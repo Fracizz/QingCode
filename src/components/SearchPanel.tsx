@@ -28,6 +28,8 @@ import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
+import { findProjectForPath } from '../utils/fileReferences'
+import Tooltip from './Tooltip'
 
 interface SearchHit {
   name: string
@@ -58,6 +60,15 @@ interface ContentSearchResponse {
 }
 
 type SearchMode = 'filename' | 'content'
+type SearchScope = 'current' | 'all'
+type TypeFilter = { kind: 'preset'; label: string; exts: string[] } | { kind: 'ext'; ext: string }
+
+const TYPE_PRESETS: { label: string; exts: string[] }[] = [
+  { label: 'Web', exts: ['html', 'css', 'scss', 'less', 'js', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'astro'] },
+  { label: '脚本', exts: ['py', 'rs', 'go', 'java', 'kt', 'rb', 'php', 'sh', 'ps1', 'bat', 'cs'] },
+  { label: '配置', exts: ['json', 'jsonc', 'yaml', 'yml', 'toml', 'xml', 'env'] },
+  { label: '文档', exts: ['md', 'mdx', 'txt', 'rst'] },
+]
 
 const COMMON_EXTS = [
   'ts', 'tsx', 'js', 'jsx', 'vue', 'svelte', 'astro',
@@ -66,6 +77,21 @@ const COMMON_EXTS = [
   'rs', 'py', 'go', 'java', 'kt', 'c', 'cpp', 'h', 'cs',
   'php', 'rb', 'swift', 'sh', 'ps1', 'bat', 'env',
 ]
+
+function typeFilterLabel(filter: TypeFilter | null) {
+  if (!filter) return '全部类型'
+  if (filter.kind === 'ext') return `.${filter.ext}`
+  return filter.label
+}
+
+function typeFilterExtensions(filter: TypeFilter | null): string[] | null {
+  if (!filter) return null
+  return filter.kind === 'ext' ? [filter.ext] : filter.exts
+}
+
+function isGlobPattern(query: string) {
+  return query.includes('*') || query.includes('?')
+}
 
 const CONTENT_DEBOUNCE_MS = 400
 const FILENAME_DEBOUNCE_MS = 200
@@ -100,19 +126,35 @@ function isNavigable(row: Row): boolean {
 }
 
 export default function SearchPanel() {
+  const projects = useProjectStore(s => s.projects)
+  const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const currentProject = useProjectStore(s => s.currentProject)
   const openFile = useEditorStore(s => s.openFile)
   const searchRoot = useUIStore(s => s.searchRoot)
   const setSearchRoot = useUIStore(s => s.setSearchRoot)
 
-  const effectiveRoot = searchRoot ?? currentProject?.path ?? null
+  const [searchScope, setSearchScope] = useState<SearchScope>('current')
+  const searchRoots = useMemo(() => {
+    if (searchRoot) return [{ path: searchRoot, label: null as string | null }]
+    if (searchScope === 'all') {
+      return projects
+        .filter(p => !unavailableProjectIds.includes(p.id))
+        .map(p => ({ path: p.path, label: p.name }))
+    }
+    if (currentProject && !unavailableProjectIds.includes(currentProject.id)) {
+      return [{ path: currentProject.path, label: null as string | null }]
+    }
+    return []
+  }, [searchRoot, searchScope, projects, unavailableProjectIds, currentProject])
+
+  const multiProjectSearch = searchRoots.length > 1
 
   const [mode, setMode] = useState<SearchMode>('content')
   const [query, setQuery] = useState('')
   const [ignoreCase, setIgnoreCase] = useState(true)
   const [fuzzy, setFuzzy] = useState(false)
   const [matchSuffix, setMatchSuffix] = useState(false)
-  const [activeExt, setActiveExt] = useState<string | null>(null)
+  const [typeFilter, setTypeFilter] = useState<TypeFilter | null>(null)
   const [extPickerOpen, setExtPickerOpen] = useState(false)
   const [filenameResults, setFilenameResults] = useState<SearchHit[]>([])
   const [contentResults, setContentResults] = useState<ContentSearchResponse | null>(null)
@@ -123,13 +165,12 @@ export default function SearchPanel() {
   const reqId = useRef(0)
   const listRef = useListRef(null)
 
-  useEffect(() => {
-    if (activeExt !== null) setMatchSuffix(true)
-  }, [activeExt])
+  const extList = typeFilterExtensions(typeFilter)
+  const useGlob = isGlobPattern(query)
 
   useEffect(() => {
     setCollapsedFiles(new Set())
-  }, [query, mode, activeExt])
+  }, [query, mode, typeFilter])
 
   useEffect(() => {
     if (!extPickerOpen) return
@@ -139,7 +180,7 @@ export default function SearchPanel() {
   }, [extPickerOpen])
 
   useEffect(() => {
-    if (!effectiveRoot) {
+    if (searchRoots.length === 0) {
       setFilenameResults([])
       setContentResults(null)
       return
@@ -150,7 +191,7 @@ export default function SearchPanel() {
         setError(null)
         return
       }
-    } else if (!query.trim() && activeExt === null) {
+    } else if (!query.trim() && !typeFilter) {
       setFilenameResults([])
       setContentResults(null)
       setError(null)
@@ -166,6 +207,7 @@ export default function SearchPanel() {
     const id = ++reqId.current
     setLoading(true)
     const debounce = mode === 'content' ? CONTENT_DEBOUNCE_MS : FILENAME_DEBOUNCE_MS
+    const perRootLimit = Math.max(50, Math.ceil(500 / searchRoots.length))
 
     const handle = setTimeout(async () => {
       try {
@@ -179,31 +221,56 @@ export default function SearchPanel() {
             }
             return
           }
-          const resp = await safeInvoke<ContentSearchResponse>('内容搜索', 'search_file_contents', {
-            root: effectiveRoot,
-            query: q,
-            ignoreCase,
-            extension: activeExt,
-            maxMatches: 500,
-            maxFilesScanned: 8000,
-            maxMatchesPerFile: 20,
-          })
+          let merged: ContentSearchResponse = {
+            files: [],
+            match_count: 0,
+            files_scanned: 0,
+            truncated: false,
+          }
+          for (const root of searchRoots) {
+            const resp = await safeInvoke<ContentSearchResponse>('内容搜索', 'search_file_contents', {
+              root: root.path,
+              query: q,
+              ignoreCase,
+              extension: null,
+              extensions: extList,
+              maxMatches: perRootLimit,
+              maxFilesScanned: Math.ceil(8000 / searchRoots.length),
+              maxMatchesPerFile: 20,
+            })
+            merged.files.push(...resp.files)
+            merged.match_count += resp.match_count
+            merged.files_scanned += resp.files_scanned
+            merged.truncated = merged.truncated || resp.truncated
+            if (merged.match_count >= 500) {
+              merged.truncated = true
+              break
+            }
+          }
           if (id === reqId.current) {
-            setContentResults(resp)
+            setContentResults(merged)
             setFilenameResults([])
             setError(null)
           }
         } else {
-          const effectiveQuery = q || (activeExt ?? '')
-          const useSuffix = matchSuffix || activeExt !== null
-          const hits = await safeInvoke<SearchHit[]>('文件搜索', 'search_files', {
-            root: effectiveRoot,
-            query: effectiveQuery,
-            ignoreCase,
-            fuzzy: fuzzy && !useSuffix,
-            matchSuffix: useSuffix,
-            limit: 500,
-          })
+          let hits: SearchHit[] = []
+          for (const root of searchRoots) {
+            const part = await safeInvoke<SearchHit[]>('文件搜索', 'search_files', {
+              root: root.path,
+              query: q,
+              ignoreCase,
+              fuzzy: fuzzy && !useGlob && !matchSuffix && !extList,
+              matchSuffix: !useGlob && matchSuffix && !extList,
+              extension: null,
+              extensions: extList,
+              limit: perRootLimit,
+            })
+            hits.push(...part)
+            if (hits.length >= 500) {
+              hits = hits.slice(0, 500)
+              break
+            }
+          }
           if (id === reqId.current) {
             setFilenameResults(hits)
             setContentResults(null)
@@ -222,11 +289,11 @@ export default function SearchPanel() {
     }, debounce)
 
     return () => clearTimeout(handle)
-  }, [effectiveRoot, query, ignoreCase, fuzzy, matchSuffix, activeExt, mode])
+  }, [searchRoots, query, ignoreCase, fuzzy, matchSuffix, typeFilter, extList, useGlob, mode])
 
   const toggleSuffix = () => {
-    if (mode === 'content') return
-    if (!matchSuffix && activeExt !== null) return
+    if (mode === 'content' || useGlob) return
+    if (!matchSuffix && typeFilter !== null) return
     setMatchSuffix(v => !v)
   }
 
@@ -236,11 +303,13 @@ export default function SearchPanel() {
       const out: Row[] = []
       for (const file of contentResults.files) {
         const collapsed = collapsedFiles.has(file.path)
+        const project = multiProjectSearch ? findProjectForPath(projects, file.path) : null
+        const dir = dirOf(file.relative)
         out.push({
           kind: 'file',
           path: file.path,
           name: file.name,
-          dir: dirOf(file.relative),
+          dir: project && dir ? `${project.name} / ${dir}` : project ? project.name : dir,
           matchCount: file.matches.length,
           collapsed,
         })
@@ -268,9 +337,11 @@ export default function SearchPanel() {
       const sep = h.relative.includes('\\') ? '\\' : '/'
       const parts = h.relative.split(sep)
       const dir = parts.length > 1 ? parts.slice(0, -1).join(sep) : '(root)'
-      const arr = groups.get(dir) ?? []
+      const project = multiProjectSearch ? findProjectForPath(projects, h.path) : null
+      const groupKey = project ? `${project.name} / ${dir}` : dir
+      const arr = groups.get(groupKey) ?? []
       arr.push(h)
-      groups.set(dir, arr)
+      groups.set(groupKey, arr)
     }
     const out: Row[] = []
     for (const [dir, items] of groups) {
@@ -278,7 +349,7 @@ export default function SearchPanel() {
       for (const h of items) out.push({ kind: 'fn', hit: h })
     }
     return out
-  }, [mode, contentResults, filenameResults, collapsedFiles])
+  }, [mode, contentResults, filenameResults, collapsedFiles, multiProjectSearch, projects])
 
   const navigableIndexes = useMemo(() => {
     const arr: number[] = []
@@ -372,7 +443,7 @@ export default function SearchPanel() {
   const hasQuery =
     mode === 'content'
       ? query.trim().length > 0
-      : query.trim().length > 0 || activeExt !== null
+      : query.trim().length > 0 || typeFilter !== null
 
   return (
     <div className="h-full flex flex-col bg-bg-sidebar text-fg">
@@ -380,19 +451,39 @@ export default function SearchPanel() {
         <Search size={13} /> Search
       </div>
 
+      {!searchRoot && (
+        <div className="mx-3 mb-2 flex rounded border border-border overflow-hidden text-[11px]">
+          <ScopeTab
+            active={searchScope === 'current'}
+            onClick={() => setSearchScope('current')}
+          >
+            当前项目
+          </ScopeTab>
+          <ScopeTab
+            active={searchScope === 'all'}
+            onClick={() => setSearchScope('all')}
+          >
+            全部项目
+          </ScopeTab>
+        </div>
+      )}
+
       {searchRoot && (
         <div className="mx-3 mb-2 flex items-center gap-1.5 px-2 py-1 rounded border border-accent/40 bg-accent/10 text-[11px] text-fg">
           <Filter size={12} className="text-accent flex-shrink-0" />
-          <span className="truncate flex-1" title={searchRoot}>
-            限定于：{searchRoot.replace(/\\/g, '/').split('/').pop() || searchRoot}
-          </span>
-          <button
-            title="清除目录限定，回到当前项目根"
-            className="text-fg-dim hover:text-fg flex-shrink-0"
-            onClick={() => setSearchRoot(null)}
-          >
-            <X size={12} />
-          </button>
+          <Tooltip label={searchRoot} side="bottom" wrapperClassName="truncate flex-1 min-w-0">
+            <span className="truncate block">
+              限定于：{searchRoot.replace(/\\/g, '/').split('/').pop() || searchRoot}
+            </span>
+          </Tooltip>
+          <Tooltip label="清除目录限定，回到当前项目根" side="bottom">
+            <button
+              className="text-fg-dim hover:text-fg flex-shrink-0"
+              onClick={() => setSearchRoot(null)}
+            >
+              <X size={12} />
+            </button>
+          </Tooltip>
         </div>
       )}
 
@@ -421,16 +512,18 @@ export default function SearchPanel() {
             onChange={e => setQuery(e.target.value)}
             placeholder={
               mode === 'content'
-                ? activeExt
-                  ? `在 .${activeExt} 文件中搜索内容…`
+                ? typeFilter
+                  ? `在 ${typeFilterLabel(typeFilter)} 文件中搜索内容…`
                   : '搜索文件内容…'
-                : activeExt
-                ? `按后缀 .${activeExt} 搜索…`
+                : useGlob
+                ? '通配符匹配，如 *.tsx 或 test*Util.ts'
+                : typeFilter
+                ? `在 ${typeFilterLabel(typeFilter)} 中搜索文件名…`
                 : matchSuffix
-                ? '输入后缀/扩展名，如 .ts'
+                ? '输入后缀/扩展名，如 .ts 或 ts'
                 : fuzzy
                 ? '模糊匹配文件名…'
-                : '搜索文件名…'
+                : '搜索文件名，支持 * 通配符…'
             }
             className="w-full pl-7 pr-7 py-1.5 text-[13px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
           />
@@ -448,7 +541,7 @@ export default function SearchPanel() {
           <Toggle
             active={ignoreCase}
             onClick={() => setIgnoreCase(v => !v)}
-            title="忽略大小写"
+            tooltip="忽略大小写"
             icon={<CaseSensitive size={13} />}
             label="Aa"
           />
@@ -457,60 +550,106 @@ export default function SearchPanel() {
               <Toggle
                 active={fuzzy}
                 onClick={() => setFuzzy(v => !v)}
-                title="模糊匹配（子序列）"
+                tooltip="模糊匹配（子序列）"
                 icon={<Type size={13} />}
                 label="模糊"
+                locked={useGlob}
               />
               <Toggle
                 active={matchSuffix}
                 onClick={toggleSuffix}
-                title="按后缀/扩展名匹配"
+                tooltip="按后缀/扩展名匹配"
                 icon={<Regex size={13} />}
                 label="后缀"
-                locked={activeExt !== null}
+                locked={typeFilter !== null || useGlob}
               />
             </>
           )}
-          <button
-            onClick={() => setExtPickerOpen(v => !v)}
-            title="按文件类型筛选"
-            className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
-              ${activeExt
-                ? 'bg-accent text-white border-accent'
-                : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
-          >
-            <Caret size={11} className={`transition-transform ${extPickerOpen ? 'rotate-180' : ''}`} />
-            <span>{activeExt ? `.${activeExt}` : '全部类型'}</span>
-          </button>
-          {activeExt && (
+          <Tooltip label="按文件类型筛选" side="bottom">
             <button
-              className="px-1 py-0.5 text-[11px] rounded text-fg-dim hover:text-fg"
-              onClick={() => setActiveExt(null)}
-              title="清除类型筛选"
+              onClick={() => setExtPickerOpen(v => !v)}
+              className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
+                ${typeFilter
+                  ? 'bg-accent text-white border-accent'
+                  : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
             >
-              <X size={12} />
+              <Caret size={11} className={`transition-transform ${extPickerOpen ? 'rotate-180' : ''}`} />
+              <span>{typeFilterLabel(typeFilter)}</span>
             </button>
+          </Tooltip>
+          {typeFilter && (
+            <Tooltip label="清除类型筛选" side="bottom">
+              <button
+                className="px-1 py-0.5 text-[11px] rounded text-fg-dim hover:text-fg"
+                onClick={() => setTypeFilter(null)}
+              >
+                <X size={12} />
+              </button>
+            </Tooltip>
           )}
           {extPickerOpen && (
             <div
-              className="absolute z-30 top-[calc(100%+4px)] left-0 bg-bg-elevated border border-border-strong rounded-md shadow-xl p-2 grid grid-cols-3 gap-1 w-[180px] max-h-56 overflow-y-auto"
+              className="absolute z-30 top-[calc(100%+4px)] left-0 bg-bg-elevated border border-border-strong rounded-md shadow-xl p-2 w-[220px] max-h-72 overflow-y-auto"
               onClick={e => e.stopPropagation()}
             >
-              {COMMON_EXTS.map(ext => (
-                <button
-                  key={ext}
-                  onClick={() => {
-                    setActiveExt(cur => (cur === ext ? null : ext))
-                    setExtPickerOpen(false)
-                  }}
-                  className={`px-1.5 py-0.5 text-[11px] rounded border transition-colors text-center
-                    ${activeExt === ext
-                      ? 'bg-accent text-white border-accent'
-                      : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
-                >
-                  .{ext}
-                </button>
-              ))}
+              <button
+                onClick={() => {
+                  setTypeFilter(null)
+                  setExtPickerOpen(false)
+                }}
+                className={`mb-2 w-full px-2 py-1 text-[11px] rounded border transition-colors text-left
+                  ${!typeFilter
+                    ? 'bg-accent text-white border-accent'
+                    : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
+              >
+                全部类型
+              </button>
+              <div className="mb-2 text-[10px] font-semibold tracking-wide uppercase text-fg-dim px-0.5">
+                常见分组
+              </div>
+              <div className="grid grid-cols-2 gap-1 mb-2">
+                {TYPE_PRESETS.map(preset => (
+                  <button
+                    key={preset.label}
+                    onClick={() => {
+                      setTypeFilter(cur =>
+                        cur?.kind === 'preset' && cur.label === preset.label
+                          ? null
+                          : { kind: 'preset', label: preset.label, exts: preset.exts }
+                      )
+                      setExtPickerOpen(false)
+                    }}
+                    className={`px-2 py-1 text-[11px] rounded border transition-colors text-left
+                      ${typeFilter?.kind === 'preset' && typeFilter.label === preset.label
+                        ? 'bg-accent text-white border-accent'
+                        : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mb-1 text-[10px] font-semibold tracking-wide uppercase text-fg-dim px-0.5">
+                扩展名
+              </div>
+              <div className="grid grid-cols-3 gap-1">
+                {COMMON_EXTS.map(ext => (
+                  <button
+                    key={ext}
+                    onClick={() => {
+                      setTypeFilter(cur =>
+                        cur?.kind === 'ext' && cur.ext === ext ? null : { kind: 'ext', ext }
+                      )
+                      setExtPickerOpen(false)
+                    }}
+                    className={`px-1.5 py-0.5 text-[11px] rounded border transition-colors text-center
+                      ${typeFilter?.kind === 'ext' && typeFilter.ext === ext
+                        ? 'bg-accent text-white border-accent'
+                        : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
+                  >
+                    .{ext}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -521,13 +660,13 @@ export default function SearchPanel() {
         tabIndex={0}
         onKeyDown={onResultsKeyDown}
       >
-        {!effectiveRoot ? (
+        {!searchRoots.length ? (
           <div className="px-4 py-6 text-[13px] text-fg-muted">请先选择或添加项目</div>
         ) : error ? (
           <div className="px-4 py-4 text-[13px] text-danger">{error}</div>
         ) : !hasQuery ? (
           <div className="px-4 py-4 text-[13px] text-fg-muted">
-            {mode === 'content' ? '输入关键词搜索文件内容' : '输入关键词或选择常见后缀开始搜索'}
+            {mode === 'content' ? '输入关键词搜索文件内容' : '输入关键词、通配符（*）或选择常见类型开始搜索'}
           </div>
         ) : rows.length === 0 && loading ? (
           <div className="px-4 py-4 text-[13px] text-fg-muted">搜索中…</div>
@@ -544,12 +683,16 @@ export default function SearchPanel() {
               {loading && <LoaderCircle size={12} className="animate-spin text-accent flex-shrink-0" aria-label="搜索中" />}
               {mode === 'content' && (
                 <span className="ml-auto flex items-center gap-2 flex-shrink-0">
-                  <button className="hover:text-fg" onClick={expandAll} title="展开全部">
-                    <ChevronDown size={12} />
-                  </button>
-                  <button className="hover:text-fg" onClick={collapseAll} title="折叠全部">
-                    <ChevronRight size={12} />
-                  </button>
+                  <Tooltip label="展开全部" side="bottom">
+                    <button className="hover:text-fg" onClick={expandAll}>
+                      <ChevronDown size={12} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip label="折叠全部" side="bottom">
+                    <button className="hover:text-fg" onClick={collapseAll}>
+                      <ChevronRight size={12} />
+                    </button>
+                  </Tooltip>
                 </span>
               )}
             </div>
@@ -607,9 +750,11 @@ const SearchRowComponent = (props: {
           <FileIcon size={13} className="text-fg-muted flex-shrink-0" />
           <span className="truncate font-medium">{row.name}</span>
           {row.dir && (
-            <span className="truncate text-fg-dim text-[11px] ml-1" title={row.dir}>
-              {row.dir}
-            </span>
+            <Tooltip label={row.dir} side="bottom" wrapperClassName="truncate min-w-0 ml-1">
+              <span className="truncate text-fg-dim text-[11px] block">
+                {row.dir}
+              </span>
+            </Tooltip>
           )}
           <span className="ml-auto text-[11px] text-fg-dim flex-shrink-0">
             {row.matchCount}
@@ -646,8 +791,10 @@ const SearchRowComponent = (props: {
 
   if (row.kind === 'dir') {
     return (
-      <div style={style} className={`${baseCls} px-4 text-[11px] text-fg-dim`} title={row.dir}>
-        <span className="truncate">{row.dir}</span>
+      <div style={style} className={`${baseCls} px-4 text-[11px] text-fg-dim`}>
+        <Tooltip label={row.dir} side="bottom" wrapperClassName="truncate min-w-0 w-full">
+          <span className="truncate block">{row.dir}</span>
+        </Tooltip>
       </div>
     )
   }
@@ -693,6 +840,28 @@ const MatchHighlight = memo(function MatchHighlight({
   )
 })
 
+function ScopeTab({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex-1 py-1 transition-colors
+        ${active
+          ? 'bg-bg-active text-fg font-medium'
+          : 'bg-bg-deep text-fg-muted hover:text-fg'}`}
+    >
+      {children}
+    </button>
+  )
+}
+
 function ModeTab({
   active,
   onClick,
@@ -718,30 +887,32 @@ function ModeTab({
 function Toggle({
   active,
   onClick,
-  title,
+  tooltip,
   icon,
   label,
   locked,
 }: {
   active: boolean
   onClick: () => void
-  title: string
+  tooltip: string
   icon: ReactNode
   label: string
   locked?: boolean
 }) {
+  const tooltipLabel = locked ? `${tooltip}（已由后缀筛选锁定）` : tooltip
   return (
-    <button
-      onClick={onClick}
-      title={locked ? `${title}（已由后缀筛选锁定）` : title}
-      className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
-        ${active
-          ? 'bg-bg-active text-fg border-border-strong'
-          : 'bg-bg-deep text-fg-muted border-border hover:text-fg'}
-        ${locked ? 'opacity-60 cursor-default' : ''}`}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
+    <Tooltip label={tooltipLabel} side="bottom">
+      <button
+        onClick={onClick}
+        className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
+          ${active
+            ? 'bg-bg-active text-fg border-border-strong'
+            : 'bg-bg-deep text-fg-muted border-border hover:text-fg'}
+          ${locked ? 'opacity-60 cursor-default' : ''}`}
+      >
+        {icon}
+        <span>{label}</span>
+      </button>
+    </Tooltip>
   )
 }

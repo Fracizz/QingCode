@@ -14,7 +14,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
-    "package:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1"
+    "icon:sync": "tauri icon public/app-icon.svg -o src-tauri/icons",
+    "package:exe": "pnpm icon:sync && powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface ContextMenuItem {
   label: string
@@ -36,23 +37,26 @@ export default function ContextMenu({
   }, [x, y])
 
   useEffect(() => {
-    const close = () => onClose()
+    const close = (event: PointerEvent) => {
+      if (event.button === 2) return
+      onClose()
+    }
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose()
     }
     window.addEventListener('pointerdown', close)
-    window.addEventListener('blur', close)
-    window.addEventListener('resize', close)
+    window.addEventListener('blur', onClose)
+    window.addEventListener('resize', onClose)
     window.addEventListener('keydown', onKeyDown)
     return () => {
       window.removeEventListener('pointerdown', close)
-      window.removeEventListener('blur', close)
-      window.removeEventListener('resize', close)
+      window.removeEventListener('blur', onClose)
+      window.removeEventListener('resize', onClose)
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [onClose])
 
-  return (
+  return createPortal(
     <div
       ref={menuRef}
       role="menu"
@@ -90,6 +94,7 @@ export default function ContextMenu({
           </button>
         </div>
       ))}
-    </div>
+    </div>,
+    document.body,
   )
 }

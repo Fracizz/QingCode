@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   ChevronDown,
   ChevronRight,
@@ -25,13 +25,37 @@ import { useProjectStore, FileNode } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
-import { isTauri, safeInvoke } from '../lib/tauri'
-import { open } from '@tauri-apps/plugin-dialog'
+import { safeInvoke } from '../lib/tauri'
 import { confirmDialog } from '../store/confirmStore'
+import { promptDialog, validateEntryName } from '../store/promptStore'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+import InlineCreateRow from './InlineCreateRow'
 import type { Project } from '../types'
-import { copyToClipboard, formatFileReference } from '../utils/fileReferences'
+import { collectAncestorDirs, copyToClipboard, formatFileReference, isDescendantOf, normalizePath, pathsEqual } from '../utils/fileReferences'
+import { removeProjectWithConfirm, relocateProjectWithDialog, addTerminalProjectWithPrompt, renameProjectWithPrompt } from '../utils/projectActions'
+
+type PendingCreate = {
+  projectId: string
+  parentPath: string
+  directory: boolean
+  depth: number
+}
+
+function createTreeDepth(parentPath: string, projectPath: string): number {
+  const root = normalizePath(projectPath)
+  const parent = normalizePath(parentPath)
+  if (parent.toLowerCase() === root.toLowerCase()) return 1
+  const rel = parent.slice(root.length).replace(/^\/+/, '')
+  return rel.split('/').filter(Boolean).length + 1
+}
+
+function dirsToReveal(parentPath: string, projectPath: string): string[] {
+  const root = normalizePath(projectPath)
+  const parent = normalizePath(parentPath)
+  if (parent.toLowerCase() === root.toLowerCase()) return []
+  return collectAncestorDirs(`${parent}/.placeholder`, projectPath)
+}
 
 type ContextTarget =
   | { kind: 'project'; project: Project }
@@ -49,17 +73,52 @@ function FileTreeItem({
   projectId,
   onOpenContextMenu,
   onCopyPath,
+  pendingCreate,
+  forceExpandedPaths,
+  onCommitCreate,
+  onCancelCreate,
 }: {
   node: FileNode
   depth: number
   projectId: string
   onOpenContextMenu: (event: ReactMouseEvent, target: ContextTarget) => void
   onCopyPath: (path: string) => void
+  pendingCreate: PendingCreate | null
+  forceExpandedPaths: Set<string> | null
+  onCommitCreate: (name: string) => void
+  onCancelCreate: () => void
 }) {
+  const rowRef = useRef<HTMLDivElement>(null)
   const [expanded, setExpanded] = useState(false)
   const [loading, setLoading] = useState(false)
   const openFile = useEditorStore(s => s.openFile)
   const expandProjectDir = useProjectStore(s => s.expandProjectDir)
+  const treeRevealPath = useProjectStore(s => s.treeRevealPath)
+  const activeFilePath = useEditorStore(s => {
+    const tab = s.tabs.find(t => t.id === s.activeTabId)
+    return tab?.path ?? null
+  })
+  const isActive = !node.is_dir && activeFilePath != null && pathsEqual(node.path, activeFilePath)
+
+  useEffect(() => {
+    if (!node.is_dir || !treeRevealPath) return
+    if (isDescendantOf(treeRevealPath, node.path)) {
+      setExpanded(true)
+    }
+  }, [treeRevealPath, node.path, node.is_dir])
+
+  useEffect(() => {
+    if (!isActive || !rowRef.current) return
+    rowRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [isActive, treeRevealPath])
+
+  useEffect(() => {
+    if (forceExpandedPaths?.has(node.path)) setExpanded(true)
+  }, [forceExpandedPaths, node.path])
+
+  useEffect(() => {
+    if (pendingCreate?.parentPath === node.path && node.is_dir) setExpanded(true)
+  }, [pendingCreate, node.path, node.is_dir])
 
   const toggle = async () => {
     if (!node.is_dir) {
@@ -86,11 +145,16 @@ function FileTreeItem({
   return (
     <div>
       <div
+        ref={rowRef}
         tabIndex={0}
-        className="flex items-center gap-1 pr-2 py-[3px] cursor-pointer text-[13px] select-none hover:bg-bg-hover focus:bg-bg-active focus:outline-none"
+        className={`flex items-center gap-1 pr-2 py-[3px] cursor-pointer text-[13px] select-none focus:outline-none
+          ${isActive ? 'bg-bg-active text-accent' : 'hover:bg-bg-hover focus:bg-bg-active'}`}
         style={{ paddingLeft: pad }}
         onClick={toggle}
-        onContextMenu={event => onOpenContextMenu(event, { kind: 'node', node })}
+        onContextMenu={event => {
+          event.currentTarget.focus()
+          onOpenContextMenu(event, { kind: 'node', node })
+        }}
         onKeyDown={event => {
           if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
             event.preventDefault()
@@ -120,16 +184,33 @@ function FileTreeItem({
         <span className="truncate text-fg">{node.name}</span>
         {loading && <RefreshCw size={12} className="ml-auto text-fg-dim animate-spin" />}
       </div>
-      {expanded && node.is_dir && node.loaded && node.children?.map(child => (
-        <FileTreeItem
-          key={child.path}
-          node={child}
-          depth={depth + 1}
-          projectId={projectId}
-          onOpenContextMenu={onOpenContextMenu}
-          onCopyPath={onCopyPath}
-        />
-      ))}
+      {expanded && node.is_dir && (
+        <>
+          {pendingCreate?.parentPath === node.path && (
+            <InlineCreateRow
+              directory={pendingCreate.directory}
+              depth={depth + 1}
+              onSubmit={onCommitCreate}
+              onCancel={onCancelCreate}
+            />
+          )}
+          {node.loaded &&
+            node.children?.map(child => (
+              <FileTreeItem
+                key={child.path}
+                node={child}
+                depth={depth + 1}
+                projectId={projectId}
+                onOpenContextMenu={onOpenContextMenu}
+                onCopyPath={onCopyPath}
+                pendingCreate={pendingCreate}
+                forceExpandedPaths={forceExpandedPaths}
+                onCommitCreate={onCommitCreate}
+                onCancelCreate={onCancelCreate}
+              />
+            ))}
+        </>
+      )}
     </div>
   )
 }
@@ -139,18 +220,17 @@ export default function Sidebar() {
     projects,
     currentProject,
     projectTrees,
-    expandedProjects,
     unavailableProjectIds,
-    removeProject,
-    relocateProject,
     switchProject,
     refreshProjectTree,
-    toggleProjectExpanded,
     expandProjectDir,
+    revealFileInTree,
   } = useProjectStore()
-  const terminals = useTerminalStore(s => s.terminals)
-  const closeProjectTerminals = useTerminalStore(s => s.closeProjectTerminals)
-  const updateProjectPath = useTerminalStore(s => s.updateProjectPath)
+  const activeTabPath = useEditorStore(s => {
+    const tab = s.tabs.find(t => t.id === s.activeTabId)
+    return tab?.path ?? null
+  })
+  const setView = useUIStore(s => s.setView)
   const addTerminal = useTerminalStore(s => s.addTerminal)
   const requestSearch = useUIStore(s => s.requestSearch)
   const renameEditorPath = useEditorStore(s => s.renamePath)
@@ -161,6 +241,20 @@ export default function Sidebar() {
     y: number
     target: ContextTarget
   } | null>(null)
+  const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null)
+
+  const forceExpandedPaths = useMemo(() => {
+    if (!pendingCreate) return null
+    const project = projects.find(p => p.id === pendingCreate.projectId)
+    if (!project) return null
+    return new Set(dirsToReveal(pendingCreate.parentPath, project.path))
+  }, [pendingCreate, projects])
+
+  const handleLocateActiveFile = () => {
+    if (!activeTabPath) return
+    setView('explorer')
+    void revealFileInTree(activeTabPath)
+  }
 
   const handleRefresh = async () => {
     if (refreshing || !currentProject) return
@@ -179,42 +273,12 @@ export default function Sidebar() {
     await useProjectStore.getState().addProjectFromDialog()
   }
 
-  const handleRemoveProject = async (id: string, name: string, path: string) => {
-    try {
-      const projectTerminals = terminals.filter(terminal => terminal.projectId === id)
-      const runningCount = projectTerminals.filter(terminal => terminal.status !== 'exited').length
-      if (isTauri()) {
-        const ok = await confirmDialog({
-          title: '移除项目',
-          message: `确定从工作区移除「${name}」？`,
-          detail:
-            runningCount > 0
-              ? `该项目有 ${runningCount} 个运行中的终端，移除后将被终止。\n不会删除磁盘上的项目文件。`
-              : '不会删除磁盘上的项目文件。',
-          kind: 'warning',
-          confirmLabel: '移除',
-          cancelLabel: '取消',
-        })
-        if (!ok) return
-      }
-      await closeProjectTerminals(id)
-      closeTabsForPath(path)
-      await removeProject(id)
-    } catch (e) {
-      console.error('remove project failed:', e)
-      useProjectStore.getState().pushToast('error', `移除项目失败: ${String(e)}`)
-    }
+  const handleRemoveProject = (id: string, name: string, path: string) => {
+    void removeProjectWithConfirm(id, name, path)
   }
 
-  const handleRelocateProject = async (id: string) => {
-    try {
-      const selected = await open({ directory: true, multiple: false })
-      if (typeof selected === 'string' && (await relocateProject(id, selected))) {
-        updateProjectPath(id, selected)
-      }
-    } catch (e) {
-      useProjectStore.getState().pushToast('error', `重新定位项目失败: ${String(e)}`)
-    }
+  const handleRelocateProject = (id: string) => {
+    void relocateProjectWithDialog(id)
   }
 
   const handleOpenProject = async (path: string) => {
@@ -228,6 +292,9 @@ export default function Sidebar() {
   const showContextMenu = (event: ReactMouseEvent, target: ContextTarget) => {
     event.preventDefault()
     event.stopPropagation()
+    if (event.currentTarget instanceof HTMLElement) {
+      event.currentTarget.focus()
+    }
     setContextMenu({ x: event.clientX, y: event.clientY, target })
   }
 
@@ -278,35 +345,63 @@ export default function Sidebar() {
     else await expandProjectDir(project.id, path)
   }
 
-  const createEntry = async (parent: string, directory: boolean) => {
+  const cancelCreate = () => setPendingCreate(null)
+
+  const commitCreate = async (name: string) => {
+    if (!pendingCreate) return
+    const { parentPath, directory, projectId } = pendingCreate
+    const project = projects.find(p => p.id === projectId)
+    if (!project) return
     const label = directory ? '文件夹' : '文件'
-    const name = window.prompt(`请输入${label}名称`)
-    if (!name?.trim()) return
+    setPendingCreate(null)
     try {
       const path = await safeInvoke<string>(
         `新建${label}`,
         directory ? 'create_directory' : 'create_file',
-        { parent, name: name.trim() }
+        { parent: parentPath, name }
       )
-      await refreshDirectory(parent)
-      useProjectStore.getState().pushToast('success', `已新建${label}: ${name.trim()}`)
+      await refreshDirectory(parentPath)
+      useProjectStore.getState().pushToast('success', `已新建${label}: ${name}`)
       if (!directory) await useEditorStore.getState().openFile(path)
     } catch (e) {
       useProjectStore.getState().pushToast('error', `${String(e)}`)
     }
   }
 
+  const startCreateEntry = async (parent: string, directory: boolean, projectId: string) => {
+    const project = projects.find(p => p.id === projectId)
+    if (!project) return
+    if (currentProject?.id !== projectId) await switchProject(project)
+
+    for (const dir of dirsToReveal(parent, project.path)) {
+      await expandProjectDir(projectId, dir)
+    }
+
+    setPendingCreate({
+      projectId,
+      parentPath: parent,
+      directory,
+      depth: createTreeDepth(parent, project.path),
+    })
+  }
+
   const handleRenameNode = async (node: FileNode) => {
-    const name = window.prompt('请输入新名称', node.name)
-    if (!name?.trim() || name.trim() === node.name) return
+    const name = await promptDialog({
+      title: '重命名',
+      message: node.is_dir ? '文件夹新名称' : '文件新名称',
+      defaultValue: node.name,
+      validate: validateEntryName,
+      confirmLabel: '重命名',
+    })
+    if (!name || name === node.name) return
     try {
       const newPath = await safeInvoke<string>('重命名', 'rename_path', {
         path: node.path,
-        newName: name.trim(),
+        newName: name,
       })
       renameEditorPath(node.path, newPath)
       await refreshDirectory(parentPath(node.path))
-      useProjectStore.getState().pushToast('success', `已重命名为: ${name.trim()}`)
+      useProjectStore.getState().pushToast('success', `已重命名为: ${name}`)
     } catch (e) {
       useProjectStore.getState().pushToast('error', `${String(e)}`)
     }
@@ -347,9 +442,14 @@ export default function Sidebar() {
     if (target.kind === 'empty') {
       return [
         {
-          label: '添加项目',
+          label: '添加文件夹项目',
           icon: <FolderPlus size={14} />,
           action: handleAddProject,
+        },
+        {
+          label: '新建终端项目',
+          icon: <TerminalIcon size={14} />,
+          action: () => addTerminalProjectWithPrompt(),
         },
         {
           label: '刷新',
@@ -391,13 +491,13 @@ export default function Sidebar() {
           icon: <FilePlus size={14} />,
           separatorBefore: true,
           disabled: unavailable,
-          action: () => activateThen(() => createEntry(project.path, false)),
+          action: () => activateThen(() => startCreateEntry(project.path, false, project.id)),
         },
         {
           label: '新建文件夹',
           icon: <FolderPlus size={14} />,
           disabled: unavailable,
-          action: () => activateThen(() => createEntry(project.path, true)),
+          action: () => activateThen(() => startCreateEntry(project.path, true, project.id)),
         },
         {
           label: '刷新项目',
@@ -424,9 +524,14 @@ export default function Sidebar() {
           action: () => copyAsReference(project.path),
         },
         {
+          label: '重命名项目',
+          icon: <Pencil size={14} />,
+          separatorBefore: true,
+          action: () => renameProjectWithPrompt(project.id, project.name),
+        },
+        {
           label: '重新定位项目',
           icon: <LocateFixed size={14} />,
-          separatorBefore: true,
           action: () => handleRelocateProject(project.id),
         },
         {
@@ -440,6 +545,7 @@ export default function Sidebar() {
 
     const node = target.node
     const parent = node.is_dir ? node.path : parentPath(node.path)
+    const project = projectOfPath(parent)
     return [
       ...(!node.is_dir
         ? [
@@ -451,24 +557,28 @@ export default function Sidebar() {
             {
               label: '新建文件（同目录）',
               icon: <FilePlus size={14} />,
-              action: () => createEntry(parent, false),
+              disabled: !project,
+              action: () => project && startCreateEntry(parent, false, project.id),
             },
             {
               label: '新建文件夹（同目录）',
               icon: <FolderPlus size={14} />,
-              action: () => createEntry(parent, true),
+              disabled: !project,
+              action: () => project && startCreateEntry(parent, true, project.id),
             },
           ]
         : [
             {
               label: '新建文件',
               icon: <FilePlus size={14} />,
-              action: () => createEntry(node.path, false),
+              disabled: !project,
+              action: () => project && startCreateEntry(node.path, false, project.id),
             },
             {
               label: '新建文件夹',
               icon: <FolderPlus size={14} />,
-              action: () => createEntry(node.path, true),
+              disabled: !project,
+              action: () => project && startCreateEntry(node.path, true, project.id),
             },
             {
               label: '在此处打开终端',
@@ -527,138 +637,213 @@ export default function Sidebar() {
       {/* Section header */}
       <div className="px-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted">
         <span>资源管理器</span>
-        <Tooltip label="刷新" side="bottom">
-          <button
-            type="button"
-            onClick={handleRefresh}
-            disabled={refreshing || !currentProject}
-            aria-label="刷新"
-            aria-busy={refreshing}
-            className={`p-1 rounded transition-colors flex-shrink-0
-            ${!currentProject
-              ? 'opacity-40'
-              : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
-          >
-            <RefreshCw
-              size={13}
-              className={refreshing ? 'text-accent animate-spin' : undefined}
-            />
-          </button>
-        </Tooltip>
+        <div className="flex items-center gap-0.5">
+          <Tooltip label="在侧边栏定位当前文件" side="bottom">
+            <button
+              type="button"
+              onClick={handleLocateActiveFile}
+              disabled={!activeTabPath}
+              aria-label="在侧边栏定位当前文件"
+              className={`p-1 rounded transition-colors flex-shrink-0
+              ${!activeTabPath
+                ? 'opacity-40'
+                : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
+            >
+              <LocateFixed size={13} />
+            </button>
+          </Tooltip>
+          <Tooltip label="刷新" side="bottom">
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshing || !currentProject}
+              aria-label="刷新"
+              aria-busy={refreshing}
+              className={`p-1 rounded transition-colors flex-shrink-0
+              ${!currentProject
+                ? 'opacity-40'
+                : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
+            >
+              <RefreshCw
+                size={13}
+                className={refreshing ? 'text-accent animate-spin' : undefined}
+              />
+            </button>
+          </Tooltip>
+        </div>
       </div>
 
-      {/* Multi-project list — every project is a root row, expanded by default */}
+      {/* Current project tree only — project switching lives in the title bar picker */}
       <div className="flex-1 overflow-auto pb-3">
-          {projects.length === 0 ? (
-            <div className="px-4 py-6 text-center">
-              <p className="text-[13px] text-fg-muted mb-3">No project opened</p>
-              <button
-                onClick={handleAddProject}
-                className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
-              >
-                <Plus size={14} /> Add project
-              </button>
-            </div>
-          ) : (
-            projects.map(project => {
-              const unavailable = unavailableProjectIds.includes(project.id)
-              const expanded = expandedProjects[project.id] ?? true
-              const isCurrent = currentProject?.id === project.id
-              const tree = projectTrees[project.id] ?? []
-              return (
-                <div key={project.id}>
-                  <div
-                    tabIndex={0}
-                    className={`group flex items-center gap-1 pr-2 py-[5px] cursor-pointer text-[13px] select-none
-                      ${isCurrent ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover'}`}
-                    onClick={() => switchProject(project)}
-                    onContextMenu={event => showContextMenu(event, { kind: 'project', project })}
-                    onKeyDown={event => {
-                      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
-                        event.preventDefault()
-                        void copyPath(project.path)
-                      }
-                    }}
+        {!currentProject ? (
+          <div className="px-4 py-6 text-center">
+            <p className="text-[13px] text-fg-muted mb-3">No project opened</p>
+            <button
+              onClick={handleAddProject}
+              className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
+            >
+              <Plus size={14} /> Add project
+            </button>
+          </div>
+        ) : (
+          (() => {
+            const unavailable = unavailableProjectIds.includes(currentProject.id)
+            const tree = projectTrees[currentProject.id] ?? []
+            return (
+              <>
+                <div
+                  className="group flex items-center gap-1 pr-2 py-[5px] text-[13px] select-none text-fg cursor-default"
+                  onContextMenu={event =>
+                    showContextMenu(event, { kind: 'project', project: currentProject })
+                  }
+                >
+                  {unavailable ? (
+                    <AlertTriangle size={15} className="text-warn flex-shrink-0" />
+                  ) : (
+                    <FolderOpen size={15} className="text-accent flex-shrink-0" />
+                  )}
+                  <Tooltip
+                    label={currentProject.path}
+                    side="bottom"
+                    wrapperClassName="truncate min-w-0 flex-1"
                   >
+                    <span className="truncate font-medium">{currentProject.name}</span>
+                  </Tooltip>
+                  <Tooltip label="新建文件" side="bottom">
                     <button
-                      title={expanded ? '折叠' : '展开'}
-                      className="flex items-center justify-center w-[18px] h-[18px] flex-shrink-0 text-fg-dim hover:text-fg"
-                      onClick={e => {
-                        e.stopPropagation()
-                        toggleProjectExpanded(project.id)
+                      type="button"
+                      aria-label="新建文件"
+                      disabled={unavailable}
+                      className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                      onClick={event => {
+                        event.stopPropagation()
+                        void startCreateEntry(currentProject.path, false, currentProject.id)
                       }}
                     >
-                      {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      <FilePlus size={13} />
                     </button>
-                    {unavailable ? (
-                      <AlertTriangle size={15} className="text-warn flex-shrink-0" />
-                    ) : expanded ? (
-                      <FolderOpen size={15} className="text-accent flex-shrink-0" />
-                    ) : (
-                      <Folder size={15} className="text-accent flex-shrink-0" />
-                    )}
-                    <span className="truncate flex-1 font-medium">{project.name}</span>
-                    {!unavailable && (
+                  </Tooltip>
+                  <Tooltip label="新建文件夹" side="bottom">
+                    <button
+                      type="button"
+                      aria-label="新建文件夹"
+                      disabled={unavailable}
+                      className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                      onClick={event => {
+                        event.stopPropagation()
+                        void startCreateEntry(currentProject.path, true, currentProject.id)
+                      }}
+                    >
+                      <FolderPlus size={13} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip label="新建终端" side="bottom">
+                    <button
+                      type="button"
+                      aria-label="新建终端"
+                      disabled={unavailable}
+                      className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                      onClick={event => {
+                        event.stopPropagation()
+                        void addTerminal(currentProject.path, currentProject.id)
+                      }}
+                    >
+                      <TerminalIcon size={13} />
+                    </button>
+                  </Tooltip>
+                  <Tooltip label="在文件管理器中打开" side="bottom">
+                    <button
+                      type="button"
+                      aria-label="在文件管理器中打开"
+                      disabled={unavailable}
+                      className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                      onClick={event => {
+                        event.stopPropagation()
+                        void handleOpenProject(currentProject.path)
+                      }}
+                    >
+                      <ExternalLink size={13} />
+                    </button>
+                  </Tooltip>
+                  {unavailable ? (
+                    <Tooltip label="重新定位项目" side="bottom">
                       <button
-                        title="在文件管理器中打开"
-                        className="opacity-0 group-hover:opacity-100 text-fg-dim hover:text-fg"
-                        onClick={e => {
-                          e.stopPropagation()
-                          handleOpenProject(project.path)
-                        }}
-                      >
-                        <ExternalLink size={13} />
-                      </button>
-                    )}
-                    {unavailable && (
-                      <button
-                        title="重新定位项目"
-                        className="text-warn hover:text-fg"
-                        onClick={e => {
-                          e.stopPropagation()
-                          handleRelocateProject(project.id)
+                        type="button"
+                        aria-label="重新定位项目"
+                        className="p-0.5 text-warn hover:text-fg"
+                        onClick={event => {
+                          event.stopPropagation()
+                          handleRelocateProject(currentProject.id)
                         }}
                       >
                         <LocateFixed size={13} />
                       </button>
-                    )}
-                    <button
-                      title="移除项目"
-                      className="opacity-0 group-hover:opacity-100 text-fg-dim hover:text-danger"
-                      onClick={e => {
-                        e.stopPropagation()
-                        handleRemoveProject(project.id, project.name, project.path)
-                      }}
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                  {expanded && (
-                    <div onContextMenu={event => showContextMenu(event, { kind: 'project', project })}>
-                      {unavailable ? (
-                        <div className="px-4 py-2 text-[12px] text-warn flex items-center gap-1.5">
-                          <AlertTriangle size={12} /> 目录不可用，请重新定位
-                        </div>
-                      ) : tree.length === 0 ? (
-                        <div className="px-4 py-2 text-[12px] text-fg-muted">Empty folder</div>
-                      ) : (
-                        tree.map(node => (
-                          <FileTreeItem
-                            key={node.path}
-                            node={node}
-                            depth={1}
-                            projectId={project.id}
-                            onOpenContextMenu={showContextMenu}
-                            onCopyPath={copyPath}
-                          />
-                        ))
-                      )}
-                    </div>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip label="移除项目" side="bottom">
+                      <button
+                        type="button"
+                        aria-label="移除项目"
+                        className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-danger"
+                        onClick={event => {
+                          event.stopPropagation()
+                          handleRemoveProject(
+                            currentProject.id,
+                            currentProject.name,
+                            currentProject.path,
+                          )
+                        }}
+                      >
+                        <X size={13} />
+                      </button>
+                    </Tooltip>
                   )}
                 </div>
-              )
-            })
-          )}
+
+                <div
+                  onContextMenu={event =>
+                    showContextMenu(event, { kind: 'project', project: currentProject })
+                  }
+                >
+                  {unavailable ? (
+                    <div className="px-4 py-2 text-[12px] text-warn flex items-center gap-1.5">
+                      <AlertTriangle size={12} /> 目录不可用，请重新定位
+                    </div>
+                  ) : (
+                    <>
+                      {pendingCreate?.parentPath === currentProject.path && (
+                        <InlineCreateRow
+                          directory={pendingCreate.directory}
+                          depth={pendingCreate.depth}
+                          onSubmit={name => void commitCreate(name)}
+                          onCancel={cancelCreate}
+                        />
+                      )}
+                      {tree.length === 0 &&
+                        pendingCreate?.parentPath !== currentProject.path && (
+                          <div className="px-4 py-2 text-[12px] text-fg-muted">Empty folder</div>
+                        )}
+                      {tree.map(node => (
+                        <FileTreeItem
+                          key={node.path}
+                          node={node}
+                          depth={1}
+                          projectId={currentProject.id}
+                          onOpenContextMenu={showContextMenu}
+                          onCopyPath={copyPath}
+                          pendingCreate={pendingCreate}
+                          forceExpandedPaths={forceExpandedPaths}
+                          onCommitCreate={name => void commitCreate(name)}
+                          onCancelCreate={cancelCreate}
+                        />
+                      ))}
+                    </>
+                  )}
+                </div>
+              </>
+            )
+          })()
+        )}
       </div>
       {contextMenu && (
         <ContextMenu

@@ -64,9 +64,9 @@ export default function ThemeSettings() {
 
 function ThemePreview({ value }: { value: AppTheme }) {
   const resolved = getResolvedTheme(value)
-  const bg = resolved === 'dark' ? '#1e1e1e' : '#ffffff'
-  const sidebar = resolved === 'dark' ? '#252526' : '#f3f3f3'
-  const fg = resolved === 'dark' ? '#d4d4d4' : '#1a1a1a'
+  const bg = resolved === 'dark' ? '#1e1e1e' : '#f0f0f0'
+  const sidebar = resolved === 'dark' ? '#252526' : '#e2e2e2'
+  const fg = resolved === 'dark' ? '#d4d4d4' : '#1f1f1f'
   const accent = resolved === 'dark' ? '#4d9eff' : '#005fb8'
   return (
     <div

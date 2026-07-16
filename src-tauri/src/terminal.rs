@@ -146,13 +146,7 @@ impl TerminalManager {
             };
             if is_current {
                 let exit_code = status.map(|status| status.exit_code()).unwrap_or(1);
-                let _ = app.emit(
-                    "terminal-exit",
-                    TerminalExitPayload {
-                        id,
-                        exit_code,
-                    },
-                );
+                let _ = app.emit("terminal-exit", TerminalExitPayload { id, exit_code });
             }
         });
 

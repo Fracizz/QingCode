@@ -1,4 +1,4 @@
-const LEGACY_PREFIX = 'nestcode:'
+const LEGACY_PREFIX = 'nestcode:' // former product id; kept for one-time localStorage migration
 const CURRENT_PREFIX = 'qingcode:'
 
 const KEYS = [
@@ -9,8 +9,8 @@ const KEYS = [
   'terminal-layout',
 ] as const
 
-/** One-time migration from NestCode localStorage keys. */
-export function migrateFromNestCode() {
+/** One-time migration from legacy localStorage keys. */
+export function migrateLegacySettings() {
   for (const key of KEYS) {
     const legacyKey = `${LEGACY_PREFIX}${key}`
     const currentKey = `${CURRENT_PREFIX}${key}`

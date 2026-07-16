@@ -1,20 +1,24 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Minus, Square, Copy, X } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { isTauri } from '../lib/tauri'
 import { useProjectStore } from '../store/projectStore'
+import { useEditorStore } from '../store/editorStore'
 import AppIcon from './AppIcon'
 import Tooltip from './Tooltip'
+import ProjectPicker from './ProjectPicker'
+import { confirmDiscardTabs } from '../utils/dirtyTabs'
 
 export default function TitleBar() {
   const [maximized, setMaximized] = useState(false)
   const inTauri = isTauri()
-  const currentProject = useProjectStore(s => s.currentProject)
+  const closeApprovedRef = useRef(false)
 
   useEffect(() => {
     if (!inTauri) return
     const win = getCurrentWindow()
-    let unlisten: (() => void) | undefined
+    let unlistenResize: (() => void) | undefined
+    let unlistenClose: (() => void) | undefined
 
     win.isMaximized().then(setMaximized).catch(() => {})
     win.onResized(async () => {
@@ -22,10 +26,25 @@ export default function TitleBar() {
         setMaximized(await win.isMaximized())
       } catch {}
     }).then(fn => {
-      unlisten = fn
+      unlistenResize = fn
     }).catch(() => {})
 
-    return () => unlisten?.()
+    win.onCloseRequested(async event => {
+      if (closeApprovedRef.current) return
+      const tabs = useEditorStore.getState().tabs
+      if (tabs.every(tab => !tab.dirty)) return
+      event.preventDefault()
+      if (!await confirmDiscardTabs(tabs, '退出应用')) return
+      closeApprovedRef.current = true
+      await win.close()
+    }).then(fn => {
+      unlistenClose = fn
+    }).catch(() => {})
+
+    return () => {
+      unlistenResize?.()
+      unlistenClose?.()
+    }
   }, [inTauri])
 
   const toggleMaximize = async () => {
@@ -48,6 +67,8 @@ export default function TitleBar() {
 
   const handleClose = async () => {
     try {
+      if (!await confirmDiscardTabs(useEditorStore.getState().tabs, '退出应用')) return
+      closeApprovedRef.current = true
       await getCurrentWindow().close()
     } catch (e) {
       useProjectStore.getState().pushToast('error', `关闭窗口失败: ${String(e)}`)
@@ -56,15 +77,17 @@ export default function TitleBar() {
 
   return (
     <div className="ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none">
-      <div
-        className="flex-1 flex items-center h-full px-3 gap-2 min-w-0"
-        data-tauri-drag-region={inTauri ? true : undefined}
-        onDoubleClick={inTauri ? toggleMaximize : undefined}
-      >
-        <AppIcon size={14} className="flex-shrink-0" />
-        <span className="text-[12px] text-fg-muted truncate">
-          {currentProject ? `${currentProject.name} — QingCode` : 'QingCode'}
-        </span>
+      <div className="flex-1 flex items-center h-full min-w-0">
+        <div className="flex items-center h-full px-3 flex-shrink-0">
+          <AppIcon size={14} className="flex-shrink-0" />
+        </div>
+        <ProjectPicker />
+        <div
+          className="flex-shrink-0 h-full w-[140px]"
+          data-tauri-drag-region={inTauri ? true : undefined}
+          onDoubleClick={inTauri ? toggleMaximize : undefined}
+        />
+        <span className="px-3 text-[12px] text-fg-dim truncate flex-shrink-0">QingCode</span>
       </div>
 
       {inTauri && (

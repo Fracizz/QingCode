@@ -1,10 +1,13 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { X, Circle, Copy, ExternalLink, Pencil, XSquare, CopyX, Files } from 'lucide-react'
+import { X, Circle, Copy, ExternalLink, Pencil, XSquare, CopyX, Files, LocateFixed } from 'lucide-react'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
+import { useUIStore } from '../store/uiStore'
 import { getFileIcon } from '../utils/fileIcons'
 import { copyToClipboard } from '../utils/fileReferences'
 import { safeInvoke } from '../lib/tauri'
+import { promptDialog, validateEntryName } from '../store/promptStore'
+import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import type { EditorTab } from '../types'
@@ -23,6 +26,8 @@ export default function EditorTabs() {
   const closeTabsToRight = useEditorStore(s => s.closeTabsToRight)
   const closeAllTabs = useEditorStore(s => s.closeAllTabs)
   const renameEditorPath = useEditorStore(s => s.renamePath)
+  const revealFileInTree = useProjectStore(s => s.revealFileInTree)
+  const setView = useUIStore(s => s.setView)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -49,12 +54,18 @@ export default function EditorTabs() {
   }
 
   const renameTab = async (tab: EditorTab) => {
-    const name = window.prompt('请输入新名称', tab.name)
-    if (!name?.trim() || name.trim() === tab.name) return
+    const name = await promptDialog({
+      title: '重命名',
+      message: '文件新名称',
+      defaultValue: tab.name,
+      validate: validateEntryName,
+      confirmLabel: '重命名',
+    })
+    if (!name || name === tab.name) return
     try {
       const newPath = await safeInvoke<string>('重命名', 'rename_path', {
         path: tab.path,
-        newName: name.trim(),
+        newName: name,
       })
       renameEditorPath(tab.path, newPath)
       // Refresh the owning project's tree so the sidebar reflects the rename.
@@ -67,37 +78,63 @@ export default function EditorTabs() {
         if (parentPath(tab.path) === project.path) await store.refreshProjectTree(project)
         else await store.expandProjectDir(project.id, parentPath(tab.path))
       }
-      useProjectStore.getState().pushToast('success', `已重命名为: ${name.trim()}`)
+      useProjectStore.getState().pushToast('success', `已重命名为: ${name}`)
     } catch (e) {
       useProjectStore.getState().pushToast('error', `重命名失败: ${String(e)}`)
     }
   }
 
+  const revealInSidebar = (path: string) => {
+    setView('explorer')
+    void revealFileInTree(path)
+  }
+
+  const closeWithConfirm = async (tabsToClose: EditorTab[], close: () => void) => {
+    if (await confirmDiscardTabs(tabsToClose, '关闭文件')) close()
+  }
+
+  const closeOne = (tab: EditorTab) => closeWithConfirm([tab], () => closeTab(tab.id))
+
+  const closeOthers = (tab: EditorTab) =>
+    closeWithConfirm(tabs.filter(candidate => candidate.id !== tab.id), () => closeOtherTabs(tab.id))
+
+  const closeToRight = (tab: EditorTab) => {
+    const index = tabs.findIndex(candidate => candidate.id === tab.id)
+    return closeWithConfirm(index < 0 ? [] : tabs.slice(index + 1), () => closeTabsToRight(tab.id))
+  }
+
+  const closeAll = () => closeWithConfirm(tabs, closeAllTabs)
+
   const menuItems = (tab: EditorTab): ContextMenuItem[] => [
     {
       label: '关闭',
       icon: <X size={14} />,
-      action: () => closeTab(tab.id),
+      action: () => closeOne(tab),
     },
     {
       label: '关闭其它',
       icon: <XSquare size={14} />,
-      action: () => closeOtherTabs(tab.id),
+      action: () => closeOthers(tab),
     },
     {
       label: '关闭右侧',
       icon: <CopyX size={14} />,
-      action: () => closeTabsToRight(tab.id),
+      action: () => closeToRight(tab),
     },
     {
       label: '关闭全部',
       icon: <Files size={14} />,
-      action: () => closeAllTabs(),
+      action: closeAll,
+    },
+    {
+      label: '在资源管理器中定位',
+      icon: <LocateFixed size={14} />,
+      separatorBefore: true,
+      action: () => revealInSidebar(tab.path),
     },
     {
       label: '复制路径',
       icon: <Copy size={14} />,
-      separatorBefore: true,
       action: () => copyPath(tab.path),
     },
     {
@@ -128,6 +165,7 @@ export default function EditorTabs() {
               onContextMenu={(event: ReactMouseEvent) => {
                 event.preventDefault()
                 event.stopPropagation()
+                if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus()
                 setContextMenu({ x: event.clientX, y: event.clientY, tab })
               }}
             >
@@ -137,7 +175,7 @@ export default function EditorTabs() {
                 className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
                 onClick={e => {
                   e.stopPropagation()
-                  closeTab(tab.id)
+                  void closeOne(tab)
                 }}
               >
                 {tab.dirty ? (

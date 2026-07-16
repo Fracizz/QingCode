@@ -1,14 +1,207 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/app-icon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>QingCode</title>
+    <script>
+      ;(function () {
+        var theme = 'dark'
+        try {
+          var stored = localStorage.getItem('qingcode:theme')
+          if (stored === 'light' || stored === 'dark' || stored === 'auto') theme = stored
+        } catch (e) {}
+        var resolved =
+          theme === 'auto' && window.matchMedia
+            ? window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light'
+            : theme === 'auto'
+              ? 'dark'
+              : theme
+        document.documentElement.setAttribute('data-theme', resolved)
+        document.documentElement.style.colorScheme = resolved
+      })()
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #1e1e1e;
+        color: #d4d4d4;
+      }
+      html[data-theme='light'],
+      html[data-theme='light'] body,
+      html[data-theme='light'] #root {
+        background: #f0f0f0;
+        color: #1f1f1f;
+      }
+
+      #startup-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #1e1e1e;
+        transition: opacity 220ms ease, visibility 220ms ease;
+      }
+      html[data-theme='light'] #startup-splash {
+        background: #f0f0f0;
+      }
+      #startup-splash.startup-splash--hide {
+        opacity: 0;
+        visibility: hidden;
+        pointer-events: none;
+      }
+      .startup-splash-inner {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 22px;
+        user-select: none;
+      }
+      .startup-logo {
+        width: 80px;
+        height: 80px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: startup-logo-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+      .startup-logo svg {
+        display: block;
+        filter: drop-shadow(0 4px 18px rgba(78, 205, 181, 0.22));
+      }
+      html[data-theme='light'] .startup-logo svg {
+        filter: drop-shadow(0 4px 14px rgba(47, 175, 155, 0.18));
+      }
+      .startup-title {
+        font: 600 16px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+          'Microsoft YaHei', sans-serif;
+        letter-spacing: 0.08em;
+        color: #d4d4d4;
+        animation: startup-fade-up 0.5s 0.08s ease-out both;
+      }
+      html[data-theme='light'] .startup-title {
+        color: #1f1f1f;
+      }
+      .startup-loader {
+        width: 132px;
+        height: 3px;
+        border-radius: 999px;
+        background: rgba(78, 205, 181, 0.14);
+        overflow: hidden;
+        animation: startup-fade-up 0.5s 0.16s ease-out both;
+      }
+      html[data-theme='light'] .startup-loader {
+        background: rgba(47, 175, 155, 0.16);
+      }
+      .startup-loader-bar {
+        display: block;
+        width: 42%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(
+          90deg,
+          rgba(78, 205, 181, 0),
+          #4ecdb5 38%,
+          #2faf9b 62%,
+          rgba(47, 175, 155, 0)
+        );
+        animation: startup-loader-slide 1.35s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+      }
+      .startup-hint {
+        margin: -10px 0 0;
+        font: 400 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+          'Microsoft YaHei', sans-serif;
+        letter-spacing: 0.12em;
+        color: rgba(212, 212, 212, 0.45);
+        animation: startup-fade-up 0.5s 0.24s ease-out both;
+      }
+      html[data-theme='light'] .startup-hint {
+        color: rgba(31, 31, 31, 0.42);
+      }
+      @keyframes startup-logo-in {
+        from {
+          opacity: 0;
+          transform: translateY(8px) scale(0.94);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+      @keyframes startup-fade-up {
+        from {
+          opacity: 0;
+          transform: translateY(6px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @keyframes startup-loader-slide {
+        0% {
+          transform: translateX(-115%);
+        }
+        100% {
+          transform: translateX(320%);
+        }
+      }
+    </style>
   </head>
 
   <body>
+    <div id="startup-splash" aria-hidden="true">
+      <div class="startup-splash-inner">
+        <div class="startup-logo" aria-hidden="true"></div>
+        <div class="startup-title">QingCode</div>
+        <div class="startup-loader" role="status" aria-label="加载中">
+          <span class="startup-loader-bar"></span>
+        </div>
+        <p class="startup-hint">正在启动</p>
+      </div>
+    </div>
     <div id="root"></div>
+    <script>
+      ;(function () {
+        var slot = document.querySelector('.startup-logo')
+        if (slot) {
+          fetch('/app-icon.svg')
+            .then(function (r) {
+              return r.text()
+            })
+            .then(function (svg) {
+              var light = document.documentElement.getAttribute('data-theme') === 'light'
+              if (light) svg = svg.replace(/fill="#F3F6F8"/g, 'fill="#2A3539"')
+              slot.innerHTML = svg.replace(/<svg\b([^>]*)>/, '<svg width="80" height="80"$1>')
+            })
+            .catch(function () {})
+        }
+      })()
+    </script>
+    <script>
+      ;(function () {
+        function showWindow() {
+          var tauri = window.__TAURI__
+          if (!tauri || !tauri.window || !tauri.window.getCurrentWindow) return
+          tauri.window.getCurrentWindow().show()
+        }
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', showWindow)
+        } else {
+          showWindow()
+        }
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

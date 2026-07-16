@@ -1,7 +1,8 @@
 use serde::Serialize;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Serialize)]
 pub struct FileNode {
@@ -29,14 +30,7 @@ fn list_dir_one_level(current: &str) -> Result<Vec<FileNode>, std::io::Error> {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
 
-        // Skip common heavy/hidden entries to keep the tree snappy.
-        if name.starts_with('.')
-            || name == "node_modules"
-            || name == "target"
-            || name == "dist"
-            || name == "build"
-            || name == ".git"
-        {
+        if is_ignored_entry(&name) {
             continue;
         }
 
@@ -87,15 +81,104 @@ pub struct SearchHit {
 }
 
 fn is_ignored_entry(name: &str) -> bool {
-    name.starts_with('.')
-        || name == "node_modules"
-        || name == "target"
-        || name == "dist"
-        || name == "build"
-        || name == ".git"
-        || name == ".next"
-        || name == ".vscode"
-        || name == ".idea"
+    matches!(
+        name,
+        "node_modules" | "target" | "dist" | "build" | ".git" | ".next"
+    )
+}
+
+fn is_glob_pattern(pattern: &str) -> bool {
+    pattern.contains('*') || pattern.contains('?')
+}
+
+fn glob_match(text: &str, pattern: &str) -> bool {
+    let text = text.as_bytes();
+    let pattern = pattern.as_bytes();
+    let mut t = 0usize;
+    let mut p = 0usize;
+    let mut star_p: Option<usize> = None;
+    let mut star_t = 0usize;
+
+    while t < text.len() {
+        if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
+            t += 1;
+            p += 1;
+        } else if p < pattern.len() && pattern[p] == b'*' {
+            star_p = Some(p);
+            star_t = t;
+            p += 1;
+        } else if let Some(sp) = star_p {
+            p = sp + 1;
+            star_t += 1;
+            t = star_t;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == b'*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
+fn normalize_extensions(extensions: Option<Vec<String>>) -> Option<Vec<String>> {
+    extensions
+        .map(|exts| {
+            exts.into_iter()
+                .map(|e| e.trim().trim_start_matches('.').to_ascii_lowercase())
+                .filter(|e| !e.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|exts| !exts.is_empty())
+}
+
+fn matches_extensions(name: &str, extensions: Option<&[String]>) -> bool {
+    match extensions {
+        None | Some([]) => true,
+        Some(exts) => Path::new(name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| exts.iter().any(|want| e.eq_ignore_ascii_case(want))),
+    }
+}
+
+fn name_matches_query(
+    name: &str,
+    is_dir: bool,
+    query: &str,
+    ignore_case: bool,
+    fuzzy: bool,
+    match_suffix: bool,
+) -> bool {
+    if is_dir || query.is_empty() {
+        return false;
+    }
+    let target_name = if ignore_case {
+        name.to_lowercase()
+    } else {
+        name.to_string()
+    };
+    let q = if ignore_case {
+        query.to_lowercase()
+    } else {
+        query.to_string()
+    };
+
+    if is_glob_pattern(&q) {
+        return glob_match(&target_name, &q);
+    }
+    if match_suffix {
+        let suffix = if q.starts_with('.') {
+            q
+        } else {
+            format!(".{}", q)
+        };
+        return target_name.ends_with(&suffix);
+    }
+    if fuzzy {
+        return fuzzy_match(&target_name, &q);
+    }
+    target_name.contains(&q)
 }
 
 fn walk_matching(
@@ -107,6 +190,7 @@ fn walk_matching(
     ignore_case: bool,
     fuzzy: bool,
     match_suffix: bool,
+    extensions: Option<&[String]>,
 ) {
     if out.len() >= limit {
         return;
@@ -125,17 +209,13 @@ fn walk_matching(
             continue;
         }
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
-        let target_name = if ignore_case {
-            name.to_lowercase()
+        let ext_ok = matches_extensions(&name, extensions);
+        let matched = if query.is_empty() {
+            !is_dir && extensions.is_some() && ext_ok
+        } else if extensions.is_some() && !ext_ok {
+            false
         } else {
-            name.clone()
-        };
-        let matched = if match_suffix {
-            !is_dir && target_name.ends_with(query)
-        } else if fuzzy {
-            fuzzy_match(&target_name, query)
-        } else {
-            target_name.contains(query)
+            name_matches_query(&name, is_dir, query, ignore_case, fuzzy, match_suffix)
         };
 
         if matched {
@@ -161,6 +241,7 @@ fn walk_matching(
                 ignore_case,
                 fuzzy,
                 match_suffix,
+                extensions,
             );
         }
     }
@@ -188,6 +269,8 @@ pub fn search_files(
     ignore_case: bool,
     fuzzy: bool,
     match_suffix: bool,
+    extension: Option<String>,
+    extensions: Option<Vec<String>>,
     limit: Option<usize>,
 ) -> Result<Vec<SearchHit>, String> {
     let base = Path::new(&root);
@@ -195,9 +278,19 @@ pub fn search_files(
         return Ok(vec![]);
     }
     let max = limit.unwrap_or(500);
-    let q = if ignore_case { query.to_lowercase() } else { query };
-    // Suffix/extension match: query like ".ts" or "ts" matches foo.ts.
-    let q = if match_suffix && !q.starts_with('.') {
+    let q = query.trim();
+    if q.is_empty() && extensions.is_none() && extension.is_none() {
+        return Ok(vec![]);
+    }
+    let ext_list = normalize_extensions(extensions.or_else(|| extension.map(|ext| vec![ext])));
+    let q = if ignore_case {
+        q.to_lowercase()
+    } else {
+        q.to_string()
+    };
+    let use_glob = is_glob_pattern(&q);
+    let use_suffix = !use_glob && match_suffix && ext_list.is_none();
+    let q = if use_suffix && !q.is_empty() && !q.starts_with('.') {
         format!(".{}", q)
     } else {
         q
@@ -210,8 +303,9 @@ pub fn search_files(
         max,
         &q,
         ignore_case,
-        fuzzy,
-        match_suffix,
+        fuzzy && !use_glob && !use_suffix,
+        use_suffix,
+        ext_list.as_deref(),
     );
     Ok(hits)
 }
@@ -254,7 +348,8 @@ fn is_binary_extension(name: &str) -> bool {
         .to_ascii_lowercase();
     matches!(
         ext.as_str(),
-        "png" | "jpg"
+        "png"
+            | "jpg"
             | "jpeg"
             | "gif"
             | "webp"
@@ -287,7 +382,10 @@ fn is_binary_extension(name: &str) -> bool {
     )
 }
 
-fn matches_extension(name: &str, extension: Option<&str>) -> bool {
+fn matches_extension(name: &str, extension: Option<&str>, extensions: Option<&[String]>) -> bool {
+    if let Some(exts) = extensions {
+        return matches_extensions(name, Some(exts));
+    }
     match extension {
         None => true,
         Some(ext) => {
@@ -309,7 +407,9 @@ fn find_match_range(haystack: &str, needle: &str, ignore_case: bool) -> Option<(
         let n = needle.to_lowercase();
         h.find(&n).map(|start| (start, start + n.len()))
     } else {
-        haystack.find(needle).map(|start| (start, start + needle.len()))
+        haystack
+            .find(needle)
+            .map(|start| (start, start + needle.len()))
     }
 }
 
@@ -382,6 +482,7 @@ fn walk_and_search_content(
     query: &str,
     ignore_case: bool,
     extension: Option<&str>,
+    extensions: Option<&[String]>,
     state: &mut ContentSearchState,
     results: &mut Vec<ContentSearchFileResult>,
 ) {
@@ -412,13 +513,14 @@ fn walk_and_search_content(
                 query,
                 ignore_case,
                 extension,
+                extensions,
                 state,
                 results,
             );
             continue;
         }
 
-        if !matches_extension(&name, extension) || is_binary_extension(&name) {
+        if !matches_extension(&name, extension, extensions) || is_binary_extension(&name) {
             continue;
         }
 
@@ -428,12 +530,8 @@ fn walk_and_search_content(
             return;
         }
 
-        let file_matches = search_lines_in_file(
-            &path,
-            query,
-            ignore_case,
-            state.max_matches_per_file,
-        );
+        let file_matches =
+            search_lines_in_file(&path, query, ignore_case, state.max_matches_per_file);
         if file_matches.is_empty() {
             continue;
         }
@@ -469,6 +567,7 @@ pub fn search_file_contents(
     query: String,
     ignore_case: bool,
     extension: Option<String>,
+    extensions: Option<Vec<String>>,
     max_matches: Option<usize>,
     max_files_scanned: Option<usize>,
     max_matches_per_file: Option<usize>,
@@ -497,6 +596,8 @@ pub fn search_file_contents(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
+    let ext_list =
+        normalize_extensions(extensions.or_else(|| ext.map(|single| vec![single.to_string()])));
 
     let mut state = ContentSearchState {
         max_matches: max_matches.unwrap_or(DEFAULT_MAX_MATCHES),
@@ -514,7 +615,8 @@ pub fn search_file_contents(
         base,
         trimmed,
         ignore_case,
-        ext,
+        None,
+        ext_list.as_deref(),
         &mut state,
         &mut results,
     );
@@ -534,16 +636,99 @@ pub fn read_file(path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub fn write_file(path: String, content: String) -> Result<(), String> {
-    fs::write(&path, &content).map_err(|e| format!("Failed to write {}: {}", path, e))
+    let file_path = Path::new(&path);
+    write_file_safely(file_path, &content).map_err(|e| format!("Failed to write {}: {}", path, e))
+}
+
+fn write_file_safely(path: &Path, content: &str) -> Result<(), std::io::Error> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty());
+    if let Some(parent) = parent {
+        fs::create_dir_all(parent)?;
+    }
+
+    if path.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "path is a directory",
+        ));
+    }
+
+    // Replacing a symlink would turn it into a regular file, so write through it instead.
+    if fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(path)?;
+        file.write_all(content.as_bytes())?;
+        return file.sync_all();
+    }
+
+    let parent = parent.unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("qingcode");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let mut temp_path = None;
+
+    for attempt in 0..10 {
+        let candidate = parent.join(format!(".{file_name}.{nonce}.{attempt}.tmp"));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file
+                    .write_all(content.as_bytes())
+                    .and_then(|_| file.sync_all())
+                {
+                    let _ = fs::remove_file(&candidate);
+                    return Err(error);
+                }
+                temp_path = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    }
+
+    let temp_path = temp_path.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "unable to create temporary file",
+        )
+    })?;
+
+    #[cfg(windows)]
+    {
+        if path.exists() {
+            let backup_path = parent.join(format!(".{file_name}.{nonce}.backup"));
+            fs::rename(path, &backup_path)?;
+            if let Err(error) = fs::rename(&temp_path, path) {
+                let _ = fs::rename(&backup_path, path);
+                let _ = fs::remove_file(&temp_path);
+                return Err(error);
+            }
+            let _ = fs::remove_file(backup_path);
+            return Ok(());
+        }
+    }
+
+    fs::rename(temp_path, path)
 }
 
 fn validate_entry_name(name: &str) -> Result<(), String> {
-    if name.is_empty()
-        || name == "."
-        || name == ".."
-        || name.contains('/')
-        || name.contains('\\')
-    {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         Err("名称不能为空或包含路径分隔符".to_string())
     } else {
         Ok(())
@@ -601,5 +786,27 @@ pub fn delete_path(path: String) -> Result<(), String> {
         fs::remove_dir_all(target).map_err(|e| format!("删除文件夹失败: {}", e))
     } else {
         fs::remove_file(target).map_err(|e| format!("删除文件失败: {}", e))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_write_replaces_existing_file_with_empty_content() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-write-test-{nonce}"));
+        let path = dir.join("sample.txt");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&path, "before").unwrap();
+
+        write_file_safely(&path, "").unwrap();
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "");
+        fs::remove_dir_all(dir).unwrap();
     }
 }

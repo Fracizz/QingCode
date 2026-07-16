@@ -1,17 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react'
 import './App.css'
 import ActivityBar from './components/ActivityBar'
 import Sidebar from './components/Sidebar'
 import EditorTabs from './components/EditorTabs'
-import Editor from './components/Editor'
 import TerminalTabs from './components/TerminalTabs'
-import TerminalView from './components/Terminal'
-import SearchPanel from './components/SearchPanel'
-import RunPanel from './components/RunPanel'
 import StatusBar from './components/StatusBar'
 import TitleBar from './components/TitleBar'
 import Toaster from './components/Toaster'
 import ConfirmDialog from './components/ConfirmDialog'
+import PromptDialog from './components/PromptDialog'
 import FontSettings from './components/FontSettings'
 import ThemeSettings from './components/ThemeSettings'
 import { Settings } from 'lucide-react'
@@ -20,8 +17,7 @@ import { useProjectStore } from './store/projectStore'
 import { useUIStore } from './store/uiStore'
 import { isTauri } from './lib/tauri'
 import ResizableSidebar from './components/ResizableSidebar'
-import { applyFontSettings, loadFontSettings } from './lib/fontSettings'
-import { applyTheme, loadTheme, startSystemThemeListener } from './lib/themeSettings'
+import { startSystemThemeListener } from './lib/themeSettings'
 import {
   clampSidebarWidth,
   loadSidebarWidth,
@@ -34,9 +30,19 @@ import {
 } from './lib/panelLayout'
 import PanelResizer from './components/PanelResizer'
 import { beginPanelResize, endPanelResize } from './lib/panelResize'
-import { migrateFromNestCode } from './lib/migrateLegacySettings'
+import { dismissStartupSplash } from './lib/startupSplash'
+import { migrateLegacySettings } from './lib/migrateLegacySettings'
 
-migrateFromNestCode()
+const Editor = lazy(() => import('./components/Editor'))
+const TerminalView = lazy(() => import('./components/Terminal'))
+const SearchPanel = lazy(() => import('./components/SearchPanel'))
+const RunPanel = lazy(() => import('./components/RunPanel'))
+
+migrateLegacySettings()
+
+function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
+  return <div className={className} aria-hidden="true" />
+}
 
 const TERMINAL_PANEL_KEY = 'qingcode:terminal-panel'
 
@@ -108,9 +114,8 @@ function App() {
   }, [loadProjects])
 
   useEffect(() => {
-    applyFontSettings(loadFontSettings())
-    applyTheme(loadTheme())
     startSystemThemeListener()
+    dismissStartupSplash()
   }, [])
 
   useEffect(() => {
@@ -200,7 +205,9 @@ function App() {
             onWidthChange={setSidebarWidth}
             className="ui-font-scaled"
           >
-            <SearchPanel />
+            <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+              <SearchPanel />
+            </Suspense>
           </ResizableSidebar>
         )}
 
@@ -210,7 +217,9 @@ function App() {
             onWidthChange={setSidebarWidth}
             className="ui-font-scaled bg-bg-sidebar"
           >
-            <RunPanel />
+            <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+              <RunPanel />
+            </Suspense>
           </ResizableSidebar>
         )}
 
@@ -231,7 +240,9 @@ function App() {
 
         <div className="flex-1 flex flex-col overflow-hidden">
           <EditorTabs />
-          <Editor />
+          <Suspense fallback={<LazyFallback />}>
+            <Editor />
+          </Suspense>
         </div>
       </div>
 
@@ -265,7 +276,9 @@ function App() {
                 t.projectId === currentProject?.id && t.id === activeTerminalId ? '' : 'hidden'
               }`}
             >
-              <TerminalView terminalId={t.id} />
+              <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
+                <TerminalView terminalId={t.id} />
+              </Suspense>
             </div>
           ))}
         </div>
@@ -274,6 +287,7 @@ function App() {
       <StatusBar />
       <Toaster />
       <ConfirmDialog />
+      <PromptDialog />
     </div>
   )
 }

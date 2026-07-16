@@ -7,6 +7,7 @@ use terminal::TerminalManager;
 
 fn legacy_database_paths(data_dir: &PathBuf) -> [PathBuf; 2] {
     [
+        // Legacy app data directories (read-only migration sources).
         data_dir.join("com.nestcode.app").join("nestcode.db"),
         data_dir
             .join("com.administrator.my-code-desktop")
@@ -14,22 +15,52 @@ fn legacy_database_paths(data_dir: &PathBuf) -> [PathBuf; 2] {
     ]
 }
 
-fn migrate_legacy_database() {
-    let Some(data_dir) = dirs::data_dir() else {
-        return;
-    };
+/// dev 构建用项目内的 .dev/qingcode.db；release 用应用数据目录下的 qingcode.db。
+/// 两者通过 `db_url` 命令暴露给前端，确保前端 Database.load 与后端 migrations 用同一个连接标签。
+fn dev_db_file() -> PathBuf {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let project_root = manifest.parent().expect("CARGO_MANIFEST_DIR has no parent");
+    project_root.join(".dev").join("qingcode.db")
+}
 
-    let new_dir = data_dir.join("com.qingcode.app");
-    let new_db = new_dir.join("qingcode.db");
+fn resolved_db_file() -> PathBuf {
+    if cfg!(debug_assertions) {
+        dev_db_file()
+    } else {
+        dirs::data_dir()
+            .expect("no data dir")
+            .join("com.qingcode.app")
+            .join("qingcode.db")
+    }
+}
+
+/// 返回 tauri-plugin-sql 的连接标签。dev 用绝对路径（覆盖插件默认的 app_config_dir 解析），
+/// release 用相对名（由插件解析到 app_config_dir = %APPDATA%\com.qingcode.app\）。
+fn build_db_url() -> String {
+    if cfg!(debug_assertions) {
+        let db = dev_db_file();
+        let _ = std::fs::create_dir_all(db.parent().expect("no parent"));
+        format!("sqlite:{}", db.display())
+    } else {
+        "sqlite:qingcode.db".to_string()
+    }
+}
+
+fn migrate_legacy_database() {
+    let new_db = resolved_db_file();
     if new_db.exists() {
         return;
     }
+
+    let Some(data_dir) = dirs::data_dir() else {
+        return;
+    };
 
     for legacy_db in legacy_database_paths(&data_dir) {
         if !legacy_db.exists() {
             continue;
         }
-        if std::fs::create_dir_all(&new_dir).is_err() {
+        if std::fs::create_dir_all(new_db.parent().unwrap_or(&new_db)).is_err() {
             return;
         }
         let _ = std::fs::copy(&legacy_db, &new_db);
@@ -38,11 +69,10 @@ fn migrate_legacy_database() {
 }
 
 fn get_migrations() -> Vec<Migration> {
-    vec![
-        Migration {
-            version: 1,
-            description: "create projects and settings tables",
-            sql: "CREATE TABLE IF NOT EXISTS projects (
+    vec![Migration {
+        version: 1,
+        description: "create projects and settings tables",
+        sql: "CREATE TABLE IF NOT EXISTS projects (
               id TEXT PRIMARY KEY,
               name TEXT NOT NULL,
               path TEXT NOT NULL UNIQUE,
@@ -60,18 +90,26 @@ fn get_migrations() -> Vec<Migration> {
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
             );",
-            kind: MigrationKind::Up,
-        },
-    ]
+        kind: MigrationKind::Up,
+    }]
 }
 
 #[tauri::command]
-fn create_terminal(id: String, cwd: String, app: tauri::AppHandle, state: tauri::State<'_, TerminalManager>) -> Result<(), String> {
+fn create_terminal(
+    id: String,
+    cwd: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, TerminalManager>,
+) -> Result<(), String> {
     state.spawn(id, &cwd, app)
 }
 
 #[tauri::command]
-fn write_terminal(id: String, data: String, state: tauri::State<'_, TerminalManager>) -> Result<(), String> {
+fn write_terminal(
+    id: String,
+    data: String,
+    state: tauri::State<'_, TerminalManager>,
+) -> Result<(), String> {
     state.write(&id, &data)
 }
 
@@ -82,8 +120,18 @@ fn kill_terminal(id: String, state: tauri::State<'_, TerminalManager>) -> Result
 }
 
 #[tauri::command]
-fn resize_terminal(id: String, cols: u16, rows: u16, state: tauri::State<'_, TerminalManager>) -> Result<(), String> {
+fn resize_terminal(
+    id: String,
+    cols: u16,
+    rows: u16,
+    state: tauri::State<'_, TerminalManager>,
+) -> Result<(), String> {
     state.resize(&id, cols, rows)
+}
+
+#[tauri::command]
+fn db_url() -> String {
+    build_db_url()
 }
 
 #[tauri::command]
@@ -108,7 +156,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
-                .add_migrations("sqlite:qingcode.db", get_migrations())
+                .add_migrations(&build_db_url(), get_migrations())
                 .build(),
         )
         .manage(TerminalManager::new())
@@ -132,6 +180,7 @@ pub fn run() {
             kill_terminal,
             resize_terminal,
             spawn_script,
+            db_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -12,6 +12,7 @@ import { useProjectStore } from '../store/projectStore'
 import { useRunConfigStore, type RunConfig, type RunTask, type RunTaskType } from '../store/runConfigStore'
 import { useTerminalStore } from '../store/terminalStore'
 import RunConfigEditor from './RunConfigEditor'
+import Tooltip from './Tooltip'
 
 const TASK_TYPE_LABEL: Record<RunTaskType, string> = {
   ps1: 'ps1',
@@ -99,20 +100,21 @@ export default function RunPanel() {
                 className="group mx-2 my-1 rounded-md border border-border hover:border-border-strong bg-bg/40 hover:bg-bg-hover/40 transition-colors"
               >
                 <div className="flex items-center gap-2 px-2 py-2">
-                  <button
-                    title={running ? '停止' : '运行'}
-                    onClick={() =>
-                      running
-                        ? void stopConfig(config)
-                        : void runConfig(currentProject, config)
-                    }
-                    className={`w-7 h-7 flex items-center justify-center rounded-md flex-shrink-0 transition-colors
-                      ${running
-                        ? 'bg-danger/15 text-danger hover:bg-danger/25'
-                        : 'bg-accent/15 text-accent hover:bg-accent/25'}`}
-                  >
-                    {running ? <Square size={14} /> : <Play size={14} />}
-                  </button>
+                  <Tooltip label={running ? '停止' : '运行'} side="bottom">
+                    <button
+                      onClick={() =>
+                        running
+                          ? void stopConfig(config)
+                          : void runConfig(currentProject, config)
+                      }
+                      className={`w-7 h-7 flex items-center justify-center rounded-md flex-shrink-0 transition-colors
+                        ${running
+                          ? 'bg-danger/15 text-danger hover:bg-danger/25'
+                          : 'bg-accent/15 text-accent hover:bg-accent/25'}`}
+                    >
+                      {running ? <Square size={14} /> : <Play size={14} />}
+                    </button>
+                  </Tooltip>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="text-[13px] font-medium truncate">{config.name}</span>
@@ -123,25 +125,33 @@ export default function RunPanel() {
                         {running ? `运行中 · ${runningTids.length}` : '空闲'}
                       </span>
                     </div>
-                    <div className="text-[11px] text-fg-dim truncate mt-0.5" title={taskOverview(config.tasks)}>
-                      {taskOverview(config.tasks)}
-                    </div>
+                    <Tooltip
+                      label={taskOverview(config.tasks)}
+                      side="bottom"
+                      wrapperClassName="block min-w-0 w-full"
+                    >
+                      <div className="text-[11px] text-fg-dim truncate mt-0.5">
+                        {taskOverview(config.tasks)}
+                      </div>
+                    </Tooltip>
                   </div>
                   <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      title="编辑"
-                      className="p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover"
-                      onClick={() => setEditing(config)}
-                    >
-                      <Pencil size={13} />
-                    </button>
-                    <button
-                      title="删除"
-                      className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
-                      onClick={() => void removeConfig(currentProject, config.id)}
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    <Tooltip label="编辑" side="bottom">
+                      <button
+                        className="p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover"
+                        onClick={() => setEditing(config)}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label="删除" side="bottom">
+                      <button
+                        className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
+                        onClick={() => void removeConfig(currentProject, config.id)}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </Tooltip>
                   </div>
                 </div>
                 {running && (
@@ -150,15 +160,15 @@ export default function RunPanel() {
                       const term = terminals.find(t => t.id === tid)
                       if (!term) return null
                       return (
-                        <button
-                          key={tid}
-                          onClick={() => setActiveTerminal(tid)}
-                          className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-bg-deep text-fg-muted hover:text-fg hover:bg-bg-hover border border-border"
-                          title={term.cwd}
-                        >
-                          <FileCode2 size={11} className="text-accent" />
-                          <span className="truncate max-w-[160px]">{term.name}</span>
-                        </button>
+                        <Tooltip key={tid} label={term.cwd} side="bottom">
+                          <button
+                            onClick={() => setActiveTerminal(tid)}
+                            className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-bg-deep text-fg-muted hover:text-fg hover:bg-bg-hover border border-border"
+                          >
+                            <FileCode2 size={11} className="text-accent" />
+                            <span className="truncate max-w-[160px]">{term.name}</span>
+                          </button>
+                        </Tooltip>
                       )
                     })}
                   </div>
@@ -191,13 +201,14 @@ function Header({ title, onAdd }: { title: string; onAdd?: () => void }) {
         <span className="truncate">{title}</span>
       </span>
       {onAdd && (
-        <button
-          onClick={onAdd}
-          title="新建运行配置"
-          className="text-fg-dim hover:text-fg p-1 rounded hover:bg-bg-hover flex-shrink-0"
-        >
-          <Plus size={14} />
-        </button>
+        <Tooltip label="新建运行配置" side="bottom">
+          <button
+            onClick={onAdd}
+            className="text-fg-dim hover:text-fg p-1 rounded hover:bg-bg-hover flex-shrink-0"
+          >
+            <Plus size={14} />
+          </button>
+        </Tooltip>
       )}
     </div>
   )

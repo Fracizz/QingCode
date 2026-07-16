@@ -16,21 +16,13 @@ interface PersistedTerminalState {
 
 function loadPersistedState(): PersistedTerminalState {
   try {
-    const value = localStorage.getItem(STORAGE_KEY)
-    if (!value) return { terminals: [], activeTerminalByProject: {} }
-    const parsed = JSON.parse(value) as Partial<PersistedTerminalState>
-    const terminals = Array.isArray(parsed.terminals)
-      ? parsed.terminals
-          .filter(tab => tab?.id && tab?.projectId && tab?.cwd)
-          .map(tab => ({ ...tab, status: 'exited' as const, exitCode: null }))
-      : []
-    return {
-      terminals,
-      activeTerminalByProject: parsed.activeTerminalByProject ?? {},
-    }
+    // PTY processes and terminal output cannot survive an application restart.
+    // Clearing old metadata lets App create a fresh shell for the active project.
+    localStorage.removeItem(STORAGE_KEY)
   } catch {
-    return { terminals: [], activeTerminalByProject: {} }
+    // Local-storage failures should not block terminal startup.
   }
+  return { terminals: [], activeTerminalByProject: {} }
 }
 
 interface TerminalState {

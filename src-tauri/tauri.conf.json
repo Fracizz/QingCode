@@ -4,12 +4,13 @@
   "version": "0.1.0",
   "identifier": "com.qingcode.app",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "pnpm dev",
     "devUrl": "http://127.0.0.1:5173",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "QingCode",
@@ -18,7 +19,9 @@
         "minWidth": 720,
         "minHeight": 480,
         "decorations": false,
-        "theme": "Dark"
+        "theme": "Dark",
+        "visible": false,
+        "backgroundColor": "#1e1e1e"
       }
     ],
     "security": {

@@ -3,8 +3,10 @@ import { Circle, Plus, RotateCcw, X, Terminal as TerminalIcon, Pencil, XSquare, 
 import { MAX_TERMINALS_PER_PROJECT, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
 import { confirmDialog } from '../store/confirmStore'
+import { promptDialog } from '../store/promptStore'
 import { formatTerminalName } from '../utils/terminalName'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
 
 export default function TerminalTabs() {
@@ -81,9 +83,15 @@ export default function TerminalTabs() {
     await closeAllProjectTerminals(currentProject.id)
   }
 
-  const handleRename = (id: string, currentName: string) => {
-    const name = window.prompt('请输入终端名称', currentName)
-    if (name !== null && name.trim()) renameTerminal(id, name)
+  const handleRename = async (id: string, currentName: string) => {
+    const name = await promptDialog({
+      title: '重命名终端',
+      message: '为当前项目的终端设置显示名称',
+      defaultValue: currentName,
+      placeholder: '例如 dev-server',
+      confirmLabel: '保存',
+    })
+    if (name) renameTerminal(id, name)
   }
 
   const handleNewTerminal = () => {
@@ -139,74 +147,84 @@ export default function TerminalTabs() {
         </div>
         <div className="flex flex-1 overflow-x-auto items-center">
           {projectTerminals.map(t => (
-            <div
-              key={t.id}
-              className={`group flex items-center gap-1.5 pl-3 pr-2 h-9 cursor-pointer border-r border-border whitespace-nowrap transition-colors
-                ${t.id === activeTerminalId ? 'bg-bg text-fg' : 'bg-bg-deep text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
-              onClick={() => setActiveTerminal(t.id)}
-              onDoubleClick={() => handleRename(t.id, t.name)}
-              onContextMenu={(event: ReactMouseEvent) => {
-                event.preventDefault()
-                event.stopPropagation()
-                setContextMenu({ x: event.clientX, y: event.clientY, terminal: t })
-              }}
-              title="双击重命名终端"
-            >
-              <Circle
-                size={7}
-                fill="currentColor"
-                className={
-                  t.status === 'running'
-                    ? 'text-ok'
-                    : t.status === 'starting'
-                      ? 'text-warn'
-                      : 'text-fg-dim'
-                }
-              />
-              <span className="text-[13px]">{formatTerminalName(t.name)}</span>
-              {t.status === 'exited' && (
-                <button
-                  title={`重启终端${t.exitCode === null ? '' : `（退出码 ${t.exitCode}）`}`}
-                  className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
-                  onClick={e => {
-                    e.stopPropagation()
-                    restartTerminal(t.id)
-                  }}
-                >
-                  <RotateCcw size={12} />
-                </button>
-              )}
-              <button
-                title="关闭终端"
-                className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
-                onClick={e => {
-                  e.stopPropagation()
-                  handleClose(t.id)
+            <Tooltip key={t.id} label="双击重命名终端" side="bottom" wrapperClassName="flex h-full flex-shrink-0">
+              <div
+                className={`group flex items-center gap-1.5 pl-3 pr-2 h-9 cursor-pointer border-r border-border whitespace-nowrap transition-colors
+                  ${t.id === activeTerminalId ? 'bg-bg text-fg' : 'bg-bg-deep text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
+                onClick={() => setActiveTerminal(t.id)}
+                onDoubleClick={() => handleRename(t.id, t.name)}
+                onContextMenu={(event: ReactMouseEvent) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus()
+                  setContextMenu({ x: event.clientX, y: event.clientY, terminal: t })
                 }}
               >
-                <X size={13} className="opacity-60 group-hover:opacity-100" />
-              </button>
-            </div>
+                <Circle
+                  size={7}
+                  fill="currentColor"
+                  className={
+                    t.status === 'running'
+                      ? 'text-ok'
+                      : t.status === 'starting'
+                        ? 'text-warn'
+                        : 'text-fg-dim'
+                  }
+                />
+                <span className="text-[13px]">{formatTerminalName(t.name)}</span>
+                {t.status === 'exited' && (
+                  <Tooltip
+                    label={`重启终端${t.exitCode === null ? '' : `（退出码 ${t.exitCode}）`}`}
+                    side="bottom"
+                  >
+                    <button
+                      className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
+                      onClick={e => {
+                        e.stopPropagation()
+                        restartTerminal(t.id)
+                      }}
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                  </Tooltip>
+                )}
+                <Tooltip label="关闭终端" side="bottom">
+                  <button
+                    className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
+                    onClick={e => {
+                      e.stopPropagation()
+                      handleClose(t.id)
+                    }}
+                  >
+                    <X size={13} className="opacity-60 group-hover:opacity-100" />
+                  </button>
+                </Tooltip>
+              </div>
+            </Tooltip>
           ))}
         </div>
-        <button
-          className={`px-2.5 h-full flex items-center ${
-            currentProject && !atLimit
-              ? 'text-fg-muted hover:text-fg hover:bg-bg-hover'
-              : 'text-fg-dim cursor-not-allowed'
-          }`}
-          disabled={!currentProject || atLimit}
-          onClick={handleNewTerminal}
-          title={
+        <Tooltip
+          label={
             atLimit
               ? `已达到每个项目 ${MAX_TERMINALS_PER_PROJECT} 个终端的上限`
               : currentProject
                 ? `在当前项目内新建终端（${currentProject.path}）`
                 : '请先选择项目'
           }
+          side="bottom"
         >
-          <Plus size={16} />
-        </button>
+          <button
+            className={`px-2.5 h-full flex items-center ${
+              currentProject && !atLimit
+                ? 'text-fg-muted hover:text-fg hover:bg-bg-hover'
+                : 'text-fg-dim cursor-not-allowed'
+            }`}
+            disabled={!currentProject || atLimit}
+            onClick={handleNewTerminal}
+          >
+            <Plus size={16} />
+          </button>
+        </Tooltip>
       </div>
       {contextMenu && (
         <ContextMenu

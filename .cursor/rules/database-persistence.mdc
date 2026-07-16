@@ -1,5 +1,5 @@
 ---
-description: Preserve NestCode SQLite data and use safe migrations
+description: Preserve QingCode SQLite data and use safe migrations
 globs: "{src/store/**/*.ts,src-tauri/src/**/*.rs}"
 alwaysApply: false
 ---

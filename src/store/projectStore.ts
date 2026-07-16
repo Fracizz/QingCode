@@ -1,12 +1,21 @@
 import { create } from 'zustand'
 import Database from '@tauri-apps/plugin-sql'
 import { open } from '@tauri-apps/plugin-dialog'
+import { tempDir } from '@tauri-apps/api/path'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import type { Project, RecentFile } from '../types'
+import { collectAncestorDirs, findProjectForPath, isDescendantOf } from '../utils/fileReferences'
+import { useEditorStore } from './editorStore'
+import { confirmDiscardTabs } from '../utils/dirtyTabs'
 
 let dbPromise: Promise<Database> | null = null
 function getDb() {
-  if (!dbPromise) dbPromise = Database.load('sqlite:qingcode.db')
+  if (!dbPromise) {
+    dbPromise = (async () => {
+      const label = await safeInvoke<string>('数据库地址', 'db_url')
+      return Database.load(label)
+    })()
+  }
   return dbPromise
 }
 
@@ -102,6 +111,8 @@ interface ProjectState {
   projectTrees: Record<string, FileNode[]>
   /** Which project rows are expanded in the sidebar (defaults to true). */
   expandedProjects: Record<string, boolean>
+  /** File path to reveal/highlight in the sidebar tree. */
+  treeRevealPath: string | null
   unavailableProjectIds: string[]
   loading: boolean
   toasts: Toast[]
@@ -109,8 +120,10 @@ interface ProjectState {
   loadProjects: () => Promise<void>
   addProject: (path: string) => Promise<boolean>
   addProjectFromDialog: () => Promise<void>
+  addTerminalProject: (name: string) => Promise<boolean>
   removeProject: (id: string) => Promise<void>
   relocateProject: (id: string, path: string) => Promise<boolean>
+  renameProject: (id: string, name: string) => Promise<void>
   switchProject: (project: Project) => Promise<void>
   addRecentFile: (path: string) => Promise<void>
   loadFileTree: () => Promise<void>
@@ -119,6 +132,7 @@ interface ProjectState {
   refreshProjectTree: (project: Project) => Promise<void>
   toggleProjectExpanded: (projectId: string) => void
   expandProjectDir: (projectId: string, path: string) => Promise<void>
+  revealFileInTree: (filePath: string) => Promise<void>
   pushToast: (kind: ToastKind, text: string) => void
   dismissToast: (id: string) => void
 }
@@ -136,6 +150,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   fileTree: [],
   projectTrees: {},
   expandedProjects: {},
+  treeRevealPath: null,
   unavailableProjectIds: [],
   loading: false,
   toasts: [],
@@ -154,40 +169,42 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         projects: await d.select<Project[]>('SELECT * FROM projects ORDER BY last_opened_at DESC')
       }))
       if (migrated) get().pushToast('success', '已从旧版本恢复项目列表')
-      const unavailableProjectIds = (
-        await Promise.all(
-          projects.map(async (project) => {
-            try {
-              await safeInvoke('检查项目目录', 'validate_directory', {
-                path: project.path
-              })
-              return null
-            } catch {
-              return project.id
-            }
-          })
-        )
-      ).filter((id): id is string => id !== null)
-      // Default every project to expanded so the sidebar shows a flat,
-      // multi-root workspace (all projects laid out, like the reference mock).
+
       const expandedProjects: Record<string, boolean> = {}
       for (const p of projects) {
         expandedProjects[p.id] = get().expandedProjects[p.id] ?? true
       }
+
       set({
         projects,
-        unavailableProjectIds,
+        unavailableProjectIds: [],
         expandedProjects,
         loading: false
       })
-      // Load each available project's root tree in parallel.
-      await Promise.all(
-        projects.filter((p) => !unavailableProjectIds.includes(p.id)).map((p) => get().ensureProjectTree(p))
-      )
-      if (projects.length > 0 && !get().currentProject) {
-        const firstAvailable = projects.find((project) => !unavailableProjectIds.includes(project.id))
-        if (firstAvailable) await get().switchProject(firstAvailable)
-      }
+
+      void (async () => {
+        const unavailableProjectIds = (
+          await Promise.all(
+            projects.map(async (project) => {
+              try {
+                await safeInvoke('检查项目目录', 'validate_directory', {
+                  path: project.path
+                })
+                return null
+              } catch {
+                return project.id
+              }
+            })
+          )
+        ).filter((id): id is string => id !== null)
+
+        set({ unavailableProjectIds })
+
+        if (projects.length > 0 && !get().currentProject) {
+          const firstAvailable = projects.find((project) => !unavailableProjectIds.includes(project.id))
+          if (firstAvailable) await get().switchProject(firstAvailable)
+        }
+      })()
     } catch (e) {
       if (e instanceof NotInTauriError) {
         set({ loading: false })
@@ -246,6 +263,35 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
+  addTerminalProject: async (name: string) => {
+    if (!isTauri()) throw new NotInTauriError('新建终端项目')
+    try {
+      const temp = await tempDir()
+      const id = crypto.randomUUID()
+      const dirName = `qingcode-terminal-${id}`
+      const path = await safeInvoke<string>('创建终端项目目录', 'create_directory', {
+        parent: temp,
+        name: dirName,
+      })
+      const now = Date.now()
+      await withDb('新建终端项目', (d) =>
+        d.execute(
+          'INSERT INTO projects (id, name, path, created_at, last_opened_at) VALUES ($1, $2, $3, $4, $5)',
+          [id, name, path, now, now],
+        ),
+      )
+      await get().loadProjects()
+      const created = get().projects.find((p) => p.id === id)
+      if (created) await get().switchProject(created)
+      get().pushToast('success', `已新建终端项目: ${name}`)
+      return true
+    } catch (e) {
+      console.error('addTerminalProject failed:', e)
+      get().pushToast('error', `新建终端项目失败: ${String(e)}`)
+      return false
+    }
+  },
+
   removeProject: async (id: string) => {
     try {
       await withDb('移除项目', async (d) => {
@@ -278,6 +324,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       await safeInvoke('检查项目目录', 'validate_directory', { path })
       const wasCurrent = get().currentProject?.id === id
+      const previousPath = get().projects.find(project => project.id === id)?.path
       // Drop the stale tree so it reloads from the new location.
       set((s) => {
         const projectTrees = { ...s.projectTrees }
@@ -285,8 +332,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         return { projectTrees }
       })
       await withDb('重新定位项目', (d) =>
-        d.execute('UPDATE projects SET name = $1, path = $2 WHERE id = $3', [baseName(path), path, id])
+        Promise.all([
+          d.execute('UPDATE projects SET name = $1, path = $2 WHERE id = $3', [baseName(path), path, id]),
+          d.execute('DELETE FROM recent_files WHERE project_id = $1', [id]),
+        ])
       )
+      if (previousPath) useEditorStore.getState().renamePath(previousPath, path)
       await get().loadProjects()
       const relocated = get().projects.find((project) => project.id === id)
       if (wasCurrent && relocated) await get().switchProject(relocated)
@@ -300,8 +351,30 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
+  renameProject: async (id: string, name: string) => {
+    try {
+      await withDb('重命名项目', (d) =>
+        d.execute('UPDATE projects SET name = $1 WHERE id = $2', [name, id]),
+      )
+      set((s) => ({
+        projects: s.projects.map((p) => (p.id === id ? { ...p, name } : p)),
+        currentProject: s.currentProject?.id === id ? { ...s.currentProject, name } : s.currentProject,
+      }))
+      get().pushToast('success', `已重命名为: ${name}`)
+    } catch (e) {
+      console.error('renameProject failed:', e)
+      get().pushToast('error', `重命名项目失败: ${String(e)}`)
+    }
+  },
+
   switchProject: async (project: Project) => {
     try {
+      const currentProject = get().currentProject
+      const tabsToClose = useEditorStore
+        .getState()
+        .tabs.filter(tab => !isDescendantOf(tab.path, project.path))
+      if (currentProject?.id !== project.id && !await confirmDiscardTabs(tabsToClose, '切换项目')) return
+
       await safeInvoke('检查项目目录', 'validate_directory', {
         path: project.path
       })
@@ -318,6 +391,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         unavailableProjectIds: s.unavailableProjectIds.filter((id) => id !== project.id),
         expandedProjects: { ...s.expandedProjects, [project.id]: true }
       }))
+      useEditorStore.getState().closeTabsOutsideProject(project.path)
       await get().ensureProjectTree(project)
     } catch (e) {
       console.error('switchProject failed:', e)
@@ -451,6 +525,22 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     } catch (e) {
       console.error('expandProjectDir failed:', e)
       get().pushToast('error', `展开目录失败: ${String(e)}`)
+    }
+  },
+
+  revealFileInTree: async (filePath: string) => {
+    const project = findProjectForPath(get().projects, filePath)
+    if (!project) return
+
+    set((s) => ({
+      treeRevealPath: filePath,
+      expandedProjects: { ...s.expandedProjects, [project.id]: true }
+    }))
+
+    await get().ensureProjectTree(project)
+
+    for (const dir of collectAncestorDirs(filePath, project.path)) {
+      await get().expandProjectDir(project.id, dir)
     }
   }
 }))

@@ -3,6 +3,7 @@ import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { formatTerminalName } from '../utils/terminalName'
+import Tooltip from './Tooltip'
 
 export default function StatusBar() {
   const currentProject = useProjectStore(s => s.currentProject)
@@ -34,12 +35,14 @@ export default function StatusBar() {
       </span>
       <div className="flex-1" />
       {activeTab && (
-        <span
-          className="opacity-75"
-          title="Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用"
+        <Tooltip
+          label="Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用"
+          side="top"
         >
-          Ctrl+Shift+C 路径 · Alt+C 文件引用
-        </span>
+          <span className="opacity-75">
+            Ctrl+Shift+C 路径 · Alt+C 文件引用
+          </span>
+        </Tooltip>
       )}
       <span className="flex items-center gap-1.5 opacity-90">
         <TerminalIcon size={13} />

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { AlertTriangle, Info, Trash2 } from 'lucide-react'
 import { useConfirmStore, type ConfirmKind } from '../store/confirmStore'
+import ModalOverlay from './ModalOverlay'
 
 const KIND_META: Record<
   ConfirmKind,
@@ -46,14 +47,7 @@ export default function ConfirmDialog() {
   const Icon = meta.icon
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
-      role="presentation"
-      onMouseDown={event => {
-        if (event.target === event.currentTarget) answer(false)
-      }}
-    >
-      <div className="absolute inset-0 bg-black/55 backdrop-blur-[1px]" aria-hidden />
+    <ModalOverlay onDismiss={() => answer(false)}>
       <div
         role="alertdialog"
         aria-modal="true"
@@ -100,6 +94,6 @@ export default function ConfirmDialog() {
           </button>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   )
 }

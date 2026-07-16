@@ -26,15 +26,25 @@ interface RunConfigFile {
   configs: RunConfig[]
 }
 
-/** `.nestcode/run.json` schema stored at the project root. */
+/** `.qingcode/run.json` schema stored at the project root. */
 export interface RunConfigFileV1 {
   version: 1
   configs: RunConfig[]
 }
 
-function runConfigPath(project: Project): string {
+function projectConfigDir(project: Project): string {
+  const sep = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
+  return `${project.path}${sep}.qingcode`
+}
+
+function legacyRunConfigPath(project: Project): string {
   const sep = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
   return `${project.path}${sep}.nestcode${sep}run.json`
+}
+
+function runConfigPath(project: Project): string {
+  const sep = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
+  return `${projectConfigDir(project)}${sep}run.json`
 }
 
 function joinPath(base: string, rel: string): string {
@@ -125,25 +135,38 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
       set(s => ({ configsByProject: { ...s.configsByProject, [project.id]: [] } }))
       return []
     }
+    const readConfigs = async (path: string) => {
+      const raw = await safeInvoke<string>('读取运行配置', 'read_file', { path })
+      return normalizeConfigs(JSON.parse(raw) as RunConfigFile)
+    }
     try {
-      const raw = await safeInvoke<string>('读取运行配置', 'read_file', {
-        path: runConfigPath(project),
-      })
-      const parsed = JSON.parse(raw) as RunConfigFile
-      const configs = normalizeConfigs(parsed)
+      const configs = await readConfigs(runConfigPath(project))
       set(s => ({
         configsByProject: { ...s.configsByProject, [project.id]: configs },
         loadedProjects: new Set(s.loadedProjects).add(project.id),
       }))
       return configs
-    } catch (e) {
-      // File missing or unreadable -> empty configs (not an error for the user).
-      set(s => ({
-        configsByProject: { ...s.configsByProject, [project.id]: [] },
-        loadedProjects: new Set(s.loadedProjects).add(project.id),
-      }))
-      if (e instanceof NotInTauriError) return []
-      return []
+    } catch {
+      try {
+        const legacyPath = legacyRunConfigPath(project)
+        const configs = await readConfigs(legacyPath)
+        await safeInvoke('保存运行配置', 'write_file', {
+          path: runConfigPath(project),
+          content: JSON.stringify({ configs } satisfies RunConfigFile, null, 2),
+        })
+        set(s => ({
+          configsByProject: { ...s.configsByProject, [project.id]: configs },
+          loadedProjects: new Set(s.loadedProjects).add(project.id),
+        }))
+        return configs
+      } catch (e) {
+        set(s => ({
+          configsByProject: { ...s.configsByProject, [project.id]: [] },
+          loadedProjects: new Set(s.loadedProjects).add(project.id),
+        }))
+        if (e instanceof NotInTauriError) return []
+        return []
+      }
     }
   },
 

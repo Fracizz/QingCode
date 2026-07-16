@@ -16,6 +16,9 @@ dist-ssr
 release
 src-tauri/target
 
+# dev 环境本地数据库（项目内，不提交）
+.dev
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

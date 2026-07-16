@@ -34,6 +34,35 @@ function projectRelativePath(projectPath: string, filePath: string) {
   return file.split('/').pop() || file
 }
 
-function normalizePath(path: string) {
+export function normalizePath(path: string) {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+export function parentPath(path: string) {
+  const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return separator > 0 ? path.slice(0, separator) : path
+}
+
+export function pathsEqual(a: string, b: string) {
+  return normalizePath(a).toLowerCase() === normalizePath(b).toLowerCase()
+}
+
+/** True when `childPath` is the same as or nested under `ancestorPath`. */
+export function isDescendantOf(childPath: string, ancestorPath: string) {
+  const child = normalizePath(childPath).toLowerCase()
+  const ancestor = normalizePath(ancestorPath).toLowerCase()
+  return child === ancestor || child.startsWith(`${ancestor}/`)
+}
+
+/** Directory paths from project root down to the file's parent (excluding root). */
+export function collectAncestorDirs(filePath: string, rootPath: string) {
+  const normRoot = normalizePath(rootPath).toLowerCase()
+  const dirs: string[] = []
+  let current = parentPath(filePath)
+  while (normalizePath(current).toLowerCase().length >= normRoot.length) {
+    if (normalizePath(current).toLowerCase() === normRoot) break
+    dirs.unshift(current)
+    current = parentPath(current)
+  }
+  return dirs
 }

@@ -22,10 +22,10 @@ import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
 const lightTheme = EditorView.theme(
   {
-    '&': { backgroundColor: '#ffffff', color: '#1a1a1a' },
-    '.cm-gutters': { backgroundColor: '#fbfbfb', color: '#8a8a8a', borderRight: '1px solid #e5e5e5' },
-    '.cm-activeLine': { backgroundColor: '#f4f7fc' },
-    '.cm-activeLineGutter': { backgroundColor: '#eef3fa', color: '#1a1a1a' },
+    '&': { backgroundColor: '#f0f0f0', color: '#1f1f1f' },
+    '.cm-gutters': { backgroundColor: '#ebebeb', color: '#757575', borderRight: '1px solid #d0d0d0' },
+    '.cm-activeLine': { backgroundColor: '#e8edf2' },
+    '.cm-activeLineGutter': { backgroundColor: '#e2e8ef', color: '#1f1f1f' },
     '.cm-selectionBackground, ::selection': { backgroundColor: '#cfe3fb' },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
       backgroundColor: '#b9d6f5',
@@ -37,9 +37,9 @@ const lightTheme = EditorView.theme(
     },
     '.cm-searchMatch': { backgroundColor: '#ffe9a8' },
     '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: '#ffd56b' },
-    '.cm-panels': { backgroundColor: '#f3f3f3', color: '#1a1a1a' },
-    '.cm-panels.cm-panels-top': { borderBottom: '1px solid #e5e5e5' },
-    '.cm-textfield': { backgroundColor: '#ffffff', border: '1px solid #d4d4d4' },
+    '.cm-panels': { backgroundColor: '#e2e2e2', color: '#1f1f1f' },
+    '.cm-panels.cm-panels-top': { borderBottom: '1px solid #d0d0d0' },
+    '.cm-textfield': { backgroundColor: '#f6f6f6', border: '1px solid #bcbcbc' },
   },
   { dark: false },
 )

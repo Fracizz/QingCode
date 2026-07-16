@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { X, Plus, Trash2, Wand2 } from 'lucide-react'
+import Tooltip from './Tooltip'
+import ModalOverlay from './ModalOverlay'
 import { useRunConfigStore, type RunConfig, type RunTask, type RunTaskType } from '../store/runConfigStore'
 import { defaultConfigs } from '../store/runConfigStore'
 import type { Project } from '../types'
@@ -80,13 +82,13 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={onClose}
-    >
+    <ModalOverlay onDismiss={onClose}>
       <div
-        className="w-[560px] max-w-[92vw] max-h-[85vh] flex flex-col bg-bg-sidebar border border-border-strong rounded-lg shadow-2xl"
+        className="relative w-full max-w-[560px] max-h-[85vh] flex flex-col bg-bg-sidebar border border-border-strong rounded-lg shadow-2xl shadow-black/50"
         onClick={e => e.stopPropagation()}
+        onMouseDown={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
       >
         <div className="flex items-center justify-between px-4 h-11 border-b border-border flex-shrink-0">
           <span className="text-[13px] font-medium">
@@ -110,13 +112,14 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               placeholder="如：前后端"
               className="flex-1 px-2 py-1.5 text-[13px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
             />
-            <button
-              onClick={loadTemplate}
-              title="从常见模板填充（Python 后端 + 前端）"
-              className="inline-flex items-center gap-1 text-[12px] px-2 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border text-fg-muted hover:text-fg"
-            >
-              <Wand2 size={13} /> 模板
-            </button>
+            <Tooltip label="从常见模板填充（Python 后端 + 前端）" side="bottom">
+              <button
+                onClick={loadTemplate}
+                className="inline-flex items-center gap-1 text-[12px] px-2 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border text-fg-muted hover:text-fg"
+              >
+                <Wand2 size={13} /> 模板
+              </button>
+            </Tooltip>
           </div>
 
           <div className="flex items-center justify-between">
@@ -162,7 +165,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
   )
 }
 
@@ -208,13 +211,14 @@ function TaskEditor({
             </option>
           ))}
         </select>
-        <button
-          onClick={onRemove}
-          title="删除任务"
-          className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
-        >
-          <Trash2 size={13} />
-        </button>
+        <Tooltip label="删除任务" side="bottom">
+          <button
+            onClick={onRemove}
+            className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
+          >
+            <Trash2 size={13} />
+          </button>
+        </Tooltip>
       </div>
       <div className="flex items-center gap-2">
         <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">

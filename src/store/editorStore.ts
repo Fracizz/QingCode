@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { safeInvoke } from '../lib/tauri'
 import { useProjectStore } from './projectStore'
 import type { EditorTab } from '../types'
+import { isDescendantOf } from '../utils/fileReferences'
 
 interface EditorState {
   tabs: EditorTab[]
@@ -18,6 +19,7 @@ interface EditorState {
   markClean: (id: string) => void
   saveFile: (id: string) => Promise<void>
   closeAllTabs: () => void
+  closeTabsOutsideProject: (projectPath: string) => void
   renamePath: (oldPath: string, newPath: string) => void
   closeTabsForPath: (path: string) => void
 }
@@ -36,6 +38,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         activeTabId: existing.id,
         pendingReveal: line ? { path, line } : null,
       })
+      void useProjectStore.getState().revealFileInTree(path)
       return
     }
     try {
@@ -49,6 +52,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         activeTabId: id,
         pendingReveal: line ? { path, line } : null,
       }))
+      void useProjectStore.getState().revealFileInTree(path)
     } catch (e) {
       console.error('openFile failed:', e)
       useProjectStore.getState().pushToast('error', `打开文件失败: ${String(e)}`)
@@ -82,7 +86,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })
   },
 
-  setActiveTab: (id: string) => set({ activeTabId: id }),
+  setActiveTab: (id: string) => {
+    set({ activeTabId: id })
+    const tab = get().tabs.find(t => t.id === id)
+    if (tab) void useProjectStore.getState().revealFileInTree(tab.path)
+  },
 
   setTabContent: (id: string, content: string) => {
     set(s => ({
@@ -104,7 +112,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   saveFile: async (id: string) => {
     const tab = get().tabs.find(t => t.id === id)
-    if (!tab || !tab.content) return
+    if (!tab || tab.content === undefined) return
     try {
       await safeInvoke('保存文件', 'write_file', { path: tab.path, content: tab.content })
       get().markClean(id)
@@ -116,10 +124,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   closeAllTabs: () => set({ tabs: [], activeTabId: null }),
 
+  closeTabsOutsideProject: (projectPath: string) =>
+    set(s => {
+      const tabs = s.tabs.filter(tab => isDescendantOf(tab.path, projectPath))
+      return {
+        tabs,
+        activeTabId: tabs.some(tab => tab.id === s.activeTabId) ? s.activeTabId : tabs[0]?.id ?? null,
+      }
+    }),
+
   renamePath: (oldPath: string, newPath: string) =>
     set(s => ({
       tabs: s.tabs.map(tab => {
-        if (tab.path !== oldPath && !isDescendantPath(tab.path, oldPath)) return tab
+        if (!isDescendantOf(tab.path, oldPath)) return tab
         const path = newPath + tab.path.slice(oldPath.length)
         const name = path.split('\\').pop() || path.split('/').pop() || path
         return { ...tab, path, name }
@@ -130,7 +147,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set(s => {
       const closedIds = new Set(
         s.tabs
-          .filter(tab => tab.path === path || isDescendantPath(tab.path, path))
+          .filter(tab => isDescendantOf(tab.path, path))
           .map(tab => tab.id)
       )
       const tabs = s.tabs.filter(tab => !closedIds.has(tab.id))
@@ -142,10 +159,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
     }),
 }))
-
-function isDescendantPath(candidate: string, parent: string) {
-  return candidate.startsWith(`${parent}\\`) || candidate.startsWith(`${parent}/`)
-}
 
 function guessLanguage(path: string): string {
   const ext = path.split('.').pop()?.toLowerCase() || ''

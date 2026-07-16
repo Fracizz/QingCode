@@ -1,4 +1,4 @@
-import { Files, Search, Terminal, Settings, FolderPlus, BugPlay } from 'lucide-react'
+import { ListTree, Search, Terminal, Settings, FolderPlus, BugPlay } from 'lucide-react'
 import Tooltip from './Tooltip'
 
 interface Props {
@@ -19,7 +19,7 @@ export default function ActivityBar({
   return (
     <div className="ui-font-scaled w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-deep border-r border-border flex flex-col items-center py-2">
       <Item
-        icon={<Files size={22} />}
+        icon={<ListTree size={22} />}
         label="资源管理器"
         active={active === 'explorer'}
         onClick={() => onActiveChange('explorer')}
