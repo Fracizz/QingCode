@@ -32,3 +32,18 @@ portable-pty = "0.8"
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 
+# 面向构建速度优化的 release profile：
+# - opt-level 3 → 2：跳过最昂贵的 LLVM 向量化/内联 pass，编译提速最明显，运行时几乎无感
+# - codegen-units 16：提高并行度，多用 CPU 核心一起编
+# - lto = false：关闭链接时优化（默认即 false，此处显式声明，避免被其他配置开启）
+# - strip + panic=abort：减小单文件 exe 体积、链接更快
+# 若追求极致构建速度可把 opt-level 改为 1；若更在意运行时性能可改回 3 并设 lto = "thin"
+[profile.release]
+opt-level = 2
+lto = false
+codegen-units = 16
+strip = "symbols"
+panic = "abort"
+debug = false
+incremental = false
+
