@@ -39,7 +39,8 @@
   --title-bar-height: 32px;
   --ui-font-size: 13px;
   --ui-font-scale: 1;
-  --mono-font-size: 13px;
+  --editor-font-size: 13px;
+  --terminal-font-size: 13px;
 }
 
 html[data-theme="light"] {
@@ -123,7 +124,7 @@ body {
   height: 100%;
   background: var(--color-bg) !important;
   font-family: var(--font-mono) !important;
-  font-size: var(--mono-font-size) !important;
+  font-size: var(--editor-font-size) !important;
 }
 
 /* Most application labels use fixed Tailwind pixel classes. Zooming only the
@@ -144,6 +145,17 @@ body {
 .xterm {
   padding: 8px 10px;
   height: 100%;
+  background: var(--color-bg-deep);
+}
+
+/* xterm.css hardcodes viewport/composition to #000 — follow theme surfaces */
+.xterm .xterm-viewport {
+  background-color: var(--color-bg-deep) !important;
+}
+
+.xterm .composition-view {
+  background: var(--color-bg-elevated);
+  color: var(--color-fg);
 }
 
 /* Search reveal flash highlight */
@@ -178,29 +190,35 @@ body {
 /* Panel resize sash (sidebar + terminal) */
 body.panel-resizing,
 body.panel-resizing * {
-  cursor: default !important;
+  cursor: ns-resize !important;
   user-select: none !important;
+}
+
+body.panel-resizing[data-panel-resize='vertical'],
+body.panel-resizing[data-panel-resize='vertical'] * {
+  cursor: ew-resize !important;
 }
 
 .panel-resizer {
   position: relative;
   flex-shrink: 0;
-  z-index: 2;
+  z-index: 20;
   touch-action: none;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: default;
 }
 
 .panel-resizer--horizontal {
-  height: 8px;
-  margin-top: -4px;
+  width: 100%;
+  height: 10px;
+  cursor: ns-resize;
 }
 
 .panel-resizer--vertical {
   width: 8px;
   margin-right: -4px;
+  cursor: ew-resize;
 }
 
 .panel-resizer-line {

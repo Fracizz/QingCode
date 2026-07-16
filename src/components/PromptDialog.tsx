@@ -51,7 +51,7 @@ export default function PromptDialog() {
   }
 
   return (
-    <ModalOverlay onDismiss={() => answer(null)}>
+    <ModalOverlay onDismiss={() => answer(null)} zIndex="z-[110]">
       <div
         role="dialog"
         aria-modal="true"

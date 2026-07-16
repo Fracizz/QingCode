@@ -7,7 +7,13 @@ export const TERMINAL_MIN_HEIGHT = 120
 export const TERMINAL_MAX_HEIGHT_RATIO = 0.8
 
 export function getTerminalMaxHeight() {
-  return Math.round(window.innerHeight * TERMINAL_MAX_HEIGHT_RATIO)
+  const titleBar = 32
+  const statusBar = 24
+  const chrome = titleBar + statusBar + 48
+  return Math.max(
+    TERMINAL_MIN_HEIGHT,
+    Math.round(window.innerHeight * TERMINAL_MAX_HEIGHT_RATIO - chrome)
+  )
 }
 
 export function terminalResizerHint(height: number) {

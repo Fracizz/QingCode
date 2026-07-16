@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useTerminalStore } from '../store/terminalStore'
 import { isTauri } from '../lib/tauri'
@@ -34,10 +35,10 @@ const DARK_THEME = {
 }
 
 const LIGHT_THEME = {
-  background: '#f0f0f0',
+  background: '#f8f8f8',
   foreground: '#1f1f1f',
   cursor: '#1f1f1f',
-  cursorAccent: '#f0f0f0',
+  cursorAccent: '#f8f8f8',
   selectionBackground: '#b9d6f5',
   black: '#000000',
   red: '#c43b32',
@@ -87,14 +88,64 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
 
     const fitAddon = new FitAddon()
     const linkAddon = new WebLinksAddon()
+    const clipboardAddon = new ClipboardAddon()
     term.loadAddon(fitAddon)
     term.loadAddon(linkAddon)
+    term.loadAddon(clipboardAddon)
     term.open(containerRef.current)
+
+    const isTerminalWritable = () =>
+      useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.status !== 'exited'
+
+    const pasteFromClipboard = async () => {
+      if (!isTerminalWritable()) return
+      try {
+        const text = await navigator.clipboard.readText()
+        if (text) term.paste(text)
+      } catch (error) {
+        console.error('Terminal paste failed:', error)
+      }
+    }
+
+    term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (event.type !== 'keydown') return true
+      const mod = event.ctrlKey || event.metaKey
+      const key = event.key.toLowerCase()
+      if (mod && key === 'v') {
+        event.preventDefault()
+        void pasteFromClipboard()
+        return false
+      }
+      if (event.shiftKey && event.key === 'Insert') {
+        event.preventDefault()
+        void pasteFromClipboard()
+        return false
+      }
+      return true
+    })
+
+    const onPaste = (event: ClipboardEvent) => {
+      if (!isTerminalWritable()) return
+      const text = event.clipboardData?.getData('text/plain') ?? ''
+      if (text) return
+      event.preventDefault()
+      event.stopPropagation()
+      void pasteFromClipboard()
+    }
+
+    const onMouseDown = () => {
+      term.focus()
+    }
+
+    const container = containerRef.current
+    container.addEventListener('paste', onPaste, true)
+    container.addEventListener('mousedown', onMouseDown)
 
     const updateFont = () => {
       const styles = getComputedStyle(document.documentElement)
       term.options.fontFamily = styles.getPropertyValue('--font-mono').trim()
-      term.options.fontSize = Number.parseInt(styles.getPropertyValue('--mono-font-size'), 10) || 13
+      term.options.fontSize =
+        Number.parseInt(styles.getPropertyValue('--terminal-font-size'), 10) || 13
       try {
         fitAddon.fit()
       } catch {}
@@ -148,6 +199,8 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
       window.removeEventListener(THEME_SETTINGS_EVENT, updateTheme)
       clearTimeout(t)
       ro.disconnect()
+      container.removeEventListener('paste', onPaste, true)
+      container.removeEventListener('mousedown', onMouseDown)
       if (unlistenRef.current) {
         unlistenRef.current()
         unlistenRef.current = null

@@ -120,8 +120,13 @@ interface ProjectState {
   loadProjects: () => Promise<void>
   addProject: (path: string) => Promise<boolean>
   addProjectFromDialog: () => Promise<void>
+  addEmptyProject: () => Promise<boolean>
   addTerminalProject: (name: string) => Promise<boolean>
   removeProject: (id: string) => Promise<void>
+  hideProject: (id: string) => Promise<void>
+  unhideProject: (id: string) => Promise<void>
+  /** Persist a manual sort order for a project (used by the project manager). */
+  setProjectSortOrder: (id: string, sortOrder: number) => Promise<void>
   relocateProject: (id: string, path: string) => Promise<boolean>
   renameProject: (id: string, name: string) => Promise<void>
   switchProject: (project: Project) => Promise<void>
@@ -171,12 +176,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       if (migrated) get().pushToast('success', '已从旧版本恢复项目列表')
 
       const expandedProjects: Record<string, boolean> = {}
-      for (const p of projects) {
+      const ephemeralProjects = get().projects.filter((p) => p.ephemeral)
+      for (const p of [...projects, ...ephemeralProjects]) {
         expandedProjects[p.id] = get().expandedProjects[p.id] ?? true
       }
 
       set({
-        projects,
+        projects: [...ephemeralProjects, ...projects],
         unavailableProjectIds: [],
         expandedProjects,
         loading: false
@@ -201,7 +207,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         set({ unavailableProjectIds })
 
         if (projects.length > 0 && !get().currentProject) {
-          const firstAvailable = projects.find((project) => !unavailableProjectIds.includes(project.id))
+          const firstAvailable = projects.find(
+            (project) => !project.hidden && !unavailableProjectIds.includes(project.id)
+          )
           if (firstAvailable) await get().switchProject(firstAvailable)
         }
       })()
@@ -263,6 +271,47 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
+  addEmptyProject: async () => {
+    if (!isTauri()) throw new NotInTauriError('新增空项目')
+    try {
+      const temp = await tempDir()
+      const id = crypto.randomUUID()
+      const dirName = `qingcode-empty-${id}`
+      const path = await safeInvoke<string>('创建空项目目录', 'create_directory', {
+        parent: temp,
+        name: dirName,
+      })
+
+      const existingNames = new Set(get().projects.map((p) => p.name))
+      let index = 1
+      let name = '空项目'
+      while (existingNames.has(name)) {
+        index += 1
+        name = `空项目 ${index}`
+      }
+
+      const now = Date.now()
+      const project: Project = {
+        id,
+        name,
+        path,
+        created_at: now,
+        last_opened_at: now,
+        ephemeral: true,
+      }
+      // Ephemeral projects live only in memory; they are not written to the
+      // projects table and disappear after restart.
+      set((s) => ({ projects: [project, ...s.projects] }))
+      await get().switchProject(project)
+      get().pushToast('success', `已新增空项目: ${name}（临时，重启后消失）`)
+      return true
+    } catch (e) {
+      console.error('addEmptyProject failed:', e)
+      get().pushToast('error', `新增空项目失败: ${String(e)}`)
+      return false
+    }
+  },
+
   addTerminalProject: async (name: string) => {
     if (!isTauri()) throw new NotInTauriError('新建终端项目')
     try {
@@ -293,6 +342,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   removeProject: async (id: string) => {
+    const target = get().projects.find((p) => p.id === id)
+    if (target?.ephemeral) {
+      const wasCurrent = get().currentProject?.id === id
+      set((s) => {
+        const projectTrees = { ...s.projectTrees }
+        delete projectTrees[id]
+        const expandedProjects = { ...s.expandedProjects }
+        delete expandedProjects[id]
+        return {
+          projects: s.projects.filter((p) => p.id !== id),
+          currentProject: wasCurrent ? null : s.currentProject,
+          recentFiles: wasCurrent ? [] : s.recentFiles,
+          fileTree: wasCurrent ? [] : s.fileTree,
+          projectTrees,
+          expandedProjects
+        }
+      })
+      get().pushToast('info', '已移除临时项目')
+      return
+    }
     try {
       await withDb('移除项目', async (d) => {
         await d.execute('DELETE FROM projects WHERE id = $1', [id])
@@ -320,17 +389,127 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
+  hideProject: async (id: string) => {
+    const target = get().projects.find((p) => p.id === id)
+    if (target?.ephemeral) {
+      const wasCurrent = get().currentProject?.id === id
+      set((s) => ({
+        projects: s.projects.map((p) => (p.id === id ? { ...p, hidden: 1 } : p)),
+      }))
+      if (wasCurrent) {
+        const unavailable = get().unavailableProjectIds
+        const next = get().projects.find(
+          (p) => !p.hidden && !unavailable.includes(p.id) && p.id !== id,
+        )
+        if (next) {
+          await get().switchProject(next)
+        } else {
+          set({ currentProject: null, recentFiles: [], fileTree: [] })
+        }
+      }
+      get().pushToast('info', '已从顶栏隐藏')
+      return
+    }
+    try {
+      await withDb('隐藏项目', (d) =>
+        d.execute('UPDATE projects SET hidden = 1 WHERE id = $1', [id]),
+      )
+      const wasCurrent = get().currentProject?.id === id
+      set((s) => ({
+        projects: s.projects.map((p) => (p.id === id ? { ...p, hidden: 1 } : p)),
+      }))
+      if (wasCurrent) {
+        const unavailable = get().unavailableProjectIds
+        const next = get().projects.find(
+          (p) => !p.hidden && !unavailable.includes(p.id) && p.id !== id,
+        )
+        if (next) {
+          await get().switchProject(next)
+        } else {
+          set({ currentProject: null, recentFiles: [], fileTree: [] })
+        }
+      }
+      get().pushToast('info', '已从顶栏隐藏，可在项目管理中恢复')
+    } catch (e) {
+      console.error('hideProject failed:', e)
+      get().pushToast('error', `隐藏项目失败: ${String(e)}`)
+    }
+  },
+
+  unhideProject: async (id: string) => {
+    const target = get().projects.find((p) => p.id === id)
+    if (target?.ephemeral) {
+      set((s) => ({
+        projects: s.projects.map((p) => (p.id === id ? { ...p, hidden: 0 } : p)),
+      }))
+      get().pushToast('success', '已恢复显示')
+      return
+    }
+    try {
+      await withDb('显示项目', (d) =>
+        d.execute('UPDATE projects SET hidden = 0 WHERE id = $1', [id]),
+      )
+      set((s) => ({
+        projects: s.projects.map((p) => (p.id === id ? { ...p, hidden: 0 } : p)),
+      }))
+      get().pushToast('success', '已恢复显示')
+    } catch (e) {
+      console.error('unhideProject failed:', e)
+      get().pushToast('error', `恢复项目失败: ${String(e)}`)
+    }
+  },
+
+  setProjectSortOrder: async (id: string, sortOrder: number) => {
+    const target = get().projects.find((p) => p.id === id)
+    if (target?.ephemeral) {
+      set((s) => ({
+        projects: s.projects.map((p) =>
+          p.id === id ? { ...p, sort_order: sortOrder } : p,
+        ),
+      }))
+      return
+    }
+    try {
+      await withDb('排序项目', (d) =>
+        d.execute('UPDATE projects SET sort_order = $1 WHERE id = $2', [sortOrder, id]),
+      )
+      set((s) => ({
+        projects: s.projects.map((p) =>
+          p.id === id ? { ...p, sort_order: sortOrder } : p,
+        ),
+      }))
+    } catch (e) {
+      console.error('setProjectSortOrder failed:', e)
+      get().pushToast('error', `排序项目失败: ${String(e)}`)
+    }
+  },
+
   relocateProject: async (id: string, path: string) => {
     try {
       await safeInvoke('检查项目目录', 'validate_directory', { path })
+      const target = get().projects.find((project) => project.id === id)
       const wasCurrent = get().currentProject?.id === id
-      const previousPath = get().projects.find(project => project.id === id)?.path
+      const previousPath = target?.path
       // Drop the stale tree so it reloads from the new location.
       set((s) => {
         const projectTrees = { ...s.projectTrees }
         delete projectTrees[id]
         return { projectTrees }
       })
+      if (target?.ephemeral) {
+        set((s) => ({
+          projects: s.projects.map((p) =>
+            p.id === id ? { ...p, name: baseName(path), path } : p,
+          ),
+        }))
+        if (previousPath) useEditorStore.getState().renamePath(previousPath, path)
+        if (wasCurrent) {
+          const relocated = get().projects.find((project) => project.id === id)
+          if (relocated) await get().switchProject(relocated)
+        }
+        get().pushToast('success', `项目已重新定位: ${baseName(path)}`)
+        return true
+      }
       await withDb('重新定位项目', (d) =>
         Promise.all([
           d.execute('UPDATE projects SET name = $1, path = $2 WHERE id = $3', [baseName(path), path, id]),
@@ -352,6 +531,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   renameProject: async (id: string, name: string) => {
+    const target = get().projects.find((p) => p.id === id)
+    if (target?.ephemeral) {
+      set((s) => ({
+        projects: s.projects.map((p) => (p.id === id ? { ...p, name } : p)),
+        currentProject: s.currentProject?.id === id ? { ...s.currentProject, name } : s.currentProject,
+      }))
+      get().pushToast('success', `已重命名为: ${name}`)
+      return
+    }
     try {
       await withDb('重命名项目', (d) =>
         d.execute('UPDATE projects SET name = $1 WHERE id = $2', [name, id]),
@@ -378,13 +566,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       await safeInvoke('检查项目目录', 'validate_directory', {
         path: project.path
       })
-      const recentFiles = await withDb('切换项目', async (d) => {
-        await d.execute('UPDATE projects SET last_opened_at = $1 WHERE id = $2', [Date.now(), project.id])
-        return d.select<RecentFile[]>(
-          'SELECT * FROM recent_files WHERE project_id = $1 ORDER BY opened_at DESC LIMIT 50',
-          [project.id]
-        )
-      })
+      let recentFiles: RecentFile[] = []
+      if (!project.ephemeral) {
+        recentFiles = await withDb('切换项目', async (d) => {
+          await d.execute('UPDATE projects SET last_opened_at = $1 WHERE id = $2', [Date.now(), project.id])
+          return d.select<RecentFile[]>(
+            'SELECT * FROM recent_files WHERE project_id = $1 ORDER BY opened_at DESC LIMIT 50',
+            [project.id]
+          )
+        })
+      }
       set((s) => ({
         currentProject: project,
         recentFiles,
@@ -407,6 +598,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   addRecentFile: async (path: string) => {
     const proj = get().currentProject
     if (!proj) return
+    if (proj.ephemeral) return
     try {
       await withDb('记录最近文件', (d) =>
         d.execute('INSERT OR REPLACE INTO recent_files (project_id, path, opened_at) VALUES ($1, $2, $3)', [

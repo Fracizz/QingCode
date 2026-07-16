@@ -47,7 +47,7 @@ export default function ConfirmDialog() {
   const Icon = meta.icon
 
   return (
-    <ModalOverlay onDismiss={() => answer(false)}>
+    <ModalOverlay onDismiss={() => answer(false)} zIndex="z-[110]">
       <div
         role="alertdialog"
         aria-modal="true"

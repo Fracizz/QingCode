@@ -16,6 +16,8 @@ import {
   FilePlus,
   Pencil,
   Trash2,
+  EyeOff,
+  ListChecks,
   Terminal as TerminalIcon,
   Search as SearchIcon,
   AtSign,
@@ -33,7 +35,7 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import InlineCreateRow from './InlineCreateRow'
 import type { Project } from '../types'
 import { collectAncestorDirs, copyToClipboard, formatFileReference, isDescendantOf, normalizePath, pathsEqual } from '../utils/fileReferences'
-import { removeProjectWithConfirm, relocateProjectWithDialog, addTerminalProjectWithPrompt, renameProjectWithPrompt } from '../utils/projectActions'
+import { relocateProjectWithDialog, addTerminalProjectWithPrompt, renameProjectWithPrompt } from '../utils/projectActions'
 
 type PendingCreate = {
   projectId: string
@@ -226,6 +228,8 @@ export default function Sidebar() {
     expandProjectDir,
     revealFileInTree,
   } = useProjectStore()
+  const hideProject = useProjectStore(s => s.hideProject)
+  const openProjectManager = useUIStore(s => s.openProjectManager)
   const activeTabPath = useEditorStore(s => {
     const tab = s.tabs.find(t => t.id === s.activeTabId)
     return tab?.path ?? null
@@ -273,8 +277,8 @@ export default function Sidebar() {
     await useProjectStore.getState().addProjectFromDialog()
   }
 
-  const handleRemoveProject = (id: string, name: string, path: string) => {
-    void removeProjectWithConfirm(id, name, path)
+  const handleRemoveProject = (id: string, _name: string, _path: string) => {
+    void hideProject(id)
   }
 
   const handleRelocateProject = (id: string) => {
@@ -452,6 +456,12 @@ export default function Sidebar() {
           action: () => addTerminalProjectWithPrompt(),
         },
         {
+          label: '管理项目',
+          icon: <ListChecks size={14} />,
+          separatorBefore: true,
+          action: openProjectManager,
+        },
+        {
           label: '刷新',
           icon: <RefreshCw size={14} />,
           separatorBefore: true,
@@ -535,10 +545,15 @@ export default function Sidebar() {
           action: () => handleRelocateProject(project.id),
         },
         {
-          label: '移除项目',
-          icon: <Trash2 size={14} />,
-          danger: true,
+          label: '从顶栏隐藏',
+          icon: <EyeOff size={14} />,
           action: () => handleRemoveProject(project.id, project.name, project.path),
+        },
+        {
+          label: '管理项目',
+          icon: <ListChecks size={14} />,
+          separatorBefore: true,
+          action: openProjectManager,
         },
       ]
     }
@@ -692,7 +707,7 @@ export default function Sidebar() {
             return (
               <>
                 <div
-                  className="group flex items-center gap-1 pr-2 py-[5px] text-[13px] select-none text-fg cursor-default"
+                  className="group flex items-center gap-1 pl-3 pr-2 py-[5px] text-[13px] select-none text-fg cursor-default"
                   onContextMenu={event =>
                     showContextMenu(event, { kind: 'project', project: currentProject })
                   }
@@ -780,10 +795,10 @@ export default function Sidebar() {
                       </button>
                     </Tooltip>
                   ) : (
-                    <Tooltip label="移除项目" side="bottom">
+                    <Tooltip label="从顶栏隐藏" side="bottom">
                       <button
                         type="button"
-                        aria-label="移除项目"
+                        aria-label="从顶栏隐藏"
                         className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-danger"
                         onClick={event => {
                           event.stopPropagation()

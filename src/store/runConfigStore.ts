@@ -47,6 +47,9 @@ function runConfigPath(project: Project): string {
   return `${projectConfigDir(project)}${sep}run.json`
 }
 
+/** Display path for UI — always forward slashes, relative to project root. */
+export const RUN_CONFIG_RELATIVE_PATH = '.qingcode/run.json'
+
 function joinPath(base: string, rel: string): string {
   if (!rel) return base
   const isAbs = /^[A-Za-z]:[\\/]/.test(rel) || rel.startsWith('/') || rel.startsWith('\\')

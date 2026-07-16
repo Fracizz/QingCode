@@ -5,7 +5,8 @@ export type FontSettings = {
   interfaceFont: string
   monoFont: string
   interfaceFontSize: number
-  monoFontSize: number
+  editorFontSize: number
+  terminalFontSize: number
 }
 
 export const DEFAULT_FONT_SETTINGS: FontSettings = {
@@ -13,12 +14,22 @@ export const DEFAULT_FONT_SETTINGS: FontSettings = {
     '-apple-system, BlinkMacSystemFont, "Segoe UI", "Segoe UI Variable", "Microsoft YaHei", Arial, sans-serif',
   monoFont: '"JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace',
   interfaceFontSize: 13,
-  monoFontSize: 13,
+  editorFontSize: 13,
+  terminalFontSize: 13,
 }
+
+type StoredFontSettings = Partial<FontSettings & { monoFontSize?: number }>
 
 export function loadFontSettings(): FontSettings {
   try {
-    return { ...DEFAULT_FONT_SETTINGS, ...JSON.parse(localStorage.getItem(FONT_SETTINGS_KEY) ?? '{}') }
+    const raw = JSON.parse(localStorage.getItem(FONT_SETTINGS_KEY) ?? '{}') as StoredFontSettings
+    const legacyMono = raw.monoFontSize
+    return {
+      ...DEFAULT_FONT_SETTINGS,
+      ...raw,
+      editorFontSize: raw.editorFontSize ?? legacyMono ?? DEFAULT_FONT_SETTINGS.editorFontSize,
+      terminalFontSize: raw.terminalFontSize ?? legacyMono ?? DEFAULT_FONT_SETTINGS.terminalFontSize,
+    }
   } catch {
     return DEFAULT_FONT_SETTINGS
   }
@@ -29,7 +40,8 @@ export function applyFontSettings(settings: FontSettings) {
   document.documentElement.style.setProperty('--font-mono', settings.monoFont)
   document.documentElement.style.setProperty('--ui-font-size', `${settings.interfaceFontSize}px`)
   document.documentElement.style.setProperty('--ui-font-scale', String(settings.interfaceFontSize / 13))
-  document.documentElement.style.setProperty('--mono-font-size', `${settings.monoFontSize}px`)
+  document.documentElement.style.setProperty('--editor-font-size', `${settings.editorFontSize}px`)
+  document.documentElement.style.setProperty('--terminal-font-size', `${settings.terminalFontSize}px`)
 }
 
 export function saveFontSettings(settings: FontSettings) {

@@ -19,12 +19,12 @@ import {
   LocateFixed,
   Check,
   Pencil,
+  ListChecks,
 } from 'lucide-react'
 import { openPath } from '@tauri-apps/plugin-opener'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import {
-  removeProjectWithConfirm,
   relocateProjectWithDialog,
   addTerminalProjectWithPrompt,
   renameProjectWithPrompt,
@@ -37,25 +37,27 @@ const ADD_BTN_W = 28
 const OVERFLOW_BTN_W = 28
 
 export default function ProjectPicker() {
-  const projects = useProjectStore(s => s.projects)
+  const allProjects = useProjectStore(s => s.projects)
+  const projects = allProjects.filter(p => !p.hidden)
   const currentProject = useProjectStore(s => s.currentProject)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
+  const addEmptyProject = useProjectStore(s => s.addEmptyProject)
+  const hideProject = useProjectStore(s => s.hideProject)
   const setView = useUIStore(s => s.setView)
+  const openProjectManager = useUIStore(s => s.openProjectManager)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
   const overflowBtnRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
   const addBtnRef = useRef<HTMLButtonElement>(null)
-  const addMenuRef = useRef<HTMLDivElement>(null)
 
   const [visibleCount, setVisibleCount] = useState(projects.length)
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({})
-  const [addMenuOpen, setAddMenuOpen] = useState(false)
-  const [addMenuStyle, setAddMenuStyle] = useState<CSSProperties>({})
+  const [addingEmpty, setAddingEmpty] = useState(false)
 
   // Recompute how many chips fit whenever projects or container width change.
   useLayoutEffect(() => {
@@ -113,30 +115,6 @@ export default function ProjectPicker() {
     }
   }, [overflowOpen])
 
-  useEffect(() => {
-    if (!addMenuOpen) return
-    const close = () => setAddMenuOpen(false)
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node
-      if (addMenuRef.current?.contains(target)) return
-      if (addBtnRef.current?.contains(target)) return
-      close()
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-    window.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('resize', close)
-    window.addEventListener('blur', close)
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('resize', close)
-      window.removeEventListener('blur', close)
-    }
-  }, [addMenuOpen])
-
   const positionDropdown = () => {
     const rect = overflowBtnRef.current?.getBoundingClientRect()
     if (!rect) return
@@ -159,6 +137,17 @@ export default function ProjectPicker() {
     await addProjectFromDialog()
   }
 
+  const handleAddEmpty = async () => {
+    if (addingEmpty) return
+    setAddingEmpty(true)
+    setView('explorer')
+    try {
+      await addEmptyProject()
+    } finally {
+      setAddingEmpty(false)
+    }
+  }
+
   const handleAddTerminal = async () => {
     setView('explorer')
     await addTerminalProjectWithPrompt()
@@ -167,20 +156,6 @@ export default function ProjectPicker() {
   const handleRename = (project: Project) => {
     closeDropdown()
     void renameProjectWithPrompt(project.id, project.name)
-  }
-
-  const openAddMenu = (event: ReactMouseEvent) => {
-    event.stopPropagation()
-    const rect = addBtnRef.current?.getBoundingClientRect()
-    if (rect) {
-      const width = 200
-      setAddMenuStyle({
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
-        top: rect.bottom + 4,
-        width,
-      })
-    }
-    setAddMenuOpen(v => !v)
   }
 
   const handleOpenInExplorer = async (path: string) => {
@@ -194,7 +169,12 @@ export default function ProjectPicker() {
 
   const handleRemove = (project: Project) => {
     closeDropdown()
-    void removeProjectWithConfirm(project.id, project.name, project.path)
+    void hideProject(project.id)
+  }
+
+  const handleManageProjects = () => {
+    closeDropdown()
+    openProjectManager()
   }
 
   const handleRelocate = (id: string) => {
@@ -248,16 +228,15 @@ export default function ProjectPicker() {
           </Tooltip>
         )}
 
-        <Tooltip label="添加项目" side="bottom" wrapperClassName="flex-shrink-0">
+        <Tooltip label="新增空项目" side="bottom" wrapperClassName="flex-shrink-0">
           <button
             ref={addBtnRef}
             type="button"
-            aria-label="添加项目"
-            aria-expanded={addMenuOpen}
-            aria-haspopup="menu"
-            onClick={openAddMenu}
+            aria-label="新增空项目"
+            disabled={addingEmpty}
+            onClick={() => void handleAddEmpty()}
             className={`flex items-center justify-center h-6 w-7 rounded text-[12px] flex-shrink-0 transition-colors
-              ${addMenuOpen ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
+              ${addingEmpty ? 'opacity-50 cursor-not-allowed' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
           >
             <Plus size={14} />
           </button>
@@ -266,10 +245,10 @@ export default function ProjectPicker() {
         {projects.length === 0 && (
           <button
             type="button"
-            onClick={openAddMenu}
+            onClick={() => void handleAddEmpty()}
             className="flex items-center h-6 px-2 rounded text-[12px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
           >
-            选择项目
+            新增空项目
           </button>
         )}
       </div>
@@ -388,10 +367,10 @@ export default function ProjectPicker() {
                         </button>
                       </Tooltip>
                     )}
-                    <Tooltip label="移除项目" side="right" wrapperClassName="flex-shrink-0">
+                    <Tooltip label="从顶栏隐藏" side="right" wrapperClassName="flex-shrink-0">
                       <button
                         type="button"
-                        aria-label="移除项目"
+                        aria-label="从顶栏隐藏"
                         className="opacity-0 group-hover:opacity-100 text-fg-dim hover:text-danger"
                         onClick={event => {
                           event.stopPropagation()
@@ -434,52 +413,22 @@ export default function ProjectPicker() {
                 </span>
                 新建终端项目
               </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={handleManageProjects}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
+              >
+                <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
+                  <ListChecks size={14} />
+                </span>
+                管理项目
+              </button>
             </div>
           </div>,
           document.body,
         )}
 
-      {addMenuOpen &&
-        createPortal(
-          <div
-            ref={addMenuRef}
-            role="menu"
-            className="ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
-            style={addMenuStyle}
-            onPointerDown={event => event.stopPropagation()}
-            onContextMenu={event => event.preventDefault()}
-          >
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setAddMenuOpen(false)
-                void handleAdd()
-              }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
-            >
-              <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
-                <FolderPlus size={14} />
-              </span>
-              添加文件夹项目
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setAddMenuOpen(false)
-                void handleAddTerminal()
-              }}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
-            >
-              <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
-                <TerminalIcon size={14} />
-              </span>
-              新建终端项目
-            </button>
-          </div>,
-          document.body,
-        )}
     </div>
   )
 }
@@ -539,10 +488,10 @@ function Chip({
           </button>
         </Tooltip>
       ) : (
-        <Tooltip label="移除项目" side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+        <Tooltip label="从顶栏隐藏" side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
           <button
             type="button"
-            aria-label="移除项目"
+            aria-label="从顶栏隐藏"
             className="inline-flex items-center justify-center opacity-0 group-hover:opacity-100 text-fg-dim hover:text-danger w-4 h-4"
             onClick={event => {
               event.stopPropagation()

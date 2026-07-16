@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Minus, Square, Copy, X } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { isTauri } from '../lib/tauri'
@@ -9,10 +9,14 @@ import Tooltip from './Tooltip'
 import ProjectPicker from './ProjectPicker'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 
+async function requestAppClose() {
+  if (!await confirmDiscardTabs(useEditorStore.getState().tabs, '退出应用')) return
+  await getCurrentWindow().destroy()
+}
+
 export default function TitleBar() {
   const [maximized, setMaximized] = useState(false)
   const inTauri = isTauri()
-  const closeApprovedRef = useRef(false)
 
   useEffect(() => {
     if (!inTauri) return
@@ -30,13 +34,12 @@ export default function TitleBar() {
     }).catch(() => {})
 
     win.onCloseRequested(async event => {
-      if (closeApprovedRef.current) return
-      const tabs = useEditorStore.getState().tabs
-      if (tabs.every(tab => !tab.dirty)) return
       event.preventDefault()
-      if (!await confirmDiscardTabs(tabs, '退出应用')) return
-      closeApprovedRef.current = true
-      await win.close()
+      try {
+        await requestAppClose()
+      } catch (e) {
+        useProjectStore.getState().pushToast('error', `关闭窗口失败: ${String(e)}`)
+      }
     }).then(fn => {
       unlistenClose = fn
     }).catch(() => {})
@@ -67,9 +70,7 @@ export default function TitleBar() {
 
   const handleClose = async () => {
     try {
-      if (!await confirmDiscardTabs(useEditorStore.getState().tabs, '退出应用')) return
-      closeApprovedRef.current = true
-      await getCurrentWindow().close()
+      await requestAppClose()
     } catch (e) {
       useProjectStore.getState().pushToast('error', `关闭窗口失败: ${String(e)}`)
     }

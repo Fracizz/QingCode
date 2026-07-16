@@ -94,6 +94,27 @@ fn get_migrations() -> Vec<Migration> {
     }]
 }
 
+fn get_column_migrations() -> Vec<Migration> {
+    // Lightweight schema-up migrations applied once by version. SQLite lacks
+    // `ADD COLUMN IF NOT EXISTS`, so each migration is guarded by its distinct
+    // version number; tauri-plugin-sql records applied versions and skips
+    // re-running them.
+    vec![
+        Migration {
+            version: 2,
+            description: "add hidden column to projects",
+            sql: "ALTER TABLE projects ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 3,
+            description: "add sort_order column to projects",
+            sql: "ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;",
+            kind: MigrationKind::Up,
+        },
+    ]
+}
+
 #[tauri::command]
 fn create_terminal(
     id: String,
@@ -156,7 +177,11 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
-                .add_migrations(&build_db_url(), get_migrations())
+                .add_migrations(&build_db_url(), {
+                    let mut m = get_migrations();
+                    m.extend(get_column_migrations());
+                    m
+                })
                 .build(),
         )
         .manage(TerminalManager::new())

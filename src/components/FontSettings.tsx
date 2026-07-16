@@ -32,7 +32,7 @@ export default function FontSettings() {
       <div>
         <h2 className="text-sm font-medium text-fg">字体</h2>
         <p className="mt-1 leading-relaxed text-fg-muted">
-          仅保留界面与等宽字体两类；代码编辑器和终端共用等宽字体。
+          界面字体与代码、终端字体分开设置；代码编辑器与终端的字号可独立调整。
         </p>
       </div>
 
@@ -50,16 +50,24 @@ export default function FontSettings() {
       />
       <FontSelect
         label="代码与终端字体"
-        description="代码编辑器与终端同步使用。"
+        description="代码编辑器与终端共用同一等宽字体族。"
         value={settings.monoFont}
         options={MONO_FONTS}
         onChange={value => update('monoFont', value)}
         monospace
       />
       <FontSizeSelect
-        label="代码与终端字体大小"
-        value={settings.monoFontSize}
-        onChange={value => update('monoFontSize', value)}
+        label="代码字体大小"
+        description="仅影响编辑器中的代码。"
+        value={settings.editorFontSize}
+        onChange={value => update('editorFontSize', value)}
+        monospace
+      />
+      <FontSizeSelect
+        label="终端字体大小"
+        description="仅影响终端面板。"
+        value={settings.terminalFontSize}
+        onChange={value => update('terminalFontSize', value)}
         monospace
       />
     </section>
@@ -70,16 +78,19 @@ function FontSizeSelect({
   label,
   value,
   onChange,
+  description,
   monospace,
 }: {
   label: string
   value: number
   onChange: (value: number) => void
+  description?: string
   monospace?: boolean
 }) {
   return (
     <label className="block">
       <span className="block font-medium text-fg">{label}</span>
+      {description ? <span className="mt-1 block text-xs text-fg-muted">{description}</span> : null}
       <select
         value={value}
         onChange={event => onChange(Number(event.target.value))}

@@ -9,7 +9,7 @@ import {
   FileCode2,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
-import { useRunConfigStore, type RunConfig, type RunTask, type RunTaskType } from '../store/runConfigStore'
+import { useRunConfigStore, type RunConfig, type RunTask, type RunTaskType, RUN_CONFIG_RELATIVE_PATH } from '../store/runConfigStore'
 import { useTerminalStore } from '../store/terminalStore'
 import RunConfigEditor from './RunConfigEditor'
 import Tooltip from './Tooltip'
@@ -78,6 +78,11 @@ export default function RunPanel() {
   return (
     <div className="h-full flex flex-col bg-bg-sidebar text-fg">
       <Header title={`运行配置 · ${currentProject.name}`} onAdd={() => setCreating(true)} />
+      <div className="px-4 pb-2 text-[11px] text-fg-dim">
+        配置保存在{' '}
+        <code className="font-mono text-fg-muted">{RUN_CONFIG_RELATIVE_PATH}</code>
+        <span className="text-fg-dim">（项目根目录相对路径）</span>
+      </div>
 
       <div className="flex-1 overflow-auto pb-3">
         {configs.length === 0 ? (

@@ -9,6 +9,7 @@ interface Props {
   ariaValueNow?: number
   ariaValueMin?: number
   ariaValueMax?: number
+  className?: string
 }
 
 export default function PanelResizer({
@@ -20,9 +21,14 @@ export default function PanelResizer({
   ariaValueNow,
   ariaValueMin,
   ariaValueMax,
+  className = '',
 }: Props) {
   return (
-    <Tooltip label={tooltip} side={tooltipSide} wrapperClassName="flex">
+    <Tooltip
+      label={tooltip}
+      side={tooltipSide}
+      wrapperClassName={orientation === 'horizontal' ? 'flex w-full shrink-0' : 'flex shrink-0'}
+    >
       <div
         onMouseDown={onMouseDown}
         role="separator"
@@ -30,7 +36,7 @@ export default function PanelResizer({
         aria-valuenow={ariaValueNow}
         aria-valuemin={ariaValueMin}
         aria-valuemax={ariaValueMax}
-        className={`panel-resizer panel-resizer--${orientation}${active ? ' panel-resizer--active' : ''}`}
+        className={`panel-resizer panel-resizer--${orientation}${active ? ' panel-resizer--active' : ''} ${className}`}
       >
         <span className="panel-resizer-line" aria-hidden />
         <span className="panel-resizer-grip" aria-hidden>

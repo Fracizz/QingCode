@@ -1,4 +1,4 @@
-import { ListTree, Search, Terminal, Settings, FolderPlus, BugPlay } from 'lucide-react'
+import { FolderTree, Search, Terminal, Settings, FolderPlus, BugPlay, ListChecks } from 'lucide-react'
 import Tooltip from './Tooltip'
 
 interface Props {
@@ -6,6 +6,7 @@ interface Props {
   onActiveChange: (v: 'explorer' | 'search' | 'run' | 'settings') => void
   onToggleTerminal: () => void
   onAddProject: () => void
+  onManageProjects: () => void
   terminalOpen: boolean
 }
 
@@ -14,12 +15,13 @@ export default function ActivityBar({
   onActiveChange,
   onToggleTerminal,
   onAddProject,
+  onManageProjects,
   terminalOpen,
 }: Props) {
   return (
     <div className="ui-font-scaled w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-deep border-r border-border flex flex-col items-center py-2">
       <Item
-        icon={<ListTree size={22} />}
+        icon={<FolderTree size={22} />}
         label="资源管理器"
         active={active === 'explorer'}
         onClick={() => onActiveChange('explorer')}
@@ -49,6 +51,11 @@ export default function ActivityBar({
         icon={<FolderPlus size={22} />}
         label="添加项目"
         onClick={onAddProject}
+      />
+      <Item
+        icon={<ListChecks size={22} />}
+        label="项目管理"
+        onClick={onManageProjects}
       />
       <Item
         icon={<Terminal size={22} />}

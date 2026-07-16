@@ -37,6 +37,7 @@ const Editor = lazy(() => import('./components/Editor'))
 const TerminalView = lazy(() => import('./components/Terminal'))
 const SearchPanel = lazy(() => import('./components/SearchPanel'))
 const RunPanel = lazy(() => import('./components/RunPanel'))
+const ProjectManager = lazy(() => import('./components/ProjectManager'))
 
 migrateLegacySettings()
 
@@ -76,6 +77,8 @@ function App() {
   const view = useUIStore(s => s.view)
   const setView = useUIStore(s => s.setView)
   const terminalOpenSignal = useUIStore(s => s.terminalOpenSignal)
+  const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
+  const openProjectManager = useUIStore(s => s.openProjectManager)
 
   const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)
   const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)
@@ -100,11 +103,11 @@ function App() {
         setIsTerminalResizing(false)
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
-        endPanelResize()
+        endPanelResize('horizontal')
       }
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
-      beginPanelResize()
+      beginPanelResize('horizontal')
     },
     [terminalHeight]
   )
@@ -184,12 +187,14 @@ function App() {
           启动，并在弹出的桌面窗口中操作。
         </div>
       )}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+        <div className="flex flex-1 min-h-0 overflow-hidden">
         <ActivityBar
           active={view}
           onActiveChange={setView}
           onToggleTerminal={() => setTerminalOpen(v => !v)}
           onAddProject={handleAddProject}
+          onManageProjects={openProjectManager}
           terminalOpen={terminalOpen}
         />
 
@@ -238,56 +243,67 @@ function App() {
           </ResizableSidebar>
         )}
 
-        <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
           <EditorTabs />
           <Suspense fallback={<LazyFallback />}>
             <Editor />
           </Suspense>
         </div>
-      </div>
-
-      <div
-        className={`${terminalOpen ? 'flex' : 'hidden'} flex-col flex-shrink-0`}
-        style={{ height: terminalHeight }}
-      >
-        <PanelResizer
-          orientation="horizontal"
-          active={isTerminalResizing}
-          tooltip={terminalResizerHint(terminalHeight)}
-          tooltipSide="top"
-          onMouseDown={onResizerMouseDown}
-          ariaValueNow={terminalHeight}
-          ariaValueMin={TERMINAL_MIN_HEIGHT}
-          ariaValueMax={getTerminalMaxHeight()}
-        />
-        <TerminalTabs />
-        <div className="flex-1 bg-bg-deep overflow-hidden">
-          {projectTerminals.length === 0 && (
-              <div className="h-full flex items-center justify-center text-fg-dim text-sm">
-                {currentProject
-                  ? `当前项目「${currentProject.name}」暂无终端，点击右上角 + 新建`
-                  : '请先选择或添加项目，终端将默认基于当前项目创建'}
-              </div>
-          )}
-          {terminals.map(t => (
-            <div
-              key={t.id}
-              className={`h-full ${
-                t.projectId === currentProject?.id && t.id === activeTerminalId ? '' : 'hidden'
-              }`}
-            >
-              <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
-                <TerminalView terminalId={t.id} />
-              </Suspense>
-            </div>
-          ))}
         </div>
+
+        {terminalOpen && (
+          <PanelResizer
+            orientation="horizontal"
+            active={isTerminalResizing}
+            tooltip={terminalResizerHint(terminalHeight)}
+            tooltipSide="top"
+            onMouseDown={onResizerMouseDown}
+            ariaValueNow={terminalHeight}
+            ariaValueMin={TERMINAL_MIN_HEIGHT}
+            ariaValueMax={getTerminalMaxHeight()}
+          />
+        )}
+
+        {terminalOpen && (
+          <div
+            className="flex flex-col flex-shrink-0 min-h-0 overflow-hidden border-t border-border"
+            style={{ height: terminalHeight }}
+          >
+            <TerminalTabs />
+            <div className="flex-1 bg-bg-deep overflow-hidden min-h-0">
+              {projectTerminals.length === 0 && (
+                  <div className="h-full flex items-center justify-center text-fg-dim text-sm">
+                    {currentProject
+                      ? `当前项目「${currentProject.name}」暂无终端，点击标签栏 + 新建`
+                      : '请先选择或添加项目，终端将默认基于当前项目创建'}
+                  </div>
+              )}
+              {terminals.map(t => (
+                <div
+                  key={t.id}
+                  className={`h-full ${
+                    t.projectId === currentProject?.id && t.id === activeTerminalId ? '' : 'hidden'
+                  }`}
+                >
+                  <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
+                    <TerminalView terminalId={t.id} />
+                  </Suspense>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <StatusBar />
       <Toaster />
       <ConfirmDialog />
       <PromptDialog />
+      {projectManagerOpen && (
+        <Suspense fallback={null}>
+          <ProjectManager />
+        </Suspense>
+      )}
     </div>
   )
 }

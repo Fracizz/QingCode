@@ -1,4 +1,4 @@
-import { useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Circle, Plus, RotateCcw, X, Terminal as TerminalIcon, Pencil, XSquare, Files } from 'lucide-react'
 import { MAX_TERMINALS_PER_PROJECT, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
@@ -8,6 +8,8 @@ import { formatTerminalName } from '../utils/terminalName'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
+
+const CLOSE_ARM_MS = 4000
 
 export default function TerminalTabs() {
   const terminals = useTerminalStore(s => s.terminals)
@@ -25,9 +27,47 @@ export default function TerminalTabs() {
     y: number
     terminal: TerminalTab
   } | null>(null)
+  const [closeArmId, setCloseArmId] = useState<string | null>(null)
 
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
   const atLimit = projectTerminals.length >= MAX_TERMINALS_PER_PROJECT
+
+  useEffect(() => {
+    if (!closeArmId) return
+    if (!terminals.some(t => t.id === closeArmId)) setCloseArmId(null)
+  }, [closeArmId, terminals])
+
+  useEffect(() => {
+    if (!closeArmId) return
+    const timer = window.setTimeout(() => setCloseArmId(null), CLOSE_ARM_MS)
+    return () => window.clearTimeout(timer)
+  }, [closeArmId])
+
+  useEffect(() => {
+    if (!closeArmId) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Element
+      if (target.closest(`[data-terminal-close="${closeArmId}"]`)) return
+      setCloseArmId(null)
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    return () => window.removeEventListener('pointerdown', onPointerDown)
+  }, [closeArmId])
+
+  const handleCloseTab = async (id: string) => {
+    setCloseArmId(null)
+    await closeTerminal(id)
+  }
+
+  const handleCloseClick = (event: ReactMouseEvent, id: string) => {
+    event.stopPropagation()
+    if (closeArmId === id) {
+      void handleCloseTab(id)
+      return
+    }
+    setActiveTerminal(id)
+    setCloseArmId(id)
+  }
 
   const handleClose = async (id: string) => {
     const terminal = terminals.find(tab => tab.id === id)
@@ -145,13 +185,16 @@ export default function TerminalTabs() {
         <div className="flex items-center gap-1.5 px-3 text-[11px] font-semibold tracking-widest uppercase text-fg-muted">
           <TerminalIcon size={13} /> Terminal
         </div>
-        <div className="flex flex-1 overflow-x-auto items-center">
+        <div className="flex flex-1 min-w-0 overflow-x-auto items-center">
           {projectTerminals.map(t => (
             <Tooltip key={t.id} label="双击重命名终端" side="bottom" wrapperClassName="flex h-full flex-shrink-0">
               <div
                 className={`group flex items-center gap-1.5 pl-3 pr-2 h-9 cursor-pointer border-r border-border whitespace-nowrap transition-colors
                   ${t.id === activeTerminalId ? 'bg-bg text-fg' : 'bg-bg-deep text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
-                onClick={() => setActiveTerminal(t.id)}
+                onClick={() => {
+                  setActiveTerminal(t.id)
+                  if (closeArmId && closeArmId !== t.id) setCloseArmId(null)
+                }}
                 onDoubleClick={() => handleRename(t.id, t.name)}
                 onContextMenu={(event: ReactMouseEvent) => {
                   event.preventDefault()
@@ -188,43 +231,57 @@ export default function TerminalTabs() {
                     </button>
                   </Tooltip>
                 )}
-                <Tooltip label="关闭终端" side="bottom">
+                <Tooltip
+                  label={closeArmId === t.id ? '再次点击关闭终端' : '关闭终端'}
+                  side="bottom"
+                >
                   <button
-                    className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
-                    onClick={e => {
-                      e.stopPropagation()
-                      handleClose(t.id)
-                    }}
+                    type="button"
+                    aria-label={closeArmId === t.id ? '确认关闭终端' : '关闭终端'}
+                    data-terminal-close={t.id}
+                    className={`ml-1 flex items-center justify-center w-4 h-4 rounded transition-colors ${
+                      closeArmId === t.id
+                        ? 'bg-danger/15 text-danger'
+                        : 'hover:bg-bg-active'
+                    }`}
+                    onClick={e => handleCloseClick(e, t.id)}
                   >
-                    <X size={13} className="opacity-60 group-hover:opacity-100" />
+                    {closeArmId === t.id ? (
+                      <Circle size={9} fill="currentColor" />
+                    ) : (
+                      <X size={13} className="opacity-60 group-hover:opacity-100" />
+                    )}
                   </button>
                 </Tooltip>
               </div>
             </Tooltip>
           ))}
-        </div>
-        <Tooltip
-          label={
-            atLimit
-              ? `已达到每个项目 ${MAX_TERMINALS_PER_PROJECT} 个终端的上限`
-              : currentProject
-                ? `在当前项目内新建终端（${currentProject.path}）`
-                : '请先选择项目'
-          }
-          side="bottom"
-        >
-          <button
-            className={`px-2.5 h-full flex items-center ${
-              currentProject && !atLimit
-                ? 'text-fg-muted hover:text-fg hover:bg-bg-hover'
-                : 'text-fg-dim cursor-not-allowed'
-            }`}
-            disabled={!currentProject || atLimit}
-            onClick={handleNewTerminal}
+          <Tooltip
+            label={
+              atLimit
+                ? `已达到每个项目 ${MAX_TERMINALS_PER_PROJECT} 个终端的上限`
+                : currentProject
+                  ? `在当前项目内新建终端（${currentProject.path}）`
+                  : '请先选择项目'
+            }
+            side="bottom"
+            wrapperClassName="flex-shrink-0"
           >
-            <Plus size={16} />
-          </button>
-        </Tooltip>
+            <button
+              type="button"
+              aria-label="新建终端"
+              className={`ml-1 mr-2 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded transition-colors ${
+                currentProject && !atLimit
+                  ? 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                  : 'text-fg-dim cursor-not-allowed'
+              }`}
+              disabled={!currentProject || atLimit}
+              onClick={handleNewTerminal}
+            >
+              <Plus size={15} />
+            </button>
+          </Tooltip>
+        </div>
       </div>
       {contextMenu && (
         <ContextMenu

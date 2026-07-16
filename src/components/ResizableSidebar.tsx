@@ -36,12 +36,12 @@ export default function ResizableSidebar({ width, onWidthChange, children, class
         setActive(false)
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
-        endPanelResize()
+        endPanelResize('vertical')
       }
 
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
-      beginPanelResize()
+      beginPanelResize('vertical')
     },
     [width, onWidthChange]
   )
