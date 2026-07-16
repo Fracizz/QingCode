@@ -45,5 +45,6 @@ codegen-units = 16
 strip = "symbols"
 panic = "abort"
 debug = false
-incremental = false
+# 开启 release 增量编译：仅改少量 Rust 文件时 package:exe 明显更快（体积略增，运行时几乎无感）
+incremental = true
 

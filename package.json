@@ -15,7 +15,8 @@
     "tauri": "tauri",
     "tauri:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
     "icon:sync": "tauri icon public/app-icon-file.svg -o src-tauri/icons",
-    "package:exe": "pnpm icon:sync && powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1"
+    "package:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1",
+    "package:exe:fast": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1 -SkipFrontend -SkipIcons"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
