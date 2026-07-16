@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { X, Plus, Trash2, Wand2 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import ModalOverlay from './ModalOverlay'
@@ -60,8 +60,10 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
       .map(t => {
         const cwd = t.cwd?.trim() || undefined
         const targetRaw = t.target.trim()
+        const normalized =
+          t.type === 'command' ? normalizeCommandTarget(targetRaw) : targetRaw
         const target =
-          t.type === 'command' && cwd ? stripRedundantCdPrefix(targetRaw) : targetRaw
+          t.type === 'command' && cwd ? stripRedundantCdPrefix(normalized) : normalized
         return {
           ...t,
           name: t.name?.trim() || undefined,
@@ -89,7 +91,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
   return (
     <ModalOverlay onDismiss={onClose}>
       <div
-        className="relative w-full max-w-[560px] max-h-[85vh] flex flex-col bg-bg-sidebar border border-border-strong rounded-lg shadow-2xl shadow-black/50"
+        className="relative w-full max-w-[640px] max-h-[85vh] flex flex-col bg-bg-sidebar border border-border-strong rounded-lg shadow-2xl shadow-black/50"
         onClick={e => e.stopPropagation()}
         onMouseDown={e => e.stopPropagation()}
         role="dialog"
@@ -231,25 +233,28 @@ function TaskEditor({
           </button>
         </Tooltip>
       </div>
-      <div className="flex items-center gap-2">
-        <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">
-          {task.type === 'command' ? '命令' : '脚本路径'}
-        </label>
-        <input
-          value={task.target}
-          onChange={e => onChange({ target: e.target.value })}
-          placeholder={
-            task.type === 'command'
-              ? 'python manage.py runserver'
-              : 'scripts/run_backend.ps1'
-          }
-          className="flex-1 px-2 py-1 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
-        />
-      </div>
-      {task.type === 'command' && (
-        <p className="pl-[72px] text-[11px] text-fg-dim">
-          Windows 下使用 CMD，可用 && 连接命令。工作目录已填时无需再写 cd。
-        </p>
+      {task.type === 'command' ? (
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] text-fg-muted">命令</label>
+          <CommandTextarea
+            value={task.target}
+            onChange={value => onChange({ target: value })}
+            placeholder="python manage.py runserver"
+          />
+          <p className="text-[11px] text-fg-dim">
+            Windows 下使用 CMD，可用 && 连接命令；换行会自动转为 &&。工作目录已填时无需再写 cd。
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-center gap-2">
+          <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">脚本路径</label>
+          <input
+            value={task.target}
+            onChange={e => onChange({ target: e.target.value })}
+            placeholder="scripts/run_backend.ps1"
+            className="flex-1 px-2 py-1 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+          />
+        </div>
       )}
       <div className="flex items-center gap-2">
         <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">工作目录</label>
@@ -303,5 +308,50 @@ function TaskEditor({
         )}
       </div>
     </div>
+  )
+}
+
+function normalizeCommandTarget(target: string): string {
+  return target.replace(/\r\n/g, '\n').replace(/\s*\n+\s*/g, ' && ').trim()
+}
+
+function CommandTextarea({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  const minRows = 2
+  const maxRows = 8
+
+  const resize = () => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight) || 20
+    const padding = 12
+    const maxHeight = lineHeight * maxRows + padding
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
+  }
+
+  useLayoutEffect(() => {
+    resize()
+  }, [value])
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      rows={minRows}
+      spellCheck={false}
+      placeholder={placeholder}
+      onChange={e => onChange(e.target.value)}
+      onInput={resize}
+      className="w-full min-h-[3.25rem] max-h-40 px-2.5 py-1.5 text-[12px] leading-5 rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono resize-y overflow-y-auto wrap-break-word"
+    />
   )
 }
