@@ -156,6 +156,19 @@ fn db_url() -> String {
 }
 
 #[tauri::command]
+fn is_dev_build() -> bool {
+    cfg!(debug_assertions)
+}
+
+#[tauri::command]
+fn terminal_has_child_processes(
+    id: String,
+    state: tauri::State<'_, TerminalManager>,
+) -> Result<bool, String> {
+    state.has_child_processes(&id)
+}
+
+#[tauri::command]
 fn spawn_script(
     id: String,
     cwd: String,
@@ -189,6 +202,7 @@ pub fn run() {
             migrate_legacy_database();
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
                 tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+                    .devtools(cfg!(debug_assertions))
                     .enable_clipboard_access()
                     .build()?;
             }
@@ -209,8 +223,10 @@ pub fn run() {
             write_terminal,
             kill_terminal,
             resize_terminal,
+            terminal_has_child_processes,
             spawn_script,
             db_url,
+            is_dev_build,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

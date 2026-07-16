@@ -20,10 +20,6 @@ export function formatTerminalName(name: string) {
   return formatTerminalNumber(name) ?? shortenTerminalLabel(name)
 }
 
-function isPathLike(value: string) {
-  return /[/\\]/.test(value) || /^[a-zA-Z]:/.test(value)
-}
-
 /** Pick a readable tab name when creating a terminal from profile settings. */
 export function resolveNewTerminalName(
   profileName: string,
@@ -34,16 +30,24 @@ export function resolveNewTerminalName(
   const cmd = command.trim()
   const name = profileName.trim()
 
-  if (!cmd) return `终端 ${nextNumber}`
+  if (name && name !== defaultProfileLabel) return name
 
-  if (name && name !== defaultProfileLabel && name !== cmd && !isPathLike(name)) {
-    return name
+  if (cmd) {
+    const fromCommand = shortenTerminalLabel(cmd)
+    if (fromCommand) return fromCommand
   }
 
-  const fromCommand = shortenTerminalLabel(cmd)
-  if (fromCommand && fromCommand !== cmd) return fromCommand
+  if (name) return name
 
   return `终端 ${nextNumber}`
+}
+
+/** Avoid duplicate tab labels within the same project. */
+export function disambiguateTerminalName(base: string, existingNames: string[]): string {
+  if (!existingNames.includes(base)) return base
+  let index = 2
+  while (existingNames.includes(`${base} (${index})`)) index++
+  return `${base} (${index})`
 }
 
 /** Short label for toasts and UI when tab name is a shell path or long string. */

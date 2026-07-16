@@ -27,6 +27,7 @@ tauri-plugin-sql = { version = "2", features = ["sqlite"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
+sysinfo = "0.33"
 portable-pty = "0.8"
 # 注意：tokio / futures / chrono 不作为直接依赖。
 # 源码未直接使用它们；由 tauri / portable-pty 等按需拉取所需特性即可，

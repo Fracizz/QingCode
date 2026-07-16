@@ -38,6 +38,10 @@ export interface TerminalTab {
   /** When set, spawn/restart uses `spawn_script` with this kind (run-config tasks). */
   shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'script'
   env?: Record<string, string>
+  /** Profile used to spawn this terminal (settings → 终端). */
+  profileId?: string
+  /** When true, OSC/window title updates may rename the tab (profile terminals). */
+  allowTitleRename?: boolean
   status: 'starting' | 'running' | 'exited'
   exitCode: number | null
   /** Wall-clock ms when the process was spawned; used to detect quick failures. */

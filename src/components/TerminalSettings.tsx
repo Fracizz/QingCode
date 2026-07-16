@@ -40,32 +40,35 @@ export default function TerminalSettings() {
     const profiles = settings.profiles.filter(profile => profile.id !== id)
     save({
       profiles,
-      defaultProfileId:
-        settings.defaultProfileId === id ? DEFAULT_TERMINAL_PROFILE.id : settings.defaultProfileId,
+      defaultProfileId: settings.defaultProfileId === id ? null : settings.defaultProfileId,
     })
   }
 
   return (
-    <section className="flex flex-col gap-4 px-4 py-5 text-[13px]">
-      <div>
-        <h2 className="text-sm font-medium text-fg">终端</h2>
-        <p className="mt-1 leading-relaxed text-fg-muted">
-          新终端会按默认配置启动。启动命令留空时，就是普通的 PowerShell 终端。
-        </p>
-      </div>
-
+    <div className="flex flex-col gap-4">
       <label className="block">
         <span className="block font-medium text-fg">默认启动配置</span>
+        <span className="mt-1 block text-xs text-fg-muted">
+          可不选；未指定时使用内置普通 PowerShell 终端。
+        </span>
         <select
-          value={settings.defaultProfileId}
-          onChange={event => save({ ...settings, defaultProfileId: event.target.value })}
+          value={settings.defaultProfileId ?? ''}
+          onChange={event =>
+            save({
+              ...settings,
+              defaultProfileId: event.target.value ? event.target.value : null,
+            })
+          }
           className="mt-2 w-full rounded border border-border-strong bg-bg-elevated px-2.5 py-2 text-fg outline-none focus:border-accent"
         >
-          {settings.profiles.map(profile => (
-            <option key={profile.id} value={profile.id}>
-              {profile.name.trim() || '未命名配置'}
-            </option>
-          ))}
+          <option value="">未指定（内置默认）</option>
+          {settings.profiles
+            .filter(profile => profile.id !== DEFAULT_TERMINAL_PROFILE.id)
+            .map(profile => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name.trim() || '未命名配置'}
+              </option>
+            ))}
         </select>
       </label>
 
@@ -104,21 +107,23 @@ export default function TerminalSettings() {
             </div>
             <label className="mt-2 block">
               <span className="text-[11px] text-fg-muted">启动命令</span>
-              <input
+              <textarea
                 value={profile.command}
                 onChange={event => updateProfile(profile.id, { command: event.target.value })}
                 placeholder={profile.id === DEFAULT_TERMINAL_PROFILE.id ? '留空：启动 PowerShell' : '例如：opencode'}
                 aria-label={`${profile.name || '终端配置'}启动命令`}
-                className="mt-1 w-full rounded border border-border bg-bg-deep px-2 py-1.5 font-mono text-[12px] text-fg outline-none focus:border-accent"
+                rows={2}
+                spellCheck={false}
+                className="mt-1 w-full min-h-[3rem] resize-y rounded border border-border bg-bg-deep px-2 py-1.5 font-mono text-[12px] text-fg outline-none focus:border-accent wrap-break-word"
               />
             </label>
           </div>
         ))}
       </div>
       <p className="text-[12px] leading-relaxed text-fg-dim">
-        启动命令直接运行在终端中。标签名固定为「终端 N」编号或任务名，
-        如需自定义可双击标签重命名。
+        点击 + 使用默认配置；右键 + 可选择其它配置。启动命令留空时启动 PowerShell；
+        程序（如 opencode）可通过窗口标题自动重命名标签，也可双击标签手动修改。
       </p>
-    </section>
+    </div>
   )
 }

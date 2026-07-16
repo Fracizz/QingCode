@@ -28,14 +28,7 @@ export default function FontSettings() {
   }
 
   return (
-    <section className="flex flex-col gap-5 px-4 py-5 text-[13px]">
-      <div>
-        <h2 className="text-sm font-medium text-fg">字体</h2>
-        <p className="mt-1 leading-relaxed text-fg-muted">
-          界面字体与代码、终端字体分开设置；代码编辑器与终端的字号可独立调整。
-        </p>
-      </div>
-
+    <div className="flex flex-col gap-5">
       <FontSelect
         label="界面字体"
         description="用于菜单、侧栏、标签和状态栏。"
@@ -70,7 +63,7 @@ export default function FontSettings() {
         onChange={value => update('terminalFontSize', value)}
         monospace
       />
-    </section>
+    </div>
   )
 }
 

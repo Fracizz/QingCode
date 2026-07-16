@@ -23,12 +23,7 @@ export default function ThemeSettings() {
   }
 
   return (
-    <section className="flex flex-col gap-4 px-4 py-5 text-[13px]">
-      <div>
-        <h2 className="text-sm font-medium text-fg">外观</h2>
-        <p className="mt-1 leading-relaxed text-fg-muted">选择界面整体主题色调。</p>
-      </div>
-
+    <div className="flex flex-col gap-4">
       <div className="grid grid-cols-3 gap-2">
         {THEMES.map(option => {
           const active = option.value === theme
@@ -58,7 +53,7 @@ export default function ThemeSettings() {
           （操作系统切换明暗时自动跟随）
         </p>
       )}
-    </section>
+    </div>
   )
 }
 

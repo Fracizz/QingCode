@@ -4,6 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+const devPort = Number(process.env.VITE_DEV_PORT) || 5173;
+const devPortLocked = Boolean(process.env.VITE_DEV_PORT);
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -13,16 +15,16 @@ export default defineConfig(async () => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
+  // 2. tauri dev 通过 VITE_DEV_PORT 锁定端口；单独 pnpm dev 则在 5173 被占用时自动递增
   server: {
-    port: 5173,
-    strictPort: true,
+    port: devPort,
+    strictPort: devPortLocked,
     host: host || "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 5174,
+          port: devPort + 1,
         }
       : undefined,
     watch: {

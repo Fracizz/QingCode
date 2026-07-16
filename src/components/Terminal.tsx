@@ -8,6 +8,7 @@ import { subscribeTerminalOutput, useTerminalStore } from '../store/terminalStor
 import { useProjectStore } from '../store/projectStore'
 import { FONT_SETTINGS_EVENT } from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
+import { TerminalOscParser } from '../utils/terminalOsc'
 import '@xterm/xterm/css/xterm.css'
 
 const DARK_THEME = {
@@ -223,11 +224,19 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         .terminals.find(tab => tab.id === terminalId)?.status
       if (status !== 'exited') writeToTerminal(terminalId, data)
     })
-    // 不采用程序通过 OSC 发送的标题覆盖标签名：默认终端保持「终端 N」编号，
-    // 运行任务保持其任务名。如需自定义名称，可双击标签手动重命名。
+    // 程序通过 OSC 设置窗口标题时自动更新标签名（如 opencode）；运行任务终端不跟随。
     let unsubscribeOutput: (() => void) | undefined
+    const oscParser = new TerminalOscParser()
     const subscribeTimer = window.setTimeout(() => {
-      unsubscribeOutput = subscribeTerminalOutput(terminalId, data => term.write(data))
+      unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
+        const cleaned = oscParser.feed(data, title => {
+          const tab = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+          if (tab?.allowTitleRename !== false && title) {
+            useTerminalStore.getState().renameTerminal(terminalId, title)
+          }
+        })
+        term.write(cleaned)
+      })
     }, 0)
 
     const ro = new ResizeObserver(() => {

@@ -2,6 +2,7 @@ import { Settings } from 'lucide-react'
 import FontSettings from './FontSettings'
 import ThemeSettings from './ThemeSettings'
 import TerminalSettings from './TerminalSettings'
+import SettingsSection from './SettingsSection'
 
 export default function SettingsPanel() {
   return (
@@ -10,11 +11,21 @@ export default function SettingsPanel() {
         <Settings size={13} /> 设置
       </div>
       <div className="flex-1 min-h-0 overflow-auto">
-        <FontSettings />
-        <div className="border-t border-border-strong" />
-        <ThemeSettings />
-        <div className="border-t border-border-strong" />
-        <TerminalSettings />
+        <SettingsSection title="外观" description="选择界面整体主题色调。">
+          <ThemeSettings />
+        </SettingsSection>
+        <SettingsSection
+          title="字体"
+          description="界面字体与代码、终端字体分开设置；字号可独立调整。"
+        >
+          <FontSettings />
+        </SettingsSection>
+        <SettingsSection
+          title="终端"
+          description="配置默认启动方式与终端配置文件。"
+        >
+          <TerminalSettings />
+        </SettingsSection>
       </div>
     </div>
   )

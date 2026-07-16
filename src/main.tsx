@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { installContextMenuGuard } from './lib/contextMenuGuard'
+import { installDeveloperMode } from './lib/developerMode'
 import { paintStartupSplashLogo } from './lib/appIconSvg'
 import { applyFontSettings, loadFontSettings } from './lib/fontSettings'
 import { applyTheme, loadTheme } from './lib/themeSettings'
@@ -9,6 +10,7 @@ import { revealAppWindow } from './lib/appWindow'
 
 applyTheme(loadTheme())
 installContextMenuGuard()
+installDeveloperMode()
 paintStartupSplashLogo()
 applyFontSettings(loadFontSettings())
 

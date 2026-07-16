@@ -4,8 +4,8 @@ import { safeInvoke } from '../lib/tauri'
 import { useProjectStore } from './projectStore'
 import { useUIStore } from './uiStore'
 import type { TerminalTab } from '../types'
-import { DEFAULT_TERMINAL_PROFILE, getDefaultTerminalProfile } from '../lib/terminalProfiles'
-import { resolveNewTerminalName, terminalDisplayLabel } from '../utils/terminalName'
+import { DEFAULT_TERMINAL_PROFILE, getTerminalProfile } from '../lib/terminalProfiles'
+import { disambiguateTerminalName, resolveNewTerminalName, terminalDisplayLabel } from '../utils/terminalName'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 const STORAGE_KEY = 'qingcode:terminal-layout'
@@ -82,7 +82,7 @@ interface TerminalState {
   terminals: TerminalTab[]
   activeTerminalId: string | null
   activeTerminalByProject: Record<string, string>
-  addTerminal: (projectPath: string, projectId: string) => Promise<string | null>
+  addTerminal: (projectPath: string, projectId: string, profileId?: string) => Promise<string | null>
   addScriptTerminal: (
     projectId: string,
     cwd: string,
@@ -112,7 +112,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   activeTerminalId: null,
   activeTerminalByProject: persisted.activeTerminalByProject,
 
-  addTerminal: async (projectPath: string, projectId: string) => {
+  addTerminal: async (projectPath: string, projectId: string, profileId?: string) => {
     const sameProject = get().terminals.filter(t => t.projectId === projectId)
     if (sameProject.length >= MAX_TERMINALS_PER_PROJECT) {
       useProjectStore
@@ -121,23 +121,29 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return null
     }
     const id = crypto.randomUUID()
-    const profile = getDefaultTerminalProfile()
+    const profile = getTerminalProfile(profileId)
     const nextNumber =
       sameProject.reduce((max, terminal) => {
         const match = /^终端 (\d+)$/.exec(terminal.name) ?? /^Terminal (\d+)$/.exec(terminal.name)
         return match ? Math.max(max, Number(match[1])) : max
       }, 0) + 1
+    const baseName = resolveNewTerminalName(
+      profile.name,
+      profile.command,
+      nextNumber,
+      DEFAULT_TERMINAL_PROFILE.name
+    )
     const tab: TerminalTab = {
       id,
-      name: resolveNewTerminalName(
-        profile.name,
-        profile.command,
-        nextNumber,
-        DEFAULT_TERMINAL_PROFILE.name
+      name: disambiguateTerminalName(
+        baseName,
+        sameProject.map(terminal => terminal.name)
       ),
       projectId,
       cwd: projectPath,
-      launchCommand: profile.command.trim(),
+      profileId: profile.id,
+      launchCommand: profile.command.trim().replace(/\s*\n+\s*/g, ' && '),
+      allowTitleRename: true,
       status: 'starting',
       exitCode: null,
       startedAt: Date.now(),
@@ -202,6 +208,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       launchCommand: target,
       shellKind,
       env,
+      allowTitleRename: false,
       status: 'starting',
       exitCode: null,
       startedAt: Date.now(),

@@ -8,13 +8,26 @@ export interface TerminalProfile {
 
 export interface TerminalProfileSettings {
   profiles: TerminalProfile[]
-  defaultProfileId: string
+  /** 未指定时使用内置 `DEFAULT_TERMINAL_PROFILE`（普通 PowerShell）。 */
+  defaultProfileId: string | null
 }
 
 export const DEFAULT_TERMINAL_PROFILE: TerminalProfile = {
   id: 'default',
   name: '普通终端',
   command: '',
+}
+
+function normalizeDefaultProfileId(
+  id: string | null | undefined,
+  profiles: TerminalProfile[]
+): string | null {
+  if (!id || id === DEFAULT_TERMINAL_PROFILE.id) return null
+  return profiles.some(profile => profile.id === id) ? id : null
+}
+
+export function getEffectiveDefaultProfileId(settings: TerminalProfileSettings): string {
+  return settings.defaultProfileId ?? DEFAULT_TERMINAL_PROFILE.id
 }
 
 export function loadTerminalProfileSettings(): TerminalProfileSettings {
@@ -32,12 +45,10 @@ export function loadTerminalProfileSettings(): TerminalProfileSettings {
     const allProfiles = profiles.some(profile => profile.id === DEFAULT_TERMINAL_PROFILE.id)
       ? profiles
       : [DEFAULT_TERMINAL_PROFILE, ...profiles]
-    const defaultProfileId = allProfiles.some(profile => profile.id === value.defaultProfileId)
-      ? value.defaultProfileId!
-      : DEFAULT_TERMINAL_PROFILE.id
+    const defaultProfileId = normalizeDefaultProfileId(value.defaultProfileId, allProfiles)
     return { profiles: allProfiles, defaultProfileId }
   } catch {
-    return { profiles: [DEFAULT_TERMINAL_PROFILE], defaultProfileId: DEFAULT_TERMINAL_PROFILE.id }
+    return { profiles: [DEFAULT_TERMINAL_PROFILE], defaultProfileId: null }
   }
 }
 
@@ -47,8 +58,18 @@ export function saveTerminalProfileSettings(settings: TerminalProfileSettings) {
 
 export function getDefaultTerminalProfile(): TerminalProfile {
   const settings = loadTerminalProfileSettings()
+  if (!settings.defaultProfileId) return DEFAULT_TERMINAL_PROFILE
   return (
     settings.profiles.find(profile => profile.id === settings.defaultProfileId) ??
     DEFAULT_TERMINAL_PROFILE
   )
+}
+
+export function getTerminalProfile(profileId?: string): TerminalProfile {
+  const settings = loadTerminalProfileSettings()
+  if (profileId) {
+    const found = settings.profiles.find(profile => profile.id === profileId)
+    if (found) return found
+  }
+  return getDefaultTerminalProfile()
 }

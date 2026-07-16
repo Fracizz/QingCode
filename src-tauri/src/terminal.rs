@@ -2,6 +2,7 @@ use portable_pty::{ChildKiller, CommandBuilder, NativePtySystem, PtyPair, PtySiz
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter};
 
 #[derive(serde::Serialize, Clone)]
@@ -21,6 +22,7 @@ struct TerminalSession {
     writer: Box<dyn std::io::Write + Send>,
     killer: Option<Box<dyn ChildKiller + Send + Sync>>,
     generation: u64,
+    shell_pid: Option<u32>,
 }
 
 pub struct TerminalManager {
@@ -77,6 +79,7 @@ impl TerminalManager {
             .map_err(|e| e.to_string())?;
 
         let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
+        let shell_pid = child.process_id();
         let killer = child.clone_killer();
         drop(pair.slave);
 
@@ -93,6 +96,7 @@ impl TerminalManager {
             writer,
             killer: Some(killer),
             generation,
+            shell_pid,
         };
 
         {
@@ -189,6 +193,17 @@ impl TerminalManager {
                 let _ = k.kill();
             }
         }
+    }
+
+    pub fn has_child_processes(&self, id: &str) -> Result<bool, String> {
+        let sessions = self.sessions.lock().unwrap();
+        let session = sessions
+            .get(id)
+            .ok_or_else(|| "Terminal not found".to_string())?;
+        let Some(pid) = session.shell_pid else {
+            return Ok(false);
+        };
+        Ok(count_child_processes(pid) > 0)
     }
 
     pub fn kill_all(&self) {
@@ -288,4 +303,15 @@ fn infer_script_kind(path: &str) -> String {
     } else {
         "sh".to_string()
     }
+}
+
+fn count_child_processes(parent_pid: u32) -> usize {
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    let parent = Pid::from_u32(parent_pid);
+    system
+        .processes()
+        .values()
+        .filter(|process| process.parent() == Some(parent))
+        .count()
 }

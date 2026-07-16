@@ -3,7 +3,9 @@ import { Circle, Plus, RotateCcw, X, Terminal as TerminalIcon, Pencil, XSquare, 
 import { MAX_TERMINALS_PER_PROJECT, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
 import { confirmDialog } from '../store/confirmStore'
+import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '../lib/terminalProfiles'
 import { formatTerminalName } from '../utils/terminalName'
+import { canCloseTerminalDirectly } from '../lib/terminalClose'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
@@ -26,6 +28,7 @@ export default function TerminalTabs() {
     y: number
     terminal: TerminalTab
   } | null>(null)
+  const [profileMenu, setProfileMenu] = useState<{ x: number; y: number } | null>(null)
   const [closeArmId, setCloseArmId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
@@ -47,7 +50,23 @@ export default function TerminalTabs() {
 
   useEffect(() => {
     if (!closeArmId) return
-    if (!terminals.some(t => t.id === closeArmId)) setCloseArmId(null)
+    let cancelled = false
+    const syncArmState = async () => {
+      const armed = terminals.find(t => t.id === closeArmId)
+      if (!armed || armed.status === 'exited') {
+        if (!cancelled) setCloseArmId(null)
+        return
+      }
+      if (await canCloseTerminalDirectly(armed)) {
+        if (!cancelled) setCloseArmId(null)
+      }
+    }
+    void syncArmState()
+    const timer = window.setInterval(() => void syncArmState(), 800)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [closeArmId, terminals])
 
   useEffect(() => {
@@ -74,18 +93,25 @@ export default function TerminalTabs() {
 
   const handleCloseClick = (event: ReactMouseEvent, id: string) => {
     event.stopPropagation()
-    if (closeArmId === id) {
-      void handleCloseTab(id)
-      return
-    }
-    setActiveTerminal(id)
-    setCloseArmId(id)
+    const terminal = terminals.find(t => t.id === id)
+    void (async () => {
+      if (await canCloseTerminalDirectly(terminal)) {
+        void handleCloseTab(id)
+        return
+      }
+      if (closeArmId === id) {
+        void handleCloseTab(id)
+        return
+      }
+      setActiveTerminal(id)
+      setCloseArmId(id)
+    })()
   }
 
   const handleClose = async (id: string) => {
     const terminal = terminals.find(tab => tab.id === id)
     if (!terminal) return
-    if (terminal.status !== 'exited') {
+    if (!(await canCloseTerminalDirectly(terminal))) {
       const confirmed = await confirmDialog({
         title: '关闭终端',
         message: `「${formatTerminalName(terminal.name)}」仍在运行`,
@@ -159,7 +185,7 @@ export default function TerminalTabs() {
     setRenameDraft('')
   }
 
-  const handleNewTerminal = () => {
+  const handleNewTerminal = (profileId?: string) => {
     if (!currentProject) {
       useProjectStore.getState().pushToast('info', '请先选择或添加项目，再创建终端')
       return
@@ -171,7 +197,21 @@ export default function TerminalTabs() {
       )
       return
     }
-    addTerminal(currentProject.path, currentProject.id)
+    addTerminal(currentProject.path, currentProject.id, profileId)
+  }
+
+  const profileMenuItems = (): ContextMenuItem[] => {
+    const settings = loadTerminalProfileSettings()
+    const effectiveDefaultId = getEffectiveDefaultProfileId(settings)
+    return settings.profiles.map(profile => ({
+      label:
+        profile.id === effectiveDefaultId
+          ? `${profile.name.trim() || '未命名配置'}（默认）`
+          : profile.name.trim() || '未命名配置',
+      icon: <Plus size={14} />,
+      disabled: atLimit,
+      action: () => handleNewTerminal(profile.id),
+    }))
   }
 
   const menuItems = (terminal: TerminalTab): ContextMenuItem[] => [
@@ -184,10 +224,10 @@ export default function TerminalTabs() {
       },
     },
     {
-      label: '新建终端（同项目）',
+      label: '新建终端（默认配置）',
       icon: <Plus size={14} />,
       disabled: atLimit,
-      action: handleNewTerminal,
+      action: () => handleNewTerminal(),
     },
     {
       label: '关闭',
@@ -210,11 +250,13 @@ export default function TerminalTabs() {
   return (
     <>
     <div className="ui-font-scaled h-9 flex bg-bg-deep border-t border-border items-center flex-shrink-0">
-        <div className="flex items-center gap-1.5 px-3 text-[11px] font-semibold tracking-widest uppercase text-fg-muted">
-          <TerminalIcon size={13} /> Terminal
+        <div className="flex items-center gap-1.5 px-3 text-[11px] font-semibold tracking-wide text-fg-muted">
+          <TerminalIcon size={13} /> 终端
         </div>
         <div className="flex flex-1 min-w-0 overflow-x-auto items-center">
-          {projectTerminals.map(t => (
+          {projectTerminals.map(t => {
+            const isCloseArmed = closeArmId === t.id
+            return (
               <div
                 key={t.id}
                 className={`group flex items-center gap-1.5 pl-3 pr-2 h-9 cursor-pointer border-r border-border whitespace-nowrap transition-colors
@@ -308,21 +350,21 @@ export default function TerminalTabs() {
                   </Tooltip>
                 )}
                 <Tooltip
-                  label={closeArmId === t.id ? '再次点击关闭终端' : '关闭终端'}
+                  label={isCloseArmed ? '再次点击关闭终端' : '关闭终端'}
                   side="top"
                 >
                   <button
                     type="button"
-                    aria-label={closeArmId === t.id ? '确认关闭终端' : '关闭终端'}
+                    aria-label={isCloseArmed ? '确认关闭终端' : '关闭终端'}
                     data-terminal-close={t.id}
                     className={`ml-1 flex items-center justify-center w-4 h-4 rounded transition-colors ${
-                      closeArmId === t.id
+                      isCloseArmed
                         ? 'bg-danger/15 text-danger'
                         : 'hover:bg-bg-active'
                     }`}
                     onClick={e => handleCloseClick(e, t.id)}
                   >
-                    {closeArmId === t.id ? (
+                    {isCloseArmed ? (
                       <Circle size={9} fill="currentColor" />
                     ) : (
                       <X size={13} className="opacity-60 group-hover:opacity-100" />
@@ -330,13 +372,14 @@ export default function TerminalTabs() {
                   </button>
                 </Tooltip>
               </div>
-          ))}
+            )
+          })}
           <Tooltip
             label={
               atLimit
                 ? `已达到每个项目 ${MAX_TERMINALS_PER_PROJECT} 个终端的上限`
                 : currentProject
-                  ? `在当前项目内新建终端（${currentProject.name}）`
+                  ? '左键：默认配置；右键：选择终端配置'
                   : '请先选择项目'
             }
             side="top"
@@ -351,7 +394,12 @@ export default function TerminalTabs() {
                   : 'text-fg-dim cursor-not-allowed'
               }`}
               disabled={!currentProject || atLimit}
-              onClick={handleNewTerminal}
+              onClick={() => handleNewTerminal()}
+              onContextMenu={event => {
+                if (!currentProject || atLimit) return
+                event.preventDefault()
+                setProfileMenu({ x: event.clientX, y: event.clientY })
+              }}
             >
               <Plus size={15} />
             </button>
@@ -364,6 +412,14 @@ export default function TerminalTabs() {
           y={contextMenu.y}
           items={menuItems(contextMenu.terminal)}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+      {profileMenu && (
+        <ContextMenu
+          x={profileMenu.x}
+          y={profileMenu.y}
+          items={profileMenuItems()}
+          onClose={() => setProfileMenu(null)}
         />
       )}
     </>
