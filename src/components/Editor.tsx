@@ -1,9 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { basicSetup } from 'codemirror'
-import { EditorState, StateEffect, StateField } from '@codemirror/state'
+import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state'
 import { Decoration, EditorView, keymap, type DecorationSet } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { javascript } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
 import { markdown } from '@codemirror/lang-markdown'
@@ -18,6 +17,36 @@ import {
   formatFileReference,
 } from '../utils/fileReferences'
 import { FileText } from 'lucide-react'
+import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
+
+// 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
+const lightTheme = EditorView.theme(
+  {
+    '&': { backgroundColor: '#ffffff', color: '#1a1a1a' },
+    '.cm-gutters': { backgroundColor: '#fbfbfb', color: '#8a8a8a', borderRight: '1px solid #e5e5e5' },
+    '.cm-activeLine': { backgroundColor: '#f4f7fc' },
+    '.cm-activeLineGutter': { backgroundColor: '#eef3fa', color: '#1a1a1a' },
+    '.cm-selectionBackground, ::selection': { backgroundColor: '#cfe3fb' },
+    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+      backgroundColor: '#b9d6f5',
+    },
+    '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#1a1a1a' },
+    '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
+      backgroundColor: '#e9f5d0',
+      outline: '1px solid #c2e08a',
+    },
+    '.cm-searchMatch': { backgroundColor: '#ffe9a8' },
+    '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: '#ffd56b' },
+    '.cm-panels': { backgroundColor: '#f3f3f3', color: '#1a1a1a' },
+    '.cm-panels.cm-panels-top': { borderBottom: '1px solid #e5e5e5' },
+    '.cm-textfield': { backgroundColor: '#ffffff', border: '1px solid #d4d4d4' },
+  },
+  { dark: false },
+)
+
+function editorThemeExtension() {
+  return getResolvedTheme() === 'dark' ? oneDark : lightTheme
+}
 
 const flashLineEffect = StateEffect.define<number>()
 const clearFlashEffect = StateEffect.define<void>()
@@ -57,6 +86,7 @@ const LANG_MAP: Record<string, () => import('@codemirror/language').LanguageSupp
 export default function Editor() {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const themeCompartment = useRef(new Compartment())
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
   const setTabContent = useEditorStore(s => s.setTabContent)
@@ -81,7 +111,7 @@ export default function Editor() {
       doc: activeTab.content || '',
       extensions: [
         basicSetup,
-        oneDark,
+        themeCompartment.current.of(editorThemeExtension()),
         langSupport ?? [],
         flashField,
         EditorView.updateListener.of(update => {
@@ -149,6 +179,16 @@ export default function Editor() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTabId])
+
+  // 主题切换时即时重配置编辑器主题（不重建 view）。
+  useEffect(() => {
+    const onTheme = () => {
+      const view = viewRef.current
+      if (view) view.dispatch({ effects: themeCompartment.current.reconfigure(editorThemeExtension()) })
+    }
+    window.addEventListener(THEME_SETTINGS_EVENT, onTheme)
+    return () => window.removeEventListener(THEME_SETTINGS_EVENT, onTheme)
+  }, [])
 
   useEffect(() => {
     if (!viewRef.current || !activeTab || !pendingReveal) return

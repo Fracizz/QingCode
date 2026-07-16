@@ -6,9 +6,10 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useTerminalStore } from '../store/terminalStore'
 import { isTauri } from '../lib/tauri'
 import { FONT_SETTINGS_EVENT } from '../lib/fontSettings'
+import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
 import '@xterm/xterm/css/xterm.css'
 
-const THEME = {
+const DARK_THEME = {
   background: '#181818',
   foreground: '#d4d4d4',
   cursor: '#d4d4d4',
@@ -32,6 +33,34 @@ const THEME = {
   brightWhite: '#ffffff',
 }
 
+const LIGHT_THEME = {
+  background: '#ffffff',
+  foreground: '#1a1a1a',
+  cursor: '#1a1a1a',
+  cursorAccent: '#ffffff',
+  selectionBackground: '#b9d6f5',
+  black: '#000000',
+  red: '#c43b32',
+  green: '#107c10',
+  yellow: '#9a6a00',
+  blue: '#005fb8',
+  magenta: '#9b1b9b',
+  cyan: '#0b7a85',
+  white: '#1a1a1a',
+  brightBlack: '#5a5a5a',
+  brightRed: '#a3261e',
+  brightGreen: '#0b6a0b',
+  brightYellow: '#7a5400',
+  brightBlue: '#004488',
+  brightMagenta: '#7a1488',
+  brightCyan: '#055a63',
+  brightWhite: '#000000',
+}
+
+function terminalTheme() {
+  return getResolvedTheme() === 'dark' ? DARK_THEME : LIGHT_THEME
+}
+
 export default function TerminalView({ terminalId }: { terminalId: string }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
@@ -50,7 +79,7 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
       fontSize: 13,
       fontFamily:
         '"JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace',
-      theme: THEME,
+      theme: terminalTheme(),
       cols: 80,
       rows: 20,
       allowProposedApi: true,
@@ -72,6 +101,11 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
     }
     window.addEventListener(FONT_SETTINGS_EVENT, updateFont)
     updateFont()
+
+    const updateTheme = () => {
+      term.options.theme = terminalTheme()
+    }
+    window.addEventListener(THEME_SETTINGS_EVENT, updateTheme)
 
     const doFit = () => {
       try {
@@ -111,6 +145,7 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
     return () => {
       cancelled = true
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
+      window.removeEventListener(THEME_SETTINGS_EVENT, updateTheme)
       clearTimeout(t)
       ro.disconnect()
       if (unlistenRef.current) {

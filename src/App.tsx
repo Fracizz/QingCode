@@ -7,6 +7,7 @@ import Editor from './components/Editor'
 import TerminalTabs from './components/TerminalTabs'
 import TerminalView from './components/Terminal'
 import SearchPanel from './components/SearchPanel'
+import RunPanel from './components/RunPanel'
 import StatusBar from './components/StatusBar'
 import TitleBar from './components/TitleBar'
 import Toaster from './components/Toaster'
@@ -20,7 +21,7 @@ import { useUIStore } from './store/uiStore'
 import { isTauri } from './lib/tauri'
 import ResizableSidebar from './components/ResizableSidebar'
 import { applyFontSettings, loadFontSettings } from './lib/fontSettings'
-import { applyTheme, loadTheme } from './lib/themeSettings'
+import { applyTheme, loadTheme, startSystemThemeListener } from './lib/themeSettings'
 import {
   clampSidebarWidth,
   loadSidebarWidth,
@@ -32,6 +33,7 @@ import {
   terminalResizerHint,
 } from './lib/panelLayout'
 import PanelResizer from './components/PanelResizer'
+import { beginPanelResize, endPanelResize } from './lib/panelResize'
 import { migrateFromNestCode } from './lib/migrateLegacySettings'
 
 migrateFromNestCode()
@@ -67,6 +69,7 @@ function App() {
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const view = useUIStore(s => s.view)
   const setView = useUIStore(s => s.setView)
+  const terminalOpenSignal = useUIStore(s => s.terminalOpenSignal)
 
   const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)
   const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)
@@ -91,11 +94,11 @@ function App() {
         setIsTerminalResizing(false)
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
-        document.body.style.userSelect = ''
+        endPanelResize()
       }
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
-      document.body.style.userSelect = 'none'
+      beginPanelResize()
     },
     [terminalHeight]
   )
@@ -107,6 +110,7 @@ function App() {
   useEffect(() => {
     applyFontSettings(loadFontSettings())
     applyTheme(loadTheme())
+    startSystemThemeListener()
   }, [])
 
   useEffect(() => {
@@ -119,6 +123,11 @@ function App() {
   useEffect(() => {
     saveSidebarWidth(sidebarWidth)
   }, [sidebarWidth])
+
+  // Open the terminal panel when something (e.g. a run config) signals it.
+  useEffect(() => {
+    if (terminalOpenSignal > 0) setTerminalOpen(true)
+  }, [terminalOpenSignal])
 
   useEffect(() => {
     const onResize = () => setSidebarWidth(w => clampSidebarWidth(w))
@@ -192,6 +201,16 @@ function App() {
             className="ui-font-scaled"
           >
             <SearchPanel />
+          </ResizableSidebar>
+        )}
+
+        {view === 'run' && (
+          <ResizableSidebar
+            width={sidebarWidth}
+            onWidthChange={setSidebarWidth}
+            className="ui-font-scaled bg-bg-sidebar"
+          >
+            <RunPanel />
           </ResizableSidebar>
         )}
 

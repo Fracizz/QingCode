@@ -53,7 +53,7 @@ export default function Tooltip({
   const triggerRef = useRef<HTMLSpanElement>(null)
   const [open, setOpen] = useState(false)
   const [style, setStyle] = useState<CSSProperties>({})
-  const timerRef = useRef<number>()
+  const timerRef = useRef<number | undefined>(undefined)
 
   const clearTimer = () => {
     if (timerRef.current !== undefined) {

@@ -176,6 +176,12 @@ body {
 }
 
 /* Panel resize sash (sidebar + terminal) */
+body.panel-resizing,
+body.panel-resizing * {
+  cursor: default !important;
+  user-select: none !important;
+}
+
 .panel-resizer {
   position: relative;
   flex-shrink: 0;
@@ -184,18 +190,17 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  cursor: default;
 }
 
 .panel-resizer--horizontal {
   height: 8px;
   margin-top: -4px;
-  cursor: row-resize;
 }
 
 .panel-resizer--vertical {
   width: 8px;
   margin-right: -4px;
-  cursor: col-resize;
 }
 
 .panel-resizer-line {

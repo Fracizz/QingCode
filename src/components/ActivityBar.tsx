@@ -1,5 +1,4 @@
 import { Files, Search, Terminal, Settings, FolderPlus, BugPlay } from 'lucide-react'
-import { useProjectStore } from '../store/projectStore'
 import Tooltip from './Tooltip'
 
 interface Props {

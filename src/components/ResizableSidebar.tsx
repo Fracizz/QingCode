@@ -5,6 +5,7 @@ import {
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
 } from '../lib/sidebarLayout'
+import { beginPanelResize, endPanelResize } from '../lib/panelResize'
 import { sidebarResizerHint } from '../lib/panelLayout'
 
 interface Props {
@@ -35,14 +36,12 @@ export default function ResizableSidebar({ width, onWidthChange, children, class
         setActive(false)
         window.removeEventListener('mousemove', onMove)
         window.removeEventListener('mouseup', onUp)
-        document.body.style.userSelect = ''
-        document.body.style.cursor = ''
+        endPanelResize()
       }
 
       window.addEventListener('mousemove', onMove)
       window.addEventListener('mouseup', onUp)
-      document.body.style.userSelect = 'none'
-      document.body.style.cursor = 'col-resize'
+      beginPanelResize()
     },
     [width, onWidthChange]
   )

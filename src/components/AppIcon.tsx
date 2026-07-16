@@ -16,16 +16,16 @@ export default function AppIcon({ size = 16, className }: Props) {
       className={className}
     >
       <rect width="512" height="512" fill="#131010" />
-      <path d="M224 220H288V272H224V220Z" fill="#4A6864" />
+      <path d="M212 232H308V328H212V232Z" fill="#4A6864" />
       <path
         fillRule="evenodd"
         clipRule="evenodd"
-        fill="#FFFFFF"
-        d="M108 272C108 400 176 444 256 444C336 444 404 400 404 272H356C356 368 314 400 256 400C198 400 156 368 156 272H108Z"
+        fill="#F1ECEC"
+        d="M80 268C80 420 164 472 256 472C348 472 432 420 432 268H372C372 388 320 424 256 424C192 424 140 388 140 268H80Z"
       />
       <path
-        fill="#FFFFFF"
-        d="M172 136H220L320 208L220 280H172L272 208L172 136Z"
+        fill="#F1ECEC"
+        d="M160 168H236L348 256L236 344H160L268 256L160 168Z"
       />
     </svg>
   )

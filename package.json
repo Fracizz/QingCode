@@ -12,7 +12,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
+    "package:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

@@ -8,8 +8,10 @@
 
 ```bash
 pnpm install
-pnpm tauri dev
+pnpm tauri:dev
 ```
+
+Windows 下若 `cargo` 不在 PATH，可用 `pnpm tauri:dev`（会自动加入 `%USERPROFILE%\.cargo\bin`）。
 
 ## 构建
 
