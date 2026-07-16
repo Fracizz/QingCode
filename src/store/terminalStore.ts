@@ -2,10 +2,63 @@ import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { safeInvoke } from '../lib/tauri'
 import { useProjectStore } from './projectStore'
+import { useUIStore } from './uiStore'
 import type { TerminalTab } from '../types'
+import { DEFAULT_TERMINAL_PROFILE, getDefaultTerminalProfile } from '../lib/terminalProfiles'
+import { resolveNewTerminalName, terminalDisplayLabel } from '../utils/terminalName'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 const STORAGE_KEY = 'qingcode:terminal-layout'
+const MAX_BUFFERED_OUTPUT_LENGTH = 1024 * 1024
+
+/** 够"快"才算启动失败：进程在此时长（毫秒）内非零退出，视为秒退并提示。 */
+const QUICK_FAIL_THRESHOLD_MS = 2000
+
+type TerminalOutputListener = (data: Uint8Array) => void
+
+const terminalOutputBuffers = new Map<string, Uint8Array>()
+const terminalOutputListeners = new Map<string, Set<TerminalOutputListener>>()
+
+function publishTerminalOutput(id: string, data: number[]) {
+  const bytes = new Uint8Array(data)
+  const listeners = terminalOutputListeners.get(id)
+  if (listeners?.size) {
+    listeners.forEach(listener => listener(bytes))
+    return
+  }
+
+  const previous = terminalOutputBuffers.get(id)
+  const buffered = new Uint8Array((previous?.length ?? 0) + bytes.length)
+  if (previous) buffered.set(previous)
+  buffered.set(bytes, previous?.length ?? 0)
+  terminalOutputBuffers.set(
+    id,
+    buffered.length > MAX_BUFFERED_OUTPUT_LENGTH
+      ? buffered.slice(buffered.length - MAX_BUFFERED_OUTPUT_LENGTH)
+      : buffered
+  )
+}
+
+function clearTerminalOutput(id: string) {
+  terminalOutputBuffers.delete(id)
+}
+
+export function subscribeTerminalOutput(id: string, listener: TerminalOutputListener) {
+  const listeners = terminalOutputListeners.get(id) ?? new Set<TerminalOutputListener>()
+  listeners.add(listener)
+  terminalOutputListeners.set(id, listeners)
+
+  const buffered = terminalOutputBuffers.get(id)
+  if (buffered) {
+    terminalOutputBuffers.delete(id)
+    listener(buffered)
+  }
+
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0) terminalOutputListeners.delete(id)
+  }
+}
 
 export type ShellKind = 'ps1' | 'bat' | 'sh' | 'command' | 'script'
 
@@ -68,6 +121,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return null
     }
     const id = crypto.randomUUID()
+    const profile = getDefaultTerminalProfile()
     const nextNumber =
       sameProject.reduce((max, terminal) => {
         const match = /^终端 (\d+)$/.exec(terminal.name) ?? /^Terminal (\d+)$/.exec(terminal.name)
@@ -75,11 +129,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }, 0) + 1
     const tab: TerminalTab = {
       id,
-      name: `终端 ${nextNumber}`,
+      name: resolveNewTerminalName(
+        profile.name,
+        profile.command,
+        nextNumber,
+        DEFAULT_TERMINAL_PROFILE.name
+      ),
       projectId,
       cwd: projectPath,
+      launchCommand: profile.command.trim(),
       status: 'starting',
       exitCode: null,
+      startedAt: Date.now(),
     }
     set(s => ({
       terminals: [...s.terminals, tab],
@@ -87,7 +148,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       activeTerminalByProject: { ...s.activeTerminalByProject, [projectId]: id },
     }))
     try {
-      await safeInvoke('新建终端', 'create_terminal', { id, cwd: projectPath })
+      if (tab.launchCommand) {
+        await safeInvoke('启动终端配置', 'spawn_script', {
+          id,
+          cwd: projectPath,
+          shellKind: 'command',
+          target: tab.launchCommand,
+          env: {},
+        })
+      } else {
+        await safeInvoke('新建终端', 'create_terminal', { id, cwd: projectPath })
+      }
       set(s => ({
         terminals: s.terminals.map(terminal =>
           terminal.id === id && terminal.status === 'starting'
@@ -128,8 +199,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       name,
       projectId,
       cwd,
+      launchCommand: target,
+      shellKind,
+      env,
       status: 'starting',
       exitCode: null,
+      startedAt: Date.now(),
     }
     set(s => ({
       terminals: [...s.terminals, tab],
@@ -140,7 +215,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       await safeInvoke('启动任务', 'spawn_script', {
         id,
         cwd,
-        shell_kind: shellKind,
+        shellKind,
         target,
         env,
       })
@@ -182,6 +257,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           : s.activeTerminalId
       return { terminals, activeTerminalId, activeTerminalByProject }
     })
+    clearTerminalOutput(id)
   },
 
   closeOtherTerminals: async (id: string) => {
@@ -199,6 +275,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       activeTerminalByProject[keep.projectId] = id
       return { terminals, activeTerminalId: id, activeTerminalByProject }
     })
+    others.forEach(clearTerminalOutput)
   },
 
   closeAllProjectTerminals: async (projectId: string) => {
@@ -217,6 +294,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         activeTerminalByProject,
       }
     })
+    ids.forEach(clearTerminalOutput)
   },
 
   closeProjectTerminals: async (projectId: string) => {
@@ -235,18 +313,31 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         activeTerminalByProject,
       }
     })
+    ids.forEach(clearTerminalOutput)
   },
 
   restartTerminal: async (id: string) => {
     const tab = get().terminals.find(terminal => terminal.id === id)
     if (!tab) return
+    clearTerminalOutput(id)
     set(s => ({
       terminals: s.terminals.map(terminal =>
-        terminal.id === id ? { ...terminal, status: 'starting', exitCode: null } : terminal
+        terminal.id === id ? { ...terminal, status: 'starting', exitCode: null, startedAt: Date.now() } : terminal
       ),
     }))
     try {
-      await safeInvoke('重启终端', 'create_terminal', { id, cwd: tab.cwd })
+      if (tab.launchCommand) {
+        // Banner is written by Terminal.tsx after reset; avoid double echo.
+        await safeInvoke('重启终端配置', 'spawn_script', {
+          id,
+          cwd: tab.cwd,
+          shellKind: tab.shellKind ?? 'command',
+          target: tab.launchCommand,
+          env: tab.env ?? {},
+        })
+      } else {
+        await safeInvoke('重启终端', 'create_terminal', { id, cwd: tab.cwd })
+      }
       set(s => ({
         terminals: s.terminals.map(terminal =>
           terminal.id === id && terminal.status === 'starting'
@@ -316,20 +407,51 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       terminals: s.terminals.map(t => (t.id === id ? { ...t, name: name.trim() || t.name } : t)),
     })),
 
-  initializeTerminalEvents: () =>
-    listen<{ id: string; exit_code: number }>('terminal-exit', event => {
-      set(s => ({
-        terminals: s.terminals.map(terminal =>
-          terminal.id === event.payload.id
-            ? {
-                ...terminal,
-                status: 'exited',
-                exitCode: event.payload.exit_code,
-              }
-            : terminal
-        ),
-      }))
-    }),
+  initializeTerminalEvents: async () => {
+    const [unlistenData, unlistenExit] = await Promise.all([
+      listen<{ id: string; data: number[] }>('terminal-data', event => {
+        if (get().terminals.some(terminal => terminal.id === event.payload.id)) {
+          publishTerminalOutput(event.payload.id, event.payload.data)
+        }
+      }),
+      listen<{ id: string; exit_code: number }>('terminal-exit', event => {
+        const { id, exit_code } = event.payload
+        const tab = get().terminals.find(t => t.id === id)
+        const startedAt = tab?.startedAt
+        const quickFail =
+          !!tab &&
+          !!startedAt &&
+          Date.now() - startedAt < QUICK_FAIL_THRESHOLD_MS &&
+          exit_code !== 0
+        set(s => ({
+          terminals: s.terminals.map(terminal =>
+            terminal.id === id
+              ? {
+                  ...terminal,
+                  status: 'exited',
+                  exitCode: exit_code,
+                }
+              : terminal
+          ),
+        }))
+        if (quickFail && tab) {
+          // 进程秒退且非零退出：切到该终端并提示，便于直接看到报错。
+          useUIStore.getState().openTerminalPanel()
+          get().setActiveTerminal(id)
+          useProjectStore.getState().pushToast(
+            'error',
+            `「${terminalDisplayLabel(tab.name)}」启动失败（退出码 ${exit_code}）`,
+            '已切换到该终端，请查看输出中的错误信息'
+          )
+        }
+      }),
+    ])
+
+    return () => {
+      unlistenData()
+      unlistenExit()
+    }
+  },
 }))
 
 useTerminalStore.subscribe(state => {

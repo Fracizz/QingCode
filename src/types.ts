@@ -33,6 +33,13 @@ export interface TerminalTab {
   name: string
   projectId: string
   cwd: string
+  /** Command/script path shown in the terminal and reused on restart. */
+  launchCommand: string
+  /** When set, spawn/restart uses `spawn_script` with this kind (run-config tasks). */
+  shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'script'
+  env?: Record<string, string>
   status: 'starting' | 'running' | 'exited'
   exitCode: number | null
+  /** Wall-clock ms when the process was spawned; used to detect quick failures. */
+  startedAt?: number
 }

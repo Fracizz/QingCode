@@ -13,6 +13,9 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
+    /* 加速重复类型检查：增量编译，缓存到 node_modules/.tmp */
+    "incremental": true,
+    "tsBuildInfoFile": "node_modules/.tmp/tsbuildinfo.json",
 
     /* Linting */
     "strict": true,

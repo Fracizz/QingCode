@@ -7,10 +7,32 @@ import { useEditorStore } from '../store/editorStore'
 import AppIcon from './AppIcon'
 import Tooltip from './Tooltip'
 import ProjectPicker from './ProjectPicker'
+import { confirmDialog } from '../store/confirmStore'
+import { useTerminalStore } from '../store/terminalStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 
 async function requestAppClose() {
-  if (!await confirmDiscardTabs(useEditorStore.getState().tabs, '退出应用')) return
+  const runningTerminals = useTerminalStore
+    .getState()
+    .terminals.filter(terminal => terminal.status !== 'exited')
+  const detail =
+    runningTerminals.length > 0
+      ? `${runningTerminals.length} 个终端仍在运行，退出后将终止。\n未保存的编辑器更改可能丢失。`
+      : '未保存的编辑器更改可能丢失。'
+
+  if (
+    !(await confirmDialog({
+      title: '退出 QingCode',
+      message: '确定要关闭应用程序吗？',
+      detail,
+      kind: 'warning',
+      confirmLabel: '退出',
+      cancelLabel: '取消',
+    }))
+  ) {
+    return
+  }
+  if (!(await confirmDiscardTabs(useEditorStore.getState().tabs, '退出应用'))) return
   await getCurrentWindow().destroy()
 }
 

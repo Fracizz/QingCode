@@ -75,14 +75,24 @@ function normalizeTask(t: Partial<RunTask> | undefined): RunTask | null {
   if (!t || typeof t.id !== 'string' || typeof t.target !== 'string') return null
   const allowed: RunTaskType[] = ['ps1', 'bat', 'sh', 'command', 'script']
   const type = allowed.includes(t.type as RunTaskType) ? (t.type as RunTaskType) : 'command'
+  const cwd = typeof t.cwd === 'string' ? t.cwd.trim() || undefined : undefined
+  let target = t.target.trim()
+  if (type === 'command' && cwd) {
+    target = stripRedundantCdPrefix(target)
+  }
   return {
     id: t.id,
     name: typeof t.name === 'string' ? t.name : undefined,
     type,
-    target: t.target,
-    cwd: typeof t.cwd === 'string' ? t.cwd : undefined,
+    target,
+    cwd,
     env: t.env && typeof t.env === 'object' ? (t.env as Record<string, string>) : undefined,
   }
+}
+
+/** When cwd is set, leading `cd …;` / `cd … &&` in target is redundant and often breaks on Windows CMD. */
+function stripRedundantCdPrefix(target: string): string {
+  return target.replace(/^(?:cd\s+(?:"[^"]+"|'[^']+'|\S+)\s*(?:;|&&|&)\s*)+/i, '').trim()
 }
 
 function defaultConfigs(): RunConfig[] {
@@ -95,13 +105,13 @@ function defaultConfigs(): RunConfig[] {
           id: crypto.randomUUID(),
           name: '后端',
           type: 'command',
-          target: 'python manage.py runserver',
+          target: '',
         },
         {
           id: crypto.randomUUID(),
           name: '前端',
           type: 'command',
-          target: 'npm run dev',
+          target: '',
         },
       ],
     },
@@ -212,6 +222,14 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
       useProjectStore.getState().pushToast('error', new NotInTauriError('运行任务').message)
       return
     }
+    if (config.tasks.length === 0) {
+      useProjectStore.getState().pushToast(
+        'error',
+        `「${config.name}」没有可运行的任务`,
+        `请检查 ${RUN_CONFIG_RELATIVE_PATH}，任务命令字段应为 target`
+      )
+      return
+    }
     const addScriptTerminal = useTerminalStore.getState().addScriptTerminal
     const taskKeys: string[] = []
     for (const task of config.tasks) {
@@ -268,4 +286,4 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
     }),
 }))
 
-export { runConfigPath, defaultConfigs }
+export { runConfigPath, defaultConfigs, stripRedundantCdPrefix }

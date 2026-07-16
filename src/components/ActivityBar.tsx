@@ -3,6 +3,7 @@ import Tooltip from './Tooltip'
 
 interface Props {
   active: 'explorer' | 'search' | 'run' | 'settings'
+  sidebarOpen: boolean
   onActiveChange: (v: 'explorer' | 'search' | 'run' | 'settings') => void
   onToggleTerminal: () => void
   onAddProject: () => void
@@ -12,6 +13,7 @@ interface Props {
 
 export default function ActivityBar({
   active,
+  sidebarOpen,
   onActiveChange,
   onToggleTerminal,
   onAddProject,
@@ -23,25 +25,25 @@ export default function ActivityBar({
       <Item
         icon={<FolderTree size={22} />}
         label="资源管理器"
-        active={active === 'explorer'}
+        active={active === 'explorer' && sidebarOpen}
         onClick={() => onActiveChange('explorer')}
       />
       <Item
         icon={<Search size={22} />}
         label="搜索"
-        active={active === 'search'}
+        active={active === 'search' && sidebarOpen}
         onClick={() => onActiveChange('search')}
       />
       <Item
         icon={<BugPlay size={22} />}
         label="运行配置"
-        active={active === 'run'}
+        active={active === 'run' && sidebarOpen}
         onClick={() => onActiveChange('run')}
       />
       <Item
         icon={<Settings size={22} />}
         label="设置"
-        active={active === 'settings'}
+        active={active === 'settings' && sidebarOpen}
         onClick={() => onActiveChange('settings')}
       />
 

@@ -4,6 +4,12 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const MAX_EDITOR_FILE_SIZE: u64 = 500 * 1024 * 1024;
+
+fn exceeds_editor_file_size_limit(size: u64) -> bool {
+    size > MAX_EDITOR_FILE_SIZE
+}
+
 #[derive(Debug, Serialize)]
 pub struct FileNode {
     pub name: String,
@@ -631,6 +637,10 @@ pub fn search_file_contents(
 
 #[tauri::command]
 pub fn read_file(path: String) -> Result<String, String> {
+    let metadata = fs::metadata(&path).map_err(|e| format!("Failed to inspect {}: {}", path, e))?;
+    if exceeds_editor_file_size_limit(metadata.len()) {
+        return Err(format!("暂不支持打开超过 500MB 的大文件: {}", path));
+    }
     fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path, e))
 }
 
@@ -808,5 +818,11 @@ mod tests {
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn rejects_files_larger_than_editor_limit() {
+        assert!(!exceeds_editor_file_size_limit(MAX_EDITOR_FILE_SIZE));
+        assert!(exceeds_editor_file_size_limit(MAX_EDITOR_FILE_SIZE + 1));
     }
 }

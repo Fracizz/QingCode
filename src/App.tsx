@@ -9,9 +9,7 @@ import TitleBar from './components/TitleBar'
 import Toaster from './components/Toaster'
 import ConfirmDialog from './components/ConfirmDialog'
 import PromptDialog from './components/PromptDialog'
-import FontSettings from './components/FontSettings'
-import ThemeSettings from './components/ThemeSettings'
-import { Settings } from 'lucide-react'
+import SettingsPanel from './components/SettingsPanel'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useUIStore } from './store/uiStore'
@@ -75,7 +73,9 @@ function App() {
   const loadProjects = useProjectStore(s => s.loadProjects)
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const view = useUIStore(s => s.view)
+  const sidebarOpen = useUIStore(s => s.sidebarOpen)
   const setView = useUIStore(s => s.setView)
+  const toggleActivityView = useUIStore(s => s.toggleActivityView)
   const terminalOpenSignal = useUIStore(s => s.terminalOpenSignal)
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
@@ -191,20 +191,21 @@ function App() {
         <div className="flex flex-1 min-h-0 overflow-hidden">
         <ActivityBar
           active={view}
-          onActiveChange={setView}
+          sidebarOpen={sidebarOpen}
+          onActiveChange={toggleActivityView}
           onToggleTerminal={() => setTerminalOpen(v => !v)}
           onAddProject={handleAddProject}
           onManageProjects={openProjectManager}
           terminalOpen={terminalOpen}
         />
 
-        {view === 'explorer' && (
+        {sidebarOpen && view === 'explorer' && (
           <ResizableSidebar width={sidebarWidth} onWidthChange={setSidebarWidth}>
             <Sidebar />
           </ResizableSidebar>
         )}
 
-        {view === 'search' && (
+        {sidebarOpen && view === 'search' && (
           <ResizableSidebar
             width={sidebarWidth}
             onWidthChange={setSidebarWidth}
@@ -216,7 +217,7 @@ function App() {
           </ResizableSidebar>
         )}
 
-        {view === 'run' && (
+        {sidebarOpen && view === 'run' && (
           <ResizableSidebar
             width={sidebarWidth}
             onWidthChange={setSidebarWidth}
@@ -228,18 +229,13 @@ function App() {
           </ResizableSidebar>
         )}
 
-        {view === 'settings' && (
+        {sidebarOpen && view === 'settings' && (
           <ResizableSidebar
             width={sidebarWidth}
             onWidthChange={setSidebarWidth}
-            className="ui-font-scaled bg-bg-sidebar"
+            className="ui-font-scaled"
           >
-            <div className="px-4 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
-              <Settings size={13} /> 设置
-            </div>
-            <FontSettings />
-            <div className="border-t border-border-strong" />
-            <ThemeSettings />
+            <SettingsPanel />
           </ResizableSidebar>
         )}
 
@@ -264,35 +260,45 @@ function App() {
           />
         )}
 
-        {terminalOpen && (
-          <div
-            className="flex flex-col flex-shrink-0 min-h-0 overflow-hidden border-t border-border"
-            style={{ height: terminalHeight }}
-          >
-            <TerminalTabs />
-            <div className="flex-1 bg-bg-deep overflow-hidden min-h-0">
-              {projectTerminals.length === 0 && (
-                  <div className="h-full flex items-center justify-center text-fg-dim text-sm">
-                    {currentProject
-                      ? `当前项目「${currentProject.name}」暂无终端，点击标签栏 + 新建`
-                      : '请先选择或添加项目，终端将默认基于当前项目创建'}
-                  </div>
-              )}
-              {terminals.map(t => (
+        <div
+          className={`${terminalOpen ? 'flex' : 'hidden'} flex-col flex-shrink-0 min-h-0 overflow-hidden border-t border-border`}
+          style={{ height: terminalHeight }}
+        >
+          <TerminalTabs />
+          <div className="relative flex-1 min-w-0 bg-bg-deep overflow-hidden min-h-0">
+            {projectTerminals.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center text-fg-dim text-sm">
+                {currentProject
+                  ? `当前项目「${currentProject.name}」暂无终端，点击标签栏 + 新建`
+                  : '请先选择或添加项目，终端将默认基于当前项目创建'}
+              </div>
+            )}
+            {terminals.map(t => {
+              const inCurrentProject = t.projectId === currentProject?.id
+              const isActive = inCurrentProject && t.id === activeTerminalId
+              return (
                 <div
                   key={t.id}
-                  className={`h-full ${
-                    t.projectId === currentProject?.id && t.id === activeTerminalId ? '' : 'hidden'
-                  }`}
+                  className={
+                    inCurrentProject
+                      ? `absolute inset-0 min-w-0 ${
+                          isActive ? 'z-10 visible' : 'invisible pointer-events-none z-0'
+                        }`
+                      : 'hidden'
+                  }
                 >
                   <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
-                    <TerminalView terminalId={t.id} />
+                    <TerminalView
+                      terminalId={t.id}
+                      isActive={isActive}
+                      layoutKey={`${terminalOpen}:${terminalHeight}`}
+                    />
                   </Suspense>
                 </div>
-              ))}
-            </div>
+              )
+            })}
           </div>
-        )}
+        </div>
       </div>
 
       <StatusBar />

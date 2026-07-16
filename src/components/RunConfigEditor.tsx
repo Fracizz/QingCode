@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react'
 import { X, Plus, Trash2, Wand2 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import ModalOverlay from './ModalOverlay'
-import { useRunConfigStore, defaultConfigs, RUN_CONFIG_RELATIVE_PATH, type RunConfig, type RunTask, type RunTaskType } from '../store/runConfigStore'
+import { useRunConfigStore, defaultConfigs, RUN_CONFIG_RELATIVE_PATH, stripRedundantCdPrefix, type RunConfig, type RunTask, type RunTaskType } from '../store/runConfigStore'
 import type { Project } from '../types'
 
 const TYPE_OPTIONS: RunTaskType[] = ['command', 'ps1', 'bat', 'sh', 'script']
 
 const TYPE_LABEL: Record<RunTaskType, string> = {
-  command: '命令',
+  command: '命令（CMD）',
   ps1: 'ps1 脚本',
   bat: 'bat 脚本',
   sh: 'sh 脚本',
@@ -57,13 +57,19 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
     const trimmedName = name.trim()
     if (!trimmedName) return
     const cleanTasks = tasks
-      .map(t => ({
-        ...t,
-        name: t.name?.trim() || undefined,
-        target: t.target.trim(),
-        cwd: t.cwd?.trim() || undefined,
-        env: t.env && Object.keys(t.env).length > 0 ? t.env : undefined,
-      }))
+      .map(t => {
+        const cwd = t.cwd?.trim() || undefined
+        const targetRaw = t.target.trim()
+        const target =
+          t.type === 'command' && cwd ? stripRedundantCdPrefix(targetRaw) : targetRaw
+        return {
+          ...t,
+          name: t.name?.trim() || undefined,
+          target,
+          cwd,
+          env: t.env && Object.keys(t.env).length > 0 ? t.env : undefined,
+        }
+      })
       .filter(t => t.target.length > 0)
     if (cleanTasks.length === 0) return
     const config: RunConfig = {
@@ -240,6 +246,11 @@ function TaskEditor({
           className="flex-1 px-2 py-1 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
         />
       </div>
+      {task.type === 'command' && (
+        <p className="pl-[72px] text-[11px] text-fg-dim">
+          Windows 下使用 CMD，可用 && 连接命令。工作目录已填时无需再写 cd。
+        </p>
+      )}
       <div className="flex items-center gap-2">
         <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">工作目录</label>
         <input

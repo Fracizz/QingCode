@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import { List, type ListImperativeAPI, type RowComponentProps } from 'react-window'
 import {
   ChevronDown,
   ChevronRight,
@@ -69,150 +70,100 @@ function parentPath(path: string) {
   return separator > 0 ? path.slice(0, separator) : path
 }
 
-function FileTreeItem({
-  node,
-  depth,
-  projectId,
-  onOpenContextMenu,
-  onCopyPath,
-  pendingCreate,
-  forceExpandedPaths,
-  onCommitCreate,
-  onCancelCreate,
-}: {
-  node: FileNode
-  depth: number
-  projectId: string
+type VisibleTreeRow =
+  | { kind: 'node'; node: FileNode; depth: number }
+  | { kind: 'create'; depth: number; directory: boolean }
+
+type TreeRowProps = {
+  rows: VisibleTreeRow[]
+  expandedPaths: Set<string>
+  loadingPaths: Set<string>
+  activeFilePath: string | null
   onOpenContextMenu: (event: ReactMouseEvent, target: ContextTarget) => void
   onCopyPath: (path: string) => void
-  pendingCreate: PendingCreate | null
-  forceExpandedPaths: Set<string> | null
+  onToggleNode: (node: FileNode) => void
   onCommitCreate: (name: string) => void
   onCancelCreate: () => void
-}) {
-  const rowRef = useRef<HTMLDivElement>(null)
-  const [expanded, setExpanded] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const openFile = useEditorStore(s => s.openFile)
-  const expandProjectDir = useProjectStore(s => s.expandProjectDir)
-  const treeRevealPath = useProjectStore(s => s.treeRevealPath)
-  const activeFilePath = useEditorStore(s => {
-    const tab = s.tabs.find(t => t.id === s.activeTabId)
-    return tab?.path ?? null
-  })
-  const isActive = !node.is_dir && activeFilePath != null && pathsEqual(node.path, activeFilePath)
+}
 
-  useEffect(() => {
-    if (!node.is_dir || !treeRevealPath) return
-    if (isDescendantOf(treeRevealPath, node.path)) {
-      setExpanded(true)
+function flattenVisibleNodes(
+  nodes: FileNode[],
+  expandedPaths: Set<string>,
+  pendingCreate: PendingCreate | null,
+): VisibleTreeRow[] {
+  const rows: VisibleTreeRow[] = []
+  const visit = (node: FileNode, depth: number) => {
+    rows.push({ kind: 'node', node, depth })
+    if (!node.is_dir || !expandedPaths.has(node.path)) return
+    if (pendingCreate?.parentPath === node.path) {
+      rows.push({ kind: 'create', depth: depth + 1, directory: pendingCreate.directory })
     }
-  }, [treeRevealPath, node.path, node.is_dir])
+    if (node.loaded) node.children?.forEach(child => visit(child, depth + 1))
+  }
+  nodes.forEach(node => visit(node, 1))
+  return rows
+}
 
-  useEffect(() => {
-    if (!isActive || !rowRef.current) return
-    rowRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [isActive, treeRevealPath])
-
-  useEffect(() => {
-    if (forceExpandedPaths?.has(node.path)) setExpanded(true)
-  }, [forceExpandedPaths, node.path])
-
-  useEffect(() => {
-    if (pendingCreate?.parentPath === node.path && node.is_dir) setExpanded(true)
-  }, [pendingCreate, node.path, node.is_dir])
-
-  const toggle = async () => {
-    if (!node.is_dir) {
-      openFile(node.path)
-      return
-    }
-    const next = !expanded
-    setExpanded(next)
-    if (next && !node.loaded) {
-      setLoading(true)
-      await expandProjectDir(projectId, node.path)
-      setLoading(false)
-    }
+function VirtualTreeRow({
+  ariaAttributes,
+  index,
+  style,
+  rows,
+  expandedPaths,
+  loadingPaths,
+  activeFilePath,
+  onOpenContextMenu,
+  onCopyPath,
+  onToggleNode,
+  onCommitCreate,
+  onCancelCreate,
+}: RowComponentProps<TreeRowProps>) {
+  const row = rows[index]
+  if (row.kind === 'create') {
+    return (
+      <div style={style} {...ariaAttributes}>
+        <InlineCreateRow directory={row.directory} depth={row.depth} onSubmit={onCommitCreate} onCancel={onCancelCreate} />
+      </div>
+    )
   }
 
-  useEffect(() => {
-    if (!expanded || !node.is_dir || node.loaded || loading) return
-    setLoading(true)
-    expandProjectDir(projectId, node.path).finally(() => setLoading(false))
-  }, [expandProjectDir, expanded, loading, node.is_dir, node.loaded, node.path, projectId])
-
-  const pad = depth * 12 + 8
+  const { node, depth } = row
+  const expanded = node.is_dir && expandedPaths.has(node.path)
+  const isActive = !node.is_dir && activeFilePath != null && pathsEqual(node.path, activeFilePath)
+  const rowStyle: CSSProperties = { ...style, paddingLeft: depth * 12 + 8 }
 
   return (
-    <div>
-      <div
-        ref={rowRef}
-        tabIndex={0}
-        className={`flex items-center gap-1 pr-2 py-[3px] cursor-pointer text-[13px] select-none focus:outline-none
-          ${isActive ? 'bg-bg-active text-accent' : 'hover:bg-bg-hover focus:bg-bg-active'}`}
-        style={{ paddingLeft: pad }}
-        onClick={toggle}
-        onContextMenu={event => {
-          event.currentTarget.focus()
-          onOpenContextMenu(event, { kind: 'node', node })
-        }}
-        onKeyDown={event => {
-          if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
-            event.preventDefault()
-            onCopyPath(node.path)
-          }
-        }}
-      >
-        {node.is_dir ? (
-          <>
-            {expanded ? (
-              <ChevronDown size={14} className="text-fg-dim flex-shrink-0" />
-            ) : (
-              <ChevronRight size={14} className="text-fg-dim flex-shrink-0" />
-            )}
-            {expanded ? (
-              <FolderOpen size={15} className="text-accent flex-shrink-0" />
-            ) : (
-              <Folder size={15} className="text-accent flex-shrink-0" />
-            )}
-          </>
-        ) : (
-          <>
-            <span className="w-[14px] flex-shrink-0" />
-            <FileIcon size={14} className="text-fg-muted flex-shrink-0" />
-          </>
-        )}
-        <span className="truncate text-fg">{node.name}</span>
-        {loading && <RefreshCw size={12} className="ml-auto text-fg-dim animate-spin" />}
-      </div>
-      {expanded && node.is_dir && (
+    <div
+      {...ariaAttributes}
+      tabIndex={0}
+      className={`flex items-center gap-1 pr-2 py-[3px] cursor-pointer text-[13px] select-none focus:outline-none
+        ${isActive ? 'bg-bg-active text-accent' : 'hover:bg-bg-hover focus:bg-bg-active'}`}
+      style={rowStyle}
+      onClick={() => onToggleNode(node)}
+      onContextMenu={event => {
+        event.currentTarget.focus()
+        onOpenContextMenu(event, { kind: 'node', node })
+      }}
+      onKeyDown={event => {
+        if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
+          event.preventDefault()
+          onCopyPath(node.path)
+        }
+      }}
+    >
+      {node.is_dir ? (
         <>
-          {pendingCreate?.parentPath === node.path && (
-            <InlineCreateRow
-              directory={pendingCreate.directory}
-              depth={depth + 1}
-              onSubmit={onCommitCreate}
-              onCancel={onCancelCreate}
-            />
-          )}
-          {node.loaded &&
-            node.children?.map(child => (
-              <FileTreeItem
-                key={child.path}
-                node={child}
-                depth={depth + 1}
-                projectId={projectId}
-                onOpenContextMenu={onOpenContextMenu}
-                onCopyPath={onCopyPath}
-                pendingCreate={pendingCreate}
-                forceExpandedPaths={forceExpandedPaths}
-                onCommitCreate={onCommitCreate}
-                onCancelCreate={onCancelCreate}
-              />
-            ))}
+          {expanded ? <ChevronDown size={14} className="text-fg-dim flex-shrink-0" /> : <ChevronRight size={14} className="text-fg-dim flex-shrink-0" />}
+          {expanded ? <FolderOpen size={15} className="text-accent flex-shrink-0" /> : <Folder size={15} className="text-accent flex-shrink-0" />}
+        </>
+      ) : (
+        <>
+          <span className="w-[14px] flex-shrink-0" />
+          <FileIcon size={14} className="text-fg-muted flex-shrink-0" />
         </>
       )}
+      <span className="truncate text-fg">{node.name}</span>
+      {loadingPaths.has(node.path) && <RefreshCw size={12} className="ml-auto text-fg-dim animate-spin" />}
     </div>
   )
 }
@@ -246,13 +197,63 @@ export default function Sidebar() {
     target: ContextTarget
   } | null>(null)
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null)
+  const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set())
+  const [loadingPaths, setLoadingPaths] = useState<Set<string>>(() => new Set())
+  const listRef = useRef<ListImperativeAPI>(null)
+  const treeRevealPath = useProjectStore(s => s.treeRevealPath)
+  const tree = currentProject ? projectTrees[currentProject.id] ?? [] : []
+  const visibleTreeRows = useMemo(
+    () => flattenVisibleNodes(tree, expandedPaths, pendingCreate),
+    [expandedPaths, pendingCreate, tree],
+  )
 
-  const forceExpandedPaths = useMemo(() => {
-    if (!pendingCreate) return null
-    const project = projects.find(p => p.id === pendingCreate.projectId)
-    if (!project) return null
-    return new Set(dirsToReveal(pendingCreate.parentPath, project.path))
-  }, [pendingCreate, projects])
+  useEffect(() => {
+    if (!currentProject || !treeRevealPath || !isDescendantOf(treeRevealPath, currentProject.path)) return
+    const paths = collectAncestorDirs(treeRevealPath, currentProject.path)
+    if (paths.length === 0) return
+    setExpandedPaths(existing => new Set([...existing, ...paths]))
+  }, [currentProject, treeRevealPath])
+
+  useEffect(() => {
+    if (!pendingCreate || !currentProject || pendingCreate.projectId !== currentProject.id) return
+    setExpandedPaths(existing => new Set([
+      ...existing,
+      ...dirsToReveal(pendingCreate.parentPath, currentProject.path),
+    ]))
+  }, [currentProject, pendingCreate])
+
+  useEffect(() => {
+    const targetIndex = pendingCreate
+      ? visibleTreeRows.findIndex(row => row.kind === 'create')
+      : visibleTreeRows.findIndex(row => row.kind === 'node' && row.node.path === treeRevealPath)
+    if (targetIndex >= 0) listRef.current?.scrollToRow({ index: targetIndex, align: 'smart', behavior: 'smooth' })
+  }, [pendingCreate, treeRevealPath, visibleTreeRows])
+
+  const toggleTreeNode = async (node: FileNode) => {
+    if (!node.is_dir) {
+      void useEditorStore.getState().openFile(node.path)
+      return
+    }
+    if (!currentProject) return
+    const expanding = !expandedPaths.has(node.path)
+    setExpandedPaths(paths => {
+      const next = new Set(paths)
+      if (expanding) next.add(node.path)
+      else next.delete(node.path)
+      return next
+    })
+    if (!expanding || node.loaded) return
+    setLoadingPaths(paths => new Set(paths).add(node.path))
+    try {
+      await expandProjectDir(currentProject.id, node.path)
+    } finally {
+      setLoadingPaths(paths => {
+        const next = new Set(paths)
+        next.delete(node.path)
+        return next
+      })
+    }
+  }
 
   const handleLocateActiveFile = () => {
     if (!activeTabPath) return
@@ -263,6 +264,7 @@ export default function Sidebar() {
   const handleRefresh = async () => {
     if (refreshing || !currentProject) return
     setRefreshing(true)
+    setExpandedPaths(new Set())
     try {
       await Promise.all([
         refreshProjectTree(currentProject),
@@ -689,7 +691,7 @@ export default function Sidebar() {
       </div>
 
       {/* Current project tree only — project switching lives in the title bar picker */}
-      <div className="flex-1 overflow-auto pb-3">
+      <div className="flex-1 min-h-0 flex flex-col pb-3">
         {!currentProject ? (
           <div className="px-4 py-6 text-center">
             <p className="text-[13px] text-fg-muted mb-3">No project opened</p>
@@ -703,7 +705,6 @@ export default function Sidebar() {
         ) : (
           (() => {
             const unavailable = unavailableProjectIds.includes(currentProject.id)
-            const tree = projectTrees[currentProject.id] ?? []
             return (
               <>
                 <div
@@ -816,6 +817,7 @@ export default function Sidebar() {
                 </div>
 
                 <div
+                  className="flex-1 min-h-0 flex flex-col"
                   onContextMenu={event =>
                     showContextMenu(event, { kind: 'project', project: currentProject })
                   }
@@ -838,20 +840,28 @@ export default function Sidebar() {
                         pendingCreate?.parentPath !== currentProject.path && (
                           <div className="px-4 py-2 text-[12px] text-fg-muted">Empty folder</div>
                         )}
-                      {tree.map(node => (
-                        <FileTreeItem
-                          key={node.path}
-                          node={node}
-                          depth={1}
-                          projectId={currentProject.id}
-                          onOpenContextMenu={showContextMenu}
-                          onCopyPath={copyPath}
-                          pendingCreate={pendingCreate}
-                          forceExpandedPaths={forceExpandedPaths}
-                          onCommitCreate={name => void commitCreate(name)}
-                          onCancelCreate={cancelCreate}
+                      {visibleTreeRows.length > 0 && (
+                        <List
+                          listRef={listRef}
+                          rowComponent={VirtualTreeRow}
+                          rowCount={visibleTreeRows.length}
+                          rowHeight={index => visibleTreeRows[index]?.kind === 'create' ? 30 : 26}
+                          rowProps={{
+                            rows: visibleTreeRows,
+                            expandedPaths,
+                            loadingPaths,
+                            activeFilePath: activeTabPath,
+                            onOpenContextMenu: showContextMenu,
+                            onCopyPath: copyPath,
+                            onToggleNode: toggleTreeNode,
+                            onCommitCreate: name => void commitCreate(name),
+                            onCancelCreate: cancelCreate,
+                          }}
+                          overscanCount={12}
+                          className="flex-1 min-h-0"
+                          style={{ width: '100%' }}
                         />
-                      ))}
+                      )}
                     </>
                   )}
                 </div>

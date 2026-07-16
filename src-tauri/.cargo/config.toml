@@ -1,0 +1,6 @@
+# 本地构建加速配置
+# 使用 Rust 工具链自带的 LLD 链接器替代 MSVC 默认 link.exe，链接阶段显著提速。
+# rustc 在 *-msvc 目标下会自动以 lld-link flavor 调用 rust-lld。
+# 若你的环境报链接器相关错误，删除本文件即可恢复默认 link.exe。
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"

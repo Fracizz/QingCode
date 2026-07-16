@@ -185,8 +185,13 @@ pub fn run() {
                 .build(),
         )
         .manage(TerminalManager::new())
-        .setup(|_| {
+        .setup(|app| {
             migrate_legacy_database();
+            for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
+                tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+                    .enable_clipboard_access()
+                    .build()?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

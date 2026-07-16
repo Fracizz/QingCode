@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter};
 #[derive(serde::Serialize, Clone)]
 pub struct TerminalDataPayload {
     pub id: String,
-    pub data: String,
+    pub data: Vec<u8>,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -116,12 +116,11 @@ impl TerminalManager {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let data = String::from_utf8_lossy(&buf[..n]).to_string();
                         let _ = app_clone.emit(
                             "terminal-data",
                             TerminalDataPayload {
                                 id: id_clone.clone(),
-                                data,
+                                data: buf[..n].to_vec(),
                             },
                         );
                     }
@@ -249,9 +248,10 @@ fn build_script_command(
         }
         "command" => {
             if cfg!(target_os = "windows") {
-                let mut c = CommandBuilder::new("powershell.exe");
-                c.arg("-NoProfile");
-                c.arg("-Command");
+                let mut c = CommandBuilder::new("cmd.exe");
+                c.arg("/d");
+                c.arg("/s");
+                c.arg("/c");
                 c.arg(target);
                 c
             } else {

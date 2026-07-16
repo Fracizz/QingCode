@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 export type TooltipSide = 'top' | 'right' | 'bottom' | 'left'
@@ -62,12 +62,16 @@ export default function Tooltip({
     }
   }
 
+  const updatePosition = () => {
+    const rect = triggerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setStyle(getPosition(rect, side))
+  }
+
   const scheduleShow = () => {
     clearTimer()
     timerRef.current = window.setTimeout(() => {
-      const rect = triggerRef.current?.getBoundingClientRect()
-      if (!rect) return
-      setStyle(getPosition(rect, side))
+      updatePosition()
       setOpen(true)
     }, delay)
   }
@@ -78,6 +82,18 @@ export default function Tooltip({
   }
 
   useEffect(() => () => clearTimer(), [])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    updatePosition()
+    const onLayoutChange = () => updatePosition()
+    window.addEventListener('scroll', onLayoutChange, true)
+    window.addEventListener('resize', onLayoutChange)
+    return () => {
+      window.removeEventListener('scroll', onLayoutChange, true)
+      window.removeEventListener('resize', onLayoutChange)
+    }
+  }, [open, side])
 
   return (
     <>
@@ -95,8 +111,8 @@ export default function Tooltip({
         createPortal(
           <div
             role="tooltip"
-            className="ui-font-scaled fixed z-[100] pointer-events-none rounded px-2 py-1 text-[11px] leading-4 text-fg border border-border-strong bg-bg-elevated shadow-lg shadow-black/40 whitespace-nowrap"
-            style={style}
+            className="fixed z-[100] pointer-events-none rounded px-2 py-1 text-[11px] leading-4 text-fg border border-border-strong bg-bg-elevated shadow-lg shadow-black/40 whitespace-nowrap"
+            style={{ ...style, fontSize: 'var(--ui-font-size)' }}
           >
             {label}
           </div>,

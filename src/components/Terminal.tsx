@@ -3,9 +3,9 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { ClipboardAddon } from '@xterm/addon-clipboard'
-import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { useTerminalStore } from '../store/terminalStore'
-import { isTauri } from '../lib/tauri'
+import { openUrl } from '@tauri-apps/plugin-opener'
+import { subscribeTerminalOutput, useTerminalStore } from '../store/terminalStore'
+import { useProjectStore } from '../store/projectStore'
 import { FONT_SETTINGS_EVENT } from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
 import '@xterm/xterm/css/xterm.css'
@@ -62,15 +62,37 @@ function terminalTheme() {
   return getResolvedTheme() === 'dark' ? DARK_THEME : LIGHT_THEME
 }
 
-export default function TerminalView({ terminalId }: { terminalId: string }) {
+interface TerminalViewProps {
+  terminalId: string
+  layoutKey?: string
+  isActive?: boolean
+}
+
+export default function TerminalView({ terminalId, layoutKey, isActive = false }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
-  const unlistenRef = useRef<UnlistenFn | null>(null)
+  const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
+  isActiveRef.current = isActive
   const writeToTerminal = useTerminalStore(s => s.writeToTerminal)
   const resizeTerminal = useTerminalStore(s => s.resizeTerminal)
   const terminal = useTerminalStore(s => s.terminals.find(tab => tab.id === terminalId))
+
+  const scheduleFit = (refresh = false) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const container = containerRef.current
+        if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+        const term = xtermRef.current
+        if (!term) return
+        try {
+          fitAddonRef.current?.fit()
+          if (refresh) term.refresh(0, term.rows - 1)
+        } catch {}
+      })
+    })
+  }
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -87,12 +109,27 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
     })
 
     const fitAddon = new FitAddon()
-    const linkAddon = new WebLinksAddon()
+    const linkAddon = new WebLinksAddon((_event, uri) => {
+      // Ctrl/Cmd + 点击链接：用系统默认浏览器打开（Tauri opener 插件）。
+      void openUrl(uri).catch(e => {
+        useProjectStore.getState().pushToast('error', `打开链接失败: ${String(e)}`)
+      })
+    })
     const clipboardAddon = new ClipboardAddon()
     term.loadAddon(fitAddon)
     term.loadAddon(linkAddon)
     term.loadAddon(clipboardAddon)
     term.open(containerRef.current)
+    xtermRef.current = term
+    fitAddonRef.current = fitAddon
+
+    const tab = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+    previousStatusRef.current = tab?.status
+    if (tab?.status === 'exited') {
+      const detail =
+        tab.exitCode === null ? '进程未启动' : `进程已退出，退出码 ${tab.exitCode}`
+      term.writeln(`\x1b[90m[${detail}，可从终端标签重启]\x1b[0m`)
+    }
 
     const isTerminalWritable = () =>
       useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.status !== 'exited'
@@ -111,6 +148,25 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
       if (event.type !== 'keydown') return true
       const mod = event.ctrlKey || event.metaKey
       const key = event.key.toLowerCase()
+      if (mod && !event.altKey && !event.shiftKey && key === 'c') {
+        if (term.hasSelection()) {
+          const selection = term.getSelection()
+          if (selection) {
+            void navigator.clipboard.writeText(selection).catch(error => {
+              console.error('Terminal copy failed:', error)
+            })
+          }
+          return false
+        }
+        if (event.ctrlKey) {
+          event.preventDefault()
+          event.stopPropagation()
+          if (!event.repeat && isTerminalWritable()) {
+            void writeToTerminal(terminalId, '\x03')
+          }
+          return false
+        }
+      }
       if (mod && key === 'v') {
         event.preventDefault()
         void pasteFromClipboard()
@@ -146,9 +202,7 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
       term.options.fontFamily = styles.getPropertyValue('--font-mono').trim()
       term.options.fontSize =
         Number.parseInt(styles.getPropertyValue('--terminal-font-size'), 10) || 13
-      try {
-        fitAddon.fit()
-      } catch {}
+      scheduleFit()
     }
     window.addEventListener(FONT_SETTINGS_EVENT, updateFont)
     updateFont()
@@ -158,12 +212,7 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
     }
     window.addEventListener(THEME_SETTINGS_EVENT, updateTheme)
 
-    const doFit = () => {
-      try {
-        fitAddon.fit()
-      } catch {}
-    }
-    const t = setTimeout(doFit, 60)
+    scheduleFit()
 
     term.onResize(({ cols, rows }) => {
       resizeTerminal(terminalId, cols, rows)
@@ -174,41 +223,38 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
         .terminals.find(tab => tab.id === terminalId)?.status
       if (status !== 'exited') writeToTerminal(terminalId, data)
     })
+    // 不采用程序通过 OSC 发送的标题覆盖标签名：默认终端保持「终端 N」编号，
+    // 运行任务保持其任务名。如需自定义名称，可双击标签手动重命名。
+    let unsubscribeOutput: (() => void) | undefined
+    const subscribeTimer = window.setTimeout(() => {
+      unsubscribeOutput = subscribeTerminalOutput(terminalId, data => term.write(data))
+    }, 0)
 
-    xtermRef.current = term
-    fitAddonRef.current = fitAddon
-
-    const ro = new ResizeObserver(doFit)
+    const ro = new ResizeObserver(() => {
+      if (!isActiveRef.current) return
+      scheduleFit()
+    })
     if (containerRef.current) ro.observe(containerRef.current)
 
-    let cancelled = false
-    if (isTauri()) {
-      listen<{ id: string; data: string }>('terminal-data', event => {
-        if (event.payload.id === terminalId) {
-          term.write(event.payload.data)
-        }
-      }).then(fn => {
-        if (cancelled) fn()
-        else unlistenRef.current = fn
-      })
-    }
-
     return () => {
-      cancelled = true
+      window.clearTimeout(subscribeTimer)
+      unsubscribeOutput?.()
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(THEME_SETTINGS_EVENT, updateTheme)
-      clearTimeout(t)
       ro.disconnect()
       container.removeEventListener('paste', onPaste, true)
       container.removeEventListener('mousedown', onMouseDown)
-      if (unlistenRef.current) {
-        unlistenRef.current()
-        unlistenRef.current = null
-      }
       term.dispose()
+      container.replaceChildren()
       xtermRef.current = null
     }
   }, [terminalId, writeToTerminal, resizeTerminal])
+
+  useEffect(() => {
+    if (!isActive) return
+    scheduleFit(true)
+    xtermRef.current?.focus()
+  }, [isActive, layoutKey])
 
   useEffect(() => {
     const term = xtermRef.current
@@ -225,5 +271,21 @@ export default function TerminalView({ terminalId }: { terminalId: string }) {
     previousStatusRef.current = terminal.status
   }, [terminal])
 
-  return <div ref={containerRef} className="h-full w-full" />
+  return (
+    <div className="flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden box-border">
+      {terminal?.launchCommand.trim() ? (
+        <div
+          className="shrink-0 border-b border-border bg-bg-deep px-2.5 py-1 text-fg-dim truncate"
+          style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--terminal-font-size)' }}
+          title={terminal.launchCommand.trim()}
+        >
+          {'> '}
+          {terminal.launchCommand.trim()}
+        </div>
+      ) : null}
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 py-2">
+        <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
+      </div>
+    </div>
+  )
 }

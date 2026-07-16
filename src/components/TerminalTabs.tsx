@@ -1,9 +1,8 @@
-import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Circle, Plus, RotateCcw, X, Terminal as TerminalIcon, Pencil, XSquare, Files } from 'lucide-react'
 import { MAX_TERMINALS_PER_PROJECT, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
 import { confirmDialog } from '../store/confirmStore'
-import { promptDialog } from '../store/promptStore'
 import { formatTerminalName } from '../utils/terminalName'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
@@ -28,9 +27,23 @@ export default function TerminalTabs() {
     terminal: TerminalTab
   } | null>(null)
   const [closeArmId, setCloseArmId] = useState<string | null>(null)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
+  const renameInputRef = useRef<HTMLInputElement>(null)
+  const renameCommittingRef = useRef(false)
 
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
   const atLimit = projectTerminals.length >= MAX_TERMINALS_PER_PROJECT
+
+  useEffect(() => {
+    if (!renamingId) return
+    const timer = window.setTimeout(() => {
+      const input = renameInputRef.current
+      input?.focus()
+      input?.select()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [renamingId])
 
   useEffect(() => {
     if (!closeArmId) return
@@ -123,15 +136,27 @@ export default function TerminalTabs() {
     await closeAllProjectTerminals(currentProject.id)
   }
 
-  const handleRename = async (id: string, currentName: string) => {
-    const name = await promptDialog({
-      title: '重命名终端',
-      message: '为当前项目的终端设置显示名称',
-      defaultValue: currentName,
-      placeholder: '例如 dev-server',
-      confirmLabel: '保存',
-    })
-    if (name) renameTerminal(id, name)
+  const startRename = (id: string, currentName: string) => {
+    setCloseArmId(null)
+    setActiveTerminal(id)
+    setRenamingId(id)
+    setRenameDraft(currentName)
+  }
+
+  const commitRename = (id: string) => {
+    renameCommittingRef.current = true
+    const trimmed = renameDraft.trim()
+    if (trimmed) renameTerminal(id, trimmed)
+    setRenamingId(null)
+    setRenameDraft('')
+    window.setTimeout(() => {
+      renameCommittingRef.current = false
+    }, 0)
+  }
+
+  const cancelRename = () => {
+    setRenamingId(null)
+    setRenameDraft('')
   }
 
   const handleNewTerminal = () => {
@@ -153,7 +178,10 @@ export default function TerminalTabs() {
     {
       label: '重命名',
       icon: <Pencil size={14} />,
-      action: () => handleRename(terminal.id, terminal.name),
+      action: () => {
+        startRename(terminal.id, terminal.name)
+        setContextMenu(null)
+      },
     },
     {
       label: '新建终端（同项目）',
@@ -187,15 +215,18 @@ export default function TerminalTabs() {
         </div>
         <div className="flex flex-1 min-w-0 overflow-x-auto items-center">
           {projectTerminals.map(t => (
-            <Tooltip key={t.id} label="双击重命名终端" side="bottom" wrapperClassName="flex h-full flex-shrink-0">
               <div
+                key={t.id}
                 className={`group flex items-center gap-1.5 pl-3 pr-2 h-9 cursor-pointer border-r border-border whitespace-nowrap transition-colors
                   ${t.id === activeTerminalId ? 'bg-bg text-fg' : 'bg-bg-deep text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
                 onClick={() => {
                   setActiveTerminal(t.id)
                   if (closeArmId && closeArmId !== t.id) setCloseArmId(null)
                 }}
-                onDoubleClick={() => handleRename(t.id, t.name)}
+                onDoubleClick={event => {
+                  event.preventDefault()
+                  startRename(t.id, t.name)
+                }}
                 onContextMenu={(event: ReactMouseEvent) => {
                   event.preventDefault()
                   event.stopPropagation()
@@ -203,22 +234,67 @@ export default function TerminalTabs() {
                   setContextMenu({ x: event.clientX, y: event.clientY, terminal: t })
                 }}
               >
-                <Circle
-                  size={7}
-                  fill="currentColor"
-                  className={
-                    t.status === 'running'
-                      ? 'text-ok'
-                      : t.status === 'starting'
-                        ? 'text-warn'
-                        : 'text-fg-dim'
-                  }
-                />
-                <span className="text-[13px]">{formatTerminalName(t.name)}</span>
-                {t.status === 'exited' && (
+                {renamingId === t.id ? (
+                  <>
+                    <Circle
+                      size={7}
+                      fill="currentColor"
+                      className={
+                        t.status === 'running'
+                          ? 'text-ok'
+                          : t.status === 'starting'
+                            ? 'text-warn'
+                            : 'text-fg-dim'
+                      }
+                    />
+                    <input
+                      ref={renameInputRef}
+                      type="text"
+                      value={renameDraft}
+                      onClick={event => event.stopPropagation()}
+                      onChange={event => setRenameDraft(event.target.value)}
+                      onKeyDown={event => {
+                        event.stopPropagation()
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          commitRename(t.id)
+                        }
+                        if (event.key === 'Escape') {
+                          event.preventDefault()
+                          cancelRename()
+                        }
+                      }}
+                      onBlur={() => {
+                        window.setTimeout(() => {
+                          if (!renameCommittingRef.current && renamingId === t.id) {
+                            commitRename(t.id)
+                          }
+                        }, 80)
+                      }}
+                      className="min-w-[5rem] max-w-[14rem] h-5 px-1.5 text-[13px] bg-bg border border-accent rounded-sm outline-none text-fg"
+                      aria-label="重命名终端"
+                    />
+                  </>
+                ) : (
+                  <Tooltip label={t.name} side="top" wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]">
+                    <Circle
+                      size={7}
+                      fill="currentColor"
+                      className={
+                        t.status === 'running'
+                          ? 'text-ok'
+                          : t.status === 'starting'
+                            ? 'text-warn'
+                            : 'text-fg-dim'
+                      }
+                    />
+                    <span className="text-[13px] truncate">{formatTerminalName(t.name)}</span>
+                  </Tooltip>
+                )}
+                {t.status === 'exited' && renamingId !== t.id && (
                   <Tooltip
                     label={`重启终端${t.exitCode === null ? '' : `（退出码 ${t.exitCode}）`}`}
-                    side="bottom"
+                    side="top"
                   >
                     <button
                       className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
@@ -233,7 +309,7 @@ export default function TerminalTabs() {
                 )}
                 <Tooltip
                   label={closeArmId === t.id ? '再次点击关闭终端' : '关闭终端'}
-                  side="bottom"
+                  side="top"
                 >
                   <button
                     type="button"
@@ -254,17 +330,16 @@ export default function TerminalTabs() {
                   </button>
                 </Tooltip>
               </div>
-            </Tooltip>
           ))}
           <Tooltip
             label={
               atLimit
                 ? `已达到每个项目 ${MAX_TERMINALS_PER_PROJECT} 个终端的上限`
                 : currentProject
-                  ? `在当前项目内新建终端（${currentProject.path}）`
+                  ? `在当前项目内新建终端（${currentProject.name}）`
                   : '请先选择项目'
             }
-            side="bottom"
+            side="top"
             wrapperClassName="flex-shrink-0"
           >
             <button
