@@ -4,8 +4,10 @@ import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { formatTerminalName } from '../utils/terminalName'
 import Tooltip from './Tooltip'
+import { useI18n } from '../lib/i18n'
 
 export default function StatusBar() {
+  const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
@@ -21,7 +23,7 @@ export default function StatusBar() {
     <div className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-accent-soft text-fg text-xs flex items-center px-3 gap-4 select-none border-t border-border">
       <span className="flex items-center gap-1.5">
         <FolderTree size={13} />
-        {currentProject ? currentProject.name : '未选择项目'}
+        {currentProject ? currentProject.name : t('未选择项目')}
       </span>
       {activeTab && (
         <span className="flex items-center gap-1.5 opacity-90">
@@ -36,20 +38,20 @@ export default function StatusBar() {
       <div className="flex-1" />
       {activeTab && (
         <Tooltip
-          label="Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用"
+          label={t('Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用')}
           side="top"
         >
           <span className="opacity-75">
-            Ctrl+Shift+C 路径 · Alt+C 文件引用
+            {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
           </span>
         </Tooltip>
       )}
       <span className="flex items-center gap-1.5 opacity-90">
         <TerminalIcon size={13} />
-        {runningTerminals}/{projectTerminals.length} 运行中
+        {t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}
         {activeTerm ? ` · ${formatTerminalName(activeTerm.name)}` : ''}
       </span>
-      <span className="opacity-90">{tabs.length} 个已打开</span>
+      <span className="opacity-90">{t('{count} 个已打开', { count: tabs.length })}</span>
     </div>
   )
 }

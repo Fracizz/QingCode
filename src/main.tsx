@@ -7,8 +7,10 @@ import { paintStartupSplashLogo } from './lib/appIconSvg'
 import { applyFontSettings, loadFontSettings } from './lib/fontSettings'
 import { applyTheme, loadTheme } from './lib/themeSettings'
 import { revealAppWindow } from './lib/appWindow'
+import { initializeLanguage } from './lib/i18n'
 
 applyTheme(loadTheme())
+initializeLanguage()
 installContextMenuGuard()
 installDeveloperMode()
 paintStartupSplashLogo()

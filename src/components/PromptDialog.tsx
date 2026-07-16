@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { usePromptStore } from '../store/promptStore'
 import ModalOverlay from './ModalOverlay'
+import { useI18n } from '../lib/i18n'
 
 export default function PromptDialog() {
+  const { t } = useI18n()
   const request = usePromptStore(s => s.request)
   const answer = usePromptStore(s => s.answer)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -43,7 +45,7 @@ export default function PromptDialog() {
         return
       }
     } else if (!trimmed) {
-      setError('不能为空')
+      setError(t('不能为空'))
       inputRef.current?.focus()
       return
     }
@@ -64,10 +66,10 @@ export default function PromptDialog() {
           </div>
           <div className="min-w-0 flex-1">
             <h2 id="prompt-title" className="text-[14px] font-semibold text-fg">
-              {request.title}
+              {t(request.title)}
             </h2>
             {request.message && (
-              <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">{request.message}</p>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">{t(request.message)}</p>
             )}
             <input
               ref={inputRef}
@@ -83,7 +85,7 @@ export default function PromptDialog() {
                   submit()
                 }
               }}
-              placeholder={request.placeholder}
+              placeholder={request.placeholder ? t(request.placeholder) : undefined}
               className={`mt-3 w-full rounded border bg-bg px-2.5 py-2 text-[13px] text-fg outline-none transition-colors
                 ${error ? 'border-danger' : 'border-border-strong focus:border-accent'}`}
               aria-invalid={error ? true : undefined}
@@ -102,14 +104,14 @@ export default function PromptDialog() {
             className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             onClick={() => answer(null)}
           >
-            {request.cancelLabel ?? '取消'}
+            {request.cancelLabel ? t(request.cancelLabel) : t('取消')}
           </button>
           <button
             type="button"
             className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors"
             onClick={submit}
           >
-            {request.confirmLabel ?? '确定'}
+            {request.confirmLabel ? t(request.confirmLabel) : t('确定')}
           </button>
         </div>
       </div>

@@ -30,6 +30,7 @@ import PanelResizer from './components/PanelResizer'
 import { beginPanelResize, endPanelResize } from './lib/panelResize'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
+import { useI18n } from './lib/i18n'
 
 const Editor = lazy(() => import('./components/Editor'))
 const TerminalView = lazy(() => import('./components/Terminal'))
@@ -62,6 +63,7 @@ function loadTerminalPanelState() {
 }
 
 function App() {
+  const { t } = useI18n()
   const initialTerminalPanel = useRef(loadTerminalPanelState()).current
   const initialSidebarWidth = useRef(loadSidebarWidth()).current
   const terminals = useTerminalStore(s => s.terminals)
@@ -182,9 +184,9 @@ function App() {
       <TitleBar />
       {!inTauri && (
         <div className="flex-shrink-0 px-4 py-2 text-[12px] leading-relaxed bg-amber-500/10 border-b border-amber-500/30 text-amber-200">
-          当前为浏览器预览模式，项目、文件、终端等功能不可用。请使用{' '}
+          {t('当前为浏览器预览模式，项目、文件、终端等功能不可用。请使用')}{' '}
           <code className="px-1 py-0.5 rounded bg-black/20">pnpm tauri dev</code>{' '}
-          启动，并在弹出的桌面窗口中操作。
+          {t('启动，并在弹出的桌面窗口中操作。')}
         </div>
       )}
       <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
@@ -269,8 +271,8 @@ function App() {
             {projectTerminals.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center text-fg-dim text-sm">
                 {currentProject
-                  ? `当前项目「${currentProject.name}」暂无终端，点击标签栏 + 新建`
-                  : '请先选择或添加项目，终端将默认基于当前项目创建'}
+                  ? t('当前项目「{name}」暂无终端，点击标签栏 + 新建', { name: currentProject.name })
+                  : t('请先选择或添加项目，终端将默认基于当前项目创建')}
               </div>
             )}
             {terminals.map(t => {

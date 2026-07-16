@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { File as FileIcon, Folder } from 'lucide-react'
 import { validateEntryName } from '../store/promptStore'
+import { useI18n } from '../lib/i18n'
 
 interface Props {
   directory: boolean
@@ -11,6 +12,7 @@ interface Props {
 
 /** VS Code-style inline name input in the explorer tree. */
 export default function InlineCreateRow({ directory, depth, onSubmit, onCancel }: Props) {
+  const { t } = useI18n()
   const inputRef = useRef<HTMLInputElement>(null)
   const submittingRef = useRef(false)
   const [value, setValue] = useState('')
@@ -70,7 +72,7 @@ export default function InlineCreateRow({ directory, depth, onSubmit, onCancel }
         }}
         className={`flex-1 min-w-0 h-[22px] px-1.5 text-[13px] bg-bg border rounded-sm outline-none text-fg
           ${error ? 'border-danger' : 'border-accent'}`}
-        aria-label={directory ? '新建文件夹名称' : '新建文件名称'}
+        aria-label={directory ? t('新建文件夹名称') : t('新建文件名称')}
         aria-invalid={error ? true : undefined}
       />
     </div>

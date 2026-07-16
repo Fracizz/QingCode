@@ -13,6 +13,7 @@ import { useRunConfigStore, type RunConfig, type RunTask, type RunTaskType, RUN_
 import { useTerminalStore } from '../store/terminalStore'
 import RunConfigEditor from './RunConfigEditor'
 import Tooltip from './Tooltip'
+import { useI18n } from '../lib/i18n'
 
 const TASK_TYPE_LABEL: Record<RunTaskType, string> = {
   ps1: 'ps1',
@@ -22,17 +23,18 @@ const TASK_TYPE_LABEL: Record<RunTaskType, string> = {
   script: '脚本',
 }
 
-function taskOverview(tasks: RunTask[]): string {
-  if (tasks.length === 0) return '无任务'
+function taskOverview(tasks: RunTask[], t: (source: string) => string): string {
+  if (tasks.length === 0) return t('无任务')
   return tasks
-    .map(t => {
-      const label = t.name ? `${t.name}: ` : ''
-      return `${label}${TASK_TYPE_LABEL[t.type]} ${t.target}`
+    .map(task => {
+      const label = task.name ? `${task.name}: ` : ''
+      return `${label}${t(TASK_TYPE_LABEL[task.type])} ${task.target}`
     })
     .join(' · ')
 }
 
 export default function RunPanel() {
+  const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
   const configsByProject = useRunConfigStore(s => s.configsByProject)
   const loadConfigs = useRunConfigStore(s => s.loadConfigs)
@@ -69,30 +71,30 @@ export default function RunPanel() {
   if (!currentProject) {
     return (
       <div className="h-full flex flex-col bg-bg-sidebar text-fg">
-        <Header title="运行配置" />
-        <div className="px-4 py-6 text-[13px] text-fg-muted">请先选择或添加项目</div>
+        <Header title={t('运行配置')} />
+        <div className="px-4 py-6 text-[13px] text-fg-muted">{t('请先选择或添加项目')}</div>
       </div>
     )
   }
 
   return (
     <div className="h-full flex flex-col bg-bg-sidebar text-fg">
-      <Header title={`运行配置 · ${currentProject.name}`} onAdd={() => setCreating(true)} />
+      <Header title={`${t('运行配置')} · ${currentProject.name}`} onAdd={() => setCreating(true)} />
       <div className="px-4 pb-2 text-[11px] text-fg-dim">
-        配置保存在{' '}
+        {t('配置保存在')}{' '}
         <code className="font-mono text-fg-muted">{RUN_CONFIG_RELATIVE_PATH}</code>
-        <span className="text-fg-dim">（项目根目录相对路径）</span>
+        <span className="text-fg-dim">{t('（项目根目录相对路径）')}</span>
       </div>
 
       <div className="flex-1 overflow-auto pb-3">
         {configs.length === 0 ? (
           <div className="px-4 py-6 text-center">
-            <p className="text-[13px] text-fg-muted mb-3">尚未配置运行任务</p>
+            <p className="text-[13px] text-fg-muted mb-3">{t('尚未配置运行任务')}</p>
             <button
               onClick={() => setCreating(true)}
               className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
             >
-              <Plus size={14} /> 新建配置
+              <Plus size={14} /> {t('新建配置')}
             </button>
           </div>
         ) : (
@@ -127,21 +129,21 @@ export default function RunPanel() {
                         className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0
                           ${running ? 'bg-ok/15 text-ok' : 'bg-bg-deep text-fg-dim'}`}
                       >
-                        {running ? `运行中 · ${runningTids.length}` : '空闲'}
+                        {running ? t('运行中 · {count}', { count: runningTids.length }) : t('空闲')}
                       </span>
                     </div>
                     <Tooltip
-                      label={taskOverview(config.tasks)}
+                      label={taskOverview(config.tasks, t)}
                       side="bottom"
                       wrapperClassName="block min-w-0 w-full"
                     >
                       <div className="text-[11px] text-fg-dim truncate mt-0.5">
-                        {taskOverview(config.tasks)}
+                        {taskOverview(config.tasks, t)}
                       </div>
                     </Tooltip>
                   </div>
                   <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Tooltip label="编辑" side="bottom">
+                    <Tooltip label={t('编辑')} side="bottom">
                       <button
                         className="p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover"
                         onClick={() => setEditing(config)}
@@ -149,7 +151,7 @@ export default function RunPanel() {
                         <Pencil size={13} />
                       </button>
                     </Tooltip>
-                    <Tooltip label="删除" side="bottom">
+                    <Tooltip label={t('删除')} side="bottom">
                       <button
                         className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
                         onClick={() => void removeConfig(currentProject, config.id)}
@@ -199,6 +201,7 @@ export default function RunPanel() {
 }
 
 function Header({ title, onAdd }: { title: string; onAdd?: () => void }) {
+  const { t } = useI18n()
   return (
     <div className="px-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted flex-shrink-0">
       <span className="flex items-center gap-2 min-w-0">
@@ -206,7 +209,7 @@ function Header({ title, onAdd }: { title: string; onAdd?: () => void }) {
         <span className="truncate">{title}</span>
       </span>
       {onAdd && (
-        <Tooltip label="新建运行配置" side="bottom">
+        <Tooltip label={t('新建运行配置')} side="bottom">
           <button
             onClick={onAdd}
             className="text-fg-dim hover:text-fg p-1 rounded hover:bg-bg-hover flex-shrink-0"

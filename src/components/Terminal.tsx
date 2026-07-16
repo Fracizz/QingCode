@@ -6,7 +6,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { subscribeTerminalOutput, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
-import { FONT_SETTINGS_EVENT } from '../lib/fontSettings'
+import { FONT_SETTINGS_EVENT, getResolvedMonoFont, getResolvedTerminalFontSize } from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import '@xterm/xterm/css/xterm.css'
@@ -100,9 +100,8 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const term = new XTerm({
       cursorBlink: true,
-      fontSize: 13,
-      fontFamily:
-        '"JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace',
+      fontSize: getResolvedTerminalFontSize(),
+      fontFamily: getResolvedMonoFont(),
       theme: terminalTheme(),
       cols: 80,
       rows: 20,
@@ -199,10 +198,8 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     container.addEventListener('mousedown', onMouseDown)
 
     const updateFont = () => {
-      const styles = getComputedStyle(document.documentElement)
-      term.options.fontFamily = styles.getPropertyValue('--font-mono').trim()
-      term.options.fontSize =
-        Number.parseInt(styles.getPropertyValue('--terminal-font-size'), 10) || 13
+      term.options.fontFamily = getResolvedMonoFont()
+      term.options.fontSize = getResolvedTerminalFontSize()
       scheduleFit()
     }
     window.addEventListener(FONT_SETTINGS_EVENT, updateFont)

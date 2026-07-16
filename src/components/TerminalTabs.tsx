@@ -9,10 +9,12 @@ import { canCloseTerminalDirectly } from '../lib/terminalClose'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
+import { useI18n } from '../lib/i18n'
 
 const CLOSE_ARM_MS = 4000
 
 export default function TerminalTabs() {
+  const { t: translate } = useI18n()
   const terminals = useTerminalStore(s => s.terminals)
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
   const setActiveTerminal = useTerminalStore(s => s.setActiveTerminal)
@@ -113,12 +115,12 @@ export default function TerminalTabs() {
     if (!terminal) return
     if (!(await canCloseTerminalDirectly(terminal))) {
       const confirmed = await confirmDialog({
-        title: '关闭终端',
-        message: `「${formatTerminalName(terminal.name)}」仍在运行`,
-        detail: '关闭后将终止当前 shell 进程，会话中的未保存输出会丢失。',
+        title: translate('关闭终端'),
+        message: translate('「{name}」仍在运行', { name: formatTerminalName(terminal.name) }),
+        detail: translate('关闭后将终止当前 shell 进程，会话中的未保存输出会丢失。'),
         kind: 'warning',
-        confirmLabel: '终止并关闭',
-        cancelLabel: '取消',
+        confirmLabel: translate('终止并关闭'),
+        cancelLabel: translate('取消'),
       })
       if (!confirmed) return
     }
@@ -133,12 +135,12 @@ export default function TerminalTabs() {
     )
     if (runningOthers.length > 0) {
       const confirmed = await confirmDialog({
-        title: '关闭其它终端',
-        message: `将终止 ${runningOthers.length} 个运行中的终端`,
-        detail: '关闭后将终止对应 shell 进程，会话中的未保存输出会丢失。',
+        title: translate('关闭其它终端'),
+        message: translate('将终止 {count} 个运行中的终端', { count: runningOthers.length }),
+        detail: translate('关闭后将终止对应 shell 进程，会话中的未保存输出会丢失。'),
         kind: 'warning',
-        confirmLabel: '终止并关闭',
-        cancelLabel: '取消',
+        confirmLabel: translate('终止并关闭'),
+        cancelLabel: translate('取消'),
       })
       if (!confirmed) return
     }
@@ -150,12 +152,12 @@ export default function TerminalTabs() {
     const running = projectTerminals.filter(t => t.status !== 'exited')
     if (running.length > 0) {
       const confirmed = await confirmDialog({
-        title: '关闭全部终端',
-        message: `将终止当前项目的 ${running.length} 个运行中终端`,
-        detail: '关闭后将终止对应 shell 进程，会话中的未保存输出会丢失。',
+        title: translate('关闭全部终端'),
+        message: translate('将终止当前项目的 {count} 个运行中终端', { count: running.length }),
+        detail: translate('关闭后将终止对应 shell 进程，会话中的未保存输出会丢失。'),
         kind: 'warning',
-        confirmLabel: '终止并关闭',
-        cancelLabel: '取消',
+        confirmLabel: translate('终止并关闭'),
+        cancelLabel: translate('取消'),
       })
       if (!confirmed) return
     }
@@ -187,13 +189,13 @@ export default function TerminalTabs() {
 
   const handleNewTerminal = (profileId?: string) => {
     if (!currentProject) {
-      useProjectStore.getState().pushToast('info', '请先选择或添加项目，再创建终端')
+      useProjectStore.getState().pushToast('info', translate('请先选择或添加项目，再创建终端'))
       return
     }
     if (atLimit) {
       useProjectStore.getState().pushToast(
         'info',
-        `已达到每个项目 ${MAX_TERMINALS_PER_PROJECT} 个终端的上限`
+        translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
       )
       return
     }
@@ -206,8 +208,8 @@ export default function TerminalTabs() {
     return settings.profiles.map(profile => ({
       label:
         profile.id === effectiveDefaultId
-          ? `${profile.name.trim() || '未命名配置'}（默认）`
-          : profile.name.trim() || '未命名配置',
+          ? `${profile.name.trim() || translate('未命名配置')}${translate('（默认）')}`
+          : profile.name.trim() || translate('未命名配置'),
       icon: <Plus size={14} />,
       disabled: atLimit,
       action: () => handleNewTerminal(profile.id),
@@ -216,7 +218,7 @@ export default function TerminalTabs() {
 
   const menuItems = (terminal: TerminalTab): ContextMenuItem[] => [
     {
-      label: '重命名',
+      label: translate('重命名'),
       icon: <Pencil size={14} />,
       action: () => {
         startRename(terminal.id, terminal.name)
@@ -224,24 +226,24 @@ export default function TerminalTabs() {
       },
     },
     {
-      label: '新建终端（默认配置）',
+      label: translate('新建终端（默认配置）'),
       icon: <Plus size={14} />,
       disabled: atLimit,
       action: () => handleNewTerminal(),
     },
     {
-      label: '关闭',
+      label: translate('关闭'),
       icon: <X size={14} />,
       separatorBefore: true,
       action: () => handleClose(terminal.id),
     },
     {
-      label: '关闭其它',
+      label: translate('关闭其它'),
       icon: <XSquare size={14} />,
       action: () => handleCloseOthers(terminal.id),
     },
     {
-      label: '关闭全部',
+      label: translate('关闭全部'),
       icon: <Files size={14} />,
       action: handleCloseAll,
     },
@@ -251,7 +253,7 @@ export default function TerminalTabs() {
     <>
     <div className="ui-font-scaled h-9 flex bg-bg-deep border-t border-border items-center flex-shrink-0">
         <div className="flex items-center gap-1.5 px-3 text-[11px] font-semibold tracking-wide text-fg-muted">
-          <TerminalIcon size={13} /> 终端
+          <TerminalIcon size={13} /> {translate('终端')}
         </div>
         <div className="flex flex-1 min-w-0 overflow-x-auto items-center">
           {projectTerminals.map(t => {
@@ -314,7 +316,7 @@ export default function TerminalTabs() {
                         }, 80)
                       }}
                       className="min-w-[5rem] max-w-[14rem] h-5 px-1.5 text-[13px] bg-bg border border-accent rounded-sm outline-none text-fg"
-                      aria-label="重命名终端"
+                      aria-label={translate('重命名终端')}
                     />
                   </>
                 ) : (
@@ -335,7 +337,9 @@ export default function TerminalTabs() {
                 )}
                 {t.status === 'exited' && renamingId !== t.id && (
                   <Tooltip
-                    label={`重启终端${t.exitCode === null ? '' : `（退出码 ${t.exitCode}）`}`}
+                    label={translate('重启终端{exitCode}', {
+                      exitCode: t.exitCode === null ? '' : translate('（退出码 {code}）', { code: t.exitCode }),
+                    })}
                     side="top"
                   >
                     <button
@@ -350,12 +354,12 @@ export default function TerminalTabs() {
                   </Tooltip>
                 )}
                 <Tooltip
-                  label={isCloseArmed ? '再次点击关闭终端' : '关闭终端'}
+                  label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
                   side="top"
                 >
                   <button
                     type="button"
-                    aria-label={isCloseArmed ? '确认关闭终端' : '关闭终端'}
+                    aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
                     data-terminal-close={t.id}
                     className={`ml-1 flex items-center justify-center w-4 h-4 rounded transition-colors ${
                       isCloseArmed
@@ -377,17 +381,17 @@ export default function TerminalTabs() {
           <Tooltip
             label={
               atLimit
-                ? `已达到每个项目 ${MAX_TERMINALS_PER_PROJECT} 个终端的上限`
+                ? translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
                 : currentProject
-                  ? '左键：默认配置；右键：选择终端配置'
-                  : '请先选择项目'
+                  ? translate('左键：默认配置；右键：选择终端配置')
+                  : translate('请先选择项目')
             }
             side="top"
             wrapperClassName="flex-shrink-0"
           >
             <button
               type="button"
-              aria-label="新建终端"
+              aria-label={translate('新建终端')}
               className={`ml-1 mr-2 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded transition-colors ${
                 currentProject && !atLimit
                   ? 'text-fg-muted hover:bg-bg-hover hover:text-fg'

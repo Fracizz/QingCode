@@ -4,7 +4,9 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const MAX_EDITOR_FILE_SIZE: u64 = 500 * 1024 * 1024;
+/// Keep full-text editing within the memory budget of a lightweight editor.
+/// Larger files need a dedicated streaming viewer rather than CodeMirror state.
+const MAX_EDITOR_FILE_SIZE: u64 = 50 * 1024 * 1024;
 
 fn exceeds_editor_file_size_limit(size: u64) -> bool {
     size > MAX_EDITOR_FILE_SIZE
@@ -639,13 +641,16 @@ pub fn search_file_contents(
 pub fn read_file(path: String) -> Result<String, String> {
     let metadata = fs::metadata(&path).map_err(|e| format!("Failed to inspect {}: {}", path, e))?;
     if exceeds_editor_file_size_limit(metadata.len()) {
-        return Err(format!("暂不支持打开超过 500MB 的大文件: {}", path));
+        return Err(format!("暂不支持打开超过 50MB 的大文件: {}", path));
     }
     fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path, e))
 }
 
 #[tauri::command]
 pub fn write_file(path: String, content: String) -> Result<(), String> {
+    if exceeds_editor_file_size_limit(content.len() as u64) {
+        return Err(format!("暂不支持保存超过 50MB 的大文件: {}", path));
+    }
     let file_path = Path::new(&path);
     write_file_safely(file_path, &content).map_err(|e| format!("Failed to write {}: {}", path, e))
 }
@@ -791,6 +796,12 @@ pub fn rename_path(path: String, new_name: String) -> Result<String, String> {
 #[tauri::command]
 pub fn delete_path(path: String) -> Result<(), String> {
     let target = Path::new(&path);
+    if !target.is_absolute() {
+        return Err("仅允许删除绝对路径".to_string());
+    }
+    if target.parent().is_none() {
+        return Err("不允许删除文件系统根目录".to_string());
+    }
     let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
     if metadata.is_dir() {
         fs::remove_dir_all(target).map_err(|e| format!("删除文件夹失败: {}", e))
@@ -824,5 +835,24 @@ mod tests {
     fn rejects_files_larger_than_editor_limit() {
         assert!(!exceeds_editor_file_size_limit(MAX_EDITOR_FILE_SIZE));
         assert!(exceeds_editor_file_size_limit(MAX_EDITOR_FILE_SIZE + 1));
+    }
+
+    #[test]
+    fn rejects_path_like_entry_names() {
+        for name in ["", ".", "..", "a/b", "a\\b"] {
+            assert!(
+                validate_entry_name(name).is_err(),
+                "{name:?} should be rejected"
+            );
+        }
+        assert!(validate_entry_name("notes.md").is_ok());
+    }
+
+    #[test]
+    fn delete_rejects_relative_and_root_paths() {
+        assert!(delete_path("relative-file.txt".to_string()).is_err());
+        let temp_dir = std::env::temp_dir();
+        let root = temp_dir.ancestors().last().unwrap();
+        assert!(delete_path(root.to_string_lossy().to_string()).is_err());
     }
 }

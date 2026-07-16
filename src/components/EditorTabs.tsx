@@ -11,6 +11,7 @@ import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import type { EditorTab } from '../types'
+import { useI18n } from '../lib/i18n'
 
 function parentPath(path: string) {
   const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -18,6 +19,7 @@ function parentPath(path: string) {
 }
 
 export default function EditorTabs() {
+  const { t } = useI18n()
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
   const setActiveTab = useEditorStore(s => s.setActiveTab)
@@ -39,9 +41,9 @@ export default function EditorTabs() {
   const copyPath = async (path: string) => {
     try {
       await copyToClipboard(path)
-      useProjectStore.getState().pushToast('success', '路径已复制')
+      useProjectStore.getState().pushToast('success', t('路径已复制'))
     } catch (e) {
-      useProjectStore.getState().pushToast('error', `复制路径失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', t('复制路径失败: {error}', { error: String(e) }))
     }
   }
 
@@ -49,17 +51,17 @@ export default function EditorTabs() {
     try {
       await revealItemInDir(path)
     } catch (e) {
-      useProjectStore.getState().pushToast('error', `在文件管理器中显示失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', t('在文件管理器中显示失败: {error}', { error: String(e) }))
     }
   }
 
   const renameTab = async (tab: EditorTab) => {
     const name = await promptDialog({
-      title: '重命名',
-      message: '文件新名称',
+      title: t('重命名'),
+      message: t('文件新名称'),
       defaultValue: tab.name,
       validate: validateEntryName,
-      confirmLabel: '重命名',
+      confirmLabel: t('重命名'),
     })
     if (!name || name === tab.name) return
     try {
@@ -78,9 +80,9 @@ export default function EditorTabs() {
         if (parentPath(tab.path) === project.path) await store.refreshProjectTree(project)
         else await store.expandProjectDir(project.id, parentPath(tab.path))
       }
-      useProjectStore.getState().pushToast('success', `已重命名为: ${name}`)
+      useProjectStore.getState().pushToast('success', t('已重命名为: {name}', { name }))
     } catch (e) {
-      useProjectStore.getState().pushToast('error', `重命名失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', t('重命名失败: {error}', { error: String(e) }))
     }
   }
 
@@ -107,43 +109,43 @@ export default function EditorTabs() {
 
   const menuItems = (tab: EditorTab): ContextMenuItem[] => [
     {
-      label: '关闭',
+      label: t('关闭'),
       icon: <X size={14} />,
       action: () => closeOne(tab),
     },
     {
-      label: '关闭其它',
+      label: t('关闭其它'),
       icon: <XSquare size={14} />,
       action: () => closeOthers(tab),
     },
     {
-      label: '关闭右侧',
+      label: t('关闭右侧'),
       icon: <CopyX size={14} />,
       action: () => closeToRight(tab),
     },
     {
-      label: '关闭全部',
+      label: t('关闭全部'),
       icon: <Files size={14} />,
       action: closeAll,
     },
     {
-      label: '在资源管理器中定位',
+      label: t('在资源管理器中定位'),
       icon: <LocateFixed size={14} />,
       separatorBefore: true,
       action: () => revealInSidebar(tab.path),
     },
     {
-      label: '复制路径',
+      label: t('复制路径'),
       icon: <Copy size={14} />,
       action: () => copyPath(tab.path),
     },
     {
-      label: '在文件管理器中显示',
+      label: t('在文件管理器中显示'),
       icon: <ExternalLink size={14} />,
       action: () => revealPath(tab.path),
     },
     {
-      label: '重命名',
+      label: t('重命名'),
       icon: <Pencil size={14} />,
       separatorBefore: true,
       action: () => renameTab(tab),

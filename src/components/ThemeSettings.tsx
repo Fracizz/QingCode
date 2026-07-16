@@ -8,8 +8,10 @@ import {
   type AppTheme,
   type ResolvedTheme,
 } from '../lib/themeSettings'
+import { useI18n } from '../lib/i18n'
 
 export default function ThemeSettings() {
+  const { t } = useI18n()
   const [theme, setTheme] = useState<AppTheme>(loadTheme)
   const [resolved, setResolved] = useState<ResolvedTheme>(() => getResolvedTheme(theme))
 
@@ -38,10 +40,10 @@ export default function ThemeSettings() {
             >
               <ThemePreview value={option.value} />
               <span className="flex items-center justify-between">
-                <span className="font-medium text-fg">{option.label}</span>
+                <span className="font-medium text-fg">{t(option.label)}</span>
                 {active && <Check size={13} className="text-accent" />}
               </span>
-              <span className="text-[11px] text-fg-dim leading-snug">{option.hint}</span>
+              <span className="text-[11px] text-fg-dim leading-snug">{t(option.hint)}</span>
             </button>
           )
         })}
@@ -49,8 +51,8 @@ export default function ThemeSettings() {
 
       {theme === 'auto' && (
         <p className="text-[12px] text-fg-muted">
-          当前解析为：<span className="text-fg">{resolved === 'dark' ? '深色' : '浅色'}</span>
-          （操作系统切换明暗时自动跟随）
+          {t('当前解析为：')}<span className="text-fg">{t(resolved === 'dark' ? '深色' : '浅色')}</span>
+          {t('（操作系统切换明暗时自动跟随）')}
         </p>
       )}
     </div>

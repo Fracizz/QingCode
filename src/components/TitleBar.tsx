@@ -10,6 +10,7 @@ import ProjectPicker from './ProjectPicker'
 import { confirmDialog } from '../store/confirmStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
+import { translate } from '../lib/i18n'
 
 async function requestAppClose() {
   const runningTerminals = useTerminalStore
@@ -17,17 +18,17 @@ async function requestAppClose() {
     .terminals.filter(terminal => terminal.status !== 'exited')
   const detail =
     runningTerminals.length > 0
-      ? `${runningTerminals.length} 个终端仍在运行，退出后将终止。\n未保存的编辑器更改可能丢失。`
-      : '未保存的编辑器更改可能丢失。'
+      ? translate('{count} 个终端仍在运行，退出后将终止。\n未保存的编辑器更改可能丢失。', { count: runningTerminals.length })
+      : translate('未保存的编辑器更改可能丢失。')
 
   if (
     !(await confirmDialog({
-      title: '退出 QingCode',
-      message: '确定要关闭应用程序吗？',
+      title: translate('退出 QingCode'),
+      message: translate('确定要关闭应用程序吗？'),
       detail,
       kind: 'warning',
-      confirmLabel: '退出',
-      cancelLabel: '取消',
+      confirmLabel: translate('退出'),
+      cancelLabel: translate('取消'),
     }))
   ) {
     return
@@ -60,7 +61,7 @@ export default function TitleBar() {
       try {
         await requestAppClose()
       } catch (e) {
-        useProjectStore.getState().pushToast('error', `关闭窗口失败: ${String(e)}`)
+        useProjectStore.getState().pushToast('error', translate('关闭窗口失败: {error}', { error: String(e) }))
       }
     }).then(fn => {
       unlistenClose = fn
@@ -78,7 +79,7 @@ export default function TitleBar() {
       if (await win.isMaximized()) await win.unmaximize()
       else await win.maximize()
     } catch (e) {
-      useProjectStore.getState().pushToast('error', `窗口最大化失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', translate('窗口最大化失败: {error}', { error: String(e) }))
     }
   }
 
@@ -86,7 +87,7 @@ export default function TitleBar() {
     try {
       await getCurrentWindow().minimize()
     } catch (e) {
-      useProjectStore.getState().pushToast('error', `窗口最小化失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', translate('窗口最小化失败: {error}', { error: String(e) }))
     }
   }
 
@@ -94,7 +95,7 @@ export default function TitleBar() {
     try {
       await requestAppClose()
     } catch (e) {
-      useProjectStore.getState().pushToast('error', `关闭窗口失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', translate('关闭窗口失败: {error}', { error: String(e) }))
     }
   }
 

@@ -1,5 +1,6 @@
 import { FolderTree, Search, Terminal, Settings, FolderPlus, BugPlay, ListChecks } from 'lucide-react'
 import Tooltip from './Tooltip'
+import { useI18n } from '../lib/i18n'
 
 interface Props {
   active: 'explorer' | 'search' | 'run' | 'settings'
@@ -20,29 +21,31 @@ export default function ActivityBar({
   onManageProjects,
   terminalOpen,
 }: Props) {
+  const { t } = useI18n()
+
   return (
     <div className="ui-font-scaled w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-deep border-r border-border flex flex-col items-center py-2">
       <Item
         icon={<FolderTree size={22} />}
-        label="资源管理器"
+        label={t('资源管理器')}
         active={active === 'explorer' && sidebarOpen}
         onClick={() => onActiveChange('explorer')}
       />
       <Item
         icon={<Search size={22} />}
-        label="搜索"
+        label={t('搜索')}
         active={active === 'search' && sidebarOpen}
         onClick={() => onActiveChange('search')}
       />
       <Item
         icon={<BugPlay size={22} />}
-        label="运行配置"
+        label={t('运行配置')}
         active={active === 'run' && sidebarOpen}
         onClick={() => onActiveChange('run')}
       />
       <Item
         icon={<Settings size={22} />}
-        label="设置"
+        label={t('设置')}
         active={active === 'settings' && sidebarOpen}
         onClick={() => onActiveChange('settings')}
       />
@@ -51,17 +54,17 @@ export default function ActivityBar({
 
       <Item
         icon={<FolderPlus size={22} />}
-        label="添加项目"
+        label={t('添加项目')}
         onClick={onAddProject}
       />
       <Item
         icon={<ListChecks size={22} />}
-        label="项目管理"
+        label={t('项目管理')}
         onClick={onManageProjects}
       />
       <Item
         icon={<Terminal size={22} />}
-        label="终端"
+        label={t('终端')}
         active={terminalOpen}
         onClick={onToggleTerminal}
       />

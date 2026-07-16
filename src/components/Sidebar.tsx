@@ -37,6 +37,7 @@ import InlineCreateRow from './InlineCreateRow'
 import type { Project } from '../types'
 import { collectAncestorDirs, copyToClipboard, formatFileReference, isDescendantOf, normalizePath, pathsEqual } from '../utils/fileReferences'
 import { relocateProjectWithDialog, addTerminalProjectWithPrompt, renameProjectWithPrompt } from '../utils/projectActions'
+import { useI18n } from '../lib/i18n'
 
 type PendingCreate = {
   projectId: string
@@ -169,6 +170,7 @@ function VirtualTreeRow({
 }
 
 export default function Sidebar() {
+  const { t } = useI18n()
   const {
     projects,
     currentProject,
@@ -291,7 +293,7 @@ export default function Sidebar() {
     try {
       await openPath(path)
     } catch (e) {
-      useProjectStore.getState().pushToast('error', `打开项目目录失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', t('打开项目目录失败: {error}', { error: String(e) }))
     }
   }
 
@@ -307,9 +309,9 @@ export default function Sidebar() {
   const copyPath = async (path: string) => {
     try {
       await copyToClipboard(path)
-      useProjectStore.getState().pushToast('success', '路径已复制')
+      useProjectStore.getState().pushToast('success', t('路径已复制'))
     } catch (e) {
-      useProjectStore.getState().pushToast('error', `复制路径失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', t('复制路径失败: {error}', { error: String(e) }))
     }
   }
 
@@ -323,22 +325,22 @@ export default function Sidebar() {
   const copyAsReference = async (path: string) => {
     const project = projectOfPath(path)
     if (!project) {
-      useProjectStore.getState().pushToast('error', '无法确定该路径所属项目')
+      useProjectStore.getState().pushToast('error', t('无法确定该路径所属项目'))
       return
     }
     try {
       const ref = formatFileReference(project, path, 1)
       await copyToClipboard(ref)
-      useProjectStore.getState().pushToast('success', '文件引用已复制')
+      useProjectStore.getState().pushToast('success', t('文件引用已复制'))
     } catch (e) {
-      useProjectStore.getState().pushToast('error', `复制引用失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', t('复制引用失败: {error}', { error: String(e) }))
     }
   }
 
   const openTerminalHere = async (cwd: string) => {
     const project = projectOfPath(cwd)
     if (!project) {
-      useProjectStore.getState().pushToast('error', '无法确定该目录所属项目')
+      useProjectStore.getState().pushToast('error', t('无法确定该目录所属项目'))
       return
     }
     await addTerminal(cwd, project.id)
@@ -358,16 +360,16 @@ export default function Sidebar() {
     const { parentPath, directory, projectId } = pendingCreate
     const project = projects.find(p => p.id === projectId)
     if (!project) return
-    const label = directory ? '文件夹' : '文件'
+    const label = directory ? t('文件夹') : t('文件')
     setPendingCreate(null)
     try {
       const path = await safeInvoke<string>(
-        `新建${label}`,
+        t('新建{kind}', { kind: label }),
         directory ? 'create_directory' : 'create_file',
         { parent: parentPath, name }
       )
       await refreshDirectory(parentPath)
-      useProjectStore.getState().pushToast('success', `已新建${label}: ${name}`)
+      useProjectStore.getState().pushToast('success', t('已新建{kind}: {name}', { kind: label, name }))
       if (!directory) await useEditorStore.getState().openFile(path)
     } catch (e) {
       useProjectStore.getState().pushToast('error', `${String(e)}`)
@@ -393,11 +395,11 @@ export default function Sidebar() {
 
   const handleRenameNode = async (node: FileNode) => {
     const name = await promptDialog({
-      title: '重命名',
-      message: node.is_dir ? '文件夹新名称' : '文件新名称',
+      title: t('重命名'),
+      message: node.is_dir ? t('文件夹新名称') : t('文件新名称'),
       defaultValue: node.name,
       validate: validateEntryName,
-      confirmLabel: '重命名',
+      confirmLabel: t('重命名'),
     })
     if (!name || name === node.name) return
     try {
@@ -407,7 +409,7 @@ export default function Sidebar() {
       })
       renameEditorPath(node.path, newPath)
       await refreshDirectory(parentPath(node.path))
-      useProjectStore.getState().pushToast('success', `已重命名为: ${name}`)
+      useProjectStore.getState().pushToast('success', t('已重命名为: {name}', { name }))
     } catch (e) {
       useProjectStore.getState().pushToast('error', `${String(e)}`)
     }
@@ -415,21 +417,21 @@ export default function Sidebar() {
 
   const handleDeleteNode = async (node: FileNode) => {
     const confirmed = await confirmDialog({
-      title: '永久删除',
-      message: `确定永久删除${node.is_dir ? '文件夹' : '文件'}「${node.name}」？`,
+      title: t('永久删除'),
+      message: t('确定永久删除{kind}「{name}」？', { kind: node.is_dir ? t('文件夹') : t('文件'), name: node.name }),
       detail: node.is_dir
-        ? '文件夹内的全部内容都会被删除，且无法撤销。'
-        : '此操作无法撤销。',
+        ? t('文件夹内的全部内容都会被删除，且无法撤销。')
+        : t('此操作无法撤销。'),
       kind: 'danger',
-      confirmLabel: '删除',
-      cancelLabel: '取消',
+      confirmLabel: t('删除'),
+      cancelLabel: t('取消'),
     })
     if (!confirmed) return
     try {
       await safeInvoke('删除', 'delete_path', { path: node.path })
       closeTabsForPath(node.path)
       await refreshDirectory(parentPath(node.path))
-      useProjectStore.getState().pushToast('success', `已删除: ${node.name}`)
+      useProjectStore.getState().pushToast('success', t('已删除: {name}', { name: node.name }))
     } catch (e) {
       useProjectStore.getState().pushToast('error', `${String(e)}`)
     }
@@ -440,7 +442,7 @@ export default function Sidebar() {
       if (node.is_dir) await openPath(node.path)
       else await revealItemInDir(node.path)
     } catch (e) {
-      useProjectStore.getState().pushToast('error', `在文件管理器中打开失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', t('在文件管理器中打开失败: {error}', { error: String(e) }))
     }
   }
 
@@ -448,23 +450,23 @@ export default function Sidebar() {
     if (target.kind === 'empty') {
       return [
         {
-          label: '添加文件夹项目',
+          label: t('添加文件夹项目'),
           icon: <FolderPlus size={14} />,
           action: handleAddProject,
         },
         {
-          label: '新建终端项目',
+          label: t('新建终端项目'),
           icon: <TerminalIcon size={14} />,
           action: () => addTerminalProjectWithPrompt(),
         },
         {
-          label: '管理项目',
+          label: t('项目管理'),
           icon: <ListChecks size={14} />,
           separatorBefore: true,
           action: openProjectManager,
         },
         {
-          label: '刷新',
+          label: t('刷新'),
           icon: <RefreshCw size={14} />,
           separatorBefore: true,
           disabled: !currentProject,
@@ -481,78 +483,78 @@ export default function Sidebar() {
       }
       return [
         {
-          label: currentProject?.id === project.id ? '当前项目' : '切换到此项目',
+          label: currentProject?.id === project.id ? t('当前项目') : t('切换到此项目'),
           icon: <FolderOpen size={14} />,
           disabled: currentProject?.id === project.id || unavailable,
           action: () => switchProject(project),
         },
         {
-          label: '新建终端',
+          label: t('新建终端'),
           icon: <TerminalIcon size={14} />,
           disabled: unavailable,
           action: () => addTerminal(project.path, project.id),
         },
         {
-          label: '在此项目内搜索',
+          label: t('在此项目内搜索'),
           icon: <SearchIcon size={14} />,
           disabled: unavailable,
           action: () => requestSearch(project.path),
         },
         {
-          label: '新建文件',
+          label: t('新建文件'),
           icon: <FilePlus size={14} />,
           separatorBefore: true,
           disabled: unavailable,
           action: () => activateThen(() => startCreateEntry(project.path, false, project.id)),
         },
         {
-          label: '新建文件夹',
+          label: t('新建文件夹'),
           icon: <FolderPlus size={14} />,
           disabled: unavailable,
           action: () => activateThen(() => startCreateEntry(project.path, true, project.id)),
         },
         {
-          label: '刷新项目',
+          label: t('刷新项目'),
           icon: <RefreshCw size={14} />,
           disabled: unavailable,
           separatorBefore: true,
           action: () => activateThen(() => refreshProjectTree(project)),
         },
         {
-          label: '在文件管理器中打开',
+          label: t('在文件管理器中打开'),
           icon: <ExternalLink size={14} />,
           disabled: unavailable,
           action: () => handleOpenProject(project.path),
         },
         {
-          label: '复制路径',
+          label: t('复制路径'),
           icon: <Copy size={14} />,
           shortcut: 'Ctrl+Shift+C',
           action: () => copyPath(project.path),
         },
         {
-          label: '复制为文件引用',
+          label: t('复制为文件引用'),
           icon: <AtSign size={14} />,
           action: () => copyAsReference(project.path),
         },
         {
-          label: '重命名项目',
+          label: t('重命名项目'),
           icon: <Pencil size={14} />,
           separatorBefore: true,
           action: () => renameProjectWithPrompt(project.id, project.name),
         },
         {
-          label: '重新定位项目',
+          label: t('重新定位项目'),
           icon: <LocateFixed size={14} />,
           action: () => handleRelocateProject(project.id),
         },
         {
-          label: '从顶栏隐藏',
+          label: t('从顶栏隐藏'),
           icon: <EyeOff size={14} />,
           action: () => handleRemoveProject(project.id, project.name, project.path),
         },
         {
-          label: '管理项目',
+          label: t('项目管理'),
           icon: <ListChecks size={14} />,
           separatorBefore: true,
           action: openProjectManager,
@@ -567,18 +569,18 @@ export default function Sidebar() {
       ...(!node.is_dir
         ? [
             {
-              label: '打开文件',
+              label: t('打开文件'),
               icon: <FileIcon size={14} />,
               action: () => useEditorStore.getState().openFile(node.path),
             },
             {
-              label: '新建文件（同目录）',
+              label: t('新建文件（同目录）'),
               icon: <FilePlus size={14} />,
               disabled: !project,
               action: () => project && startCreateEntry(parent, false, project.id),
             },
             {
-              label: '新建文件夹（同目录）',
+              label: t('新建文件夹（同目录）'),
               icon: <FolderPlus size={14} />,
               disabled: !project,
               action: () => project && startCreateEntry(parent, true, project.id),
@@ -586,53 +588,53 @@ export default function Sidebar() {
           ]
         : [
             {
-              label: '新建文件',
+              label: t('新建文件'),
               icon: <FilePlus size={14} />,
               disabled: !project,
               action: () => project && startCreateEntry(node.path, false, project.id),
             },
             {
-              label: '新建文件夹',
+              label: t('新建文件夹'),
               icon: <FolderPlus size={14} />,
               disabled: !project,
               action: () => project && startCreateEntry(node.path, true, project.id),
             },
             {
-              label: '在此处打开终端',
+              label: t('在此处打开终端'),
               icon: <TerminalIcon size={14} />,
               separatorBefore: true,
               action: () => openTerminalHere(node.path),
             },
             {
-              label: '在此文件夹中搜索',
+              label: t('在此文件夹中搜索'),
               icon: <SearchIcon size={14} />,
               action: () => requestSearch(node.path),
             },
           ]),
       {
-        label: '重命名',
+        label: t('重命名'),
         icon: <Pencil size={14} />,
         separatorBefore: true,
         action: () => handleRenameNode(node),
       },
       {
-        label: '复制路径',
+        label: t('复制路径'),
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+Shift+C',
         action: () => copyPath(node.path),
       },
       {
-        label: '复制为文件引用',
+        label: t('复制为文件引用'),
         icon: <AtSign size={14} />,
         action: () => copyAsReference(node.path),
       },
       {
-        label: node.is_dir ? '在文件管理器中打开' : '在文件管理器中显示',
+        label: node.is_dir ? t('在文件管理器中打开') : t('在文件管理器中显示'),
         icon: <ExternalLink size={14} />,
         action: () => revealNode(node),
       },
       {
-        label: '永久删除',
+        label: t('永久删除'),
         icon: <Trash2 size={14} />,
         danger: true,
         separatorBefore: true,
@@ -653,14 +655,14 @@ export default function Sidebar() {
     >
       {/* Section header */}
       <div className="px-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted">
-        <span>资源管理器</span>
+        <span>{t('资源管理器')}</span>
         <div className="flex items-center gap-0.5">
-          <Tooltip label="在侧边栏定位当前文件" side="bottom">
+          <Tooltip label={t('在侧边栏定位当前文件')} side="bottom">
             <button
               type="button"
               onClick={handleLocateActiveFile}
               disabled={!activeTabPath}
-              aria-label="在侧边栏定位当前文件"
+              aria-label={t('在侧边栏定位当前文件')}
               className={`p-1 rounded transition-colors flex-shrink-0
               ${!activeTabPath
                 ? 'opacity-40'
@@ -669,12 +671,12 @@ export default function Sidebar() {
               <LocateFixed size={13} />
             </button>
           </Tooltip>
-          <Tooltip label="刷新" side="bottom">
+          <Tooltip label={t('刷新')} side="bottom">
             <button
               type="button"
               onClick={handleRefresh}
               disabled={refreshing || !currentProject}
-              aria-label="刷新"
+              aria-label={t('刷新')}
               aria-busy={refreshing}
               className={`p-1 rounded transition-colors flex-shrink-0
               ${!currentProject
@@ -694,12 +696,12 @@ export default function Sidebar() {
       <div className="flex-1 min-h-0 flex flex-col pb-3">
         {!currentProject ? (
           <div className="px-4 py-6 text-center">
-            <p className="text-[13px] text-fg-muted mb-3">No project opened</p>
+            <p className="text-[13px] text-fg-muted mb-3">{t('未打开项目')}</p>
             <button
               onClick={handleAddProject}
               className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
             >
-              <Plus size={14} /> Add project
+              <Plus size={14} /> {t('添加项目')}
             </button>
           </div>
         ) : (
@@ -725,10 +727,10 @@ export default function Sidebar() {
                   >
                     <span className="truncate font-medium">{currentProject.name}</span>
                   </Tooltip>
-                  <Tooltip label="新建文件" side="bottom">
+                  <Tooltip label={t('新建文件')} side="bottom">
                     <button
                       type="button"
-                      aria-label="新建文件"
+                      aria-label={t('新建文件')}
                       disabled={unavailable}
                       className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
                       onClick={event => {
@@ -739,10 +741,10 @@ export default function Sidebar() {
                       <FilePlus size={13} />
                     </button>
                   </Tooltip>
-                  <Tooltip label="新建文件夹" side="bottom">
+                  <Tooltip label={t('新建文件夹')} side="bottom">
                     <button
                       type="button"
-                      aria-label="新建文件夹"
+                      aria-label={t('新建文件夹')}
                       disabled={unavailable}
                       className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
                       onClick={event => {
@@ -753,10 +755,10 @@ export default function Sidebar() {
                       <FolderPlus size={13} />
                     </button>
                   </Tooltip>
-                  <Tooltip label="新建终端" side="bottom">
+                  <Tooltip label={t('新建终端')} side="bottom">
                     <button
                       type="button"
-                      aria-label="新建终端"
+                      aria-label={t('新建终端')}
                       disabled={unavailable}
                       className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
                       onClick={event => {
@@ -767,10 +769,10 @@ export default function Sidebar() {
                       <TerminalIcon size={13} />
                     </button>
                   </Tooltip>
-                  <Tooltip label="在文件管理器中打开" side="bottom">
+                  <Tooltip label={t('在文件管理器中打开')} side="bottom">
                     <button
                       type="button"
-                      aria-label="在文件管理器中打开"
+                      aria-label={t('在文件管理器中打开')}
                       disabled={unavailable}
                       className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
                       onClick={event => {
@@ -782,10 +784,10 @@ export default function Sidebar() {
                     </button>
                   </Tooltip>
                   {unavailable ? (
-                    <Tooltip label="重新定位项目" side="bottom">
+                    <Tooltip label={t('重新定位项目')} side="bottom">
                       <button
                         type="button"
-                        aria-label="重新定位项目"
+                        aria-label={t('重新定位项目')}
                         className="p-0.5 text-warn hover:text-fg"
                         onClick={event => {
                           event.stopPropagation()
@@ -796,10 +798,10 @@ export default function Sidebar() {
                       </button>
                     </Tooltip>
                   ) : (
-                    <Tooltip label="从顶栏隐藏" side="bottom">
+                    <Tooltip label={t('从顶栏隐藏')} side="bottom">
                       <button
                         type="button"
-                        aria-label="从顶栏隐藏"
+                        aria-label={t('从顶栏隐藏')}
                         className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-danger"
                         onClick={event => {
                           event.stopPropagation()
@@ -824,7 +826,7 @@ export default function Sidebar() {
                 >
                   {unavailable ? (
                     <div className="px-4 py-2 text-[12px] text-warn flex items-center gap-1.5">
-                      <AlertTriangle size={12} /> 目录不可用，请重新定位
+                      <AlertTriangle size={12} /> {t('目录不可用，请重新定位')}
                     </div>
                   ) : (
                     <>
@@ -838,7 +840,7 @@ export default function Sidebar() {
                       )}
                       {tree.length === 0 &&
                         pendingCreate?.parentPath !== currentProject.path && (
-                          <div className="px-4 py-2 text-[12px] text-fg-muted">Empty folder</div>
+                          <div className="px-4 py-2 text-[12px] text-fg-muted">{t('空文件夹')}</div>
                         )}
                       {visibleTreeRows.length > 0 && (
                         <List

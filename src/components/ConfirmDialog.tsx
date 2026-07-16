@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { AlertTriangle, Info, Trash2 } from 'lucide-react'
 import { useConfirmStore, type ConfirmKind } from '../store/confirmStore'
 import ModalOverlay from './ModalOverlay'
+import { useI18n } from '../lib/i18n'
 
 const KIND_META: Record<
   ConfirmKind,
@@ -25,6 +26,7 @@ const KIND_META: Record<
 }
 
 export default function ConfirmDialog() {
+  const { t } = useI18n()
   const request = useConfirmStore(s => s.request)
   const answer = useConfirmStore(s => s.answer)
   const cancelRef = useRef<HTMLButtonElement>(null)
@@ -63,14 +65,14 @@ export default function ConfirmDialog() {
           </div>
           <div className="min-w-0 flex-1">
             <h2 id="confirm-title" className="text-[14px] font-semibold text-fg">
-              {request.title}
+              {t(request.title)}
             </h2>
             <p id="confirm-message" className="mt-1.5 text-[13px] leading-relaxed text-fg">
-              {request.message}
+              {t(request.message)}
             </p>
             {request.detail && (
               <p className="mt-2 text-[12px] leading-relaxed text-fg-muted whitespace-pre-line">
-                {request.detail}
+                {t(request.detail)}
               </p>
             )}
           </div>
@@ -82,7 +84,7 @@ export default function ConfirmDialog() {
             className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             onClick={() => answer(false)}
           >
-            {request.cancelLabel ?? '取消'}
+            {request.cancelLabel ? t(request.cancelLabel) : t('取消')}
           </button>
           <button
             ref={confirmRef}
@@ -90,7 +92,7 @@ export default function ConfirmDialog() {
             className={`px-3 py-1.5 text-[13px] rounded transition-colors ${meta.confirmClass}`}
             onClick={() => answer(true)}
           >
-            {request.confirmLabel ?? '确定'}
+            {request.confirmLabel ? t(request.confirmLabel) : t('确定')}
           </button>
         </div>
       </div>

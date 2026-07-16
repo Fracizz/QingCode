@@ -29,6 +29,7 @@ import {
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import type { Project } from '../types'
+import { useI18n } from '../lib/i18n'
 
 type SortKey = 'name' | 'path' | 'last_opened_at' | 'created_at'
 type SortDir = 'asc' | 'desc'
@@ -41,18 +42,19 @@ const SORT_LABELS: Record<SortKey, string> = {
   created_at: '创建时间',
 }
 
-function timeAgo(ts: number): string {
+function timeAgo(ts: number, t: (source: string, values?: Record<string, string | number>) => string): string {
   const diff = Date.now() - ts
   const day = 24 * 60 * 60 * 1000
-  if (diff < 60 * 1000) return '刚刚'
-  if (diff < 60 * 60 * 1000) return `${Math.floor(diff / 60000)} 分钟前`
-  if (diff < day) return `${Math.floor(diff / 3600000)} 小时前`
-  if (diff < 30 * day) return `${Math.floor(diff / day)} 天前`
+  if (diff < 60 * 1000) return t('刚刚')
+  if (diff < 60 * 60 * 1000) return t('{count} 分钟前', { count: Math.floor(diff / 60000) })
+  if (diff < day) return t('{count} 小时前', { count: Math.floor(diff / 3600000) })
+  if (diff < 30 * day) return t('{count} 天前', { count: Math.floor(diff / day) })
   const d = new Date(ts)
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 export default function ProjectManager() {
+  const { language, t } = useI18n()
   const allProjects = useProjectStore(s => s.projects)
   const projects = useMemo(() => allProjects.filter(p => !p.ephemeral), [allProjects])
   const currentProject = useProjectStore(s => s.currentProject)
@@ -75,12 +77,12 @@ export default function ProjectManager() {
     const dir = sortDir === 'asc' ? 1 : -1
     return [...list].sort((a, b) => {
       let cmp = 0
-      if (sortKey === 'name') cmp = a.name.localeCompare(b.name, 'zh')
+      if (sortKey === 'name') cmp = a.name.localeCompare(b.name, language)
       else if (sortKey === 'path') cmp = a.path.localeCompare(b.path)
       else cmp = a[sortKey] - b[sortKey]
       return cmp * dir
     })
-  }, [projects, sortKey, sortDir, filter])
+  }, [projects, sortKey, sortDir, filter, language])
 
   // Drop selections for projects that no longer exist (deleted/filtered out).
   useEffect(() => {
@@ -125,13 +127,12 @@ export default function ProjectManager() {
     const targets = sortedProjects.filter(p => selectedIds.has(p.id))
     if (targets.length === 0) return
     const ok = await confirmDialog({
-      title: '批量删除项目',
-      message: `确定永久删除选中的 ${targets.length} 个项目？`,
-      detail:
-        '将移除工作区记录并关闭相关终端与标签页，不会删除磁盘上的项目文件。',
+      title: t('批量删除项目'),
+      message: t('确定永久删除选中的 {count} 个项目？', { count: targets.length }),
+      detail: t('将移除工作区记录并关闭相关终端与标签页，不会删除磁盘上的项目文件。'),
       kind: 'danger',
-      confirmLabel: '永久删除',
-      cancelLabel: '取消',
+      confirmLabel: t('永久删除'),
+      cancelLabel: t('取消'),
     })
     if (!ok) return
     for (const p of targets) {
@@ -140,7 +141,7 @@ export default function ProjectManager() {
         useEditorStore.getState().closeTabsForPath(p.path)
         await useProjectStore.getState().removeProject(p.id)
       } catch (e) {
-        useProjectStore.getState().pushToast('error', `删除「${p.name}」失败: ${String(e)}`)
+        useProjectStore.getState().pushToast('error', t('删除「{name}」失败: {error}', { name: p.name, error: String(e) }))
       }
     }
     setSelectedIds(new Set())
@@ -190,7 +191,7 @@ export default function ProjectManager() {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="项目管理"
+        aria-label={t('项目管理')}
         className="relative w-full max-w-[760px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={e => e.stopPropagation()}
       >
@@ -198,14 +199,14 @@ export default function ProjectManager() {
         <div className="flex items-center justify-between px-4 h-12 border-b border-border-strong flex-shrink-0">
           <div className="flex items-center gap-2 text-[14px] font-semibold text-fg">
             <ArrowUpDown size={16} className="text-fg-muted" />
-            项目管理
+            {t('项目管理')}
             <span className="text-[12px] text-fg-muted font-normal">
-              共 {projects.length} 个 · 显示 {visibleCount} · 隐藏 {hiddenCount}
+              {t('共 {total} 个 · 显示 {visible} · 隐藏 {hidden}', { total: projects.length, visible: visibleCount, hidden: hiddenCount })}
             </span>
           </div>
           <button
             type="button"
-            aria-label="关闭"
+            aria-label={t('关闭')}
             onClick={closeProjectManager}
             className="p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
           >
@@ -220,7 +221,7 @@ export default function ProjectManager() {
             onClick={() => void addProjectFromDialog()}
             className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
           >
-            <FolderPlus size={13} /> 添加文件夹
+            <FolderPlus size={13} /> {t('添加文件夹')}
           </button>
           <button
             type="button"
@@ -239,13 +240,13 @@ export default function ProjectManager() {
                 className={`px-2 py-0.5 text-[12px] rounded transition-colors
                   ${filter === mode ? 'bg-bg-elevated text-fg shadow-sm' : 'text-fg-muted hover:text-fg'}`}
               >
-                {mode === 'all' ? '全部' : mode === 'visible' ? '已显示' : '已隐藏'}
+                {mode === 'all' ? t('全部') : mode === 'visible' ? t('已显示') : t('已隐藏')}
               </button>
             ))}
           </div>
 
           <div className="flex items-center gap-1 text-[12px] text-fg-muted">
-            排序
+            {t('排序')}
             <select
               value={sortKey}
               onChange={e => setSortKey(e.target.value as SortKey)}
@@ -253,13 +254,13 @@ export default function ProjectManager() {
             >
               {(Object.keys(SORT_LABELS) as SortKey[]).map(k => (
                 <option key={k} value={k}>
-                  {SORT_LABELS[k]}
+                  {t(SORT_LABELS[k])}
                 </option>
               ))}
             </select>
             <button
               type="button"
-              aria-label="切换排序方向"
+              aria-label={t('切换排序方向')}
               onClick={() => setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))}
               className="p-1 rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             >
@@ -271,20 +272,20 @@ export default function ProjectManager() {
         {/* Selection action bar — only visible while rows are checked. */}
         {selectedIds.size > 0 && (
           <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border flex-shrink-0 bg-bg-active/40">
-            <span className="text-[12px] text-fg-muted">已选 {selectedIds.size} 项</span>
+            <span className="text-[12px] text-fg-muted">{t('已选 {count} 项', { count: selectedIds.size })}</span>
             <button
               type="button"
               onClick={() => void handleBatchDelete()}
               className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-danger/40 text-danger hover:bg-danger/10 transition-colors"
             >
-              <Trash2 size={13} /> 批量删除
+              <Trash2 size={13} /> {t('批量删除')}
             </button>
             <button
               type="button"
               onClick={clearSelection}
               className="ml-auto px-2 py-1 text-[12px] rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             >
-              取消选择
+              {t('取消选择')}
             </button>
           </div>
         )}
@@ -293,7 +294,7 @@ export default function ProjectManager() {
         <div className="flex-1 overflow-auto">
           {sortedProjects.length === 0 ? (
             <div className="px-4 py-10 text-center text-[13px] text-fg-muted">
-              暂无项目。点击上方按钮添加。
+              {t('暂无项目。点击上方按钮添加。')}
             </div>
           ) : (
             <table className="w-full text-[13px]">
@@ -304,19 +305,19 @@ export default function ProjectManager() {
                       checked={allSelected}
                       indeterminate={someSelected}
                       onChange={toggleAll}
-                      ariaLabel="全选当前列表"
+                      ariaLabel={t('全选当前列表')}
                     />
                   </th>
                   <Th onClick={() => cycleSort('name')} active={sortKey === 'name'} dir={sortDir}>
-                    名称
+                    {t('名称')}
                   </Th>
                   <Th onClick={() => cycleSort('path')} active={sortKey === 'path'} dir={sortDir}>
-                    路径
+                    {t('路径')}
                   </Th>
                   <Th onClick={() => cycleSort('last_opened_at')} active={sortKey === 'last_opened_at'} dir={sortDir}>
-                    最近打开
+                    {t('最近打开')}
                   </Th>
-                  <th className="px-3 py-1.5 font-medium text-right">操作</th>
+                  <th className="px-3 py-1.5 font-medium text-right">{t('操作')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -335,7 +336,7 @@ export default function ProjectManager() {
                         <Checkbox
                           checked={checked}
                           onChange={() => toggleOne(project.id)}
-                          ariaLabel={`选择 ${project.name}`}
+                          ariaLabel={t('选择 {name}', { name: project.name })}
                         />
                       </td>
                       <td className="px-3 py-2 align-middle">
@@ -358,7 +359,7 @@ export default function ProjectManager() {
                                 ? 'text-fg font-medium'
                                 : 'text-fg hover:text-accent'
                             }`}
-                            title={unavailable ? '目录不可用，请重新定位' : project.name}
+                            title={unavailable ? t('目录不可用，请重新定位') : project.name}
                           >
                             {project.name}
                             {isCurrent && (
@@ -376,26 +377,26 @@ export default function ProjectManager() {
                         </span>
                       </td>
                       <td className="px-3 py-2 align-middle whitespace-nowrap text-fg-muted text-[12px]">
-                        {timeAgo(project.last_opened_at)}
+                        {timeAgo(project.last_opened_at, t)}
                       </td>
                       <td className="px-3 py-2 align-middle">
                         <div className="flex items-center justify-end gap-0.5">
                           {project.hidden ? (
-                            <ActBtn label="恢复显示" onClick={() => void unhideProject(project.id)}>
+                            <ActBtn label={t('恢复显示')} onClick={() => void unhideProject(project.id)}>
                               <Eye size={14} />
                             </ActBtn>
                           ) : (
-                            <ActBtn label="从顶栏隐藏" onClick={() => void hideProject(project.id)}>
+                            <ActBtn label={t('从顶栏隐藏')} onClick={() => void hideProject(project.id)}>
                               <EyeOff size={14} />
                             </ActBtn>
                           )}
-                          <ActBtn label="重命名" onClick={() => handleRename(project)}>
+                          <ActBtn label={t('重命名')} onClick={() => handleRename(project)}>
                             <Pencil size={14} />
                           </ActBtn>
-                          <ActBtn label="重新定位" onClick={() => handleRelocate(project)}>
+                          <ActBtn label={t('重新定位')} onClick={() => handleRelocate(project)}>
                             <LocateFixed size={14} />
                           </ActBtn>
-                          <ActBtn label="永久删除" danger onClick={() => handleDelete(project)}>
+                          <ActBtn label={t('永久删除')} danger onClick={() => handleDelete(project)}>
                             <Trash2 size={14} />
                           </ActBtn>
                         </div>
@@ -411,14 +412,14 @@ export default function ProjectManager() {
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-2.5 border-t border-border-strong flex-shrink-0">
           <span className="text-[12px] text-fg-muted">
-            顶栏 ✕ 仅隐藏显示；此处「永久删除」才会清除项目记录
+            {t('顶栏 ✕ 仅隐藏显示；此处「永久删除」才会清除项目记录')}
           </span>
           <button
             type="button"
             onClick={closeProjectManager}
             className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors"
           >
-            完成
+            {t('完成')}
           </button>
         </div>
       </div>

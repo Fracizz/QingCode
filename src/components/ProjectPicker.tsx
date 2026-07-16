@@ -31,12 +31,14 @@ import {
 } from '../utils/projectActions'
 import Tooltip from './Tooltip'
 import type { Project } from '../types'
+import { useI18n } from '../lib/i18n'
 
 const CHIP_GAP = 4
 const ADD_BTN_W = 28
 const OVERFLOW_BTN_W = 28
 
 export default function ProjectPicker() {
+  const { t } = useI18n()
   const allProjects = useProjectStore(s => s.projects)
   const projects = allProjects.filter(p => !p.hidden)
   const currentProject = useProjectStore(s => s.currentProject)
@@ -209,11 +211,11 @@ export default function ProjectPicker() {
         ))}
 
         {hasOverflow && (
-          <Tooltip label="更多项目" side="bottom" wrapperClassName="flex-shrink-0">
+          <Tooltip label={t('更多项目')} side="bottom" wrapperClassName="flex-shrink-0">
             <button
               ref={overflowBtnRef}
               type="button"
-              aria-label="更多项目"
+              aria-label={t('更多项目')}
               aria-expanded={overflowOpen}
               aria-haspopup="menu"
               onClick={openOverflow}
@@ -228,11 +230,11 @@ export default function ProjectPicker() {
           </Tooltip>
         )}
 
-        <Tooltip label="新增空项目" side="bottom" wrapperClassName="flex-shrink-0">
+        <Tooltip label={t('新增空项目')} side="bottom" wrapperClassName="flex-shrink-0">
           <button
             ref={addBtnRef}
             type="button"
-            aria-label="新增空项目"
+            aria-label={t('新增空项目')}
             disabled={addingEmpty}
             onClick={() => void handleAddEmpty()}
             className={`flex items-center justify-center h-6 w-7 rounded text-[12px] flex-shrink-0 transition-colors
@@ -248,7 +250,7 @@ export default function ProjectPicker() {
             onClick={() => void handleAddEmpty()}
             className="flex items-center h-6 px-2 rounded text-[12px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
           >
-            新增空项目
+            {t('新增空项目')}
           </button>
         )}
       </div>
@@ -284,7 +286,7 @@ export default function ProjectPicker() {
             onContextMenu={event => event.preventDefault()}
           >
             <div className="px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted">
-              更多项目
+              {t('更多项目')}
             </div>
             <div className="flex-1 overflow-auto">
               {overflowProjects.map(project => {
@@ -321,10 +323,10 @@ export default function ProjectPicker() {
                     >
                       <span className="truncate">{project.name}</span>
                     </Tooltip>
-                    <Tooltip label="重命名项目" side="right" wrapperClassName="flex-shrink-0">
+                    <Tooltip label={t('重命名项目')} side="right" wrapperClassName="flex-shrink-0">
                       <button
                         type="button"
-                        aria-label="重命名项目"
+                        aria-label={t('重命名项目')}
                         className="opacity-0 group-hover:opacity-100 text-fg-dim hover:text-fg"
                         onClick={event => {
                           event.stopPropagation()
@@ -335,10 +337,10 @@ export default function ProjectPicker() {
                       </button>
                     </Tooltip>
                     {unavailable ? (
-                      <Tooltip label="重新定位项目" side="right" wrapperClassName="flex-shrink-0">
+                      <Tooltip label={t('重新定位项目')} side="right" wrapperClassName="flex-shrink-0">
                         <button
                           type="button"
-                          aria-label="重新定位项目"
+                          aria-label={t('重新定位项目')}
                           className="text-warn hover:text-fg"
                           onClick={event => {
                             event.stopPropagation()
@@ -350,13 +352,13 @@ export default function ProjectPicker() {
                       </Tooltip>
                     ) : (
                       <Tooltip
-                        label="在文件管理器中打开"
+                        label={t('在文件管理器中打开')}
                         side="right"
                         wrapperClassName="flex-shrink-0"
                       >
                         <button
                           type="button"
-                          aria-label="在文件管理器中打开"
+                          aria-label={t('在文件管理器中打开')}
                           className="opacity-0 group-hover:opacity-100 text-fg-dim hover:text-fg"
                           onClick={event => {
                             event.stopPropagation()
@@ -367,10 +369,10 @@ export default function ProjectPicker() {
                         </button>
                       </Tooltip>
                     )}
-                    <Tooltip label="从顶栏隐藏" side="right" wrapperClassName="flex-shrink-0">
+                    <Tooltip label={t('从顶栏隐藏')} side="right" wrapperClassName="flex-shrink-0">
                       <button
                         type="button"
-                        aria-label="从顶栏隐藏"
+                        aria-label={t('从顶栏隐藏')}
                         className="opacity-0 group-hover:opacity-100 text-fg-dim hover:text-danger"
                         onClick={event => {
                           event.stopPropagation()
@@ -397,7 +399,7 @@ export default function ProjectPicker() {
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <FolderPlus size={14} />
                 </span>
-                添加文件夹项目
+                {t('添加文件夹项目')}
               </button>
               <button
                 type="button"
@@ -411,7 +413,7 @@ export default function ProjectPicker() {
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <TerminalIcon size={14} />
                 </span>
-                新建终端项目
+                {t('新建终端项目')}
               </button>
               <button
                 type="button"
@@ -422,7 +424,7 @@ export default function ProjectPicker() {
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <ListChecks size={14} />
                 </span>
-                管理项目
+                {t('项目管理')}
               </button>
             </div>
           </div>,
@@ -450,6 +452,7 @@ function Chip({
   onRemove: () => void
   onRelocate: () => void
 }) {
+  const { t } = useI18n()
   return (
     <div
       data-chip-id={measure ? project.id : undefined}
@@ -474,10 +477,10 @@ function Chip({
       )}
       <span className="truncate max-w-[140px]">{project.name}</span>
       {unavailable ? (
-        <Tooltip label="重新定位项目" side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+        <Tooltip label={t('重新定位项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
           <button
             type="button"
-            aria-label="重新定位项目"
+            aria-label={t('重新定位项目')}
             className="inline-flex items-center justify-center text-warn hover:text-fg w-4 h-4"
             onClick={event => {
               event.stopPropagation()
@@ -488,10 +491,10 @@ function Chip({
           </button>
         </Tooltip>
       ) : (
-        <Tooltip label="从顶栏隐藏" side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+        <Tooltip label={t('从顶栏隐藏')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
           <button
             type="button"
-            aria-label="从顶栏隐藏"
+            aria-label={t('从顶栏隐藏')}
             className="inline-flex items-center justify-center opacity-0 group-hover:opacity-100 text-fg-dim hover:text-danger w-4 h-4"
             onClick={event => {
               event.stopPropagation()

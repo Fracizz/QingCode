@@ -30,6 +30,7 @@ import { useUIStore } from '../store/uiStore'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import { findProjectForPath } from '../utils/fileReferences'
 import Tooltip from './Tooltip'
+import { useI18n } from '../lib/i18n'
 
 interface SearchHit {
   name: string
@@ -126,6 +127,7 @@ function isNavigable(row: Row): boolean {
 }
 
 export default function SearchPanel() {
+  const { t } = useI18n()
   const projects = useProjectStore(s => s.projects)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const currentProject = useProjectStore(s => s.currentProject)
@@ -448,7 +450,7 @@ export default function SearchPanel() {
   return (
     <div className="h-full flex flex-col bg-bg-sidebar text-fg">
       <div className="px-4 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-widest uppercase text-fg-muted">
-        <Search size={13} /> Search
+        <Search size={13} /> {t('搜索')}
       </div>
 
       {!searchRoot && (
@@ -457,13 +459,13 @@ export default function SearchPanel() {
             active={searchScope === 'current'}
             onClick={() => setSearchScope('current')}
           >
-            当前项目
+            {t('当前项目')}
           </ScopeTab>
           <ScopeTab
             active={searchScope === 'all'}
             onClick={() => setSearchScope('all')}
           >
-            全部项目
+            {t('全部项目')}
           </ScopeTab>
         </div>
       )}
@@ -473,10 +475,10 @@ export default function SearchPanel() {
           <Filter size={12} className="text-accent flex-shrink-0" />
           <Tooltip label={searchRoot} side="bottom" wrapperClassName="truncate flex-1 min-w-0">
             <span className="truncate block">
-              限定于：{searchRoot.replace(/\\/g, '/').split('/').pop() || searchRoot}
+              {t('限定于：')}{searchRoot.replace(/\\/g, '/').split('/').pop() || searchRoot}
             </span>
           </Tooltip>
-          <Tooltip label="清除目录限定，回到当前项目根" side="bottom">
+          <Tooltip label={t('清除目录限定，回到当前项目根')} side="bottom">
             <button
               className="text-fg-dim hover:text-fg flex-shrink-0"
               onClick={() => setSearchRoot(null)}
@@ -490,10 +492,10 @@ export default function SearchPanel() {
       <div className="px-3 pb-2 flex flex-col gap-2">
         <div className="flex rounded border border-border overflow-hidden text-[11px]">
           <ModeTab active={mode === 'content'} onClick={() => setMode('content')}>
-            内容
+            {t('内容')}
           </ModeTab>
           <ModeTab active={mode === 'filename'} onClick={() => setMode('filename')}>
-            文件名
+            {t('文件名')}
           </ModeTab>
         </div>
 
@@ -502,7 +504,7 @@ export default function SearchPanel() {
             <LoaderCircle
               size={13}
               className="absolute left-2.5 top-1/2 -translate-y-1/2 animate-spin text-accent"
-              aria-label="搜索中"
+              aria-label={t('搜索中')}
             />
           ) : (
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
@@ -513,17 +515,17 @@ export default function SearchPanel() {
             placeholder={
               mode === 'content'
                 ? typeFilter
-                  ? `在 ${typeFilterLabel(typeFilter)} 文件中搜索内容…`
-                  : '搜索文件内容…'
+                  ? t('在 {type} 文件中搜索内容…', { type: t(typeFilterLabel(typeFilter)) })
+                  : t('搜索文件内容…')
                 : useGlob
-                ? '通配符匹配，如 *.tsx 或 test*Util.ts'
+                ? t('通配符匹配，如 *.tsx 或 test*Util.ts')
                 : typeFilter
-                ? `在 ${typeFilterLabel(typeFilter)} 中搜索文件名…`
+                ? t('在 {type} 中搜索文件名…', { type: t(typeFilterLabel(typeFilter)) })
                 : matchSuffix
-                ? '输入后缀/扩展名，如 .ts 或 ts'
+                ? t('输入后缀/扩展名，如 .ts 或 ts')
                 : fuzzy
-                ? '模糊匹配文件名…'
-                : '搜索文件名，支持 * 通配符…'
+                ? t('模糊匹配文件名…')
+                : t('搜索文件名，支持 * 通配符…')
             }
             className="w-full pl-7 pr-7 py-1.5 text-[13px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
           />
@@ -541,7 +543,7 @@ export default function SearchPanel() {
           <Toggle
             active={ignoreCase}
             onClick={() => setIgnoreCase(v => !v)}
-            tooltip="忽略大小写"
+            tooltip={t('忽略大小写')}
             icon={<CaseSensitive size={13} />}
             label="Aa"
           />
@@ -550,22 +552,22 @@ export default function SearchPanel() {
               <Toggle
                 active={fuzzy}
                 onClick={() => setFuzzy(v => !v)}
-                tooltip="模糊匹配（子序列）"
+                tooltip={t('模糊匹配（子序列）')}
                 icon={<Type size={13} />}
-                label="模糊"
+                label={t('模糊')}
                 locked={useGlob}
               />
               <Toggle
                 active={matchSuffix}
                 onClick={toggleSuffix}
-                tooltip="按后缀/扩展名匹配"
+                tooltip={t('按后缀/扩展名匹配')}
                 icon={<Regex size={13} />}
-                label="后缀"
+                label={t('后缀')}
                 locked={typeFilter !== null || useGlob}
               />
             </>
           )}
-          <Tooltip label="按文件类型筛选" side="bottom">
+          <Tooltip label={t('按文件类型筛选')} side="bottom">
             <button
               onClick={() => setExtPickerOpen(v => !v)}
               className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
@@ -574,11 +576,11 @@ export default function SearchPanel() {
                   : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
             >
               <Caret size={11} className={`transition-transform ${extPickerOpen ? 'rotate-180' : ''}`} />
-              <span>{typeFilterLabel(typeFilter)}</span>
+              <span>{t(typeFilterLabel(typeFilter))}</span>
             </button>
           </Tooltip>
           {typeFilter && (
-            <Tooltip label="清除类型筛选" side="bottom">
+            <Tooltip label={t('清除类型筛选')} side="bottom">
               <button
                 className="px-1 py-0.5 text-[11px] rounded text-fg-dim hover:text-fg"
                 onClick={() => setTypeFilter(null)}
@@ -602,10 +604,10 @@ export default function SearchPanel() {
                     ? 'bg-accent text-white border-accent'
                     : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
               >
-                全部类型
+                {t('全部类型')}
               </button>
               <div className="mb-2 text-[10px] font-semibold tracking-wide uppercase text-fg-dim px-0.5">
-                常见分组
+                {t('常见分组')}
               </div>
               <div className="grid grid-cols-2 gap-1 mb-2">
                 {TYPE_PRESETS.map(preset => (
@@ -624,12 +626,12 @@ export default function SearchPanel() {
                         ? 'bg-accent text-white border-accent'
                         : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
                   >
-                    {preset.label}
+                    {t(preset.label)}
                   </button>
                 ))}
               </div>
               <div className="mb-1 text-[10px] font-semibold tracking-wide uppercase text-fg-dim px-0.5">
-                扩展名
+                {t('扩展名')}
               </div>
               <div className="grid grid-cols-3 gap-1">
                 {COMMON_EXTS.map(ext => (
@@ -661,34 +663,38 @@ export default function SearchPanel() {
         onKeyDown={onResultsKeyDown}
       >
         {!searchRoots.length ? (
-          <div className="px-4 py-6 text-[13px] text-fg-muted">请先选择或添加项目</div>
+          <div className="px-4 py-6 text-[13px] text-fg-muted">{t('请先选择或添加项目')}</div>
         ) : error ? (
           <div className="px-4 py-4 text-[13px] text-danger">{error}</div>
         ) : !hasQuery ? (
           <div className="px-4 py-4 text-[13px] text-fg-muted">
-            {mode === 'content' ? '输入关键词搜索文件内容' : '输入关键词、通配符（*）或选择常见类型开始搜索'}
+            {mode === 'content' ? t('输入关键词搜索文件内容') : t('输入关键词、通配符（*）或选择常见类型开始搜索')}
           </div>
         ) : rows.length === 0 && loading ? (
-          <div className="px-4 py-4 text-[13px] text-fg-muted">搜索中…</div>
+          <div className="px-4 py-4 text-[13px] text-fg-muted">{t('搜索中…')}</div>
         ) : rows.length === 0 ? (
-          <div className="px-4 py-4 text-[13px] text-fg-muted">无匹配结果</div>
+          <div className="px-4 py-4 text-[13px] text-fg-muted">{t('无匹配结果')}</div>
         ) : (
           <>
             <div className="px-4 py-1 flex items-center gap-2 text-[11px] text-fg-dim">
               <span className="truncate">
                 {mode === 'content'
-                  ? `${contentResults!.match_count} 个匹配 · ${contentResults!.files.length} 个文件${contentResults!.truncated ? ' · 已截断' : ''}`
-                  : `${filenameResults.length} 个结果`}
+                  ? t('{matches} 个匹配 · {files} 个文件{truncated}', {
+                      matches: contentResults!.match_count,
+                      files: contentResults!.files.length,
+                      truncated: contentResults!.truncated ? t(' · 已截断') : '',
+                    })
+                  : t('{count} 个结果', { count: filenameResults.length })}
               </span>
-              {loading && <LoaderCircle size={12} className="animate-spin text-accent flex-shrink-0" aria-label="搜索中" />}
+              {loading && <LoaderCircle size={12} className="animate-spin text-accent flex-shrink-0" aria-label={t('搜索中')} />}
               {mode === 'content' && (
                 <span className="ml-auto flex items-center gap-2 flex-shrink-0">
-                  <Tooltip label="展开全部" side="bottom">
+                  <Tooltip label={t('展开全部')} side="bottom">
                     <button className="hover:text-fg" onClick={expandAll}>
                       <ChevronDown size={12} />
                     </button>
                   </Tooltip>
-                  <Tooltip label="折叠全部" side="bottom">
+                  <Tooltip label={t('折叠全部')} side="bottom">
                     <button className="hover:text-fg" onClick={collapseAll}>
                       <ChevronRight size={12} />
                     </button>
@@ -728,6 +734,7 @@ const SearchRowComponent = (props: {
   index: number
   style: CSSProperties
 } & SearchRowProps) => {
+  const { t } = useI18n()
   const { index, style, rows, activeIndex, onToggleFile, onOpenMatch, onOpenFilename } = props
   const row = rows[index]
   if (!row) return null
@@ -784,7 +791,7 @@ const SearchRowComponent = (props: {
   if (row.kind === 'more') {
     return (
       <div style={style} className={`${baseCls} pl-9 pr-3 text-[11px] text-fg-dim`}>
-        …可能还有更多匹配
+        {t('…可能还有更多匹配')}
       </div>
     )
   }
@@ -899,7 +906,8 @@ function Toggle({
   label: string
   locked?: boolean
 }) {
-  const tooltipLabel = locked ? `${tooltip}（已由后缀筛选锁定）` : tooltip
+  const { t } = useI18n()
+  const tooltipLabel = locked ? `${tooltip}${t('（已由后缀筛选锁定）')}` : tooltip
   return (
     <Tooltip label={tooltipLabel} side="bottom">
       <button
