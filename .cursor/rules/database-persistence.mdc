@@ -1,0 +1,14 @@
+---
+description: Preserve NestCode SQLite data and use safe migrations
+globs: "{src/store/**/*.ts,src-tauri/src/**/*.rs}"
+alwaysApply: false
+---
+# Database Persistence
+
+- Treat `src-tauri/tauri.conf.json`'s `identifier` and the SQLite database name as persistent-data contracts. Do not change either without a migration from every released value.
+- Add schema changes as forward-only, numbered `tauri_plugin_sql::Migration` entries. Do not edit migrations that may already have run in a release.
+- Make data migrations idempotent: record completion in `settings`, skip safely when already complete, and use a transaction for multi-row writes.
+- Preserve user data by default. Use `INSERT OR IGNORE` or an explicit conflict policy; never overwrite or delete existing rows during an automatic migration.
+- Keep all database access behind the project store or a dedicated persistence module. UI components must not issue SQL directly.
+- Handle unavailable, malformed, or legacy databases without preventing the app from starting; log diagnostic context and leave the current database intact.
+- Before shipping a persistence change, verify both fresh install behavior and upgrade behavior from the previous identifier/database name.
