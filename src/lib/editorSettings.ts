@@ -25,6 +25,9 @@ export type EditorPreferenceSettings = {
   trimTrailingWhitespace: boolean
   insertFinalNewline: boolean
   eol: EolMode
+  formatOnPaste: boolean
+  bracketPairColorization: boolean
+  bracketPairGuides: boolean
 }
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferenceSettings = {
@@ -38,6 +41,9 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferenceSettings = {
   trimTrailingWhitespace: false,
   insertFinalNewline: false,
   eol: 'auto',
+  formatOnPaste: false,
+  bracketPairColorization: true,
+  bracketPairGuides: true,
 }
 
 function asNumber(value: unknown, fallback: number): number {
@@ -109,6 +115,18 @@ export function readEditorPreferences(settings: SettingsFile): EditorPreferenceS
       DEFAULT_EDITOR_PREFERENCES.insertFinalNewline,
     ),
     eol: asEol(settings['files.eol']),
+    formatOnPaste: asBoolean(
+      settings['editor.formatOnPaste'],
+      DEFAULT_EDITOR_PREFERENCES.formatOnPaste,
+    ),
+    bracketPairColorization: asBoolean(
+      settings['editor.bracketPairColorization.enabled'],
+      DEFAULT_EDITOR_PREFERENCES.bracketPairColorization,
+    ),
+    bracketPairGuides: asBoolean(
+      settings['editor.guides.bracketPairs'],
+      DEFAULT_EDITOR_PREFERENCES.bracketPairGuides,
+    ),
   }
 }
 

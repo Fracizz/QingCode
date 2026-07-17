@@ -127,13 +127,13 @@ const SHARED_SETTINGS_BODY = `
   "editor.minimap.enabled": false,
   // 保存时自动格式化（调用 format_document；可用 Shift+Alt+F 手动格式化）
   "editor.formatOnSave": false,
-  // 【暂未生效】粘贴时自动格式化
+  // 粘贴后自动格式化（复用 format_document；大文件/不支持语言会跳过）
   "editor.formatOnPaste": false,
   // 【暂未生效】链接编辑
   "editor.linkedEditing": false,
-  // 【暂未生效】括号对着色（编辑器仍有基础匹配高亮）
+  // 括号对着色（按嵌套深度分色）
   "editor.bracketPairColorization.enabled": true,
-  // 【暂未生效】括号对参考线
+  // 光标所在括号对之间的竖向参考线
   "editor.guides.bracketPairs": true,
 
   // ============================== 文件 ==============================

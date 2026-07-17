@@ -240,6 +240,7 @@ function createTabEditorState(
       : { ...basePrefs, wordWrap: 'off' as const }
   const showLineNumbers = prefs.lineNumbers !== 'off'
   const settingsContent = profile === 'full' ? tab.content : undefined
+  const enableBracketDecorations = profile === 'full' && !large && !huge
 
   const setup: Extension[] =
     profile === 'plain'
@@ -258,13 +259,25 @@ function createTabEditorState(
       setup,
       themeCompartment.of(editorThemeExtension()),
       languageCompartment.of(initialLang),
-      settingsCompartment.of(buildEditorPreferenceExtensions(prefs, settingsContent)),
+      settingsCompartment.of(
+        buildEditorPreferenceExtensions(prefs, settingsContent, {
+          enableBracketDecorations,
+        }),
+      ),
       flashField,
       EditorView.updateListener.of(update => {
         if (update.docChanged) {
           // Avoid full-document copies into Zustand on every keystroke.
           markDirty(tabId)
           notifyEditorContentChanged(tabId)
+          const pasted = update.transactions.some(tr => tr.isUserEvent('input.paste'))
+          if (
+            pasted &&
+            profile === 'full' &&
+            getEditorPreferences().formatOnPaste
+          ) {
+            void formatDocument(tabId, { quiet: true })
+          }
         }
       }),
       keymap.of([
@@ -375,6 +388,10 @@ function bindTabToView(
     profile === 'full'
       ? getEditorPreferences()
       : { ...getEditorPreferences(), wordWrap: 'off' as const }
+  const enableBracketDecorations =
+    profile === 'full' &&
+    !isLargeDocument(tab.content) &&
+    !isHugeDocument(tab.content)
   view.dispatch({
     effects: [
       themeCompartment.reconfigure(editorThemeExtension()),
@@ -382,6 +399,7 @@ function bindTabToView(
         buildEditorPreferenceExtensions(
           prefs,
           profile === 'full' ? tab.content : undefined,
+          { enableBracketDecorations },
         ),
       ),
     ],
@@ -561,11 +579,16 @@ export default function Editor() {
         profile === 'full'
           ? (prefs ?? getEditorPreferences())
           : { ...(prefs ?? getEditorPreferences()), wordWrap: 'off' as const }
+      const enableBracketDecorations =
+        profile === 'full' &&
+        !isLargeDocument(tab?.content) &&
+        !isHugeDocument(tab?.content)
       view.dispatch({
         effects: settingsCompartment.current.reconfigure(
           buildEditorPreferenceExtensions(
             next,
             profile === 'full' ? tab?.content : undefined,
+            { enableBracketDecorations },
           ),
         ),
       })

@@ -10,6 +10,8 @@
 - 工作区信任：未信任项目限制高风险能力，降低打开陌生仓库时的安全风险
 - 文档格式化：支持 `Shift+Alt+F` 调用 Prettier / rustfmt / shfmt / ruff·black / gofmt（需本机已安装）格式化当前文件
 - `editor.formatOnSave`：保存前按上述格式化器自动格式化（失败时不阻断保存）
+- `editor.formatOnPaste`：粘贴后自动格式化（安静模式，大文件/不支持语言跳过）
+- `editor.bracketPairColorization.enabled` / `editor.guides.bracketPairs`：括号嵌套分色与光标所在括号对参考线
 - `files.exclude` / `search.exclude`：资源管理器与文件/内容搜索按设置 JSON 中的排除规则生效
 - `terminal.integrated.scrollback`：限制 xterm 缓冲，并跨重启持久化最近输出
 - `terminal.integrated.cursorBlinking`：控制终端光标闪烁

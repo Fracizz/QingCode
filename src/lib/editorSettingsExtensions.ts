@@ -5,16 +5,23 @@ import {
   highlightTrailingWhitespace,
   highlightWhitespace,
 } from '@codemirror/view'
+import { bracketDecorationExtensions } from './bracketDecorations'
 import {
   detectIndentFromContent,
   getEditorPreferences,
   type EditorPreferenceSettings,
 } from './editorSettings'
 
+export type BuildEditorPreferenceOptions = {
+  /** Skip expensive bracket decorations (degraded / plain / huge docs). */
+  enableBracketDecorations?: boolean
+}
+
 /** Build CodeMirror extensions from effective editor preferences. */
 export function buildEditorPreferenceExtensions(
   prefs: EditorPreferenceSettings = getEditorPreferences(),
   content?: string,
+  options: BuildEditorPreferenceOptions = {},
 ): Extension[] {
   let tabSize = prefs.tabSize
   let insertSpaces = prefs.insertSpaces
@@ -40,6 +47,14 @@ export function buildEditorPreferenceExtensions(
         ? highlightTrailingWhitespace()
         : []
 
+  const bracketsEnabled = options.enableBracketDecorations !== false
+  const bracketExt = bracketsEnabled
+    ? bracketDecorationExtensions({
+        colorization: prefs.bracketPairColorization,
+        guides: prefs.bracketPairGuides,
+      })
+    : []
+
   return [
     EditorState.tabSize.of(tabSize),
     indentUnit.of(indent),
@@ -48,5 +63,6 @@ export function buildEditorPreferenceExtensions(
       ? []
       : EditorView.editorAttributes.of({ class: 'cm-hide-linenumbers' }),
     whitespaceExt,
+    bracketExt,
   ]
 }
