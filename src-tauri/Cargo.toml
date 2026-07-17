@@ -14,6 +14,14 @@ edition = "2021"
 name = "qingcode_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# `tauri build` enables `tauri/custom-protocol` for release so the webview loads
+# the embedded `frontendDist` instead of `devUrl`. package-exe.ps1 calls
+# `cargo build --release` directly for incremental speed, so we expose the same
+# feature here and enable it in the release build to avoid the webview falling
+# back to http://127.0.0.1:5173 (ERR_CONNECTION_REFUSED) in the shipped exe.
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

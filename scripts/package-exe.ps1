@@ -94,7 +94,7 @@ function Invoke-FrontendBuild {
 function Invoke-RustReleaseBuild {
   Write-Step 'Rust release build'
   $sw = [Diagnostics.Stopwatch]::StartNew()
-  cargo build --release -p qingcode --manifest-path $cargoManifest
+  cargo build --release -p qingcode --manifest-path $cargoManifest --features custom-protocol
   if ($LASTEXITCODE -ne 0) {
     throw "cargo build failed with exit code $LASTEXITCODE."
   }
