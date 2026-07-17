@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-07-17
+
+### Added
+
+- 状态栏显示应用版本（开发构建带 `dev` 标记），便于区分正式版与开发版
+
 ## [0.1.3] - 2026-07-17
 
 ### Added
@@ -63,7 +69,8 @@
 - Windows 单文件 exe 打包（`pnpm package:exe`）
 - GitHub / Gitee Release 工作流与版本脚本
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.1

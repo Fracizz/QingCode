@@ -224,6 +224,8 @@
     "Ctrl+Shift+C 路径 · Alt+C 文件引用": "Ctrl+Shift+C Path · Alt+C File Reference",
     "{running}/{total} 运行中": "{running}/{total} running",
     "{count} 个已打开": "{count} open",
+    "开发构建：项目数据在仓库 .dev/；主题字体等保存在开发服务器源下": "Dev build: project data lives in the repo .dev/ folder; theme/fonts use the Vite origin storage.",
+    "正式构建：项目数据在 %APPDATA%\\com.qingcode.app\\；主题字体等与开发版不共用": "Release build: project data lives in %APPDATA%\\com.qingcode.app\\; theme/fonts are not shared with the dev build.",
     "在文件管理器中显示失败: {error}": "Could not reveal in File Explorer: {error}",
     "重命名失败: {error}": "Could not rename: {error}",
     "关闭文件": "Close File",
