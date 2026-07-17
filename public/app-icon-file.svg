@@ -1,6 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="96" fill="#000000"/>
-  <path fill="#2FAF9B" d="M64 380H448V472H64V380Z"/>
-  <path fill="#4ECDB5" d="M64 288H448V380H64V288Z"/>
-  <path fill="#F3F6F8" d="M80 96H304L456 256L304 416H80L320 256L80 96Z"/>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="72%" fx="50%" fy="38%">
+      <stop offset="0%" stop-color="#141414"/>
+      <stop offset="100%" stop-color="#000000"/>
+    </radialGradient>
+    <clipPath id="squircle">
+      <rect width="512" height="512" rx="112"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <rect width="512" height="512" fill="url(#bg)"/>
+
+    <!-- 青台下层 -->
+    <path fill="#2FAF9B" d="M96 448H416V488H96V448Z"/>
+
+    <!-- 青台上层 -->
+    <path fill="#4ECDB5" d="M96 408H416V448H96V408Z"/>
+
+    <!-- 厚切代码括号 -->
+    <path fill="#F3F6F8" d="M128 152H268L392 256L268 360H128L292 256L128 152Z"/>
+  </g>
 </svg>

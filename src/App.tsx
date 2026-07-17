@@ -31,6 +31,8 @@ import { beginPanelResize, endPanelResize } from './lib/panelResize'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
 import { useI18n } from './lib/i18n'
+import { isShortcutInputTarget, shortcutMatchesEvent } from './lib/shortcuts'
+import { useShortcutStore } from './store/shortcutStore'
 
 const Editor = lazy(() => import('./components/Editor'))
 const TerminalView = lazy(() => import('./components/Terminal'))
@@ -81,6 +83,7 @@ function App() {
   const terminalOpenSignal = useUIStore(s => s.terminalOpenSignal)
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
+  const shortcuts = useShortcutStore(s => s.shortcuts)
 
   const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)
   const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)
@@ -158,6 +161,24 @@ function App() {
       unlisten?.()
     }
   }, [initializeTerminalEvents])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isShortcutInputTarget(event.target)) return
+      if (shortcutMatchesEvent(shortcuts.searchAllProjects, event)) {
+        event.preventDefault()
+        useUIStore.getState().requestGlobalSearch()
+      } else if (shortcutMatchesEvent(shortcuts.toggleTerminal, event)) {
+        event.preventDefault()
+        setTerminalOpen(open => !open)
+      } else if (shortcutMatchesEvent(shortcuts.openSettings, event)) {
+        event.preventDefault()
+        setView('settings')
+      }
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [shortcuts, setView])
 
   // Ensure the current project has at least one terminal, and that the active
   // terminal belongs to the current project.

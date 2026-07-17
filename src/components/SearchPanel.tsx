@@ -134,6 +134,7 @@ export default function SearchPanel() {
   const openFile = useEditorStore(s => s.openFile)
   const searchRoot = useUIStore(s => s.searchRoot)
   const setSearchRoot = useUIStore(s => s.setSearchRoot)
+  const globalSearchSignal = useUIStore(s => s.globalSearchSignal)
 
   const [searchScope, setSearchScope] = useState<SearchScope>('current')
   const searchRoots = useMemo(() => {
@@ -166,9 +167,16 @@ export default function SearchPanel() {
   const [activeIndex, setActiveIndex] = useState(0)
   const reqId = useRef(0)
   const listRef = useListRef(null)
-
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const extList = typeFilterExtensions(typeFilter)
   const useGlob = isGlobPattern(query)
+
+  useEffect(() => {
+    if (globalSearchSignal === 0) return
+    setSearchRoot(null)
+    setSearchScope('all')
+    window.requestAnimationFrame(() => searchInputRef.current?.focus())
+  }, [globalSearchSignal, setSearchRoot])
 
   useEffect(() => {
     setCollapsedFiles(new Set())
@@ -510,6 +518,7 @@ export default function SearchPanel() {
             <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
           )}
           <input
+            ref={searchInputRef}
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder={
