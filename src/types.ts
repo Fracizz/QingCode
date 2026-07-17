@@ -57,4 +57,9 @@ export interface TerminalTab {
   exitCode: number | null
   /** Wall-clock ms when the process was spawned; used to detect quick failures. */
   startedAt?: number
+  /**
+   * Set when terminal metadata was restored after app restart; cleared after
+   * the first spawn attempt so user-exited tabs are not auto-restarted.
+   */
+  awaitingRestoreSpawn?: boolean
 }

@@ -18,6 +18,7 @@ import {
 import { isSettingsJsonPath } from '../lib/projectSettings'
 import { translate } from '../lib/i18n'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
+import { authorizePaths } from '../lib/pathAllowlist'
 import { loadEffectiveAutoSaveSettings, notifyAutoSaveSettingsChanged } from '../lib/autoSaveSettings'
 import { useProjectStore } from './projectStore'
 import type { EditorTab } from '../types'
@@ -70,6 +71,11 @@ interface EditorState {
   bumpContentEpoch: (id: string) => void
   /** Replace tab buffer from disk (clears dirty, rebuilds editor session). */
   reloadFromDisk: (id: string, content: string, mtime?: number | null) => Promise<void>
+  /**
+   * After session restore: load disk content for tabs that only have a path
+   * (draft bodies may already be attached). Safe to call repeatedly.
+   */
+  loadMissingTabContents: () => Promise<void>
 }
 
 function splitPinned(tabs: EditorTab[]) {
@@ -367,6 +373,88 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })
   },
 
+  loadMissingTabContents: async () => {
+    const targets = get()
+      .tabs.filter(
+        t =>
+          !t.openError &&
+          !t.loading &&
+          (t.content === undefined || t.diskMtime === undefined),
+      )
+      .map(t => t.id)
+    if (targets.length === 0) return
+
+    set(s => ({
+      tabs: s.tabs.map(t =>
+        targets.includes(t.id) && t.content === undefined ? { ...t, loading: true } : t,
+      ),
+    }))
+
+    await Promise.all(
+      targets.map(async id => {
+        const initial = get().findTab(id)
+        if (!initial) return
+        try {
+          let mtime: number | null = null
+          try {
+            mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', {
+              path: initial.path,
+            })
+          } catch {
+            mtime = null
+          }
+
+          const current = get().findTab(id)
+          if (!current) return
+
+          // Draft-restored buffers already have content; only refresh mtime.
+          if (current.content !== undefined) {
+            set(s => {
+              const next = mapTabEverywhere(s, id, t => ({
+                ...t,
+                loading: false,
+                diskMtime: mtime,
+              }))
+              return next ?? s
+            })
+            return
+          }
+
+          const content = await safeInvoke<string>('读取文件', 'read_file', {
+            path: current.path,
+          })
+          if (!get().findTab(id)) return
+          set(s => {
+            const next = mapTabEverywhere(s, id, t => ({
+              ...t,
+              content,
+              loading: false,
+              openError: undefined,
+              openErrorKind: undefined,
+              diskMtime: mtime,
+              // No draft body survived — open clean from disk.
+              dirty: false,
+            }))
+            return next ?? s
+          })
+        } catch (e) {
+          console.error('loadMissingTabContents failed:', e)
+          if (!get().findTab(id)) return
+          const { message, kind } = parseOpenFileError(e)
+          set(s => {
+            const next = mapTabEverywhere(s, id, t => ({
+              ...t,
+              loading: false,
+              openError: message,
+              openErrorKind: kind,
+            }))
+            return next ?? s
+          })
+        }
+      }),
+    )
+  },
+
   reloadFromDisk: async (id, content, mtime) => {
     disposeEditorSession(id)
     set(s => {
@@ -459,6 +547,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
 
       if (!(await confirmOutsideSymlinkWrite(selected))) return
+      // Explicit Save As dialog = user authorization for that write target.
+      await authorizePaths([selected])
       await safeInvoke('另存为', 'write_file', { path: selected, content })
 
       const conflict = get().getAllTabs().find(t => t.id !== id && pathsEqual(t.path, selected))

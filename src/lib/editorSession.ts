@@ -93,6 +93,14 @@ export function captureEditorScroll(tabId: string, view: EditorView) {
   })
 }
 
+export function getEditorScroll(tabId: string): EditorScrollPos | undefined {
+  return scrolls.get(tabId)
+}
+
+export function setEditorScroll(tabId: string, pos: EditorScrollPos) {
+  scrolls.set(tabId, { top: pos.top, left: pos.left })
+}
+
 export function restoreEditorScroll(tabId: string, view: EditorView) {
   const pos = scrolls.get(tabId)
   if (!pos) return

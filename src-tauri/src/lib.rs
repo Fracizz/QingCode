@@ -4,9 +4,11 @@ mod file_associations;
 mod file_watcher;
 mod fonts;
 mod git_status;
+mod path_guard;
 mod terminal;
 
 use file_watcher::FileWatcherManager;
+use path_guard::PathAllowlist;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri_plugin_sql::{Migration, MigrationKind};
@@ -237,6 +239,7 @@ pub fn run() {
         )
         .manage(TerminalManager::new())
         .manage(FileWatcherManager::new())
+        .manage(PathAllowlist::new())
         .manage(LaunchFiles(Mutex::new(launch_files)))
         .setup(|app| {
             migrate_legacy_database();
@@ -285,6 +288,8 @@ pub fn run() {
             commands::delete_path,
             commands::directory_delete_stats,
             commands::check_symlink_write,
+            path_guard::sync_project_roots,
+            path_guard::authorize_paths,
             git_status::get_git_head,
             fonts::list_system_fonts,
             create_terminal,

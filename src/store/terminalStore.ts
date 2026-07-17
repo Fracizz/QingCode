@@ -5,10 +5,12 @@ import { useProjectStore } from './projectStore'
 import { useUIStore } from './uiStore'
 import type { TerminalTab } from '../types'
 import { DEFAULT_TERMINAL_PROFILE, getTerminalProfile } from '../lib/terminalProfiles'
+import { ensureTerminalProfileTrust } from '../lib/terminalProfileTrust'
 import { disambiguateTerminalName, resolveNewTerminalName, terminalDisplayLabel } from '../utils/terminalName'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
-const STORAGE_KEY = 'qingcode:terminal-layout'
+/** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
+const LEGACY_SESSION_STORAGE_KEY = 'qingcode:terminal-layout'
 const MAX_BUFFERED_OUTPUT_LENGTH = 1024 * 1024
 
 /** 够"快"才算启动失败：进程在此时长（毫秒）内非零退出，视为秒退并提示。 */
@@ -62,22 +64,6 @@ export function subscribeTerminalOutput(id: string, listener: TerminalOutputList
 
 export type ShellKind = 'ps1' | 'bat' | 'sh' | 'command' | 'script'
 
-interface PersistedTerminalState {
-  terminals: TerminalTab[]
-  activeTerminalByProject: Record<string, string>
-}
-
-function loadPersistedState(): PersistedTerminalState {
-  try {
-    // PTY processes and terminal output cannot survive a window/app restart.
-    // sessionStorage keeps metadata per-window (not shared like localStorage).
-    sessionStorage.removeItem(STORAGE_KEY)
-  } catch {
-    // Storage failures should not block terminal startup.
-  }
-  return { terminals: [], activeTerminalByProject: {} }
-}
-
 interface TerminalState {
   terminals: TerminalTab[]
   activeTerminalId: string | null
@@ -96,6 +82,13 @@ interface TerminalState {
   closeAllProjectTerminals: (projectId: string) => Promise<void>
   closeProjectTerminals: (projectId: string) => Promise<void>
   restartTerminal: (id: string) => Promise<void>
+  /** Seed tabs from durable workspace session (no PTY yet). */
+  hydrateTerminalSessions: (
+    terminals: TerminalTab[],
+    activeTerminalByProject: Record<string, string>,
+  ) => void
+  /** Spawn PTYs for tabs restored after restart (once). */
+  spawnRestoredTerminals: (projectId: string) => Promise<void>
   activateProject: (projectId: string) => void
   updateProjectPath: (projectId: string, path: string) => void
   setActiveTerminal: (id: string) => void
@@ -105,12 +98,17 @@ interface TerminalState {
   initializeTerminalEvents: () => Promise<UnlistenFn>
 }
 
-const persisted = loadPersistedState()
+try {
+  // Legacy per-window key — durable metadata moved to workspaceSessionPersist.
+  sessionStorage.removeItem(LEGACY_SESSION_STORAGE_KEY)
+} catch {
+  /* ignore */
+}
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
-  terminals: persisted.terminals,
+  terminals: [],
   activeTerminalId: null,
-  activeTerminalByProject: persisted.activeTerminalByProject,
+  activeTerminalByProject: {},
 
   addTerminal: async (projectPath: string, projectId: string, profileId?: string) => {
     const sameProject = get().terminals.filter(t => t.projectId === projectId)
@@ -120,8 +118,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         .pushToast('info', `每个项目最多可创建 ${MAX_TERMINALS_PER_PROJECT} 个终端`)
       return null
     }
-    const id = crypto.randomUUID()
     const profile = getTerminalProfile(profileId)
+    if (!(await ensureTerminalProfileTrust(profile))) return null
+    const id = crypto.randomUUID()
     const nextNumber =
       sameProject.reduce((max, terminal) => {
         const match = /^终端 (\d+)$/.exec(terminal.name) ?? /^Terminal (\d+)$/.exec(terminal.name)
@@ -326,10 +325,32 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   restartTerminal: async (id: string) => {
     const tab = get().terminals.find(terminal => terminal.id === id)
     if (!tab) return
+    // Profile terminals store profileId + launchCommand without shellKind.
+    // Run-config tasks set shellKind and are gated by ensureRunTrust instead.
+    if (tab.launchCommand && tab.profileId && !tab.shellKind) {
+      const profile = getTerminalProfile(tab.profileId)
+      if (
+        !(await ensureTerminalProfileTrust({
+          id: profile.id,
+          name: profile.name,
+          command: tab.launchCommand,
+        }))
+      ) {
+        return
+      }
+    }
     clearTerminalOutput(id)
     set(s => ({
       terminals: s.terminals.map(terminal =>
-        terminal.id === id ? { ...terminal, status: 'starting', exitCode: null, startedAt: Date.now() } : terminal
+        terminal.id === id
+          ? {
+              ...terminal,
+              status: 'starting',
+              exitCode: null,
+              startedAt: Date.now(),
+              awaitingRestoreSpawn: false,
+            }
+          : terminal
       ),
     }))
     try {
@@ -360,6 +381,30 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }))
       useProjectStore.getState().pushToast('error', `重启终端失败: ${String(e)}`)
     }
+  },
+
+  hydrateTerminalSessions: (terminals, activeTerminalByProject) => {
+    set({
+      terminals,
+      activeTerminalId: null,
+      activeTerminalByProject: { ...activeTerminalByProject },
+    })
+  },
+
+  spawnRestoredTerminals: async (projectId: string) => {
+    const pending = get().terminals.filter(
+      t => t.projectId === projectId && t.awaitingRestoreSpawn,
+    )
+    if (pending.length === 0) return
+    // Clear flags first so concurrent effect runs do not double-spawn.
+    set(s => ({
+      terminals: s.terminals.map(t =>
+        t.projectId === projectId && t.awaitingRestoreSpawn
+          ? { ...t, awaitingRestoreSpawn: false }
+          : t,
+      ),
+    }))
+    await Promise.all(pending.map(t => get().restartTerminal(t.id)))
   },
 
   activateProject: (projectId: string) =>
@@ -461,14 +506,4 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 }))
 
-useTerminalStore.subscribe(state => {
-  try {
-    sessionStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify({
-        terminals: state.terminals,
-        activeTerminalByProject: state.activeTerminalByProject,
-      } satisfies PersistedTerminalState)
-    )
-  } catch {}
-})
+// Durable terminal metadata is persisted via workspaceSessionSync (localStorage).

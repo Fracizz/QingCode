@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
-  "description": "Shared capability for the main QingCode window. Secondary qing-* windows use secondary.json (no create-webview-window).",
-  "windows": ["main"],
+  "identifier": "secondary",
+  "description": "Capability for secondary QingCode windows (qing-*). Same editor surface as main, but cannot spawn further WebviewWindows. Custom invoke commands remain process-global in Tauri 2 (path sandbox still applies). sql:allow-execute is required for project/recent-file CRUD via plugin-sql; opener:allow-open-path is scoped to common roots plus drive letters so Reveal/Open in Explorer works for arbitrary project paths.",
+  "windows": ["qing-*"],
   "permissions": [
     "core:default",
     "opener:default",
@@ -22,7 +22,7 @@
     "dialog:default",
     "sql:default",
     "sql:allow-execute",
-    "core:webview:allow-create-webview-window",
+    "core:webview:deny-create-webview-window",
     "core:window:allow-minimize",
     "core:window:allow-maximize",
     "core:window:allow-unmaximize",

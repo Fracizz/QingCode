@@ -315,12 +315,26 @@ export function formatSettings(
   return `${JSON5.stringify(normalized, null, 2)}\n`
 }
 
-function settingsAreDefaultShape(settings: SettingsFile, defaults: SettingsFile): boolean {
-  try {
-    return JSON.stringify(settings) === JSON.stringify(defaults)
-  } catch {
-    return false
+/** Deep equality for JSON-like values; object key order does not matter. */
+function jsonValueEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+    return a.every((item, index) => jsonValueEqual(item, b[index]))
   }
+  if (!isRecord(a) || !isRecord(b)) return false
+  const aKeys = Object.keys(a)
+  const bKeys = Object.keys(b)
+  if (aKeys.length !== bKeys.length) return false
+  for (const key of aKeys) {
+    if (!Object.prototype.hasOwnProperty.call(b, key)) return false
+    if (!jsonValueEqual(a[key], b[key])) return false
+  }
+  return true
+}
+
+function settingsAreDefaultShape(settings: SettingsFile, defaults: SettingsFile): boolean {
+  return jsonValueEqual(settings, defaults)
 }
 
 export function parseSettings(input: unknown, scope: SettingsScope = 'global'): SettingsFile {
@@ -497,15 +511,37 @@ export async function saveSettingsToPath(
   scope?: SettingsScope,
 ): Promise<void> {
   const resolvedScope = scope ?? (isGlobalSettingsPath(path) ? 'global' : 'project')
+  const normalized = resolvedScope === 'project' ? stripGlobalOnlyKeys(settings) : settings
+  const content = formatSettings(normalized, resolvedScope)
+
+  // Avoid wiping a hand-edited commented file when values are unchanged.
+  // Default-shaped saves always re-emit the commented template via formatSettings.
+  try {
+    const existing = await safeInvoke<string>('读取设置', 'read_file', { path })
+    if (
+      settingsTextHasComments(existing) &&
+      !settingsAreDefaultShape(normalized, defaultSettingsFor(resolvedScope)) &&
+      jsonValueEqual(parseSettingsText(existing, resolvedScope), normalized)
+    ) {
+      return
+    }
+  } catch {
+    // File missing or unreadable — write below.
+  }
+
   await safeInvoke('保存设置', 'write_file', {
     path,
-    content: formatSettings(settings, resolvedScope),
+    content,
   })
 }
 
 export async function loadGlobalSettings(): Promise<SettingsFile> {
   const path = await resolveGlobalSettingsPath()
-  return loadSettingsFromPath(path, 'global')
+  // Upgrade bare (uncommented) default-shaped files back to the commented template.
+  if (await settingsFileExists(path)) {
+    return ensureSettingsFile(path, { scope: 'global', upgradeComments: true })
+  }
+  return defaultSettingsFor('global')
 }
 
 export async function saveGlobalSettings(settings: SettingsFile): Promise<void> {

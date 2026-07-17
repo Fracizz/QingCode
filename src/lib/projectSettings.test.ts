@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import JSON5 from 'json5'
 import {
   DEFAULT_GLOBAL_SETTINGS,
   DEFAULT_PROJECT_SETTINGS,
@@ -99,6 +100,31 @@ describe('validateSettings / strip / format', () => {
     const text = formatSettings(DEFAULT_GLOBAL_SETTINGS, 'global')
     expect(text).toContain('QingCode 全局设置')
     expect(text).toContain('qingcode.projects')
+    expect(text).toContain('//')
+  })
+
+  it('formatSettings returns commented template when default keys are reordered', () => {
+    const { custom, version, ...rest } = DEFAULT_GLOBAL_SETTINGS
+    const reordered = { version, custom, ...rest } as typeof DEFAULT_GLOBAL_SETTINGS
+    const text = formatSettings(reordered, 'global')
+    expect(text).toContain('QingCode 全局设置')
+    expect(text).toContain('// 编辑器字号')
+
+    const { custom: pCustom, version: pVersion, ...pRest } = DEFAULT_PROJECT_SETTINGS
+    const projectReordered = { version: pVersion, custom: pCustom, ...pRest }
+    const projectText = formatSettings(projectReordered, 'project')
+    expect(projectText).toContain('QingCode 工作区设置')
+    expect(projectText).toContain('//')
+    expect(projectText).not.toContain('"qingcode.projects":')
+  })
+
+  it('formatSettings returns commented template for bare JSON5 dump of defaults', () => {
+    const bare = `${JSON5.stringify(DEFAULT_GLOBAL_SETTINGS, null, 2)}\n`
+    expect(bare).not.toContain('//')
+    const parsed = parseSettingsText(bare, 'global')
+    const text = formatSettings(parsed, 'global')
+    expect(text).toContain('QingCode 全局设置')
+    expect(text).toContain('// ============================== 编辑器')
   })
 })
 

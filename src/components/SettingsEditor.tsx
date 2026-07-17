@@ -8,7 +8,6 @@ import {
 } from 'react'
 import {
   CircleHelp,
-  FileJson,
   Search,
   Settings2,
   X,
@@ -283,21 +282,12 @@ export default function SettingsEditor() {
             {t('工作区')}
           </ScopeButton>
           <div className="flex-1" />
-          <Tooltip label={t('在编辑器中打开设置 JSON')} side="bottom">
-            <button
-              type="button"
-              disabled={openingJson}
-              onClick={() => void openSettingsJson(false)}
-              className="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
-            >
-              <FileJson size={15} />
-            </button>
-          </Tooltip>
           <Tooltip label={t('帮助文档')} side="bottom">
             <button
               type="button"
               onClick={() => setHelpOpen(true)}
               className="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg"
+              aria-label={t('帮助文档')}
             >
               <CircleHelp size={15} />
             </button>

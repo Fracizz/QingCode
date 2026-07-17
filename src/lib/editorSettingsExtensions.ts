@@ -30,14 +30,15 @@ export function buildEditorPreferenceExtensions(
   const wrapOn = prefs.wordWrap !== 'off'
   const showLineNumbers = prefs.lineNumbers !== 'off'
 
+  // CodeMirror has no built-in "selection-only" whitespace highlighter (VS Code's
+  // `selection` mode). Map selection/none → off so we do not paint every indent
+  // space as dots. `boundary` is approximated with full highlightWhitespace.
   const whitespaceExt =
     prefs.renderWhitespace === 'all' || prefs.renderWhitespace === 'boundary'
       ? highlightWhitespace()
       : prefs.renderWhitespace === 'trailing'
         ? highlightTrailingWhitespace()
-        : prefs.renderWhitespace === 'selection'
-          ? highlightWhitespace()
-          : []
+        : []
 
   return [
     EditorState.tabSize.of(tabSize),

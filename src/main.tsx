@@ -8,9 +8,16 @@ import { revealAppWindow } from './lib/appWindow'
 import { initializeLanguage } from './lib/i18n'
 import { installStartupSplashGuard } from './lib/startupSplash'
 import { initWindowSession } from './lib/windowSession'
+import {
+  hydrateWorkspaceSessionsIfNeeded,
+  installWorkspaceSessionPersistence,
+} from './lib/workspaceSessionSync'
 
 // Critical path before first paint: theme, fonts, splash logo, i18n.
 initWindowSession()
+// Restore editor tabs / terminal metadata before stores paint workspace UI.
+hydrateWorkspaceSessionsIfNeeded()
+installWorkspaceSessionPersistence()
 applyTheme(loadTheme())
 initializeLanguage()
 paintStartupSplashLogo()

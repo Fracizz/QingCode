@@ -20,8 +20,16 @@ export type DraftSnapshotTab = {
 
 type DraftMap = Record<string, UnsavedDraft>
 
-function normalizePath(path: string): string {
+export function normalizeDraftPath(path: string): string {
   return path.replace(/\\/g, '/').toLowerCase()
+}
+
+function normalizePath(path: string): string {
+  return normalizeDraftPath(path)
+}
+
+export function getDraft(path: string): UnsavedDraft | null {
+  return readMap()[normalizePath(path)] ?? null
 }
 
 function readMap(): DraftMap {

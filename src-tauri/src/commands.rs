@@ -2,12 +2,14 @@ use crate::content_search::{
     self, ContentSearchOptions, ContentSearchResponse, DEFAULT_MAX_FILES_SCANNED,
     DEFAULT_MAX_MATCHES, DEFAULT_MAX_MATCHES_PER_FILE,
 };
+use crate::path_guard::PathAllowlist;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::State;
 
 /// Keep full-text editing within the memory budget of a lightweight editor.
 /// Larger files need a dedicated streaming viewer rather than CodeMirror state.
@@ -73,7 +75,11 @@ fn list_dir_one_level(current: &str) -> Result<Vec<FileNode>, std::io::Error> {
 }
 
 #[tauri::command]
-pub fn scan_directory(path: String) -> Result<Vec<FileNode>, String> {
+pub fn scan_directory(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<Vec<FileNode>, String> {
+    allowlist.ensure_allowed(&path)?;
     list_dir_one_level(&path).map_err(|e| e.to_string())
 }
 
@@ -328,7 +334,11 @@ fn walk_file_extensions(
 pub fn list_file_extensions(
     roots: Vec<String>,
     max_files: Option<usize>,
+    allowlist: State<'_, PathAllowlist>,
 ) -> Result<Vec<String>, String> {
+    for root in &roots {
+        allowlist.ensure_allowed(root)?;
+    }
     let max = max_files.unwrap_or(8_000).clamp(100, 50_000);
     let mut counts: HashMap<String, usize> = HashMap::new();
     let mut scanned = 0usize;
@@ -358,7 +368,9 @@ pub fn search_files(
     extension: Option<String>,
     extensions: Option<Vec<String>>,
     limit: Option<usize>,
+    allowlist: State<'_, PathAllowlist>,
 ) -> Result<Vec<SearchHit>, String> {
+    allowlist.ensure_allowed(&root)?;
     let base = Path::new(&root);
     if !base.is_dir() {
         return Ok(vec![]);
@@ -512,7 +524,9 @@ pub fn search_file_contents(
     max_files_scanned: Option<usize>,
     max_matches_per_file: Option<usize>,
     search_id: Option<u64>,
+    allowlist: State<'_, PathAllowlist>,
 ) -> Result<ContentSearchResponse, String> {
+    allowlist.ensure_allowed(&root)?;
     let ext = extension
         .as_deref()
         .map(str::trim)
@@ -538,7 +552,12 @@ pub fn search_file_contents(
 }
 
 #[tauri::command]
-pub fn read_file(path: String) -> Result<String, String> {
+pub fn read_file(path: String, allowlist: State<'_, PathAllowlist>) -> Result<String, String> {
+    allowlist.ensure_allowed(&path)?;
+    read_file_inner(path)
+}
+
+fn read_file_inner(path: String) -> Result<String, String> {
     let file_path = Path::new(&path);
     let metadata = fs::metadata(file_path)
         .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
@@ -566,7 +585,15 @@ pub fn read_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn write_file(path: String, content: String) -> Result<(), String> {
+pub fn write_file(
+    path: String,
+    content: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<(), String> {
+    // Mandatory sandbox: canonicalize/symlink-resolve before allowlist check.
+    // Symlink escape is rejected unless the resolved target was explicitly authorized
+    // (e.g. after the frontend confirm dialog grants the path).
+    allowlist.ensure_allowed(&path)?;
     if exceeds_editor_file_size_limit(content.len() as u64) {
         return Err(format!("暂不支持保存超过 50MB 的大文件: {}", path));
     }
@@ -670,13 +697,18 @@ fn validate_entry_name(name: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn create_file(parent: String, name: String) -> Result<String, String> {
+pub fn create_file(
+    parent: String,
+    name: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<String, String> {
     validate_entry_name(&name)?;
     let parent_path = Path::new(&parent);
     if !parent_path.is_dir() {
         return Err(format!("目录不可用: {}", parent));
     }
-    let path = parent_path.join(name);
+    let path = parent_path.join(&name);
+    allowlist.ensure_allowed(&path.to_string_lossy())?;
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -686,25 +718,36 @@ pub fn create_file(parent: String, name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn create_directory(parent: String, name: String) -> Result<String, String> {
+pub fn create_directory(
+    parent: String,
+    name: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<String, String> {
     validate_entry_name(&name)?;
     let parent_path = Path::new(&parent);
     if !parent_path.is_dir() {
         return Err(format!("目录不可用: {}", parent));
     }
-    let path = parent_path.join(name);
+    let path = parent_path.join(&name);
+    allowlist.ensure_allowed(&path.to_string_lossy())?;
     fs::create_dir(&path).map_err(|e| format!("新建文件夹失败: {}", e))?;
     Ok(path.to_string_lossy().to_string())
 }
 
 #[tauri::command]
-pub fn rename_path(path: String, new_name: String) -> Result<String, String> {
+pub fn rename_path(
+    path: String,
+    new_name: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<String, String> {
     validate_entry_name(&new_name)?;
+    allowlist.ensure_allowed(&path)?;
     let source = Path::new(&path);
     let parent = source
         .parent()
         .ok_or_else(|| "无法重命名该路径".to_string())?;
-    let target = parent.join(new_name);
+    let target = parent.join(&new_name);
+    allowlist.ensure_allowed(&target.to_string_lossy())?;
     if target.exists() {
         return Err("目标名称已存在".to_string());
     }
@@ -713,14 +756,9 @@ pub fn rename_path(path: String, new_name: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn delete_path(path: String) -> Result<(), String> {
+pub fn delete_path(path: String, allowlist: State<'_, PathAllowlist>) -> Result<(), String> {
+    allowlist.ensure_allowed(&path)?;
     let target = Path::new(&path);
-    if !target.is_absolute() {
-        return Err("仅允许删除绝对路径".to_string());
-    }
-    if target.parent().is_none() {
-        return Err("不允许删除文件系统根目录".to_string());
-    }
     let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
     if metadata.is_dir() {
         fs::remove_dir_all(target).map_err(|e| format!("删除文件夹失败: {}", e))
@@ -739,11 +777,12 @@ pub struct DirectoryDeleteStats {
 
 /// Walk a directory (without following dir symlinks) to gather cheap delete-confirm stats.
 #[tauri::command]
-pub fn directory_delete_stats(path: String) -> Result<DirectoryDeleteStats, String> {
+pub fn directory_delete_stats(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<DirectoryDeleteStats, String> {
+    allowlist.ensure_allowed(&path)?;
     let target = Path::new(&path);
-    if !target.is_absolute() {
-        return Err("仅允许统计绝对路径".to_string());
-    }
     let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
     if !metadata.is_dir() {
         return Err("路径不是文件夹".to_string());
@@ -790,67 +829,33 @@ pub struct SymlinkWriteCheck {
     pub resolved_path: Option<String>,
 }
 
-/// Detect whether writing `path` would follow a symlink to a target outside `project_roots`.
+/// Detect whether writing `path` would follow a symlink to a target outside registered roots.
+/// Uses the native allowlist (not caller-supplied roots). Fail closed on resolve errors.
 #[tauri::command]
 pub fn check_symlink_write(
     path: String,
-    project_roots: Vec<String>,
+    allowlist: State<'_, PathAllowlist>,
 ) -> Result<SymlinkWriteCheck, String> {
-    let target = Path::new(&path);
-    if !path_involves_symlink(target) {
-        return Ok(SymlinkWriteCheck {
+    check_symlink_write_inner(Path::new(&path), &allowlist)
+}
+
+fn check_symlink_write_inner(
+    path: &Path,
+    allowlist: &PathAllowlist,
+) -> Result<SymlinkWriteCheck, String> {
+    let outside = allowlist.with_state(|state| {
+        crate::path_guard::outside_symlink_write_target(path, state)
+    })??;
+    match outside {
+        None => Ok(SymlinkWriteCheck {
             needs_confirm: false,
             resolved_path: None,
-        });
+        }),
+        Some(resolved) => Ok(SymlinkWriteCheck {
+            needs_confirm: true,
+            resolved_path: Some(display_path(&resolved)),
+        }),
     }
-
-    let resolved = match resolve_write_path(target) {
-        Some(resolved) => resolved,
-        None => {
-            return Ok(SymlinkWriteCheck {
-                needs_confirm: true,
-                resolved_path: Some(display_path(target)),
-            });
-        }
-    };
-
-    let roots: Vec<_> = project_roots
-        .iter()
-        .filter_map(|root| fs::canonicalize(root).ok())
-        .collect();
-    let inside = roots.iter().any(|root| resolved.starts_with(root));
-
-    Ok(SymlinkWriteCheck {
-        needs_confirm: !inside,
-        resolved_path: Some(display_path(&resolved)),
-    })
-}
-
-fn path_involves_symlink(path: &Path) -> bool {
-    let mut current = path.to_path_buf();
-    loop {
-        if fs::symlink_metadata(&current)
-            .map(|meta| meta.file_type().is_symlink())
-            .unwrap_or(false)
-        {
-            return true;
-        }
-        if !current.pop() {
-            break;
-        }
-    }
-    false
-}
-
-fn resolve_write_path(path: &Path) -> Option<std::path::PathBuf> {
-    if path.exists() {
-        return fs::canonicalize(path).ok();
-    }
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())?;
-    let name = path.file_name()?;
-    Some(fs::canonicalize(parent).ok()?.join(name))
 }
 
 fn display_path(path: &Path) -> String {
@@ -912,7 +917,7 @@ mod tests {
         // ZIP/XLSX signature bytes — not valid UTF-8 text.
         fs::write(&path, [0x50u8, 0x4b, 0x03, 0x04, 0xff, 0xfe]).unwrap();
 
-        let err = read_file(path.to_string_lossy().to_string()).unwrap_err();
+        let err = read_file_inner(path.to_string_lossy().to_string()).unwrap_err();
         assert!(err.contains(".xlsx"), "{err}");
         assert!(err.contains("暂不支持"), "{err}");
         assert!(!err.to_ascii_lowercase().contains("utf-8"), "{err}");
@@ -931,7 +936,7 @@ mod tests {
         let path = dir.join("mystery.dat");
         fs::write(&path, [0x00u8, 0xff, 0xfe, 0x80]).unwrap();
 
-        let err = read_file(path.to_string_lossy().to_string()).unwrap_err();
+        let err = read_file_inner(path.to_string_lossy().to_string()).unwrap_err();
         assert!(err.contains("暂不支持"), "{err}");
         assert!(err.contains("mystery.dat"), "{err}");
         assert!(
@@ -954,14 +959,6 @@ mod tests {
     }
 
     #[test]
-    fn delete_rejects_relative_and_root_paths() {
-        assert!(delete_path("relative-file.txt".to_string()).is_err());
-        let temp_dir = std::env::temp_dir();
-        let root = temp_dir.ancestors().last().unwrap();
-        assert!(delete_path(root.to_string_lossy().to_string()).is_err());
-    }
-
-    #[test]
     fn directory_delete_stats_counts_nested_files() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -972,9 +969,11 @@ mod tests {
         fs::write(dir.join("a.txt"), "hello").unwrap();
         fs::write(dir.join("nested/b.txt"), "world!!").unwrap();
 
-        let stats = directory_delete_stats(dir.to_string_lossy().to_string()).unwrap();
-        assert_eq!(stats.file_count, 2);
-        assert_eq!(stats.total_size, 12);
+        let mut file_count = 0u64;
+        let mut total_size = 0u64;
+        collect_directory_delete_stats(&dir, &mut file_count, &mut total_size).unwrap();
+        assert_eq!(file_count, 2);
+        assert_eq!(total_size, 12);
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -990,11 +989,9 @@ mod tests {
         let file = dir.join("note.txt");
         fs::write(&file, "hi").unwrap();
 
-        let check = check_symlink_write(
-            file.to_string_lossy().to_string(),
-            vec![dir.to_string_lossy().to_string()],
-        )
-        .unwrap();
+        let allowlist = PathAllowlist::new();
+        allowlist.sync_project_roots(vec![dir.to_string_lossy().to_string()]);
+        let check = check_symlink_write_inner(&file, &allowlist).unwrap();
         assert!(!check.needs_confirm);
         assert!(check.resolved_path.is_none());
 
@@ -1020,11 +1017,9 @@ mod tests {
         let link = project.join("alias.txt");
         symlink(&target, &link).unwrap();
 
-        let check = check_symlink_write(
-            link.to_string_lossy().to_string(),
-            vec![project.to_string_lossy().to_string()],
-        )
-        .unwrap();
+        let allowlist = PathAllowlist::new();
+        allowlist.sync_project_roots(vec![project.to_string_lossy().to_string()]);
+        let check = check_symlink_write_inner(&link, &allowlist).unwrap();
         assert!(check.needs_confirm);
         assert!(
             check
@@ -1054,8 +1049,12 @@ mod tests {
         fs::write(dir.join("logo.png"), [0u8; 8]).unwrap();
         fs::write(ignored.join("pkg.js"), "module.exports = {}").unwrap();
 
-        let exts =
-            list_file_extensions(vec![dir.to_string_lossy().to_string()], Some(1000)).unwrap();
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut scanned = 0usize;
+        walk_file_extensions(&dir, &mut counts, &mut scanned, 1000);
+        let mut items: Vec<(String, usize)> = counts.into_iter().collect();
+        items.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let exts: Vec<String> = items.into_iter().map(|(ext, _)| ext).collect();
         assert!(exts.contains(&"ts".to_string()));
         assert!(exts.contains(&"tsx".to_string()));
         assert!(exts.contains(&"md".to_string()));

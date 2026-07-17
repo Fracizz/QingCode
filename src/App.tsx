@@ -40,6 +40,10 @@ import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFileWatcher } from './hooks/useFileWatcher'
 import { useDraftRecovery } from './hooks/useDraftRecovery'
+import {
+  markWorkspaceSessionPersistReady,
+  pruneWorkspaceSessions,
+} from './lib/workspaceSessionSync'
 
 const Editor = lazy(() => import('./components/Editor'))
 const TerminalView = lazy(() => import('./components/Terminal'))
@@ -143,7 +147,9 @@ function App() {
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
   const addTerminal = useTerminalStore(s => s.addTerminal)
   const activateProject = useTerminalStore(s => s.activateProject)
+  const spawnRestoredTerminals = useTerminalStore(s => s.spawnRestoredTerminals)
   const initializeTerminalEvents = useTerminalStore(s => s.initializeTerminalEvents)
+  const loadMissingTabContents = useEditorStore(s => s.loadMissingTabContents)
   const currentProject = useProjectStore(s => s.currentProject)
   const loadProjects = useProjectStore(s => s.loadProjects)
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
@@ -193,9 +199,25 @@ function App() {
     [terminalHeight]
   )
 
+  const projects = useProjectStore(s => s.projects)
+  const [projectsReady, setProjectsReady] = useState(false)
+
   useEffect(() => {
-    loadProjects()
+    let cancelled = false
+    void loadProjects().then(() => {
+      if (cancelled) return
+      markWorkspaceSessionPersistReady()
+      setProjectsReady(true)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [loadProjects])
+
+  useEffect(() => {
+    if (!projectsReady) return
+    pruneWorkspaceSessions(new Set(projects.map(p => p.id)))
+  }, [projectsReady, projects])
 
   useEffect(() => {
     startSystemThemeListener()
@@ -272,6 +294,18 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [shortcuts, setView])
 
+  const tabsNeedContentLoad = useEditorStore(s =>
+    s.tabs.some(
+      t => !t.openError && !t.loading && (t.content === undefined || t.diskMtime === undefined),
+    ),
+  )
+
+  // After project session restore, load disk (or keep draft) bodies for open tabs.
+  useEffect(() => {
+    if (!currentProject || !tabsNeedContentLoad) return
+    void loadMissingTabContents()
+  }, [currentProject?.id, tabsNeedContentLoad, loadMissingTabContents])
+
   // Ensure the current project has at least one terminal, and that the active
   // terminal belongs to the current project. Defer PTY spawn so first project
   // paint is not blocked by PowerShell / ConPTY startup; skip entirely while
@@ -283,12 +317,18 @@ function App() {
     const projectPath = currentProject.path
     if (useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
       activateProject(projectId)
+      if (terminalOpen) {
+        return scheduleDeferredWork(() => {
+          void spawnRestoredTerminals(projectId)
+        })
+      }
       return
     }
     if (!terminalOpen) return
     return scheduleDeferredWork(() => {
       if (useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
         activateProject(projectId)
+        void spawnRestoredTerminals(projectId)
         return
       }
       void addTerminal(projectPath, projectId)

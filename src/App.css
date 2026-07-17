@@ -82,11 +82,12 @@ html[data-theme="forest"] {
   --color-fg-muted: #49694d;
   --color-fg-dim: #005454;
 
-  --color-accent: #ffcc80;
+  /* Muted amber: Material Forest's #ffcc80 is too luminous for filled CTAs. */
+  --color-accent: #b8894a;
   --color-accent-soft: #104110;
   --color-danger: #f07178;
-  --color-warn: #ffcb6b;
-  --color-ok: #c3e88d;
+  --color-warn: #d4b06a;
+  --color-ok: #89d185;
 
   --color-tab-active: #002626;
   --color-tab-inactive: #002e2e;

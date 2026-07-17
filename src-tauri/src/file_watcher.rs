@@ -1,6 +1,7 @@
 //! Debounced filesystem watching for open files and project roots.
 //! Emits `fs-change` events to the frontend; self-writes can be suppressed briefly.
 
+use crate::path_guard::PathAllowlist;
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEventKind, Debouncer};
 use serde::Serialize;
@@ -199,7 +200,19 @@ pub fn sync_file_watches(
     files: Vec<String>,
     app: AppHandle,
     state: State<'_, FileWatcherManager>,
+    allowlist: State<'_, PathAllowlist>,
 ) -> Result<(), String> {
+    for root in &roots {
+        if !root.is_empty() {
+            allowlist.ensure_allowed(root)?;
+        }
+    }
+    for file in &files {
+        if !file.is_empty() {
+            allowlist.ensure_allowed(file)?;
+        }
+    }
+
     let mut guard = state
         .inner
         .lock()
@@ -245,7 +258,12 @@ pub fn is_fs_watch_suppressed(
 
 /// Last modified time in Unix milliseconds, or null if missing.
 #[tauri::command]
-pub fn file_mtime(path: String) -> Result<Option<u64>, String> {
+pub fn file_mtime(path: String, allowlist: State<'_, PathAllowlist>) -> Result<Option<u64>, String> {
+    allowlist.ensure_allowed(&path)?;
+    file_mtime_inner(path)
+}
+
+fn file_mtime_inner(path: String) -> Result<Option<u64>, String> {
     let meta = match std::fs::metadata(&path) {
         Ok(m) => m,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -273,7 +291,7 @@ mod tests {
 
     #[test]
     fn file_mtime_missing_returns_none() {
-        let result = file_mtime(r"D:\definitely\missing\qingcode-test-mtime.txt".into());
+        let result = file_mtime_inner(r"D:\definitely\missing\qingcode-test-mtime.txt".into());
         assert_eq!(result.unwrap(), None);
     }
 

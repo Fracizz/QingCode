@@ -15,7 +15,8 @@ export const MATERIAL_FOREST = {
   border: '#003838',
   highlight: '#003F3F',
   disabled: '#005454',
-  accent: '#FFCC80',
+  /** UI accent (cursor, CTAs); muted from Material Forest #FFCC80 for filled buttons. */
+  accent: '#B8894A',
   excluded: '#113711',
   syntax: {
     green: '#c3e88d',

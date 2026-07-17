@@ -3,13 +3,23 @@ import { choiceDialog } from '../store/choiceStore'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import {
-  clearAllDrafts,
   clearDraft,
   listUnsavedDrafts,
+  normalizeDraftPath,
   scheduleDraftPersist,
 } from '../lib/draftRecovery'
 import { flushAllLiveEditorContents, getLiveEditorContent } from '../lib/editorSession'
 import { translate } from '../lib/i18n'
+
+function collectOpenDraftPaths(): Set<string> {
+  const paths = new Set<string>()
+  const editor = useEditorStore.getState()
+  for (const tab of editor.tabs) paths.add(normalizeDraftPath(tab.path))
+  for (const session of Object.values(editor.projectSessions)) {
+    for (const tab of session.tabs) paths.add(normalizeDraftPath(tab.path))
+  }
+  return paths
+}
 
 /** Persist dirty buffers and offer restore of crash drafts on startup. */
 export function useDraftRecovery() {
@@ -31,7 +41,11 @@ export function useDraftRecovery() {
   useEffect(() => {
     if (started.current) return
     started.current = true
-    const drafts = listUnsavedDrafts()
+
+    // Workspace session restore already applied drafts for restored dirty tabs.
+    // Only prompt for orphan crash drafts that are not part of any open/session tab.
+    const openPaths = collectOpenDraftPaths()
+    const drafts = listUnsavedDrafts().filter(d => !openPaths.has(normalizeDraftPath(d.path)))
     if (drafts.length === 0) return
 
     void (async () => {
@@ -51,7 +65,8 @@ export function useDraftRecovery() {
       })
 
       if (choice === 'discard') {
-        clearAllDrafts()
+        for (const draft of drafts) clearDraft(draft.path)
+        // Keep drafts that still belong to open/session tabs.
         return
       }
       if (choice !== 'restore') return
