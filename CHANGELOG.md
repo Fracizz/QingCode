@@ -4,12 +4,19 @@
 
 ## [Unreleased]
 
-### Added
+## [0.1.1] - 2026-07-17
 
-- GitHub Release 工作流：推送 `v*` 标签后自动构建 Windows 单文件 exe 并上传
-- Gitee Release 同步：配置 `GITEE_TOKEN` 后同一份 exe 自动上传到 Gitee Releases
-- 版本同步脚本 `pnpm bump:version` 与发版标签脚本 `pnpm release:tag`
-- 中英双语 README
+### Fixed
+
+- 便携版 exe 启动时窗口被建成约 14×14、几乎不可见的问题
+- 打包脚本未启用 `custom-protocol`，导致 exe 误连本地 Vite（`ERR_CONNECTION_REFUSED`）
+- 退出应用时把空闲终端误报为「仍在运行」
+- 退出确认中虚假的「未保存的编辑器更改可能丢失」提示
+
+### Changed
+
+- 全局设置文件改为 `default-settings.json`，工作区改为 `.qingcode/project-settings.json`（JSON5，支持注释与项目列表配置）
+- README 改为突出产品描述，去掉发版流程说明
 
 ## [0.1.0] - 2026-07-17
 
@@ -24,6 +31,8 @@
 - 主题（深色 / 浅色 / 跟随系统）、字体与字号设置
 - 界面语言：简体中文、English
 - Windows 单文件 exe 打包（`pnpm package:exe`）
+- GitHub / Gitee Release 工作流与版本脚本
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.0
