@@ -12,6 +12,7 @@ QingCode is a Tauri 2 desktop code editor with a React 19/Vite frontend and a Ru
 - `pnpm build` runs TypeScript checking and creates the frontend production bundle.
 - `cargo test` (from `src-tauri/`) runs Rust unit tests; `cargo fmt --all -- --check` verifies Rust formatting.
 - `pnpm tauri build --no-bundle` validates the production desktop build without producing an installer. Run `pnpm package:exe` when preparing the Windows executable package.
+- For a GitHub Release: `pnpm bump:version x.y.z`, update `CHANGELOG.md`, commit, then `pnpm release:tag x.y.z` and `git push github vX.Y.Z` (see README).
 
 ## Coding Style & Naming Conventions
 

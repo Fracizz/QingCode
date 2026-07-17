@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build (e.g. v0.1.0). Leave empty to use package.json version and create/update a draft.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Tags need full history for annotated tags / notes
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Read app version
+        id: meta
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $conf = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+          $cargo = Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | ForEach-Object { $_.Matches.Groups[1].Value }
+          if ($pkg.version -ne $conf.version -or $pkg.version -ne $cargo) {
+            throw "Version mismatch: package=$($pkg.version) tauri=$($conf.version) cargo=$cargo"
+          }
+          $tag = if ("${{ github.event_name }}" -eq "workflow_dispatch" -and "${{ inputs.tag }}") {
+            "${{ inputs.tag }}"
+          } elseif ("${{ github.ref_type }}" -eq "tag") {
+            "${{ github.ref_name }}"
+          } else {
+            "v$($pkg.version)"
+          }
+          if ($tag -notmatch '^v') { $tag = "v$tag" }
+          $expected = "v$($pkg.version)"
+          if ($tag -ne $expected) {
+            throw "Tag $tag does not match package version $expected"
+          }
+          "version=$($pkg.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "exe=release/QingCode_$($pkg.version).exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build portable exe
+        run: pnpm package:exe
+
+      - name: Verify artifact
+        shell: pwsh
+        run: |
+          $exe = "${{ steps.meta.outputs.exe }}"
+          if (-not (Test-Path $exe)) { throw "Missing $exe" }
+          if (-not (Test-Path "release/QingCode.exe")) { throw "Missing release/QingCode.exe" }
+          Get-Item $exe, "release/QingCode.exe" | Format-Table Name, Length, LastWriteTime
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: QingCode v${{ steps.meta.outputs.version }}
+          draft: ${{ github.event_name == 'workflow_dispatch' && inputs.tag == '' }}
+          generate_release_notes: true
+          body: |
+            ## QingCode v${{ steps.meta.outputs.version }}
+
+            Windows portable build (no installer).
+
+            1. Download `QingCode_${{ steps.meta.outputs.version }}.exe`
+            2. Run it (WebView2 required on Windows 10/11)
+            3. See [CHANGELOG.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.md) for details
+          files: |
+            release/QingCode_${{ steps.meta.outputs.version }}.exe
+            release/QingCode.exe
