@@ -594,7 +594,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const proj = get().currentProject
     if (!proj) return
     try {
-      const tree = await loadProjectRootTree(proj.path)
+      const tree = await loadProjectRootTree(proj)
       set({ fileTree: tree })
     } catch (e) {
       console.error('loadFileTree failed:', e)
@@ -609,8 +609,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   expandDir: async (path: string) => {
+    const proj = get().currentProject
+    if (!proj) return
     try {
-      const children = await loadDirChildren(path)
+      const children = await loadDirChildren(path, proj.path, proj)
       set(s => ({
         fileTree: patchDirChildren(s.fileTree, path, children),
       }))
@@ -623,7 +625,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   ensureProjectTree: async (project: Project) => {
     if (get().projectTrees[project.id]) return
     try {
-      const tree = await loadProjectRootTree(project.path)
+      const tree = await loadProjectRootTree(project)
       set(s => ({
         projectTrees: {
           ...s.projectTrees,
@@ -644,7 +646,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   refreshProjectTree: async (project: Project) => {
     try {
-      const tree = await loadProjectRootTree(project.path)
+      const tree = await loadProjectRootTree(project)
       set(s => ({
         projectTrees: {
           ...s.projectTrees,
@@ -667,8 +669,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     })),
 
   expandProjectDir: async (projectId: string, path: string) => {
+    const project = get().projects.find(p => p.id === projectId)
+    if (!project) return
     try {
-      const children = await loadDirChildren(path)
+      const children = await loadDirChildren(path, project.path, project)
       set(s => {
         const tree = s.projectTrees[projectId] ?? []
         return {

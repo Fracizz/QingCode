@@ -3,7 +3,25 @@ import { GitCompare } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
 import { useI18n } from '../lib/i18n'
 
+export type FileCompareAction = {
+  label: string
+  primary?: boolean
+  onClick: () => void
+}
+
 export type FileCompareRequest = {
+  path: string
+  leftTitle: string
+  rightTitle: string
+  leftContent: string
+  rightContent: string
+  onClose: () => void
+  /** Extra footer actions (besides Close). */
+  actions?: FileCompareAction[]
+}
+
+/** @deprecated Prefer left/right fields; kept for call-site migration. */
+export type LegacyFileCompareRequest = {
   path: string
   localContent: string
   diskContent: string
@@ -12,16 +30,32 @@ export type FileCompareRequest = {
   onClose: () => void
 }
 
-export default function FileCompareDialog({
-  path,
-  localContent,
-  diskContent,
-  onKeepLocal,
-  onReload,
-  onClose,
-}: FileCompareRequest) {
+export function isLegacyFileCompareRequest(
+  request: FileCompareRequest | LegacyFileCompareRequest,
+): request is LegacyFileCompareRequest {
+  return 'localContent' in request && 'diskContent' in request
+}
+
+export default function FileCompareDialog(props: FileCompareRequest | LegacyFileCompareRequest) {
   const { t } = useI18n()
   const closeRef = useRef<HTMLButtonElement>(null)
+
+  const request: FileCompareRequest = isLegacyFileCompareRequest(props)
+    ? {
+        path: props.path,
+        leftTitle: t('本地修改'),
+        rightTitle: t('磁盘版本'),
+        leftContent: props.localContent,
+        rightContent: props.diskContent,
+        onClose: props.onClose,
+        actions: [
+          { label: t('保留本地修改'), onClick: props.onKeepLocal },
+          { label: t('重新加载'), primary: true, onClick: props.onReload },
+        ],
+      }
+    : props
+
+  const { path, leftTitle, rightTitle, leftContent, rightContent, onClose, actions } = request
 
   useEffect(() => {
     closeRef.current?.focus()
@@ -54,8 +88,8 @@ export default function FileCompareDialog({
           </div>
         </div>
         <div className="grid min-h-0 flex-1 grid-cols-2 gap-px bg-border">
-          <ComparePane title={t('本地修改')} content={localContent} />
-          <ComparePane title={t('磁盘版本')} content={diskContent} />
+          <ComparePane title={leftTitle} content={leftContent} />
+          <ComparePane title={rightTitle} content={rightContent} />
         </div>
         <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
           <button
@@ -66,20 +100,20 @@ export default function FileCompareDialog({
           >
             {t('关闭')}
           </button>
-          <button
-            type="button"
-            className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
-            onClick={onKeepLocal}
-          >
-            {t('保留本地修改')}
-          </button>
-          <button
-            type="button"
-            className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors"
-            onClick={onReload}
-          >
-            {t('重新加载')}
-          </button>
+          {(actions ?? []).map(action => (
+            <button
+              key={action.label}
+              type="button"
+              className={
+                action.primary
+                  ? 'px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors'
+                  : 'px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors'
+              }
+              onClick={action.onClick}
+            >
+              {action.label}
+            </button>
+          ))}
         </div>
       </div>
     </ModalOverlay>

@@ -11,11 +11,16 @@ import Toaster from './components/Toaster'
 import ConfirmDialog from './components/ConfirmDialog'
 import ChoiceDialog from './components/ChoiceDialog'
 import PromptDialog from './components/PromptDialog'
+import CommandPalette from './components/CommandPalette'
+import SymbolPicker from './components/SymbolPicker'
 import FileCompareDialog from './components/FileCompareDialog'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useEditorStore } from './store/editorStore'
 import { useUIStore } from './store/uiStore'
+import { useCompareStore } from './store/compareStore'
+import { useCommandPaletteStore } from './store/commandPaletteStore'
+import { useSymbolPickerStore } from './store/symbolPickerStore'
 import { isTauri } from './lib/tauri'
 import ResizableSidebar from './components/ResizableSidebar'
 import { startSystemThemeListener } from './lib/themeSettings'
@@ -58,6 +63,7 @@ const TerminalView = lazy(() => import('./components/Terminal'))
 const SearchPanel = lazy(() => import('./components/SearchPanel'))
 const RunPanel = lazy(() => import('./components/RunPanel'))
 const ProjectManager = lazy(() => import('./components/ProjectManager'))
+const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'))
 const SettingsEditor = lazy(() => import('./components/SettingsEditor'))
 
 migrateLegacySettings()
@@ -183,13 +189,18 @@ function App() {
   const setView = useUIStore(s => s.setView)
   const toggleActivityView = useUIStore(s => s.toggleActivityView)
   const terminalOpenSignal = useUIStore(s => s.terminalOpenSignal)
+  const terminalToggleSignal = useUIStore(s => s.terminalToggleSignal)
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
+  const workspaceManagerOpen = useUIStore(s => s.workspaceManagerOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const shortcuts = useShortcutStore(s => s.shortcuts)
+  const togglePalette = useCommandPaletteStore(s => s.togglePalette)
+  const openSymbolPicker = useSymbolPickerStore(s => s.openPicker)
 
   useAutoSave()
   useDraftRecovery()
-  const { compare: fileCompare } = useFileWatcher()
+  useFileWatcher()
+  const fileCompare = useCompareStore(s => s.request)
 
   const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)
   const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)
@@ -279,6 +290,10 @@ function App() {
   }, [terminalOpenSignal])
 
   useEffect(() => {
+    if (terminalToggleSignal > 0) setTerminalOpen(open => !open)
+  }, [terminalToggleSignal])
+
+  useEffect(() => {
     const onResize = () => setSidebarWidth(w => clampSidebarWidth(w))
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
@@ -299,14 +314,39 @@ function App() {
   }, [initializeTerminalEvents])
 
   useEffect(() => {
+    const isCommandPaletteShortcut = (event: KeyboardEvent) => {
+      if (shortcutMatchesEvent(shortcuts.openCommandPalette, event)) return true
+      // Cmd+Shift+P on macOS when the remappable binding remains Ctrl+Shift+P.
+      return (
+        shortcuts.openCommandPalette === 'Ctrl+Shift+P' &&
+        event.metaKey &&
+        event.shiftKey &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === 'p'
+      )
+    }
+
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isShortcutInputTarget(event.target)) return
-      if (shortcutMatchesEvent(shortcuts.searchAllProjects, event)) {
+      if (event.defaultPrevented) return
+
+      // Available from inputs / terminal so the palette stays globally discoverable.
+      if (isCommandPaletteShortcut(event)) {
+        event.preventDefault()
+        togglePalette()
+        return
+      }
+
+      if (isShortcutInputTarget(event.target)) return
+      if (shortcutMatchesEvent(shortcuts.goToSymbolInEditor, event)) {
+        event.preventDefault()
+        openSymbolPicker()
+      } else if (shortcutMatchesEvent(shortcuts.searchAllProjects, event)) {
         event.preventDefault()
         useUIStore.getState().requestGlobalSearch()
       } else if (shortcutMatchesEvent(shortcuts.toggleTerminal, event)) {
         event.preventDefault()
-        setTerminalOpen(open => !open)
+        useUIStore.getState().requestToggleTerminal()
       } else if (shortcutMatchesEvent(shortcuts.openSettings, event)) {
         event.preventDefault()
         setView('settings')
@@ -324,7 +364,7 @@ function App() {
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [shortcuts, setView])
+  }, [shortcuts, setView, togglePalette, openSymbolPicker])
 
   const tabsNeedContentLoad = useEditorStore(s =>
     s.tabs.some(
@@ -519,10 +559,17 @@ function App() {
       <ConfirmDialog />
       <ChoiceDialog />
       <PromptDialog />
+      <CommandPalette />
+      <SymbolPicker />
       {fileCompare && <FileCompareDialog {...fileCompare} />}
       {projectManagerOpen && (
         <Suspense fallback={null}>
           <ProjectManager />
+        </Suspense>
+      )}
+      {workspaceManagerOpen && (
+        <Suspense fallback={null}>
+          <WorkspaceManager />
         </Suspense>
       )}
     </div>

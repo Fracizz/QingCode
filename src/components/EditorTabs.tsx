@@ -1,11 +1,14 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { X, Circle, Copy, ExternalLink, Eye, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle } from 'lucide-react'
+import { X, Circle, Copy, ExternalLink, Eye, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle, GitCompare } from 'lucide-react'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
+import { useGitStatusStore } from '../store/gitStatusStore'
 import { getFileIcon } from '../utils/fileIcons'
 import { copyToClipboard } from '../utils/fileReferences'
 import { safeInvoke } from '../lib/tauri'
+import { openGitCompareWithHead } from '../lib/gitCompare'
+import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
 import { promptDialog, validateEntryName } from '../store/promptStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -37,6 +40,7 @@ export default function EditorTabs() {
   const renameEditorPath = useEditorStore(s => s.renamePath)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
   const setView = useUIStore(s => s.setView)
+  useGitStatusStore(s => s.statusByPath)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -160,6 +164,11 @@ export default function EditorTabs() {
       action: () => revealInSidebar(tab.path),
     },
     {
+      label: t('与 Git HEAD 比较'),
+      icon: <GitCompare size={14} />,
+      action: () => void openGitCompareWithHead(tab.path),
+    },
+    {
       label: t('复制路径'),
       icon: <Copy size={14} />,
       action: () => copyPath(tab.path),
@@ -189,6 +198,9 @@ export default function EditorTabs() {
           const active = tab.id === activeTabId
           const loading = isLoadingTab(tab)
           const viewOnly = isViewOnlyTab(tab)
+          const gitStatus = useGitStatusStore.getState().statusFor(tab.path)
+          const gitGlyph = gitStatusGlyph(gitStatus)
+          const gitColor = gitStatusColorClass(gitStatus)
           const Icon = isOpenErrorTab(tab)
             ? AlertTriangle
             : loading
@@ -218,7 +230,16 @@ export default function EditorTabs() {
               }}
             >
               {Icon && <Icon size={15} className={iconClass} />}
-              <span className={`text-[13px] ${isOpenErrorTab(tab) ? 'italic' : ''}`}>{tab.name}</span>
+              <span
+                className={`text-[13px] ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && gitColor ? gitColor : ''}`}
+              >
+                {tab.name}
+              </span>
+              {gitGlyph && (
+                <span className={`text-[11px] font-medium ${gitColor}`} title={gitStatus ?? undefined}>
+                  {gitGlyph}
+                </span>
+              )}
               <button
                 className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
                 onClick={e => {

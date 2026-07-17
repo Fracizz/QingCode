@@ -1,4 +1,9 @@
-export type ShortcutCommand = 'searchAllProjects' | 'toggleTerminal' | 'openSettings'
+export type ShortcutCommand =
+  | 'searchAllProjects'
+  | 'toggleTerminal'
+  | 'openSettings'
+  | 'openCommandPalette'
+  | 'goToSymbolInEditor'
 
 export type ShortcutMap = Record<ShortcutCommand, string>
 
@@ -6,6 +11,8 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   searchAllProjects: 'Ctrl+Shift+F',
   toggleTerminal: 'Ctrl+`',
   openSettings: 'Ctrl+,',
+  openCommandPalette: 'Ctrl+Shift+P',
+  goToSymbolInEditor: 'Ctrl+Shift+O',
 }
 
 export const RESERVED_SHORTCUTS = new Set([

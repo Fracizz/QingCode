@@ -6,7 +6,11 @@ import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { openUrl } from '@tauri-apps/plugin-opener'
-import { subscribeTerminalOutput, useTerminalStore } from '../store/terminalStore'
+import {
+  hasTerminalScrollback,
+  subscribeTerminalOutput,
+  useTerminalStore,
+} from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
 import {
   FONT_SETTINGS_EVENT,
@@ -14,8 +18,13 @@ import {
   getResolvedTerminalFontSize,
 } from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
+import {
+  TERMINAL_SCROLLBACK_SETTINGS_EVENT,
+  getTerminalScrollback,
+} from '../lib/terminalScrollbackSettings'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import { TerminalOscParser } from '../utils/terminalOsc'
+import { translate } from '../lib/i18n'
 import '@xterm/xterm/css/xterm.css'
 
 // Backgrounds match App.css --color-bg-deep so the caret/outline stays visible.
@@ -152,6 +161,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       fontFamily: getResolvedTerminalFont(),
       lineHeight: 1.0,
       letterSpacing: 0,
+      scrollback: getTerminalScrollback(),
       // WebGL/canvas: draw box/block glyphs ourselves so WebView2 font metrics
       // cannot stretch OpenCode ASCII banners.
       customGlyphs: true,
@@ -197,10 +207,15 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const tab = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
     previousStatusRef.current = tab?.status
-    if (tab?.status === 'exited') {
+    const hadRestoredScrollback = hasTerminalScrollback(terminalId)
+    // Restored scrollback is written via subscribeTerminalOutput; only show a
+    // status line when there is nothing to replay (or after restore note).
+    if (tab?.status === 'exited' && !hadRestoredScrollback) {
       const detail =
-        tab.exitCode === null ? '进程未启动' : `进程已退出，退出码 ${tab.exitCode}`
-      term.writeln(`\x1b[90m[${detail}，可从终端标签重启]\x1b[0m`)
+        tab.exitCode === null
+          ? translate('进程未启动')
+          : translate('进程已退出，退出码 {code}', { code: String(tab.exitCode) })
+      term.writeln(`\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
     }
 
     const isTerminalWritable = () =>
@@ -277,6 +292,12 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     window.addEventListener(FONT_SETTINGS_EVENT, updateFont)
     updateFont()
 
+    const updateScrollback = () => {
+      term.options.scrollback = getTerminalScrollback()
+    }
+    window.addEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
+    updateScrollback()
+
     const updateTheme = () => {
       term.options.theme = terminalTheme()
     }
@@ -309,13 +330,20 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     const subscribeTimer = window.setTimeout(() => {
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
         const cleaned = oscParser.feed(data, title => {
-          const tab = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
-          if (tab?.allowTitleRename !== false && title) {
+          const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+          if (current?.allowTitleRename !== false && title) {
             useTerminalStore.getState().renameTerminal(terminalId, title)
           }
         })
         term.write(cleaned)
       })
+      const restored = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+      if (restored?.status === 'exited' && hadRestoredScrollback) {
+        const note = restored.awaitingRestoreSpawn
+          ? translate('会话输出已恢复；进程将按原配置重新启动')
+          : translate('会话输出已恢复；可从终端标签重启进程')
+        term.writeln(`\x1b[90m[${note}]\x1b[0m`)
+      }
     }, 0)
 
     const ro = new ResizeObserver(() => {
@@ -329,6 +357,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       for (const id of fitTimers) window.clearTimeout(id)
       unsubscribeOutput?.()
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
+      window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
       window.removeEventListener(THEME_SETTINGS_EVENT, updateTheme)
       ro.disconnect()
       container.removeEventListener('paste', onPaste, true)
@@ -349,12 +378,18 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     if (!term || !terminal) return
     const previous = previousStatusRef.current
     if (terminal.status === 'starting' && previous === 'exited') {
-      term.reset()
-      term.writeln('\x1b[90m正在重启终端…\x1b[0m')
+      if (terminal.restorePreservedOutput) {
+        term.writeln(`\x1b[90m\r\n── ${translate('正在重启终端…')} ──\x1b[0m`)
+      } else {
+        term.reset()
+        term.writeln(`\x1b[90m${translate('正在重启终端…')}\x1b[0m`)
+      }
     } else if (terminal.status === 'exited' && previous !== 'exited') {
       const detail =
-        terminal.exitCode === null ? '进程未启动' : `进程已退出，退出码 ${terminal.exitCode}`
-      term.writeln(`\r\n\x1b[90m[${detail}，可从终端标签重启]\x1b[0m`)
+        terminal.exitCode === null
+          ? translate('进程未启动')
+          : translate('进程已退出，退出码 {code}', { code: String(terminal.exitCode) })
+      term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
     }
     previousStatusRef.current = terminal.status
   }, [terminal])

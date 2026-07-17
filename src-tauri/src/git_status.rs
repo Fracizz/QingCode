@@ -2,6 +2,7 @@ use crate::path_guard::PathAllowlist;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use tauri::State;
 
 /// Current Git HEAD for status-bar display.
@@ -12,8 +13,29 @@ pub struct GitHeadInfo {
     pub detached: bool,
 }
 
+/// One changed path from `git status --porcelain`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct GitStatusEntry {
+    /// Absolute path (OS native separators).
+    pub path: String,
+    /// Short UI code: `M`, `A`, `D`, `??`, `MM`, `R`, …
+    pub status: String,
+}
+
+/// Worktree dirty snapshot for the explorer / tabs.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct GitWorkdirStatus {
+    pub entries: Vec<GitStatusEntry>,
+    pub dirty_count: usize,
+}
+
 /// Resolve the Git directory for `start` or any ancestor (supports worktrees).
 fn find_git_dir(start: &Path) -> Option<PathBuf> {
+    find_git_workdir_and_dir(start).map(|(_, git_dir)| git_dir)
+}
+
+/// Resolve the worktree root (directory containing `.git`) and the git dir.
+fn find_git_workdir_and_dir(start: &Path) -> Option<(PathBuf, PathBuf)> {
     let mut current = if start.is_dir() {
         start.to_path_buf()
     } else {
@@ -23,17 +45,21 @@ fn find_git_dir(start: &Path) -> Option<PathBuf> {
     loop {
         let git = current.join(".git");
         if git.is_dir() {
-            return Some(git);
+            return Some((current, git));
         }
         if git.is_file() {
             if let Some(dir) = resolve_gitdir_file(&git, &current) {
-                return Some(dir);
+                return Some((current, dir));
             }
         }
         if !current.pop() {
             return None;
         }
     }
+}
+
+fn find_git_workdir(start: &Path) -> Option<PathBuf> {
+    find_git_workdir_and_dir(start).map(|(workdir, _)| workdir)
 }
 
 fn resolve_gitdir_file(git_file: &Path, worktree: &Path) -> Option<PathBuf> {
@@ -105,6 +131,176 @@ pub fn get_git_head(path: String, allowlist: State<'_, PathAllowlist>) -> Option
         return None;
     }
     read_git_head(Path::new(&path))
+}
+
+fn apply_no_window(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
+/// Run `git` in `workdir`. Returns stdout on success; `None` when git is missing / not a repo.
+fn run_git(workdir: &Path, args: &[&str]) -> Option<std::process::Output> {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(workdir)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    apply_no_window(&mut cmd);
+    cmd.output().ok()
+}
+
+/// Map porcelain `XY` to a short UI status code.
+pub fn porcelain_xy_to_status(xy: &str) -> String {
+    let mut chars = xy.chars();
+    let x = chars.next().unwrap_or(' ');
+    let y = chars.next().unwrap_or(' ');
+    if x == '?' && y == '?' {
+        return "??".into();
+    }
+    if x == '!' && y == '!' {
+        return "!!".into();
+    }
+    if x != ' ' && y != ' ' {
+        if x == y {
+            return x.to_string();
+        }
+        return format!("{x}{y}");
+    }
+    if y != ' ' {
+        return y.to_string();
+    }
+    if x != ' ' {
+        return x.to_string();
+    }
+    xy.trim().to_string()
+}
+
+/// Parse one `git status --porcelain` line into (relative path, status).
+/// Supports rename/copy lines (`old -> new`).
+pub fn parse_porcelain_line(line: &str) -> Option<(String, String)> {
+    let line = line.trim_end_matches(['\r', '\n']);
+    if line.len() < 3 {
+        return None;
+    }
+    let xy = &line[..2];
+    let rest = line[2..].trim_start();
+    if rest.is_empty() {
+        return None;
+    }
+
+    let path = if let Some((_old, new_path)) = rest.split_once(" -> ") {
+        new_path.trim()
+    } else {
+        // Quoted paths from git: "path with spaces"
+        let trimmed = rest.trim();
+        if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+            &trimmed[1..trimmed.len() - 1]
+        } else {
+            trimmed
+        }
+    };
+
+    if path.is_empty() {
+        return None;
+    }
+
+    Some((path.replace('\\', "/"), porcelain_xy_to_status(xy)))
+}
+
+fn absolute_from_workdir(workdir: &Path, rel: &str) -> PathBuf {
+    let mut abs = workdir.to_path_buf();
+    for part in rel.split('/') {
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        abs.push(part);
+    }
+    abs
+}
+
+/// Collect dirty paths via `git status --porcelain` (CLI only; no libgit2).
+pub fn read_git_workdir_status(path: &Path) -> Option<GitWorkdirStatus> {
+    let workdir = find_git_workdir(path)?;
+    let output = run_git(
+        &workdir,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=normal",
+            "--ignore-submodules=dirty",
+        ],
+    )?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut entries = Vec::new();
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let Some((rel, status)) = parse_porcelain_line(line) else {
+            continue;
+        };
+        let abs = absolute_from_workdir(&workdir, &rel);
+        entries.push(GitStatusEntry {
+            path: abs.to_string_lossy().to_string(),
+            status,
+        });
+    }
+    let dirty_count = entries.len();
+    Some(GitWorkdirStatus {
+        entries,
+        dirty_count,
+    })
+}
+
+#[tauri::command]
+pub fn get_git_workdir_status(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Option<GitWorkdirStatus> {
+    if path.trim().is_empty() {
+        return None;
+    }
+    if allowlist.ensure_allowed(&path).is_err() {
+        return None;
+    }
+    read_git_workdir_status(Path::new(&path))
+}
+
+/// Read file contents at `HEAD:path` via `git show`. `None` when the path is not in HEAD
+/// (e.g. untracked) or git/repo is unavailable.
+pub fn read_git_show_head(path: &Path) -> Option<String> {
+    let workdir = find_git_workdir(path)?;
+    let rel = path.strip_prefix(&workdir).ok()?;
+    let rel_str = rel.to_string_lossy().replace('\\', "/");
+    if rel_str.is_empty() {
+        return None;
+    }
+    let spec = format!("HEAD:{rel_str}");
+    let output = run_git(&workdir, &["show", &spec])?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
+}
+
+#[tauri::command]
+pub fn git_show_head_file(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<Option<String>, String> {
+    if path.trim().is_empty() {
+        return Ok(None);
+    }
+    allowlist.ensure_allowed(&path)?;
+    Ok(read_git_show_head(Path::new(&path)))
 }
 
 #[cfg(test)]
@@ -190,6 +386,113 @@ mod tests {
     fn read_git_head_returns_none_outside_repo() {
         let root = temp_dir("norepo");
         assert!(read_git_head(&root).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn parse_porcelain_modified_and_untracked() {
+        assert_eq!(
+            parse_porcelain_line(" M src/main.rs"),
+            Some(("src/main.rs".into(), "M".into()))
+        );
+        assert_eq!(
+            parse_porcelain_line("?? new file.txt"),
+            Some(("new file.txt".into(), "??".into()))
+        );
+        assert_eq!(
+            parse_porcelain_line("A  staged.ts"),
+            Some(("staged.ts".into(), "A".into()))
+        );
+        assert_eq!(
+            parse_porcelain_line("D  gone.rs"),
+            Some(("gone.rs".into(), "D".into()))
+        );
+        assert_eq!(
+            parse_porcelain_line("MM both.rs"),
+            Some(("both.rs".into(), "M".into()))
+        );
+        assert_eq!(
+            parse_porcelain_line("AM added-then-mod.ts"),
+            Some(("added-then-mod.ts".into(), "AM".into()))
+        );
+    }
+
+    #[test]
+    fn parse_porcelain_rename() {
+        assert_eq!(
+            parse_porcelain_line("R  old.rs -> new.rs"),
+            Some(("new.rs".into(), "R".into()))
+        );
+    }
+
+    #[test]
+    fn porcelain_xy_to_status_variants() {
+        assert_eq!(porcelain_xy_to_status("??"), "??");
+        assert_eq!(porcelain_xy_to_status(" M"), "M");
+        assert_eq!(porcelain_xy_to_status("M "), "M");
+        assert_eq!(porcelain_xy_to_status("MD"), "MD");
+    }
+
+    #[test]
+    fn read_git_workdir_status_via_cli_when_git_available() {
+        let root = temp_dir("porcelain-cli");
+        let init = Command::new("git")
+            .current_dir(&root)
+            .args(["init"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+        let Ok(init) = init else {
+            fs::remove_dir_all(&root).ok();
+            return;
+        };
+        if !init.status.success() {
+            fs::remove_dir_all(&root).ok();
+            return;
+        }
+        let _ = Command::new("git")
+            .current_dir(&root)
+            .args(["config", "user.email", "test@qingcode.local"])
+            .output();
+        let _ = Command::new("git")
+            .current_dir(&root)
+            .args(["config", "user.name", "QingCode Test"])
+            .output();
+
+        fs::write(root.join("tracked.txt"), "v1\n").unwrap();
+        let add = Command::new("git")
+            .current_dir(&root)
+            .args(["add", "tracked.txt"])
+            .output()
+            .unwrap();
+        if !add.status.success() {
+            fs::remove_dir_all(&root).ok();
+            return;
+        }
+        let commit = Command::new("git")
+            .current_dir(&root)
+            .args(["commit", "-m", "init"])
+            .output()
+            .unwrap();
+        if !commit.status.success() {
+            fs::remove_dir_all(&root).ok();
+            return;
+        }
+
+        fs::write(root.join("tracked.txt"), "v2\n").unwrap();
+        fs::write(root.join("new.txt"), "untracked\n").unwrap();
+
+        let status = read_git_workdir_status(&root).expect("porcelain status");
+        assert!(status.dirty_count >= 2);
+        let codes: Vec<_> = status.entries.iter().map(|e| e.status.as_str()).collect();
+        assert!(codes.iter().any(|c| *c == "M" || c.contains('M')));
+        assert!(codes.iter().any(|c| *c == "??"));
+
+        let head = read_git_show_head(&root.join("tracked.txt")).expect("HEAD blob");
+        assert_eq!(head, "v1\n");
+        assert!(read_git_show_head(&root.join("new.txt")).is_none());
+
         fs::remove_dir_all(root).unwrap();
     }
 }

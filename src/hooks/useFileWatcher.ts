@@ -1,14 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
+import { useCompareStore } from '../store/compareStore'
+import { useGitStatusStore } from '../store/gitStatusStore'
 import { choiceDialog } from '../store/choiceStore'
 import { flushLiveEditorContent, getLiveEditorContent } from '../lib/editorSession'
-import { EDIT_MAX_BYTES, editorPerfProfile } from '../lib/fileSizePolicy'
+import { editorPerfProfile, resolveEditMaxBytes } from '../lib/fileSizePolicy'
 import { translate } from '../lib/i18n'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
-import type { FileCompareRequest } from '../components/FileCompareDialog'
 import type { EditorTab, Project } from '../types'
 
 export type FsChangePayload = {
@@ -91,7 +92,6 @@ function findOpenTabByPath(path: string): EditorTab | undefined {
 }
 
 export function useFileWatcher() {
-  const [compare, setCompare] = useState<FileCompareRequest | null>(null)
   const prompting = useRef(new Set<string>())
   const treeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingTreePaths = useRef<string[]>([])
@@ -108,6 +108,24 @@ export function useFileWatcher() {
     const files = collectWatchFiles(tabs, projectSessions)
     void syncWatches(roots, files)
   }, [currentProject, projects, tabs, projectSessions])
+
+  // Lightweight git dirty snapshot for the current project.
+  useEffect(() => {
+    if (!isTauri() || !currentProject || currentProject.ephemeral) {
+      useGitStatusStore.getState().clear()
+      return
+    }
+    void useGitStatusStore.getState().refresh(currentProject.path)
+    const onFocus = () => useGitStatusStore.getState().scheduleRefresh(currentProject.path, 200)
+    window.addEventListener('focus', onFocus)
+    const intervalId = window.setInterval(() => {
+      useGitStatusStore.getState().scheduleRefresh(currentProject.path, 0)
+    }, 30_000)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.clearInterval(intervalId)
+    }
+  }, [currentProject?.id, currentProject?.path, currentProject?.ephemeral])
 
   useEffect(() => {
     if (!isTauri()) return
@@ -135,6 +153,7 @@ export function useFileWatcher() {
           void refreshTreeForPath(p)
           if (seen.size >= 4) break
         }
+        useGitStatusStore.getState().scheduleRefresh(undefined, 700)
       }, 500)
 
       const editor = useEditorStore.getState()
@@ -168,7 +187,8 @@ export function useFileWatcher() {
             return
           }
 
-          const profile = editorPerfProfile(tab.fileSize ?? 0)
+          const editMaxBytes = resolveEditMaxBytes(tab.path)
+          const profile = editorPerfProfile(tab.fileSize ?? 0, editMaxBytes)
           // Plain/degraded: skip full read when mtime is unchanged.
           if (
             (profile === 'plain' || profile === 'degraded') &&
@@ -196,7 +216,7 @@ export function useFileWatcher() {
             return
           }
 
-          const allowCompare = (tab.fileSize ?? 0) <= EDIT_MAX_BYTES
+          const allowCompare = (tab.fileSize ?? 0) <= editMaxBytes
           // Dirty: ask user.
           const choice = await choiceDialog({
             title: '文件已在外部更改',
@@ -216,18 +236,30 @@ export function useFileWatcher() {
           } else if (choice === 'compare' && allowCompare) {
             flushLiveEditorContent(tab.id)
             const localNow = getLiveEditorContent(tab.id) ?? tab.content ?? ''
-            setCompare({
+            const close = () => useCompareStore.getState().closeCompare()
+            useCompareStore.getState().openCompare({
               path: tab.path,
-              localContent: localNow,
-              diskContent,
-              onClose: () => setCompare(null),
-              onKeepLocal: () => {
-                editor.setDiskMtime(tab.id, mtime)
-                setCompare(null)
-              },
-              onReload: () => {
-                void editor.reloadFromDisk(tab.id, diskContent, mtime).then(() => setCompare(null))
-              },
+              leftTitle: translate('本地修改'),
+              rightTitle: translate('磁盘版本'),
+              leftContent: localNow,
+              rightContent: diskContent,
+              onClose: close,
+              actions: [
+                {
+                  label: translate('保留本地修改'),
+                  onClick: () => {
+                    editor.setDiskMtime(tab.id, mtime)
+                    close()
+                  },
+                },
+                {
+                  label: translate('重新加载'),
+                  primary: true,
+                  onClick: () => {
+                    void editor.reloadFromDisk(tab.id, diskContent, mtime).then(close)
+                  },
+                },
+              ],
             })
           }
         } catch (e) {
@@ -247,6 +279,4 @@ export function useFileWatcher() {
       if (treeTimer.current) clearTimeout(treeTimer.current)
     }
   }, [])
-
-  return { compare }
 }

@@ -537,6 +537,12 @@ export default function Editor() {
 
   useEffect(() => {
     void loadEffectiveEditorPreferences(currentProject)
+    void import('../lib/fileSizeSettings').then(m =>
+      m.loadEffectiveFileSizePreferences(currentProject),
+    )
+    void import('../lib/terminalScrollbackSettings').then(m =>
+      m.loadEffectiveTerminalScrollback(currentProject),
+    )
   }, [currentProject?.id])
 
   useEffect(() => {
@@ -597,17 +603,19 @@ export default function Editor() {
   useEffect(() => {
     if (!viewRef.current || !activeTab || isOpenErrorTab(activeTab) || isLoadingTab(activeTab) || !pendingReveal) return
     if (pendingReveal.path !== activeTab.path) return
-    const lineNum = Math.min(
-      Math.max(1, pendingReveal.line),
-      viewRef.current.state.doc.lines
-    )
-    const line = viewRef.current.state.doc.line(lineNum)
+    const doc = viewRef.current.state.doc
+    const lineNum = Math.min(Math.max(1, pendingReveal.line), doc.lines)
+    const line = doc.line(lineNum)
+    const pos =
+      typeof pendingReveal.from === 'number'
+        ? Math.min(Math.max(0, pendingReveal.from), doc.length)
+        : line.from
     viewRef.current.dispatch({
       effects: [
-        EditorView.scrollIntoView(line.from, { y: 'center' }),
+        EditorView.scrollIntoView(pos, { y: 'center' }),
         flashLineEffect.of(lineNum),
       ],
-      selection: { anchor: line.from },
+      selection: { anchor: pos },
     })
     viewRef.current.focus()
     clearPendingReveal()

@@ -11,6 +11,16 @@ import { useI18n } from '../lib/i18n'
 
 const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = [
   {
+    id: 'openCommandPalette',
+    label: '打开命令面板',
+    description: '打开命令面板，搜索并运行编辑器命令。',
+  },
+  {
+    id: 'goToSymbolInEditor',
+    label: '转到编辑器中的符号',
+    description: '打开当前文件的符号列表，快速跳转到函数、类或标题。',
+  },
+  {
     id: 'searchAllProjects',
     label: '打开搜索',
     description: '打开搜索面板，默认在当前项目中搜索文件与内容。',
@@ -47,7 +57,7 @@ const FIXED_SHORTCUTS: { shortcut: string; label: string; description: string }[
   {
     shortcut: 'Shift+Alt+F',
     label: '格式化文档',
-    description: '使用 Prettier 或 rustfmt 格式化当前文件（需本机已安装对应工具）。',
+    description: '使用 Prettier、rustfmt、shfmt、ruff/black 或 gofmt 格式化当前文件（需本机已安装对应工具）。',
   },
 ]
 

@@ -56,6 +56,14 @@ function buildSharedDefaults(): SettingsFile {
     'files.encoding': 'utf8',
     'files.trimTrailingWhitespace': false,
     'files.insertFinalNewline': false,
+    // Max size for rich/degraded CodeMirror edit (bytes or "20MB"). Plain edit stays ≤100MB; view ≤500MB.
+    'files.maxSizeForEdit': {
+      '*': 20 * 1024 * 1024,
+      '*.log': 50 * 1024 * 1024,
+      '*.txt': 50 * 1024 * 1024,
+      '*.out': 50 * 1024 * 1024,
+      '*.err': 50 * 1024 * 1024,
+    },
     'files.exclude': {
       '**/.git': true,
       '**/.svn': true,
@@ -115,17 +123,17 @@ const SHARED_SETTINGS_BODY = `
   "editor.lineNumbers": "on",
   // 空白字符渲染：none | boundary | selection | trailing | all
   "editor.renderWhitespace": "selection",
-  // 【未支持】小地图
+  // 【暂未生效】小地图
   "editor.minimap.enabled": false,
-  // 【未支持】保存时自动格式化
+  // 【暂未生效】保存时自动格式化（可用 Shift+Alt+F 手动格式化）
   "editor.formatOnSave": false,
-  // 【未支持】粘贴时自动格式化
+  // 【暂未生效】粘贴时自动格式化
   "editor.formatOnPaste": false,
-  // 【未支持】链接编辑
+  // 【暂未生效】链接编辑
   "editor.linkedEditing": false,
-  // 【未支持】括号对着色（编辑器仍有基础匹配高亮）
+  // 【暂未生效】括号对着色（编辑器仍有基础匹配高亮）
   "editor.bracketPairColorization.enabled": true,
-  // 【未支持】括号对参考线
+  // 【暂未生效】括号对参考线
   "editor.guides.bracketPairs": true,
 
   // ============================== 文件 ==============================
@@ -135,13 +143,24 @@ const SHARED_SETTINGS_BODY = `
   "files.autoSaveDelay": 1000,
   // 换行符：auto | LF | CRLF（保存时生效）
   "files.eol": "auto",
-  // 【未支持】默认文件编码（当前固定 UTF-8）
+  // 【暂未生效】默认文件编码（当前固定 UTF-8）
   "files.encoding": "utf8",
   // 保存时去掉行尾空格
   "files.trimTrailingWhitespace": false,
   // 保存时确保文件以空行结尾
   "files.insertFinalNewline": false,
-  // 【未支持】资源管理器隐藏规则（后端仍用内置忽略列表）
+  // 按扩展名覆盖「富文本/降级编辑」上限（字节或 "50MB" 字符串）。更具体的模式优先。
+  // - 默认 * = 20MB；*.log / *.txt 等 = 50MB
+  // - 纯文本整缓冲编辑硬顶仍为 100MB（WebView 安全，与后端 read_file 一致）
+  // - 只读分块预览硬顶仍为 500MB；不可通过此项提高
+  "files.maxSizeForEdit": {
+    "*": 20971520,
+    "*.log": 52428800,
+    "*.txt": 52428800,
+    "*.out": 52428800,
+    "*.err": 52428800,
+  },
+  // 资源管理器隐藏规则（VS Code 风格 glob；true=隐藏，false=强制显示）
   "files.exclude": {
     "**/.git": true,
     "**/.svn": true,
@@ -158,7 +177,7 @@ const SHARED_SETTINGS_BODY = `
   },
 
   // ============================== 搜索 ==============================
-  // 【未支持】全文搜索排除（搜索侧仍用内置忽略）
+  // 全文/文件名搜索排除（在 files.exclude 之上叠加；保存后立即生效）
   "search.exclude": {
     "**/node_modules": true,
     "**/bower_components": true,
@@ -167,17 +186,17 @@ const SHARED_SETTINGS_BODY = `
     "**/target": true,
     "**/*.code-search": true,
   },
-  // 【未支持】搜索是否跟随符号链接
+  // 【暂未生效】搜索是否跟随符号链接
   "search.followSymlinks": true,
-  // 【部分支持】内容搜索使用 ignore 规则；与此项未完全对齐
+  // 【部分生效】内容搜索会读取 .gitignore 等 ignore 文件；与此项未完全对齐
   "search.useIgnoreFiles": true,
-  // 【未支持】资源管理器是否按 .gitignore 隐藏条目
+  // 【暂未生效】资源管理器是否按 .gitignore 隐藏条目
   "explorer.excludeGitIgnore": true,
 
   // ============================== 终端 ==============================
-  // 【未支持】终端回滚缓冲行数（终端设置页另有配置）
+  // 终端回滚缓冲行数（xterm scrollback + 会话输出持久化共用）
   "terminal.integrated.scrollback": 5000,
-  // 【未支持】终端光标是否闪烁
+  // 【暂未生效】终端光标是否闪烁
   "terminal.integrated.cursorBlinking": true,
 `
 

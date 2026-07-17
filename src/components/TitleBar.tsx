@@ -1,45 +1,14 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Minus, Square, Copy, X } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { requestAppClose } from '../lib/appClose'
 import { isTauri } from '../lib/tauri'
 import { useProjectStore } from '../store/projectStore'
-import { useEditorStore } from '../store/editorStore'
 import AppIcon from './AppIcon'
 import FileMenu from './FileMenu'
 import Tooltip from './Tooltip'
 import ProjectPicker from './ProjectPicker'
-import { confirmDialog } from '../store/confirmStore'
-import { useTerminalStore } from '../store/terminalStore'
-import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { translate } from '../lib/i18n'
-import { listBusyTerminals } from '../lib/terminalClose'
-
-async function requestAppClose() {
-  // Only warn for busy terminals (child processes / run tasks). Idle shells
-  // still get killed on quit, but should not look like "仍在运行".
-  const busyTerminals = await listBusyTerminals(useTerminalStore.getState().terminals)
-  const detail =
-    busyTerminals.length > 0
-      ? translate('{count} 个终端仍在运行，退出后将终止。', {
-          count: busyTerminals.length,
-        })
-      : undefined
-
-  if (
-    !(await confirmDialog({
-      title: translate('退出 QingCode'),
-      message: translate('确定要关闭应用程序吗？'),
-      detail,
-      kind: 'warning',
-      confirmLabel: translate('退出'),
-      cancelLabel: translate('取消'),
-    }))
-  ) {
-    return
-  }
-  if (!(await confirmDiscardTabs(useEditorStore.getState().getAllTabs(), '退出应用'))) return
-  await getCurrentWindow().destroy()
-}
 
 export default function TitleBar() {
   const [maximized, setMaximized] = useState(false)

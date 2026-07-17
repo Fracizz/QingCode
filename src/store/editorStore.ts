@@ -8,6 +8,7 @@ import {
   editorPerfProfile,
   fileOpenTier,
   formatFileSize,
+  resolveEditMaxBytes,
 } from '../lib/fileSizePolicy'
 import {
   disposeEditorSession,
@@ -22,6 +23,7 @@ import {
   loadEffectiveEditorPreferences,
   prepareContentForSave,
 } from '../lib/editorSettings'
+import { loadEffectiveFileSizePreferences } from '../lib/fileSizeSettings'
 import { isSettingsJsonPath } from '../lib/projectSettings'
 import { translate } from '../lib/i18n'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
@@ -52,7 +54,8 @@ async function populateTabFromDisk(id: string, path: string, line?: number) {
     throw new Error(`无法打开文件夹：${tabNameFromPath(path)}`)
   }
 
-  const tier = fileOpenTier(stat.size)
+  const editMaxBytes = resolveEditMaxBytes(path)
+  const tier = fileOpenTier(stat.size, editMaxBytes)
   if (tier === 'reject') {
     throw new Error(
       `暂不支持打开超过 500MB 的大文件：${tabNameFromPath(path)}`,
@@ -116,7 +119,7 @@ async function populateTabFromDisk(id: string, path: string, line?: number) {
     }
   })
 
-  const profile = editorPerfProfile(stat.size)
+  const profile = editorPerfProfile(stat.size, editMaxBytes)
   if (profile === 'plain') {
     useProjectStore.getState().pushToast(
       'info',
@@ -141,16 +144,23 @@ async function populateTabFromDisk(id: string, path: string, line?: number) {
   }
 }
 
+export type PendingReveal = {
+  path: string
+  line: number
+  /** Optional document offset; when set, Editor scrolls/selects here instead of line start. */
+  from?: number
+}
+
 export interface ProjectEditorSession {
   tabs: EditorTab[]
   activeTabId: string | null
-  pendingReveal: { path: string; line: number } | null
+  pendingReveal: PendingReveal | null
 }
 
 interface EditorState {
   tabs: EditorTab[]
   activeTabId: string | null
-  pendingReveal: { path: string; line: number } | null
+  pendingReveal: PendingReveal | null
   /** Inactive projects' editor sessions (tabs, active file, reveal). */
   projectSessions: Record<string, ProjectEditorSession>
   openFile: (path: string, line?: number) => Promise<void>
@@ -177,6 +187,16 @@ interface EditorState {
   activateProjectSession: (fromProjectId: string | null, toProjectId: string) => void
   /** Drop a project's stashed session and dispose CodeMirror runtime state. */
   discardProjectSession: (projectId: string) => void
+  /**
+   * Merge stashed sessions for inactive projects (named workspace restore).
+   * Does not change the currently visible `tabs` array.
+   */
+  mergeProjectSessions: (sessions: Record<string, ProjectEditorSession>) => void
+  /**
+   * Replace the visible project's tabs (keeps pinned settings tabs).
+   * Used when activating a named workspace that is already the current project.
+   */
+  applyVisibleProjectSession: (session: ProjectEditorSession) => void
   renamePath: (oldPath: string, newPath: string) => void
   closeTabsForPath: (path: string) => void
   findTab: (id: string) => EditorTab | undefined
@@ -585,6 +605,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       get().setTabContent(id, content)
       get().markClean(id)
       get().setDiskMtime(id, mtime)
+      void import('./gitStatusStore').then(({ useGitStatusStore }) => {
+        useGitStatusStore.getState().scheduleRefresh(undefined, 200)
+      })
       set(s => {
         const next = mapTabEverywhere(s, id, t => ({
           ...t,
@@ -594,16 +617,37 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       })
       if (content !== raw) get().bumpContentEpoch(id)
       // Active plain tabs: keep a single buffer in CodeMirror.
-      if (
-        editorPerfProfile(get().findTab(id)?.fileSize ?? content.length) === 'plain' &&
-        getLiveEditorContent(id) !== null
-      ) {
-        get().clearTabContentBuffer(id)
+      {
+        const saved = get().findTab(id)
+        const editMax = saved ? resolveEditMaxBytes(saved.path) : undefined
+        if (
+          editorPerfProfile(saved?.fileSize ?? content.length, editMax) === 'plain' &&
+          getLiveEditorContent(id) !== null
+        ) {
+          get().clearTabContentBuffer(id)
+        }
       }
       if (isSettingsJsonPath(tab.path)) {
         const project = useProjectStore.getState().currentProject
         void loadEffectiveEditorPreferences(project)
+        void loadEffectiveFileSizePreferences(project)
         void loadEffectiveAutoSaveSettings(project).then(notifyAutoSaveSettingsChanged)
+        void import('../lib/terminalScrollbackSettings').then(({ loadEffectiveTerminalScrollback }) =>
+          loadEffectiveTerminalScrollback(project),
+        )
+        void import('../lib/excludeSettings').then(({ loadEffectiveExcludeSettings }) =>
+          loadEffectiveExcludeSettings(project).then(() => {
+            const store = useProjectStore.getState()
+            for (const p of store.projects) {
+              if (!p.ephemeral && store.projectTrees[p.id]) {
+                void store.refreshProjectTree(p)
+              }
+            }
+            if (project && store.fileTree.length > 0) {
+              void store.loadFileTree()
+            }
+          }),
+        )
       }
     } catch (e) {
       console.error('saveFile failed:', e)
@@ -748,6 +792,47 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const projectSessions = { ...s.projectSessions }
       delete projectSessions[projectId]
       return { projectSessions }
+    })
+  },
+
+  mergeProjectSessions: sessions => {
+    const entries = Object.entries(sessions)
+    if (entries.length === 0) return
+    set(s => {
+      const projectSessions = { ...s.projectSessions }
+      for (const [projectId, session] of entries) {
+        const previous = projectSessions[projectId]
+        if (previous) {
+          disposeEditorSessions(previous.tabs.map(t => t.id))
+        }
+        projectSessions[projectId] = {
+          tabs: session.tabs,
+          activeTabId: session.activeTabId,
+          pendingReveal: session.pendingReveal ?? null,
+        }
+      }
+      return { projectSessions }
+    })
+  },
+
+  applyVisibleProjectSession: session => {
+    flushAllLiveEditorContents()
+    set(s => {
+      const { pinned, projectTabs } = splitPinned(s.tabs)
+      disposeEditorSessions(projectTabs.map(t => t.id))
+      const incoming = session.tabs.filter(t => !isPinnedSettingsTab(t.path))
+      const tabs = [...incoming, ...pinned]
+      let activeTabId = session.activeTabId
+      if (activeTabId && !tabs.some(t => t.id === activeTabId)) activeTabId = null
+      if (!activeTabId && s.activeTabId && pinned.some(t => t.id === s.activeTabId)) {
+        activeTabId = s.activeTabId
+      }
+      if (!activeTabId) activeTabId = tabs[0]?.id ?? null
+      return {
+        tabs,
+        activeTabId,
+        pendingReveal: session.pendingReveal ?? null,
+      }
     })
   },
 

@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- VS 风格大文件分级编辑：按体积在完整编辑 / 降级编辑 / 纯文本编辑 / 只读查看间切换，降低打开超大文件时的卡顿
+- 工作区信任：未信任项目限制高风险能力，降低打开陌生仓库时的安全风险
+- 文档格式化：支持 `Shift+Alt+F` 调用 Prettier / rustfmt（需本机已安装）格式化当前文件
+- `files.exclude` / `search.exclude`：资源管理器与文件/内容搜索按设置 JSON 中的排除规则生效
+
+### Changed
+
+- 设置 JSON 中尚未接线的预留键（如小地图、formatOnSave、终端 scrollback 等）标注为「暂未生效」，避免误以为已生效
+
 ## [0.1.3] - 2026-07-17
 
 ### Added

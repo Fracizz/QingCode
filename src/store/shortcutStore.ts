@@ -10,6 +10,14 @@ function loadShortcuts(): ShortcutMap {
       searchAllProjects: typeof saved.searchAllProjects === 'string' ? saved.searchAllProjects : DEFAULT_SHORTCUTS.searchAllProjects,
       toggleTerminal: typeof saved.toggleTerminal === 'string' ? saved.toggleTerminal : DEFAULT_SHORTCUTS.toggleTerminal,
       openSettings: typeof saved.openSettings === 'string' ? saved.openSettings : DEFAULT_SHORTCUTS.openSettings,
+      openCommandPalette:
+        typeof saved.openCommandPalette === 'string'
+          ? saved.openCommandPalette
+          : DEFAULT_SHORTCUTS.openCommandPalette,
+      goToSymbolInEditor:
+        typeof saved.goToSymbolInEditor === 'string'
+          ? saved.goToSymbolInEditor
+          : DEFAULT_SHORTCUTS.goToSymbolInEditor,
     }
   } catch {
     return { ...DEFAULT_SHORTCUTS }

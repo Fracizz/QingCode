@@ -1,4 +1,5 @@
 import type { Project } from '../types'
+import { mergeExcludeMaps } from './excludeSettings'
 import {
   DEFAULT_GLOBAL_SETTINGS,
   loadGlobalSettings,
@@ -47,6 +48,11 @@ export function mergeSettings(global: SettingsFile, workspace?: SettingsFile | n
   if (!workspace) return merged
   for (const [key, value] of Object.entries(workspace)) {
     if (key === 'version' || key === 'custom') continue
+    if (key === 'files.exclude' || key === 'search.exclude') {
+      // Deep-merge exclude maps so workspace can flip individual patterns.
+      merged[key] = mergeExcludeMaps(merged[key], value)
+      continue
+    }
     merged[key] = value
   }
   merged.custom = { ...merged.custom, ...(workspace.custom ?? {}) }

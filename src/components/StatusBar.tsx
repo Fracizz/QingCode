@@ -11,6 +11,7 @@ import {
   isProjectRestricted,
   WORKSPACE_TRUST_CHANGED_EVENT,
 } from '../lib/workspaceTrust'
+import { useGitStatusStore } from '../store/gitStatusStore'
 
 type GitHeadInfo = {
   name: string
@@ -29,6 +30,7 @@ export default function StatusBar() {
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [devBuild, setDevBuild] = useState(false)
   const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
+  const gitDirtyCount = useGitStatusStore(s => s.dirtyCount)
   const [trustTick, setTrustTick] = useState(0)
 
   useEffect(() => {
@@ -130,12 +132,21 @@ export default function StatusBar() {
       )}
       {gitHead && (
         <Tooltip
-          label={gitHead.detached ? t('分离的 HEAD（未在分支上）') : t('当前 Git 分支')}
+          label={
+            gitHead.detached
+              ? t('分离的 HEAD（未在分支上）')
+              : gitDirtyCount > 0
+                ? t('当前 Git 分支 · {count} 个更改', { count: gitDirtyCount })
+                : t('当前 Git 分支')
+          }
           side="top"
         >
           <span className="flex items-center gap-1.5 opacity-90">
             <GitBranch size={13} />
             {gitHead.detached ? t('分离 HEAD · {sha}', { sha: gitHead.name }) : gitHead.name}
+            {gitDirtyCount > 0 && (
+              <span className="text-warn">*{gitDirtyCount}</span>
+            )}
           </span>
         </Tooltip>
       )}

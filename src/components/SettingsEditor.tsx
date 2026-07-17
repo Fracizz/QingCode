@@ -228,7 +228,16 @@ export default function SettingsEditor() {
   const visibleCategories = useMemo(() => {
     if (!q) return CATEGORIES
     return CATEGORIES.filter(cat => {
-      if (cat.id === 'json') return match('打开设置 JSON', 'settings.json', '自定义设置')
+      if (cat.id === 'json') {
+        return match(
+          '打开设置 JSON',
+          'settings.json',
+          '自定义设置',
+          'files.exclude',
+          'search.exclude',
+          '暂未生效',
+        )
+      }
       if (cat.id === 'common') {
         return match('颜色主题', '界面字号', '常用设置')
       }
@@ -248,8 +257,11 @@ export default function SettingsEditor() {
           'Windows',
           'Alt+C',
           'Ctrl+Shift+C',
+          'Ctrl+Shift+O',
           'Shift+Alt+F',
           '格式化',
+          '转到编辑器中的符号',
+          '符号',
         )
       }
       if (cat.id === 'language') return match('语言', '简体中文', 'English')
@@ -757,7 +769,14 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('打开设置 JSON', 'settings.json', '自定义设置') && (
+            {match(
+              '打开设置 JSON',
+              'settings.json',
+              '自定义设置',
+              'files.exclude',
+              'search.exclude',
+              '暂未生效',
+            ) && (
               <Section
                 id="json"
                 title={t('打开设置 JSON')}
@@ -798,6 +817,14 @@ export default function SettingsEditor() {
                       {t('写入默认模板并打开')}
                     </button>
                   </div>
+                </SettingItem>
+                <SettingItem
+                  title={t('JSON 键生效说明')}
+                  description={t(
+                    'files.exclude 控制资源管理器隐藏；search.exclude 在其上叠加并作用于搜索。标有「暂未生效」的键（如 editor.minimap、formatOnSave 等）会保存但不会改变行为。terminal.integrated.scrollback 已生效。详见帮助文档。',
+                  )}
+                >
+                  <span className="text-[12px] text-fg-dim">{t('见 JSON 注释 / 帮助文档')}</span>
                 </SettingItem>
               </Section>
             )}

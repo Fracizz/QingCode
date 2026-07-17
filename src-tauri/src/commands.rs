@@ -2,6 +2,7 @@ use crate::content_search::{
     self, ContentSearchOptions, ContentSearchResponse, DEFAULT_MAX_FILES_SCANNED,
     DEFAULT_MAX_MATCHES, DEFAULT_MAX_MATCHES_PER_FILE,
 };
+use crate::exclude;
 use crate::path_guard::PathAllowlist;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -51,6 +52,20 @@ pub struct FileSlice {
     pub file_size: u64,
 }
 
+/// Result of streaming scan for a 1-based line start offset.
+#[derive(Debug, Serialize)]
+pub struct LineOffsetResult {
+    /// Requested 1-based line number.
+    pub line: u64,
+    /// Byte offset of the start of that line (or last line when not found).
+    pub offset: u64,
+    /// True when the requested line exists.
+    pub found: bool,
+    /// Total lines counted (full file when `!found` or scan completed).
+    pub total_lines: u64,
+    pub file_size: u64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct FileNode {
     pub name: String,
@@ -60,7 +75,31 @@ pub struct FileNode {
     pub children: Option<Vec<FileNode>>,
 }
 
-fn list_dir_one_level(current: &str) -> Result<Vec<FileNode>, std::io::Error> {
+fn should_skip_path(
+    workspace_root: &str,
+    full_path: &str,
+    name: &str,
+    exclude_patterns: Option<&[String]>,
+) -> bool {
+    match exclude_patterns {
+        Some(patterns) => {
+            if let Some(rel) = exclude::relative_to_root(workspace_root, full_path) {
+                if rel.is_empty() {
+                    return false;
+                }
+                return exclude::is_path_excluded(&rel, patterns);
+            }
+            exclude::is_path_excluded(name, patterns)
+        }
+        None => exclude::default_hard_ignore_name(name),
+    }
+}
+
+fn list_dir_one_level(
+    current: &str,
+    workspace_root: &str,
+    exclude_patterns: Option<&[String]>,
+) -> Result<Vec<FileNode>, std::io::Error> {
     let dir = Path::new(current);
     if !dir.is_dir() {
         return Err(std::io::Error::new(
@@ -76,12 +115,12 @@ fn list_dir_one_level(current: &str) -> Result<Vec<FileNode>, std::io::Error> {
         let entry = entry?;
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
+        let full_path = path.to_string_lossy().to_string();
 
-        if is_ignored_entry(&name) {
+        if should_skip_path(workspace_root, &full_path, &name, exclude_patterns) {
             continue;
         }
 
-        let full_path = path.to_string_lossy().to_string();
         // Prefer DirEntry::file_type() to avoid an extra metadata round-trip per entry.
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
 
@@ -109,10 +148,13 @@ fn list_dir_one_level(current: &str) -> Result<Vec<FileNode>, std::io::Error> {
 #[tauri::command]
 pub fn scan_directory(
     path: String,
+    workspace_root: Option<String>,
+    exclude_patterns: Option<Vec<String>>,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<Vec<FileNode>, String> {
     allowlist.ensure_allowed(&path)?;
-    list_dir_one_level(&path).map_err(|e| e.to_string())
+    let root = workspace_root.unwrap_or_else(|| path.clone());
+    list_dir_one_level(&path, &root, exclude_patterns.as_deref()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -133,10 +175,7 @@ pub struct SearchHit {
 }
 
 fn is_ignored_entry(name: &str) -> bool {
-    matches!(
-        name,
-        "node_modules" | "target" | "dist" | "build" | ".git" | ".next"
-    )
+    exclude::default_hard_ignore_name(name)
 }
 
 fn is_glob_pattern(pattern: &str) -> bool {
@@ -244,6 +283,7 @@ fn walk_matching(
     fuzzy: bool,
     match_suffix: bool,
     extensions: Option<&[String]>,
+    exclude_patterns: Option<&[String]>,
 ) {
     if out.len() >= limit {
         return;
@@ -252,13 +292,15 @@ fn walk_matching(
         Ok(e) => e,
         Err(_) => return,
     };
+    let base_str = base.to_string_lossy();
     for entry in entries.flatten() {
         if out.len() >= limit {
             return;
         }
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if is_ignored_entry(&name) {
+        let full = path.to_string_lossy().to_string();
+        if should_skip_path(&base_str, &full, &name, exclude_patterns) {
             continue;
         }
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
@@ -272,7 +314,6 @@ fn walk_matching(
         };
 
         if matched {
-            let full = path.to_string_lossy().to_string();
             let relative = path
                 .strip_prefix(base)
                 .map(|p| p.to_string_lossy().to_string())
@@ -295,6 +336,7 @@ fn walk_matching(
                 fuzzy,
                 match_suffix,
                 extensions,
+                exclude_patterns,
             );
         }
     }
@@ -400,6 +442,7 @@ pub fn search_files(
     extension: Option<String>,
     extensions: Option<Vec<String>>,
     limit: Option<usize>,
+    exclude_patterns: Option<Vec<String>>,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<Vec<SearchHit>, String> {
     allowlist.ensure_allowed(&root)?;
@@ -436,6 +479,7 @@ pub fn search_files(
         fuzzy && !use_glob && !use_suffix,
         use_suffix,
         ext_list.as_deref(),
+        exclude_patterns.as_deref(),
     );
     Ok(hits)
 }
@@ -556,6 +600,7 @@ pub fn search_file_contents(
     max_files_scanned: Option<usize>,
     max_matches_per_file: Option<usize>,
     search_id: Option<u64>,
+    exclude_patterns: Option<Vec<String>>,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<ContentSearchResponse, String> {
     allowlist.ensure_allowed(&root)?;
@@ -573,6 +618,7 @@ pub fn search_file_contents(
         max_matches: max_matches.unwrap_or(DEFAULT_MAX_MATCHES),
         max_files_scanned: max_files_scanned.unwrap_or(DEFAULT_MAX_FILES_SCANNED),
         max_matches_per_file: max_matches_per_file.unwrap_or(DEFAULT_MAX_MATCHES_PER_FILE),
+        exclude_patterns,
     };
 
     Ok(content_search::search_file_contents(
@@ -706,6 +752,108 @@ fn read_file_slice_inner(path: String, offset: u64, max_bytes: u64) -> Result<Fi
         len,
         text,
         eof,
+        file_size,
+    })
+}
+
+/// Streaming newline scan: return the byte offset of a 1-based line without loading the file.
+#[tauri::command]
+pub fn find_line_offset(
+    path: String,
+    line: u64,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<LineOffsetResult, String> {
+    allowlist.ensure_allowed(&path)?;
+    find_line_offset_inner(path, line)
+}
+
+fn find_line_offset_inner(path: String, line: u64) -> Result<LineOffsetResult, String> {
+    if line == 0 {
+        return Err("行号必须从 1 开始".into());
+    }
+
+    let file_path = Path::new(&path);
+    let metadata = fs::metadata(file_path)
+        .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
+    if metadata.is_dir() {
+        return Err(format!("无法打开文件夹：{}", display_file_name(&path)));
+    }
+    let file_size = metadata.len();
+    if exceeds_viewer_file_size_limit(file_size) {
+        return Err(format!(
+            "暂不支持打开超过 500MB 的大文件：{}",
+            display_file_name(&path)
+        ));
+    }
+    if is_binary_extension(&path) {
+        return Err(unsupported_text_file_message(&path));
+    }
+
+    if file_size == 0 {
+        return Ok(LineOffsetResult {
+            line,
+            offset: 0,
+            found: line == 1,
+            total_lines: 0,
+            file_size: 0,
+        });
+    }
+
+    if line == 1 {
+        // Still count total lines for UI feedback when useful — cheap enough for jump-to-1.
+        // Skip full count for line 1 to keep first jump fast on huge files.
+        return Ok(LineOffsetResult {
+            line: 1,
+            offset: 0,
+            found: true,
+            total_lines: 1,
+            file_size,
+        });
+    }
+
+    let mut file = File::open(file_path)
+        .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
+
+    const BUF_SIZE: usize = 64 * 1024;
+    let mut buf = [0u8; BUF_SIZE];
+    let mut current_line: u64 = 1;
+    let mut file_pos: u64 = 0;
+    let mut last_line_offset: u64 = 0;
+
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
+        if n == 0 {
+            break;
+        }
+        for (i, &b) in buf[..n].iter().enumerate() {
+            if b == b'\n' {
+                let next_offset = file_pos + i as u64 + 1;
+                current_line += 1;
+                last_line_offset = next_offset;
+                if current_line == line {
+                    return Ok(LineOffsetResult {
+                        line,
+                        offset: next_offset.min(file_size),
+                        found: true,
+                        total_lines: line,
+                        file_size,
+                    });
+                }
+            }
+        }
+        file_pos += n as u64;
+    }
+
+    // File ended without reaching `line`. If it does not end with `\n`, the last
+    // partial line still counts (already in current_line).
+    let total_lines = if file_size > 0 { current_line } else { 0 };
+    Ok(LineOffsetResult {
+        line,
+        offset: last_line_offset.min(file_size),
+        found: false,
+        total_lines,
         file_size,
     })
 }
@@ -1267,6 +1415,39 @@ mod tests {
         assert_eq!(slice.len, 5);
         assert!(!slice.eof);
         assert_eq!(slice.file_size, 26);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn find_line_offset_locates_line_starts() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-line-test-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sample.txt");
+        // line1\nline2\nline3
+        fs::write(&path, "aa\nbbb\nc").unwrap();
+        let p = path.to_string_lossy().to_string();
+
+        let l1 = find_line_offset_inner(p.clone(), 1).unwrap();
+        assert!(l1.found);
+        assert_eq!(l1.offset, 0);
+
+        let l2 = find_line_offset_inner(p.clone(), 2).unwrap();
+        assert!(l2.found);
+        assert_eq!(l2.offset, 3); // after "aa\n"
+
+        let l3 = find_line_offset_inner(p.clone(), 3).unwrap();
+        assert!(l3.found);
+        assert_eq!(l3.offset, 7); // after "aa\nbbb\n"
+
+        let missing = find_line_offset_inner(p, 99).unwrap();
+        assert!(!missing.found);
+        assert_eq!(missing.total_lines, 3);
+        assert_eq!(missing.offset, 7);
 
         fs::remove_dir_all(dir).unwrap();
     }

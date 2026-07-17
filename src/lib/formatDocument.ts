@@ -9,7 +9,36 @@ import { translate } from './i18n'
 import { isPinnedSettingsTab } from '../utils/editorHelpers'
 import { EDIT_DEGRADED_BYTES, formatFileSize } from './fileSizePolicy'
 
-/** Format the active (or given) editor tab via native Prettier / rustfmt. */
+/** Normalize Tauri / Error payloads into a plain message string. */
+export function formatInvokeErrorMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  return raw.replace(/^Error:\s*/i, '').trim() || raw
+}
+
+/**
+ * Prefer clear backend messages (暂不支持 / 未找到 …) over a vague
+ * 「格式化失败」 wrapper.
+ */
+export function formatDocumentErrorToast(error: unknown): string {
+  const message = formatInvokeErrorMessage(error)
+  if (
+    message.includes('暂不支持')
+    || message.startsWith('未找到')
+    || message.startsWith('格式化失败')
+    || message.startsWith('格式化超时')
+    || message.startsWith('文件过大')
+    || message.startsWith('无法识别')
+    || message.startsWith('无法启动')
+    || message.startsWith('写入格式化')
+    || message.startsWith('格式化进程')
+    || message.startsWith('格式化输出')
+  ) {
+    return message
+  }
+  return translate('格式化失败: {error}', { error: message })
+}
+
+/** Format the active (or given) editor tab via native formatters. */
 export async function formatDocument(tabId?: string): Promise<void> {
   const editor = useEditorStore.getState()
   const id = tabId ?? editor.activeTabId
@@ -59,9 +88,6 @@ export async function formatDocument(tabId?: string): Promise<void> {
       useProjectStore.getState().pushToast('success', translate('已格式化'))
     }
   } catch (error) {
-    useProjectStore.getState().pushToast(
-      'error',
-      translate('格式化失败: {error}', { error: String(error) }),
-    )
+    useProjectStore.getState().pushToast('error', formatDocumentErrorToast(error))
   }
 }

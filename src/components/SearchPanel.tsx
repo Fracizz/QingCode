@@ -47,6 +47,7 @@ import {
 import Tooltip from './Tooltip'
 import ReplacePreviewDialog from './ReplacePreviewDialog'
 import { buildReplacePreview, type ReplacePreview } from '../lib/workspaceReplace'
+import { loadExcludeSettingsForProject } from '../lib/excludeSettings'
 import { useI18n } from '../lib/i18n'
 
 interface SearchHit {
@@ -271,8 +272,13 @@ export default function SearchPanel() {
 
           const maxFilesScanned = Math.ceil(8000 / searchRoots.length)
           const parts = await Promise.all(
-            searchRoots.map(root =>
-              safeInvoke<ContentSearchResponse>('内容搜索', 'search_file_contents', {
+            searchRoots.map(async root => {
+              const project =
+                findProjectForPath(projects, root.path) ??
+                projects.find(p => p.path === root.path) ??
+                null
+              const excludes = await loadExcludeSettingsForProject(project)
+              return safeInvoke<ContentSearchResponse>('内容搜索', 'search_file_contents', {
                 root: root.path,
                 query: q,
                 ignoreCase,
@@ -282,8 +288,9 @@ export default function SearchPanel() {
                 maxFilesScanned,
                 maxMatchesPerFile: MAX_MATCHES_PER_FILE,
                 searchId,
-              }),
-            ),
+                excludePatterns: excludes.searchExclude,
+              })
+            }),
           )
           if (id !== reqId.current) return
           if (parts.every(p => p.cancelled)) return
@@ -313,8 +320,13 @@ export default function SearchPanel() {
           }
         } else {
           const parts = await Promise.all(
-            searchRoots.map(root =>
-              safeInvoke<SearchHit[]>('文件搜索', 'search_files', {
+            searchRoots.map(async root => {
+              const project =
+                findProjectForPath(projects, root.path) ??
+                projects.find(p => p.path === root.path) ??
+                null
+              const excludes = await loadExcludeSettingsForProject(project)
+              return safeInvoke<SearchHit[]>('文件搜索', 'search_files', {
                 root: root.path,
                 query: q,
                 ignoreCase,
@@ -323,8 +335,9 @@ export default function SearchPanel() {
                 extension: null,
                 extensions: extList,
                 limit: perRootLimit,
-              }),
-            ),
+                excludePatterns: excludes.searchExclude,
+              })
+            }),
           )
           if (id !== reqId.current) return
           let hits = parts.flat()
@@ -352,7 +365,7 @@ export default function SearchPanel() {
         void safeInvoke('取消内容搜索', 'cancel_content_search').catch(() => {})
       }
     }
-  }, [searchRoots, query, ignoreCase, fuzzy, matchSuffix, typeFilter, extList, useGlob, mode])
+  }, [searchRoots, query, ignoreCase, fuzzy, matchSuffix, typeFilter, extList, useGlob, mode, projects])
 
   const toggleSuffix = () => {
     if (mode === 'content' || useGlob) return

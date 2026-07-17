@@ -5,6 +5,7 @@ import {
   patchTree,
   type FileNode,
 } from '../utils/fileTreeHelpers'
+import { loadExcludeSettingsForProject } from './excludeSettings'
 
 export type { FileNode }
 export { patchTree }
@@ -14,17 +15,44 @@ export function withLoadedFlags(nodes: FileNode[]): FileNode[] {
   return nodes.map(n => ({ ...n, loaded: n.is_dir ? false : true }))
 }
 
-export async function scanDirectory(path: string, action = '读取目录'): Promise<FileNode[]> {
-  const tree = await safeInvoke<FileNode[]>(action, 'scan_directory', { path })
+export async function scanDirectory(
+  path: string,
+  options?: {
+    action?: string
+    workspaceRoot?: string
+    excludePatterns?: string[]
+  },
+): Promise<FileNode[]> {
+  const tree = await safeInvoke<FileNode[]>(options?.action ?? '读取目录', 'scan_directory', {
+    path,
+    workspaceRoot: options?.workspaceRoot ?? path,
+    excludePatterns: options?.excludePatterns ?? null,
+  })
   return withLoadedFlags(tree)
 }
 
-export async function loadProjectRootTree(projectPath: string): Promise<FileNode[]> {
-  return scanDirectory(projectPath, '读取目录')
+export async function loadProjectRootTree(project: Project | string): Promise<FileNode[]> {
+  const projectPath = typeof project === 'string' ? project : project.path
+  const projectObj = typeof project === 'string' ? null : project
+  const excludes = await loadExcludeSettingsForProject(projectObj)
+  return scanDirectory(projectPath, {
+    action: '读取目录',
+    workspaceRoot: projectPath,
+    excludePatterns: excludes.filesExclude,
+  })
 }
 
-export async function loadDirChildren(path: string): Promise<FileNode[]> {
-  return scanDirectory(path, '展开目录')
+export async function loadDirChildren(
+  path: string,
+  workspaceRoot: string,
+  project?: Project | null,
+): Promise<FileNode[]> {
+  const excludes = await loadExcludeSettingsForProject(project ?? null)
+  return scanDirectory(path, {
+    action: '展开目录',
+    workspaceRoot,
+    excludePatterns: excludes.filesExclude,
+  })
 }
 
 export function patchDirChildren(

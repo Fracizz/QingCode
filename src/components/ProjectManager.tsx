@@ -17,6 +17,7 @@ import {
   ShieldOff,
   ShieldCheck,
   ShieldAlert,
+  Layers,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -37,6 +38,7 @@ import {
   addTerminalProjectWithPrompt,
   renameProjectWithPrompt,
 } from '../utils/projectActions'
+import { saveSelectedProjectsAsWorkspace } from '../lib/namedWorkspaceActions'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import type { Project } from '../types'
@@ -75,6 +77,7 @@ export default function ProjectManager() {
   const unhideProject = useProjectStore(s => s.unhideProject)
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const closeProjectManager = useUIStore(s => s.closeProjectManager)
+  const openWorkspaceManager = useUIStore(s => s.openWorkspaceManager)
 
   const [sortKey, setSortKey] = useState<SortKey>('last_opened_at')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -249,6 +252,16 @@ export default function ProjectManager() {
           >
             <TerminalIcon size={13} /> 新建终端项目
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              closeProjectManager()
+              openWorkspaceManager()
+            }}
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+          >
+            <Layers size={13} /> {t('多项目工作区')}
+          </button>
 
           <div className="flex items-center gap-0.5 ml-auto bg-bg-active rounded p-0.5">
             {(['all', 'visible', 'hidden'] as FilterMode[]).map(mode => (
@@ -298,6 +311,13 @@ export default function ProjectManager() {
               className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-danger/40 text-danger hover:bg-danger/10 transition-colors"
             >
               <Trash2 size={13} /> {t('批量删除')}
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveSelectedProjectsAsWorkspace([...selectedIds])}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+            >
+              <Layers size={13} /> {t('保存选中为多项目工作区')}
             </button>
             <button
               type="button"

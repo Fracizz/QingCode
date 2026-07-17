@@ -1,5 +1,6 @@
 mod commands;
 mod content_search;
+mod exclude;
 mod file_associations;
 mod file_watcher;
 mod fonts;
@@ -284,6 +285,7 @@ pub fn run() {
             commands::file_stat,
             commands::read_file,
             commands::read_file_slice,
+            commands::find_line_offset,
             commands::replace_file_range,
             commands::write_file,
             commands::search_files,
@@ -302,6 +304,8 @@ pub fn run() {
             path_guard::sync_trusted_roots,
             path_guard::authorize_paths,
             git_status::get_git_head,
+            git_status::get_git_workdir_status,
+            git_status::git_show_head_file,
             fonts::list_system_fonts,
             create_terminal,
             write_terminal,

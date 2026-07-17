@@ -9,22 +9,63 @@ import { ensureTerminalProfileTrust } from '../lib/terminalProfileTrust'
 import { isProjectTrusted } from '../lib/workspaceTrust'
 import { disambiguateTerminalName, resolveNewTerminalName, terminalDisplayLabel } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
+import {
+  getTerminalScrollback,
+  scrollbackMaxChars,
+} from '../lib/terminalScrollbackSettings'
+import {
+  absorbInputForHistory,
+  appendScrollbackBytes,
+  buildTerminalOutputSnapshot,
+  decodeScrollbackBytes,
+  encodeScrollbackText,
+  loadTerminalOutputSnapshot,
+  pushCommandHistory,
+  saveTerminalOutputSnapshot,
+  truncateScrollbackBytes,
+} from '../lib/terminalSessionPersist'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 /** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
 const LEGACY_SESSION_STORAGE_KEY = 'qingcode:terminal-layout'
-const MAX_BUFFERED_OUTPUT_LENGTH = 1024 * 1024
+const OUTPUT_PERSIST_DEBOUNCE_MS = 800
 
 /** 够"快"才算启动失败：进程在此时长（毫秒）内非零退出，视为秒退并提示。 */
 const QUICK_FAIL_THRESHOLD_MS = 2000
 
 type TerminalOutputListener = (data: Uint8Array) => void
 
+/** Late-subscriber catch-up (cleared once a live listener attaches). */
 const terminalOutputBuffers = new Map<string, Uint8Array>()
+/** Always-on ring used for persistence + restore replay. */
+const terminalScrollbackRings = new Map<string, Uint8Array>()
+const terminalCommandHistory = new Map<string, string[]>()
+const terminalInputPending = new Map<string, string>()
 const terminalOutputListeners = new Map<string, Set<TerminalOutputListener>>()
+const terminalRingUpdatedAt = new Map<string, number>()
+
+let outputPersistTimer: ReturnType<typeof setTimeout> | null = null
+
+function maxBufferedBytes(): number {
+  return scrollbackMaxChars(getTerminalScrollback())
+}
+
+function touchRing(id: string, bytes: Uint8Array) {
+  terminalScrollbackRings.set(id, bytes)
+  terminalRingUpdatedAt.set(id, Date.now())
+  scheduleTerminalOutputPersist()
+}
 
 function publishTerminalOutput(id: string, data: number[]) {
   const bytes = new Uint8Array(data)
+  const ring = appendScrollbackBytes(
+    terminalScrollbackRings.get(id),
+    bytes,
+    getTerminalScrollback(),
+    maxBufferedBytes(),
+  )
+  touchRing(id, ring)
+
   const listeners = terminalOutputListeners.get(id)
   if (listeners?.size) {
     listeners.forEach(listener => listener(bytes))
@@ -32,19 +73,58 @@ function publishTerminalOutput(id: string, data: number[]) {
   }
 
   const previous = terminalOutputBuffers.get(id)
-  const buffered = new Uint8Array((previous?.length ?? 0) + bytes.length)
-  if (previous) buffered.set(previous)
-  buffered.set(bytes, previous?.length ?? 0)
-  terminalOutputBuffers.set(
-    id,
-    buffered.length > MAX_BUFFERED_OUTPUT_LENGTH
-      ? buffered.slice(buffered.length - MAX_BUFFERED_OUTPUT_LENGTH)
-      : buffered
+  const buffered = appendScrollbackBytes(
+    previous,
+    bytes,
+    getTerminalScrollback(),
+    maxBufferedBytes(),
   )
+  terminalOutputBuffers.set(id, buffered)
 }
 
-function clearTerminalOutput(id: string) {
+function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   terminalOutputBuffers.delete(id)
+  terminalScrollbackRings.delete(id)
+  terminalCommandHistory.delete(id)
+  terminalInputPending.delete(id)
+  terminalRingUpdatedAt.delete(id)
+  if (options?.persist !== false) scheduleTerminalOutputPersist()
+}
+
+/** Seed live rings from durable storage (called during workspace hydrate). */
+export function seedTerminalOutputFromPersist(
+  id: string,
+  scrollback: string,
+  history: string[] = [],
+) {
+  if (scrollback) {
+    const bytes = truncateScrollbackBytes(
+      encodeScrollbackText(scrollback),
+      getTerminalScrollback(),
+      maxBufferedBytes(),
+    )
+    terminalScrollbackRings.set(id, bytes)
+    terminalOutputBuffers.set(id, bytes)
+    terminalRingUpdatedAt.set(id, Date.now())
+  }
+  if (history.length > 0) {
+    terminalCommandHistory.set(id, [...history])
+  }
+}
+
+/** Hydrate all persisted scrollback/history entries that match known tab ids. */
+export function hydrateTerminalOutputForTabs(terminalIds: Iterable<string>) {
+  const snapshot = loadTerminalOutputSnapshot()
+  if (!snapshot) return
+  const wanted = new Set(terminalIds)
+  for (const [id, entry] of Object.entries(snapshot.terminals)) {
+    if (!wanted.has(id)) continue
+    seedTerminalOutputFromPersist(id, entry.scrollback, entry.history)
+  }
+}
+
+export function getTerminalCommandHistory(id: string): string[] {
+  return terminalCommandHistory.get(id) ?? []
 }
 
 export function subscribeTerminalOutput(id: string, listener: TerminalOutputListener) {
@@ -56,12 +136,73 @@ export function subscribeTerminalOutput(id: string, listener: TerminalOutputList
   if (buffered) {
     terminalOutputBuffers.delete(id)
     listener(buffered)
+  } else {
+    // Remount after project switch: replay the durable ring once.
+    const ring = terminalScrollbackRings.get(id)
+    if (ring?.length && listeners.size === 1) {
+      listener(ring)
+    }
   }
 
   return () => {
     listeners.delete(listener)
     if (listeners.size === 0) terminalOutputListeners.delete(id)
   }
+}
+
+function collectOutputPersistPayload(): Record<
+  string,
+  { scrollback: string; history: string[]; updatedAt?: number }
+> {
+  const terminals: Record<string, { scrollback: string; history: string[]; updatedAt?: number }> =
+    {}
+  for (const tab of useTerminalStore.getState().terminals) {
+    const scrollback = decodeScrollbackBytes(terminalScrollbackRings.get(tab.id))
+    const history = terminalCommandHistory.get(tab.id) ?? []
+    if (!scrollback && history.length === 0) continue
+    terminals[tab.id] = {
+      scrollback,
+      history,
+      updatedAt: terminalRingUpdatedAt.get(tab.id),
+    }
+  }
+  return terminals
+}
+
+export function persistTerminalOutputNow() {
+  if (outputPersistTimer) {
+    clearTimeout(outputPersistTimer)
+    outputPersistTimer = null
+  }
+  const terminals = collectOutputPersistPayload()
+  const snapshot = buildTerminalOutputSnapshot({
+    terminals,
+    scrollbackLines: getTerminalScrollback(),
+  })
+  saveTerminalOutputSnapshot(snapshot)
+}
+
+export function scheduleTerminalOutputPersist() {
+  if (outputPersistTimer) clearTimeout(outputPersistTimer)
+  outputPersistTimer = setTimeout(() => {
+    outputPersistTimer = null
+    persistTerminalOutputNow()
+  }, OUTPUT_PERSIST_DEBOUNCE_MS)
+}
+
+function recordTypedInput(id: string, data: string) {
+  const { pending, commands } = absorbInputForHistory(
+    terminalInputPending.get(id) ?? '',
+    data,
+  )
+  terminalInputPending.set(id, pending)
+  if (commands.length === 0) return
+  let history = terminalCommandHistory.get(id) ?? []
+  for (const command of commands) {
+    history = pushCommandHistory(history, command)
+  }
+  terminalCommandHistory.set(id, history)
+  scheduleTerminalOutputPersist()
 }
 
 export type ShellKind = 'ps1' | 'bat' | 'sh' | 'command' | 'script'
@@ -83,12 +224,21 @@ interface TerminalState {
   closeOtherTerminals: (id: string) => Promise<void>
   closeAllProjectTerminals: (projectId: string) => Promise<void>
   closeProjectTerminals: (projectId: string) => Promise<void>
-  restartTerminal: (id: string) => Promise<void>
+  restartTerminal: (id: string, options?: { preserveOutput?: boolean }) => Promise<void>
   /** Seed tabs from durable workspace session (no PTY yet). */
   hydrateTerminalSessions: (
     terminals: TerminalTab[],
     activeTerminalByProject: Record<string, string>,
   ) => void
+  /**
+   * Replace terminal metadata for specific projects (named workspace restore).
+   * Other projects' terminals are left alone. Kills PTYs for replaced ids.
+   */
+  replaceTerminalSessionsForProjects: (
+    projectIds: string[],
+    terminals: TerminalTab[],
+    activeTerminalByProject: Record<string, string>,
+  ) => Promise<void>
   /** Spawn PTYs for tabs restored after restart (once). */
   spawnRestoredTerminals: (projectId: string) => Promise<void>
   activateProject: (projectId: string) => void
@@ -305,7 +455,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       activeTerminalByProject[keep.projectId] = id
       return { terminals, activeTerminalId: id, activeTerminalByProject }
     })
-    others.forEach(clearTerminalOutput)
+    others.forEach(id => clearTerminalOutput(id))
   },
 
   closeAllProjectTerminals: async (projectId: string) => {
@@ -324,7 +474,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         activeTerminalByProject,
       }
     })
-    ids.forEach(clearTerminalOutput)
+    ids.forEach(id => clearTerminalOutput(id))
   },
 
   closeProjectTerminals: async (projectId: string) => {
@@ -343,10 +493,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         activeTerminalByProject,
       }
     })
-    ids.forEach(clearTerminalOutput)
+    ids.forEach(id => clearTerminalOutput(id))
   },
 
-  restartTerminal: async (id: string) => {
+  restartTerminal: async (id: string, options) => {
     const tab = get().terminals.find(terminal => terminal.id === id)
     if (!tab) return
     // Profile terminals store profileId + launchCommand without shellKind.
@@ -363,7 +513,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         return
       }
     }
-    clearTerminalOutput(id)
+    if (!options?.preserveOutput) {
+      clearTerminalOutput(id)
+    } else {
+      // Keep scrollback/history; drop late-subscriber catch-up so xterm is not double-fed.
+      terminalOutputBuffers.delete(id)
+      terminalInputPending.delete(id)
+    }
     set(s => ({
       terminals: s.terminals.map(terminal =>
         terminal.id === id
@@ -373,6 +529,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
               exitCode: null,
               startedAt: Date.now(),
               awaitingRestoreSpawn: false,
+              restorePreservedOutput: options?.preserveOutput === true,
             }
           : terminal
       ),
@@ -393,14 +550,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       set(s => ({
         terminals: s.terminals.map(terminal =>
           terminal.id === id && terminal.status === 'starting'
-            ? { ...terminal, status: 'running' }
+            ? { ...terminal, status: 'running', restorePreservedOutput: undefined }
             : terminal
         ),
       }))
     } catch (e) {
       set(s => ({
         terminals: s.terminals.map(terminal =>
-          terminal.id === id ? { ...terminal, status: 'exited', exitCode: null } : terminal
+          terminal.id === id
+            ? { ...terminal, status: 'exited', exitCode: null, restorePreservedOutput: undefined }
+            : terminal
         ),
       }))
       useProjectStore.getState().pushToast('error', `重启终端失败: ${String(e)}`)
@@ -413,6 +572,42 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       activeTerminalId: null,
       activeTerminalByProject: { ...activeTerminalByProject },
     })
+    hydrateTerminalOutputForTabs(terminals.map(t => t.id))
+  },
+
+  replaceTerminalSessionsForProjects: async (
+    projectIds,
+    terminals,
+    activeTerminalByProject,
+  ) => {
+    const replace = new Set(projectIds)
+    if (replace.size === 0) return
+    const outgoing = get()
+      .terminals.filter(t => replace.has(t.projectId))
+      .map(t => t.id)
+    await Promise.all(
+      outgoing.map(id => safeInvoke('关闭终端', 'kill_terminal', { id }).catch(() => undefined)),
+    )
+    outgoing.forEach(id => clearTerminalOutput(id))
+    set(s => {
+      const kept = s.terminals.filter(t => !replace.has(t.projectId))
+      const nextActiveByProject = { ...s.activeTerminalByProject }
+      for (const id of replace) delete nextActiveByProject[id]
+      for (const [projectId, terminalId] of Object.entries(activeTerminalByProject)) {
+        if (replace.has(projectId)) nextActiveByProject[projectId] = terminalId
+      }
+      const nextTerminals = [...kept, ...terminals]
+      const activeTerminalId =
+        s.activeTerminalId && nextTerminals.some(t => t.id === s.activeTerminalId)
+          ? s.activeTerminalId
+          : null
+      return {
+        terminals: nextTerminals,
+        activeTerminalByProject: nextActiveByProject,
+        activeTerminalId,
+      }
+    })
+    hydrateTerminalOutputForTabs(terminals.map(t => t.id))
   },
 
   spawnRestoredTerminals: async (projectId: string) => {
@@ -428,7 +623,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           : t,
       ),
     }))
-    await Promise.all(pending.map(t => get().restartTerminal(t.id)))
+    // Preserve scrollback across restore respawn (manual restart still clears).
+    await Promise.all(pending.map(t => get().restartTerminal(t.id, { preserveOutput: true })))
   },
 
   activateProject: (projectId: string) =>
@@ -467,6 +663,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }),
 
   writeToTerminal: async (id: string, data: string) => {
+    recordTypedInput(id, data)
     try {
       await safeInvoke('终端输入', 'write_terminal', { id, data })
     } catch {}
@@ -531,3 +728,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 }))
 
 // Durable terminal metadata is persisted via workspaceSessionSync (localStorage).
+// Scrollback / command history is persisted separately (terminalSessionPersist).
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    persistTerminalOutputNow()
+  })
+}
+
+/** True when the ring still has bytes (used by Terminal UI for restore banners). */
+export function hasTerminalScrollback(id: string): boolean {
+  const ring = terminalScrollbackRings.get(id)
+  return !!ring && ring.length > 0
+}

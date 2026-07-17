@@ -22,13 +22,17 @@ import {
   Terminal as TerminalIcon,
   Search as SearchIcon,
   AtSign,
+  GitCompare,
 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useProjectStore, type FileNode } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
+import { useGitStatusStore } from '../store/gitStatusStore'
 import { safeInvoke } from '../lib/tauri'
+import { openGitCompareWithHead } from '../lib/gitCompare'
+import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
 import { confirmDialog } from '../store/confirmStore'
 import { promptDialog, validateEntryName } from '../store/promptStore'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -69,6 +73,7 @@ type TreeRowProps = {
   expandedPaths: Set<string>
   loadingPaths: Set<string>
   activeFilePath: string | null
+  gitStatusFor: (path: string, isDir: boolean) => string | null
   onOpenContextMenu: (event: ReactMouseEvent, target: ContextTarget) => void
   onCopyPath: (path: string) => void
   onToggleNode: (node: FileNode) => void
@@ -84,6 +89,7 @@ function VirtualTreeRow({
   expandedPaths,
   loadingPaths,
   activeFilePath,
+  gitStatusFor,
   onOpenContextMenu,
   onCopyPath,
   onToggleNode,
@@ -103,6 +109,9 @@ function VirtualTreeRow({
   const expanded = node.is_dir && expandedPaths.has(node.path)
   const isActive = !node.is_dir && activeFilePath != null && pathsEqual(node.path, activeFilePath)
   const rowStyle: CSSProperties = { ...style, paddingLeft: depth * 12 + 8 }
+  const gitStatus = gitStatusFor(node.path, !!node.is_dir)
+  const gitGlyph = gitStatusGlyph(gitStatus)
+  const gitColor = gitStatusColorClass(gitStatus)
 
   return (
     <div
@@ -134,8 +143,15 @@ function VirtualTreeRow({
           <FileIcon size={14} className="text-fg-muted flex-shrink-0" />
         </>
       )}
-      <span className="truncate text-fg">{node.name}</span>
-      {loadingPaths.has(node.path) && <RefreshCw size={12} className="ml-auto text-fg-dim animate-spin" />}
+      <span className={`truncate ${gitColor || 'text-fg'}`}>{node.name}</span>
+      {gitGlyph && (
+        <span className={`ml-auto flex-shrink-0 text-[11px] font-medium ${gitColor}`} title={gitStatus ?? undefined}>
+          {gitGlyph}
+        </span>
+      )}
+      {loadingPaths.has(node.path) && (
+        <RefreshCw size={12} className={`${gitGlyph ? 'ml-1' : 'ml-auto'} text-fg-dim animate-spin`} />
+      )}
     </div>
   )
 }
@@ -158,6 +174,12 @@ export default function Sidebar() {
     const tab = s.tabs.find(t => t.id === s.activeTabId)
     return tab?.path ?? null
   })
+  // Subscribe to the map so tree glyphs refresh when porcelain status changes.
+  useGitStatusStore(s => s.statusByPath)
+  const gitStatusFor = (path: string, isDir: boolean) =>
+    isDir
+      ? useGitStatusStore.getState().statusForDir(path)
+      : useGitStatusStore.getState().statusFor(path)
   const setView = useUIStore(s => s.setView)
   const addTerminal = useTerminalStore(s => s.addTerminal)
   const requestSearch = useUIStore(s => s.requestSearch)
@@ -592,6 +614,11 @@ export default function Sidebar() {
               action: () => useEditorStore.getState().openFile(node.path),
             },
             {
+              label: t('与 Git HEAD 比较'),
+              icon: <GitCompare size={14} />,
+              action: () => void openGitCompareWithHead(node.path),
+            },
+            {
               label: t('新建文件（同目录）'),
               icon: <FilePlus size={14} />,
               disabled: !project,
@@ -871,6 +898,7 @@ export default function Sidebar() {
                             expandedPaths,
                             loadingPaths,
                             activeFilePath: activeTabPath,
+                            gitStatusFor,
                             onOpenContextMenu: showContextMenu,
                             onCopyPath: copyPath,
                             onToggleNode: toggleTreeNode,

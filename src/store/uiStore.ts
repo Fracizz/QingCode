@@ -12,6 +12,8 @@ interface UIState {
   globalSearchSignal: number
   /** Incremented to request the terminal panel to open (e.g. when a run config starts). */
   terminalOpenSignal: number
+  /** Incremented to toggle the terminal panel (shortcut / command palette). */
+  terminalToggleSignal: number
   /** When true, explorer should start inline “new file” at the project root. */
   pendingNewFile: boolean
   /** Search query for the latest Settings deep-link (e.g. files.autoSave). */
@@ -20,6 +22,8 @@ interface UIState {
   settingsFocusSignal: number
   /** Whether the project manager modal is open. */
   projectManagerOpen: boolean
+  /** Whether the named multi-project workspace manager modal is open. */
+  workspaceManagerOpen: boolean
   setView: (view: View) => void
   /** Activity bar click: switch view, or collapse when clicking the active view again. */
   toggleActivityView: (view: View) => void
@@ -36,8 +40,12 @@ interface UIState {
   requestSettings: (query?: string) => void
   /** Request the terminal panel to open. */
   openTerminalPanel: () => void
+  /** Toggle the terminal panel open/closed. */
+  requestToggleTerminal: () => void
   openProjectManager: () => void
   closeProjectManager: () => void
+  openWorkspaceManager: () => void
+  closeWorkspaceManager: () => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -46,10 +54,12 @@ export const useUIStore = create<UIState>((set) => ({
   searchRoot: null,
   globalSearchSignal: 0,
   terminalOpenSignal: 0,
+  terminalToggleSignal: 0,
   pendingNewFile: false,
   settingsFocusQuery: null,
   settingsFocusSignal: 0,
   projectManagerOpen: false,
+  workspaceManagerOpen: false,
   setView: view => set({ view, sidebarOpen: true }),
   toggleActivityView: view =>
     set(state => {
@@ -74,6 +84,9 @@ export const useUIStore = create<UIState>((set) => ({
       settingsFocusSignal: state.settingsFocusSignal + 1,
     })),
   openTerminalPanel: () => set(s => ({ terminalOpenSignal: s.terminalOpenSignal + 1 })),
+  requestToggleTerminal: () => set(s => ({ terminalToggleSignal: s.terminalToggleSignal + 1 })),
   openProjectManager: () => set({ projectManagerOpen: true }),
   closeProjectManager: () => set({ projectManagerOpen: false }),
+  openWorkspaceManager: () => set({ workspaceManagerOpen: true }),
+  closeWorkspaceManager: () => set({ workspaceManagerOpen: false }),
 }))

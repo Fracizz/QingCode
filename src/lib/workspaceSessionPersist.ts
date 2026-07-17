@@ -3,8 +3,9 @@
  *
  * Dirty buffer bodies live in `draftRecovery` (`qingcode:unsaved-drafts`); this
  * snapshot only records tab paths / dirty flags / optional scroll, and terminal
- * metadata (not PTY output). Shared across windows — fresh windows must not
- * overwrite it (see `shouldRestoreWorkspace`).
+ * metadata. PTY scrollback / command history live in `terminalSessionPersist`.
+ * Shared across windows — fresh windows must not overwrite it
+ * (see `shouldRestoreWorkspace`).
  */
 
 export const WORKSPACE_SESSION_KEY = 'qingcode:workspace-sessions'
@@ -146,7 +147,8 @@ function parseTerminal(value: unknown): PersistedTerminalMeta | null {
   return terminal
 }
 
-function parseProjectSession(value: unknown): PersistedProjectSession | null {
+/** Parse one project's tab/terminal session; returns null when the value is unusable. */
+export function parseProjectSession(value: unknown): PersistedProjectSession | null {
   if (!isRecord(value)) return null
   const tabs = Array.isArray(value.tabs)
     ? value.tabs.map(parseEditorTab).filter((t): t is PersistedEditorTab => t != null)

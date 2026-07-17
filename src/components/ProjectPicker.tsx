@@ -20,6 +20,7 @@ import {
   Check,
   Pencil,
   ListChecks,
+  Layers,
 } from 'lucide-react'
 import { openPath } from '@tauri-apps/plugin-opener'
 import { useProjectStore } from '../store/projectStore'
@@ -49,6 +50,7 @@ export default function ProjectPicker() {
   const hideProject = useProjectStore(s => s.hideProject)
   const setView = useUIStore(s => s.setView)
   const openProjectManager = useUIStore(s => s.openProjectManager)
+  const openWorkspaceManager = useUIStore(s => s.openWorkspaceManager)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
@@ -177,6 +179,11 @@ export default function ProjectPicker() {
   const handleManageProjects = () => {
     closeDropdown()
     openProjectManager()
+  }
+
+  const handleManageWorkspaces = () => {
+    closeDropdown()
+    openWorkspaceManager()
   }
 
   const handleRelocate = (id: string) => {
@@ -428,6 +435,17 @@ export default function ProjectPicker() {
                   <ListChecks size={14} />
                 </span>
                 {t('项目管理')}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={handleManageWorkspaces}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
+              >
+                <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
+                  <Layers size={14} />
+                </span>
+                {t('多项目工作区')}
               </button>
             </div>
           </div>,

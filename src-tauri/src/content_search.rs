@@ -1,5 +1,6 @@
 //! Project content search backed by the ripgrep stack (`ignore` + `grep-searcher`).
 
+use crate::exclude;
 use grep_matcher::Matcher;
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
@@ -51,6 +52,9 @@ pub struct ContentSearchOptions {
     pub max_matches: usize,
     pub max_files_scanned: usize,
     pub max_matches_per_file: usize,
+    /// When `Some`, apply VS Code–style exclude globs (relative to search root).
+    /// When `None`, fall back to built-in hard-ignored directory names.
+    pub exclude_patterns: Option<Vec<String>>,
 }
 
 /// Invalidate in-flight searches and return a fresh search id for the next query.
@@ -319,6 +323,9 @@ pub fn search_file_contents(
         .map(|n| n.get().clamp(2, 8))
         .unwrap_or(4);
 
+    let root_str = root_buf.to_string_lossy().to_string();
+    let exclude_patterns = options.exclude_patterns.clone();
+
     let mut builder = WalkBuilder::new(&root_buf);
     builder
         .hidden(false)
@@ -331,12 +338,25 @@ pub fn search_file_contents(
         // Apply root `.gitignore` even when the folder is not a git checkout.
         .add_custom_ignore_filename(".gitignore")
         .threads(threads)
-        .filter_entry(|entry| {
+        .filter_entry(move |entry| {
             if entry.depth() == 0 {
                 return true;
             }
             let name = entry.file_name().to_string_lossy();
-            !is_hard_ignored_dir(&name)
+            let full = entry.path().to_string_lossy();
+            match exclude_patterns.as_deref() {
+                Some(patterns) => {
+                    if let Some(rel) = exclude::relative_to_root(&root_str, &full) {
+                        if !rel.is_empty() && exclude::is_path_excluded(&rel, patterns) {
+                            return false;
+                        }
+                    } else if exclude::is_path_excluded(name.as_ref(), patterns) {
+                        return false;
+                    }
+                    true
+                }
+                None => !is_hard_ignored_dir(&name),
+            }
         });
 
     let walker = builder.build_parallel();
@@ -480,7 +500,35 @@ mod tests {
             max_matches: 100,
             max_files_scanned: 1000,
             max_matches_per_file: 20,
+            exclude_patterns: None,
         }
+    }
+
+    #[test]
+    fn respects_exclude_patterns_from_settings() {
+        let dir = temp_dir("exclude-patterns");
+        fs::create_dir_all(dir.join("keep")).unwrap();
+        fs::create_dir_all(dir.join("secret")).unwrap();
+        fs::write(dir.join("keep/a.txt"), "findme_keep\n").unwrap();
+        fs::write(dir.join("secret/b.txt"), "findme_secret\n").unwrap();
+
+        let mut o = opts("findme");
+        o.exclude_patterns = Some(vec!["**/secret".to_string()]);
+        let resp = search(&dir, o);
+        let texts: Vec<_> = resp
+            .files
+            .iter()
+            .flat_map(|f| f.matches.iter().map(|m| m.text.as_str()))
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains("findme_keep")),
+            "keep/ should be searchable: {texts:?}"
+        );
+        assert!(
+            !texts.iter().any(|t| t.contains("findme_secret")),
+            "secret/ should be excluded: {texts:?}"
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     fn search(root: &Path, options: ContentSearchOptions) -> ContentSearchResponse {

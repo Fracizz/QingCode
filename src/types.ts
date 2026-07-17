@@ -69,4 +69,9 @@ export interface TerminalTab {
    * the first spawn attempt so user-exited tabs are not auto-restarted.
    */
   awaitingRestoreSpawn?: boolean
+  /**
+   * Transient: restore respawn kept prior scrollback; Terminal.tsx appends a
+   * separator instead of resetting xterm.
+   */
+  restorePreservedOutput?: boolean
 }

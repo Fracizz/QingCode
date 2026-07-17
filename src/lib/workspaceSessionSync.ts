@@ -23,7 +23,7 @@ import {
 import { shouldRestoreWorkspace } from './windowSession'
 import { isPinnedSettingsTab, guessLanguage, tabNameFromPath } from '../utils/editorHelpers'
 import { useEditorStore, type ProjectEditorSession } from '../store/editorStore'
-import { useTerminalStore } from '../store/terminalStore'
+import { persistTerminalOutputNow, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
 import type { EditorTab, TerminalTab } from '../types'
 
@@ -48,7 +48,7 @@ function splitPinned(tabs: EditorTab[]) {
   return { pinned, projectTabs }
 }
 
-function tabFromPersisted(tab: PersistedEditorTab): EditorTab {
+export function tabFromPersisted(tab: PersistedEditorTab): EditorTab {
   const draft = tab.dirty ? getDraft(tab.path) : null
   if (tab.dirty && draft) {
     clearDraft(tab.path)
@@ -68,7 +68,7 @@ function tabFromPersisted(tab: PersistedEditorTab): EditorTab {
   return editorTab
 }
 
-function projectSessionFromPersisted(session: PersistedProjectSession): ProjectEditorSession {
+export function projectSessionFromPersisted(session: PersistedProjectSession): ProjectEditorSession {
   const tabs = session.tabs
     .filter(t => !isPinnedSettingsTab(t.path))
     .map(tabFromPersisted)
@@ -78,7 +78,7 @@ function projectSessionFromPersisted(session: PersistedProjectSession): ProjectE
   return { tabs, activeTabId, pendingReveal: null }
 }
 
-function terminalFromPersisted(
+export function terminalFromPersisted(
   projectId: string,
   meta: PersistedProjectSession['terminals'][number],
 ): TerminalTab {
@@ -221,13 +221,24 @@ export function markWorkspaceSessionPersistReady() {
   scheduleWorkspaceSessionPersist()
 }
 
-function persistNow() {
-  if (!shouldRestoreWorkspace() || !persistReady) return
-
+/**
+ * Capture the current in-memory editor + terminal session.
+ * Optionally restrict to a set of durable project ids (named workspaces).
+ */
+export function captureWorkspaceSessionSnapshot(options?: {
+  /** When set, only these durable project ids are included. */
+  projectIds?: Iterable<string>
+  now?: number
+}): WorkspaceSessionSnapshot {
   const projectState = useProjectStore.getState()
   const durableIds = new Set(
     projectState.projects.filter(p => !p.ephemeral).map(p => p.id),
   )
+  const filterIds = options?.projectIds ? new Set(options.projectIds) : null
+  const includeIds = filterIds
+    ? new Set([...filterIds].filter(id => durableIds.has(id)))
+    : durableIds
+
   const ephemeralIds = projectState.projects.filter(p => p.ephemeral).map(p => p.id)
   // Also exclude sessions whose project was removed while the app was closed.
   const unknownIds = Object.keys(useEditorStore.getState().projectSessions).filter(
@@ -237,10 +248,10 @@ function persistNow() {
   const terminalState = useTerminalStore.getState()
   const { pinned: pinnedTabs } = splitPinned(useEditorStore.getState().tabs)
 
-  const snapshot = buildWorkspaceSessionSnapshot({
+  return buildWorkspaceSessionSnapshot({
     editorSessions: Object.fromEntries(
       Object.entries(editorSessions)
-        .filter(([projectId]) => durableIds.has(projectId))
+        .filter(([projectId]) => includeIds.has(projectId))
         .map(([projectId, session]) => [
           projectId,
           {
@@ -267,7 +278,7 @@ function persistNow() {
       viewMode: tab.viewMode,
     })),
     terminals: terminalState.terminals
-      .filter(t => durableIds.has(t.projectId))
+      .filter(t => includeIds.has(t.projectId))
       .map(t => ({
         id: t.id,
         name: t.name,
@@ -281,9 +292,15 @@ function persistNow() {
       })),
     activeTerminalByProject: terminalState.activeTerminalByProject,
     excludeProjectIds: [...ephemeralIds, ...unknownIds],
+    now: options?.now,
   })
+}
 
-  saveWorkspaceSession(snapshot)
+function persistNow() {
+  if (!shouldRestoreWorkspace() || !persistReady) return
+  saveWorkspaceSession(captureWorkspaceSessionSnapshot())
+  // Keep bulky scrollback in sync when session metadata flushes.
+  persistTerminalOutputNow()
 }
 
 export function scheduleWorkspaceSessionPersist() {
