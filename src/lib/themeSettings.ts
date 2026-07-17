@@ -39,7 +39,11 @@ export function getResolvedTheme(theme: AppTheme = loadTheme()): ResolvedTheme {
 
 export function applyTheme(theme: AppTheme) {
   const resolved = getResolvedTheme(theme)
-  document.documentElement.setAttribute('data-theme', resolved)
+  const root = document.documentElement
+  // Enable color transitions only around the switch so drag/hover states stay snappy.
+  root.classList.add('theme-transition')
+  root.setAttribute('data-theme', resolved)
+  window.setTimeout(() => root.classList.remove('theme-transition'), 260)
   window.dispatchEvent(
     new CustomEvent(THEME_SETTINGS_EVENT, { detail: { theme, resolved } }),
   )

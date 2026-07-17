@@ -78,7 +78,7 @@ export default function HelpDialog({ onClose }: Props) {
         role="dialog"
         aria-modal="true"
         aria-labelledby="help-dialog-title"
-        className="relative flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-sidebar shadow-2xl shadow-black/50"
+        className="modal-content-enter relative flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-sidebar shadow-2xl shadow-black/50"
         onMouseDown={event => event.stopPropagation()}
       >
         <header className="flex h-11 flex-shrink-0 items-center justify-between border-b border-border px-4">

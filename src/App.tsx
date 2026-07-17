@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react'
-import { Clock, FileText } from 'lucide-react'
+import { Clock, FileText, FolderOpen, Settings, Terminal as TerminalIcon } from 'lucide-react'
 import './App.css'
 import ActivityBar from './components/ActivityBar'
+import AppIcon from './components/AppIcon'
 import Sidebar from './components/Sidebar'
 import EditorTabs from './components/EditorTabs'
 import TerminalTabs from './components/TerminalTabs'
@@ -77,16 +78,76 @@ function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
 function EmptyEditor() {
   const { t } = useI18n()
   const recentFiles = useProjectStore(s => s.recentFiles)
+  const projects = useProjectStore(s => s.projects)
+  const switchProject = useProjectStore(s => s.switchProject)
+  const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const openFile = useEditorStore(s => s.openFile)
+  const setView = useUIStore(s => s.setView)
+  const openTerminalPanel = useUIStore(s => s.openTerminalPanel)
   const recent = recentFiles.slice(0, 8)
+  const recentProjects = projects.filter(p => !p.hidden).slice(0, 5)
+
+  const actions = [
+    {
+      icon: <FolderOpen size={14} />,
+      label: t('打开项目'),
+      onClick: () => void addProjectFromDialog(),
+    },
+    {
+      icon: <TerminalIcon size={14} />,
+      label: t('打开终端面板'),
+      onClick: openTerminalPanel,
+    },
+    {
+      icon: <Settings size={14} />,
+      label: t('打开设置'),
+      onClick: () => setView('settings'),
+    },
+  ]
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-3 px-6">
-      <FileText size={40} strokeWidth={1.2} />
-      <p className="text-sm">{t('从侧边栏打开文件开始编辑')}</p>
+    <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-5 px-6 select-none">
+      <div className="flex flex-col items-center gap-2">
+        <AppIcon size={48} />
+        <p className="text-sm text-fg-muted">{t('从侧边栏打开文件开始编辑')}</p>
+      </div>
+
+      <div className="flex items-center gap-2">
+        {actions.map(action => (
+          <button
+            key={action.label}
+            type="button"
+            onClick={action.onClick}
+            className="flex items-center gap-1.5 rounded border border-border-strong bg-bg-elevated px-3 py-1.5 text-[13px] text-fg-muted transition-colors hover:bg-bg-active hover:text-fg"
+          >
+            {action.icon}
+            {action.label}
+          </button>
+        ))}
+      </div>
+
+      {recentProjects.length > 0 && (
+        <div className="flex flex-col items-center gap-1.5">
+          <p className="text-[11px] font-semibold tracking-wide text-fg-dim">{t('最近项目')}</p>
+          <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-[420px]">
+            {recentProjects.map(project => (
+              <button
+                key={project.id}
+                type="button"
+                title={project.path}
+                onClick={() => void switchProject(project)}
+                className="max-w-[180px] truncate rounded-full border border-border px-2.5 py-1 text-[12px] text-fg-muted transition-colors hover:border-border-strong hover:bg-bg-hover hover:text-fg"
+              >
+                {project.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       <p className="text-xs text-fg-dim">{t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}</p>
       {recent.length > 0 && (
-        <div className="mt-4 w-full max-w-md">
+        <div className="mt-2 w-full max-w-md">
           <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
             <Clock size={12} />
             {t('最近打开的文件')}
@@ -100,6 +161,7 @@ function EmptyEditor() {
                   onClick={() => void openFile(file.path)}
                   title={file.path}
                 >
+                  <FileText size={12} className="flex-shrink-0 opacity-70" />
                   <span className="truncate font-medium text-fg">
                     {file.path.split(/[/\\]/).pop() || file.path}
                   </span>

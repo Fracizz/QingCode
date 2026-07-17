@@ -1,10 +1,12 @@
-export const FILE_ENCODING_OPTIONS = [
-  { value: 'utf-8', label: 'UTF-8' },
-  { value: 'utf-8-bom', label: 'UTF-8 BOM' },
-  { value: 'utf-16le-bom', label: 'UTF-16 LE BOM' },
-  { value: 'utf-16be-bom', label: 'UTF-16 BE BOM' },
+import type { FileEncoding } from './editorSettings'
+
+/** Status-bar encoding picker options (aligned with `files.encoding` / FileEncoding). */
+export const FILE_ENCODING_OPTIONS: { value: FileEncoding; label: string }[] = [
+  { value: 'utf8', label: 'UTF-8' },
+  { value: 'utf8bom', label: 'UTF-8 with BOM' },
   { value: 'gbk', label: 'GBK' },
-] as const
+  { value: 'gb18030', label: 'GB18030' },
+]
 
 export function formatFileEncoding(encoding?: string) {
   if (!encoding) return 'UTF-8'

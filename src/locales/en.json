@@ -659,8 +659,22 @@
     "选择一个更改查看差异": "Select a change to view its diff",
     "正在读取 Git 状态…": "Reading Git status…",
     "正在读取差异…": "Reading diff…",
+    "打开差异对比失败：{error}": "Could not open diff: {error}",
+    "HEAD（原文件）": "HEAD (Original)",
+    "工作区（当前）": "Working Tree (Current)",
+    "差异对比": "Diff",
+    "该文件当前没有可显示的差异。": "This file has no diff to display.",
     "未跟踪文件尚无 Git Diff；添加到仓库后即可查看。": "Untracked files have no Git diff yet. Add the file to the repository to view one.",
     "该文件当前没有可显示的未暂存差异。": "This file has no unstaged diff to display.",
-    "读取差异失败：{error}": "Could not read diff: {error}"
+    "读取差异失败：{error}": "Could not read diff: {error}",
+    "文件编码": "File Encoding",
+    "文件编码：可在此转换，保存后生效": "File encoding: choose an encoding here and save to convert",
+    "打开源代码管理": "Open Source Control",
+    "切换终端面板": "Toggle Terminal Panel",
+    "打开终端面板": "Open Terminal Panel",
+    "行 {line}, 列 {col}": "Ln {line}, Col {col}",
+    "显示所有打开的文件": "Show All Opened Files",
+    "打开项目": "Open Project",
+    "最近项目": "Recent Projects"
   }
 }

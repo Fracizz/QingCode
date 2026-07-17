@@ -112,6 +112,14 @@ function VirtualTreeRow({
   const gitStatus = gitStatusFor(node.path, !!node.is_dir)
   const gitGlyph = gitStatusGlyph(gitStatus)
   const gitColor = gitStatusColorClass(gitStatus)
+  // Indent guides: one faint vertical line per ancestor level, aligned to the chevron center.
+  if (depth > 1) {
+    rowStyle.backgroundImage =
+      'repeating-linear-gradient(to right, color-mix(in srgb, var(--color-border-strong) 70%, transparent) 0 1px, transparent 1px 12px)'
+    rowStyle.backgroundPosition = '27px 0'
+    rowStyle.backgroundSize = `${(depth - 1) * 12 + 1}px 100%`
+    rowStyle.backgroundRepeat = 'no-repeat'
+  }
 
   return (
     <div

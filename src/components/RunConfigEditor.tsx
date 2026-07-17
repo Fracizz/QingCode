@@ -93,7 +93,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
   return (
     <ModalOverlay onDismiss={onClose}>
       <div
-        className="relative w-full max-w-[640px] max-h-[85vh] flex flex-col bg-bg-sidebar border border-border-strong rounded-lg shadow-2xl shadow-black/50"
+        className="modal-content-enter relative w-full max-w-[640px] max-h-[85vh] flex flex-col bg-bg-sidebar border border-border-strong rounded-lg shadow-2xl shadow-black/50"
         onClick={e => e.stopPropagation()}
         onMouseDown={e => e.stopPropagation()}
         role="dialog"

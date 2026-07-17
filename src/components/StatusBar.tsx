@@ -3,6 +3,7 @@ import { GitBranch, FolderTree, FileText, Terminal as TerminalIcon, ShieldAlert 
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
+import { useUIStore } from '../store/uiStore'
 import { formatTerminalName } from '../utils/terminalName'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
@@ -12,6 +13,8 @@ import {
   WORKSPACE_TRUST_CHANGED_EVENT,
 } from '../lib/workspaceTrust'
 import { useGitStatusStore } from '../store/gitStatusStore'
+import { FILE_ENCODING_OPTIONS, formatFileEncoding } from '../lib/fileEncoding'
+import type { FileEncoding } from '../lib/editorSettings'
 
 type GitHeadInfo = {
   name: string
@@ -25,8 +28,12 @@ export default function StatusBar() {
   const currentProject = useProjectStore(s => s.currentProject)
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
+  const cursor = useEditorStore(s => s.cursor)
+  const setTabEncoding = useEditorStore(s => s.setTabEncoding)
   const terminals = useTerminalStore(s => s.terminals)
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
+  const setView = useUIStore(s => s.setView)
+  const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [devBuild, setDevBuild] = useState(false)
   const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
@@ -141,16 +148,25 @@ export default function StatusBar() {
           }
           side="top"
         >
-          <span className="flex items-center gap-1.5 opacity-90">
+          <button
+            type="button"
+            className="flex items-center gap-1.5 rounded px-1 -mx-1 opacity-90 hover:opacity-100 hover:bg-bg-hover transition-colors"
+            onClick={() => setView('sourceControl')}
+          >
             <GitBranch size={13} />
             {gitHead.detached ? t('分离 HEAD · {sha}', { sha: gitHead.name }) : gitHead.name}
             {gitDirtyCount > 0 && (
               <span className="text-warn">*{gitDirtyCount}</span>
             )}
-          </span>
+          </button>
         </Tooltip>
       )}
       <div className="flex-1" />
+      {activeTab && cursor && (
+        <span className="opacity-75">
+          {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
+        </span>
+      )}
       {activeTab && (
         <Tooltip
           label={t('Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用')}
@@ -161,12 +177,38 @@ export default function StatusBar() {
           </span>
         </Tooltip>
       )}
-      <span className="flex items-center gap-1.5 opacity-90">
-        <TerminalIcon size={13} />
-        {t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}
-        {activeTerm ? ` · ${formatTerminalName(activeTerm.name)}` : ''}
-      </span>
+      <Tooltip label={t('切换终端面板')} side="top">
+        <button
+          type="button"
+          className="flex items-center gap-1.5 rounded px-1 -mx-1 opacity-90 hover:opacity-100 hover:bg-bg-hover transition-colors"
+          onClick={requestToggleTerminal}
+        >
+          <TerminalIcon size={13} />
+          {t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}
+          {activeTerm ? ` · ${formatTerminalName(activeTerm.name)}` : ''}
+        </button>
+      </Tooltip>
       <span className="opacity-90">{t('{count} 个已打开', { count: tabs.length })}</span>
+      {activeTab?.kind === 'diff' ? (
+        <span className="opacity-75">{t('差异对比')}</span>
+      ) : activeTab && !activeTab.openError && activeTab.viewMode !== 'view' ? (
+        <select
+          value={activeTab.encoding ?? 'utf8'}
+          aria-label={t('文件编码')}
+          title={t('文件编码：可在此转换，保存后生效')}
+          onChange={event => setTabEncoding(activeTab.id, event.target.value as FileEncoding)}
+          className="max-w-[116px] cursor-pointer bg-transparent font-mono text-[11px] text-fg-muted outline-none hover:text-fg"
+        >
+          {!FILE_ENCODING_OPTIONS.some(option => option.value === activeTab.encoding) && activeTab.encoding && (
+            <option value={activeTab.encoding}>{formatFileEncoding(activeTab.encoding)}</option>
+          )}
+          {FILE_ENCODING_OPTIONS.map(option => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : null}
       {appVersion && (
         <Tooltip
           label={

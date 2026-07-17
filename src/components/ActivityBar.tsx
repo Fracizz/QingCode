@@ -1,6 +1,7 @@
 import { FolderTree, Search, Terminal, Settings, FolderPlus, BugPlay, ListChecks, GitBranch } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
+import { useGitStatus } from '../hooks/useGitStatus'
 
 interface Props {
   active: 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
@@ -22,6 +23,8 @@ export default function ActivityBar({
   terminalOpen,
 }: Props) {
   const { t } = useI18n()
+  const gitStatus = useGitStatus()
+  const gitChanges = gitStatus?.is_repository ? gitStatus.changes.length : 0
 
   return (
     <div className="ui-font-scaled w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-deep border-r border-border flex flex-col items-center py-2">
@@ -41,6 +44,7 @@ export default function ActivityBar({
         icon={<GitBranch size={22} />}
         label={t('源代码管理')}
         active={active === 'sourceControl' && sidebarOpen}
+        badge={gitChanges > 0 ? gitChanges : undefined}
         onClick={() => onActiveChange('sourceControl')}
       />
       <Item
@@ -82,11 +86,13 @@ function Item({
   icon,
   label,
   active,
+  badge,
   onClick,
 }: {
   icon: React.ReactNode
   label: string
   active?: boolean
+  badge?: number
   onClick?: () => void
 }) {
   return (
@@ -102,6 +108,14 @@ function Item({
           <span className="absolute left-[-8px] top-1 bottom-1 w-[2px] rounded bg-accent" />
         )}
         {icon}
+        {badge !== undefined && (
+          <span
+            aria-hidden="true"
+            className="absolute bottom-0.5 right-0.5 min-w-[15px] h-[15px] px-[3px] rounded-full bg-accent text-white text-[9px] font-semibold leading-[15px] text-center"
+          >
+            {badge > 99 ? '99+' : badge}
+          </span>
+        )}
       </button>
     </Tooltip>
   )

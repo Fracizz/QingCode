@@ -198,7 +198,7 @@ export default function Tooltip({
           <div
             ref={tipRef}
             role="tooltip"
-            className="fixed z-[100] pointer-events-none rounded px-2 py-1 text-[11px] leading-4 text-fg border border-border-strong bg-bg-elevated shadow-lg shadow-black/40 whitespace-nowrap"
+            className="tooltip-enter fixed z-[100] pointer-events-none rounded px-2 py-1 text-[11px] leading-4 text-fg border border-border-strong bg-bg-elevated shadow-lg shadow-black/40 whitespace-nowrap"
             style={{ ...style, fontSize: 'var(--ui-font-size)' }}
           >
             {label}

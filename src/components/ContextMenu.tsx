@@ -63,7 +63,7 @@ export default function ContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      className="ui-font-scaled fixed z-50 min-w-[220px] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-50 min-w-[220px] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
       style={{ left: position.x, top: position.y }}
       onPointerDown={event => event.stopPropagation()}
       onContextMenu={event => event.preventDefault()}

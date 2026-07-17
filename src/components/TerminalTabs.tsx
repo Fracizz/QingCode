@@ -332,7 +332,7 @@ export default function TerminalTabs() {
                       fill="currentColor"
                       className={
                         t.status === 'running'
-                          ? 'text-ok'
+                          ? 'text-ok dirty-pulse'
                           : t.status === 'starting'
                             ? 'text-warn'
                             : 'text-fg-dim'
@@ -373,13 +373,15 @@ export default function TerminalTabs() {
                       fill="currentColor"
                       className={
                         t.status === 'running'
-                          ? 'text-ok'
+                          ? 'text-ok dirty-pulse'
                           : t.status === 'starting'
                             ? 'text-warn'
                             : 'text-fg-dim'
                       }
                     />
-                    <span className="text-[13px] truncate">{formatTerminalName(t.name)}</span>
+                    <span className={`text-[13px] truncate ${t.status === 'exited' ? 'opacity-60' : ''}`}>
+                      {formatTerminalName(t.name)}
+                    </span>
                   </Tooltip>
                 )}
                 {t.status === 'exited' && renamingId !== t.id && (

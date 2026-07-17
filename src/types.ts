@@ -46,6 +46,10 @@ export interface EditorTab {
   diskMtime?: number | null
   /** Bumped to force CodeMirror session rebuild after external reload / draft restore. */
   contentEpoch?: number
+  /** When set, the main editor shows a read-only HEAD ↔ working-tree compare. */
+  kind?: 'edit' | 'diff'
+  /** HEAD (or empty) side of a diff tab. */
+  originalContent?: string
 }
 
 export interface TerminalTab {

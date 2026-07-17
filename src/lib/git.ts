@@ -9,6 +9,11 @@ export type GitStatus = {
   changes: GitChange[]
 }
 
+export type GitFileContents = {
+  original: string
+  modified: string
+}
+
 export const GIT_STATUS_UPDATED_EVENT = 'qingcode:git-status-updated'
 
 export function notifyGitStatusUpdated() {

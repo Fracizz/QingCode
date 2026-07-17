@@ -1,5 +1,5 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { X, Circle, Copy, ExternalLink, Eye, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle, GitCompare } from 'lucide-react'
+import { X, Circle, ChevronDown, Copy, ExternalLink, Eye, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle, GitCompare } from 'lucide-react'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -13,6 +13,7 @@ import { promptDialog, validateEntryName } from '../store/promptStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+import Tooltip from './Tooltip'
 import type { EditorTab } from '../types'
 import { useI18n } from '../lib/i18n'
 import { isLoadingTab, isOpenErrorTab, isViewOnlyTab } from '../lib/openFileError'
@@ -46,6 +47,7 @@ export default function EditorTabs() {
     y: number
     tab: EditorTab
   } | null>(null)
+  const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null)
 
   if (tabs.length === 0) return null
 
@@ -163,11 +165,15 @@ export default function EditorTabs() {
       separatorBefore: true,
       action: () => revealInSidebar(tab.path),
     },
-    {
-      label: t('与 Git HEAD 比较'),
-      icon: <GitCompare size={14} />,
-      action: () => void openGitCompareWithHead(tab.path),
-    },
+    ...(tab.kind === 'diff'
+      ? []
+      : [
+          {
+            label: t('与 Git HEAD 比较'),
+            icon: <GitCompare size={14} />,
+            action: () => void openGitCompareWithHead(tab.path),
+          } satisfies ContextMenuItem,
+        ]),
     {
       label: t('复制路径'),
       icon: <Copy size={14} />,
@@ -183,17 +189,32 @@ export default function EditorTabs() {
       icon: <ExternalLink size={14} />,
       action: () => revealPath(tab.path),
     },
-    {
-      label: t('重命名'),
-      icon: <Pencil size={14} />,
-      separatorBefore: true,
-      action: () => renameTab(tab),
-    },
+    ...(tab.kind === 'diff'
+      ? []
+      : [
+          {
+            label: t('重命名'),
+            icon: <Pencil size={14} />,
+            separatorBefore: true,
+            action: () => renameTab(tab),
+          } satisfies ContextMenuItem,
+        ]),
   ]
+
+  const overflowItems = (): ContextMenuItem[] =>
+    tabs.map(tab => {
+      const Icon = tab.kind === 'diff' ? GitCompare : getFileIcon(tab.path)
+      return {
+        label: tab.id === activeTabId ? `${tab.name} ●` : tab.name,
+        icon: Icon ? <Icon size={14} /> : undefined,
+        action: () => setActiveTab(tab.id),
+      }
+    })
 
   return (
     <>
-    <div className="ui-font-scaled h-[var(--tab-height)] flex bg-bg-deep border-b border-border overflow-x-auto flex-shrink-0">
+    <div className="ui-font-scaled h-[var(--tab-height)] flex bg-bg-deep border-b border-border flex-shrink-0">
+      <div className="flex flex-1 min-w-0 overflow-x-auto">
         {tabs.map(tab => {
           const active = tab.id === activeTabId
           const loading = isLoadingTab(tab)
@@ -205,23 +226,34 @@ export default function EditorTabs() {
             ? AlertTriangle
             : loading
               ? LoaderCircle
-              : viewOnly
-                ? Eye
-                : getFileIcon(tab.name)
+              : tab.kind === 'diff'
+                ? GitCompare
+                : viewOnly
+                  ? Eye
+                  : getFileIcon(tab.name)
           const iconClass = isOpenErrorTab(tab)
             ? 'flex-shrink-0 text-warn'
             : loading
               ? 'flex-shrink-0 text-accent animate-spin'
-              : viewOnly
+              : tab.kind === 'diff' || viewOnly
                 ? 'flex-shrink-0 text-accent opacity-90'
                 : 'flex-shrink-0 opacity-80'
           return (
             <div
               key={tab.id}
-              className={`group flex items-center gap-2 pl-3 pr-2 h-full cursor-pointer border-r border-border whitespace-nowrap transition-colors
+              className={`group relative flex items-center gap-2 pl-3 pr-2 h-full cursor-pointer border-r border-border whitespace-nowrap transition-colors
                 ${active ? 'bg-tab-active text-fg' : 'bg-tab-inactive text-fg-muted hover:bg-bg-elevated hover:text-fg'}
                 ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}`}
               onClick={() => setActiveTab(tab.id)}
+              onAuxClick={event => {
+                if (event.button !== 1) return
+                event.preventDefault()
+                void closeOne(tab)
+              }}
+              onMouseDown={event => {
+                // Prevent middle-click auto-scroll.
+                if (event.button === 1) event.preventDefault()
+              }}
               onContextMenu={(event: ReactMouseEvent) => {
                 event.preventDefault()
                 event.stopPropagation()
@@ -229,13 +261,16 @@ export default function EditorTabs() {
                 setContextMenu({ x: event.clientX, y: event.clientY, tab })
               }}
             >
+              {active && (
+                <span className="absolute top-0 left-0 right-0 h-[2px] bg-accent" aria-hidden="true" />
+              )}
               {Icon && <Icon size={15} className={iconClass} />}
               <span
-                className={`text-[13px] ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && gitColor ? gitColor : ''}`}
+                className={`text-[13px] ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && tab.kind !== 'diff' && gitColor ? gitColor : ''}`}
               >
                 {tab.name}
               </span>
-              {gitGlyph && (
+              {tab.kind !== 'diff' && gitGlyph && (
                 <span className={`text-[11px] font-medium ${gitColor}`} title={gitStatus ?? undefined}>
                   {gitGlyph}
                 </span>
@@ -248,7 +283,7 @@ export default function EditorTabs() {
                 }}
               >
                 {tab.dirty ? (
-                  <Circle size={9} className="text-warn group-hover:hidden" fill="currentColor" />
+                  <Circle size={9} className="dirty-pulse text-warn group-hover:hidden" fill="currentColor" />
                 ) : null}
                 <X
                   size={14}
@@ -259,12 +294,33 @@ export default function EditorTabs() {
           )
         })}
       </div>
+      <Tooltip label={t('显示所有打开的文件')} side="bottom">
+        <button
+          type="button"
+          className="flex h-full w-8 flex-shrink-0 items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg"
+          onClick={event => {
+            const rect = event.currentTarget.getBoundingClientRect()
+            setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
+          }}
+        >
+          <ChevronDown size={14} />
+        </button>
+      </Tooltip>
+      </div>
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
           items={menuItems(contextMenu.tab)}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+      {overflowMenu && (
+        <ContextMenu
+          x={overflowMenu.x}
+          y={overflowMenu.y}
+          items={overflowItems()}
+          onClose={() => setOverflowMenu(null)}
         />
       )}
     </>

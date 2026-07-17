@@ -214,7 +214,7 @@ export default function ProjectManager() {
         role="dialog"
         aria-modal="true"
         aria-label={t('项目管理')}
-        className="relative w-full max-w-[760px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-content-enter relative w-full max-w-[760px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={e => e.stopPropagation()}
       >
         {/* Header */}

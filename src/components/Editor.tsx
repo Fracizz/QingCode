@@ -91,6 +91,7 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import MarkdownPreview from './MarkdownPreview'
 import EditorOpenError from './EditorOpenError'
 import LargeFileViewer from './LargeFileViewer'
+import DiffEditor from './DiffEditor'
 
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
 const lightTheme = EditorView.theme(
@@ -224,6 +225,7 @@ function createTabEditorState(
   settingsCompartment: Compartment,
   markDirty: (id: string) => void,
   saveFile: (id: string) => Promise<void>,
+  setCursor: (cursor: { line: number; col: number } | null) => void,
 ): EditorState {
   const tabId = tab.id
   const tabPath = tab.path
@@ -278,6 +280,11 @@ function createTabEditorState(
           ) {
             void formatDocument(tabId, { quiet: true })
           }
+        }
+        if (update.selectionSet || update.docChanged) {
+          const head = update.state.selection.main.head
+          const line = update.state.doc.lineAt(head)
+          setCursor({ line: line.number, col: head - line.from + 1 })
         }
       }),
       keymap.of([
@@ -359,6 +366,7 @@ function bindTabToView(
   settingsCompartment: Compartment,
   markDirty: (id: string) => void,
   saveFile: (id: string) => Promise<void>,
+  setCursor: (cursor: { line: number; col: number } | null) => void,
   previousTabId: string | null,
 ): string {
   if (previousTabId && previousTabId !== tab.id) {
@@ -378,6 +386,7 @@ function bindTabToView(
       settingsCompartment,
       markDirty,
       saveFile,
+      setCursor,
     )
 
   view.setState(state)
@@ -425,6 +434,7 @@ export default function Editor() {
   const activeTabId = useEditorStore(s => s.activeTabId)
   const markDirty = useEditorStore(s => s.markDirty)
   const saveFile = useEditorStore(s => s.saveFile)
+  const setCursor = useEditorStore(s => s.setCursor)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
   const currentProject = useProjectStore(s => s.currentProject)
   const setView = useUIStore(s => s.setView)
@@ -438,6 +448,7 @@ export default function Editor() {
   const clearPendingReveal = useEditorStore(s => s.clearPendingReveal)
   const showEditor =
     !!activeTab &&
+    activeTab.kind !== 'diff' &&
     !isOpenErrorTab(activeTab) &&
     !isLoadingTab(activeTab) &&
     !isViewOnlyTab(activeTab)
@@ -449,6 +460,7 @@ export default function Editor() {
   // Destroy the shared view only when leaving the editable surface (not on tab switch).
   useEffect(() => {
     if (showEditor) return
+    setCursor(null)
     const view = viewRef.current
     if (!view) return
     const tabId = boundTabIdRef.current
@@ -461,7 +473,7 @@ export default function Editor() {
     view.destroy()
     viewRef.current = null
     boundTabIdRef.current = null
-  }, [showEditor])
+  }, [showEditor, setCursor])
 
   // One EditorView + cached EditorState per tab (undo/selection/folds survive switches).
   useEffect(() => {
@@ -489,6 +501,7 @@ export default function Editor() {
         settingsCompartment.current,
         markDirty,
         saveFile,
+        setCursor,
         previousTabId,
       )
       boundEpochRef.current = epoch
@@ -504,6 +517,7 @@ export default function Editor() {
         settingsCompartment.current,
         markDirty,
         saveFile,
+        setCursor,
         null,
       )
     }
@@ -541,6 +555,7 @@ export default function Editor() {
     activeTab?.contentEpoch,
     markDirty,
     saveFile,
+    setCursor,
   ])
 
   // 主题切换时即时重配置编辑器主题（不重建 view）。
@@ -859,6 +874,10 @@ export default function Editor() {
         </p>
       </div>
     )
+  }
+
+  if (activeTab.kind === 'diff') {
+    return <DiffEditor tab={activeTab} />
   }
 
   if (isOpenErrorTab(activeTab)) {

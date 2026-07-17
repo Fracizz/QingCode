@@ -310,6 +310,7 @@ pub fn run() {
             git_status::git_show_head_file,
             git::git_status,
             git::git_diff,
+            git::git_file_contents,
             fonts::list_system_fonts,
             create_terminal,
             write_terminal,

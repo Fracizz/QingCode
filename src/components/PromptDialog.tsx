@@ -58,7 +58,7 @@ export default function PromptDialog() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="prompt-title"
-        className="relative w-full max-w-[420px] rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-content-enter relative w-full max-w-[420px] rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
       >
         <div className="flex gap-3 px-4 pt-4 pb-3">
           <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-bg-active text-accent">

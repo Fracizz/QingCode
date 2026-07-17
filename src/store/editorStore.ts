@@ -22,10 +22,12 @@ import {
   getEditorPreferences,
   loadEffectiveEditorPreferences,
   prepareContentForSave,
+  type FileEncoding,
 } from '../lib/editorSettings'
 import { loadEffectiveFileSizePreferences } from '../lib/fileSizeSettings'
 import { isSettingsJsonPath } from '../lib/projectSettings'
 import { translate } from '../lib/i18n'
+import type { GitFileContents } from '../lib/git'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
 import { authorizePaths } from '../lib/pathAllowlist'
 import { loadEffectiveAutoSaveSettings, notifyAutoSaveSettingsChanged } from '../lib/autoSaveSettings'
@@ -33,6 +35,10 @@ import { useProjectStore } from './projectStore'
 import type { EditorTab } from '../types'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
 import { guessLanguage, isPinnedSettingsTab, tabNameFromPath } from '../utils/editorHelpers'
+
+function fileNameFromPath(path: string) {
+  return path.split('\\').pop() || path.split('/').pop() || path
+}
 
 function resolveTabContent(tab: EditorTab): string | undefined {
   return getLiveEditorContent(tab.id) ?? tab.content
@@ -165,9 +171,14 @@ interface EditorState {
   pendingReveal: PendingReveal | null
   /** Inactive projects' editor sessions (tabs, active file, reveal). */
   projectSessions: Record<string, ProjectEditorSession>
+  /** Caret position of the active editor, shown in the status bar. */
+  cursor: { line: number; col: number } | null
   openFile: (path: string, line?: number) => Promise<void>
   retryOpenFile: (id: string) => Promise<void>
+  /** Open a read-only HEAD ↔ working-tree compare tab for a project-relative file. */
+  openDiff: (projectPath: string, relativePath: string, absolutePath: string) => Promise<void>
   clearPendingReveal: () => void
+  setCursor: (cursor: { line: number; col: number } | null) => void
   closeTab: (id: string) => void
   closeOtherTabs: (id: string) => void
   closeTabsToRight: (id: string) => void
@@ -177,6 +188,7 @@ interface EditorState {
   clearTabContentBuffer: (id: string) => void
   markDirty: (id: string) => void
   markClean: (id: string) => void
+  setTabEncoding: (id: string, encoding: FileEncoding) => void
   saveFile: (id: string) => Promise<void>
   saveAs: (id: string) => Promise<void>
   closeAllTabs: () => void
@@ -256,8 +268,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   activeTabId: null,
   pendingReveal: null,
   projectSessions: {},
+  cursor: null,
 
   clearPendingReveal: () => set({ pendingReveal: null }),
+
+  setCursor: cursor => set({ cursor }),
 
   findTab: (id: string) => {
     const s = get()
@@ -280,7 +295,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   openFile: async (path: string, line?: number) => {
-    const existing = get().tabs.find(t => t.path === path)
+    const existing = get().tabs.find(t => t.kind !== 'diff' && t.path === path)
     if (existing) {
       if (existing.loading) {
         set({
@@ -429,9 +444,52 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setActiveTab: (id: string) => {
     const prev = get().activeTabId
     if (prev && prev !== id) flushLiveEditorContent(prev)
-    set({ activeTabId: id })
+    set({ activeTabId: id, cursor: null })
     const tab = get().tabs.find(t => t.id === id)
-    if (tab) void useProjectStore.getState().revealFileInTree(tab.path)
+    if (tab && tab.kind !== 'diff') void useProjectStore.getState().revealFileInTree(tab.path)
+  },
+
+  openDiff: async (projectPath: string, relativePath: string, absolutePath: string) => {
+    const existing = get().tabs.find(t => t.kind === 'diff' && t.path === absolutePath)
+    if (existing) {
+      const prev = get().activeTabId
+      if (prev && prev !== existing.id) flushLiveEditorContent(prev)
+      set({ activeTabId: existing.id, cursor: null, pendingReveal: null })
+      return
+    }
+    try {
+      const pair = await safeInvoke<GitFileContents>('读取 Git 文件内容', 'git_file_contents', {
+        path: projectPath,
+        file: absolutePath,
+      })
+      const name = fileNameFromPath(relativePath)
+      const id = crypto.randomUUID()
+      const prev = get().activeTabId
+      if (prev) flushLiveEditorContent(prev)
+      const tab: EditorTab = {
+        id,
+        path: absolutePath,
+        name: `${name} (对比)`,
+        dirty: false,
+        kind: 'diff',
+        content: pair.modified,
+        originalContent: pair.original,
+        language: guessLanguage(relativePath),
+        encoding: 'utf8',
+      }
+      set(s => ({
+        tabs: [...s.tabs, tab],
+        activeTabId: id,
+        cursor: null,
+        pendingReveal: null,
+      }))
+    } catch (e) {
+      console.error('openDiff failed:', e)
+      useProjectStore.getState().pushToast(
+        'error',
+        translate('打开差异对比失败：{error}', { error: String(e) }),
+      )
+    }
   },
 
   setTabContent: (id: string, content: string) => {
@@ -452,7 +510,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   markDirty: (id: string) => {
     set(s => {
-      const next = mapTabEverywhere(s, id, t => (t.openError ? t : { ...t, dirty: true }))
+      const next = mapTabEverywhere(s, id, t =>
+        t.openError || t.kind === 'diff' ? t : { ...t, dirty: true },
+      )
       return next ?? s
     })
   },
@@ -464,6 +524,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return next ?? s
     })
     if (tab) clearDraftForTab(tab.path)
+  },
+
+  setTabEncoding: (id, encoding) => {
+    set(s => {
+      const next = mapTabEverywhere(s, id, t =>
+        t.kind === 'diff' || t.encoding === encoding ? t : { ...t, encoding, dirty: true },
+      )
+      return next ?? s
+    })
   },
 
   setDiskMtime: (id, mtime) => {
@@ -488,6 +557,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const targets = get()
       .tabs.filter(
         t =>
+          t.kind !== 'diff' &&
           !t.openError &&
           !t.loading &&
           (t.viewMode === 'view'
@@ -570,7 +640,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   saveFile: async (id: string) => {
     const tab = get().findTab(id)
-    if (!tab || tab.openError || tab.loading || tab.viewMode === 'view') return
+    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || tab.viewMode === 'view') return
     // Format-on-save before reading the buffer for write (quiet: no success spam).
     try {
       const { getFormatOnSave } = await import('../lib/formatOnSaveSettings')
@@ -582,7 +652,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       console.error('formatOnSave failed:', e)
     }
     const afterFormat = get().findTab(id)
-    if (!afterFormat || afterFormat.openError || afterFormat.loading || afterFormat.viewMode === 'view') {
+    if (
+      !afterFormat ||
+      afterFormat.kind === 'diff' ||
+      afterFormat.openError ||
+      afterFormat.loading ||
+      afterFormat.viewMode === 'view'
+    ) {
       return
     }
     const raw = resolveTabContent(afterFormat)
@@ -686,7 +762,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   saveAs: async (id: string) => {
     const tab = get().findTab(id)
-    if (!tab || tab.openError || tab.loading) return
+    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading) return
     const content = resolveTabContent(tab)
     if (content === undefined) return
     if (!isTauri()) {
@@ -872,7 +948,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const renameTab = (tab: EditorTab): EditorTab => {
         if (!isDescendantOf(tab.path, oldPath)) return tab
         const path = newPath + tab.path.slice(oldPath.length)
-        return { ...tab, path, name: tabNameFromPath(path) }
+        const baseName = tabNameFromPath(path)
+        const name = tab.kind === 'diff' ? `${baseName} (对比)` : baseName
+        return { ...tab, path, name }
       }
       const projectSessions: Record<string, ProjectEditorSession> = {}
       for (const [id, session] of Object.entries(s.projectSessions)) {

@@ -129,6 +129,17 @@ body,
   overflow: hidden;
 }
 
+/* Smooth color cross-fade while switching themes (class applied briefly by applyTheme). */
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition:
+    background-color 200ms ease,
+    border-color 200ms ease,
+    color 200ms ease !important;
+}
+
 body {
   font-family: var(--font-sans);
   font-size: var(--ui-font-size);
@@ -423,6 +434,61 @@ body {
   }
 }
 
+/* Modal / menu entrance animations */
+.modal-overlay-enter {
+  animation: modal-overlay-in 140ms ease-out;
+}
+@keyframes modal-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-content-enter {
+  animation: modal-content-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes modal-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.menu-enter {
+  animation: menu-in 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Tooltip fade-in */
+.tooltip-enter {
+  animation: tooltip-in 120ms ease-out;
+}
+@keyframes tooltip-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Unsaved-changes dot: gentle pulse so dirty tabs stand out. */
+.dirty-pulse {
+  animation: dirty-pulse 2.2s ease-in-out infinite;
+}
+@keyframes dirty-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 /* Panel resize sash (sidebar + terminal) */
 body.panel-resizing,
 body.panel-resizing * {
@@ -535,6 +601,32 @@ body.panel-resizing[data-panel-resize='vertical'] * {
 .panel-resizer--active .panel-resizer-grip span {
   background: var(--color-accent);
   transform: scale(1.15);
+}
+
+/* Keyboard focus visibility — editor (cm-content) and terminal helper manage their own focus. */
+#root :is(button, [role='menuitem'], [role='tab'], [tabindex]):focus-visible:not(.cm-content):not(.xterm-helper-textarea) {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+
+/* Git side-by-side diff (CodeMirror MergeView) fills the editor pane. */
+.cm-merge-host {
+  height: 100%;
+}
+.cm-merge-host .cm-mergeView,
+.cm-merge-host .cm-mergeViewEditors {
+  height: 100%;
+}
+.cm-merge-host .cm-mergeViewEditors {
+  display: flex;
+}
+.cm-merge-host .cm-mergeViewEditors > * {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+.cm-merge-host .cm-editor {
+  height: 100%;
 }
 
 /* Settings / form selects — theme-aligned, hide native OS chrome */
