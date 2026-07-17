@@ -5,6 +5,24 @@
 **QingCode** is a lightweight desktop code editor for Windows.  
 Multiple projects, file browsing, editing, and terminals live in one window — less app switching, more time writing code.
 
+## Screenshots
+
+### Explorer & editor
+
+![Explorer and code editor](./docs/screenshots/01-explorer-editor.jpg)
+
+### Search
+
+![File content search](./docs/screenshots/02-search.jpg)
+
+### Editor & terminal
+
+![Editor, run configs, and terminal](./docs/screenshots/03-editor-terminal.jpg)
+
+### Settings
+
+![Theme and font settings](./docs/screenshots/04-settings.jpg)
+
 ## Why QingCode
 
 Most editors assume a single workspace. QingCode is built for **working across several local projects at once**: switch from the title bar like tabs, keep each project’s file tree and terminals, and never wipe the scene when you leave.

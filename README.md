@@ -5,6 +5,24 @@
 **QingCode** 是一款面向 Windows 的轻量桌面代码编辑器。  
 把多项目管理、文件浏览、代码编辑和终端放进同一个窗口——少切换应用，多把时间花在写代码上。
 
+## 界面预览
+
+### 资源管理器与编辑器
+
+![资源管理器与代码编辑](./docs/screenshots/01-explorer-editor.jpg)
+
+### 全局搜索
+
+![文件内容搜索](./docs/screenshots/02-search.jpg)
+
+### 编辑器与终端
+
+![编辑器、运行配置与终端](./docs/screenshots/03-editor-terminal.jpg)
+
+### 设置
+
+![主题与字体等设置](./docs/screenshots/04-settings.jpg)
+
 ## 为什么选 QingCode
 
 多数编辑器默认围绕「一个工作区」展开。QingCode 从一开始就为**同时维护多个本地项目**设计：标题栏像标签一样切换项目，每个项目自带文件树与终端，切走也不会把现场清掉。
