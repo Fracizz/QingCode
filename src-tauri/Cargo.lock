@@ -3187,6 +3187,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
  "tauri-plugin-sql",
+ "winreg 0.55.0",
 ]
 
 [[package]]

@@ -21,9 +21,9 @@ import {
   MONO_FONT_OPTIONS,
   loadFontSettings,
   saveFontSettings,
-  withCurrentFontOption,
   type FontSettings,
 } from '../lib/fontSettings'
+import FontFamilySelect from './FontFamilySelect'
 import {
   DEFAULT_THEME,
   THEMES,
@@ -167,7 +167,7 @@ export default function SettingsEditor() {
     return CATEGORIES.filter(cat => {
       if (cat.id === 'json') return match('打开设置 JSON', 'settings.json', '自定义设置')
       if (cat.id === 'common') {
-        return match('颜色主题', '界面字号', '编辑器字号', '常用设置')
+        return match('颜色主题', '界面字号', '常用设置')
       }
       if (cat.id === 'appearance') return match('颜色主题', '外观', '深色', '浅色')
       if (cat.id === 'editor') return match('界面字体', '代码字体', '编辑器字号', '文本编辑器')
@@ -283,7 +283,7 @@ export default function SettingsEditor() {
         {/* Content */}
         <div className="flex-1 min-w-0 overflow-auto px-6 py-4">
           <div className="max-w-[800px] flex flex-col gap-6">
-            {match('常用设置', '颜色主题', '界面字号', '编辑器字号') && (
+            {match('常用设置', '颜色主题', '界面字号') && (
               <Section
                 id="common"
                 title={t('常用设置')}
@@ -302,7 +302,7 @@ export default function SettingsEditor() {
                       value={theme}
                       disabled={workspaceLocked}
                       onChange={e => updateTheme(e.target.value as AppTheme)}
-                      className="setting-control"
+                      className="setting-control setting-select"
                     >
                       {THEMES.map(option => (
                         <option key={option.value} value={option.value}>
@@ -324,27 +324,7 @@ export default function SettingsEditor() {
                       value={fonts.interfaceFontSize}
                       disabled={workspaceLocked}
                       onChange={e => updateFonts('interfaceFontSize', Number(e.target.value))}
-                      className="setting-control"
-                    >
-                      {FONT_SIZE_OPTIONS.map(size => (
-                        <option key={size} value={size}>{size}</option>
-                      ))}
-                    </select>
-                  </SettingItem>
-                )}
-                {match('编辑器字号', '代码字号') && (
-                  <SettingItem
-                    title={t('编辑器: 字号')}
-                    description={t('控制编辑器中的字号（像素）。')}
-                    modified={fonts.editorFontSize !== DEFAULT_FONT_SETTINGS.editorFontSize}
-                    locked={workspaceLocked}
-                    lockHint={t('此设置仅在用户作用域中可用')}
-                  >
-                    <select
-                      value={fonts.editorFontSize}
-                      disabled={workspaceLocked}
-                      onChange={e => updateFonts('editorFontSize', Number(e.target.value))}
-                      className="setting-control"
+                      className="setting-control setting-select"
                     >
                       {FONT_SIZE_OPTIONS.map(size => (
                         <option key={size} value={size}>{size}</option>
@@ -399,41 +379,35 @@ export default function SettingsEditor() {
               >
                 <SettingItem
                   title={t('界面字体')}
-                  description={t('用于菜单、侧栏、标签和状态栏的字体族。')}
+                  description={t('用于菜单、侧栏、标签和状态栏的字体族。可选择本机已安装字体。')}
                   modified={fonts.interfaceFont !== DEFAULT_FONT_SETTINGS.interfaceFont}
                   locked={workspaceLocked}
                   lockHint={t('此设置仅在用户作用域中可用')}
                 >
-                  <select
+                  <FontFamilySelect
                     value={fonts.interfaceFont}
+                    presets={INTERFACE_FONT_OPTIONS}
+                    kind="sans"
                     disabled={workspaceLocked}
-                    onChange={e => updateFonts('interfaceFont', e.target.value)}
-                    className="setting-control setting-control-wide"
-                    style={{ fontFamily: 'var(--font-sans)' }}
-                  >
-                    {withCurrentFontOption(INTERFACE_FONT_OPTIONS, fonts.interfaceFont).map(option => (
-                      <option key={option.value} value={option.value}>{t(option.label)}</option>
-                    ))}
-                  </select>
+                    aria-label={t('界面字体')}
+                    onChange={value => updateFonts('interfaceFont', value)}
+                  />
                 </SettingItem>
                 <SettingItem
                   title={t('编辑器: 字体族')}
-                  description={t('控制编辑器字体族。终端默认共用同一等宽字体。')}
+                  description={t('控制编辑器字体族。终端默认共用同一等宽字体。可选择本机已安装字体。')}
                   modified={fonts.monoFont !== DEFAULT_FONT_SETTINGS.monoFont}
                   locked={workspaceLocked}
                   lockHint={t('此设置仅在用户作用域中可用')}
                 >
-                  <select
+                  <FontFamilySelect
                     value={fonts.monoFont}
+                    presets={MONO_FONT_OPTIONS}
+                    kind="mono"
                     disabled={workspaceLocked}
-                    onChange={e => updateFonts('monoFont', e.target.value)}
-                    className="setting-control setting-control-wide font-mono"
-                    style={{ fontFamily: 'var(--font-mono)' }}
-                  >
-                    {withCurrentFontOption(MONO_FONT_OPTIONS, fonts.monoFont).map(option => (
-                      <option key={option.value} value={option.value}>{t(option.label)}</option>
-                    ))}
-                  </select>
+                    aria-label={t('编辑器: 字体族')}
+                    onChange={value => updateFonts('monoFont', value)}
+                  />
                 </SettingItem>
                 <SettingItem
                   title={t('编辑器: 字号')}
@@ -446,7 +420,7 @@ export default function SettingsEditor() {
                     value={fonts.editorFontSize}
                     disabled={workspaceLocked}
                     onChange={e => updateFonts('editorFontSize', Number(e.target.value))}
-                    className="setting-control"
+                    className="setting-control setting-select"
                   >
                     {FONT_SIZE_OPTIONS.map(size => (
                       <option key={size} value={size}>{size}</option>
@@ -474,7 +448,7 @@ export default function SettingsEditor() {
                     value={fonts.terminalFontSize}
                     disabled={workspaceLocked}
                     onChange={e => updateFonts('terminalFontSize', Number(e.target.value))}
-                    className="setting-control"
+                    className="setting-control setting-select"
                   >
                     {FONT_SIZE_OPTIONS.map(size => (
                       <option key={size} value={size}>{size}</option>
@@ -497,7 +471,7 @@ export default function SettingsEditor() {
                         defaultProfileId: e.target.value ? e.target.value : null,
                       })
                     }
-                    className="setting-control setting-control-wide"
+                    className="setting-control setting-control-wide setting-select"
                   >
                     <option value="">{t('未指定（内置默认）')}</option>
                     {terminal.profiles
@@ -560,7 +534,7 @@ export default function SettingsEditor() {
                     value={language}
                     disabled={workspaceLocked}
                     onChange={e => setLanguage(e.target.value as AppLanguage)}
-                    className="setting-control setting-control-wide"
+                    className="setting-control setting-control-wide setting-select"
                   >
                     {localeOptions.map(option => (
                       <option key={option.locale} value={option.locale}>
@@ -619,32 +593,6 @@ export default function SettingsEditor() {
           </div>
         </div>
       </div>
-
-      <style>{`
-        .setting-control {
-          min-width: 120px;
-          max-width: 100%;
-          height: 26px;
-          border-radius: 2px;
-          border: 1px solid var(--color-border-strong, #3c3c3c);
-          background: var(--color-bg-deep, #181818);
-          color: inherit;
-          padding: 0 8px;
-          font-size: 13px;
-          outline: none;
-        }
-        .setting-control:focus {
-          border-color: var(--color-accent, #4d9eff);
-        }
-        .setting-control:disabled {
-          opacity: 0.45;
-          cursor: not-allowed;
-        }
-        .setting-control-wide {
-          min-width: 220px;
-          width: min(100%, 320px);
-        }
-      `}</style>
 
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
     </div>

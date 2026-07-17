@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- QingCode — 居中厚切括号 + 底部青台（透明底，供应用内 UI 使用） -->
+
+  <!-- 青台下层（整体上移 10px，避免视觉偏底） -->
+  <path fill="#2FAF9B" d="M96 438H416V478H96V438Z"/>
+
+  <!-- 青台上层 -->
+  <path fill="#4ECDB5" d="M96 398H416V438H96V398Z"/>
+
+  <!-- 厚切代码括号（居中、留白） -->
+  <path fill="#F3F6F8" d="M128 152H268L392 256L268 360H128L292 256L128 152Z"/>
+</svg>

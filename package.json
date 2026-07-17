@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "dev:5173": "vite --port 5173 --strictPort",
+    "dev:app": "vite --strictPort",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "check": "pnpm check:frontend && pnpm check:rust",

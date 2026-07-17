@@ -4,8 +4,9 @@ param()
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
+# Prefer an uncommon port so Vite/Next defaults (5173/3000) don't collide.
 function Get-AvailableDevPort {
-  param([int]$StartPort = 5173, [int]$MaxAttempts = 100)
+  param([int]$StartPort = 38417, [int]$MaxAttempts = 100)
   for ($port = $StartPort; $port -lt ($StartPort + $MaxAttempts); $port++) {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
     try {

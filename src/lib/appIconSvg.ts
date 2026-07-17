@@ -1,4 +1,4 @@
-import appIconSvg from '../../public/app-icon.svg?raw'
+import appIconSvg from '../assets/app-icon.svg?raw'
 import { getResolvedTheme, loadTheme, type ResolvedTheme } from './themeSettings'
 
 const BRACKET_DARK = '#F3F6F8'
@@ -11,7 +11,7 @@ function iconSvgForTheme(theme: ResolvedTheme): string {
   return appIconSvg
 }
 
-/** Render `public/app-icon.svg` at a given pixel size (single source of truth). */
+/** Render `src/assets/app-icon.svg` at a given pixel size (UI source of truth). */
 export function renderAppIconSvg(
   size: number,
   className?: string,

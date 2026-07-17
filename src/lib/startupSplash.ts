@@ -1,6 +1,7 @@
 const SPLASH_ID = 'startup-splash'
-const MIN_VISIBLE_MS = 520
-const FALLBACK_DISMISS_MS = 8000
+/** Short floor so splash does not feel sticky on fast machines. */
+const MIN_VISIBLE_MS = 160
+const FALLBACK_DISMISS_MS = 6000
 
 let dismissScheduled = false
 const shownAt = typeof performance !== 'undefined' ? performance.now() : 0
@@ -11,7 +12,7 @@ function removeSplash() {
   el.classList.add('startup-splash--hide')
   const cleanup = () => el.remove()
   el.addEventListener('transitionend', cleanup, { once: true })
-  window.setTimeout(cleanup, 320)
+  window.setTimeout(cleanup, 220)
 }
 
 /** Fade out the static startup splash once the app shell has painted. */

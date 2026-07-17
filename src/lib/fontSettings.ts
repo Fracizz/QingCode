@@ -114,3 +114,57 @@ export function withCurrentFontOption(options: FontOption[], value: string): Fon
   if (options.some(option => option.value === value)) return options
   return [{ label: '自定义', value }, ...options]
 }
+
+export type FontKind = 'sans' | 'mono'
+
+/** Build a CSS font-family stack from an OS font family name. */
+export function fontStackFromFamily(family: string, kind: FontKind): string {
+  const trimmed = family.trim()
+  if (!trimmed) {
+    return kind === 'mono' ? SYSTEM_MONO_FONT : SYSTEM_INTERFACE_FONT
+  }
+  const quoted = `"${trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+  return kind === 'mono' ? `${quoted}, ${SYSTEM_MONO_FONT}` : `${quoted}, ${SYSTEM_INTERFACE_FONT}`
+}
+
+/** Turn installed family names into selectable options, skipping preset labels. */
+export function systemFontOptions(
+  families: string[],
+  kind: FontKind,
+  presetLabels: Iterable<string> = [],
+): FontOption[] {
+  const skip = new Set(
+    [...presetLabels].map(label => label.trim().toLowerCase()).filter(Boolean),
+  )
+  return families
+    .map(family => family.trim())
+    .filter(family => family && !skip.has(family.toLowerCase()))
+    .map(family => ({
+      label: family,
+      value: fontStackFromFamily(family, kind),
+    }))
+}
+
+let systemFontCache: string[] | null = null
+let systemFontPending: Promise<string[]> | null = null
+
+/** Load OS-installed font families once (empty outside Tauri / on failure). */
+export async function loadSystemFontFamilies(): Promise<string[]> {
+  if (systemFontCache) return systemFontCache
+  if (!systemFontPending) {
+    systemFontPending = (async () => {
+      try {
+        const { isTauri, safeInvoke } = await import('./tauri')
+        if (!isTauri()) return []
+        const fonts = await safeInvoke<string[]>('列出系统字体', 'list_system_fonts')
+        return Array.isArray(fonts) ? fonts.filter(Boolean) : []
+      } catch {
+        return []
+      }
+    })().then(fonts => {
+      systemFontCache = fonts
+      return fonts
+    })
+  }
+  return systemFontPending
+}

@@ -50,7 +50,7 @@
         align-items: center;
         justify-content: center;
         background: #1e1e1e;
-        transition: opacity 220ms ease, visibility 220ms ease;
+        transition: opacity 140ms ease, visibility 140ms ease;
       }
       html[data-theme='light'] #startup-splash {
         background: #f0f0f0;
@@ -64,19 +64,21 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 22px;
+        gap: 18px;
         user-select: none;
       }
       .startup-logo {
-        width: 80px;
-        height: 80px;
+        width: 72px;
+        height: 72px;
         display: flex;
         align-items: center;
         justify-content: center;
-        animation: startup-logo-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+        animation: startup-logo-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
       }
       .startup-logo svg {
         display: block;
+        width: 72px;
+        height: 72px;
         filter: drop-shadow(0 4px 18px rgba(78, 205, 181, 0.22));
       }
       html[data-theme='light'] .startup-logo svg {
@@ -87,18 +89,18 @@
           'Microsoft YaHei', sans-serif;
         letter-spacing: 0.08em;
         color: #d4d4d4;
-        animation: startup-fade-up 0.5s 0.08s ease-out both;
+        animation: startup-fade-up 0.28s 0.04s ease-out both;
       }
       html[data-theme='light'] .startup-title {
         color: #1f1f1f;
       }
       .startup-loader {
-        width: 132px;
+        width: 120px;
         height: 3px;
         border-radius: 999px;
         background: rgba(78, 205, 181, 0.14);
         overflow: hidden;
-        animation: startup-fade-up 0.5s 0.16s ease-out both;
+        animation: startup-fade-up 0.28s 0.08s ease-out both;
       }
       html[data-theme='light'] .startup-loader {
         background: rgba(47, 175, 155, 0.16);
@@ -115,15 +117,15 @@
           #2faf9b 62%,
           rgba(47, 175, 155, 0)
         );
-        animation: startup-loader-slide 1.35s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+        animation: startup-loader-slide 1.1s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
       }
       .startup-hint {
-        margin: -10px 0 0;
+        margin: -8px 0 0;
         font: 400 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
           'Microsoft YaHei', sans-serif;
         letter-spacing: 0.12em;
         color: rgba(212, 212, 212, 0.45);
-        animation: startup-fade-up 0.5s 0.24s ease-out both;
+        animation: startup-fade-up 0.28s 0.1s ease-out both;
       }
       html[data-theme='light'] .startup-hint {
         color: rgba(31, 31, 31, 0.42);
@@ -131,7 +133,7 @@
       @keyframes startup-logo-in {
         from {
           opacity: 0;
-          transform: translateY(8px) scale(0.94);
+          transform: translateY(4px) scale(0.96);
         }
         to {
           opacity: 1;
@@ -141,7 +143,7 @@
       @keyframes startup-fade-up {
         from {
           opacity: 0;
-          transform: translateY(6px);
+          transform: translateY(4px);
         }
         to {
           opacity: 1;
@@ -162,7 +164,14 @@
   <body>
     <div id="startup-splash" aria-hidden="true">
       <div class="startup-splash-inner">
-        <div class="startup-logo" aria-hidden="true"></div>
+        <div class="startup-logo" aria-hidden="true">
+          <!-- Inline logo avoids a startup fetch; paintStartupSplashLogo() may refresh later. -->
+          <svg id="startup-logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="72" height="72">
+            <path fill="#2FAF9B" d="M96 438H416V478H96V438Z"/>
+            <path fill="#4ECDB5" d="M96 398H416V438H96V398Z"/>
+            <path id="startup-logo-bracket" fill="#F3F6F8" d="M128 152H268L392 256L268 360H128L292 256L128 152Z"/>
+          </svg>
+        </div>
         <div class="startup-title">QingCode</div>
         <div class="startup-loader" role="status" aria-label="加载中">
           <span class="startup-loader-bar"></span>
@@ -173,47 +182,25 @@
     <div id="root"></div>
     <script>
       ;(function () {
-        var slot = document.querySelector('.startup-logo')
-        if (slot) {
-          fetch('/app-icon.svg')
-            .then(function (r) {
-              return r.text()
-            })
-            .then(function (svg) {
-              var light = document.documentElement.getAttribute('data-theme') === 'light'
-              if (light) svg = svg.replace(/fill="#F3F6F8"/g, 'fill="#2A3539"')
-              slot.innerHTML = svg.replace(/<svg\b([^>]*)>/, '<svg width="80" height="80"$1>')
-            })
-            .catch(function () {})
+        if (document.documentElement.getAttribute('data-theme') === 'light') {
+          var bracket = document.getElementById('startup-logo-bracket')
+          if (bracket) bracket.setAttribute('fill', '#2A3539')
         }
       })()
     </script>
     <script>
       ;(function () {
+        // Show as soon as splash markup is in the DOM. Size repair happens in Rust while hidden.
         function showWindow() {
           var tauri = window.__TAURI__
-          function reveal(win) {
-            if (!win) return
-            // Repair tiny borderless windows (~14x14) before showing.
-            Promise.resolve(win.innerSize?.())
-              .then(function (size) {
-                if (!size || (size.width >= 200 && size.height >= 200)) return null
-                var LogicalSize = tauri.window.LogicalSize
-                if (!LogicalSize || !win.setSize) return null
-                return win.setSize(new LogicalSize(1280, 800)).then(function () {
-                  return win.center?.()
-                })
-              })
-              .catch(function () {})
-              .finally(function () {
-                void win.show()
-              })
-          }
-          if (tauri?.window?.getCurrentWindow) {
-            reveal(tauri.window.getCurrentWindow())
+          var win = tauri && tauri.window && tauri.window.getCurrentWindow
+            ? tauri.window.getCurrentWindow()
+            : null
+          if (win && win.show) {
+            void win.show()
             return
           }
-          if (tauri?.core?.invoke) {
+          if (tauri && tauri.core && tauri.core.invoke) {
             void tauri.core.invoke('plugin:window|show')
           }
         }

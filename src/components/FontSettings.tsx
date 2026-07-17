@@ -5,10 +5,10 @@ import {
   MONO_FONT_OPTIONS,
   loadFontSettings,
   saveFontSettings,
-  withCurrentFontOption,
   type FontSettings,
 } from '../lib/fontSettings'
 import { useI18n } from '../lib/i18n'
+import FontFamilySelect from './FontFamilySelect'
 
 export default function FontSettings() {
   const { t } = useI18n()
@@ -24,10 +24,11 @@ export default function FontSettings() {
     <div className="flex flex-col gap-6">
       <FontGroup
         title={t('界面字体')}
-        description={t('用于菜单、侧栏、标签和状态栏，支持选择系统默认字体。')}
+        description={t('用于菜单、侧栏、标签和状态栏，可选择系统默认或本机已安装字体。')}
         fontLabel={t('字体')}
         fontValue={settings.interfaceFont}
-        fontOptions={withCurrentFontOption(INTERFACE_FONT_OPTIONS, settings.interfaceFont)}
+        fontPresets={INTERFACE_FONT_OPTIONS}
+        fontKind="sans"
         onFontChange={value => update('interfaceFont', value)}
         sizeLabel={t('字号')}
         sizeValue={settings.interfaceFontSize}
@@ -36,12 +37,12 @@ export default function FontSettings() {
 
       <FontGroup
         title={t('代码与终端字体')}
-        description={t('代码编辑器与终端共用同一等宽字体族，支持选择系统默认字体。')}
+        description={t('代码编辑器与终端共用同一等宽字体族，可选择系统默认或本机已安装字体。')}
         fontLabel={t('字体')}
         fontValue={settings.monoFont}
-        fontOptions={withCurrentFontOption(MONO_FONT_OPTIONS, settings.monoFont)}
+        fontPresets={MONO_FONT_OPTIONS}
+        fontKind="mono"
         onFontChange={value => update('monoFont', value)}
-        monospace
         sizeLabel={t('代码字号')}
         sizeValue={settings.editorFontSize}
         onSizeChange={value => update('editorFontSize', value)}
@@ -58,7 +59,8 @@ function FontGroup({
   description,
   fontLabel,
   fontValue,
-  fontOptions,
+  fontPresets,
+  fontKind,
   onFontChange,
   sizeLabel,
   sizeValue,
@@ -66,13 +68,13 @@ function FontGroup({
   extraSizeLabel,
   extraSizeValue,
   onExtraSizeChange,
-  monospace,
 }: {
   title: string
   description: string
   fontLabel: string
   fontValue: string
-  fontOptions: { label: string; value: string }[]
+  fontPresets: { label: string; value: string }[]
+  fontKind: 'sans' | 'mono'
   onFontChange: (value: string) => void
   sizeLabel: string
   sizeValue: number
@@ -80,12 +82,9 @@ function FontGroup({
   extraSizeLabel?: string
   extraSizeValue?: number
   onExtraSizeChange?: (value: number) => void
-  monospace?: boolean
 }) {
-  const { t } = useI18n()
-  const fieldClass = `w-full rounded border border-border-strong bg-bg-elevated px-2.5 py-2 text-fg outline-none focus:border-accent ${
-    monospace ? 'font-mono' : ''
-  }`
+  const fieldClass =
+    'setting-control setting-select !h-auto !min-h-[36px] !w-full !rounded !border-[var(--color-border-strong)] !bg-[var(--color-bg-elevated)] !px-2.5 !py-2'
 
   return (
     <section className="flex flex-col gap-3">
@@ -95,18 +94,16 @@ function FontGroup({
       </div>
       <label className="block">
         <span className="block text-xs font-medium text-fg-muted">{fontLabel}</span>
-        <select
-          value={fontValue}
-          onChange={event => onFontChange(event.target.value)}
-          className={`mt-1.5 ${fieldClass}`}
-          style={monospace ? { fontFamily: 'var(--font-mono)' } : { fontFamily: 'var(--font-sans)' }}
-        >
-          {fontOptions.map(option => (
-            <option key={option.value} value={option.value}>
-              {t(option.label)}
-            </option>
-          ))}
-        </select>
+        <div className="mt-1.5">
+          <FontFamilySelect
+            value={fontValue}
+            presets={fontPresets}
+            kind={fontKind}
+            onChange={onFontChange}
+            className="!w-full"
+            aria-label={fontLabel}
+          />
+        </div>
       </label>
       <div className={`grid gap-3 ${extraSizeLabel ? 'grid-cols-2' : 'grid-cols-1'}`}>
         <FontSizeField
@@ -142,7 +139,11 @@ function FontSizeField({
   return (
     <label className="block">
       <span className="block text-xs font-medium text-fg-muted">{label}</span>
-      <select value={value} onChange={event => onChange(Number(event.target.value))} className={`mt-1.5 ${className}`}>
+      <select
+        value={value}
+        onChange={event => onChange(Number(event.target.value))}
+        className={`mt-1.5 ${className}`}
+      >
         {FONT_SIZE_OPTIONS.map(size => (
           <option key={size} value={size}>
             {size}px

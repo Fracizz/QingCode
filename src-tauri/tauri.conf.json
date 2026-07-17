@@ -4,8 +4,8 @@
   "version": "0.1.1",
   "identifier": "com.qingcode.app",
   "build": {
-    "beforeDevCommand": "pnpm dev:5173",
-    "devUrl": "http://127.0.0.1:5173",
+    "beforeDevCommand": "pnpm dev:app",
+    "devUrl": "http://127.0.0.1:38417",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
@@ -21,7 +21,7 @@
         "minHeight": 480,
         "decorations": false,
         "theme": "Dark",
-        "visible": true,
+        "visible": false,
         "center": true,
         "backgroundColor": "#1e1e1e"
       }

@@ -1,5 +1,6 @@
 mod commands;
 mod content_search;
+mod fonts;
 mod terminal;
 
 use std::path::PathBuf;
@@ -222,9 +223,10 @@ pub fn run() {
                     .devtools(cfg!(debug_assertions))
                     .enable_clipboard_access()
                     .build()?;
-                // On Windows, borderless windows created with visible:false often boot at
-                // ~14x14 and set_size is ignored while undecorated. Re-apply size with a
-                // brief decorations toggle, then restore borderless chrome.
+                // Keep the window hidden until the HTML splash paints and calls show().
+                // On Windows, borderless + visible:false often boots at ~14x14 and ignores
+                // set_size while undecorated — repair size with a decorations toggle while
+                // still hidden so chrome never flashes.
                 #[cfg(target_os = "windows")]
                 {
                     let _ = window.set_decorations(true);
@@ -236,7 +238,6 @@ pub fn run() {
                     )));
                     let _ = window.set_decorations(false);
                     let _ = window.center();
-                    let _ = window.show();
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
@@ -244,7 +245,6 @@ pub fn run() {
                         1280.0, 800.0,
                     )));
                     let _ = window.center();
-                    let _ = window.show();
                 }
             }
             Ok(())
@@ -263,6 +263,7 @@ pub fn run() {
             commands::create_directory,
             commands::rename_path,
             commands::delete_path,
+            fonts::list_system_fonts,
             create_terminal,
             write_terminal,
             kill_terminal,

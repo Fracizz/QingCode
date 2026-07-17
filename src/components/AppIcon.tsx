@@ -12,7 +12,7 @@ interface Props {
   className?: string
 }
 
-/** Inline app mark — sourced from public/app-icon.svg */
+/** Inline app mark — sourced from src/assets/app-icon.svg */
 export default function AppIcon({ size = 16, className }: Props) {
   const [resolved, setResolved] = useState<ResolvedTheme>(() => getResolvedTheme(loadTheme()))
 

@@ -4,7 +4,8 @@ import tailwindcss from "@tailwindcss/vite";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
-const devPort = Number(process.env.VITE_DEV_PORT) || 5173;
+const DEFAULT_DEV_PORT = 38417;
+const devPort = Number(process.env.VITE_DEV_PORT) || DEFAULT_DEV_PORT;
 const devPortLocked = Boolean(process.env.VITE_DEV_PORT);
 
 // https://vite.dev/config/
@@ -15,7 +16,7 @@ export default defineConfig(async () => ({
   //
   // 1. prevent Vite from obscuring rust errors
   clearScreen: false,
-  // 2. tauri dev 通过 VITE_DEV_PORT 锁定端口；单独 pnpm dev 则在 5173 被占用时自动递增
+  // 2. tauri:dev sets VITE_DEV_PORT (default 38417); plain `pnpm dev` can auto-increment if free
   server: {
     port: devPort,
     strictPort: devPortLocked,
