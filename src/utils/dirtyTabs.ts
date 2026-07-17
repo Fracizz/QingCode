@@ -1,8 +1,12 @@
 import type { EditorTab } from '../types'
+import { flushAutoSave, shouldAutoSaveBeforeDiscard } from '../lib/autoSave'
 import { confirmDialog } from '../store/confirmStore'
 import { translate } from '../lib/i18n'
 
 export async function confirmDiscardTabs(tabs: EditorTab[], action: string) {
+  if (shouldAutoSaveBeforeDiscard()) {
+    await flushAutoSave(tabs.filter(tab => tab.dirty).map(tab => tab.id))
+  }
   const dirtyTabs = tabs.filter(tab => tab.dirty)
   if (dirtyTabs.length === 0) return true
 

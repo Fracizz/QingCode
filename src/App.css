@@ -67,16 +67,53 @@ html[data-theme="light"] {
   --color-tab-inactive: #e2e2e2;
 }
 
+/* Everforest medium-dark — warm forest green UI (JetBrains Everforest / Forest style). */
+html[data-theme="forest"] {
+  --color-bg: #2d353b;
+  --color-bg-deep: #232a2e;
+  --color-bg-sidebar: #343f44;
+  --color-bg-elevated: #3d484d;
+  --color-bg-hover: #475258;
+  --color-bg-active: #4f585e;
+  --color-border: #475258;
+  --color-border-strong: #56635f;
+
+  --color-fg: #d3c6aa;
+  --color-fg-muted: #859289;
+  --color-fg-dim: #7a8478;
+
+  --color-accent: #a7c080;
+  --color-accent-soft: #425047;
+  --color-danger: #e67e80;
+  --color-warn: #dbbc7f;
+  --color-ok: #83c092;
+
+  --color-tab-active: #2d353b;
+  --color-tab-inactive: #343f44;
+}
+
 html[data-theme="light"] * {
   scrollbar-color: #c4c4c4 transparent;
+}
+
+html[data-theme="forest"] * {
+  scrollbar-color: #56635f transparent;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb {
   background: #c4c4c4;
 }
 
+html[data-theme="forest"] *::-webkit-scrollbar-thumb {
+  background: #56635f;
+}
+
 html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
+}
+
+html[data-theme="forest"] *::-webkit-scrollbar-thumb:hover {
+  background: #6b7a72;
 }
 
 html,
@@ -458,6 +495,10 @@ body.panel-resizing[data-panel-resize='vertical'] * {
 
 html[data-theme='light'] .setting-control {
   color-scheme: light;
+}
+
+html[data-theme='forest'] .setting-control {
+  color-scheme: dark;
 }
 
 .setting-control:hover:not(:disabled) {

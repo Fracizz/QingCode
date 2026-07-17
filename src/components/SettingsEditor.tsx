@@ -49,7 +49,15 @@ import {
   ensureSettingsFile,
   resolveGlobalSettingsPath,
   resolveProjectSettingsPath,
+  DEFAULT_GLOBAL_SETTINGS,
 } from '../lib/projectSettings'
+import {
+  AUTO_SAVE_DELAY_OPTIONS,
+  AUTO_SAVE_MODES,
+  loadScopedAutoSaveSettings,
+  saveScopedAutoSaveSettings,
+  type AutoSaveMode,
+} from '../lib/autoSaveSettings'
 import { isTauri } from '../lib/tauri'
 
 type SettingsScope = 'user' | 'workspace'
@@ -88,6 +96,10 @@ export default function SettingsEditor() {
   const [fonts, setFonts] = useState<FontSettings>(loadFontSettings)
   const [terminal, setTerminal] = useState<TerminalProfileSettings>(loadTerminalProfileSettings)
   const [openingJson, setOpeningJson] = useState(false)
+  const [autoSaveMode, setAutoSaveMode] = useState<AutoSaveMode>('off')
+  const [autoSaveDelay, setAutoSaveDelay] = useState<number>(
+    DEFAULT_GLOBAL_SETTINGS['files.autoSaveDelay'] as number,
+  )
   const searchRef = useRef<HTMLInputElement>(null)
   const sectionRefs = useRef<Partial<Record<CategoryId, HTMLElement | null>>>({})
 
@@ -97,6 +109,14 @@ export default function SettingsEditor() {
 
   useEffect(() => {
     if (scope === 'workspace' && !currentProject) setScope('user')
+  }, [scope, currentProject])
+
+  useEffect(() => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    void loadScopedAutoSaveSettings(settingsScope, currentProject).then(settings => {
+      setAutoSaveMode(settings.mode)
+      setAutoSaveDelay(settings.delay)
+    })
   }, [scope, currentProject])
 
   const workspaceLocked = scope === 'workspace'
@@ -121,6 +141,18 @@ export default function SettingsEditor() {
   const updateTerminal = (next: TerminalProfileSettings) => {
     setTerminal(next)
     saveTerminalProfileSettings(next)
+  }
+
+  const updateAutoSave = async (mode: AutoSaveMode, delay = autoSaveDelay) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setAutoSaveMode(mode)
+    setAutoSaveDelay(delay)
+    try {
+      await saveScopedAutoSaveSettings(settingsScope, { mode, delay }, currentProject)
+    } catch (error) {
+      pushToast('error', t('保存自动保存设置失败: {error}', { error: String(error) }))
+    }
   }
 
   const scrollTo = (id: CategoryId) => {
@@ -170,7 +202,7 @@ export default function SettingsEditor() {
         return match('颜色主题', '界面字号', '常用设置')
       }
       if (cat.id === 'appearance') return match('颜色主题', '外观', '深色', '浅色')
-      if (cat.id === 'editor') return match('界面字体', '代码字体', '编辑器字号', '文本编辑器')
+      if (cat.id === 'editor') return match('界面字体', '代码字体', '编辑器字号', '文本编辑器', '自动保存')
       if (cat.id === 'terminal') return match('终端', '默认启动配置', '终端字号')
       if (cat.id === 'features') {
         return match(
@@ -381,13 +413,66 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('文本编辑器', '界面字体', '代码字体', '编辑器字号', '终端字号') && (
+            {match('文本编辑器', '界面字体', '代码字体', '编辑器字号', '终端字号', '自动保存') && (
               <Section
                 id="editor"
                 title={t('文本编辑器')}
                 sectionRefs={sectionRefs}
                 onVisible={setCategory}
               >
+                {match('自动保存', 'files.autoSave') && (
+                  <>
+                    <SettingItem
+                      title={t('文件: 自动保存')}
+                      description={t('控制具有未保存更改的编辑器何时自动保存。')}
+                      modified={
+                        autoSaveMode !== DEFAULT_GLOBAL_SETTINGS['files.autoSave'] ||
+                        autoSaveDelay !== DEFAULT_GLOBAL_SETTINGS['files.autoSaveDelay']
+                      }
+                      locked={scope === 'workspace' && !currentProject}
+                      lockHint={t('请先选择项目，再配置工作区自动保存。')}
+                    >
+                      <select
+                        value={autoSaveMode}
+                        disabled={scope === 'workspace' && !currentProject}
+                        onChange={e => void updateAutoSave(e.target.value as AutoSaveMode)}
+                        className="setting-control setting-control-wide setting-select"
+                      >
+                        {AUTO_SAVE_MODES.map(option => (
+                          <option key={option.value} value={option.value}>
+                            {t(option.label)}
+                          </option>
+                        ))}
+                      </select>
+                    </SettingItem>
+                    {autoSaveMode === 'afterDelay' && (
+                      <SettingItem
+                        title={t('文件: 自动保存延迟')}
+                        description={t('在 afterDelay 模式下，停止编辑后等待多久再保存（毫秒）。')}
+                        modified={autoSaveDelay !== DEFAULT_GLOBAL_SETTINGS['files.autoSaveDelay']}
+                        locked={scope === 'workspace' && !currentProject}
+                        lockHint={t('请先选择项目，再配置工作区自动保存。')}
+                      >
+                        <select
+                          value={autoSaveDelay}
+                          disabled={scope === 'workspace' && !currentProject}
+                          onChange={e =>
+                            void updateAutoSave(autoSaveMode, Number(e.target.value))
+                          }
+                          className="setting-control setting-select"
+                        >
+                          {AUTO_SAVE_DELAY_OPTIONS.map(delay => (
+                            <option key={delay} value={delay}>
+                              {delay} ms
+                            </option>
+                          ))}
+                        </select>
+                      </SettingItem>
+                    )}
+                  </>
+                )}
+                {match('界面字体', '代码字体', '编辑器字号') && (
+                <>
                 <SettingItem
                   title={t('界面字体')}
                   description={t('用于菜单、侧栏、标签和状态栏的字体族。可选择本机已安装字体。')}
@@ -438,6 +523,8 @@ export default function SettingsEditor() {
                     ))}
                   </select>
                 </SettingItem>
+                </>
+                )}
               </Section>
             )}
 

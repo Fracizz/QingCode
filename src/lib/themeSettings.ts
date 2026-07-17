@@ -1,14 +1,15 @@
 export const THEME_SETTINGS_KEY = 'qingcode:theme'
 export const THEME_SETTINGS_EVENT = 'qingcode:theme-changed'
 
-export type AppTheme = 'dark' | 'light' | 'auto'
-export type ResolvedTheme = 'dark' | 'light'
+export type AppTheme = 'dark' | 'light' | 'forest' | 'auto'
+export type ResolvedTheme = 'dark' | 'light' | 'forest'
 
 export const DEFAULT_THEME: AppTheme = 'dark'
 
 export const THEMES: { label: string; value: AppTheme; hint: string }[] = [
   { label: '深色', value: 'dark', hint: '常驻深色' },
   { label: '浅色', value: 'light', hint: '常驻浅色' },
+  { label: '森林', value: 'forest', hint: '暖色森林绿（Everforest 风格）' },
   { label: '跟随系统', value: 'auto', hint: '随操作系统明暗自动切换' },
 ]
 
@@ -23,13 +24,16 @@ function systemPrefersDark(): boolean {
 export function loadTheme(): AppTheme {
   try {
     const stored = localStorage.getItem(THEME_SETTINGS_KEY) as AppTheme | null
-    if (stored === 'light' || stored === 'dark' || stored === 'auto') return stored
+    if (stored === 'light' || stored === 'dark' || stored === 'forest' || stored === 'auto') {
+      return stored
+    }
   } catch {}
   return DEFAULT_THEME
 }
 
 export function getResolvedTheme(theme: AppTheme = loadTheme()): ResolvedTheme {
   if (theme === 'auto') return systemPrefersDark() ? 'dark' : 'light'
+  if (theme === 'forest') return 'forest'
   return theme
 }
 

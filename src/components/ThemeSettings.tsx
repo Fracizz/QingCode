@@ -26,7 +26,7 @@ export default function ThemeSettings() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {THEMES.map(option => {
           const active = option.value === theme
           return (
@@ -59,12 +59,18 @@ export default function ThemeSettings() {
   )
 }
 
+const THEME_PREVIEW: Record<
+  ResolvedTheme,
+  { bg: string; sidebar: string; fg: string; accent: string }
+> = {
+  dark: { bg: '#1e1e1e', sidebar: '#252526', fg: '#d4d4d4', accent: '#4d9eff' },
+  light: { bg: '#f0f0f0', sidebar: '#e2e2e2', fg: '#1f1f1f', accent: '#005fb8' },
+  forest: { bg: '#2d353b', sidebar: '#343f44', fg: '#d3c6aa', accent: '#a7c080' },
+}
+
 function ThemePreview({ value }: { value: AppTheme }) {
   const resolved = getResolvedTheme(value)
-  const bg = resolved === 'dark' ? '#1e1e1e' : '#f0f0f0'
-  const sidebar = resolved === 'dark' ? '#252526' : '#e2e2e2'
-  const fg = resolved === 'dark' ? '#d4d4d4' : '#1f1f1f'
-  const accent = resolved === 'dark' ? '#4d9eff' : '#005fb8'
+  const { bg, sidebar, fg, accent } = THEME_PREVIEW[resolved]
   return (
     <div
       className="h-12 w-full overflow-hidden rounded border border-border"

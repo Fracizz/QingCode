@@ -66,8 +66,35 @@ const LIGHT_THEME = {
   brightWhite: '#000000',
 }
 
+const FOREST_THEME = {
+  background: '#232a2e',
+  foreground: '#d3c6aa',
+  cursor: '#d3c6aa',
+  cursorAccent: '#232a2e',
+  selectionBackground: '#543a48',
+  black: '#232a2e',
+  red: '#e67e80',
+  green: '#a7c080',
+  yellow: '#dbbc7f',
+  blue: '#7fbbb3',
+  magenta: '#d699b6',
+  cyan: '#83c092',
+  white: '#d3c6aa',
+  brightBlack: '#7a8478',
+  brightRed: '#e67e80',
+  brightGreen: '#a7c080',
+  brightYellow: '#dbbc7f',
+  brightBlue: '#7fbbb3',
+  brightMagenta: '#d699b6',
+  brightCyan: '#83c092',
+  brightWhite: '#fdf6e3',
+}
+
 function terminalTheme() {
-  return getResolvedTheme() === 'dark' ? DARK_THEME : LIGHT_THEME
+  const resolved = getResolvedTheme()
+  if (resolved === 'forest') return FOREST_THEME
+  if (resolved === 'dark') return DARK_THEME
+  return LIGHT_THEME
 }
 
 /** ConPTY heuristics for Windows hosts (portable-pty / OpenCode TUI). */

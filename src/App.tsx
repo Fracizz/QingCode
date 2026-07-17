@@ -34,6 +34,7 @@ import { migrateLegacySettings } from './lib/migrateLegacySettings'
 import { useI18n } from './lib/i18n'
 import { isShortcutInputTarget, shortcutMatchesEvent } from './lib/shortcuts'
 import { useShortcutStore } from './store/shortcutStore'
+import { useAutoSave } from './hooks/useAutoSave'
 
 const Editor = lazy(() => import('./components/Editor'))
 const TerminalView = lazy(() => import('./components/Terminal'))
@@ -119,6 +120,8 @@ function App() {
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const shortcuts = useShortcutStore(s => s.shortcuts)
+
+  useAutoSave()
 
   const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)
   const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)

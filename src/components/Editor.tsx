@@ -35,7 +35,9 @@ import {
   formatFileReference,
 } from '../utils/fileReferences'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
+import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
 import { translate, useI18n } from '../lib/i18n'
+import { notifyEditorBlur, notifyEditorContentChanged } from '../lib/autoSave'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
@@ -61,7 +63,10 @@ const lightTheme = EditorView.theme(
 )
 
 function editorThemeExtension() {
-  return getResolvedTheme() === 'dark' ? oneDark : lightTheme
+  const resolved = getResolvedTheme()
+  if (resolved === 'forest') return [FOREST_THEME, forestSyntax]
+  if (resolved === 'dark') return oneDark
+  return lightTheme
 }
 
 const flashLineEffect = StateEffect.define<number>()
@@ -160,6 +165,7 @@ export default function Editor() {
           if (update.docChanged) {
             setTabContent(activeTab.id, update.state.doc.toString())
             markDirty(activeTab.id)
+            notifyEditorContentChanged(activeTab.id)
           }
         }),
         keymap.of([
@@ -450,7 +456,15 @@ export default function Editor() {
   return (
     <>
       <div className="flex-1 overflow-hidden bg-bg" onContextMenu={openContextMenu}>
-        <div ref={containerRef} className="h-full" />
+        <div
+          ref={containerRef}
+          className="h-full"
+          onBlur={event => {
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              notifyEditorBlur()
+            }
+          }}
+        />
       </div>
       {contextMenu && (
         <ContextMenu

@@ -414,6 +414,18 @@
     "撤销": "Undo",
     "重做": "Redo",
     "粘贴失败: {error}": "Could not paste: {error}",
-    "从侧边栏打开文件开始编辑": "Open a file from the sidebar to start editing"
+    "从侧边栏打开文件开始编辑": "Open a file from the sidebar to start editing",
+    "文件: 自动保存": "Files: Auto Save",
+    "控制具有未保存更改的编辑器何时自动保存。": "Controls when editors with unsaved changes are saved automatically.",
+    "文件: 自动保存延迟": "Files: Auto Save Delay",
+    "在 afterDelay 模式下，停止编辑后等待多久再保存（毫秒）。": "In afterDelay mode, how long to wait after editing stops before saving (milliseconds).",
+    "保存自动保存设置失败: {error}": "Could not save auto save settings: {error}",
+    "请先选择项目，再配置工作区自动保存。": "Select a project before configuring workspace auto save.",
+    "关闭": "Off",
+    "延迟后": "After Delay",
+    "失去焦点时": "On Focus Change",
+    "窗口切换时": "On Window Change",
+    "森林": "Forest",
+    "暖色森林绿（Everforest 风格）": "Warm forest green inspired by Everforest"
   }
 }
