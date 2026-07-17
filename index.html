@@ -192,8 +192,25 @@
       ;(function () {
         function showWindow() {
           var tauri = window.__TAURI__
+          function reveal(win) {
+            if (!win) return
+            // Repair tiny borderless windows (~14x14) before showing.
+            Promise.resolve(win.innerSize?.())
+              .then(function (size) {
+                if (!size || (size.width >= 200 && size.height >= 200)) return null
+                var LogicalSize = tauri.window.LogicalSize
+                if (!LogicalSize || !win.setSize) return null
+                return win.setSize(new LogicalSize(1280, 800)).then(function () {
+                  return win.center?.()
+                })
+              })
+              .catch(function () {})
+              .finally(function () {
+                void win.show()
+              })
+          }
           if (tauri?.window?.getCurrentWindow) {
-            void tauri.window.getCurrentWindow().show()
+            reveal(tauri.window.getCurrentWindow())
             return
           }
           if (tauri?.core?.invoke) {

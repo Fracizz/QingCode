@@ -1,168 +1,81 @@
 # QingCode
 
-[English](./README.en.md) · [配置帮助](./帮助文档.md)
+[English](./README.en.md)
 
-轻量、原生的桌面代码编辑器。面向需要同时处理多个本地项目的开发者，把项目切换、文件管理、代码编辑和终端工作流集中在一个简洁的 Windows 桌面应用中。
+**QingCode** 是一款面向 Windows 的轻量桌面代码编辑器。  
+把多项目管理、文件浏览、代码编辑和终端放进同一个窗口——少切换应用，多把时间花在写代码上。
 
-> 当前版本 **0.1.0** · [下载发布包](https://github.com/Fracizz/QingCode/releases) · [更新日志](./CHANGELOG.md)
+## 为什么选 QingCode
 
-## 能做什么
+多数编辑器默认围绕「一个工作区」展开。QingCode 从一开始就为**同时维护多个本地项目**设计：标题栏像标签一样切换项目，每个项目自带文件树与终端，切走也不会把现场清掉。
 
-### 同时管理多个项目
+它足够轻：原生桌面壳、按需加载编辑器语言、不塞满插件市场。适合日常看代码、改配置、跑脚本——而不是再开一整套重型 IDE。
 
-把常用项目加入标题栏，像切换标签一样在项目间快速切换。项目过多时会自动收纳，仍可随时添加、移除、重新定位，或在文件管理器中打开。
+## 核心能力
 
-### 浏览和管理本地文件
+### 多项目随手切换
 
-资源管理器只显示当前项目，减少干扰。你可以直接在文件树中：
+把常用目录加入标题栏，单击即可切换。项目多了会自动收纳；需要时再添加、移除、重新定位，或在资源管理器中打开。
 
-- 新建文件或文件夹
-- 重命名、删除文件和文件夹
-- 复制完整路径或文件引用
-- 在指定目录打开终端
+### 干净的文件树
 
-### 专注写代码
+资源管理器只展示当前项目，干扰更少。可直接在树里新建、重命名、删除，复制路径或文件引用，也能在指定目录打开终端。
 
-支持同时打开多个文件，未保存内容会有明确标记，按 `Ctrl+S` 即可保存。编辑器按需支持 JavaScript、TypeScript、JSON、Markdown、CSS、HTML 与 Python 等常见文件类型。
+### 顺手的代码编辑
 
-### 在项目中直接使用终端
+多文件标签编辑，未保存一目了然，`Ctrl+S` 保存。常见语言按需启用，例如 JavaScript、TypeScript、JSON、Markdown、CSS、HTML、Python 等。
 
-每个项目都可以保留多个终端标签页，默认从项目根目录启动。切换到其他项目时，已有终端不会被关闭；返回项目后可继续原来的工作。
+### 跟项目走的终端
 
-### 快速找到文件和内容
+每个项目可保留多个终端标签，默认落在项目根目录。换到别的项目时，已有终端不会被关掉——回来接着用。
 
-可以按目录范围搜索文件名或文件内容，适合在项目中定位代码、配置或文本。
+### 搜索与运行
 
-### 保存常用运行方式
+按范围搜文件名或文件内容；也可为常用脚本保存运行配置，一键在终端里启动。
 
-为项目脚本创建运行配置，一键在终端中启动，减少重复输入命令。
+### 按习惯定制
 
-### 按自己的习惯使用
+深色 / 浅色 / 跟随系统；界面与代码字体、字号可调；界面语言支持简体中文与 English。全局与项目级设置均保存在本机（JSON5，可写注释）。
 
-支持深色、浅色和跟随系统主题；界面与代码字体、字号均可调整；界面语言可选简体中文或 English。设置会保存在本机。
+## 典型用法
 
-## 使用流程
+1. 添加一个本地项目目录  
+2. 在侧栏浏览、创建或打开文件  
+3. 需要时打开终端，在项目目录执行命令  
+4. 从标题栏切到下一个项目——编辑与终端状态仍在
 
-1. 添加一个本地项目目录。
-2. 在资源管理器中浏览、创建或编辑文件。
-3. 打开终端，在项目根目录执行常用命令。
-4. 需要处理其他项目时，直接从标题栏切换，终端和编辑状态会继续保留。
+## 获取应用
 
-## 下载与安装
+目前优先支持 **Windows 10 / 11（x64）**。
 
-优先支持 **Windows 10/11**（x64）。
+- 便携版：下载 `QingCode.exe`（或带版本号的同名文件），双击即可运行，无需安装  
+- 依赖：[WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（较新的 Windows 通常已预装）
 
-1. 打开 [Releases](https://github.com/Fracizz/QingCode/releases)。
-2. 下载最新的 `QingCode_<version>.exe`（或 `QingCode.exe`）。
-3. 双击运行即可，无需安装。
+本地从源码打包：
 
-系统需已安装 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（较新的 Windows 10/11 通常已预装）。
+```bash
+pnpm install
+pnpm package:exe
+```
+
+产物在 `release/` 目录。
 
 ## 适合谁
 
-QingCode 适合希望用轻量桌面工具完成日常代码查看、编辑、文件操作和终端工作的开发者，尤其适合同时维护多个本地项目的场景。
+- 同时维护多个本地仓库或业务目录的开发者  
+- 想要「打开就能改、打开就能跑」的轻量桌面工具  
+- 不希望为一个简单任务拉起完整 IDE 的人  
 
-## 开发
+## 从源码运行
 
-### 环境要求
-
-- [Node.js](https://nodejs.org/) 22+
-- [pnpm](https://pnpm.io/) 10+
-- [Rust](https://www.rust-lang.org/) stable（含 Cargo）
-- Windows + WebView2
-
-### 常用命令
+环境：Node.js 22+、pnpm 10+、Rust stable、Windows + WebView2。
 
 ```bash
-pnpm install          # 安装前端依赖
-pnpm tauri:dev        # 启动完整桌面应用（推荐）
-pnpm dev              # 仅 Vite 前端，适合布局调试
-pnpm build            # TypeScript 检查 + 前端产物
-pnpm check            # 前端类型检查 + Rust 格式/测试
-pnpm package:exe      # 打 Windows 单文件 exe 到 release/
+pnpm install
+pnpm tauri:dev    # 完整桌面应用
 ```
 
-产物路径：
-
-- `release/QingCode_<version>.exe` — 带版本号
-- `release/QingCode.exe` — 最新副本
-
-仅改了 Rust、前端未变时可加速打包：
-
-```bash
-pnpm package:exe:fast
-```
-
-### 项目结构
-
-| 路径 | 说明 |
-| --- | --- |
-| `src/` | React 前端（组件、Zustand、Tauri 封装） |
-| `src-tauri/` | Rust / Tauri 后端与权限配置 |
-| `scripts/` | Windows 开发与打包脚本 |
-| `帮助文档.md` | 语言包与设置说明 |
-| `DESIGN.md` | 界面与交互设计约定 |
-
-## 发版
-
-版本号需同步出现在三处：
-
-- `package.json`
-- `src-tauri/Cargo.toml`
-- `src-tauri/tauri.conf.json`
-
-### 本地发版
-
-```powershell
-# 1. 同步版本号（示例：升到 0.1.1）
-pnpm bump:version 0.1.1
-
-# 2. 更新 CHANGELOG.md，提交变更
-git add -A
-git commit -m "chore: release v0.1.1"
-git push origin master
-git push github master   # 若同时维护 GitHub 远程
-
-# 3. 打标签并推送（触发 GitHub Actions 构建与 Release）
-git tag v0.1.1
-git push github v0.1.1
-```
-
-也可一键走完校验、打标签（不会自动 `git push`）：
-
-```powershell
-pnpm release:tag 0.1.1
-```
-
-### CI 发版
-
-推送形如 `v0.1.1` 的 tag 到 GitHub 后，[Release](./.github/workflows/release.yml) 工作流会：
-
-1. 在 `windows-latest` 上执行 `pnpm package:exe`
-2. 创建 [GitHub Release](https://github.com/Fracizz/QingCode/releases) 并上传 exe
-3. 若已配置 `GITEE_TOKEN`，同步创建 [Gitee Release](https://gitee.com/FrancizTest_admin/qing-code/releases) 并上传同一份 exe
-
-#### 配置 Gitee 同步（一次性）
-
-1. 打开 Gitee → 设置 → [私人令牌](https://gitee.com/profile/personal_access_tokens)，新建令牌，勾选 `projects`（仓库与 Releases）权限。
-2. 打开 GitHub 仓库 → Settings → Secrets and variables → Actions，新增 Secret：
-   - Name: `GITEE_TOKEN`
-   - Value: 上一步的令牌
-3. 之后每次推送 `v*` 标签都会自动同步到 Gitee Releases。
-
-也可本地上传（需本机已打出 `release/` 产物，并设置环境变量 `GITEE_TOKEN`）：
-
-```powershell
-pnpm gitee:release 0.1.0
-```
-
-## 相关文档
-
-- [English README](./README.en.md)
-- [更新日志](./CHANGELOG.md)
-- [配置帮助](./帮助文档.md)
-- [设计规范](./DESIGN.md)
-- [贡献与仓库约定](./AGENTS.md)
+更多约定见 [AGENTS.md](./AGENTS.md)；设置与语言说明见 [帮助文档.md](./帮助文档.md)。
 
 ## 技术栈
 

@@ -218,10 +218,34 @@ pub fn run() {
         .setup(|app| {
             migrate_legacy_database();
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
-                tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+                let window = tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
                     .devtools(cfg!(debug_assertions))
                     .enable_clipboard_access()
                     .build()?;
+                // On Windows, borderless windows created with visible:false often boot at
+                // ~14x14 and set_size is ignored while undecorated. Re-apply size with a
+                // brief decorations toggle, then restore borderless chrome.
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = window.set_decorations(true);
+                    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                        1280.0, 800.0,
+                    )));
+                    let _ = window.set_min_size(Some(tauri::Size::Logical(
+                        tauri::LogicalSize::new(720.0, 480.0),
+                    )));
+                    let _ = window.set_decorations(false);
+                    let _ = window.center();
+                    let _ = window.show();
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+                        1280.0, 800.0,
+                    )));
+                    let _ = window.center();
+                    let _ = window.show();
+                }
             }
             Ok(())
         })
