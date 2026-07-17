@@ -3,6 +3,8 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { ClipboardAddon } from '@xterm/addon-clipboard'
+import { WebglAddon } from '@xterm/addon-webgl'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { subscribeTerminalOutput, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
@@ -68,6 +70,15 @@ function terminalTheme() {
   return getResolvedTheme() === 'dark' ? DARK_THEME : LIGHT_THEME
 }
 
+/** ConPTY heuristics for Windows hosts (portable-pty / OpenCode TUI). */
+function windowsPtyOptions(): { backend: 'conpty'; buildNumber: number } | undefined {
+  if (typeof navigator === 'undefined') return undefined
+  const ua = navigator.userAgent
+  if (!/Windows/i.test(ua)) return undefined
+  // Win10 2004+ / Win11 ConPTY builds; high enough to enable modern wrap/reflow.
+  return { backend: 'conpty', buildNumber: 22621 }
+}
+
 interface TerminalViewProps {
   terminalId: string
   layoutKey?: string
@@ -113,11 +124,15 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       fontFamily: getResolvedTerminalFont(),
       lineHeight: 1.0,
       letterSpacing: 0,
+      // WebGL/canvas: draw box/block glyphs ourselves so WebView2 font metrics
+      // cannot stretch OpenCode ASCII banners.
+      customGlyphs: true,
       rescaleOverlappingGlyphs: true,
       theme: terminalTheme(),
       cols: 80,
       rows: 20,
       allowProposedApi: true,
+      windowsPty: windowsPtyOptions(),
     })
 
     const fitAddon = new FitAddon()
@@ -128,10 +143,27 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       })
     })
     const clipboardAddon = new ClipboardAddon()
+    const unicode11 = new Unicode11Addon()
     term.loadAddon(fitAddon)
     term.loadAddon(linkAddon)
     term.loadAddon(clipboardAddon)
+    term.loadAddon(unicode11)
+    term.unicode.activeVersion = '11'
     term.open(containerRef.current)
+
+    // Prefer WebGL so customGlyphs apply; fall back silently to canvas.
+    try {
+      const webgl = new WebglAddon()
+      webgl.onContextLoss(() => {
+        try {
+          webgl.dispose()
+        } catch {}
+      })
+      term.loadAddon(webgl)
+    } catch {
+      // Canvas renderer remains active.
+    }
+
     xtermRef.current = term
     fitAddonRef.current = fitAddon
 
@@ -224,6 +256,16 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     scheduleFit(false, isActiveRef.current)
 
+    // Release builds show the window after splash; delayed refits catch final size
+    // and Cascadia/Consolas loading so OpenCode gets correct cols before painting.
+    const fitTimers = [50, 150, 400].map(ms =>
+      window.setTimeout(() => scheduleFit(true, false), ms),
+    )
+    void document.fonts?.ready?.then(() => {
+      term.options.fontFamily = getResolvedTerminalFont()
+      scheduleFit(true, false)
+    })
+
     term.onResize(({ cols, rows }) => {
       resizeTerminal(terminalId, cols, rows)
     })
@@ -256,6 +298,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     return () => {
       window.clearTimeout(subscribeTimer)
+      for (const id of fitTimers) window.clearTimeout(id)
       unsubscribeOutput?.()
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(THEME_SETTINGS_EVENT, updateTheme)
