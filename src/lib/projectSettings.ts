@@ -30,7 +30,6 @@ export type SettingsScope = 'global' | 'project'
 
 export const PROJECT_SETTINGS_RELATIVE_PATH = '.qingcode/project-settings.json'
 export const GLOBAL_SETTINGS_DISPLAY_PATH = '全局设置 / default-settings.json'
-export const LEGACY_PROJECT_SETTINGS_RELATIVE_PATH = '.qingcode/settings.json'
 
 export const PROJECTS_KEY = 'qingcode.projects'
 export const PROJECTS_SYNC_ON_STARTUP_KEY = 'qingcode.projects.syncOnStartup'
@@ -87,7 +86,7 @@ function buildSharedDefaults(): SettingsFile {
   }
 }
 
-/** Global user-settings defaults (includes machine-wide project list). */
+/** Global default-settings defaults (includes machine-wide project list). */
 export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   ...buildSharedDefaults(),
   [PROJECTS_SYNC_ON_STARTUP_KEY]: true,
@@ -265,29 +264,17 @@ export function projectSettingsPath(project: Project): string {
   return `${projectConfigDir(project)}${separator}project-settings.json`
 }
 
-function legacyProjectSettingsPath(project: Project): string {
-  const separator = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
-  return `${projectConfigDir(project)}${separator}settings.json`
-}
-
 export function isSettingsJsonPath(path: string): boolean {
   const normalized = path.replace(/\\/g, '/')
   return (
     normalized.endsWith('/default-settings.json') ||
-    normalized.endsWith('/user-settings.json') ||
-    normalized.endsWith('/com.qingcode.app/settings.json') ||
-    normalized.endsWith('/.qingcode/project-settings.json') ||
-    normalized.endsWith('/.qingcode/settings.json')
+    normalized.endsWith('/.qingcode/project-settings.json')
   )
 }
 
 export function isGlobalSettingsPath(path: string): boolean {
   const normalized = path.replace(/\\/g, '/')
-  return (
-    normalized.endsWith('/default-settings.json') ||
-    normalized.endsWith('/user-settings.json') ||
-    normalized.endsWith('/com.qingcode.app/settings.json')
-  )
+  return normalized.endsWith('/default-settings.json')
 }
 
 export function defaultSettingsFor(scope: SettingsScope): SettingsFile {
@@ -403,20 +390,8 @@ export async function resolveGlobalSettingsPath(): Promise<string> {
   return safeInvoke<string>('读取全局设置路径', 'default_settings_path')
 }
 
-/** Prefer project-settings.json; migrate legacy .qingcode/settings.json when needed. */
 export async function resolveProjectSettingsPath(project: Project): Promise<string> {
-  const path = projectSettingsPath(project)
-  if (await settingsFileExists(path)) return path
-  const legacy = legacyProjectSettingsPath(project)
-  if (await settingsFileExists(legacy)) {
-    try {
-      const raw = await safeInvoke<string>('读取设置', 'read_file', { path: legacy })
-      await safeInvoke('保存设置', 'write_file', { path, content: raw })
-    } catch {
-      return legacy
-    }
-  }
-  return path
+  return projectSettingsPath(project)
 }
 
 export async function loadSettingsFromPath(

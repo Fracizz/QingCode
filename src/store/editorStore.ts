@@ -180,11 +180,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 /** Keep global default-settings.json open across project switches. */
 function isPinnedSettingsTab(path: string): boolean {
   const normalized = path.replace(/\\/g, '/')
-  return (
-    normalized.endsWith('/default-settings.json') ||
-    normalized.endsWith('/user-settings.json') ||
-    normalized.endsWith('/com.qingcode.app/settings.json')
-  )
+  return normalized.endsWith('/default-settings.json')
 }
 
 function guessLanguage(path: string): string {
@@ -192,10 +188,7 @@ function guessLanguage(path: string): string {
   // default-settings.json / project-settings.json are JSON5 (comments allowed)
   if (
     normalized.endsWith('/default-settings.json') ||
-    normalized.endsWith('/project-settings.json') ||
-    normalized.endsWith('/user-settings.json') ||
-    normalized.endsWith('/com.qingcode.app/settings.json') ||
-    normalized.endsWith('/.qingcode/settings.json')
+    normalized.endsWith('/project-settings.json')
   ) {
     return 'json5'
   }

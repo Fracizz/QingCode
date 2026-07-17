@@ -5,7 +5,7 @@ import { useProjectStore } from '../store/projectStore'
 import { confirmDialog } from '../store/confirmStore'
 import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '../lib/terminalProfiles'
 import { formatTerminalName } from '../utils/terminalName'
-import { canCloseTerminalDirectly } from '../lib/terminalClose'
+import { canCloseTerminalDirectly, listBusyTerminals } from '../lib/terminalClose'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
@@ -130,8 +130,8 @@ export default function TerminalTabs() {
   const handleCloseOthers = async (id: string) => {
     const terminal = terminals.find(tab => tab.id === id)
     if (!terminal) return
-    const runningOthers = terminals.filter(
-      t => t.projectId === terminal.projectId && t.id !== id && t.status !== 'exited'
+    const runningOthers = await listBusyTerminals(
+      terminals.filter(t => t.projectId === terminal.projectId && t.id !== id),
     )
     if (runningOthers.length > 0) {
       const confirmed = await confirmDialog({
@@ -149,7 +149,7 @@ export default function TerminalTabs() {
 
   const handleCloseAll = async () => {
     if (!currentProject) return
-    const running = projectTerminals.filter(t => t.status !== 'exited')
+    const running = await listBusyTerminals(projectTerminals)
     if (running.length > 0) {
       const confirmed = await confirmDialog({
         title: translate('关闭全部终端'),

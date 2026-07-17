@@ -158,7 +158,6 @@ fn db_url() -> String {
 
 /// Absolute path to the global `default-settings.json`.
 /// Dev builds write beside the project `.dev` database; release uses app data dir.
-/// Migrates legacy `user-settings.json` / `settings.json` when present.
 #[tauri::command]
 fn default_settings_path() -> String {
     let dir = if cfg!(debug_assertions) {
@@ -170,17 +169,9 @@ fn default_settings_path() -> String {
             .join("com.qingcode.app")
     };
     let _ = std::fs::create_dir_all(&dir);
-    let path = dir.join("default-settings.json");
-    if !path.exists() {
-        for legacy_name in ["user-settings.json", "settings.json"] {
-            let legacy = dir.join(legacy_name);
-            if legacy.is_file() {
-                let _ = std::fs::rename(&legacy, &path);
-                break;
-            }
-        }
-    }
-    path.to_string_lossy().into_owned()
+    dir.join("default-settings.json")
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[tauri::command]

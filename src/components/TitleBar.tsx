@@ -11,15 +11,18 @@ import { confirmDialog } from '../store/confirmStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { translate } from '../lib/i18n'
+import { listBusyTerminals } from '../lib/terminalClose'
 
 async function requestAppClose() {
-  const runningTerminals = useTerminalStore
-    .getState()
-    .terminals.filter(terminal => terminal.status !== 'exited')
+  // Only warn for busy terminals (child processes / run tasks). Idle shells
+  // still get killed on quit, but should not look like "仍在运行".
+  const busyTerminals = await listBusyTerminals(useTerminalStore.getState().terminals)
   const detail =
-    runningTerminals.length > 0
-      ? translate('{count} 个终端仍在运行，退出后将终止。\n未保存的编辑器更改可能丢失。', { count: runningTerminals.length })
-      : translate('未保存的编辑器更改可能丢失。')
+    busyTerminals.length > 0
+      ? translate('{count} 个终端仍在运行，退出后将终止。', {
+          count: busyTerminals.length,
+        })
+      : undefined
 
   if (
     !(await confirmDialog({

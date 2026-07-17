@@ -6,11 +6,14 @@ import { confirmDialog } from '../store/confirmStore'
 import { promptDialog, validateEntryName } from '../store/promptStore'
 import { isTauri } from '../lib/tauri'
 import { translate } from '../lib/i18n'
+import { listBusyTerminals } from '../lib/terminalClose'
 
 /** Confirm then remove a project, tearing down its terminals and editor tabs. */
 export async function removeProjectWithConfirm(id: string, name: string, path: string) {
-  const terminals = useTerminalStore.getState().terminals
-  const runningCount = terminals.filter(t => t.projectId === id && t.status !== 'exited').length
+  const busy = await listBusyTerminals(
+    useTerminalStore.getState().terminals.filter(t => t.projectId === id),
+  )
+  const runningCount = busy.length
   if (isTauri()) {
     const ok = await confirmDialog({
       title: translate('移除项目'),

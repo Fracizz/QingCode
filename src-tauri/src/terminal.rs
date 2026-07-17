@@ -148,6 +148,10 @@ impl TerminalManager {
                 }
             };
             if is_current {
+                {
+                    let mut sessions = sessions.lock().unwrap();
+                    sessions.remove(&id);
+                }
                 let exit_code = status.map(|status| status.exit_code()).unwrap_or(1);
                 let _ = app.emit("terminal-exit", TerminalExitPayload { id, exit_code });
             }
@@ -197,12 +201,17 @@ impl TerminalManager {
 
     pub fn has_child_processes(&self, id: &str) -> Result<bool, String> {
         let sessions = self.sessions.lock().unwrap();
-        let session = sessions
-            .get(id)
-            .ok_or_else(|| "Terminal not found".to_string())?;
+        let Some(session) = sessions.get(id) else {
+            // Session already cleaned up (process exited) → not busy.
+            return Ok(false);
+        };
         let Some(pid) = session.shell_pid else {
             return Ok(false);
         };
+        // Parent process may already be gone; treat as not busy.
+        if !process_exists(pid) {
+            return Ok(false);
+        }
         Ok(count_child_processes(pid) > 0)
     }
 
@@ -303,6 +312,12 @@ fn infer_script_kind(path: &str) -> String {
     } else {
         "sh".to_string()
     }
+}
+
+fn process_exists(pid: u32) -> bool {
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    system.process(Pid::from_u32(pid)).is_some()
 }
 
 fn count_child_processes(parent_pid: u32) -> usize {
