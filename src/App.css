@@ -461,8 +461,9 @@ html[data-theme='light'] .setting-control {
 }
 
 .setting-control-wide {
-  min-width: 220px;
-  width: min(100%, 320px);
+  min-width: 180px;
+  width: 100%;
+  max-width: 320px;
 }
 
 .setting-select {

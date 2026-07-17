@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-17
+
+### Added
+
+- 设置中可选择本机已安装的系统字体
+- 快捷键设置展示编辑器保留项（含 `Alt+C` 复制文件引用、`Ctrl+Shift+C` 复制路径）
+
+### Fixed
+
+- 启动闪屏与窗口过早显示导致的闪烁；缩短 splash 等待
+- 设置页字体下拉把标题挤成竖排一字的问题
+- Vite 禁止从 `public/` 用 `?raw` 导入 SVG
+- 去掉「常用设置」与「文本编辑器」重复的编辑器字号项
+
+### Changed
+
+- 应用图标图形整体居中，并同步桌面打包图标
+
 ## [0.1.1] - 2026-07-17
 
 ### Fixed
@@ -33,6 +51,7 @@
 - Windows 单文件 exe 打包（`pnpm package:exe`）
 - GitHub / Gitee Release 工作流与版本脚本
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.0

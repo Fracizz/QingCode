@@ -27,6 +27,25 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
   },
 ]
 
+/** Editor-bound shortcuts shown as read-only (not remappable here). */
+const FIXED_SHORTCUTS: { shortcut: string; label: string; description: string }[] = [
+  {
+    shortcut: 'Ctrl+S',
+    label: '保存文件',
+    description: '保存当前编辑器中的文件。',
+  },
+  {
+    shortcut: 'Ctrl+Shift+C',
+    label: '复制路径',
+    description: '复制当前文件或选中项的完整路径。',
+  },
+  {
+    shortcut: 'Alt+C',
+    label: '复制为文件引用',
+    description: '复制当前文件的引用（含行号范围），便于粘贴到对话或文档。',
+  },
+]
+
 export default function ShortcutSettings() {
   const { t } = useI18n()
   const shortcuts = useShortcutStore(s => s.shortcuts)
@@ -77,7 +96,7 @@ export default function ShortcutSettings() {
               setCapturing(command.id)
               setMessage(null)
             }}
-            onBlur={() => setCapturing(current => current === command.id ? null : current)}
+            onBlur={() => setCapturing(current => (current === command.id ? null : current))}
             onKeyDown={event => captureShortcut(event, command.id)}
             aria-label={t(command.label)}
             className={`w-32 rounded border bg-bg-deep px-2 py-1 text-center font-mono text-[12px] outline-none ${
@@ -86,6 +105,26 @@ export default function ShortcutSettings() {
           />
         </label>
       ))}
+
+      <p className="pt-1 text-xs text-fg-muted">{t('以下快捷键由编辑器保留，不可在此修改：')}</p>
+      {FIXED_SHORTCUTS.map(item => (
+        <div
+          key={item.shortcut}
+          className="flex items-center gap-3 rounded border border-border/80 bg-bg/20 px-3 py-2"
+        >
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] text-fg">{t(item.label)}</span>
+            <span className="mt-0.5 block text-[11px] text-fg-muted">{t(item.description)}</span>
+          </span>
+          <span
+            className="inline-flex h-[30px] w-32 items-center justify-center rounded border border-border bg-bg-deep px-2 font-mono text-[12px] text-fg-dim"
+            title={t('不可修改')}
+          >
+            {item.shortcut}
+          </span>
+        </div>
+      ))}
+
       {message && <p className="text-xs text-danger">{message}</p>}
       <button
         type="button"

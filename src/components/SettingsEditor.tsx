@@ -172,7 +172,18 @@ export default function SettingsEditor() {
       if (cat.id === 'appearance') return match('颜色主题', '外观', '深色', '浅色')
       if (cat.id === 'editor') return match('界面字体', '代码字体', '编辑器字号', '文本编辑器')
       if (cat.id === 'terminal') return match('终端', '默认启动配置', '终端字号')
-      if (cat.id === 'features') return match('快捷键', '功能', '打开搜索', '切换终端')
+      if (cat.id === 'features') {
+        return match(
+          '快捷键',
+          '功能',
+          '打开搜索',
+          '切换终端',
+          '复制路径',
+          '文件引用',
+          'Alt+C',
+          'Ctrl+Shift+C',
+        )
+      }
       if (cat.id === 'language') return match('语言', '简体中文', 'English')
       return true
     })
@@ -688,15 +699,15 @@ function SettingItem({
         locked ? 'opacity-70' : ''
       }`}
     >
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
+        <div className="min-w-[12rem] flex-1 basis-0">
           <div className="text-[13px] font-medium text-fg">{title}</div>
-          <p className="mt-1 text-[12px] leading-relaxed text-fg-muted">{description}</p>
+          <p className="mt-1 text-[12px] leading-relaxed text-fg-muted break-words">{description}</p>
           {locked && lockHint && (
-            <p className="mt-1 text-[11px] text-warn">{lockHint}</p>
+            <p className="mt-1 text-[11px] text-warn break-words">{lockHint}</p>
           )}
         </div>
-        <div className="flex-shrink-0 pt-0.5">{children}</div>
+        <div className="w-full sm:w-auto sm:max-w-[min(100%,320px)] sm:flex-shrink-0 pt-0.5">{children}</div>
       </div>
     </div>
   )
