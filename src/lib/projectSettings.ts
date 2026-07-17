@@ -125,7 +125,7 @@ const SHARED_SETTINGS_BODY = `
   "editor.renderWhitespace": "selection",
   // 【暂未生效】小地图
   "editor.minimap.enabled": false,
-  // 【暂未生效】保存时自动格式化（可用 Shift+Alt+F 手动格式化）
+  // 保存时自动格式化（调用 format_document；可用 Shift+Alt+F 手动格式化）
   "editor.formatOnSave": false,
   // 【暂未生效】粘贴时自动格式化
   "editor.formatOnPaste": false,
@@ -196,7 +196,7 @@ const SHARED_SETTINGS_BODY = `
   // ============================== 终端 ==============================
   // 终端回滚缓冲行数（xterm scrollback + 会话输出持久化共用）
   "terminal.integrated.scrollback": 5000,
-  // 【暂未生效】终端光标是否闪烁
+  // 终端光标是否闪烁
   "terminal.integrated.cursorBlinking": true,
 `
 

@@ -821,7 +821,7 @@ export default function SettingsEditor() {
                 <SettingItem
                   title={t('JSON 键生效说明')}
                   description={t(
-                    'files.exclude 控制资源管理器隐藏；search.exclude 在其上叠加并作用于搜索。标有「暂未生效」的键（如 editor.minimap、formatOnSave 等）会保存但不会改变行为。terminal.integrated.scrollback 已生效。详见帮助文档。',
+                    'files.exclude / search.exclude、editor.formatOnSave、terminal.integrated.scrollback / cursorBlinking 已生效。标有「暂未生效」的键（如 editor.minimap、formatOnPaste）会保存但不会改变行为。详见帮助文档。',
                   )}
                 >
                   <span className="text-[12px] text-fg-dim">{t('见 JSON 注释 / 帮助文档')}</span>

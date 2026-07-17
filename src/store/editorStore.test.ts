@@ -1,0 +1,104 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { EditorTab } from '../types'
+
+vi.mock('../lib/draftRecovery', () => ({
+  clearDraftForTab: vi.fn(),
+}))
+
+vi.mock('../lib/editorSession', () => ({
+  disposeEditorSession: vi.fn(),
+  disposeEditorSessions: vi.fn(),
+  flushAllLiveEditorContents: vi.fn(),
+  flushLiveEditorContent: vi.fn(),
+  getLiveEditorContent: vi.fn(() => null),
+}))
+
+vi.mock('../lib/tauri', () => ({
+  isTauri: () => false,
+  safeInvoke: vi.fn(),
+}))
+
+vi.mock('./projectStore', () => ({
+  useProjectStore: {
+    getState: () => ({
+      pushToast: vi.fn(),
+      revealFileInTree: vi.fn(),
+      currentProject: null,
+      projects: [],
+    }),
+  },
+}))
+
+import { useEditorStore } from './editorStore'
+
+function makeTab(partial: Partial<EditorTab> & Pick<EditorTab, 'id' | 'path'>): EditorTab {
+  return {
+    name: partial.name ?? partial.path.split(/[/\\]/).pop() ?? partial.path,
+    dirty: false,
+    content: 'hello',
+    language: 'typescript',
+    viewMode: 'edit',
+    ...partial,
+  }
+}
+
+describe('editorStore tab lifecycle', () => {
+  beforeEach(() => {
+    useEditorStore.setState({
+      tabs: [
+        makeTab({ id: 'a', path: 'D:\\proj\\src\\a.ts', content: 'a', dirty: false }),
+        makeTab({ id: 'b', path: 'D:\\proj\\src\\b.ts', content: 'b', dirty: true }),
+      ],
+      activeTabId: 'a',
+      pendingReveal: null,
+      projectSessions: {
+        other: {
+          tabs: [makeTab({ id: 'c', path: 'D:\\proj\\lib\\c.ts', content: 'c', dirty: false })],
+          activeTabId: 'c',
+          pendingReveal: null,
+        },
+      },
+    })
+  })
+
+  it('markDirty / markClean toggle dirty on the target tab', () => {
+    useEditorStore.getState().markDirty('a')
+    expect(useEditorStore.getState().findTab('a')?.dirty).toBe(true)
+    useEditorStore.getState().markClean('a')
+    expect(useEditorStore.getState().findTab('a')?.dirty).toBe(false)
+  })
+
+  it('reloadFromDisk replaces content and clears dirty', async () => {
+    useEditorStore.getState().markDirty('b')
+    await useEditorStore.getState().reloadFromDisk('b', 'from-disk', 1234)
+    const tab = useEditorStore.getState().findTab('b')
+    expect(tab?.content).toBe('from-disk')
+    expect(tab?.dirty).toBe(false)
+    expect(tab?.diskMtime).toBe(1234)
+    expect(tab?.contentEpoch).toBe(1)
+  })
+
+  it('renamePath updates visible and stashed tabs under the old path', () => {
+    useEditorStore.getState().renamePath('D:\\proj\\src', 'D:\\proj\\app')
+    expect(useEditorStore.getState().findTab('a')?.path).toBe('D:\\proj\\app\\a.ts')
+    expect(useEditorStore.getState().findTab('a')?.name).toBe('a.ts')
+    expect(useEditorStore.getState().findTab('b')?.path).toBe('D:\\proj\\app\\b.ts')
+    expect(useEditorStore.getState().projectSessions.other.tabs[0]?.path).toBe(
+      'D:\\proj\\lib\\c.ts',
+    )
+
+    useEditorStore.getState().renamePath('D:\\proj\\lib\\c.ts', 'D:\\proj\\lib\\renamed.ts')
+    expect(useEditorStore.getState().projectSessions.other.tabs[0]?.path).toBe(
+      'D:\\proj\\lib\\renamed.ts',
+    )
+    expect(useEditorStore.getState().projectSessions.other.tabs[0]?.name).toBe('renamed.ts')
+  })
+
+  it('setDiskMtime updates external-change baseline without clearing content', () => {
+    useEditorStore.getState().setDiskMtime('a', 999)
+    const tab = useEditorStore.getState().findTab('a')
+    expect(tab?.diskMtime).toBe(999)
+    expect(tab?.content).toBe('a')
+    expect(tab?.dirty).toBe(false)
+  })
+})

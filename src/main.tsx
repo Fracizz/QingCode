@@ -22,8 +22,12 @@ applyTheme(loadTheme())
 initializeLanguage()
 paintStartupSplashLogo()
 applyFontSettings(loadFontSettings())
-// Apply global terminal.integrated.scrollback ASAP (project overlay loads later).
+// Apply global terminal settings ASAP (project overlay loads later).
 void import('./lib/terminalScrollbackSettings').then(m => m.loadEffectiveTerminalScrollback(null))
+void import('./lib/terminalCursorSettings').then(m =>
+  m.loadEffectiveTerminalCursorBlinking(null),
+)
+void import('./lib/formatOnSaveSettings').then(m => m.loadEffectiveFormatOnSave(null))
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

@@ -38,39 +38,58 @@ export function formatDocumentErrorToast(error: unknown): string {
   return translate('格式化失败: {error}', { error: message })
 }
 
+export type FormatDocumentOptions = {
+  /**
+   * Suppress success / already-formatted / unsupported / too-large toasts.
+   * Used by format-on-save so routine saves stay quiet; tool-missing still surfaces.
+   */
+  quiet?: boolean
+}
+
 /** Format the active (or given) editor tab via native formatters. */
-export async function formatDocument(tabId?: string): Promise<void> {
+export async function formatDocument(
+  tabId?: string,
+  options: FormatDocumentOptions = {},
+): Promise<void> {
+  const quiet = options.quiet === true
+  const toast = (level: 'success' | 'error' | 'info', message: string) => {
+    if (quiet && level !== 'error') return
+    useProjectStore.getState().pushToast(level, message)
+  }
+
   const editor = useEditorStore.getState()
   const id = tabId ?? editor.activeTabId
   if (!id) {
-    useProjectStore.getState().pushToast('error', translate('没有可格式化的文件'))
+    toast('error', translate('没有可格式化的文件'))
     return
   }
 
   const tab = editor.findTab(id)
   if (!tab) {
-    useProjectStore.getState().pushToast('error', translate('没有可格式化的文件'))
+    toast('error', translate('没有可格式化的文件'))
     return
   }
 
   if (isPinnedSettingsTab(tab.path) || tab.viewMode === 'view' || tab.loading || tab.openError) {
-    useProjectStore.getState().pushToast('error', translate('当前标签不支持格式化'))
+    if (!quiet) toast('error', translate('当前标签不支持格式化'))
     return
   }
 
   const content = getLiveEditorContent(id) ?? tab.content
   if (content === undefined) {
-    useProjectStore.getState().pushToast('error', translate('当前标签不支持格式化'))
+    if (!quiet) toast('error', translate('当前标签不支持格式化'))
     return
   }
 
   if (content.length > EDIT_DEGRADED_BYTES) {
-    useProjectStore.getState().pushToast(
-      'error',
-      translate('文件过大（>{size}），无法在编辑器内格式化', {
-        size: formatFileSize(EDIT_DEGRADED_BYTES),
-      }),
-    )
+    if (!quiet) {
+      toast(
+        'error',
+        translate('文件过大（>{size}），无法在编辑器内格式化', {
+          size: formatFileSize(EDIT_DEGRADED_BYTES),
+        }),
+      )
+    }
     return
   }
 
@@ -80,14 +99,17 @@ export async function formatDocument(tabId?: string): Promise<void> {
       content,
     })
     if (formatted === content) {
-      useProjectStore.getState().pushToast('success', translate('已是格式化结果'))
+      toast('success', translate('已是格式化结果'))
       return
     }
     const changed = applyEditorDocument(id, formatted)
     if (changed) {
-      useProjectStore.getState().pushToast('success', translate('已格式化'))
+      toast('success', translate('已格式化'))
     }
   } catch (error) {
-    useProjectStore.getState().pushToast('error', formatDocumentErrorToast(error))
+    const message = formatDocumentErrorToast(error)
+    // Quiet save path: skip "unsupported language" noise; still surface missing tools.
+    if (quiet && message.includes('暂不支持')) return
+    toast('error', message)
   }
 }

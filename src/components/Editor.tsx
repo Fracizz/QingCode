@@ -540,8 +540,14 @@ export default function Editor() {
     void import('../lib/fileSizeSettings').then(m =>
       m.loadEffectiveFileSizePreferences(currentProject),
     )
+    void import('../lib/formatOnSaveSettings').then(m =>
+      m.loadEffectiveFormatOnSave(currentProject),
+    )
     void import('../lib/terminalScrollbackSettings').then(m =>
       m.loadEffectiveTerminalScrollback(currentProject),
+    )
+    void import('../lib/terminalCursorSettings').then(m =>
+      m.loadEffectiveTerminalCursorBlinking(currentProject),
     )
   }, [currentProject?.id])
 

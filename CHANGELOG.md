@@ -8,12 +8,16 @@
 
 - VS 风格大文件分级编辑：按体积在完整编辑 / 降级编辑 / 纯文本编辑 / 只读查看间切换，降低打开超大文件时的卡顿
 - 工作区信任：未信任项目限制高风险能力，降低打开陌生仓库时的安全风险
-- 文档格式化：支持 `Shift+Alt+F` 调用 Prettier / rustfmt（需本机已安装）格式化当前文件
+- 文档格式化：支持 `Shift+Alt+F` 调用 Prettier / rustfmt / shfmt / ruff·black / gofmt（需本机已安装）格式化当前文件
+- `editor.formatOnSave`：保存前按上述格式化器自动格式化（失败时不阻断保存）
 - `files.exclude` / `search.exclude`：资源管理器与文件/内容搜索按设置 JSON 中的排除规则生效
+- `terminal.integrated.scrollback`：限制 xterm 缓冲，并跨重启持久化最近输出
+- `terminal.integrated.cursorBlinking`：控制终端光标闪烁
+- 命令面板、多项目工作区、符号跳转、轻量 Git 状态/与 HEAD 比较等一批能力
 
 ### Changed
 
-- 设置 JSON 中尚未接线的预留键（如小地图、formatOnSave、终端 scrollback 等）标注为「暂未生效」，避免误以为已生效
+- 设置 JSON 中尚未接线的预留键（如小地图、formatOnPaste 等）标注为「暂未生效」，避免误以为已生效
 
 ## [0.1.3] - 2026-07-17
 

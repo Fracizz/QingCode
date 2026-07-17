@@ -22,6 +22,10 @@ import {
   TERMINAL_SCROLLBACK_SETTINGS_EVENT,
   getTerminalScrollback,
 } from '../lib/terminalScrollbackSettings'
+import {
+  TERMINAL_CURSOR_SETTINGS_EVENT,
+  getTerminalCursorBlinking,
+} from '../lib/terminalCursorSettings'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import { translate } from '../lib/i18n'
@@ -153,7 +157,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     if (!containerRef.current) return
 
     const term = new XTerm({
-      cursorBlink: true,
+      cursorBlink: getTerminalCursorBlinking(),
       cursorStyle: 'bar',
       cursorWidth: 2,
       cursorInactiveStyle: 'outline',
@@ -298,6 +302,12 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     window.addEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
     updateScrollback()
 
+    const updateCursor = () => {
+      term.options.cursorBlink = getTerminalCursorBlinking()
+    }
+    window.addEventListener(TERMINAL_CURSOR_SETTINGS_EVENT, updateCursor)
+    updateCursor()
+
     const updateTheme = () => {
       term.options.theme = terminalTheme()
     }
@@ -358,6 +368,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       unsubscribeOutput?.()
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
+      window.removeEventListener(TERMINAL_CURSOR_SETTINGS_EVENT, updateCursor)
       window.removeEventListener(THEME_SETTINGS_EVENT, updateTheme)
       ro.disconnect()
       container.removeEventListener('paste', onPaste, true)

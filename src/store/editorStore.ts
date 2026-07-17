@@ -569,33 +569,49 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   saveFile: async (id: string) => {
     const tab = get().findTab(id)
     if (!tab || tab.openError || tab.loading || tab.viewMode === 'view') return
-    const raw = resolveTabContent(tab)
+    // Format-on-save before reading the buffer for write (quiet: no success spam).
+    try {
+      const { getFormatOnSave } = await import('../lib/formatOnSaveSettings')
+      if (getFormatOnSave()) {
+        const { formatDocument } = await import('../lib/formatDocument')
+        await formatDocument(id, { quiet: true })
+      }
+    } catch (e) {
+      console.error('formatOnSave failed:', e)
+    }
+    const afterFormat = get().findTab(id)
+    if (!afterFormat || afterFormat.openError || afterFormat.loading || afterFormat.viewMode === 'view') {
+      return
+    }
+    const raw = resolveTabContent(afterFormat)
     if (raw === undefined) return
     const content = prepareContentForSave(raw, getEditorPreferences())
-    if (!(await confirmOutsideSymlinkWrite(tab.path))) return
+    if (!(await confirmOutsideSymlinkWrite(afterFormat.path))) return
     try {
       if (isTauri()) {
         try {
-          await safeInvoke('抑制监视', 'suppress_fs_watch', { path: tab.path })
+          await safeInvoke('抑制监视', 'suppress_fs_watch', { path: afterFormat.path })
         } catch {
           /* best-effort */
         }
-        if (tab.diskMtime != null) {
+        if (afterFormat.diskMtime != null) {
           const current = await safeInvoke<number | null>('读取修改时间', 'file_mtime', {
-            path: tab.path,
+            path: afterFormat.path,
           })
-          if (current != null && current !== tab.diskMtime) {
+          if (current != null && current !== afterFormat.diskMtime) {
             useProjectStore
               .getState()
               .pushToast(
                 'error',
-                translate('磁盘文件已更改，请先重新加载或比较后再保存：{name}', { name: tab.name }),
+                translate('磁盘文件已更改，请先重新加载或比较后再保存：{name}', {
+                  name: afterFormat.name,
+                }),
               )
             return
           }
         }
       }
-      await safeInvoke('保存文件', 'write_file', { path: tab.path, content })
+      await safeInvoke('保存文件', 'write_file', { path: afterFormat.path, content })
       let mtime: number | null = null
       try {
         mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', { path: tab.path })
@@ -632,8 +648,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         void loadEffectiveEditorPreferences(project)
         void loadEffectiveFileSizePreferences(project)
         void loadEffectiveAutoSaveSettings(project).then(notifyAutoSaveSettingsChanged)
+        void import('../lib/formatOnSaveSettings').then(({ loadEffectiveFormatOnSave }) =>
+          loadEffectiveFormatOnSave(project),
+        )
         void import('../lib/terminalScrollbackSettings').then(({ loadEffectiveTerminalScrollback }) =>
           loadEffectiveTerminalScrollback(project),
+        )
+        void import('../lib/terminalCursorSettings').then(
+          ({ loadEffectiveTerminalCursorBlinking }) =>
+            loadEffectiveTerminalCursorBlinking(project),
         )
         void import('../lib/excludeSettings').then(({ loadEffectiveExcludeSettings }) =>
           loadEffectiveExcludeSettings(project).then(() => {
