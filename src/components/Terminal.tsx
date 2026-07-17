@@ -6,15 +6,20 @@ import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import { subscribeTerminalOutput, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
-import { FONT_SETTINGS_EVENT, getResolvedMonoFont, getResolvedTerminalFontSize } from '../lib/fontSettings'
+import {
+  FONT_SETTINGS_EVENT,
+  getResolvedTerminalFont,
+  getResolvedTerminalFontSize,
+} from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import '@xterm/xterm/css/xterm.css'
 
+// Backgrounds match App.css --color-bg-deep so the caret/outline stays visible.
 const DARK_THEME = {
   background: '#181818',
   foreground: '#d4d4d4',
-  cursor: '#d4d4d4',
+  cursor: '#aeafad',
   cursorAccent: '#181818',
   selectionBackground: '#264f78',
   black: '#000000',
@@ -36,10 +41,10 @@ const DARK_THEME = {
 }
 
 const LIGHT_THEME = {
-  background: '#f8f8f8',
+  background: '#e6e6e6',
   foreground: '#1f1f1f',
-  cursor: '#1f1f1f',
-  cursorAccent: '#f8f8f8',
+  cursor: '#1a1a1a',
+  cursorAccent: '#e6e6e6',
   selectionBackground: '#b9d6f5',
   black: '#000000',
   red: '#c43b32',
@@ -80,7 +85,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   const resizeTerminal = useTerminalStore(s => s.resizeTerminal)
   const terminal = useTerminalStore(s => s.terminals.find(tab => tab.id === terminalId))
 
-  const scheduleFit = (refresh = false) => {
+  const scheduleFit = (refresh = false, focusAfter = false) => {
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         const container = containerRef.current
@@ -90,6 +95,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         try {
           fitAddonRef.current?.fit()
           if (refresh) term.refresh(0, term.rows - 1)
+          if (focusAfter && isActiveRef.current) term.focus()
         } catch {}
       })
     })
@@ -100,8 +106,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const term = new XTerm({
       cursorBlink: true,
+      cursorStyle: 'bar',
+      cursorWidth: 2,
+      cursorInactiveStyle: 'outline',
       fontSize: getResolvedTerminalFontSize(),
-      fontFamily: getResolvedMonoFont(),
+      fontFamily: getResolvedTerminalFont(),
+      lineHeight: 1.0,
+      letterSpacing: 0,
+      rescaleOverlappingGlyphs: true,
       theme: terminalTheme(),
       cols: 80,
       rows: 20,
@@ -198,9 +210,9 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     container.addEventListener('mousedown', onMouseDown)
 
     const updateFont = () => {
-      term.options.fontFamily = getResolvedMonoFont()
+      term.options.fontFamily = getResolvedTerminalFont()
       term.options.fontSize = getResolvedTerminalFontSize()
-      scheduleFit()
+      scheduleFit(true, isActiveRef.current)
     }
     window.addEventListener(FONT_SETTINGS_EVENT, updateFont)
     updateFont()
@@ -210,7 +222,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     }
     window.addEventListener(THEME_SETTINGS_EVENT, updateTheme)
 
-    scheduleFit()
+    scheduleFit(false, isActiveRef.current)
 
     term.onResize(({ cols, rows }) => {
       resizeTerminal(terminalId, cols, rows)
@@ -258,8 +270,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
   useEffect(() => {
     if (!isActive) return
-    scheduleFit(true)
-    xtermRef.current?.focus()
+    scheduleFit(true, true)
   }, [isActive, layoutKey])
 
   useEffect(() => {
@@ -278,7 +289,12 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   }, [terminal])
 
   return (
-    <div className="flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden box-border">
+    <div
+      className="flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden box-border"
+      onMouseDown={() => {
+        if (isActive) xtermRef.current?.focus()
+      }}
+    >
       {terminal?.launchCommand.trim() ? (
         <div
           className="shrink-0 border-b border-border bg-bg-deep px-2.5 py-1 text-fg-dim truncate"

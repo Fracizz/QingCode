@@ -136,7 +136,8 @@ interface ProjectState {
   setProjectSortOrder: (id: string, sortOrder: number) => Promise<void>
   relocateProject: (id: string, path: string) => Promise<boolean>
   renameProject: (id: string, name: string) => Promise<void>
-  switchProject: (project: Project) => Promise<void>
+  /** @returns false if the user cancelled dirty-tab confirmation or activation failed */
+  switchProject: (project: Project) => Promise<boolean>
   addRecentFile: (path: string) => Promise<void>
   loadFileTree: () => Promise<void>
   expandDir: (path: string) => Promise<void>
@@ -306,8 +307,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
       // Open the most recent project immediately so the UI is not gated on
       // validating every project path (slow/network drives can stall startup).
+      // Prefer persisted projects, then in-memory ephemeral/empty projects.
       if (!get().currentProject) {
-        const candidate = projects.find((project) => !project.hidden)
+        const candidate =
+          projects.find((project) => !project.hidden) ??
+          ephemeralProjects.find((project) => !project.hidden)
         if (candidate) void get().switchProject(candidate)
       }
 
@@ -329,20 +333,31 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
         set({ unavailableProjectIds })
 
+        const pickAvailable = () => {
+          const all = get().projects
+          return (
+            all.find(
+              (project) =>
+                !project.hidden &&
+                !unavailableProjectIds.includes(project.id) &&
+                !project.ephemeral,
+            ) ??
+            all.find(
+              (project) => !project.hidden && !unavailableProjectIds.includes(project.id),
+            )
+          )
+        }
+
         const current = get().currentProject
         if (current && unavailableProjectIds.includes(current.id)) {
-          const firstAvailable = projects.find(
-            (project) => !project.hidden && !unavailableProjectIds.includes(project.id)
-          )
+          const firstAvailable = pickAvailable()
           if (firstAvailable) {
             await get().switchProject(firstAvailable)
           } else {
             set({ currentProject: null, recentFiles: [] })
           }
         } else if (!current) {
-          const firstAvailable = projects.find(
-            (project) => !project.hidden && !unavailableProjectIds.includes(project.id)
-          )
+          const firstAvailable = pickAvailable()
           if (firstAvailable) await get().switchProject(firstAvailable)
         }
       })()
@@ -432,10 +447,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         last_opened_at: now,
         ephemeral: true,
       }
+
+      const tabsToClose = useEditorStore
+        .getState()
+        .tabs.filter((tab) => !isDescendantOf(tab.path, project.path))
+      if (get().currentProject?.id !== id && !(await confirmDiscardTabs(tabsToClose, '切换项目'))) {
+        return false
+      }
+
       // Ephemeral projects live only in memory; they are not written to the
-      // projects table and disappear after restart.
-      set((s) => ({ projects: [project, ...s.projects] }))
-      await get().switchProject(project)
+      // projects table and disappear after restart. Set currentProject in the
+      // same update so explorer/terminal are never left without an active project.
+      set((s) => ({
+        projects: [project, ...s.projects],
+        currentProject: project,
+        recentFiles: [],
+        unavailableProjectIds: s.unavailableProjectIds.filter((pid) => pid !== id),
+        expandedProjects: { ...s.expandedProjects, [id]: true },
+      }))
+      useEditorStore.getState().closeTabsOutsideProject(project.path)
+      void get().ensureProjectTree(project)
       get().pushToast('success', `已新增空项目: ${name}（临时，重启后消失）`)
       return true
     } catch (e) {
@@ -694,11 +725,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const tabsToClose = useEditorStore
         .getState()
         .tabs.filter(tab => !isDescendantOf(tab.path, project.path))
-      if (currentProject?.id !== project.id && !await confirmDiscardTabs(tabsToClose, '切换项目')) return
+      if (currentProject?.id !== project.id && !await confirmDiscardTabs(tabsToClose, '切换项目')) {
+        return false
+      }
 
-      await safeInvoke('检查项目目录', 'validate_directory', {
-        path: project.path
-      })
+      // Ephemeral/empty projects use a scratch temp directory; do not block
+      // activation on validate so terminals remain usable.
+      if (!project.ephemeral) {
+        await safeInvoke('检查项目目录', 'validate_directory', {
+          path: project.path
+        })
+      }
       let recentFiles: RecentFile[] = []
       if (!project.ephemeral) {
         recentFiles = await withDb('切换项目', async (d) => {
@@ -718,6 +755,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       useEditorStore.getState().closeTabsOutsideProject(project.path)
       // Load the tree after the project switch paints; callers should not wait on I/O.
       void get().ensureProjectTree(project)
+      return true
     } catch (e) {
       console.error('switchProject failed:', e)
       set((s) => ({
@@ -726,6 +764,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           : [...s.unavailableProjectIds, project.id]
       }))
       get().pushToast('error', `切换项目失败: ${String(e)}`)
+      return false
     }
   },
 

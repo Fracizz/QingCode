@@ -25,6 +25,9 @@ export default function TerminalTabs() {
   const renameTerminal = useTerminalStore(s => s.renameTerminal)
   const addTerminal = useTerminalStore(s => s.addTerminal)
   const currentProject = useProjectStore(s => s.currentProject)
+  const addEmptyProject = useProjectStore(s => s.addEmptyProject)
+  const switchProject = useProjectStore(s => s.switchProject)
+  const [creatingTerminal, setCreatingTerminal] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -187,19 +190,63 @@ export default function TerminalTabs() {
     setRenameDraft('')
   }
 
-  const handleNewTerminal = (profileId?: string) => {
-    if (!currentProject) {
-      useProjectStore.getState().pushToast('info', translate('请先选择或添加项目，再创建终端'))
-      return
+  const ensureProjectForTerminal = async () => {
+    const state = useProjectStore.getState()
+    if (state.currentProject) return state.currentProject
+
+    // Prefer an already-listed project (e.g. empty/ephemeral chip in the title bar)
+    // before creating another scratch workspace.
+    const candidate =
+      state.projects.find(
+        (project) => !project.hidden && !state.unavailableProjectIds.includes(project.id),
+      ) ?? state.projects.find((project) => !project.hidden)
+
+    if (candidate) {
+      const switched = await switchProject(candidate)
+      return switched ? useProjectStore.getState().currentProject : null
     }
-    if (atLimit) {
+
+    const created = await addEmptyProject()
+    return created ? useProjectStore.getState().currentProject : null
+  }
+
+  const handleNewTerminal = (profileId?: string) => {
+    if (creatingTerminal) return
+    if (currentProject && atLimit) {
       useProjectStore.getState().pushToast(
         'info',
         translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
       )
       return
     }
-    addTerminal(currentProject.path, currentProject.id, profileId)
+
+    setCreatingTerminal(true)
+    void (async () => {
+      try {
+        const project = currentProject ?? (await ensureProjectForTerminal())
+        if (!project) {
+          useProjectStore
+            .getState()
+            .pushToast('info', translate('请先选择或添加项目，再创建终端'))
+          return
+        }
+        const sameProject = useTerminalStore
+          .getState()
+          .terminals.filter((terminal) => terminal.projectId === project.id)
+        if (sameProject.length >= MAX_TERMINALS_PER_PROJECT) {
+          useProjectStore.getState().pushToast(
+            'info',
+            translate('已达到每个项目 {count} 个终端的上限', {
+              count: MAX_TERMINALS_PER_PROJECT,
+            }),
+          )
+          return
+        }
+        await addTerminal(project.path, project.id, profileId)
+      } finally {
+        setCreatingTerminal(false)
+      }
+    })()
   }
 
   const profileMenuItems = (): ContextMenuItem[] => {
@@ -380,11 +427,11 @@ export default function TerminalTabs() {
           })}
           <Tooltip
             label={
-              atLimit
+              currentProject && atLimit
                 ? translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
                 : currentProject
                   ? translate('左键：默认配置；右键：选择终端配置')
-                  : translate('请先选择项目')
+                  : translate('新建终端（无项目时将创建空项目）')
             }
             side="top"
             wrapperClassName="flex-shrink-0"
@@ -393,14 +440,14 @@ export default function TerminalTabs() {
               type="button"
               aria-label={translate('新建终端')}
               className={`ml-1 mr-2 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded transition-colors ${
-                currentProject && !atLimit
+                !(currentProject && atLimit) && !creatingTerminal
                   ? 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                   : 'text-fg-dim cursor-not-allowed'
               }`}
-              disabled={!currentProject || atLimit}
+              disabled={Boolean(currentProject && atLimit) || creatingTerminal}
               onClick={() => handleNewTerminal()}
               onContextMenu={event => {
-                if (!currentProject || atLimit) return
+                if (!currentProject || atLimit || creatingTerminal) return
                 event.preventDefault()
                 setProfileMenu({ x: event.clientX, y: event.clientY })
               }}

@@ -136,6 +136,7 @@
     "再次点击关闭终端": "Click again to close terminal",
     "确认关闭终端": "Confirm close terminal",
     "左键：默认配置；右键：选择终端配置": "Left click: default profile; right click: choose a profile",
+    "新建终端（无项目时将创建空项目）": "New terminal (creates an empty project if none is selected)",
     "请先选择项目": "Select a project first",
     "全部项目": "All Projects",
     "限定于：": "Limited to: ",

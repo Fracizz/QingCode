@@ -32,7 +32,7 @@ fn list_windows_font_families() -> Vec<String> {
             };
             for item in key.enum_values().flatten() {
                 let (name, _) = item;
-                if let Some(family) = normalize_font_family_name(&name) {
+                for family in expand_font_family_names(&name) {
                     families.insert(family);
                 }
             }
@@ -41,16 +41,45 @@ fn list_windows_font_families() -> Vec<String> {
     families.into_iter().collect()
 }
 
+/// Windows Fonts registry values often pack several faces from one TTC into a
+/// single name joined with ` & `, e.g.
+/// `Nirmala UI & Nirmala UI Bold & Nirmala Text (TrueType)`.
+#[cfg(windows)]
+fn expand_font_family_names(raw: &str) -> Vec<String> {
+    let base = raw.split(" (").next().unwrap_or(raw).trim();
+    if base.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut seen = BTreeSet::new();
+    for part in base.split(" & ") {
+        if let Some(family) = normalize_font_family_name(part) {
+            if seen.insert(family.clone()) {
+                out.push(family);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(windows)]
 fn normalize_font_family_name(raw: &str) -> Option<String> {
     let base = raw.split(" (").next().unwrap_or(raw).trim();
-    if base.is_empty() {
+    // Reject leftover multi-face blobs instead of exposing them as one option.
+    if base.is_empty() || base.contains(" & ") {
         return None;
     }
 
     const SUFFIXES: &[&str] = &[
         " Bold Italic",
         " Bold Oblique",
+        " SemiBold Italic",
+        " Semibold Italic",
+        " SemiLight Italic",
+        " Semilight Italic",
+        " ExtraBold Italic",
+        " ExtraLight Italic",
         " Italic",
         " Oblique",
         " Bold",
@@ -58,6 +87,8 @@ fn normalize_font_family_name(raw: &str) -> Option<String> {
         " Medium",
         " SemiBold",
         " Semibold",
+        " SemiLight",
+        " Semilight",
         " Regular",
         " Black",
         " Thin",
@@ -88,7 +119,7 @@ fn normalize_font_family_name(raw: &str) -> Option<String> {
     }
 
     let family = family.trim();
-    if family.is_empty() || family.eq_ignore_ascii_case("Unknown") {
+    if family.is_empty() || family.eq_ignore_ascii_case("Unknown") || family.contains('&') {
         None
     } else {
         Some(family.to_string())
@@ -97,7 +128,7 @@ fn normalize_font_family_name(raw: &str) -> Option<String> {
 
 #[cfg(all(test, windows))]
 mod tests {
-    use super::normalize_font_family_name;
+    use super::{expand_font_family_names, normalize_font_family_name};
 
     #[test]
     fn strips_truetype_and_style_suffixes() {
@@ -112,6 +143,39 @@ mod tests {
         assert_eq!(
             normalize_font_family_name("Cascadia Code SemiBold (TrueType)").as_deref(),
             Some("Cascadia Code")
+        );
+        assert_eq!(
+            normalize_font_family_name("Nirmala UI Semilight").as_deref(),
+            Some("Nirmala UI")
+        );
+    }
+
+    #[test]
+    fn splits_ttc_multi_family_registry_names() {
+        assert_eq!(
+            expand_font_family_names(
+                "Nirmala UI & Nirmala UI Bold & Nirmala UI Semilight & Nirmala Text & Nirmala Text Bold & Nirmala Text Semilight (TrueType)"
+            ),
+            vec!["Nirmala UI".to_string(), "Nirmala Text".to_string()]
+        );
+        assert_eq!(
+            expand_font_family_names("Microsoft YaHei & Microsoft YaHei UI (TrueType)"),
+            vec![
+                "Microsoft YaHei".to_string(),
+                "Microsoft YaHei UI".to_string()
+            ]
+        );
+        assert_eq!(
+            expand_font_family_names("SimSun & NSimSun (TrueType)"),
+            vec!["SimSun".to_string(), "NSimSun".to_string()]
+        );
+    }
+
+    #[test]
+    fn rejects_unsplit_ampersand_blob() {
+        assert_eq!(
+            normalize_font_family_name("Nirmala UI & Nirmala Text"),
+            None
         );
     }
 }

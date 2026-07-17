@@ -7,6 +7,10 @@ export const SYSTEM_INTERFACE_FONT =
 export const SYSTEM_MONO_FONT =
   'ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace'
 
+/** Concrete mono stack for xterm cell metrics (avoid generic `ui-monospace` first). */
+export const TERMINAL_MONO_FONT =
+  '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace'
+
 export const JETBRAINS_MONO_FONT =
   '"JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace'
 
@@ -93,6 +97,34 @@ export function getResolvedMonoFont(): string {
   )
 }
 
+/**
+ * Font stack for xterm. Generic families like `ui-monospace` can resolve to a face
+ * with poor box-drawing coverage while fallbacks supply glyphs at wrong widths,
+ * which corrupts TUI UIs (block art, progress bars). Prefer concrete mono fonts.
+ */
+export function getResolvedTerminalFont(): string {
+  const mono = getResolvedMonoFont()
+  const parts = mono
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean)
+    .filter(part => {
+      const bare = part.replace(/^["']|["']$/g, '').toLowerCase()
+      return bare !== 'ui-monospace' && bare !== 'monospace'
+    })
+
+  const seen = new Set<string>()
+  const ordered: string[] = []
+  for (const part of [...parts, ...TERMINAL_MONO_FONT.split(',').map(p => p.trim())]) {
+    const key = part.replace(/^["']|["']$/g, '').toLowerCase()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    ordered.push(part)
+  }
+  ordered.push('monospace')
+  return ordered.join(', ')
+}
+
 export function getResolvedTerminalFontSize(): number {
   if (typeof document === 'undefined') return DEFAULT_FONT_SETTINGS.terminalFontSize
   return (
@@ -101,6 +133,73 @@ export function getResolvedTerminalFontSize(): number {
       10
     ) || DEFAULT_FONT_SETTINGS.terminalFontSize
   )
+}
+
+const FONT_STYLE_SUFFIXES = [
+  ' Bold Italic',
+  ' Bold Oblique',
+  ' SemiBold Italic',
+  ' Semibold Italic',
+  ' SemiLight Italic',
+  ' Semilight Italic',
+  ' ExtraBold Italic',
+  ' ExtraLight Italic',
+  ' Italic',
+  ' Oblique',
+  ' Bold',
+  ' Light',
+  ' Medium',
+  ' SemiBold',
+  ' Semibold',
+  ' SemiLight',
+  ' Semilight',
+  ' Regular',
+  ' Black',
+  ' Thin',
+  ' ExtraBold',
+  ' ExtraLight',
+  ' DemiBold',
+  ' Heavy',
+  ' Condensed',
+  ' Narrow',
+] as const
+
+/** Strip weight/style suffixes so Bold/Semilight map to one family. */
+export function normalizeFontFamilyLabel(raw: string): string | null {
+  let family = raw.replace(/\s*\([^)]*\)\s*$/, '').trim()
+  if (!family || family.includes('&')) return null
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const suffix of FONT_STYLE_SUFFIXES) {
+      if (family.endsWith(suffix)) {
+        const next = family.slice(0, -suffix.length).trimEnd()
+        if (next) {
+          family = next
+          changed = true
+          break
+        }
+      }
+    }
+  }
+  return family || null
+}
+
+/** Split Windows TTC registry blobs (`A & B & C`) into individual family names. */
+export function expandSystemFontFamilies(names: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const name of names) {
+    for (const part of name.split(/\s*&\s*/)) {
+      const family = normalizeFontFamilyLabel(part)
+      if (!family) continue
+      const key = family.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(family)
+    }
+  }
+  return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 }
 
 export function saveFontSettings(settings: FontSettings) {
@@ -136,8 +235,7 @@ export function systemFontOptions(
   const skip = new Set(
     [...presetLabels].map(label => label.trim().toLowerCase()).filter(Boolean),
   )
-  return families
-    .map(family => family.trim())
+  return expandSystemFontFamilies(families)
     .filter(family => family && !skip.has(family.toLowerCase()))
     .map(family => ({
       label: family,
@@ -157,7 +255,7 @@ export async function loadSystemFontFamilies(): Promise<string[]> {
         const { isTauri, safeInvoke } = await import('./tauri')
         if (!isTauri()) return []
         const fonts = await safeInvoke<string[]>('列出系统字体', 'list_system_fonts')
-        return Array.isArray(fonts) ? fonts.filter(Boolean) : []
+        return expandSystemFontFamilies(Array.isArray(fonts) ? fonts.filter(Boolean) : [])
       } catch {
         return []
       }

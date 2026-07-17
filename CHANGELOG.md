@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-07-17
+
+### Added
+
+- 无当前项目时也可新建终端：自动选用已有项目或创建临时工作区
+
+### Fixed
+
+- 系统字体列表拆分 Windows TTC 多字体注册表名（如「微软雅黑 & 微软雅黑 UI」）
+- 编辑器设置中的等宽字体实际应用到 CodeMirror（覆盖 `.cm-scroller`）
+- 终端字体/字号随设置更可靠地更新
+
 ## [0.1.2] - 2026-07-17
 
 ### Added
@@ -51,7 +63,8 @@
 - Windows 单文件 exe 打包（`pnpm package:exe`）
 - GitHub / Gitee Release 工作流与版本脚本
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.0

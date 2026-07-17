@@ -119,10 +119,18 @@ body {
   background-clip: content-box;
 }
 
-/* CodeMirror: blend into the editor surface */
+/* CodeMirror: blend into the editor surface.
+   CM base theme hardcodes `.cm-scroller { font-family: monospace }`, so the
+   family must be set on the scroller (not only `.cm-editor`) or settings never apply. */
 .cm-editor {
   height: 100%;
   background: var(--color-bg) !important;
+  font-family: var(--font-mono) !important;
+  font-size: var(--editor-font-size) !important;
+}
+.cm-editor .cm-scroller {
+  overflow: auto;
+  line-height: 1.6;
   font-family: var(--font-mono) !important;
   font-size: var(--editor-font-size) !important;
 }
@@ -132,10 +140,6 @@ body {
    interface font-size preference without changing editor or terminal text. */
 .ui-font-scaled {
   zoom: var(--ui-font-scale);
-}
-.cm-editor .cm-scroller {
-  overflow: auto;
-  line-height: 1.6;
 }
 .cm-editor.cm-focused {
   outline: none !important;
