@@ -17,6 +17,7 @@
 - 编辑器设置中的等宽字体实际应用到 CodeMirror（覆盖 `.cm-scroller`）
 - 终端字体/字号随设置更可靠地更新
 - 正式版 WebView2 下 OpenCode 等 TUI 方块字/标题重叠乱码（WebGL 自绘字形 + 稳妥等宽字体栈）
+- 正式版编辑器正文不可见/错位：CSP 对 `style-src` 注入 nonce 导致 CodeMirror 运行时样式被拦截
 
 ## [0.1.2] - 2026-07-17
 
