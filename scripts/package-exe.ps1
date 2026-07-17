@@ -21,7 +21,7 @@ $distIndex = Join-Path $projectRoot 'dist\index.html'
 
 function Write-Step([string]$Message) {
   Write-Host ""
-  Write-Host "▸ $Message" -ForegroundColor Cyan
+  Write-Host "> $Message" -ForegroundColor Cyan
 }
 
 function Get-FileSha256([string]$Path) {
@@ -124,11 +124,11 @@ try {
   } elseif ($frontendStale) {
     Invoke-FrontendBuild
   } else {
-    Write-Host '  frontend up to date — skipping pnpm build'
+    Write-Host '  frontend up to date - skipping pnpm build'
   }
 
   if ($iconsSynced) {
-    Write-Host '  icons changed — forcing Rust rebuild for embedded resources'
+    Write-Host '  icons changed - forcing Rust rebuild for embedded resources'
     Push-Location (Join-Path $projectRoot 'src-tauri')
     try {
       cargo clean -p qingcode --quiet
@@ -154,7 +154,7 @@ try {
 
   if ($SkipCopy) {
     Write-Host ""
-    Write-Host "✓ Build artifact ready (copy skipped)" -ForegroundColor Green
+    Write-Host "OK Build artifact ready (copy skipped)" -ForegroundColor Green
     Write-Host "  $($exe.FullName)"
     Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
     return
@@ -173,7 +173,7 @@ try {
   $versionedUpToDate = (Test-Path $versioned) -and ((Get-Item $versioned).Length -eq $exe.Length) -and ((Get-FileSha256 $versioned) -eq $sourceHash)
 
   if ($latestUpToDate -and $versionedUpToDate) {
-    Write-Host '  release/ already matches build output — skipping copy'
+    Write-Host '  release/ already matches build output - skipping copy'
   } else {
     function Copy-ReleaseExe([string]$From, [string]$To) {
       $temp = "$To.part"
@@ -190,14 +190,14 @@ try {
       Copy-ReleaseExe $exe.FullName $versioned
       $versionedOk = $true
     } catch {
-      Write-Host "  warning: failed to update $versioned — $_" -ForegroundColor Yellow
+      Write-Host "  warning: failed to update $versioned - $_" -ForegroundColor Yellow
     }
 
     try {
       Copy-ReleaseExe $exe.FullName $latest
       $latestOk = $true
     } catch {
-      Write-Host "  warning: failed to update $latest (exe may be running) — $_" -ForegroundColor Yellow
+      Write-Host "  warning: failed to update $latest (exe may be running) - $_" -ForegroundColor Yellow
     }
 
     if (-not $versionedOk -and -not $latestOk) {
@@ -213,7 +213,7 @@ try {
   }
 
   Write-Host ""
-  Write-Host "✓ 单文件 exe 已输出到 release/" -ForegroundColor Green
+  Write-Host "OK portable exe written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
   Write-Host "  $latest"
   Write-Host "  源: $($exe.FullName)"

@@ -475,9 +475,7 @@ fn unsupported_text_file_message(path: &str) -> String {
     let name = display_file_name(path);
     let ext = file_extension_lower(name);
     if !ext.is_empty() {
-        format!(
-            "暂不支持打开 .{ext} 格式（非文本文件），请用对应应用打开：{name}"
-        )
+        format!("暂不支持打开 .{ext} 格式（非文本文件），请用对应应用打开：{name}")
     } else {
         format!("暂不支持打开非文本或非 UTF-8 文件：{name}")
     }
@@ -556,7 +554,11 @@ pub fn read_file(path: String) -> Result<String, String> {
     match fs::read_to_string(file_path) {
         Ok(content) => Ok(content),
         Err(e) if is_utf8_decode_error(&e) => Err(unsupported_text_file_message(&path)),
-        Err(e) => Err(format!("读取文件失败：{}（{}）", display_file_name(&path), e)),
+        Err(e) => Err(format!(
+            "读取文件失败：{}（{}）",
+            display_file_name(&path),
+            e
+        )),
     }
 }
 
@@ -794,7 +796,10 @@ mod tests {
         let err = read_file(path.to_string_lossy().to_string()).unwrap_err();
         assert!(err.contains("暂不支持"), "{err}");
         assert!(err.contains("mystery.dat"), "{err}");
-        assert!(!err.to_ascii_lowercase().contains("stream did not contain"), "{err}");
+        assert!(
+            !err.to_ascii_lowercase().contains("stream did not contain"),
+            "{err}"
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }
@@ -834,7 +839,8 @@ mod tests {
         fs::write(dir.join("logo.png"), [0u8; 8]).unwrap();
         fs::write(ignored.join("pkg.js"), "module.exports = {}").unwrap();
 
-        let exts = list_file_extensions(vec![dir.to_string_lossy().to_string()], Some(1000)).unwrap();
+        let exts =
+            list_file_extensions(vec![dir.to_string_lossy().to_string()], Some(1000)).unwrap();
         assert!(exts.contains(&"ts".to_string()));
         assert!(exts.contains(&"tsx".to_string()));
         assert!(exts.contains(&"md".to_string()));

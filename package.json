@@ -17,13 +17,13 @@
     "check:frontend": "tsc --noEmit",
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri",
-    "tauri:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
+    "tauri:dev": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
     "tauri:dev:direct": "tauri dev",
     "icon:sync": "tauri icon public/app-icon-file.svg -o src-tauri/icons",
-    "package:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1",
-    "package:exe:fast": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1 -SkipFrontend -SkipIcons",
-    "bump:version": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/bump-version.ps1 -Version",
-    "release:tag": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/release-tag.ps1 -Version"
+    "package:exe": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1",
+    "package:exe:fast": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1 -SkipFrontend -SkipIcons",
+    "bump:version": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/bump-version.ps1 -Version",
+    "release:tag": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/release-tag.ps1 -Version"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

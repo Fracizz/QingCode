@@ -20,6 +20,8 @@ jobs:
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
 
       - uses: swatinem/rust-cache@v2
         with:
