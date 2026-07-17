@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type View = 'explorer' | 'search' | 'run' | 'settings'
+export type View = 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
 
 interface UIState {
   view: View

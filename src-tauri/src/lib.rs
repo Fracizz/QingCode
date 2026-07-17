@@ -6,6 +6,7 @@ mod file_associations;
 mod file_watcher;
 mod fonts;
 mod format;
+mod git;
 mod git_status;
 mod path_guard;
 mod terminal;
@@ -307,6 +308,8 @@ pub fn run() {
             git_status::get_git_head,
             git_status::get_git_workdir_status,
             git_status::git_show_head_file,
+            git::git_status,
+            git::git_diff,
             fonts::list_system_fonts,
             create_terminal,
             write_terminal,

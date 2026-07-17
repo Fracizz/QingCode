@@ -1,11 +1,11 @@
-import { FolderTree, Search, Terminal, Settings, FolderPlus, BugPlay, ListChecks } from 'lucide-react'
+import { FolderTree, Search, Terminal, Settings, FolderPlus, BugPlay, ListChecks, GitBranch } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 
 interface Props {
-  active: 'explorer' | 'search' | 'run' | 'settings'
+  active: 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
   sidebarOpen: boolean
-  onActiveChange: (v: 'explorer' | 'search' | 'run' | 'settings') => void
+  onActiveChange: (v: 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings') => void
   onToggleTerminal: () => void
   onAddProject: () => void
   onManageProjects: () => void
@@ -36,6 +36,12 @@ export default function ActivityBar({
         label={t('搜索')}
         active={active === 'search' && sidebarOpen}
         onClick={() => onActiveChange('search')}
+      />
+      <Item
+        icon={<GitBranch size={22} />}
+        label={t('源代码管理')}
+        active={active === 'sourceControl' && sidebarOpen}
+        onClick={() => onActiveChange('sourceControl')}
       />
       <Item
         icon={<BugPlay size={22} />}

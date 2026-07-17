@@ -649,6 +649,18 @@
     "已删除多项目工作区「{name}」": "Deleted multi-project workspace “{name}”",
     "打开多项目工作区失败：无法切换到目标项目": "Could not open multi-project workspace: failed to switch to the target project",
     "已打开多项目工作区「{name}」": "Opened multi-project workspace “{name}”",
-    "已打开多项目工作区「{name}」（{missing} 个项目不可用）": "Opened multi-project workspace “{name}” ({missing} project(s) unavailable)"
+    "已打开多项目工作区「{name}」（{missing} 个项目不可用）": "Opened multi-project workspace “{name}” ({missing} project(s) unavailable)",
+    "源代码管理": "Source Control",
+    "Git 功能需要 Tauri 桌面环境": "Git features require the Tauri desktop app",
+    "当前项目不是 Git 仓库": "The current project is not a Git repository",
+    "游离 HEAD": "Detached HEAD",
+    "{count} 个更改": "{count} changes",
+    "工作区没有未提交的更改": "The working tree has no uncommitted changes",
+    "选择一个更改查看差异": "Select a change to view its diff",
+    "正在读取 Git 状态…": "Reading Git status…",
+    "正在读取差异…": "Reading diff…",
+    "未跟踪文件尚无 Git Diff；添加到仓库后即可查看。": "Untracked files have no Git diff yet. Add the file to the repository to view one.",
+    "该文件当前没有可显示的未暂存差异。": "This file has no unstaged diff to display.",
+    "读取差异失败：{error}": "Could not read diff: {error}"
   }
 }

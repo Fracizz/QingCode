@@ -61,6 +61,7 @@ import {
 const Editor = lazy(() => import('./components/Editor'))
 const TerminalView = lazy(() => import('./components/Terminal'))
 const SearchPanel = lazy(() => import('./components/SearchPanel'))
+const SourceControlPanel = lazy(() => import('./components/SourceControlPanel'))
 const RunPanel = lazy(() => import('./components/RunPanel'))
 const ProjectManager = lazy(() => import('./components/ProjectManager'))
 const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'))
@@ -451,6 +452,18 @@ function App() {
           >
             <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
               <SearchPanel />
+            </Suspense>
+          </ResizableSidebar>
+        )}
+
+        {sidebarOpen && view === 'sourceControl' && (
+          <ResizableSidebar
+            width={sidebarWidth}
+            onWidthChange={setSidebarWidth}
+            className="ui-font-scaled bg-bg-sidebar"
+          >
+            <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+              <SourceControlPanel />
             </Suspense>
           </ResizableSidebar>
         )}
