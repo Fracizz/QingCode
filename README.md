@@ -139,10 +139,22 @@ pnpm release:tag 0.1.1
 推送形如 `v0.1.1` 的 tag 到 GitHub 后，[Release](./.github/workflows/release.yml) 工作流会：
 
 1. 在 `windows-latest` 上执行 `pnpm package:exe`
-2. 创建对应 GitHub Release
-3. 上传 `QingCode_<version>.exe` 与 `QingCode.exe`
+2. 创建 [GitHub Release](https://github.com/Fracizz/QingCode/releases) 并上传 exe
+3. 若已配置 `GITEE_TOKEN`，同步创建 [Gitee Release](https://gitee.com/FrancizTest_admin/qing-code/releases) 并上传同一份 exe
 
-草稿/预发布可通过 workflow 输入或后续在 GitHub Release 页面调整。
+#### 配置 Gitee 同步（一次性）
+
+1. 打开 Gitee → 设置 → [私人令牌](https://gitee.com/profile/personal_access_tokens)，新建令牌，勾选 `projects`（仓库与 Releases）权限。
+2. 打开 GitHub 仓库 → Settings → Secrets and variables → Actions，新增 Secret：
+   - Name: `GITEE_TOKEN`
+   - Value: 上一步的令牌
+3. 之后每次推送 `v*` 标签都会自动同步到 Gitee Releases。
+
+也可本地上传（需本机已打出 `release/` 产物，并设置环境变量 `GITEE_TOKEN`）：
+
+```powershell
+pnpm gitee:release 0.1.0
+```
 
 ## 相关文档
 

@@ -7,6 +7,7 @@
 ### Added
 
 - GitHub Release 工作流：推送 `v*` 标签后自动构建 Windows 单文件 exe 并上传
+- Gitee Release 同步：配置 `GITEE_TOKEN` 后同一份 exe 自动上传到 Gitee Releases
 - 版本同步脚本 `pnpm bump:version` 与发版标签脚本 `pnpm release:tag`
 - 中英双语 README
 

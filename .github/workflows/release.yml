@@ -17,6 +17,8 @@ permissions:
 jobs:
   release-windows:
     runs-on: windows-latest
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -101,6 +103,36 @@ jobs:
             1. Download `QingCode_${{ steps.meta.outputs.version }}.exe`
             2. Run it (WebView2 required on Windows 10/11)
             3. See [CHANGELOG.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.md) for details
+
+            Also mirrored on Gitee: https://gitee.com/FrancizTest_admin/qing-code/releases
           files: |
             release/QingCode_${{ steps.meta.outputs.version }}.exe
             release/QingCode.exe
+
+      - name: Publish Gitee Release
+        if: env.GITEE_TOKEN != ''
+        shell: pwsh
+        run: |
+          $ver = '${{ steps.meta.outputs.version }}'
+          $tag = '${{ steps.meta.outputs.tag }}'
+          $body = @"
+          ## QingCode v$ver
+
+          Windows portable build (no installer).
+
+          1. Download ``QingCode_$ver.exe``
+          2. Run it (WebView2 required on Windows 10/11)
+          3. Changelog: https://gitee.com/FrancizTest_admin/qing-code/blob/master/CHANGELOG.md
+          "@
+          ./scripts/publish-gitee-release.ps1 `
+            -Tag $tag `
+            -Name "QingCode v$ver" `
+            -Body $body.Trim() `
+            -Files @(
+              "release/QingCode_$ver.exe",
+              'release/QingCode.exe'
+            )
+
+      - name: Gitee token missing
+        if: env.GITEE_TOKEN == ''
+        run: echo "::warning::GITEE_TOKEN secret is not set; skipped Gitee release upload. Add it under GitHub repo Settings > Secrets and variables > Actions, then re-run the Release workflow."

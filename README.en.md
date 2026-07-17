@@ -139,8 +139,22 @@ pnpm release:tag 0.1.1
 Pushing a tag like `v0.1.1` to GitHub runs the [Release](./.github/workflows/release.yml) workflow, which:
 
 1. Builds with `pnpm package:exe` on `windows-latest`
-2. Creates a GitHub Release
-3. Uploads `QingCode_<version>.exe` and `QingCode.exe`
+2. Creates a [GitHub Release](https://github.com/Fracizz/QingCode/releases) and uploads the exe
+3. If `GITEE_TOKEN` is configured, mirrors the same assets to [Gitee Releases](https://gitee.com/FrancizTest_admin/qing-code/releases)
+
+#### One-time Gitee sync setup
+
+1. Create a Gitee [private token](https://gitee.com/profile/personal_access_tokens) with `projects` scope.
+2. In the GitHub repo: Settings → Secrets and variables → Actions → New secret:
+   - Name: `GITEE_TOKEN`
+   - Value: the token from step 1
+3. Later `v*` tags will publish to both GitHub and Gitee.
+
+Local upload (requires `release/` artifacts and `GITEE_TOKEN` in the environment):
+
+```powershell
+pnpm gitee:release 0.1.0
+```
 
 ## Related docs
 

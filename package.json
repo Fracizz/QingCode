@@ -23,7 +23,8 @@
     "package:exe": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1",
     "package:exe:fast": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1 -SkipFrontend -SkipIcons",
     "bump:version": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/bump-version.ps1 -Version",
-    "release:tag": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/release-tag.ps1 -Version"
+    "release:tag": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/release-tag.ps1 -Version",
+    "gitee:release": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/gitee-release.ps1 -Version"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
