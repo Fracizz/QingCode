@@ -1,10 +1,31 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { basicSetup, minimalSetup } from 'codemirror'
 import { search } from '@codemirror/search'
-import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state'
-import { Decoration, EditorView, keymap, lineNumbers, type DecorationSet } from '@codemirror/view'
+import { Compartment, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
+import {
+  Decoration,
+  EditorView,
+  crosshairCursor,
+  drawSelection,
+  dropCursor,
+  highlightActiveLine,
+  highlightSpecialChars,
+  keymap,
+  lineNumbers,
+  rectangularSelection,
+  type DecorationSet,
+} from '@codemirror/view'
 import { createEditorFindReplacePanel } from './EditorFindReplacePanel'
-import { redo, redoDepth, selectAll, undo, undoDepth } from '@codemirror/commands'
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  redo,
+  redoDepth,
+  selectAll,
+  undo,
+  undoDepth,
+} from '@codemirror/commands'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { javascript } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
@@ -27,6 +48,7 @@ import {
   Scissors,
   SquareMousePointer,
   Undo2,
+  AlignLeft,
 } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { useEditorStore } from '../store/editorStore'
@@ -50,6 +72,7 @@ import { translate, useI18n } from '../lib/i18n'
 import { notifyEditorBlur, notifyEditorContentChanged } from '../lib/autoSave'
 import {
   captureEditorScroll,
+  clearTabContentBuffer,
   flushLiveEditorContent,
   getLiveEditorContent,
   isHugeDocument,
@@ -60,11 +83,14 @@ import {
   takeCachedEditorState,
   unregisterEditorView,
 } from '../lib/editorSession'
-import { isLoadingTab, isOpenErrorTab } from '../lib/openFileError'
+import { editorPerfProfileForTab, type EditorPerfProfile } from '../lib/fileSizePolicy'
+import { formatDocument } from '../lib/formatDocument'
+import { isLoadingTab, isOpenErrorTab, isViewOnlyTab } from '../lib/openFileError'
 import type { EditorTab } from '../types'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import MarkdownPreview from './MarkdownPreview'
 import EditorOpenError from './EditorOpenError'
+import LargeFileViewer from './LargeFileViewer'
 
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
 const lightTheme = EditorView.theme(
@@ -176,6 +202,21 @@ function isMarkdownTab(tab: EditorTab | undefined | null): boolean {
   return /\.md$/i.test(tab.path)
 }
 
+function plainEditorBase(showLineNumbers: boolean): Extension[] {
+  return [
+    highlightSpecialChars(),
+    history({ minDepth: 20, newGroupDelay: 300 }),
+    drawSelection(),
+    dropCursor(),
+    rectangularSelection(),
+    crosshairCursor(),
+    highlightActiveLine(),
+    showLineNumbers ? lineNumbers() : [],
+    keymap.of([...historyKeymap, ...defaultKeymap]),
+    search({ top: true, createPanel: createEditorFindReplacePanel }),
+  ]
+}
+
 function createTabEditorState(
   tab: EditorTab,
   themeCompartment: Compartment,
@@ -186,27 +227,38 @@ function createTabEditorState(
 ): EditorState {
   const tabId = tab.id
   const tabPath = tab.path
-  const large = isLargeDocument(tab.content)
-  const huge = isHugeDocument(tab.content)
+  const profile: EditorPerfProfile = editorPerfProfileForTab(tab)
+  const large = profile === 'full' && isLargeDocument(tab.content)
+  const huge = profile !== 'full' || isHugeDocument(tab.content)
   const langFactory = !huge && tab.language ? LANG_MAP[tab.language] : undefined
-  // Large docs: skip language on first paint; enable after idle. Huge: never.
-  const initialLang = !large && langFactory ? langFactory() : []
-  const prefs = getEditorPreferences()
+  // Large docs: skip language on first paint; enable after idle. Degraded/plain/huge: never.
+  const initialLang = profile === 'full' && !large && langFactory ? langFactory() : []
+  const basePrefs = getEditorPreferences()
+  const prefs =
+    profile === 'full'
+      ? basePrefs
+      : { ...basePrefs, wordWrap: 'off' as const }
   const showLineNumbers = prefs.lineNumbers !== 'off'
+  const settingsContent = profile === 'full' ? tab.content : undefined
 
-  return EditorState.create({
-    doc: tab.content || '',
-    extensions: [
-      large
+  const setup: Extension[] =
+    profile === 'plain'
+      ? plainEditorBase(showLineNumbers)
+      : profile === 'degraded' || large
         ? [
             minimalSetup,
             showLineNumbers ? lineNumbers() : [],
             search({ top: true, createPanel: createEditorFindReplacePanel }),
           ]
-        : [basicSetup, search({ top: true, createPanel: createEditorFindReplacePanel })],
+        : [basicSetup, search({ top: true, createPanel: createEditorFindReplacePanel })]
+
+  return EditorState.create({
+    doc: tab.content || '',
+    extensions: [
+      setup,
       themeCompartment.of(editorThemeExtension()),
       languageCompartment.of(initialLang),
-      settingsCompartment.of(buildEditorPreferenceExtensions(prefs, tab.content)),
+      settingsCompartment.of(buildEditorPreferenceExtensions(prefs, settingsContent)),
       flashField,
       EditorView.updateListener.of(update => {
         if (update.docChanged) {
@@ -269,7 +321,15 @@ function createTabEditorState(
         {
           key: 'Ctrl-Shift-v',
           run: () => {
+            if (editorPerfProfileForTab(tab) !== 'full') return true
             window.dispatchEvent(new CustomEvent('qingcode:toggle-markdown-preview'))
+            return true
+          },
+        },
+        {
+          key: 'Shift-Alt-f',
+          run: () => {
+            void formatDocument(tabId)
             return true
           },
         },
@@ -310,14 +370,26 @@ function bindTabToView(
   view.setState(state)
   registerEditorView(tab.id, view)
   restoreEditorScroll(tab.id, view)
+  const profile = editorPerfProfileForTab(tab)
+  const prefs =
+    profile === 'full'
+      ? getEditorPreferences()
+      : { ...getEditorPreferences(), wordWrap: 'off' as const }
   view.dispatch({
     effects: [
       themeCompartment.reconfigure(editorThemeExtension()),
       settingsCompartment.reconfigure(
-        buildEditorPreferenceExtensions(getEditorPreferences(), tab.content),
+        buildEditorPreferenceExtensions(
+          prefs,
+          profile === 'full' ? tab.content : undefined,
+        ),
       ),
     ],
   })
+  // Plain: CM owns the buffer; drop Zustand duplicate after bind.
+  if (profile === 'plain' && tab.content !== undefined) {
+    clearTabContentBuffer(tab.id)
+  }
   return tab.id
 }
 
@@ -347,8 +419,12 @@ export default function Editor() {
   const pendingReveal = useEditorStore(s => s.pendingReveal)
   const clearPendingReveal = useEditorStore(s => s.clearPendingReveal)
   const showEditor =
-    !!activeTab && !isOpenErrorTab(activeTab) && !isLoadingTab(activeTab)
-  const markdownTab = isMarkdownTab(activeTab)
+    !!activeTab &&
+    !isOpenErrorTab(activeTab) &&
+    !isLoadingTab(activeTab) &&
+    !isViewOnlyTab(activeTab)
+  const activeProfile = activeTab ? editorPerfProfileForTab(activeTab) : 'full'
+  const markdownTab = isMarkdownTab(activeTab) && activeProfile === 'full'
   const showPreviewPane = markdownTab && mdPreviewMode !== 'off'
   const showSourcePane = !markdownTab || mdPreviewMode !== 'preview'
 
@@ -414,14 +490,15 @@ export default function Editor() {
       )
     }
 
-    const large = isLargeDocument(activeTab.content)
-    const huge = isHugeDocument(activeTab.content)
+    const profile = editorPerfProfileForTab(activeTab)
+    const large = profile === 'full' && isLargeDocument(activeTab.content)
+    const huge = profile !== 'full' || isHugeDocument(activeTab.content)
     const langFactory =
       !huge && activeTab.language ? LANG_MAP[activeTab.language] : undefined
 
     let cancelLanguage: (() => void) | undefined
     // Re-schedule after StrictMode remounts; reconfigure is cheap/idempotent.
-    if (large && langFactory) {
+    if (profile === 'full' && large && langFactory) {
       const tabId = activeTab.id
       cancelLanguage = scheduleIdle(() => {
         const current = viewRef.current
@@ -442,6 +519,7 @@ export default function Editor() {
     activeTabId,
     activeTab?.loading,
     activeTab?.openError,
+    activeTab?.viewMode,
     activeTab?.contentEpoch,
     markDirty,
     saveFile,
@@ -466,9 +544,17 @@ export default function Editor() {
       const view = viewRef.current
       if (!view) return
       const tab = useEditorStore.getState().tabs.find(t => t.id === boundTabIdRef.current)
+      const profile = tab ? editorPerfProfileForTab(tab) : 'full'
+      const next =
+        profile === 'full'
+          ? (prefs ?? getEditorPreferences())
+          : { ...(prefs ?? getEditorPreferences()), wordWrap: 'off' as const }
       view.dispatch({
         effects: settingsCompartment.current.reconfigure(
-          buildEditorPreferenceExtensions(prefs ?? getEditorPreferences(), tab?.content),
+          buildEditorPreferenceExtensions(
+            next,
+            profile === 'full' ? tab?.content : undefined,
+          ),
         ),
       })
     }
@@ -501,7 +587,7 @@ export default function Editor() {
       const tab = useEditorStore
         .getState()
         .tabs.find(t => t.id === useEditorStore.getState().activeTabId)
-      if (!isMarkdownTab(tab)) return
+      if (!isMarkdownTab(tab) || !tab || editorPerfProfileForTab(tab) !== 'full') return
       setMdPreviewMode(mode => (mode === 'off' ? 'side' : mode === 'side' ? 'preview' : 'off'))
     }
     window.addEventListener('qingcode:toggle-markdown-preview', onToggle)
@@ -671,6 +757,14 @@ export default function Editor() {
         },
       },
       {
+        label: t('格式化文档'),
+        icon: <AlignLeft size={14} />,
+        shortcut: 'Shift+Alt+F',
+        action: () => {
+          if (activeTabId) void formatDocument(activeTabId)
+        },
+      },
+      {
         label: t('复制路径'),
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+Shift+C',
@@ -732,6 +826,10 @@ export default function Editor() {
 
   if (isOpenErrorTab(activeTab)) {
     return <EditorOpenError tab={activeTab} />
+  }
+
+  if (isViewOnlyTab(activeTab)) {
+    return <LargeFileViewer tab={activeTab} />
   }
 
   if (isLoadingTab(activeTab)) {

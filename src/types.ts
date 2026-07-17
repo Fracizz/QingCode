@@ -28,6 +28,13 @@ export interface EditorTab {
   dirty: boolean
   content?: string
   language?: string
+  /**
+   * `view` = read-only slice viewer for files above the plain-edit cap (100–500MB).
+   * Default / omitted = CodeMirror edit (full / degraded / plain by size).
+   */
+  viewMode?: 'edit' | 'view'
+  /** On-disk size in bytes when known (used by large-file viewer). */
+  fileSize?: number
   /** True while read_file is in flight (progressive open). */
   loading?: boolean
   /** Set when read_file failed; tab stays open like VS Code error editors. */

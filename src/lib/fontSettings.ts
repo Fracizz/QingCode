@@ -78,7 +78,8 @@ export const DEFAULT_FONT_SETTINGS: FontSettings = {
   interfaceFont: SYSTEM_INTERFACE_FONT,
   monoFont: SYSTEM_MONO_FONT,
   interfaceFontSize: 13,
-  editorFontSize: 13,
+  /** Keep in sync with DEFAULT_GLOBAL_SETTINGS['editor.fontSize']. */
+  editorFontSize: 14,
   terminalFontSize: 13,
 }
 
@@ -257,10 +258,55 @@ export function expandSystemFontFamilies(names: string[]): string[] {
   return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 }
 
-export function saveFontSettings(settings: FontSettings) {
+export type SaveFontSettingsOptions = {
+  /** When false, only update localStorage/CSS (used when settings JSON is the writer). */
+  syncEditorFontSizeToSettings?: boolean
+}
+
+/** Apply font CSS + localStorage without writing settings JSON. */
+export function applyStoredFontSettings(settings: FontSettings) {
   localStorage.setItem(FONT_SETTINGS_KEY, JSON.stringify(settings))
   applyFontSettings(settings)
   window.dispatchEvent(new Event(FONT_SETTINGS_EVENT))
+}
+
+/**
+ * Mirror effective `editor.fontSize` into the Settings UI store / CSS.
+ * Does not write back to settings JSON (avoids loops).
+ */
+export function syncEditorFontSizeFromPreferences(fontSize: number) {
+  const size = Math.min(48, Math.max(8, Math.round(fontSize)))
+  const current = loadFontSettings()
+  if (current.editorFontSize === size) {
+    document.documentElement.style.setProperty('--editor-font-size', `${size}px`)
+    return
+  }
+  applyStoredFontSettings({ ...current, editorFontSize: size })
+}
+
+async function syncEditorFontSizeToGlobalSettings(fontSize: number) {
+  try {
+    const { loadGlobalSettings, saveGlobalSettings } = await import('./projectSettings')
+    const global = await loadGlobalSettings()
+    if (global['editor.fontSize'] === fontSize) return
+    await saveGlobalSettings({ ...global, 'editor.fontSize': fontSize })
+    const { getEditorPreferences, notifyEditorSettingsChanged } = await import('./editorSettings')
+    const prefs = getEditorPreferences()
+    if (prefs.fontSize !== fontSize) {
+      notifyEditorSettingsChanged({ ...prefs, fontSize })
+    }
+  } catch (e) {
+    console.error('sync editor.fontSize to settings failed:', e)
+  }
+}
+
+export function saveFontSettings(
+  settings: FontSettings,
+  options: SaveFontSettingsOptions = {},
+) {
+  applyStoredFontSettings(settings)
+  if (options.syncEditorFontSizeToSettings === false) return
+  void syncEditorFontSizeToGlobalSettings(settings.editorFontSize)
 }
 
 /** Keep unknown persisted values selectable after preset lists change. */

@@ -1,5 +1,5 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { X, Circle, Copy, ExternalLink, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle } from 'lucide-react'
+import { X, Circle, Copy, ExternalLink, Eye, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle } from 'lucide-react'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -12,7 +12,7 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import type { EditorTab } from '../types'
 import { useI18n } from '../lib/i18n'
-import { isLoadingTab, isOpenErrorTab } from '../lib/openFileError'
+import { isLoadingTab, isOpenErrorTab, isViewOnlyTab } from '../lib/openFileError'
 
 function parentPath(path: string) {
   const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -188,16 +188,21 @@ export default function EditorTabs() {
         {tabs.map(tab => {
           const active = tab.id === activeTabId
           const loading = isLoadingTab(tab)
+          const viewOnly = isViewOnlyTab(tab)
           const Icon = isOpenErrorTab(tab)
             ? AlertTriangle
             : loading
               ? LoaderCircle
-              : getFileIcon(tab.name)
+              : viewOnly
+                ? Eye
+                : getFileIcon(tab.name)
           const iconClass = isOpenErrorTab(tab)
             ? 'flex-shrink-0 text-warn'
             : loading
               ? 'flex-shrink-0 text-accent animate-spin'
-              : 'flex-shrink-0 opacity-80'
+              : viewOnly
+                ? 'flex-shrink-0 text-accent opacity-90'
+                : 'flex-shrink-0 opacity-80'
           return (
             <div
               key={tab.id}

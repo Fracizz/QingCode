@@ -14,10 +14,13 @@ import { useProjectStore } from '../store/projectStore'
 import { useRunConfigStore, type RunConfig, type RunTask, type RunTaskType, RUN_CONFIG_RELATIVE_PATH } from '../store/runConfigStore'
 import { useTerminalStore } from '../store/terminalStore'
 import {
+  isProjectRestricted,
   isProjectTrusted,
-  untrustProject,
-  RUN_TRUST_CHANGED_EVENT,
-} from '../lib/runTrust'
+  restrictProject,
+  trustProject,
+  pushTrustedRootsToNative,
+  WORKSPACE_TRUST_CHANGED_EVENT,
+} from '../lib/workspaceTrust'
 import RunConfigEditor from './RunConfigEditor'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
@@ -53,19 +56,24 @@ export default function RunPanel() {
   const terminals = useTerminalStore(s => s.terminals)
   const setActiveTerminal = useTerminalStore(s => s.setActiveTerminal)
 
+  const projects = useProjectStore(s => s.projects)
   const [editing, setEditing] = useState<RunConfig | null>(null)
   const [creating, setCreating] = useState(false)
   const [projectTrusted, setProjectTrusted] = useState(false)
+  const [projectRestricted, setProjectRestricted] = useState(false)
 
   useEffect(() => {
     if (currentProject) void loadConfigs(currentProject)
   }, [currentProject?.id, loadConfigs, currentProject])
 
   useEffect(() => {
-    const sync = () => setProjectTrusted(currentProject ? isProjectTrusted(currentProject) : false)
+    const sync = () => {
+      setProjectTrusted(currentProject ? isProjectTrusted(currentProject) : false)
+      setProjectRestricted(currentProject ? isProjectRestricted(currentProject) : false)
+    }
     sync()
-    window.addEventListener(RUN_TRUST_CHANGED_EVENT, sync)
-    return () => window.removeEventListener(RUN_TRUST_CHANGED_EVENT, sync)
+    window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
   }, [currentProject?.id, currentProject?.path])
 
   const configs = currentProject ? configsByProject[currentProject.id] ?? [] : []
@@ -98,7 +106,15 @@ export default function RunPanel() {
         title={`${t('运行配置')} · ${currentProject.name}`}
         onAdd={() => setCreating(true)}
         trusted={projectTrusted}
-        onUntrust={() => untrustProject(currentProject)}
+        restricted={projectRestricted}
+        onRestrict={() => {
+          restrictProject(currentProject)
+          void pushTrustedRootsToNative(projects)
+        }}
+        onTrust={() => {
+          trustProject(currentProject)
+          void pushTrustedRootsToNative(projects)
+        }}
       />
       <div className="px-4 pb-2 text-[11px] text-fg-dim">
         {t('配置保存在')}{' '}
@@ -107,10 +123,15 @@ export default function RunPanel() {
         {projectTrusted ? (
           <span className="ml-2 inline-flex items-center gap-1 text-ok">
             <ShieldCheck size={11} />
-            {t('已信任此项目的运行配置')}
+            {t('已信任此项目')}
+          </span>
+        ) : projectRestricted ? (
+          <span className="ml-2 inline-flex items-center gap-1 text-warn">
+            <ShieldOff size={11} />
+            {t('受限模式：无法运行任务')}
           </span>
         ) : (
-          <span className="ml-2 text-fg-dim">{t('首次运行前需确认或信任项目')}</span>
+          <span className="ml-2 text-fg-dim">{t('打开项目时将询问是否信任')}</span>
         )}
       </div>
 
@@ -232,12 +253,16 @@ function Header({
   title,
   onAdd,
   trusted,
-  onUntrust,
+  restricted,
+  onRestrict,
+  onTrust,
 }: {
   title: string
   onAdd?: () => void
   trusted?: boolean
-  onUntrust?: () => void
+  restricted?: boolean
+  onRestrict?: () => void
+  onTrust?: () => void
 }) {
   const { t } = useI18n()
   return (
@@ -247,15 +272,27 @@ function Header({
         <span className="truncate">{title}</span>
       </span>
       <span className="flex items-center gap-0.5 flex-shrink-0">
-        {trusted && onUntrust && (
-          <Tooltip label={t('撤销运行信任')} side="bottom">
+        {trusted && onRestrict && (
+          <Tooltip label={t('切换为受限模式')} side="bottom">
             <button
               type="button"
-              onClick={onUntrust}
+              onClick={onRestrict}
               className="text-fg-dim hover:text-warn p-1 rounded hover:bg-bg-hover"
-              aria-label={t('撤销运行信任')}
+              aria-label={t('切换为受限模式')}
             >
               <ShieldOff size={14} />
+            </button>
+          </Tooltip>
+        )}
+        {restricted && onTrust && (
+          <Tooltip label={t('信任此项目')} side="bottom">
+            <button
+              type="button"
+              onClick={onTrust}
+              className="text-fg-dim hover:text-ok p-1 rounded hover:bg-bg-hover"
+              aria-label={t('信任此项目')}
+            >
+              <ShieldCheck size={14} />
             </button>
           </Tooltip>
         )}

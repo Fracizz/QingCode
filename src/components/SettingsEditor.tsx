@@ -248,6 +248,8 @@ export default function SettingsEditor() {
           'Windows',
           'Alt+C',
           'Ctrl+Shift+C',
+          'Shift+Alt+F',
+          '格式化',
         )
       }
       if (cat.id === 'language') return match('语言', '简体中文', 'English')
@@ -527,7 +529,7 @@ export default function SettingsEditor() {
                 </SettingItem>
                 <SettingItem
                   title={t('编辑器: 字号')}
-                  description={t('控制编辑器中的字号（像素）。')}
+                  description={t('控制编辑器中的字号（像素），对应用户设置 editor.fontSize。')}
                   modified={fonts.editorFontSize !== DEFAULT_FONT_SETTINGS.editorFontSize}
                   locked={workspaceLocked}
                   lockHint={t('此设置仅在用户作用域中可用')}

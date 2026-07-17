@@ -35,6 +35,7 @@ import {
 import { EditorView, runScopeHandlers, type Panel, type ViewUpdate } from '@codemirror/view'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
+import { shouldSkipSearchMatchCount } from '../lib/editorSession'
 
 const ICON_BTN =
   'inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[5px] text-fg-muted hover:bg-bg-hover hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/50 disabled:opacity-40 disabled:pointer-events-none'
@@ -49,6 +50,8 @@ type PanelProps = {
 
 function countMatches(view: EditorView, query: SearchQuery): { current: number; total: number } {
   if (!query.valid || !query.search) return { current: 0, total: 0 }
+  // Degraded/plain docs: skip full-document match scans (VS-style large-file guard).
+  if (shouldSkipSearchMatchCount(view.state.doc.length)) return { current: 0, total: 0 }
   const cursor = query.getCursor(view.state)
   const ranges: { from: number; to: number }[] = []
   for (let step = cursor.next(); !step.done; step = cursor.next()) {

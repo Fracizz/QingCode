@@ -35,6 +35,7 @@ import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
 import { listenForOpenFileRequests, openLaunchFiles } from './lib/launchFiles'
 import { useI18n } from './lib/i18n'
+import { formatDocument } from './lib/formatDocument'
 import { isShortcutInputTarget, shortcutMatchesEvent } from './lib/shortcuts'
 import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
@@ -44,6 +45,13 @@ import {
   markWorkspaceSessionPersistReady,
   pruneWorkspaceSessions,
 } from './lib/workspaceSessionSync'
+import {
+  isProjectRestricted,
+  isProjectTrusted,
+  trustProject,
+  pushTrustedRootsToNative,
+  WORKSPACE_TRUST_CHANGED_EVENT,
+} from './lib/workspaceTrust'
 
 const Editor = lazy(() => import('./components/Editor'))
 const TerminalView = lazy(() => import('./components/Terminal'))
@@ -151,8 +159,24 @@ function App() {
   const initializeTerminalEvents = useTerminalStore(s => s.initializeTerminalEvents)
   const loadMissingTabContents = useEditorStore(s => s.loadMissingTabContents)
   const currentProject = useProjectStore(s => s.currentProject)
+  const projects = useProjectStore(s => s.projects)
   const loadProjects = useProjectStore(s => s.loadProjects)
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
+  const [trustTick, setTrustTick] = useState(0)
+  useEffect(() => {
+    const sync = () => setTrustTick(n => n + 1)
+    window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
+  }, [])
+  const projectRestricted =
+    trustTick >= 0 &&
+    !!currentProject &&
+    !currentProject.ephemeral &&
+    isProjectRestricted(currentProject)
+  const projectTrusted =
+    trustTick >= 0 &&
+    !!currentProject &&
+    (currentProject.ephemeral || isProjectTrusted(currentProject))
   const activeTabId = useEditorStore(s => s.activeTabId)
   const view = useUIStore(s => s.view)
   const sidebarOpen = useUIStore(s => s.sidebarOpen)
@@ -172,6 +196,7 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth)
   const [isTerminalResizing, setIsTerminalResizing] = useState(false)
   const dragStateRef = useRef<{ startY: number; startH: number } | null>(null)
+  const [projectsReady, setProjectsReady] = useState(false)
 
   const onResizerMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -198,9 +223,6 @@ function App() {
     },
     [terminalHeight]
   )
-
-  const projects = useProjectStore(s => s.projects)
-  const [projectsReady, setProjectsReady] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -288,6 +310,16 @@ function App() {
       } else if (shortcutMatchesEvent(shortcuts.openSettings, event)) {
         event.preventDefault()
         setView('settings')
+      } else if (shortcutMatchesEvent('Shift+Alt+F', event)) {
+        // Editor keymap owns the shortcut inside CodeMirror; skip terminal focus.
+        if (
+          event.target instanceof HTMLElement &&
+          event.target.closest('.cm-editor, .xterm')
+        ) {
+          return
+        }
+        event.preventDefault()
+        void formatDocument()
       }
     }
     window.addEventListener('keydown', onKeyDown, true)
@@ -309,10 +341,10 @@ function App() {
   // Ensure the current project has at least one terminal, and that the active
   // terminal belongs to the current project. Defer PTY spawn so first project
   // paint is not blocked by PowerShell / ConPTY startup; skip entirely while
-  // the terminal panel is closed.
+  // the terminal panel is closed or the workspace is restricted.
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
   useEffect(() => {
-    if (!currentProject) return
+    if (!currentProject || !projectTrusted) return
     const projectId = currentProject.id
     const projectPath = currentProject.path
     if (useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
@@ -334,7 +366,7 @@ function App() {
       void addTerminal(projectPath, projectId)
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProject?.id, terminalOpen])
+  }, [currentProject?.id, terminalOpen, projectTrusted])
 
   const handleAddProject = () => {
     setView('explorer')
@@ -403,6 +435,23 @@ function App() {
           ) : (
             <>
               <EditorTabs />
+              {projectRestricted && currentProject && (
+                <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 text-[12px] bg-amber-500/10 border-b border-amber-500/30 text-amber-100">
+                  <span className="min-w-0 flex-1">
+                    {t('受限模式：只能浏览文件，无法编辑、使用终端或运行脚本。')}
+                  </span>
+                  <button
+                    type="button"
+                    className="flex-shrink-0 px-2 py-0.5 rounded bg-accent/90 hover:bg-accent text-white text-[12px]"
+                    onClick={() => {
+                      trustProject(currentProject)
+                      void pushTrustedRootsToNative(projects)
+                    }}
+                  >
+                    {t('信任此项目')}
+                  </button>
+                </div>
+              )}
               {activeTabId ? (
                 <Suspense fallback={<LazyFallback />}>
                   <Editor />

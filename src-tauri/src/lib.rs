@@ -3,6 +3,7 @@ mod content_search;
 mod file_associations;
 mod file_watcher;
 mod fonts;
+mod format;
 mod git_status;
 mod path_guard;
 mod terminal;
@@ -133,7 +134,9 @@ fn create_terminal(
     cwd: String,
     app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
+    allowlist: tauri::State<'_, PathAllowlist>,
 ) -> Result<(), String> {
+    allowlist.ensure_executable(&cwd)?;
     state.spawn(id, &cwd, app)
 }
 
@@ -209,6 +212,7 @@ fn terminal_has_child_processes(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn spawn_script(
     id: String,
     cwd: String,
@@ -217,7 +221,9 @@ fn spawn_script(
     env: std::collections::HashMap<String, String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
+    allowlist: tauri::State<'_, PathAllowlist>,
 ) -> Result<(), String> {
+    allowlist.ensure_executable(&cwd)?;
     state.spawn_script(id, &cwd, &shell_kind, &target, env, app)
 }
 
@@ -275,7 +281,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::scan_directory,
             commands::validate_directory,
+            commands::file_stat,
             commands::read_file,
+            commands::read_file_slice,
+            commands::replace_file_range,
             commands::write_file,
             commands::search_files,
             commands::search_file_contents,
@@ -288,7 +297,9 @@ pub fn run() {
             commands::delete_path,
             commands::directory_delete_stats,
             commands::check_symlink_write,
+            format::format_document,
             path_guard::sync_project_roots,
+            path_guard::sync_trusted_roots,
             path_guard::authorize_paths,
             git_status::get_git_head,
             fonts::list_system_fonts,

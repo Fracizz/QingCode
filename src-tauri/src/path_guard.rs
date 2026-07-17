@@ -9,8 +9,10 @@ use tauri::State;
 
 #[derive(Debug, Default)]
 pub(crate) struct AllowlistState {
-    /// Registered project roots (raw paths from the frontend).
+    /// Registered project roots (raw paths from the frontend) — browse/read.
     project_roots: Vec<PathBuf>,
+    /// Workspace-trusted roots — write / terminal / spawn_script.
+    trusted_roots: Vec<PathBuf>,
     /// Explicit grants (Save As, Open with, temp project dirs, confirmed symlink writes).
     authorized: Vec<PathBuf>,
 }
@@ -29,6 +31,12 @@ impl PathAllowlist {
     pub fn sync_project_roots(&self, roots: Vec<String>) {
         if let Ok(mut state) = self.inner.lock() {
             state.project_roots = roots.into_iter().map(PathBuf::from).collect();
+        }
+    }
+
+    pub fn sync_trusted_roots(&self, roots: Vec<String>) {
+        if let Ok(mut state) = self.inner.lock() {
+            state.trusted_roots = roots.into_iter().map(PathBuf::from).collect();
         }
     }
 
@@ -51,6 +59,24 @@ impl PathAllowlist {
         ensure_path_allowed(Path::new(path), &state)
     }
 
+    /// Read-ok paths that may also be written (trusted workspace, authorized, or app settings).
+    pub fn ensure_writable(&self, path: &str) -> Result<(), String> {
+        let state = self
+            .inner
+            .lock()
+            .map_err(|_| "路径沙箱状态不可用".to_string())?;
+        ensure_path_writable(Path::new(path), &state)
+    }
+
+    /// Terminal / spawn_script cwd must sit under a trusted project root.
+    pub fn ensure_executable(&self, path: &str) -> Result<(), String> {
+        let state = self
+            .inner
+            .lock()
+            .map_err(|_| "路径沙箱状态不可用".to_string())?;
+        ensure_path_executable(Path::new(path), &state)
+    }
+
     pub fn with_state<R>(&self, f: impl FnOnce(&AllowlistState) -> R) -> Result<R, String> {
         let state = self
             .inner
@@ -69,9 +95,8 @@ pub(crate) fn ensure_path_allowed(path: &Path, state: &AllowlistState) -> Result
         return Err("不允许访问文件系统根目录".to_string());
     }
 
-    let resolved = resolve_for_sandbox(path).ok_or_else(|| {
-        format!("无法解析路径: {}", display_path(path))
-    })?;
+    let resolved =
+        resolve_for_sandbox(path).ok_or_else(|| format!("无法解析路径: {}", display_path(path)))?;
 
     if is_under_app_settings_dir(&resolved) {
         return Ok(());
@@ -91,6 +116,38 @@ pub(crate) fn ensure_path_allowed(path: &Path, state: &AllowlistState) -> Result
     ))
 }
 
+/// Write / create / rename / delete: allowlisted path plus trust (or explicit grant).
+pub(crate) fn ensure_path_writable(path: &Path, state: &AllowlistState) -> Result<(), String> {
+    ensure_path_allowed(path, state)?;
+    let resolved =
+        resolve_for_sandbox(path).ok_or_else(|| format!("无法解析路径: {}", display_path(path)))?;
+
+    if is_under_app_settings_dir(&resolved) {
+        return Ok(());
+    }
+    if is_authorized(&resolved, path, &state.authorized) {
+        return Ok(());
+    }
+    if is_inside_any_root(&resolved, &state.trusted_roots) {
+        return Ok(());
+    }
+
+    Err("项目未信任（受限模式），无法修改文件".to_string())
+}
+
+/// Terminal / script execution: cwd must be under a trusted project root.
+pub(crate) fn ensure_path_executable(path: &Path, state: &AllowlistState) -> Result<(), String> {
+    ensure_path_allowed(path, state)?;
+    let resolved =
+        resolve_for_sandbox(path).ok_or_else(|| format!("无法解析路径: {}", display_path(path)))?;
+
+    if is_inside_any_root(&resolved, &state.trusted_roots) {
+        return Ok(());
+    }
+
+    Err("项目未信任（受限模式），无法运行终端或脚本".to_string())
+}
+
 /// Canonicalize when possible; for not-yet-created paths, walk up to the nearest
 /// existing ancestor, canonicalize it (following symlinks), then re-join the suffix.
 pub fn resolve_for_sandbox(path: &Path) -> Option<PathBuf> {
@@ -101,11 +158,8 @@ pub fn resolve_for_sandbox(path: &Path) -> Option<PathBuf> {
     let mut suffix = Vec::new();
     let mut current = path.to_path_buf();
     loop {
-        if let Some(name) = current.file_name() {
-            suffix.push(name.to_os_string());
-        } else {
-            return None;
-        }
+        let name = current.file_name()?;
+        suffix.push(name.to_os_string());
         if !current.pop() || current.as_os_str().is_empty() {
             return None;
         }
@@ -206,7 +260,8 @@ fn is_under_app_settings_dir(resolved: &Path) -> bool {
     // Directory may not exist yet (first launch).
     if let Some(parent) = dir.parent() {
         if let Ok(parent_canon) = fs::canonicalize(parent) {
-            let expected = strip_verbatim_prefix(parent_canon).join(dir.file_name().unwrap_or_default());
+            let expected =
+                strip_verbatim_prefix(parent_canon).join(dir.file_name().unwrap_or_default());
             return path_is_within(resolved, &expected) || paths_equal_loose(resolved, &dir);
         }
     }
@@ -256,6 +311,11 @@ pub fn sync_project_roots(roots: Vec<String>, allowlist: State<'_, PathAllowlist
 }
 
 #[tauri::command]
+pub fn sync_trusted_roots(roots: Vec<String>, allowlist: State<'_, PathAllowlist>) {
+    allowlist.sync_trusted_roots(roots);
+}
+
+#[tauri::command]
 pub fn authorize_paths(paths: Vec<String>, allowlist: State<'_, PathAllowlist>) {
     allowlist.authorize_paths(paths);
 }
@@ -265,6 +325,20 @@ pub fn authorize_paths(paths: Vec<String>, allowlist: State<'_, PathAllowlist>) 
 pub(crate) fn test_state(roots: Vec<PathBuf>, authorized: Vec<PathBuf>) -> AllowlistState {
     AllowlistState {
         project_roots: roots,
+        trusted_roots: Vec::new(),
+        authorized,
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn test_state_with_trust(
+    roots: Vec<PathBuf>,
+    trusted: Vec<PathBuf>,
+    authorized: Vec<PathBuf>,
+) -> AllowlistState {
+    AllowlistState {
+        project_roots: roots,
+        trusted_roots: trusted,
         authorized,
     }
 }
@@ -432,7 +506,69 @@ mod tests {
         let file = base.join("a.txt");
         fs::write(&file, "ok").unwrap();
         let state = test_state(vec![base.clone()], vec![]);
-        assert!(outside_symlink_write_target(&file, &state).unwrap().is_none());
+        assert!(outside_symlink_write_target(&file, &state)
+            .unwrap()
+            .is_none());
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn write_blocked_when_project_not_trusted() {
+        let base = temp_base("untrusted-write");
+        let project = base.join("project");
+        fs::create_dir_all(project.join("src")).unwrap();
+        let file = project.join("src/main.rs");
+        fs::write(&file, "fn main() {}").unwrap();
+
+        let state = test_state(vec![project.clone()], vec![]);
+        assert!(ensure_path_allowed(&file, &state).is_ok());
+        let err = ensure_path_writable(&file, &state).unwrap_err();
+        assert!(err.contains("受限") || err.contains("未信任"), "{err}");
+
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn write_ok_when_project_trusted() {
+        let base = temp_base("trusted-write");
+        let project = base.join("project");
+        fs::create_dir_all(project.join("src")).unwrap();
+        let file = project.join("src/main.rs");
+        fs::write(&file, "fn main() {}").unwrap();
+
+        let state = test_state_with_trust(vec![project.clone()], vec![project.clone()], vec![]);
+        assert!(ensure_path_writable(&file, &state).is_ok());
+        assert!(ensure_path_executable(&project, &state).is_ok());
+
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn execute_blocked_when_not_trusted() {
+        let base = temp_base("untrusted-exec");
+        let project = base.join("project");
+        fs::create_dir_all(&project).unwrap();
+
+        let state = test_state(vec![project.clone()], vec![]);
+        let err = ensure_path_executable(&project, &state).unwrap_err();
+        assert!(err.contains("受限") || err.contains("未信任"), "{err}");
+
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn authorized_outside_path_writable_without_trust() {
+        let base = temp_base("auth-write");
+        let project = base.join("project");
+        let outside = base.join("outside");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let file = outside.join("save-as.txt");
+        fs::write(&file, "ok").unwrap();
+
+        let state = test_state(vec![project], vec![file.clone()]);
+        assert!(ensure_path_writable(&file, &state).is_ok());
+
         fs::remove_dir_all(base).unwrap();
     }
 }

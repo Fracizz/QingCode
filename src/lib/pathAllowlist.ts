@@ -20,3 +20,9 @@ export async function syncRootsFromProjects(
 ): Promise<void> {
   await syncProjectRoots(projects.map(p => p.path))
 }
+
+/** Push workspace-trusted project roots (write / terminal / run) to the native sandbox. */
+export async function syncTrustedRoots(roots: string[]): Promise<void> {
+  if (!isTauri()) return
+  await safeInvoke('同步受信任项目根目录', 'sync_trusted_roots', { roots })
+}

@@ -15,6 +15,7 @@ export type RenderWhitespaceMode = 'none' | 'boundary' | 'selection' | 'trailing
 export type EolMode = 'auto' | 'LF' | 'CRLF'
 
 export type EditorPreferenceSettings = {
+  fontSize: number
   tabSize: number
   insertSpaces: boolean
   detectIndentation: boolean
@@ -27,6 +28,7 @@ export type EditorPreferenceSettings = {
 }
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferenceSettings = {
+  fontSize: DEFAULT_GLOBAL_SETTINGS['editor.fontSize'] as number,
   tabSize: DEFAULT_GLOBAL_SETTINGS['editor.tabSize'] as number,
   insertSpaces: DEFAULT_GLOBAL_SETTINGS['editor.insertSpaces'] as boolean,
   detectIndentation: DEFAULT_GLOBAL_SETTINGS['editor.detectIndentation'] as boolean,
@@ -42,6 +44,12 @@ function asNumber(value: unknown, fallback: number): number {
   const n = typeof value === 'number' ? value : Number(value)
   if (!Number.isFinite(n)) return fallback
   return Math.min(64, Math.max(1, Math.round(n)))
+}
+
+function asFontSize(value: unknown, fallback: number): number {
+  const n = typeof value === 'number' ? value : Number(value)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(48, Math.max(8, Math.round(n)))
 }
 
 function asBoolean(value: unknown, fallback: boolean): boolean {
@@ -82,6 +90,7 @@ function asEol(value: unknown): EolMode {
 
 export function readEditorPreferences(settings: SettingsFile): EditorPreferenceSettings {
   return {
+    fontSize: asFontSize(settings['editor.fontSize'], DEFAULT_EDITOR_PREFERENCES.fontSize),
     tabSize: asNumber(settings['editor.tabSize'], DEFAULT_EDITOR_PREFERENCES.tabSize),
     insertSpaces: asBoolean(settings['editor.insertSpaces'], DEFAULT_EDITOR_PREFERENCES.insertSpaces),
     detectIndentation: asBoolean(
@@ -121,6 +130,9 @@ export async function loadEffectiveEditorPreferences(
   const workspace = project ? await loadProjectSettings(project) : null
   const prefs = readEditorPreferences(mergeSettings(global, workspace))
   notifyEditorSettingsChanged(prefs)
+  // Single source of truth: settings JSON drives --editor-font-size / UI mirror.
+  const { syncEditorFontSizeFromPreferences } = await import('./fontSettings')
+  syncEditorFontSizeFromPreferences(prefs.fontSize)
   return prefs
 }
 

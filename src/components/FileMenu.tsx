@@ -88,7 +88,10 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
 
   const activeTab = tabs.find(tab => tab.id === activeTabId) ?? null
   const canSave =
-    !!activeTab && !activeTab.openError && activeTab.content !== undefined
+    !!activeTab &&
+    !activeTab.openError &&
+    activeTab.viewMode !== 'view' &&
+    activeTab.content !== undefined
   const dirtyCount = useEditorStore(s => {
     let count = s.tabs.filter(tab => tab.dirty).length
     for (const session of Object.values(s.projectSessions)) {

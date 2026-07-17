@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { GitBranch, FolderTree, FileText, Terminal as TerminalIcon } from 'lucide-react'
+import { GitBranch, FolderTree, FileText, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
@@ -7,6 +7,10 @@ import { formatTerminalName } from '../utils/terminalName'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { isTauri, safeInvoke } from '../lib/tauri'
+import {
+  isProjectRestricted,
+  WORKSPACE_TRUST_CHANGED_EVENT,
+} from '../lib/workspaceTrust'
 
 type GitHeadInfo = {
   name: string
@@ -25,6 +29,19 @@ export default function StatusBar() {
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [devBuild, setDevBuild] = useState(false)
   const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
+  const [trustTick, setTrustTick] = useState(0)
+
+  useEffect(() => {
+    const sync = () => setTrustTick(n => n + 1)
+    window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
+  }, [])
+
+  const restricted =
+    trustTick >= 0 &&
+    !!currentProject &&
+    !currentProject.ephemeral &&
+    isProjectRestricted(currentProject)
 
   const activeTab = tabs.find(t => t.id === activeTabId)
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
@@ -96,6 +113,14 @@ export default function StatusBar() {
         <FolderTree size={13} />
         {currentProject ? currentProject.name : t('未选择项目')}
       </span>
+      {restricted && (
+        <Tooltip label={t('受限模式：只能浏览，无法编辑或运行')} side="top">
+          <span className="flex items-center gap-1 text-warn">
+            <ShieldAlert size={13} />
+            {t('受限')}
+          </span>
+        </Tooltip>
+      )}
       {activeTab && (
         <span className="flex items-center gap-1.5 opacity-90">
           <FileText size={13} />

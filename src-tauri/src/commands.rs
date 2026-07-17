@@ -6,17 +6,49 @@ use crate::path_guard::PathAllowlist;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::fs::File;
+use std::io::{copy, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 
-/// Keep full-text editing within the memory budget of a lightweight editor.
-/// Larger files need a dedicated streaming viewer rather than CodeMirror state.
-const MAX_EDITOR_FILE_SIZE: u64 = 50 * 1024 * 1024;
+/// Full-buffer `read_file` / `write_file` budget (plain-text CodeMirror up to this size).
+/// Frontend further tiers: ≤20MB full/degraded edit, 20–100MB plain edit, >100MB view-only.
+const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;
+/// Legacy range-replace hard cap (same as full-buffer budget; UI no longer exposes patch).
+const MAX_PATCH_FILE_SIZE: u64 = 100 * 1024 * 1024;
+/// Pure read-only slice viewer hard cap.
+const MAX_VIEWER_FILE_SIZE: u64 = 500 * 1024 * 1024;
+/// Max bytes returned by a single `read_file_slice` call.
+const MAX_SLICE_BYTES: u64 = 256 * 1024;
+/// Max UTF-8 bytes accepted by `replace_file_range` (fragment edit).
+const MAX_REPLACE_TEXT_BYTES: u64 = 1024 * 1024;
 
 fn exceeds_editor_file_size_limit(size: u64) -> bool {
     size > MAX_EDITOR_FILE_SIZE
+}
+
+fn exceeds_patch_file_size_limit(size: u64) -> bool {
+    size > MAX_PATCH_FILE_SIZE
+}
+
+fn exceeds_viewer_file_size_limit(size: u64) -> bool {
+    size > MAX_VIEWER_FILE_SIZE
+}
+
+#[derive(Debug, Serialize)]
+pub struct FileStat {
+    pub size: u64,
+    pub is_dir: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FileSlice {
+    pub offset: u64,
+    pub len: u64,
+    pub text: String,
+    pub eof: bool,
+    pub file_size: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -552,6 +584,22 @@ pub fn search_file_contents(
 }
 
 #[tauri::command]
+pub fn file_stat(path: String, allowlist: State<'_, PathAllowlist>) -> Result<FileStat, String> {
+    allowlist.ensure_allowed(&path)?;
+    file_stat_inner(path)
+}
+
+fn file_stat_inner(path: String) -> Result<FileStat, String> {
+    let file_path = Path::new(&path);
+    let metadata = fs::metadata(file_path)
+        .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
+    Ok(FileStat {
+        size: metadata.len(),
+        is_dir: metadata.is_dir(),
+    })
+}
+
+#[tauri::command]
 pub fn read_file(path: String, allowlist: State<'_, PathAllowlist>) -> Result<String, String> {
     allowlist.ensure_allowed(&path)?;
     read_file_inner(path)
@@ -566,7 +614,7 @@ fn read_file_inner(path: String) -> Result<String, String> {
     }
     if exceeds_editor_file_size_limit(metadata.len()) {
         return Err(format!(
-            "暂不支持打开超过 50MB 的大文件：{}",
+            "暂不支持在编辑器中打开超过 100MB 的文件（可用只读预览打开至 500MB）：{}",
             display_file_name(&path)
         ));
     }
@@ -585,6 +633,123 @@ fn read_file_inner(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn read_file_slice(
+    path: String,
+    offset: u64,
+    max_bytes: u64,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<FileSlice, String> {
+    allowlist.ensure_allowed(&path)?;
+    read_file_slice_inner(path, offset, max_bytes)
+}
+
+fn read_file_slice_inner(path: String, offset: u64, max_bytes: u64) -> Result<FileSlice, String> {
+    let file_path = Path::new(&path);
+    let metadata = fs::metadata(file_path)
+        .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
+    if metadata.is_dir() {
+        return Err(format!("无法打开文件夹：{}", display_file_name(&path)));
+    }
+    let file_size = metadata.len();
+    if exceeds_viewer_file_size_limit(file_size) {
+        return Err(format!(
+            "暂不支持打开超过 500MB 的大文件：{}",
+            display_file_name(&path)
+        ));
+    }
+    if is_binary_extension(&path) {
+        return Err(unsupported_text_file_message(&path));
+    }
+    if offset > file_size {
+        return Err(format!(
+            "读取偏移超出文件范围：{}",
+            display_file_name(&path)
+        ));
+    }
+
+    let want = max_bytes.clamp(1, MAX_SLICE_BYTES);
+    let available = file_size - offset;
+    let to_read = want.min(available) as usize;
+
+    let mut file = File::open(file_path)
+        .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
+    file.seek(SeekFrom::Start(offset))
+        .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
+
+    let mut buf = vec![0u8; to_read];
+    let mut read_total = 0usize;
+    while read_total < to_read {
+        match file.read(&mut buf[read_total..]) {
+            Ok(0) => break,
+            Ok(n) => read_total += n,
+            Err(e) => {
+                return Err(format!(
+                    "读取文件失败：{}（{}）",
+                    display_file_name(&path),
+                    e
+                ))
+            }
+        }
+    }
+    buf.truncate(read_total);
+
+    // Avoid splitting a UTF-8 codepoint at the end of the window.
+    let end = trim_utf8_end(&buf);
+    buf.truncate(end);
+
+    let text = String::from_utf8_lossy(&buf).into_owned();
+    let len = buf.len() as u64;
+    let eof = offset + len >= file_size;
+
+    Ok(FileSlice {
+        offset,
+        len,
+        text,
+        eof,
+        file_size,
+    })
+}
+
+/// Truncate `buf` so it ends on a UTF-8 character boundary (may shorten by ≤3 bytes).
+fn trim_utf8_end(buf: &[u8]) -> usize {
+    if buf.is_empty() {
+        return 0;
+    }
+    let mut i = buf.len();
+    while i > 0 && (buf[i - 1] & 0b1100_0000) == 0b1000_0000 {
+        i -= 1;
+        if buf.len() - i > 3 {
+            return buf.len();
+        }
+    }
+    if i == 0 {
+        return 0;
+    }
+    let lead = buf[i - 1];
+    let need = utf8_char_len(lead);
+    let have = buf.len() - (i - 1);
+    if have < need {
+        i - 1
+    } else {
+        buf.len()
+    }
+}
+
+fn utf8_char_len(lead: u8) -> usize {
+    if lead < 0x80 {
+        1
+    } else if lead & 0b1110_0000 == 0b1100_0000 {
+        2
+    } else if lead & 0b1111_0000 == 0b1110_0000 {
+        3
+    } else if lead & 0b1111_1000 == 0b1111_0000 {
+        4
+    } else {
+        1
+    }
+}
+
+#[tauri::command]
 pub fn write_file(
     path: String,
     content: String,
@@ -593,9 +758,9 @@ pub fn write_file(
     // Mandatory sandbox: canonicalize/symlink-resolve before allowlist check.
     // Symlink escape is rejected unless the resolved target was explicitly authorized
     // (e.g. after the frontend confirm dialog grants the path).
-    allowlist.ensure_allowed(&path)?;
+    allowlist.ensure_writable(&path)?;
     if exceeds_editor_file_size_limit(content.len() as u64) {
-        return Err(format!("暂不支持保存超过 50MB 的大文件: {}", path));
+        return Err(format!("暂不支持保存超过 100MB 的大文件: {}", path));
     }
     let file_path = Path::new(&path);
     write_file_safely(file_path, &content).map_err(|e| format!("Failed to write {}: {}", path, e))
@@ -688,6 +853,154 @@ fn write_file_safely(path: &Path, content: &str) -> Result<(), std::io::Error> {
     fs::rename(temp_path, path)
 }
 
+#[tauri::command]
+pub fn replace_file_range(
+    path: String,
+    start: u64,
+    end: u64,
+    text: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<FileStat, String> {
+    allowlist.ensure_writable(&path)?;
+    replace_file_range_inner(path, start, end, text)
+}
+
+/// Stream a range replacement into a temp file, then atomically replace.
+/// Kept for compatibility; the UI opens ≤100MB files in CodeMirror instead.
+fn replace_file_range_inner(
+    path: String,
+    start: u64,
+    end: u64,
+    text: String,
+) -> Result<FileStat, String> {
+    if start > end {
+        return Err("替换范围无效：起始位置大于结束位置".into());
+    }
+    let text_bytes = text.as_bytes();
+    if text_bytes.len() as u64 > MAX_REPLACE_TEXT_BYTES {
+        return Err(format!(
+            "替换内容不能超过 {}MB",
+            MAX_REPLACE_TEXT_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let file_path = Path::new(&path);
+    let metadata = fs::metadata(file_path)
+        .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
+    if metadata.is_dir() {
+        return Err(format!("无法打开文件夹：{}", display_file_name(&path)));
+    }
+    let file_size = metadata.len();
+    if exceeds_patch_file_size_limit(file_size) {
+        return Err(format!(
+            "超过 100MB 的文件仅支持只读预览，无法编辑：{}",
+            display_file_name(&path)
+        ));
+    }
+    if is_binary_extension(&path) {
+        return Err(unsupported_text_file_message(&path));
+    }
+    if end > file_size {
+        return Err(format!(
+            "替换范围超出文件末尾：{}",
+            display_file_name(&path)
+        ));
+    }
+
+    let parent = file_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let file_name = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("qingcode");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+
+    let mut temp_path = None;
+    for attempt in 0..10 {
+        let candidate = parent.join(format!(".{file_name}.{nonce}.{attempt}.patch.tmp"));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut out) => {
+                let result = (|| -> Result<(), String> {
+                    let mut src = File::open(file_path).map_err(|e| {
+                        format!("读取文件失败：{}（{}）", display_file_name(&path), e)
+                    })?;
+                    if start > 0 {
+                        copy(&mut Read::by_ref(&mut src).take(start), &mut out).map_err(|e| {
+                            format!("写入临时文件失败：{}", e)
+                        })?;
+                    }
+                    out.write_all(text_bytes)
+                        .map_err(|e| format!("写入替换内容失败：{}", e))?;
+                    if end < file_size {
+                        src.seek(SeekFrom::Start(end)).map_err(|e| e.to_string())?;
+                        copy(&mut src, &mut out).map_err(|e| {
+                            format!("写入临时文件失败：{}", e)
+                        })?;
+                    }
+                    out.sync_all().map_err(|e| format!("同步临时文件失败：{}", e))?;
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    let _ = fs::remove_file(&candidate);
+                    return Err(error);
+                }
+                temp_path = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(format!("创建临时文件失败：{}", error));
+            }
+        }
+    }
+
+    let temp_path = temp_path.ok_or_else(|| "无法创建临时文件".to_string())?;
+
+    #[cfg(windows)]
+    {
+        if file_path.exists() {
+            let backup_path = parent.join(format!(".{file_name}.{nonce}.patch.backup"));
+            if let Err(error) = fs::rename(file_path, &backup_path) {
+                let _ = fs::remove_file(&temp_path);
+                return Err(format!("替换文件失败：{}", error));
+            }
+            if let Err(error) = fs::rename(&temp_path, file_path) {
+                let _ = fs::rename(&backup_path, file_path);
+                let _ = fs::remove_file(&temp_path);
+                return Err(format!("替换文件失败：{}", error));
+            }
+            let _ = fs::remove_file(backup_path);
+        } else if let Err(error) = fs::rename(&temp_path, file_path) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(format!("替换文件失败：{}", error));
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        if let Err(error) = fs::rename(&temp_path, file_path) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(format!("替换文件失败：{}", error));
+        }
+    }
+
+    let new_meta = fs::metadata(file_path)
+        .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
+    Ok(FileStat {
+        size: new_meta.len(),
+        is_dir: false,
+    })
+}
+
 fn validate_entry_name(name: &str) -> Result<(), String> {
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         Err("名称不能为空或包含路径分隔符".to_string())
@@ -708,7 +1021,7 @@ pub fn create_file(
         return Err(format!("目录不可用: {}", parent));
     }
     let path = parent_path.join(&name);
-    allowlist.ensure_allowed(&path.to_string_lossy())?;
+    allowlist.ensure_writable(&path.to_string_lossy())?;
     fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -729,7 +1042,7 @@ pub fn create_directory(
         return Err(format!("目录不可用: {}", parent));
     }
     let path = parent_path.join(&name);
-    allowlist.ensure_allowed(&path.to_string_lossy())?;
+    allowlist.ensure_writable(&path.to_string_lossy())?;
     fs::create_dir(&path).map_err(|e| format!("新建文件夹失败: {}", e))?;
     Ok(path.to_string_lossy().to_string())
 }
@@ -741,13 +1054,13 @@ pub fn rename_path(
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<String, String> {
     validate_entry_name(&new_name)?;
-    allowlist.ensure_allowed(&path)?;
+    allowlist.ensure_writable(&path)?;
     let source = Path::new(&path);
     let parent = source
         .parent()
         .ok_or_else(|| "无法重命名该路径".to_string())?;
     let target = parent.join(&new_name);
-    allowlist.ensure_allowed(&target.to_string_lossy())?;
+    allowlist.ensure_writable(&target.to_string_lossy())?;
     if target.exists() {
         return Err("目标名称已存在".to_string());
     }
@@ -757,7 +1070,7 @@ pub fn rename_path(
 
 #[tauri::command]
 pub fn delete_path(path: String, allowlist: State<'_, PathAllowlist>) -> Result<(), String> {
-    allowlist.ensure_allowed(&path)?;
+    allowlist.ensure_writable(&path)?;
     let target = Path::new(&path);
     let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
     if metadata.is_dir() {
@@ -781,7 +1094,7 @@ pub fn directory_delete_stats(
     path: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<DirectoryDeleteStats, String> {
-    allowlist.ensure_allowed(&path)?;
+    allowlist.ensure_writable(&path)?;
     let target = Path::new(&path);
     let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
     if !metadata.is_dir() {
@@ -843,9 +1156,8 @@ fn check_symlink_write_inner(
     path: &Path,
     allowlist: &PathAllowlist,
 ) -> Result<SymlinkWriteCheck, String> {
-    let outside = allowlist.with_state(|state| {
-        crate::path_guard::outside_symlink_write_target(path, state)
-    })??;
+    let outside = allowlist
+        .with_state(|state| crate::path_guard::outside_symlink_write_target(path, state))??;
     match outside {
         None => Ok(SymlinkWriteCheck {
             needs_confirm: false,
@@ -894,6 +1206,69 @@ mod tests {
     fn rejects_files_larger_than_editor_limit() {
         assert!(!exceeds_editor_file_size_limit(MAX_EDITOR_FILE_SIZE));
         assert!(exceeds_editor_file_size_limit(MAX_EDITOR_FILE_SIZE + 1));
+        assert_eq!(MAX_EDITOR_FILE_SIZE, 100 * 1024 * 1024);
+        assert_eq!(MAX_PATCH_FILE_SIZE, 100 * 1024 * 1024);
+        assert_eq!(MAX_VIEWER_FILE_SIZE, 500 * 1024 * 1024);
+        assert!(!exceeds_patch_file_size_limit(MAX_PATCH_FILE_SIZE));
+        assert!(exceeds_patch_file_size_limit(MAX_PATCH_FILE_SIZE + 1));
+        assert!(!exceeds_viewer_file_size_limit(MAX_VIEWER_FILE_SIZE));
+        assert!(exceeds_viewer_file_size_limit(MAX_VIEWER_FILE_SIZE + 1));
+    }
+
+    #[test]
+    fn replace_file_range_rewrites_middle() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-replace-test-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sample.txt");
+        let body = "AAAOLDBBB";
+        fs::write(&path, body).unwrap();
+        let start = 3u64;
+        let end = 6u64;
+        let stat = replace_file_range_inner(
+            path.to_string_lossy().to_string(),
+            start,
+            end,
+            "NEW".into(),
+        )
+        .unwrap();
+        let next = fs::read_to_string(&path).unwrap();
+        assert_eq!(next, "AAANEWBBB");
+        assert_eq!(stat.size, next.len() as u64);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn trim_utf8_end_keeps_complete_characters() {
+        let text = "你好".as_bytes();
+        assert_eq!(trim_utf8_end(text), text.len());
+        // Drop last continuation byte → trim incomplete char.
+        let incomplete = &text[..text.len() - 1];
+        assert_eq!(trim_utf8_end(incomplete), 3); // keeps first 你
+    }
+
+    #[test]
+    fn read_file_slice_reads_window() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-slice-test-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sample.txt");
+        fs::write(&path, "abcdefghijklmnopqrstuvwxyz").unwrap();
+
+        let slice = read_file_slice_inner(path.to_string_lossy().to_string(), 10, 5).unwrap();
+        assert_eq!(slice.text, "klmno");
+        assert_eq!(slice.offset, 10);
+        assert_eq!(slice.len, 5);
+        assert!(!slice.eof);
+        assert_eq!(slice.file_size, 26);
+
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

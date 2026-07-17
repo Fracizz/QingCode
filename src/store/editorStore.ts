@@ -3,6 +3,13 @@ import { save } from '@tauri-apps/plugin-dialog'
 import { safeInvoke, isTauri } from '../lib/tauri'
 import { parseOpenFileError } from '../lib/openFileError'
 import {
+  EDIT_DEGRADED_BYTES,
+  EDIT_WARN_BYTES,
+  editorPerfProfile,
+  fileOpenTier,
+  formatFileSize,
+} from '../lib/fileSizePolicy'
+import {
   disposeEditorSession,
   disposeEditorSessions,
   flushAllLiveEditorContents,
@@ -29,6 +36,111 @@ function resolveTabContent(tab: EditorTab): string | undefined {
   return getLiveEditorContent(tab.id) ?? tab.content
 }
 
+type FileStat = { size: number; is_dir: boolean }
+
+/**
+ * Stat → tier → edit (`read_file`) or view-only tab. Shared by open / retry / restore.
+ */
+async function populateTabFromDisk(id: string, path: string, line?: number) {
+  const get = () => useEditorStore.getState()
+  const set = useEditorStore.setState
+
+  const stat = await safeInvoke<FileStat>('读取文件信息', 'file_stat', { path })
+  if (!get().findTab(id)) return
+
+  if (stat.is_dir) {
+    throw new Error(`无法打开文件夹：${tabNameFromPath(path)}`)
+  }
+
+  const tier = fileOpenTier(stat.size)
+  if (tier === 'reject') {
+    throw new Error(
+      `暂不支持打开超过 500MB 的大文件：${tabNameFromPath(path)}`,
+    )
+  }
+
+  let mtime: number | null = null
+  try {
+    mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', { path })
+  } catch {
+    mtime = null
+  }
+  if (!get().findTab(id)) return
+
+  if (tier === 'view') {
+    set(s => {
+      const next = mapTabEverywhere(s, id, t => ({
+        ...t,
+        content: undefined,
+        viewMode: 'view' as const,
+        fileSize: stat.size,
+        loading: false,
+        dirty: false,
+        openError: undefined,
+        openErrorKind: undefined,
+        diskMtime: mtime,
+        language: guessLanguage(path),
+      }))
+      if (!next) return s
+      return { ...next, pendingReveal: null }
+    })
+    useProjectStore.getState().pushToast(
+      'info',
+      translate('已以只读预览打开大文件（{size}，不可编辑）', {
+        size: formatFileSize(stat.size),
+      }),
+    )
+    return
+  }
+
+  const content = await safeInvoke<string>('读取文件', 'read_file', { path })
+  if (!get().findTab(id)) return
+
+  set(s => {
+    const next = mapTabEverywhere(s, id, t => ({
+      ...t,
+      content,
+      viewMode: 'edit' as const,
+      fileSize: stat.size,
+      loading: false,
+      openError: undefined,
+      openErrorKind: undefined,
+      diskMtime: mtime,
+      language: guessLanguage(path),
+      dirty: false,
+    }))
+    if (!next) return s
+    return {
+      ...next,
+      pendingReveal: line ? { path, line } : s.pendingReveal,
+    }
+  })
+
+  const profile = editorPerfProfile(stat.size)
+  if (profile === 'plain') {
+    useProjectStore.getState().pushToast(
+      'info',
+      translate('文件较大（{size}），已以纯文本模式打开（限撤销、无高亮）', {
+        size: formatFileSize(stat.size),
+      }),
+    )
+  } else if (profile === 'degraded' || stat.size >= EDIT_DEGRADED_BYTES) {
+    useProjectStore.getState().pushToast(
+      'info',
+      translate('文件较大（{size}），已关闭高亮/换行/折叠等以保持流畅', {
+        size: formatFileSize(stat.size),
+      }),
+    )
+  } else if (stat.size >= EDIT_WARN_BYTES) {
+    useProjectStore.getState().pushToast(
+      'info',
+      translate('文件较大（{size}），已关闭语法高亮以保持流畅', {
+        size: formatFileSize(stat.size),
+      }),
+    )
+  }
+}
+
 export interface ProjectEditorSession {
   tabs: EditorTab[]
   activeTabId: string | null
@@ -49,6 +161,8 @@ interface EditorState {
   closeTabsToRight: (id: string) => void
   setActiveTab: (id: string) => void
   setTabContent: (id: string, content: string) => void
+  /** Drop Zustand content copy while the live CodeMirror buffer owns the doc. */
+  clearTabContentBuffer: (id: string) => void
   markDirty: (id: string) => void
   markClean: (id: string) => void
   saveFile: (id: string) => Promise<void>
@@ -183,29 +297,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     void useProjectStore.getState().revealFileInTree(path)
 
     try {
-      const content = await safeInvoke<string>('读取文件', 'read_file', { path })
-      if (!get().findTab(id)) return
-      let mtime: number | null = null
-      try {
-        mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', { path })
-      } catch {
-        mtime = null
-      }
-      set(s => {
-        const next = mapTabEverywhere(s, id, t => ({
-          ...t,
-          content,
-          loading: false,
-          openError: undefined,
-          openErrorKind: undefined,
-          diskMtime: mtime,
-        }))
-        if (!next) return s
-        return {
-          ...next,
-          pendingReveal: line ? { path, line } : s.pendingReveal,
-        }
-      })
+      await populateTabFromDisk(id, path, line)
       void useProjectStore.getState().addRecentFile(path)
     } catch (e) {
       console.error('openFile failed:', e)
@@ -216,6 +308,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           ...t,
           loading: false,
           content: undefined,
+          viewMode: 'edit',
           openError: message,
           openErrorKind: kind,
         }))
@@ -238,20 +331,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return next ?? s
     })
     try {
-      const content = await safeInvoke<string>('读取文件', 'read_file', { path: tab.path })
-      if (!get().findTab(id)) return
-      set(s => {
-        const next = mapTabEverywhere(s, id, t => ({
-          ...t,
-          content,
-          language: guessLanguage(tab.path),
-          loading: false,
-          openError: undefined,
-          openErrorKind: undefined,
-          dirty: false,
-        }))
-        return next ?? s
-      })
+      await populateTabFromDisk(id, tab.path)
     } catch (e) {
       console.error('retryOpenFile failed:', e)
       if (!get().findTab(id)) return
@@ -339,6 +419,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })
   },
 
+  clearTabContentBuffer: (id: string) => {
+    set(s => {
+      const next = mapTabEverywhere(s, id, t =>
+        t.openError || t.content === undefined ? t : { ...t, content: undefined },
+      )
+      return next ?? s
+    })
+  },
+
   markDirty: (id: string) => {
     set(s => {
       const next = mapTabEverywhere(s, id, t => (t.openError ? t : { ...t, dirty: true }))
@@ -379,7 +468,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         t =>
           !t.openError &&
           !t.loading &&
-          (t.content === undefined || t.diskMtime === undefined),
+          (t.viewMode === 'view'
+            ? t.fileSize === undefined
+            : t.content === undefined || t.diskMtime === undefined),
       )
       .map(t => t.id)
     if (targets.length === 0) return
@@ -395,20 +486,17 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const initial = get().findTab(id)
         if (!initial) return
         try {
-          let mtime: number | null = null
-          try {
-            mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', {
-              path: initial.path,
-            })
-          } catch {
-            mtime = null
-          }
-
-          const current = get().findTab(id)
-          if (!current) return
-
           // Draft-restored buffers already have content; only refresh mtime.
-          if (current.content !== undefined) {
+          if (initial.content !== undefined && initial.viewMode !== 'view') {
+            let mtime: number | null = null
+            try {
+              mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', {
+                path: initial.path,
+              })
+            } catch {
+              mtime = null
+            }
+            if (!get().findTab(id)) return
             set(s => {
               const next = mapTabEverywhere(s, id, t => ({
                 ...t,
@@ -420,23 +508,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             return
           }
 
-          const content = await safeInvoke<string>('读取文件', 'read_file', {
-            path: current.path,
-          })
-          if (!get().findTab(id)) return
-          set(s => {
-            const next = mapTabEverywhere(s, id, t => ({
-              ...t,
-              content,
-              loading: false,
-              openError: undefined,
-              openErrorKind: undefined,
-              diskMtime: mtime,
-              // No draft body survived — open clean from disk.
-              dirty: false,
-            }))
-            return next ?? s
-          })
+          await populateTabFromDisk(id, initial.path)
         } catch (e) {
           console.error('loadMissingTabContents failed:', e)
           if (!get().findTab(id)) return
@@ -476,7 +548,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   saveFile: async (id: string) => {
     const tab = get().findTab(id)
-    if (!tab || tab.openError || tab.loading) return
+    if (!tab || tab.openError || tab.loading || tab.viewMode === 'view') return
     const raw = resolveTabContent(tab)
     if (raw === undefined) return
     const content = prepareContentForSave(raw, getEditorPreferences())
@@ -513,7 +585,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       get().setTabContent(id, content)
       get().markClean(id)
       get().setDiskMtime(id, mtime)
+      set(s => {
+        const next = mapTabEverywhere(s, id, t => ({
+          ...t,
+          fileSize: new TextEncoder().encode(content).length,
+        }))
+        return next ?? s
+      })
       if (content !== raw) get().bumpContentEpoch(id)
+      // Active plain tabs: keep a single buffer in CodeMirror.
+      if (
+        editorPerfProfile(get().findTab(id)?.fileSize ?? content.length) === 'plain' &&
+        getLiveEditorContent(id) !== null
+      ) {
+        get().clearTabContentBuffer(id)
+      }
       if (isSettingsJsonPath(tab.path)) {
         const project = useProjectStore.getState().currentProject
         void loadEffectiveEditorPreferences(project)

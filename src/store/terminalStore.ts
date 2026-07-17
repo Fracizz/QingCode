@@ -6,7 +6,9 @@ import { useUIStore } from './uiStore'
 import type { TerminalTab } from '../types'
 import { DEFAULT_TERMINAL_PROFILE, getTerminalProfile } from '../lib/terminalProfiles'
 import { ensureTerminalProfileTrust } from '../lib/terminalProfileTrust'
+import { isProjectTrusted } from '../lib/workspaceTrust'
 import { disambiguateTerminalName, resolveNewTerminalName, terminalDisplayLabel } from '../utils/terminalName'
+import { translate } from '../lib/i18n'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 /** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
@@ -111,6 +113,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   activeTerminalByProject: {},
 
   addTerminal: async (projectPath: string, projectId: string, profileId?: string) => {
+    const project =
+      useProjectStore.getState().projects.find(p => p.id === projectId) ??
+      (useProjectStore.getState().currentProject?.id === projectId
+        ? useProjectStore.getState().currentProject
+        : null)
+    if (project && !project.ephemeral && !isProjectTrusted(project)) {
+      useProjectStore
+        .getState()
+        .pushToast('info', translate('当前为受限模式，无法打开终端'))
+      return null
+    }
     const sameProject = get().terminals.filter(t => t.projectId === projectId)
     if (sameProject.length >= MAX_TERMINALS_PER_PROJECT) {
       useProjectStore
@@ -191,6 +204,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     env: Record<string, string>,
     name: string
   ) => {
+    const project =
+      useProjectStore.getState().projects.find(p => p.id === projectId) ??
+      (useProjectStore.getState().currentProject?.id === projectId
+        ? useProjectStore.getState().currentProject
+        : null)
+    if (project && !project.ephemeral && !isProjectTrusted(project)) {
+      useProjectStore
+        .getState()
+        .pushToast('info', translate('当前为受限模式，无法运行任务'))
+      return null
+    }
     const sameProject = get().terminals.filter(t => t.projectId === projectId)
     if (sameProject.length >= MAX_TERMINALS_PER_PROJECT) {
       useProjectStore

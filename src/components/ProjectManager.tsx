@@ -15,6 +15,8 @@ import {
   Folder,
   AlertTriangle,
   ShieldOff,
+  ShieldCheck,
+  ShieldAlert,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -22,10 +24,13 @@ import { useTerminalStore } from '../store/terminalStore'
 import { useEditorStore } from '../store/editorStore'
 import { confirmDialog } from '../store/confirmStore'
 import {
-  isProjectTrusted,
+  getWorkspaceTrust,
+  restrictProject,
+  trustProject,
   untrustProject,
-  RUN_TRUST_CHANGED_EVENT,
-} from '../lib/runTrust'
+  pushTrustedRootsToNative,
+  WORKSPACE_TRUST_CHANGED_EVENT,
+} from '../lib/workspaceTrust'
 import {
   removeProjectWithConfirm,
   relocateProjectWithDialog,
@@ -79,8 +84,8 @@ export default function ProjectManager() {
 
   useEffect(() => {
     const sync = () => setTrustTick(n => n + 1)
-    window.addEventListener(RUN_TRUST_CHANGED_EVENT, sync)
-    return () => window.removeEventListener(RUN_TRUST_CHANGED_EVENT, sync)
+    window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
   }, [])
 
   const sortedProjects = useMemo(() => {
@@ -340,7 +345,9 @@ export default function ProjectManager() {
                   const isCurrent = currentProject?.id === project.id
                   const checked = selectedIds.has(project.id)
                   // trustTick invalidates this read when localStorage trust changes.
-                  const trusted = trustTick >= 0 && isProjectTrusted(project)
+                  const trustLevel = trustTick >= 0 ? getWorkspaceTrust(project) : 'undecided'
+                  const trusted = trustLevel === 'trusted'
+                  const restricted = trustLevel === 'restricted'
                   return (
                     <tr
                       key={project.id}
@@ -407,7 +414,35 @@ export default function ProjectManager() {
                             </ActBtn>
                           )}
                           {trusted && (
-                            <ActBtn label={t('撤销运行信任')} onClick={() => untrustProject(project)}>
+                            <ActBtn
+                              label={t('切换为受限模式')}
+                              onClick={() => {
+                                restrictProject(project)
+                                void pushTrustedRootsToNative(allProjects)
+                              }}
+                            >
+                              <ShieldAlert size={14} />
+                            </ActBtn>
+                          )}
+                          {restricted && (
+                            <ActBtn
+                              label={t('信任此项目')}
+                              onClick={() => {
+                                trustProject(project)
+                                void pushTrustedRootsToNative(allProjects)
+                              }}
+                            >
+                              <ShieldCheck size={14} />
+                            </ActBtn>
+                          )}
+                          {(trusted || restricted) && (
+                            <ActBtn
+                              label={t('清除信任决定')}
+                              onClick={() => {
+                                untrustProject(project)
+                                void pushTrustedRootsToNative(allProjects)
+                              }}
+                            >
                               <ShieldOff size={14} />
                             </ActBtn>
                           )}

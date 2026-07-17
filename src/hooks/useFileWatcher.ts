@@ -5,9 +5,11 @@ import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { choiceDialog } from '../store/choiceStore'
 import { flushLiveEditorContent, getLiveEditorContent } from '../lib/editorSession'
+import { EDIT_MAX_BYTES, editorPerfProfile } from '../lib/fileSizePolicy'
 import { translate } from '../lib/i18n'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
 import type { FileCompareRequest } from '../components/FileCompareDialog'
+import type { EditorTab, Project } from '../types'
 
 export type FsChangePayload = {
   path: string
@@ -44,6 +46,50 @@ async function refreshTreeForPath(path: string) {
   }
 }
 
+function collectWatchRoots(
+  currentProject: Project | null,
+  projects: Project[],
+  projectSessions: Record<string, { tabs: EditorTab[] }>,
+): string[] {
+  const roots = new Set<string>()
+  if (currentProject && !currentProject.ephemeral) {
+    roots.add(currentProject.path)
+  }
+  for (const [projectId, session] of Object.entries(projectSessions)) {
+    if (session.tabs.length === 0) continue
+    const project = projects.find(p => p.id === projectId)
+    if (project && !project.ephemeral) roots.add(project.path)
+  }
+  return [...roots]
+}
+
+function collectWatchFiles(
+  tabs: EditorTab[],
+  projectSessions: Record<string, { tabs: EditorTab[] }>,
+): string[] {
+  const files = new Set<string>()
+  for (const tab of tabs) {
+    if (!tab.loading && !tab.openError) files.add(tab.path)
+  }
+  for (const session of Object.values(projectSessions)) {
+    for (const tab of session.tabs) {
+      if (!tab.loading && !tab.openError) files.add(tab.path)
+    }
+  }
+  return [...files]
+}
+
+function findOpenTabByPath(path: string): EditorTab | undefined {
+  const editor = useEditorStore.getState()
+  const current = editor.tabs.find(t => pathsEqual(t.path, path))
+  if (current) return current
+  for (const session of Object.values(editor.projectSessions)) {
+    const tab = session.tabs.find(t => pathsEqual(t.path, path))
+    if (tab) return tab
+  }
+  return undefined
+}
+
 export function useFileWatcher() {
   const [compare, setCompare] = useState<FileCompareRequest | null>(null)
   const prompting = useRef(new Set<string>())
@@ -51,17 +97,17 @@ export function useFileWatcher() {
   const pendingTreePaths = useRef<string[]>([])
 
   const currentProject = useProjectStore(s => s.currentProject)
+  const projects = useProjectStore(s => s.projects)
   const tabs = useEditorStore(s => s.tabs)
+  const projectSessions = useEditorStore(s => s.projectSessions)
 
-  // Sync OS watches with open files + current project root.
+  // Watch current root + inactive projects that still have open tabs/files.
   useEffect(() => {
     if (!isTauri()) return
-    const roots = currentProject && !currentProject.ephemeral ? [currentProject.path] : []
-    const files = tabs
-      .filter(t => !t.loading && !t.openError)
-      .map(t => t.path)
+    const roots = collectWatchRoots(currentProject, projects, projectSessions)
+    const files = collectWatchFiles(tabs, projectSessions)
     void syncWatches(roots, files)
-  }, [currentProject?.path, currentProject?.ephemeral, tabs])
+  }, [currentProject, projects, tabs, projectSessions])
 
   useEffect(() => {
     if (!isTauri()) return
@@ -92,7 +138,7 @@ export function useFileWatcher() {
       }, 500)
 
       const editor = useEditorStore.getState()
-      const tab = editor.tabs.find(t => pathsEqual(t.path, changedPath))
+      const tab = findOpenTabByPath(changedPath)
       if (!tab || tab.loading || tab.openError) return
       if (prompting.current.has(normalize(tab.path))) return
 
@@ -108,10 +154,32 @@ export function useFileWatcher() {
 
         prompting.current.add(normalize(tab.path))
         try {
-          const diskContent = await safeInvoke<string>('读取文件', 'read_file', { path: tab.path })
           const mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', {
             path: tab.path,
           })
+
+          // Read-only slice viewer: never pull full content into the WebView.
+          if (tab.viewMode === 'view') {
+            if (mtime != null && mtime === tab.diskMtime) return
+            editor.setDiskMtime(tab.id, mtime)
+            useProjectStore
+              .getState()
+              .pushToast('info', translate('磁盘文件已更改（只读预览）：{name}', { name: tab.name }))
+            return
+          }
+
+          const profile = editorPerfProfile(tab.fileSize ?? 0)
+          // Plain/degraded: skip full read when mtime is unchanged.
+          if (
+            (profile === 'plain' || profile === 'degraded') &&
+            mtime != null &&
+            tab.diskMtime != null &&
+            mtime === tab.diskMtime
+          ) {
+            return
+          }
+
+          const diskContent = await safeInvoke<string>('读取文件', 'read_file', { path: tab.path })
           const local = getLiveEditorContent(tab.id) ?? tab.content ?? ''
 
           if (!tab.dirty && local === diskContent) {
@@ -128,6 +196,7 @@ export function useFileWatcher() {
             return
           }
 
+          const allowCompare = (tab.fileSize ?? 0) <= EDIT_MAX_BYTES
           // Dirty: ask user.
           const choice = await choiceDialog({
             title: '文件已在外部更改',
@@ -135,7 +204,7 @@ export function useFileWatcher() {
             detail: tab.path,
             options: [
               { id: 'reload', label: '重新加载', primary: true },
-              { id: 'compare', label: '比较' },
+              ...(allowCompare ? [{ id: 'compare', label: '比较' }] : []),
               { id: 'keep', label: '保留本地修改' },
             ],
           })
@@ -144,7 +213,7 @@ export function useFileWatcher() {
             await editor.reloadFromDisk(tab.id, diskContent, mtime)
           } else if (choice === 'keep') {
             editor.setDiskMtime(tab.id, mtime)
-          } else if (choice === 'compare') {
+          } else if (choice === 'compare' && allowCompare) {
             flushLiveEditorContent(tab.id)
             const localNow = getLiveEditorContent(tab.id) ?? tab.content ?? ''
             setCompare({
@@ -181,4 +250,3 @@ export function useFileWatcher() {
 
   return { compare }
 }
-

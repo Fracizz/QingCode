@@ -58,10 +58,11 @@ function tabFromPersisted(tab: PersistedEditorTab): EditorTab {
     id: tab.id,
     path: tab.path,
     name: tab.name || tabNameFromPath(tab.path),
-    dirty,
+    dirty: tab.viewMode === 'view' ? false : dirty,
     language: tab.language || guessLanguage(tab.path),
+    viewMode: tab.viewMode === 'view' ? 'view' : 'edit',
   }
-  if (draft) {
+  if (draft && tab.viewMode !== 'view') {
     editorTab.content = draft.content
   }
   return editorTab
@@ -98,6 +99,10 @@ function terminalFromPersisted(
 }
 
 function applyScrollHints(snapshot: WorkspaceSessionSnapshot) {
+  for (const tab of snapshot.pinnedTabs ?? []) {
+    if (!tab.scroll) continue
+    setEditorScroll(tab.id, tab.scroll)
+  }
   for (const session of Object.values(snapshot.projects)) {
     for (const tab of session.tabs) {
       if (!tab.scroll) continue
@@ -113,7 +118,12 @@ export function hydrateWorkspaceSessionsIfNeeded(): boolean {
   if (!shouldRestoreWorkspace()) return false
 
   const snapshot = loadWorkspaceSession()
-  if (!snapshot || Object.keys(snapshot.projects).length === 0) return false
+  if (!snapshot) return false
+
+  const pinnedTabs = (snapshot.pinnedTabs ?? [])
+    .filter(t => isPinnedSettingsTab(t.path))
+    .map(tabFromPersisted)
+  if (Object.keys(snapshot.projects).length === 0 && pinnedTabs.length === 0) return false
 
   const projectSessions: Record<string, ProjectEditorSession> = {}
   const terminals: TerminalTab[] = []
@@ -131,7 +141,13 @@ export function hydrateWorkspaceSessionsIfNeeded(): boolean {
 
   applyScrollHints(snapshot)
 
-  useEditorStore.setState({ projectSessions })
+  // Pinned settings tabs live in the visible `tabs` array so the first
+  // `activateProjectSession` (on restore) keeps them across project switches.
+  useEditorStore.setState({
+    projectSessions,
+    tabs: pinnedTabs,
+    activeTabId: pinnedTabs[0]?.id ?? null,
+  })
   useTerminalStore.getState().hydrateTerminalSessions(terminals, activeTerminalByProject)
   return true
 }
@@ -219,6 +235,7 @@ function persistNow() {
   )
   const editorSessions = collectEditorSessionsForPersist()
   const terminalState = useTerminalStore.getState()
+  const { pinned: pinnedTabs } = splitPinned(useEditorStore.getState().tabs)
 
   const snapshot = buildWorkspaceSessionSnapshot({
     editorSessions: Object.fromEntries(
@@ -231,14 +248,24 @@ function persistNow() {
               id: tab.id,
               path: tab.path,
               name: tab.name,
-              dirty: tab.dirty,
+              dirty: tab.viewMode === 'view' ? false : tab.dirty,
               language: tab.language,
               scroll: scrollForTab(tab.id),
+              viewMode: tab.viewMode,
             })),
             activeTabId: session.activeTabId,
           },
         ]),
     ),
+    pinnedTabs: pinnedTabs.map(tab => ({
+      id: tab.id,
+      path: tab.path,
+      name: tab.name,
+      dirty: tab.viewMode === 'view' ? false : tab.dirty,
+      language: tab.language,
+      scroll: scrollForTab(tab.id),
+      viewMode: tab.viewMode,
+    })),
     terminals: terminalState.terminals
       .filter(t => durableIds.has(t.projectId))
       .map(t => ({

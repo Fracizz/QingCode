@@ -78,6 +78,30 @@ describe('parseWorkspaceSession', () => {
     expect(parsed).not.toBeNull()
     expect(Object.keys(parsed!.projects)).toHaveLength(0)
   })
+
+  it('keeps global pinned settings tabs', () => {
+    const parsed = parseWorkspaceSession({
+      version: 1,
+      updatedAt: 2,
+      pinnedTabs: [
+        {
+          id: 'pin1',
+          path: 'C:/Users/x/.qingcode/default-settings.json',
+          name: 'default-settings.json',
+          dirty: false,
+          language: 'json5',
+          scroll: { top: 40, left: 0 },
+        },
+      ],
+      projects: {},
+    })
+    expect(parsed).not.toBeNull()
+    expect(parsed!.pinnedTabs).toHaveLength(1)
+    expect(parsed!.pinnedTabs![0].scroll).toEqual({ top: 40, left: 0 })
+    expect(collectPersistedTabPaths(parsed!)).toEqual([
+      'C:/Users/x/.qingcode/default-settings.json',
+    ])
+  })
 })
 
 describe('buildWorkspaceSessionSnapshot', () => {
@@ -131,6 +155,26 @@ describe('buildWorkspaceSessionSnapshot', () => {
     expect(snapshot.projects.p1.terminals).toHaveLength(1)
     expect(snapshot.projects.p1.activeTerminalId).toBe('term1')
     expect(collectPersistedTabPaths(snapshot)).toEqual(['D:/proj/a.ts'])
+  })
+
+  it('includes pinned settings tabs at the workspace root', () => {
+    const snapshot = buildWorkspaceSessionSnapshot({
+      editorSessions: {},
+      pinnedTabs: [
+        {
+          id: 'pin1',
+          path: 'C:/Users/x/.qingcode/default-settings.json',
+          name: 'default-settings.json',
+          dirty: false,
+          language: 'json5',
+        },
+      ],
+      terminals: [],
+      activeTerminalByProject: {},
+      now: 7,
+    })
+    expect(snapshot.pinnedTabs).toHaveLength(1)
+    expect(snapshot.pinnedTabs![0].path).toContain('default-settings.json')
   })
 })
 

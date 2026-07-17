@@ -35,6 +35,10 @@ import {
   type FileNode,
 } from '../lib/fileTreeCache'
 import { authorizePaths, syncRootsFromProjects } from '../lib/pathAllowlist'
+import {
+  ensureWorkspaceTrust,
+  pushTrustedRootsToNative,
+} from '../lib/workspaceTrust'
 
 export type { FileNode }
 
@@ -90,6 +94,7 @@ interface ProjectState {
 async function syncAllowlistRoots(projects: Project[]): Promise<void> {
   try {
     await syncRootsFromProjects(projects)
+    await pushTrustedRootsToNative(projects)
   } catch (error) {
     console.warn('sync project roots to path allowlist failed:', error)
   }
@@ -516,9 +521,20 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const currentProject = get().currentProject
       if (currentProject?.id === project.id) {
-        void get().ensureProjectTree(project)
+        // Fast re-click: still refresh so inactive-window tree drift is visible.
+        if (project.ephemeral) void get().ensureProjectTree(project)
+        else void get().refreshProjectTree(project)
         return true
       }
+
+      // VS Code–style workspace trust: ask once before activating the project.
+      const trust = await ensureWorkspaceTrust(project)
+      if (trust === false) return false
+      const known = get().projects
+      const forTrustSync = known.some(p => p.id === project.id)
+        ? known
+        : [...known, project]
+      await pushTrustedRootsToNative(forTrustSync)
 
       // Ephemeral/empty projects use a scratch temp directory; do not block
       // activation on validate so terminals remain usable.
@@ -540,8 +556,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }))
       // Keep the previous project's tabs/drafts/CM state; restore the target's.
       useEditorStore.getState().activateProjectSession(previousId, project.id)
-      // Load the tree after the project switch paints; callers should not wait on I/O.
-      void get().ensureProjectTree(project)
+      // Refresh on switch — inactive durable projects have no root watcher.
+      if (project.ephemeral) void get().ensureProjectTree(project)
+      else void get().refreshProjectTree(project)
       return true
     } catch (e) {
       console.error('switchProject failed:', e)

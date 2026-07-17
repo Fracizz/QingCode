@@ -1,6 +1,8 @@
+use crate::path_guard::PathAllowlist;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tauri::State;
 
 /// Current Git HEAD for status-bar display.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -95,8 +97,11 @@ pub fn read_git_head(path: &Path) -> Option<GitHeadInfo> {
 }
 
 #[tauri::command]
-pub fn get_git_head(path: String) -> Option<GitHeadInfo> {
+pub fn get_git_head(path: String, allowlist: State<'_, PathAllowlist>) -> Option<GitHeadInfo> {
     if path.trim().is_empty() {
+        return None;
+    }
+    if allowlist.ensure_allowed(&path).is_err() {
         return None;
     }
     read_git_head(Path::new(&path))
@@ -185,7 +190,6 @@ mod tests {
     fn read_git_head_returns_none_outside_repo() {
         let root = temp_dir("norepo");
         assert!(read_git_head(&root).is_none());
-        assert!(get_git_head(String::new()).is_none());
         fs::remove_dir_all(root).unwrap();
     }
 }

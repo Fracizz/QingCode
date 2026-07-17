@@ -42,7 +42,7 @@ export function openFileErrorTitle(kind: OpenFileErrorKind): string {
     case 'encoding':
       return '无法在文本编辑器中显示此文件，因为它可能是二进制文件或使用了不支持的文本编码。'
     case 'too-large':
-      return '文件过大，无法在文本编辑器中打开。'
+      return '文件过大（超过 500MB），无法打开。'
     case 'folder':
       return '无法在文本编辑器中打开文件夹。'
     case 'access':
@@ -60,7 +60,14 @@ export function isLoadingTab(tab: {
   loading?: boolean
   content?: string
   openError?: string
+  viewMode?: 'edit' | 'view'
 }): boolean {
   if (tab.openError) return false
+  // View-mode tabs never hold full `content`; only the progressive spinner matters.
+  if (tab.viewMode === 'view') return Boolean(tab.loading)
   return Boolean(tab.loading) || tab.content === undefined
+}
+
+export function isViewOnlyTab(tab: { viewMode?: 'edit' | 'view'; openError?: string }): boolean {
+  return tab.viewMode === 'view' && !tab.openError
 }

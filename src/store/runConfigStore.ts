@@ -1,8 +1,12 @@
 import { create } from 'zustand'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import { translate } from '../lib/i18n'
-import { isProjectTrusted, trustProject } from '../lib/runTrust'
-import { confirmDialog } from './confirmStore'
+import {
+  ensureWorkspaceTrust,
+  isProjectRestricted,
+  isProjectTrusted,
+  pushTrustedRootsToNative,
+} from '../lib/workspaceTrust'
 import { useProjectStore } from './projectStore'
 import { useTerminalStore, type ShellKind } from './terminalStore'
 import { useUIStore } from './uiStore'
@@ -98,62 +102,19 @@ function stripRedundantCdPrefix(target: string): string {
   return target.replace(/^(?:cd\s+(?:"[^"]+"|'[^']+'|\S+)\s*(?:;|&&|&)\s*)+/i, '').trim()
 }
 
-const TASK_TYPE_LABEL: Record<RunTaskType, string> = {
-  ps1: 'ps1',
-  bat: 'bat',
-  sh: 'sh',
-  command: '命令',
-  script: '脚本',
-}
-
-function formatEnv(env?: Record<string, string>): string {
-  if (!env || Object.keys(env).length === 0) return translate('（无）')
-  return Object.entries(env)
-    .map(([key, value]) => `  ${key}=${value}`)
-    .join('\n')
-}
-
-/** Human-readable summary shown in the first-run trust confirmation. */
-function formatRunTrustDetail(project: Project, config: RunConfig): string {
-  const lines: string[] = [
-    translate('来源：项目配置 {path}', { path: RUN_CONFIG_RELATIVE_PATH }),
-    translate('项目：{name}', { name: project.name }),
-    translate('配置：{name}', { name: config.name }),
-    '',
-  ]
-  config.tasks.forEach((task, index) => {
-    const cwd = task.cwd ? joinPath(project.path, task.cwd) : project.path
-    const taskTitle = task.name
-      ? translate('任务 {index} · {name}', { index: index + 1, name: task.name })
-      : translate('任务 {index}', { index: index + 1 })
-    lines.push(taskTitle)
-    lines.push(translate('  类型：{type}', { type: translate(TASK_TYPE_LABEL[task.type]) }))
-    lines.push(translate('  命令 / 脚本：{target}', { target: task.target || translate('（空）') }))
-    lines.push(translate('  工作目录：{cwd}', { cwd }))
-    lines.push(translate('  环境变量：'))
-    lines.push(formatEnv(task.env))
-    if (index < config.tasks.length - 1) lines.push('')
-  })
-  return lines.join('\n')
-}
-
-async function ensureRunTrust(project: Project, config: RunConfig): Promise<boolean> {
-  if (isProjectTrusted(project)) return true
-  const choice = await confirmDialog({
-    title: translate('运行项目任务'),
-    message: translate(
-      '即将执行来自项目配置（{path}）的命令。未信任的仓库可能包含恶意脚本，请确认后再运行。',
-      { path: RUN_CONFIG_RELATIVE_PATH },
-    ),
-    detail: formatRunTrustDetail(project, config),
-    kind: 'warning',
-    confirmLabel: translate('确认一次'),
-    altLabel: translate('信任此项目'),
-    cancelLabel: translate('取消'),
-  })
-  if (choice === false) return false
-  if (choice === 'alt') trustProject(project)
-  return true
+async function ensureRunTrust(project: Project): Promise<boolean> {
+  if (isProjectTrusted(project) || project.ephemeral) return true
+  if (isProjectRestricted(project)) {
+    useProjectStore
+      .getState()
+      .pushToast('info', translate('当前为受限模式，请先信任此项目后再运行'))
+    return false
+  }
+  // Undecided should be rare (trust is asked on project open).
+  const level = await ensureWorkspaceTrust(project)
+  if (level === false) return false
+  await pushTrustedRootsToNative(useProjectStore.getState().projects)
+  return level === 'trusted'
 }
 
 function defaultConfigs(): RunConfig[] {
@@ -291,7 +252,7 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
       )
       return
     }
-    if (!(await ensureRunTrust(project, config))) return
+    if (!(await ensureRunTrust(project))) return
     const addScriptTerminal = useTerminalStore.getState().addScriptTerminal
     const taskKeys: string[] = []
     for (const task of config.tasks) {

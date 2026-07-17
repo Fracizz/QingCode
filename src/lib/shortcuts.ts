@@ -12,6 +12,7 @@ export const RESERVED_SHORTCUTS = new Set([
   'Ctrl+S',
   'Ctrl+Shift+C',
   'Alt+C',
+  'Shift+Alt+F',
   'Ctrl+Shift+I',
   'F12',
 ])

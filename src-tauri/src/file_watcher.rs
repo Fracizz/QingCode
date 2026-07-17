@@ -258,7 +258,10 @@ pub fn is_fs_watch_suppressed(
 
 /// Last modified time in Unix milliseconds, or null if missing.
 #[tauri::command]
-pub fn file_mtime(path: String, allowlist: State<'_, PathAllowlist>) -> Result<Option<u64>, String> {
+pub fn file_mtime(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<Option<u64>, String> {
     allowlist.ensure_allowed(&path)?;
     file_mtime_inner(path)
 }

@@ -22,6 +22,8 @@ export type PersistedEditorTab = {
   dirty: boolean
   language?: string
   scroll?: PersistedScrollPos
+  /** Restored large files reopen in the slice viewer. */
+  viewMode?: 'view'
 }
 
 export type PersistedTerminalMeta = {
@@ -45,6 +47,8 @@ export type PersistedProjectSession = {
 export type WorkspaceSessionSnapshot = {
   version: typeof WORKSPACE_SESSION_VERSION
   updatedAt: number
+  /** Global default-settings.json tabs that stay visible across project switches. */
+  pinnedTabs?: PersistedEditorTab[]
   projects: Record<string, PersistedProjectSession>
 }
 
@@ -55,6 +59,7 @@ export type EditorTabSnapshotInput = {
   dirty: boolean
   language?: string
   scroll?: PersistedScrollPos | null
+  viewMode?: 'edit' | 'view'
 }
 
 export type TerminalSnapshotInput = {
@@ -101,6 +106,7 @@ function parseEditorTab(value: unknown): PersistedEditorTab | null {
   if (typeof value.language === 'string') tab.language = value.language
   const scroll = parseScroll(value.scroll)
   if (scroll) tab.scroll = scroll
+  if (value.viewMode === 'view') tab.viewMode = 'view'
   return tab
 }
 
@@ -185,9 +191,20 @@ export function parseWorkspaceSession(raw: unknown): WorkspaceSessionSnapshot | 
     if (parsed.tabs.length === 0 && parsed.terminals.length === 0) continue
     projects[projectId] = parsed
   }
+  const pinnedTabs = Array.isArray(raw.pinnedTabs)
+    ? raw.pinnedTabs.map(parseEditorTab).filter((t): t is PersistedEditorTab => t != null)
+    : []
+  if (Object.keys(projects).length === 0 && pinnedTabs.length === 0) {
+    return {
+      version: WORKSPACE_SESSION_VERSION,
+      updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : 0,
+      projects: {},
+    }
+  }
   return {
     version: WORKSPACE_SESSION_VERSION,
     updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : 0,
+    ...(pinnedTabs.length > 0 ? { pinnedTabs } : {}),
     projects,
   }
 }
@@ -229,6 +246,7 @@ export function serializeEditorTab(tab: EditorTabSnapshotInput): PersistedEditor
   if (tab.scroll && Number.isFinite(tab.scroll.top) && Number.isFinite(tab.scroll.left)) {
     out.scroll = { top: tab.scroll.top, left: tab.scroll.left }
   }
+  if (tab.viewMode === 'view') out.viewMode = 'view'
   return out
 }
 
@@ -253,6 +271,8 @@ export function buildWorkspaceSessionSnapshot(input: {
   editorSessions: Record<string, ProjectEditorSessionInput>
   terminals: TerminalSnapshotInput[]
   activeTerminalByProject: Record<string, string>
+  /** Global pinned settings tabs (survive project switches and restarts). */
+  pinnedTabs?: EditorTabSnapshotInput[]
   /** Project ids that must not be written (e.g. ephemeral). */
   excludeProjectIds?: Iterable<string>
   now?: number
@@ -290,9 +310,12 @@ export function buildWorkspaceSessionSnapshot(input: {
     projects[projectId] = { tabs, activeTabId, terminals, activeTerminalId }
   }
 
+  const pinnedTabs = (input.pinnedTabs ?? []).map(serializeEditorTab)
+
   return {
     version: WORKSPACE_SESSION_VERSION,
     updatedAt: input.now ?? Date.now(),
+    ...(pinnedTabs.length > 0 ? { pinnedTabs } : {}),
     projects,
   }
 }
@@ -300,6 +323,7 @@ export function buildWorkspaceSessionSnapshot(input: {
 /** Paths of every editor tab recorded in the snapshot (for draft coordination). */
 export function collectPersistedTabPaths(snapshot: WorkspaceSessionSnapshot): string[] {
   const paths: string[] = []
+  for (const tab of snapshot.pinnedTabs ?? []) paths.push(tab.path)
   for (const session of Object.values(snapshot.projects)) {
     for (const tab of session.tabs) paths.push(tab.path)
   }

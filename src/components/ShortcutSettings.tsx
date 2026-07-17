@@ -44,6 +44,11 @@ const FIXED_SHORTCUTS: { shortcut: string; label: string; description: string }[
     label: '复制为文件引用',
     description: '复制当前文件的引用（含行号范围），便于粘贴到对话或文档。',
   },
+  {
+    shortcut: 'Shift+Alt+F',
+    label: '格式化文档',
+    description: '使用 Prettier 或 rustfmt 格式化当前文件（需本机已安装对应工具）。',
+  },
 ]
 
 export default function ShortcutSettings() {
