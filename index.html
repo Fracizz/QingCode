@@ -192,8 +192,13 @@
       ;(function () {
         function showWindow() {
           var tauri = window.__TAURI__
-          if (!tauri || !tauri.window || !tauri.window.getCurrentWindow) return
-          tauri.window.getCurrentWindow().show()
+          if (tauri?.window?.getCurrentWindow) {
+            void tauri.window.getCurrentWindow().show()
+            return
+          }
+          if (tauri?.core?.invoke) {
+            void tauri.core.invoke('plugin:window|show')
+          }
         }
         if (document.readyState === 'loading') {
           document.addEventListener('DOMContentLoaded', showWindow)

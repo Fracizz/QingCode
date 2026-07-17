@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:5173": "vite --port 5173 --strictPort",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "check": "pnpm check:frontend && pnpm check:rust",
@@ -17,6 +18,7 @@
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo test --manifest-path src-tauri/Cargo.toml",
     "tauri": "tauri",
     "tauri:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
+    "tauri:dev:direct": "tauri dev",
     "icon:sync": "tauri icon public/app-icon-file.svg -o src-tauri/icons",
     "package:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1",
     "package:exe:fast": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1 -SkipFrontend -SkipIcons"

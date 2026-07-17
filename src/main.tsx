@@ -8,6 +8,7 @@ import { applyFontSettings, loadFontSettings } from './lib/fontSettings'
 import { applyTheme, loadTheme } from './lib/themeSettings'
 import { revealAppWindow } from './lib/appWindow'
 import { initializeLanguage } from './lib/i18n'
+import { installStartupSplashGuard } from './lib/startupSplash'
 
 applyTheme(loadTheme())
 initializeLanguage()
@@ -22,4 +23,5 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   </React.StrictMode>,
 )
 
+installStartupSplashGuard()
 revealAppWindow()

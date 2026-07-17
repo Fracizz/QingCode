@@ -9,7 +9,6 @@ import TitleBar from './components/TitleBar'
 import Toaster from './components/Toaster'
 import ConfirmDialog from './components/ConfirmDialog'
 import PromptDialog from './components/PromptDialog'
-import SettingsPanel from './components/SettingsPanel'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useUIStore } from './store/uiStore'
@@ -39,6 +38,7 @@ const TerminalView = lazy(() => import('./components/Terminal'))
 const SearchPanel = lazy(() => import('./components/SearchPanel'))
 const RunPanel = lazy(() => import('./components/RunPanel'))
 const ProjectManager = lazy(() => import('./components/ProjectManager'))
+const SettingsPanel = lazy(() => import('./components/SettingsPanel'))
 
 migrateLegacySettings()
 
@@ -258,7 +258,9 @@ function App() {
             onWidthChange={setSidebarWidth}
             className="ui-font-scaled"
           >
-            <SettingsPanel />
+            <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+              <SettingsPanel />
+            </Suspense>
           </ResizableSidebar>
         )}
 
