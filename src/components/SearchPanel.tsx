@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -9,6 +10,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
+import { createPortal } from 'react-dom'
 import {
   Search,
   File as FileIcon,
@@ -58,31 +60,19 @@ interface ContentSearchResponse {
   match_count: number
   files_scanned: number
   truncated: boolean
+  cancelled?: boolean
 }
 
 type SearchMode = 'filename' | 'content'
 type SearchScope = 'current' | 'all'
-type TypeFilter = { kind: 'preset'; label: string; exts: string[] } | { kind: 'ext'; ext: string }
+type TypeFilter = { kind: 'ext'; ext: string } | { kind: 'star'; exts: string[] }
 
-const TYPE_PRESETS: { label: string; exts: string[] }[] = [
-  { label: 'Web', exts: ['html', 'css', 'scss', 'less', 'js', 'jsx', 'ts', 'tsx', 'vue', 'svelte', 'astro'] },
-  { label: '脚本', exts: ['py', 'rs', 'go', 'java', 'kt', 'rb', 'php', 'sh', 'ps1', 'bat', 'cs'] },
-  { label: '配置', exts: ['json', 'jsonc', 'yaml', 'yml', 'toml', 'xml', 'env'] },
-  { label: '文档', exts: ['md', 'mdx', 'txt', 'rst'] },
-]
-
-const COMMON_EXTS = [
-  'ts', 'tsx', 'js', 'jsx', 'vue', 'svelte', 'astro',
-  'json', 'jsonc', 'html', 'css', 'scss', 'less',
-  'md', 'mdx', 'yaml', 'yml', 'toml', 'xml', 'sql',
-  'rs', 'py', 'go', 'java', 'kt', 'c', 'cpp', 'h', 'cs',
-  'php', 'rb', 'swift', 'sh', 'ps1', 'bat', 'env',
-]
+const TOP_EXT_COUNT = 5
 
 function typeFilterLabel(filter: TypeFilter | null) {
   if (!filter) return '全部类型'
-  if (filter.kind === 'ext') return `.${filter.ext}`
-  return filter.label
+  if (filter.kind === 'star') return '*'
+  return `.${filter.ext}`
 }
 
 function typeFilterExtensions(filter: TypeFilter | null): string[] | null {
@@ -126,6 +116,25 @@ function isNavigable(row: Row): boolean {
   return row.kind === 'file' || row.kind === 'match' || row.kind === 'fn'
 }
 
+function trimContentFiles(
+  files: ContentSearchFileResult[],
+  maxMatches: number,
+): ContentSearchFileResult[] {
+  const out: ContentSearchFileResult[] = []
+  let remaining = maxMatches
+  for (const file of files) {
+    if (remaining <= 0) break
+    if (file.matches.length <= remaining) {
+      out.push(file)
+      remaining -= file.matches.length
+    } else {
+      out.push({ ...file, matches: file.matches.slice(0, remaining) })
+      remaining = 0
+    }
+  }
+  return out
+}
+
 export default function SearchPanel() {
   const { t } = useI18n()
   const projects = useProjectStore(s => s.projects)
@@ -159,6 +168,9 @@ export default function SearchPanel() {
   const [matchSuffix, setMatchSuffix] = useState(false)
   const [typeFilter, setTypeFilter] = useState<TypeFilter | null>(null)
   const [extPickerOpen, setExtPickerOpen] = useState(false)
+  const [extPickerStyle, setExtPickerStyle] = useState<CSSProperties>({})
+  const [projectExts, setProjectExts] = useState<string[]>([])
+  const [projectExtsLoading, setProjectExtsLoading] = useState(false)
   const [filenameResults, setFilenameResults] = useState<SearchHit[]>([])
   const [contentResults, setContentResults] = useState<ContentSearchResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -166,15 +178,21 @@ export default function SearchPanel() {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
   const [activeIndex, setActiveIndex] = useState(0)
   const reqId = useRef(0)
+  const extScanId = useRef(0)
   const listRef = useListRef(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const extPickerBtnRef = useRef<HTMLButtonElement>(null)
+  const extPickerRef = useRef<HTMLDivElement>(null)
   const extList = typeFilterExtensions(typeFilter)
   const useGlob = isGlobPattern(query)
+  const topExts = useMemo(() => projectExts.slice(0, TOP_EXT_COUNT), [projectExts])
+  const otherExts = useMemo(() => projectExts.slice(TOP_EXT_COUNT), [projectExts])
+  const hasStarOption = otherExts.length > 0
 
   useEffect(() => {
     if (globalSearchSignal === 0) return
     setSearchRoot(null)
-    setSearchScope('all')
+    setSearchScope('current')
     window.requestAnimationFrame(() => searchInputRef.current?.focus())
   }, [globalSearchSignal, setSearchRoot])
 
@@ -183,11 +201,88 @@ export default function SearchPanel() {
   }, [query, mode, typeFilter])
 
   useEffect(() => {
+    if (typeFilter?.kind !== 'star') return
+    if (otherExts.length === 0) {
+      setTypeFilter(null)
+      return
+    }
+    setTypeFilter({ kind: 'star', exts: otherExts })
+  }, [otherExts])
+
+  const closeExtPicker = useCallback(() => setExtPickerOpen(false), [])
+
+  const positionExtPicker = useCallback(() => {
+    const rect = extPickerBtnRef.current?.getBoundingClientRect()
+    if (!rect) return
+    const width = 200
+    const estimatedHeight = 88
+    let top = rect.bottom + 4
+    if (top + estimatedHeight > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - estimatedHeight - 4)
+    }
+    // Align to the trigger button; keep the menu inside the viewport.
+    const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
+    setExtPickerStyle({ left, top, width })
+  }, [])
+
+  useLayoutEffect(() => {
     if (!extPickerOpen) return
-    const onDoc = () => setExtPickerOpen(false)
-    document.addEventListener('click', onDoc)
-    return () => document.removeEventListener('click', onDoc)
-  }, [extPickerOpen])
+    positionExtPicker()
+  }, [extPickerOpen, positionExtPicker, projectExts.length])
+
+  useEffect(() => {
+    if (!extPickerOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (extPickerRef.current?.contains(target)) return
+      if (extPickerBtnRef.current?.contains(target)) return
+      closeExtPicker()
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeExtPicker()
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('resize', closeExtPicker)
+    window.addEventListener('scroll', closeExtPicker, true)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('resize', closeExtPicker)
+      window.removeEventListener('scroll', closeExtPicker, true)
+    }
+  }, [extPickerOpen, closeExtPicker])
+
+  useEffect(() => {
+    if (searchRoots.length === 0) {
+      setProjectExts([])
+      setProjectExtsLoading(false)
+      return
+    }
+    if (!isTauri()) {
+      setProjectExts([])
+      setProjectExtsLoading(false)
+      return
+    }
+    const id = ++extScanId.current
+    setProjectExtsLoading(true)
+    const roots = searchRoots.map(root => root.path)
+    void safeInvoke<string[]>('扫描项目扩展名', 'list_file_extensions', {
+      roots,
+      maxFiles: 8000,
+    })
+      .then(exts => {
+        if (id !== extScanId.current) return
+        setProjectExts(exts)
+      })
+      .catch(() => {
+        if (id !== extScanId.current) return
+        setProjectExts([])
+      })
+      .finally(() => {
+        if (id === extScanId.current) setProjectExtsLoading(false)
+      })
+  }, [searchRoots])
 
   useEffect(() => {
     if (searchRoots.length === 0) {
@@ -231,31 +326,45 @@ export default function SearchPanel() {
             }
             return
           }
-          let merged: ContentSearchResponse = {
+          const searchId = await safeInvoke<number>('开始内容搜索', 'start_content_search')
+          if (id !== reqId.current) return
+
+          const maxFilesScanned = Math.ceil(8000 / searchRoots.length)
+          const parts = await Promise.all(
+            searchRoots.map(root =>
+              safeInvoke<ContentSearchResponse>('内容搜索', 'search_file_contents', {
+                root: root.path,
+                query: q,
+                ignoreCase,
+                extension: null,
+                extensions: extList,
+                maxMatches: perRootLimit,
+                maxFilesScanned,
+                maxMatchesPerFile: MAX_MATCHES_PER_FILE,
+                searchId,
+              }),
+            ),
+          )
+          if (id !== reqId.current) return
+          if (parts.every(p => p.cancelled)) return
+
+          const merged: ContentSearchResponse = {
             files: [],
             match_count: 0,
             files_scanned: 0,
             truncated: false,
           }
-          for (const root of searchRoots) {
-            const resp = await safeInvoke<ContentSearchResponse>('内容搜索', 'search_file_contents', {
-              root: root.path,
-              query: q,
-              ignoreCase,
-              extension: null,
-              extensions: extList,
-              maxMatches: perRootLimit,
-              maxFilesScanned: Math.ceil(8000 / searchRoots.length),
-              maxMatchesPerFile: 20,
-            })
+          for (const resp of parts) {
+            if (resp.cancelled) continue
             merged.files.push(...resp.files)
             merged.match_count += resp.match_count
             merged.files_scanned += resp.files_scanned
             merged.truncated = merged.truncated || resp.truncated
-            if (merged.match_count >= 500) {
-              merged.truncated = true
-              break
-            }
+          }
+          if (merged.match_count > 500) {
+            merged.files = trimContentFiles(merged.files, 500)
+            merged.match_count = merged.files.reduce((n, f) => n + f.matches.length, 0)
+            merged.truncated = true
           }
           if (id === reqId.current) {
             setContentResults(merged)
@@ -263,24 +372,23 @@ export default function SearchPanel() {
             setError(null)
           }
         } else {
-          let hits: SearchHit[] = []
-          for (const root of searchRoots) {
-            const part = await safeInvoke<SearchHit[]>('文件搜索', 'search_files', {
-              root: root.path,
-              query: q,
-              ignoreCase,
-              fuzzy: fuzzy && !useGlob && !matchSuffix && !extList,
-              matchSuffix: !useGlob && matchSuffix && !extList,
-              extension: null,
-              extensions: extList,
-              limit: perRootLimit,
-            })
-            hits.push(...part)
-            if (hits.length >= 500) {
-              hits = hits.slice(0, 500)
-              break
-            }
-          }
+          const parts = await Promise.all(
+            searchRoots.map(root =>
+              safeInvoke<SearchHit[]>('文件搜索', 'search_files', {
+                root: root.path,
+                query: q,
+                ignoreCase,
+                fuzzy: fuzzy && !useGlob && !matchSuffix && !extList,
+                matchSuffix: !useGlob && matchSuffix && !extList,
+                extension: null,
+                extensions: extList,
+                limit: perRootLimit,
+              }),
+            ),
+          )
+          if (id !== reqId.current) return
+          let hits = parts.flat()
+          if (hits.length > 500) hits = hits.slice(0, 500)
           if (id === reqId.current) {
             setFilenameResults(hits)
             setContentResults(null)
@@ -298,7 +406,12 @@ export default function SearchPanel() {
       }
     }, debounce)
 
-    return () => clearTimeout(handle)
+    return () => {
+      clearTimeout(handle)
+      if (mode === 'content' && isTauri()) {
+        void safeInvoke('取消内容搜索', 'cancel_content_search').catch(() => {})
+      }
+    }
   }, [searchRoots, query, ignoreCase, fuzzy, matchSuffix, typeFilter, extList, useGlob, mode])
 
   const toggleSuffix = () => {
@@ -578,7 +691,18 @@ export default function SearchPanel() {
           )}
           <Tooltip label={t('按文件类型筛选')} side="bottom">
             <button
-              onClick={() => setExtPickerOpen(v => !v)}
+              ref={extPickerBtnRef}
+              type="button"
+              aria-expanded={extPickerOpen}
+              onClick={event => {
+                event.stopPropagation()
+                if (extPickerOpen) {
+                  closeExtPicker()
+                  return
+                }
+                positionExtPicker()
+                setExtPickerOpen(true)
+              }}
               className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
                 ${typeFilter
                   ? 'bg-accent text-white border-accent'
@@ -591,6 +715,7 @@ export default function SearchPanel() {
           {typeFilter && (
             <Tooltip label={t('清除类型筛选')} side="bottom">
               <button
+                type="button"
                 className="px-1 py-0.5 text-[11px] rounded text-fg-dim hover:text-fg"
                 onClick={() => setTypeFilter(null)}
               >
@@ -598,71 +723,82 @@ export default function SearchPanel() {
               </button>
             </Tooltip>
           )}
-          {extPickerOpen && (
-            <div
-              className="absolute z-30 top-[calc(100%+4px)] left-0 bg-bg-elevated border border-border-strong rounded-md shadow-xl p-2 w-[220px] max-h-72 overflow-y-auto"
-              onClick={e => e.stopPropagation()}
-            >
-              <button
-                onClick={() => {
-                  setTypeFilter(null)
-                  setExtPickerOpen(false)
-                }}
-                className={`mb-2 w-full px-2 py-1 text-[11px] rounded border transition-colors text-left
-                  ${!typeFilter
-                    ? 'bg-accent text-white border-accent'
-                    : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
+          {extPickerOpen &&
+            createPortal(
+              <div
+                ref={extPickerRef}
+                role="listbox"
+                className="ui-font-scaled fixed z-[100] bg-bg-elevated border border-border-strong rounded-md shadow-xl p-2"
+                style={extPickerStyle}
+                onPointerDown={event => event.stopPropagation()}
               >
-                {t('全部类型')}
-              </button>
-              <div className="mb-2 text-[10px] font-semibold tracking-wide uppercase text-fg-dim px-0.5">
-                {t('常见分组')}
-              </div>
-              <div className="grid grid-cols-2 gap-1 mb-2">
-                {TYPE_PRESETS.map(preset => (
+                <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
+                  <span className="text-[10px] font-semibold tracking-wide uppercase text-fg-dim">
+                    {t('当前项目')}
+                  </span>
+                  {projectExtsLoading && (
+                    <LoaderCircle size={10} className="animate-spin text-accent" />
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-1">
                   <button
-                    key={preset.label}
+                    type="button"
                     onClick={() => {
-                      setTypeFilter(cur =>
-                        cur?.kind === 'preset' && cur.label === preset.label
-                          ? null
-                          : { kind: 'preset', label: preset.label, exts: preset.exts }
-                      )
-                      setExtPickerOpen(false)
-                    }}
-                    className={`px-2 py-1 text-[11px] rounded border transition-colors text-left
-                      ${typeFilter?.kind === 'preset' && typeFilter.label === preset.label
-                        ? 'bg-accent text-white border-accent'
-                        : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
-                  >
-                    {t(preset.label)}
-                  </button>
-                ))}
-              </div>
-              <div className="mb-1 text-[10px] font-semibold tracking-wide uppercase text-fg-dim px-0.5">
-                {t('扩展名')}
-              </div>
-              <div className="grid grid-cols-3 gap-1">
-                {COMMON_EXTS.map(ext => (
-                  <button
-                    key={ext}
-                    onClick={() => {
-                      setTypeFilter(cur =>
-                        cur?.kind === 'ext' && cur.ext === ext ? null : { kind: 'ext', ext }
-                      )
-                      setExtPickerOpen(false)
+                      setTypeFilter(null)
+                      closeExtPicker()
                     }}
                     className={`px-1.5 py-0.5 text-[11px] rounded border transition-colors text-center
-                      ${typeFilter?.kind === 'ext' && typeFilter.ext === ext
+                      ${!typeFilter
                         ? 'bg-accent text-white border-accent'
                         : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
                   >
-                    .{ext}
+                    {t('全部')}
                   </button>
-                ))}
-              </div>
-            </div>
-          )}
+                  {topExts.map(ext => (
+                    <button
+                      key={ext}
+                      type="button"
+                      onClick={() => {
+                        setTypeFilter(cur =>
+                          cur?.kind === 'ext' && cur.ext === ext ? null : { kind: 'ext', ext }
+                        )
+                        closeExtPicker()
+                      }}
+                      className={`px-1.5 py-0.5 text-[11px] rounded border transition-colors text-center
+                        ${typeFilter?.kind === 'ext' && typeFilter.ext === ext
+                          ? 'bg-accent text-white border-accent'
+                          : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
+                    >
+                      .{ext}
+                    </button>
+                  ))}
+                  {hasStarOption && (
+                    <button
+                      type="button"
+                      title={t('其余扩展名')}
+                      onClick={() => {
+                        setTypeFilter(cur =>
+                          cur?.kind === 'star' ? null : { kind: 'star', exts: otherExts }
+                        )
+                        closeExtPicker()
+                      }}
+                      className={`px-1.5 py-0.5 text-[11px] rounded border transition-colors text-center
+                        ${typeFilter?.kind === 'star'
+                          ? 'bg-accent text-white border-accent'
+                          : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
+                    >
+                      *
+                    </button>
+                  )}
+                  {!projectExtsLoading && topExts.length === 0 && (
+                    <span className="col-span-2 px-1 py-0.5 text-[11px] text-fg-dim">
+                      {t('暂无扩展名')}
+                    </span>
+                  )}
+                </div>
+              </div>,
+              document.body,
+            )}
         </div>
       </div>
 
@@ -677,7 +813,7 @@ export default function SearchPanel() {
           <div className="px-4 py-4 text-[13px] text-danger">{error}</div>
         ) : !hasQuery ? (
           <div className="px-4 py-4 text-[13px] text-fg-muted">
-            {mode === 'content' ? t('输入关键词搜索文件内容') : t('输入关键词、通配符（*）或选择常见类型开始搜索')}
+            {mode === 'content' ? t('输入关键词搜索文件内容') : t('输入关键词、通配符（*）或选择文件类型开始搜索')}
           </div>
         ) : rows.length === 0 && loading ? (
           <div className="px-4 py-4 text-[13px] text-fg-muted">{t('搜索中…')}</div>

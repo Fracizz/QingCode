@@ -1,7 +1,10 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { basicSetup } from 'codemirror'
+import { search } from '@codemirror/search'
 import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state'
 import { Decoration, EditorView, keymap, type DecorationSet } from '@codemirror/view'
+import { createEditorFindReplacePanel } from './EditorFindReplacePanel'
+import { redo, redoDepth, selectAll, undo, undoDepth } from '@codemirror/commands'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { javascript } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
@@ -9,15 +12,31 @@ import { markdown } from '@codemirror/lang-markdown'
 import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
 import { python } from '@codemirror/lang-python'
+import {
+  AtSign,
+  ClipboardPaste,
+  Copy,
+  ExternalLink,
+  FileText,
+  LocateFixed,
+  Redo2,
+  Save,
+  Scissors,
+  SquareMousePointer,
+  Undo2,
+} from 'lucide-react'
+import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
+import { useUIStore } from '../store/uiStore'
 import {
   copyToClipboard,
   findProjectForPath,
   formatFileReference,
 } from '../utils/fileReferences'
-import { FileText } from 'lucide-react'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
+import { translate, useI18n } from '../lib/i18n'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
 const lightTheme = EditorView.theme(
@@ -37,9 +56,6 @@ const lightTheme = EditorView.theme(
     },
     '.cm-searchMatch': { backgroundColor: '#ffe9a8' },
     '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: '#ffd56b' },
-    '.cm-panels': { backgroundColor: '#e2e2e2', color: '#1f1f1f' },
-    '.cm-panels.cm-panels-top': { borderBottom: '1px solid #d0d0d0' },
-    '.cm-textfield': { backgroundColor: '#f6f6f6', border: '1px solid #bcbcbc' },
   },
   { dark: false },
 )
@@ -77,13 +93,35 @@ const LANG_MAP: Record<string, () => import('@codemirror/language').LanguageSupp
   jsx: () => javascript({ jsx: true }),
   tsx: () => javascript({ jsx: true, typescript: true }),
   json: () => json(),
+  // JSON5 / JSONC: JS highlighter so // and /* */ comments are allowed visually
+  json5: () => javascript(),
   markdown: () => markdown(),
   css: () => css(),
   html: () => html(),
   python: () => python(),
 }
 
+function hasNonEmptySelection(view: EditorView) {
+  return !view.state.selection.main.empty
+}
+
+function selectedText(view: EditorView) {
+  const { from, to } = view.state.selection.main
+  return view.state.sliceDoc(from, to)
+}
+
+function selectionLineRange(view: EditorView) {
+  const selection = view.state.selection.main
+  const startLine = view.state.doc.lineAt(selection.from).number
+  const endPosition = selection.empty
+    ? selection.head
+    : Math.max(selection.from, selection.to - 1)
+  const endLine = view.state.doc.lineAt(endPosition).number
+  return { startLine, endLine }
+}
+
 export default function Editor() {
+  const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const themeCompartment = useRef(new Compartment())
@@ -92,6 +130,9 @@ export default function Editor() {
   const setTabContent = useEditorStore(s => s.setTabContent)
   const markDirty = useEditorStore(s => s.markDirty)
   const saveFile = useEditorStore(s => s.saveFile)
+  const revealFileInTree = useProjectStore(s => s.revealFileInTree)
+  const setView = useUIStore(s => s.setView)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   const activeTab = tabs.find(t => t.id === activeTabId)
   const pendingReveal = useEditorStore(s => s.pendingReveal)
@@ -111,6 +152,7 @@ export default function Editor() {
       doc: activeTab.content || '',
       extensions: [
         basicSetup,
+        search({ top: true, createPanel: createEditorFindReplacePanel }),
         themeCompartment.current.of(editorThemeExtension()),
         langSupport ?? [],
         flashField,
@@ -132,9 +174,16 @@ export default function Editor() {
             key: 'Ctrl-Shift-c',
             run: () => {
               void copyToClipboard(activeTab.path)
-                .then(() => useProjectStore.getState().pushToast('success', '文件路径已复制'))
+                .then(() =>
+                  useProjectStore.getState().pushToast('success', translate('路径已复制'))
+                )
                 .catch(error =>
-                  useProjectStore.getState().pushToast('error', `复制路径失败: ${String(error)}`)
+                  useProjectStore
+                    .getState()
+                    .pushToast(
+                      'error',
+                      translate('复制路径失败: {error}', { error: String(error) })
+                    )
                 )
               return true
             },
@@ -147,19 +196,19 @@ export default function Editor() {
                 findProjectForPath(projectState.projects, activeTab.path) ??
                 projectState.currentProject
               if (!project) return false
-              const selection = view.state.selection.main
-              const startLine = view.state.doc.lineAt(selection.from).number
-              const endPosition = selection.empty
-                ? selection.head
-                : Math.max(selection.from, selection.to - 1)
-              const endLine = view.state.doc.lineAt(endPosition).number
+              const { startLine, endLine } = selectionLineRange(view)
               const reference = formatFileReference(project, activeTab.path, startLine, endLine)
               void copyToClipboard(reference)
                 .then(() =>
-                  useProjectStore.getState().pushToast('success', `文件引用已复制: ${reference}`)
+                  useProjectStore.getState().pushToast('success', translate('文件引用已复制'))
                 )
                 .catch(error =>
-                  useProjectStore.getState().pushToast('error', `复制引用失败: ${String(error)}`)
+                  useProjectStore
+                    .getState()
+                    .pushToast(
+                      'error',
+                      translate('复制引用失败: {error}', { error: String(error) })
+                    )
                 )
               return true
             },
@@ -207,26 +256,210 @@ export default function Editor() {
     })
     viewRef.current.focus()
     clearPendingReveal()
-    const t = window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       if (viewRef.current) viewRef.current.dispatch({ effects: clearFlashEffect.of() })
     }, 1200)
-    return () => window.clearTimeout(t)
+    return () => window.clearTimeout(timer)
   }, [pendingReveal, activeTab?.path, activeTabId, clearPendingReveal])
+
+  const copyPath = async (path: string) => {
+    try {
+      await copyToClipboard(path)
+      useProjectStore.getState().pushToast('success', t('路径已复制'))
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const copyAsReference = async (path: string) => {
+    const view = viewRef.current
+    const projectState = useProjectStore.getState()
+    const project = findProjectForPath(projectState.projects, path) ?? projectState.currentProject
+    if (!project) {
+      useProjectStore.getState().pushToast('error', t('无法确定该路径所属项目'))
+      return
+    }
+    const { startLine, endLine } = view
+      ? selectionLineRange(view)
+      : { startLine: 1, endLine: 1 }
+    const reference = formatFileReference(project, path, startLine, endLine)
+    try {
+      await copyToClipboard(reference)
+      useProjectStore.getState().pushToast('success', t('文件引用已复制'))
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('复制引用失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const revealInSidebar = (path: string) => {
+    setView('explorer')
+    void revealFileInTree(path)
+  }
+
+  const revealPath = async (path: string) => {
+    try {
+      await revealItemInDir(path)
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('在文件管理器中显示失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const menuItems = (path: string): ContextMenuItem[] => {
+    const view = viewRef.current
+    const canEditSelection = !!view && hasNonEmptySelection(view)
+    const canUndo = !!view && undoDepth(view.state) > 0
+    const canRedo = !!view && redoDepth(view.state) > 0
+
+    return [
+      {
+        label: t('剪切'),
+        icon: <Scissors size={14} />,
+        shortcut: 'Ctrl+X',
+        disabled: !canEditSelection,
+        action: async () => {
+          if (!view || !hasNonEmptySelection(view)) return
+          await navigator.clipboard.writeText(selectedText(view))
+          view.dispatch(view.state.replaceSelection(''))
+          view.focus()
+        },
+      },
+      {
+        label: t('复制'),
+        icon: <Copy size={14} />,
+        shortcut: 'Ctrl+C',
+        disabled: !canEditSelection,
+        action: async () => {
+          if (!view || !hasNonEmptySelection(view)) return
+          await navigator.clipboard.writeText(selectedText(view))
+          view.focus()
+        },
+      },
+      {
+        label: t('粘贴'),
+        icon: <ClipboardPaste size={14} />,
+        shortcut: 'Ctrl+V',
+        disabled: !view,
+        action: async () => {
+          if (!view) return
+          try {
+            const text = await navigator.clipboard.readText()
+            view.dispatch(view.state.replaceSelection(text))
+            view.focus()
+          } catch (error) {
+            useProjectStore
+              .getState()
+              .pushToast('error', t('粘贴失败: {error}', { error: String(error) }))
+          }
+        },
+      },
+      {
+        label: t('全选'),
+        icon: <SquareMousePointer size={14} />,
+        shortcut: 'Ctrl+A',
+        disabled: !view,
+        action: () => {
+          if (!view) return
+          selectAll(view)
+          view.focus()
+        },
+      },
+      {
+        label: t('撤销'),
+        icon: <Undo2 size={14} />,
+        shortcut: 'Ctrl+Z',
+        separatorBefore: true,
+        disabled: !canUndo,
+        action: () => {
+          if (!view) return
+          undo(view)
+          view.focus()
+        },
+      },
+      {
+        label: t('重做'),
+        icon: <Redo2 size={14} />,
+        shortcut: 'Ctrl+Y',
+        disabled: !canRedo,
+        action: () => {
+          if (!view) return
+          redo(view)
+          view.focus()
+        },
+      },
+      {
+        label: t('保存'),
+        icon: <Save size={14} />,
+        shortcut: 'Ctrl+S',
+        separatorBefore: true,
+        action: () => {
+          if (activeTabId) void saveFile(activeTabId)
+        },
+      },
+      {
+        label: t('复制路径'),
+        icon: <Copy size={14} />,
+        shortcut: 'Ctrl+Shift+C',
+        separatorBefore: true,
+        action: () => copyPath(path),
+      },
+      {
+        label: t('复制为文件引用'),
+        icon: <AtSign size={14} />,
+        shortcut: 'Alt+C',
+        action: () => copyAsReference(path),
+      },
+      {
+        label: t('在资源管理器中定位'),
+        icon: <LocateFixed size={14} />,
+        separatorBefore: true,
+        action: () => revealInSidebar(path),
+      },
+      {
+        label: t('在文件管理器中显示'),
+        icon: <ExternalLink size={14} />,
+        action: () => revealPath(path),
+      },
+    ]
+  }
+
+  const openContextMenu = (event: ReactMouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    viewRef.current?.focus()
+    setContextMenu({ x: event.clientX, y: event.clientY })
+  }
 
   if (!activeTab) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-3">
         <FileText size={40} strokeWidth={1.2} />
-        <p className="text-sm">Open a file from the sidebar to start editing</p>
-        <p className="text-xs text-fg-dim">Ctrl + Shift + C 复制文件路径</p>
-        <p className="text-xs text-fg-dim">Alt + C 复制引用，例如 @web/src/app.vue#L70</p>
+        <p className="text-sm">{t('从侧边栏打开文件开始编辑')}</p>
+        <p className="text-xs text-fg-dim">
+          {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
+        </p>
       </div>
     )
   }
 
   return (
-    <div className="flex-1 overflow-hidden bg-bg">
-      <div ref={containerRef} className="h-full" />
-    </div>
+    <>
+      <div className="flex-1 overflow-hidden bg-bg" onContextMenu={openContextMenu}>
+        <div ref={containerRef} className="h-full" />
+      </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={menuItems(activeTab.path)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+    </>
   )
 }

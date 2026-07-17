@@ -168,6 +168,128 @@ body {
   70% { background: rgba(255, 138, 101, 0.28); }
   100% { background: rgba(255, 138, 101, 0); }
 }
+
+/* In-editor Find/Replace — float like VS Code over the editor */
+.cm-editor .cm-panels {
+  background: var(--color-bg-sidebar);
+  color: var(--color-fg);
+}
+.cm-editor .cm-panels.cm-panels-top:has(.cm-qing-find-replace-host) {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: auto;
+  z-index: 20;
+  width: auto;
+  max-width: min(100%, 440px);
+  border: none;
+  background: transparent;
+  pointer-events: none;
+}
+.cm-editor .cm-panels.cm-panels-top {
+  border-bottom: 1px solid var(--color-border);
+}
+.cm-editor .cm-panels.cm-panels-bottom {
+  border-top: 1px solid var(--color-border);
+}
+.cm-editor .cm-qing-find-replace-host {
+  pointer-events: auto;
+}
+.cm-editor .cm-qing-find-replace {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 4px 6px 0 0;
+}
+.cm-editor .cm-qing-find-replace-widget {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 340px;
+  padding: 4px 28px 6px 4px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  color: var(--color-fg);
+}
+.cm-editor .cm-qing-find-toggle-replace {
+  margin-top: 4px;
+}
+.cm-editor .cm-qing-find-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.cm-editor .cm-qing-find-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+.cm-editor .cm-qing-find-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 220px;
+  min-width: 160px;
+  height: 26px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-bg-deep);
+}
+.cm-editor .cm-qing-find-input-wrap:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+.cm-editor .cm-qing-find-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 8px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--color-fg);
+  font-size: 13px;
+}
+.cm-editor .cm-qing-find-input::placeholder {
+  color: var(--color-fg-dim);
+}
+.cm-editor .cm-qing-find-input-wrap:not(.is-replace) .cm-qing-find-input {
+  padding-right: 2px;
+}
+.cm-editor .cm-qing-find-input-toggles {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding-right: 2px;
+}
+.cm-editor .cm-qing-find-count {
+  flex: 0 0 auto;
+  min-width: 3.5rem;
+  padding: 0 2px;
+  color: var(--color-fg-muted);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+.cm-editor .cm-qing-find-count.is-empty {
+  color: var(--color-danger);
+}
+.cm-editor .cm-qing-find-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+.cm-editor .cm-qing-find-close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}
 .xterm-viewport::-webkit-scrollbar {
   width: 10px;
 }

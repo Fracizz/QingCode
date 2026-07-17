@@ -7,6 +7,12 @@ import type { Project, RecentFile } from '../types'
 import { collectAncestorDirs, findProjectForPath, isDescendantOf } from '../utils/fileReferences'
 import { useEditorStore } from './editorStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
+import {
+  loadGlobalSettings,
+  readProjectEntries,
+  shouldSyncProjectsOnStartup,
+} from '../lib/projectSettings'
+import { translate } from '../lib/i18n'
 
 let dbPromise: Promise<Database> | null = null
 function getDb() {
@@ -143,6 +149,80 @@ interface ProjectState {
   dismissToast: (id: string) => void
 }
 
+function normalizeProjectPath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+async function syncProjectsFromUserSettings(
+  db: Database,
+  projects: Project[],
+): Promise<{ projects: Project[]; imported: number }> {
+  const settings = await loadGlobalSettings()
+  if (!shouldSyncProjectsOnStartup(settings)) {
+    return { projects, imported: 0 }
+  }
+  const entries = readProjectEntries(settings)
+  if (entries.length === 0) return { projects, imported: 0 }
+
+  let imported = 0
+  let next = projects
+
+  for (const entry of entries) {
+    const existing = next.find(
+      project => normalizeProjectPath(project.path) === normalizeProjectPath(entry.path),
+    )
+    if (existing) {
+      const hidden = entry.hidden ? 1 : 0
+      const name = entry.name?.trim() || existing.name
+      const defaultShell = entry.defaultShell ?? existing.default_shell ?? null
+      const needsUpdate =
+        existing.hidden !== hidden ||
+        existing.name !== name ||
+        (existing.default_shell ?? null) !== defaultShell
+      if (!needsUpdate) continue
+      await db.execute(
+        'UPDATE projects SET name = $1, hidden = $2, default_shell = $3 WHERE id = $4',
+        [name, hidden, defaultShell, existing.id],
+      )
+      next = next.map(project =>
+        project.id === existing.id
+          ? { ...project, name, hidden, default_shell: defaultShell ?? undefined }
+          : project,
+      )
+      continue
+    }
+
+    try {
+      await safeInvoke('检查项目目录', 'validate_directory', { path: entry.path })
+      const id = crypto.randomUUID()
+      const now = Date.now()
+      const name = entry.name?.trim() || baseName(entry.path)
+      const hidden = entry.hidden ? 1 : 0
+      await db.execute(
+        'INSERT INTO projects (id, name, path, default_shell, created_at, last_opened_at, hidden) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+        [id, name, entry.path, entry.defaultShell ?? null, now, now, hidden],
+      )
+      next = [
+        {
+          id,
+          name,
+          path: entry.path,
+          default_shell: entry.defaultShell,
+          created_at: now,
+          last_opened_at: now,
+          hidden,
+        },
+        ...next,
+      ]
+      imported += 1
+    } catch {
+      // Skip missing / invalid paths from settings; user can fix the JSON.
+    }
+  }
+
+  return { projects: next, imported }
+}
+
 function baseName(p: string) {
   const norm = p.replace(/\\/g, '/')
   const parts = norm.split('/').filter(Boolean)
@@ -178,11 +258,38 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   loadProjects: async () => {
     try {
-      const { migrated, projects } = await withDb('加载项目列表', async (d) => ({
-        migrated: await migrateLegacyProjects(d),
-        projects: await d.select<Project[]>('SELECT * FROM projects ORDER BY last_opened_at DESC')
-      }))
+      const { migrated, projects, importedFromSettings } = await withDb(
+        '加载项目列表',
+        async (d) => {
+          const migrated = await migrateLegacyProjects(d)
+          let projects = await d.select<Project[]>(
+            'SELECT * FROM projects ORDER BY last_opened_at DESC',
+          )
+          let importedFromSettings = 0
+          if (isTauri()) {
+            try {
+              const synced = await syncProjectsFromUserSettings(d, projects)
+              projects = synced.projects
+              importedFromSettings = synced.imported
+              if (importedFromSettings > 0) {
+                projects = await d.select<Project[]>(
+                  'SELECT * FROM projects ORDER BY last_opened_at DESC',
+                )
+              }
+            } catch (error) {
+              console.warn('sync projects from default-settings.json failed:', error)
+            }
+          }
+          return { migrated, projects, importedFromSettings }
+        },
+      )
       if (migrated) get().pushToast('success', '已从旧版本恢复项目列表')
+      if (importedFromSettings > 0) {
+        get().pushToast(
+          'success',
+          translate('已从用户设置同步 {count} 个项目', { count: importedFromSettings }),
+        )
+      }
 
       const expandedProjects: Record<string, boolean> = {}
       const ephemeralProjects = get().projects.filter((p) => p.ephemeral)
@@ -196,6 +303,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         expandedProjects,
         loading: false
       })
+
+      // Open the most recent project immediately so the UI is not gated on
+      // validating every project path (slow/network drives can stall startup).
+      if (!get().currentProject) {
+        const candidate = projects.find((project) => !project.hidden)
+        if (candidate) void get().switchProject(candidate)
+      }
 
       void (async () => {
         const unavailableProjectIds = (
@@ -215,7 +329,17 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
         set({ unavailableProjectIds })
 
-        if (projects.length > 0 && !get().currentProject) {
+        const current = get().currentProject
+        if (current && unavailableProjectIds.includes(current.id)) {
+          const firstAvailable = projects.find(
+            (project) => !project.hidden && !unavailableProjectIds.includes(project.id)
+          )
+          if (firstAvailable) {
+            await get().switchProject(firstAvailable)
+          } else {
+            set({ currentProject: null, recentFiles: [] })
+          }
+        } else if (!current) {
           const firstAvailable = projects.find(
             (project) => !project.hidden && !unavailableProjectIds.includes(project.id)
           )
@@ -592,7 +716,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         expandedProjects: { ...s.expandedProjects, [project.id]: true }
       }))
       useEditorStore.getState().closeTabsOutsideProject(project.path)
-      await get().ensureProjectTree(project)
+      // Load the tree after the project switch paints; callers should not wait on I/O.
+      void get().ensureProjectTree(project)
     } catch (e) {
       console.error('switchProject failed:', e)
       set((s) => ({

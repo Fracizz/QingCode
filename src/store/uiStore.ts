@@ -8,7 +8,7 @@ interface UIState {
   sidebarOpen: boolean
   /** When set, search is restricted to this directory path (absolute). */
   searchRoot: string | null
-  /** Incremented when the global project-search shortcut opens the search view. */
+  /** Incremented when the search shortcut opens the search view. */
   globalSearchSignal: number
   /** Incremented to request the terminal panel to open (e.g. when a run config starts). */
   terminalOpenSignal: number
@@ -20,7 +20,7 @@ interface UIState {
   setSearchRoot: (path: string | null) => void
   /** Switch to the search view, optionally scoped to a directory. */
   requestSearch: (root?: string | null) => void
-  /** Switch to content search across every available project. */
+  /** Switch to the search view and focus the query input (defaults to current project). */
   requestGlobalSearch: () => void
   /** Request the terminal panel to open. */
   openTerminalPanel: () => void

@@ -1,4 +1,5 @@
 mod commands;
+mod content_search;
 mod terminal;
 
 use std::path::PathBuf;
@@ -155,6 +156,33 @@ fn db_url() -> String {
     build_db_url()
 }
 
+/// Absolute path to the global `default-settings.json`.
+/// Dev builds write beside the project `.dev` database; release uses app data dir.
+/// Migrates legacy `user-settings.json` / `settings.json` when present.
+#[tauri::command]
+fn default_settings_path() -> String {
+    let dir = if cfg!(debug_assertions) {
+        let db = dev_db_file();
+        db.parent().expect("dev db has parent").to_path_buf()
+    } else {
+        dirs::data_dir()
+            .expect("no data dir")
+            .join("com.qingcode.app")
+    };
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("default-settings.json");
+    if !path.exists() {
+        for legacy_name in ["user-settings.json", "settings.json"] {
+            let legacy = dir.join(legacy_name);
+            if legacy.is_file() {
+                let _ = std::fs::rename(&legacy, &path);
+                break;
+            }
+        }
+    }
+    path.to_string_lossy().into_owned()
+}
+
 #[tauri::command]
 fn is_dev_build() -> bool {
     cfg!(debug_assertions)
@@ -213,6 +241,9 @@ pub fn run() {
             commands::write_file,
             commands::search_files,
             commands::search_file_contents,
+            commands::start_content_search,
+            commands::cancel_content_search,
+            commands::list_file_extensions,
             commands::create_file,
             commands::create_directory,
             commands::rename_path,
@@ -224,6 +255,7 @@ pub fn run() {
             terminal_has_child_processes,
             spawn_script,
             db_url,
+            default_settings_path,
             is_dev_build,
         ])
         .run(tauri::generate_context!())

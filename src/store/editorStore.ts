@@ -4,6 +4,21 @@ import { useProjectStore } from './projectStore'
 import type { EditorTab } from '../types'
 import { isDescendantOf } from '../utils/fileReferences'
 
+function formatOpenFileError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const message = raw.replace(/^Error:\s*/i, '').trim() || raw
+  // Backend already returns a complete Chinese reason for unsupported formats / size limits.
+  if (
+    message.startsWith('暂不支持')
+    || message.startsWith('无法打开')
+    || message.startsWith('无法访问')
+    || message.startsWith('读取文件失败')
+  ) {
+    return message
+  }
+  return `打开文件失败：${message}`
+}
+
 interface EditorState {
   tabs: EditorTab[]
   activeTabId: string | null
@@ -55,7 +70,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       void useProjectStore.getState().revealFileInTree(path)
     } catch (e) {
       console.error('openFile failed:', e)
-      useProjectStore.getState().pushToast('error', `打开文件失败: ${String(e)}`)
+      useProjectStore.getState().pushToast('error', formatOpenFileError(e))
     }
   },
 
@@ -126,7 +141,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   closeTabsOutsideProject: (projectPath: string) =>
     set(s => {
-      const tabs = s.tabs.filter(tab => isDescendantOf(tab.path, projectPath))
+      const tabs = s.tabs.filter(
+        tab => isDescendantOf(tab.path, projectPath) || isPinnedSettingsTab(tab.path),
+      )
       return {
         tabs,
         activeTabId: tabs.some(tab => tab.id === s.activeTabId) ? s.activeTabId : tabs[0]?.id ?? null,
@@ -160,11 +177,33 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }),
 }))
 
+/** Keep global default-settings.json open across project switches. */
+function isPinnedSettingsTab(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/')
+  return (
+    normalized.endsWith('/default-settings.json') ||
+    normalized.endsWith('/user-settings.json') ||
+    normalized.endsWith('/com.qingcode.app/settings.json')
+  )
+}
+
 function guessLanguage(path: string): string {
+  const normalized = path.replace(/\\/g, '/')
+  // default-settings.json / project-settings.json are JSON5 (comments allowed)
+  if (
+    normalized.endsWith('/default-settings.json') ||
+    normalized.endsWith('/project-settings.json') ||
+    normalized.endsWith('/user-settings.json') ||
+    normalized.endsWith('/com.qingcode.app/settings.json') ||
+    normalized.endsWith('/.qingcode/settings.json')
+  ) {
+    return 'json5'
+  }
   const ext = path.split('.').pop()?.toLowerCase() || ''
   const map: Record<string, string> = {
     js: 'javascript', jsx: 'jsx', ts: 'typescript', tsx: 'tsx',
-    json: 'json', md: 'markdown', css: 'css', html: 'html',
+    json: 'json', json5: 'json5', jsonc: 'json5',
+    md: 'markdown', css: 'css', html: 'html',
     py: 'python', rs: 'rust', toml: 'toml', yml: 'yaml', yaml: 'yaml',
     xml: 'xml', sh: 'shell', bat: 'bat', ps1: 'powershell',
     go: 'go', java: 'java', c: 'c', cpp: 'cpp', h: 'c',

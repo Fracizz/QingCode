@@ -1,6 +1,11 @@
+use crate::content_search::{
+    self, ContentSearchOptions, ContentSearchResponse, DEFAULT_MAX_FILES_SCANNED,
+    DEFAULT_MAX_MATCHES, DEFAULT_MAX_MATCHES_PER_FILE,
+};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -43,7 +48,8 @@ fn list_dir_one_level(current: &str) -> Result<Vec<FileNode>, std::io::Error> {
         }
 
         let full_path = path.to_string_lossy().to_string();
-        let is_dir = path.is_dir();
+        // Prefer DirEntry::file_type() to avoid an extra metadata round-trip per entry.
+        let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
 
         let node = FileNode {
             name,
@@ -270,6 +276,76 @@ fn fuzzy_match(haystack: &str, needle: &str) -> bool {
     true
 }
 
+fn walk_file_extensions(
+    root: &Path,
+    counts: &mut HashMap<String, usize>,
+    scanned: &mut usize,
+    max_files: usize,
+) {
+    if *scanned >= max_files {
+        return;
+    }
+    let entries = match fs::read_dir(root) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        if *scanned >= max_files {
+            return;
+        }
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if is_ignored_entry(&name) {
+            continue;
+        }
+        let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
+        if is_dir {
+            walk_file_extensions(&path, counts, scanned, max_files);
+            continue;
+        }
+        *scanned += 1;
+        if is_binary_extension(&name) {
+            continue;
+        }
+        let Some(ext) = Path::new(&name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+        else {
+            continue;
+        };
+        if ext.is_empty() {
+            continue;
+        }
+        *counts.entry(ext).or_insert(0) += 1;
+    }
+}
+
+/// Collect unique file extensions under the given project roots (ignores
+/// common build/vendor dirs and binary media). Sorted by frequency, then name.
+#[tauri::command]
+pub fn list_file_extensions(
+    roots: Vec<String>,
+    max_files: Option<usize>,
+) -> Result<Vec<String>, String> {
+    let max = max_files.unwrap_or(8_000).clamp(100, 50_000);
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    let mut scanned = 0usize;
+    for root in roots {
+        let path = Path::new(&root);
+        if !path.is_dir() {
+            continue;
+        }
+        walk_file_extensions(path, &mut counts, &mut scanned, max);
+        if scanned >= max {
+            break;
+        }
+    }
+    let mut items: Vec<(String, usize)> = counts.into_iter().collect();
+    items.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    Ok(items.into_iter().map(|(ext, _)| ext).take(80).collect())
+}
+
 #[tauri::command]
 pub fn search_files(
     root: String,
@@ -318,44 +394,17 @@ pub fn search_files(
     Ok(hits)
 }
 
-const MAX_FILE_BYTES: u64 = 512 * 1024;
-const MAX_LINE_CHARS: usize = 300;
-const DEFAULT_MAX_MATCHES: usize = 500;
-const DEFAULT_MAX_FILES_SCANNED: usize = 8000;
-const DEFAULT_MAX_MATCHES_PER_FILE: usize = 20;
-
-#[derive(Debug, Serialize, Clone)]
-pub struct ContentSearchMatch {
-    pub line: u32,
-    pub text: String,
-    pub match_start: u32,
-    pub match_end: u32,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct ContentSearchFileResult {
-    pub name: String,
-    pub path: String,
-    pub relative: String,
-    pub matches: Vec<ContentSearchMatch>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ContentSearchResponse {
-    pub files: Vec<ContentSearchFileResult>,
-    pub match_count: usize,
-    pub files_scanned: usize,
-    pub truncated: bool,
-}
-
-fn is_binary_extension(name: &str) -> bool {
-    let ext = Path::new(name)
+fn file_extension_lower(name: &str) -> String {
+    Path::new(name)
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+}
+
+fn is_binary_extension(name: &str) -> bool {
     matches!(
-        ext.as_str(),
+        file_extension_lower(name).as_str(),
         "png"
             | "jpg"
             | "jpeg"
@@ -387,186 +436,68 @@ fn is_binary_extension(name: &str) -> bool {
             | "wasm"
             | "lock"
             | "map"
+            | "pyc"
+            | "pyo"
+            | "pyd"
+            | "class"
+            | "o"
+            | "obj"
+            | "typed"
+            // Office / document binaries (not plain text)
+            | "xlsx"
+            | "xlsm"
+            | "xls"
+            | "docx"
+            | "doc"
+            | "pptx"
+            | "ppt"
+            | "odt"
+            | "ods"
+            | "odp"
+            | "numbers"
+            | "pages"
+            | "key"
+            | "sqlite"
+            | "db"
+            | "7zip"
     )
 }
 
-fn matches_extension(name: &str, extension: Option<&str>, extensions: Option<&[String]>) -> bool {
-    if let Some(exts) = extensions {
-        return matches_extensions(name, Some(exts));
-    }
-    match extension {
-        None => true,
-        Some(ext) => {
-            let want = ext.trim_start_matches('.');
-            Path::new(name)
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case(want))
-        }
-    }
+fn display_file_name(path: &str) -> &str {
+    Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path)
 }
 
-fn find_match_range(haystack: &str, needle: &str, ignore_case: bool) -> Option<(usize, usize)> {
-    if needle.is_empty() {
-        return None;
-    }
-    if ignore_case {
-        let h = haystack.to_lowercase();
-        let n = needle.to_lowercase();
-        h.find(&n).map(|start| (start, start + n.len()))
+/// User-facing reason when a path cannot be opened as a text editor buffer.
+fn unsupported_text_file_message(path: &str) -> String {
+    let name = display_file_name(path);
+    let ext = file_extension_lower(name);
+    if !ext.is_empty() {
+        format!(
+            "暂不支持打开 .{ext} 格式（非文本文件），请用对应应用打开：{name}"
+        )
     } else {
-        haystack
-            .find(needle)
-            .map(|start| (start, start + needle.len()))
+        format!("暂不支持打开非文本或非 UTF-8 文件：{name}")
     }
 }
 
-fn truncate_line(s: &str, max_chars: usize) -> String {
-    let count = s.chars().count();
-    if count <= max_chars {
-        return s.to_string();
-    }
-    s.chars().take(max_chars).chain(['…']).collect()
+fn is_utf8_decode_error(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::InvalidData
+        || err.to_string().to_ascii_lowercase().contains("utf-8")
 }
 
-fn search_lines_in_file(
-    path: &Path,
-    query: &str,
-    ignore_case: bool,
-    max_per_file: usize,
-) -> Vec<ContentSearchMatch> {
-    let meta = match fs::metadata(path) {
-        Ok(m) => m,
-        Err(_) => return vec![],
-    };
-    if meta.len() > MAX_FILE_BYTES {
-        return vec![];
-    }
-
-    let file = match fs::File::open(path) {
-        Ok(f) => f,
-        Err(_) => return vec![],
-    };
-
-    let reader = BufReader::new(file);
-    let mut matches = Vec::new();
-
-    for (idx, line_result) in reader.lines().enumerate() {
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-        if line.contains('\0') {
-            break;
-        }
-        if let Some((start, end)) = find_match_range(&line, query, ignore_case) {
-            matches.push(ContentSearchMatch {
-                line: (idx + 1) as u32,
-                text: truncate_line(&line, MAX_LINE_CHARS),
-                match_start: start as u32,
-                match_end: end as u32,
-            });
-            if matches.len() >= max_per_file {
-                break;
-            }
-        }
-    }
-
-    matches
+/// Begin a content-search session. Returns an id shared across multi-root invokes.
+#[tauri::command]
+pub fn start_content_search() -> u64 {
+    content_search::start_content_search()
 }
 
-struct ContentSearchState {
-    max_matches: usize,
-    max_files_scanned: usize,
-    max_matches_per_file: usize,
-    match_count: usize,
-    files_scanned: usize,
-    truncated: bool,
-}
-
-fn walk_and_search_content(
-    root: &Path,
-    base: &Path,
-    query: &str,
-    ignore_case: bool,
-    extension: Option<&str>,
-    extensions: Option<&[String]>,
-    state: &mut ContentSearchState,
-    results: &mut Vec<ContentSearchFileResult>,
-) {
-    if state.truncated {
-        return;
-    }
-
-    let entries = match fs::read_dir(root) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        if state.truncated {
-            return;
-        }
-
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().to_string();
-        if is_ignored_entry(&name) {
-            continue;
-        }
-
-        if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
-            walk_and_search_content(
-                &path,
-                base,
-                query,
-                ignore_case,
-                extension,
-                extensions,
-                state,
-                results,
-            );
-            continue;
-        }
-
-        if !matches_extension(&name, extension, extensions) || is_binary_extension(&name) {
-            continue;
-        }
-
-        state.files_scanned += 1;
-        if state.files_scanned > state.max_files_scanned {
-            state.truncated = true;
-            return;
-        }
-
-        let file_matches =
-            search_lines_in_file(&path, query, ignore_case, state.max_matches_per_file);
-        if file_matches.is_empty() {
-            continue;
-        }
-
-        let full = path.to_string_lossy().to_string();
-        let relative = path
-            .strip_prefix(base)
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|_| full.clone());
-
-        let remaining = state.max_matches.saturating_sub(state.match_count);
-        let take = file_matches.len().min(remaining);
-        let taken = file_matches.into_iter().take(take).collect::<Vec<_>>();
-        state.match_count += taken.len();
-
-        results.push(ContentSearchFileResult {
-            name: name.clone(),
-            path: full.clone(),
-            relative,
-            matches: taken,
-        });
-
-        if state.match_count >= state.max_matches {
-            state.truncated = true;
-            return;
-        }
-    }
+/// Cancel any in-flight content search sessions.
+#[tauri::command]
+pub fn cancel_content_search() {
+    content_search::cancel_content_search()
 }
 
 #[tauri::command]
@@ -579,27 +510,8 @@ pub fn search_file_contents(
     max_matches: Option<usize>,
     max_files_scanned: Option<usize>,
     max_matches_per_file: Option<usize>,
+    search_id: Option<u64>,
 ) -> Result<ContentSearchResponse, String> {
-    let trimmed = query.trim();
-    if trimmed.is_empty() {
-        return Ok(ContentSearchResponse {
-            files: vec![],
-            match_count: 0,
-            files_scanned: 0,
-            truncated: false,
-        });
-    }
-
-    let base = Path::new(&root);
-    if !base.is_dir() {
-        return Ok(ContentSearchResponse {
-            files: vec![],
-            match_count: 0,
-            files_scanned: 0,
-            truncated: false,
-        });
-    }
-
     let ext = extension
         .as_deref()
         .map(str::trim)
@@ -607,43 +519,45 @@ pub fn search_file_contents(
     let ext_list =
         normalize_extensions(extensions.or_else(|| ext.map(|single| vec![single.to_string()])));
 
-    let mut state = ContentSearchState {
+    let options = ContentSearchOptions {
+        query,
+        ignore_case,
+        extensions: ext_list,
         max_matches: max_matches.unwrap_or(DEFAULT_MAX_MATCHES),
         max_files_scanned: max_files_scanned.unwrap_or(DEFAULT_MAX_FILES_SCANNED),
         max_matches_per_file: max_matches_per_file.unwrap_or(DEFAULT_MAX_MATCHES_PER_FILE),
-        match_count: 0,
-        files_scanned: 0,
-        truncated: false,
     };
 
-    let mut results: Vec<ContentSearchFileResult> = Vec::new();
-
-    walk_and_search_content(
-        base,
-        base,
-        trimmed,
-        ignore_case,
+    Ok(content_search::search_file_contents(
+        Path::new(&root),
+        options,
+        search_id.unwrap_or(0),
         None,
-        ext_list.as_deref(),
-        &mut state,
-        &mut results,
-    );
-
-    Ok(ContentSearchResponse {
-        files: results,
-        match_count: state.match_count,
-        files_scanned: state.files_scanned,
-        truncated: state.truncated,
-    })
+    ))
 }
 
 #[tauri::command]
 pub fn read_file(path: String) -> Result<String, String> {
-    let metadata = fs::metadata(&path).map_err(|e| format!("Failed to inspect {}: {}", path, e))?;
-    if exceeds_editor_file_size_limit(metadata.len()) {
-        return Err(format!("暂不支持打开超过 50MB 的大文件: {}", path));
+    let file_path = Path::new(&path);
+    let metadata = fs::metadata(file_path)
+        .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
+    if metadata.is_dir() {
+        return Err(format!("无法打开文件夹：{}", display_file_name(&path)));
     }
-    fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", path, e))
+    if exceeds_editor_file_size_limit(metadata.len()) {
+        return Err(format!(
+            "暂不支持打开超过 50MB 的大文件：{}",
+            display_file_name(&path)
+        ));
+    }
+    if is_binary_extension(&path) {
+        return Err(unsupported_text_file_message(&path));
+    }
+    match fs::read_to_string(file_path) {
+        Ok(content) => Ok(content),
+        Err(e) if is_utf8_decode_error(&e) => Err(unsupported_text_file_message(&path)),
+        Err(e) => Err(format!("读取文件失败：{}（{}）", display_file_name(&path), e)),
+    }
 }
 
 #[tauri::command]
@@ -838,6 +752,54 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_message_mentions_office_extension() {
+        let msg = unsupported_text_file_message(r"D:\proj\stories_final.xlsx");
+        assert!(msg.contains(".xlsx"), "{msg}");
+        assert!(msg.contains("stories_final.xlsx"), "{msg}");
+        assert!(msg.contains("暂不支持"), "{msg}");
+        assert!(!msg.contains("UTF-8"), "{msg}");
+    }
+
+    #[test]
+    fn read_file_rejects_xlsx_before_decoding() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-xlsx-test-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("book.xlsx");
+        // ZIP/XLSX signature bytes — not valid UTF-8 text.
+        fs::write(&path, [0x50u8, 0x4b, 0x03, 0x04, 0xff, 0xfe]).unwrap();
+
+        let err = read_file(path.to_string_lossy().to_string()).unwrap_err();
+        assert!(err.contains(".xlsx"), "{err}");
+        assert!(err.contains("暂不支持"), "{err}");
+        assert!(!err.to_ascii_lowercase().contains("utf-8"), "{err}");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn read_file_maps_invalid_utf8_to_friendly_message() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-bin-test-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mystery.dat");
+        fs::write(&path, [0x00u8, 0xff, 0xfe, 0x80]).unwrap();
+
+        let err = read_file(path.to_string_lossy().to_string()).unwrap_err();
+        assert!(err.contains("暂不支持"), "{err}");
+        assert!(err.contains("mystery.dat"), "{err}");
+        assert!(!err.to_ascii_lowercase().contains("stream did not contain"), "{err}");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn rejects_path_like_entry_names() {
         for name in ["", ".", "..", "a/b", "a\\b"] {
             assert!(
@@ -854,5 +816,31 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let root = temp_dir.ancestors().last().unwrap();
         assert!(delete_path(root.to_string_lossy().to_string()).is_err());
+    }
+
+    #[test]
+    fn list_file_extensions_collects_from_project_and_skips_ignored() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-ext-test-{nonce}"));
+        let ignored = dir.join("node_modules");
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::create_dir_all(&ignored).unwrap();
+        fs::write(dir.join("src/main.ts"), "export {}").unwrap();
+        fs::write(dir.join("src/app.tsx"), "export {}").unwrap();
+        fs::write(dir.join("README.md"), "# hi").unwrap();
+        fs::write(dir.join("logo.png"), [0u8; 8]).unwrap();
+        fs::write(ignored.join("pkg.js"), "module.exports = {}").unwrap();
+
+        let exts = list_file_extensions(vec![dir.to_string_lossy().to_string()], Some(1000)).unwrap();
+        assert!(exts.contains(&"ts".to_string()));
+        assert!(exts.contains(&"tsx".to_string()));
+        assert!(exts.contains(&"md".to_string()));
+        assert!(!exts.contains(&"js".to_string()), "ignored node_modules js");
+        assert!(!exts.contains(&"png".to_string()), "binary png skipped");
+
+        fs::remove_dir_all(dir).unwrap();
     }
 }

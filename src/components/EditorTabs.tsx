@@ -18,6 +18,11 @@ function parentPath(path: string) {
   return separator > 0 ? path.slice(0, separator) : path
 }
 
+function fileName(path: string) {
+  const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return separator >= 0 ? path.slice(separator + 1) : path
+}
+
 export default function EditorTabs() {
   const { t } = useI18n()
   const tabs = useEditorStore(s => s.tabs)
@@ -44,6 +49,15 @@ export default function EditorTabs() {
       useProjectStore.getState().pushToast('success', t('路径已复制'))
     } catch (e) {
       useProjectStore.getState().pushToast('error', t('复制路径失败: {error}', { error: String(e) }))
+    }
+  }
+
+  const copyFileName = async (path: string) => {
+    try {
+      await copyToClipboard(fileName(path))
+      useProjectStore.getState().pushToast('success', t('文件名已复制'))
+    } catch (e) {
+      useProjectStore.getState().pushToast('error', t('复制文件名失败: {error}', { error: String(e) }))
     }
   }
 
@@ -138,6 +152,11 @@ export default function EditorTabs() {
       label: t('复制路径'),
       icon: <Copy size={14} />,
       action: () => copyPath(tab.path),
+    },
+    {
+      label: t('复制文件名'),
+      icon: <Copy size={14} />,
+      action: () => copyFileName(tab.path),
     },
     {
       label: t('在文件管理器中显示'),

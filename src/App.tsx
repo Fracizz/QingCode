@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react'
+import { FileText } from 'lucide-react'
 import './App.css'
 import ActivityBar from './components/ActivityBar'
 import Sidebar from './components/Sidebar'
@@ -11,6 +12,7 @@ import ConfirmDialog from './components/ConfirmDialog'
 import PromptDialog from './components/PromptDialog'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
+import { useEditorStore } from './store/editorStore'
 import { useUIStore } from './store/uiStore'
 import { isTauri } from './lib/tauri'
 import ResizableSidebar from './components/ResizableSidebar'
@@ -38,12 +40,44 @@ const TerminalView = lazy(() => import('./components/Terminal'))
 const SearchPanel = lazy(() => import('./components/SearchPanel'))
 const RunPanel = lazy(() => import('./components/RunPanel'))
 const ProjectManager = lazy(() => import('./components/ProjectManager'))
-const SettingsPanel = lazy(() => import('./components/SettingsPanel'))
+const SettingsEditor = lazy(() => import('./components/SettingsEditor'))
 
 migrateLegacySettings()
 
 function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
   return <div className={className} aria-hidden="true" />
+}
+
+/** Lightweight empty editor so CodeMirror is not downloaded until a file is opened. */
+function EmptyEditor() {
+  const { t } = useI18n()
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-3">
+      <FileText size={40} strokeWidth={1.2} />
+      <p className="text-sm">{t('从侧边栏打开文件开始编辑')}</p>
+      <p className="text-xs text-fg-dim">{t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}</p>
+    </div>
+  )
+}
+
+/** Run after first paint / idle so project switch is not blocked by heavy work (e.g. PTY). */
+function scheduleDeferredWork(fn: () => void, timeoutMs = 600): () => void {
+  let cancelled = false
+  const run = () => {
+    if (!cancelled) fn()
+  }
+  if (typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(run, { timeout: timeoutMs })
+    return () => {
+      cancelled = true
+      window.cancelIdleCallback(id)
+    }
+  }
+  const timer = window.setTimeout(run, 0)
+  return () => {
+    cancelled = true
+    window.clearTimeout(timer)
+  }
 }
 
 const TERMINAL_PANEL_KEY = 'qingcode:terminal-panel'
@@ -76,6 +110,7 @@ function App() {
   const currentProject = useProjectStore(s => s.currentProject)
   const loadProjects = useProjectStore(s => s.loadProjects)
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
+  const activeTabId = useEditorStore(s => s.activeTabId)
   const view = useUIStore(s => s.view)
   const sidebarOpen = useUIStore(s => s.sidebarOpen)
   const setView = useUIStore(s => s.setView)
@@ -181,17 +216,28 @@ function App() {
   }, [shortcuts, setView])
 
   // Ensure the current project has at least one terminal, and that the active
-  // terminal belongs to the current project.
+  // terminal belongs to the current project. Defer PTY spawn so first project
+  // paint is not blocked by PowerShell / ConPTY startup; skip entirely while
+  // the terminal panel is closed.
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
   useEffect(() => {
     if (!currentProject) return
-    if (projectTerminals.length === 0) {
-      addTerminal(currentProject.path, currentProject.id)
-    } else {
-      activateProject(currentProject.id)
+    const projectId = currentProject.id
+    const projectPath = currentProject.path
+    if (useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
+      activateProject(projectId)
+      return
     }
+    if (!terminalOpen) return
+    return scheduleDeferredWork(() => {
+      if (useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
+        activateProject(projectId)
+        return
+      }
+      void addTerminal(projectPath, projectId)
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProject?.id])
+  }, [currentProject?.id, terminalOpen])
 
   const handleAddProject = () => {
     setView('explorer')
@@ -252,23 +298,23 @@ function App() {
           </ResizableSidebar>
         )}
 
-        {sidebarOpen && view === 'settings' && (
-          <ResizableSidebar
-            width={sidebarWidth}
-            onWidthChange={setSidebarWidth}
-            className="ui-font-scaled"
-          >
-            <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-              <SettingsPanel />
-            </Suspense>
-          </ResizableSidebar>
-        )}
-
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <EditorTabs />
-          <Suspense fallback={<LazyFallback />}>
-            <Editor />
-          </Suspense>
+          {view === 'settings' ? (
+            <Suspense fallback={<LazyFallback />}>
+              <SettingsEditor />
+            </Suspense>
+          ) : (
+            <>
+              <EditorTabs />
+              {activeTabId ? (
+                <Suspense fallback={<LazyFallback />}>
+                  <Editor />
+                </Suspense>
+              ) : (
+                <EmptyEditor />
+              )}
+            </>
+          )}
         </div>
         </div>
 
@@ -298,19 +344,15 @@ function App() {
                   : t('请先选择或添加项目，终端将默认基于当前项目创建')}
               </div>
             )}
-            {terminals.map(t => {
-              const inCurrentProject = t.projectId === currentProject?.id
-              const isActive = inCurrentProject && t.id === activeTerminalId
+            {/* Only mount the current project's terminals to avoid xterm cost across projects. */}
+            {projectTerminals.map(t => {
+              const isActive = t.id === activeTerminalId
               return (
                 <div
                   key={t.id}
-                  className={
-                    inCurrentProject
-                      ? `absolute inset-0 min-w-0 ${
-                          isActive ? 'z-10 visible' : 'invisible pointer-events-none z-0'
-                        }`
-                      : 'hidden'
-                  }
+                  className={`absolute inset-0 min-w-0 ${
+                    isActive ? 'z-10 visible' : 'invisible pointer-events-none z-0'
+                  }`}
                 >
                   <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
                     <TerminalView

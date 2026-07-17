@@ -12,8 +12,8 @@ import { useI18n } from '../lib/i18n'
 const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = [
   {
     id: 'searchAllProjects',
-    label: '全项目搜索',
-    description: '在所有可用项目中搜索文件与内容。',
+    label: '打开搜索',
+    description: '打开搜索面板，默认在当前项目中搜索文件与内容。',
   },
   {
     id: 'toggleTerminal',
