@@ -235,7 +235,7 @@ export default function SettingsEditor() {
           '自定义设置',
           'files.exclude',
           'search.exclude',
-          '暂未生效',
+          '不计划',
         )
       }
       if (cat.id === 'common') {
@@ -775,7 +775,7 @@ export default function SettingsEditor() {
               '自定义设置',
               'files.exclude',
               'search.exclude',
-              '暂未生效',
+              '不计划',
             ) && (
               <Section
                 id="json"
@@ -821,7 +821,7 @@ export default function SettingsEditor() {
                 <SettingItem
                   title={t('JSON 键生效说明')}
                   description={t(
-                    'files.exclude / search.exclude、editor.formatOnSave / formatOnPaste、括号着色与参考线、terminal.integrated.scrollback / cursorBlinking 已生效。标有「暂未生效」的键（如 editor.minimap、linkedEditing）会保存但不会改变行为。详见帮助文档。',
+                    'files.exclude / search.exclude / useIgnoreFiles / followSymlinks、explorer.excludeGitIgnore、files.encoding、editor.formatOnSave / formatOnPaste、括号着色与参考线、terminal.integrated.scrollback / cursorBlinking 已生效。标有「不计划」的键（如 editor.minimap、linkedEditing）会保存但不会改变行为。详见帮助文档。',
                   )}
                 >
                   <span className="text-[12px] text-fg-dim">{t('见 JSON 注释 / 帮助文档')}</span>

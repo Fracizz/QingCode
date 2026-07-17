@@ -21,12 +21,14 @@ export async function scanDirectory(
     action?: string
     workspaceRoot?: string
     excludePatterns?: string[]
+    excludeGitIgnore?: boolean
   },
 ): Promise<FileNode[]> {
   const tree = await safeInvoke<FileNode[]>(options?.action ?? '读取目录', 'scan_directory', {
     path,
     workspaceRoot: options?.workspaceRoot ?? path,
     excludePatterns: options?.excludePatterns ?? null,
+    excludeGitIgnore: options?.excludeGitIgnore ?? true,
   })
   return withLoadedFlags(tree)
 }
@@ -39,6 +41,7 @@ export async function loadProjectRootTree(project: Project | string): Promise<Fi
     action: '读取目录',
     workspaceRoot: projectPath,
     excludePatterns: excludes.filesExclude,
+    excludeGitIgnore: excludes.excludeGitIgnore,
   })
 }
 
@@ -52,6 +55,7 @@ export async function loadDirChildren(
     action: '展开目录',
     workspaceRoot,
     excludePatterns: excludes.filesExclude,
+    excludeGitIgnore: excludes.excludeGitIgnore,
   })
 }
 

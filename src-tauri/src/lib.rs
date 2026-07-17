@@ -1,6 +1,7 @@
 mod commands;
 mod content_search;
 mod exclude;
+mod file_encoding;
 mod file_associations;
 mod file_watcher;
 mod fonts;

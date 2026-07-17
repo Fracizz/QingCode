@@ -487,7 +487,7 @@ mod tests {
         assert!(status.dirty_count >= 2);
         let codes: Vec<_> = status.entries.iter().map(|e| e.status.as_str()).collect();
         assert!(codes.iter().any(|c| *c == "M" || c.contains('M')));
-        assert!(codes.iter().any(|c| *c == "??"));
+        assert!(codes.contains(&"??"));
 
         let head = read_git_show_head(&root.join("tracked.txt")).expect("HEAD blob");
         assert_eq!(head, "v1\n");

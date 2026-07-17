@@ -75,4 +75,21 @@ describe('isPathExcluded / maps', () => {
     expect(effective.searchExclude.includes('**/dist')).toBe(false)
     expect(effective.searchExclude.some(p => p.includes('code-search'))).toBe(true)
   })
+
+  it('reads ignore / symlink flags from settings', () => {
+    const defaults = readEffectiveExcludeSettings(DEFAULT_GLOBAL_SETTINGS)
+    expect(defaults.excludeGitIgnore).toBe(true)
+    expect(defaults.useIgnoreFiles).toBe(true)
+    expect(defaults.followSymlinks).toBe(false)
+
+    const overridden = readEffectiveExcludeSettings({
+      ...DEFAULT_GLOBAL_SETTINGS,
+      'explorer.excludeGitIgnore': false,
+      'search.useIgnoreFiles': false,
+      'search.followSymlinks': true,
+    })
+    expect(overridden.excludeGitIgnore).toBe(false)
+    expect(overridden.useIgnoreFiles).toBe(false)
+    expect(overridden.followSymlinks).toBe(true)
+  })
 })

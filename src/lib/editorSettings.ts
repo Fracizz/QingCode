@@ -13,6 +13,7 @@ export type WordWrapMode = 'off' | 'on' | 'wordWrapColumn' | 'bounded'
 export type LineNumbersMode = 'on' | 'off' | 'relative' | 'interval'
 export type RenderWhitespaceMode = 'none' | 'boundary' | 'selection' | 'trailing' | 'all'
 export type EolMode = 'auto' | 'LF' | 'CRLF'
+export type FileEncoding = 'utf8' | 'utf8bom' | 'gbk' | 'gb18030'
 
 export type EditorPreferenceSettings = {
   fontSize: number
@@ -25,6 +26,7 @@ export type EditorPreferenceSettings = {
   trimTrailingWhitespace: boolean
   insertFinalNewline: boolean
   eol: EolMode
+  encoding: FileEncoding
   formatOnPaste: boolean
   bracketPairColorization: boolean
   bracketPairGuides: boolean
@@ -41,6 +43,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferenceSettings = {
   trimTrailingWhitespace: false,
   insertFinalNewline: false,
   eol: 'auto',
+  encoding: 'utf8',
   formatOnPaste: false,
   bracketPairColorization: true,
   bracketPairGuides: true,
@@ -94,6 +97,13 @@ function asEol(value: unknown): EolMode {
   return 'auto'
 }
 
+export function asFileEncoding(value: unknown): FileEncoding {
+  if (value === 'utf8bom' || value === 'gbk' || value === 'gb18030' || value === 'utf8') {
+    return value
+  }
+  return 'utf8'
+}
+
 export function readEditorPreferences(settings: SettingsFile): EditorPreferenceSettings {
   return {
     fontSize: asFontSize(settings['editor.fontSize'], DEFAULT_EDITOR_PREFERENCES.fontSize),
@@ -115,6 +125,7 @@ export function readEditorPreferences(settings: SettingsFile): EditorPreferenceS
       DEFAULT_EDITOR_PREFERENCES.insertFinalNewline,
     ),
     eol: asEol(settings['files.eol']),
+    encoding: asFileEncoding(settings['files.encoding']),
     formatOnPaste: asBoolean(
       settings['editor.formatOnPaste'],
       DEFAULT_EDITOR_PREFERENCES.formatOnPaste,

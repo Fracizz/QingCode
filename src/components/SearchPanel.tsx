@@ -289,6 +289,8 @@ export default function SearchPanel() {
                 maxMatchesPerFile: MAX_MATCHES_PER_FILE,
                 searchId,
                 excludePatterns: excludes.searchExclude,
+                useIgnoreFiles: excludes.useIgnoreFiles,
+                followSymlinks: excludes.followSymlinks,
               })
             }),
           )
@@ -336,6 +338,8 @@ export default function SearchPanel() {
                 extensions: extList,
                 limit: perRootLimit,
                 excludePatterns: excludes.searchExclude,
+                useIgnoreFiles: excludes.useIgnoreFiles,
+                followSymlinks: excludes.followSymlinks,
               })
             }),
           )

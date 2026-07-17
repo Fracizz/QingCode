@@ -33,6 +33,12 @@ export type EffectiveExcludeSettings = {
   filesExclude: string[]
   /** Enabled patterns for search = files.exclude ∪ search.exclude (true wins unless false). */
   searchExclude: string[]
+  /** Hide paths matched by `.gitignore` / ignore files in the explorer. */
+  excludeGitIgnore: boolean
+  /** Honor ignore files during content / filename search. */
+  useIgnoreFiles: boolean
+  /** Follow symbolic links while searching. */
+  followSymlinks: boolean
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -144,12 +150,28 @@ export function vscodeGlobToRegExp(pattern: string): RegExp {
   return new RegExp(out)
 }
 
+function asBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
+}
+
 export function readEffectiveExcludeSettings(settings: SettingsFile): EffectiveExcludeSettings {
   const filesMap = readExcludeMap(settings, 'files.exclude')
   const searchMap = mergeExcludeMaps(filesMap, readExcludeMap(settings, 'search.exclude'))
   return {
     filesExclude: enabledExcludePatterns(filesMap),
     searchExclude: enabledExcludePatterns(searchMap),
+    excludeGitIgnore: asBoolean(
+      settings['explorer.excludeGitIgnore'],
+      DEFAULT_GLOBAL_SETTINGS['explorer.excludeGitIgnore'] as boolean,
+    ),
+    useIgnoreFiles: asBoolean(
+      settings['search.useIgnoreFiles'],
+      DEFAULT_GLOBAL_SETTINGS['search.useIgnoreFiles'] as boolean,
+    ),
+    followSymlinks: asBoolean(
+      settings['search.followSymlinks'],
+      DEFAULT_GLOBAL_SETTINGS['search.followSymlinks'] as boolean,
+    ),
   }
 }
 

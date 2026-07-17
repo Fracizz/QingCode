@@ -13,13 +13,16 @@
 - `editor.formatOnPaste`：粘贴后自动格式化（安静模式，大文件/不支持语言跳过）
 - `editor.bracketPairColorization.enabled` / `editor.guides.bracketPairs`：括号嵌套分色与光标所在括号对参考线
 - `files.exclude` / `search.exclude`：资源管理器与文件/内容搜索按设置 JSON 中的排除规则生效
+- `explorer.excludeGitIgnore` / `search.useIgnoreFiles`：资源管理器与搜索按 `.gitignore` 等 ignore 文件过滤（可关）
+- `search.followSymlinks`：搜索是否跟随符号链接（默认 `false`）
+- `files.encoding`：打开/保存支持 `utf8` / `utf8bom` / `gbk` / `gb18030`
 - `terminal.integrated.scrollback`：限制 xterm 缓冲，并跨重启持久化最近输出
 - `terminal.integrated.cursorBlinking`：控制终端光标闪烁
 - 命令面板、多项目工作区、符号跳转、轻量 Git 状态/与 HEAD 比较等一批能力
 
 ### Changed
 
-- 设置 JSON 中尚未接线的预留键（如小地图、formatOnPaste 等）标注为「暂未生效」，避免误以为已生效
+- 设置 JSON 中不计划实现的预留键（小地图、链接编辑）标注为「不计划」；其余常用键已接线生效
 
 ## [0.1.3] - 2026-07-17
 

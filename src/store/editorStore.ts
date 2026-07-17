@@ -96,7 +96,8 @@ async function populateTabFromDisk(id: string, path: string, line?: number) {
     return
   }
 
-  const content = await safeInvoke<string>('读取文件', 'read_file', { path })
+  const encoding = getEditorPreferences().encoding
+  const content = await safeInvoke<string>('读取文件', 'read_file', { path, encoding })
   if (!get().findTab(id)) return
 
   set(s => {
@@ -105,6 +106,7 @@ async function populateTabFromDisk(id: string, path: string, line?: number) {
       content,
       viewMode: 'edit' as const,
       fileSize: stat.size,
+      encoding,
       loading: false,
       openError: undefined,
       openErrorKind: undefined,
@@ -611,7 +613,11 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           }
         }
       }
-      await safeInvoke('保存文件', 'write_file', { path: afterFormat.path, content })
+      await safeInvoke('保存文件', 'write_file', {
+        path: afterFormat.path,
+        content,
+        encoding: afterFormat.encoding ?? getEditorPreferences().encoding,
+      })
       let mtime: number | null = null
       try {
         mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', { path: tab.path })
@@ -702,7 +708,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (!(await confirmOutsideSymlinkWrite(selected))) return
       // Explicit Save As dialog = user authorization for that write target.
       await authorizePaths([selected])
-      await safeInvoke('另存为', 'write_file', { path: selected, content })
+      const encoding = tab.encoding ?? getEditorPreferences().encoding
+      await safeInvoke('另存为', 'write_file', { path: selected, content, encoding })
 
       const conflict = get().getAllTabs().find(t => t.id !== id && pathsEqual(t.path, selected))
       if (conflict) get().closeTab(conflict.id)
@@ -714,6 +721,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           path: selected,
           name,
           content,
+          encoding,
           language: guessLanguage(selected),
           dirty: false,
         }))

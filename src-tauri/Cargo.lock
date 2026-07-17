@@ -3263,6 +3263,7 @@ name = "qingcode"
 version = "0.1.3"
 dependencies = [
  "dirs",
+ "encoding_rs",
  "grep-matcher",
  "grep-regex",
  "grep-searcher",

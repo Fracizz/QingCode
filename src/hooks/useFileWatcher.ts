@@ -7,6 +7,7 @@ import { useCompareStore } from '../store/compareStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { choiceDialog } from '../store/choiceStore'
 import { flushLiveEditorContent, getLiveEditorContent } from '../lib/editorSession'
+import { getEditorPreferences } from '../lib/editorSettings'
 import { editorPerfProfile, resolveEditMaxBytes } from '../lib/fileSizePolicy'
 import { translate } from '../lib/i18n'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
@@ -199,7 +200,11 @@ export function useFileWatcher() {
             return
           }
 
-          const diskContent = await safeInvoke<string>('读取文件', 'read_file', { path: tab.path })
+          const encoding = tab.encoding ?? getEditorPreferences().encoding
+          const diskContent = await safeInvoke<string>('读取文件', 'read_file', {
+            path: tab.path,
+            encoding,
+          })
           const local = getLiveEditorContent(tab.id) ?? tab.content ?? ''
 
           if (!tab.dirty && local === diskContent) {

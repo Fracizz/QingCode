@@ -1,4 +1,5 @@
 import { getLiveEditorContent, flushLiveEditorContent } from './editorSession'
+import { getEditorPreferences } from './editorSettings'
 import { translate } from './i18n'
 import { isTauri, safeInvoke } from './tauri'
 import { useCompareStore } from '../store/compareStore'
@@ -25,7 +26,8 @@ export async function openGitCompareWithHead(filePath: string): Promise<void> {
     leftContent = getLiveEditorContent(tab.id) ?? tab.content ?? ''
   } else {
     try {
-      leftContent = await safeInvoke<string>('读取文件', 'read_file', { path: filePath })
+      const encoding = tab?.encoding ?? getEditorPreferences().encoding
+      leftContent = await safeInvoke<string>('读取文件', 'read_file', { path: filePath, encoding })
     } catch (e) {
       useProjectStore.getState().pushToast(
         'error',

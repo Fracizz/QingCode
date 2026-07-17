@@ -1,3 +1,4 @@
+import { getEditorPreferences } from './editorSettings'
 import { safeInvoke } from './tauri'
 
 export type ReplacePreviewFile = {
@@ -103,7 +104,11 @@ export async function applyWorkspaceReplace(
     const file = preview.files[i]
     options?.onProgress?.(i, total)
     try {
-      const content = await safeInvoke<string>('读取文件', 'read_file', { path: file.path })
+      const encoding = getEditorPreferences().encoding
+      const content = await safeInvoke<string>('读取文件', 'read_file', {
+        path: file.path,
+        encoding,
+      })
       const { next, count } = applyRegexReplace(
         content,
         preview.query,
@@ -112,7 +117,7 @@ export async function applyWorkspaceReplace(
       )
       if (count === 0 || next === content) continue
       await options?.beforeWrite?.(file.path)
-      await safeInvoke('写入文件', 'write_file', { path: file.path, content: next })
+      await safeInvoke('写入文件', 'write_file', { path: file.path, content: next, encoding })
       filesChanged += 1
       replacements += count
     } catch (e) {

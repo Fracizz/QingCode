@@ -55,6 +55,10 @@ pub struct ContentSearchOptions {
     /// When `Some`, apply VS Code–style exclude globs (relative to search root).
     /// When `None`, fall back to built-in hard-ignored directory names.
     pub exclude_patterns: Option<Vec<String>>,
+    /// Honor `.gitignore` / `.ignore` / git exclude files (search.useIgnoreFiles).
+    pub use_ignore_files: bool,
+    /// Follow symbolic links while walking (search.followSymlinks).
+    pub follow_symlinks: bool,
 }
 
 /// Invalidate in-flight searches and return a fresh search id for the next query.
@@ -326,17 +330,16 @@ pub fn search_file_contents(
     let root_str = root_buf.to_string_lossy().to_string();
     let exclude_patterns = options.exclude_patterns.clone();
 
+    let use_ignore = options.use_ignore_files;
     let mut builder = WalkBuilder::new(&root_buf);
     builder
         .hidden(false)
-        .git_ignore(true)
-        .git_global(true)
-        .git_exclude(true)
-        .ignore(true)
-        .parents(true)
-        .follow_links(false)
-        // Apply root `.gitignore` even when the folder is not a git checkout.
-        .add_custom_ignore_filename(".gitignore")
+        .git_ignore(use_ignore)
+        .git_global(use_ignore)
+        .git_exclude(use_ignore)
+        .ignore(use_ignore)
+        .parents(use_ignore)
+        .follow_links(options.follow_symlinks)
         .threads(threads)
         .filter_entry(move |entry| {
             if entry.depth() == 0 {
@@ -358,6 +361,10 @@ pub fn search_file_contents(
                 None => !is_hard_ignored_dir(&name),
             }
         });
+    // Apply root `.gitignore` even when the folder is not a git checkout.
+    if use_ignore {
+        builder.add_custom_ignore_filename(".gitignore");
+    }
 
     let walker = builder.build_parallel();
     walker.run(|| {
@@ -501,6 +508,8 @@ mod tests {
             max_files_scanned: 1000,
             max_matches_per_file: 20,
             exclude_patterns: None,
+            use_ignore_files: true,
+            follow_symlinks: false,
         }
     }
 
@@ -576,6 +585,33 @@ mod tests {
         assert!(
             !texts.iter().any(|t| t.contains("findme_ignored")),
             "gitignore ignored.txt should be skipped: {texts:?}"
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn use_ignore_files_false_includes_gitignored_paths() {
+        let dir = temp_dir("gitignore-off");
+        fs::write(dir.join(".gitignore"), "ignored.txt\n").unwrap();
+        fs::write(dir.join("ignored.txt"), "findme_ignored\n").unwrap();
+        fs::write(dir.join("keep.rs"), "findme_keep\n").unwrap();
+
+        let mut o = opts("findme");
+        o.use_ignore_files = false;
+        let resp = search(&dir, o);
+        let texts: Vec<_> = resp
+            .files
+            .iter()
+            .flat_map(|f| f.matches.iter().map(|m| m.text.clone()))
+            .collect();
+        assert!(
+            texts.iter().any(|t| t.contains("findme_keep")),
+            "{texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("findme_ignored")),
+            "ignored.txt should be searchable when useIgnoreFiles=false: {texts:?}"
         );
 
         fs::remove_dir_all(dir).unwrap();

@@ -3,7 +3,9 @@ use crate::content_search::{
     DEFAULT_MAX_MATCHES, DEFAULT_MAX_MATCHES_PER_FILE,
 };
 use crate::exclude;
+use crate::file_encoding;
 use crate::path_guard::PathAllowlist;
+use ignore::WalkBuilder;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
@@ -99,6 +101,7 @@ fn list_dir_one_level(
     current: &str,
     workspace_root: &str,
     exclude_patterns: Option<&[String]>,
+    exclude_git_ignore: bool,
 ) -> Result<Vec<FileNode>, std::io::Error> {
     let dir = Path::new(current);
     if !dir.is_dir() {
@@ -111,8 +114,29 @@ fn list_dir_one_level(
     let mut dirs = vec![];
     let mut files = vec![];
 
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
+    let mut builder = WalkBuilder::new(dir);
+    builder
+        .max_depth(Some(1))
+        .hidden(false)
+        .git_ignore(exclude_git_ignore)
+        .git_global(exclude_git_ignore)
+        .git_exclude(exclude_git_ignore)
+        .ignore(exclude_git_ignore)
+        .parents(exclude_git_ignore)
+        .follow_links(false);
+    if exclude_git_ignore {
+        // Honor root `.gitignore` even when the folder is not a git checkout.
+        builder.add_custom_ignore_filename(".gitignore");
+    }
+
+    for result in builder.build() {
+        let entry = match result {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if entry.depth() == 0 {
+            continue;
+        }
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         let full_path = path.to_string_lossy().to_string();
@@ -121,7 +145,6 @@ fn list_dir_one_level(
             continue;
         }
 
-        // Prefer DirEntry::file_type() to avoid an extra metadata round-trip per entry.
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
 
         let node = FileNode {
@@ -150,11 +173,18 @@ pub fn scan_directory(
     path: String,
     workspace_root: Option<String>,
     exclude_patterns: Option<Vec<String>>,
+    exclude_git_ignore: Option<bool>,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<Vec<FileNode>, String> {
     allowlist.ensure_allowed(&path)?;
     let root = workspace_root.unwrap_or_else(|| path.clone());
-    list_dir_one_level(&path, &root, exclude_patterns.as_deref()).map_err(|e| e.to_string())
+    list_dir_one_level(
+        &path,
+        &root,
+        exclude_patterns.as_deref(),
+        exclude_git_ignore.unwrap_or(true),
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -284,25 +314,47 @@ fn walk_matching(
     match_suffix: bool,
     extensions: Option<&[String]>,
     exclude_patterns: Option<&[String]>,
+    use_ignore_files: bool,
+    follow_symlinks: bool,
 ) {
-    if out.len() >= limit {
-        return;
+    let base_str = base.to_string_lossy().to_string();
+    let exclude_owned = exclude_patterns.map(|p| p.to_vec());
+
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .hidden(false)
+        .git_ignore(use_ignore_files)
+        .git_global(use_ignore_files)
+        .git_exclude(use_ignore_files)
+        .ignore(use_ignore_files)
+        .parents(use_ignore_files)
+        .follow_links(follow_symlinks)
+        .filter_entry(move |entry| {
+            if entry.depth() == 0 {
+                return true;
+            }
+            let name = entry.file_name().to_string_lossy();
+            let full = entry.path().to_string_lossy();
+            !should_skip_path(&base_str, &full, &name, exclude_owned.as_deref())
+        });
+    if use_ignore_files {
+        builder.add_custom_ignore_filename(".gitignore");
     }
-    let entries = match fs::read_dir(root) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    let base_str = base.to_string_lossy();
-    for entry in entries.flatten() {
+
+    for result in builder.build() {
         if out.len() >= limit {
-            return;
+            break;
+        }
+        let entry = match result {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        if entry.depth() == 0 {
+            continue;
         }
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         let full = path.to_string_lossy().to_string();
-        if should_skip_path(&base_str, &full, &name, exclude_patterns) {
-            continue;
-        }
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
         let ext_ok = matches_extensions(&name, extensions);
         let matched = if query.is_empty() {
@@ -319,25 +371,11 @@ fn walk_matching(
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| full.clone());
             out.push(SearchHit {
-                name: name.clone(),
+                name,
                 path: full,
                 relative,
                 is_dir,
             });
-        }
-        if is_dir {
-            walk_matching(
-                &path,
-                base,
-                out,
-                limit,
-                query,
-                ignore_case,
-                fuzzy,
-                match_suffix,
-                extensions,
-                exclude_patterns,
-            );
         }
     }
 }
@@ -443,6 +481,8 @@ pub fn search_files(
     extensions: Option<Vec<String>>,
     limit: Option<usize>,
     exclude_patterns: Option<Vec<String>>,
+    use_ignore_files: Option<bool>,
+    follow_symlinks: Option<bool>,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<Vec<SearchHit>, String> {
     allowlist.ensure_allowed(&root)?;
@@ -480,6 +520,8 @@ pub fn search_files(
         use_suffix,
         ext_list.as_deref(),
         exclude_patterns.as_deref(),
+        use_ignore_files.unwrap_or(true),
+        follow_symlinks.unwrap_or(false),
     );
     Ok(hits)
 }
@@ -571,9 +613,12 @@ fn unsupported_text_file_message(path: &str) -> String {
     }
 }
 
-fn is_utf8_decode_error(err: &std::io::Error) -> bool {
-    err.kind() == std::io::ErrorKind::InvalidData
-        || err.to_string().to_ascii_lowercase().contains("utf-8")
+fn decode_error_message(path: &str, encoding: file_encoding::FileEncoding) -> String {
+    format!(
+        "暂不支持打开非文本或无法按 {} 解码的文件：{}",
+        encoding.as_str(),
+        display_file_name(path)
+    )
 }
 
 /// Begin a content-search session. Returns an id shared across multi-root invokes.
@@ -601,6 +646,8 @@ pub fn search_file_contents(
     max_matches_per_file: Option<usize>,
     search_id: Option<u64>,
     exclude_patterns: Option<Vec<String>>,
+    use_ignore_files: Option<bool>,
+    follow_symlinks: Option<bool>,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<ContentSearchResponse, String> {
     allowlist.ensure_allowed(&root)?;
@@ -619,6 +666,8 @@ pub fn search_file_contents(
         max_files_scanned: max_files_scanned.unwrap_or(DEFAULT_MAX_FILES_SCANNED),
         max_matches_per_file: max_matches_per_file.unwrap_or(DEFAULT_MAX_MATCHES_PER_FILE),
         exclude_patterns,
+        use_ignore_files: use_ignore_files.unwrap_or(true),
+        follow_symlinks: follow_symlinks.unwrap_or(false),
     };
 
     Ok(content_search::search_file_contents(
@@ -646,12 +695,17 @@ fn file_stat_inner(path: String) -> Result<FileStat, String> {
 }
 
 #[tauri::command]
-pub fn read_file(path: String, allowlist: State<'_, PathAllowlist>) -> Result<String, String> {
+pub fn read_file(
+    path: String,
+    encoding: Option<String>,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<String, String> {
     allowlist.ensure_allowed(&path)?;
-    read_file_inner(path)
+    read_file_inner(path, encoding.as_deref())
 }
 
-fn read_file_inner(path: String) -> Result<String, String> {
+fn read_file_inner(path: String, encoding: Option<&str>) -> Result<String, String> {
+    let enc = file_encoding::parse(encoding);
     let file_path = Path::new(&path);
     let metadata = fs::metadata(file_path)
         .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
@@ -667,15 +721,14 @@ fn read_file_inner(path: String) -> Result<String, String> {
     if is_binary_extension(&path) {
         return Err(unsupported_text_file_message(&path));
     }
-    match fs::read_to_string(file_path) {
-        Ok(content) => Ok(content),
-        Err(e) if is_utf8_decode_error(&e) => Err(unsupported_text_file_message(&path)),
-        Err(e) => Err(format!(
+    let bytes = fs::read(file_path).map_err(|e| {
+        format!(
             "读取文件失败：{}（{}）",
             display_file_name(&path),
             e
-        )),
-    }
+        )
+    })?;
+    file_encoding::decode(&bytes, enc).map_err(|_| decode_error_message(&path, enc))
 }
 
 #[tauri::command]
@@ -901,20 +954,30 @@ fn utf8_char_len(lead: u8) -> usize {
 pub fn write_file(
     path: String,
     content: String,
+    encoding: Option<String>,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<(), String> {
     // Mandatory sandbox: canonicalize/symlink-resolve before allowlist check.
     // Symlink escape is rejected unless the resolved target was explicitly authorized
     // (e.g. after the frontend confirm dialog grants the path).
     allowlist.ensure_writable(&path)?;
-    if exceeds_editor_file_size_limit(content.len() as u64) {
+    let enc = file_encoding::parse(encoding.as_deref());
+    let bytes = file_encoding::encode(&content, enc).map_err(|e| {
+        format!(
+            "无法按 {} 编码保存文件：{}（{}）",
+            enc.as_str(),
+            display_file_name(&path),
+            e
+        )
+    })?;
+    if exceeds_editor_file_size_limit(bytes.len() as u64) {
         return Err(format!("暂不支持保存超过 100MB 的大文件: {}", path));
     }
     let file_path = Path::new(&path);
-    write_file_safely(file_path, &content).map_err(|e| format!("Failed to write {}: {}", path, e))
+    write_file_safely(file_path, &bytes).map_err(|e| format!("Failed to write {}: {}", path, e))
 }
 
-fn write_file_safely(path: &Path, content: &str) -> Result<(), std::io::Error> {
+fn write_file_safely(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty());
@@ -938,7 +1001,7 @@ fn write_file_safely(path: &Path, content: &str) -> Result<(), std::io::Error> {
             .write(true)
             .truncate(true)
             .open(path)?;
-        file.write_all(content.as_bytes())?;
+        file.write_all(bytes)?;
         return file.sync_all();
     }
 
@@ -961,10 +1024,7 @@ fn write_file_safely(path: &Path, content: &str) -> Result<(), std::io::Error> {
             .open(&candidate)
         {
             Ok(mut file) => {
-                if let Err(error) = file
-                    .write_all(content.as_bytes())
-                    .and_then(|_| file.sync_all())
-                {
+                if let Err(error) = file.write_all(bytes).and_then(|_| file.sync_all()) {
                     let _ = fs::remove_file(&candidate);
                     return Err(error);
                 }
@@ -1344,7 +1404,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(&path, "before").unwrap();
 
-        write_file_safely(&path, "").unwrap();
+        write_file_safely(&path, b"").unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
         fs::remove_dir_all(dir).unwrap();
@@ -1473,7 +1533,7 @@ mod tests {
         // ZIP/XLSX signature bytes — not valid UTF-8 text.
         fs::write(&path, [0x50u8, 0x4b, 0x03, 0x04, 0xff, 0xfe]).unwrap();
 
-        let err = read_file_inner(path.to_string_lossy().to_string()).unwrap_err();
+        let err = read_file_inner(path.to_string_lossy().to_string(), None).unwrap_err();
         assert!(err.contains(".xlsx"), "{err}");
         assert!(err.contains("暂不支持"), "{err}");
         assert!(!err.to_ascii_lowercase().contains("utf-8"), "{err}");
@@ -1492,13 +1552,62 @@ mod tests {
         let path = dir.join("mystery.dat");
         fs::write(&path, [0x00u8, 0xff, 0xfe, 0x80]).unwrap();
 
-        let err = read_file_inner(path.to_string_lossy().to_string()).unwrap_err();
+        let err = read_file_inner(path.to_string_lossy().to_string(), None).unwrap_err();
         assert!(err.contains("暂不支持"), "{err}");
         assert!(err.contains("mystery.dat"), "{err}");
         assert!(
             !err.to_ascii_lowercase().contains("stream did not contain"),
             "{err}"
         );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn read_write_gbk_roundtrip() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-gbk-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("notes.txt");
+        // "中文" in GBK
+        fs::write(&path, [0xD6u8, 0xD0, 0xCE, 0xC4]).unwrap();
+
+        assert!(read_file_inner(path.to_string_lossy().to_string(), Some("utf8")).is_err());
+        let text = read_file_inner(path.to_string_lossy().to_string(), Some("gbk")).unwrap();
+        assert_eq!(text, "中文");
+
+        let bytes = file_encoding::encode("测试", file_encoding::FileEncoding::Gbk).unwrap();
+        write_file_safely(&path, &bytes).unwrap();
+        let again = read_file_inner(path.to_string_lossy().to_string(), Some("gbk")).unwrap();
+        assert_eq!(again, "测试");
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn list_dir_respects_gitignore_when_enabled() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-scan-gi-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(".gitignore"), "secret.txt\n").unwrap();
+        fs::write(dir.join("keep.txt"), "k").unwrap();
+        fs::write(dir.join("secret.txt"), "s").unwrap();
+        let root = dir.to_string_lossy().to_string();
+
+        let hidden = list_dir_one_level(&root, &root, None, true).unwrap();
+        let names: Vec<_> = hidden.iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&"keep.txt"), "{names:?}");
+        assert!(!names.contains(&"secret.txt"), "{names:?}");
+
+        let shown = list_dir_one_level(&root, &root, None, false).unwrap();
+        let names2: Vec<_> = shown.iter().map(|n| n.name.as_str()).collect();
+        assert!(names2.contains(&"secret.txt"), "{names2:?}");
 
         fs::remove_dir_all(dir).unwrap();
     }

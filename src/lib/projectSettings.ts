@@ -85,7 +85,7 @@ function buildSharedDefaults(): SettingsFile {
       '**/target': true,
       '**/*.code-search': true,
     },
-    'search.followSymlinks': true,
+    'search.followSymlinks': false,
     'search.useIgnoreFiles': true,
     'explorer.excludeGitIgnore': true,
     'terminal.integrated.scrollback': 5000,
@@ -123,13 +123,13 @@ const SHARED_SETTINGS_BODY = `
   "editor.lineNumbers": "on",
   // 空白字符渲染：none | boundary | selection | trailing | all
   "editor.renderWhitespace": "selection",
-  // 【暂未生效】小地图
+  // 【不计划】小地图（CodeMirror 无内置；保留键以免旧配置报错）
   "editor.minimap.enabled": false,
   // 保存时自动格式化（调用 format_document；可用 Shift+Alt+F 手动格式化）
   "editor.formatOnSave": false,
   // 粘贴后自动格式化（复用 format_document；大文件/不支持语言会跳过）
   "editor.formatOnPaste": false,
-  // 【暂未生效】链接编辑
+  // 【不计划】链接编辑 / HTML 标签同步改名（保留键以免旧配置报错）
   "editor.linkedEditing": false,
   // 括号对着色（按嵌套深度分色）
   "editor.bracketPairColorization.enabled": true,
@@ -143,7 +143,7 @@ const SHARED_SETTINGS_BODY = `
   "files.autoSaveDelay": 1000,
   // 换行符：auto | LF | CRLF（保存时生效）
   "files.eol": "auto",
-  // 【暂未生效】默认文件编码（当前固定 UTF-8）
+  // 默认文件编码：utf8 | utf8bom | gbk | gb18030（打开/保存按此转码；大文件只读分片仍按 UTF-8）
   "files.encoding": "utf8",
   // 保存时去掉行尾空格
   "files.trimTrailingWhitespace": false,
@@ -186,11 +186,11 @@ const SHARED_SETTINGS_BODY = `
     "**/target": true,
     "**/*.code-search": true,
   },
-  // 【暂未生效】搜索是否跟随符号链接
-  "search.followSymlinks": true,
-  // 【部分生效】内容搜索会读取 .gitignore 等 ignore 文件；与此项未完全对齐
+  // 搜索是否跟随符号链接（默认 false，避免环与逃出工作区）
+  "search.followSymlinks": false,
+  // 内容/文件名搜索是否读取 .gitignore、.ignore 等 ignore 文件
   "search.useIgnoreFiles": true,
-  // 【暂未生效】资源管理器是否按 .gitignore 隐藏条目
+  // 资源管理器是否按 .gitignore 等 ignore 文件隐藏条目
   "explorer.excludeGitIgnore": true,
 
   // ============================== 终端 ==============================
