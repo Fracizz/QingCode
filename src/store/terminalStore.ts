@@ -69,11 +69,11 @@ interface PersistedTerminalState {
 
 function loadPersistedState(): PersistedTerminalState {
   try {
-    // PTY processes and terminal output cannot survive an application restart.
-    // Clearing old metadata lets App create a fresh shell for the active project.
-    localStorage.removeItem(STORAGE_KEY)
+    // PTY processes and terminal output cannot survive a window/app restart.
+    // sessionStorage keeps metadata per-window (not shared like localStorage).
+    sessionStorage.removeItem(STORAGE_KEY)
   } catch {
-    // Local-storage failures should not block terminal startup.
+    // Storage failures should not block terminal startup.
   }
   return { terminals: [], activeTerminalByProject: {} }
 }
@@ -463,7 +463,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
 useTerminalStore.subscribe(state => {
   try {
-    localStorage.setItem(
+    sessionStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
         terminals: state.terminals,

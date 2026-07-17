@@ -24,6 +24,7 @@ import {
   Filter,
   LoaderCircle,
   ChevronDown as Caret,
+  Replace,
 } from 'lucide-react'
 import { List, useListRef } from 'react-window'
 import { useProjectStore } from '../store/projectStore'
@@ -31,7 +32,21 @@ import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import { findProjectForPath } from '../utils/fileReferences'
+import {
+  dirOf,
+  isGlobPattern,
+  isNavigable,
+  rowHeightOf,
+  trimContentFiles,
+  typeFilterExtensions,
+  typeFilterLabel,
+  type ContentSearchFileResult,
+  type SearchResultRow as Row,
+  type TypeFilter,
+} from '../utils/searchHelpers'
 import Tooltip from './Tooltip'
+import ReplacePreviewDialog from './ReplacePreviewDialog'
+import { buildReplacePreview, type ReplacePreview } from '../lib/workspaceReplace'
 import { useI18n } from '../lib/i18n'
 
 interface SearchHit {
@@ -39,20 +54,6 @@ interface SearchHit {
   path: string
   relative: string
   is_dir: boolean
-}
-
-interface ContentSearchMatch {
-  line: number
-  text: string
-  match_start: number
-  match_end: number
-}
-
-interface ContentSearchFileResult {
-  name: string
-  path: string
-  relative: string
-  matches: ContentSearchMatch[]
 }
 
 interface ContentSearchResponse {
@@ -65,75 +66,11 @@ interface ContentSearchResponse {
 
 type SearchMode = 'filename' | 'content'
 type SearchScope = 'current' | 'all'
-type TypeFilter = { kind: 'ext'; ext: string } | { kind: 'star'; exts: string[] }
 
 const TOP_EXT_COUNT = 5
-
-function typeFilterLabel(filter: TypeFilter | null) {
-  if (!filter) return '全部类型'
-  if (filter.kind === 'star') return '*'
-  return `.${filter.ext}`
-}
-
-function typeFilterExtensions(filter: TypeFilter | null): string[] | null {
-  if (!filter) return null
-  return filter.kind === 'ext' ? [filter.ext] : filter.exts
-}
-
-function isGlobPattern(query: string) {
-  return query.includes('*') || query.includes('?')
-}
-
 const CONTENT_DEBOUNCE_MS = 400
 const FILENAME_DEBOUNCE_MS = 200
 const MAX_MATCHES_PER_FILE = 20
-
-type Row =
-  | { kind: 'file'; path: string; name: string; dir: string; matchCount: number; collapsed: boolean }
-  | { kind: 'match'; path: string; line: number; text: string; matchStart: number; matchEnd: number }
-  | { kind: 'more'; path: string }
-  | { kind: 'dir'; dir: string }
-  | { kind: 'fn'; hit: SearchHit }
-
-function rowHeightOf(row: Row): number {
-  switch (row.kind) {
-    case 'file': return 24
-    case 'match': return 22
-    case 'more': return 18
-    case 'dir': return 20
-    case 'fn': return 22
-  }
-}
-
-function dirOf(relative: string): string {
-  const sep = relative.includes('\\') ? '\\' : '/'
-  const parts = relative.split(sep).filter(Boolean)
-  if (parts.length <= 1) return ''
-  return parts.slice(0, -1).join(sep)
-}
-
-function isNavigable(row: Row): boolean {
-  return row.kind === 'file' || row.kind === 'match' || row.kind === 'fn'
-}
-
-function trimContentFiles(
-  files: ContentSearchFileResult[],
-  maxMatches: number,
-): ContentSearchFileResult[] {
-  const out: ContentSearchFileResult[] = []
-  let remaining = maxMatches
-  for (const file of files) {
-    if (remaining <= 0) break
-    if (file.matches.length <= remaining) {
-      out.push(file)
-      remaining -= file.matches.length
-    } else {
-      out.push({ ...file, matches: file.matches.slice(0, remaining) })
-      remaining = 0
-    }
-  }
-  return out
-}
 
 export default function SearchPanel() {
   const { t } = useI18n()
@@ -177,7 +114,10 @@ export default function SearchPanel() {
   const [error, setError] = useState<string | null>(null)
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
   const [activeIndex, setActiveIndex] = useState(0)
+  const [replaceText, setReplaceText] = useState('')
+  const [replacePreview, setReplacePreview] = useState<ReplacePreview | null>(null)
   const reqId = useRef(0)
+  const pushToast = useProjectStore(s => s.pushToast)
   const extScanId = useRef(0)
   const listRef = useListRef(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
@@ -569,6 +509,7 @@ export default function SearchPanel() {
       : query.trim().length > 0 || typeFilter !== null
 
   return (
+    <>
     <div className="h-full flex flex-col bg-bg-sidebar text-fg">
       <div className="px-4 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-widest uppercase text-fg-muted">
         <Search size={13} /> {t('搜索')}
@@ -660,6 +601,50 @@ export default function SearchPanel() {
             </button>
           )}
         </div>
+
+        {mode === 'content' && (
+          <div className="flex items-center gap-1.5">
+            <div className="relative flex-1 min-w-0">
+              <Replace
+                size={13}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim"
+              />
+              <input
+                value={replaceText}
+                onChange={e => setReplaceText(e.target.value)}
+                placeholder={t('替换为…')}
+                className="w-full pl-7 pr-2 py-1.5 text-[13px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+              />
+            </div>
+            <Tooltip label={t('预览并确认后写入全部匹配')} side="bottom">
+              <button
+                type="button"
+                disabled={
+                  !contentResults ||
+                  contentResults.files.length === 0 ||
+                  !query.trim() ||
+                  loading
+                }
+                className="flex-shrink-0 px-2 py-1.5 text-[11px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                onClick={() => {
+                  if (!contentResults || !query.trim()) return
+                  setReplacePreview(
+                    buildReplacePreview(
+                      query,
+                      replaceText,
+                      ignoreCase,
+                      contentResults.files,
+                      contentResults.match_count,
+                      contentResults.truncated,
+                    ),
+                  )
+                }}
+              >
+                {t('全部替换')}
+              </button>
+            </Tooltip>
+          </div>
+        )}
 
         <div className="flex items-center gap-1.5 flex-wrap relative">
           <Toggle
@@ -863,6 +848,22 @@ export default function SearchPanel() {
         )}
       </div>
     </div>
+    {replacePreview && (
+      <ReplacePreviewDialog
+        preview={replacePreview}
+        onClose={() => setReplacePreview(null)}
+        onApplied={result => {
+          pushToast(
+            'success',
+            t('已替换 {replacements} 处（{files} 个文件）', {
+              replacements: result.replacements,
+              files: result.filesChanged,
+            }),
+          )
+        }}
+      />
+    )}
+    </>
   )
 }
 

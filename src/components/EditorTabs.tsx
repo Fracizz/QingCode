@@ -1,5 +1,5 @@
 import { useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { X, Circle, Copy, ExternalLink, Pencil, XSquare, CopyX, Files, LocateFixed } from 'lucide-react'
+import { X, Circle, Copy, ExternalLink, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle } from 'lucide-react'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -12,6 +12,7 @@ import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import type { EditorTab } from '../types'
 import { useI18n } from '../lib/i18n'
+import { isLoadingTab, isOpenErrorTab } from '../lib/openFileError'
 
 function parentPath(path: string) {
   const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -29,6 +30,7 @@ export default function EditorTabs() {
   const activeTabId = useEditorStore(s => s.activeTabId)
   const setActiveTab = useEditorStore(s => s.setActiveTab)
   const closeTab = useEditorStore(s => s.closeTab)
+  const retryOpenFile = useEditorStore(s => s.retryOpenFile)
   const closeOtherTabs = useEditorStore(s => s.closeOtherTabs)
   const closeTabsToRight = useEditorStore(s => s.closeTabsToRight)
   const closeAllTabs = useEditorStore(s => s.closeAllTabs)
@@ -122,6 +124,15 @@ export default function EditorTabs() {
   const closeAll = () => closeWithConfirm(tabs, closeAllTabs)
 
   const menuItems = (tab: EditorTab): ContextMenuItem[] => [
+    ...(isOpenErrorTab(tab)
+      ? [
+          {
+            label: t('重试'),
+            icon: <RotateCw size={14} />,
+            action: () => void retryOpenFile(tab.id),
+          },
+        ]
+      : []),
     {
       label: t('关闭'),
       icon: <X size={14} />,
@@ -176,12 +187,23 @@ export default function EditorTabs() {
     <div className="ui-font-scaled h-[var(--tab-height)] flex bg-bg-deep border-b border-border overflow-x-auto flex-shrink-0">
         {tabs.map(tab => {
           const active = tab.id === activeTabId
-          const Icon = getFileIcon(tab.name)
+          const loading = isLoadingTab(tab)
+          const Icon = isOpenErrorTab(tab)
+            ? AlertTriangle
+            : loading
+              ? LoaderCircle
+              : getFileIcon(tab.name)
+          const iconClass = isOpenErrorTab(tab)
+            ? 'flex-shrink-0 text-warn'
+            : loading
+              ? 'flex-shrink-0 text-accent animate-spin'
+              : 'flex-shrink-0 opacity-80'
           return (
             <div
               key={tab.id}
               className={`group flex items-center gap-2 pl-3 pr-2 h-full cursor-pointer border-r border-border whitespace-nowrap transition-colors
-                ${active ? 'bg-tab-active text-fg' : 'bg-tab-inactive text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
+                ${active ? 'bg-tab-active text-fg' : 'bg-tab-inactive text-fg-muted hover:bg-bg-elevated hover:text-fg'}
+                ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}`}
               onClick={() => setActiveTab(tab.id)}
               onContextMenu={(event: ReactMouseEvent) => {
                 event.preventDefault()
@@ -190,8 +212,8 @@ export default function EditorTabs() {
                 setContextMenu({ x: event.clientX, y: event.clientY, tab })
               }}
             >
-              {Icon && <Icon size={15} className="flex-shrink-0 opacity-80" />}
-              <span className="text-[13px]">{tab.name}</span>
+              {Icon && <Icon size={15} className={iconClass} />}
+              <span className={`text-[13px] ${isOpenErrorTab(tab) ? 'italic' : ''}`}>{tab.name}</span>
               <button
                 className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
                 onClick={e => {

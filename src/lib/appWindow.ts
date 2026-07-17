@@ -1,4 +1,4 @@
-import { isTauri } from './tauri'
+import { isTauri, NotInTauriError } from './tauri'
 
 let revealScheduled = false
 
@@ -6,6 +6,32 @@ const DEFAULT_WIDTH = 1280
 const DEFAULT_HEIGHT = 800
 const MIN_SANE_WIDTH = 200
 const MIN_SANE_HEIGHT = 200
+
+/** Open another QingCode window with a clean workspace (no inherited project/tabs). */
+export async function openNewAppWindow() {
+  if (!isTauri()) throw new NotInTauriError('新建窗口')
+  const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+  const label = `qing-${Date.now()}`
+  await new Promise<void>((resolve, reject) => {
+    const win = new WebviewWindow(label, {
+      // `fresh=1` → sessionStorage flag; skip auto-restoring last project.
+      url: '/?fresh=1',
+      title: 'QingCode',
+      width: DEFAULT_WIDTH,
+      height: DEFAULT_HEIGHT,
+      minWidth: 720,
+      minHeight: 480,
+      decorations: false,
+      center: true,
+      visible: false,
+      backgroundColor: '#1e1e1e',
+    })
+    void win.once('tauri://created', () => resolve())
+    void win.once('tauri://error', event => {
+      reject(new Error(String(event.payload ?? '新建窗口失败')))
+    })
+  })
+}
 
 /**
  * Fallback reveal when the HTML splash script did not show the window,

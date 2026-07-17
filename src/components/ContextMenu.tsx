@@ -1,9 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { Check } from 'lucide-react'
 
 export interface ContextMenuItem {
   label: string
   icon?: ReactNode
+  /** When set, shows a checkmark column (VS Code-style toggle items). */
+  checked?: boolean
   danger?: boolean
   disabled?: boolean
   separatorBefore?: boolean
@@ -70,7 +73,8 @@ export default function ContextMenu({
           {item.separatorBefore && <div className="my-1 border-t border-border-strong" />}
           <button
             type="button"
-            role="menuitem"
+            role={item.checked !== undefined ? 'menuitemcheckbox' : 'menuitem'}
+            aria-checked={item.checked !== undefined ? item.checked : undefined}
             disabled={item.disabled}
             className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] outline-none transition-colors
               ${
@@ -85,7 +89,11 @@ export default function ContextMenu({
             }}
           >
             <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
-              {item.icon}
+              {item.checked !== undefined
+                ? item.checked
+                  ? <Check size={14} className="text-fg" />
+                  : null
+                : item.icon}
             </span>
             <span className="flex-1">{item.label}</span>
             {item.shortcut && (

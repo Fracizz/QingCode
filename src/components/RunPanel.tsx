@@ -7,10 +7,17 @@ import {
   Plus,
   BugPlay,
   FileCode2,
+  ShieldCheck,
+  ShieldOff,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useRunConfigStore, type RunConfig, type RunTask, type RunTaskType, RUN_CONFIG_RELATIVE_PATH } from '../store/runConfigStore'
 import { useTerminalStore } from '../store/terminalStore'
+import {
+  isProjectTrusted,
+  untrustProject,
+  RUN_TRUST_CHANGED_EVENT,
+} from '../lib/runTrust'
 import RunConfigEditor from './RunConfigEditor'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
@@ -48,10 +55,18 @@ export default function RunPanel() {
 
   const [editing, setEditing] = useState<RunConfig | null>(null)
   const [creating, setCreating] = useState(false)
+  const [projectTrusted, setProjectTrusted] = useState(false)
 
   useEffect(() => {
     if (currentProject) void loadConfigs(currentProject)
   }, [currentProject?.id, loadConfigs, currentProject])
+
+  useEffect(() => {
+    const sync = () => setProjectTrusted(currentProject ? isProjectTrusted(currentProject) : false)
+    sync()
+    window.addEventListener(RUN_TRUST_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(RUN_TRUST_CHANGED_EVENT, sync)
+  }, [currentProject?.id, currentProject?.path])
 
   const configs = currentProject ? configsByProject[currentProject.id] ?? [] : []
 
@@ -79,11 +94,24 @@ export default function RunPanel() {
 
   return (
     <div className="h-full flex flex-col bg-bg-sidebar text-fg">
-      <Header title={`${t('运行配置')} · ${currentProject.name}`} onAdd={() => setCreating(true)} />
+      <Header
+        title={`${t('运行配置')} · ${currentProject.name}`}
+        onAdd={() => setCreating(true)}
+        trusted={projectTrusted}
+        onUntrust={() => untrustProject(currentProject)}
+      />
       <div className="px-4 pb-2 text-[11px] text-fg-dim">
         {t('配置保存在')}{' '}
         <code className="font-mono text-fg-muted">{RUN_CONFIG_RELATIVE_PATH}</code>
         <span className="text-fg-dim">{t('（项目根目录相对路径）')}</span>
+        {projectTrusted ? (
+          <span className="ml-2 inline-flex items-center gap-1 text-ok">
+            <ShieldCheck size={11} />
+            {t('已信任此项目的运行配置')}
+          </span>
+        ) : (
+          <span className="ml-2 text-fg-dim">{t('首次运行前需确认或信任项目')}</span>
+        )}
       </div>
 
       <div className="flex-1 overflow-auto pb-3">
@@ -200,7 +228,17 @@ export default function RunPanel() {
   )
 }
 
-function Header({ title, onAdd }: { title: string; onAdd?: () => void }) {
+function Header({
+  title,
+  onAdd,
+  trusted,
+  onUntrust,
+}: {
+  title: string
+  onAdd?: () => void
+  trusted?: boolean
+  onUntrust?: () => void
+}) {
   const { t } = useI18n()
   return (
     <div className="px-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted flex-shrink-0">
@@ -208,16 +246,30 @@ function Header({ title, onAdd }: { title: string; onAdd?: () => void }) {
         <BugPlay size={13} className="flex-shrink-0" />
         <span className="truncate">{title}</span>
       </span>
-      {onAdd && (
-        <Tooltip label={t('新建运行配置')} side="bottom">
-          <button
-            onClick={onAdd}
-            className="text-fg-dim hover:text-fg p-1 rounded hover:bg-bg-hover flex-shrink-0"
-          >
-            <Plus size={14} />
-          </button>
-        </Tooltip>
-      )}
+      <span className="flex items-center gap-0.5 flex-shrink-0">
+        {trusted && onUntrust && (
+          <Tooltip label={t('撤销运行信任')} side="bottom">
+            <button
+              type="button"
+              onClick={onUntrust}
+              className="text-fg-dim hover:text-warn p-1 rounded hover:bg-bg-hover"
+              aria-label={t('撤销运行信任')}
+            >
+              <ShieldOff size={14} />
+            </button>
+          </Tooltip>
+        )}
+        {onAdd && (
+          <Tooltip label={t('新建运行配置')} side="bottom">
+            <button
+              onClick={onAdd}
+              className="text-fg-dim hover:text-fg p-1 rounded hover:bg-bg-hover"
+            >
+              <Plus size={14} />
+            </button>
+          </Tooltip>
+        )}
+      </span>
     </div>
   )
 }

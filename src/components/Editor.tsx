@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { basicSetup } from 'codemirror'
+import { basicSetup, minimalSetup } from 'codemirror'
 import { search } from '@codemirror/search'
 import { Compartment, EditorState, StateEffect, StateField } from '@codemirror/state'
-import { Decoration, EditorView, keymap, type DecorationSet } from '@codemirror/view'
+import { Decoration, EditorView, keymap, lineNumbers, type DecorationSet } from '@codemirror/view'
 import { createEditorFindReplacePanel } from './EditorFindReplacePanel'
 import { redo, redoDepth, selectAll, undo, undoDepth } from '@codemirror/commands'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -14,10 +14,13 @@ import { html } from '@codemirror/lang-html'
 import { python } from '@codemirror/lang-python'
 import {
   AtSign,
+  BookOpen,
   ClipboardPaste,
+  Columns2,
   Copy,
   ExternalLink,
   FileText,
+  LoaderCircle,
   LocateFixed,
   Redo2,
   Save,
@@ -36,9 +39,32 @@ import {
 } from '../utils/fileReferences'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
 import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
+import {
+  EDITOR_SETTINGS_EVENT,
+  getEditorPreferences,
+  loadEffectiveEditorPreferences,
+  type EditorPreferenceSettings,
+} from '../lib/editorSettings'
+import { buildEditorPreferenceExtensions } from '../lib/editorSettingsExtensions'
 import { translate, useI18n } from '../lib/i18n'
 import { notifyEditorBlur, notifyEditorContentChanged } from '../lib/autoSave'
+import {
+  captureEditorScroll,
+  flushLiveEditorContent,
+  getLiveEditorContent,
+  isHugeDocument,
+  isLargeDocument,
+  registerEditorView,
+  restoreEditorScroll,
+  setCachedEditorState,
+  takeCachedEditorState,
+  unregisterEditorView,
+} from '../lib/editorSession'
+import { isLoadingTab, isOpenErrorTab } from '../lib/openFileError'
+import type { EditorTab } from '../types'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+import MarkdownPreview from './MarkdownPreview'
+import EditorOpenError from './EditorOpenError'
 
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
 const lightTheme = EditorView.theme(
@@ -125,115 +151,301 @@ function selectionLineRange(view: EditorView) {
   return { startLine, endLine }
 }
 
+function scheduleIdle(fn: () => void, timeoutMs = 800): () => void {
+  let cancelled = false
+  const run = () => {
+    if (!cancelled) fn()
+  }
+  if (typeof window.requestIdleCallback === 'function') {
+    const id = window.requestIdleCallback(run, { timeout: timeoutMs })
+    return () => {
+      cancelled = true
+      window.cancelIdleCallback(id)
+    }
+  }
+  const timer = window.setTimeout(run, 0)
+  return () => {
+    cancelled = true
+    window.clearTimeout(timer)
+  }
+}
+
+function isMarkdownTab(tab: EditorTab | undefined | null): boolean {
+  if (!tab) return false
+  if (tab.language === 'markdown') return true
+  return /\.md$/i.test(tab.path)
+}
+
+function createTabEditorState(
+  tab: EditorTab,
+  themeCompartment: Compartment,
+  languageCompartment: Compartment,
+  settingsCompartment: Compartment,
+  markDirty: (id: string) => void,
+  saveFile: (id: string) => Promise<void>,
+): EditorState {
+  const tabId = tab.id
+  const tabPath = tab.path
+  const large = isLargeDocument(tab.content)
+  const huge = isHugeDocument(tab.content)
+  const langFactory = !huge && tab.language ? LANG_MAP[tab.language] : undefined
+  // Large docs: skip language on first paint; enable after idle. Huge: never.
+  const initialLang = !large && langFactory ? langFactory() : []
+  const prefs = getEditorPreferences()
+  const showLineNumbers = prefs.lineNumbers !== 'off'
+
+  return EditorState.create({
+    doc: tab.content || '',
+    extensions: [
+      large
+        ? [
+            minimalSetup,
+            showLineNumbers ? lineNumbers() : [],
+            search({ top: true, createPanel: createEditorFindReplacePanel }),
+          ]
+        : [basicSetup, search({ top: true, createPanel: createEditorFindReplacePanel })],
+      themeCompartment.of(editorThemeExtension()),
+      languageCompartment.of(initialLang),
+      settingsCompartment.of(buildEditorPreferenceExtensions(prefs, tab.content)),
+      flashField,
+      EditorView.updateListener.of(update => {
+        if (update.docChanged) {
+          // Avoid full-document copies into Zustand on every keystroke.
+          markDirty(tabId)
+          notifyEditorContentChanged(tabId)
+        }
+      }),
+      keymap.of([
+        {
+          key: 'Mod-s',
+          run: () => {
+            void saveFile(tabId)
+            return true
+          },
+        },
+        {
+          key: 'Ctrl-Shift-c',
+          run: () => {
+            void copyToClipboard(tabPath)
+              .then(() =>
+                useProjectStore.getState().pushToast('success', translate('路径已复制'))
+              )
+              .catch(error =>
+                useProjectStore
+                  .getState()
+                  .pushToast(
+                    'error',
+                    translate('复制路径失败: {error}', { error: String(error) })
+                  )
+              )
+            return true
+          },
+        },
+        {
+          key: 'Alt-c',
+          run: view => {
+            const projectState = useProjectStore.getState()
+            const project =
+              findProjectForPath(projectState.projects, tabPath) ??
+              projectState.currentProject
+            if (!project) return false
+            const { startLine, endLine } = selectionLineRange(view)
+            const reference = formatFileReference(project, tabPath, startLine, endLine)
+            void copyToClipboard(reference)
+              .then(() =>
+                useProjectStore.getState().pushToast('success', translate('文件引用已复制'))
+              )
+              .catch(error =>
+                useProjectStore
+                  .getState()
+                  .pushToast(
+                    'error',
+                    translate('复制引用失败: {error}', { error: String(error) })
+                  )
+              )
+            return true
+          },
+        },
+        {
+          key: 'Ctrl-Shift-v',
+          run: () => {
+            window.dispatchEvent(new CustomEvent('qingcode:toggle-markdown-preview'))
+            return true
+          },
+        },
+      ]),
+    ],
+  })
+}
+
+function bindTabToView(
+  view: EditorView,
+  tab: EditorTab,
+  themeCompartment: Compartment,
+  languageCompartment: Compartment,
+  settingsCompartment: Compartment,
+  markDirty: (id: string) => void,
+  saveFile: (id: string) => Promise<void>,
+  previousTabId: string | null,
+): string {
+  if (previousTabId && previousTabId !== tab.id) {
+    captureEditorScroll(previousTabId, view)
+    setCachedEditorState(previousTabId, view.state)
+    flushLiveEditorContent(previousTabId)
+    unregisterEditorView(previousTabId, view)
+  }
+
+  const cached = takeCachedEditorState(tab.id)
+  const state =
+    cached ??
+    createTabEditorState(
+      tab,
+      themeCompartment,
+      languageCompartment,
+      settingsCompartment,
+      markDirty,
+      saveFile,
+    )
+
+  view.setState(state)
+  registerEditorView(tab.id, view)
+  restoreEditorScroll(tab.id, view)
+  view.dispatch({
+    effects: [
+      themeCompartment.reconfigure(editorThemeExtension()),
+      settingsCompartment.reconfigure(
+        buildEditorPreferenceExtensions(getEditorPreferences(), tab.content),
+      ),
+    ],
+  })
+  return tab.id
+}
+
+type MdPreviewMode = 'off' | 'side' | 'preview'
+
 export default function Editor() {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
+  const boundTabIdRef = useRef<string | null>(null)
   const themeCompartment = useRef(new Compartment())
+  const languageCompartment = useRef(new Compartment())
+  const settingsCompartment = useRef(new Compartment())
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
-  const setTabContent = useEditorStore(s => s.setTabContent)
   const markDirty = useEditorStore(s => s.markDirty)
   const saveFile = useEditorStore(s => s.saveFile)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
+  const currentProject = useProjectStore(s => s.currentProject)
   const setView = useUIStore(s => s.setView)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [mdPreviewMode, setMdPreviewMode] = useState<MdPreviewMode>('off')
+  const [previewContent, setPreviewContent] = useState('')
+  const boundEpochRef = useRef(0)
 
-  const activeTab = tabs.find(t => t.id === activeTabId)
+  const activeTab = tabs.find(tab => tab.id === activeTabId)
   const pendingReveal = useEditorStore(s => s.pendingReveal)
   const clearPendingReveal = useEditorStore(s => s.clearPendingReveal)
+  const showEditor =
+    !!activeTab && !isOpenErrorTab(activeTab) && !isLoadingTab(activeTab)
+  const markdownTab = isMarkdownTab(activeTab)
+  const showPreviewPane = markdownTab && mdPreviewMode !== 'off'
+  const showSourcePane = !markdownTab || mdPreviewMode !== 'preview'
 
+  // Destroy the shared view only when leaving the editable surface (not on tab switch).
   useEffect(() => {
-    if (!containerRef.current) return
-    if (viewRef.current) {
-      viewRef.current.destroy()
-      viewRef.current = null
+    if (showEditor) return
+    const view = viewRef.current
+    if (!view) return
+    const tabId = boundTabIdRef.current
+    if (tabId) {
+      captureEditorScroll(tabId, view)
+      setCachedEditorState(tabId, view.state)
+      flushLiveEditorContent(tabId)
+      unregisterEditorView(tabId, view)
     }
-    if (!activeTab) return
+    view.destroy()
+    viewRef.current = null
+    boundTabIdRef.current = null
+  }, [showEditor])
 
-    const langSupport = activeTab.language ? LANG_MAP[activeTab.language]?.() : undefined
+  // One EditorView + cached EditorState per tab (undo/selection/folds survive switches).
+  useEffect(() => {
+    if (!showEditor || !activeTab) return
+    const host = containerRef.current
+    if (!host) return
 
-    const state = EditorState.create({
-      doc: activeTab.content || '',
-      extensions: [
-        basicSetup,
-        search({ top: true, createPanel: createEditorFindReplacePanel }),
-        themeCompartment.current.of(editorThemeExtension()),
-        langSupport ?? [],
-        flashField,
-        EditorView.updateListener.of(update => {
-          if (update.docChanged) {
-            setTabContent(activeTab.id, update.state.doc.toString())
-            markDirty(activeTab.id)
-            notifyEditorContentChanged(activeTab.id)
-          }
-        }),
-        keymap.of([
-          {
-            key: 'Mod-s',
-            run: () => {
-              saveFile(activeTab.id)
-              return true
-            },
-          },
-          {
-            key: 'Ctrl-Shift-c',
-            run: () => {
-              void copyToClipboard(activeTab.path)
-                .then(() =>
-                  useProjectStore.getState().pushToast('success', translate('路径已复制'))
-                )
-                .catch(error =>
-                  useProjectStore
-                    .getState()
-                    .pushToast(
-                      'error',
-                      translate('复制路径失败: {error}', { error: String(error) })
-                    )
-                )
-              return true
-            },
-          },
-          {
-            key: 'Alt-c',
-            run: view => {
-              const projectState = useProjectStore.getState()
-              const project =
-                findProjectForPath(projectState.projects, activeTab.path) ??
-                projectState.currentProject
-              if (!project) return false
-              const { startLine, endLine } = selectionLineRange(view)
-              const reference = formatFileReference(project, activeTab.path, startLine, endLine)
-              void copyToClipboard(reference)
-                .then(() =>
-                  useProjectStore.getState().pushToast('success', translate('文件引用已复制'))
-                )
-                .catch(error =>
-                  useProjectStore
-                    .getState()
-                    .pushToast(
-                      'error',
-                      translate('复制引用失败: {error}', { error: String(error) })
-                    )
-                )
-              return true
-            },
-          },
-        ]),
-        EditorView.lineWrapping,
-      ],
-    })
+    let view = viewRef.current
+    if (!view) {
+      view = new EditorView({
+        state: EditorState.create({ doc: '' }),
+        parent: host,
+      })
+      viewRef.current = view
+    }
 
-    viewRef.current = new EditorView({ state, parent: containerRef.current })
+    const previousTabId = boundTabIdRef.current
+    const epoch = activeTab.contentEpoch ?? 0
+    if (previousTabId !== activeTab.id) {
+      boundTabIdRef.current = bindTabToView(
+        view,
+        activeTab,
+        themeCompartment.current,
+        languageCompartment.current,
+        settingsCompartment.current,
+        markDirty,
+        saveFile,
+        previousTabId,
+      )
+      boundEpochRef.current = epoch
+    } else if (epoch !== boundEpochRef.current) {
+      // External reload / draft restore disposed the session — rebuild from store.
+      boundEpochRef.current = epoch
+      unregisterEditorView(activeTab.id, view)
+      boundTabIdRef.current = bindTabToView(
+        view,
+        activeTab,
+        themeCompartment.current,
+        languageCompartment.current,
+        settingsCompartment.current,
+        markDirty,
+        saveFile,
+        null,
+      )
+    }
+
+    const large = isLargeDocument(activeTab.content)
+    const huge = isHugeDocument(activeTab.content)
+    const langFactory =
+      !huge && activeTab.language ? LANG_MAP[activeTab.language] : undefined
+
+    let cancelLanguage: (() => void) | undefined
+    // Re-schedule after StrictMode remounts; reconfigure is cheap/idempotent.
+    if (large && langFactory) {
+      const tabId = activeTab.id
+      cancelLanguage = scheduleIdle(() => {
+        const current = viewRef.current
+        if (!current || boundTabIdRef.current !== tabId) return
+        current.dispatch({
+          effects: languageCompartment.current.reconfigure(langFactory()),
+        })
+      })
+    }
 
     return () => {
-      if (viewRef.current) {
-        viewRef.current.destroy()
-        viewRef.current = null
-      }
+      cancelLanguage?.()
     }
+    // Recreate/swap only when the tab identity / epoch / loadability changes — not on content flushes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTabId])
+  }, [
+    showEditor,
+    activeTabId,
+    activeTab?.loading,
+    activeTab?.openError,
+    activeTab?.contentEpoch,
+    markDirty,
+    saveFile,
+  ])
 
   // 主题切换时即时重配置编辑器主题（不重建 view）。
   useEffect(() => {
@@ -246,7 +458,58 @@ export default function Editor() {
   }, [])
 
   useEffect(() => {
-    if (!viewRef.current || !activeTab || !pendingReveal) return
+    void loadEffectiveEditorPreferences(currentProject)
+  }, [currentProject?.id])
+
+  useEffect(() => {
+    const apply = (prefs?: EditorPreferenceSettings) => {
+      const view = viewRef.current
+      if (!view) return
+      const tab = useEditorStore.getState().tabs.find(t => t.id === boundTabIdRef.current)
+      view.dispatch({
+        effects: settingsCompartment.current.reconfigure(
+          buildEditorPreferenceExtensions(prefs ?? getEditorPreferences(), tab?.content),
+        ),
+      })
+    }
+    const onSettings = (event: Event) => {
+      apply((event as CustomEvent<EditorPreferenceSettings>).detail)
+    }
+    window.addEventListener(EDITOR_SETTINGS_EVENT, onSettings)
+    return () => window.removeEventListener(EDITOR_SETTINGS_EVENT, onSettings)
+  }, [])
+
+  useEffect(() => {
+    if (!showPreviewPane || !activeTab) {
+      setPreviewContent('')
+      return
+    }
+    const sync = () => {
+      setPreviewContent(getLiveEditorContent(activeTab.id) ?? activeTab.content ?? '')
+    }
+    sync()
+    const timer = window.setInterval(sync, 400)
+    return () => window.clearInterval(timer)
+  }, [showPreviewPane, activeTab?.id, activeTab?.content, activeTab?.dirty])
+
+  useEffect(() => {
+    if (!markdownTab) setMdPreviewMode('off')
+  }, [markdownTab, activeTabId])
+
+  useEffect(() => {
+    const onToggle = () => {
+      const tab = useEditorStore
+        .getState()
+        .tabs.find(t => t.id === useEditorStore.getState().activeTabId)
+      if (!isMarkdownTab(tab)) return
+      setMdPreviewMode(mode => (mode === 'off' ? 'side' : mode === 'side' ? 'preview' : 'off'))
+    }
+    window.addEventListener('qingcode:toggle-markdown-preview', onToggle)
+    return () => window.removeEventListener('qingcode:toggle-markdown-preview', onToggle)
+  }, [])
+
+  useEffect(() => {
+    if (!viewRef.current || !activeTab || isOpenErrorTab(activeTab) || isLoadingTab(activeTab) || !pendingReveal) return
     if (pendingReveal.path !== activeTab.path) return
     const lineNum = Math.min(
       Math.max(1, pendingReveal.line),
@@ -266,7 +529,7 @@ export default function Editor() {
       if (viewRef.current) viewRef.current.dispatch({ effects: clearFlashEffect.of() })
     }, 1200)
     return () => window.clearTimeout(timer)
-  }, [pendingReveal, activeTab?.path, activeTabId, clearPendingReveal])
+  }, [pendingReveal, activeTab?.path, activeTabId, clearPendingReveal, activeTab])
 
   const copyPath = async (path: string) => {
     try {
@@ -431,6 +694,20 @@ export default function Editor() {
         icon: <ExternalLink size={14} />,
         action: () => revealPath(path),
       },
+      ...(markdownTab
+        ? [
+            {
+              label: t('切换 Markdown 预览'),
+              icon: <BookOpen size={14} />,
+              shortcut: 'Ctrl+Shift+V',
+              separatorBefore: true,
+              action: () =>
+                setMdPreviewMode(mode =>
+                  mode === 'off' ? 'side' : mode === 'side' ? 'preview' : 'off',
+                ),
+            } satisfies ContextMenuItem,
+          ]
+        : []),
     ]
   }
 
@@ -453,18 +730,93 @@ export default function Editor() {
     )
   }
 
+  if (isOpenErrorTab(activeTab)) {
+    return <EditorOpenError tab={activeTab} />
+  }
+
+  if (isLoadingTab(activeTab)) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-bg text-fg-muted">
+        <LoaderCircle size={28} className="animate-spin text-accent" aria-hidden />
+        <p className="text-sm">{t('正在打开文件…')}</p>
+        <p className="max-w-md truncate px-6 font-mono text-[11px] text-fg-dim" title={activeTab.path}>
+          {activeTab.path}
+        </p>
+      </div>
+    )
+  }
+
   return (
     <>
-      <div className="flex-1 overflow-hidden bg-bg" onContextMenu={openContextMenu}>
-        <div
-          ref={containerRef}
-          className="h-full"
-          onBlur={event => {
-            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-              notifyEditorBlur()
-            }
-          }}
-        />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
+        {markdownTab && (
+          <div className="flex h-8 flex-shrink-0 items-center gap-1 border-b border-border px-2">
+            <span className="mr-1 text-[11px] text-fg-dim">{t('Markdown')}</span>
+            <button
+              type="button"
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+                mdPreviewMode === 'off'
+                  ? 'bg-bg-active text-fg'
+                  : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+              }`}
+              onClick={() => setMdPreviewMode('off')}
+            >
+              <FileText size={12} />
+              {t('编辑')}
+            </button>
+            <button
+              type="button"
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+                mdPreviewMode === 'side'
+                  ? 'bg-bg-active text-fg'
+                  : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+              }`}
+              onClick={() => setMdPreviewMode('side')}
+            >
+              <Columns2 size={12} />
+              {t('并排预览')}
+            </button>
+            <button
+              type="button"
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+                mdPreviewMode === 'preview'
+                  ? 'bg-bg-active text-fg'
+                  : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+              }`}
+              onClick={() => setMdPreviewMode('preview')}
+            >
+              <BookOpen size={12} />
+              {t('预览')}
+            </button>
+            <span className="ml-auto text-[10px] text-fg-dim">Ctrl+Shift+V</span>
+          </div>
+        )}
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div
+            className={`${showSourcePane ? 'flex' : 'hidden'} min-w-0 flex-1 flex-col overflow-hidden`}
+            onContextMenu={openContextMenu}
+          >
+            <div
+              ref={containerRef}
+              className="h-full"
+              onBlur={event => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  if (activeTabId) flushLiveEditorContent(activeTabId)
+                  notifyEditorBlur()
+                }
+              }}
+            />
+          </div>
+          {showPreviewPane && (
+            <div
+              className={`min-w-0 flex-1 overflow-hidden border-border ${
+                showSourcePane ? 'border-l' : ''
+              }`}
+            >
+              <MarkdownPreview content={previewContent} />
+            </div>
+          )}
+        </div>
       </div>
       {contextMenu && (
         <ContextMenu

@@ -31,6 +31,7 @@ export async function removeProjectWithConfirm(id: string, name: string, path: s
   try {
     await useTerminalStore.getState().closeProjectTerminals(id)
     useEditorStore.getState().closeTabsForPath(path)
+    useEditorStore.getState().discardProjectSession(id)
     await useProjectStore.getState().removeProject(id)
   } catch (e) {
     useProjectStore.getState().pushToast('error', translate('移除项目失败: {error}', { error: String(e) }))

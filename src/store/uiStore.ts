@@ -12,6 +12,12 @@ interface UIState {
   globalSearchSignal: number
   /** Incremented to request the terminal panel to open (e.g. when a run config starts). */
   terminalOpenSignal: number
+  /** When true, explorer should start inline “new file” at the project root. */
+  pendingNewFile: boolean
+  /** Search query for the latest Settings deep-link (e.g. files.autoSave). */
+  settingsFocusQuery: string | null
+  /** Incremented when opening Settings with a focus query. */
+  settingsFocusSignal: number
   /** Whether the project manager modal is open. */
   projectManagerOpen: boolean
   setView: (view: View) => void
@@ -22,6 +28,12 @@ interface UIState {
   requestSearch: (root?: string | null) => void
   /** Switch to the search view and focus the query input (defaults to current project). */
   requestGlobalSearch: () => void
+  /** Open explorer and request creating a new file at the current project root. */
+  requestNewFile: () => void
+  /** Clear a pending new-file request after the explorer handles it. */
+  clearPendingNewFile: () => void
+  /** Open Settings (user scope) and optionally prefill the search box. */
+  requestSettings: (query?: string) => void
   /** Request the terminal panel to open. */
   openTerminalPanel: () => void
   openProjectManager: () => void
@@ -34,6 +46,9 @@ export const useUIStore = create<UIState>((set) => ({
   searchRoot: null,
   globalSearchSignal: 0,
   terminalOpenSignal: 0,
+  pendingNewFile: false,
+  settingsFocusQuery: null,
+  settingsFocusSignal: 0,
   projectManagerOpen: false,
   setView: view => set({ view, sidebarOpen: true }),
   toggleActivityView: view =>
@@ -49,6 +64,15 @@ export const useUIStore = create<UIState>((set) => ({
     sidebarOpen: true,
     globalSearchSignal: state.globalSearchSignal + 1,
   })),
+  requestNewFile: () => set({ view: 'explorer', sidebarOpen: true, pendingNewFile: true }),
+  clearPendingNewFile: () => set({ pendingNewFile: false }),
+  requestSettings: query =>
+    set(state => ({
+      view: 'settings',
+      sidebarOpen: true,
+      settingsFocusQuery: query ?? null,
+      settingsFocusSignal: state.settingsFocusSignal + 1,
+    })),
   openTerminalPanel: () => set(s => ({ terminalOpenSignal: s.terminalOpenSignal + 1 })),
   openProjectManager: () => set({ projectManagerOpen: true }),
   closeProjectManager: () => set({ projectManagerOpen: false }),

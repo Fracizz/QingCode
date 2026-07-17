@@ -11,7 +11,7 @@
         var theme = 'dark'
         try {
           var stored = localStorage.getItem('qingcode:theme')
-          if (stored === 'light' || stored === 'dark' || stored === 'auto') theme = stored
+          if (stored === 'light' || stored === 'dark' || stored === 'forest' || stored === 'auto') theme = stored
         } catch (e) {}
         var resolved =
           theme === 'auto' && window.matchMedia
@@ -41,6 +41,12 @@
         background: #f0f0f0;
         color: #1f1f1f;
       }
+      html[data-theme='forest'],
+      html[data-theme='forest'] body,
+      html[data-theme='forest'] #root {
+        background: #002626;
+        color: #b2c2b0;
+      }
 
       #startup-splash {
         position: fixed;
@@ -54,6 +60,9 @@
       }
       html[data-theme='light'] #startup-splash {
         background: #f0f0f0;
+      }
+      html[data-theme='forest'] #startup-splash {
+        background: #002626;
       }
       #startup-splash.startup-splash--hide {
         opacity: 0;

@@ -59,6 +59,12 @@ import {
   type AutoSaveMode,
 } from '../lib/autoSaveSettings'
 import { isTauri } from '../lib/tauri'
+import {
+  getOpenWithStatus,
+  registerOpenWith,
+  unregisterOpenWith,
+  type OpenWithStatus,
+} from '../lib/openWithSettings'
 
 type SettingsScope = 'user' | 'workspace'
 type CategoryId =
@@ -69,6 +75,9 @@ type CategoryId =
   | 'features'
   | 'language'
   | 'json'
+
+/** Survives Strict Mode remounts so a stale deep-link is not reapplied. */
+let appliedSettingsFocusSignal = 0
 
 const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: 'common', label: '常用设置' },
@@ -86,6 +95,8 @@ export default function SettingsEditor() {
   const pushToast = useProjectStore(s => s.pushToast)
   const openFile = useEditorStore(s => s.openFile)
   const setView = useUIStore(s => s.setView)
+  const settingsFocusQuery = useUIStore(s => s.settingsFocusQuery)
+  const settingsFocusSignal = useUIStore(s => s.settingsFocusSignal)
   const shortcuts = useShortcutStore(s => s.shortcuts)
 
   const [scope, setScope] = useState<SettingsScope>('user')
@@ -100,12 +111,33 @@ export default function SettingsEditor() {
   const [autoSaveDelay, setAutoSaveDelay] = useState<number>(
     DEFAULT_GLOBAL_SETTINGS['files.autoSaveDelay'] as number,
   )
+  const [openWith, setOpenWith] = useState<OpenWithStatus | null>(null)
+  const [openWithBusy, setOpenWithBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const sectionRefs = useRef<Partial<Record<CategoryId, HTMLElement | null>>>({})
 
   useEffect(() => {
     searchRef.current?.focus()
   }, [])
+
+  useEffect(() => {
+    if (!isTauri()) return
+    void getOpenWithStatus().then(setOpenWith)
+  }, [])
+
+  useEffect(() => {
+    if (settingsFocusSignal === 0 || settingsFocusSignal <= appliedSettingsFocusSignal) return
+    appliedSettingsFocusSignal = settingsFocusSignal
+    setScope('user')
+    if (settingsFocusQuery) {
+      setQuery(settingsFocusQuery)
+      setCategory('editor')
+    }
+    requestAnimationFrame(() => {
+      sectionRefs.current.editor?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      searchRef.current?.focus()
+    })
+  }, [settingsFocusSignal, settingsFocusQuery])
 
   useEffect(() => {
     if (scope === 'workspace' && !currentProject) setScope('user')
@@ -212,6 +244,9 @@ export default function SettingsEditor() {
           '切换终端',
           '复制路径',
           '文件引用',
+          '打开方式',
+          'Open with',
+          'Windows',
           'Alt+C',
           'Ctrl+Shift+C',
         )
@@ -392,23 +427,18 @@ export default function SettingsEditor() {
                   locked={workspaceLocked}
                   lockHint={t('此设置仅在用户作用域中可用')}
                 >
-                  <div className="flex flex-wrap gap-2">
+                  <select
+                    value={theme}
+                    disabled={workspaceLocked}
+                    onChange={e => updateTheme(e.target.value as AppTheme)}
+                    className="setting-control setting-select"
+                  >
                     {THEMES.map(option => (
-                      <button
-                        key={option.value}
-                        type="button"
-                        disabled={workspaceLocked}
-                        onClick={() => updateTheme(option.value)}
-                        className={`min-w-[88px] rounded border px-2 py-1.5 text-[12px] transition-colors disabled:opacity-40 ${
-                          theme === option.value
-                            ? 'border-accent bg-accent/15 text-fg'
-                            : 'border-border-strong text-fg-muted hover:border-accent/60 hover:text-fg'
-                        }`}
-                      >
+                      <option key={option.value} value={option.value}>
                         {t(option.label)}
-                      </button>
+                      </option>
                     ))}
-                  </div>
+                  </select>
                 </SettingItem>
               </Section>
             )}
@@ -592,25 +622,116 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('功能', '快捷键') && !workspaceLocked && (
+            {match('功能', '快捷键', '打开方式', 'Open with') && !workspaceLocked && (
               <Section
                 id="features"
                 title={t('功能')}
                 sectionRefs={sectionRefs}
                 onVisible={setCategory}
               >
-                <SettingItem
-                  title={t('键盘快捷方式')}
-                  description={t('自定义常用操作的按键组合。')}
-                  modified={Object.keys(DEFAULT_SHORTCUTS).some(
-                    key => shortcuts[key as ShortcutCommand] !== DEFAULT_SHORTCUTS[key as ShortcutCommand],
-                  )}
-                >
-                  <span className="text-[12px] text-fg-dim">{t('见下方列表')}</span>
-                </SettingItem>
-                <div className="pl-3">
-                  <ShortcutSettings />
-                </div>
+                {match('打开方式', 'Open with', 'Windows') && (
+                  <SettingItem
+                    title={t('Windows 打开方式')}
+                    description={t(
+                      '将 QingCode 添加到资源管理器「打开方式」菜单（常见代码/文本扩展名，不修改默认程序）。写入当前用户注册表，无需管理员权限。',
+                    )}
+                    modified={Boolean(openWith?.registered)}
+                  >
+                    <div className="flex flex-col items-end gap-2 max-w-md">
+                      {!isTauri() || openWith?.supported === false ? (
+                        <span className="text-[12px] text-fg-dim">
+                          {t('仅 Windows 桌面版支持此功能。')}
+                        </span>
+                      ) : (
+                        <>
+                          <span className="text-[12px] text-fg-muted text-right">
+                            {openWith?.registered ? t('已注册到「打开方式」') : t('尚未注册')}
+                            {openWith?.extensions?.length
+                              ? ` · ${t('已注册 {count} 种扩展名', { count: openWith.extensions.length })}`
+                              : ''}
+                          </span>
+                          {openWith?.exe_path ? (
+                            <span
+                              className="text-[11px] text-fg-dim font-mono truncate max-w-full"
+                              title={openWith.exe_path}
+                            >
+                              {t('当前程序：{path}', { path: openWith.exe_path })}
+                            </span>
+                          ) : null}
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={openWithBusy}
+                              className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                              onClick={() => {
+                                setOpenWithBusy(true)
+                                void registerOpenWith()
+                                  .then(status => {
+                                    setOpenWith(status)
+                                    pushToast(
+                                      'success',
+                                      t(
+                                        '注册成功。可在资源管理器中右键文件 → 打开方式 → QingCode。',
+                                      ),
+                                    )
+                                  })
+                                  .catch(error =>
+                                    pushToast(
+                                      'error',
+                                      t('注册失败: {error}', { error: String(error) }),
+                                    ),
+                                  )
+                                  .finally(() => setOpenWithBusy(false))
+                              }}
+                            >
+                              {t('注册「打开方式」')}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={openWithBusy || !openWith?.registered}
+                              className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                              onClick={() => {
+                                setOpenWithBusy(true)
+                                void unregisterOpenWith()
+                                  .then(status => {
+                                    setOpenWith(status)
+                                    pushToast('success', t('已取消「打开方式」注册。'))
+                                  })
+                                  .catch(error =>
+                                    pushToast(
+                                      'error',
+                                      t('取消注册失败: {error}', { error: String(error) }),
+                                    ),
+                                  )
+                                  .finally(() => setOpenWithBusy(false))
+                              }}
+                            >
+                              {t('取消注册')}
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </SettingItem>
+                )}
+                {match('快捷键', '键盘') && (
+                  <>
+                    <SettingItem
+                      title={t('键盘快捷方式')}
+                      description={t('自定义常用操作的按键组合。')}
+                      modified={Object.keys(DEFAULT_SHORTCUTS).some(
+                        key =>
+                          shortcuts[key as ShortcutCommand] !==
+                          DEFAULT_SHORTCUTS[key as ShortcutCommand],
+                      )}
+                    >
+                      <span className="text-[12px] text-fg-dim">{t('见下方列表')}</span>
+                    </SettingItem>
+                    <div className="pl-3">
+                      <ShortcutSettings />
+                    </div>
+                  </>
+                )}
               </Section>
             )}
 

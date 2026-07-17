@@ -4,15 +4,23 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { tempDir } from '@tauri-apps/api/path'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import type { Project, RecentFile } from '../types'
-import { collectAncestorDirs, findProjectForPath, isDescendantOf } from '../utils/fileReferences'
+import { collectAncestorDirs, findProjectForPath } from '../utils/fileReferences'
+import {
+  baseName,
+  normalizeProjectPath,
+  patchTree,
+  type FileNode,
+} from '../utils/fileTreeHelpers'
 import { useEditorStore } from './editorStore'
-import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import {
   loadGlobalSettings,
   readProjectEntries,
   shouldSyncProjectsOnStartup,
 } from '../lib/projectSettings'
 import { translate } from '../lib/i18n'
+import { shouldRestoreWorkspace } from '../lib/windowSession'
+
+export type { FileNode }
 
 let dbPromise: Promise<Database> | null = null
 function getDb() {
@@ -93,14 +101,6 @@ async function withDb<T>(action: string, fn: (d: Database) => Promise<T>): Promi
   return fn(d)
 }
 
-export interface FileNode {
-  name: string
-  path: string
-  is_dir: boolean
-  children?: FileNode[]
-  loaded?: boolean
-}
-
 export type ToastKind = 'error' | 'info' | 'success'
 export interface Toast {
   id: string
@@ -148,10 +148,6 @@ interface ProjectState {
   revealFileInTree: (filePath: string) => Promise<void>
   pushToast: (kind: ToastKind, text: string, detail?: string) => void
   dismissToast: (id: string) => void
-}
-
-function normalizeProjectPath(path: string): string {
-  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 
 async function syncProjectsFromUserSettings(
@@ -222,12 +218,6 @@ async function syncProjectsFromUserSettings(
   }
 
   return { projects: next, imported }
-}
-
-function baseName(p: string) {
-  const norm = p.replace(/\\/g, '/')
-  const parts = norm.split('/').filter(Boolean)
-  return parts[parts.length - 1] || p
 }
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
@@ -305,10 +295,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         loading: false
       })
 
-      // Open the most recent project immediately so the UI is not gated on
-      // validating every project path (slow/network drives can stall startup).
-      // Prefer persisted projects, then in-memory ephemeral/empty projects.
-      if (!get().currentProject) {
+      // Main window: open the most recent project immediately so the UI is not
+      // gated on validating every path. Fresh windows (File → New Window) stay
+      // empty — no inherited currentProject / explorer / auto terminal.
+      const restoreWorkspace = shouldRestoreWorkspace()
+      if (restoreWorkspace && !get().currentProject) {
         const candidate =
           projects.find((project) => !project.hidden) ??
           ephemeralProjects.find((project) => !project.hidden)
@@ -332,6 +323,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ).filter((id): id is string => id !== null)
 
         set({ unavailableProjectIds })
+
+        if (!restoreWorkspace) return
 
         const pickAvailable = () => {
           const all = get().projects
@@ -448,16 +441,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ephemeral: true,
       }
 
-      const tabsToClose = useEditorStore
-        .getState()
-        .tabs.filter((tab) => !isDescendantOf(tab.path, project.path))
-      if (get().currentProject?.id !== id && !(await confirmDiscardTabs(tabsToClose, '切换项目'))) {
-        return false
-      }
-
       // Ephemeral projects live only in memory; they are not written to the
       // projects table and disappear after restart. Set currentProject in the
       // same update so explorer/terminal are never left without an active project.
+      const previousId = get().currentProject?.id ?? null
       set((s) => ({
         projects: [project, ...s.projects],
         currentProject: project,
@@ -465,7 +452,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         unavailableProjectIds: s.unavailableProjectIds.filter((pid) => pid !== id),
         expandedProjects: { ...s.expandedProjects, [id]: true },
       }))
-      useEditorStore.getState().closeTabsOutsideProject(project.path)
+      useEditorStore.getState().activateProjectSession(previousId, id)
       void get().ensureProjectTree(project)
       get().pushToast('success', `已新增空项目: ${name}（临时，重启后消失）`)
       return true
@@ -722,11 +709,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   switchProject: async (project: Project) => {
     try {
       const currentProject = get().currentProject
-      const tabsToClose = useEditorStore
-        .getState()
-        .tabs.filter(tab => !isDescendantOf(tab.path, project.path))
-      if (currentProject?.id !== project.id && !await confirmDiscardTabs(tabsToClose, '切换项目')) {
-        return false
+      if (currentProject?.id === project.id) {
+        void get().ensureProjectTree(project)
+        return true
       }
 
       // Ephemeral/empty projects use a scratch temp directory; do not block
@@ -746,13 +731,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           )
         })
       }
+      const previousId = currentProject?.id ?? null
       set((s) => ({
         currentProject: project,
         recentFiles,
         unavailableProjectIds: s.unavailableProjectIds.filter((id) => id !== project.id),
         expandedProjects: { ...s.expandedProjects, [project.id]: true }
       }))
-      useEditorStore.getState().closeTabsOutsideProject(project.path)
+      // Keep the previous project's tabs/drafts/CM state; restore the target's.
+      useEditorStore.getState().activateProjectSession(previousId, project.id)
       // Load the tree after the project switch paints; callers should not wait on I/O.
       void get().ensureProjectTree(project)
       return true
@@ -772,14 +759,21 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const proj = get().currentProject
     if (!proj) return
     if (proj.ephemeral) return
+    const openedAt = Date.now()
     try {
       await withDb('记录最近文件', (d) =>
         d.execute('INSERT OR REPLACE INTO recent_files (project_id, path, opened_at) VALUES ($1, $2, $3)', [
           proj.id,
           path,
-          Date.now()
+          openedAt
         ])
       )
+      set(s => {
+        if (s.currentProject?.id !== proj.id) return s
+        const next: RecentFile = { project_id: proj.id, path, opened_at: openedAt }
+        const rest = s.recentFiles.filter(f => f.path !== path)
+        return { recentFiles: [next, ...rest].slice(0, 50) }
+      })
     } catch (e) {
       console.error('addRecentFile failed:', e)
     }
@@ -909,20 +903,3 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   }
 }))
-
-function patchTree(
-  nodes: FileNode[],
-  targetPath: string,
-  updater: (existing: FileNode[] | undefined) => FileNode[]
-): FileNode[] {
-  return nodes.map((n) => {
-    if (n.path === targetPath) {
-      const children = updater(n.children)
-      return { ...n, children, loaded: true }
-    }
-    if (n.children) {
-      return { ...n, children: patchTree(n.children, targetPath, updater) }
-    }
-    return n
-  })
-}

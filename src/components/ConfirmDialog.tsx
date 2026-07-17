@@ -47,6 +47,8 @@ export default function ConfirmDialog() {
   const kind = request.kind ?? 'warning'
   const meta = KIND_META[kind]
   const Icon = meta.icon
+  const hasAlt = Boolean(request.altLabel)
+  const wide = hasAlt || Boolean(request.detail && request.detail.includes('\n'))
 
   return (
     <ModalOverlay onDismiss={() => answer(false)} zIndex="z-[110]">
@@ -55,7 +57,9 @@ export default function ConfirmDialog() {
         aria-modal="true"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-message"
-        className="relative w-full max-w-[420px] rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className={`relative w-full rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50 ${
+          wide ? 'max-w-[520px]' : 'max-w-[420px]'
+        }`}
       >
         <div className="flex gap-3 px-4 pt-4 pb-3">
           <div
@@ -71,13 +75,13 @@ export default function ConfirmDialog() {
               {t(request.message)}
             </p>
             {request.detail && (
-              <p className="mt-2 text-[12px] leading-relaxed text-fg-muted whitespace-pre-line">
+              <p className="mt-2 max-h-[240px] overflow-auto rounded border border-border bg-bg-deep/60 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-fg-muted whitespace-pre-wrap break-all">
                 {t(request.detail)}
               </p>
             )}
           </div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+        <div className="flex flex-wrap justify-end gap-2 border-t border-border px-4 py-3">
           <button
             ref={cancelRef}
             type="button"
@@ -86,6 +90,15 @@ export default function ConfirmDialog() {
           >
             {request.cancelLabel ? t(request.cancelLabel) : t('取消')}
           </button>
+          {hasAlt && (
+            <button
+              type="button"
+              className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+              onClick={() => answer('alt')}
+            >
+              {t(request.altLabel!)}
+            </button>
+          )}
           <button
             ref={confirmRef}
             type="button"

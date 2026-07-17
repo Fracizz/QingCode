@@ -65,8 +65,8 @@ fn list_dir_one_level(current: &str) -> Result<Vec<FileNode>, std::io::Error> {
         }
     }
 
-    dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-    files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    dirs.sort_by_key(|a| a.name.to_lowercase());
+    files.sort_by_key(|a| a.name.to_lowercase());
 
     dirs.extend(files);
     Ok(dirs)
@@ -195,6 +195,7 @@ fn name_matches_query(
     target_name.contains(&q)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn walk_matching(
     root: &Path,
     base: &Path,
@@ -347,6 +348,7 @@ pub fn list_file_extensions(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn search_files(
     root: String,
     query: String,
@@ -499,6 +501,7 @@ pub fn cancel_content_search() {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn search_file_contents(
     root: String,
     query: String,
@@ -726,6 +729,141 @@ pub fn delete_path(path: String) -> Result<(), String> {
     }
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryDeleteStats {
+    pub path: String,
+    pub file_count: u64,
+    pub total_size: u64,
+}
+
+/// Walk a directory (without following dir symlinks) to gather cheap delete-confirm stats.
+#[tauri::command]
+pub fn directory_delete_stats(path: String) -> Result<DirectoryDeleteStats, String> {
+    let target = Path::new(&path);
+    if !target.is_absolute() {
+        return Err("仅允许统计绝对路径".to_string());
+    }
+    let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
+    if !metadata.is_dir() {
+        return Err("路径不是文件夹".to_string());
+    }
+
+    let mut file_count = 0u64;
+    let mut total_size = 0u64;
+    collect_directory_delete_stats(target, &mut file_count, &mut total_size)?;
+
+    Ok(DirectoryDeleteStats {
+        path: display_path(target),
+        file_count,
+        total_size,
+    })
+}
+
+fn collect_directory_delete_stats(
+    dir: &Path,
+    file_count: &mut u64,
+    total_size: &mut u64,
+) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|e| format!("读取目录失败: {}", e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取目录项失败: {}", e))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("读取文件类型失败: {}", e))?;
+        if file_type.is_dir() && !file_type.is_symlink() {
+            collect_directory_delete_stats(&entry.path(), file_count, total_size)?;
+        } else {
+            *file_count += 1;
+            if let Ok(meta) = entry.metadata() {
+                *total_size = total_size.saturating_add(meta.len());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SymlinkWriteCheck {
+    pub needs_confirm: bool,
+    pub resolved_path: Option<String>,
+}
+
+/// Detect whether writing `path` would follow a symlink to a target outside `project_roots`.
+#[tauri::command]
+pub fn check_symlink_write(
+    path: String,
+    project_roots: Vec<String>,
+) -> Result<SymlinkWriteCheck, String> {
+    let target = Path::new(&path);
+    if !path_involves_symlink(target) {
+        return Ok(SymlinkWriteCheck {
+            needs_confirm: false,
+            resolved_path: None,
+        });
+    }
+
+    let resolved = match resolve_write_path(target) {
+        Some(resolved) => resolved,
+        None => {
+            return Ok(SymlinkWriteCheck {
+                needs_confirm: true,
+                resolved_path: Some(display_path(target)),
+            });
+        }
+    };
+
+    let roots: Vec<_> = project_roots
+        .iter()
+        .filter_map(|root| fs::canonicalize(root).ok())
+        .collect();
+    let inside = roots.iter().any(|root| resolved.starts_with(root));
+
+    Ok(SymlinkWriteCheck {
+        needs_confirm: !inside,
+        resolved_path: Some(display_path(&resolved)),
+    })
+}
+
+fn path_involves_symlink(path: &Path) -> bool {
+    let mut current = path.to_path_buf();
+    loop {
+        if fs::symlink_metadata(&current)
+            .map(|meta| meta.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+    false
+}
+
+fn resolve_write_path(path: &Path) -> Option<std::path::PathBuf> {
+    if path.exists() {
+        return fs::canonicalize(path).ok();
+    }
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())?;
+    let name = path.file_name()?;
+    Some(fs::canonicalize(parent).ok()?.join(name))
+}
+
+fn display_path(path: &Path) -> String {
+    let raw = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(stripped) = raw.strip_prefix(r"\\?\") {
+            return stripped.to_string();
+        }
+    }
+    raw.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -821,6 +959,83 @@ mod tests {
         let temp_dir = std::env::temp_dir();
         let root = temp_dir.ancestors().last().unwrap();
         assert!(delete_path(root.to_string_lossy().to_string()).is_err());
+    }
+
+    #[test]
+    fn directory_delete_stats_counts_nested_files() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-dir-stats-{nonce}"));
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        fs::write(dir.join("a.txt"), "hello").unwrap();
+        fs::write(dir.join("nested/b.txt"), "world!!").unwrap();
+
+        let stats = directory_delete_stats(dir.to_string_lossy().to_string()).unwrap();
+        assert_eq!(stats.file_count, 2);
+        assert_eq!(stats.total_size, 12);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn check_symlink_write_skips_regular_file_inside_project() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-symlink-check-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("note.txt");
+        fs::write(&file, "hi").unwrap();
+
+        let check = check_symlink_write(
+            file.to_string_lossy().to_string(),
+            vec![dir.to_string_lossy().to_string()],
+        )
+        .unwrap();
+        assert!(!check.needs_confirm);
+        assert!(check.resolved_path.is_none());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_symlink_write_flags_symlink_outside_project() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!("qingcode-symlink-out-{nonce}"));
+        let project = base.join("project");
+        let outside = base.join("outside");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        let target = outside.join("secret.txt");
+        fs::write(&target, "secret").unwrap();
+        let link = project.join("alias.txt");
+        symlink(&target, &link).unwrap();
+
+        let check = check_symlink_write(
+            link.to_string_lossy().to_string(),
+            vec![project.to_string_lossy().to_string()],
+        )
+        .unwrap();
+        assert!(check.needs_confirm);
+        assert!(
+            check
+                .resolved_path
+                .as_deref()
+                .is_some_and(|p| p.ends_with("secret.txt")),
+            "{:?}",
+            check.resolved_path
+        );
+
+        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]

@@ -14,12 +14,18 @@ import {
   ArrowDown,
   Folder,
   AlertTriangle,
+  ShieldOff,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { useEditorStore } from '../store/editorStore'
 import { confirmDialog } from '../store/confirmStore'
+import {
+  isProjectTrusted,
+  untrustProject,
+  RUN_TRUST_CHANGED_EVENT,
+} from '../lib/runTrust'
 import {
   removeProjectWithConfirm,
   relocateProjectWithDialog,
@@ -69,6 +75,13 @@ export default function ProjectManager() {
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [filter, setFilter] = useState<FilterMode>('all')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [trustTick, setTrustTick] = useState(0)
+
+  useEffect(() => {
+    const sync = () => setTrustTick(n => n + 1)
+    window.addEventListener(RUN_TRUST_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(RUN_TRUST_CHANGED_EVENT, sync)
+  }, [])
 
   const sortedProjects = useMemo(() => {
     let list = projects
@@ -139,6 +152,7 @@ export default function ProjectManager() {
       try {
         await useTerminalStore.getState().closeProjectTerminals(p.id)
         useEditorStore.getState().closeTabsForPath(p.path)
+        useEditorStore.getState().discardProjectSession(p.id)
         await useProjectStore.getState().removeProject(p.id)
       } catch (e) {
         useProjectStore.getState().pushToast('error', t('删除「{name}」失败: {error}', { name: p.name, error: String(e) }))
@@ -325,6 +339,8 @@ export default function ProjectManager() {
                   const unavailable = unavailableProjectIds.includes(project.id)
                   const isCurrent = currentProject?.id === project.id
                   const checked = selectedIds.has(project.id)
+                  // trustTick invalidates this read when localStorage trust changes.
+                  const trusted = trustTick >= 0 && isProjectTrusted(project)
                   return (
                     <tr
                       key={project.id}
@@ -388,6 +404,11 @@ export default function ProjectManager() {
                           ) : (
                             <ActBtn label={t('从顶栏隐藏')} onClick={() => void hideProject(project.id)}>
                               <EyeOff size={14} />
+                            </ActBtn>
+                          )}
+                          {trusted && (
+                            <ActBtn label={t('撤销运行信任')} onClick={() => untrustProject(project)}>
+                              <ShieldOff size={14} />
                             </ActBtn>
                           )}
                           <ActBtn label={t('重命名')} onClick={() => handleRename(project)}>

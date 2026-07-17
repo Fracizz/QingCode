@@ -136,23 +136,16 @@ impl TerminalManager {
         let sessions = Arc::clone(&self.sessions);
         std::thread::spawn(move || {
             let status = child.wait();
-            let is_current = {
+            let current_generation = {
                 let sessions = sessions.lock().unwrap();
-                if sessions
-                    .get(&id)
-                    .is_some_and(|session| session.generation == generation)
-                {
-                    true
-                } else {
-                    false
-                }
+                sessions.get(&id).map(|session| session.generation)
             };
-            if is_current {
+            if should_emit_terminal_exit(current_generation, generation) {
                 {
                     let mut sessions = sessions.lock().unwrap();
                     sessions.remove(&id);
                 }
-                let exit_code = status.map(|status| status.exit_code()).unwrap_or(1);
+                let exit_code = resolve_exit_code(status.map(|status| status.exit_code()).ok());
                 let _ = app.emit("terminal-exit", TerminalExitPayload { id, exit_code });
             }
         });
@@ -231,6 +224,15 @@ impl Drop for TerminalManager {
     }
 }
 
+/// Pure description of a run-config command (unit-testable without a PTY).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScriptCommandSpec {
+    program: String,
+    args: Vec<String>,
+    cwd: Option<String>,
+    env: Vec<(String, String)>,
+}
+
 /// Build a `CommandBuilder` for a run-config task. `cwd` is applied when
 /// non-empty; `env` entries are overlaid on top of the inherited environment.
 fn build_script_command(
@@ -239,6 +241,26 @@ fn build_script_command(
     cwd: &str,
     env: HashMap<String, String>,
 ) -> Result<CommandBuilder, String> {
+    let spec = resolve_script_command(shell_kind, target, cwd, env)?;
+    let mut cmd = CommandBuilder::new(&spec.program);
+    for arg in &spec.args {
+        cmd.arg(arg);
+    }
+    if let Some(ref cwd) = spec.cwd {
+        cmd.cwd(cwd);
+    }
+    for (k, v) in spec.env {
+        cmd.env(k, v);
+    }
+    Ok(cmd)
+}
+
+fn resolve_script_command(
+    shell_kind: &str,
+    target: &str,
+    cwd: &str,
+    env: HashMap<String, String>,
+) -> Result<ScriptCommandSpec, String> {
     if target.trim().is_empty() {
         return Err("运行任务 target 不能为空".to_string());
     }
@@ -249,40 +271,38 @@ fn build_script_command(
         shell_kind.to_string()
     };
 
-    let mut cmd = match kind.as_str() {
-        "ps1" => {
-            let mut c = CommandBuilder::new("powershell.exe");
-            c.arg("-NoProfile");
-            c.arg("-ExecutionPolicy");
-            c.arg("Bypass");
-            c.arg("-File");
-            c.arg(target);
-            c
-        }
-        "bat" => {
-            let mut c = CommandBuilder::new("cmd.exe");
-            c.arg("/c");
-            c.arg(target);
-            c
-        }
-        "sh" => {
-            let mut c = CommandBuilder::new("bash");
-            c.arg(target);
-            c
-        }
+    let (program, args) = match kind.as_str() {
+        "ps1" => (
+            "powershell.exe".to_string(),
+            vec![
+                "-NoProfile".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                target.to_string(),
+            ],
+        ),
+        "bat" => (
+            "cmd.exe".to_string(),
+            vec!["/c".to_string(), target.to_string()],
+        ),
+        "sh" => ("bash".to_string(), vec![target.to_string()]),
         "command" => {
             if cfg!(target_os = "windows") {
-                let mut c = CommandBuilder::new("cmd.exe");
-                c.arg("/d");
-                c.arg("/s");
-                c.arg("/c");
-                c.arg(target);
-                c
+                (
+                    "cmd.exe".to_string(),
+                    vec![
+                        "/d".to_string(),
+                        "/s".to_string(),
+                        "/c".to_string(),
+                        target.to_string(),
+                    ],
+                )
             } else {
-                let mut c = CommandBuilder::new("bash");
-                c.arg("-c");
-                c.arg(target);
-                c
+                (
+                    "bash".to_string(),
+                    vec!["-c".to_string(), target.to_string()],
+                )
             }
         }
         other => {
@@ -290,13 +310,19 @@ fn build_script_command(
         }
     };
 
-    if !cwd.is_empty() {
-        cmd.cwd(cwd);
-    }
-    for (k, v) in env {
-        cmd.env(k, v);
-    }
-    Ok(cmd)
+    let mut env_pairs: Vec<(String, String)> = env.into_iter().collect();
+    env_pairs.sort_by_key(|(k, _)| k.clone());
+
+    Ok(ScriptCommandSpec {
+        program,
+        args,
+        cwd: if cwd.is_empty() {
+            None
+        } else {
+            Some(cwd.to_string())
+        },
+        env: env_pairs,
+    })
 }
 
 fn infer_script_kind(path: &str) -> String {
@@ -314,6 +340,17 @@ fn infer_script_kind(path: &str) -> String {
     }
 }
 
+/// Whether a wait thread should emit `terminal-exit` for this session id.
+/// Stale when the id was reused (generation advanced) or the session was removed.
+fn should_emit_terminal_exit(current_generation: Option<u64>, expected: u64) -> bool {
+    current_generation == Some(expected)
+}
+
+/// Map a waited exit status to the payload code; missing status → 1.
+fn resolve_exit_code(status_code: Option<u32>) -> u32 {
+    status_code.unwrap_or(1)
+}
+
 fn process_exists(pid: u32) -> bool {
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
@@ -329,4 +366,92 @@ fn count_child_processes(parent_pid: u32) -> usize {
         .values()
         .filter(|process| process.parent() == Some(parent))
         .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infer_script_kind_from_extension() {
+        assert_eq!(infer_script_kind(r"D:\run\task.ps1"), "ps1");
+        assert_eq!(infer_script_kind("scripts/build.bat"), "bat");
+        assert_eq!(infer_script_kind("scripts/build.CMD"), "bat");
+        assert_eq!(infer_script_kind("scripts/build.sh"), "sh");
+    }
+
+    #[test]
+    fn resolve_script_command_rejects_empty_target() {
+        let err = resolve_script_command("command", "  ", "", HashMap::new()).unwrap_err();
+        assert!(err.contains("不能为空"), "err={err}");
+    }
+
+    #[test]
+    fn resolve_script_command_rejects_unknown_kind() {
+        let err = resolve_script_command("ruby", "puts 1", "", HashMap::new()).unwrap_err();
+        assert!(err.contains("不支持"), "err={err}");
+    }
+
+    #[test]
+    fn resolve_script_command_builds_ps1() {
+        let mut env = HashMap::new();
+        env.insert("FOO".to_string(), "1".to_string());
+        let spec = resolve_script_command("ps1", r"D:\run\task.ps1", r"D:\work", env).unwrap();
+        assert_eq!(spec.program, "powershell.exe");
+        assert_eq!(
+            spec.args,
+            vec![
+                "-NoProfile".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-File".to_string(),
+                r"D:\run\task.ps1".to_string(),
+            ]
+        );
+        assert_eq!(spec.cwd.as_deref(), Some(r"D:\work"));
+        assert_eq!(spec.env, vec![("FOO".to_string(), "1".to_string())]);
+    }
+
+    #[test]
+    fn resolve_script_command_infers_kind_for_script() {
+        let spec = resolve_script_command("script", "tools/setup.sh", "", HashMap::new()).unwrap();
+        assert_eq!(spec.program, "bash");
+        assert_eq!(spec.args, vec!["tools/setup.sh".to_string()]);
+    }
+
+    #[test]
+    fn resolve_script_command_builds_inline_command() {
+        let spec =
+            resolve_script_command("command", "echo hello", "C:\\tmp", HashMap::new()).unwrap();
+        if cfg!(target_os = "windows") {
+            assert_eq!(spec.program, "cmd.exe");
+            assert_eq!(
+                spec.args,
+                vec![
+                    "/d".to_string(),
+                    "/s".to_string(),
+                    "/c".to_string(),
+                    "echo hello".to_string(),
+                ]
+            );
+        } else {
+            assert_eq!(spec.program, "bash");
+            assert_eq!(spec.args, vec!["-c".to_string(), "echo hello".to_string()]);
+        }
+        assert_eq!(spec.cwd.as_deref(), Some("C:\\tmp"));
+    }
+
+    #[test]
+    fn should_emit_terminal_exit_only_for_current_generation() {
+        assert!(should_emit_terminal_exit(Some(3), 3));
+        assert!(!should_emit_terminal_exit(Some(4), 3));
+        assert!(!should_emit_terminal_exit(None, 3));
+    }
+
+    #[test]
+    fn resolve_exit_code_defaults_to_one() {
+        assert_eq!(resolve_exit_code(Some(0)), 0);
+        assert_eq!(resolve_exit_code(Some(42)), 42);
+        assert_eq!(resolve_exit_code(None), 1);
+    }
 }

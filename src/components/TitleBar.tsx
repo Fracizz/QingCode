@@ -5,6 +5,7 @@ import { isTauri } from '../lib/tauri'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import AppIcon from './AppIcon'
+import FileMenu from './FileMenu'
 import Tooltip from './Tooltip'
 import ProjectPicker from './ProjectPicker'
 import { confirmDialog } from '../store/confirmStore'
@@ -36,7 +37,7 @@ async function requestAppClose() {
   ) {
     return
   }
-  if (!(await confirmDiscardTabs(useEditorStore.getState().tabs, '退出应用'))) return
+  if (!(await confirmDiscardTabs(useEditorStore.getState().getAllTabs(), '退出应用'))) return
   await getCurrentWindow().destroy()
 }
 
@@ -103,22 +104,44 @@ export default function TitleBar() {
   }
 
   return (
-    <div className="ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none">
+    <div
+      className="ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none"
+      onDoubleClick={inTauri ? toggleMaximize : undefined}
+    >
       <div className="flex-1 flex items-center h-full min-w-0">
-        <div className="flex items-center h-full px-3 flex-shrink-0">
+        <div
+          className="flex items-center h-full gap-0.5 px-3 flex-shrink-0"
+          onDoubleClick={event => event.stopPropagation()}
+        >
           <AppIcon size={14} className="flex-shrink-0" />
+          <FileMenu onExit={handleClose} />
         </div>
         <ProjectPicker />
         <div
           className="flex-shrink-0 h-full w-[140px]"
           data-tauri-drag-region={inTauri ? true : undefined}
-          onDoubleClick={inTauri ? toggleMaximize : undefined}
+          onDoubleClick={inTauri ? event => {
+            event.stopPropagation()
+            void toggleMaximize()
+          } : undefined}
         />
-        <span className="px-3 text-[12px] text-fg-dim truncate flex-shrink-0">QingCode</span>
+        <span
+          className="px-3 text-[12px] text-fg-dim truncate flex-shrink-0 h-full flex items-center"
+          data-tauri-drag-region={inTauri ? true : undefined}
+          onDoubleClick={inTauri ? event => {
+            event.stopPropagation()
+            void toggleMaximize()
+          } : undefined}
+        >
+          QingCode
+        </span>
       </div>
 
       {inTauri && (
-        <div className="flex h-full flex-shrink-0">
+        <div
+          className="flex h-full flex-shrink-0"
+          onDoubleClick={event => event.stopPropagation()}
+        >
           <WindowButton label="Minimize" onClick={handleMinimize}>
             <Minus size={14} strokeWidth={1.5} />
           </WindowButton>

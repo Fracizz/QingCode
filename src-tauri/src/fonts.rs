@@ -25,7 +25,10 @@ fn list_windows_font_families() -> Vec<String> {
     ];
 
     let mut families = BTreeSet::new();
-    for root in [RegKey::predef(HKEY_LOCAL_MACHINE), RegKey::predef(HKEY_CURRENT_USER)] {
+    for root in [
+        RegKey::predef(HKEY_LOCAL_MACHINE),
+        RegKey::predef(HKEY_CURRENT_USER),
+    ] {
         for path in KEYS {
             let Ok(key) = root.open_subkey(path) else {
                 continue;

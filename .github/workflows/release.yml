@@ -40,7 +40,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
 
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
@@ -49,6 +49,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Check (tsc, vitest, rustfmt, clippy, cargo test)
+        run: pnpm check
 
       - name: Read app version
         id: meta
@@ -87,6 +90,10 @@ jobs:
           if (-not (Test-Path $exe)) { throw "Missing $exe" }
           if (-not (Test-Path "release/QingCode.exe")) { throw "Missing release/QingCode.exe" }
           Get-Item $exe, "release/QingCode.exe" | Format-Table Name, Length, LastWriteTime
+
+      - name: Smoke start portable exe
+        shell: pwsh
+        run: ./scripts/smoke-start.ps1 -ExePath release/QingCode.exe -WaitSeconds 4
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

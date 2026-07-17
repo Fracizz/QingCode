@@ -24,7 +24,7 @@ import {
   AtSign,
 } from 'lucide-react'
 import Tooltip from './Tooltip'
-import { useProjectStore, FileNode } from '../store/projectStore'
+import { useProjectStore, type FileNode } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
@@ -35,30 +35,23 @@ import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import InlineCreateRow from './InlineCreateRow'
 import type { Project } from '../types'
-import { collectAncestorDirs, copyToClipboard, formatFileReference, isDescendantOf, normalizePath, pathsEqual } from '../utils/fileReferences'
+import { collectAncestorDirs, copyToClipboard, formatFileReference, isDescendantOf, pathsEqual } from '../utils/fileReferences'
+import {
+  createTreeDepth,
+  dirsToReveal,
+  flattenVisibleNodes,
+  type PendingCreate,
+  type VisibleTreeRow,
+} from '../utils/fileTreeView'
 import { relocateProjectWithDialog, addTerminalProjectWithPrompt, renameProjectWithPrompt } from '../utils/projectActions'
+import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
+import { formatBytes } from '../utils/formatBytes'
 import { useI18n } from '../lib/i18n'
 
-type PendingCreate = {
-  projectId: string
-  parentPath: string
-  directory: boolean
-  depth: number
-}
-
-function createTreeDepth(parentPath: string, projectPath: string): number {
-  const root = normalizePath(projectPath)
-  const parent = normalizePath(parentPath)
-  if (parent.toLowerCase() === root.toLowerCase()) return 1
-  const rel = parent.slice(root.length).replace(/^\/+/, '')
-  return rel.split('/').filter(Boolean).length + 1
-}
-
-function dirsToReveal(parentPath: string, projectPath: string): string[] {
-  const root = normalizePath(projectPath)
-  const parent = normalizePath(parentPath)
-  if (parent.toLowerCase() === root.toLowerCase()) return []
-  return collectAncestorDirs(`${parent}/.placeholder`, projectPath)
+type DirectoryDeleteStats = {
+  path: string
+  fileCount: number
+  totalSize: number
 }
 
 type ContextTarget =
@@ -71,10 +64,6 @@ function parentPath(path: string) {
   return separator > 0 ? path.slice(0, separator) : path
 }
 
-type VisibleTreeRow =
-  | { kind: 'node'; node: FileNode; depth: number }
-  | { kind: 'create'; depth: number; directory: boolean }
-
 type TreeRowProps = {
   rows: VisibleTreeRow[]
   expandedPaths: Set<string>
@@ -85,24 +74,6 @@ type TreeRowProps = {
   onToggleNode: (node: FileNode) => void
   onCommitCreate: (name: string) => void
   onCancelCreate: () => void
-}
-
-function flattenVisibleNodes(
-  nodes: FileNode[],
-  expandedPaths: Set<string>,
-  pendingCreate: PendingCreate | null,
-): VisibleTreeRow[] {
-  const rows: VisibleTreeRow[] = []
-  const visit = (node: FileNode, depth: number) => {
-    rows.push({ kind: 'node', node, depth })
-    if (!node.is_dir || !expandedPaths.has(node.path)) return
-    if (pendingCreate?.parentPath === node.path) {
-      rows.push({ kind: 'create', depth: depth + 1, directory: pendingCreate.directory })
-    }
-    if (node.loaded) node.children?.forEach(child => visit(child, depth + 1))
-  }
-  nodes.forEach(node => visit(node, 1))
-  return rows
 }
 
 function VirtualTreeRow({
@@ -190,6 +161,8 @@ export default function Sidebar() {
   const setView = useUIStore(s => s.setView)
   const addTerminal = useTerminalStore(s => s.addTerminal)
   const requestSearch = useUIStore(s => s.requestSearch)
+  const pendingNewFile = useUIStore(s => s.pendingNewFile)
+  const clearPendingNewFile = useUIStore(s => s.clearPendingNewFile)
   const renameEditorPath = useEditorStore(s => s.renamePath)
   const closeTabsForPath = useEditorStore(s => s.closeTabsForPath)
   const [refreshing, setRefreshing] = useState(false)
@@ -361,6 +334,9 @@ export default function Sidebar() {
     const project = projects.find(p => p.id === projectId)
     if (!project) return
     const label = directory ? t('文件夹') : t('文件')
+    const separator = parentPath.includes('\\') ? '\\' : '/'
+    const candidatePath = `${parentPath.replace(/[\\/]+$/, '')}${separator}${name}`
+    if (!(await confirmOutsideSymlinkWrite(candidatePath))) return
     setPendingCreate(null)
     try {
       const path = await safeInvoke<string>(
@@ -392,6 +368,20 @@ export default function Sidebar() {
       depth: createTreeDepth(parent, project.path),
     })
   }
+
+  useEffect(() => {
+    if (!pendingNewFile) return
+    clearPendingNewFile()
+    const project = useProjectStore.getState().currentProject
+    if (!project) return
+    if (useProjectStore.getState().unavailableProjectIds.includes(project.id)) {
+      useProjectStore.getState().pushToast('info', t('目录不可用，请重新定位'))
+      return
+    }
+    void startCreateEntry(project.path, false, project.id)
+    // Consume once per pending flag; startCreateEntry uses latest project state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNewFile])
 
   const handleRenameNode = async (node: FileNode) => {
     const name = await promptDialog({
@@ -426,7 +416,35 @@ export default function Sidebar() {
       confirmLabel: t('删除'),
       cancelLabel: t('取消'),
     })
-    if (!confirmed) return
+    if (confirmed !== true) return
+
+    if (node.is_dir) {
+      let detail = t('路径：{path}', { path: node.path })
+      try {
+        const stats = await safeInvoke<DirectoryDeleteStats>('统计文件夹', 'directory_delete_stats', {
+          path: node.path,
+        })
+        detail = [
+          t('路径：{path}', { path: stats.path || node.path }),
+          t('包含 {count} 个文件（约 {size}）', {
+            count: stats.fileCount,
+            size: formatBytes(stats.totalSize),
+          }),
+        ].join('\n')
+      } catch {
+        // Path-only secondary confirm is still useful if stats fail.
+      }
+      const confirmedAgain = await confirmDialog({
+        title: t('再次确认删除文件夹'),
+        message: t('即将永久删除以下文件夹：'),
+        detail,
+        kind: 'danger',
+        confirmLabel: t('永久删除'),
+        cancelLabel: t('取消'),
+      })
+      if (confirmedAgain !== true) return
+    }
+
     try {
       await safeInvoke('删除', 'delete_path', { path: node.path })
       closeTabsForPath(node.path)

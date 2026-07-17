@@ -9,7 +9,7 @@ export const DEFAULT_THEME: AppTheme = 'dark'
 export const THEMES: { label: string; value: AppTheme; hint: string }[] = [
   { label: '深色', value: 'dark', hint: '常驻深色' },
   { label: '浅色', value: 'light', hint: '常驻浅色' },
-  { label: '森林', value: 'forest', hint: '暖色森林绿（Everforest 风格）' },
+  { label: '森林', value: 'forest', hint: '深绿 Material Forest（IDEA 同款）' },
   { label: '跟随系统', value: 'auto', hint: '随操作系统明暗自动切换' },
 ]
 

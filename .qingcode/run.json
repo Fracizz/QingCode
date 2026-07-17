@@ -1,0 +1,16 @@
+{
+  "configs": [
+    {
+      "id": "beb19fa5-cfb3-401f-89c7-d3057e36967b",
+      "name": "dev",
+      "tasks": [
+        {
+          "id": "f81e0175-2d96-4216-bd39-639c956ec513",
+          "name": "dev",
+          "type": "command",
+          "target": "pnpm tauri:dev"
+        }
+      ]
+    }
+  ]
+}

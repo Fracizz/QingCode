@@ -8,6 +8,13 @@ import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { isTauri, safeInvoke } from '../lib/tauri'
 
+type GitHeadInfo = {
+  name: string
+  detached: boolean
+}
+
+const GIT_HEAD_REFRESH_MS = 15_000
+
 export default function StatusBar() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
@@ -17,6 +24,7 @@ export default function StatusBar() {
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [devBuild, setDevBuild] = useState(false)
+  const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
 
   const activeTab = tabs.find(t => t.id === activeTabId)
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
@@ -46,6 +54,42 @@ export default function StatusBar() {
     }
   }, [])
 
+  useEffect(() => {
+    const projectPath = currentProject?.path
+    if (!projectPath || !isTauri()) {
+      setGitHead(null)
+      return
+    }
+
+    let cancelled = false
+
+    const loadGitHead = async () => {
+      try {
+        const info = await safeInvoke<GitHeadInfo | null>('读取 Git 分支', 'get_git_head', {
+          path: projectPath,
+        })
+        if (!cancelled) setGitHead(info ?? null)
+      } catch {
+        if (!cancelled) setGitHead(null)
+      }
+    }
+
+    void loadGitHead()
+    const onFocus = () => {
+      void loadGitHead()
+    }
+    window.addEventListener('focus', onFocus)
+    const intervalId = window.setInterval(() => {
+      void loadGitHead()
+    }, GIT_HEAD_REFRESH_MS)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', onFocus)
+      window.clearInterval(intervalId)
+    }
+  }, [currentProject?.path])
+
   return (
     <div className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-accent-soft text-fg text-xs flex items-center px-3 gap-4 select-none border-t border-border">
       <span className="flex items-center gap-1.5">
@@ -59,9 +103,17 @@ export default function StatusBar() {
           {activeTab.dirty && <span className="text-warn">●</span>}
         </span>
       )}
-      <span className="flex items-center gap-1.5 opacity-90">
-        <GitBranch size={13} />main
-      </span>
+      {gitHead && (
+        <Tooltip
+          label={gitHead.detached ? t('分离的 HEAD（未在分支上）') : t('当前 Git 分支')}
+          side="top"
+        >
+          <span className="flex items-center gap-1.5 opacity-90">
+            <GitBranch size={13} />
+            {gitHead.detached ? t('分离 HEAD · {sha}', { sha: gitHead.name }) : gitHead.name}
+          </span>
+        </Tooltip>
+      )}
       <div className="flex-1" />
       {activeTab && (
         <Tooltip

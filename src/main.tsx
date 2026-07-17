@@ -7,8 +7,10 @@ import { applyTheme, loadTheme } from './lib/themeSettings'
 import { revealAppWindow } from './lib/appWindow'
 import { initializeLanguage } from './lib/i18n'
 import { installStartupSplashGuard } from './lib/startupSplash'
+import { initWindowSession } from './lib/windowSession'
 
 // Critical path before first paint: theme, fonts, splash logo, i18n.
+initWindowSession()
 applyTheme(loadTheme())
 initializeLanguage()
 paintStartupSplashLogo()

@@ -14,14 +14,19 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "check": "pnpm check:frontend && pnpm check:rust",
-    "check:frontend": "tsc --noEmit",
-    "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:frontend": "tsc --noEmit && vitest run",
+    "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke:start": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/smoke-start.ps1",
     "tauri": "tauri",
     "tauri:dev": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
     "tauri:dev:direct": "tauri dev",
     "icon:sync": "tauri icon public/app-icon-file.svg -o src-tauri/icons",
     "package:exe": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1",
     "package:exe:fast": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1 -SkipFrontend -SkipIcons",
+    "register:open-with": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/register-open-with.ps1",
+    "unregister:open-with": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/register-open-with.ps1 -Unregister",
     "bump:version": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/bump-version.ps1 -Version",
     "release:tag": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/release-tag.ps1 -Version",
     "gitee:release": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/gitee-release.ps1 -Version"
@@ -41,6 +46,7 @@
     "@codemirror/state": "^6.7.1",
     "@codemirror/theme-one-dark": "^6.1.3",
     "@codemirror/view": "^6.43.6",
+    "@lezer/highlight": "^1.2.3",
     "@tailwindcss/vite": "^4.3.2",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
@@ -57,6 +63,7 @@
     "lucide-react": "^1.24.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-markdown": "^10.1.0",
     "react-window": "^2.2.7",
     "tailwindcss": "^4.3.2",
     "zustand": "^5.0.14"
@@ -67,6 +74,7 @@
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^4.1.10"
   }
 }

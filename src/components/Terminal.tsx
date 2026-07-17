@@ -14,6 +14,7 @@ import {
   getResolvedTerminalFontSize,
 } from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
+import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import '@xterm/xterm/css/xterm.css'
 
@@ -67,27 +68,27 @@ const LIGHT_THEME = {
 }
 
 const FOREST_THEME = {
-  background: '#232a2e',
-  foreground: '#d3c6aa',
-  cursor: '#d3c6aa',
-  cursorAccent: '#232a2e',
-  selectionBackground: '#543a48',
-  black: '#232a2e',
-  red: '#e67e80',
-  green: '#a7c080',
-  yellow: '#dbbc7f',
-  blue: '#7fbbb3',
-  magenta: '#d699b6',
-  cyan: '#83c092',
-  white: '#d3c6aa',
-  brightBlack: '#7a8478',
-  brightRed: '#e67e80',
-  brightGreen: '#a7c080',
-  brightYellow: '#dbbc7f',
-  brightBlue: '#7fbbb3',
-  brightMagenta: '#d699b6',
-  brightCyan: '#83c092',
-  brightWhite: '#fdf6e3',
+  background: M.contrast,
+  foreground: M.foreground,
+  cursor: M.accent,
+  cursorAccent: M.contrast,
+  selectionBackground: M.selectionBg,
+  black: M.contrast,
+  red: M.syntax.red,
+  green: M.syntax.green,
+  yellow: M.syntax.yellow,
+  blue: M.syntax.blue,
+  magenta: M.syntax.purple,
+  cyan: M.syntax.cyan,
+  white: M.syntax.white,
+  brightBlack: M.disabled,
+  brightRed: M.syntax.red,
+  brightGreen: M.syntax.green,
+  brightYellow: M.syntax.yellow,
+  brightBlue: M.syntax.blue,
+  brightMagenta: M.syntax.purple,
+  brightCyan: M.syntax.cyan,
+  brightWhite: M.syntax.white,
 }
 
 function terminalTheme() {

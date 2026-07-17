@@ -1,4 +1,5 @@
 import type { Project } from '../types'
+import { flushLiveEditorContent } from './editorSession'
 import { useEditorStore } from '../store/editorStore'
 import { loadEffectiveAutoSaveSettings, type AutoSaveSettings } from './autoSaveSettings'
 
@@ -38,8 +39,9 @@ export function applyAutoSaveSettings(settings: AutoSaveSettings) {
 
 async function saveTabIfDirty(tabId: string) {
   clearTimer(tabId)
-  const tab = useEditorStore.getState().tabs.find(item => item.id === tabId)
+  const tab = useEditorStore.getState().findTab(tabId)
   if (!tab?.dirty) return
+  flushLiveEditorContent(tabId)
   await useEditorStore.getState().saveFile(tabId)
 }
 
@@ -50,7 +52,7 @@ async function saveTabsIfDirty(tabIds: string[]) {
 export async function flushAutoSave(tabIds?: string[]) {
   if (current.mode === 'off') return
   clearAllTimers()
-  const tabs = useEditorStore.getState().tabs
+  const tabs = useEditorStore.getState().getAllTabs()
   const targets =
     tabIds?.length
       ? tabs.filter(tab => tabIds.includes(tab.id))

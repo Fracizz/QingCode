@@ -1,13 +1,21 @@
 mod commands;
 mod content_search;
+mod file_associations;
+mod file_watcher;
 mod fonts;
+mod git_status;
 mod terminal;
 
-use std::path::PathBuf;
+use file_watcher::FileWatcherManager;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use tauri_plugin_sql::{Migration, MigrationKind};
 use terminal::TerminalManager;
 
-fn legacy_database_paths(data_dir: &PathBuf) -> [PathBuf; 2] {
+/// File paths passed on the command line (Explorer "Open with").
+struct LaunchFiles(Mutex<Vec<String>>);
+
+fn legacy_database_paths(data_dir: &Path) -> [PathBuf; 2] {
     [
         // Legacy app data directories (read-only migration sources).
         data_dir.join("com.nestcode.app").join("nestcode.db"),
@@ -180,6 +188,16 @@ fn is_dev_build() -> bool {
     cfg!(debug_assertions)
 }
 
+/// Consume CLI file paths once (Explorer → Open with / `QingCode.exe path`).
+#[tauri::command]
+fn take_launch_files(state: tauri::State<'_, LaunchFiles>) -> Vec<String> {
+    state
+        .0
+        .lock()
+        .map(|mut paths| std::mem::take(&mut *paths))
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 fn terminal_has_child_processes(
     id: String,
@@ -203,6 +221,8 @@ fn spawn_script(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let launch_files = file_associations::collect_cli_file_paths(std::env::args());
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -216,6 +236,8 @@ pub fn run() {
                 .build(),
         )
         .manage(TerminalManager::new())
+        .manage(FileWatcherManager::new())
+        .manage(LaunchFiles(Mutex::new(launch_files)))
         .setup(|app| {
             migrate_legacy_database();
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
@@ -230,9 +252,8 @@ pub fn run() {
                 #[cfg(target_os = "windows")]
                 {
                     let _ = window.set_decorations(true);
-                    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                        1280.0, 800.0,
-                    )));
+                    let _ = window
+                        .set_size(tauri::Size::Logical(tauri::LogicalSize::new(1280.0, 800.0)));
                     let _ = window.set_min_size(Some(tauri::Size::Logical(
                         tauri::LogicalSize::new(720.0, 480.0),
                     )));
@@ -241,9 +262,8 @@ pub fn run() {
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
-                    let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-                        1280.0, 800.0,
-                    )));
+                    let _ = window
+                        .set_size(tauri::Size::Logical(tauri::LogicalSize::new(1280.0, 800.0)));
                     let _ = window.center();
                 }
             }
@@ -263,6 +283,9 @@ pub fn run() {
             commands::create_directory,
             commands::rename_path,
             commands::delete_path,
+            commands::directory_delete_stats,
+            commands::check_symlink_write,
+            git_status::get_git_head,
             fonts::list_system_fonts,
             create_terminal,
             write_terminal,
@@ -273,6 +296,14 @@ pub fn run() {
             db_url,
             default_settings_path,
             is_dev_build,
+            take_launch_files,
+            file_associations::get_open_with_status,
+            file_associations::register_file_open_with,
+            file_associations::unregister_file_open_with,
+            file_watcher::sync_file_watches,
+            file_watcher::suppress_fs_watch,
+            file_watcher::is_fs_watch_suppressed,
+            file_watcher::file_mtime,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,3 +1,5 @@
+import type { OpenFileErrorKind } from './lib/openFileError'
+
 export interface Project {
   id: string
   name: string
@@ -26,6 +28,15 @@ export interface EditorTab {
   dirty: boolean
   content?: string
   language?: string
+  /** True while read_file is in flight (progressive open). */
+  loading?: boolean
+  /** Set when read_file failed; tab stays open like VS Code error editors. */
+  openError?: string
+  openErrorKind?: OpenFileErrorKind
+  /** Last known on-disk mtime (unix ms) when content was loaded/saved. */
+  diskMtime?: number | null
+  /** Bumped to force CodeMirror session rebuild after external reload / draft restore. */
+  contentEpoch?: number
 }
 
 export interface TerminalTab {

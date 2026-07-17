@@ -196,7 +196,7 @@ export default function ProjectPicker() {
 
   return (
     <div className="relative overflow-hidden flex-1 flex items-center h-full min-w-0 gap-1">
-      {/* Visible chips */}
+      {/* Visible chips — empty leftover width bubbles dblclick maximize to TitleBar */}
       <div ref={containerRef} className="flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden">
         {visibleProjects.map(project => (
           <Chip
@@ -219,6 +219,7 @@ export default function ProjectPicker() {
               aria-expanded={overflowOpen}
               aria-haspopup="menu"
               onClick={openOverflow}
+              onDoubleClick={event => event.stopPropagation()}
               className={`flex items-center justify-center h-6 w-7 rounded text-[12px] flex-shrink-0 transition-colors
                 ${overflowOpen ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
             >
@@ -237,6 +238,7 @@ export default function ProjectPicker() {
             aria-label={t('新增空项目')}
             disabled={addingEmpty}
             onClick={() => void handleAddEmpty()}
+            onDoubleClick={event => event.stopPropagation()}
             className={`flex items-center justify-center h-6 w-7 rounded text-[12px] flex-shrink-0 transition-colors
               ${addingEmpty ? 'opacity-50 cursor-not-allowed' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
           >
@@ -248,6 +250,7 @@ export default function ProjectPicker() {
           <button
             type="button"
             onClick={() => void handleAddEmpty()}
+            onDoubleClick={event => event.stopPropagation()}
             className="flex items-center h-6 px-2 rounded text-[12px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
           >
             {t('新增空项目')}
@@ -457,6 +460,7 @@ function Chip({
     <div
       data-chip-id={measure ? project.id : undefined}
       onClick={() => !unavailable && onSwitch()}
+      onDoubleClick={event => event.stopPropagation()}
       className={`group flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[12px] flex-shrink-0 select-none transition-colors
         ${
           isCurrent

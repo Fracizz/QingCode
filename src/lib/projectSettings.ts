@@ -115,17 +115,17 @@ const SHARED_SETTINGS_BODY = `
   "editor.lineNumbers": "on",
   // 空白字符渲染：none | boundary | selection | trailing | all
   "editor.renderWhitespace": "selection",
-  // 是否显示小地图（当前版本可能尚未全部接线，可预留）
+  // 【未支持】小地图
   "editor.minimap.enabled": false,
-  // 保存时是否自动格式化
+  // 【未支持】保存时自动格式化
   "editor.formatOnSave": false,
-  // 粘贴时是否自动格式化
+  // 【未支持】粘贴时自动格式化
   "editor.formatOnPaste": false,
-  // 是否启用链接编辑（如同时改标签名）
+  // 【未支持】链接编辑
   "editor.linkedEditing": false,
-  // 括号对着色
+  // 【未支持】括号对着色（编辑器仍有基础匹配高亮）
   "editor.bracketPairColorization.enabled": true,
-  // 括号对参考线
+  // 【未支持】括号对参考线
   "editor.guides.bracketPairs": true,
 
   // ============================== 文件 ==============================
@@ -133,15 +133,15 @@ const SHARED_SETTINGS_BODY = `
   "files.autoSave": "off",
   // afterDelay 模式下的延迟（毫秒）
   "files.autoSaveDelay": 1000,
-  // 换行符：auto | LF | CRLF
+  // 换行符：auto | LF | CRLF（保存时生效）
   "files.eol": "auto",
-  // 默认文件编码
+  // 【未支持】默认文件编码（当前固定 UTF-8）
   "files.encoding": "utf8",
   // 保存时去掉行尾空格
   "files.trimTrailingWhitespace": false,
   // 保存时确保文件以空行结尾
   "files.insertFinalNewline": false,
-  // 资源管理器中隐藏的文件/目录（true = 隐藏）
+  // 【未支持】资源管理器隐藏规则（后端仍用内置忽略列表）
   "files.exclude": {
     "**/.git": true,
     "**/.svn": true,
@@ -158,7 +158,7 @@ const SHARED_SETTINGS_BODY = `
   },
 
   // ============================== 搜索 ==============================
-  // 全文搜索时排除的路径
+  // 【未支持】全文搜索排除（搜索侧仍用内置忽略）
   "search.exclude": {
     "**/node_modules": true,
     "**/bower_components": true,
@@ -167,17 +167,17 @@ const SHARED_SETTINGS_BODY = `
     "**/target": true,
     "**/*.code-search": true,
   },
-  // 搜索是否跟随符号链接
+  // 【未支持】搜索是否跟随符号链接
   "search.followSymlinks": true,
-  // 是否遵守 .gitignore 等忽略规则
+  // 【部分支持】内容搜索使用 ignore 规则；与此项未完全对齐
   "search.useIgnoreFiles": true,
-  // 资源管理器是否按 .gitignore 隐藏条目
+  // 【未支持】资源管理器是否按 .gitignore 隐藏条目
   "explorer.excludeGitIgnore": true,
 
   // ============================== 终端 ==============================
-  // 终端回滚缓冲行数
+  // 【未支持】终端回滚缓冲行数（终端设置页另有配置）
   "terminal.integrated.scrollback": 5000,
-  // 终端光标是否闪烁
+  // 【未支持】终端光标是否闪烁
   "terminal.integrated.cursorBlinking": true,
 `
 

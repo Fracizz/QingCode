@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react'
-import { FileText } from 'lucide-react'
+import { Clock, FileText } from 'lucide-react'
 import './App.css'
 import ActivityBar from './components/ActivityBar'
 import Sidebar from './components/Sidebar'
@@ -9,7 +9,9 @@ import StatusBar from './components/StatusBar'
 import TitleBar from './components/TitleBar'
 import Toaster from './components/Toaster'
 import ConfirmDialog from './components/ConfirmDialog'
+import ChoiceDialog from './components/ChoiceDialog'
 import PromptDialog from './components/PromptDialog'
+import FileCompareDialog from './components/FileCompareDialog'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useEditorStore } from './store/editorStore'
@@ -31,10 +33,13 @@ import PanelResizer from './components/PanelResizer'
 import { beginPanelResize, endPanelResize } from './lib/panelResize'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
+import { listenForOpenFileRequests, openLaunchFiles } from './lib/launchFiles'
 import { useI18n } from './lib/i18n'
 import { isShortcutInputTarget, shortcutMatchesEvent } from './lib/shortcuts'
 import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
+import { useFileWatcher } from './hooks/useFileWatcher'
+import { useDraftRecovery } from './hooks/useDraftRecovery'
 
 const Editor = lazy(() => import('./components/Editor'))
 const TerminalView = lazy(() => import('./components/Terminal'))
@@ -52,11 +57,42 @@ function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
 /** Lightweight empty editor so CodeMirror is not downloaded until a file is opened. */
 function EmptyEditor() {
   const { t } = useI18n()
+  const recentFiles = useProjectStore(s => s.recentFiles)
+  const openFile = useEditorStore(s => s.openFile)
+  const recent = recentFiles.slice(0, 8)
+
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-3">
+    <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-3 px-6">
       <FileText size={40} strokeWidth={1.2} />
       <p className="text-sm">{t('从侧边栏打开文件开始编辑')}</p>
       <p className="text-xs text-fg-dim">{t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}</p>
+      {recent.length > 0 && (
+        <div className="mt-4 w-full max-w-md">
+          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+            <Clock size={12} />
+            {t('最近打开的文件')}
+          </div>
+          <ul className="space-y-0.5">
+            {recent.map(file => (
+              <li key={file.path}>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
+                  onClick={() => void openFile(file.path)}
+                  title={file.path}
+                >
+                  <span className="truncate font-medium text-fg">
+                    {file.path.split(/[/\\]/).pop() || file.path}
+                  </span>
+                  <span className="ml-auto truncate text-[11px] text-fg-dim max-w-[55%]">
+                    {file.path}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
@@ -122,6 +158,8 @@ function App() {
   const shortcuts = useShortcutStore(s => s.shortcuts)
 
   useAutoSave()
+  useDraftRecovery()
+  const { compare: fileCompare } = useFileWatcher()
 
   const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)
   const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)
@@ -162,6 +200,22 @@ function App() {
   useEffect(() => {
     startSystemThemeListener()
     dismissStartupSplash()
+  }, [])
+
+  // Explorer "Open with" / CLI file paths — open after first paint.
+  useEffect(() => {
+    if (!isTauri()) return
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+    void listenForOpenFileRequests().then(fn => {
+      if (cancelled) fn()
+      else unlisten = fn
+    })
+    void openLaunchFiles()
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
   }, [])
 
   useEffect(() => {
@@ -374,7 +428,9 @@ function App() {
       <StatusBar />
       <Toaster />
       <ConfirmDialog />
+      <ChoiceDialog />
       <PromptDialog />
+      {fileCompare && <FileCompareDialog {...fileCompare} />}
       {projectManagerOpen && (
         <Suspense fallback={null}>
           <ProjectManager />

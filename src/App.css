@@ -67,29 +67,33 @@ html[data-theme="light"] {
   --color-tab-inactive: #e2e2e2;
 }
 
-/* Everforest medium-dark — warm forest green UI (JetBrains Everforest / Forest style). */
+/* JetBrains Material Theme UI — Material Forest. */
 html[data-theme="forest"] {
-  --color-bg: #2d353b;
-  --color-bg-deep: #232a2e;
-  --color-bg-sidebar: #343f44;
-  --color-bg-elevated: #3d484d;
-  --color-bg-hover: #475258;
-  --color-bg-active: #4f585e;
-  --color-border: #475258;
-  --color-border-strong: #56635f;
+  --color-bg: #002626;
+  --color-bg-deep: #002020;
+  --color-bg-sidebar: #002e2e;
+  --color-bg-elevated: #003535;
+  --color-bg-hover: #003f3f;
+  --color-bg-active: #104110;
+  --color-border: #003838;
+  --color-border-strong: #005454;
 
-  --color-fg: #d3c6aa;
-  --color-fg-muted: #859289;
-  --color-fg-dim: #7a8478;
+  --color-fg: #b2c2b0;
+  --color-fg-muted: #49694d;
+  --color-fg-dim: #005454;
 
-  --color-accent: #a7c080;
-  --color-accent-soft: #425047;
-  --color-danger: #e67e80;
-  --color-warn: #dbbc7f;
-  --color-ok: #83c092;
+  --color-accent: #ffcc80;
+  --color-accent-soft: #104110;
+  --color-danger: #f07178;
+  --color-warn: #ffcb6b;
+  --color-ok: #c3e88d;
 
-  --color-tab-active: #2d353b;
-  --color-tab-inactive: #343f44;
+  --color-tab-active: #002626;
+  --color-tab-inactive: #002e2e;
+}
+
+html[data-theme="forest"] .cm-editor .cm-content {
+  color: #eeffff;
 }
 
 html[data-theme="light"] * {
@@ -97,7 +101,7 @@ html[data-theme="light"] * {
 }
 
 html[data-theme="forest"] * {
-  scrollbar-color: #56635f transparent;
+  scrollbar-color: #003838 transparent;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb {
@@ -105,7 +109,7 @@ html[data-theme="light"] *::-webkit-scrollbar-thumb {
 }
 
 html[data-theme="forest"] *::-webkit-scrollbar-thumb {
-  background: #56635f;
+  background: #003838;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
@@ -113,7 +117,7 @@ html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
 }
 
 html[data-theme="forest"] *::-webkit-scrollbar-thumb:hover {
-  background: #6b7a72;
+  background: #005454;
 }
 
 html,
@@ -181,6 +185,63 @@ body {
   background-color: var(--color-bg-sidebar);
   color: var(--color-fg-muted);
   border-right: 1px solid var(--color-border);
+}
+.cm-editor.cm-hide-linenumbers .cm-gutters {
+  display: none;
+}
+
+/* Markdown preview (react-markdown) */
+.qing-md-preview h1,
+.qing-md-preview h2,
+.qing-md-preview h3,
+.qing-md-preview h4 {
+  font-weight: 600;
+  margin: 1.1em 0 0.45em;
+  line-height: 1.3;
+  color: var(--color-fg);
+}
+.qing-md-preview h1 { font-size: 1.6em; }
+.qing-md-preview h2 { font-size: 1.35em; }
+.qing-md-preview h3 { font-size: 1.15em; }
+.qing-md-preview p { margin: 0.55em 0; }
+.qing-md-preview ul,
+.qing-md-preview ol { margin: 0.55em 0; padding-left: 1.4em; }
+.qing-md-preview code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-bg-active);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+.qing-md-preview pre {
+  margin: 0.75em 0;
+  padding: 0.75em 1em;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--color-bg-deep);
+  border: 1px solid var(--color-border);
+}
+.qing-md-preview pre code {
+  background: transparent;
+  padding: 0;
+}
+.qing-md-preview a { color: var(--color-accent); text-decoration: underline; }
+.qing-md-preview blockquote {
+  margin: 0.75em 0;
+  padding-left: 0.9em;
+  border-left: 3px solid var(--color-border-strong);
+  color: var(--color-fg-muted);
+}
+.qing-md-preview table {
+  border-collapse: collapse;
+  margin: 0.75em 0;
+  width: 100%;
+}
+.qing-md-preview th,
+.qing-md-preview td {
+  border: 1px solid var(--color-border);
+  padding: 0.35em 0.6em;
+  text-align: left;
 }
 
 /* Most application labels use fixed Tailwind pixel classes. Zooming only the
