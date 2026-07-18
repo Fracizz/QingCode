@@ -140,6 +140,18 @@ export function useFileWatcher() {
       const payload = event.payload
       if (!payload?.path) return
       const changedPath = payload.path
+      const current = useProjectStore.getState().currentProject
+      if (
+        current &&
+        !current.ephemeral &&
+        (pathsEqual(changedPath, current.path) || isDescendantOf(changedPath, current.path))
+      ) {
+        window.dispatchEvent(
+          new CustomEvent('qingcode:git-worktree-changed', {
+            detail: { projectPath: current.path },
+          }),
+        )
+      }
 
       // Debounced explorer refresh for project-tree churn.
       pendingTreePaths.current.push(changedPath)

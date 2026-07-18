@@ -1559,6 +1559,49 @@ mod tests {
     }
 
     #[test]
+    fn filename_search_finds_deep_files_and_honors_excludes() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-filename-search-test-{nonce}"));
+        fs::create_dir_all(dir.join("src").join("components")).unwrap();
+        fs::create_dir_all(dir.join("generated")).unwrap();
+        fs::write(
+            dir.join("src").join("components").join("Needle.tsx"),
+            "export {}",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("generated").join("Needle.generated.ts"),
+            "export {}",
+        )
+        .unwrap();
+
+        let excludes = vec!["**/generated".to_string()];
+        let mut hits = Vec::new();
+        walk_matching(
+            &dir,
+            &dir,
+            &mut hits,
+            50,
+            "needle",
+            true,
+            true,
+            false,
+            None,
+            Some(&excludes),
+            false,
+            false,
+        );
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].name, "Needle.tsx");
+        assert!(hits[0].relative.contains("src"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn read_file_maps_invalid_utf8_to_friendly_message() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)

@@ -40,7 +40,6 @@ encoding_rs = "0.8"
 grep-searcher = "0.1.17"
 grep-regex = "0.1.14"
 grep-matcher = "0.1.9"
-winreg = "0.55"
 notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
 # Sync HTTP for release checks only (avoid pulling reqwest/tokio net).
@@ -48,6 +47,10 @@ ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 # 注意：tokio / futures / chrono 不作为直接依赖。
 # 源码未直接使用它们；由 tauri / portable-pty 等按需拉取所需特性即可，
 # 避免 tokio "full" 把 net/signal/process/fs 等全部模块强行编入。
+
+[target.'cfg(windows)'.dependencies]
+# Fonts registry + Explorer “Open with” (Windows only).
+winreg = "0.55"
 
 # 面向构建速度优化的 release profile：
 # - opt-level 3 → 2：跳过最昂贵的 LLVM 向量化/内联 pass，编译提速最明显，运行时几乎无感

@@ -200,6 +200,7 @@ export default function ProjectPicker() {
             onSwitch={() => void handleSwitch(project)}
             onRemove={() => handleRemove(project)}
             onRelocate={() => handleRelocate(project.id)}
+            onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
           />
         ))}
 
@@ -267,6 +268,7 @@ export default function ProjectPicker() {
             onSwitch={() => {}}
             onRemove={() => {}}
             onRelocate={() => {}}
+            onOpenInExplorer={() => {}}
           />
         ))}
       </div>
@@ -422,6 +424,7 @@ function Chip({
   onSwitch,
   onRemove,
   onRelocate,
+  onOpenInExplorer,
 }: {
   project: Project
   isCurrent: boolean
@@ -430,6 +433,7 @@ function Chip({
   onSwitch: () => void
   onRemove: () => void
   onRelocate: () => void
+  onOpenInExplorer: () => void
 }) {
   const { t } = useI18n()
   return (
@@ -456,6 +460,21 @@ function Chip({
         </span>
       )}
       <span className="truncate max-w-[140px]">{project.name}</span>
+      {project.ephemeral && !unavailable && (
+        <Tooltip label={t('在文件管理器中打开')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+          <button
+            type="button"
+            aria-label={t('在文件管理器中打开')}
+            className="inline-flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg w-4 h-4"
+            onClick={event => {
+              event.stopPropagation()
+              onOpenInExplorer()
+            }}
+          >
+            <ExternalLink size={12} />
+          </button>
+        </Tooltip>
+      )}
       {unavailable ? (
         <Tooltip label={t('重新定位项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
           <button

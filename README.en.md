@@ -102,23 +102,31 @@ QingCode **deliberately skips** full IntelliSense, a debugger, and an extension 
 
 ## Get the app
 
-Primary support: **Windows 10 / 11 (x64)**.
+Download from [GitHub Releases](https://github.com/Fracizz/QingCode/releases) or [Gitee Releases](https://gitee.com/FrancizTest_admin/qing-code/releases) (built by CI on `v*` tags):
 
-- Portable build: download `QingCode.exe` (or a versioned copy) and run — no installer  
-- Requires [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) (usually preinstalled on recent Windows)
+| Platform | Arch | Recommended file |
+|----------|------|------------------|
+| Windows | x64 | `QingCode_*-windows-x64.exe` or `QingCode_*.exe` |
+| Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
+| macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` or `.zip` |
 
-Build from source locally:
+- Windows: portable exe; needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)  
+- macOS: unsigned builds may need right-click → Open the first time  
+
+Local packaging:
 
 ```bash
 pnpm install
-pnpm package:exe
+pnpm package:exe          # current Windows host
+pnpm package:exe:arm64    # Windows ARM64 target
+pnpm package:macos        # macOS only: Apple Silicon dmg/app
 ```
 
-Artifacts land in `release/`.
+Artifacts land in `release/`. Multi-arch publishing uses `.github/workflows/release.yml`.
 
 ## Run from source
 
-Needs Node.js 22+, pnpm 10+, Rust stable, Windows + WebView2.
+Needs Node.js 22+, pnpm 10+, Rust stable; WebView2 on Windows, Xcode CLT on macOS.
 
 ```bash
 pnpm install

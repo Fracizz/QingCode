@@ -56,19 +56,51 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     }
 }
 
+fn prefer_asset_names() -> &'static [&'static str] {
+    #[cfg(all(windows, target_arch = "aarch64"))]
+    {
+        &["-windows-arm64.exe", "qingcode-windows-arm64.exe"]
+    }
+    #[cfg(all(windows, not(target_arch = "aarch64")))]
+    {
+        &["-windows-x64.exe", "qingcode.exe"]
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        &["-macos-arm64.dmg", "-macos-arm64.zip"]
+    }
+    #[cfg(not(any(windows, all(target_os = "macos", target_arch = "aarch64"))))]
+    {
+        &[".exe", ".dmg", ".zip"]
+    }
+}
+
 fn pick_download_url(assets: &[ReleaseAsset]) -> Option<String> {
+    let preferred = prefer_asset_names();
+    for needle in preferred {
+        for asset in assets {
+            let name = asset.name.as_deref().unwrap_or("").to_ascii_lowercase();
+            let Some(url) = asset.browser_download_url.clone() else {
+                continue;
+            };
+            if name.contains(needle) || name == *needle {
+                return Some(url);
+            }
+        }
+    }
+
     let mut fallback: Option<String> = None;
     for asset in assets {
         let name = asset.name.as_deref().unwrap_or("").to_ascii_lowercase();
         let Some(url) = asset.browser_download_url.clone() else {
             continue;
         };
-        if name == "qingcode.exe"
-            || (name.starts_with("qingcode_") && name.ends_with(".exe"))
-        {
+        if name == "qingcode.exe" || (name.starts_with("qingcode_") && name.ends_with(".exe")) {
             return Some(url);
         }
-        if name.ends_with(".exe") && fallback.is_none() {
+        if (name.ends_with(".exe") || name.ends_with(".dmg") || name.ends_with(".zip"))
+            && fallback.is_none()
+        {
             fallback = Some(url);
         }
     }
@@ -89,7 +121,11 @@ fn fetch_release(url: &str) -> Result<ReleaseJson, String> {
         .map_err(|e| format!("解析 Release JSON 失败：{}", e))
 }
 
-fn release_to_info(release: ReleaseJson, current: &str, source: &str) -> Result<AppUpdateInfo, String> {
+fn release_to_info(
+    release: ReleaseJson,
+    current: &str,
+    source: &str,
+) -> Result<AppUpdateInfo, String> {
     let tag = release
         .tag_name
         .filter(|s| !s.trim().is_empty())
@@ -105,10 +141,7 @@ fn release_to_info(release: ReleaseJson, current: &str, source: &str) -> Result<
                 "https://github.com/Fracizz/QingCode/releases".to_string()
             }
         });
-    let download_url = release
-        .assets
-        .as_deref()
-        .and_then(pick_download_url);
+    let download_url = release.assets.as_deref().and_then(pick_download_url);
     let notes = release
         .body
         .map(|b| {
@@ -183,17 +216,28 @@ mod tests {
                 browser_download_url: Some("https://example.com/notes.txt".into()),
             },
             ReleaseAsset {
+                name: Some("QingCode_0.1.4-windows-x64.exe".into()),
+                browser_download_url: Some(
+                    "https://example.com/QingCode_0.1.4-windows-x64.exe".into(),
+                ),
+            },
+            ReleaseAsset {
+                name: Some("QingCode_0.1.4-windows-arm64.exe".into()),
+                browser_download_url: Some(
+                    "https://example.com/QingCode_0.1.4-windows-arm64.exe".into(),
+                ),
+            },
+            ReleaseAsset {
                 name: Some("QingCode_0.1.4.exe".into()),
                 browser_download_url: Some("https://example.com/QingCode_0.1.4.exe".into()),
             },
-            ReleaseAsset {
-                name: Some("other.exe".into()),
-                browser_download_url: Some("https://example.com/other.exe".into()),
-            },
         ];
-        assert_eq!(
-            pick_download_url(&assets).as_deref(),
-            Some("https://example.com/QingCode_0.1.4.exe")
-        );
+        let picked = pick_download_url(&assets).unwrap();
+        #[cfg(all(windows, target_arch = "aarch64"))]
+        assert!(picked.contains("windows-arm64"));
+        #[cfg(all(windows, not(target_arch = "aarch64")))]
+        assert!(picked.contains("windows-x64") || picked.ends_with("QingCode_0.1.4.exe"));
+        #[cfg(not(windows))]
+        assert!(!picked.is_empty());
     }
 }

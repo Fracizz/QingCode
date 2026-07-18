@@ -7,17 +7,31 @@ param(
   # Skip icon sync from SVG.
   [switch]$SkipIcons,
   # Skip copying to release/ when output already matches the build artifact.
-  [switch]$SkipCopy
+  [switch]$SkipCopy,
+  # Optional Rust target triple (e.g. aarch64-pc-windows-msvc for Windows ARM64).
+  [string]$Target = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$releaseDir = Join-Path $projectRoot 'src-tauri\target\release'
 $outDir = Join-Path $projectRoot 'release'
 $cargoManifest = Join-Path $projectRoot 'src-tauri\Cargo.toml'
 $iconSvg = Join-Path $projectRoot 'public\app-icon-file.svg'
 $iconIco = Join-Path $projectRoot 'src-tauri\icons\icon.ico'
 $distIndex = Join-Path $projectRoot 'dist\index.html'
+
+if ($Target) {
+  $releaseDir = Join-Path $projectRoot "src-tauri\target\$Target\release"
+} else {
+  $releaseDir = Join-Path $projectRoot 'src-tauri\target\release'
+}
+
+# Artifact suffix for multi-arch releases. Host/default build keeps legacy names.
+$archSuffix = switch -Regex ($Target) {
+  'aarch64-pc-windows' { '-windows-arm64' }
+  'x86_64-pc-windows' { '-windows-x64' }
+  default { '' }
+}
 
 function Write-Step([string]$Message) {
   Write-Host ""
@@ -93,8 +107,19 @@ function Invoke-FrontendBuild {
 
 function Invoke-RustReleaseBuild {
   Write-Step 'Rust release build'
+  if ($Target) {
+    Write-Host "  target: $Target" -ForegroundColor DarkGray
+  }
   $sw = [Diagnostics.Stopwatch]::StartNew()
-  cargo build --release -p qingcode --manifest-path $cargoManifest --features custom-protocol
+  $cargoArgs = @(
+    'build', '--release', '-p', 'qingcode',
+    '--manifest-path', $cargoManifest,
+    '--features', 'custom-protocol'
+  )
+  if ($Target) {
+    $cargoArgs += @('--target', $Target)
+  }
+  & cargo @cargoArgs
   if ($LASTEXITCODE -ne 0) {
     throw "cargo build failed with exit code $LASTEXITCODE."
   }
@@ -165,8 +190,13 @@ try {
     New-Item -ItemType Directory -Path $outDir | Out-Null
   }
 
-  $versioned = Join-Path $outDir ("{0}_{1}.exe" -f $productName, $version)
-  $latest = Join-Path $outDir ("{0}.exe" -f $productName)
+  $versioned = Join-Path $outDir ("{0}_{1}{2}.exe" -f $productName, $version, $archSuffix)
+  # Keep unversioned QingCode.exe for the default (host) build only.
+  $latest = if ($archSuffix) {
+    Join-Path $outDir ("{0}{1}.exe" -f $productName, $archSuffix)
+  } else {
+    Join-Path $outDir ("{0}.exe" -f $productName)
+  }
   $sourceHash = Get-FileSha256 $exe.FullName
 
   $latestUpToDate = (Test-Path $latest) -and ((Get-Item $latest).Length -eq $exe.Length) -and ((Get-FileSha256 $latest) -eq $sourceHash)

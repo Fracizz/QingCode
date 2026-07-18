@@ -10,6 +10,20 @@ export type QuickOpenEntry = {
   projectName: string
 }
 
+export type QuickOpenProject = {
+  id: string
+  name: string
+  path: string
+}
+
+/** Native filename-search result. Keep this separate from the lazy explorer tree. */
+export type QuickOpenSearchHit = {
+  name: string
+  path: string
+  relative: string
+  is_dir: boolean
+}
+
 function projectRelativePath(projectPath: string, filePath: string) {
   const root = normalizePath(projectPath)
   const file = normalizePath(filePath)
@@ -41,22 +55,47 @@ function walkFiles(
 }
 
 export function collectQuickOpenFiles(
-  projects: Array<{ id: string; name: string; path: string }>,
+  projects: QuickOpenProject[],
   projectTrees: Record<string, FileNode[]>,
 ): QuickOpenEntry[] {
   const out: QuickOpenEntry[] = []
-  const seen = new Set<string>()
   for (const project of projects) {
     const tree = projectTrees[project.id]
     if (!tree) continue
     walkFiles(tree, out, project.path, project.name)
   }
-  return out.filter(entry => {
-    const key = entry.path.toLowerCase()
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
+  return mergeQuickOpenEntries(out)
+}
+
+/** Convert full-project native filename hits into the palette's shared entry shape. */
+export function quickOpenEntriesFromSearchHits(
+  project: QuickOpenProject,
+  hits: QuickOpenSearchHit[],
+): QuickOpenEntry[] {
+  return hits
+    .filter(hit => !hit.is_dir)
+    .map(hit => ({
+      id: hit.path,
+      path: hit.path,
+      label: hit.name,
+      relativePath: hit.relative.replace(/\\/g, '/'),
+      projectName: project.name,
+    }))
+}
+
+/** Prefer the immediately available tree results, then fill gaps from native search. */
+export function mergeQuickOpenEntries(...groups: ReadonlyArray<readonly QuickOpenEntry[]>): QuickOpenEntry[] {
+  const seen = new Set<string>()
+  const merged: QuickOpenEntry[] = []
+  for (const group of groups) {
+    for (const entry of group) {
+      const key = entry.path.toLowerCase()
+      if (seen.has(key)) continue
+      seen.add(key)
+      merged.push(entry)
+    }
+  }
+  return merged
 }
 
 export function filterQuickOpenFiles(

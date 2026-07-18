@@ -25,6 +25,8 @@
     "icon:sync": "tauri icon public/app-icon-file.svg -o src-tauri/icons",
     "package:exe": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1",
     "package:exe:fast": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1 -SkipFrontend -SkipIcons",
+    "package:exe:arm64": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1 -Target aarch64-pc-windows-msvc",
+    "package:macos": "bash ./scripts/package-macos.sh",
     "register:open-with": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/register-open-with.ps1",
     "unregister:open-with": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/register-open-with.ps1 -Unregister",
     "bump:version": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/bump-version.ps1 -Version",

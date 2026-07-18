@@ -285,6 +285,25 @@ export default function SourceControlPanel() {
     }
   }, [projectPath, refresh])
 
+  // Refresh only while this panel is mounted, and only after a debounced file
+  // watcher event for the active project. This keeps the fast cached open path
+  // while making terminal/external edits visible without a polling loop.
+  useEffect(() => {
+    if (!projectPath || !isTauri()) return
+    let timer: number | null = null
+    const onWorktreeChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectPath?: string }>).detail
+      if (detail?.projectPath !== projectPath) return
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(() => void refresh({ soft: true }), 700)
+    }
+    window.addEventListener('qingcode:git-worktree-changed', onWorktreeChange)
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      window.removeEventListener('qingcode:git-worktree-changed', onWorktreeChange)
+    }
+  }, [projectPath, refresh])
+
   const openChange = useCallback(
     (change: GitChange) => {
       if (!currentProject) return

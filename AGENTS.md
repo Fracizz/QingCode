@@ -13,7 +13,8 @@ QingCode is a Tauri 2 desktop code editor with a React 19/Vite frontend and a Ru
 - `pnpm test` / `pnpm test:watch` run Vitest unit tests under `src/**/*.{test,spec}.{ts,tsx}`.
 - `pnpm check` runs frontend typecheck + Vitest, then Rust `fmt` / `clippy -D warnings` / `test`.
 - `cargo test` (from `src-tauri/`) runs Rust unit tests; `cargo fmt --all -- --check` verifies Rust formatting; `cargo clippy --all-targets -- -D warnings` enforces lint cleanliness.
-- `pnpm tauri build --no-bundle` validates the production desktop build without producing an installer. Run `pnpm package:exe` when preparing the Windows executable package; `pnpm smoke:start` does a short process-start smoke of `release/QingCode.exe`.
+- `pnpm tauri build --no-bundle` validates the production desktop build without producing an installer. Run `pnpm package:exe` for a Windows portable exe; `pnpm package:exe:arm64` targets `aarch64-pc-windows-msvc`; `pnpm package:macos` (macOS host only) builds Apple Silicon dmg/app zip. `pnpm smoke:start` smokes `release/QingCode.exe`.
+- Release CI (`.github/workflows/release.yml`) builds **Windows x64**, **Windows ARM64** (`windows-11-arm`), and **macOS arm64** (`macos-14`), then uploads assets to GitHub Release (and Gitee when `GITEE_TOKEN` is set).
 - `pnpm register:open-with` / `pnpm unregister:open-with` register or remove Explorer “Open with” entries for the portable `release/QingCode.exe` (HKCU, no admin). Settings → 功能 also exposes the same action for the running exe.
 
 ## Coding Style & Naming Conventions
@@ -22,7 +23,7 @@ Match the surrounding code: TypeScript uses two-space indentation, functional Re
 
 ## Testing Guidelines
 
-Prefer pure helpers / reducers with Vitest coverage under `src/**/*.test.ts` (stores, settings parse, path utils, dirty-tab copy). For TypeScript/UI changes, run `pnpm check` (or at least `pnpm test` + `pnpm build`) and manually verify the affected path in `pnpm tauri:dev`. Add Rust tests near the helper or command they cover, use descriptive names such as `parse_path_rejects_empty_input`, and run `cargo test` / `clippy` before review. Exercise file-changing commands against disposable files or a temporary workspace. Release CI runs `pnpm check`, packages the portable exe, then `scripts/smoke-start.ps1`.
+Prefer pure helpers / reducers with Vitest coverage under `src/**/*.test.ts` (stores, settings parse, path utils, dirty-tab copy). For TypeScript/UI changes, run `pnpm check` (or at least `pnpm test` + `pnpm build`) and manually verify the affected path in `pnpm tauri:dev`. Add Rust tests near the helper or command they cover, use descriptive names such as `parse_path_rejects_empty_input`, and run `cargo test` / `clippy` before review. Exercise file-changing commands against disposable files or a temporary workspace. Release CI runs `pnpm check`, then packages Windows x64 / Windows ARM64 / macOS arm64 artifacts.
 
 ## Dual Remotes (Gitee + GitHub)
 

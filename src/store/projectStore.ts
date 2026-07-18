@@ -273,7 +273,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       void syncAllowlistRoots(get().projects)
       useEditorStore.getState().activateProjectSession(previousId, id)
       void get().ensureProjectTree(project)
-      get().pushToast('success', `已新建临时项目: ${name}（重启后消失）`)
+      get().pushToast('success', `已新建临时项目: ${name}（退出后将从列表移除；文件保留在系统临时目录）`)
       return true
     } catch (e) {
       console.error('addEmptyProject failed:', e)
@@ -301,7 +301,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         }
       })
       void syncAllowlistRoots(get().projects)
-      get().pushToast('info', '已移除临时项目')
+      get().pushToast('info', '已从列表移除临时项目；文件保留在系统临时目录')
       return
     }
     try {

@@ -102,23 +102,31 @@ QingCode **刻意不做**完整 IntelliSense、调试器和插件市场；你继
 
 ## 获取应用
 
-目前优先支持 **Windows 10 / 11（x64）**。
+从 [GitHub Releases](https://github.com/Fracizz/QingCode/releases) 或 [Gitee Releases](https://gitee.com/FrancizTest_admin/qing-code/releases) 下载（打 `v*` 标签后由 CI 构建）：
 
-- 便携版：下载 `QingCode.exe`（或带版本号的同名文件），双击即可运行，无需安装  
-- 依赖：[WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)（较新的 Windows 通常已预装）
+| 平台 | 架构 | 推荐文件 |
+|------|------|----------|
+| Windows | x64 | `QingCode_*-windows-x64.exe` 或 `QingCode_*.exe` |
+| Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
+| macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` 或 `.zip` |
 
-本地从源码打包：
+- Windows：便携 exe，双击运行；需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）  
+- macOS：未签名时首次请右键 → 打开；需要 Apple Developer 签名/公证后再分发可跳过该步骤  
+
+本地打包：
 
 ```bash
 pnpm install
-pnpm package:exe
+pnpm package:exe              # 当前 Windows 主机架构
+pnpm package:exe:arm64        # Windows ARM64（需本机或 CI 的 aarch64 工具链）
+pnpm package:macos            # 仅在 macOS 上：Apple Silicon dmg/app
 ```
 
-产物在 `release/` 目录。
+产物在 `release/`。完整多架构发布走 GitHub Actions（`.github/workflows/release.yml`）。
 
 ## 从源码运行
 
-环境：Node.js 22+、pnpm 10+、Rust stable、Windows + WebView2。
+环境：Node.js 22+、pnpm 10+、Rust stable；Windows 需 WebView2，macOS 需 Xcode CLT。
 
 ```bash
 pnpm install

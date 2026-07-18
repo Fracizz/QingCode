@@ -1,3 +1,4 @@
+use crate::file_encoding::{self, FileEncoding};
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output};
@@ -110,13 +111,18 @@ fn resolve_relative(root: &Path, file: &str) -> Result<String, String> {
         .join("/"))
 }
 
+fn decode_git_text(bytes: &[u8]) -> String {
+    file_encoding::decode(bytes, FileEncoding::Auto)
+        .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
+}
+
 fn truncate_diff(bytes: Vec<u8>) -> String {
     if bytes.len() <= MAX_DIFF_BYTES {
-        return String::from_utf8_lossy(&bytes).into_owned();
+        return decode_git_text(&bytes);
     }
     format!(
         "{}\n\n… 差异内容已截断（最多显示 1MB）",
-        String::from_utf8_lossy(&bytes[..MAX_DIFF_BYTES])
+        decode_git_text(&bytes[..MAX_DIFF_BYTES])
     )
 }
 
@@ -153,7 +159,7 @@ fn synthetic_untracked_diff(root: &Path, relative: &str) -> Result<Option<String
             "diff --git a/{relative} b/{relative}\nnew file mode 100644\n--- /dev/null\n+++ b/{relative}\n@@ 文件过大，已跳过内容预览（>{MAX_DIFF_BYTES} bytes）@@\n"
         )));
     }
-    let content = String::from_utf8_lossy(&bytes);
+    let content = decode_git_text(&bytes);
     let mut out = format!(
         "diff --git a/{relative} b/{relative}\nnew file mode 100644\n--- /dev/null\n+++ b/{relative}\n"
     );
@@ -275,9 +281,7 @@ pub struct GitFileContents {
 fn git_show_revision(root: &Path, revision: &str, relative: &str) -> String {
     let spec = format!("{revision}:{relative}");
     match run_git(root, &["show", "--textconv", &spec]) {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).into_owned()
-        }
+        Ok(output) if output.status.success() => decode_git_text(&output.stdout),
         _ => String::new(),
     }
 }
@@ -288,7 +292,7 @@ fn read_working_tree_text(root: &Path, relative: &str) -> String {
         return String::new();
     }
     match std::fs::read(&absolute) {
-        Ok(bytes) if bytes.len() <= MAX_DIFF_BYTES => String::from_utf8_lossy(&bytes).into_owned(),
+        Ok(bytes) if bytes.len() <= MAX_DIFF_BYTES => decode_git_text(&bytes),
         Ok(_) => format!("… 文件过大，已跳过内容（最多 {MAX_DIFF_BYTES} bytes）\n"),
         Err(_) => String::new(),
     }
@@ -340,6 +344,12 @@ mod tests {
     fn keeps_chinese_and_space_paths_unquoted() {
         let status = parse_status("## main\0?? src/中文 文件.ts\0".as_bytes());
         assert_eq!(status.changes[0].path, "src/中文 文件.ts");
+    }
+
+    #[test]
+    fn decodes_gbk_diff_content() {
+        // "中文" in GBK
+        assert_eq!(decode_git_text(&[0xD6, 0xD0, 0xCE, 0xC4]), "中文");
     }
 
     #[test]
