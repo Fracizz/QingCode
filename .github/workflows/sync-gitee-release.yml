@@ -23,7 +23,8 @@ concurrency:
 
 jobs:
   sync:
-    runs-on: ubuntu-latest
+    # Windows: curl.exe + faster uploads to Gitee than ubuntu-latest in practice.
+    runs-on: windows-latest
     env:
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -33,39 +34,33 @@ jobs:
 
       - name: Require GITEE_TOKEN
         if: env.GITEE_TOKEN == ''
+        shell: pwsh
         run: |
-          echo "::error::GITEE_TOKEN secret is not set. Add a Gitee private token under Settings → Secrets and variables → Actions, then re-run this workflow."
+          Write-Error 'GITEE_TOKEN secret is not set. Add a Gitee private token under Settings → Secrets and variables → Actions, then re-run this workflow.'
           exit 1
 
       - name: Resolve tag
         id: meta
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          TAG="${{ github.event.inputs.tag }}"
-          if [[ -z "$TAG" ]]; then
-            TAG="v0.1.4"
-          fi
-          [[ "$TAG" == v* ]] || TAG="v${TAG}"
-          VER="${TAG#v}"
-          NOTES="docs/release-notes/${TAG}.md"
-          if [[ ! -f "$NOTES" ]]; then
-            echo "Missing notes file: $NOTES" >&2
-            exit 1
-          fi
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${VER}" >> "$GITHUB_OUTPUT"
-          echo "notes=${NOTES}" >> "$GITHUB_OUTPUT"
+          $tag = '${{ github.event.inputs.tag }}'
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = 'v0.1.4' }
+          if (-not $tag.StartsWith('v')) { $tag = "v$tag" }
+          $ver = $tag.Substring(1)
+          $notes = "docs/release-notes/$tag.md"
+          if (-not (Test-Path -LiteralPath $notes)) { throw "Missing notes file: $notes" }
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "notes=$notes" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Download GitHub Release assets
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          TAG='${{ steps.meta.outputs.tag }}'
-          mkdir -p release-assets
-          gh release download "$TAG" --repo "${{ github.repository }}" --dir release-assets
-          ls -la release-assets
-          test -n "$(ls -A release-assets)"
+          $tag = '${{ steps.meta.outputs.tag }}'
+          New-Item -ItemType Directory -Force -Path release-assets | Out-Null
+          gh release download $tag --repo '${{ github.repository }}' --dir release-assets
+          Get-ChildItem release-assets | Format-Table Name, Length
+          if (-not (Get-ChildItem release-assets -File)) { throw 'No assets downloaded' }
 
       - name: Publish to Gitee
         shell: pwsh
