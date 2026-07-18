@@ -50,6 +50,7 @@ import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFileWatcher } from './hooks/useFileWatcher'
 import { useDraftRecovery } from './hooks/useDraftRecovery'
+import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
 import {
   markWorkspaceSessionPersistReady,
   pruneWorkspaceSessions,
@@ -268,6 +269,7 @@ function App() {
   useAutoSave()
   useDraftRecovery()
   useFileWatcher()
+  useAppUpdateCheck()
   const fileCompare = useCompareStore(s => s.request)
 
   const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)

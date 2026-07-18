@@ -33,6 +33,8 @@ export const GLOBAL_SETTINGS_DISPLAY_PATH = '全局设置 / default-settings.jso
 
 export const PROJECTS_KEY = 'qingcode.projects'
 export const PROJECTS_SYNC_ON_STARTUP_KEY = 'qingcode.projects.syncOnStartup'
+export const UPDATE_CHECK_ON_STARTUP_KEY = 'qingcode.update.checkOnStartup'
+export const UPDATE_SKIPPED_VERSION_KEY = 'qingcode.update.skippedVersion'
 
 function buildSharedDefaults(): SettingsFile {
   return {
@@ -99,6 +101,7 @@ export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   ...buildSharedDefaults(),
   [PROJECTS_SYNC_ON_STARTUP_KEY]: true,
   [PROJECTS_KEY]: [] as SettingsProjectEntry[],
+  [UPDATE_CHECK_ON_STARTUP_KEY]: true,
 }
 
 /** Workspace `.qingcode/project-settings.json` defaults (no project list — global-only). */
@@ -237,6 +240,15 @@ ${SHARED_SETTINGS_BODY}
     //   // defaultShell: "powershell",
     // },
   ],
+  //
+  // qingcode.update.checkOnStartup
+  //   true  = 正式构建启动约 3 秒后自动检查 Gitee/GitHub Release
+  //   false = 仅通过设置 → 功能 →「检查更新」手动检查
+  "qingcode.update.checkOnStartup": true,
+  //
+  // qingcode.update.skippedVersion
+  //   跳过的版本号（不含 v）；与远端最新版本相同时不再弹窗提示
+  // "qingcode.update.skippedVersion": "0.1.4",
 
   // ============================== 自定义扩展 ==============================
   // 自由键值，供后续功能读取；请勿删除整个 custom 对象

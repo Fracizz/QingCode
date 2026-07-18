@@ -703,6 +703,24 @@
     "行 {line}, 列 {col}": "Ln {line}, Col {col}",
     "显示所有打开的文件": "Show All Opened Files",
     "打开项目": "Open Project",
-    "最近项目": "Recent Projects"
+    "最近项目": "Recent Projects",
+    "开启": "On",
+    "启动时自动检查更新": "Check for Updates on Startup",
+    "正式构建启动后约 3 秒静默查询 Gitee / GitHub Release。关闭后仍可手动检查。": "About 3 seconds after a release build starts, silently query Gitee / GitHub Releases. You can still check manually when this is off.",
+    "检查更新": "Check for Updates",
+    "查询远端最新便携版；发现新版本时提示打开下载页，不会自动安装。": "Query the latest portable release. When a newer version is found, you can open the download page; nothing is installed automatically.",
+    "检查更新需要 Tauri 桌面环境": "Checking for updates requires the Tauri desktop app",
+    "当前已是最新版本": "You are already on the latest version",
+    "检查更新失败: {error}": "Could not check for updates: {error}",
+    "保存更新设置失败: {error}": "Could not save update settings: {error}",
+    "正在检查…": "Checking…",
+    "点击检查更新": "Click to check for updates",
+    "发现新版本": "Update Available",
+    "QingCode {version} 可用。是否打开下载页？": "QingCode {version} is available. Open the download page?",
+    "当前版本：{current} → 最新版本：{latest}": "Current: {current} → Latest: {latest}",
+    "来源：{source}": "Source: {source}",
+    "打开下载页": "Open Download Page",
+    "跳过此版本": "Skip This Version",
+    "稍后": "Later"
   }
 }

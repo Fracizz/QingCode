@@ -10,6 +10,7 @@ mod git;
 mod git_status;
 mod path_guard;
 mod terminal;
+mod update;
 
 use file_watcher::FileWatcherManager;
 use path_guard::PathAllowlist;
@@ -322,6 +323,7 @@ pub fn run() {
             db_url,
             default_settings_path,
             is_dev_build,
+            update::check_app_update,
             take_launch_files,
             file_associations::get_open_with_status,
             file_associations::register_file_open_with,

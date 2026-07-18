@@ -65,6 +65,12 @@ import {
   unregisterOpenWith,
   type OpenWithStatus,
 } from '../lib/openWithSettings'
+import {
+  DEFAULT_UPDATE_SETTINGS,
+  loadUpdateSettings,
+  saveCheckOnStartup,
+} from '../lib/updateSettings'
+import { checkForAppUpdate, promptAppUpdate } from '../lib/appUpdate'
 
 type SettingsScope = 'user' | 'workspace'
 type CategoryId =
@@ -113,6 +119,8 @@ export default function SettingsEditor() {
   )
   const [openWith, setOpenWith] = useState<OpenWithStatus | null>(null)
   const [openWithBusy, setOpenWithBusy] = useState(false)
+  const [checkOnStartup, setCheckOnStartup] = useState(DEFAULT_UPDATE_SETTINGS.checkOnStartup)
+  const [updateCheckBusy, setUpdateCheckBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const sectionRefs = useRef<Partial<Record<CategoryId, HTMLElement | null>>>({})
 
@@ -123,6 +131,10 @@ export default function SettingsEditor() {
   useEffect(() => {
     if (!isTauri()) return
     void getOpenWithStatus().then(setOpenWith)
+  }, [])
+
+  useEffect(() => {
+    void loadUpdateSettings().then(settings => setCheckOnStartup(settings.checkOnStartup))
   }, [])
 
   useEffect(() => {
@@ -256,6 +268,8 @@ export default function SettingsEditor() {
           '打开方式',
           'Open with',
           'Windows',
+          '检查更新',
+          '自动检查更新',
           'Alt+C',
           'Ctrl+Shift+C',
           'Ctrl+Shift+O',
@@ -626,13 +640,85 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('功能', '快捷键', '打开方式', 'Open with') && !workspaceLocked && (
+            {match('功能', '快捷键', '打开方式', 'Open with', '检查更新', '自动检查更新') &&
+              !workspaceLocked && (
               <Section
                 id="features"
                 title={t('功能')}
                 sectionRefs={sectionRefs}
                 onVisible={setCategory}
               >
+                {match('检查更新', '自动检查更新', '更新') && (
+                  <>
+                    <SettingItem
+                      title={t('启动时自动检查更新')}
+                      description={t(
+                        '正式构建启动后约 3 秒静默查询 Gitee / GitHub Release。关闭后仍可手动检查。',
+                      )}
+                      modified={checkOnStartup !== DEFAULT_UPDATE_SETTINGS.checkOnStartup}
+                      locked={workspaceLocked}
+                      lockHint={t('此设置仅在用户作用域中可用')}
+                    >
+                      <select
+                        value={checkOnStartup ? 'on' : 'off'}
+                        disabled={workspaceLocked}
+                        onChange={e => {
+                          const enabled = e.target.value === 'on'
+                          setCheckOnStartup(enabled)
+                          void saveCheckOnStartup(enabled).catch(error =>
+                            pushToast(
+                              'error',
+                              t('保存更新设置失败: {error}', { error: String(error) }),
+                            ),
+                          )
+                        }}
+                        className="setting-control setting-select"
+                      >
+                        <option value="on">{t('开启')}</option>
+                        <option value="off">{t('关闭')}</option>
+                      </select>
+                    </SettingItem>
+                    <SettingItem
+                      title={t('检查更新')}
+                      description={t(
+                        '查询远端最新便携版；发现新版本时提示打开下载页，不会自动安装。',
+                      )}
+                      modified={false}
+                      locked={workspaceLocked}
+                      lockHint={t('此设置仅在用户作用域中可用')}
+                    >
+                      <button
+                        type="button"
+                        disabled={updateCheckBusy || !isTauri() || workspaceLocked}
+                        className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                        onClick={() => {
+                          if (!isTauri()) {
+                            pushToast('error', t('检查更新需要 Tauri 桌面环境'))
+                            return
+                          }
+                          setUpdateCheckBusy(true)
+                          void checkForAppUpdate({ ignoreSkip: true, prompt: false })
+                            .then(async info => {
+                              if (!info) {
+                                pushToast('success', t('当前已是最新版本'))
+                                return
+                              }
+                              await promptAppUpdate(info)
+                            })
+                            .catch(error =>
+                              pushToast(
+                                'error',
+                                t('检查更新失败: {error}', { error: String(error) }),
+                              ),
+                            )
+                            .finally(() => setUpdateCheckBusy(false))
+                        }}
+                      >
+                        {updateCheckBusy ? t('正在检查…') : t('检查更新')}
+                      </button>
+                    </SettingItem>
+                  </>
+                )}
                 {match('打开方式', 'Open with', 'Windows') && (
                   <SettingItem
                     title={t('Windows 打开方式')}

@@ -19,6 +19,7 @@
 - `terminal.integrated.scrollback`：限制 xterm 缓冲，并跨重启持久化最近输出
 - `terminal.integrated.cursorBlinking`：控制终端光标闪烁
 - 命令面板、多项目工作区、符号跳转、轻量 Git 状态/与 HEAD 比较等一批能力
+- 检查更新：正式构建可启动时自动查询 Gitee/GitHub Release；设置中可关闭自动检查或手动检查；发现新版本仅提示打开下载页
 
 ### Fixed
 

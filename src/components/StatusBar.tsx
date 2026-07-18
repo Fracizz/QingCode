@@ -21,6 +21,7 @@ import {
   formatFileEncoding,
 } from '../lib/fileEncoding'
 import type { FileEncoding, WritableFileEncoding } from '../lib/editorSettings'
+import { checkForAppUpdate } from '../lib/appUpdate'
 
 type GitHeadInfo = {
   name: string
@@ -44,9 +45,11 @@ export default function StatusBar() {
   const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [devBuild, setDevBuild] = useState(false)
+  const [updateBusy, setUpdateBusy] = useState(false)
   const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
   const gitDirtyCount = useGitStatusStore(s => s.dirtyCount)
   const [tabsMenu, setTabsMenu] = useState<{ x: number; y: number } | null>(null)
+  const pushToast = useProjectStore(s => s.pushToast)
 
   const tabsMenuItems = (): ContextMenuItem[] =>
     tabs.map(tab => {
@@ -273,16 +276,40 @@ export default function StatusBar() {
         {appVersion && (
           <Tooltip
             label={
-              devBuild
-                ? t('开发构建：项目数据在仓库 .dev/；主题字体等保存在开发服务器源下')
-                : t('正式构建：项目数据在 %APPDATA%\\com.qingcode.app\\；主题字体等与开发版不共用')
+              updateBusy
+                ? t('正在检查…')
+                : `${
+                    devBuild
+                      ? t('开发构建：项目数据在仓库 .dev/；主题字体等保存在开发服务器源下')
+                      : t('正式构建：项目数据在 %APPDATA%\\com.qingcode.app\\；主题字体等与开发版不共用')
+                  }\n${t('点击检查更新')}`
             }
             side="top"
           >
-            <span className="opacity-80 font-mono">
+            <button
+              type="button"
+              disabled={updateBusy || !isTauri()}
+              className="opacity-80 font-mono hover:opacity-100 hover:text-fg disabled:opacity-40"
+              onClick={() => {
+                if (!isTauri() || updateBusy) return
+                setUpdateBusy(true)
+                void checkForAppUpdate({
+                  currentVersion: appVersion,
+                  ignoreSkip: true,
+                  prompt: true,
+                })
+                  .then(info => {
+                    if (!info) pushToast('success', t('当前已是最新版本'))
+                  })
+                  .catch(error =>
+                    pushToast('error', t('检查更新失败: {error}', { error: String(error) })),
+                  )
+                  .finally(() => setUpdateBusy(false))
+              }}
+            >
               v{appVersion}
               {devBuild ? ' · dev' : ''}
-            </span>
+            </button>
           </Tooltip>
         )}
       </div>
