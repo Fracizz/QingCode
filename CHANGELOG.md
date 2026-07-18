@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 本机打包统一为 `pnpm package`：一次产出 Windows x64 便携版与 NSIS 安装包（ARM64/macOS 仍走 CI）
+
 ## [0.1.4] - 2026-07-18
 
 ### Added

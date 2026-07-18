@@ -121,18 +121,15 @@ QingCode **刻意不做**完整 IntelliSense、调试器和插件市场；你继
 - Windows：便携 exe 或 NSIS 安装包（`*-setup.exe`）；需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）  
 - macOS：未签名时首次请右键 → 打开；需要 Apple Developer 签名/公证后再分发可跳过该步骤  
 
-本地打包：
+本地打包（Windows x64 本机）：
 
 ```bash
 pnpm install
-pnpm package:exe              # 当前 Windows 主机架构（便携版）
-pnpm package:exe:arm64        # Windows ARM64（需本机或 CI 的 aarch64 工具链）
-pnpm package:installer        # Windows NSIS 安装包 → release/QingCode-setup.exe
-pnpm package:installer:arm64  # Windows ARM64 安装包
-pnpm package:macos            # 仅在 macOS 上：Apple Silicon dmg/app
+pnpm package                  # 一次产出便携版 + NSIS 安装包（仅 x64）
+# pnpm package:fast           # 跳过前端/图标，仅重编 Rust
 ```
 
-产物在 `release/`。完整多架构发布走 GitHub Actions（`.github/workflows/release.yml`）。
+产物在 `release/`：`QingCode.exe`（便携）、`QingCode-setup.exe`（安装包）。ARM64 / macOS 等多架构发布走 GitHub Actions（`.github/workflows/release.yml`）。
 
 ## 从源码运行
 

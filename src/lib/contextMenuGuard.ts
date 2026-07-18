@@ -5,8 +5,7 @@ const NATIVE_MENU_SELECTOR = [
   'select',
   '[contenteditable="true"]',
   '[data-native-context-menu]',
-  // xterm focuses its hidden textarea on right-click for copy/paste via the WebView menu.
-  '.xterm',
+  // Terminal (.xterm) uses a custom ContextMenu — native WebView menus add browser chrome.
 ].join(', ')
 
 /** App surfaces that use custom menus or should never show the browser menu. */

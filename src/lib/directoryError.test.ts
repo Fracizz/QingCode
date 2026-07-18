@@ -3,7 +3,27 @@ import { useLocaleStore } from './i18n'
 import {
   formatDirectoryErrorDetail,
   formatExpandDirErrorToast,
+  isDirectoryUnavailableError,
 } from './directoryError'
+
+describe('isDirectoryUnavailableError', () => {
+  it('matches Chinese and English directory-unavailable payloads', () => {
+    expect(isDirectoryUnavailableError('目录不可用: D:\\tmp\\gone')).toBe(true)
+    expect(
+      isDirectoryUnavailableError(
+        new Error('Directory is unavailable: D:\\WorkSpace\\code\\qing-code'),
+      ),
+    ).toBe(true)
+  })
+
+  it('rejects sandbox and other errors', () => {
+    expect(
+      isDirectoryUnavailableError('路径不在已注册项目内，且未经授权: D:\\proj'),
+    ).toBe(false)
+    expect(isDirectoryUnavailableError('无法解析路径: D:\\proj')).toBe(false)
+    expect(isDirectoryUnavailableError('读取目录失败')).toBe(false)
+  })
+})
 
 describe('formatDirectoryErrorDetail', () => {
   beforeEach(() => {

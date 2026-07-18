@@ -6,6 +6,10 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Local packaging unified as `pnpm package`: one pass builds Windows x64 portable + NSIS installer (ARM64/macOS remain CI)
+
 ## [0.1.4] - 2026-07-18
 
 ### Added

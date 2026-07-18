@@ -175,11 +175,12 @@ pub fn resolve_for_sandbox(path: &Path) -> Option<PathBuf> {
 
 fn is_inside_any_root(resolved: &Path, roots: &[PathBuf]) -> bool {
     roots.iter().any(|root| {
-        let Ok(root_canon) = fs::canonicalize(root) else {
-            return false;
-        };
-        let root_canon = strip_verbatim_prefix(root_canon);
-        path_is_within(resolved, &root_canon)
+        if let Ok(root_canon) = fs::canonicalize(root) {
+            let root_canon = strip_verbatim_prefix(root_canon);
+            return path_is_within(resolved, &root_canon);
+        }
+        // canonicalize can flap under AV / sync-disk load; fall back to loose keys.
+        path_is_within_loose(resolved, root)
     })
 }
 
@@ -198,6 +199,13 @@ fn is_authorized(resolved: &Path, original: &Path, authorized: &[PathBuf]) -> bo
 
 fn path_is_within(path: &Path, root: &Path) -> bool {
     path == root || path.starts_with(root)
+}
+
+/// Prefix match on normalized keys so a failed canonicalize still hits registered roots.
+fn path_is_within_loose(path: &Path, root: &Path) -> bool {
+    let path_key = normalize_key(path);
+    let root_key = normalize_key(root);
+    path_key == root_key || path_key.starts_with(&(root_key + "/"))
 }
 
 fn paths_equal_loose(a: &Path, b: &Path) -> bool {
@@ -398,6 +406,30 @@ mod tests {
     }
 
     #[test]
+    fn is_inside_any_root_falls_back_when_canonicalize_fails() {
+        // Non-existent registered root → canonicalize fails; loose keys must still match.
+        let ghost_root = if cfg!(windows) {
+            PathBuf::from(r"Z:\qingcode-ghost-root-that-does-not-exist")
+        } else {
+            PathBuf::from("/qingcode-ghost-root-that-does-not-exist")
+        };
+        let child = ghost_root.join("src").join("main.rs");
+        assert!(
+            is_inside_any_root(&child, &[ghost_root.clone()]),
+            "loose fallback should treat child as inside ghost root"
+        );
+        assert!(path_is_within_loose(&child, &ghost_root));
+        assert!(!path_is_within_loose(
+            Path::new(if cfg!(windows) {
+                r"Z:\qingcode-ghost-root-that-does-not-exist-extra\x"
+            } else {
+                "/qingcode-ghost-root-that-does-not-exist-extra/x"
+            }),
+            &ghost_root
+        ));
+    }
+
+    #[test]
     fn authorized_path_outside_project_ok() {
         let base = temp_base("auth");
         let project = base.join("project");
@@ -492,7 +524,7 @@ mod tests {
         fs::write(&outside, "x").unwrap();
 
         let state = test_state(vec![missing_root], vec![]);
-        // Missing roots must not widen access (canonicalize fails → not inside).
+        // Missing roots must not widen access to unrelated paths (loose prefix still fails).
         let err = ensure_path_allowed(&outside, &state).unwrap_err();
         assert!(err.contains("未经授权") || err.contains("不在"), "{err}");
 

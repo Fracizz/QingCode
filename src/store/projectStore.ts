@@ -10,6 +10,7 @@ import {
   formatExpandDirErrorToast,
   formatReadDirErrorToast,
   formatRefreshDirErrorToast,
+  isDirectoryUnavailableError,
 } from '../lib/directoryError'
 import { shouldRestoreWorkspace } from '../lib/windowSession'
 import {
@@ -107,6 +108,36 @@ async function syncAllowlistRoots(projects: Project[]): Promise<void> {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/** Retry briefly — Windows can flap `is_dir` under AV / indexer load. */
+async function validateDirectoryWithRetry(path: string): Promise<boolean> {
+  const delaysMs = [0, 50, 100]
+  for (let i = 0; i < delaysMs.length; i++) {
+    if (delaysMs[i] > 0) await sleep(delaysMs[i])
+    try {
+      await safeInvoke('检查项目目录', 'validate_directory', { path })
+      return true
+    } catch {
+      // try again
+    }
+  }
+  return false
+}
+
+function withUnavailableProject(
+  ids: string[],
+  projectId: string,
+  unavailable: boolean,
+): string[] {
+  if (unavailable) {
+    return ids.includes(projectId) ? ids : [...ids, projectId]
+  }
+  return ids.filter(id => id !== projectId)
+}
+
 export const useProjectStore = create<ProjectState>((set, get) => ({
   projects: [],
   currentProject: null,
@@ -169,35 +200,35 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }
 
       void (async () => {
-        const unavailableProjectIds = (
-          await Promise.all(
-            projects.map(async project => {
-              try {
-                await safeInvoke('检查项目目录', 'validate_directory', {
-                  path: project.path,
-                })
-                return null
-              } catch {
-                return project.id
-              }
-            }),
-          )
-        ).filter((id): id is string => id !== null)
+        const results = await Promise.all(
+          projects.map(async project => ({
+            id: project.id,
+            ok: await validateDirectoryWithRetry(project.path),
+          })),
+        )
 
-        set({ unavailableProjectIds })
+        // Merge per-id so parallel switchProject clears are not wiped.
+        set(s => {
+          let next = s.unavailableProjectIds
+          for (const { id, ok } of results) {
+            next = withUnavailableProject(next, id, !ok)
+          }
+          return { unavailableProjectIds: next }
+        })
 
         if (!restoreWorkspace) return
 
+        const unavailable = get().unavailableProjectIds
         const current = get().currentProject
-        if (current && unavailableProjectIds.includes(current.id)) {
-          const firstAvailable = pickAvailableProject(get().projects, unavailableProjectIds)
+        if (current && unavailable.includes(current.id)) {
+          const firstAvailable = pickAvailableProject(get().projects, unavailable)
           if (firstAvailable) {
             await get().switchProject(firstAvailable)
           } else {
             set({ currentProject: null, recentFiles: [] })
           }
         } else if (!current) {
-          const firstAvailable = pickAvailableProject(get().projects, unavailableProjectIds)
+          const firstAvailable = pickAvailableProject(get().projects, unavailable)
           if (firstAvailable) await get().switchProject(firstAvailable)
         }
       })()
@@ -543,11 +574,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return true
     } catch (e) {
       console.error('switchProject failed:', e)
-      set(s => ({
-        unavailableProjectIds: s.unavailableProjectIds.includes(project.id)
-          ? s.unavailableProjectIds
-          : [...s.unavailableProjectIds, project.id],
-      }))
+      if (isDirectoryUnavailableError(e)) {
+        set(s => ({
+          unavailableProjectIds: withUnavailableProject(
+            s.unavailableProjectIds,
+            project.id,
+            true,
+          ),
+        }))
+      }
       get().pushToast('error', `切换项目失败: ${String(e)}`)
       return false
     }
@@ -576,15 +611,25 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (!proj) return
     try {
       const tree = await loadProjectRootTree(proj)
-      set({ fileTree: tree })
+      set(s => ({
+        fileTree: tree,
+        unavailableProjectIds: withUnavailableProject(
+          s.unavailableProjectIds,
+          proj.id,
+          false,
+        ),
+      }))
     } catch (e) {
       console.error('loadFileTree failed:', e)
-      set(s => ({
-        unavailableProjectIds:
-          proj && !s.unavailableProjectIds.includes(proj.id)
-            ? [...s.unavailableProjectIds, proj.id]
-            : s.unavailableProjectIds,
-      }))
+      if (isDirectoryUnavailableError(e)) {
+        set(s => ({
+          unavailableProjectIds: withUnavailableProject(
+            s.unavailableProjectIds,
+            proj.id,
+            true,
+          ),
+        }))
+      }
       get().pushToast('error', formatReadDirErrorToast(e))
     }
   },
@@ -612,15 +657,23 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           ...s.projectTrees,
           [project.id]: preserveLoadedChildren(tree, s.projectTrees[project.id] ?? []),
         },
-        unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
+        unavailableProjectIds: withUnavailableProject(
+          s.unavailableProjectIds,
+          project.id,
+          false,
+        ),
       }))
     } catch (e) {
       console.error('ensureProjectTree failed:', e)
-      set(s => ({
-        unavailableProjectIds: s.unavailableProjectIds.includes(project.id)
-          ? s.unavailableProjectIds
-          : [...s.unavailableProjectIds, project.id],
-      }))
+      if (isDirectoryUnavailableError(e)) {
+        set(s => ({
+          unavailableProjectIds: withUnavailableProject(
+            s.unavailableProjectIds,
+            project.id,
+            true,
+          ),
+        }))
+      }
       get().pushToast('error', formatReadDirErrorToast(e))
     }
   },
@@ -633,10 +686,23 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           ...s.projectTrees,
           [project.id]: preserveLoadedChildren(tree, s.projectTrees[project.id] ?? []),
         },
-        unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
+        unavailableProjectIds: withUnavailableProject(
+          s.unavailableProjectIds,
+          project.id,
+          false,
+        ),
       }))
     } catch (e) {
       console.error('refreshProjectTree failed:', e)
+      if (isDirectoryUnavailableError(e)) {
+        set(s => ({
+          unavailableProjectIds: withUnavailableProject(
+            s.unavailableProjectIds,
+            project.id,
+            true,
+          ),
+        }))
+      }
       get().pushToast('error', formatRefreshDirErrorToast(e))
     }
   },

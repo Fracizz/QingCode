@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -29,6 +29,7 @@ import {
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import { translate } from '../lib/i18n'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import '@xterm/xterm/css/xterm.css'
 
 // Backgrounds match App.css --color-bg-deep so the caret/outline stays visible.
@@ -132,10 +133,65 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   const fitAddonRef = useRef<FitAddon | null>(null)
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   isActiveRef.current = isActive
   const writeToTerminal = useTerminalStore(s => s.writeToTerminal)
   const resizeTerminal = useTerminalStore(s => s.resizeTerminal)
   const terminal = useTerminalStore(s => s.terminals.find(tab => tab.id === terminalId))
+
+  const isTerminalWritable = () =>
+    useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.status !== 'exited'
+
+  const copySelection = async () => {
+    const term = xtermRef.current
+    if (!term?.hasSelection()) return
+    const selection = term.getSelection()
+    if (!selection) return
+    try {
+      await navigator.clipboard.writeText(selection)
+    } catch (error) {
+      console.error('Terminal copy failed:', error)
+    }
+  }
+
+  const pasteFromClipboard = async () => {
+    const term = xtermRef.current
+    if (!term || !isTerminalWritable()) return
+    try {
+      const text = await navigator.clipboard.readText()
+      if (text) term.paste(text)
+    } catch (error) {
+      console.error('Terminal paste failed:', error)
+    }
+  }
+
+  const selectAll = () => {
+    xtermRef.current?.selectAll()
+  }
+
+  const contextMenuItems = (): ContextMenuItem[] => [
+    {
+      label: translate('复制'),
+      shortcut: 'Ctrl+C',
+      disabled: !xtermRef.current?.hasSelection(),
+      action: () => {
+        void copySelection()
+      },
+    },
+    {
+      label: translate('粘贴'),
+      shortcut: 'Ctrl+V',
+      disabled: !isTerminalWritable(),
+      action: () => {
+        void pasteFromClipboard()
+      },
+    },
+    {
+      label: translate('全选'),
+      separatorBefore: true,
+      action: selectAll,
+    },
+  ]
 
   const scheduleFit = (refresh = false, focusAfter = false) => {
     window.requestAnimationFrame(() => {
@@ -222,31 +278,13 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       term.writeln(`\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
     }
 
-    const isTerminalWritable = () =>
-      useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.status !== 'exited'
-
-    const pasteFromClipboard = async () => {
-      if (!isTerminalWritable()) return
-      try {
-        const text = await navigator.clipboard.readText()
-        if (text) term.paste(text)
-      } catch (error) {
-        console.error('Terminal paste failed:', error)
-      }
-    }
-
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (event.type !== 'keydown') return true
       const mod = event.ctrlKey || event.metaKey
       const key = event.key.toLowerCase()
       if (mod && !event.altKey && !event.shiftKey && key === 'c') {
         if (term.hasSelection()) {
-          const selection = term.getSelection()
-          if (selection) {
-            void navigator.clipboard.writeText(selection).catch(error => {
-              console.error('Terminal copy failed:', error)
-            })
-          }
+          void copySelection()
           return false
         }
         if (event.ctrlKey) {
@@ -419,6 +457,11 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       onMouseDown={() => {
         if (isActive) xtermRef.current?.focus()
       }}
+      onContextMenu={(event: ReactMouseEvent) => {
+        event.preventDefault()
+        event.stopPropagation()
+        setContextMenu({ x: event.clientX, y: event.clientY })
+      }}
     >
       {terminal?.launchCommand.trim() ? (
         <div
@@ -433,6 +476,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 py-2">
         <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
       </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenuItems()}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   )
 }

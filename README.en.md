@@ -121,18 +121,15 @@ Download from [GitHub Releases](https://github.com/Fracizz/QingCode/releases) or
 - Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)  
 - macOS: unsigned builds may need right-click → Open the first time  
 
-Local packaging:
+Local packaging (Windows x64 host):
 
 ```bash
 pnpm install
-pnpm package:exe              # current Windows host (portable)
-pnpm package:exe:arm64        # Windows ARM64 target
-pnpm package:installer        # Windows NSIS setup → release/QingCode-setup.exe
-pnpm package:installer:arm64  # Windows ARM64 installer
-pnpm package:macos            # macOS only: Apple Silicon dmg/app
+pnpm package                  # portable + NSIS installer in one pass (x64 only)
+# pnpm package:fast           # skip frontend/icons; Rust only
 ```
 
-Artifacts land in `release/`. Multi-arch publishing uses `.github/workflows/release.yml`.
+Artifacts land in `release/`: `QingCode.exe` (portable), `QingCode-setup.exe` (installer). ARM64 / macOS multi-arch builds use `.github/workflows/release.yml`.
 
 ## Run from source
 
