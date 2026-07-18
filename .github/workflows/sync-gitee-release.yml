@@ -1,0 +1,84 @@
+name: Sync Gitee Release
+
+# Mirror a GitHub Release (notes + assets) to Gitee. Requires secret GITEE_TOKEN.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to sync (e.g. v0.1.4)'
+        required: true
+        type: string
+        default: 'v0.1.4'
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/sync-gitee-release.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-gitee-${{ github.event.inputs.tag || 'v0.1.4' }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Require GITEE_TOKEN
+        if: env.GITEE_TOKEN == ''
+        run: |
+          echo "::error::GITEE_TOKEN secret is not set. Add a Gitee private token under Settings → Secrets and variables → Actions, then re-run this workflow."
+          exit 1
+
+      - name: Resolve tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.tag }}"
+          if [[ -z "$TAG" ]]; then
+            TAG="v0.1.4"
+          fi
+          [[ "$TAG" == v* ]] || TAG="v${TAG}"
+          VER="${TAG#v}"
+          NOTES="docs/release-notes/${TAG}.md"
+          if [[ ! -f "$NOTES" ]]; then
+            echo "Missing notes file: $NOTES" >&2
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "notes=${NOTES}" >> "$GITHUB_OUTPUT"
+
+      - name: Download GitHub Release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.meta.outputs.tag }}'
+          mkdir -p release-assets
+          gh release download "$TAG" --repo "${{ github.repository }}" --dir release-assets
+          ls -la release-assets
+          test -n "$(ls -A release-assets)"
+
+      - name: Publish to Gitee
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.meta.outputs.tag }}'
+          $ver = '${{ steps.meta.outputs.version }}'
+          $notes = '${{ steps.meta.outputs.notes }}'
+          $body = Get-Content -LiteralPath $notes -Raw -Encoding utf8
+          $files = @(Get-ChildItem -Path release-assets -File | ForEach-Object { $_.FullName })
+          if ($files.Count -eq 0) { throw 'No GitHub release assets downloaded' }
+          ./scripts/publish-gitee-release.ps1 `
+            -Tag $tag `
+            -Name "QingCode v$ver" `
+            -Body $body.Trim() `
+            -Files $files
+          Write-Host "Synced $tag → https://gitee.com/FrancizTest_admin/qing-code/releases/tag/$tag"
