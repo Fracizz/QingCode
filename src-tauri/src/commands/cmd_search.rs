@@ -1,7 +1,7 @@
 use crate::content_search;
 use crate::content_search::{
-    ContentSearchOptions, ContentSearchResponse, DEFAULT_MAX_FILES_SCANNED,
-    DEFAULT_MAX_MATCHES, DEFAULT_MAX_MATCHES_PER_FILE,
+    ContentSearchOptions, ContentSearchResponse, DEFAULT_MAX_FILES_SCANNED, DEFAULT_MAX_MATCHES,
+    DEFAULT_MAX_MATCHES_PER_FILE,
 };
 use crate::exclude;
 use crate::path_guard::PathAllowlist;
@@ -284,15 +284,60 @@ fn is_binary_extension(name: &str) -> bool {
         .to_ascii_lowercase();
     matches!(
         ext.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "ico" | "bmp"
-        | "woff" | "woff2" | "ttf" | "otf" | "eot" | "pdf"
-        | "zip" | "gz" | "tar" | "7z" | "rar" | "exe" | "dll"
-        | "so" | "dylib" | "bin" | "mp3" | "mp4" | "avi"
-        | "mov" | "mkv" | "wasm" | "lock" | "map" | "pyc"
-        | "pyo" | "pyd" | "class" | "o" | "obj" | "typed"
-        | "xlsx" | "xlsm" | "xls" | "docx" | "doc"
-        | "pptx" | "ppt" | "odt" | "ods" | "odp"
-        | "numbers" | "pages" | "key" | "sqlite" | "db" | "7zip"
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "ico"
+            | "bmp"
+            | "woff"
+            | "woff2"
+            | "ttf"
+            | "otf"
+            | "eot"
+            | "pdf"
+            | "zip"
+            | "gz"
+            | "tar"
+            | "7z"
+            | "rar"
+            | "exe"
+            | "dll"
+            | "so"
+            | "dylib"
+            | "bin"
+            | "mp3"
+            | "mp4"
+            | "avi"
+            | "mov"
+            | "mkv"
+            | "wasm"
+            | "lock"
+            | "map"
+            | "pyc"
+            | "pyo"
+            | "pyd"
+            | "class"
+            | "o"
+            | "obj"
+            | "typed"
+            | "xlsx"
+            | "xlsm"
+            | "xls"
+            | "docx"
+            | "doc"
+            | "pptx"
+            | "ppt"
+            | "odt"
+            | "ods"
+            | "odp"
+            | "numbers"
+            | "pages"
+            | "key"
+            | "sqlite"
+            | "db"
+            | "7zip"
     )
 }
 

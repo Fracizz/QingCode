@@ -100,7 +100,11 @@ pub fn list_user_locales() -> Result<Vec<UserLocalePack>, String> {
     let entries = fs::read_dir(&dir).map_err(|e| format!("读取语言包目录失败: {e}"))?;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("json")) != Some(true)
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("json"))
+            != Some(true)
         {
             continue;
         }
@@ -112,15 +116,17 @@ pub fn list_user_locales() -> Result<Vec<UserLocalePack>, String> {
             packs.push(pack);
         }
     }
-    packs.sort_by(|a, b| a.locale.to_ascii_lowercase().cmp(&b.locale.to_ascii_lowercase()));
+    packs.sort_by(|a, b| {
+        a.locale
+            .to_ascii_lowercase()
+            .cmp(&b.locale.to_ascii_lowercase())
+    });
     Ok(packs)
 }
 
 #[tauri::command]
 pub fn user_locales_dir() -> String {
-    ensure_user_locales_dir()
-        .to_string_lossy()
-        .into_owned()
+    ensure_user_locales_dir().to_string_lossy().into_owned()
 }
 
 #[cfg(test)]
