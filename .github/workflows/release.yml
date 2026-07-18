@@ -298,6 +298,55 @@ jobs:
         shell: pwsh
         run: Get-ChildItem -Recurse release-assets | Format-Table FullName, Length
 
+      - name: Prepare release notes (CN/EN)
+        id: notes
+        shell: pwsh
+        run: |
+          $ver = '${{ needs.meta.outputs.version }}'
+          $tag = '${{ needs.meta.outputs.tag }}'
+          $src = "docs/release-notes/$tag.md"
+          $out = 'release-notes.md'
+          if (Test-Path -LiteralPath $src) {
+            Copy-Item -LiteralPath $src -Destination $out -Force
+            Write-Host "Using $src"
+          } else {
+            @"
+          ## QingCode v$ver
+
+          ### 中文
+          多平台构建（macOS 未签名：首次请右键 → 打开）。Windows 需安装 WebView2。
+
+          | 平台 | 文件 |
+          |------|------|
+          | Windows x64 便携 | ``QingCode_${ver}-windows-x64.exe``（兼 ``QingCode_${ver}.exe``） |
+          | Windows x64 安装包 | ``QingCode_${ver}-windows-x64-setup.exe``（兼 ``QingCode_${ver}-setup.exe``） |
+          | Windows ARM64 便携 | ``QingCode_${ver}-windows-arm64.exe`` |
+          | Windows ARM64 安装包 | ``QingCode_${ver}-windows-arm64-setup.exe`` |
+          | macOS Apple Silicon | ``QingCode_${ver}-macos-arm64.dmg`` / ``.zip`` |
+
+          完整说明见 [CHANGELOG.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.md)。
+
+          ---
+
+          ### English
+          Multi-platform builds (unsigned macOS: right-click → Open the first time). WebView2 required on Windows.
+
+          | Platform | File |
+          |----------|------|
+          | Windows x64 portable | ``QingCode_${ver}-windows-x64.exe`` (also ``QingCode_${ver}.exe``) |
+          | Windows x64 installer | ``QingCode_${ver}-windows-x64-setup.exe`` (also ``QingCode_${ver}-setup.exe``) |
+          | Windows ARM64 portable | ``QingCode_${ver}-windows-arm64.exe`` |
+          | Windows ARM64 installer | ``QingCode_${ver}-windows-arm64-setup.exe`` |
+          | macOS Apple Silicon | ``QingCode_${ver}-macos-arm64.dmg`` / ``.zip`` |
+
+          Full notes: [CHANGELOG.en.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.en.md).
+
+          Gitee mirror: https://gitee.com/FrancizTest_admin/qing-code/releases
+          "@.Trim() | Set-Content -LiteralPath $out -Encoding utf8
+            Write-Host "Generated fallback notes (missing $src)"
+          }
+          echo "path=$out" >> $env:GITHUB_OUTPUT
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -305,36 +354,7 @@ jobs:
           name: QingCode v${{ needs.meta.outputs.version }}
           draft: ${{ needs.meta.outputs.draft == 'true' }}
           generate_release_notes: true
-          body: |
-            ## QingCode v${{ needs.meta.outputs.version }}
-
-            ### 中文
-            多平台构建（macOS 未签名：首次请右键 → 打开）。
-
-            | 平台 | 文件 |
-            |------|------|
-            | Windows x64 便携 | `QingCode_${{ needs.meta.outputs.version }}-windows-x64.exe`（兼 `QingCode_${{ needs.meta.outputs.version }}.exe`） |
-            | Windows x64 安装包 | `QingCode_${{ needs.meta.outputs.version }}-windows-x64-setup.exe`（兼 `QingCode_${{ needs.meta.outputs.version }}-setup.exe`） |
-            | Windows ARM64 便携 | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64.exe` |
-            | Windows ARM64 安装包 | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64-setup.exe` |
-            | macOS Apple Silicon | `QingCode_${{ needs.meta.outputs.version }}-macos-arm64.dmg` / `.zip` |
-
-            Windows 需安装 WebView2。变更说明见 [CHANGELOG.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.md)。
-
-            ### English
-            Multi-platform builds (unsigned macOS OK — right-click → Open the first time).
-
-            | Platform | File |
-            |----------|------|
-            | Windows x64 portable | `QingCode_${{ needs.meta.outputs.version }}-windows-x64.exe` (also `QingCode_${{ needs.meta.outputs.version }}.exe`) |
-            | Windows x64 installer | `QingCode_${{ needs.meta.outputs.version }}-windows-x64-setup.exe` (also `QingCode_${{ needs.meta.outputs.version }}-setup.exe`) |
-            | Windows ARM64 portable | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64.exe` |
-            | Windows ARM64 installer | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64-setup.exe` |
-            | macOS Apple Silicon | `QingCode_${{ needs.meta.outputs.version }}-macos-arm64.dmg` / `.zip` |
-
-            Requires WebView2 on Windows 10/11. See [CHANGELOG.en.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.en.md).
-
-            Gitee mirror (requires `GITEE_TOKEN`): https://gitee.com/FrancizTest_admin/qing-code/releases
+          body_path: ${{ steps.notes.outputs.path }}
           files: release-assets/*
 
       - name: Publish Gitee Release
@@ -345,31 +365,7 @@ jobs:
           $tag = '${{ needs.meta.outputs.tag }}'
           $files = Get-ChildItem -Path release-assets -File | ForEach-Object { $_.FullName }
           if ($files.Count -eq 0) { throw 'No release assets to upload to Gitee' }
-          $body = @"
-          ## QingCode v$ver
-
-          ### 中文
-          多平台构建。
-
-          - Windows x64 便携: ``QingCode_$ver-windows-x64.exe`` / ``QingCode_$ver.exe``
-          - Windows x64 安装包: ``QingCode_$ver-windows-x64-setup.exe`` / ``QingCode_$ver-setup.exe``
-          - Windows ARM64 便携: ``QingCode_$ver-windows-arm64.exe``
-          - Windows ARM64 安装包: ``QingCode_$ver-windows-arm64-setup.exe``
-          - macOS Apple Silicon: ``QingCode_$ver-macos-arm64.dmg`` / ``.zip``
-
-          变更说明：https://gitee.com/FrancizTest_admin/qing-code/blob/master/CHANGELOG.md
-
-          ### English
-          Multi-platform builds.
-
-          - Windows x64 portable: ``QingCode_$ver-windows-x64.exe`` / ``QingCode_$ver.exe``
-          - Windows x64 installer: ``QingCode_$ver-windows-x64-setup.exe`` / ``QingCode_$ver-setup.exe``
-          - Windows ARM64 portable: ``QingCode_$ver-windows-arm64.exe``
-          - Windows ARM64 installer: ``QingCode_$ver-windows-arm64-setup.exe``
-          - macOS Apple Silicon: ``QingCode_$ver-macos-arm64.dmg`` / ``.zip``
-
-          Changelog: https://gitee.com/FrancizTest_admin/qing-code/blob/master/CHANGELOG.en.md
-          "@
+          $body = Get-Content -LiteralPath 'release-notes.md' -Raw -Encoding utf8
           ./scripts/publish-gitee-release.ps1 `
             -Tag $tag `
             -Name "QingCode v$ver" `

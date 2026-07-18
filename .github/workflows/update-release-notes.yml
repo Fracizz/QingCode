@@ -1,0 +1,62 @@
+name: Update release notes
+
+# Push docs/release-notes/<tag>.md to refresh that GitHub Release body (CN/EN).
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'docs/release-notes/*.md'
+      - '.github/workflows/update-release-notes.yml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag whose notes file to apply (e.g. v0.1.4)'
+        required: true
+        type: string
+        default: 'v0.1.4'
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag and notes file
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            # Prefer the newest notes file changed in this push; fallback to v0.1.4.
+            TAG=""
+            if [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+              CHANGED=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}" -- 'docs/release-notes/*.md' || true)
+              TAG=$(printf '%s\n' "$CHANGED" | sed -n 's|^docs/release-notes/\(.*\)\.md$|\1|p' | head -n1)
+            fi
+            if [[ -z "$TAG" ]]; then
+              TAG=$(ls -1 docs/release-notes/*.md 2>/dev/null | xargs -n1 basename | sed 's/\.md$//' | sort -V | tail -n1)
+            fi
+          fi
+          [[ "$TAG" == v* ]] || TAG="v${TAG}"
+          FILE="docs/release-notes/${TAG}.md"
+          if [[ ! -f "$FILE" ]]; then
+            echo "Missing notes file: $FILE" >&2
+            exit 1
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "file=${FILE}" >> "$GITHUB_OUTPUT"
+
+      - name: Update GitHub Release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${{ steps.meta.outputs.tag }}" \
+            --repo "${{ github.repository }}" \
+            --notes-file "${{ steps.meta.outputs.file }}"
+          echo "Updated ${{ steps.meta.outputs.tag }} from ${{ steps.meta.outputs.file }}"
