@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
-import { Circle, Plus, RotateCcw, X, Terminal as TerminalIcon, Pencil, XSquare, Files } from 'lucide-react'
+import {
+  Circle,
+  Plus,
+  RotateCcw,
+  X,
+  Terminal as TerminalIcon,
+  Pencil,
+  XSquare,
+  Files,
+  ChevronDown,
+} from 'lucide-react'
 import { MAX_TERMINALS_PER_PROJECT, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
+import { useUIStore } from '../store/uiStore'
 import { confirmDialog } from '../store/confirmStore'
 import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '../lib/terminalProfiles'
 import { formatTerminalName } from '../utils/terminalName'
@@ -27,6 +38,7 @@ export default function TerminalTabs() {
   const currentProject = useProjectStore(s => s.currentProject)
   const addEmptyProject = useProjectStore(s => s.addEmptyProject)
   const switchProject = useProjectStore(s => s.switchProject)
+  const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
   const [creatingTerminal, setCreatingTerminal] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -441,7 +453,7 @@ export default function TerminalTabs() {
             <button
               type="button"
               aria-label={translate('新建终端')}
-              className={`ml-1 mr-2 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded transition-colors ${
+              className={`ml-1 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded transition-colors ${
                 !(currentProject && atLimit) && !creatingTerminal
                   ? 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                   : 'text-fg-dim cursor-not-allowed'
@@ -455,6 +467,29 @@ export default function TerminalTabs() {
               }}
             >
               <Plus size={15} />
+            </button>
+          </Tooltip>
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-0.5 pr-1.5 pl-1 border-l border-border">
+          <Tooltip label={translate('收起终端（任务继续在后台运行）')} side="top">
+            <button
+              type="button"
+              aria-label={translate('收起终端')}
+              className="flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
+              onClick={() => requestToggleTerminal()}
+            >
+              <ChevronDown size={15} />
+            </button>
+          </Tooltip>
+          <Tooltip label={translate('关闭全部终端')} side="top">
+            <button
+              type="button"
+              aria-label={translate('关闭全部终端')}
+              disabled={projectTerminals.length === 0}
+              className="flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={() => void handleCloseAll()}
+            >
+              <X size={15} />
             </button>
           </Tooltip>
         </div>

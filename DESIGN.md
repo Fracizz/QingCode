@@ -215,15 +215,24 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 |----|------|
 | 组件 | 统一使用 `Tooltip`，从 `./Tooltip` 导入 |
 | 样式 | `bg-bg-elevated` + `border-border-strong` + 阴影，11px 字号 |
-| 延迟 | 默认 **400ms**（`SHOW_DELAY`），可通过 `delay` 覆盖 |
+| 延迟 | 默认 **2000ms**（`SHOW_DELAY`）：悬停约两秒后再显示，减少误触；密集交互处可用 `delay` 覆盖为更短 |
+| 焦点 | 默认 **`showOnFocus={false}`**：点击/聚焦不立刻弹出提示；指针按下时立即隐藏 |
+| 文案 | 使用 `t()` / `translate()` 的中文 key，英文走 `en.json`；**禁止**硬编码英文（如标题栏 Minimize/Maximize） |
 | 位置 | 活动栏 / 侧边栏图标 → `right`；标题栏窗口按钮 → `bottom`；面板内按钮 / 工具栏 → `bottom`；状态栏 → `top`；拖拽条按方向适配 |
 | 截断文本 | 对 `truncate` 元素用 `Tooltip` 展示完整路径或说明，`wrapperClassName` 保留布局 |
-| 无障碍 | 纯图标按钮同时设置 `aria-label`；`Tooltip` 浮层带 `role="tooltip"` |
+| 无障碍 | 纯图标按钮同时设置 `aria-label`（与 tip 文案一致、已 i18n）；`Tooltip` 浮层带 `role="tooltip"` |
+
+**适用范围（与默认 2s 延迟一致）：**
+
+- 活动栏视图/动作图标
+- 标题栏窗口控制（最小化 / 最大化·还原 / 关闭窗口）
+- 侧边栏、面板工具栏、状态栏等同类图标按钮提示
 
 **禁止：**
 
 - HTML `title` 属性（含 JSX `title={...}`）
 - 依赖浏览器默认白底系统 tooltip 的任何交互提示
+- 窗口按钮等 chrome 控件硬编码英文 label
 
 **允许例外（非 UI 提示）：**
 
@@ -233,8 +242,8 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 **用法示例：**
 
 ```tsx
-<Tooltip label="刷新" side="bottom">
-  <button type="button" aria-label="刷新" onClick={handleRefresh}>
+<Tooltip label={t('刷新')} side="bottom">
+  <button type="button" aria-label={t('刷新')} onClick={handleRefresh}>
     <RefreshCw size={13} />
   </button>
 </Tooltip>
@@ -320,7 +329,7 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 | `.modal-overlay-enter` | 对话框遮罩淡入 | 140ms |
 | `.modal-content-enter` | 对话框面板上浮 + 缩放 | 160ms |
 | `.menu-enter` | 右键/下拉菜单淡入 + 轻微缩放 | 120ms |
-| `.tooltip-enter` | Tooltip 淡入（配合 400ms 延迟） | 120ms |
+| `.tooltip-enter` | Tooltip 淡入（配合默认 2000ms 悬停延迟） | 120ms |
 | `.dirty-pulse` | 未保存圆点 / 运行中终端圆点呼吸 | 2.2s 循环 |
 | `html.theme-transition` | 主题切换时由 `applyTheme` 临时挂载 260ms，全局颜色 200ms 过渡 | 200ms |
 
@@ -334,7 +343,7 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 ## 文案
 
 - 界面文案默认 **简体中文**
-- 活动栏 Tooltip、设置面板、状态栏保持一致
+- 活动栏 / 标题栏 / 设置面板 / 状态栏等 Tooltip 与界面语言一致（中文 key + `en.json`）
 - 占位功能（如调试）使用 toast 明确告知「开发中」
 
 ---
@@ -342,7 +351,7 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 ## 新增 UI 检查清单
 
 - [ ] 颜色使用 `@theme` token，不写死 hex（图标 SVG 除外）
-- [ ] 悬停提示用 `Tooltip`，**禁止** HTML `title`（可用 `rg 'title=' src/components` 自查）
+- [ ] 悬停提示用 `Tooltip`（默认悬停约 2s），文案走 i18n，**禁止** HTML `title`（可用 `rg 'title=' src/components` 自查）
 - [ ] 文本输入用 `promptDialog`，**禁止** `window.prompt`
 - [ ] 模态对话框使用 `ModalOverlay` 居中，不手写偏移定位
 - [ ] 图标来自 lucide-react，尺寸与活动栏协调

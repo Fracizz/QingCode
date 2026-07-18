@@ -8,9 +8,10 @@ import AppIcon from './AppIcon'
 import FileMenu from './FileMenu'
 import Tooltip from './Tooltip'
 import ProjectPicker from './ProjectPicker'
-import { translate } from '../lib/i18n'
+import { translate, useI18n } from '../lib/i18n'
 
 export default function TitleBar() {
+  const { t } = useI18n()
   const [maximized, setMaximized] = useState(false)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const inTauri = isTauri()
@@ -125,17 +126,17 @@ export default function TitleBar() {
           className="flex h-full flex-shrink-0"
           onDoubleClick={event => event.stopPropagation()}
         >
-          <WindowButton label="Minimize" onClick={handleMinimize}>
+          <WindowButton label={t('最小化')} onClick={handleMinimize}>
             <Minus size={14} strokeWidth={1.5} />
           </WindowButton>
-          <WindowButton label={maximized ? 'Restore' : 'Maximize'} onClick={toggleMaximize}>
+          <WindowButton label={maximized ? t('还原') : t('最大化')} onClick={toggleMaximize}>
             {maximized ? (
               <Copy size={12} strokeWidth={1.5} />
             ) : (
               <Square size={12} strokeWidth={1.5} />
             )}
           </WindowButton>
-          <WindowButton label="Close" onClick={handleClose} danger>
+          <WindowButton label={t('关闭窗口')} onClick={handleClose} danger>
             <X size={14} strokeWidth={1.5} />
           </WindowButton>
         </div>

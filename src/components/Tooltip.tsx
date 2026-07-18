@@ -4,7 +4,8 @@ import { createPortal } from 'react-dom'
 export type TooltipSide = 'top' | 'right' | 'bottom' | 'left'
 
 const OFFSET = 8
-const SHOW_DELAY = 400
+/** Default hover delay before showing a tip (chrome / icon buttons). */
+const SHOW_DELAY = 2000
 const VIEWPORT_MARGIN = 8
 
 type Size = { width: number; height: number }
@@ -108,6 +109,8 @@ interface Props {
   label: string
   side?: TooltipSide
   delay?: number
+  /** When false, focus does not open the tip (avoids tip-on-click). Default false. */
+  showOnFocus?: boolean
   wrapperClassName?: string
   children: ReactNode
 }
@@ -116,6 +119,7 @@ export default function Tooltip({
   label,
   side = 'right',
   delay = SHOW_DELAY,
+  showOnFocus = false,
   wrapperClassName = 'inline-flex shrink-0',
   children,
 }: Props) {
@@ -188,8 +192,9 @@ export default function Tooltip({
         className={wrapperClassName}
         onMouseEnter={scheduleShow}
         onMouseLeave={hide}
-        onFocus={scheduleShow}
+        onFocus={showOnFocus ? scheduleShow : undefined}
         onBlur={hide}
+        onPointerDown={hide}
       >
         {children}
       </span>
