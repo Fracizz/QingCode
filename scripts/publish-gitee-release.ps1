@@ -101,6 +101,14 @@ function Remove-AttachFile([int]$ReleaseId, [int]$AttachId, [string]$FileName) {
   Invoke-GiteeApi -Method Delete -Path "/repos/$Owner/$Repo/releases/$ReleaseId/attach_files/$AttachId" | Out-Null
 }
 
+function Get-CurlCommand {
+  foreach ($name in @('curl.exe', 'curl')) {
+    $cmd = Get-Command $name -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+  }
+  throw 'curl not found. Install curl (Windows) or ensure curl is on PATH (Linux/macOS CI).'
+}
+
 function Add-AttachFile([int]$ReleaseId, [string]$FilePath) {
   if (-not (Test-Path -LiteralPath $FilePath)) {
     throw "File not found: $FilePath"
@@ -109,13 +117,14 @@ function Add-AttachFile([int]$ReleaseId, [string]$FilePath) {
   Write-Host ("  uploading {0} ({1:N1} MB) ..." -f $item.Name, ($item.Length / 1MB))
 
   $uri = "$api/repos/$Owner/$Repo/releases/$ReleaseId/attach_files"
+  $curl = Get-CurlCommand
   $args = @(
     '-sS', '-f', '-X', 'POST',
     '-F', "access_token=$Token",
     '-F', "file=@$($item.FullName);filename=$($item.Name)",
     $uri
   )
-  & curl.exe @args
+  & $curl @args
   if ($LASTEXITCODE -ne 0) {
     throw "Failed to upload $($item.Name) to Gitee (curl exit $LASTEXITCODE). Check token permissions and Gitee attachment size limits."
   }
