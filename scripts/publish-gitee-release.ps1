@@ -43,17 +43,22 @@ function Invoke-GiteeApi {
 
 function Get-ReleaseByTag([string]$TagName) {
   try {
-    return Invoke-GiteeApi -Method Get -Path "/repos/$Owner/$Repo/releases/tags/$TagName"
+    $found = Invoke-GiteeApi -Method Get -Path "/repos/$Owner/$Repo/releases/tags/$TagName"
+    # Gitee may respond 200 with JSON null / empty object when the tag has no release.
+    if ($null -ne $found -and [int]$found.id -gt 0) { return $found }
   } catch {
     $resp = $_.Exception.Response
-    if ($resp -and [int]$resp.StatusCode -eq 404) { return $null }
-    # Older Gitee may not support /tags/{tag}; fall back to list.
+    if ($resp -and [int]$resp.StatusCode -eq 404) {
+      # Fall through to list lookup.
+    } else {
+      # Older Gitee may not support /tags/{tag}; fall back to list.
+    }
   }
   $page = 1
   while ($true) {
     $list = Invoke-GiteeApi -Method Get -Path "/repos/$Owner/$Repo/releases" -Query @{ page = "$page"; per_page = '50' }
     if (-not $list -or $list.Count -eq 0) { return $null }
-    $hit = $list | Where-Object { $_.tag_name -eq $TagName } | Select-Object -First 1
+    $hit = $list | Where-Object { $_.tag_name -eq $TagName -and [int]$_.id -gt 0 } | Select-Object -First 1
     if ($hit) { return $hit }
     if ($list.Count -lt 50) { return $null }
     $page++
@@ -71,10 +76,15 @@ function New-GiteeRelease {
 }
 
 function Update-GiteeRelease([int]$ReleaseId) {
+  if ($ReleaseId -le 0) {
+    throw "Invalid Gitee release id=$ReleaseId for tag $Tag"
+  }
   Write-Host "Updating Gitee release $Tag (id=$ReleaseId) notes ..."
+  # Gitee PATCH requires tag_name even when only updating notes.
   return Invoke-GiteeApi -Method Patch -Path "/repos/$Owner/$Repo/releases/$ReleaseId" -Form @{
-    name = $Name
-    body = $Body
+    tag_name = $Tag
+    name     = $Name
+    body     = $Body
   }
 }
 
