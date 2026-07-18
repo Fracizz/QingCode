@@ -1,7 +1,7 @@
 import { FolderTree, Search, Terminal, Settings, FolderPlus, BugPlay, ListChecks, GitBranch } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
-import { useGitStatus } from '../hooks/useGitStatus'
+import { useGitStatusStore } from '../store/gitStatusStore'
 
 interface Props {
   active: 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
@@ -23,8 +23,7 @@ export default function ActivityBar({
   terminalOpen,
 }: Props) {
   const { t } = useI18n()
-  const gitStatus = useGitStatus()
-  const gitChanges = gitStatus?.is_repository ? gitStatus.changes.length : 0
+  const gitChanges = useGitStatusStore(s => s.dirtyCount)
 
   return (
     <div className="ui-font-scaled w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-deep border-r border-border flex flex-col items-center py-2">
