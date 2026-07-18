@@ -130,6 +130,10 @@ jobs:
         shell: pwsh
         run: ./scripts/package-exe.ps1 -Force
 
+      - name: Build NSIS installer (x64)
+        shell: pwsh
+        run: ./scripts/package-installer.ps1 -Force -SkipFrontend
+
       - name: Smoke start
         shell: pwsh
         run: ./scripts/smoke-start.ps1 -ExePath release/QingCode.exe -WaitSeconds 4
@@ -144,6 +148,10 @@ jobs:
           # Keep legacy names for existing download links / docs.
           Copy-Item "release/QingCode_$ver.exe" "dist-release/QingCode_$ver.exe"
           Copy-Item "release/QingCode.exe" "dist-release/QingCode.exe"
+          Copy-Item "release/QingCode_$ver-setup.exe" "dist-release/QingCode_$ver-windows-x64-setup.exe"
+          Copy-Item "release/QingCode-setup.exe" "dist-release/QingCode-windows-x64-setup.exe"
+          Copy-Item "release/QingCode_$ver-setup.exe" "dist-release/QingCode_$ver-setup.exe"
+          Copy-Item "release/QingCode-setup.exe" "dist-release/QingCode-setup.exe"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -189,6 +197,10 @@ jobs:
         shell: pwsh
         run: ./scripts/package-exe.ps1 -Force -Target aarch64-pc-windows-msvc
 
+      - name: Build NSIS installer (arm64)
+        shell: pwsh
+        run: ./scripts/package-installer.ps1 -Force -SkipFrontend -Target aarch64-pc-windows-msvc
+
       - name: Smoke start
         shell: pwsh
         run: ./scripts/smoke-start.ps1 -ExePath release/QingCode-windows-arm64.exe -WaitSeconds 4
@@ -200,6 +212,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist-release | Out-Null
           Copy-Item "release/QingCode_$ver-windows-arm64.exe" "dist-release/"
           Copy-Item "release/QingCode-windows-arm64.exe" "dist-release/"
+          Copy-Item "release/QingCode_$ver-windows-arm64-setup.exe" "dist-release/"
+          Copy-Item "release/QingCode-windows-arm64-setup.exe" "dist-release/"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -299,8 +313,10 @@ jobs:
 
             | 平台 | 文件 |
             |------|------|
-            | Windows x64 | `QingCode_${{ needs.meta.outputs.version }}-windows-x64.exe`（兼 `QingCode_${{ needs.meta.outputs.version }}.exe`） |
-            | Windows ARM64 | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64.exe` |
+            | Windows x64 便携 | `QingCode_${{ needs.meta.outputs.version }}-windows-x64.exe`（兼 `QingCode_${{ needs.meta.outputs.version }}.exe`） |
+            | Windows x64 安装包 | `QingCode_${{ needs.meta.outputs.version }}-windows-x64-setup.exe`（兼 `QingCode_${{ needs.meta.outputs.version }}-setup.exe`） |
+            | Windows ARM64 便携 | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64.exe` |
+            | Windows ARM64 安装包 | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64-setup.exe` |
             | macOS Apple Silicon | `QingCode_${{ needs.meta.outputs.version }}-macos-arm64.dmg` / `.zip` |
 
             Windows 需安装 WebView2。变更说明见 [CHANGELOG.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.md)。
@@ -310,8 +326,10 @@ jobs:
 
             | Platform | File |
             |----------|------|
-            | Windows x64 | `QingCode_${{ needs.meta.outputs.version }}-windows-x64.exe` (also `QingCode_${{ needs.meta.outputs.version }}.exe`) |
-            | Windows ARM64 | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64.exe` |
+            | Windows x64 portable | `QingCode_${{ needs.meta.outputs.version }}-windows-x64.exe` (also `QingCode_${{ needs.meta.outputs.version }}.exe`) |
+            | Windows x64 installer | `QingCode_${{ needs.meta.outputs.version }}-windows-x64-setup.exe` (also `QingCode_${{ needs.meta.outputs.version }}-setup.exe`) |
+            | Windows ARM64 portable | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64.exe` |
+            | Windows ARM64 installer | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64-setup.exe` |
             | macOS Apple Silicon | `QingCode_${{ needs.meta.outputs.version }}-macos-arm64.dmg` / `.zip` |
 
             Requires WebView2 on Windows 10/11. See [CHANGELOG.en.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.en.md).
@@ -333,8 +351,10 @@ jobs:
           ### 中文
           多平台构建。
 
-          - Windows x64: ``QingCode_$ver-windows-x64.exe`` / ``QingCode_$ver.exe``
-          - Windows ARM64: ``QingCode_$ver-windows-arm64.exe``
+          - Windows x64 便携: ``QingCode_$ver-windows-x64.exe`` / ``QingCode_$ver.exe``
+          - Windows x64 安装包: ``QingCode_$ver-windows-x64-setup.exe`` / ``QingCode_$ver-setup.exe``
+          - Windows ARM64 便携: ``QingCode_$ver-windows-arm64.exe``
+          - Windows ARM64 安装包: ``QingCode_$ver-windows-arm64-setup.exe``
           - macOS Apple Silicon: ``QingCode_$ver-macos-arm64.dmg`` / ``.zip``
 
           变更说明：https://gitee.com/FrancizTest_admin/qing-code/blob/master/CHANGELOG.md
@@ -342,8 +362,10 @@ jobs:
           ### English
           Multi-platform builds.
 
-          - Windows x64: ``QingCode_$ver-windows-x64.exe`` / ``QingCode_$ver.exe``
-          - Windows ARM64: ``QingCode_$ver-windows-arm64.exe``
+          - Windows x64 portable: ``QingCode_$ver-windows-x64.exe`` / ``QingCode_$ver.exe``
+          - Windows x64 installer: ``QingCode_$ver-windows-x64-setup.exe`` / ``QingCode_$ver-setup.exe``
+          - Windows ARM64 portable: ``QingCode_$ver-windows-arm64.exe``
+          - Windows ARM64 installer: ``QingCode_$ver-windows-arm64-setup.exe``
           - macOS Apple Silicon: ``QingCode_$ver-macos-arm64.dmg`` / ``.zip``
 
           Changelog: https://gitee.com/FrancizTest_admin/qing-code/blob/master/CHANGELOG.en.md
