@@ -8,7 +8,7 @@ describe('readEditorPreferences bracket / paste flags', () => {
     expect(prefs.formatOnPaste).toBe(false)
     expect(prefs.bracketPairColorization).toBe(true)
     expect(prefs.bracketPairGuides).toBe(true)
-    expect(prefs.encoding).toBe('utf8')
+    expect(prefs.encoding).toBe('auto')
   })
 
   it('reads VS Code-style keys', () => {
@@ -23,5 +23,13 @@ describe('readEditorPreferences bracket / paste flags', () => {
     expect(prefs.bracketPairColorization).toBe(false)
     expect(prefs.bracketPairGuides).toBe(false)
     expect(prefs.encoding).toBe('gbk')
+  })
+
+  it('accepts automatic file-encoding detection', () => {
+    const prefs = readEditorPreferences({
+      ...DEFAULT_GLOBAL_SETTINGS,
+      'files.encoding': 'auto',
+    })
+    expect(prefs.encoding).toBe('auto')
   })
 })

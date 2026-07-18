@@ -2,14 +2,17 @@ import { create } from 'zustand'
 
 interface CommandPaletteState {
   open: boolean
-  openPalette: () => void
+  /** Seed input when opening (e.g. `> ` for command-only mode). */
+  seedQuery: string
+  openPalette: (seedQuery?: string) => void
   closePalette: () => void
   togglePalette: () => void
 }
 
 export const useCommandPaletteStore = create<CommandPaletteState>(set => ({
   open: false,
-  openPalette: () => set({ open: true }),
-  closePalette: () => set({ open: false }),
-  togglePalette: () => set(state => ({ open: !state.open })),
+  seedQuery: '',
+  openPalette: (seedQuery = '') => set({ open: true, seedQuery }),
+  closePalette: () => set({ open: false, seedQuery: '' }),
+  togglePalette: () => set(state => ({ open: !state.open, seedQuery: '' })),
 }))

@@ -5,9 +5,11 @@ import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useCompareStore } from '../store/compareStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
+import { useSourceControlStore } from '../store/sourceControlStore'
 import { choiceDialog } from '../store/choiceStore'
 import { flushLiveEditorContent, getLiveEditorContent } from '../lib/editorSession'
 import { getEditorPreferences } from '../lib/editorSettings'
+import { resolveReadEncoding } from '../lib/fileEncoding'
 import { editorPerfProfile, resolveEditMaxBytes } from '../lib/fileSizePolicy'
 import { translate } from '../lib/i18n'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
@@ -114,6 +116,7 @@ export function useFileWatcher() {
   useEffect(() => {
     if (!isTauri() || !currentProject || currentProject.ephemeral) {
       useGitStatusStore.getState().clear()
+      useSourceControlStore.getState().clearCache()
       return
     }
     void useGitStatusStore.getState().refresh(currentProject.path)
@@ -200,7 +203,10 @@ export function useFileWatcher() {
             return
           }
 
-          const encoding = tab.encoding ?? getEditorPreferences().encoding
+          const encoding = tab.encoding ?? await resolveReadEncoding(
+            tab.path,
+            getEditorPreferences().encoding,
+          )
           const diskContent = await safeInvoke<string>('读取文件', 'read_file', {
             path: tab.path,
             encoding,

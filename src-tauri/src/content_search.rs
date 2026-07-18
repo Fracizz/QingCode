@@ -605,10 +605,7 @@ mod tests {
             .iter()
             .flat_map(|f| f.matches.iter().map(|m| m.text.clone()))
             .collect();
-        assert!(
-            texts.iter().any(|t| t.contains("findme_keep")),
-            "{texts:?}"
-        );
+        assert!(texts.iter().any(|t| t.contains("findme_keep")), "{texts:?}");
         assert!(
             texts.iter().any(|t| t.contains("findme_ignored")),
             "ignored.txt should be searchable when useIgnoreFiles=false: {texts:?}"

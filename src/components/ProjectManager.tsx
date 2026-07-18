@@ -40,6 +40,7 @@ import {
 } from '../utils/projectActions'
 import { saveSelectedProjectsAsWorkspace } from '../lib/namedWorkspaceActions'
 import ModalOverlay from './ModalOverlay'
+import SegmentedControl from './SegmentedControl'
 import Tooltip from './Tooltip'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
@@ -250,7 +251,7 @@ export default function ProjectManager() {
             onClick={() => void addTerminalProjectWithPrompt()}
             className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
           >
-            <TerminalIcon size={13} /> 新建终端项目
+            <TerminalIcon size={13} /> {t('新建草稿项目')}
           </button>
           <button
             type="button"
@@ -263,19 +264,17 @@ export default function ProjectManager() {
             <Layers size={13} /> {t('多项目工作区')}
           </button>
 
-          <div className="flex items-center gap-0.5 ml-auto bg-bg-active rounded p-0.5">
-            {(['all', 'visible', 'hidden'] as FilterMode[]).map(mode => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => setFilter(mode)}
-                className={`px-2 py-0.5 text-[12px] rounded transition-colors
-                  ${filter === mode ? 'bg-bg-elevated text-fg shadow-sm' : 'text-fg-muted hover:text-fg'}`}
-              >
-                {mode === 'all' ? t('全部') : mode === 'visible' ? t('已显示') : t('已隐藏')}
-              </button>
-            ))}
-          </div>
+          <SegmentedControl<FilterMode>
+            className="ml-auto"
+            ariaLabel={t('筛选项目')}
+            options={[
+              { value: 'all', label: t('全部') },
+              { value: 'visible', label: t('已显示') },
+              { value: 'hidden', label: t('已隐藏') },
+            ]}
+            value={filter}
+            onChange={setFilter}
+          />
 
           <div className="flex items-center gap-1 text-[12px] text-fg-muted">
             {t('排序')}

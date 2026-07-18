@@ -62,7 +62,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
         role="dialog"
         aria-modal="true"
         aria-labelledby="replace-preview-title"
-        className="relative flex h-[min(78vh,620px)] w-full max-w-[640px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-content-enter relative flex h-[min(78vh,620px)] w-full max-w-[640px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Replace size={16} className="text-accent" />

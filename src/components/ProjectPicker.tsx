@@ -10,8 +10,6 @@ import { createPortal } from 'react-dom'
 import {
   ChevronDown,
   Folder,
-  FolderPlus,
-  Terminal as TerminalIcon,
   AlertTriangle,
   Plus,
   X,
@@ -27,7 +25,6 @@ import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import {
   relocateProjectWithDialog,
-  addTerminalProjectWithPrompt,
   renameProjectWithPrompt,
 } from '../utils/projectActions'
 import Tooltip from './Tooltip'
@@ -45,7 +42,6 @@ export default function ProjectPicker() {
   const currentProject = useProjectStore(s => s.currentProject)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
-  const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const addEmptyProject = useProjectStore(s => s.addEmptyProject)
   const hideProject = useProjectStore(s => s.hideProject)
   const setView = useUIStore(s => s.setView)
@@ -136,11 +132,6 @@ export default function ProjectPicker() {
     await switchProject(project)
   }
 
-  const handleAdd = async () => {
-    setView('explorer')
-    await addProjectFromDialog()
-  }
-
   const handleAddEmpty = async () => {
     if (addingEmpty) return
     setAddingEmpty(true)
@@ -150,11 +141,6 @@ export default function ProjectPicker() {
     } finally {
       setAddingEmpty(false)
     }
-  }
-
-  const handleAddTerminal = async () => {
-    setView('explorer')
-    await addTerminalProjectWithPrompt()
   }
 
   const handleRename = (project: Project) => {
@@ -238,11 +224,11 @@ export default function ProjectPicker() {
           </Tooltip>
         )}
 
-        <Tooltip label={t('新增空项目')} side="bottom" wrapperClassName="flex-shrink-0">
+        <Tooltip label={t('新建临时项目')} side="bottom" wrapperClassName="flex-shrink-0">
           <button
             ref={addBtnRef}
             type="button"
-            aria-label={t('新增空项目')}
+            aria-label={t('新建临时项目')}
             disabled={addingEmpty}
             onClick={() => void handleAddEmpty()}
             onDoubleClick={event => event.stopPropagation()}
@@ -260,7 +246,7 @@ export default function ProjectPicker() {
             onDoubleClick={event => event.stopPropagation()}
             className="flex items-center h-6 px-2 rounded text-[12px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
           >
-            {t('新增空项目')}
+            {t('新建临时项目')}
           </button>
         )}
       </div>
@@ -337,7 +323,7 @@ export default function ProjectPicker() {
                       <button
                         type="button"
                         aria-label={t('重命名项目')}
-                        className="opacity-0 group-hover:opacity-100 text-fg-dim hover:text-fg"
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg"
                         onClick={event => {
                           event.stopPropagation()
                           handleRename(project)
@@ -369,7 +355,7 @@ export default function ProjectPicker() {
                         <button
                           type="button"
                           aria-label={t('在文件管理器中打开')}
-                          className="opacity-0 group-hover:opacity-100 text-fg-dim hover:text-fg"
+                          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg"
                           onClick={event => {
                             event.stopPropagation()
                             void handleOpenInExplorer(project.path)
@@ -383,7 +369,7 @@ export default function ProjectPicker() {
                       <button
                         type="button"
                         aria-label={t('从顶栏隐藏')}
-                        className="opacity-0 group-hover:opacity-100 text-fg-dim hover:text-danger"
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-danger"
                         onClick={event => {
                           event.stopPropagation()
                           handleRemove(project)
@@ -397,34 +383,6 @@ export default function ProjectPicker() {
               })}
             </div>
             <div className="border-t border-border-strong mt-1 pt-1">
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  closeDropdown()
-                  void handleAdd()
-                }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
-              >
-                <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
-                  <FolderPlus size={14} />
-                </span>
-                {t('添加文件夹项目')}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  closeDropdown()
-                  void handleAddTerminal()
-                }}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
-              >
-                <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
-                  <TerminalIcon size={14} />
-                </span>
-                {t('新建终端项目')}
-              </button>
               <button
                 type="button"
                 role="menuitem"
@@ -517,7 +475,7 @@ function Chip({
           <button
             type="button"
             aria-label={t('从顶栏隐藏')}
-            className="inline-flex items-center justify-center opacity-0 group-hover:opacity-100 text-fg-dim hover:text-danger w-4 h-4"
+            className="inline-flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-danger w-4 h-4"
             onClick={event => {
               event.stopPropagation()
               onRemove()

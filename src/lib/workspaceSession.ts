@@ -50,10 +50,10 @@ export function buildExpandedProjectsMap(
 export function nextEmptyProjectName(existingNames: Iterable<string>): string {
   const names = new Set(existingNames)
   let index = 1
-  let name = '空项目'
+  let name = '临时项目'
   while (names.has(name)) {
     index += 1
-    name = `空项目 ${index}`
+    name = `临时项目 ${index}`
   }
   return name
 }

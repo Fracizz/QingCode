@@ -1,4 +1,5 @@
 import { getEditorPreferences } from './editorSettings'
+import { resolveReadEncoding } from './fileEncoding'
 import { safeInvoke } from './tauri'
 
 export type ReplacePreviewFile = {
@@ -104,7 +105,7 @@ export async function applyWorkspaceReplace(
     const file = preview.files[i]
     options?.onProgress?.(i, total)
     try {
-      const encoding = getEditorPreferences().encoding
+      const encoding = await resolveReadEncoding(file.path, getEditorPreferences().encoding)
       const content = await safeInvoke<string>('读取文件', 'read_file', {
         path: file.path,
         encoding,

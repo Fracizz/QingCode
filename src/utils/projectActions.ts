@@ -50,17 +50,9 @@ export async function relocateProjectWithDialog(id: string) {
   }
 }
 
-/** Prompt for a name and create a lightweight terminal-only project (scratch dir under temp). */
+/** Create an ephemeral scratch project (in-memory, cleared on restart). */
 export async function addTerminalProjectWithPrompt() {
-  const name = await promptDialog({
-    title: translate('新建终端项目'),
-    message: translate('项目名称'),
-    defaultValue: translate('终端项目'),
-    confirmLabel: translate('新建'),
-    validate: validateEntryName,
-  })
-  if (!name) return
-  await useProjectStore.getState().addTerminalProject(name.trim())
+  await useProjectStore.getState().addEmptyProject()
 }
 
 /** Prompt for a new display name and rename the project. */

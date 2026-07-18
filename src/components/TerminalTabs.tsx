@@ -433,7 +433,7 @@ export default function TerminalTabs() {
                 ? translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
                 : currentProject
                   ? translate('左键：默认配置；右键：选择终端配置')
-                  : translate('新建终端（无项目时将创建空项目）')
+                  : translate('新建终端（无项目时将创建临时项目）')
             }
             side="top"
             wrapperClassName="flex-shrink-0"

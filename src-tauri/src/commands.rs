@@ -704,6 +704,34 @@ pub fn read_file(
     read_file_inner(path, encoding.as_deref())
 }
 
+#[tauri::command]
+pub fn detect_file_encoding(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<String, String> {
+    allowlist.ensure_allowed(&path)?;
+    let file_path = Path::new(&path);
+    let metadata = fs::metadata(file_path)
+        .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
+    if metadata.is_dir() {
+        return Err(format!("无法打开文件夹：{}", display_file_name(&path)));
+    }
+    if exceeds_editor_file_size_limit(metadata.len()) {
+        return Err(format!(
+            "暂不支持在编辑器中打开超过 100MB 的文件（可用只读预览打开至 500MB）：{}",
+            display_file_name(&path)
+        ));
+    }
+    if is_binary_extension(&path) {
+        return Err(unsupported_text_file_message(&path));
+    }
+    let bytes = fs::read(file_path)
+        .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
+    file_encoding::detect(&bytes)
+        .map(|encoding| encoding.as_str().to_string())
+        .map_err(|_| unsupported_text_file_message(&path))
+}
+
 fn read_file_inner(path: String, encoding: Option<&str>) -> Result<String, String> {
     let enc = file_encoding::parse(encoding);
     let file_path = Path::new(&path);
@@ -721,13 +749,8 @@ fn read_file_inner(path: String, encoding: Option<&str>) -> Result<String, Strin
     if is_binary_extension(&path) {
         return Err(unsupported_text_file_message(&path));
     }
-    let bytes = fs::read(file_path).map_err(|e| {
-        format!(
-            "读取文件失败：{}（{}）",
-            display_file_name(&path),
-            e
-        )
-    })?;
+    let bytes = fs::read(file_path)
+        .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
     file_encoding::decode(&bytes, enc).map_err(|_| decode_error_message(&path, enc))
 }
 
@@ -1142,19 +1165,17 @@ fn replace_file_range_inner(
                         format!("读取文件失败：{}（{}）", display_file_name(&path), e)
                     })?;
                     if start > 0 {
-                        copy(&mut Read::by_ref(&mut src).take(start), &mut out).map_err(|e| {
-                            format!("写入临时文件失败：{}", e)
-                        })?;
+                        copy(&mut Read::by_ref(&mut src).take(start), &mut out)
+                            .map_err(|e| format!("写入临时文件失败：{}", e))?;
                     }
                     out.write_all(text_bytes)
                         .map_err(|e| format!("写入替换内容失败：{}", e))?;
                     if end < file_size {
                         src.seek(SeekFrom::Start(end)).map_err(|e| e.to_string())?;
-                        copy(&mut src, &mut out).map_err(|e| {
-                            format!("写入临时文件失败：{}", e)
-                        })?;
+                        copy(&mut src, &mut out).map_err(|e| format!("写入临时文件失败：{}", e))?;
                     }
-                    out.sync_all().map_err(|e| format!("同步临时文件失败：{}", e))?;
+                    out.sync_all()
+                        .map_err(|e| format!("同步临时文件失败：{}", e))?;
                     Ok(())
                 })();
                 if let Err(error) = result {
@@ -1436,13 +1457,9 @@ mod tests {
         fs::write(&path, body).unwrap();
         let start = 3u64;
         let end = 6u64;
-        let stat = replace_file_range_inner(
-            path.to_string_lossy().to_string(),
-            start,
-            end,
-            "NEW".into(),
-        )
-        .unwrap();
+        let stat =
+            replace_file_range_inner(path.to_string_lossy().to_string(), start, end, "NEW".into())
+                .unwrap();
         let next = fs::read_to_string(&path).unwrap();
         assert_eq!(next, "AAANEWBBB");
         assert_eq!(stat.size, next.len() as u64);

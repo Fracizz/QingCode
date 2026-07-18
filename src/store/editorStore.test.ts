@@ -101,4 +101,11 @@ describe('editorStore tab lifecycle', () => {
     expect(tab?.content).toBe('a')
     expect(tab?.dirty).toBe(false)
   })
+
+  it('setTabEncoding marks the buffer dirty for an explicit save conversion', () => {
+    useEditorStore.getState().setTabEncoding('a', 'gb18030')
+    const tab = useEditorStore.getState().findTab('a')
+    expect(tab?.encoding).toBe('gb18030')
+    expect(tab?.dirty).toBe(true)
+  })
 })

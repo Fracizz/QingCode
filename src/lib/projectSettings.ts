@@ -53,7 +53,7 @@ function buildSharedDefaults(): SettingsFile {
     'files.autoSave': 'off',
     'files.autoSaveDelay': 1000,
     'files.eol': 'auto',
-    'files.encoding': 'utf8',
+    'files.encoding': 'auto',
     'files.trimTrailingWhitespace': false,
     'files.insertFinalNewline': false,
     // Max size for rich/degraded CodeMirror edit (bytes or "20MB"). Plain edit stays ≤100MB; view ≤500MB.
@@ -143,8 +143,8 @@ const SHARED_SETTINGS_BODY = `
   "files.autoSaveDelay": 1000,
   // 换行符：auto | LF | CRLF（保存时生效）
   "files.eol": "auto",
-  // 默认文件编码：utf8 | utf8bom | gbk | gb18030（打开/保存按此转码；大文件只读分片仍按 UTF-8）
-  "files.encoding": "utf8",
+  // 默认文件编码：auto | utf8 | utf8bom | gbk | gb18030（auto 依次检查 BOM、UTF-8、GB18030；大文件只读分片仍按 UTF-8）
+  "files.encoding": "auto",
   // 保存时去掉行尾空格
   "files.trimTrailingWhitespace": false,
   // 保存时确保文件以空行结尾

@@ -503,7 +503,7 @@ export default function Sidebar() {
           action: handleAddProject,
         },
         {
-          label: t('新建终端项目'),
+          label: t('新建草稿项目'),
           icon: <TerminalIcon size={14} />,
           action: () => addTerminalProjectWithPrompt(),
         },
@@ -785,7 +785,7 @@ export default function Sidebar() {
                       type="button"
                       aria-label={t('新建文件')}
                       disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
                       onClick={event => {
                         event.stopPropagation()
                         void startCreateEntry(currentProject.path, false, currentProject.id)
@@ -799,7 +799,7 @@ export default function Sidebar() {
                       type="button"
                       aria-label={t('新建文件夹')}
                       disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
                       onClick={event => {
                         event.stopPropagation()
                         void startCreateEntry(currentProject.path, true, currentProject.id)
@@ -813,7 +813,7 @@ export default function Sidebar() {
                       type="button"
                       aria-label={t('新建终端')}
                       disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
                       onClick={event => {
                         event.stopPropagation()
                         void addTerminal(currentProject.path, currentProject.id)
@@ -827,7 +827,7 @@ export default function Sidebar() {
                       type="button"
                       aria-label={t('在文件管理器中打开')}
                       disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
                       onClick={event => {
                         event.stopPropagation()
                         void handleOpenProject(currentProject.path)
@@ -855,7 +855,7 @@ export default function Sidebar() {
                       <button
                         type="button"
                         aria-label={t('从顶栏隐藏')}
-                        className="opacity-0 group-hover:opacity-100 p-0.5 text-fg-dim hover:text-danger"
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-danger"
                         onClick={event => {
                           event.stopPropagation()
                           handleRemoveProject(

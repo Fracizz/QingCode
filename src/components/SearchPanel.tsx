@@ -13,6 +13,8 @@ import {
 import { createPortal } from 'react-dom'
 import {
   Search,
+  SearchX,
+  AlertCircle,
   File as FileIcon,
   Folder,
   CaseSensitive,
@@ -45,6 +47,8 @@ import {
   type TypeFilter,
 } from '../utils/searchHelpers'
 import Tooltip from './Tooltip'
+import EmptyState from './EmptyState'
+import SegmentedControl from './SegmentedControl'
 import ReplacePreviewDialog from './ReplacePreviewDialog'
 import { buildReplacePreview, type ReplacePreview } from '../lib/workspaceReplace'
 import { loadExcludeSettingsForProject } from '../lib/excludeSettings'
@@ -528,25 +532,21 @@ export default function SearchPanel() {
   return (
     <>
     <div className="h-full flex flex-col bg-bg-sidebar text-fg">
-      <div className="px-4 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-widest uppercase text-fg-muted">
+      <div className="px-4 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
         <Search size={13} /> {t('搜索')}
       </div>
 
       {!searchRoot && (
-        <div className="mx-3 mb-2 flex rounded border border-border overflow-hidden text-[11px]">
-          <ScopeTab
-            active={searchScope === 'current'}
-            onClick={() => setSearchScope('current')}
-          >
-            {t('当前项目')}
-          </ScopeTab>
-          <ScopeTab
-            active={searchScope === 'all'}
-            onClick={() => setSearchScope('all')}
-          >
-            {t('全部项目')}
-          </ScopeTab>
-        </div>
+        <SegmentedControl
+          className="mx-3 mb-2"
+          ariaLabel={t('搜索范围')}
+          options={[
+            { value: 'current', label: t('当前项目') },
+            { value: 'all', label: t('全部项目') },
+          ]}
+          value={searchScope}
+          onChange={setSearchScope}
+        />
       )}
 
       {searchRoot && (
@@ -569,14 +569,15 @@ export default function SearchPanel() {
       )}
 
       <div className="px-3 pb-2 flex flex-col gap-2">
-        <div className="flex rounded border border-border overflow-hidden text-[11px]">
-          <ModeTab active={mode === 'content'} onClick={() => setMode('content')}>
-            {t('内容')}
-          </ModeTab>
-          <ModeTab active={mode === 'filename'} onClick={() => setMode('filename')}>
-            {t('文件名')}
-          </ModeTab>
-        </div>
+        <SegmentedControl
+          ariaLabel={t('搜索模式')}
+          options={[
+            { value: 'content', label: t('内容') },
+            { value: 'filename', label: t('文件名') },
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
 
         <div className="relative">
           {loading ? (
@@ -607,7 +608,7 @@ export default function SearchPanel() {
                 ? t('模糊匹配文件名…')
                 : t('搜索文件名，支持 * 通配符…')
             }
-            className="w-full pl-7 pr-7 py-1.5 text-[13px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+            className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
           />
           {query && (
             <button
@@ -630,7 +631,7 @@ export default function SearchPanel() {
                 value={replaceText}
                 onChange={e => setReplaceText(e.target.value)}
                 placeholder={t('替换为…')}
-                className="w-full pl-7 pr-2 py-1.5 text-[13px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+                className="setting-input w-full pl-7 pr-2 py-1.5 text-[13px]"
               />
             </div>
             <Tooltip label={t('预览并确认后写入全部匹配')} side="bottom">
@@ -730,7 +731,7 @@ export default function SearchPanel() {
               <div
                 ref={extPickerRef}
                 role="listbox"
-                className="ui-font-scaled fixed z-[100] bg-bg-elevated border border-border-strong rounded-md shadow-xl p-2"
+                className="menu-enter ui-font-scaled fixed z-[100] bg-bg-elevated border border-border-strong rounded-md shadow-2xl shadow-black/50 p-2"
                 style={extPickerStyle}
                 onPointerDown={event => event.stopPropagation()}
               >
@@ -810,17 +811,18 @@ export default function SearchPanel() {
         onKeyDown={onResultsKeyDown}
       >
         {!searchRoots.length ? (
-          <div className="px-4 py-6 text-[13px] text-fg-muted">{t('请先选择或添加项目')}</div>
+          <EmptyState icon={<Folder size={28} strokeWidth={1.2} />} title={t('请先选择或添加项目')} />
         ) : error ? (
-          <div className="px-4 py-4 text-[13px] text-danger">{error}</div>
+          <EmptyState icon={<AlertCircle size={28} strokeWidth={1.2} className="text-danger" />} title={error} />
         ) : !hasQuery ? (
-          <div className="px-4 py-4 text-[13px] text-fg-muted">
-            {mode === 'content' ? t('输入关键词搜索文件内容') : t('输入关键词、通配符（*）或选择文件类型开始搜索')}
-          </div>
+          <EmptyState
+            icon={<Search size={28} strokeWidth={1.2} />}
+            title={mode === 'content' ? t('输入关键词搜索文件内容') : t('输入关键词、通配符（*）或选择文件类型开始搜索')}
+          />
         ) : rows.length === 0 && loading ? (
-          <div className="px-4 py-4 text-[13px] text-fg-muted">{t('搜索中…')}</div>
+          <EmptyState icon={<LoaderCircle size={24} className="animate-spin text-accent" />} title={t('搜索中…')} />
         ) : rows.length === 0 ? (
-          <div className="px-4 py-4 text-[13px] text-fg-muted">{t('无匹配结果')}</div>
+          <EmptyState icon={<SearchX size={28} strokeWidth={1.2} />} title={t('无匹配结果')} />
         ) : (
           <>
             <div className="px-4 py-1 flex items-center gap-2 text-[11px] text-fg-dim">
@@ -1009,50 +1011,6 @@ const MatchHighlight = memo(function MatchHighlight({
     </>
   )
 })
-
-function ScopeTab({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex-1 py-1 transition-colors
-        ${active
-          ? 'bg-bg-active text-fg font-medium'
-          : 'bg-bg-deep text-fg-muted hover:text-fg'}`}
-    >
-      {children}
-    </button>
-  )
-}
-
-function ModeTab({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex-1 py-1 transition-colors
-        ${active
-          ? 'bg-bg-active text-fg font-medium'
-          : 'bg-bg-deep text-fg-muted hover:text-fg'}`}
-    >
-      {children}
-    </button>
-  )
-}
 
 function Toggle({
   active,

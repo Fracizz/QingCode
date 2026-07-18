@@ -19,6 +19,7 @@ import type { ShortcutCommand, ShortcutMap } from './shortcuts'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useRunConfigStore } from '../store/runConfigStore'
+import { promptDialog } from '../store/promptStore'
 import { useSymbolPickerStore } from '../store/symbolPickerStore'
 import { useUIStore } from '../store/uiStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
@@ -289,6 +290,34 @@ export function buildCommands(): AppCommand[] {
         return Boolean(tab && !tab.openError && !tab.loading)
       },
       run: () => useSymbolPickerStore.getState().openPicker(),
+    },
+    {
+      id: 'editor.goToLine',
+      title: '转到行',
+      keywords: 'go to line jump ln col',
+      shortcutCommand: 'goToLine',
+      when: () => !!activeTab,
+      run: async () => {
+        if (!activeTab) return
+        const currentLine = useEditorStore.getState().cursor?.line ?? 1
+        const input = await promptDialog({
+          title: translate('转到行'),
+          message: translate('行号'),
+          defaultValue: String(currentLine),
+          confirmLabel: translate('跳转'),
+          validate: value => {
+            const line = Number(value.trim())
+            if (!Number.isFinite(line) || line < 1 || !Number.isInteger(line)) {
+              return translate('请输入有效行号')
+            }
+            return null
+          },
+        })
+        if (!input) return
+        useEditorStore.setState({
+          pendingReveal: { path: activeTab.path, line: Math.floor(Number(input)) },
+        })
+      },
     },
     {
       id: 'view.explorer',

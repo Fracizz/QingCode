@@ -31,9 +31,9 @@ fn extension_of(path: &str) -> Option<String> {
 
 fn formatter_for_extension(ext: &str) -> Option<FormatterKind> {
     match ext {
-        "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" | "json" | "jsonc"
-        | "css" | "scss" | "less" | "html" | "htm" | "md" | "markdown" | "mdx" | "yml"
-        | "yaml" | "graphql" | "gql" | "vue" | "astro" => Some(FormatterKind::Prettier),
+        "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" | "json" | "jsonc" | "css"
+        | "scss" | "less" | "html" | "htm" | "md" | "markdown" | "mdx" | "yml" | "yaml"
+        | "graphql" | "gql" | "vue" | "astro" => Some(FormatterKind::Prettier),
         "rs" => Some(FormatterKind::Rustfmt),
         // Matches editor language map (`sh` → shell). bat/ps1 use other formatters; skip.
         "sh" => Some(FormatterKind::Shfmt),
@@ -148,12 +148,7 @@ fn run_with_stdin(mut cmd: Command, input: &str) -> Result<String, String> {
     let output = match rx.recv_timeout(FORMAT_TIMEOUT) {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => return Err(format!("格式化进程失败: {e}")),
-        Err(_) => {
-            return Err(format!(
-                "格式化超时（{} 秒）",
-                FORMAT_TIMEOUT.as_secs()
-            ))
-        }
+        Err(_) => return Err(format!("格式化超时（{} 秒）", FORMAT_TIMEOUT.as_secs())),
     };
 
     if !output.status.success() {
@@ -172,7 +167,12 @@ fn run_with_stdin(mut cmd: Command, input: &str) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|e| format!("格式化输出不是有效 UTF-8: {e}"))
 }
 
-fn run_windows_cmd_bin(bin: &Path, cwd: &Path, args: &[&str], content: &str) -> Result<String, String> {
+fn run_windows_cmd_bin(
+    bin: &Path,
+    cwd: &Path,
+    args: &[&str],
+    content: &str,
+) -> Result<String, String> {
     let mut cmd = Command::new("cmd");
     cmd.current_dir(cwd).arg("/C").arg(bin);
     for arg in args {
@@ -218,8 +218,14 @@ fn format_with_prettier(path: &str, content: &str) -> Result<String, String> {
             Err(e) => return Err(e),
         }
         let mut npx = Command::new("cmd");
-        npx.current_dir(cwd)
-            .args(["/C", "npx", "--no-install", "prettier", "--stdin-filepath", path]);
+        npx.current_dir(cwd).args([
+            "/C",
+            "npx",
+            "--no-install",
+            "prettier",
+            "--stdin-filepath",
+            path,
+        ]);
         run_with_stdin(npx, content).map_err(|e| {
             if is_spawn_failure(&e) {
                 "未找到 prettier（请安装 Prettier：在项目中执行 npm i -D prettier，或全局安装）"
@@ -232,9 +238,7 @@ fn format_with_prettier(path: &str, content: &str) -> Result<String, String> {
     #[cfg(not(windows))]
     {
         let mut cmd = Command::new("prettier");
-        cmd.current_dir(cwd)
-            .arg("--stdin-filepath")
-            .arg(path);
+        cmd.current_dir(cwd).arg("--stdin-filepath").arg(path);
         match run_with_stdin(cmd, content) {
             Ok(formatted) => return Ok(formatted),
             Err(e) if is_spawn_failure(&e) => {}
@@ -415,12 +419,10 @@ pub fn format_document(
         ));
     }
 
-    let ext = extension_of(&path).ok_or_else(|| {
-        "暂不支持格式化该语言/扩展名（无法识别文件类型）".to_string()
-    })?;
-    let kind = formatter_for_extension(&ext).ok_or_else(|| {
-        format!("暂不支持格式化该语言/扩展名（.{ext}）")
-    })?;
+    let ext = extension_of(&path)
+        .ok_or_else(|| "暂不支持格式化该语言/扩展名（无法识别文件类型）".to_string())?;
+    let kind = formatter_for_extension(&ext)
+        .ok_or_else(|| format!("暂不支持格式化该语言/扩展名（.{ext}）"))?;
 
     match kind {
         FormatterKind::Prettier => format_with_prettier(&path, &content),
@@ -438,7 +440,10 @@ mod tests {
     #[test]
     fn maps_common_prettier_extensions() {
         assert_eq!(formatter_for_extension("ts"), Some(FormatterKind::Prettier));
-        assert_eq!(formatter_for_extension("json"), Some(FormatterKind::Prettier));
+        assert_eq!(
+            formatter_for_extension("json"),
+            Some(FormatterKind::Prettier)
+        );
         assert_eq!(formatter_for_extension("md"), Some(FormatterKind::Prettier));
     }
 

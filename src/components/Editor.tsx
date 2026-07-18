@@ -88,6 +88,7 @@ import { formatDocument } from '../lib/formatDocument'
 import { isLoadingTab, isOpenErrorTab, isViewOnlyTab } from '../lib/openFileError'
 import type { EditorTab } from '../types'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+import Kbd from './Kbd'
 import MarkdownPreview from './MarkdownPreview'
 import EditorOpenError from './EditorOpenError'
 import LargeFileViewer from './LargeFileViewer'
@@ -869,8 +870,8 @@ export default function Editor() {
       <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-3">
         <FileText size={40} strokeWidth={1.2} />
         <p className="text-sm">{t('从侧边栏打开文件开始编辑')}</p>
-        <p className="text-xs text-fg-dim">
-          {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
+        <p className="text-xs text-fg-dim flex items-center gap-1.5">
+          <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span>·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}
         </p>
       </div>
     )
@@ -942,7 +943,7 @@ export default function Editor() {
               <BookOpen size={12} />
               {t('预览')}
             </button>
-            <span className="ml-auto text-[10px] text-fg-dim">Ctrl+Shift+V</span>
+            <span className="ml-auto"><Kbd>Ctrl+Shift+V</Kbd></span>
           </div>
         )}
         <div className="flex min-h-0 flex-1 overflow-hidden">

@@ -20,10 +20,18 @@ export default function Toaster() {
             : t.kind === 'success'
               ? 'text-ok'
               : 'text-accent'
+        const barColor =
+          t.kind === 'error'
+            ? 'bg-danger'
+            : t.kind === 'success'
+              ? 'bg-ok'
+              : 'bg-accent'
+        // Mirrors the auto-dismiss timers in projectStore.pushToast.
+        const durationMs = t.detail ? 6000 : 4000
         return (
           <div
             key={t.id}
-            className="toast-enter bg-bg-elevated border border-border-strong rounded-md shadow-lg px-3 py-2.5 flex items-start gap-2 text-sm max-w-sm"
+            className="toast-enter relative overflow-hidden bg-bg-elevated border border-border-strong rounded-md shadow-lg px-3 py-2.5 flex items-start gap-2 text-sm max-w-sm"
           >
             <Icon size={16} className={`${color} mt-0.5 flex-shrink-0`} />
             <div className="flex-1 min-w-0">
@@ -38,6 +46,11 @@ export default function Toaster() {
             >
               <X size={14} />
             </button>
+            <span
+              aria-hidden="true"
+              className={`toast-progress absolute bottom-0 left-0 h-[2px] opacity-70 ${barColor}`}
+              style={{ animationDuration: `${durationMs}ms` }}
+            />
           </div>
         )
       })}

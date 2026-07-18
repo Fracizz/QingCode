@@ -125,7 +125,7 @@ export default function SymbolPicker() {
         role="dialog"
         aria-modal="true"
         aria-label={t('转到编辑器中的符号')}
-        className="relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-content-enter relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
       >
         <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
           <ListTree size={16} className="flex-shrink-0 text-fg-muted" aria-hidden />

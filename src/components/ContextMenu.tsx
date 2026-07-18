@@ -19,11 +19,14 @@ export default function ContextMenu({
   y,
   items,
   onClose,
+  /** When true, treat `y` as the bottom edge and open the menu upward. */
+  preferAbove = false,
 }: {
   x: number
   y: number
   items: ContextMenuItem[]
   onClose: () => void
+  preferAbove?: boolean
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
   const [position, setPosition] = useState({ x, y })
@@ -32,12 +35,16 @@ export default function ContextMenu({
     const menu = menuRef.current
     if (!menu) return
     const margin = 8
-    setPosition({
-      x: Math.max(margin, Math.min(x, window.innerWidth - menu.offsetWidth - margin)),
-      y: Math.max(margin, Math.min(y, window.innerHeight - menu.offsetHeight - margin)),
-    })
+    const maxH = Math.max(120, window.innerHeight - margin * 2)
+    menu.style.maxHeight = `${maxH}px`
+    const width = menu.offsetWidth
+    const height = Math.min(menu.scrollHeight, maxH)
+    const nextX = Math.max(margin, Math.min(x, window.innerWidth - width - margin))
+    const rawY = preferAbove ? y - height : y
+    const nextY = Math.max(margin, Math.min(rawY, window.innerHeight - height - margin))
+    setPosition({ x: nextX, y: nextY })
     menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
-  }, [x, y])
+  }, [x, y, items, preferAbove])
 
   useEffect(() => {
     const close = (event: PointerEvent) => {
@@ -63,7 +70,7 @@ export default function ContextMenu({
     <div
       ref={menuRef}
       role="menu"
-      className="menu-enter ui-font-scaled fixed z-50 min-w-[220px] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-50 min-w-[220px] max-w-[min(360px,calc(100vw-16px))] overflow-y-auto rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
       style={{ left: position.x, top: position.y }}
       onPointerDown={event => event.stopPropagation()}
       onContextMenu={event => event.preventDefault()}
@@ -95,7 +102,7 @@ export default function ContextMenu({
                   : null
                 : item.icon}
             </span>
-            <span className="flex-1">{item.label}</span>
+            <span className="min-w-0 flex-1 truncate">{item.label}</span>
             {item.shortcut && (
               <span className="ml-5 text-[11px] text-fg-dim">{item.shortcut}</span>
             )}

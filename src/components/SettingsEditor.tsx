@@ -40,6 +40,7 @@ import { useShortcutStore } from '../store/shortcutStore'
 import { DEFAULT_SHORTCUTS, type ShortcutCommand } from '../lib/shortcuts'
 import ShortcutSettings from './ShortcutSettings'
 import HelpDialog from './HelpDialog'
+import SegmentedControl from './SegmentedControl'
 import Tooltip from './Tooltip'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
@@ -282,19 +283,18 @@ export default function SettingsEditor() {
       {/* Header: scope + search + actions */}
       <div className="flex-shrink-0 border-b border-border bg-bg px-4 pt-3 pb-3">
         <div className="flex items-center gap-2 mb-3">
-          <ScopeButton
-            active={scope === 'user'}
-            onClick={() => setScope('user')}
-          >
-            {t('用户')}
-          </ScopeButton>
-          <ScopeButton
-            active={scope === 'workspace'}
-            disabled={!currentProject}
-            onClick={() => currentProject && setScope('workspace')}
-          >
-            {t('工作区')}
-          </ScopeButton>
+          <SegmentedControl
+            ariaLabel={t('设置范围')}
+            options={[
+              { value: 'user', label: t('用户') },
+              { value: 'workspace', label: t('工作区'), disabled: !currentProject },
+            ]}
+            value={scope}
+            onChange={value => {
+              if (value === 'workspace' && !currentProject) return
+              setScope(value)
+            }}
+          />
           <div className="flex-1" />
           <Tooltip label={t('帮助文档')} side="bottom">
             <button
@@ -315,7 +315,7 @@ export default function SettingsEditor() {
             value={query}
             onChange={e => setQuery(e.target.value)}
             placeholder={t('搜索设置')}
-            className="w-full h-8 pl-8 pr-8 rounded-sm border border-border-strong bg-bg-deep text-[13px] text-fg outline-none focus:border-accent"
+            className="setting-input w-full h-8 pl-8 pr-8 text-[13px]"
           />
           {query && (
             <button
@@ -834,33 +834,6 @@ export default function SettingsEditor() {
 
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
     </div>
-  )
-}
-
-function ScopeButton({
-  active,
-  disabled,
-  onClick,
-  children,
-}: {
-  active: boolean
-  disabled?: boolean
-  onClick: () => void
-  children: ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={`h-7 px-3 rounded-sm text-[12px] transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-        active
-          ? 'bg-bg-active text-fg'
-          : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
-      }`}
-    >
-      {children}
-    </button>
   )
 }
 

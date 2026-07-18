@@ -14,10 +14,14 @@ function loadShortcuts(): ShortcutMap {
         typeof saved.openCommandPalette === 'string'
           ? saved.openCommandPalette
           : DEFAULT_SHORTCUTS.openCommandPalette,
+      quickOpen:
+        typeof saved.quickOpen === 'string' ? saved.quickOpen : DEFAULT_SHORTCUTS.quickOpen,
       goToSymbolInEditor:
         typeof saved.goToSymbolInEditor === 'string'
           ? saved.goToSymbolInEditor
           : DEFAULT_SHORTCUTS.goToSymbolInEditor,
+      goToLine:
+        typeof saved.goToLine === 'string' ? saved.goToLine : DEFAULT_SHORTCUTS.goToLine,
     }
   } catch {
     return { ...DEFAULT_SHORTCUTS }

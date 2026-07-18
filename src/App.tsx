@@ -5,6 +5,7 @@ import ActivityBar from './components/ActivityBar'
 import AppIcon from './components/AppIcon'
 import Sidebar from './components/Sidebar'
 import EditorTabs from './components/EditorTabs'
+import EditorBreadcrumbs from './components/EditorBreadcrumbs'
 import TerminalTabs from './components/TerminalTabs'
 import StatusBar from './components/StatusBar'
 import TitleBar from './components/TitleBar'
@@ -15,6 +16,8 @@ import PromptDialog from './components/PromptDialog'
 import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
 import FileCompareDialog from './components/FileCompareDialog'
+import EmptyState from './components/EmptyState'
+import Kbd from './components/Kbd'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useEditorStore } from './store/editorStore'
@@ -145,7 +148,9 @@ function EmptyEditor() {
         </div>
       )}
 
-      <p className="text-xs text-fg-dim">{t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}</p>
+      <p className="text-xs text-fg-dim flex items-center gap-1.5">
+        <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span>·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}
+      </p>
       {recent.length > 0 && (
         <div className="mt-2 w-full max-w-md">
           <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
@@ -257,7 +262,7 @@ function App() {
   const workspaceManagerOpen = useUIStore(s => s.workspaceManagerOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const shortcuts = useShortcutStore(s => s.shortcuts)
-  const togglePalette = useCommandPaletteStore(s => s.togglePalette)
+  const openPalette = useCommandPaletteStore(s => s.openPalette)
   const openSymbolPicker = useSymbolPickerStore(s => s.openPicker)
 
   useAutoSave()
@@ -396,12 +401,28 @@ function App() {
       // Available from inputs / terminal so the palette stays globally discoverable.
       if (isCommandPaletteShortcut(event)) {
         event.preventDefault()
-        togglePalette()
+        openPalette('> ')
+        return
+      }
+      if (shortcutMatchesEvent(shortcuts.quickOpen, event)) {
+        event.preventDefault()
+        openPalette('')
         return
       }
 
       if (isShortcutInputTarget(event.target)) return
-      if (shortcutMatchesEvent(shortcuts.goToSymbolInEditor, event)) {
+      if (event.ctrlKey && event.key === 'Tab' && !event.shiftKey && !event.altKey) {
+        event.preventDefault()
+        useEditorStore.getState().cycleTabMru()
+        return
+      }
+      if (shortcutMatchesEvent(shortcuts.goToLine, event)) {
+        event.preventDefault()
+        void import('./lib/commands').then(({ buildCommands }) => {
+          const command = buildCommands().find(item => item.id === 'editor.goToLine')
+          if (command && (!command.when || command.when())) void command.run()
+        })
+      } else if (shortcutMatchesEvent(shortcuts.goToSymbolInEditor, event)) {
         event.preventDefault()
         openSymbolPicker()
       } else if (shortcutMatchesEvent(shortcuts.searchAllProjects, event)) {
@@ -427,7 +448,7 @@ function App() {
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [shortcuts, setView, togglePalette, openSymbolPicker])
+  }, [shortcuts, setView, openPalette, openSymbolPicker])
 
   const tabsNeedContentLoad = useEditorStore(s =>
     s.tabs.some(
@@ -550,6 +571,7 @@ function App() {
           ) : (
             <>
               <EditorTabs />
+              <EditorBreadcrumbs />
               {projectRestricted && currentProject && (
                 <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 text-[12px] bg-amber-500/10 border-b border-amber-500/30 text-amber-100">
                   <span className="min-w-0 flex-1">
@@ -599,10 +621,16 @@ function App() {
           <TerminalTabs />
           <div className="relative flex-1 min-w-0 bg-bg-deep overflow-hidden min-h-0">
             {projectTerminals.length === 0 && (
-              <div className="absolute inset-0 flex items-center justify-center text-fg-dim text-sm">
-                {currentProject
-                  ? t('当前项目「{name}」暂无终端，点击标签栏 + 新建', { name: currentProject.name })
-                  : t('请先选择或添加项目，终端将默认基于当前项目创建')}
+              <div className="absolute inset-0">
+                <EmptyState
+                  className="h-full"
+                  icon={<TerminalIcon size={28} strokeWidth={1.2} />}
+                  title={
+                    currentProject
+                      ? t('当前项目「{name}」暂无终端，点击标签栏 + 新建', { name: currentProject.name })
+                      : t('请先选择或添加项目，终端将默认基于当前项目创建')
+                  }
+                />
               </div>
             )}
             {/* Only mount the current project's terminals to avoid xterm cost across projects. */}

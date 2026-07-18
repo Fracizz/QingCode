@@ -21,7 +21,7 @@ describe('resolveNewTerminalName / disambiguateTerminalName', () => {
 
   it('falls back to command label or numbered terminal', () => {
     expect(resolveNewTerminalName('普通终端', 'bash.exe', 4)).toBe('Bash')
-    expect(resolveNewTerminalName('普通终端', '', 5)).toBe('普通终端')
+    expect(resolveNewTerminalName('普通终端', '', 5)).toBe('终端 5')
     expect(resolveNewTerminalName('', '', 5)).toBe('终端 5')
   })
 

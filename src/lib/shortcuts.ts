@@ -3,7 +3,9 @@ export type ShortcutCommand =
   | 'toggleTerminal'
   | 'openSettings'
   | 'openCommandPalette'
+  | 'quickOpen'
   | 'goToSymbolInEditor'
+  | 'goToLine'
 
 export type ShortcutMap = Record<ShortcutCommand, string>
 
@@ -12,7 +14,9 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   toggleTerminal: 'Ctrl+`',
   openSettings: 'Ctrl+,',
   openCommandPalette: 'Ctrl+Shift+P',
+  quickOpen: 'Ctrl+P',
   goToSymbolInEditor: 'Ctrl+Shift+O',
+  goToLine: 'Ctrl+G',
 }
 
 export const RESERVED_SHORTCUTS = new Set([

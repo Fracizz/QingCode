@@ -3,7 +3,6 @@ import {
   DEFAULT_GLOBAL_SETTINGS,
   loadGlobalSettings,
   loadProjectSettings,
-  type SettingsFile,
 } from './projectSettings'
 import { mergeSettings } from './autoSaveSettings'
 
@@ -13,7 +12,7 @@ export function parseFormatOnSave(value: unknown): boolean {
   return value === true
 }
 
-export function readFormatOnSave(settings: SettingsFile): boolean {
+export function readFormatOnSave(settings: Record<string, unknown>): boolean {
   return parseFormatOnSave(settings['editor.formatOnSave'])
 }
 

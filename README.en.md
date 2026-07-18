@@ -2,8 +2,8 @@
 
 [中文](./README.md)
 
-**QingCode** is a lightweight desktop code editor for Windows.  
-Multiple projects, file browsing, editing, and terminals live in one window — less app switching, more time writing code.
+**QingCode** is a **project-management companion for the AI coding era** on Windows: multi-project switching, service startup, terminal sessions, and light editing in one window.  
+It is not another VS Code or Zed — it focuses on keeping several local projects and their processes under control.
 
 ## Screenshots
 
@@ -25,42 +25,80 @@ Multiple projects, file browsing, editing, and terminals live in one window — 
 
 ## Why QingCode
 
-Most editors assume a single workspace. QingCode is built for **working across several local projects at once**: switch from the title bar like tabs, keep each project’s file tree and terminals, and never wipe the scene when you leave.
+Coding increasingly happens alongside AI tools (Cursor, Claude, OpenCode, and others). What often slows you down is not “missing a heavier IDE”, but:
 
-It stays light: a native shell, languages loaded on demand, no bloated marketplace. Built for everyday reading, editing configs, and running scripts — not for launching a full IDE for every small task.
+- Several local repos open at once, with context lost every time you switch windows  
+- Each project needs a stack of services (API, web, workers, proxies…) that are easy to forget and hard to keep tidy in terminals  
+- AI assistants, scripts, and local processes stay fragmented while project ops stay manual  
+
+QingCode puts weight on **project ops and the running scene**: pin many projects, keep terminals with each project, and start services with run configurations. Editing, search, and Git review are enough to stay oriented; deep language intelligence stays with the AI tools you already use.
 
 ## What you get
 
 ### Multi-project switching
 
-Pin folders in the title bar and switch with a click. Overflow stays reachable; add, remove, relocate, or reveal in File Explorer anytime.
+Pin folders in the title bar and switch with a click. Each project keeps its own file tree and terminals; leaving a project does not wipe unsaved buffers or terminal sessions. Overflow stays reachable, and you can save named multi-project workspaces.
 
-### A focused file tree
+### Run configurations: start project services
+
+This is a core QingCode workflow. Define run configurations per project (stored in `.qingcode/run.json`):
+
+- One configuration can hold multiple tasks (command / script / ps1 / bat / sh)  
+- On launch, **each task opens its own terminal** — ideal for API + web + worker side by side  
+- Per-task working directory and environment variables; stop a whole configuration at once  
+- Unknown projects start restricted; trust is required before editing, running scripts, or using the terminal  
+
+Typical loop: open a project → start a run configuration → services land in separate terminals → edit code or hand a terminal to an AI CLI.
+
+### Terminal profiles: default shells and AI / tool entry points
+
+Alongside run configurations, manage **terminal profiles** (name + startup command):
+
+- Default PowerShell, or jump straight into a custom environment  
+- Save common AI / dev CLIs (for example `opencode`) as profiles and pick them from the terminal “+” menu  
+- Terminals default to the project root; switching projects does not close existing ones  
+
+Run configurations answer “how do this project’s services start?”; terminal profiles answer “what should this shell open with?” — together they keep the local multi-project scene in one place.
+
+### Focused file tree and light editing
 
 The explorer shows only the active project. Create, rename, and delete in place; copy paths or file references; open a terminal in any folder.
 
-### Straightforward editing
+Multi-tab editing with on-demand highlighting for common languages; auto-detect UTF-8 / BOM / GB18030-compatible text; external changes can be reloaded or compared instead of overwritten silently. Large files degrade or open read-only. Editor and terminal sessions restore after restart.
 
-Multiple file tabs, clear dirty markers, save with `Ctrl+S`. Common languages load on demand — JavaScript, TypeScript, JSON, Markdown, CSS, HTML, Python, and more.
+### Lightweight Git review
 
-### Terminals that stay with the project
+Source Control shows the branch, changed files, and diffs; compare any file side by side with HEAD. Chinese names, spaces, and renames use original paths. Commit and push can stay in your usual Git or AI tools — QingCode helps you see what changed first.
 
-Each project can keep several terminal tabs, starting in the project root by default. Switching projects does not close them — come back and continue.
+### Search and preferences
 
-### Search and run
+Search file names or contents in a chosen scope. Dark / light / forest / system theme; adjustable UI and editor fonts; Simplified Chinese or English UI. Global and project settings live on disk (JSON5 with comments).
 
-Search file names or contents in a chosen scope. Save run configurations for common scripts and launch them in the terminal in one step.
+## How it relates to VS Code / Zed
 
-### Make it yours
+| | QingCode | VS Code | Zed |
+|--|--|--|--|
+| Role | Multi-project ops companion | Extensible platform editor | Native high-performance editor |
+| Multi-project switching | Title-bar pins; sessions kept | Workspace-centric | Typical single-project focus |
+| Service / task startup | **Multi-task run configs → many terminals** | Strong tasks / launch | Available, different shape |
+| LSP / debug / marketplace | Intentionally not a full IDE | Full stack | Strong LSP, smaller ecosystem |
+| AI | Not built-in; plays well with CLIs | Extensions or built-in | Built-in leaning |
 
-Dark / light / system theme; adjustable UI and editor fonts; Simplified Chinese or English UI. Global and project settings live on disk (JSON5 with comments).
+QingCode **deliberately skips** full IntelliSense, a debugger, and an extension marketplace. Keep VS Code / Zed / Cursor for deep editing; use QingCode to manage which projects are open, which services are up, and which terminals are live.
 
 ## Typical flow
 
-1. Add a local project folder  
-2. Browse, create, or open files in the sidebar  
-3. Open a terminal when you need the shell  
-4. Switch projects from the title bar — editor and terminal state remain
+1. Add several local project folders and pin them in the title bar  
+2. Create run configurations for common stacks (for example `dev` = API + web)  
+3. Start services in one click; each task gets its own terminal  
+4. Use terminal profiles to jump into an AI CLI or project script environment  
+5. Switch projects from the title bar — editor and terminal state remain  
+
+## Who it is for
+
+- People who keep several local repos and frequently start/stop services  
+- Developers already using AI coding tools who want a steadier local project / process companion  
+- Anyone who would rather not launch a full IDE just to switch projects and bring services up  
 
 ## Get the app
 
@@ -77,12 +115,6 @@ pnpm package:exe
 ```
 
 Artifacts land in `release/`.
-
-## Who it is for
-
-- Developers who keep several local repos or work folders open  
-- Anyone who wants a light “open, edit, run” desktop tool  
-- People who would rather not start a full IDE for a small change  
 
 ## Run from source
 

@@ -37,8 +37,6 @@ export function resolveNewTerminalName(
     if (fromCommand) return fromCommand
   }
 
-  if (name) return name
-
   return `终端 ${nextNumber}`
 }
 

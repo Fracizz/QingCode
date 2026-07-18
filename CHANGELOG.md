@@ -15,10 +15,14 @@
 - `files.exclude` / `search.exclude`：资源管理器与文件/内容搜索按设置 JSON 中的排除规则生效
 - `explorer.excludeGitIgnore` / `search.useIgnoreFiles`：资源管理器与搜索按 `.gitignore` 等 ignore 文件过滤（可关）
 - `search.followSymlinks`：搜索是否跟随符号链接（默认 `false`）
-- `files.encoding`：打开/保存支持 `utf8` / `utf8bom` / `gbk` / `gb18030`
+- `files.encoding`：默认 `auto` 检测（BOM / UTF-8 / GB18030 兼容兀底），打开/保存支持 `utf8` / `utf8bom` / `gbk` / `gb18030`，状态栏可重新按编码读取或保存转换
 - `terminal.integrated.scrollback`：限制 xterm 缓冲，并跨重启持久化最近输出
 - `terminal.integrated.cursorBlinking`：控制终端光标闪烁
 - 命令面板、多项目工作区、符号跳转、轻量 Git 状态/与 HEAD 比较等一批能力
+
+### Fixed
+
+- 源代码管理使用 Git 原始路径记录解析，中文、空格和重命名文件可正确查看差异
 
 ### Changed
 

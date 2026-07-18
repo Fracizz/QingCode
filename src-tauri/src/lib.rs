@@ -1,8 +1,8 @@
 mod commands;
 mod content_search;
 mod exclude;
-mod file_encoding;
 mod file_associations;
+mod file_encoding;
 mod file_watcher;
 mod fonts;
 mod format;
@@ -286,6 +286,7 @@ pub fn run() {
             commands::validate_directory,
             commands::file_stat,
             commands::read_file,
+            commands::detect_file_encoding,
             commands::read_file_slice,
             commands::find_line_offset,
             commands::replace_file_range,

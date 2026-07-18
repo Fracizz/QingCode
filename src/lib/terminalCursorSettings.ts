@@ -3,7 +3,6 @@ import {
   DEFAULT_GLOBAL_SETTINGS,
   loadGlobalSettings,
   loadProjectSettings,
-  type SettingsFile,
 } from './projectSettings'
 import { mergeSettings } from './autoSaveSettings'
 
@@ -14,7 +13,7 @@ export function parseTerminalCursorBlinking(value: unknown): boolean {
   return true
 }
 
-export function readTerminalCursorBlinking(settings: SettingsFile): boolean {
+export function readTerminalCursorBlinking(settings: Record<string, unknown>): boolean {
   return parseTerminalCursorBlinking(settings['terminal.integrated.cursorBlinking'])
 }
 

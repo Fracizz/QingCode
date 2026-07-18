@@ -156,7 +156,7 @@ export default function RunPanel() {
                 className="group mx-2 my-1 rounded-md border border-border hover:border-border-strong bg-bg/40 hover:bg-bg-hover/40 transition-colors"
               >
                 <div className="flex items-center gap-2 px-2 py-2">
-                  <Tooltip label={running ? '停止' : '运行'} side="bottom">
+                  <Tooltip label={running ? t('停止') : t('运行')} side="bottom">
                     <button
                       onClick={() =>
                         running
@@ -191,7 +191,7 @@ export default function RunPanel() {
                       </div>
                     </Tooltip>
                   </div>
-                  <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                     <Tooltip label={t('编辑')} side="bottom">
                       <button
                         className="p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover"

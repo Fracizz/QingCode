@@ -10,6 +10,7 @@ import {
   Check,
 } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
+import EmptyState from './EmptyState'
 import Tooltip from './Tooltip'
 import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
@@ -110,7 +111,7 @@ export default function WorkspaceManager() {
         role="dialog"
         aria-modal="true"
         aria-label={t('多项目工作区')}
-        className="relative w-full max-w-[560px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="modal-content-enter relative w-full max-w-[560px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 h-12 border-b border-border-strong flex-shrink-0">
@@ -147,9 +148,11 @@ export default function WorkspaceManager() {
 
         <div className="flex-1 overflow-auto">
           {workspaces.length === 0 ? (
-            <div className="px-4 py-10 text-center text-[13px] text-fg-muted">
-              {t('暂无多项目工作区。可先在顶栏显示相关项目，再点上方保存。')}
-            </div>
+            <EmptyState
+              className="py-10"
+              icon={<Layers size={28} strokeWidth={1.2} />}
+              title={t('暂无多项目工作区。可先在顶栏显示相关项目，再点上方保存。')}
+            />
           ) : (
             <ul className="divide-y divide-border/60">
               {workspaces.map(workspace => {

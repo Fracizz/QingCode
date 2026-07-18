@@ -69,7 +69,6 @@ interface ProjectState {
   addProject: (path: string) => Promise<boolean>
   addProjectFromDialog: () => Promise<void>
   addEmptyProject: () => Promise<boolean>
-  addTerminalProject: (name: string) => Promise<boolean>
   removeProject: (id: string) => Promise<void>
   hideProject: (id: string) => Promise<void>
   unhideProject: (id: string) => Promise<void>
@@ -244,7 +243,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   addEmptyProject: async () => {
-    if (!isTauri()) throw new NotInTauriError('新增空项目')
+    if (!isTauri()) throw new NotInTauriError('新建临时项目')
     try {
       const temp = await tempDir()
       const id = crypto.randomUUID()
@@ -252,7 +251,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const separator = temp.includes('\\') && !temp.includes('/') ? '\\' : '/'
       const intended = `${temp.replace(/[\\/]+$/, '')}${separator}${dirName}`
       await authorizePaths([intended, temp])
-      const path = await safeInvoke<string>('创建空项目目录', 'create_directory', {
+      const path = await safeInvoke<string>('创建临时项目目录', 'create_directory', {
         parent: temp,
         name: dirName,
       })
@@ -274,38 +273,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       void syncAllowlistRoots(get().projects)
       useEditorStore.getState().activateProjectSession(previousId, id)
       void get().ensureProjectTree(project)
-      get().pushToast('success', `已新增空项目: ${name}（临时，重启后消失）`)
+      get().pushToast('success', `已新建临时项目: ${name}（重启后消失）`)
       return true
     } catch (e) {
       console.error('addEmptyProject failed:', e)
-      get().pushToast('error', `新增空项目失败: ${String(e)}`)
-      return false
-    }
-  },
-
-  addTerminalProject: async (name: string) => {
-    if (!isTauri()) throw new NotInTauriError('新建终端项目')
-    try {
-      const temp = await tempDir()
-      const id = crypto.randomUUID()
-      const dirName = `qingcode-terminal-${id}`
-      const separator = temp.includes('\\') && !temp.includes('/') ? '\\' : '/'
-      const intended = `${temp.replace(/[\\/]+$/, '')}${separator}${dirName}`
-      await authorizePaths([intended, temp])
-      const path = await safeInvoke<string>('创建终端项目目录', 'create_directory', {
-        parent: temp,
-        name: dirName,
-      })
-      const now = Date.now()
-      await insertProject(id, name, path, now)
-      await get().loadProjects()
-      const created = get().projects.find(p => p.id === id)
-      if (created) await get().switchProject(created)
-      get().pushToast('success', `已新建终端项目: ${name}`)
-      return true
-    } catch (e) {
-      console.error('addTerminalProject failed:', e)
-      get().pushToast('error', `新建终端项目失败: ${String(e)}`)
+      get().pushToast('error', `新建临时项目失败: ${String(e)}`)
       return false
     }
   },

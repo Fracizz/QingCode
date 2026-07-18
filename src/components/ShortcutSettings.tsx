@@ -16,6 +16,11 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
     description: '打开命令面板，搜索并运行编辑器命令。',
   },
   {
+    id: 'quickOpen',
+    label: '快速打开文件',
+    description: '按文件名模糊搜索并打开项目中的文件。',
+  },
+  {
     id: 'goToSymbolInEditor',
     label: '转到编辑器中的符号',
     description: '打开当前文件的符号列表，快速跳转到函数、类或标题。',
@@ -34,6 +39,11 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
     id: 'openSettings',
     label: '打开设置',
     description: '打开设置面板。',
+  },
+  {
+    id: 'goToLine',
+    label: '转到行',
+    description: '跳转到当前文件中的指定行号。',
   },
 ]
 

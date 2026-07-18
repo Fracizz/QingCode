@@ -12,7 +12,19 @@ import { translate } from '../lib/i18n'
 
 export default function TitleBar() {
   const [maximized, setMaximized] = useState(false)
+  const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const inTauri = isTauri()
+
+  useEffect(() => {
+    const onFocus = () => setWindowFocused(true)
+    const onBlur = () => setWindowFocused(false)
+    window.addEventListener('focus', onFocus)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
 
   useEffect(() => {
     if (!inTauri) return
@@ -74,7 +86,9 @@ export default function TitleBar() {
 
   return (
     <div
-      className="ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none"
+      className={`ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none transition-opacity duration-150 ${
+        windowFocused ? '' : 'opacity-60'
+      }`}
       onDoubleClick={inTauri ? toggleMaximize : undefined}
     >
       <div className="flex-1 flex items-center h-full min-w-0">

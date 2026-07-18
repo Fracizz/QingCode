@@ -52,35 +52,31 @@ fn parse_branch(header: &str) -> Option<String> {
     }
 }
 
-/// Porcelain path may be `old -> new` for renames/copies; keep the destination.
-fn normalize_status_path(path: &str) -> String {
-    if let Some((_, right)) = path.split_once(" -> ") {
-        right.trim().trim_matches('"').to_string()
-    } else {
-        path.trim().trim_matches('"').to_string()
-    }
-}
-
-fn parse_status(output: &str) -> GitStatus {
+/// Parse porcelain v1 `-z` records. NUL framing preserves Chinese, spaces and
+/// rename paths exactly instead of relying on Git's display-oriented quoting.
+fn parse_status(output: &[u8]) -> GitStatus {
     let mut branch = None;
     let mut changes = vec![];
-    for line in output.lines() {
-        if line.starts_with("## ") {
-            branch = parse_branch(line);
+    let mut records = output.split(|byte| *byte == 0);
+    while let Some(record) = records.next() {
+        if record.starts_with(b"## ") {
+            branch = parse_branch(&String::from_utf8_lossy(record));
             continue;
         }
-        if line.len() < 4 {
+        if record.len() < 4 {
             continue;
         }
-        let status = line[..2].trim();
-        let path = normalize_status_path(line[3..].trim());
+        let status = String::from_utf8_lossy(&record[..2]).trim().to_string();
+        let path = String::from_utf8_lossy(&record[3..]).into_owned();
         if status.is_empty() || path.is_empty() {
             continue;
         }
-        changes.push(GitChange {
-            path,
-            status: status.to_string(),
-        });
+        // In -z mode rename/copy source path is a second record; the first is
+        // the destination shown in the panel and used for the diff pathspec.
+        if status.contains('R') || status.contains('C') {
+            let _source_path = records.next();
+        }
+        changes.push(GitChange { path, status });
     }
     GitStatus {
         is_repository: true,
@@ -241,7 +237,7 @@ pub fn git_status(path: String) -> Result<GitStatus, String> {
     if !root.is_dir() {
         return Err("Git 项目目录不可用".to_string());
     }
-    let output = run_git(root, &["status", "--porcelain=v1", "--branch"])?;
+    let output = run_git(root, &["status", "--porcelain=v1", "--branch", "-z"])?;
     if !output.status.success() {
         if is_not_repository_error(&output) {
             return Ok(GitStatus {
@@ -255,7 +251,7 @@ pub fn git_status(path: String) -> Result<GitStatus, String> {
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }
-    Ok(parse_status(&String::from_utf8_lossy(&output.stdout)))
+    Ok(parse_status(&output.stdout))
 }
 
 #[tauri::command]
@@ -279,7 +275,9 @@ pub struct GitFileContents {
 fn git_show_revision(root: &Path, revision: &str, relative: &str) -> String {
     let spec = format!("{revision}:{relative}");
     match run_git(root, &["show", "--textconv", &spec]) {
-        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout).into_owned(),
+        Ok(output) if output.status.success() => {
+            String::from_utf8_lossy(&output.stdout).into_owned()
+        }
         _ => String::new(),
     }
 }
@@ -317,7 +315,7 @@ mod tests {
     #[test]
     fn parses_branch_and_changed_files() {
         let status =
-            parse_status("## feature/test...origin/feature/test\n M src/main.ts\n?? notes.txt\n");
+            parse_status(b"## feature/test...origin/feature/test\0 M src/main.ts\0?? notes.txt\0");
         assert_eq!(status.branch.as_deref(), Some("feature/test"));
         assert_eq!(status.changes.len(), 2);
         assert_eq!(status.changes[0].status, "M");
@@ -326,16 +324,22 @@ mod tests {
 
     #[test]
     fn parses_repository_without_commits() {
-        let status = parse_status("## No commits yet on main\n?? README.md\n");
+        let status = parse_status(b"## No commits yet on main\0?? README.md\0");
         assert_eq!(status.branch.as_deref(), Some("main"));
         assert_eq!(status.changes[0].status, "??");
     }
 
     #[test]
     fn parses_rename_destination_path() {
-        let status = parse_status("## main\nR  old.ts -> new.ts\n");
+        let status = parse_status(b"## main\0R  new.ts\0old.ts\0");
         assert_eq!(status.changes[0].path, "new.ts");
         assert_eq!(status.changes[0].status, "R");
+    }
+
+    #[test]
+    fn keeps_chinese_and_space_paths_unquoted() {
+        let status = parse_status("## main\0?? src/中文 文件.ts\0".as_bytes());
+        assert_eq!(status.changes[0].path, "src/中文 文件.ts");
     }
 
     #[test]

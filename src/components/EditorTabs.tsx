@@ -38,6 +38,7 @@ export default function EditorTabs() {
   const closeOtherTabs = useEditorStore(s => s.closeOtherTabs)
   const closeTabsToRight = useEditorStore(s => s.closeTabsToRight)
   const closeAllTabs = useEditorStore(s => s.closeAllTabs)
+  const reorderTabs = useEditorStore(s => s.reorderTabs)
   const renameEditorPath = useEditorStore(s => s.renamePath)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
   const setView = useUIStore(s => s.setView)
@@ -48,6 +49,8 @@ export default function EditorTabs() {
     tab: EditorTab
   } | null>(null)
   const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null)
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [dropIndex, setDropIndex] = useState<number | null>(null)
 
   if (tabs.length === 0) return null
 
@@ -215,7 +218,7 @@ export default function EditorTabs() {
     <>
     <div className="ui-font-scaled h-[var(--tab-height)] flex bg-bg-deep border-b border-border flex-shrink-0">
       <div className="flex flex-1 min-w-0 overflow-x-auto">
-        {tabs.map(tab => {
+        {tabs.map((tab, index) => {
           const active = tab.id === activeTabId
           const loading = isLoadingTab(tab)
           const viewOnly = isViewOnlyTab(tab)
@@ -241,10 +244,35 @@ export default function EditorTabs() {
           return (
             <div
               key={tab.id}
+              draggable
               className={`group relative flex items-center gap-2 pl-3 pr-2 h-full cursor-pointer border-r border-border whitespace-nowrap transition-colors
                 ${active ? 'bg-tab-active text-fg' : 'bg-tab-inactive text-fg-muted hover:bg-bg-elevated hover:text-fg'}
-                ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}`}
+                ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}
+                ${dropIndex === index && dragIndex !== index ? 'ring-1 ring-inset ring-accent/60' : ''}`}
               onClick={() => setActiveTab(tab.id)}
+              onDragStart={event => {
+                setDragIndex(index)
+                event.dataTransfer.effectAllowed = 'move'
+                event.dataTransfer.setData('text/plain', tab.id)
+              }}
+              onDragOver={event => {
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'move'
+                if (dragIndex !== null && dragIndex !== index) setDropIndex(index)
+              }}
+              onDragLeave={() => {
+                if (dropIndex === index) setDropIndex(null)
+              }}
+              onDrop={event => {
+                event.preventDefault()
+                if (dragIndex !== null && dragIndex !== index) reorderTabs(dragIndex, index)
+                setDragIndex(null)
+                setDropIndex(null)
+              }}
+              onDragEnd={() => {
+                setDragIndex(null)
+                setDropIndex(null)
+              }}
               onAuxClick={event => {
                 if (event.button !== 1) return
                 event.preventDefault()
@@ -297,7 +325,8 @@ export default function EditorTabs() {
       <Tooltip label={t('显示所有打开的文件')} side="bottom">
         <button
           type="button"
-          className="flex h-full w-8 flex-shrink-0 items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg"
+          aria-label={t('显示所有打开的文件')}
+          className="flex h-full w-8 flex-shrink-0 items-center justify-center border-l border-border text-fg-muted hover:bg-bg-hover hover:text-fg"
           onClick={event => {
             const rect = event.currentTarget.getBoundingClientRect()
             setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })

@@ -23,7 +23,9 @@ import {
   loadEffectiveEditorPreferences,
   prepareContentForSave,
   type FileEncoding,
+  type WritableFileEncoding,
 } from '../lib/editorSettings'
+import { resolveReadEncoding } from '../lib/fileEncoding'
 import { loadEffectiveFileSizePreferences } from '../lib/fileSizeSettings'
 import { isSettingsJsonPath } from '../lib/projectSettings'
 import { translate } from '../lib/i18n'
@@ -31,6 +33,7 @@ import type { GitFileContents } from '../lib/git'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
 import { authorizePaths } from '../lib/pathAllowlist'
 import { loadEffectiveAutoSaveSettings, notifyAutoSaveSettingsChanged } from '../lib/autoSaveSettings'
+import { choiceDialog } from './choiceStore'
 import { useProjectStore } from './projectStore'
 import type { EditorTab } from '../types'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
@@ -102,7 +105,7 @@ async function populateTabFromDisk(id: string, path: string, line?: number) {
     return
   }
 
-  const encoding = getEditorPreferences().encoding
+  const encoding = await resolveReadEncoding(path, getEditorPreferences().encoding)
   const content = await safeInvoke<string>('读取文件', 'read_file', { path, encoding })
   if (!get().findTab(id)) return
 
@@ -173,6 +176,8 @@ interface EditorState {
   projectSessions: Record<string, ProjectEditorSession>
   /** Caret position of the active editor, shown in the status bar. */
   cursor: { line: number; col: number } | null
+  /** Most-recently-used tab order for Ctrl+Tab cycling. */
+  tabMru: string[]
   openFile: (path: string, line?: number) => Promise<void>
   retryOpenFile: (id: string) => Promise<void>
   /** Open a read-only HEAD ↔ working-tree compare tab for a project-relative file. */
@@ -183,12 +188,17 @@ interface EditorState {
   closeOtherTabs: (id: string) => void
   closeTabsToRight: (id: string) => void
   setActiveTab: (id: string) => void
+  cycleTabMru: () => void
+  reorderTabs: (fromIndex: number, toIndex: number) => void
   setTabContent: (id: string, content: string) => void
   /** Drop Zustand content copy while the live CodeMirror buffer owns the doc. */
   clearTabContentBuffer: (id: string) => void
   markDirty: (id: string) => void
   markClean: (id: string) => void
-  setTabEncoding: (id: string, encoding: FileEncoding) => void
+  /** Choose the encoding used when the current buffer is next saved (conversion). */
+  setTabEncoding: (id: string, encoding: WritableFileEncoding) => void
+  /** Discard the current buffer after confirmation and read the disk file with a chosen encoding. */
+  reopenWithEncoding: (id: string, encoding: FileEncoding) => Promise<void>
   saveFile: (id: string) => Promise<void>
   saveAs: (id: string) => Promise<void>
   closeAllTabs: () => void
@@ -224,6 +234,12 @@ interface EditorState {
    * (draft bodies may already be attached). Safe to call repeatedly.
    */
   loadMissingTabContents: () => Promise<void>
+}
+
+function buildTabMru(tabs: EditorTab[], activeTabId: string | null): string[] {
+  const ids = tabs.map(tab => tab.id)
+  if (!activeTabId) return ids
+  return [activeTabId, ...ids.filter(id => id !== activeTabId)]
 }
 
 function splitPinned(tabs: EditorTab[]) {
@@ -269,6 +285,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   pendingReveal: null,
   projectSessions: {},
   cursor: null,
+  tabMru: [],
 
   clearPendingReveal: () => set({ pendingReveal: null }),
 
@@ -394,7 +411,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const activeTabId = s.activeTabId === id
           ? (tabs.length > 0 ? tabs[tabs.length - 1].id : null)
           : s.activeTabId
-        return { tabs, activeTabId }
+        return { tabs, activeTabId, tabMru: buildTabMru(tabs, activeTabId) }
       }
       // Tab may live in a stashed project session (e.g. closed via path ops).
       let projectSessions = s.projectSessions
@@ -444,9 +461,35 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setActiveTab: (id: string) => {
     const prev = get().activeTabId
     if (prev && prev !== id) flushLiveEditorContent(prev)
-    set({ activeTabId: id, cursor: null })
+    set(s => ({
+      activeTabId: id,
+      cursor: null,
+      tabMru: buildTabMru(s.tabs, id),
+    }))
     const tab = get().tabs.find(t => t.id === id)
     if (tab && tab.kind !== 'diff') void useProjectStore.getState().revealFileInTree(tab.path)
+  },
+
+  cycleTabMru: () => {
+    const { tabs, activeTabId, tabMru } = get()
+    const ordered = tabMru.filter(id => tabs.some(tab => tab.id === id))
+    if (ordered.length < 2) return
+    const currentIndex = ordered.indexOf(activeTabId ?? '')
+    const nextIndex = currentIndex < 0 ? 1 : (currentIndex + 1) % ordered.length
+    get().setActiveTab(ordered[nextIndex])
+  },
+
+  reorderTabs: (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return
+    set(s => {
+      if (fromIndex < 0 || toIndex < 0 || fromIndex >= s.tabs.length || toIndex >= s.tabs.length) {
+        return s
+      }
+      const tabs = [...s.tabs]
+      const [moved] = tabs.splice(fromIndex, 1)
+      tabs.splice(toIndex, 0, moved)
+      return { tabs, tabMru: buildTabMru(tabs, s.activeTabId) }
+    })
   },
 
   openDiff: async (projectPath: string, relativePath: string, absolutePath: string) => {
@@ -533,6 +576,48 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       )
       return next ?? s
     })
+  },
+
+  reopenWithEncoding: async (id, requestedEncoding) => {
+    const tab = get().findTab(id)
+    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || tab.viewMode === 'view') return
+    if (!isTauri()) {
+      useProjectStore.getState().pushToast('error', translate('当前环境无法重新打开文件'))
+      return
+    }
+    if (tab.dirty) {
+      const choice = await choiceDialog({
+        title: translate('重新按编码打开文件？'),
+        message: translate('这会放弃当前文件的未保存修改，并按 {encoding} 重新读取磁盘内容。', {
+          encoding: requestedEncoding === 'auto' ? translate('自动检测') : requestedEncoding.toUpperCase(),
+        }),
+        detail: tab.path,
+        options: [
+          { id: 'reload', label: translate('重新打开'), primary: true },
+          { id: 'cancel', label: translate('取消') },
+        ],
+      })
+      if (choice !== 'reload') return
+    }
+    try {
+      const encoding = await resolveReadEncoding(tab.path, requestedEncoding)
+      const [content, mtime] = await Promise.all([
+        safeInvoke<string>('读取文件', 'read_file', { path: tab.path, encoding }),
+        safeInvoke<number | null>('读取修改时间', 'file_mtime', { path: tab.path }).catch(() => null),
+      ])
+      await get().reloadFromDisk(id, content, mtime)
+      set(s => {
+        const next = mapTabEverywhere(s, id, t => ({ ...t, encoding }))
+        return next ?? s
+      })
+      useProjectStore
+        .getState()
+        .pushToast('success', translate('已按 {encoding} 重新打开：{name}', { encoding: encoding.toUpperCase(), name: tab.name }))
+    } catch (e) {
+      useProjectStore
+        .getState()
+        .pushToast('error', translate('重新打开文件失败: {error}', { error: String(e) }))
+    }
   },
 
   setDiskMtime: (id, mtime) => {
@@ -689,10 +774,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           }
         }
       }
+      const encoding = afterFormat.encoding ?? await resolveReadEncoding(
+        afterFormat.path,
+        getEditorPreferences().encoding,
+      )
       await safeInvoke('保存文件', 'write_file', {
         path: afterFormat.path,
         content,
-        encoding: afterFormat.encoding ?? getEditorPreferences().encoding,
+        encoding,
       })
       let mtime: number | null = null
       try {
@@ -784,7 +873,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (!(await confirmOutsideSymlinkWrite(selected))) return
       // Explicit Save As dialog = user authorization for that write target.
       await authorizePaths([selected])
-      const encoding = tab.encoding ?? getEditorPreferences().encoding
+      const encoding = tab.encoding ?? await resolveReadEncoding(tab.path, getEditorPreferences().encoding)
       await safeInvoke('另存为', 'write_file', { path: selected, content, encoding })
 
       const conflict = get().getAllTabs().find(t => t.id !== id && pathsEqual(t.path, selected))
@@ -885,6 +974,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         tabs,
         activeTabId,
         pendingReveal: incoming.pendingReveal,
+        tabMru: buildTabMru(tabs, activeTabId),
       }
     })
   },

@@ -434,6 +434,17 @@ body {
   }
 }
 
+/* Toast auto-dismiss countdown bar (duration set inline per toast). */
+.toast-progress {
+  animation-name: toast-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes toast-progress {
+  from { width: 100%; }
+  to { width: 0; }
+}
+
 /* Modal / menu entrance animations */
 .modal-overlay-enter {
   animation: modal-overlay-in 140ms ease-out;
@@ -627,6 +638,23 @@ body.panel-resizing[data-panel-resize='vertical'] * {
 }
 .cm-merge-host .cm-editor {
   height: 100%;
+}
+
+/* Shared text-input chrome (border/background/focus). Layout (padding, width,
+   font-size) stays on Tailwind classes at the call site so icon slots still work. */
+.setting-input {
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg-deep);
+  color: var(--color-fg);
+  outline: none;
+  transition: border-color 120ms ease;
+}
+.setting-input::placeholder {
+  color: var(--color-fg-dim);
+}
+.setting-input:focus {
+  border-color: var(--color-accent);
 }
 
 /* Settings / form selects — theme-aligned, hide native OS chrome */

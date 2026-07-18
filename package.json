@@ -29,7 +29,8 @@
     "unregister:open-with": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/register-open-with.ps1 -Unregister",
     "bump:version": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/bump-version.ps1 -Version",
     "release:tag": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/release-tag.ps1 -Version",
-    "gitee:release": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/gitee-release.ps1 -Version"
+    "gitee:release": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/gitee-release.ps1 -Version",
+    "remotes:setup": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/setup-dual-remotes.ps1"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -71,6 +72,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/node": "^22.15.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
