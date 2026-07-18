@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { parseFormatOnSave, readFormatOnSave } from './formatOnSaveSettings'
+import { DEFAULT_GLOBAL_SETTINGS } from './projectSettings'
 
 describe('formatOnSaveSettings', () => {
   it('parses boolean only', () => {
@@ -10,7 +11,9 @@ describe('formatOnSaveSettings', () => {
   })
 
   it('reads editor.formatOnSave from settings', () => {
-    expect(readFormatOnSave({ 'editor.formatOnSave': true })).toBe(true)
-    expect(readFormatOnSave({})).toBe(false)
+    expect(readFormatOnSave({ ...DEFAULT_GLOBAL_SETTINGS, 'editor.formatOnSave': true })).toBe(
+      true,
+    )
+    expect(readFormatOnSave(DEFAULT_GLOBAL_SETTINGS)).toBe(false)
   })
 })

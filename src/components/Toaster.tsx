@@ -33,6 +33,8 @@ export default function Toaster() {
             key={t.id}
             className="toast-enter relative overflow-hidden bg-bg-elevated border border-border-strong rounded-md shadow-lg px-3 py-2.5 flex items-start gap-2 text-sm max-w-sm"
           >
+            {/* Left color indicator bar */}
+            <span className={`absolute left-0 top-0 bottom-0 w-[3px] ${barColor}`} aria-hidden="true" />
             <Icon size={16} className={`${color} mt-0.5 flex-shrink-0`} />
             <div className="flex-1 min-w-0">
               <p className="font-medium text-fg leading-snug">{t.text}</p>

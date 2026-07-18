@@ -5,7 +5,7 @@ export type TooltipSide = 'top' | 'right' | 'bottom' | 'left'
 
 const OFFSET = 8
 /** Default hover delay before showing a tip (chrome / icon buttons). */
-const SHOW_DELAY = 2000
+const SHOW_DELAY = 600
 const VIEWPORT_MARGIN = 8
 
 type Size = { width: number; height: number }

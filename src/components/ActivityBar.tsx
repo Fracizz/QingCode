@@ -1,4 +1,4 @@
-import { FolderTree, Search, Terminal, Settings, FolderPlus, BugPlay, ListChecks, GitBranch } from 'lucide-react'
+import { FolderCode, Search, Terminal, Settings, FolderPlus, BugPlay, ListChecks, GitBranch } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { useGitStatusStore } from '../store/gitStatusStore'
@@ -28,7 +28,7 @@ export default function ActivityBar({
   return (
     <div className="ui-font-scaled w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-deep border-r border-border flex flex-col items-center py-2">
       <Item
-        icon={<FolderTree size={22} />}
+        icon={<FolderCode size={22} />}
         label={t('资源管理器')}
         active={active === 'explorer' && sidebarOpen}
         onClick={() => onActiveChange('explorer')}

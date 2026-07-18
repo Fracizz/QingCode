@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import { basicSetup, minimalSetup } from 'codemirror'
 import { search } from '@codemirror/search'
 import { Compartment, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
@@ -92,7 +99,7 @@ import Kbd from './Kbd'
 import MarkdownPreview from './MarkdownPreview'
 import EditorOpenError from './EditorOpenError'
 import LargeFileViewer from './LargeFileViewer'
-import DiffEditor from './DiffEditor'
+const DiffEditor = lazy(() => import('./DiffEditor'))
 
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
 const lightTheme = EditorView.theme(
@@ -878,7 +885,11 @@ export default function Editor() {
   }
 
   if (activeTab.kind === 'diff') {
-    return <DiffEditor tab={activeTab} />
+    return (
+      <Suspense fallback={<div className="flex-1 bg-bg" aria-hidden="true" />}>
+        <DiffEditor tab={activeTab} />
+      </Suspense>
+    )
   }
 
   if (isOpenErrorTab(activeTab)) {

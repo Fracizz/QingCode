@@ -1,7 +1,7 @@
-import { useEffect, useRef } from 'react'
-import { MergeView } from '@codemirror/merge'
+import { useEffect, useRef, useState, useCallback } from 'react'
+import { MergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge'
 import { EditorState } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
+import { EditorView, keymap } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { javascript } from '@codemirror/lang-javascript'
 import { json } from '@codemirror/lang-json'
@@ -9,10 +9,56 @@ import { markdown } from '@codemirror/lang-markdown'
 import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
 import { python } from '@codemirror/lang-python'
+import { ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
 import type { EditorTab } from '../types'
 import { getResolvedTheme, THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
 import { useI18n } from '../lib/i18n'
+
+/** 差异对比文件大小上限：超过此值的文件不显示差异对比（5MB） */
+const DIFF_MAX_BYTES = 5 * 1024 * 1024
+
+/* ------------------------------------------------------------------ */
+/*  高对比度差异主题（覆盖 CodeMirror merge 的默认低对比度颜色）          */
+/*  &light / &dark 只能用在 baseTheme，不能用在 EditorView.theme。       */
+/* ------------------------------------------------------------------ */
+const diffTheme = EditorView.baseTheme({
+  /* 左侧（HEAD）删除行背景 */
+  '&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': {
+    backgroundColor: 'rgba(220, 80, 80, 0.12)',
+  },
+  /* 右侧（工作区）新增行背景 */
+  '&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': {
+    backgroundColor: 'rgba(80, 180, 80, 0.12)',
+  },
+  /* 左侧删除文本下划线 */
+  '&light.cm-merge-a .cm-changedText': {
+    background: 'linear-gradient(rgba(220,80,80,0.4), rgba(220,80,80,0.4)) bottom/100% 2px no-repeat',
+  },
+  '&light .cm-deletedChunk .cm-deletedText': {
+    background: 'linear-gradient(rgba(220,80,80,0.4), rgba(220,80,80,0.4)) bottom/100% 2px no-repeat',
+  },
+  '&dark.cm-merge-a .cm-changedText': {
+    background: 'linear-gradient(rgba(255,120,120,0.5), rgba(255,120,120,0.5)) bottom/100% 2px no-repeat',
+  },
+  '&dark .cm-deletedChunk .cm-deletedText': {
+    background: 'linear-gradient(rgba(255,120,120,0.5), rgba(255,120,120,0.5)) bottom/100% 2px no-repeat',
+  },
+  /* 右侧新增文本下划线 */
+  '&light.cm-merge-b .cm-changedText': {
+    background: 'linear-gradient(rgba(80,180,80,0.4), rgba(80,180,80,0.4)) bottom/100% 2px no-repeat',
+  },
+  '&dark.cm-merge-b .cm-changedText': {
+    background: 'linear-gradient(rgba(120,255,120,0.5), rgba(120,255,120,0.5)) bottom/100% 2px no-repeat',
+  },
+  /* gutter 标记颜色 */
+  '&light.cm-merge-a .cm-changedLineGutter': { background: '#dc5050' },
+  '&light .cm-deletedLineGutter': { background: '#dc5050' },
+  '&dark.cm-merge-a .cm-changedLineGutter': { background: '#ff7878' },
+  '&dark .cm-deletedLineGutter': { background: '#ff7878' },
+  '&light.cm-merge-b .cm-changedLineGutter': { background: '#50b450' },
+  '&dark.cm-merge-b .cm-changedLineGutter': { background: '#78ff78' },
+})
 
 const lightTheme = EditorView.theme(
   {
@@ -67,8 +113,32 @@ function sideExtensions(language?: string) {
     EditorState.readOnly.of(true),
     EditorView.lineWrapping,
     editorThemeExtension(),
+    diffTheme,
     lang ?? [],
   ]
+}
+
+/** 统计文本中的新增/删除行数（基于换行符） */
+function countDiffLines(original: string, current: string): { added: number; removed: number } {
+  const origLines = original.split('\n')
+  const currLines = current.split('\n')
+  let added = 0
+  let removed = 0
+  const maxLen = Math.max(origLines.length, currLines.length)
+  for (let i = 0; i < maxLen; i++) {
+    const o = origLines[i] ?? ''
+    const c = currLines[i] ?? ''
+    if (o !== c) {
+      if (o && !c) removed++
+      else if (!o && c) added++
+      else {
+        /* 修改行：两边都计 */
+        added++
+        removed++
+      }
+    }
+  }
+  return { added, removed }
 }
 
 type Props = {
@@ -80,10 +150,13 @@ export default function DiffEditor({ tab }: Props) {
   const { t } = useI18n()
   const hostRef = useRef<HTMLDivElement>(null)
   const mergeRef = useRef<MergeView | null>(null)
+  const [stats, setStats] = useState({ added: 0, removed: 0 })
 
-  useEffect(() => {
-    if (!hostRef.current) return
+  // 计算内容大小，超过阈值时禁用差异对比
+  const contentSize = (tab.originalContent?.length ?? 0) + (tab.content?.length ?? 0)
+  const isTooLarge = contentSize > DIFF_MAX_BYTES
 
+  const buildMergeView = useCallback((parent: HTMLElement) => {
     mergeRef.current?.destroy()
     mergeRef.current = new MergeView({
       a: {
@@ -92,29 +165,31 @@ export default function DiffEditor({ tab }: Props) {
       },
       b: {
         doc: tab.content ?? '',
-        extensions: sideExtensions(tab.language),
+        extensions: [
+          ...sideExtensions(tab.language),
+          keymap.of([
+            { key: 'Mod-ArrowDown', run: goToNextChunk },
+            { key: 'Mod-ArrowUp', run: goToPreviousChunk },
+          ]),
+        ],
       },
-      parent: hostRef.current,
+      parent,
       collapseUnchanged: { margin: 3, minSize: 4 },
+      gutter: true,
+      highlightChanges: true,
     })
+  }, [tab.originalContent, tab.content, tab.language])
+
+  useEffect(() => {
+    if (!hostRef.current || isTooLarge) return
+
+    buildMergeView(hostRef.current)
+    setStats(countDiffLines(tab.originalContent ?? '', tab.content ?? ''))
 
     const onTheme = () => {
-      // Rebuild so theme compartments stay in sync with app theme.
       const parent = hostRef.current
       if (!parent) return
-      mergeRef.current?.destroy()
-      mergeRef.current = new MergeView({
-        a: {
-          doc: tab.originalContent ?? '',
-          extensions: sideExtensions(tab.language),
-        },
-        b: {
-          doc: tab.content ?? '',
-          extensions: sideExtensions(tab.language),
-        },
-        parent,
-        collapseUnchanged: { margin: 3, minSize: 4 },
-      })
+      buildMergeView(parent)
     }
     window.addEventListener(THEME_SETTINGS_EVENT, onTheme)
     return () => {
@@ -122,13 +197,83 @@ export default function DiffEditor({ tab }: Props) {
       mergeRef.current?.destroy()
       mergeRef.current = null
     }
-  }, [tab.id, tab.originalContent, tab.content, tab.language])
+  }, [tab.id, tab.originalContent, tab.content, tab.language, buildMergeView, isTooLarge])
+
+  const handlePrevDiff = useCallback(() => {
+    const b = mergeRef.current?.b
+    if (!b) return
+    goToPreviousChunk({ state: b.state, dispatch: b.dispatch.bind(b) })
+  }, [])
+
+  const handleNextDiff = useCallback(() => {
+    const b = mergeRef.current?.b
+    if (!b) return
+    goToNextChunk({ state: b.state, dispatch: b.dispatch.bind(b) })
+  }, [])
+
+  // 文件过大时显示提示，不渲染差异对比
+  if (isTooLarge) {
+    return (
+      <div className="flex h-full min-h-0 flex-col bg-bg">
+        <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-[11px]">
+          <div className="flex flex-1 items-center border-r border-border px-3 py-1.5 text-fg-muted">
+            <span className="truncate">{t('HEAD（原文件）')}</span>
+          </div>
+          <div className="flex flex-1 items-center px-3 py-1.5 text-fg-muted">
+            <span className="truncate">{t('工作区（当前）')}</span>
+          </div>
+        </div>
+        <div className="flex flex-1 items-center justify-center p-6">
+          <div className="flex flex-col items-center gap-3 text-fg-muted">
+            <AlertTriangle size={32} className="text-warn" />
+            <p className="text-sm font-medium">{t('文件过大，无法显示差异对比')}</p>
+            <p className="text-xs">
+              {t('差异对比支持的最大文件大小为 {size}', { size: '5MB' })}
+            </p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg">
-      <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-[11px] text-fg-muted">
-        <div className="flex-1 truncate border-r border-border px-3 py-1.5">{t('HEAD（原文件）')}</div>
-        <div className="flex-1 truncate px-3 py-1.5">{t('工作区（当前）')}</div>
+      {/* Header: 文件信息 + 差异统计 + 导航 */}
+      <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-[11px]">
+        <div className="flex flex-1 items-center border-r border-border px-3 py-1.5 text-fg-muted">
+          <span className="truncate">{t('HEAD（原文件）')}</span>
+          {stats.removed > 0 && (
+            <span className="ml-2 inline-flex items-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
+              -{stats.removed}
+            </span>
+          )}
+        </div>
+        <div className="flex flex-1 items-center px-3 py-1.5 text-fg-muted">
+          <span className="truncate">{t('工作区（当前）')}</span>
+          {stats.added > 0 && (
+            <span className="ml-2 inline-flex items-center rounded-full bg-green-500/15 px-1.5 py-0.5 text-[10px] font-medium text-green-400">
+              +{stats.added}
+            </span>
+          )}
+          <div className="ml-auto flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handlePrevDiff}
+              title={t('上一个差异')}
+              className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-deep"
+            >
+              <ChevronUp size={12} />
+            </button>
+            <button
+              type="button"
+              onClick={handleNextDiff}
+              title={t('下一个差异')}
+              className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-deep"
+            >
+              <ChevronDown size={12} />
+            </button>
+          </div>
+        </div>
       </div>
       <div ref={hostRef} className="cm-merge-host min-h-0 flex-1 overflow-hidden" />
     </div>

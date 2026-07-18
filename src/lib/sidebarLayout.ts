@@ -1,6 +1,8 @@
 export const SIDEBAR_WIDTH_KEY = 'qingcode:sidebar-width'
 
-export const SIDEBAR_DEFAULT_WIDTH = 260
+export const SIDEBAR_DEFAULT_WIDTH = 300
+/** Old factory default — migrate so existing installs pick up the wider sidebar. */
+const SIDEBAR_LEGACY_DEFAULT_WIDTH = 260
 export const SIDEBAR_MIN_WIDTH = 180
 export const SIDEBAR_MAX_WIDTH = 520
 export const SIDEBAR_EDITOR_MIN_WIDTH = 320
@@ -19,6 +21,7 @@ export function loadSidebarWidth(): number {
     if (raw == null) return SIDEBAR_DEFAULT_WIDTH
     const parsed = Number.parseInt(raw, 10)
     if (!Number.isFinite(parsed)) return SIDEBAR_DEFAULT_WIDTH
+    if (parsed === SIDEBAR_LEGACY_DEFAULT_WIDTH) return SIDEBAR_DEFAULT_WIDTH
     return clampSidebarWidth(parsed)
   } catch {
     return SIDEBAR_DEFAULT_WIDTH

@@ -50,7 +50,7 @@ export function revealAppWindow() {
       const needsRepair = logicalW < MIN_SANE_WIDTH || logicalH < MIN_SANE_HEIGHT
 
       if (needsRepair) {
-        // Prefer repairing while hidden to avoid title-bar flash.
+        // Prefer repairing while hidden; avoid decorations toggles (blank WebView2).
         if (visible) {
           try {
             await win.hide()
@@ -58,18 +58,22 @@ export function revealAppWindow() {
             // continue with best-effort resize
           }
         }
-        try {
-          await win.setDecorations(true)
-        } catch {
-          // optional permission
-        }
         await win.setSize(new LogicalSize(DEFAULT_WIDTH, DEFAULT_HEIGHT))
-        try {
-          await win.setDecorations(false)
-        } catch {
-          // keep default chrome if toggle fails
-        }
         await win.center()
+        const [nextSize, nextScale] = await Promise.all([win.innerSize(), win.scaleFactor()])
+        const nextW = nextSize.width / nextScale
+        const nextH = nextSize.height / nextScale
+        if (nextW < MIN_SANE_WIDTH || nextH < MIN_SANE_HEIGHT) {
+          try {
+            await win.setDecorations(true)
+            await win.setSize(new LogicalSize(DEFAULT_WIDTH, DEFAULT_HEIGHT))
+            await win.setDecorations(false)
+            await win.setSize(new LogicalSize(DEFAULT_WIDTH, DEFAULT_HEIGHT))
+            await win.center()
+          } catch {
+            // best-effort
+          }
+        }
       }
 
       if (!visible || needsRepair) {

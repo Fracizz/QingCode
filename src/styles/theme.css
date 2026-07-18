@@ -1,0 +1,131 @@
+@theme {
+  /* Cursor-style dark palette */
+  --color-bg: #1e1e1e;
+  --color-bg-deep: #181818;
+  --color-bg-sidebar: #252526;
+  --color-bg-elevated: #2d2d30;
+  --color-bg-hover: #2a2d2e;
+  --color-bg-active: #37373d;
+  --color-border: #2d2d30;
+  --color-border-strong: #3c3c3c;
+
+  --color-fg: #d4d4d4;
+  --color-fg-muted: #858585;
+  --color-fg-dim: #6b6b6b;
+
+  --color-accent: #4d9eff;
+  --color-accent-soft: #244a66;
+  --color-danger: #f48771;
+  --color-warn: #e2c08d;
+  --color-ok: #89d185;
+
+  --color-tab-active: #1e1e1e;
+  --color-tab-inactive: #2d2d30;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Segoe UI Variable", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas,
+    "Courier New", monospace;
+}
+
+:root {
+  --sidebar-width: 300px;
+  --activity-bar-width: 48px;
+  --terminal-height: 260px;
+  --tab-height: 35px;
+  --status-bar-height: 24px;
+  --title-bar-height: 32px;
+  --ui-font-size: 13px;
+  --ui-font-scale: 1;
+  --editor-font-size: 14px;
+  --terminal-font-size: 13px;
+}
+
+html[data-theme="light"] {
+  --color-bg: #f0f0f0;
+  --color-bg-deep: #e6e6e6;
+  --color-bg-sidebar: #e2e2e2;
+  --color-bg-elevated: #f6f6f6;
+  --color-bg-hover: #d6d6d6;
+  --color-bg-active: #cccccc;
+  --color-border: #d0d0d0;
+  --color-border-strong: #bcbcbc;
+
+  --color-fg: #1f1f1f;
+  --color-fg-muted: #555555;
+  --color-fg-dim: #757575;
+
+  --color-accent: #005fb8;
+  --color-accent-soft: #b4d7f7;
+  --color-danger: #c41e3a;
+  --color-warn: #b88000;
+  --color-ok: #107c10;
+
+  --color-tab-active: #f0f0f0;
+  --color-tab-inactive: #e2e2e2;
+}
+
+/* JetBrains Material Theme UI — Material Forest. */
+html[data-theme="forest"] {
+  --color-bg: #002626;
+  --color-bg-deep: #002020;
+  --color-bg-sidebar: #002e2e;
+  --color-bg-elevated: #003535;
+  --color-bg-hover: #003f3f;
+  --color-bg-active: #104110;
+  --color-border: #003838;
+  --color-border-strong: #005454;
+
+  --color-fg: #b2c2b0;
+  --color-fg-muted: #49694d;
+  --color-fg-dim: #005454;
+
+  /* Muted amber: Material Forest's #ffcc80 is too luminous for filled CTAs. */
+  --color-accent: #b8894a;
+  --color-accent-soft: #104110;
+  --color-danger: #f07178;
+  --color-warn: #d4b06a;
+  --color-ok: #89d185;
+
+  --color-tab-active: #002626;
+  --color-tab-inactive: #002e2e;
+}
+
+html[data-theme="forest"] .cm-editor .cm-content {
+  color: #eeffff;
+}
+
+html[data-theme="light"] * {
+  scrollbar-color: #c4c4c4 transparent;
+}
+
+html[data-theme="forest"] * {
+  scrollbar-color: #003838 transparent;
+}
+
+html[data-theme="light"] *::-webkit-scrollbar-thumb {
+  background: #c4c4c4;
+}
+
+html[data-theme="forest"] *::-webkit-scrollbar-thumb {
+  background: #003838;
+}
+
+html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+html[data-theme="forest"] *::-webkit-scrollbar-thumb:hover {
+  background: #005454;
+}
+
+/* Smooth color cross-fade while switching themes (class applied briefly by applyTheme). */
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition:
+    background-color 200ms ease,
+    border-color 200ms ease,
+    color 200ms ease !important;
+}

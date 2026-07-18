@@ -199,19 +199,35 @@
     </script>
     <script>
       ;(function () {
-        // Show as soon as splash markup is in the DOM. Size repair happens in Rust while hidden.
+        // Show once splash markup is ready. Prefer setSize-only repair — decorations
+        // toggles can blank WebView2 during the first navigation.
         function showWindow() {
           var tauri = window.__TAURI__
           var win = tauri && tauri.window && tauri.window.getCurrentWindow
             ? tauri.window.getCurrentWindow()
             : null
-          if (win && win.show) {
-            void win.show()
+          if (!win) {
+            if (tauri && tauri.core && tauri.core.invoke) {
+              void tauri.core.invoke('plugin:window|show')
+            }
             return
           }
-          if (tauri && tauri.core && tauri.core.invoke) {
-            void tauri.core.invoke('plugin:window|show')
+
+          function reveal() {
+            void win.show()
           }
+
+          Promise.resolve(win.innerSize ? win.innerSize() : null)
+            .then(function (size) {
+              if (!size || (size.width >= 200 && size.height >= 200)) return null
+              var LogicalSize = tauri.window && tauri.window.LogicalSize
+              if (!LogicalSize || !win.setSize) return null
+              return win.setSize(new LogicalSize(1280, 800)).then(function () {
+                return win.center ? win.center() : null
+              })
+            })
+            .catch(function () {})
+            .then(reveal, reveal)
         }
         if (document.readyState === 'loading') {
           document.addEventListener('DOMContentLoaded', showWindow)

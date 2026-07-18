@@ -231,6 +231,39 @@ fn spawn_script(
     state.spawn_script(id, &cwd, &shell_kind, &target, env, app)
 }
 
+#[cfg(target_os = "windows")]
+fn repair_windows_main_window_size(window: &tauri::WebviewWindow) {
+    const WIDTH: f64 = 1280.0;
+    const HEIGHT: f64 = 800.0;
+    const MIN_SANE: u32 = 200;
+
+    let target = tauri::Size::Logical(tauri::LogicalSize::new(WIDTH, HEIGHT));
+    let min = tauri::Size::Logical(tauri::LogicalSize::new(720.0, 480.0));
+
+    // Prefer sizing without a decorations toggle: toggling chrome while the first
+    // navigation is in flight can leave WebView2 stuck on an empty surface.
+    let _ = window.set_size(target);
+    let _ = window.set_min_size(Some(min));
+    let _ = window.center();
+
+    let needs_chrome_toggle = window
+        .inner_size()
+        .map(|size| size.width < MIN_SANE || size.height < MIN_SANE)
+        .unwrap_or(true);
+    if !needs_chrome_toggle {
+        return;
+    }
+
+    let _ = window.set_decorations(true);
+    let _ = window.set_size(target);
+    let _ = window.set_min_size(Some(min));
+    let _ = window.set_decorations(false);
+    let _ = window.set_size(target);
+    let _ = window.center();
+    // Decorations changes can abort the initial document load — reload once.
+    let _ = window.reload();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let launch_files = file_associations::collect_cli_file_paths(std::env::args());
@@ -254,24 +287,25 @@ pub fn run() {
         .setup(|app| {
             migrate_legacy_database();
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
+                // Keep visible:false from config so the HTML splash owns the first show().
+                // Pin an explicit inner size on Windows so borderless+hidden does not boot
+                // at ~14x14; only fall back to a decorations toggle if size is still wrong.
+                #[cfg(target_os = "windows")]
+                let window = tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+                    .devtools(cfg!(debug_assertions))
+                    .enable_clipboard_access()
+                    .inner_size(1280.0, 800.0)
+                    .min_inner_size(720.0, 480.0)
+                    .build()?;
+                #[cfg(not(target_os = "windows"))]
                 let window = tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
                     .devtools(cfg!(debug_assertions))
                     .enable_clipboard_access()
                     .build()?;
-                // Keep the window hidden until the HTML splash paints and calls show().
-                // On Windows, borderless + visible:false often boots at ~14x14 and ignores
-                // set_size while undecorated — repair size with a decorations toggle while
-                // still hidden so chrome never flashes.
+
                 #[cfg(target_os = "windows")]
                 {
-                    let _ = window.set_decorations(true);
-                    let _ = window
-                        .set_size(tauri::Size::Logical(tauri::LogicalSize::new(1280.0, 800.0)));
-                    let _ = window.set_min_size(Some(tauri::Size::Logical(
-                        tauri::LogicalSize::new(720.0, 480.0),
-                    )));
-                    let _ = window.set_decorations(false);
-                    let _ = window.center();
+                    repair_windows_main_window_size(&window);
                 }
                 #[cfg(not(target_os = "windows"))]
                 {

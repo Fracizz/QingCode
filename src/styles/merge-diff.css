@@ -1,0 +1,19 @@
+/* Git side-by-side diff (CodeMirror MergeView) fills the editor pane. */
+.cm-merge-host {
+  height: 100%;
+}
+.cm-merge-host .cm-mergeView,
+.cm-merge-host .cm-mergeViewEditors {
+  height: 100%;
+}
+.cm-merge-host .cm-mergeViewEditors {
+  display: flex;
+}
+.cm-merge-host .cm-mergeViewEditors > * {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+.cm-merge-host .cm-editor {
+  height: 100%;
+}

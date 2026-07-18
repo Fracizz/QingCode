@@ -1,0 +1,20 @@
+/* xterm: match panel background; padding belongs on the outer wrapper in Terminal.tsx */
+.xterm {
+  height: 100%;
+  width: 100%;
+  background: var(--color-bg-deep);
+}
+
+/* xterm.css hardcodes viewport/composition to #000 — follow theme surfaces */
+.xterm .xterm-viewport {
+  background-color: var(--color-bg-deep) !important;
+}
+
+.xterm .composition-view {
+  background: var(--color-bg-elevated);
+  color: var(--color-fg);
+}
+
+.xterm-viewport::-webkit-scrollbar {
+  width: 10px;
+}

@@ -1,0 +1,118 @@
+/* Panel resize sash (sidebar + terminal) */
+body.panel-resizing,
+body.panel-resizing * {
+  cursor: ns-resize !important;
+  user-select: none !important;
+}
+
+body.panel-resizing[data-panel-resize='vertical'],
+body.panel-resizing[data-panel-resize='vertical'] * {
+  cursor: ew-resize !important;
+}
+
+.panel-resizer {
+  position: relative;
+  flex-shrink: 0;
+  z-index: 20;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.panel-resizer--horizontal {
+  width: 100%;
+  height: 10px;
+  cursor: ns-resize;
+}
+
+.panel-resizer--vertical {
+  width: 8px;
+  margin-right: -4px;
+  cursor: ew-resize;
+}
+
+.panel-resizer-line {
+  position: absolute;
+  background: var(--color-border-strong);
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease;
+  pointer-events: none;
+}
+
+.panel-resizer--horizontal .panel-resizer-line {
+  inset-inline: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  transition-property: opacity, background, height;
+}
+
+.panel-resizer--vertical .panel-resizer-line {
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  transition-property: opacity, background, width;
+}
+
+.panel-resizer-grip {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+
+.panel-resizer--horizontal .panel-resizer-grip {
+  flex-direction: row;
+  gap: 4px;
+  padding: 0 6px;
+}
+
+.panel-resizer--vertical .panel-resizer-grip {
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 0;
+}
+
+.panel-resizer-grip span {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--color-fg-dim);
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.panel-resizer:hover .panel-resizer-line,
+.panel-resizer--active .panel-resizer-line {
+  opacity: 1;
+}
+
+/* Glow effect on hover */
+.panel-resizer:hover {
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-accent) 30%, transparent));
+}
+
+.panel-resizer--active.panel-resizer--horizontal .panel-resizer-line {
+  height: 2px;
+  background: var(--color-accent);
+}
+
+.panel-resizer--active.panel-resizer--vertical .panel-resizer-line {
+  width: 2px;
+  background: var(--color-accent);
+}
+
+.panel-resizer:hover .panel-resizer-grip,
+.panel-resizer--active .panel-resizer-grip {
+  opacity: 1;
+}
+
+.panel-resizer--active .panel-resizer-grip span {
+  background: var(--color-accent);
+  transform: scale(1.15);
+}

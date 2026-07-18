@@ -15,6 +15,10 @@ dist-ssr
 # 构建产物（单文件 exe 归档目录）
 release
 src-tauri/target
+src-tauri/gen
+
+# 包管理器 lock（使用 pnpm）
+package-lock.json
 
 # dev 环境本地数据库（项目内，不提交）
 .dev

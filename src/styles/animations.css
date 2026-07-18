@@ -1,0 +1,80 @@
+/* Toasts */
+.toast-enter {
+  animation: toast-in 160ms ease-out;
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Toast auto-dismiss countdown bar (duration set inline per toast). */
+.toast-progress {
+  animation-name: toast-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+@keyframes toast-progress {
+  from { width: 100%; }
+  to { width: 0; }
+}
+
+/* Modal / menu entrance animations */
+.modal-overlay-enter {
+  animation: modal-overlay-in 140ms ease-out;
+}
+@keyframes modal-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-content-enter {
+  animation: modal-content-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes modal-content-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.menu-enter {
+  animation: menu-in 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Tooltip fade-in */
+.tooltip-enter {
+  animation: tooltip-in 120ms ease-out;
+}
+@keyframes tooltip-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Unsaved-changes dot: gentle pulse so dirty tabs stand out. */
+.dirty-pulse {
+  animation: dirty-pulse 2.2s ease-in-out infinite;
+}
+@keyframes dirty-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}

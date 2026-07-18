@@ -25,7 +25,7 @@ export default function ModalOverlay({
       role="presentation"
     >
       <div
-        className="modal-overlay-enter absolute inset-0 bg-black/55 backdrop-blur-[1px]"
+        className="modal-overlay-enter absolute inset-0 bg-black/55 backdrop-blur-[3px] transition-all duration-150"
         aria-hidden
         onMouseDown={onDismiss}
       />

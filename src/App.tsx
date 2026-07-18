@@ -110,19 +110,27 @@ function EmptyEditor() {
   ]
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-5 px-6 select-none">
-      <div className="flex flex-col items-center gap-2">
-        <AppIcon size={48} />
+    <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-6 px-6 select-none">
+      {/* Decorative background glow */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full bg-accent/[0.03] blur-3xl" />
+      </div>
+
+      <div className="flex flex-col items-center gap-3 relative">
+        <div className="relative">
+          <div className="absolute inset-0 bg-accent/10 blur-xl rounded-full scale-150" aria-hidden="true" />
+          <AppIcon size={52} />
+        </div>
         <p className="text-sm text-fg-muted">{t('从侧边栏打开文件开始编辑')}</p>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 relative">
         {actions.map(action => (
           <button
             key={action.label}
             type="button"
             onClick={action.onClick}
-            className="flex items-center gap-1.5 rounded border border-border-strong bg-bg-elevated px-3 py-1.5 text-[13px] text-fg-muted transition-colors hover:bg-bg-active hover:text-fg"
+            className="flex items-center gap-1.5 rounded-md border border-border-strong bg-bg-elevated/80 px-3.5 py-2 text-[13px] text-fg-muted transition-all duration-150 hover:bg-bg-active hover:text-fg hover:shadow-sm hover:-translate-y-[1px] active:translate-y-0"
           >
             {action.icon}
             {action.label}
@@ -131,8 +139,8 @@ function EmptyEditor() {
       </div>
 
       {recentProjects.length > 0 && (
-        <div className="flex flex-col items-center gap-1.5">
-          <p className="text-[11px] font-semibold tracking-wide text-fg-dim">{t('最近项目')}</p>
+        <div className="flex flex-col items-center gap-2 relative">
+          <p className="text-[11px] font-semibold tracking-wide text-fg-dim uppercase">{t('最近项目')}</p>
           <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-[420px]">
             {recentProjects.map(project => (
               <button
@@ -140,7 +148,7 @@ function EmptyEditor() {
                 type="button"
                 title={project.path}
                 onClick={() => void switchProject(project)}
-                className="max-w-[180px] truncate rounded-full border border-border px-2.5 py-1 text-[12px] text-fg-muted transition-colors hover:border-border-strong hover:bg-bg-hover hover:text-fg"
+                className="max-w-[180px] truncate rounded-full border border-border px-3 py-1 text-[12px] text-fg-muted transition-all duration-150 hover:border-border-strong hover:bg-bg-hover hover:text-fg hover:shadow-sm"
               >
                 {project.name}
               </button>
@@ -149,8 +157,8 @@ function EmptyEditor() {
         </div>
       )}
 
-      <p className="text-xs text-fg-dim flex items-center gap-1.5">
-        <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span>·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}
+      <p className="text-xs text-fg-dim/70 flex items-center gap-1.5 relative">
+        <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span className="text-fg-dim/40">·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}
       </p>
       {recent.length > 0 && (
         <div className="mt-2 w-full max-w-md">
@@ -617,8 +625,10 @@ function App() {
         )}
 
         <div
-          className={`${terminalOpen ? 'flex' : 'hidden'} flex-col flex-shrink-0 min-h-0 overflow-hidden border-t border-border`}
-          style={{ height: terminalHeight }}
+          className={`flex-col flex-shrink-0 min-h-0 overflow-hidden border-t border-border transition-all duration-200 ease-out ${
+            terminalOpen ? 'flex opacity-100' : 'opacity-0 pointer-events-none h-0 border-t-0'
+          }`}
+          style={{ height: terminalOpen ? terminalHeight : 0 }}
         >
           <TerminalTabs />
           <div className="relative flex-1 min-w-0 bg-bg-deep overflow-hidden min-h-0">

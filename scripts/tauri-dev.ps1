@@ -24,6 +24,17 @@ function Get-AvailableDevPort {
 
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
 
+# Unlock target\debug\qingcode.exe (and stale windows) from a previous session.
+Get-Process -Name 'qingcode', 'QingCode' -ErrorAction SilentlyContinue |
+  Where-Object {
+    $_.Path -and (
+      $_.Path -like (Join-Path $projectRoot 'src-tauri\target\*') -or
+      $_.Path -like (Join-Path $projectRoot 'release\*')
+    )
+  } |
+  Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 400
+
 $devPort = Get-AvailableDevPort
 $env:VITE_DEV_PORT = "$devPort"
 
@@ -31,7 +42,9 @@ $devDir = Join-Path $projectRoot '.dev'
 New-Item -ItemType Directory -Force -Path $devDir | Out-Null
 
 $overridePath = Join-Path $devDir 'tauri-dev-override.json'
-@{ build = @{ devUrl = "http://127.0.0.1:$devPort" } } | ConvertTo-Json -Depth 3 | Set-Content $overridePath -Encoding UTF8
+$overrideJson = @{ build = @{ devUrl = "http://127.0.0.1:$devPort" } } | ConvertTo-Json -Depth 3
+# Avoid UTF-8 BOM (breaks some Tauri config merges on Windows PowerShell 5).
+[System.IO.File]::WriteAllText($overridePath, $overrideJson + "`n", (New-Object System.Text.UTF8Encoding $false))
 
 Write-Host "Using dev server port $devPort"
 

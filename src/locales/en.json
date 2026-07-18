@@ -727,6 +727,10 @@
     "来源：{source}": "Source: {source}",
     "打开下载页": "Open Download Page",
     "跳过此版本": "Skip This Version",
-    "稍后": "Later"
+    "稍后": "Later",
+    "上一个差异": "Previous Change",
+    "下一个差异": "Next Change",
+    "文件过大，无法显示差异对比": "File too large to display diff",
+    "差异对比支持的最大文件大小为 {size}": "Diff comparison supports files up to {size}"
   }
 }

@@ -45,3 +45,17 @@ queueMicrotask(() => {
 
 // Fallback only — HTML splash script should already have shown the window.
 window.setTimeout(() => revealAppWindow(), 120)
+
+// WebView2 can finish navigation with an empty #root after a decorations/size
+// repair aborted the first document load. Reload once per session.
+window.setTimeout(() => {
+  const root = document.getElementById('root')
+  if (!root || root.childElementCount > 0) return
+  try {
+    if (sessionStorage.getItem('qingcode:empty-root-reloaded') === '1') return
+    sessionStorage.setItem('qingcode:empty-root-reloaded', '1')
+  } catch {
+    return
+  }
+  window.location.reload()
+}, 800)

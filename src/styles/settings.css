@@ -1,0 +1,89 @@
+/* Shared text-input chrome (border/background/focus). Layout (padding, width,
+   font-size) stays on Tailwind classes at the call site so icon slots still work. */
+.setting-input {
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg-deep);
+  color: var(--color-fg);
+  outline: none;
+  transition: border-color 120ms ease;
+}
+.setting-input::placeholder {
+  color: var(--color-fg-dim);
+}
+.setting-input:focus {
+  border-color: var(--color-accent);
+}
+
+/* Settings / form selects — theme-aligned, hide native OS chrome */
+.setting-control {
+  min-width: 120px;
+  max-width: 100%;
+  height: 26px;
+  border-radius: 2px;
+  border: 1px solid var(--color-border-strong);
+  background-color: var(--color-bg-deep);
+  color: var(--color-fg);
+  padding: 0 8px;
+  font-size: 13px;
+  line-height: 24px;
+  outline: none;
+  box-shadow: none;
+  color-scheme: dark;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+html[data-theme='light'] .setting-control {
+  color-scheme: light;
+}
+
+html[data-theme='forest'] .setting-control {
+  color-scheme: dark;
+}
+
+.setting-control:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-fg-muted) 55%, var(--color-border-strong));
+}
+
+.setting-control:focus,
+.setting-control:focus-visible {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+.setting-control:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.setting-control-wide {
+  min-width: 180px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.setting-select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 24px;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--color-fg-muted) 50%),
+    linear-gradient(135deg, var(--color-fg-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) 11px,
+    calc(100% - 9px) 11px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.setting-select:hover:not(:disabled) {
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--color-fg) 50%),
+    linear-gradient(135deg, var(--color-fg) 50%, transparent 50%);
+}
+
+.setting-control option,
+.setting-control optgroup {
+  background: var(--color-bg-elevated);
+  color: var(--color-fg);
+}

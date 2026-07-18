@@ -21,6 +21,13 @@ const CHUNK_BYTES = 128 * 1024
 /** Max chunks to scan when Find Next continues past the current window. */
 const MAX_SEARCH_CHUNKS = 32
 
+/** 行偏移索引：记录文件中每行的起始字节偏移，用于快速定位 */
+type LineIndex = {
+  offsets: number[] // 每行的字节偏移
+  totalLines: number
+  fileSize: number
+}
+
 type FileSlice = {
   offset: number
   len: number
@@ -112,6 +119,8 @@ export default function LargeFileViewer({ tab }: Props) {
   const requestId = useRef(0)
   const markRefs = useRef<(HTMLElement | null)[]>([])
   const preRef = useRef<HTMLPreElement>(null)
+  // 行偏移索引缓存，避免重复计算
+  const lineIndexRef = useRef<LineIndex | null>(null)
 
   const loadSlice = useCallback(
     async (nextOffset: number): Promise<FileSlice | null> => {
@@ -229,6 +238,40 @@ export default function LargeFileViewer({ tab }: Props) {
     setActiveMatch(0)
   }
 
+  /** 构建行偏移索引：扫描整个文件建立每行的字节偏移 */
+  const buildLineIndex = useCallback(async (): Promise<LineIndex | null> => {
+    if (lineIndexRef.current && lineIndexRef.current.fileSize === fileSize) {
+      return lineIndexRef.current
+    }
+    try {
+      const offsets: number[] = [0]
+      let cursorOffset = 0
+      let currentEof = false
+      while (!currentEof && offsets.length < 10_000_000) {
+        const slice = await safeInvoke<FileSlice>('读取文件片段', 'read_file_slice', {
+          path: tab.path,
+          offset: cursorOffset,
+          maxBytes: CHUNK_BYTES,
+        })
+        if (!slice) break
+        // 统计当前块中的换行符，建立行偏移
+        for (let i = 0; i < slice.text.length; i++) {
+          if (slice.text.charCodeAt(i) === 10) { // '\n'
+            offsets.push(slice.offset + i + 1)
+          }
+        }
+        currentEof = slice.eof
+        cursorOffset = slice.offset + slice.len
+        if (cursorOffset >= fileSize) break
+      }
+      const index: LineIndex = { offsets, totalLines: offsets.length, fileSize }
+      lineIndexRef.current = index
+      return index
+    } catch {
+      return null
+    }
+  }, [tab.path, fileSize])
+
   const findInDirection = async (direction: 1 | -1) => {
     const query = searchInput.trim()
     if (!query || loading) return
@@ -249,7 +292,38 @@ export default function LargeFileViewer({ tab }: Props) {
       }
     }
 
-    // Continue into adjacent chunks (bounded).
+    // 优先使用行偏移索引进行搜索（如果文件不太大）
+    if (fileSize > 0 && fileSize <= 50 * 1024 * 1024) {
+      const index = await buildLineIndex()
+      if (index && index.offsets.length > 0) {
+        // 基于行索引进行搜索：逐行检查
+        const startLine = Math.floor(offset / CHUNK_BYTES) * (CHUNK_BYTES / 80) // 估算
+        const linesToCheck = direction === 1
+          ? index.offsets.slice(startLine)
+          : index.offsets.slice(0, startLine).reverse()
+        for (let i = 0; i < Math.min(linesToCheck.length, MAX_SEARCH_CHUNKS * 100); i++) {
+          const lineOffset = linesToCheck[i]
+          const slice = await safeInvoke<FileSlice>('读取文件片段', 'read_file_slice', {
+            path: tab.path,
+            offset: lineOffset,
+            maxBytes: CHUNK_BYTES,
+          })
+          if (!slice) break
+          const found = findAllMatches(slice.text, query)
+          if (found.length > 0) {
+            applySearch(query)
+            setActiveMatch(direction === 1 ? 0 : found.length - 1)
+            setStatusLine(null)
+            await loadSlice(slice.offset)
+            return
+          }
+        }
+        useProjectStore.getState().pushToast('info', t('未找到匹配项'))
+        return
+      }
+    }
+
+    // Fallback: 逐块扫描（原有逻辑）
     let cursorOffset = offset
     let cursorEof = eof
     for (let i = 0; i < MAX_SEARCH_CHUNKS; i++) {

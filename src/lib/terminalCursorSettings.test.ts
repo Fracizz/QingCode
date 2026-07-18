@@ -3,6 +3,7 @@ import {
   parseTerminalCursorBlinking,
   readTerminalCursorBlinking,
 } from './terminalCursorSettings'
+import { DEFAULT_GLOBAL_SETTINGS } from './projectSettings'
 
 describe('terminalCursorSettings', () => {
   it('defaults to blinking when unset', () => {
@@ -12,9 +13,12 @@ describe('terminalCursorSettings', () => {
   })
 
   it('reads terminal.integrated.cursorBlinking', () => {
-    expect(readTerminalCursorBlinking({ 'terminal.integrated.cursorBlinking': false })).toBe(
-      false,
-    )
-    expect(readTerminalCursorBlinking({})).toBe(true)
+    expect(
+      readTerminalCursorBlinking({
+        ...DEFAULT_GLOBAL_SETTINGS,
+        'terminal.integrated.cursorBlinking': false,
+      }),
+    ).toBe(false)
+    expect(readTerminalCursorBlinking(DEFAULT_GLOBAL_SETTINGS)).toBe(true)
   })
 })
