@@ -47,6 +47,23 @@ export function pathsEqual(a: string, b: string) {
   return normalizePath(a).toLowerCase() === normalizePath(b).toLowerCase()
 }
 
+/** True when `paths` already contains an entry equal to `path` (separator/case insensitive). */
+export function pathSetHas(paths: Set<string>, path: string) {
+  if (paths.has(path)) return true
+  for (const entry of paths) {
+    if (pathsEqual(entry, path)) return true
+  }
+  return false
+}
+
+/** Add `path` to a set unless an equal path is already present. */
+export function addPathToSet(paths: Set<string>, path: string) {
+  if (pathSetHas(paths, path)) return paths
+  const next = new Set(paths)
+  next.add(path)
+  return next
+}
+
 /** True when `childPath` is the same as or nested under `ancestorPath`. */
 export function isDescendantOf(childPath: string, ancestorPath: string) {
   const child = normalizePath(childPath).toLowerCase()

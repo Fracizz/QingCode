@@ -411,7 +411,7 @@ export default function SettingsEditor() {
                 {match('界面字号', '字体') && (
                   <SettingItem
                     title={t('界面字号')}
-                    description={t('控制菜单、侧栏、标签和状态栏的字号（像素）。')}
+                    description={t('控制菜单、标题栏、侧栏、标签和状态栏的字号（像素）。')}
                     modified={fonts.interfaceFontSize !== DEFAULT_FONT_SETTINGS.interfaceFontSize}
                     locked={workspaceLocked}
                     lockHint={t('此设置仅在用户作用域中可用')}
@@ -523,7 +523,7 @@ export default function SettingsEditor() {
                 <>
                 <SettingItem
                   title={t('界面字体')}
-                  description={t('用于菜单、侧栏、标签和状态栏的字体族。可选择本机已安装字体。')}
+                  description={t('用于菜单、标题栏、侧栏、标签和状态栏的字体族。可选择本机已安装字体。')}
                   modified={fonts.interfaceFont !== DEFAULT_FONT_SETTINGS.interfaceFont}
                   locked={workspaceLocked}
                   lockHint={t('此设置仅在用户作用域中可用')}

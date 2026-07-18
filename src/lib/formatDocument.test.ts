@@ -20,8 +20,8 @@ describe('formatDocumentErrorToast', () => {
     expect(formatDocumentErrorToast('暂不支持格式化该语言/扩展名（.java）')).toBe(
       '暂不支持格式化该语言/扩展名（.java）',
     )
-    expect(formatDocumentErrorToast('未找到 shfmt（请安装 shfmt 并加入 PATH）')).toBe(
-      '未找到 shfmt（请安装 shfmt 并加入 PATH）',
+    expect(formatDocumentErrorToast('未找到 shfmt。请安装 shfmt 并加入 PATH')).toBe(
+      '未找到 shfmt。请安装 shfmt 并加入 PATH',
     )
     expect(formatDocumentErrorToast('格式化失败: syntax')).toBe('格式化失败: syntax')
   })

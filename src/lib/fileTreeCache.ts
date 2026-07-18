@@ -2,13 +2,14 @@ import { safeInvoke } from './tauri'
 import type { Project } from '../types'
 import { collectAncestorDirs, findProjectForPath } from '../utils/fileReferences'
 import {
+  findNodeByPath,
   patchTree,
   type FileNode,
 } from '../utils/fileTreeHelpers'
 import { loadExcludeSettingsForProject } from './excludeSettings'
 
 export type { FileNode }
-export { patchTree }
+export { findNodeByPath, patchTree }
 
 /** Mark directory nodes as not yet expanded. */
 export function withLoadedFlags(nodes: FileNode[]): FileNode[] {

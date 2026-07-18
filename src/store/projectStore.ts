@@ -3,7 +3,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { tempDir } from '@tauri-apps/api/path'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import type { Project, RecentFile } from '../types'
-import { baseName } from '../utils/fileTreeHelpers'
+import { baseName, findNodeByPath } from '../utils/fileTreeHelpers'
 import { useEditorStore } from './editorStore'
 import { translate } from '../lib/i18n'
 import { shouldRestoreWorkspace } from '../lib/windowSession'
@@ -61,6 +61,8 @@ interface ProjectState {
   expandedProjects: Record<string, boolean>
   /** File path to reveal/highlight in the sidebar tree. */
   treeRevealPath: string | null
+  /** Increments on every reveal so Sidebar can re-scroll/expand even for the same path. */
+  treeRevealSeq: number
   unavailableProjectIds: string[]
   loading: boolean
   toasts: Toast[]
@@ -107,6 +109,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   projectTrees: {},
   expandedProjects: {},
   treeRevealPath: null,
+  treeRevealSeq: 0,
   unavailableProjectIds: [],
   loading: false,
   toasts: [],
@@ -666,6 +669,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     set(s => ({
       treeRevealPath: filePath,
+      treeRevealSeq: s.treeRevealSeq + 1,
       expandedProjects: { ...s.expandedProjects, [project.id]: true },
     }))
 
@@ -673,6 +677,18 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     for (const dir of dirsToReveal(filePath, project)) {
       await get().expandProjectDir(project.id, dir)
+    }
+
+    // Folder targets: load children so revealing a breadcrumb folder actually opens it.
+    const tree = get().projectTrees[project.id] ?? []
+    const target = findNodeByPath(tree, filePath)
+    if (target) {
+      if (target.path !== filePath) {
+        set({ treeRevealPath: target.path })
+      }
+      if (target.is_dir) {
+        await get().expandProjectDir(project.id, target.path)
+      }
     }
   },
 }))

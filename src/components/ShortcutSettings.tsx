@@ -1,8 +1,9 @@
 import { useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { RotateCcw } from 'lucide-react'
 import {
+  canonicalizeShortcut,
+  isReservedShortcut,
   isShortcutInputTarget,
-  RESERVED_SHORTCUTS,
   shortcutFromKeyboardEvent,
   type ShortcutCommand,
 } from '../lib/shortcuts'
@@ -91,11 +92,15 @@ export default function ShortcutSettings() {
       setMessage(t('请输入 Ctrl、Alt、Shift 或 Meta 加按键的组合。'))
       return
     }
-    if (RESERVED_SHORTCUTS.has(shortcut)) {
+    if (isReservedShortcut(shortcut)) {
       setMessage(t('该按键组合已由编辑器或开发工具使用。'))
       return
     }
-    const conflict = COMMANDS.find(item => item.id !== command && shortcuts[item.id] === shortcut)
+    const conflict = COMMANDS.find(
+      item =>
+        item.id !== command &&
+        canonicalizeShortcut(shortcuts[item.id]) === canonicalizeShortcut(shortcut),
+    )
     if (conflict) {
       setMessage(t('该快捷键已用于「{name}」。', { name: t(conflict.label) }))
       return

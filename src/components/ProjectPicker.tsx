@@ -214,7 +214,7 @@ export default function ProjectPicker() {
               aria-haspopup="menu"
               onClick={openOverflow}
               onDoubleClick={event => event.stopPropagation()}
-              className={`flex items-center justify-center h-6 w-7 rounded text-[12px] flex-shrink-0 transition-colors
+              className={`flex items-center justify-center h-6 w-7 rounded text-[13px] flex-shrink-0 transition-colors
                 ${overflowOpen ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
             >
               <ChevronDown
@@ -233,7 +233,7 @@ export default function ProjectPicker() {
             disabled={addingEmpty}
             onClick={() => void handleAddEmpty()}
             onDoubleClick={event => event.stopPropagation()}
-            className={`flex items-center justify-center h-6 w-7 rounded text-[12px] flex-shrink-0 transition-colors
+            className={`flex items-center justify-center h-6 w-7 rounded text-[13px] flex-shrink-0 transition-colors
               ${addingEmpty ? 'opacity-50 cursor-not-allowed' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
           >
             <Plus size={14} />
@@ -245,7 +245,7 @@ export default function ProjectPicker() {
             type="button"
             onClick={() => void handleAddEmpty()}
             onDoubleClick={event => event.stopPropagation()}
-            className="flex items-center h-6 px-2 rounded text-[12px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="flex items-center h-6 px-2 rounded text-[13px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
           >
             {t('新建临时项目')}
           </button>
@@ -441,7 +441,7 @@ function Chip({
       data-chip-id={measure ? project.id : undefined}
       onClick={() => !unavailable && onSwitch()}
       onDoubleClick={event => event.stopPropagation()}
-      className={`group flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[12px] flex-shrink-0 select-none transition-colors
+      className={`group flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-colors
         ${
           isCurrent
             ? 'bg-bg-active text-fg'

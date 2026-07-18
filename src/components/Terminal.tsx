@@ -358,6 +358,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const ro = new ResizeObserver(() => {
       if (!isActiveRef.current) return
+      // Terminal height drag updates the panel via DOM every frame; defer xterm
+      // fit until mouseup (layoutKey commit) so resize stays smooth.
+      if (
+        document.body.classList.contains('panel-resizing') &&
+        document.body.dataset.panelResize === 'horizontal'
+      ) {
+        return
+      }
       scheduleFit()
     })
     if (containerRef.current) ro.observe(containerRef.current)

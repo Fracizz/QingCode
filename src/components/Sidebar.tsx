@@ -39,7 +39,16 @@ import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import InlineCreateRow from './InlineCreateRow'
 import type { Project } from '../types'
-import { collectAncestorDirs, copyToClipboard, formatFileReference, isDescendantOf, pathsEqual } from '../utils/fileReferences'
+import {
+  addPathToSet,
+  collectAncestorDirs,
+  copyToClipboard,
+  formatFileReference,
+  isDescendantOf,
+  pathSetHas,
+  pathsEqual,
+} from '../utils/fileReferences'
+import { findNodeByPath } from '../utils/fileTreeHelpers'
 import {
   createTreeDepth,
   dirsToReveal,
@@ -73,6 +82,7 @@ type TreeRowProps = {
   expandedPaths: Set<string>
   loadingPaths: Set<string>
   activeFilePath: string | null
+  revealPath: string | null
   gitStatusFor: (path: string, isDir: boolean) => string | null
   onOpenContextMenu: (event: ReactMouseEvent, target: ContextTarget) => void
   onCopyPath: (path: string) => void
@@ -89,6 +99,7 @@ function VirtualTreeRow({
   expandedPaths,
   loadingPaths,
   activeFilePath,
+  revealPath,
   gitStatusFor,
   onOpenContextMenu,
   onCopyPath,
@@ -106,8 +117,9 @@ function VirtualTreeRow({
   }
 
   const { node, depth } = row
-  const expanded = node.is_dir && expandedPaths.has(node.path)
+  const expanded = node.is_dir && pathSetHas(expandedPaths, node.path)
   const isActive = !node.is_dir && activeFilePath != null && pathsEqual(node.path, activeFilePath)
+  const isRevealed = revealPath != null && pathsEqual(node.path, revealPath)
   const rowStyle: CSSProperties = { ...style, paddingLeft: depth * 12 + 8 }
   const gitStatus = gitStatusFor(node.path, !!node.is_dir)
   const gitGlyph = gitStatusGlyph(gitStatus)
@@ -126,7 +138,7 @@ function VirtualTreeRow({
       {...ariaAttributes}
       tabIndex={0}
       className={`flex items-center gap-1 pr-2 py-[3px] cursor-pointer text-[13px] select-none focus:outline-none
-        ${isActive ? 'bg-bg-active text-accent' : 'hover:bg-bg-hover focus:bg-bg-active'}`}
+        ${isActive || isRevealed ? 'bg-bg-active text-accent' : 'hover:bg-bg-hover focus:bg-bg-active'}`}
       style={rowStyle}
       onClick={() => onToggleNode(node)}
       onContextMenu={event => {
@@ -153,7 +165,7 @@ function VirtualTreeRow({
       )}
       <span className={`truncate ${gitColor || 'text-fg'}`}>{node.name}</span>
       {gitGlyph && (
-        <span className={`ml-auto flex-shrink-0 text-[11px] font-medium ${gitColor}`} title={gitStatus ?? undefined}>
+        <span className={`ml-auto flex-shrink-0 text-[11px] font-medium ${gitColor}`}>
           {gitGlyph}
         </span>
       )}
@@ -206,33 +218,66 @@ export default function Sidebar() {
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(() => new Set())
   const listRef = useRef<ListImperativeAPI>(null)
   const treeRevealPath = useProjectStore(s => s.treeRevealPath)
+  const treeRevealSeq = useProjectStore(s => s.treeRevealSeq)
   const tree = currentProject ? projectTrees[currentProject.id] ?? [] : []
   const visibleTreeRows = useMemo(
     () => flattenVisibleNodes(tree, expandedPaths, pendingCreate),
     [expandedPaths, pendingCreate, tree],
   )
+  const revealingProjectRoot =
+    !!currentProject &&
+    !!treeRevealPath &&
+    pathsEqual(treeRevealPath, currentProject.path)
 
   useEffect(() => {
     if (!currentProject || !treeRevealPath || !isDescendantOf(treeRevealPath, currentProject.path)) return
-    const paths = collectAncestorDirs(treeRevealPath, currentProject.path)
-    if (paths.length === 0) return
-    setExpandedPaths(existing => new Set([...existing, ...paths]))
-  }, [currentProject, treeRevealPath])
+    if (pathsEqual(treeRevealPath, currentProject.path)) return
+
+    const ancestors = collectAncestorDirs(treeRevealPath, currentProject.path)
+    const target = findNodeByPath(tree, treeRevealPath)
+    const toExpand = [
+      ...ancestors.map(path => findNodeByPath(tree, path)?.path ?? path),
+      ...(target?.is_dir ? [target.path] : []),
+    ]
+    if (toExpand.length === 0) return
+
+    setExpandedPaths(existing => {
+      let next = existing
+      for (const path of toExpand) next = addPathToSet(next, path)
+      return next === existing ? existing : new Set(next)
+    })
+
+    if (target?.is_dir && !target.loaded) {
+      void expandProjectDir(currentProject.id, target.path)
+    }
+  }, [currentProject, expandProjectDir, tree, treeRevealPath, treeRevealSeq])
 
   useEffect(() => {
     if (!pendingCreate || !currentProject || pendingCreate.projectId !== currentProject.id) return
-    setExpandedPaths(existing => new Set([
-      ...existing,
-      ...dirsToReveal(pendingCreate.parentPath, currentProject.path),
-    ]))
+    setExpandedPaths(existing => {
+      let next = existing
+      for (const path of dirsToReveal(pendingCreate.parentPath, currentProject.path)) {
+        next = addPathToSet(next, path)
+      }
+      return next === existing ? existing : new Set(next)
+    })
   }, [currentProject, pendingCreate])
 
   useEffect(() => {
+    if (!treeRevealPath || !currentProject) return
+    if (pathsEqual(treeRevealPath, currentProject.path)) {
+      listRef.current?.scrollToRow({ index: 0, align: 'start', behavior: 'smooth' })
+      return
+    }
     const targetIndex = pendingCreate
       ? visibleTreeRows.findIndex(row => row.kind === 'create')
-      : visibleTreeRows.findIndex(row => row.kind === 'node' && row.node.path === treeRevealPath)
-    if (targetIndex >= 0) listRef.current?.scrollToRow({ index: targetIndex, align: 'smart', behavior: 'smooth' })
-  }, [pendingCreate, treeRevealPath, visibleTreeRows])
+      : visibleTreeRows.findIndex(
+          row => row.kind === 'node' && pathsEqual(row.node.path, treeRevealPath),
+        )
+    if (targetIndex >= 0) {
+      listRef.current?.scrollToRow({ index: targetIndex, align: 'smart', behavior: 'smooth' })
+    }
+  }, [currentProject, pendingCreate, treeRevealPath, treeRevealSeq, visibleTreeRows])
 
   const toggleTreeNode = async (node: FileNode) => {
     if (!node.is_dir) {
@@ -240,11 +285,13 @@ export default function Sidebar() {
       return
     }
     if (!currentProject) return
-    const expanding = !expandedPaths.has(node.path)
+    const expanding = !pathSetHas(expandedPaths, node.path)
     setExpandedPaths(paths => {
-      const next = new Set(paths)
-      if (expanding) next.add(node.path)
-      else next.delete(node.path)
+      if (expanding) return addPathToSet(paths, node.path)
+      const next = new Set<string>()
+      for (const path of paths) {
+        if (!pathsEqual(path, node.path)) next.add(path)
+      }
       return next
     })
     if (!expanding || node.loaded) return
@@ -763,7 +810,9 @@ export default function Sidebar() {
             return (
               <>
                 <div
-                  className="group flex items-center gap-1 pl-3 pr-2 py-[5px] text-[13px] select-none text-fg cursor-default"
+                  className={`group flex items-center gap-1 pl-3 pr-2 py-[5px] text-[13px] select-none cursor-default ${
+                    revealingProjectRoot ? 'bg-bg-active text-accent' : 'text-fg'
+                  }`}
                   onContextMenu={event =>
                     showContextMenu(event, { kind: 'project', project: currentProject })
                   }
@@ -906,6 +955,7 @@ export default function Sidebar() {
                             expandedPaths,
                             loadingPaths,
                             activeFilePath: activeTabPath,
+                            revealPath: treeRevealPath,
                             gitStatusFor,
                             onOpenContextMenu: showContextMenu,
                             onCopyPath: copyPath,

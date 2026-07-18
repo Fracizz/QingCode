@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { Check } from 'lucide-react'
+import { getContextMenuStylePosition } from './contextMenuPosition'
 
 export interface ContextMenuItem {
   label: string
@@ -34,15 +35,17 @@ export default function ContextMenu({
   useLayoutEffect(() => {
     const menu = menuRef.current
     if (!menu) return
-    const margin = 8
-    const maxH = Math.max(120, window.innerHeight - margin * 2)
-    menu.style.maxHeight = `${maxH}px`
-    const width = menu.offsetWidth
-    const height = Math.min(menu.scrollHeight, maxH)
-    const nextX = Math.max(margin, Math.min(x, window.innerWidth - width - margin))
-    const rawY = preferAbove ? y - height : y
-    const nextY = Math.max(margin, Math.min(rawY, window.innerHeight - height - margin))
-    setPosition({ x: nextX, y: nextY })
+    const zoom = Number.parseFloat(getComputedStyle(menu).zoom) || 1
+    const placed = getContextMenuStylePosition(
+      x,
+      y,
+      { width: menu.offsetWidth, height: menu.scrollHeight },
+      { width: window.innerWidth, height: window.innerHeight },
+      preferAbove,
+      zoom,
+    )
+    menu.style.maxHeight = `${placed.maxHeight}px`
+    setPosition({ x: placed.x, y: placed.y })
     menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
   }, [x, y, items, preferAbove])
 

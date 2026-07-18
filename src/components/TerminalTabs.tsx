@@ -16,13 +16,29 @@ import { useUIStore } from '../store/uiStore'
 import { confirmDialog } from '../store/confirmStore'
 import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '../lib/terminalProfiles'
 import { formatTerminalName } from '../utils/terminalName'
-import { canCloseTerminalDirectly, listBusyTerminals } from '../lib/terminalClose'
+import { canCloseTerminalDirectly, isTerminalBusy, listBusyTerminals } from '../lib/terminalClose'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
 import { useI18n } from '../lib/i18n'
 
 const CLOSE_ARM_MS = 4000
+const BUSY_POLL_MS = 800
+
+function sameIdSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false
+  for (const id of a) {
+    if (!b.has(id)) return false
+  }
+  return true
+}
+
+/** Pulse only when busy (child process / run task); idle shells stay static green. */
+function terminalStatusDotClass(status: TerminalTab['status'], busy: boolean): string {
+  if (status === 'running') return busy ? 'text-ok dirty-pulse' : 'text-ok'
+  if (status === 'starting') return 'text-warn'
+  return 'text-fg-dim'
+}
 
 export default function TerminalTabs() {
   const { t: translate } = useI18n()
@@ -47,6 +63,7 @@ export default function TerminalTabs() {
   } | null>(null)
   const [profileMenu, setProfileMenu] = useState<{ x: number; y: number } | null>(null)
   const [closeArmId, setCloseArmId] = useState<string | null>(null)
+  const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set())
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const renameInputRef = useRef<HTMLInputElement>(null)
@@ -66,6 +83,28 @@ export default function TerminalTabs() {
   }, [renamingId])
 
   useEffect(() => {
+    let cancelled = false
+    const syncBusy = async () => {
+      const candidates = terminals.filter(
+        t => t.projectId === currentProject?.id && t.status !== 'exited',
+      )
+      const next = new Set<string>()
+      for (const terminal of candidates) {
+        if (await isTerminalBusy(terminal)) next.add(terminal.id)
+      }
+      if (!cancelled) {
+        setBusyIds(prev => (sameIdSet(prev, next) ? prev : next))
+      }
+    }
+    void syncBusy()
+    const timer = window.setInterval(() => void syncBusy(), BUSY_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [terminals, currentProject?.id])
+
+  useEffect(() => {
     if (!closeArmId) return
     let cancelled = false
     const syncArmState = async () => {
@@ -79,7 +118,7 @@ export default function TerminalTabs() {
       }
     }
     void syncArmState()
-    const timer = window.setInterval(() => void syncArmState(), 800)
+    const timer = window.setInterval(() => void syncArmState(), BUSY_POLL_MS)
     return () => {
       cancelled = true
       window.clearInterval(timer)
@@ -342,13 +381,7 @@ export default function TerminalTabs() {
                     <Circle
                       size={7}
                       fill="currentColor"
-                      className={
-                        t.status === 'running'
-                          ? 'text-ok dirty-pulse'
-                          : t.status === 'starting'
-                            ? 'text-warn'
-                            : 'text-fg-dim'
-                      }
+                      className={terminalStatusDotClass(t.status, busyIds.has(t.id))}
                     />
                     <input
                       ref={renameInputRef}
@@ -383,13 +416,7 @@ export default function TerminalTabs() {
                     <Circle
                       size={7}
                       fill="currentColor"
-                      className={
-                        t.status === 'running'
-                          ? 'text-ok dirty-pulse'
-                          : t.status === 'starting'
-                            ? 'text-warn'
-                            : 'text-fg-dim'
-                      }
+                      className={terminalStatusDotClass(t.status, busyIds.has(t.id))}
                     />
                     <span className={`text-[13px] truncate ${t.status === 'exited' ? 'opacity-60' : ''}`}>
                       {formatTerminalName(t.name)}

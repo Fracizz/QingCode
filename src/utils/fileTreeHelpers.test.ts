@@ -42,4 +42,15 @@ describe('patchTree', () => {
     ])
     expect(next[0].children?.[0].path).toBe('/proj/src/a.ts')
   })
+
+  it('matches Windows path separators when patching', () => {
+    const winTree: FileNode[] = [
+      { name: 'test', path: 'D:\\proj\\test', is_dir: true, loaded: false },
+    ]
+    const next = patchTree(winTree, 'D:/proj/test', () => [
+      { name: 'a.log', path: 'D:\\proj\\test\\a.log', is_dir: false },
+    ])
+    expect(next[0].loaded).toBe(true)
+    expect(next[0].children?.[0].name).toBe('a.log')
+  })
 })

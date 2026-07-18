@@ -1,5 +1,5 @@
 import type { FileNode } from './fileTreeHelpers'
-import { collectAncestorDirs, normalizePath } from './fileReferences'
+import { collectAncestorDirs, normalizePath, pathSetHas } from './fileReferences'
 
 export type PendingCreate = {
   projectId: string
@@ -36,7 +36,7 @@ export function flattenVisibleNodes(
   const rows: VisibleTreeRow[] = []
   const visit = (node: FileNode, depth: number) => {
     rows.push({ kind: 'node', node, depth })
-    if (!node.is_dir || !expandedPaths.has(node.path)) return
+    if (!node.is_dir || !pathSetHas(expandedPaths, node.path)) return
     if (pendingCreate?.parentPath === node.path) {
       rows.push({ kind: 'create', depth: depth + 1, directory: pendingCreate.directory })
     }

@@ -17,3 +17,32 @@
 .cm-merge-host .cm-editor {
   height: 100%;
 }
+
+/* Keep gutters even between panes; avoid bright ticks stretching wide. */
+.cm-merge-host .cm-changedLineGutter,
+.cm-merge-host .cm-deletedLineGutter,
+.cm-merge-host .cm-inlineChangedLineGutter {
+  width: 3px !important;
+  min-width: 3px !important;
+  max-width: 3px !important;
+}
+
+/* Collapsed unchanged bands: quieter divider, clearer affordance. */
+.cm-merge-host .cm-collapsedLines {
+  padding: 2px 8px !important;
+  margin: 2px 0 !important;
+  border-radius: 4px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--color-fg-muted) !important;
+  background: color-mix(in srgb, var(--color-bg-elevated) 80%, transparent) !important;
+  border: 1px solid var(--color-border);
+  box-shadow: none !important;
+  cursor: pointer;
+}
+.cm-merge-host .cm-collapsedLines:hover {
+  color: var(--color-fg) !important;
+  background: var(--color-bg-hover) !important;
+  border-color: var(--color-border-strong);
+}

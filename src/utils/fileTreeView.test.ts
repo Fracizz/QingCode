@@ -47,6 +47,20 @@ describe('flattenVisibleNodes', () => {
     ])
   })
 
+  it('treats expanded paths as equal across separators', () => {
+    const winTree: FileNode[] = [
+      {
+        name: 'test',
+        path: 'D:\\proj\\test',
+        is_dir: true,
+        loaded: true,
+        children: [{ name: 'a.log', path: 'D:\\proj\\test\\a.log', is_dir: false }],
+      },
+    ]
+    const rows = flattenVisibleNodes(winTree, new Set(['D:/proj/test']), null)
+    expect(rows.filter(r => r.kind === 'node').map(r => r.node.name)).toEqual(['test', 'a.log'])
+  })
+
   it('inserts pending create row under parent', () => {
     const rows = flattenVisibleNodes(tree, new Set(['/src']), {
       projectId: 'p',

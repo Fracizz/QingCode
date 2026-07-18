@@ -361,6 +361,14 @@ function createTabEditorState(
             return true
           },
         },
+        {
+          // Windows / some layouts report Alt before Shift.
+          key: 'Alt-Shift-f',
+          run: () => {
+            void formatDocument(tabId)
+            return true
+          },
+        },
       ]),
     ],
   })

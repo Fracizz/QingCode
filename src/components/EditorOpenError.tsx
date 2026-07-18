@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, Copy, ExternalLink, LocateFixed, RotateCw } from 'lucide-react'
-import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { AlertTriangle, AppWindow, Copy, ExternalLink, LocateFixed, RotateCw } from 'lucide-react'
+import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -47,6 +47,16 @@ export default function EditorOpenError({ tab }: Props) {
     }
   }
 
+  const openWithAssociatedApp = async () => {
+    try {
+      await openPath(tab.path)
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('在关联的应用程序中打开失败: {error}', { error: String(error) }))
+    }
+  }
+
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 bg-bg px-8 py-10 text-center">
       <AlertTriangle size={48} strokeWidth={1.25} className="text-warn opacity-90" aria-hidden />
@@ -63,6 +73,11 @@ export default function EditorOpenError({ tab }: Props) {
         </p>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[13px]">
+        <ActionButton
+          icon={<AppWindow size={14} />}
+          label={t('在关联的应用程序中打开')}
+          onClick={() => void openWithAssociatedApp()}
+        />
         <ActionButton
           icon={<RotateCw size={14} />}
           label={t('重试')}

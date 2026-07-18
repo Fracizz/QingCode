@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  addPathToSet,
   collectAncestorDirs,
   findProjectForPath,
   formatFileReference,
   isDescendantOf,
   normalizePath,
   parentPath,
+  pathSetHas,
   pathsEqual,
 } from './fileReferences'
 import type { Project } from '../types'
@@ -31,6 +33,13 @@ describe('normalizePath / parentPath / pathsEqual', () => {
 
   it('pathsEqual is case-insensitive', () => {
     expect(pathsEqual('D:/Work/A', 'd:\\work\\a\\')).toBe(true)
+  })
+
+  it('pathSetHas / addPathToSet tolerate separator differences', () => {
+    const set = new Set(['D:\\proj\\test'])
+    expect(pathSetHas(set, 'D:/proj/test')).toBe(true)
+    expect(addPathToSet(set, 'D:/proj/test')).toBe(set)
+    expect(addPathToSet(set, 'D:/proj/other').has('D:/proj/other')).toBe(true)
   })
 })
 

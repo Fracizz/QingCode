@@ -110,7 +110,7 @@ function EmptyEditor() {
   ]
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-6 px-6 select-none">
+    <div className="ui-font-scaled flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-6 px-6 select-none">
       {/* Decorative background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full bg-accent/[0.03] blur-3xl" />
@@ -284,34 +284,44 @@ function App() {
   const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth)
   const [isTerminalResizing, setIsTerminalResizing] = useState(false)
+  const terminalPanelRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef<{ startY: number; startH: number } | null>(null)
+  const dragHeightRef = useRef(terminalHeight)
   const [projectsReady, setProjectsReady] = useState(false)
 
-  const onResizerMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      dragStateRef.current = { startY: e.clientY, startH: terminalHeight }
-      setIsTerminalResizing(true)
-      const onMove = (ev: MouseEvent) => {
-        const st = dragStateRef.current
-        if (!st) return
-        const maxH = getTerminalMaxHeight()
-        const next = Math.min(maxH, Math.max(TERMINAL_MIN_HEIGHT, st.startH - (ev.clientY - st.startY)))
-        setTerminalHeight(next)
-      }
-      const onUp = () => {
-        dragStateRef.current = null
-        setIsTerminalResizing(false)
-        window.removeEventListener('mousemove', onMove)
-        window.removeEventListener('mouseup', onUp)
-        endPanelResize('horizontal')
-      }
-      window.addEventListener('mousemove', onMove)
-      window.addEventListener('mouseup', onUp)
-      beginPanelResize('horizontal')
-    },
-    [terminalHeight]
-  )
+  useEffect(() => {
+    dragHeightRef.current = terminalHeight
+  }, [terminalHeight])
+
+  const onResizerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const startH = dragHeightRef.current
+    dragStateRef.current = { startY: e.clientY, startH }
+    setIsTerminalResizing(true)
+    beginPanelResize('horizontal')
+
+    // Drive height via DOM during drag to avoid re-rendering App/Editor/xterm every pixel.
+    // React state + localStorage commit on mouseup.
+    const panel = terminalPanelRef.current
+    const onMove = (ev: MouseEvent) => {
+      const st = dragStateRef.current
+      if (!st) return
+      const maxH = getTerminalMaxHeight()
+      const next = Math.min(maxH, Math.max(TERMINAL_MIN_HEIGHT, st.startH - (ev.clientY - st.startY)))
+      dragHeightRef.current = next
+      if (panel) panel.style.height = `${next}px`
+    }
+    const onUp = () => {
+      dragStateRef.current = null
+      setTerminalHeight(dragHeightRef.current)
+      setIsTerminalResizing(false)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      endPanelResize('horizontal')
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -445,14 +455,17 @@ function App() {
         event.preventDefault()
         setView('settings')
       } else if (shortcutMatchesEvent('Shift+Alt+F', event)) {
-        // Editor keymap owns the shortcut inside CodeMirror; skip terminal focus.
+        // Handle in capture phase so format works even when CodeMirror has focus.
+        // (Previously skipped .cm-editor and relied on CM keymap, which often missed
+        // Alt+Shift+F on Windows / IME.) Skip only the terminal.
         if (
           event.target instanceof HTMLElement &&
-          event.target.closest('.cm-editor, .xterm')
+          event.target.closest('.xterm')
         ) {
           return
         }
         event.preventDefault()
+        event.stopPropagation()
         void formatDocument()
       }
     }
@@ -625,10 +638,22 @@ function App() {
         )}
 
         <div
-          className={`flex-col flex-shrink-0 min-h-0 overflow-hidden border-t border-border transition-all duration-200 ease-out ${
+          ref={terminalPanelRef}
+          data-terminal-panel
+          className={`flex-col flex-shrink-0 min-h-0 overflow-hidden border-t border-border ${
+            isTerminalResizing ? '' : 'transition-all duration-200 ease-out'
+          } ${
             terminalOpen ? 'flex opacity-100' : 'opacity-0 pointer-events-none h-0 border-t-0'
           }`}
-          style={{ height: terminalOpen ? terminalHeight : 0 }}
+          style={{
+            // While dragging, prefer the live ref so the isTerminalResizing
+            // re-render (and any incidental App updates) cannot snap height back.
+            height: terminalOpen
+              ? isTerminalResizing
+                ? dragHeightRef.current
+                : terminalHeight
+              : 0,
+          }}
         >
           <TerminalTabs />
           <div className="relative flex-1 min-w-0 bg-bg-deep overflow-hidden min-h-0">

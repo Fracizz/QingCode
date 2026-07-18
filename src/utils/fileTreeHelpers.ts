@@ -7,6 +7,26 @@ export interface FileNode {
   loaded?: boolean
 }
 
+export function normalizeProjectPath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+function pathsMatch(a: string, b: string) {
+  return normalizeProjectPath(a) === normalizeProjectPath(b)
+}
+
+/** Find a node by path (separator/case insensitive). */
+export function findNodeByPath(nodes: FileNode[], targetPath: string): FileNode | null {
+  for (const node of nodes) {
+    if (pathsMatch(node.path, targetPath)) return node
+    if (node.children) {
+      const found = findNodeByPath(node.children, targetPath)
+      if (found) return found
+    }
+  }
+  return null
+}
+
 /** Immutable patch: replace children of the node at `targetPath`. */
 export function patchTree(
   nodes: FileNode[],
@@ -14,7 +34,7 @@ export function patchTree(
   updater: (existing: FileNode[] | undefined) => FileNode[],
 ): FileNode[] {
   return nodes.map(n => {
-    if (n.path === targetPath) {
+    if (pathsMatch(n.path, targetPath)) {
       const children = updater(n.children)
       return { ...n, children, loaded: true }
     }
@@ -23,10 +43,6 @@ export function patchTree(
     }
     return n
   })
-}
-
-export function normalizeProjectPath(path: string): string {
-  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
 }
 
 export function baseName(path: string): string {

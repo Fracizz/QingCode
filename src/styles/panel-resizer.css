@@ -5,6 +5,11 @@ body.panel-resizing * {
   user-select: none !important;
 }
 
+/* Live drag must not fight CSS height transitions */
+body.panel-resizing [data-terminal-panel] {
+  transition: none !important;
+}
+
 body.panel-resizing[data-panel-resize='vertical'],
 body.panel-resizing[data-panel-resize='vertical'] * {
   cursor: ew-resize !important;

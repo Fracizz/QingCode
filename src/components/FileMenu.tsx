@@ -195,7 +195,7 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
         aria-label={t('文件')}
         aria-haspopup="menu"
         aria-expanded={menu !== null}
-        className={`flex h-6 items-center rounded px-2 text-[12px] transition-colors
+        className={`flex h-6 items-center rounded px-2 text-[13px] transition-colors
           ${menu ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}`}
         onPointerDown={event => event.stopPropagation()}
         onDoubleClick={event => event.stopPropagation()}

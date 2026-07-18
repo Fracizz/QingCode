@@ -299,7 +299,7 @@ export default function EditorTabs() {
                 {tab.name}
               </span>
               {tab.kind !== 'diff' && gitGlyph && (
-                <span className={`text-[11px] font-medium ${gitColor}`} title={gitStatus ?? undefined}>
+                <span className={`text-[11px] font-medium ${gitColor}`}>
                   {gitGlyph}
                 </span>
               )}
@@ -326,12 +326,16 @@ export default function EditorTabs() {
         <button
           type="button"
           aria-label={t('显示所有打开的文件')}
-          className="flex h-full w-8 flex-shrink-0 items-center justify-center border-l border-border text-fg-muted hover:bg-bg-hover hover:text-fg"
+          className="relative flex h-full w-8 flex-shrink-0 items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg"
           onClick={event => {
             const rect = event.currentTarget.getBoundingClientRect()
             setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
           }}
         >
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border"
+          />
           <ChevronDown size={14} />
         </button>
       </Tooltip>

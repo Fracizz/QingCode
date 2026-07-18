@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { GitBranch, FolderTree, FileText, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
+import { GitBranch, Folder, FileText, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
@@ -20,7 +20,6 @@ import {
   REOPEN_FILE_ENCODING_OPTIONS,
   formatFileEncoding,
 } from '../lib/fileEncoding'
-import type { FileEncoding, WritableFileEncoding } from '../lib/editorSettings'
 import { checkForAppUpdate } from '../lib/appUpdate'
 
 type GitHeadInfo = {
@@ -29,6 +28,11 @@ type GitHeadInfo = {
 }
 
 const GIT_HEAD_REFRESH_MS = 15_000
+
+/** Subtle vertical rule between logical status-bar groups. */
+function StatusDivider() {
+  return <span className="mx-1.5 h-3 w-px flex-shrink-0 bg-border" aria-hidden />
+}
 
 export default function StatusBar() {
   const { t } = useI18n()
@@ -49,6 +53,7 @@ export default function StatusBar() {
   const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
   const gitDirtyCount = useGitStatusStore(s => s.dirtyCount)
   const [tabsMenu, setTabsMenu] = useState<{ x: number; y: number } | null>(null)
+  const [encodingMenu, setEncodingMenu] = useState<{ x: number; y: number } | null>(null)
   const pushToast = useProjectStore(s => s.pushToast)
 
   const tabsMenuItems = (): ContextMenuItem[] =>
@@ -60,6 +65,26 @@ export default function StatusBar() {
         action: () => setActiveTab(tab.id),
       }
     })
+
+  /** Save-encoding + reopen-encoding in one themed menu (not duplicate actions). */
+  const encodingMenuItems = (): ContextMenuItem[] => {
+    if (!activeTab) return []
+    const current = activeTab.encoding ?? 'utf8'
+    return [
+      ...FILE_ENCODING_OPTIONS.map(option => ({
+        label: t('保存为 {encoding}', { encoding: option.label }),
+        checked: option.value === current,
+        action: () => setTabEncoding(activeTab.id, option.value),
+      })),
+      ...REOPEN_FILE_ENCODING_OPTIONS.map((option, index) => ({
+        label: t('重新打开：{encoding}', {
+          encoding: option.value === 'auto' ? t('自动检测') : option.label,
+        }),
+        separatorBefore: index === 0,
+        action: () => void reopenWithEncoding(activeTab.id, option.value),
+      })),
+    ]
+  }
   const [trustTick, setTrustTick] = useState(0)
 
   useEffect(() => {
@@ -138,11 +163,18 @@ export default function StatusBar() {
     }
   }, [currentProject?.path])
 
+  const showEditorHints = Boolean(activeTab)
+  const showEncoding =
+    activeTab?.kind === 'diff' ||
+    Boolean(activeTab && !activeTab.openError && activeTab.viewMode !== 'view')
+  const showMetaGroup = showEncoding || Boolean(appVersion)
+
   return (
-    <div className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-accent-soft text-fg text-xs flex items-center gap-3 overflow-hidden px-3 select-none border-t border-border">
-      <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
+    <div className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-accent-soft text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border">
+      {/* Workspace context: project · file · git */}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
         <span className="flex min-w-0 max-w-[28%] items-center gap-1.5">
-          <FolderTree size={13} className="flex-shrink-0" />
+          <Folder size={13} className="flex-shrink-0 text-fg-muted" />
           <span className="truncate">{currentProject ? currentProject.name : t('未选择项目')}</span>
         </span>
         {restricted && (
@@ -154,163 +186,182 @@ export default function StatusBar() {
           </Tooltip>
         )}
         {activeTab && (
-          <span className="flex min-w-0 max-w-[36%] items-center gap-1.5 opacity-90">
-            <FileText size={13} className="flex-shrink-0" />
-            <span className="truncate">{activeTab.name}</span>
-            {activeTab.dirty && <span className="flex-shrink-0 text-warn">●</span>}
-          </span>
+          <>
+            <StatusDivider />
+            <span className="flex min-w-0 max-w-[36%] items-center gap-1.5 text-fg-muted">
+              <FileText size={13} className="flex-shrink-0" />
+              <span className="truncate text-fg">{activeTab.name}</span>
+              {activeTab.dirty && <span className="flex-shrink-0 text-warn">●</span>}
+            </span>
+          </>
         )}
         {gitHead && (
-          <Tooltip
-            label={
-              gitHead.detached
-                ? t('分离的 HEAD（未在分支上）')
-                : gitDirtyCount > 0
-                  ? t('当前 Git 分支 · {count} 个更改', { count: gitDirtyCount })
-                  : t('当前 Git 分支')
-            }
-            side="top"
-          >
-            <button
-              type="button"
-              className="flex min-w-0 max-w-[28%] items-center gap-1.5 rounded px-1 -mx-1 opacity-90 hover:opacity-100 hover:bg-bg-hover transition-colors"
-              onClick={() => setView('sourceControl')}
+          <>
+            <StatusDivider />
+            <Tooltip
+              label={
+                gitHead.detached
+                  ? t('分离的 HEAD（未在分支上）')
+                  : gitDirtyCount > 0
+                    ? t('当前 Git 分支 · {count} 个更改', { count: gitDirtyCount })
+                    : t('当前 Git 分支')
+              }
+              side="top"
             >
-              <GitBranch size={13} className="flex-shrink-0" />
-              <span className="truncate">
-                {gitHead.detached ? t('分离 HEAD · {sha}', { sha: gitHead.name }) : gitHead.name}
-              </span>
-              {gitDirtyCount > 0 && (
-                <span className="flex-shrink-0 text-warn">*{gitDirtyCount}</span>
-              )}
-            </button>
-          </Tooltip>
+              <button
+                type="button"
+                className="flex min-w-0 max-w-[28%] items-center gap-1.5 rounded px-1 -mx-1 text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+                onClick={() => setView('sourceControl')}
+              >
+                <GitBranch size={13} className="flex-shrink-0" />
+                <span className="truncate text-fg">
+                  {gitHead.detached ? t('分离 HEAD · {sha}', { sha: gitHead.name }) : gitHead.name}
+                </span>
+                {gitDirtyCount > 0 && (
+                  <span className="flex-shrink-0 text-warn">*{gitDirtyCount}</span>
+                )}
+              </button>
+            </Tooltip>
+          </>
         )}
       </div>
-      <div className="flex flex-shrink-0 items-center gap-3">
-        {activeTab && cursor && (
-          <span className="hidden opacity-75 sm:inline">
-            {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
-          </span>
-        )}
-        {activeTab && (
-          <Tooltip
-            label={t('Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用')}
-            side="top"
-          >
-            <span className="hidden opacity-75 lg:inline">
-              {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
-            </span>
-          </Tooltip>
-        )}
-        <Tooltip label={t('切换终端面板')} side="top">
-          <button
-            type="button"
-            className="flex max-w-[180px] items-center gap-1.5 rounded px-1 -mx-1 opacity-90 hover:opacity-100 hover:bg-bg-hover transition-colors"
-            onClick={requestToggleTerminal}
-          >
-            <TerminalIcon size={13} className="flex-shrink-0" />
-            <span className="truncate">
-              {t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}
-              {activeTerm ? ` · ${formatTerminalName(activeTerm.name)}` : ''}
-            </span>
-          </button>
-        </Tooltip>
-        {tabs.length > 0 ? (
-          <Tooltip label={t('显示所有打开的文件')} side="top">
-            <button
-              type="button"
-              className="flex-shrink-0 rounded px-1 -mx-1 opacity-90 hover:opacity-100 hover:bg-bg-hover transition-colors"
-              onClick={event => {
-                const rect = event.currentTarget.getBoundingClientRect()
-                // Open above the status bar and right-align to the control.
-                const menuWidth = 220
-                setTabsMenu({
-                  x: Math.max(8, rect.right - menuWidth),
-                  y: Math.max(8, rect.top - 4),
-                })
-              }}
-            >
-              {t('{count} 个已打开', { count: tabs.length })}
-            </button>
-          </Tooltip>
-        ) : (
-          <span className="flex-shrink-0 opacity-90">{t('{count} 个已打开', { count: tabs.length })}</span>
-        )}
-        {activeTab?.kind === 'diff' ? (
-          <span className="opacity-75">{t('差异对比')}</span>
-        ) : activeTab && !activeTab.openError && activeTab.viewMode !== 'view' ? (
+
+      {/* Right: hints | session actions | meta */}
+      <div className="flex flex-shrink-0 items-center">
+        {showEditorHints && (
           <>
-            <select
-              value={activeTab.encoding ?? 'utf8'}
-              aria-label={t('文件编码')}
-              title={t('转换文件编码，保存后生效')}
-              onChange={event => setTabEncoding(activeTab.id, event.target.value as WritableFileEncoding)}
-              className="max-w-[116px] cursor-pointer bg-transparent font-mono text-[11px] text-fg-muted outline-none hover:text-fg"
-            >
-              {!FILE_ENCODING_OPTIONS.some(option => option.value === activeTab.encoding) && activeTab.encoding && (
-                <option value={activeTab.encoding}>{formatFileEncoding(activeTab.encoding)}</option>
+            <div className="flex items-center gap-2.5 text-fg-muted">
+              {cursor && (
+                <span className="hidden sm:inline">
+                  {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
+                </span>
               )}
-              {FILE_ENCODING_OPTIONS.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <select
-              value=""
-              aria-label={t('按编码重新打开')}
-              title={t('按指定编码重新读取磁盘文件，未保存修改不会被保留')}
-              onChange={event => void reopenWithEncoding(activeTab.id, event.target.value as FileEncoding)}
-              className="max-w-[92px] cursor-pointer bg-transparent font-mono text-[11px] text-fg-muted outline-none hover:text-fg"
-            >
-              <option value="" disabled>{t('重新打开…')}</option>
-              {REOPEN_FILE_ENCODING_OPTIONS.map(option => (
-                <option key={option.value} value={option.value}>
-                  {t(option.label)}
-                </option>
-              ))}
-            </select>
+              <Tooltip
+                label={t('Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用')}
+                side="top"
+              >
+                <span className="hidden lg:inline">
+                  {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
+                </span>
+              </Tooltip>
+            </div>
+            <StatusDivider />
           </>
-        ) : null}
-        {appVersion && (
-          <Tooltip
-            label={
-              updateBusy
-                ? t('正在检查…')
-                : `${
-                    devBuild
-                      ? t('开发构建：项目数据在仓库 .dev/；主题字体等保存在开发服务器源下')
-                      : t('正式构建：项目数据在 %APPDATA%\\com.qingcode.app\\；主题字体等与开发版不共用')
-                  }\n${t('点击检查更新')}`
-            }
-            side="top"
-          >
+        )}
+
+        <div className="flex items-center gap-1">
+          <Tooltip label={t('切换终端面板')} side="top">
             <button
               type="button"
-              disabled={updateBusy || !isTauri()}
-              className="opacity-80 font-mono hover:opacity-100 hover:text-fg disabled:opacity-40"
-              onClick={() => {
-                if (!isTauri() || updateBusy) return
-                setUpdateBusy(true)
-                void checkForAppUpdate({
-                  currentVersion: appVersion,
-                  ignoreSkip: true,
-                  prompt: true,
-                })
-                  .then(info => {
-                    if (!info) pushToast('success', t('当前已是最新版本'))
-                  })
-                  .catch(error =>
-                    pushToast('error', t('检查更新失败: {error}', { error: String(error) })),
-                  )
-                  .finally(() => setUpdateBusy(false))
-              }}
+              className="flex max-w-[180px] items-center gap-1.5 rounded px-1.5 py-px hover:bg-bg-hover transition-colors"
+              onClick={requestToggleTerminal}
             >
-              v{appVersion}
-              {devBuild ? ' · dev' : ''}
+              <TerminalIcon size={13} className="flex-shrink-0 text-fg-muted" />
+              <span className="truncate">
+                {t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}
+                {activeTerm ? (
+                  <span className="text-fg-muted">{` · ${formatTerminalName(activeTerm.name)}`}</span>
+                ) : null}
+              </span>
             </button>
           </Tooltip>
+          {tabs.length > 0 ? (
+            <Tooltip label={t('显示所有打开的文件')} side="top">
+              <button
+                type="button"
+                className="flex-shrink-0 rounded px-1.5 py-px hover:bg-bg-hover transition-colors"
+                onClick={event => {
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  // Open above the status bar and right-align to the control.
+                  const menuWidth = 220
+                  setTabsMenu({
+                    x: Math.max(8, rect.right - menuWidth),
+                    y: Math.max(8, rect.top - 4),
+                  })
+                }}
+              >
+                {t('{count} 个已打开', { count: tabs.length })}
+              </button>
+            </Tooltip>
+          ) : (
+            <span className="flex-shrink-0 px-1.5 text-fg-muted">
+              {t('{count} 个已打开', { count: tabs.length })}
+            </span>
+          )}
+        </div>
+
+        {showMetaGroup && (
+          <>
+            <StatusDivider />
+            <div className="flex items-center font-mono text-[11px] text-fg-muted">
+              {activeTab?.kind === 'diff' ? (
+                <span>{t('差异对比')}</span>
+              ) : activeTab && !activeTab.openError && activeTab.viewMode !== 'view' ? (
+                <Tooltip
+                  label={t('转换编码（下次保存）· 或按编码重新打开')}
+                  side="top"
+                >
+                  <button
+                    type="button"
+                    aria-label={t('文件编码')}
+                    aria-haspopup="menu"
+                    aria-expanded={encodingMenu != null}
+                    className="max-w-[140px] truncate rounded px-1 -mx-1 hover:bg-bg-hover hover:text-fg transition-colors"
+                    onClick={event => {
+                      const rect = event.currentTarget.getBoundingClientRect()
+                      const menuWidth = 260
+                      setEncodingMenu({
+                        x: Math.max(8, rect.right - menuWidth),
+                        y: Math.max(8, rect.top - 4),
+                      })
+                    }}
+                  >
+                    {formatFileEncoding(activeTab.encoding)}
+                  </button>
+                </Tooltip>
+              ) : null}
+              {showEncoding && appVersion ? <StatusDivider /> : null}
+              {appVersion && (
+                <Tooltip
+                  label={
+                    updateBusy
+                      ? t('正在检查…')
+                      : `${
+                          devBuild
+                            ? t('开发构建：项目数据在仓库 .dev/；主题字体等保存在开发服务器源下')
+                            : t('正式构建：项目数据在 %APPDATA%\\com.qingcode.app\\；主题字体等与开发版不共用')
+                        }\n${t('点击检查更新')}`
+                  }
+                  side="top"
+                >
+                  <button
+                    type="button"
+                    disabled={updateBusy || !isTauri()}
+                    className="rounded px-1 -mx-1 hover:bg-bg-hover hover:text-fg disabled:opacity-40 transition-colors"
+                    onClick={() => {
+                      if (!isTauri() || updateBusy) return
+                      setUpdateBusy(true)
+                      void checkForAppUpdate({
+                        currentVersion: appVersion,
+                        ignoreSkip: true,
+                        prompt: true,
+                      })
+                        .then(info => {
+                          if (!info) pushToast('success', t('当前已是最新版本'))
+                        })
+                        .catch(error =>
+                          pushToast('error', t('检查更新失败: {error}', { error: String(error) })),
+                        )
+                        .finally(() => setUpdateBusy(false))
+                    }}
+                  >
+                    v{appVersion}
+                    {devBuild ? ' · dev' : ''}
+                  </button>
+                </Tooltip>
+              )}
+            </div>
+          </>
         )}
       </div>
       {tabsMenu && (
@@ -319,6 +370,15 @@ export default function StatusBar() {
           y={tabsMenu.y}
           items={tabsMenuItems()}
           onClose={() => setTabsMenu(null)}
+          preferAbove
+        />
+      )}
+      {encodingMenu && (
+        <ContextMenu
+          x={encodingMenu.x}
+          y={encodingMenu.y}
+          items={encodingMenuItems()}
+          onClose={() => setEncodingMenu(null)}
           preferAbove
         />
       )}

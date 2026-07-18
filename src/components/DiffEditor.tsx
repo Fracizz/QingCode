@@ -23,41 +23,52 @@ const DIFF_MAX_BYTES = 5 * 1024 * 1024
 /*  &light / &dark 只能用在 baseTheme，不能用在 EditorView.theme。       */
 /* ------------------------------------------------------------------ */
 const diffTheme = EditorView.baseTheme({
-  /* 左侧（HEAD）删除行背景 */
+  /* 左侧（HEAD）删除行背景 — soft wash, no neon borders */
   '&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': {
-    backgroundColor: 'rgba(220, 80, 80, 0.12)',
+    backgroundColor: 'rgba(244, 135, 113, 0.14)',
   },
   /* 右侧（工作区）新增行背景 */
   '&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': {
-    backgroundColor: 'rgba(80, 180, 80, 0.12)',
+    backgroundColor: 'rgba(137, 209, 133, 0.14)',
   },
-  /* 左侧删除文本下划线 */
-  '&light.cm-merge-a .cm-changedText': {
-    background: 'linear-gradient(rgba(220,80,80,0.4), rgba(220,80,80,0.4)) bottom/100% 2px no-repeat',
+  /*
+   * Inline change marks: solid translucent fill instead of CM's default
+   * bottom-gradient "underline", which wraps into thin bright vertical boxes
+   * when line wrapping / font scaling is on.
+   */
+  '&light.cm-merge-a .cm-changedText, &light .cm-deletedChunk .cm-deletedText': {
+    background: 'rgba(196, 30, 58, 0.22)',
+    padding: '0 1px',
+    borderRadius: '2px',
   },
-  '&light .cm-deletedChunk .cm-deletedText': {
-    background: 'linear-gradient(rgba(220,80,80,0.4), rgba(220,80,80,0.4)) bottom/100% 2px no-repeat',
+  '&dark.cm-merge-a .cm-changedText, &dark .cm-deletedChunk .cm-deletedText': {
+    background: 'rgba(244, 135, 113, 0.28)',
+    padding: '0 1px',
+    borderRadius: '2px',
   },
-  '&dark.cm-merge-a .cm-changedText': {
-    background: 'linear-gradient(rgba(255,120,120,0.5), rgba(255,120,120,0.5)) bottom/100% 2px no-repeat',
-  },
-  '&dark .cm-deletedChunk .cm-deletedText': {
-    background: 'linear-gradient(rgba(255,120,120,0.5), rgba(255,120,120,0.5)) bottom/100% 2px no-repeat',
-  },
-  /* 右侧新增文本下划线 */
   '&light.cm-merge-b .cm-changedText': {
-    background: 'linear-gradient(rgba(80,180,80,0.4), rgba(80,180,80,0.4)) bottom/100% 2px no-repeat',
+    background: 'rgba(16, 124, 16, 0.20)',
+    padding: '0 1px',
+    borderRadius: '2px',
   },
   '&dark.cm-merge-b .cm-changedText': {
-    background: 'linear-gradient(rgba(120,255,120,0.5), rgba(120,255,120,0.5)) bottom/100% 2px no-repeat',
+    background: 'rgba(137, 209, 133, 0.28)',
+    padding: '0 1px',
+    borderRadius: '2px',
   },
-  /* gutter 标记颜色 */
-  '&light.cm-merge-a .cm-changedLineGutter': { background: '#dc5050' },
-  '&light .cm-deletedLineGutter': { background: '#dc5050' },
-  '&dark.cm-merge-a .cm-changedLineGutter': { background: '#ff7878' },
-  '&dark .cm-deletedLineGutter': { background: '#ff7878' },
-  '&light.cm-merge-b .cm-changedLineGutter': { background: '#50b450' },
-  '&dark.cm-merge-b .cm-changedLineGutter': { background: '#78ff78' },
+  /* Narrow gutter ticks aligned with --color-danger / --color-ok */
+  '&light.cm-merge-a .cm-changedLineGutter, &light .cm-deletedLineGutter': {
+    background: 'color-mix(in srgb, var(--color-danger) 85%, transparent)',
+  },
+  '&dark.cm-merge-a .cm-changedLineGutter, &dark .cm-deletedLineGutter': {
+    background: 'color-mix(in srgb, var(--color-danger) 75%, transparent)',
+  },
+  '&light.cm-merge-b .cm-changedLineGutter': {
+    background: 'color-mix(in srgb, var(--color-ok) 85%, transparent)',
+  },
+  '&dark.cm-merge-b .cm-changedLineGutter': {
+    background: 'color-mix(in srgb, var(--color-ok) 75%, transparent)',
+  },
 })
 
 const lightTheme = EditorView.theme(

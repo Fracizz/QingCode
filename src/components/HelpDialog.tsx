@@ -1,7 +1,16 @@
-import { useEffect, type ReactNode } from 'react'
-import { FileText, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { FileText, Search, X } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import helpDocument from '../../帮助文档.md?raw'
 import { useI18n } from '../lib/i18n'
+import {
+  filterHelpSections,
+  flattenText,
+  helpHeadingId,
+  joinHelpSections,
+  splitHelpSections,
+} from '../utils/helpDocument'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 
@@ -9,60 +18,71 @@ type Props = {
   onClose: () => void
 }
 
-function HelpContent() {
-  const blocks: ReactNode[] = []
-  let codeLines: string[] | null = null
+const HELP_SECTIONS = splitHelpSections(helpDocument)
 
-  for (const [index, line] of helpDocument.trim().split(/\r?\n/).entries()) {
-    if (line.startsWith('```')) {
-      if (codeLines) {
-        blocks.push(
-          <pre key={`code-${index}`} className="my-3 overflow-x-auto rounded bg-bg-deep p-3 font-mono text-[12px] leading-5 text-fg">
-            <code>{codeLines.join('\n')}</code>
-          </pre>
-        )
-        codeLines = null
-      } else {
-        codeLines = []
-      }
-      continue
-    }
-    if (codeLines) {
-      codeLines.push(line)
-      continue
-    }
-    if (line.startsWith('# ')) {
-      blocks.push(<h2 key={index} className="mb-4 text-lg font-semibold text-fg">{line.slice(2)}</h2>)
-    } else if (line.startsWith('## ')) {
-      blocks.push(<h3 key={index} className="mt-6 mb-2 text-sm font-semibold text-fg">{line.slice(3)}</h3>)
-    } else if (/^\d+\. /.test(line)) {
-      blocks.push(<p key={index} className="ml-5 text-[13px] leading-6 text-fg-muted">{line}</p>)
-    } else if (line.startsWith('- ')) {
-      blocks.push(
-        <p key={index} className="flex gap-2 text-[13px] leading-6 text-fg-muted">
-          <span className="text-accent">•</span><span>{line.slice(2)}</span>
-        </p>
-      )
-    } else if (line) {
-      blocks.push(<p key={index} className="text-[13px] leading-6 text-fg-muted">{line}</p>)
-    } else {
-      blocks.push(<div key={index} className="h-2" />)
-    }
+function Heading({
+  as: Tag,
+  children,
+}: {
+  as: 'h1' | 'h2' | 'h3' | 'h4'
+  children?: ReactNode
+}) {
+  const id = helpHeadingId(flattenText(children))
+  return <Tag id={id || undefined}>{children}</Tag>
+}
+
+function HelpMarkdown({ content }: { content: string }) {
+  const articleRef = useRef<HTMLElement | null>(null)
+
+  const onAnchorClick = (event: MouseEvent<HTMLAnchorElement>, href: string) => {
+    event.preventDefault()
+    const id = decodeURIComponent(href.slice(1))
+    const root = articleRef.current
+    const target = root?.querySelector<HTMLElement>(`#${CSS.escape(id)}`)
+    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
-  if (codeLines) {
-    blocks.push(
-      <pre key="code-final" className="my-3 overflow-x-auto rounded bg-bg-deep p-3 font-mono text-[12px] leading-5 text-fg">
-        <code>{codeLines.join('\n')}</code>
-      </pre>
-    )
-  }
-
-  return <>{blocks}</>
+  return (
+    <article
+      ref={articleRef}
+      className="qing-md-preview flex-1 overflow-auto px-5 py-4 text-[14px] leading-relaxed text-fg"
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ children }) => <Heading as="h1">{children}</Heading>,
+          h2: ({ children }) => <Heading as="h2">{children}</Heading>,
+          h3: ({ children }) => <Heading as="h3">{children}</Heading>,
+          h4: ({ children }) => <Heading as="h4">{children}</Heading>,
+          a: ({ href, children }) => {
+            if (href?.startsWith('#')) {
+              return (
+                <a href={href} onClick={event => onAnchorClick(event, href)}>
+                  {children}
+                </a>
+              )
+            }
+            return (
+              <a href={href} target="_blank" rel="noreferrer noopener">
+                {children}
+              </a>
+            )
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </article>
+  )
 }
 
 export default function HelpDialog({ onClose }: Props) {
   const { t } = useI18n()
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  const filtered = useMemo(() => filterHelpSections(HELP_SECTIONS, query), [query])
+  const markdown = useMemo(() => joinHelpSections(filtered), [filtered])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -72,16 +92,20 @@ export default function HelpDialog({ onClose }: Props) {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [onClose])
 
+  useEffect(() => {
+    searchRef.current?.focus()
+  }, [])
+
   return (
     <ModalOverlay onDismiss={onClose} zIndex="z-[120]">
       <section
         role="dialog"
         aria-modal="true"
         aria-labelledby="help-dialog-title"
-        className="modal-content-enter relative flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-sidebar shadow-2xl shadow-black/50"
+        className="modal-content-enter relative flex max-h-[min(72vh,680px)] w-full max-w-[min(90vw,960px)] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-sidebar shadow-2xl shadow-black/50"
         onMouseDown={event => event.stopPropagation()}
       >
-        <header className="flex h-11 flex-shrink-0 items-center justify-between border-b border-border px-4">
+        <header className="flex h-11 flex-shrink-0 items-center justify-between gap-3 border-b border-border px-4">
           <h2 id="help-dialog-title" className="flex items-center gap-2 text-[14px] font-medium text-fg">
             <FileText size={16} className="text-accent" /> {t('帮助文档')}
           </h2>
@@ -96,9 +120,39 @@ export default function HelpDialog({ onClose }: Props) {
             </button>
           </Tooltip>
         </header>
-        <article className="flex-1 overflow-auto px-5 py-4">
-          <HelpContent />
-        </article>
+
+        <div className="flex-shrink-0 border-b border-border px-4 py-2.5">
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+              placeholder={t('搜索帮助文档')}
+              aria-label={t('搜索帮助文档')}
+              className="setting-input h-8 w-full pl-8 pr-8 text-[13px]"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                aria-label={t('清除搜索')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {markdown.trim() ? (
+          <HelpMarkdown content={markdown} />
+        ) : (
+          <div className="flex flex-1 items-center justify-center px-5 py-10 text-[13px] text-fg-dim">
+            {t('没有匹配的帮助内容')}
+          </div>
+        )}
+
         <footer className="flex justify-end border-t border-border px-4 py-3">
           <button
             type="button"

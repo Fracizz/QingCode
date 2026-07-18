@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -10,8 +9,6 @@ import {
 import {
   AlertCircle,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
   Folder,
   GitBranch,
   LoaderCircle,
@@ -26,15 +23,15 @@ import {
   useSourceControlStore,
 } from '../store/sourceControlStore'
 import type { GitChange, GitStatus } from '../lib/git'
+import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import Tooltip from './Tooltip'
 import EmptyState from './EmptyState'
 import { translate, useI18n } from '../lib/i18n'
 
 const ROW_HEIGHT = 32
-/** Matches max-h-64 (16rem) for the inline diff panel. */
-const DIFF_PANEL_HEIGHT = 256
-const MAX_INLINE_DIFF_LINES = 400
+/** Fixed status column so M / U / D share one vertical edge with filenames. */
+const STATUS_COL = 'w-4 shrink-0 text-center font-mono text-[12px] font-semibold leading-none'
 
 function absoluteFilePath(projectPath: string, relativePath: string) {
   const root = projectPath.replace(/[\\/]+$/, '')
@@ -52,62 +49,9 @@ function fileDirName(path: string) {
   return separator > 0 ? path.slice(0, separator + 1) : ''
 }
 
-function statusClass(status: string) {
-  if (status.includes('D')) return 'text-danger'
-  if (status === '??' || status.includes('A') || status.includes('R') || status.includes('C')) {
-    return 'text-ok'
-  }
-  return 'text-warn'
-}
-
-function diffLineClass(line: string) {
-  if (line.startsWith('+++') || line.startsWith('---')) return 'text-fg-muted'
-  if (line.startsWith('+')) return 'text-ok'
-  if (line.startsWith('-')) return 'text-danger'
-  if (line.startsWith('@@')) return 'text-accent'
-  if (line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('new file') || line.startsWith('deleted file')) {
-    return 'text-fg-dim'
-  }
-  return 'text-fg-muted'
-}
-
-/** Full-width row background so +/- hunks read as blocks, not just colored text. */
-function diffLineRowClass(line: string) {
-  if (line.startsWith('+++') || line.startsWith('---')) return ''
-  if (line.startsWith('+')) return 'bg-ok/10'
-  if (line.startsWith('-')) return 'bg-danger/10'
-  if (line.startsWith('@@')) return 'bg-accent/10'
-  return ''
-}
-
-function DiffView({ text }: { text: string }) {
-  const { t } = useI18n()
-  const allLines = text.split('\n')
-  const truncated = allLines.length > MAX_INLINE_DIFF_LINES
-  const lines = truncated ? allLines.slice(0, MAX_INLINE_DIFF_LINES) : allLines
-  return (
-    <pre className="whitespace-pre-wrap break-words py-3 font-mono text-[11px] leading-5">
-      {lines.map((line, index) => (
-        <span key={index} className={`block px-3 ${diffLineClass(line)} ${diffLineRowClass(line)}`}>
-          {line || ' '}
-        </span>
-      ))}
-      {truncated && (
-        <span className="block px-3 pt-2 text-[11px] leading-5 text-fg-muted">
-          {t('差异过长，已截断显示。点击文件可在编辑器中查看完整差异。')}
-        </span>
-      )}
-    </pre>
-  )
-}
-
 type ChangeRowProps = {
   changes: GitChange[]
   selected: string | null
-  expanded: string | null
-  diff: string | null
-  diffLoading: boolean
-  onToggleDiff: (change: GitChange) => void
   onOpenChange: (change: GitChange) => void
 }
 
@@ -116,84 +60,35 @@ function ChangeRowComponent(props: {
   index: number
   style: CSSProperties
 } & ChangeRowProps) {
-  const { t } = useI18n()
-  const {
-    index,
-    style,
-    changes,
-    selected,
-    expanded,
-    diff,
-    diffLoading,
-    onToggleDiff,
-    onOpenChange,
-  } = props
+  const { index, style, changes, selected, onOpenChange } = props
   const change = changes[index]
   if (!change) return null
 
-  const open = expanded === change.path
   const active = selected === change.path
+  const glyph = gitStatusGlyph(change.status) ?? change.status
+  const glyphColor = gitStatusColorClass(change.status)
 
   return (
     <div style={style} className="overflow-hidden">
-      <div
-        className={`flex h-8 w-full items-center gap-0.5 px-2 text-[12px] hover:bg-bg-hover ${
+      <button
+        type="button"
+        onClick={() => onOpenChange(change)}
+        className={`flex h-8 w-full items-center gap-2 px-4 text-left text-[12px] hover:bg-bg-hover ${
           active ? 'bg-bg-active' : ''
         }`}
       >
-        <button
-          type="button"
-          onClick={e => {
-            e.stopPropagation()
-            onToggleDiff(change)
-          }}
-          aria-label={open ? t('折叠差异') : t('展开差异')}
-          aria-expanded={open}
-          className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded text-fg-dim hover:bg-bg-hover hover:text-fg"
-        >
-          {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-        </button>
-        <button
-          type="button"
-          onClick={() => onOpenChange(change)}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-        >
-          <span className={`w-5 flex-shrink-0 font-mono font-semibold ${statusClass(change.status)}`}>
-            {change.status}
-          </span>
-          <span className="min-w-0 flex items-baseline gap-1.5 overflow-hidden">
-            <span className="flex-shrink-0 font-medium text-fg">{fileBaseName(change.path)}</span>
-            {fileDirName(change.path) && (
-              <span className="min-w-0 truncate text-[11px] text-fg-dim">{fileDirName(change.path)}</span>
-            )}
-          </span>
-        </button>
-      </div>
-      {open && (
-        <div
-          className="overflow-auto border-y border-border bg-bg-deep"
-          style={{ height: DIFF_PANEL_HEIGHT }}
-        >
-          {diffLoading ? (
-            <div className="flex items-center gap-2 px-3 py-3 text-[12px] text-fg-muted">
-              <LoaderCircle size={14} className="animate-spin text-accent" />
-              {t('正在读取差异…')}
-            </div>
-          ) : diff ? (
-            <DiffView text={diff} />
-          ) : null}
-        </div>
-      )}
+        <span className={`${STATUS_COL} ${glyphColor}`}>{glyph}</span>
+        <span className="min-w-0 flex flex-1 items-center gap-1.5 overflow-hidden">
+          <span className="flex-shrink-0 font-medium leading-none text-fg">{fileBaseName(change.path)}</span>
+          {fileDirName(change.path) && (
+            <span className="min-w-0 truncate text-[11px] leading-none text-fg-dim">
+              {fileDirName(change.path)}
+            </span>
+          )}
+        </span>
+      </button>
     </div>
   )
-}
-
-function rowHeightOf(index: number, props: ChangeRowProps) {
-  const change = props.changes[index]
-  if (change && props.expanded === change.path) {
-    return ROW_HEIGHT + DIFF_PANEL_HEIGHT
-  }
-  return ROW_HEIGHT
 }
 
 export default function SourceControlPanel() {
@@ -207,13 +102,6 @@ export default function SourceControlPanel() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
-  /** Inline unified diff under a row; only toggled by the chevron, never by row click. */
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const [diff, setDiff] = useState<string | null>(null)
-  const [diffLoading, setDiffLoading] = useState(false)
-  const diffRequestId = useRef(0)
-  const expandedRef = useRef<string | null>(null)
-  expandedRef.current = expanded
   const listRef = useListRef(null)
 
   const refresh = useCallback(async (opts?: { soft?: boolean }) => {
@@ -241,18 +129,8 @@ export default function SourceControlPanel() {
       setStatus(next)
       setError(null)
       useSourceControlStore.getState().setCache(path, next)
-      const currentExpanded = expandedRef.current
       if (!soft) {
         setSelected(null)
-        setExpanded(null)
-        setDiff(null)
-      } else if (currentExpanded) {
-        const stillThere = next.changes.some(c => c.path === currentExpanded)
-        if (!stillThere) {
-          setExpanded(null)
-          setDiff(null)
-          setSelected(prev => (prev === currentExpanded ? null : prev))
-        }
       }
       useGitStatusStore.getState().scheduleRefresh(path, 0)
     } catch (reason) {
@@ -270,8 +148,6 @@ export default function SourceControlPanel() {
       setStatus(null)
       setError(null)
       setSelected(null)
-      setExpanded(null)
-      setDiff(null)
       return
     }
     const cached = peekSourceControlCache(projectPath)
@@ -314,52 +190,15 @@ export default function SourceControlPanel() {
     [currentProject],
   )
 
-  const toggleInlineDiff = useCallback(
-    async (change: GitChange) => {
-      if (!currentProject) return
-      if (expandedRef.current === change.path) {
-        diffRequestId.current += 1
-        setExpanded(null)
-        setDiff(null)
-        setDiffLoading(false)
-        return
-      }
-      const abs = absoluteFilePath(currentProject.path, change.path)
-      const requestId = ++diffRequestId.current
-      setSelected(change.path)
-      setExpanded(change.path)
-      setDiffLoading(true)
-      setDiff(null)
-      try {
-        const text = await safeInvoke<string>('读取 Git 差异', 'git_diff', {
-          path: currentProject.path,
-          file: abs,
-        })
-        if (requestId !== diffRequestId.current) return
-        setDiff(text || translate('该文件当前没有可显示的差异。'))
-      } catch (reason) {
-        if (requestId !== diffRequestId.current) return
-        setDiff(translate('读取差异失败：{error}', { error: String(reason) }))
-      } finally {
-        if (requestId === diffRequestId.current) setDiffLoading(false)
-      }
-    },
-    [currentProject],
-  )
-
   const changes = status?.changes ?? []
 
   const rowProps = useMemo(
     () => ({
       changes,
       selected,
-      expanded,
-      diff,
-      diffLoading,
-      onToggleDiff: (change: GitChange) => void toggleInlineDiff(change),
       onOpenChange: openChange,
     }),
-    [changes, selected, expanded, diff, diffLoading, toggleInlineDiff, openChange],
+    [changes, selected, openChange],
   )
 
   let body: ReactNode
@@ -387,7 +226,7 @@ export default function SourceControlPanel() {
             <List
               listRef={listRef}
               rowCount={status.changes.length}
-              rowHeight={rowHeightOf}
+              rowHeight={ROW_HEIGHT}
               rowComponent={ChangeRowComponent}
               rowProps={rowProps}
               overscanCount={8}
