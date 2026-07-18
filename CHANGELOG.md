@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 编辑器右侧代码小地图（`editor.minimap.enabled`，默认开启）：缩略图、视口框、点击/拖拽跳转；按体积分级（≤1MB 完整 / 1–5MB 密度条 / >5MB 隐藏）
+
 ### Changed
 
 - 本机打包统一为 `pnpm package`：一次产出 Windows x64 便携版与 NSIS 安装包（ARM64/macOS 仍走 CI）

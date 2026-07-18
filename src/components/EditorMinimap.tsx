@@ -1,423 +1,356 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { EditorView } from '@codemirror/view'
-import { getResolvedTheme } from '../lib/themeSettings'
-import type { EditorTab } from '../types'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type RefObject,
+} from 'react'
+import type { EditorView } from '@codemirror/view'
+import type { Text } from '@codemirror/state'
+import { setMinimapUpdateHandler } from '../lib/minimapBridge'
+import {
+  MINIMAP_REPAINT_THROTTLE_MS,
+  MINIMAP_WIDTH_DEFAULT,
+  clampMinimapWidth,
+  loadMinimapWidth,
+  resolveMinimapByteSize,
+  resolveMinimapMode,
+  saveMinimapWidth,
+  type MinimapRenderMode,
+} from '../lib/minimapPolicy'
+import '../styles/minimap.css'
 
-// ─── Constants ───────────────────────────────────────────────────────────────
+type Props = {
+  viewRef: RefObject<EditorView | null>
+  /** Bound tab id — used to reattach after tab switches. */
+  tabId: string | null
+  fileSize?: number
+}
 
-/** Minimap 默认宽度 */
-export const MINIMAP_DEFAULT_WIDTH = 120
-/** Minimap 最小宽度 */
-export const MINIMAP_MIN_WIDTH = 60
-/** Minimap 最大宽度 */
-export const MINIMAP_MAX_WIDTH = 200
-/** 编辑器最小安全宽度（px）—— 拖动时保证编辑器不会太小 */
-export const EDITOR_MIN_WIDTH = 400
-/** 文件大小限制：超过此值的文件不显示 minimap（5MB） */
-export const MINIMAP_MAX_FILE_SIZE = 5 * 1024 * 1024
-/** 文件大小软限制：超过此值显示简化 minimap（1MB） */
-export const MINIMAP_SOFT_MAX_FILE_SIZE = 1 * 1024 * 1024
+type LineKind = 'empty' | 'comment' | 'string' | 'keyword' | 'code'
 
-// ─── Theme Colors for Canvas ─────────────────────────────────────────────────
+const KEYWORD_RE =
+  /^(import|export|from|function|const|let|var|class|return|if|else|for|while|switch|case|break|continue|type|interface|enum|async|await|def|class|public|private|protected|struct|fn|use|mod|impl|pub|package|func)\b/
 
-function getThemeColors() {
-  const resolved = getResolvedTheme()
-
-  if (resolved === 'forest') {
-    return {
-      bg: '#1e2b24',
-      fg: '#a9b7c6',
-      keyword: '#cc7832',
-      string: '#6a8759',
-      number: '#6897bb',
-      comment: '#808080',
-      function: '#ffc66d',
-      type: '#bbb529',
-      operator: '#a9b7c6',
-      property: '#9876aa',
-      tag: '#e8bf6a',
-      variable: '#a9b7c6',
-      accent: '#4ECDB5',
-      selection: 'rgba(78, 205, 181, 0.25)',
-    }
+function classifyLine(text: string): LineKind {
+  const t = text.trimStart()
+  if (!t) return 'empty'
+  if (
+    t.startsWith('//') ||
+    t.startsWith('#') ||
+    t.startsWith('/*') ||
+    t.startsWith('*') ||
+    t.startsWith('<!--')
+  ) {
+    return 'comment'
   }
+  if (t.startsWith('"') || t.startsWith("'") || t.startsWith('`')) return 'string'
+  if (KEYWORD_RE.test(t)) return 'keyword'
+  return 'code'
+}
 
-  if (resolved === 'light') {
-    return {
-      bg: '#f0f0f0',
-      fg: '#1f1f1f',
-      keyword: '#0000ff',
-      string: '#a31515',
-      number: '#098658',
-      comment: '#008000',
-      function: '#795e26',
-      type: '#267f99',
-      operator: '#1f1f1f',
-      property: '#001080',
-      tag: '#800000',
-      variable: '#001080',
-      accent: '#007acc',
-      selection: 'rgba(0, 122, 204, 0.25)',
-    }
+function readThemeColors() {
+  const styles = getComputedStyle(document.documentElement)
+  const read = (name: string, fallback: string) => {
+    const v = styles.getPropertyValue(name).trim()
+    return v || fallback
   }
-
-  // dark (default)
   return {
-    bg: '#1e1e1e',
-    fg: '#d4d4d4',
-    keyword: '#569cd6',
-    string: '#ce9178',
-    number: '#b5cea8',
-    comment: '#6a9955',
-    function: '#dcdcaa',
-    type: '#4ec9b0',
-    operator: '#d4d4d4',
-    property: '#9cdcfe',
-    tag: '#569cd6',
-    variable: '#9cdcfe',
-    accent: '#4d9eff',
-    selection: 'rgba(77, 158, 255, 0.25)',
+    code: read('--color-fg-muted', '#858585'),
+    comment: read('--color-fg-dim', '#6b6b6b'),
+    string: read('--color-ok', '#89d185'),
+    keyword: read('--color-accent', '#4d9eff'),
+    density: read('--color-fg-dim', '#6b6b6b'),
   }
 }
 
-// ─── Simple Tokenizer for Canvas ─────────────────────────────────────────────
-
-interface Token {
-  text: string
-  type: 'keyword' | 'string' | 'number' | 'comment' | 'function' | 'type' | 'operator' | 'property' | 'tag' | 'variable' | 'default'
-}
-
-const KEYWORDS = new Set([
-  'import', 'export', 'from', 'const', 'let', 'var', 'function', 'class', 'interface',
-  'type', 'enum', 'return', 'if', 'else', 'for', 'while', 'do', 'switch', 'case',
-  'break', 'continue', 'try', 'catch', 'finally', 'throw', 'new', 'this', 'super',
-  'extends', 'implements', 'async', 'await', 'yield', 'typeof', 'instanceof',
-  'void', 'null', 'undefined', 'true', 'false', 'public', 'private', 'protected',
-  'static', 'readonly', 'abstract', 'namespace', 'module', 'declare', 'def',
-  'in', 'of', 'as', 'is', 'with', 'assert', 'raise', 'except', 'pass', 'lambda',
-  'global', 'nonlocal', 'del',
-])
-
-function tokenizeLine(line: string): Token[] {
-  const tokens: Token[] = []
-  let i = 0
-
-  while (i < line.length) {
-    // Skip whitespace
-    if (/\s/.test(line[i])) {
-      let j = i
-      while (j < line.length && /\s/.test(line[j])) j++
-      tokens.push({ text: line.slice(i, j), type: 'default' })
-      i = j
-      continue
-    }
-
-    // String literals
-    if (line[i] === '"' || line[i] === "'" || line[i] === '`') {
-      const quote = line[i]
-      let j = i + 1
-      while (j < line.length && line[j] !== quote) {
-        if (line[j] === '\\') j++
-        j++
-      }
-      tokens.push({ text: line.slice(i, j + 1), type: 'string' })
-      i = j + 1
-      continue
-    }
-
-    // Comments
-    if (line[i] === '/' && line[i + 1] === '/') {
-      tokens.push({ text: line.slice(i), type: 'comment' })
-      break
-    }
-    if (line[i] === '#') {
-      tokens.push({ text: line.slice(i), type: 'comment' })
-      break
-    }
-
-    // Numbers
-    if (/\d/.test(line[i]) || (line[i] === '.' && /\d/.test(line[i + 1] || ''))) {
-      let j = i
-      while (j < line.length && (/\d/.test(line[j]) || line[j] === '.' || line[j] === 'e' || line[j] === 'E' || line[j] === '+' || line[j] === '-')) j++
-      tokens.push({ text: line.slice(i, j), type: 'number' })
-      i = j
-      continue
-    }
-
-    // Identifiers and keywords
-    if (/[a-zA-Z_$]/.test(line[i])) {
-      let j = i
-      while (j < line.length && /[a-zA-Z0-9_$]/.test(line[j])) j++
-      const word = line.slice(i, j)
-      if (KEYWORDS.has(word)) {
-        tokens.push({ text: word, type: 'keyword' })
-      } else if (line[j] === '(') {
-        tokens.push({ text: word, type: 'function' })
-      } else if (/^[A-Z]/.test(word)) {
-        tokens.push({ text: word, type: 'type' })
-      } else {
-        tokens.push({ text: word, type: 'variable' })
-      }
-      i = j
-      continue
-    }
-
-    // Operators and other characters
-    tokens.push({ text: line[i], type: 'operator' })
-    i++
-  }
-
-  return tokens
-}
-
-// ─── Canvas Renderer ─────────────────────────────────────────────────────────
-
-interface MinimapRenderOptions {
-  content: string
-  width: number
-  simplified: boolean // true for files > 1MB
-}
-
-function renderMinimap(canvas: HTMLCanvasElement, options: MinimapRenderOptions) {
-  const { content, width, simplified } = options
-  const ctx = canvas.getContext('2d')!
-  const colors = getThemeColors()
-  const lines = content.split('\n')
-
-  // Calculate dimensions
-  const lineHeight = simplified ? 1.5 : 2.5
-  const totalHeight = lines.length * lineHeight
-
-  // Set canvas size
-  const dpr = window.devicePixelRatio || 1
-  canvas.width = width * dpr
-  canvas.height = Math.max(totalHeight, 100) * dpr
-  ctx.scale(dpr, dpr)
-
-  // Background
-  ctx.fillStyle = colors.bg
-  ctx.fillRect(0, 0, width, canvas.height / dpr)
-
-  if (simplified) {
-    // Simplified mode: just draw line bars with varying brightness
-    lines.forEach((line, i) => {
-      const y = i * lineHeight
-      const brightness = Math.min(1, line.length / 80)
-      const alpha = 0.3 + brightness * 0.5
-      ctx.fillStyle = `rgba(150, 150, 150, ${alpha})`
-      const barWidth = Math.min(width - 4, (line.length / 80) * width)
-      ctx.fillRect(2, y, barWidth, lineHeight - 0.5)
-    })
-  } else {
-    // Full mode: token-based coloring
-    ctx.font = `${lineHeight * 1.2}px monospace`
-    ctx.textBaseline = 'top'
-
-    lines.forEach((line, lineIndex) => {
-      const y = lineIndex * lineHeight
-      const tokens = tokenizeLine(line)
-      let x = 2
-
-      for (const token of tokens) {
-        if (x >= width - 2) break
-
-        switch (token.type) {
-          case 'keyword':
-            ctx.fillStyle = colors.keyword
-            break
-          case 'string':
-            ctx.fillStyle = colors.string
-            break
-          case 'number':
-            ctx.fillStyle = colors.number
-            break
-          case 'comment':
-            ctx.fillStyle = colors.comment
-            break
-          case 'function':
-            ctx.fillStyle = colors.function
-            break
-          case 'type':
-            ctx.fillStyle = colors.type
-            break
-          default:
-            ctx.fillStyle = colors.fg
-        }
-
-        ctx.fillText(token.text, x, y)
-        x += ctx.measureText(token.text).width
-      }
-    })
+function colorForKind(kind: LineKind, colors: ReturnType<typeof readThemeColors>): string {
+  switch (kind) {
+    case 'comment':
+      return colors.comment
+    case 'string':
+      return colors.string
+    case 'keyword':
+      return colors.keyword
+    case 'empty':
+      return 'transparent'
+    default:
+      return colors.code
   }
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+function paintMinimap(
+  canvas: HTMLCanvasElement,
+  doc: Text,
+  mode: MinimapRenderMode,
+  cssWidth: number,
+  cssHeight: number,
+) {
+  if (mode === 'hidden' || cssWidth <= 0 || cssHeight <= 0) return
 
-interface EditorMinimapProps {
-  /** The main CodeMirror EditorView to sync with */
-  mainView: EditorView | null
-  /** Current active tab */
-  activeTab: EditorTab | undefined
-  /** Whether minimap is enabled */
-  enabled: boolean
-  /** Current width */
-  width: number
-  /** Called when width changes via drag */
-  onWidthChange: (width: number) => void
+  const dpr = mode === 'density' ? 1 : Math.min(window.devicePixelRatio || 1, 2)
+  const w = Math.max(1, Math.floor(cssWidth * dpr))
+  const h = Math.max(1, Math.floor(cssHeight * dpr))
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w
+    canvas.height = h
+  }
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, cssWidth, cssHeight)
+
+  const totalLines = Math.max(1, doc.lines)
+  const colors = readThemeColors()
+  const sampleRows = Math.max(1, Math.floor(cssHeight))
+
+  for (let y = 0; y < sampleRows; y++) {
+    const lineNum = Math.min(totalLines, Math.floor((y / sampleRows) * totalLines) + 1)
+    let lineText = ''
+    let lineLen = 0
+    try {
+      const line = doc.line(lineNum)
+      lineLen = line.length
+      if (mode === 'full') {
+        // Sample a short prefix only — never materialize the whole document.
+        lineText = doc.sliceString(line.from, Math.min(line.to, line.from + 96))
+      }
+    } catch {
+      continue
+    }
+
+    if (mode === 'density') {
+      const density = Math.min(1, lineLen / 100)
+      if (density <= 0) continue
+      ctx.fillStyle = colors.density
+      ctx.globalAlpha = 0.35 + density * 0.55
+      ctx.fillRect(0, y, Math.max(1, cssWidth * density), 1)
+      ctx.globalAlpha = 1
+      continue
+    }
+
+    const kind = classifyLine(lineText)
+    if (kind === 'empty') continue
+    const bar = Math.min(1, Math.max(0.12, lineLen / 80))
+    ctx.fillStyle = colorForKind(kind, colors)
+    ctx.fillRect(0, y, Math.max(1, cssWidth * bar), 1)
+  }
 }
 
-export default function EditorMinimap({
-  mainView,
-  activeTab,
-  enabled,
-  width,
-  onWidthChange,
-}: EditorMinimapProps) {
+export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
+  const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [isDragging, setIsDragging] = useState(false)
-  const dragStartX = useRef(0)
-  const dragStartWidth = useRef(0)
-  const [viewportTop, setViewportTop] = useState(0)
-  const [viewportHeight, setViewportHeight] = useState(0)
+  const viewportRef = useRef<HTMLDivElement>(null)
+  const [width, setWidth] = useState(() => loadMinimapWidth())
+  const [mode, setMode] = useState<MinimapRenderMode>(() =>
+    resolveMinimapMode(resolveMinimapByteSize(fileSize, 0)),
+  )
+  const widthRef = useRef(width)
+  const modeRef = useRef(mode)
+  const scheduleRef = useRef(0)
+  const lastRepaintAtRef = useRef(0)
+  const pendingRepaintRef = useRef(false)
+  const dragWidthRef = useRef<{ startX: number; startWidth: number } | null>(null)
 
-  // Check if file is too large for minimap
-  const fileSize = activeTab?.fileSize ?? activeTab?.content?.length ?? 0
-  const isSimplified = fileSize > MINIMAP_SOFT_MAX_FILE_SIZE
-  const isDisabled = fileSize > MINIMAP_MAX_FILE_SIZE
+  widthRef.current = width
+  modeRef.current = mode
 
-  // ─── Render minimap content ──────────────────────────────────────────────
+  // Reset tier when switching tabs so a prior >5MB “hidden” state cannot stick.
   useEffect(() => {
-    if (!enabled || !activeTab || !activeTab.content || isDisabled) return
+    const docLen = viewRef.current?.state.doc.length ?? 0
+    const next = resolveMinimapMode(resolveMinimapByteSize(fileSize, docLen))
+    modeRef.current = next
+    setMode(next)
+  }, [tabId, fileSize, viewRef])
 
+  const updateViewport = () => {
+    const view = viewRef.current
+    const viewport = viewportRef.current
+    const root = rootRef.current
+    if (!view || !viewport || !root) return
+    const scrollDOM = view.scrollDOM
+    const scrollHeight = Math.max(1, scrollDOM.scrollHeight)
+    const clientHeight = scrollDOM.clientHeight
+    const mapH = root.clientHeight
+    const top = (scrollDOM.scrollTop / scrollHeight) * mapH
+    const height = Math.max(8, (clientHeight / scrollHeight) * mapH)
+    viewport.style.top = `${top}px`
+    viewport.style.height = `${Math.min(mapH, height)}px`
+  }
+
+  const repaintNow = () => {
+    const view = viewRef.current
     const canvas = canvasRef.current
-    if (!canvas) return
+    const root = rootRef.current
+    if (!view || !canvas || !root) return
 
-    const content = activeTab.content
-    renderMinimap(canvas, {
-      content,
-      width,
-      simplified: isSimplified,
-    })
-  }, [enabled, activeTab, width, isSimplified, isDisabled])
+    const doc = view.state.doc
+    const bytes = resolveMinimapByteSize(fileSize, doc.length)
+    const nextMode = resolveMinimapMode(bytes)
+    if (nextMode !== modeRef.current) {
+      modeRef.current = nextMode
+      setMode(nextMode)
+    }
+    if (nextMode === 'hidden') return
 
-  // ─── Scroll sync: main editor → minimap viewport indicator ────────────────
+    const cssWidth = root.clientWidth || widthRef.current || MINIMAP_WIDTH_DEFAULT
+    const cssHeight = root.clientHeight
+    if (cssHeight <= 0) return
+
+    paintMinimap(canvas, doc, nextMode, cssWidth, cssHeight)
+    updateViewport()
+    lastRepaintAtRef.current = performance.now()
+  }
+
+  const requestRepaint = (force = false) => {
+    pendingRepaintRef.current = true
+    if (scheduleRef.current) return
+    const elapsed = performance.now() - lastRepaintAtRef.current
+    const delay = force ? 0 : Math.max(0, MINIMAP_REPAINT_THROTTLE_MS - elapsed)
+    scheduleRef.current = window.setTimeout(() => {
+      scheduleRef.current = 0
+      if (!pendingRepaintRef.current) return
+      pendingRepaintRef.current = false
+      requestAnimationFrame(repaintNow)
+    }, delay)
+  }
+
+  // Attach to CM updates + scroll; retry briefly until view exists after bind.
   useEffect(() => {
-    if (!enabled || !mainView || isDisabled) return
+    let cancelled = false
+    let scrollEl: HTMLElement | null = null
+    let tries = 0
+    let retryTimer = 0
 
-    const updateViewport = () => {
-      const scroller = mainView.scrollDOM
-      const scrollTop = scroller.scrollTop
-      const scrollHeight = scroller.scrollHeight - scroller.clientHeight
-      const clientHeight = scroller.clientHeight
+    const detachScroll = () => {
+      if (scrollEl) {
+        scrollEl.removeEventListener('scroll', updateViewport)
+        scrollEl = null
+      }
+    }
 
-      if (scrollHeight <= 0) {
-        setViewportTop(0)
-        setViewportHeight(100)
+    const attach = () => {
+      if (cancelled) return
+      const view = viewRef.current
+      if (!view) {
+        if (tries++ < 40) {
+          retryTimer = window.setTimeout(attach, 16)
+        }
         return
       }
-
-      const topPercent = (scrollTop / scrollHeight) * 100
-      const heightPercent = (clientHeight / scroller.scrollHeight) * 100
-
-      setViewportTop(topPercent)
-      setViewportHeight(Math.max(heightPercent, 3)) // minimum 3% height
+      detachScroll()
+      scrollEl = view.scrollDOM
+      scrollEl.addEventListener('scroll', updateViewport, { passive: true })
+      requestRepaint(true)
     }
 
-    const scroller = mainView.scrollDOM
-    scroller.addEventListener('scroll', updateViewport, { passive: true })
-    updateViewport()
+    setMinimapUpdateHandler(update => {
+      if (update.docChanged) requestRepaint(false)
+      if (update.geometryChanged) {
+        updateViewport()
+        requestRepaint(false)
+      }
+    })
+
+    attach()
+
+    const root = rootRef.current
+    const ro =
+      root && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => requestRepaint(true))
+        : null
+    if (root && ro) ro.observe(root)
+
+    const onTheme = () => requestRepaint(true)
+    window.addEventListener('qingcode:theme-changed', onTheme)
 
     return () => {
-      scroller.removeEventListener('scroll', updateViewport)
+      cancelled = true
+      window.clearTimeout(retryTimer)
+      if (scheduleRef.current) {
+        window.clearTimeout(scheduleRef.current)
+        scheduleRef.current = 0
+      }
+      setMinimapUpdateHandler(null)
+      detachScroll()
+      ro?.disconnect()
+      window.removeEventListener('qingcode:theme-changed', onTheme)
     }
-  }, [enabled, mainView, isDisabled])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabId, fileSize, viewRef])
 
-  // ─── Click/drag on minimap → scroll main editor ───────────────────────────
-  const handleMinimapClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    if (!mainView) return
-
-    const rect = containerRef.current?.getBoundingClientRect()
-    if (!rect) return
-
-    const clickY = e.clientY - rect.top
-    const containerHeight = rect.height
-    const scrollRatio = clickY / containerHeight
-
-    const scroller = mainView.scrollDOM
-    const maxScroll = scroller.scrollHeight - scroller.clientHeight
-    const targetScroll = scrollRatio * maxScroll
-
-    scroller.scrollTop = Math.max(0, Math.min(targetScroll, maxScroll))
-  }, [mainView])
-
-  // ─── Drag resizer ─────────────────────────────────────────────────────────
-  const handleResizerMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(true)
-    dragStartX.current = e.clientX
-    dragStartWidth.current = width
-
-    const handleMouseMove = (ev: MouseEvent) => {
-      const delta = dragStartX.current - ev.clientX // dragging left = wider
-      const newWidth = Math.max(MINIMAP_MIN_WIDTH, Math.min(MINIMAP_MAX_WIDTH, dragStartWidth.current + delta))
-      onWidthChange(newWidth)
-    }
-
-    const handleMouseUp = () => {
-      setIsDragging(false)
-      window.removeEventListener('mousemove', handleMouseMove)
-      window.removeEventListener('mouseup', handleMouseUp)
-    }
-
-    window.addEventListener('mousemove', handleMouseMove)
-    window.addEventListener('mouseup', handleMouseUp)
-  }, [width, onWidthChange])
-
-  // ─── Render ───────────────────────────────────────────────────────────────
-  if (!enabled || !activeTab || isDisabled) {
-    return null
+  const jumpToClientY = (clientY: number) => {
+    const view = viewRef.current
+    const root = rootRef.current
+    if (!view || !root) return
+    const rect = root.getBoundingClientRect()
+    const ratio = Math.min(1, Math.max(0, (clientY - rect.top) / Math.max(1, rect.height)))
+    const scrollDOM = view.scrollDOM
+    const maxScroll = Math.max(0, scrollDOM.scrollHeight - scrollDOM.clientHeight)
+    scrollDOM.scrollTop = ratio * maxScroll
+    updateViewport()
   }
 
+  const onCanvasPointerDown = (event: ReactMouseEvent) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    jumpToClientY(event.clientY)
+
+    const onMove = (e: MouseEvent) => jumpToClientY(e.clientY)
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  const onResizePointerDown = (event: ReactMouseEvent) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    dragWidthRef.current = { startX: event.clientX, startWidth: widthRef.current }
+
+    const onMove = (e: MouseEvent) => {
+      const drag = dragWidthRef.current
+      if (!drag) return
+      // Dragging left edge: move left → wider.
+      const next = clampMinimapWidth(drag.startWidth + (drag.startX - e.clientX))
+      widthRef.current = next
+      setWidth(next)
+    }
+    const onUp = () => {
+      dragWidthRef.current = null
+      saveMinimapWidth(widthRef.current)
+      requestRepaint(true)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  if (mode === 'hidden') return null
+
   return (
-    <div className="flex h-full flex-shrink-0 overflow-hidden" style={{ width }}>
-      {/* Drag resizer (left edge of minimap) */}
+    <div
+      ref={rootRef}
+      className="editor-minimap"
+      style={{ width }}
+      aria-hidden
+    >
       <div
-        className="flex-shrink-0 w-1 cursor-col-resize hover:bg-accent/30 active:bg-accent/60 transition-colors"
-        onMouseDown={handleResizerMouseDown}
-        style={{ cursor: isDragging ? 'col-resize' : undefined }}
+        className="editor-minimap__resizer"
+        onMouseDown={onResizePointerDown}
+        title="Drag to resize"
       />
-
-      {/* Minimap content */}
-      <div
-        ref={containerRef}
-        className="flex-1 relative overflow-hidden cursor-pointer select-none"
-        onClick={handleMinimapClick}
-      >
-        <canvas
-          ref={canvasRef}
-          className="block w-full"
-          style={{ imageRendering: 'pixelated' }}
-        />
-
-        {/* Viewport indicator */}
-        <div
-          className="absolute left-0 right-0 border-y border-accent/40 bg-accent/10 pointer-events-none"
-          style={{
-            top: `${viewportTop}%`,
-            height: `${viewportHeight}%`,
-          }}
-        />
-
-        {/* Current line indicator */}
-        <div
-          className="absolute left-0 right-0 h-px bg-accent/60 pointer-events-none"
-          style={{
-            top: `${viewportTop + viewportHeight / 2}%`,
-          }}
-        />
-      </div>
+      <canvas
+        ref={canvasRef}
+        className="editor-minimap__canvas"
+        onMouseDown={onCanvasPointerDown}
+      />
+      <div ref={viewportRef} className="editor-minimap__viewport" />
     </div>
   )
 }

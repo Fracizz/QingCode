@@ -126,7 +126,7 @@ const SHARED_SETTINGS_BODY = `
   "editor.lineNumbers": "on",
   // editor.renderWhitespace：空白字符渲染 none | boundary | selection | trailing | all
   "editor.renderWhitespace": "selection",
-  // editor.minimap.enabled：小地图（默认开启；超过 5MB 的文件自动隐藏）
+  // editor.minimap.enabled：编辑器右侧代码小地图（缩略图 + 视口框；>5MB 自动隐藏）
   "editor.minimap.enabled": true,
   // editor.formatOnSave：保存时自动格式化（format_document；可用 Shift+Alt+F 手动格式化）
   "editor.formatOnSave": false,

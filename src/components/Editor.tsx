@@ -93,6 +93,12 @@ import {
 } from '../lib/editorSession'
 import { editorPerfProfileForTab, type EditorPerfProfile } from '../lib/fileSizePolicy'
 import { formatDocument } from '../lib/formatDocument'
+import { emitMinimapUpdate } from '../lib/minimapBridge'
+import {
+  getMinimapEnabled,
+  loadEffectiveMinimapEnabled,
+  MINIMAP_SETTINGS_EVENT,
+} from '../lib/minimapSettings'
 import { isLoadingTab, isOpenErrorTab, isViewOnlyTab } from '../lib/openFileError'
 import type { EditorTab } from '../types'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -100,7 +106,7 @@ import Kbd from './Kbd'
 import MarkdownPreview from './MarkdownPreview'
 import EditorOpenError from './EditorOpenError'
 import LargeFileViewer from './LargeFileViewer'
-import EditorMinimap, { MINIMAP_DEFAULT_WIDTH, MINIMAP_MIN_WIDTH, MINIMAP_MAX_WIDTH } from './EditorMinimap'
+import EditorMinimap from './EditorMinimap'
 const DiffEditor = lazy(() => import('./DiffEditor'))
 
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
@@ -278,6 +284,7 @@ function createTabEditorState(
       ),
       flashField,
       EditorView.updateListener.of(update => {
+        emitMinimapUpdate(update)
         if (update.docChanged) {
           // Avoid full-document copies into Zustand on every keystroke.
           markDirty(tabId)
@@ -459,6 +466,7 @@ export default function Editor() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [mdPreviewMode, setMdPreviewMode] = useState<MdPreviewMode>('off')
   const [previewContent, setPreviewContent] = useState('')
+  const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const previewScrollRef = useRef<HTMLDivElement>(null)
   const syncingMdScrollRef = useRef(false)
   const boundEpochRef = useRef(0)
@@ -476,42 +484,6 @@ export default function Editor() {
   const markdownTab = isMarkdownTab(activeTab) && activeProfile === 'full'
   const showPreviewPane = markdownTab && mdPreviewMode !== 'off'
   const showSourcePane = !markdownTab || mdPreviewMode !== 'preview'
-  
-  // Minimap state
-  const [minimapEnabled, setMinimapEnabled] = useState(() => {
-    try {
-      const stored = localStorage.getItem('qingcode:minimap-enabled')
-      return stored !== null ? stored === 'true' : getEditorPreferences().minimapEnabled
-    } catch {
-      return true
-    }
-  })
-  const [minimapWidth, setMinimapWidth] = useState(() => {
-    try {
-      const stored = localStorage.getItem('qingcode:minimap-width')
-      const parsed = stored ? parseInt(stored, 10) : MINIMAP_DEFAULT_WIDTH
-      return Math.max(MINIMAP_MIN_WIDTH, Math.min(MINIMAP_MAX_WIDTH, parsed))
-    } catch {
-      return MINIMAP_DEFAULT_WIDTH
-    }
-  })
-  
-  // Persist minimap width
-  useEffect(() => {
-    localStorage.setItem('qingcode:minimap-width', String(minimapWidth))
-  }, [minimapWidth])
-  
-  // Listen for minimap setting changes
-  useEffect(() => {
-    const handleSettingsChange = (event: Event) => {
-      const detail = (event as CustomEvent<EditorPreferenceSettings>).detail
-      if (detail && typeof detail.minimapEnabled === 'boolean') {
-        setMinimapEnabled(detail.minimapEnabled)
-      }
-    }
-    window.addEventListener(EDITOR_SETTINGS_EVENT, handleSettingsChange)
-    return () => window.removeEventListener(EDITOR_SETTINGS_EVENT, handleSettingsChange)
-  }, [])
 
   // Destroy the shared view only when leaving the editable surface (not on tab switch).
   useEffect(() => {
@@ -632,6 +604,7 @@ export default function Editor() {
     void import('../lib/formatOnSaveSettings').then(m =>
       m.loadEffectiveFormatOnSave(currentProject),
     )
+    void loadEffectiveMinimapEnabled(currentProject)
     void import('../lib/terminalScrollbackSettings').then(m =>
       m.loadEffectiveTerminalScrollback(currentProject),
     )
@@ -639,6 +612,14 @@ export default function Editor() {
       m.loadEffectiveTerminalCursorBlinking(currentProject),
     )
   }, [currentProject?.id])
+
+  useEffect(() => {
+    const onMinimap = (event: Event) => {
+      setMinimapEnabled((event as CustomEvent<boolean>).detail === true)
+    }
+    window.addEventListener(MINIMAP_SETTINGS_EVENT, onMinimap)
+    return () => window.removeEventListener(MINIMAP_SETTINGS_EVENT, onMinimap)
+  }, [])
 
   useEffect(() => {
     const apply = (prefs?: EditorPreferenceSettings) => {
@@ -1038,26 +1019,24 @@ export default function Editor() {
             onContextMenu={openContextMenu}
           >
             <div
-              ref={containerRef}
-              className="h-full"
+              className="editor-pane"
               onBlur={event => {
                 if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
                   if (activeTabId) flushLiveEditorContent(activeTabId)
                   notifyEditorBlur()
                 }
               }}
-            />
+            >
+              <div ref={containerRef} className="editor-pane__host" />
+              {minimapEnabled && showSourcePane && (
+                <EditorMinimap
+                  viewRef={viewRef}
+                  tabId={activeTabId}
+                  fileSize={activeTab?.fileSize}
+                />
+              )}
+            </div>
           </div>
-          {/* Minimap */}
-          {showSourcePane && !showPreviewPane && (
-            <EditorMinimap
-              mainView={viewRef.current}
-              activeTab={activeTab}
-              enabled={minimapEnabled}
-              width={minimapWidth}
-              onWidthChange={setMinimapWidth}
-            />
-          )}
           {showPreviewPane && (
             <div
               className={`min-w-0 flex-1 overflow-hidden border-border ${

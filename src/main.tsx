@@ -28,6 +28,7 @@ void import('./lib/terminalCursorSettings').then(m =>
   m.loadEffectiveTerminalCursorBlinking(null),
 )
 void import('./lib/formatOnSaveSettings').then(m => m.loadEffectiveFormatOnSave(null))
+void import('./lib/minimapSettings').then(m => m.loadEffectiveMinimapEnabled(null))
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

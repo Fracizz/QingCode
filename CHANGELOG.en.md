@@ -6,6 +6,10 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- Editor minimap (`editor.minimap.enabled`, on by default): thumbnail, viewport indicator, click/drag jump; size tiers (≤1MB full / 1–5MB density / >5MB hidden)
+
 ### Changed
 
 - Local packaging unified as `pnpm package`: one pass builds Windows x64 portable + NSIS installer (ARM64/macOS remain CI)

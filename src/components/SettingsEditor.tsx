@@ -59,6 +59,11 @@ import {
   saveScopedAutoSaveSettings,
   type AutoSaveMode,
 } from '../lib/autoSaveSettings'
+import {
+  getMinimapEnabled,
+  loadScopedMinimapEnabled,
+  saveScopedMinimapEnabled,
+} from '../lib/minimapSettings'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import {
   getOpenWithStatus,
@@ -118,6 +123,7 @@ export default function SettingsEditor() {
   const [autoSaveDelay, setAutoSaveDelay] = useState<number>(
     DEFAULT_GLOBAL_SETTINGS['files.autoSaveDelay'] as number,
   )
+  const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const [openWith, setOpenWith] = useState<OpenWithStatus | null>(null)
   const [openWithBusy, setOpenWithBusy] = useState(false)
   const [checkOnStartup, setCheckOnStartup] = useState(DEFAULT_UPDATE_SETTINGS.checkOnStartup)
@@ -162,6 +168,7 @@ export default function SettingsEditor() {
       setAutoSaveMode(settings.mode)
       setAutoSaveDelay(settings.delay)
     })
+    void loadScopedMinimapEnabled(settingsScope, currentProject).then(setMinimapEnabled)
   }, [scope, currentProject])
 
   const workspaceLocked = scope === 'workspace'
@@ -197,6 +204,17 @@ export default function SettingsEditor() {
       await saveScopedAutoSaveSettings(settingsScope, { mode, delay }, currentProject)
     } catch (error) {
       pushToast('error', t('保存自动保存设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const updateMinimapEnabled = async (enabled: boolean) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setMinimapEnabled(enabled)
+    try {
+      await saveScopedMinimapEnabled(settingsScope, enabled, currentProject)
+    } catch (error) {
+      pushToast('error', t('保存小地图设置失败: {error}', { error: String(error) }))
     }
   }
 
@@ -256,7 +274,8 @@ export default function SettingsEditor() {
         return match('颜色主题', '界面字号', '常用设置')
       }
       if (cat.id === 'appearance') return match('颜色主题', '外观', '深色', '浅色')
-      if (cat.id === 'editor') return match('界面字体', '代码字体', '编辑器字号', '文本编辑器', '自动保存')
+      if (cat.id === 'editor')
+        return match('界面字体', '代码字体', '编辑器字号', '文本编辑器', '自动保存', '小地图', 'minimap')
       if (cat.id === 'terminal') return match('终端', '默认启动配置', '终端字号')
       if (cat.id === 'features') {
         return match(
@@ -470,13 +489,43 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('文本编辑器', '界面字体', '代码字体', '编辑器字号', '终端字号', '自动保存') && (
+            {match(
+              '文本编辑器',
+              '界面字体',
+              '代码字体',
+              '编辑器字号',
+              '终端字号',
+              '自动保存',
+              '小地图',
+              'minimap',
+            ) && (
               <Section
                 id="editor"
                 title={t('文本编辑器')}
                 sectionRefs={sectionRefs}
                 onVisible={setCategory}
               >
+                {match('小地图', 'minimap', 'editor.minimap.enabled') && (
+                  <SettingItem
+                    title={t('编辑器: 小地图')}
+                    description={t(
+                      '在编辑区右侧显示代码缩略图，便于快速跳转。大于 5MB 的文件会自动隐藏。对应 editor.minimap.enabled。',
+                    )}
+                    modified={minimapEnabled !== DEFAULT_GLOBAL_SETTINGS['editor.minimap.enabled']}
+                    locked={scope === 'workspace' && !currentProject}
+                    lockHint={t('请先选择项目，再配置工作区小地图。')}
+                  >
+                    <label className="inline-flex items-center gap-2 text-[12px] text-fg">
+                      <input
+                        type="checkbox"
+                        checked={minimapEnabled}
+                        disabled={scope === 'workspace' && !currentProject}
+                        onChange={e => void updateMinimapEnabled(e.target.checked)}
+                      />
+                      {t('启用小地图')}
+                    </label>
+                  </SettingItem>
+                )}
                 {match('自动保存', 'files.autoSave') && (
                   <>
                     <SettingItem
@@ -975,7 +1024,7 @@ export default function SettingsEditor() {
                 <SettingItem
                   title={t('JSON 键生效说明')}
                   description={t(
-                    'files.exclude / search.exclude / useIgnoreFiles / followSymlinks、explorer.excludeGitIgnore、files.encoding、editor.formatOnSave / formatOnPaste、括号着色与参考线、terminal.integrated.scrollback / cursorBlinking 已生效。标有「不计划」的键（如 editor.minimap、linkedEditing）会保存但不会改变行为。详见帮助文档。',
+                    'files.exclude / search.exclude / useIgnoreFiles / followSymlinks、explorer.excludeGitIgnore、files.encoding、editor.minimap.enabled、editor.formatOnSave / formatOnPaste、括号着色与参考线、terminal.integrated.scrollback / cursorBlinking 已生效。标有「不计划」的键（如 linkedEditing）会保存但不会改变行为。详见帮助文档。',
                   )}
                 >
                   <span className="text-[12px] text-fg-dim">{t('见 JSON 注释 / 帮助文档')}</span>
