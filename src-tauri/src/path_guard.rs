@@ -415,7 +415,7 @@ mod tests {
         };
         let child = ghost_root.join("src").join("main.rs");
         assert!(
-            is_inside_any_root(&child, &[ghost_root.clone()]),
+            is_inside_any_root(&child, std::slice::from_ref(&ghost_root)),
             "loose fallback should treat child as inside ghost root"
         );
         assert!(path_is_within_loose(&child, &ghost_root));
