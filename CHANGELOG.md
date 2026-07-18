@@ -2,7 +2,11 @@
 
 本文件记录 QingCode 的用户可见变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+英文版见 [CHANGELOG.en.md](./CHANGELOG.en.md)。
+
 ## [Unreleased]
+
+## [0.1.4] - 2026-07-18
 
 ### Added
 
@@ -15,21 +19,31 @@
 - `files.exclude` / `search.exclude`：资源管理器与文件/内容搜索按设置 JSON 中的排除规则生效
 - `explorer.excludeGitIgnore` / `search.useIgnoreFiles`：资源管理器与搜索按 `.gitignore` 等 ignore 文件过滤（可关）
 - `search.followSymlinks`：搜索是否跟随符号链接（默认 `false`）
-- `files.encoding`：默认 `auto` 检测（UTF-8/UTF-16 BOM / UTF-8 / GB18030 兼容兀底），打开/保存支持 `utf8` / `utf8bom` / `utf16le` / `utf16be` / `gbk` / `gb18030`，状态栏可重新按编码读取或保存转换
+- `files.encoding`：默认 `auto` 检测（UTF-8/UTF-16 BOM / UTF-8 / GB18030 兼容兜底），打开/保存支持 `utf8` / `utf8bom` / `utf16le` / `utf16be` / `gbk` / `gb18030`，状态栏可重新按编码读取或保存转换
 - `terminal.integrated.scrollback`：限制 xterm 缓冲，并跨重启持久化最近输出
 - `terminal.integrated.cursorBlinking`：控制终端光标闪烁
 - 命令面板、多项目工作区、符号跳转、轻量 Git 状态/与 HEAD 比较等一批能力
+- 快速打开与临时项目：更方便地打开文件夹与短期工作区
 - 检查更新：正式构建可启动时自动查询 Gitee/GitHub Release；设置中可关闭自动检查或手动检查；发现新版本仅提示打开下载页
 - GitHub Release 多架构构建：Windows x64 / Windows ARM64（`windows-11-arm`）/ macOS Apple Silicon arm64（`macos-14`，dmg + app zip）
+- Windows NSIS 安装包脚本（`pnpm package:installer`）
+- 中英双语 README 界面截图（资源管理器、搜索、源代码管理、运行配置、设置、项目管理）
+- Everforest 森林主题与 VS Code 风格自动保存
+- 完整中英文帮助文档，并随界面语言切换
 
 ### Fixed
 
 - 源代码管理使用 Git 原始路径记录解析，中文、空格和重命名文件可正确查看差异
+- Diff 主题导致的启动白屏
+- 根目录刷新晚于目录展开时，已展开文件夹子节点被清空的问题
+- 正式版编辑器/终端相关稳定性问题的后续体验修补（格式化提示、交互细节等）
 
 ### Changed
 
 - 设置 JSON 中不计划实现的预留键（小地图、链接编辑）标注为「不计划」；其余常用键已接线生效
 - 帮助文档随界面语言切换：中文界面显示 `帮助文档.md`，非中文界面显示英文 `HELP.md`
+- 终端支持收起/关闭；Tooltip 需悬停约两秒；窗口按钮文案国际化
+- 优化源代码管理面板在大量变更时的打开性能
 
 ## [0.1.3] - 2026-07-17
 
@@ -93,7 +107,8 @@
 - Windows 单文件 exe 打包（`pnpm package:exe`）
 - GitHub / Gitee Release 工作流与版本脚本
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.1

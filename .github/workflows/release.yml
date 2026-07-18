@@ -294,24 +294,29 @@ jobs:
           body: |
             ## QingCode v${{ needs.meta.outputs.version }}
 
+            ### 中文
+            多平台构建（macOS 未签名：首次请右键 → 打开）。
+
+            | 平台 | 文件 |
+            |------|------|
+            | Windows x64 | `QingCode_${{ needs.meta.outputs.version }}-windows-x64.exe`（兼 `QingCode_${{ needs.meta.outputs.version }}.exe`） |
+            | Windows ARM64 | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64.exe` |
+            | macOS Apple Silicon | `QingCode_${{ needs.meta.outputs.version }}-macos-arm64.dmg` / `.zip` |
+
+            Windows 需安装 WebView2。变更说明见 [CHANGELOG.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.md)。
+
+            ### English
             Multi-platform builds (unsigned macOS OK — right-click → Open the first time).
 
-            ### Windows
-            | Arch | File |
-            |------|------|
-            | x64 | `QingCode_${{ needs.meta.outputs.version }}-windows-x64.exe` (also `QingCode_${{ needs.meta.outputs.version }}.exe`) |
-            | ARM64 | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64.exe` |
+            | Platform | File |
+            |----------|------|
+            | Windows x64 | `QingCode_${{ needs.meta.outputs.version }}-windows-x64.exe` (also `QingCode_${{ needs.meta.outputs.version }}.exe`) |
+            | Windows ARM64 | `QingCode_${{ needs.meta.outputs.version }}-windows-arm64.exe` |
+            | macOS Apple Silicon | `QingCode_${{ needs.meta.outputs.version }}-macos-arm64.dmg` / `.zip` |
 
-            Requires WebView2 on Windows 10/11.
+            Requires WebView2 on Windows 10/11. See [CHANGELOG.en.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.en.md).
 
-            ### macOS
-            | Arch | File |
-            |------|------|
-            | Apple Silicon (arm64) | `QingCode_${{ needs.meta.outputs.version }}-macos-arm64.dmg` or `.zip` |
-
-            See [CHANGELOG.md](https://github.com/Fracizz/QingCode/blob/master/CHANGELOG.md).
-
-            Also mirrored on Gitee when `GITEE_TOKEN` is configured: https://gitee.com/FrancizTest_admin/qing-code/releases
+            Gitee mirror (requires `GITEE_TOKEN`): https://gitee.com/FrancizTest_admin/qing-code/releases
           files: release-assets/*
 
       - name: Publish Gitee Release
@@ -325,13 +330,23 @@ jobs:
           $body = @"
           ## QingCode v$ver
 
+          ### 中文
+          多平台构建。
+
+          - Windows x64: ``QingCode_$ver-windows-x64.exe`` / ``QingCode_$ver.exe``
+          - Windows ARM64: ``QingCode_$ver-windows-arm64.exe``
+          - macOS Apple Silicon: ``QingCode_$ver-macos-arm64.dmg`` / ``.zip``
+
+          变更说明：https://gitee.com/FrancizTest_admin/qing-code/blob/master/CHANGELOG.md
+
+          ### English
           Multi-platform builds.
 
           - Windows x64: ``QingCode_$ver-windows-x64.exe`` / ``QingCode_$ver.exe``
           - Windows ARM64: ``QingCode_$ver-windows-arm64.exe``
           - macOS Apple Silicon: ``QingCode_$ver-macos-arm64.dmg`` / ``.zip``
 
-          Changelog: https://gitee.com/FrancizTest_admin/qing-code/blob/master/CHANGELOG.md
+          Changelog: https://gitee.com/FrancizTest_admin/qing-code/blob/master/CHANGELOG.en.md
           "@
           ./scripts/publish-gitee-release.ps1 `
             -Tag $tag `

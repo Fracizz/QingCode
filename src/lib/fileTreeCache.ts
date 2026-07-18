@@ -68,6 +68,23 @@ export function patchDirChildren(
   return patchTree(tree, path, () => children)
 }
 
+/**
+ * A root scan only contains one level. Keep lazy-loaded descendants when its
+ * response lands after a directory expansion, otherwise it can replace an
+ * expanded folder with an unloaded copy and leave its visible row empty.
+ */
+export function preserveLoadedChildren(fresh: FileNode[], existing: FileNode[]): FileNode[] {
+  return fresh.map(node => {
+    const previous = findNodeByPath(existing, node.path)
+    if (!node.is_dir || !previous?.is_dir || !previous.loaded) return node
+    return {
+      ...node,
+      children: previous.children,
+      loaded: true,
+    }
+  })
+}
+
 /** Ancestor directories that must be expanded to reveal `filePath` under `project`. */
 export function dirsToReveal(filePath: string, project: Project): string[] {
   return collectAncestorDirs(filePath, project.path)

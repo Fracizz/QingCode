@@ -9,19 +9,27 @@
 
 ### 资源管理器与编辑器
 
-![资源管理器与代码编辑](./docs/screenshots/01-explorer-editor.jpg)
+![资源管理器与代码编辑](./docs/screenshots/zh-01-explorer-editor.jpg)
 
 ### 全局搜索
 
-![文件内容搜索](./docs/screenshots/02-search.jpg)
+![文件内容搜索](./docs/screenshots/zh-02-search.jpg)
 
-### 编辑器与终端
+### 源代码管理
 
-![编辑器、运行配置与终端](./docs/screenshots/03-editor-terminal.jpg)
+![分支、更改列表与差异对比](./docs/screenshots/zh-03-source-control.jpg)
+
+### 运行配置
+
+![运行配置与 .qingcode/run.json](./docs/screenshots/zh-04-run-config.jpg)
 
 ### 设置
 
-![主题与字体等设置](./docs/screenshots/04-settings.jpg)
+![主题与字体等设置](./docs/screenshots/zh-05-settings.jpg)
+
+### 项目管理
+
+![添加、隐藏与管理本地项目](./docs/screenshots/zh-06-manage-projects.jpg)
 
 ## 为什么做 QingCode
 

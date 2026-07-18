@@ -9,19 +9,27 @@ It is not another VS Code or Zed — it focuses on keeping several local project
 
 ### Explorer & editor
 
-![Explorer and code editor](./docs/screenshots/01-explorer-editor.jpg)
+![Explorer and code editor](./docs/screenshots/en-01-explorer-editor.jpg)
 
 ### Search
 
-![File content search](./docs/screenshots/02-search.jpg)
+![File content search](./docs/screenshots/en-02-search.jpg)
 
-### Editor & terminal
+### Source Control
 
-![Editor, run configs, and terminal](./docs/screenshots/03-editor-terminal.jpg)
+![Branch, changes, and diffs](./docs/screenshots/en-03-source-control.jpg)
+
+### Run configurations
+
+![Run configs and .qingcode/run.json](./docs/screenshots/en-04-run-config.jpg)
 
 ### Settings
 
-![Theme and font settings](./docs/screenshots/04-settings.jpg)
+![Theme and font settings](./docs/screenshots/en-05-settings.jpg)
+
+### Manage projects
+
+![Add, hide, and manage local projects](./docs/screenshots/en-06-manage-projects.jpg)
 
 ## Why QingCode
 

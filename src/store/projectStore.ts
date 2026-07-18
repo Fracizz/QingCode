@@ -37,6 +37,7 @@ import {
   loadDirChildren,
   loadProjectRootTree,
   patchDirChildren,
+  preserveLoadedChildren,
   type FileNode,
 } from '../lib/fileTreeCache'
 import { authorizePaths, syncRootsFromProjects } from '../lib/pathAllowlist'
@@ -609,7 +610,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set(s => ({
         projectTrees: {
           ...s.projectTrees,
-          [project.id]: tree,
+          [project.id]: preserveLoadedChildren(tree, s.projectTrees[project.id] ?? []),
         },
         unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
       }))
@@ -630,7 +631,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       set(s => ({
         projectTrees: {
           ...s.projectTrees,
-          [project.id]: tree,
+          [project.id]: preserveLoadedChildren(tree, s.projectTrees[project.id] ?? []),
         },
         unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
       }))
