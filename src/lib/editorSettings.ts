@@ -38,6 +38,7 @@ export type EditorPreferenceSettings = {
   formatOnPaste: boolean
   bracketPairColorization: boolean
   bracketPairGuides: boolean
+  minimapEnabled: boolean
 }
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferenceSettings = {
@@ -55,6 +56,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferenceSettings = {
   formatOnPaste: false,
   bracketPairColorization: true,
   bracketPairGuides: true,
+  minimapEnabled: true,
 }
 
 function asNumber(value: unknown, fallback: number): number {
@@ -153,6 +155,10 @@ export function readEditorPreferences(settings: SettingsFile): EditorPreferenceS
     bracketPairGuides: asBoolean(
       settings['editor.guides.bracketPairs'],
       DEFAULT_EDITOR_PREFERENCES.bracketPairGuides,
+    ),
+    minimapEnabled: asBoolean(
+      settings['editor.minimap.enabled'],
+      DEFAULT_EDITOR_PREFERENCES.minimapEnabled,
     ),
   }
 }

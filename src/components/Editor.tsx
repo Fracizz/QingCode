@@ -100,6 +100,7 @@ import Kbd from './Kbd'
 import MarkdownPreview from './MarkdownPreview'
 import EditorOpenError from './EditorOpenError'
 import LargeFileViewer from './LargeFileViewer'
+import EditorMinimap, { MINIMAP_DEFAULT_WIDTH, MINIMAP_MIN_WIDTH, MINIMAP_MAX_WIDTH } from './EditorMinimap'
 const DiffEditor = lazy(() => import('./DiffEditor'))
 
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
@@ -475,6 +476,42 @@ export default function Editor() {
   const markdownTab = isMarkdownTab(activeTab) && activeProfile === 'full'
   const showPreviewPane = markdownTab && mdPreviewMode !== 'off'
   const showSourcePane = !markdownTab || mdPreviewMode !== 'preview'
+  
+  // Minimap state
+  const [minimapEnabled, setMinimapEnabled] = useState(() => {
+    try {
+      const stored = localStorage.getItem('qingcode:minimap-enabled')
+      return stored !== null ? stored === 'true' : getEditorPreferences().minimapEnabled
+    } catch {
+      return true
+    }
+  })
+  const [minimapWidth, setMinimapWidth] = useState(() => {
+    try {
+      const stored = localStorage.getItem('qingcode:minimap-width')
+      const parsed = stored ? parseInt(stored, 10) : MINIMAP_DEFAULT_WIDTH
+      return Math.max(MINIMAP_MIN_WIDTH, Math.min(MINIMAP_MAX_WIDTH, parsed))
+    } catch {
+      return MINIMAP_DEFAULT_WIDTH
+    }
+  })
+  
+  // Persist minimap width
+  useEffect(() => {
+    localStorage.setItem('qingcode:minimap-width', String(minimapWidth))
+  }, [minimapWidth])
+  
+  // Listen for minimap setting changes
+  useEffect(() => {
+    const handleSettingsChange = (event: Event) => {
+      const detail = (event as CustomEvent<EditorPreferenceSettings>).detail
+      if (detail && typeof detail.minimapEnabled === 'boolean') {
+        setMinimapEnabled(detail.minimapEnabled)
+      }
+    }
+    window.addEventListener(EDITOR_SETTINGS_EVENT, handleSettingsChange)
+    return () => window.removeEventListener(EDITOR_SETTINGS_EVENT, handleSettingsChange)
+  }, [])
 
   // Destroy the shared view only when leaving the editable surface (not on tab switch).
   useEffect(() => {
@@ -1011,6 +1048,16 @@ export default function Editor() {
               }}
             />
           </div>
+          {/* Minimap */}
+          {showSourcePane && !showPreviewPane && (
+            <EditorMinimap
+              mainView={viewRef.current}
+              activeTab={activeTab}
+              enabled={minimapEnabled}
+              width={minimapWidth}
+              onWidthChange={setMinimapWidth}
+            />
+          )}
           {showPreviewPane && (
             <div
               className={`min-w-0 flex-1 overflow-hidden border-border ${
