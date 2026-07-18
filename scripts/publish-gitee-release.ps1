@@ -7,8 +7,8 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$Name,
   [string]$Body = '',
-  [Parameter(Mandatory = $true)]
-  [string[]]$Files,
+  # Optional: omit or pass @() to only create/update release notes (no asset upload).
+  [string[]]$Files = @(),
   [string]$Token = $env:GITEE_TOKEN,
   [string]$TargetCommitish = 'master'
 )
@@ -70,6 +70,14 @@ function New-GiteeRelease {
   }
 }
 
+function Update-GiteeRelease([int]$ReleaseId) {
+  Write-Host "Updating Gitee release $Tag (id=$ReleaseId) notes ..."
+  return Invoke-GiteeApi -Method Patch -Path "/repos/$Owner/$Repo/releases/$ReleaseId" -Form @{
+    name = $Name
+    body = $Body
+  }
+}
+
 function Get-AttachFiles([int]$ReleaseId) {
   try {
     return @(Invoke-GiteeApi -Method Get -Path "/repos/$Owner/$Repo/releases/$ReleaseId/attach_files")
@@ -108,33 +116,38 @@ $release = Get-ReleaseByTag -TagName $Tag
 if (-not $release) {
   $release = New-GiteeRelease
 } else {
-  Write-Host "Gitee release for $Tag already exists (id=$($release.id)); uploading assets..."
+  $release = Update-GiteeRelease -ReleaseId ([int]$release.id)
 }
 
 $releaseId = [int]$release.id
-$existing = Get-AttachFiles -ReleaseId $releaseId
-$fileNames = @()
-foreach ($path in $Files) {
-  $resolved = Resolve-Path -LiteralPath $path
-  foreach ($r in $resolved) {
-    $fileNames += (Get-Item -LiteralPath $r.Path).Name
+$fileList = @($Files | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+if ($fileList.Count -gt 0) {
+  $existing = Get-AttachFiles -ReleaseId $releaseId
+  $fileNames = @()
+  foreach ($path in $fileList) {
+    $resolved = Resolve-Path -LiteralPath $path
+    foreach ($r in $resolved) {
+      $fileNames += (Get-Item -LiteralPath $r.Path).Name
+    }
   }
+
+  foreach ($asset in $existing) {
+    if ($fileNames -contains $asset.name) {
+      Remove-AttachFile -ReleaseId $releaseId -AttachId ([int]$asset.id) -FileName $asset.name
+    }
+  }
+
+  foreach ($path in $fileList) {
+    $resolved = Resolve-Path -LiteralPath $path
+    foreach ($r in $resolved) {
+      Add-AttachFile -ReleaseId $releaseId -FilePath $r.Path
+    }
+  }
+} else {
+  Write-Host 'No files provided; skipped asset upload (notes only).'
 }
 
-foreach ($asset in $existing) {
-  if ($fileNames -contains $asset.name) {
-    Remove-AttachFile -ReleaseId $releaseId -AttachId ([int]$asset.id) -FileName $asset.name
-  }
-}
-
-foreach ($path in $Files) {
-  $resolved = Resolve-Path -LiteralPath $path
-  foreach ($r in $resolved) {
-    Add-AttachFile -ReleaseId $releaseId -FilePath $r.Path
-  }
-}
-
-$url = "https://gitee.com/$Owner/$Repo/releases"
+$url = "https://gitee.com/$Owner/$Repo/releases/tag/$Tag"
 Write-Host ""
 Write-Host "OK Gitee release ready: $url" -ForegroundColor Green
 Write-Host "  tag: $Tag"

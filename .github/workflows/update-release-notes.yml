@@ -1,6 +1,6 @@
 name: Update release notes
 
-# Push docs/release-notes/<tag>.md to refresh that GitHub Release body (CN/EN).
+# Push docs/release-notes/<tag>.md to refresh GitHub (and Gitee if GITEE_TOKEN is set) Release body.
 on:
   push:
     branches: [master]
@@ -21,6 +21,8 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,6 +53,8 @@ jobs:
           fi
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "file=${FILE}" >> "$GITHUB_OUTPUT"
+          VER="${TAG#v}"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
 
       - name: Update GitHub Release body
         env:
@@ -59,4 +63,21 @@ jobs:
           gh release edit "${{ steps.meta.outputs.tag }}" \
             --repo "${{ github.repository }}" \
             --notes-file "${{ steps.meta.outputs.file }}"
-          echo "Updated ${{ steps.meta.outputs.tag }} from ${{ steps.meta.outputs.file }}"
+          echo "Updated GitHub ${{ steps.meta.outputs.tag }} from ${{ steps.meta.outputs.file }}"
+
+      - name: Update Gitee Release body
+        if: env.GITEE_TOKEN != ''
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.meta.outputs.tag }}'
+          $ver = '${{ steps.meta.outputs.version }}'
+          $body = Get-Content -LiteralPath '${{ steps.meta.outputs.file }}' -Raw -Encoding utf8
+          ./scripts/publish-gitee-release.ps1 `
+            -Tag $tag `
+            -Name "QingCode v$ver" `
+            -Body $body.Trim() `
+            -Files @()
+
+      - name: Gitee token missing
+        if: env.GITEE_TOKEN == ''
+        run: echo "::warning::GITEE_TOKEN secret is not set; skipped Gitee release notes sync. Add it under Settings → Secrets → Actions, then re-run this workflow or Release."
