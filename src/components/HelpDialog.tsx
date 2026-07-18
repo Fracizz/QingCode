@@ -2,12 +2,14 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode }
 import { FileText, Search, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import helpDocument from '../../帮助文档.md?raw'
+import helpDocumentEn from '../../HELP.md?raw'
+import helpDocumentZh from '../../帮助文档.md?raw'
 import { useI18n } from '../lib/i18n'
 import {
   filterHelpSections,
   flattenText,
   helpHeadingId,
+  isChineseHelpLanguage,
   joinHelpSections,
   splitHelpSections,
 } from '../utils/helpDocument'
@@ -17,8 +19,6 @@ import Tooltip from './Tooltip'
 type Props = {
   onClose: () => void
 }
-
-const HELP_SECTIONS = splitHelpSections(helpDocument)
 
 function Heading({
   as: Tag,
@@ -77,11 +77,16 @@ function HelpMarkdown({ content }: { content: string }) {
 }
 
 export default function HelpDialog({ onClose }: Props) {
-  const { t } = useI18n()
+  const { t, language } = useI18n()
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
 
-  const filtered = useMemo(() => filterHelpSections(HELP_SECTIONS, query), [query])
+  const sections = useMemo(
+    () =>
+      splitHelpSections(isChineseHelpLanguage(language) ? helpDocumentZh : helpDocumentEn),
+    [language],
+  )
+  const filtered = useMemo(() => filterHelpSections(sections, query), [sections, query])
   const markdown = useMemo(() => joinHelpSections(filtered), [filtered])
 
   useEffect(() => {

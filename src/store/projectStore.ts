@@ -6,6 +6,11 @@ import type { Project, RecentFile } from '../types'
 import { baseName, findNodeByPath } from '../utils/fileTreeHelpers'
 import { useEditorStore } from './editorStore'
 import { translate } from '../lib/i18n'
+import {
+  formatExpandDirErrorToast,
+  formatReadDirErrorToast,
+  formatRefreshDirErrorToast,
+} from '../lib/directoryError'
 import { shouldRestoreWorkspace } from '../lib/windowSession'
 import {
   deleteProjectRows,
@@ -42,7 +47,7 @@ import {
 
 export type { FileNode }
 
-export type ToastKind = 'error' | 'info' | 'success'
+export type ToastKind = 'error' | 'info' | 'success' | 'warn'
 export interface Toast {
   id: string
   kind: ToastKind
@@ -579,7 +584,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             ? [...s.unavailableProjectIds, proj.id]
             : s.unavailableProjectIds,
       }))
-      get().pushToast('error', `读取目录失败: ${String(e)}`)
+      get().pushToast('error', formatReadDirErrorToast(e))
     }
   },
 
@@ -593,7 +598,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }))
     } catch (e) {
       console.error('expandDir failed:', e)
-      get().pushToast('error', `展开目录失败: ${String(e)}`)
+      get().pushToast('error', formatExpandDirErrorToast(e))
     }
   },
 
@@ -615,7 +620,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           ? s.unavailableProjectIds
           : [...s.unavailableProjectIds, project.id],
       }))
-      get().pushToast('error', `读取目录失败: ${String(e)}`)
+      get().pushToast('error', formatReadDirErrorToast(e))
     }
   },
 
@@ -631,7 +636,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }))
     } catch (e) {
       console.error('refreshProjectTree failed:', e)
-      get().pushToast('error', `刷新目录失败: ${String(e)}`)
+      get().pushToast('error', formatRefreshDirErrorToast(e))
     }
   },
 
@@ -659,7 +664,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       })
     } catch (e) {
       console.error('expandProjectDir failed:', e)
-      get().pushToast('error', `展开目录失败: ${String(e)}`)
+      get().pushToast('error', formatExpandDirErrorToast(e))
     }
   },
 

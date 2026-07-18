@@ -19,7 +19,7 @@ initWindowSession()
 hydrateWorkspaceSessionsIfNeeded()
 installWorkspaceSessionPersistence()
 applyTheme(loadTheme())
-initializeLanguage()
+void initializeLanguage()
 paintStartupSplashLogo()
 applyFontSettings(loadFontSettings())
 // Apply global terminal settings ASAP (project overlay loads later).

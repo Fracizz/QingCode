@@ -13,7 +13,14 @@ export type WordWrapMode = 'off' | 'on' | 'wordWrapColumn' | 'bounded'
 export type LineNumbersMode = 'on' | 'off' | 'relative' | 'interval'
 export type RenderWhitespaceMode = 'none' | 'boundary' | 'selection' | 'trailing' | 'all'
 export type EolMode = 'auto' | 'LF' | 'CRLF'
-export type FileEncoding = 'auto' | 'utf8' | 'utf8bom' | 'gbk' | 'gb18030'
+export type FileEncoding =
+  | 'auto'
+  | 'utf8'
+  | 'utf8bom'
+  | 'utf16le'
+  | 'utf16be'
+  | 'gbk'
+  | 'gb18030'
 export type WritableFileEncoding = Exclude<FileEncoding, 'auto'>
 
 export type EditorPreferenceSettings = {
@@ -99,7 +106,15 @@ function asEol(value: unknown): EolMode {
 }
 
 export function asFileEncoding(value: unknown): FileEncoding {
-  if (value === 'auto' || value === 'utf8bom' || value === 'gbk' || value === 'gb18030' || value === 'utf8') {
+  if (
+    value === 'auto' ||
+    value === 'utf8bom' ||
+    value === 'utf16le' ||
+    value === 'utf16be' ||
+    value === 'gbk' ||
+    value === 'gb18030' ||
+    value === 'utf8'
+  ) {
     return value
   }
   return 'utf8'

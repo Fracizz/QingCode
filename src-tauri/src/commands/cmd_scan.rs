@@ -44,7 +44,7 @@ fn list_dir_one_level(
     if !dir.is_dir() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("Directory is unavailable: {}", current),
+            format!("目录不可用: {}", current),
         ));
     }
 
@@ -129,6 +129,6 @@ pub fn validate_directory(path: String) -> Result<(), String> {
     if Path::new(&path).is_dir() {
         Ok(())
     } else {
-        Err(format!("Directory is unavailable: {}", path))
+        Err(format!("目录不可用: {}", path))
     }
 }

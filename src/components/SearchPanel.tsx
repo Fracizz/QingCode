@@ -50,6 +50,7 @@ import Tooltip from './Tooltip'
 import EmptyState from './EmptyState'
 import SegmentedControl from './SegmentedControl'
 import ReplacePreviewDialog from './ReplacePreviewDialog'
+import { getContextMenuStylePosition } from './contextMenuPosition'
 import { buildReplacePreview, type ReplacePreview } from '../lib/workspaceReplace'
 import { loadExcludeSettingsForProject } from '../lib/excludeSettings'
 import { useI18n } from '../lib/i18n'
@@ -76,6 +77,7 @@ const TOP_EXT_COUNT = 5
 const CONTENT_DEBOUNCE_MS = 400
 const FILENAME_DEBOUNCE_MS = 200
 const MAX_MATCHES_PER_FILE = 20
+const EXT_PICKER_WIDTH = 168
 
 export default function SearchPanel() {
   const { t } = useI18n()
@@ -110,7 +112,12 @@ export default function SearchPanel() {
   const [matchSuffix, setMatchSuffix] = useState(false)
   const [typeFilter, setTypeFilter] = useState<TypeFilter | null>(null)
   const [extPickerOpen, setExtPickerOpen] = useState(false)
-  const [extPickerStyle, setExtPickerStyle] = useState<CSSProperties>({})
+  const [extPickerStyle, setExtPickerStyle] = useState<CSSProperties>({
+    visibility: 'hidden',
+    left: 0,
+    top: 0,
+    width: EXT_PICKER_WIDTH,
+  })
   const [projectExts, setProjectExts] = useState<string[]>([])
   const [projectExtsLoading, setProjectExtsLoading] = useState(false)
   const [filenameResults, setFilenameResults] = useState<SearchHit[]>([])
@@ -156,24 +163,32 @@ export default function SearchPanel() {
 
   const closeExtPicker = useCallback(() => setExtPickerOpen(false), [])
 
-  const positionExtPicker = useCallback(() => {
-    const rect = extPickerBtnRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const width = 200
-    const estimatedHeight = 88
-    let top = rect.bottom + 4
-    if (top + estimatedHeight > window.innerHeight - 8) {
-      top = Math.max(8, rect.top - estimatedHeight - 4)
-    }
-    // Align to the trigger button; keep the menu inside the viewport.
-    const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
-    setExtPickerStyle({ left, top, width })
-  }, [])
-
   useLayoutEffect(() => {
     if (!extPickerOpen) return
-    positionExtPicker()
-  }, [extPickerOpen, positionExtPicker, projectExts.length])
+    const btn = extPickerBtnRef.current
+    const menu = extPickerRef.current
+    if (!btn || !menu) return
+
+    const rect = btn.getBoundingClientRect()
+    const zoom = Number.parseFloat(getComputedStyle(menu).zoom) || 1
+    const height = menu.scrollHeight
+    const gap = 4
+    const preferAbove = rect.bottom + gap + height * zoom > window.innerHeight - 8
+    const placed = getContextMenuStylePosition(
+      rect.left,
+      preferAbove ? rect.top - gap : rect.bottom + gap,
+      { width: EXT_PICKER_WIDTH, height },
+      { width: window.innerWidth, height: window.innerHeight },
+      preferAbove,
+      zoom,
+    )
+    setExtPickerStyle({
+      left: placed.x,
+      top: placed.y,
+      width: EXT_PICKER_WIDTH,
+      visibility: 'visible',
+    })
+  }, [extPickerOpen, projectExts.length, topExts.length])
 
   useEffect(() => {
     if (!extPickerOpen) return
@@ -664,7 +679,7 @@ export default function SearchPanel() {
           </div>
         )}
 
-        <div className="flex items-center gap-1.5 flex-wrap relative">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <Toggle
             active={ignoreCase}
             onClick={() => setIgnoreCase(v => !v)}
@@ -703,7 +718,7 @@ export default function SearchPanel() {
                   closeExtPicker()
                   return
                 }
-                positionExtPicker()
+                setExtPickerStyle(prev => ({ ...prev, visibility: 'hidden' }))
                 setExtPickerOpen(true)
               }}
               className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
@@ -731,72 +746,77 @@ export default function SearchPanel() {
               <div
                 ref={extPickerRef}
                 role="listbox"
-                className="menu-enter ui-font-scaled fixed z-[100] bg-bg-elevated border border-border-strong rounded-md shadow-2xl shadow-black/50 p-2"
+                className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated p-1.5 shadow-2xl shadow-black/50"
                 style={extPickerStyle}
                 onPointerDown={event => event.stopPropagation()}
               >
-                <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-                  <span className="text-[10px] font-semibold tracking-wide uppercase text-fg-dim">
-                    {t('当前项目')}
-                  </span>
+                <div className="mb-1 flex items-center justify-between gap-2 px-1">
+                  <span className="text-[10px] text-fg-dim">{t('当前项目')}</span>
                   {projectExtsLoading && (
                     <LoaderCircle size={10} className="animate-spin text-accent" />
                   )}
                 </div>
-                <div className="grid grid-cols-3 gap-1">
+                <div className="flex flex-wrap gap-1">
                   <button
                     type="button"
+                    role="option"
+                    aria-selected={!typeFilter}
                     onClick={() => {
                       setTypeFilter(null)
                       closeExtPicker()
                     }}
-                    className={`px-1.5 py-0.5 text-[11px] rounded border transition-colors text-center
+                    className={`rounded border px-2 py-0.5 text-[11px] transition-colors
                       ${!typeFilter
-                        ? 'bg-accent text-white border-accent'
-                        : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
+                        ? 'border-accent bg-accent text-white'
+                        : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'}`}
                   >
                     {t('全部')}
                   </button>
-                  {topExts.map(ext => (
-                    <button
-                      key={ext}
-                      type="button"
-                      onClick={() => {
-                        setTypeFilter(cur =>
-                          cur?.kind === 'ext' && cur.ext === ext ? null : { kind: 'ext', ext }
-                        )
-                        closeExtPicker()
-                      }}
-                      className={`px-1.5 py-0.5 text-[11px] rounded border transition-colors text-center
-                        ${typeFilter?.kind === 'ext' && typeFilter.ext === ext
-                          ? 'bg-accent text-white border-accent'
-                          : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
-                    >
-                      .{ext}
-                    </button>
-                  ))}
+                  {topExts.map(ext => {
+                    const selected = typeFilter?.kind === 'ext' && typeFilter.ext === ext
+                    return (
+                      <button
+                        key={ext}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        onClick={() => {
+                          setTypeFilter(cur =>
+                            cur?.kind === 'ext' && cur.ext === ext ? null : { kind: 'ext', ext }
+                          )
+                          closeExtPicker()
+                        }}
+                        className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
+                          ${selected
+                            ? 'border-accent bg-accent text-white'
+                            : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'}`}
+                      >
+                        .{ext}
+                      </button>
+                    )
+                  })}
                   {hasStarOption && (
                     <button
                       type="button"
-                      title={t('其余扩展名')}
+                      role="option"
+                      aria-selected={typeFilter?.kind === 'star'}
+                      title={`${t('其余扩展名')}（${otherExts.length}）`}
                       onClick={() => {
                         setTypeFilter(cur =>
                           cur?.kind === 'star' ? null : { kind: 'star', exts: otherExts }
                         )
                         closeExtPicker()
                       }}
-                      className={`px-1.5 py-0.5 text-[11px] rounded border transition-colors text-center
+                      className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
                         ${typeFilter?.kind === 'star'
-                          ? 'bg-accent text-white border-accent'
-                          : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
+                          ? 'border-accent bg-accent text-white'
+                          : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'}`}
                     >
                       *
                     </button>
                   )}
                   {!projectExtsLoading && topExts.length === 0 && (
-                    <span className="col-span-2 px-1 py-0.5 text-[11px] text-fg-dim">
-                      {t('暂无扩展名')}
-                    </span>
+                    <span className="px-1 py-0.5 text-[11px] text-fg-dim">{t('暂无扩展名')}</span>
                   )}
                 </div>
               </div>,

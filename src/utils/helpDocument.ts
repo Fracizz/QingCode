@@ -5,6 +5,12 @@ export type HelpSection = {
   markdown: string
 }
 
+/** Chinese UI languages use `帮助文档.md`; all others use English `HELP.md`. */
+export function isChineseHelpLanguage(language: string): boolean {
+  const code = language.trim().toLowerCase()
+  return code === 'zh-cn' || code === 'zh' || code.startsWith('zh-')
+}
+
 /** Split a help markdown document into the preamble and `##` sections. */
 export function splitHelpSections(document: string): HelpSection[] {
   const text = document.replace(/^\uFEFF/, '').trimEnd()

@@ -1,4 +1,9 @@
-import { useState, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import { X, Circle, ChevronDown, Copy, ExternalLink, Eye, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle, GitCompare } from 'lucide-react'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
@@ -9,6 +14,11 @@ import { copyToClipboard } from '../utils/fileReferences'
 import { safeInvoke } from '../lib/tauri'
 import { openGitCompareWithHead } from '../lib/gitCompare'
 import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
+import {
+  EDITOR_TAB_OVERFLOW_BTN_W,
+  MAX_OPEN_EDITOR_TABS,
+  pickVisibleTabIndices,
+} from '../lib/editorTabsLayout'
 import { promptDialog, validateEntryName } from '../store/promptStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -26,6 +36,44 @@ function parentPath(path: string) {
 function fileName(path: string) {
   const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return separator >= 0 ? path.slice(separator + 1) : path
+}
+
+function TabChrome({ tab }: { tab: EditorTab }) {
+  const loading = isLoadingTab(tab)
+  const viewOnly = isViewOnlyTab(tab)
+  const gitStatus = useGitStatusStore.getState().statusFor(tab.path)
+  const gitGlyph = gitStatusGlyph(gitStatus)
+  const gitColor = gitStatusColorClass(gitStatus)
+  const Icon = isOpenErrorTab(tab)
+    ? AlertTriangle
+    : loading
+      ? LoaderCircle
+      : tab.kind === 'diff'
+        ? GitCompare
+        : viewOnly
+          ? Eye
+          : getFileIcon(tab.name)
+  const iconClass = isOpenErrorTab(tab)
+    ? 'flex-shrink-0 text-warn'
+    : loading
+      ? 'flex-shrink-0 text-accent animate-spin'
+      : tab.kind === 'diff' || viewOnly
+        ? 'flex-shrink-0 text-accent opacity-90'
+        : 'flex-shrink-0 opacity-80'
+
+  return (
+    <>
+      {Icon && <Icon size={15} className={iconClass} />}
+      <span
+        className={`text-[13px] ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && tab.kind !== 'diff' && gitColor ? gitColor : ''}`}
+      >
+        {tab.name}
+      </span>
+      {tab.kind !== 'diff' && gitGlyph && (
+        <span className={`text-[11px] font-medium ${gitColor}`}>{gitGlyph}</span>
+      )}
+    </>
+  )
 }
 
 export default function EditorTabs() {
@@ -51,6 +99,41 @@ export default function EditorTabs() {
   const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
+  const [visibleIndices, setVisibleIndices] = useState<number[]>([])
+  const stripRef = useRef<HTMLDivElement>(null)
+  const measureRef = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    const strip = stripRef.current
+    const measure = measureRef.current
+    if (!strip || !measure || tabs.length === 0) {
+      setVisibleIndices([])
+      return
+    }
+
+    const compute = () => {
+      const widths = Array.from(
+        measure.querySelectorAll<HTMLElement>('[data-tab-measure-id]'),
+        el => el.offsetWidth,
+      )
+      if (widths.length !== tabs.length) {
+        setVisibleIndices(tabs.map((_, i) => i))
+        return
+      }
+      const activeIndex = Math.max(
+        0,
+        tabs.findIndex(tab => tab.id === activeTabId),
+      )
+      setVisibleIndices(
+        pickVisibleTabIndices(widths, activeIndex, strip.clientWidth, EDITOR_TAB_OVERFLOW_BTN_W),
+      )
+    }
+
+    compute()
+    const ro = new ResizeObserver(compute)
+    ro.observe(strip)
+    return () => ro.disconnect()
+  }, [tabs, activeTabId])
 
   if (tabs.length === 0) return null
 
@@ -95,7 +178,6 @@ export default function EditorTabs() {
         newName: name,
       })
       renameEditorPath(tab.path, newPath)
-      // Refresh the owning project's tree so the sidebar reflects the rename.
       const store = useProjectStore.getState()
       const norm = parentPath(tab.path).replace(/\\/g, '/')
       const project = store.projects.find(
@@ -214,131 +296,144 @@ export default function EditorTabs() {
       }
     })
 
+  const indices = visibleIndices.length > 0 ? visibleIndices : tabs.map((_, i) => i)
+  const hiddenCount = Math.max(0, tabs.length - indices.length)
+
   return (
     <>
-    <div className="ui-font-scaled h-[var(--tab-height)] flex bg-bg-deep border-b border-border flex-shrink-0">
-      <div className="flex flex-1 min-w-0 overflow-x-auto">
-        {tabs.map((tab, index) => {
-          const active = tab.id === activeTabId
-          const loading = isLoadingTab(tab)
-          const viewOnly = isViewOnlyTab(tab)
-          const gitStatus = useGitStatusStore.getState().statusFor(tab.path)
-          const gitGlyph = gitStatusGlyph(gitStatus)
-          const gitColor = gitStatusColorClass(gitStatus)
-          const Icon = isOpenErrorTab(tab)
-            ? AlertTriangle
-            : loading
-              ? LoaderCircle
-              : tab.kind === 'diff'
-                ? GitCompare
-                : viewOnly
-                  ? Eye
-                  : getFileIcon(tab.name)
-          const iconClass = isOpenErrorTab(tab)
-            ? 'flex-shrink-0 text-warn'
-            : loading
-              ? 'flex-shrink-0 text-accent animate-spin'
-              : tab.kind === 'diff' || viewOnly
-                ? 'flex-shrink-0 text-accent opacity-90'
-                : 'flex-shrink-0 opacity-80'
-          return (
-            <div
-              key={tab.id}
-              draggable
-              className={`group relative flex items-center gap-2 pl-3 pr-2 h-full cursor-pointer border-r border-border whitespace-nowrap transition-colors
+      <div className="ui-font-scaled relative flex h-[var(--tab-height)] flex-shrink-0 border-b border-border bg-bg-deep">
+        <div ref={stripRef} className="flex min-w-0 flex-1 overflow-hidden">
+          {indices.map((index, visiblePos) => {
+            const tab = tabs[index]
+            if (!tab) return null
+            const active = tab.id === activeTabId
+            const showDivider = visiblePos < indices.length - 1
+            return (
+              <div
+                key={tab.id}
+                draggable
+                className={`group relative flex h-full cursor-pointer items-center gap-2 whitespace-nowrap pl-3 pr-2 transition-colors
                 ${active ? 'bg-tab-active text-fg' : 'bg-tab-inactive text-fg-muted hover:bg-bg-elevated hover:text-fg'}
                 ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}
                 ${dropIndex === index && dragIndex !== index ? 'ring-1 ring-inset ring-accent/60' : ''}`}
-              onClick={() => setActiveTab(tab.id)}
-              onDragStart={event => {
-                setDragIndex(index)
-                event.dataTransfer.effectAllowed = 'move'
-                event.dataTransfer.setData('text/plain', tab.id)
-              }}
-              onDragOver={event => {
-                event.preventDefault()
-                event.dataTransfer.dropEffect = 'move'
-                if (dragIndex !== null && dragIndex !== index) setDropIndex(index)
-              }}
-              onDragLeave={() => {
-                if (dropIndex === index) setDropIndex(null)
-              }}
-              onDrop={event => {
-                event.preventDefault()
-                if (dragIndex !== null && dragIndex !== index) reorderTabs(dragIndex, index)
-                setDragIndex(null)
-                setDropIndex(null)
-              }}
-              onDragEnd={() => {
-                setDragIndex(null)
-                setDropIndex(null)
-              }}
-              onAuxClick={event => {
-                if (event.button !== 1) return
-                event.preventDefault()
-                void closeOne(tab)
-              }}
-              onMouseDown={event => {
-                // Prevent middle-click auto-scroll.
-                if (event.button === 1) event.preventDefault()
-              }}
-              onContextMenu={(event: ReactMouseEvent) => {
-                event.preventDefault()
-                event.stopPropagation()
-                if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus()
-                setContextMenu({ x: event.clientX, y: event.clientY, tab })
-              }}
-            >
-              {active && (
-                <span className="absolute top-0 left-0 right-0 h-[2px] bg-accent" aria-hidden="true" />
-              )}
-              {Icon && <Icon size={15} className={iconClass} />}
-              <span
-                className={`text-[13px] ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && tab.kind !== 'diff' && gitColor ? gitColor : ''}`}
-              >
-                {tab.name}
-              </span>
-              {tab.kind !== 'diff' && gitGlyph && (
-                <span className={`text-[11px] font-medium ${gitColor}`}>
-                  {gitGlyph}
-                </span>
-              )}
-              <button
-                className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
-                onClick={e => {
-                  e.stopPropagation()
+                onClick={() => setActiveTab(tab.id)}
+                onDragStart={event => {
+                  setDragIndex(index)
+                  event.dataTransfer.effectAllowed = 'move'
+                  event.dataTransfer.setData('text/plain', tab.id)
+                }}
+                onDragOver={event => {
+                  event.preventDefault()
+                  event.dataTransfer.dropEffect = 'move'
+                  if (dragIndex !== null && dragIndex !== index) setDropIndex(index)
+                }}
+                onDragLeave={() => {
+                  if (dropIndex === index) setDropIndex(null)
+                }}
+                onDrop={event => {
+                  event.preventDefault()
+                  if (dragIndex !== null && dragIndex !== index) reorderTabs(dragIndex, index)
+                  setDragIndex(null)
+                  setDropIndex(null)
+                }}
+                onDragEnd={() => {
+                  setDragIndex(null)
+                  setDropIndex(null)
+                }}
+                onAuxClick={event => {
+                  if (event.button !== 1) return
+                  event.preventDefault()
                   void closeOne(tab)
                 }}
+                onMouseDown={event => {
+                  if (event.button === 1) event.preventDefault()
+                }}
+                onContextMenu={(event: ReactMouseEvent) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus()
+                  setContextMenu({ x: event.clientX, y: event.clientY, tab })
+                }}
               >
-                {tab.dirty ? (
-                  <Circle size={9} className="dirty-pulse text-warn group-hover:hidden" fill="currentColor" />
-                ) : null}
-                <X
-                  size={14}
-                  className={tab.dirty ? 'hidden group-hover:block' : 'opacity-60 group-hover:opacity-100'}
-                />
-              </button>
-            </div>
-          )
-        })}
-      </div>
-      <Tooltip label={t('显示所有打开的文件')} side="bottom">
-        <button
-          type="button"
-          aria-label={t('显示所有打开的文件')}
-          className="relative flex h-full w-8 flex-shrink-0 items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg"
-          onClick={event => {
-            const rect = event.currentTarget.getBoundingClientRect()
-            setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
-          }}
+                {active && (
+                  <span className="absolute top-0 left-0 right-0 h-[2px] bg-accent" aria-hidden="true" />
+                )}
+                {showDivider && (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border-strong"
+                  />
+                )}
+                <TabChrome tab={tab} />
+                <button
+                  className="ml-1 flex h-4 w-4 items-center justify-center rounded hover:bg-bg-active"
+                  onClick={e => {
+                    e.stopPropagation()
+                    void closeOne(tab)
+                  }}
+                >
+                  {tab.dirty ? (
+                    <Circle size={9} className="dirty-pulse text-warn group-hover:hidden" fill="currentColor" />
+                  ) : null}
+                  <X
+                    size={14}
+                    className={tab.dirty ? 'hidden group-hover:block' : 'opacity-60 group-hover:opacity-100'}
+                  />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+        <Tooltip
+          label={
+            hiddenCount > 0
+              ? t('显示所有打开的文件（{hidden} 个已折叠，最多 {max}）', {
+                  hidden: hiddenCount,
+                  max: MAX_OPEN_EDITOR_TABS,
+                })
+              : t('显示所有打开的文件（最多 {max} 个）', { max: MAX_OPEN_EDITOR_TABS })
+          }
+          side="bottom"
         >
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border"
-          />
-          <ChevronDown size={14} />
-        </button>
-      </Tooltip>
+          <button
+            type="button"
+            aria-label={t('显示所有打开的文件')}
+            className="relative flex h-full w-8 flex-shrink-0 items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg"
+            onClick={event => {
+              const rect = event.currentTarget.getBoundingClientRect()
+              setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
+            }}
+          >
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border-strong"
+            />
+            <ChevronDown size={14} />
+            {hiddenCount > 0 && (
+              <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-accent px-0.5 text-center text-[9px] font-semibold leading-[12px] text-white">
+                {hiddenCount > 99 ? '99+' : hiddenCount}
+              </span>
+            )}
+          </button>
+        </Tooltip>
+
+        {/* Hidden measure layer: natural tab widths for overflow fitting. */}
+        <div
+          ref={measureRef}
+          className="pointer-events-none absolute left-0 top-0 -z-10 flex h-[var(--tab-height)] opacity-0"
+          aria-hidden="true"
+        >
+          {tabs.map(tab => (
+            <div
+              key={`measure-${tab.id}`}
+              data-tab-measure-id={tab.id}
+              className="flex h-full items-center gap-2 whitespace-nowrap pl-3 pr-2"
+            >
+              <TabChrome tab={tab} />
+              <span className="ml-1 h-4 w-4 flex-shrink-0" />
+            </div>
+          ))}
+        </div>
       </div>
       {contextMenu && (
         <ContextMenu

@@ -16,7 +16,7 @@ const FORMAT_TIMEOUT: Duration = Duration::from_secs(45);
 
 // Short, actionable hints when the external tool is missing (project or PATH).
 const HINT_PRETTIER: &str = "未找到 Prettier。请在项目执行：npm i -D prettier";
-const HINT_PYTHON: &str = "未找到 Python 格式化工具。请在项目执行：pip install ruff";
+const HINT_PYTHON: &str = "暂不支持 Python 格式化";
 const HINT_RUSTFMT: &str = "未找到 rustfmt。请执行：rustup component add rustfmt";
 const HINT_SHFMT: &str = "未找到 shfmt。请安装 shfmt 并加入 PATH";
 const HINT_GOFMT: &str = "未找到 gofmt。请安装 Go 并确保 gofmt 在 PATH 中";
@@ -95,6 +95,7 @@ fn look_up_prettier(start: &Path) -> Option<PathBuf> {
 }
 
 /// Walk ancestors for `.venv` / `venv` tool binaries (discovery only; no installs).
+#[allow(dead_code)] // Kept for restoring Python formatters (ruff/black).
 fn look_up_venv_tool(start: &Path, tool: &str) -> Option<PathBuf> {
     let mut dir = start.to_path_buf();
     if dir.is_file() {
@@ -330,6 +331,7 @@ fn format_with_shfmt(path: &str, content: &str) -> Result<String, String> {
     }
 }
 
+#[allow(dead_code)] // Kept for restoring Python formatters.
 fn run_ruff_format(bin: &Path, cwd: &Path, path: &str, content: &str) -> Result<String, String> {
     let args = ["format", "--stdin-filename", path, "-"];
     #[cfg(windows)]
@@ -351,6 +353,7 @@ fn run_ruff_format(bin: &Path, cwd: &Path, path: &str, content: &str) -> Result<
     }
 }
 
+#[allow(dead_code)] // Kept for restoring Python formatters.
 fn run_black(bin: &Path, cwd: &Path, path: &str, content: &str) -> Result<String, String> {
     let args = ["--stdin-filename", path, "-q", "-"];
     #[cfg(windows)]
@@ -371,26 +374,9 @@ fn run_black(bin: &Path, cwd: &Path, path: &str, content: &str) -> Result<String
     }
 }
 
-fn format_with_python(path: &str, content: &str) -> Result<String, String> {
-    let file_path = Path::new(path);
-    let cwd = cwd_for_file(path);
-
-    // Prefer ruff format, then black. Local venv first, then PATH.
-    if let Some(bin) = look_up_venv_tool(file_path, "ruff") {
-        return run_ruff_format(&bin, cwd, path, content).map_err(|e| or_missing_hint(HINT_PYTHON, e));
-    }
-
-    match run_ruff_format(Path::new("ruff"), cwd, path, content) {
-        Ok(formatted) => return Ok(formatted),
-        Err(e) if is_spawn_failure(&e) => {}
-        Err(e) => return Err(e),
-    }
-
-    if let Some(bin) = look_up_venv_tool(file_path, "black") {
-        return run_black(&bin, cwd, path, content).map_err(|e| or_missing_hint(HINT_PYTHON, e));
-    }
-
-    run_black(Path::new("black"), cwd, path, content).map_err(|e| or_missing_hint(HINT_PYTHON, e))
+fn format_with_python(_path: &str, _content: &str) -> Result<String, String> {
+    // Temporarily disabled — ruff/black helpers retained above for a later restore.
+    Err(HINT_PYTHON.to_string())
 }
 
 fn format_with_gofmt(content: &str) -> Result<String, String> {

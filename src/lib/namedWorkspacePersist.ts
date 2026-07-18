@@ -5,6 +5,7 @@
  */
 
 import { pathsEqual } from '../utils/fileReferences'
+import { getLocaleOptions, translateFor } from './i18n'
 import {
   WORKSPACE_SESSION_VERSION,
   parseProjectSession,
@@ -15,6 +16,39 @@ import {
 
 export const NAMED_WORKSPACES_KEY = 'qingcode:named-workspaces'
 export const NAMED_WORKSPACE_VERSION = 1 as const
+/** i18n source key used as the default saved workspace name (stable across languages). */
+export const DEFAULT_NAMED_WORKSPACE_NAME = '多项目工作区'
+/** Fired after the named-workspace catalog is written (same-tab UI refresh). */
+export const NAMED_WORKSPACE_CHANGE_EVENT = 'qingcode:named-workspace-changed'
+
+export function notifyNamedWorkspaceChanged() {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new Event(NAMED_WORKSPACE_CHANGE_EVENT))
+}
+
+/** True when `name` is the built-in default in any registered locale (or the source key). */
+export function isDefaultNamedWorkspaceName(name: string): boolean {
+  const trimmed = name.trim()
+  if (!trimmed) return false
+  if (trimmed === DEFAULT_NAMED_WORKSPACE_NAME) return true
+  return getLocaleOptions().some(
+    ({ locale }) => trimmed === translateFor(locale, DEFAULT_NAMED_WORKSPACE_NAME),
+  )
+}
+
+/** Persist default names as the Chinese source key so UI language can switch later. */
+export function normalizeNamedWorkspaceName(name: string): string {
+  const trimmed = name.trim()
+  return isDefaultNamedWorkspaceName(trimmed) ? DEFAULT_NAMED_WORKSPACE_NAME : trimmed
+}
+
+/** Display name in the current UI language (defaults follow i18n; custom names stay as-is). */
+export function formatNamedWorkspaceName(
+  name: string,
+  t: (source: string) => string,
+): string {
+  return isDefaultNamedWorkspaceName(name) ? t(DEFAULT_NAMED_WORKSPACE_NAME) : name
+}
 
 export type WorkspaceMember = {
   projectId: string
@@ -154,6 +188,7 @@ export function saveNamedWorkspaceCatalog(catalog: NamedWorkspaceCatalog): void 
   } catch {
     // Quota / private mode — named workspaces simply will not persist.
   }
+  notifyNamedWorkspaceChanged()
 }
 
 export function clearNamedWorkspaceCatalog(): void {
@@ -162,6 +197,7 @@ export function clearNamedWorkspaceCatalog(): void {
   } catch {
     /* ignore */
   }
+  notifyNamedWorkspaceChanged()
 }
 
 export type ProjectLike = {

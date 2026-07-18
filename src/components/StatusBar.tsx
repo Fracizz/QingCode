@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { GitBranch, Folder, FileText, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
+import { GitBranch, Folder, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
@@ -13,8 +13,7 @@ import {
   WORKSPACE_TRUST_CHANGED_EVENT,
 } from '../lib/workspaceTrust'
 import { useGitStatusStore } from '../store/gitStatusStore'
-import { getFileIcon } from '../utils/fileIcons'
-import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+import ContextMenu from './ContextMenu'
 import {
   FILE_ENCODING_OPTIONS,
   REOPEN_FILE_ENCODING_OPTIONS,
@@ -39,7 +38,6 @@ export default function StatusBar() {
   const currentProject = useProjectStore(s => s.currentProject)
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
-  const setActiveTab = useEditorStore(s => s.setActiveTab)
   const cursor = useEditorStore(s => s.cursor)
   const setTabEncoding = useEditorStore(s => s.setTabEncoding)
   const reopenWithEncoding = useEditorStore(s => s.reopenWithEncoding)
@@ -52,22 +50,11 @@ export default function StatusBar() {
   const [updateBusy, setUpdateBusy] = useState(false)
   const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
   const gitDirtyCount = useGitStatusStore(s => s.dirtyCount)
-  const [tabsMenu, setTabsMenu] = useState<{ x: number; y: number } | null>(null)
   const [encodingMenu, setEncodingMenu] = useState<{ x: number; y: number } | null>(null)
   const pushToast = useProjectStore(s => s.pushToast)
 
-  const tabsMenuItems = (): ContextMenuItem[] =>
-    tabs.map(tab => {
-      const Icon = getFileIcon(tab.name)
-      return {
-        label: tab.id === activeTabId ? `${tab.name} ●` : tab.name,
-        icon: Icon ? <Icon size={14} /> : undefined,
-        action: () => setActiveTab(tab.id),
-      }
-    })
-
   /** Save-encoding + reopen-encoding in one themed menu (not duplicate actions). */
-  const encodingMenuItems = (): ContextMenuItem[] => {
+  const encodingMenuItems = () => {
     if (!activeTab) return []
     const current = activeTab.encoding ?? 'utf8'
     return [
@@ -171,7 +158,7 @@ export default function StatusBar() {
 
   return (
     <div className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-accent-soft text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border">
-      {/* Workspace context: project · file · git */}
+      {/* Workspace context: project · git */}
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
         <span className="flex min-w-0 max-w-[28%] items-center gap-1.5">
           <Folder size={13} className="flex-shrink-0 text-fg-muted" />
@@ -184,16 +171,6 @@ export default function StatusBar() {
               {t('受限')}
             </span>
           </Tooltip>
-        )}
-        {activeTab && (
-          <>
-            <StatusDivider />
-            <span className="flex min-w-0 max-w-[36%] items-center gap-1.5 text-fg-muted">
-              <FileText size={13} className="flex-shrink-0" />
-              <span className="truncate text-fg">{activeTab.name}</span>
-              {activeTab.dirty && <span className="flex-shrink-0 text-warn">●</span>}
-            </span>
-          </>
         )}
         {gitHead && (
           <>
@@ -249,46 +226,21 @@ export default function StatusBar() {
           </>
         )}
 
-        <div className="flex items-center gap-1">
-          <Tooltip label={t('切换终端面板')} side="top">
-            <button
-              type="button"
-              className="flex max-w-[180px] items-center gap-1.5 rounded px-1.5 py-px hover:bg-bg-hover transition-colors"
-              onClick={requestToggleTerminal}
-            >
-              <TerminalIcon size={13} className="flex-shrink-0 text-fg-muted" />
-              <span className="truncate">
-                {t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}
-                {activeTerm ? (
-                  <span className="text-fg-muted">{` · ${formatTerminalName(activeTerm.name)}`}</span>
-                ) : null}
-              </span>
-            </button>
-          </Tooltip>
-          {tabs.length > 0 ? (
-            <Tooltip label={t('显示所有打开的文件')} side="top">
-              <button
-                type="button"
-                className="flex-shrink-0 rounded px-1.5 py-px hover:bg-bg-hover transition-colors"
-                onClick={event => {
-                  const rect = event.currentTarget.getBoundingClientRect()
-                  // Open above the status bar and right-align to the control.
-                  const menuWidth = 220
-                  setTabsMenu({
-                    x: Math.max(8, rect.right - menuWidth),
-                    y: Math.max(8, rect.top - 4),
-                  })
-                }}
-              >
-                {t('{count} 个已打开', { count: tabs.length })}
-              </button>
-            </Tooltip>
-          ) : (
-            <span className="flex-shrink-0 px-1.5 text-fg-muted">
-              {t('{count} 个已打开', { count: tabs.length })}
+        <Tooltip label={t('切换终端面板')} side="top">
+          <button
+            type="button"
+            className="flex max-w-[180px] items-center gap-1.5 rounded px-1.5 py-px hover:bg-bg-hover transition-colors"
+            onClick={requestToggleTerminal}
+          >
+            <TerminalIcon size={13} className="flex-shrink-0 text-fg-muted" />
+            <span className="truncate">
+              {t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}
+              {activeTerm ? (
+                <span className="text-fg-muted">{` · ${formatTerminalName(activeTerm.name)}`}</span>
+              ) : null}
             </span>
-          )}
-        </div>
+          </button>
+        </Tooltip>
 
         {showMetaGroup && (
           <>
@@ -364,15 +316,6 @@ export default function StatusBar() {
           </>
         )}
       </div>
-      {tabsMenu && (
-        <ContextMenu
-          x={tabsMenu.x}
-          y={tabsMenu.y}
-          items={tabsMenuItems()}
-          onClose={() => setTabsMenu(null)}
-          preferAbove
-        />
-      )}
       {encodingMenu && (
         <ContextMenu
           x={encodingMenu.x}

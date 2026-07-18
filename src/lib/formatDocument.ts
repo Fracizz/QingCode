@@ -17,10 +17,16 @@ export function formatInvokeErrorMessage(error: unknown): string {
 
 /**
  * Prefer clear backend messages (暂不支持 / 未找到 …) over a vague
- * 「格式化失败」 wrapper.
+ * 「格式化失败」 wrapper. Backend strings use Chinese source keys for i18n.
  */
 export function formatDocumentErrorToast(error: unknown): string {
   const message = formatInvokeErrorMessage(error)
+
+  const unsupportedExt = message.match(/^暂不支持格式化该语言\/扩展名（\.(.+?)）$/)
+  if (unsupportedExt) {
+    return translate('暂不支持格式化该语言/扩展名（.{ext}）', { ext: unsupportedExt[1] })
+  }
+
   if (
     message.includes('暂不支持')
     || message.startsWith('未找到')
@@ -33,7 +39,7 @@ export function formatDocumentErrorToast(error: unknown): string {
     || message.startsWith('格式化进程')
     || message.startsWith('格式化输出')
   ) {
-    return message
+    return translate(message)
   }
   return translate('格式化失败: {error}', { error: message })
 }

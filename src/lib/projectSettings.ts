@@ -112,65 +112,70 @@ export const DEFAULT_SETTINGS = DEFAULT_GLOBAL_SETTINGS
 
 const SHARED_SETTINGS_BODY = `
   // ============================== 编辑器 ==============================
-  // 编辑器字号（像素）
+  // editor.fontSize：编辑器字号（像素）
   "editor.fontSize": 14,
-  // Tab 宽度（空格数）。insertSpaces 为 true 时按空格缩进
+  // editor.tabSize：Tab 宽度（空格数）。insertSpaces 为 true 时按空格缩进
   "editor.tabSize": 4,
-  // true = 按空格缩进；false = 插入 Tab 字符
+  // editor.insertSpaces：true = 按空格缩进；false = 插入 Tab 字符
   "editor.insertSpaces": true,
-  // 打开文件时是否根据内容自动推断缩进风格
+  // editor.detectIndentation：打开文件时是否根据内容自动推断缩进风格
   "editor.detectIndentation": true,
-  // 自动换行：off | on | wordWrapColumn | bounded
+  // editor.wordWrap：自动换行 off | on | wordWrapColumn | bounded
   "editor.wordWrap": "off",
-  // 行号显示：on | off | relative | interval
+  // editor.lineNumbers：行号显示 on | off | relative | interval
   "editor.lineNumbers": "on",
-  // 空白字符渲染：none | boundary | selection | trailing | all
+  // editor.renderWhitespace：空白字符渲染 none | boundary | selection | trailing | all
   "editor.renderWhitespace": "selection",
-  // 【不计划】小地图（CodeMirror 无内置；保留键以免旧配置报错）
+  // editor.minimap.enabled：【不计划】小地图（CodeMirror 无内置；保留键以免旧配置报错）
   "editor.minimap.enabled": false,
-  // 保存时自动格式化（调用 format_document；可用 Shift+Alt+F 手动格式化）
+  // editor.formatOnSave：保存时自动格式化（format_document；可用 Shift+Alt+F 手动格式化）
   "editor.formatOnSave": false,
-  // 粘贴后自动格式化（复用 format_document；大文件/不支持语言会跳过）
+  // editor.formatOnPaste：粘贴后自动格式化（大文件/不支持语言会跳过）
   "editor.formatOnPaste": false,
-  // 【不计划】链接编辑 / HTML 标签同步改名（保留键以免旧配置报错）
+  // editor.linkedEditing：【不计划】链接编辑 / HTML 标签同步改名（保留键以免旧配置报错）
   "editor.linkedEditing": false,
-  // 括号对着色（按嵌套深度分色）
+  // editor.bracketPairColorization.enabled：括号对着色（按嵌套深度分色）
   "editor.bracketPairColorization.enabled": true,
-  // 光标所在括号对之间的竖向参考线
+  // editor.guides.bracketPairs：光标所在括号对之间的竖向参考线
   "editor.guides.bracketPairs": true,
 
   // ============================== 文件 ==============================
-  // 自动保存：off | afterDelay | onFocusChange | onWindowChange
+  // files.autoSave：自动保存 off | afterDelay | onFocusChange | onWindowChange
   "files.autoSave": "off",
-  // afterDelay 模式下的延迟（毫秒）
+  // files.autoSaveDelay：afterDelay 模式下的延迟（毫秒）
   "files.autoSaveDelay": 1000,
-  // 换行符：auto | LF | CRLF（保存时生效）
+  // files.eol：换行符 auto | LF | CRLF（保存时生效）
   "files.eol": "auto",
-  // 默认文件编码：auto | utf8 | utf8bom | gbk | gb18030（auto 依次检查 BOM、UTF-8、GB18030；大文件只读分片仍按 UTF-8）
+  // files.encoding：默认文件编码 auto | utf8 | utf8bom | utf16le | utf16be | gbk | gb18030
+  //（auto 依次检查 UTF-8/UTF-16 BOM、UTF-8、GB18030；无 BOM 的 UTF-16 需手动指定；大文件只读分片仍按 UTF-8）
   "files.encoding": "auto",
-  // 保存时去掉行尾空格
+  // files.trimTrailingWhitespace：保存时去掉行尾空格
   "files.trimTrailingWhitespace": false,
-  // 保存时确保文件以空行结尾
+  // files.insertFinalNewline：保存时确保文件以空行结尾
   "files.insertFinalNewline": false,
-  // 按扩展名覆盖「富文本/降级编辑」上限（字节或 "50MB" 字符串）。更具体的模式优先。
-  // - 默认 * = 20MB；*.log / *.txt 等 = 50MB
-  // - 纯文本整缓冲编辑硬顶仍为 100MB（WebView 安全，与后端 read_file 一致）
-  // - 只读分块预览硬顶仍为 500MB；不可通过此项提高
+  // files.maxSizeForEdit：按 glob 覆盖「富文本/降级编辑」上限（字节或 "50MB" 字符串；更具体模式优先）
+  // - "*" 默认 20MB；*.log / *.txt 等 50MB
+  // - 纯文本整缓冲编辑硬顶仍为 100MB；只读分块预览硬顶 500MB（不可通过此项提高）
   "files.maxSizeForEdit": {
+    // 默认上限（约 20MB）
     "*": 20971520,
+    // 常见日志/文本放宽到约 50MB
     "*.log": 52428800,
     "*.txt": 52428800,
     "*.out": 52428800,
     "*.err": 52428800,
   },
-  // 资源管理器隐藏规则（VS Code 风格 glob；true=隐藏，false=强制显示）
+  // files.exclude：资源管理器隐藏规则（VS Code 风格 glob；true=隐藏，false=强制显示）
   "files.exclude": {
+    // 版本控制元数据
     "**/.git": true,
     "**/.svn": true,
     "**/.hg": true,
     "**/CVS": true,
+    // 系统垃圾文件
     "**/.DS_Store": true,
     "**/Thumbs.db": true,
+    // 依赖与构建产物
     "**/node_modules": true,
     "**/dist": true,
     "**/build": true,
@@ -180,26 +185,29 @@ const SHARED_SETTINGS_BODY = `
   },
 
   // ============================== 搜索 ==============================
-  // 全文/文件名搜索排除（在 files.exclude 之上叠加；保存后立即生效）
+  // search.exclude：全文/文件名搜索排除（在 files.exclude 之上叠加；保存后立即生效）
   "search.exclude": {
+    // 依赖目录
     "**/node_modules": true,
     "**/bower_components": true,
+    // 构建产物
     "**/dist": true,
     "**/build": true,
     "**/target": true,
+    // VS Code 搜索会话文件
     "**/*.code-search": true,
   },
-  // 搜索是否跟随符号链接（默认 false，避免环与逃出工作区）
+  // search.followSymlinks：搜索是否跟随符号链接（默认 false，避免环与逃出工作区）
   "search.followSymlinks": false,
-  // 内容/文件名搜索是否读取 .gitignore、.ignore 等 ignore 文件
+  // search.useIgnoreFiles：内容/文件名搜索是否读取 .gitignore、.ignore 等 ignore 文件
   "search.useIgnoreFiles": true,
-  // 资源管理器是否按 .gitignore 等 ignore 文件隐藏条目
+  // explorer.excludeGitIgnore：资源管理器是否按 .gitignore 等 ignore 文件隐藏条目
   "explorer.excludeGitIgnore": true,
 
   // ============================== 终端 ==============================
-  // 终端回滚缓冲行数（xterm scrollback + 会话输出持久化共用）
+  // terminal.integrated.scrollback：终端回滚缓冲行数（xterm scrollback + 会话输出持久化共用）
   "terminal.integrated.scrollback": 5000,
-  // 终端光标是否闪烁
+  // terminal.integrated.cursorBlinking：终端光标是否闪烁
   "terminal.integrated.cursorBlinking": true,
 `
 
@@ -213,8 +221,10 @@ export const DEFAULT_GLOBAL_SETTINGS_TEXT = `{
   // - 支持 // 与 /* */ 注释、尾逗号、无引号键名
   // - 本文件为「本机全局」配置，对所有项目生效
   // - 工作区专用配置请写各仓库：.qingcode/project-settings.json
+  // - 各配置项上方均有对应注释；【不得删除注释】（含本文件头与各项说明）
   // - 改完后 Ctrl+S 保存；部分项需重启或重开文件后生效
   // =============================================================================
+  // version：设置文件 schema 版本（当前固定为 1）
   version: 1,
 ${SHARED_SETTINGS_BODY}
   // ============================== 全局项目列表 ==============================
@@ -251,7 +261,7 @@ ${SHARED_SETTINGS_BODY}
   // "qingcode.update.skippedVersion": "0.1.4",
 
   // ============================== 自定义扩展 ==============================
-  // 自由键值，供后续功能读取；请勿删除整个 custom 对象
+  // custom：自由键值，供后续功能读取；请勿删除整个 custom 对象
   custom: {
     // apiBaseUrl: "http://localhost:3000",
   },
@@ -264,10 +274,13 @@ export const DEFAULT_PROJECT_SETTINGS_TEXT = `{
   // QingCode 工作区设置 project-settings.json（JSON5）
   // - 仅作用于当前项目；同名键会覆盖全局 default-settings.json
   // - 全局项目列表请写在 default-settings.json（qingcode.projects）
+  // - 各配置项上方均有对应注释；【不得删除注释】（含本文件头与各项说明）
   // =============================================================================
+  // version：设置文件 schema 版本（当前固定为 1）
   version: 1,
 ${SHARED_SETTINGS_BODY}
   // ============================== 自定义扩展 ==============================
+  // custom：自由键值，供后续功能读取；请勿删除整个 custom 对象
   custom: {
     // apiBaseUrl: "http://localhost:3000",
   },
@@ -335,15 +348,134 @@ export function parseSettingsText(text: string, scope: SettingsScope = 'global')
   }
 }
 
+/** JSON5 value text suitable after `key:` (multi-line values indented by `baseIndent`). */
+function formatJson5AssignedValue(value: unknown, baseIndent: number): string {
+  if (typeof value === 'string') return JSON.stringify(value)
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (value === null) return 'null'
+  const raw = JSON5.stringify(value, null, 2)
+  if (!raw.includes('\n')) return raw
+  const pad = ' '.repeat(baseIndent)
+  return raw
+    .split('\n')
+    .map((line, index) => (index === 0 ? line : pad + line))
+    .join('\n')
+}
+
+/**
+ * Replace a top-level `key: value` / `"key": value` assignment in a commented JSON5
+ * template. Nested braces/brackets are matched so object values can be swapped whole.
+ */
+export function replaceTopLevelJson5Value(
+  text: string,
+  key: string,
+  valueText: string,
+  quotedKey = true,
+): string {
+  const keyToken = quotedKey ? `"${key}"` : key
+  const prefix = `  ${keyToken}:`
+  const lines = text.split('\n')
+  let start = -1
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith(prefix)) {
+      start = i
+      break
+    }
+  }
+  if (start < 0) return text
+
+  const afterColon = lines[start].slice(prefix.length).trimStart()
+  let end = start
+  if (afterColon.startsWith('{') || afterColon.startsWith('[')) {
+    const open = afterColon[0]
+    const close = open === '{' ? '}' : ']'
+    let balance = 0
+    for (let i = start; i < lines.length; i++) {
+      const chunk = i === start ? afterColon : lines[i]
+      for (const ch of chunk) {
+        if (ch === open) balance++
+        else if (ch === close) balance--
+      }
+      if (balance === 0) {
+        end = i
+        break
+      }
+    }
+  }
+
+  const trimmed = valueText.trim()
+  const valueLines = trimmed.split('\n')
+  const replacement =
+    valueLines.length === 1
+      ? [`  ${keyToken}: ${valueLines[0]},`]
+      : [
+          `  ${keyToken}: ${valueLines[0]}`,
+          ...valueLines.slice(1, -1),
+          `${valueLines[valueLines.length - 1]},`,
+        ]
+  lines.splice(start, end - start + 1, ...replacement)
+  return lines.join('\n')
+}
+
+/**
+ * Emit the commented JSON5 template with `settings` values applied.
+ * Keys that still match defaults keep the template’s nested comments.
+ */
 export function formatSettings(
   settings: SettingsFile = DEFAULT_GLOBAL_SETTINGS,
   scope: SettingsScope = 'global',
 ): string {
+  const defaults = defaultSettingsFor(scope)
   const normalized = scope === 'project' ? stripGlobalOnlyKeys(settings) : settings
-  if (settingsAreDefaultShape(normalized, defaultSettingsFor(scope))) {
+  const merged: SettingsFile = {
+    ...defaults,
+    ...normalized,
+    version: 1,
+    custom: isRecord(normalized.custom) ? normalized.custom : {},
+  }
+
+  if (settingsAreDefaultShape(merged, defaults)) {
     return defaultSettingsTextFor(scope)
   }
-  return `${JSON5.stringify(normalized, null, 2)}\n`
+
+  let text = defaultSettingsTextFor(scope)
+  text = replaceTopLevelJson5Value(text, 'version', String(merged.version ?? 1), false)
+
+  for (const key of Object.keys(defaults)) {
+    if (key === 'version' || key === 'custom') continue
+    if (!(key in merged)) continue
+    if (jsonValueEqual(merged[key], defaults[key])) continue
+    const formatted = formatJson5AssignedValue(merged[key], 2)
+    text = replaceTopLevelJson5Value(text, key, formatted, true)
+  }
+
+  if (!jsonValueEqual(merged.custom, defaults.custom ?? {})) {
+    text = replaceTopLevelJson5Value(
+      text,
+      'custom',
+      formatJson5AssignedValue(merged.custom ?? {}, 2),
+      false,
+    )
+  }
+
+  // Optional skipped-version key (commented in the template by default).
+  const skipped = merged[UPDATE_SKIPPED_VERSION_KEY]
+  if (typeof skipped === 'string' && skipped.trim()) {
+    const line = `  "${UPDATE_SKIPPED_VERSION_KEY}": ${JSON.stringify(skipped.trim())},`
+    if (text.includes(`// "${UPDATE_SKIPPED_VERSION_KEY}"`)) {
+      text = text.replace(
+        new RegExp(`\\s*//\\s*"${UPDATE_SKIPPED_VERSION_KEY}"\\s*:\\s*"[^"]*"\\s*,?`),
+        `\n${line}`,
+      )
+    } else if (!text.includes(`"${UPDATE_SKIPPED_VERSION_KEY}"`)) {
+      text = text.replace(
+        /(\n  \/\/ ============================== 自定义扩展)/,
+        `\n${line}$1`,
+      )
+    }
+  }
+
+  return text.endsWith('\n') ? text : `${text}\n`
 }
 
 /** Deep equality for JSON-like values; object key order does not matter. */
@@ -478,8 +610,7 @@ async function writeCommentedTemplate(path: string, scope: SettingsScope): Promi
  * Ensure the settings file exists on disk.
  * - If missing or `writeTemplate`: write the commented JSON5 template for `scope`.
  * - If `upgradeComments` (default true) and the file has no `//` comments: rewrite
- *   the detailed template when content is still default-shaped (or global file is
- *   missing project-list keys from an older bare dump).
+ *   the commented template while preserving current values.
  */
 export async function ensureSettingsFile(
   path: string,
@@ -507,28 +638,9 @@ export async function ensureSettingsFile(
     const raw = await safeInvoke<string>('读取设置', 'read_file', { path })
     if (upgradeComments && !settingsTextHasComments(raw)) {
       const parsed = parseSettingsText(raw, scope)
-      const defaults = defaultSettingsFor(scope)
-      const nearDefault =
-        settingsAreDefaultShape(parsed, defaults) ||
-        (scope === 'global' &&
-          settingsAreDefaultShape(
-            {
-              ...parsed,
-              [PROJECTS_KEY]: parsed[PROJECTS_KEY] ?? [],
-              [PROJECTS_SYNC_ON_STARTUP_KEY]:
-                parsed[PROJECTS_SYNC_ON_STARTUP_KEY] ?? true,
-            },
-            defaults,
-          ))
-      // Older bare dumps omitted qingcode.projects*; treat as upgradable defaults.
-      const legacyBareGlobal =
-        scope === 'global' &&
-        parsed[PROJECTS_KEY] === undefined &&
-        Object.keys(parsed.custom ?? {}).length === 0
-
-      if (nearDefault || legacyBareGlobal) {
-        return writeCommentedTemplate(path, scope)
-      }
+      const content = formatSettings(parsed, scope)
+      await safeInvoke('保存设置', 'write_file', { path, content })
+      return parsed
     }
     return parseSettingsText(raw, scope)
   } catch {

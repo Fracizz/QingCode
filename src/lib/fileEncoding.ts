@@ -5,6 +5,8 @@ import type { FileEncoding, WritableFileEncoding } from './editorSettings'
 export const FILE_ENCODING_OPTIONS: { value: WritableFileEncoding; label: string }[] = [
   { value: 'utf8', label: 'UTF-8' },
   { value: 'utf8bom', label: 'UTF-8 with BOM' },
+  { value: 'utf16le', label: 'UTF-16 LE' },
+  { value: 'utf16be', label: 'UTF-16 BE' },
   { value: 'gbk', label: 'GBK' },
   { value: 'gb18030', label: 'GB18030' },
 ]

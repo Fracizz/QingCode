@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import JSON5 from 'json5'
 import {
   DEFAULT_GLOBAL_SETTINGS,
+  DEFAULT_GLOBAL_SETTINGS_TEXT,
   DEFAULT_PROJECT_SETTINGS,
+  DEFAULT_PROJECT_SETTINGS_TEXT,
   PROJECTS_KEY,
   PROJECTS_SYNC_ON_STARTUP_KEY,
+  UPDATE_CHECK_ON_STARTUP_KEY,
   defaultSettingsFor,
   formatSettings,
   isGlobalSettingsPath,
@@ -17,6 +20,15 @@ import {
   stripGlobalOnlyKeys,
   validateSettings,
 } from './projectSettings'
+
+/** Every top-level settings key should have a JSON5 comment that names it. */
+function assertTopLevelKeysHaveComments(text: string, settings: Record<string, unknown>) {
+  for (const key of Object.keys(settings)) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const commented = new RegExp(`//[^\\n]*${escaped}`)
+    expect(commented.test(text), `missing comment for key: ${key}`).toBe(true)
+  }
+}
 
 describe('parseSettings', () => {
   it('returns defaults for non-objects', () => {
@@ -108,7 +120,7 @@ describe('validateSettings / strip / format', () => {
     const reordered = { version, custom, ...rest } as typeof DEFAULT_GLOBAL_SETTINGS
     const text = formatSettings(reordered, 'global')
     expect(text).toContain('QingCode 全局设置')
-    expect(text).toContain('// 编辑器字号')
+    expect(text).toContain('// editor.fontSize：')
 
     const { custom: pCustom, version: pVersion, ...pRest } = DEFAULT_PROJECT_SETTINGS
     const projectReordered = { version: pVersion, custom: pCustom, ...pRest }
@@ -125,6 +137,48 @@ describe('validateSettings / strip / format', () => {
     const text = formatSettings(parsed, 'global')
     expect(text).toContain('QingCode 全局设置')
     expect(text).toContain('// ============================== 编辑器')
+  })
+
+  it('formatSettings keeps comments when applying customized values', () => {
+    const customized = {
+      ...DEFAULT_GLOBAL_SETTINGS,
+      'files.autoSave': 'afterDelay',
+      'files.encoding': 'utf8',
+      'search.followSymlinks': true,
+    }
+    const text = formatSettings(customized, 'global')
+    expect(text).toContain('不得删除注释')
+    expect(text).toContain('// files.autoSave：')
+    expect(text).toContain('"files.autoSave": "afterDelay"')
+    expect(text).toContain('"files.encoding": "utf8"')
+    expect(text).toContain('"search.followSymlinks": true')
+    // Unchanged object keys keep nested template comments.
+    expect(text).toContain('// 版本控制元数据')
+    const roundTrip = parseSettingsText(text, 'global')
+    expect(roundTrip['files.autoSave']).toBe('afterDelay')
+    expect(roundTrip['files.encoding']).toBe('utf8')
+    expect(roundTrip['search.followSymlinks']).toBe(true)
+  })
+
+  it('default-settings JSON5 template comments every top-level key', () => {
+    assertTopLevelKeysHaveComments(DEFAULT_GLOBAL_SETTINGS_TEXT, {
+      ...DEFAULT_GLOBAL_SETTINGS,
+      version: 1,
+      [UPDATE_CHECK_ON_STARTUP_KEY]: true,
+    })
+    expect(DEFAULT_GLOBAL_SETTINGS_TEXT).toContain('// version：')
+    expect(DEFAULT_GLOBAL_SETTINGS_TEXT).toContain('// files.encoding：')
+    expect(DEFAULT_GLOBAL_SETTINGS_TEXT).toContain('// qingcode.projects')
+    expect(DEFAULT_GLOBAL_SETTINGS_TEXT).toContain('不得删除注释')
+  })
+
+  it('project-settings JSON5 template comments every top-level key', () => {
+    assertTopLevelKeysHaveComments(DEFAULT_PROJECT_SETTINGS_TEXT, {
+      ...DEFAULT_PROJECT_SETTINGS,
+      version: 1,
+    })
+    expect(DEFAULT_PROJECT_SETTINGS_TEXT).not.toContain('"qingcode.projects":')
+    expect(DEFAULT_PROJECT_SETTINGS_TEXT).toContain('不得删除注释')
   })
 })
 

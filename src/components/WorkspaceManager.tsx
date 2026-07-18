@@ -23,7 +23,11 @@ import {
   saveVisibleProjectsAsWorkspace,
   updateNamedWorkspaceSessions,
 } from '../lib/namedWorkspaceActions'
-import type { NamedWorkspace } from '../lib/namedWorkspacePersist'
+import {
+  formatNamedWorkspaceName,
+  NAMED_WORKSPACE_CHANGE_EVENT,
+  type NamedWorkspace,
+} from '../lib/namedWorkspacePersist'
 
 export default function WorkspaceManager() {
   const { t } = useI18n()
@@ -41,8 +45,13 @@ export default function WorkspaceManager() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') closeWorkspaceManager()
     }
+    const onCatalog = () => refresh()
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener(NAMED_WORKSPACE_CHANGE_EVENT, onCatalog)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener(NAMED_WORKSPACE_CHANGE_EVENT, onCatalog)
+    }
   }, [closeWorkspaceManager])
 
   const handleOpen = async (workspace: NamedWorkspace) => {
@@ -111,7 +120,7 @@ export default function WorkspaceManager() {
         role="dialog"
         aria-modal="true"
         aria-label={t('多项目工作区')}
-        className="modal-content-enter relative w-full max-w-[560px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter relative w-full max-w-[560px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 h-12 border-b border-border-strong flex-shrink-0">
@@ -167,7 +176,9 @@ export default function WorkspaceManager() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 text-[13px] text-fg font-medium">
                           {isActive && <Check size={13} className="text-accent flex-shrink-0" />}
-                          <span className="truncate">{workspace.name}</span>
+                          <span className="truncate">
+                            {formatNamedWorkspaceName(workspace.name, t)}
+                          </span>
                           <span className="text-[11px] text-fg-muted font-normal flex-shrink-0">
                             {t('{count} 个项目', { count: workspace.members.length })}
                           </span>

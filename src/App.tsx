@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useRef, useState, lazy, Suspense } from 'react'
-import { Clock, FileText, FolderOpen, Settings, Terminal as TerminalIcon } from 'lucide-react'
+import { useEffect, useRef, useState, lazy, Suspense } from 'react'
 import './App.css'
 import ActivityBar from './components/ActivityBar'
-import AppIcon from './components/AppIcon'
 import Sidebar from './components/Sidebar'
 import EditorTabs from './components/EditorTabs'
 import EditorBreadcrumbs from './components/EditorBreadcrumbs'
-import TerminalTabs from './components/TerminalTabs'
 import StatusBar from './components/StatusBar'
 import TitleBar from './components/TitleBar'
 import Toaster from './components/Toaster'
@@ -16,8 +13,8 @@ import PromptDialog from './components/PromptDialog'
 import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
 import FileCompareDialog from './components/FileCompareDialog'
-import EmptyState from './components/EmptyState'
-import Kbd from './components/Kbd'
+import EmptyEditor from './components/EmptyEditor'
+import TerminalPanel from './components/TerminalPanel'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useEditorStore } from './store/editorStore'
@@ -33,24 +30,17 @@ import {
   loadSidebarWidth,
   saveSidebarWidth,
 } from './lib/sidebarLayout'
-import {
-  getTerminalMaxHeight,
-  TERMINAL_MIN_HEIGHT,
-  terminalResizerHint,
-} from './lib/panelLayout'
-import PanelResizer from './components/PanelResizer'
-import { beginPanelResize, endPanelResize } from './lib/panelResize'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
 import { listenForOpenFileRequests, openLaunchFiles } from './lib/launchFiles'
 import { useI18n } from './lib/i18n'
-import { formatDocument } from './lib/formatDocument'
-import { isShortcutInputTarget, shortcutMatchesEvent } from './lib/shortcuts'
 import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFileWatcher } from './hooks/useFileWatcher'
 import { useDraftRecovery } from './hooks/useDraftRecovery'
 import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
+import { useTerminalPanel } from './hooks/useTerminalPanel'
+import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
 import {
   markWorkspaceSessionPersistReady,
   pruneWorkspaceSessions,
@@ -64,7 +54,6 @@ import {
 } from './lib/workspaceTrust'
 
 const Editor = lazy(() => import('./components/Editor'))
-const TerminalView = lazy(() => import('./components/Terminal'))
 const SearchPanel = lazy(() => import('./components/SearchPanel'))
 const SourceControlPanel = lazy(() => import('./components/SourceControlPanel'))
 const RunPanel = lazy(() => import('./components/RunPanel'))
@@ -76,120 +65,6 @@ migrateLegacySettings()
 
 function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
   return <div className={className} aria-hidden="true" />
-}
-
-/** Lightweight empty editor so CodeMirror is not downloaded until a file is opened. */
-function EmptyEditor() {
-  const { t } = useI18n()
-  const recentFiles = useProjectStore(s => s.recentFiles)
-  const projects = useProjectStore(s => s.projects)
-  const switchProject = useProjectStore(s => s.switchProject)
-  const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
-  const openFile = useEditorStore(s => s.openFile)
-  const setView = useUIStore(s => s.setView)
-  const openTerminalPanel = useUIStore(s => s.openTerminalPanel)
-  const recent = recentFiles.slice(0, 8)
-  const recentProjects = projects.filter(p => !p.hidden).slice(0, 5)
-
-  const actions = [
-    {
-      icon: <FolderOpen size={14} />,
-      label: t('打开项目'),
-      onClick: () => void addProjectFromDialog(),
-    },
-    {
-      icon: <TerminalIcon size={14} />,
-      label: t('打开终端面板'),
-      onClick: openTerminalPanel,
-    },
-    {
-      icon: <Settings size={14} />,
-      label: t('打开设置'),
-      onClick: () => setView('settings'),
-    },
-  ]
-
-  return (
-    <div className="ui-font-scaled flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-6 px-6 select-none">
-      {/* Decorative background glow */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full bg-accent/[0.03] blur-3xl" />
-      </div>
-
-      <div className="flex flex-col items-center gap-3 relative">
-        <div className="relative">
-          <div className="absolute inset-0 bg-accent/10 blur-xl rounded-full scale-150" aria-hidden="true" />
-          <AppIcon size={52} />
-        </div>
-        <p className="text-sm text-fg-muted">{t('从侧边栏打开文件开始编辑')}</p>
-      </div>
-
-      <div className="flex items-center gap-2 relative">
-        {actions.map(action => (
-          <button
-            key={action.label}
-            type="button"
-            onClick={action.onClick}
-            className="flex items-center gap-1.5 rounded-md border border-border-strong bg-bg-elevated/80 px-3.5 py-2 text-[13px] text-fg-muted transition-all duration-150 hover:bg-bg-active hover:text-fg hover:shadow-sm hover:-translate-y-[1px] active:translate-y-0"
-          >
-            {action.icon}
-            {action.label}
-          </button>
-        ))}
-      </div>
-
-      {recentProjects.length > 0 && (
-        <div className="flex flex-col items-center gap-2 relative">
-          <p className="text-[11px] font-semibold tracking-wide text-fg-dim uppercase">{t('最近项目')}</p>
-          <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-[420px]">
-            {recentProjects.map(project => (
-              <button
-                key={project.id}
-                type="button"
-                title={project.path}
-                onClick={() => void switchProject(project)}
-                className="max-w-[180px] truncate rounded-full border border-border px-3 py-1 text-[12px] text-fg-muted transition-all duration-150 hover:border-border-strong hover:bg-bg-hover hover:text-fg hover:shadow-sm"
-              >
-                {project.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <p className="text-xs text-fg-dim/70 flex items-center gap-1.5 relative">
-        <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span className="text-fg-dim/40">·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}
-      </p>
-      {recent.length > 0 && (
-        <div className="mt-2 w-full max-w-md">
-          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
-            <Clock size={12} />
-            {t('最近打开的文件')}
-          </div>
-          <ul className="space-y-0.5">
-            {recent.map(file => (
-              <li key={file.path}>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
-                  onClick={() => void openFile(file.path)}
-                  title={file.path}
-                >
-                  <FileText size={12} className="flex-shrink-0 opacity-70" />
-                  <span className="truncate font-medium text-fg">
-                    {file.path.split(/[/\\]/).pop() || file.path}
-                  </span>
-                  <span className="ml-auto truncate text-[11px] text-fg-dim max-w-[55%]">
-                    {file.path}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  )
 }
 
 /** Run after first paint / idle so project switch is not blocked by heavy work (e.g. PTY). */
@@ -212,30 +87,9 @@ function scheduleDeferredWork(fn: () => void, timeoutMs = 600): () => void {
   }
 }
 
-const TERMINAL_PANEL_KEY = 'qingcode:terminal-panel'
-
-function loadTerminalPanelState() {
-  try {
-    const value = JSON.parse(localStorage.getItem(TERMINAL_PANEL_KEY) ?? '{}') as {
-      open?: boolean
-      height?: number
-    }
-    const maxH = getTerminalMaxHeight()
-    return {
-      open: value.open ?? true,
-      height: Math.min(maxH, Math.max(TERMINAL_MIN_HEIGHT, value.height ?? 260)),
-    }
-  } catch {
-    return { open: true, height: 260 }
-  }
-}
-
 function App() {
   const { t } = useI18n()
-  const initialTerminalPanel = useRef(loadTerminalPanelState()).current
   const initialSidebarWidth = useRef(loadSidebarWidth()).current
-  const terminals = useTerminalStore(s => s.terminals)
-  const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
   const addTerminal = useTerminalStore(s => s.addTerminal)
   const activateProject = useTerminalStore(s => s.activateProject)
   const spawnRestoredTerminals = useTerminalStore(s => s.spawnRestoredTerminals)
@@ -280,48 +134,19 @@ function App() {
   useAppUpdateCheck()
   const fileCompare = useCompareStore(s => s.request)
 
-  const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)
-  const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)
+  const {
+    terminalOpen,
+    setTerminalOpen,
+    terminalHeight,
+    isTerminalResizing,
+    onResizerMouseDown,
+    terminalPanelRef,
+  } = useTerminalPanel()
+
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth)
-  const [isTerminalResizing, setIsTerminalResizing] = useState(false)
-  const terminalPanelRef = useRef<HTMLDivElement>(null)
-  const dragStateRef = useRef<{ startY: number; startH: number } | null>(null)
-  const dragHeightRef = useRef(terminalHeight)
   const [projectsReady, setProjectsReady] = useState(false)
 
-  useEffect(() => {
-    dragHeightRef.current = terminalHeight
-  }, [terminalHeight])
-
-  const onResizerMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    const startH = dragHeightRef.current
-    dragStateRef.current = { startY: e.clientY, startH }
-    setIsTerminalResizing(true)
-    beginPanelResize('horizontal')
-
-    // Drive height via DOM during drag to avoid re-rendering App/Editor/xterm every pixel.
-    // React state + localStorage commit on mouseup.
-    const panel = terminalPanelRef.current
-    const onMove = (ev: MouseEvent) => {
-      const st = dragStateRef.current
-      if (!st) return
-      const maxH = getTerminalMaxHeight()
-      const next = Math.min(maxH, Math.max(TERMINAL_MIN_HEIGHT, st.startH - (ev.clientY - st.startY)))
-      dragHeightRef.current = next
-      if (panel) panel.style.height = `${next}px`
-    }
-    const onUp = () => {
-      dragStateRef.current = null
-      setTerminalHeight(dragHeightRef.current)
-      setIsTerminalResizing(false)
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      endPanelResize('horizontal')
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-  }, [])
+  useAppKeyboardShortcuts({ shortcuts, setView, openPalette, openSymbolPicker })
 
   useEffect(() => {
     let cancelled = false
@@ -362,24 +187,17 @@ function App() {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem(
-      TERMINAL_PANEL_KEY,
-      JSON.stringify({ open: terminalOpen, height: terminalHeight })
-    )
-  }, [terminalOpen, terminalHeight])
-
-  useEffect(() => {
     saveSidebarWidth(sidebarWidth)
   }, [sidebarWidth])
 
   // Open the terminal panel when something (e.g. a run config) signals it.
   useEffect(() => {
     if (terminalOpenSignal > 0) setTerminalOpen(true)
-  }, [terminalOpenSignal])
+  }, [terminalOpenSignal, setTerminalOpen])
 
   useEffect(() => {
     if (terminalToggleSignal > 0) setTerminalOpen(open => !open)
-  }, [terminalToggleSignal])
+  }, [terminalToggleSignal, setTerminalOpen])
 
   useEffect(() => {
     const onResize = () => setSidebarWidth(w => clampSidebarWidth(w))
@@ -401,78 +219,6 @@ function App() {
     }
   }, [initializeTerminalEvents])
 
-  useEffect(() => {
-    const isCommandPaletteShortcut = (event: KeyboardEvent) => {
-      if (shortcutMatchesEvent(shortcuts.openCommandPalette, event)) return true
-      // Cmd+Shift+P on macOS when the remappable binding remains Ctrl+Shift+P.
-      return (
-        shortcuts.openCommandPalette === 'Ctrl+Shift+P' &&
-        event.metaKey &&
-        event.shiftKey &&
-        !event.ctrlKey &&
-        !event.altKey &&
-        event.key.toLowerCase() === 'p'
-      )
-    }
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
-
-      // Available from inputs / terminal so the palette stays globally discoverable.
-      if (isCommandPaletteShortcut(event)) {
-        event.preventDefault()
-        openPalette('> ')
-        return
-      }
-      if (shortcutMatchesEvent(shortcuts.quickOpen, event)) {
-        event.preventDefault()
-        openPalette('')
-        return
-      }
-
-      if (isShortcutInputTarget(event.target)) return
-      if (event.ctrlKey && event.key === 'Tab' && !event.shiftKey && !event.altKey) {
-        event.preventDefault()
-        useEditorStore.getState().cycleTabMru()
-        return
-      }
-      if (shortcutMatchesEvent(shortcuts.goToLine, event)) {
-        event.preventDefault()
-        void import('./lib/commands').then(({ buildCommands }) => {
-          const command = buildCommands().find(item => item.id === 'editor.goToLine')
-          if (command && (!command.when || command.when())) void command.run()
-        })
-      } else if (shortcutMatchesEvent(shortcuts.goToSymbolInEditor, event)) {
-        event.preventDefault()
-        openSymbolPicker()
-      } else if (shortcutMatchesEvent(shortcuts.searchAllProjects, event)) {
-        event.preventDefault()
-        useUIStore.getState().requestGlobalSearch()
-      } else if (shortcutMatchesEvent(shortcuts.toggleTerminal, event)) {
-        event.preventDefault()
-        useUIStore.getState().requestToggleTerminal()
-      } else if (shortcutMatchesEvent(shortcuts.openSettings, event)) {
-        event.preventDefault()
-        setView('settings')
-      } else if (shortcutMatchesEvent('Shift+Alt+F', event)) {
-        // Handle in capture phase so format works even when CodeMirror has focus.
-        // (Previously skipped .cm-editor and relied on CM keymap, which often missed
-        // Alt+Shift+F on Windows / IME.) Skip only the terminal.
-        if (
-          event.target instanceof HTMLElement &&
-          event.target.closest('.xterm')
-        ) {
-          return
-        }
-        event.preventDefault()
-        event.stopPropagation()
-        void formatDocument()
-      }
-    }
-    window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [shortcuts, setView, openPalette, openSymbolPicker])
-
   const tabsNeedContentLoad = useEditorStore(s =>
     s.tabs.some(
       t => !t.openError && !t.loading && (t.content === undefined || t.diskMtime === undefined),
@@ -489,7 +235,6 @@ function App() {
   // terminal belongs to the current project. Defer PTY spawn so first project
   // paint is not blocked by PowerShell / ConPTY startup; skip entirely while
   // the terminal panel is closed or the workspace is restricted.
-  const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
   useEffect(() => {
     if (!currentProject || !projectTrusted) return
     const projectId = currentProject.id
@@ -534,164 +279,103 @@ function App() {
       )}
       <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
         <div className="flex flex-1 min-h-0 overflow-hidden">
-        <ActivityBar
-          active={view}
-          sidebarOpen={sidebarOpen}
-          onActiveChange={toggleActivityView}
-          onToggleTerminal={() => setTerminalOpen(v => !v)}
-          onAddProject={handleAddProject}
-          onManageProjects={openProjectManager}
-          terminalOpen={terminalOpen}
-        />
-
-        {sidebarOpen && view === 'explorer' && (
-          <ResizableSidebar width={sidebarWidth} onWidthChange={setSidebarWidth}>
-            <Sidebar />
-          </ResizableSidebar>
-        )}
-
-        {sidebarOpen && view === 'search' && (
-          <ResizableSidebar
-            width={sidebarWidth}
-            onWidthChange={setSidebarWidth}
-            className="ui-font-scaled"
-          >
-            <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-              <SearchPanel />
-            </Suspense>
-          </ResizableSidebar>
-        )}
-
-        {sidebarOpen && view === 'sourceControl' && (
-          <ResizableSidebar
-            width={sidebarWidth}
-            onWidthChange={setSidebarWidth}
-            className="ui-font-scaled bg-bg-sidebar"
-          >
-            <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-              <SourceControlPanel />
-            </Suspense>
-          </ResizableSidebar>
-        )}
-
-        {sidebarOpen && view === 'run' && (
-          <ResizableSidebar
-            width={sidebarWidth}
-            onWidthChange={setSidebarWidth}
-            className="ui-font-scaled bg-bg-sidebar"
-          >
-            <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-              <RunPanel />
-            </Suspense>
-          </ResizableSidebar>
-        )}
-
-        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          {view === 'settings' ? (
-            <Suspense fallback={<LazyFallback />}>
-              <SettingsEditor />
-            </Suspense>
-          ) : (
-            <>
-              <EditorTabs />
-              <EditorBreadcrumbs />
-              {projectRestricted && currentProject && (
-                <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 text-[12px] bg-amber-500/10 border-b border-amber-500/30 text-amber-100">
-                  <span className="min-w-0 flex-1">
-                    {t('受限模式：只能浏览文件，无法编辑、使用终端或运行脚本。')}
-                  </span>
-                  <button
-                    type="button"
-                    className="flex-shrink-0 px-2 py-0.5 rounded bg-accent/90 hover:bg-accent text-white text-[12px]"
-                    onClick={() => {
-                      trustProject(currentProject)
-                      void pushTrustedRootsToNative(projects)
-                    }}
-                  >
-                    {t('信任此项目')}
-                  </button>
-                </div>
-              )}
-              {activeTabId ? (
-                <Suspense fallback={<LazyFallback />}>
-                  <Editor />
-                </Suspense>
-              ) : (
-                <EmptyEditor />
-              )}
-            </>
-          )}
-        </div>
-        </div>
-
-        {terminalOpen && (
-          <PanelResizer
-            orientation="horizontal"
-            active={isTerminalResizing}
-            tooltip={terminalResizerHint(terminalHeight)}
-            tooltipSide="top"
-            onMouseDown={onResizerMouseDown}
-            ariaValueNow={terminalHeight}
-            ariaValueMin={TERMINAL_MIN_HEIGHT}
-            ariaValueMax={getTerminalMaxHeight()}
+          <ActivityBar
+            active={view}
+            sidebarOpen={sidebarOpen}
+            onActiveChange={toggleActivityView}
+            onToggleTerminal={() => setTerminalOpen(v => !v)}
+            onAddProject={handleAddProject}
+            onManageProjects={openProjectManager}
+            terminalOpen={terminalOpen}
           />
-        )}
 
-        <div
-          ref={terminalPanelRef}
-          data-terminal-panel
-          className={`flex-col flex-shrink-0 min-h-0 overflow-hidden border-t border-border ${
-            isTerminalResizing ? '' : 'transition-all duration-200 ease-out'
-          } ${
-            terminalOpen ? 'flex opacity-100' : 'opacity-0 pointer-events-none h-0 border-t-0'
-          }`}
-          style={{
-            // While dragging, prefer the live ref so the isTerminalResizing
-            // re-render (and any incidental App updates) cannot snap height back.
-            height: terminalOpen
-              ? isTerminalResizing
-                ? dragHeightRef.current
-                : terminalHeight
-              : 0,
-          }}
-        >
-          <TerminalTabs />
-          <div className="relative flex-1 min-w-0 bg-bg-deep overflow-hidden min-h-0">
-            {projectTerminals.length === 0 && (
-              <div className="absolute inset-0">
-                <EmptyState
-                  className="h-full"
-                  icon={<TerminalIcon size={28} strokeWidth={1.2} />}
-                  title={
-                    currentProject
-                      ? t('当前项目「{name}」暂无终端，点击标签栏 + 新建', { name: currentProject.name })
-                      : t('请先选择或添加项目，终端将默认基于当前项目创建')
-                  }
-                />
-              </div>
-            )}
-            {/* Only mount the current project's terminals to avoid xterm cost across projects. */}
-            {projectTerminals.map(t => {
-              const isActive = t.id === activeTerminalId
-              return (
-                <div
-                  key={t.id}
-                  className={`absolute inset-0 min-w-0 ${
-                    isActive ? 'z-10 visible' : 'invisible pointer-events-none z-0'
-                  }`}
-                >
-                  <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
-                    <TerminalView
-                      terminalId={t.id}
-                      isActive={isActive}
-                      layoutKey={`${terminalOpen}:${terminalHeight}`}
-                    />
+          {sidebarOpen && view === 'explorer' && (
+            <ResizableSidebar width={sidebarWidth} onWidthChange={setSidebarWidth}>
+              <Sidebar />
+            </ResizableSidebar>
+          )}
+
+          {sidebarOpen && view === 'search' && (
+            <ResizableSidebar
+              width={sidebarWidth}
+              onWidthChange={setSidebarWidth}
+              className="ui-font-scaled"
+            >
+              <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                <SearchPanel />
+              </Suspense>
+            </ResizableSidebar>
+          )}
+
+          {sidebarOpen && view === 'sourceControl' && (
+            <ResizableSidebar
+              width={sidebarWidth}
+              onWidthChange={setSidebarWidth}
+              className="ui-font-scaled bg-bg-sidebar"
+            >
+              <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                <SourceControlPanel />
+              </Suspense>
+            </ResizableSidebar>
+          )}
+
+          {sidebarOpen && view === 'run' && (
+            <ResizableSidebar
+              width={sidebarWidth}
+              onWidthChange={setSidebarWidth}
+              className="ui-font-scaled bg-bg-sidebar"
+            >
+              <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                <RunPanel />
+              </Suspense>
+            </ResizableSidebar>
+          )}
+
+          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+            {view === 'settings' ? (
+              <Suspense fallback={<LazyFallback />}>
+                <SettingsEditor />
+              </Suspense>
+            ) : (
+              <>
+                <EditorTabs />
+                <EditorBreadcrumbs />
+                {projectRestricted && currentProject && (
+                  <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 text-[12px] bg-amber-500/10 border-b border-amber-500/30 text-amber-100">
+                    <span className="min-w-0 flex-1">
+                      {t('受限模式：只能浏览文件，无法编辑、使用终端或运行脚本。')}
+                    </span>
+                    <button
+                      type="button"
+                      className="flex-shrink-0 px-2 py-0.5 rounded bg-accent/90 hover:bg-accent text-white text-[12px]"
+                      onClick={() => {
+                        trustProject(currentProject)
+                        void pushTrustedRootsToNative(projects)
+                      }}
+                    >
+                      {t('信任此项目')}
+                    </button>
+                  </div>
+                )}
+                {activeTabId ? (
+                  <Suspense fallback={<LazyFallback />}>
+                    <Editor />
                   </Suspense>
-                </div>
-              )
-            })}
+                ) : (
+                  <EmptyEditor />
+                )}
+              </>
+            )}
           </div>
         </div>
+
+        <TerminalPanel
+          terminalOpen={terminalOpen}
+          terminalHeight={terminalHeight}
+          isTerminalResizing={isTerminalResizing}
+          onResizerMouseDown={onResizerMouseDown}
+          terminalPanelRef={terminalPanelRef}
+        />
       </div>
 
       <StatusBar />

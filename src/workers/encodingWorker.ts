@@ -33,13 +33,16 @@ function base64ToBytes(base64: string): Uint8Array {
   return bytes
 }
 
-/** 检测 BOM */
+/** 检测 BOM（须先于 NUL 二进制判定，否则 UTF-16 会被误判） */
 function detectBOM(bytes: Uint8Array): string | null {
-  if (bytes.length >= 3 &&
-      bytes[0] === 0xEF &&
-      bytes[1] === 0xBB &&
-      bytes[2] === 0xBF) {
+  if (bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
     return 'utf8bom'
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xFF && bytes[1] === 0xFE) {
+    return 'utf16le'
+  }
+  if (bytes.length >= 2 && bytes[0] === 0xFE && bytes[1] === 0xFF) {
+    return 'utf16be'
   }
   return null
 }

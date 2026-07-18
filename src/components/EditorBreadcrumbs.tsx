@@ -54,7 +54,7 @@ export default function EditorBreadcrumbs() {
   }
 
   return (
-    <div className="ui-font-scaled flex h-[22px] flex-shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-bg-deep px-3 text-[11px] text-fg-muted select-none">
+    <div className="ui-font-scaled flex h-[22px] flex-shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-bg-deep pl-0 pr-3 text-[11px] text-fg-muted select-none">
       <button
         type="button"
         className="max-w-[140px] cursor-pointer truncate rounded px-1.5 bg-bg-hover/80 text-fg hover:bg-bg-active"

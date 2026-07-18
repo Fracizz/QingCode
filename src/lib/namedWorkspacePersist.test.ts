@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  DEFAULT_NAMED_WORKSPACE_NAME,
   NAMED_WORKSPACES_KEY,
   buildNamedWorkspace,
   clearNamedWorkspaceCatalog,
   emptyNamedWorkspaceCatalog,
+  formatNamedWorkspaceName,
   loadNamedWorkspaceCatalog,
+  normalizeNamedWorkspaceName,
   parseNamedWorkspace,
   parseNamedWorkspaceCatalog,
   remapWorkspaceSessions,
@@ -14,6 +17,7 @@ import {
   setActiveNamedWorkspaceId,
   upsertNamedWorkspace,
 } from './namedWorkspacePersist'
+import { translateFor } from './i18n'
 import type { WorkspaceSessionSnapshot } from './workspaceSessionPersist'
 
 function installMemoryLocalStorage() {
@@ -196,5 +200,25 @@ describe('catalog helpers + localStorage', () => {
 
   it('parseNamedWorkspaceCatalog rejects wrong version', () => {
     expect(parseNamedWorkspaceCatalog({ version: 2, workspaces: [] })).toBeNull()
+  })
+
+  it('normalizes and displays the default workspace name across locales', () => {
+    expect(normalizeNamedWorkspaceName('Multi-Project Workspace')).toBe(
+      DEFAULT_NAMED_WORKSPACE_NAME,
+    )
+    expect(normalizeNamedWorkspaceName(DEFAULT_NAMED_WORKSPACE_NAME)).toBe(
+      DEFAULT_NAMED_WORKSPACE_NAME,
+    )
+    expect(normalizeNamedWorkspaceName('My stack')).toBe('My stack')
+
+    const tEn = (source: string) => translateFor('en', source)
+    const tZh = (source: string) => translateFor('zh-CN', source)
+    expect(formatNamedWorkspaceName(DEFAULT_NAMED_WORKSPACE_NAME, tEn)).toBe(
+      'Multi-Project Workspace',
+    )
+    expect(formatNamedWorkspaceName('Multi-Project Workspace', tZh)).toBe(
+      DEFAULT_NAMED_WORKSPACE_NAME,
+    )
+    expect(formatNamedWorkspaceName('My stack', tEn)).toBe('My stack')
   })
 })

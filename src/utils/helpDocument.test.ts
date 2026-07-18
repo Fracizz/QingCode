@@ -3,6 +3,7 @@ import {
   filterHelpSections,
   flattenText,
   helpHeadingId,
+  isChineseHelpLanguage,
   joinHelpSections,
   splitHelpSections,
 } from './helpDocument'
@@ -74,5 +75,19 @@ describe('helpHeadingId', () => {
 describe('flattenText', () => {
   it('flattens nested children', () => {
     expect(flattenText(['a', { props: { children: ['b', 'c'] } }, 1])).toBe('abc1')
+  })
+})
+
+describe('isChineseHelpLanguage', () => {
+  it('treats zh-CN and zh-* as Chinese help', () => {
+    expect(isChineseHelpLanguage('zh-CN')).toBe(true)
+    expect(isChineseHelpLanguage('zh')).toBe(true)
+    expect(isChineseHelpLanguage('zh-TW')).toBe(true)
+  })
+
+  it('uses English help for non-Chinese locales', () => {
+    expect(isChineseHelpLanguage('en')).toBe(false)
+    expect(isChineseHelpLanguage('ja')).toBe(false)
+    expect(isChineseHelpLanguage('fr-FR')).toBe(false)
   })
 })

@@ -73,12 +73,12 @@
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 18px;
+        gap: 22px;
         user-select: none;
       }
       .startup-logo {
-        width: 72px;
-        height: 72px;
+        width: 96px;
+        height: 96px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -86,15 +86,15 @@
       }
       .startup-logo svg {
         display: block;
-        width: 72px;
-        height: 72px;
+        width: 96px;
+        height: 96px;
         filter: drop-shadow(0 4px 18px rgba(78, 205, 181, 0.22));
       }
       html[data-theme='light'] .startup-logo svg {
         filter: drop-shadow(0 4px 14px rgba(47, 175, 155, 0.18));
       }
       .startup-title {
-        font: 600 16px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+        font: 600 20px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
           'Microsoft YaHei', sans-serif;
         letter-spacing: 0.08em;
         color: #d4d4d4;
@@ -104,7 +104,7 @@
         color: #1f1f1f;
       }
       .startup-loader {
-        width: 120px;
+        width: 160px;
         height: 3px;
         border-radius: 999px;
         background: rgba(78, 205, 181, 0.14);
@@ -130,7 +130,7 @@
       }
       .startup-hint {
         margin: -8px 0 0;
-        font: 400 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+        font: 400 13px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
           'Microsoft YaHei', sans-serif;
         letter-spacing: 0.12em;
         color: rgba(212, 212, 212, 0.45);
@@ -175,10 +175,11 @@
       <div class="startup-splash-inner">
         <div class="startup-logo" aria-hidden="true">
           <!-- Inline logo avoids a startup fetch; paintStartupSplashLogo() may refresh later. -->
-          <svg id="startup-logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="72" height="72">
+          <!-- Keep in sync with src/assets/app-icon.svg (paintStartupSplashLogo refreshes after boot). -->
+          <svg id="startup-logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="96" height="96">
             <path fill="#2FAF9B" d="M96 379H416V419H96V379Z"/>
             <path fill="#4ECDB5" d="M96 339H416V379H96V339Z"/>
-            <path id="startup-logo-bracket" fill="#F3F6F8" d="M124 93H264L388 197L264 301H124L288 197L124 93Z"/>
+            <path id="startup-logo-bracket" fill="#F3F6F8" d="M124 93H264L388 197L264 301H124L248 197L124 93Z"/>
           </svg>
         </div>
         <div class="startup-title">QingCode</div>

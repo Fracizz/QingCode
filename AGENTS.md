@@ -4,6 +4,8 @@
 
 QingCode is a Tauri 2 desktop code editor with a React 19/Vite frontend and a Rust backend. Keep UI code in `src/`: reusable views live in `src/components/`, Zustand state in `src/store/`, Tauri wrappers in `src/lib/`, and focused helpers in `src/utils/`. Static files belong in `public/`. Native commands and terminal handling are in `src-tauri/src/`; Tauri permissions are defined in `src-tauri/capabilities/default.json`. Use `scripts/` for Windows packaging helpers and consult `DESIGN.md` before changing interaction patterns.
 
+Global `default-settings.json` and workspace `.qingcode/project-settings.json` are **JSON5** (comments, trailing commas). Default templates in `src/lib/projectSettings.ts` must keep **per-key comments** and state in the file header that comments must not be deleted (`不得删除注释`).
+
 ## Build, Test, and Development Commands
 
 - `pnpm install` installs the frontend toolchain.
@@ -13,7 +15,7 @@ QingCode is a Tauri 2 desktop code editor with a React 19/Vite frontend and a Ru
 - `pnpm test` / `pnpm test:watch` run Vitest unit tests under `src/**/*.{test,spec}.{ts,tsx}`.
 - `pnpm check` runs frontend typecheck + Vitest, then Rust `fmt` / `clippy -D warnings` / `test`.
 - `cargo test` (from `src-tauri/`) runs Rust unit tests; `cargo fmt --all -- --check` verifies Rust formatting; `cargo clippy --all-targets -- -D warnings` enforces lint cleanliness.
-- `pnpm tauri build --no-bundle` validates the production desktop build without producing an installer. Run `pnpm package:exe` for a Windows portable exe; `pnpm package:exe:arm64` targets `aarch64-pc-windows-msvc`; `pnpm package:macos` (macOS host only) builds Apple Silicon dmg/app zip. `pnpm smoke:start` smokes `release/QingCode.exe`.
+- `pnpm tauri build --no-bundle` validates the production desktop build without producing an installer. Run `pnpm package:exe` for a Windows portable exe; `pnpm package:exe:arm64` targets `aarch64-pc-windows-msvc`; `pnpm package:installer` builds a Windows NSIS setup exe (`release/QingCode-setup.exe`); `pnpm package:installer:arm64` for ARM64; `pnpm package:macos` (macOS host only) builds Apple Silicon dmg/app zip. `pnpm smoke:start` smokes `release/QingCode.exe`.
 - Release CI (`.github/workflows/release.yml`) builds **Windows x64**, **Windows ARM64** (`windows-11-arm`), and **macOS arm64** (`macos-14`), then uploads assets to GitHub Release (and Gitee when `GITEE_TOKEN` is set).
 - `pnpm register:open-with` / `pnpm unregister:open-with` register or remove Explorer “Open with” entries for the portable `release/QingCode.exe` (HKCU, no admin). Settings → 功能 also exposes the same action for the running exe.
 

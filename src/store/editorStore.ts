@@ -38,6 +38,7 @@ import { useProjectStore } from './projectStore'
 import type { EditorTab } from '../types'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
 import { guessLanguage, isPinnedSettingsTab, tabNameFromPath } from '../utils/editorHelpers'
+import { MAX_OPEN_EDITOR_TABS, pickEvictableTabId } from '../lib/editorTabsLayout'
 
 function fileNameFromPath(path: string) {
   return path.split('\\').pop() || path.split('/').pop() || path
@@ -242,6 +243,26 @@ function buildTabMru(tabs: EditorTab[], activeTabId: string | null): string[] {
   return [activeTabId, ...ids.filter(id => id !== activeTabId)]
 }
 
+/** Close least-recent clean tabs until there is room for one more open. */
+function ensureOpenTabCapacity(): boolean {
+  const get = () => useEditorStore.getState()
+  while (get().tabs.length >= MAX_OPEN_EDITOR_TABS) {
+    const { tabs, tabMru, activeTabId } = get()
+    const victim = pickEvictableTabId(tabs, tabMru, isPinnedSettingsTab, activeTabId)
+    if (!victim) {
+      useProjectStore.getState().pushToast(
+        'warn',
+        translate('已达到最多同时打开 {max} 个标签，请先关闭部分文件', {
+          max: MAX_OPEN_EDITOR_TABS,
+        }),
+      )
+      return false
+    }
+    get().closeTab(victim)
+  }
+  return true
+}
+
 function splitPinned(tabs: EditorTab[]) {
   const pinned: EditorTab[] = []
   const projectTabs: EditorTab[] = []
@@ -333,6 +354,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return
     }
 
+    if (!ensureOpenTabCapacity()) return
+
     const name = tabNameFromPath(path)
     const id = crypto.randomUUID()
     const language = guessLanguage(path)
@@ -340,14 +363,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     // Progressive open: show the tab immediately so the UI stays responsive.
     const prev = get().activeTabId
     if (prev) flushLiveEditorContent(prev)
-    set(s => ({
-      tabs: [
+    set(s => {
+      const tabs = [
         ...s.tabs,
         { id, path, name, dirty: false, language, loading: true },
-      ],
-      activeTabId: id,
-      pendingReveal: line ? { path, line } : null,
-    }))
+      ]
+      return {
+        tabs,
+        activeTabId: id,
+        pendingReveal: line ? { path, line } : null,
+        tabMru: buildTabMru(tabs, id),
+      }
+    })
     void useProjectStore.getState().revealFileInTree(path)
 
     try {
@@ -500,6 +527,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       set({ activeTabId: existing.id, cursor: null, pendingReveal: null })
       return
     }
+    if (!ensureOpenTabCapacity()) return
     try {
       const pair = await safeInvoke<GitFileContents>('读取 Git 文件内容', 'git_file_contents', {
         path: projectPath,
@@ -525,6 +553,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         activeTabId: id,
         cursor: null,
         pendingReveal: null,
+        tabMru: buildTabMru([...s.tabs, tab], id),
       }))
     } catch (e) {
       console.error('openDiff failed:', e)

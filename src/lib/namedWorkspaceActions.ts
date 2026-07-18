@@ -13,7 +13,10 @@ import { translate } from './i18n'
 import { setEditorScroll } from './editorSession'
 import {
   buildNamedWorkspace,
+  DEFAULT_NAMED_WORKSPACE_NAME,
+  formatNamedWorkspaceName,
   loadNamedWorkspaceCatalog,
+  normalizeNamedWorkspaceName,
   remapWorkspaceSessions,
   removeNamedWorkspace,
   saveNamedWorkspaceCatalog,
@@ -82,14 +85,14 @@ export async function saveVisibleProjectsAsWorkspace(): Promise<NamedWorkspace |
   const name = await promptDialog({
     title: translate('保存为多项目工作区'),
     message: translate('工作区名称'),
-    defaultValue: translate('多项目工作区'),
+    defaultValue: translate(DEFAULT_NAMED_WORKSPACE_NAME),
     confirmLabel: translate('保存'),
     validate: validateEntryName,
   })
   if (!name) return null
   return saveProjectsAsWorkspace(
     projects.map(p => p.id),
-    name.trim(),
+    normalizeNamedWorkspaceName(name),
   )
 }
 
@@ -105,6 +108,7 @@ export async function saveProjectsAsWorkspace(
     return null
   }
 
+  const storedName = normalizeNamedWorkspaceName(name)
   flushWorkspaceSessionPersist()
   const snapshot = captureWorkspaceSessionSnapshot({ projectIds: projects.map(p => p.id) })
   const existing = options?.workspaceId
@@ -112,7 +116,7 @@ export async function saveProjectsAsWorkspace(
     : undefined
   const workspace = buildNamedWorkspace({
     id: existing?.id,
-    name,
+    name: storedName,
     projects,
     snapshot,
     activeProjectId: useProjectStore.getState().currentProject?.id ?? null,
@@ -128,7 +132,12 @@ export async function saveProjectsAsWorkspace(
   commitCatalog(catalog => upsertNamedWorkspace(catalog, workspace))
   useProjectStore
     .getState()
-    .pushToast('success', translate('已保存多项目工作区「{name}」', { name: workspace.name }))
+    .pushToast(
+      'success',
+      translate('已保存多项目工作区「{name}」', {
+        name: formatNamedWorkspaceName(workspace.name, translate),
+      }),
+    )
   return workspace
 }
 
@@ -162,20 +171,27 @@ export async function renameNamedWorkspace(workspaceId: string): Promise<boolean
   const name = await promptDialog({
     title: translate('重命名多项目工作区'),
     message: translate('工作区名称'),
-    defaultValue: existing.name,
+    defaultValue: formatNamedWorkspaceName(existing.name, translate),
     confirmLabel: translate('重命名'),
     validate: validateEntryName,
   })
-  if (!name || name.trim() === existing.name) return false
+  if (!name) return false
+  const storedName = normalizeNamedWorkspaceName(name)
+  if (storedName === existing.name) return false
   const updated: NamedWorkspace = {
     ...existing,
-    name: name.trim(),
+    name: storedName,
     updatedAt: Date.now(),
   }
   commitCatalog(catalog => upsertNamedWorkspace(catalog, updated))
   useProjectStore
     .getState()
-    .pushToast('success', translate('已重命名为「{name}」', { name: updated.name }))
+    .pushToast(
+      'success',
+      translate('已重命名为「{name}」', {
+        name: formatNamedWorkspaceName(updated.name, translate),
+      }),
+    )
   return true
 }
 
@@ -184,7 +200,9 @@ export async function deleteNamedWorkspace(workspaceId: string): Promise<boolean
   if (!existing) return false
   const ok = await confirmDialog({
     title: translate('删除多项目工作区'),
-    message: translate('确定删除多项目工作区「{name}」？', { name: existing.name }),
+    message: translate('确定删除多项目工作区「{name}」？', {
+      name: formatNamedWorkspaceName(existing.name, translate),
+    }),
     detail: translate('仅删除工作区快照，不会移除项目或磁盘文件。'),
     kind: 'danger',
     confirmLabel: translate('删除'),
@@ -194,7 +212,12 @@ export async function deleteNamedWorkspace(workspaceId: string): Promise<boolean
   commitCatalog(catalog => removeNamedWorkspace(catalog, workspaceId))
   useProjectStore
     .getState()
-    .pushToast('info', translate('已删除多项目工作区「{name}」', { name: existing.name }))
+    .pushToast(
+      'info',
+      translate('已删除多项目工作区「{name}」', {
+        name: formatNamedWorkspaceName(existing.name, translate),
+      }),
+    )
   return true
 }
 
@@ -228,6 +251,12 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
     }
   }
 
+  // Disk-missing folders stay in the project list but are marked unavailable.
+  const unavailableIds = new Set(useProjectStore.getState().unavailableProjectIds)
+  const availableResolved = remapped.resolved.filter(r => !unavailableIds.has(r.project.id))
+  const diskUnavailableCount = remapped.resolved.length - availableResolved.length
+  const missingCount = remapped.missing.length
+
   applyScrollFromSessions(remapped.sessionsByProjectId)
 
   const editorSessions = Object.fromEntries(
@@ -252,7 +281,14 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
     .getState()
     .replaceTerminalSessionsForProjects(memberIds, terminals, activeTerminalByProject)
 
-  const activeId = remapped.activeProjectId
+  // Prefer a project whose directory still exists on disk.
+  let activeId = remapped.activeProjectId
+  if (activeId && unavailableIds.has(activeId)) {
+    activeId = availableResolved[0]?.project.id ?? null
+  } else if (!activeId) {
+    activeId = availableResolved[0]?.project.id ?? remapped.activeProjectId
+  }
+
   const currentId = useProjectStore.getState().currentProject?.id ?? null
 
   if (activeId && activeId === currentId && editorSessions[activeId]) {
@@ -277,6 +313,7 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
         }
       }
     }
+    // If every member directory is gone, chips stay visible with ⚠ for relocate.
   }
 
   // Expand member rows in the explorer.
@@ -289,19 +326,30 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
   commitCatalog(c => setActiveNamedWorkspaceId(c, workspace.id))
   useUIStore.getState().setView('explorer')
 
-  const missingCount = remapped.missing.length
-  if (missingCount > 0) {
+  if (diskUnavailableCount > 0 || missingCount > 0) {
+    const details: string[] = []
+    if (diskUnavailableCount > 0) {
+      details.push(
+        translate('{count} 个项目目录不可用', { count: diskUnavailableCount }),
+      )
+    }
+    if (missingCount > 0) {
+      details.push(translate('{count} 个项目已不在列表中', { count: missingCount }))
+    }
     useProjectStore.getState().pushToast(
-      'info',
-      translate('已打开多项目工作区「{name}」（{missing} 个项目不可用）', {
-        name: workspace.name,
-        missing: missingCount,
+      availableResolved.length > 0 ? 'info' : 'error',
+      translate('已打开多项目工作区「{name}」（{detail}，请重新定位）', {
+        name: formatNamedWorkspaceName(workspace.name, translate),
+        detail: details.join(translate('、')),
       }),
     )
   } else {
-    useProjectStore
-      .getState()
-      .pushToast('success', translate('已打开多项目工作区「{name}」', { name: workspace.name }))
+    useProjectStore.getState().pushToast(
+      'success',
+      translate('已打开多项目工作区「{name}」', {
+        name: formatNamedWorkspaceName(workspace.name, translate),
+      }),
+    )
   }
   return true
 }
@@ -317,10 +365,10 @@ export async function saveSelectedProjectsAsWorkspace(
   const name = await promptDialog({
     title: translate('保存选中为多项目工作区'),
     message: translate('工作区名称'),
-    defaultValue: translate('多项目工作区'),
+    defaultValue: translate(DEFAULT_NAMED_WORKSPACE_NAME),
     confirmLabel: translate('保存'),
     validate: validateEntryName,
   })
   if (!name) return null
-  return saveProjectsAsWorkspace(projectIds, name.trim())
+  return saveProjectsAsWorkspace(projectIds, normalizeNamedWorkspaceName(name))
 }

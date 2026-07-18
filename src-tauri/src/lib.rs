@@ -11,6 +11,7 @@ mod git_status;
 mod path_guard;
 mod terminal;
 mod update;
+mod user_locales;
 
 use file_watcher::FileWatcherManager;
 use path_guard::PathAllowlist;
@@ -356,6 +357,8 @@ pub fn run() {
             spawn_script,
             db_url,
             default_settings_path,
+            user_locales::user_locales_dir,
+            user_locales::list_user_locales,
             is_dev_build,
             update::check_app_update,
             take_launch_files,

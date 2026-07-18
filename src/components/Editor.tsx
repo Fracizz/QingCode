@@ -6,6 +6,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
+import { syncScrollTop } from '../utils/scrollSync'
 import { basicSetup, minimalSetup } from 'codemirror'
 import { search } from '@codemirror/search'
 import { Compartment, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
@@ -457,6 +458,8 @@ export default function Editor() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [mdPreviewMode, setMdPreviewMode] = useState<MdPreviewMode>('off')
   const [previewContent, setPreviewContent] = useState('')
+  const previewScrollRef = useRef<HTMLDivElement>(null)
+  const syncingMdScrollRef = useRef(false)
   const boundEpochRef = useRef(0)
 
   const activeTab = tabs.find(tab => tab.id === activeTabId)
@@ -643,6 +646,33 @@ export default function Editor() {
     const timer = window.setInterval(sync, 400)
     return () => window.clearInterval(timer)
   }, [showPreviewPane, activeTab?.id, activeTab?.content, activeTab?.dirty])
+
+  // Side-by-side Markdown: keep editor ↔ preview vertical scroll in sync.
+  useEffect(() => {
+    if (mdPreviewMode !== 'side' || !showSourcePane || !showPreviewPane) return
+    const view = viewRef.current
+    const preview = previewScrollRef.current
+    if (!view || !preview) return
+
+    const syncFrom = (source: HTMLElement, target: HTMLElement) => {
+      if (syncingMdScrollRef.current) return
+      syncingMdScrollRef.current = true
+      syncScrollTop(source, target)
+      requestAnimationFrame(() => {
+        syncingMdScrollRef.current = false
+      })
+    }
+
+    const onEditorScroll = () => syncFrom(view.scrollDOM, preview)
+    const onPreviewScroll = () => syncFrom(preview, view.scrollDOM)
+
+    view.scrollDOM.addEventListener('scroll', onEditorScroll, { passive: true })
+    preview.addEventListener('scroll', onPreviewScroll, { passive: true })
+    return () => {
+      view.scrollDOM.removeEventListener('scroll', onEditorScroll)
+      preview.removeEventListener('scroll', onPreviewScroll)
+    }
+  }, [mdPreviewMode, showSourcePane, showPreviewPane, activeTabId, previewContent])
 
   useEffect(() => {
     if (!markdownTab) setMdPreviewMode('off')
@@ -987,7 +1017,7 @@ export default function Editor() {
                 showSourcePane ? 'border-l' : ''
               }`}
             >
-              <MarkdownPreview content={previewContent} />
+              <MarkdownPreview ref={previewScrollRef} content={previewContent} />
             </div>
           )}
         </div>

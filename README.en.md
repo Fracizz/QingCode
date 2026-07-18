@@ -72,7 +72,7 @@ Source Control shows the branch, changed files, and diffs; compare any file side
 
 ### Search and preferences
 
-Search file names or contents in a chosen scope. Dark / light / forest / system theme; adjustable UI and editor fonts; Simplified Chinese or English UI. Global and project settings live on disk (JSON5 with comments).
+Search file names or contents in a chosen scope. Dark / light / forest / system theme; adjustable UI and editor fonts; Simplified Chinese or English UI. Global `default-settings.json` and project `.qingcode/project-settings.json` are **JSON5**; the template states that comments must not be deleted (see [HELP.md · Settings](./HELP.md#settings)).
 
 ## How it relates to VS Code / Zed
 
@@ -110,16 +110,18 @@ Download from [GitHub Releases](https://github.com/Fracizz/QingCode/releases) or
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` or `.zip` |
 
-- Windows: portable exe; needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)  
+- Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)  
 - macOS: unsigned builds may need right-click → Open the first time  
 
 Local packaging:
 
 ```bash
 pnpm install
-pnpm package:exe          # current Windows host
-pnpm package:exe:arm64    # Windows ARM64 target
-pnpm package:macos        # macOS only: Apple Silicon dmg/app
+pnpm package:exe              # current Windows host (portable)
+pnpm package:exe:arm64        # Windows ARM64 target
+pnpm package:installer        # Windows NSIS setup → release/QingCode-setup.exe
+pnpm package:installer:arm64  # Windows ARM64 installer
+pnpm package:macos            # macOS only: Apple Silicon dmg/app
 ```
 
 Artifacts land in `release/`. Multi-arch publishing uses `.github/workflows/release.yml`.
@@ -133,7 +135,7 @@ pnpm install
 pnpm tauri:dev    # full desktop app
 ```
 
-See [AGENTS.md](./AGENTS.md) for repo conventions and [帮助文档.md](./帮助文档.md) for settings (Chinese).
+See [AGENTS.md](./AGENTS.md) for repo conventions and [HELP.md](./HELP.md) for usage documentation.
 
 ## Stack
 

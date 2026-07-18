@@ -12,7 +12,8 @@ import {
   Settings2,
   X,
 } from 'lucide-react'
-import { useI18n, localeOptions, type AppLanguage } from '../lib/i18n'
+import { useI18n } from '../lib/i18n'
+import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import {
   DEFAULT_FONT_SETTINGS,
   FONT_SIZE_OPTIONS,
@@ -58,7 +59,7 @@ import {
   saveScopedAutoSaveSettings,
   type AutoSaveMode,
 } from '../lib/autoSaveSettings'
-import { isTauri } from '../lib/tauri'
+import { isTauri, safeInvoke } from '../lib/tauri'
 import {
   getOpenWithStatus,
   registerOpenWith,
@@ -96,7 +97,7 @@ const CATEGORIES: { id: CategoryId; label: string }[] = [
 ]
 
 export default function SettingsEditor() {
-  const { t, language, setLanguage } = useI18n()
+  const { t, language, setLanguage, localeOptions, reloadUserLocales } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
   const pushToast = useProjectStore(s => s.pushToast)
   const openFile = useEditorStore(s => s.openFile)
@@ -279,7 +280,9 @@ export default function SettingsEditor() {
           '符号',
         )
       }
-      if (cat.id === 'language') return match('语言', '简体中文', 'English')
+      if (cat.id === 'language') {
+        return match('语言', '简体中文', 'English', '语言包', '自定义语言')
+      }
       return true
     })
   }, [q, language, shortcuts])
@@ -295,8 +298,8 @@ export default function SettingsEditor() {
       </div>
 
       {/* Header: scope + search + actions */}
-      <div className="flex-shrink-0 border-b border-border bg-bg px-4 pt-3 pb-3">
-        <div className="flex items-center gap-2 mb-3">
+      <div className="flex-shrink-0 border-b border-border bg-bg pt-3 pb-3">
+        <div className="flex items-center gap-2 mb-3 px-4">
           <SegmentedControl
             ariaLabel={t('设置范围')}
             options={[
@@ -322,33 +325,39 @@ export default function SettingsEditor() {
           </Tooltip>
         </div>
 
-        <div className="relative max-w-[720px]">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder={t('搜索设置')}
-            className="setting-input w-full h-8 pl-8 pr-8 text-[13px]"
-          />
-          {query && (
-            <button
-              type="button"
-              onClick={() => setQuery('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
-            >
-              <X size={14} />
-            </button>
-          )}
-        </div>
+        {/* Search aligns with the content column (TOC is 200px; content uses px-6 + max-w-[800px]). */}
+        <div className="flex min-w-0">
+          <div className="w-[200px] flex-shrink-0" aria-hidden />
+          <div className="flex-1 min-w-0 px-6">
+            <div className="relative max-w-[800px]">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
+              <input
+                ref={searchRef}
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder={t('搜索设置')}
+                className="setting-input w-full h-8 pl-8 pr-8 text-[13px]"
+              />
+              {query && (
+                <button
+                  type="button"
+                  onClick={() => setQuery('')}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
 
-        {scope === 'workspace' && (
-          <p className="mt-2 text-[12px] text-fg-muted">
-            {t('工作区设置作用于当前项目「{name}」。多数界面设置仅用户作用域可用；工作区主要用于 project-settings.json。', {
-              name: currentProject?.name ?? '',
-            })}
-          </p>
-        )}
+            {scope === 'workspace' && (
+              <p className="mt-2 text-[12px] text-fg-muted max-w-[800px]">
+                {t('工作区设置作用于当前项目「{name}」。多数界面设置仅用户作用域可用；工作区主要用于 project-settings.json。', {
+                  name: currentProject?.name ?? '',
+                })}
+              </p>
+            )}
+          </div>
+        </div>
       </div>
 
       <div className="flex flex-1 min-h-0">
@@ -825,7 +834,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('语言', '简体中文', 'English') && (
+            {match('语言', '简体中文', 'English', '语言包', '自定义语言') && (
               <Section
                 id="language"
                 title={t('语言')}
@@ -834,7 +843,7 @@ export default function SettingsEditor() {
               >
                 <SettingItem
                   title={t('显示语言')}
-                  description={t('选择界面显示语言。更改后立即生效。')}
+                  description={t('选择界面显示语言。更改后立即生效。也可从用户语言包目录加载自定义 JSON。')}
                   modified={language !== 'zh-CN'}
                   locked={workspaceLocked}
                   lockHint={t('此设置仅在用户作用域中可用')}
@@ -842,15 +851,74 @@ export default function SettingsEditor() {
                   <select
                     value={language}
                     disabled={workspaceLocked}
-                    onChange={e => setLanguage(e.target.value as AppLanguage)}
+                    onChange={e => setLanguage(e.target.value)}
                     className="setting-control setting-control-wide setting-select"
                   >
                     {localeOptions.map(option => (
                       <option key={option.locale} value={option.locale}>
-                        {t(option.label)}
+                        {option.builtin ? t(option.label) : option.label}
                       </option>
                     ))}
                   </select>
+                </SettingItem>
+                <SettingItem
+                  title={t('自定义语言包')}
+                  description={t(
+                    '将 JSON 语言包放入应用数据目录的 locales 文件夹（可参考其中的 _example.json）。修改后点击刷新即可出现在上方列表。',
+                  )}
+                  locked={workspaceLocked}
+                  lockHint={t('此设置仅在用户作用域中可用')}
+                >
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={workspaceLocked || !isTauri()}
+                      className="setting-control px-2.5 py-1 text-[12px]"
+                      onClick={() => {
+                        void (async () => {
+                          try {
+                            const result = await reloadUserLocales()
+                            pushToast(
+                              'info',
+                              t('已刷新语言包（{count} 个用户包）', {
+                                count: result.loaded,
+                              }),
+                            )
+                          } catch (error) {
+                            pushToast(
+                              'error',
+                              error instanceof Error ? error.message : String(error),
+                            )
+                          }
+                        })()
+                      }}
+                    >
+                      {t('刷新语言包')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={workspaceLocked || !isTauri()}
+                      className="setting-control px-2.5 py-1 text-[12px]"
+                      onClick={() => {
+                        void (async () => {
+                          try {
+                            const dir = await safeInvoke<string>(
+                              '读取语言包目录',
+                              'user_locales_dir',
+                            )
+                            await revealItemInDir(dir)
+                          } catch (error) {
+                            pushToast(
+                              'error',
+                              error instanceof Error ? error.message : String(error),
+                            )
+                          }
+                        })()
+                      }}
+                    >
+                      {t('打开语言包目录')}
+                    </button>
+                  </div>
                 </SettingItem>
               </Section>
             )}

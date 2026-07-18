@@ -1,12 +1,15 @@
-//! Text ↔ bytes conversion for `files.encoding` (auto / utf8 / utf8bom / gbk / gb18030).
+//! Text ↔ bytes conversion for `files.encoding`
+//! (auto / utf8 / utf8bom / utf16le / utf16be / gbk / gb18030).
 
-use encoding_rs::{Encoding, GB18030, GBK, UTF_8};
+use encoding_rs::{Encoding, GB18030, GBK, UTF_16BE, UTF_16LE, UTF_8};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileEncoding {
     Auto,
     Utf8,
     Utf8Bom,
+    Utf16Le,
+    Utf16Be,
     Gbk,
     Gb18030,
 }
@@ -17,6 +20,8 @@ impl FileEncoding {
             Self::Auto => "auto",
             Self::Utf8 => "utf8",
             Self::Utf8Bom => "utf8bom",
+            Self::Utf16Le => "utf16le",
+            Self::Utf16Be => "utf16be",
             Self::Gbk => "gbk",
             Self::Gb18030 => "gb18030",
         }
@@ -33,6 +38,8 @@ pub fn parse(name: Option<&str>) -> FileEncoding {
     {
         "auto" => FileEncoding::Auto,
         "utf8bom" | "utf8-bom" | "utf-8-bom" => FileEncoding::Utf8Bom,
+        "utf16le" | "utf-16le" | "utf-16-le" | "ucs-2le" => FileEncoding::Utf16Le,
+        "utf16be" | "utf-16be" | "utf-16-be" | "ucs-2be" => FileEncoding::Utf16Be,
         "gbk" | "gb2312" | "cp936" => FileEncoding::Gbk,
         "gb18030" => FileEncoding::Gb18030,
         "utf8" | "utf-8" | "" => FileEncoding::Utf8,
@@ -43,6 +50,8 @@ pub fn parse(name: Option<&str>) -> FileEncoding {
 fn charset(enc: FileEncoding) -> &'static Encoding {
     match enc {
         FileEncoding::Auto | FileEncoding::Utf8 | FileEncoding::Utf8Bom => UTF_8,
+        FileEncoding::Utf16Le => UTF_16LE,
+        FileEncoding::Utf16Be => UTF_16BE,
         FileEncoding::Gbk => GBK,
         FileEncoding::Gb18030 => GB18030,
     }
@@ -53,9 +62,19 @@ fn charset(enc: FileEncoding) -> &'static Encoding {
 /// GBK is a subset of GB18030, so non-UTF-8 legacy text is intentionally
 /// reported as GB18030: it can decode both safely, while claiming GBK would
 /// be incorrect for GB18030-only characters.
+///
+/// UTF-16 without a BOM is not auto-detected (NUL bytes look binary); reopen
+/// with an explicit encoding when needed.
 pub fn detect(bytes: &[u8]) -> Result<FileEncoding, String> {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return Ok(FileEncoding::Utf8Bom);
+    }
+    // Check UTF-16 BOMs before the NUL-byte binary gate (ASCII-in-UTF-16 is full of NULs).
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        return Ok(FileEncoding::Utf16Le);
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return Ok(FileEncoding::Utf16Be);
     }
     if bytes.contains(&0) {
         return Err("binary content".to_string());
@@ -90,6 +109,8 @@ pub fn decode(bytes: &[u8], enc: FileEncoding) -> Result<String, String> {
 }
 
 /// Encode a Unicode string to on-disk bytes for `enc`.
+///
+/// UTF-16 variants always write a BOM (same as VS Code `utf16le` / `utf16be`).
 pub fn encode(text: &str, enc: FileEncoding) -> Result<Vec<u8>, String> {
     match enc {
         // Auto is only meaningful while reading. New/unspecified content is UTF-8.
@@ -101,6 +122,8 @@ pub fn encode(text: &str, enc: FileEncoding) -> Result<Vec<u8>, String> {
             out.extend_from_slice(text.as_bytes());
             Ok(out)
         }
+        FileEncoding::Utf16Le => Ok(encode_utf16(text, true)),
+        FileEncoding::Utf16Be => Ok(encode_utf16(text, false)),
         FileEncoding::Gbk | FileEncoding::Gb18030 => {
             let encoding = charset(enc);
             let (cow, _used, had_errors) = encoding.encode(text);
@@ -112,6 +135,25 @@ pub fn encode(text: &str, enc: FileEncoding) -> Result<Vec<u8>, String> {
     }
 }
 
+/// encoding_rs can decode UTF-16 but does not encode to it; write BOM + code units ourselves.
+fn encode_utf16(text: &str, little_endian: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 + text.len() * 2);
+    if little_endian {
+        out.extend_from_slice(&[0xFF, 0xFE]);
+    } else {
+        out.extend_from_slice(&[0xFE, 0xFF]);
+    }
+    for unit in text.encode_utf16() {
+        let bytes = if little_endian {
+            unit.to_le_bytes()
+        } else {
+            unit.to_be_bytes()
+        };
+        out.extend_from_slice(&bytes);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,6 +163,8 @@ mod tests {
         assert_eq!(parse(Some("auto")), FileEncoding::Auto);
         assert_eq!(parse(Some("utf8")), FileEncoding::Utf8);
         assert_eq!(parse(Some("utf8bom")), FileEncoding::Utf8Bom);
+        assert_eq!(parse(Some("utf16le")), FileEncoding::Utf16Le);
+        assert_eq!(parse(Some("UTF-16BE")), FileEncoding::Utf16Be);
         assert_eq!(parse(Some("GBK")), FileEncoding::Gbk);
         assert_eq!(parse(Some("gb18030")), FileEncoding::Gb18030);
         assert_eq!(parse(Some("mystery")), FileEncoding::Utf8);
@@ -136,6 +180,25 @@ mod tests {
             vec![0xEF, 0xBB, 0xBF, b'h', b'i']
         );
         assert_eq!(encode("hi", FileEncoding::Utf8).unwrap(), b"hi");
+    }
+
+    #[test]
+    fn utf16_le_roundtrip_with_bom() {
+        let text = "中文hi";
+        let bytes = encode(text, FileEncoding::Utf16Le).unwrap();
+        assert!(bytes.starts_with(&[0xFF, 0xFE]));
+        assert_eq!(detect(&bytes).unwrap(), FileEncoding::Utf16Le);
+        assert_eq!(decode(&bytes, FileEncoding::Auto).unwrap(), text);
+        assert_eq!(decode(&bytes, FileEncoding::Utf16Le).unwrap(), text);
+    }
+
+    #[test]
+    fn utf16_be_roundtrip_with_bom() {
+        let text = "AB中";
+        let bytes = encode(text, FileEncoding::Utf16Be).unwrap();
+        assert!(bytes.starts_with(&[0xFE, 0xFF]));
+        assert_eq!(detect(&bytes).unwrap(), FileEncoding::Utf16Be);
+        assert_eq!(decode(&bytes, FileEncoding::Utf16Be).unwrap(), text);
     }
 
     #[test]

@@ -28,6 +28,7 @@ import {
   renameProjectWithPrompt,
 } from '../utils/projectActions'
 import Tooltip from './Tooltip'
+import WorkspaceMenu from './WorkspaceMenu'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
 
@@ -189,6 +190,9 @@ export default function ProjectPicker() {
 
   return (
     <div className="relative overflow-hidden flex-1 flex items-center h-full min-w-0 gap-1">
+      {/* Keep workspace control next to the file menu — not pushed to the far right. */}
+      <WorkspaceMenu />
+
       {/* Visible chips — empty leftover width bubbles dblclick maximize to TitleBar */}
       <div ref={containerRef} className="flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden">
         {visibleProjects.map(project => (

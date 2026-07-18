@@ -36,7 +36,7 @@ export interface EditorTab {
   /** On-disk size in bytes when known (used by large-file viewer). */
   fileSize?: number
   /** Session encoding used for read/write (from files.encoding at open). */
-  encoding?: 'utf8' | 'utf8bom' | 'gbk' | 'gb18030'
+  encoding?: 'utf8' | 'utf8bom' | 'utf16le' | 'utf16be' | 'gbk' | 'gb18030'
   /** True while read_file is in flight (progressive open). */
   loading?: boolean
   /** Set when read_file failed; tab stays open like VS Code error editors. */
