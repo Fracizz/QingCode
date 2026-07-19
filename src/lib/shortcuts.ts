@@ -7,9 +7,11 @@ export type ShortcutCommand =
   | 'goToSymbolInEditor'
   | 'goToLine'
   | 'toggleMinimap'
+  | 'renameInExplorer'
 
 export type ShortcutMap = Record<ShortcutCommand, string>
 
+/** Empty string means unbound (disabled). */
 export const DEFAULT_SHORTCUTS: ShortcutMap = {
   searchAllProjects: 'Ctrl+Shift+F',
   toggleTerminal: 'Ctrl+`',
@@ -19,6 +21,11 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   goToSymbolInEditor: 'Ctrl+Shift+O',
   goToLine: 'Ctrl+G',
   toggleMinimap: 'Ctrl+Shift+G',
+  renameInExplorer: 'F2',
+}
+
+export function isShortcutBound(shortcut: string): boolean {
+  return shortcut.trim().length > 0
 }
 
 /** Display form (VS Code style). Matching uses canonicalizeShortcut. */
@@ -68,6 +75,7 @@ export function shortcutFromKeyboardEvent(event: KeyboardEvent): string | null {
 }
 
 export function shortcutMatchesEvent(shortcut: string, event: KeyboardEvent): boolean {
+  if (!isShortcutBound(shortcut)) return false
   const pressed = shortcutFromKeyboardEvent(event)
   if (!pressed) return false
   return pressed === canonicalizeShortcut(shortcut)

@@ -796,24 +796,28 @@ export default function SearchPanel() {
                     )
                   })}
                   {hasStarOption && (
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={typeFilter?.kind === 'star'}
-                      title={`${t('其余扩展名')}（${otherExts.length}）`}
-                      onClick={() => {
-                        setTypeFilter(cur =>
-                          cur?.kind === 'star' ? null : { kind: 'star', exts: otherExts }
-                        )
-                        closeExtPicker()
-                      }}
-                      className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
-                        ${typeFilter?.kind === 'star'
-                          ? 'border-accent bg-accent text-white'
-                          : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'}`}
+                    <Tooltip
+                      label={`${t('其余扩展名')}（${otherExts.length}）`}
+                      side="bottom"
                     >
-                      *
-                    </button>
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={typeFilter?.kind === 'star'}
+                        onClick={() => {
+                          setTypeFilter(cur =>
+                            cur?.kind === 'star' ? null : { kind: 'star', exts: otherExts }
+                          )
+                          closeExtPicker()
+                        }}
+                        className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
+                          ${typeFilter?.kind === 'star'
+                            ? 'border-accent bg-accent text-white'
+                            : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'}`}
+                      >
+                        *
+                      </button>
+                    </Tooltip>
                   )}
                   {!projectExtsLoading && topExts.length === 0 && (
                     <span className="px-1 py-0.5 text-[11px] text-fg-dim">{t('暂无扩展名')}</span>

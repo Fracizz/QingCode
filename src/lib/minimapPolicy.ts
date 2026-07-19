@@ -10,19 +10,28 @@ export const MINIMAP_HIDE_BYTES = EDIT_DEGRADED_BYTES
 export const MINIMAP_WIDTH_DEFAULT = 120
 export const MINIMAP_WIDTH_MIN = 80
 export const MINIMAP_WIDTH_MAX = 360
-export const MINIMAP_WIDTH_PRESETS = [100, 120, 160, 240, 320] as const
 /** Space that resizing must leave for the actual editor content. */
 export const MINIMAP_EDITOR_SAFE_WIDTH = 360
 export const MINIMAP_WIDTH_STORAGE_KEY = 'qingcode:minimap-width'
 export const MINIMAP_HIDE_SCROLLBAR_KEY = 'qingcode:minimap-hide-scrollbar'
+export const MINIMAP_HOVER_SHOW_KEY = 'qingcode:minimap-hover-show'
 
-/** CSS pixels per source character (full mode). */
+/** Canvas paint style: shrunken monospace (default); density tier forces blocks. */
+export type MinimapPaintStyle = 'text' | 'blocks'
+export const MINIMAP_STYLE_DEFAULT: MinimapPaintStyle = 'text'
+
+/** CSS pixels per source character (block mode, full tier). */
 export const MINIMAP_CHAR_WIDTH = 3
-/** CSS pixels per source line (full mode). Long files still scroll the glance window. */
+/** CSS pixels per source line (block mode). Long files still scroll the glance window. */
 export const MINIMAP_CHAR_HEIGHT = 4
 /** Slightly tighter scale for density mode (1–5MB). */
 export const MINIMAP_CHAR_WIDTH_DENSITY = 2
 export const MINIMAP_CHAR_HEIGHT_DENSITY = 3
+
+/** Text mode: 8px mono with ~4.8px advance (VS Code–style code texture). */
+export const MINIMAP_TEXT_FONT_SIZE = 8
+export const MINIMAP_TEXT_LINE_HEIGHT = 10
+export const MINIMAP_TEXT_CHAR_WIDTH = 4.8
 
 /** Min interval between canvas repaints after doc changes (ms). */
 export const MINIMAP_REPAINT_THROTTLE_MS = 48
@@ -34,11 +43,13 @@ export const MINIMAP_SCROLLBAR_THUMB_MIN = 24
 export const MINIMAP_SCROLLBAR_WIDTH = 12
 
 /** Quick-view hover delay before showing the source peek (ms). */
-export const MINIMAP_QUICK_VIEW_DELAY_MS = 1000
+export const MINIMAP_QUICK_VIEW_DELAY_MS = 500
 /** Gap between Quick View panel and the minimap left edge (px). */
 export const MINIMAP_QUICK_VIEW_GAP = 12
 /** Lines shown above/below the hovered line in Quick View. */
 export const MINIMAP_QUICK_VIEW_RADIUS = 6
+/** Delay before folding the glance after the pointer leaves (ms). */
+export const MINIMAP_HOVER_COLLAPSE_DELAY_MS = 140
 
 export type MinimapRenderMode = 'full' | 'density' | 'hidden'
 
@@ -47,7 +58,22 @@ export type MinimapCharSize = {
   charHeight: number
 }
 
-export function resolveMinimapCharSize(mode: MinimapRenderMode): MinimapCharSize {
+export function resolveMinimapPaintStyle(
+  mode: MinimapRenderMode,
+  preferred: MinimapPaintStyle,
+): MinimapPaintStyle {
+  if (mode === 'density') return 'blocks'
+  return preferred
+}
+
+export function resolveMinimapCharSize(
+  mode: MinimapRenderMode,
+  style: MinimapPaintStyle = MINIMAP_STYLE_DEFAULT,
+): MinimapCharSize {
+  const effective = resolveMinimapPaintStyle(mode, style)
+  if (effective === 'text' && mode === 'full') {
+    return { charWidth: MINIMAP_TEXT_CHAR_WIDTH, charHeight: MINIMAP_TEXT_LINE_HEIGHT }
+  }
   if (mode === 'density') {
     return { charWidth: MINIMAP_CHAR_WIDTH_DENSITY, charHeight: MINIMAP_CHAR_HEIGHT_DENSITY }
   }
@@ -298,6 +324,27 @@ export function saveMinimapHideScrollbar(hide: boolean): void {
   if (typeof localStorage === 'undefined') return
   try {
     localStorage.setItem(MINIMAP_HIDE_SCROLLBAR_KEY, hide ? '1' : '0')
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+/** When true, collapse to the scroll rail until the pointer hovers it. */
+export function loadMinimapHoverShow(): boolean {
+  if (typeof localStorage === 'undefined') return false
+  try {
+    const raw = localStorage.getItem(MINIMAP_HOVER_SHOW_KEY)
+    if (raw == null) return false
+    return raw === '1' || raw === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function saveMinimapHoverShow(enabled: boolean): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(MINIMAP_HOVER_SHOW_KEY, enabled ? '1' : '0')
   } catch {
     // ignore quota / private mode
   }

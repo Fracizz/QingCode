@@ -1,6 +1,7 @@
 import { Clock, FileText, FolderOpen, Settings, Terminal as TerminalIcon } from 'lucide-react'
 import AppIcon from './AppIcon'
 import Kbd from './Kbd'
+import Tooltip from './Tooltip'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
@@ -71,15 +72,20 @@ export default function EmptyEditor() {
           <p className="text-[11px] font-semibold tracking-wide text-fg-dim uppercase">{t('最近项目')}</p>
           <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-[420px]">
             {recentProjects.map(project => (
-              <button
+              <Tooltip
                 key={project.id}
-                type="button"
-                title={project.path}
-                onClick={() => void switchProject(project)}
-                className="max-w-[180px] truncate rounded-full border border-border px-3 py-1 text-[12px] text-fg-muted transition-all duration-150 hover:border-border-strong hover:bg-bg-hover hover:text-fg hover:shadow-sm"
+                label={project.path}
+                side="bottom"
+                wrapperClassName="max-w-[180px]"
               >
-                {project.name}
-              </button>
+                <button
+                  type="button"
+                  onClick={() => void switchProject(project)}
+                  className="max-w-[180px] truncate rounded-full border border-border px-3 py-1 text-[12px] text-fg-muted transition-all duration-150 hover:border-border-strong hover:bg-bg-hover hover:text-fg hover:shadow-sm"
+                >
+                  {project.name}
+                </button>
+              </Tooltip>
             ))}
           </div>
         </div>
@@ -97,20 +103,21 @@ export default function EmptyEditor() {
           <ul className="space-y-0.5">
             {recent.map(file => (
               <li key={file.path}>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
-                  onClick={() => void openFile(file.path)}
-                  title={file.path}
-                >
-                  <FileText size={12} className="flex-shrink-0 opacity-70" />
-                  <span className="truncate font-medium text-fg">
-                    {file.path.split(/[/\\]/).pop() || file.path}
-                  </span>
-                  <span className="ml-auto truncate text-[11px] text-fg-dim max-w-[55%]">
-                    {file.path}
-                  </span>
-                </button>
+                <Tooltip label={file.path} side="bottom" wrapperClassName="block w-full">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
+                    onClick={() => void openFile(file.path)}
+                  >
+                    <FileText size={12} className="flex-shrink-0 opacity-70" />
+                    <span className="truncate font-medium text-fg">
+                      {file.path.split(/[/\\]/).pop() || file.path}
+                    </span>
+                    <span className="ml-auto truncate text-[11px] text-fg-dim max-w-[55%]">
+                      {file.path}
+                    </span>
+                  </button>
+                </Tooltip>
               </li>
             ))}
           </ul>

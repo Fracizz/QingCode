@@ -5,10 +5,12 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type RefObject,
 } from 'react'
 import { syncScrollTop } from '../utils/scrollSync'
-import { basicSetup, minimalSetup } from 'codemirror'
+import { minimalSetup } from 'codemirror'
 import { search } from '@codemirror/search'
+import { qingBasicSetup } from '../lib/editorBasicSetup'
 import { Compartment, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
 import {
   Decoration,
@@ -35,12 +37,6 @@ import {
   undoDepth,
 } from '@codemirror/commands'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { javascript } from '@codemirror/lang-javascript'
-import { json } from '@codemirror/lang-json'
-import { markdown } from '@codemirror/lang-markdown'
-import { css } from '@codemirror/lang-css'
-import { html } from '@codemirror/lang-html'
-import { python } from '@codemirror/lang-python'
 import {
   AtSign,
   BookOpen,
@@ -77,10 +73,18 @@ import {
 } from '../lib/editorSettings'
 import { FONT_SETTINGS_EVENT, loadFontSettings } from '../lib/fontSettings'
 import { buildEditorPreferenceExtensions } from '../lib/editorSettingsExtensions'
+import { reliableClickMouseSelection } from '../lib/editorMouseSelection'
+import {
+  editorHasOccurrenceHighlight,
+  occurrenceHighlightMarker,
+  preserveSelectionTokenColors,
+  selectionMatchMainHighlight,
+} from '../lib/selectionMatchMainHighlight'
 import { translate, useI18n } from '../lib/i18n'
 import { notifyEditorBlur, notifyEditorContentChanged } from '../lib/autoSave'
 import {
   captureEditorScroll,
+  clearCachedEditorStates,
   clearTabContentBuffer,
   flushLiveEditorContent,
   getLiveEditorContent,
@@ -94,6 +98,14 @@ import {
 } from '../lib/editorSession'
 import { editorPerfProfileForTab, type EditorPerfProfile } from '../lib/fileSizePolicy'
 import { formatDocument } from '../lib/formatDocument'
+import {
+  isSupportedEditorLanguage,
+  loadLanguageSupport,
+} from '../lib/editorLanguages'
+
+// Drop in-memory EditorState cache after occurrence-highlight wiring changes so
+// background tabs reopen with match highlighting (large/degraded included).
+clearCachedEditorStates()
 import { emitMinimapUpdate } from '../lib/minimapBridge'
 import {
   getMinimapEnabled,
@@ -110,6 +122,7 @@ import MarkdownPreview from './MarkdownPreview'
 import EditorOpenError from './EditorOpenError'
 import LargeFileViewer from './LargeFileViewer'
 import EditorMinimap from './EditorMinimap'
+import Tooltip from './Tooltip'
 const DiffEditor = lazy(() => import('./DiffEditor'))
 
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
@@ -119,8 +132,8 @@ const lightTheme = EditorView.theme(
     '.cm-gutters': { backgroundColor: '#ebebeb', color: '#757575', borderRight: '1px solid #d0d0d0' },
     '.cm-activeLine': { backgroundColor: '#e8edf2' },
     '.cm-activeLineGutter': { backgroundColor: '#e2e8ef', color: '#1f1f1f' },
-    '.cm-selectionBackground, ::selection': { backgroundColor: '#cfe3fb' },
-    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+    '.cm-selectionBackground': { backgroundColor: '#cfe3fb' },
+    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
       backgroundColor: '#b9d6f5',
     },
     '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#1a1a1a' },
@@ -130,14 +143,31 @@ const lightTheme = EditorView.theme(
     },
     '.cm-searchMatch': { backgroundColor: '#ffe9a8' },
     '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: '#ffd56b' },
+    '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },
+    '.cm-selectionMatchMainLayer .cm-selectionMatchMain': {
+      backgroundColor: 'rgba(153, 255, 119, 0.5)',
+    },
+    '.cm-searchMatch .cm-selectionMatch': { backgroundColor: 'transparent' },
   },
   { dark: false },
+)
+
+/** Selection-match colors for oneDark (main overlay + other hits). */
+const darkSelectionMatchTheme = EditorView.theme(
+  {
+    '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },
+    '.cm-selectionMatchMainLayer .cm-selectionMatchMain': {
+      backgroundColor: 'rgba(153, 255, 119, 0.5)',
+    },
+    '.cm-searchMatch .cm-selectionMatch': { backgroundColor: 'transparent' },
+  },
+  { dark: true },
 )
 
 function editorThemeExtension() {
   const resolved = getResolvedTheme()
   if (resolved === 'forest') return [FOREST_THEME, forestSyntax]
-  if (resolved === 'dark') return oneDark
+  if (resolved === 'dark') return [oneDark, darkSelectionMatchTheme]
   return lightTheme
 }
 
@@ -163,20 +193,6 @@ const flashField = StateField.define<DecorationSet>({
   },
   provide: f => EditorView.decorations.from(f),
 })
-
-const LANG_MAP: Record<string, () => import('@codemirror/language').LanguageSupport> = {
-  javascript: () => javascript(),
-  typescript: () => javascript({ typescript: true }),
-  jsx: () => javascript({ jsx: true }),
-  tsx: () => javascript({ jsx: true, typescript: true }),
-  json: () => json(),
-  // JSON5 / JSONC: JS highlighter so // and /* */ comments are allowed visually
-  json5: () => javascript(),
-  markdown: () => markdown(),
-  css: () => css(),
-  html: () => html(),
-  python: () => python(),
-}
 
 function hasNonEmptySelection(view: EditorView) {
   return !view.state.selection.main.empty
@@ -251,9 +267,8 @@ function createTabEditorState(
   const profile: EditorPerfProfile = editorPerfProfileForTab(tab)
   const large = profile === 'full' && isLargeDocument(tab.content)
   const huge = profile !== 'full' || isHugeDocument(tab.content)
-  const langFactory = !huge && tab.language ? LANG_MAP[tab.language] : undefined
-  // Large docs: skip language on first paint; enable after idle. Degraded/plain/huge: never.
-  const initialLang = profile === 'full' && !large && langFactory ? langFactory() : []
+  const deferHighlight = profile === 'full' && !huge
+  const initialLang: Extension = []
   const basePrefs = getEditorPreferences()
   const prefs =
     profile === 'full'
@@ -261,7 +276,14 @@ function createTabEditorState(
       : { ...basePrefs, wordWrap: 'off' as const }
   const showLineNumbers = prefs.lineNumbers !== 'off'
   const settingsContent = profile === 'full' ? tab.content : undefined
-  const enableBracketDecorations = profile === 'full' && !large && !huge
+  const enableBracketDecorations =
+    profile === 'full' && !large && !huge && !deferHighlight
+
+  // Own occurrence highlighter for every profile (main overlay + other hits).
+  const occurrenceHighlight: Extension[] = [
+    occurrenceHighlightMarker(),
+    selectionMatchMainHighlight(),
+  ]
 
   const setup: Extension[] =
     profile === 'plain'
@@ -272,7 +294,7 @@ function createTabEditorState(
             showLineNumbers ? lineNumbers() : [],
             search({ top: true, createPanel: createEditorFindReplacePanel }),
           ]
-        : [basicSetup, search({ top: true, createPanel: createEditorFindReplacePanel })]
+        : [qingBasicSetup(), search({ top: true, createPanel: createEditorFindReplacePanel })]
 
   return EditorState.create({
     doc: tab.content || '',
@@ -286,6 +308,10 @@ function createTabEditorState(
         }),
       ),
       flashField,
+      preserveSelectionTokenColors(),
+      // Kept outside compartments so every profile (incl. large/degraded) gets matches.
+      occurrenceHighlight,
+      reliableClickMouseSelection(),
       EditorView.updateListener.of(update => {
         emitMinimapUpdate(update)
         if (update.docChanged) {
@@ -386,6 +412,45 @@ function createTabEditorState(
   })
 }
 
+function scheduleHeavyEditorFeatures(
+  viewRef: RefObject<EditorView | null>,
+  boundTabIdRef: RefObject<string | null>,
+  tab: EditorTab,
+  languageCompartment: Compartment,
+  settingsCompartment: Compartment,
+): () => void {
+  const profile = editorPerfProfileForTab(tab)
+  if (profile !== 'full' || isHugeDocument(tab.content)) return () => {}
+
+  const tabId = tab.id
+  const large = isLargeDocument(tab.content)
+  const langId = tab.language
+
+  return scheduleIdle(() => {
+    const current = viewRef.current
+    if (!current || boundTabIdRef.current !== tabId) return
+
+    if (langId && isSupportedEditorLanguage(langId)) {
+      void loadLanguageSupport(langId).then(lang => {
+        const live = viewRef.current
+        if (!live || boundTabIdRef.current !== tabId) return
+        live.dispatch({ effects: languageCompartment.reconfigure(lang) })
+      })
+    }
+
+    if (!large) {
+      const prefs = getEditorPreferences()
+      current.dispatch({
+        effects: settingsCompartment.reconfigure(
+          buildEditorPreferenceExtensions(prefs, tab.content, {
+            enableBracketDecorations: true,
+          }),
+        ),
+      })
+    }
+  })
+}
+
 function bindTabToView(
   view: EditorView,
   tab: EditorTab,
@@ -396,7 +461,7 @@ function bindTabToView(
   saveFile: (id: string) => Promise<void>,
   setCursor: (cursor: { line: number; col: number } | null) => void,
   previousTabId: string | null,
-): string {
+): { tabId: string; fresh: boolean } {
   if (previousTabId && previousTabId !== tab.id) {
     captureEditorScroll(previousTabId, view)
     setCachedEditorState(previousTabId, view.state)
@@ -405,10 +470,18 @@ function bindTabToView(
   }
 
   const cached = takeCachedEditorState(tab.id)
+  const usableCache = cached && editorHasOccurrenceHighlight(cached) ? cached : undefined
+  const fresh = !usableCache
+  // Prefer live buffer when rebuilding a stale active state (keeps unsaved edits).
+  const tabForState =
+    !usableCache && previousTabId === null && view.state.doc.length > 0
+      ? { ...tab, content: view.state.doc.toString() }
+      : tab
+  const priorSelection = !usableCache ? view.state.selection : null
   const state =
-    cached ??
+    usableCache ??
     createTabEditorState(
-      tab,
+      tabForState,
       themeCompartment,
       languageCompartment,
       settingsCompartment,
@@ -418,6 +491,13 @@ function bindTabToView(
     )
 
   view.setState(state)
+  if (priorSelection && !usableCache) {
+    try {
+      view.dispatch({ selection: priorSelection })
+    } catch {
+      /* selection may be out of range after external reload */
+    }
+  }
   registerEditorView(tab.id, view)
   restoreEditorScroll(tab.id, view)
   const profile = editorPerfProfileForTab(tab)
@@ -445,7 +525,7 @@ function bindTabToView(
   if (profile === 'plain' && tab.content !== undefined) {
     clearTabContentBuffer(tab.id)
   }
-  return tab.id
+  return { tabId: tab.id, fresh }
 }
 
 type MdPreviewMode = 'off' | 'side' | 'preview'
@@ -524,8 +604,10 @@ export default function Editor() {
 
     const previousTabId = boundTabIdRef.current
     const epoch = activeTab.contentEpoch ?? 0
+    const staleOccurrence = !editorHasOccurrenceHighlight(view.state)
+    let cancelHeavy: (() => void) | undefined
     if (previousTabId !== activeTab.id) {
-      boundTabIdRef.current = bindTabToView(
+      const bind = bindTabToView(
         view,
         activeTab,
         themeCompartment.current,
@@ -536,12 +618,23 @@ export default function Editor() {
         setCursor,
         previousTabId,
       )
+      boundTabIdRef.current = bind.tabId
       boundEpochRef.current = epoch
-    } else if (epoch !== boundEpochRef.current) {
-      // External reload / draft restore disposed the session — rebuild from store.
+      if (bind.fresh) {
+        cancelHeavy = scheduleHeavyEditorFeatures(
+          viewRef,
+          boundTabIdRef,
+          activeTab,
+          languageCompartment.current,
+          settingsCompartment.current,
+        )
+      }
+    } else if (epoch !== boundEpochRef.current || staleOccurrence) {
+      // External reload / draft restore, or occurrence-highlight extensions missing
+      // (stale HMR / pre-fix EditorState still bound to this tab).
       boundEpochRef.current = epoch
       unregisterEditorView(activeTab.id, view)
-      boundTabIdRef.current = bindTabToView(
+      const bind = bindTabToView(
         view,
         activeTab,
         themeCompartment.current,
@@ -552,29 +645,18 @@ export default function Editor() {
         setCursor,
         null,
       )
-    }
-
-    const profile = editorPerfProfileForTab(activeTab)
-    const large = profile === 'full' && isLargeDocument(activeTab.content)
-    const huge = profile !== 'full' || isHugeDocument(activeTab.content)
-    const langFactory =
-      !huge && activeTab.language ? LANG_MAP[activeTab.language] : undefined
-
-    let cancelLanguage: (() => void) | undefined
-    // Re-schedule after StrictMode remounts; reconfigure is cheap/idempotent.
-    if (profile === 'full' && large && langFactory) {
-      const tabId = activeTab.id
-      cancelLanguage = scheduleIdle(() => {
-        const current = viewRef.current
-        if (!current || boundTabIdRef.current !== tabId) return
-        current.dispatch({
-          effects: languageCompartment.current.reconfigure(langFactory()),
-        })
-      })
+      boundTabIdRef.current = bind.tabId
+      cancelHeavy = scheduleHeavyEditorFeatures(
+        viewRef,
+        boundTabIdRef,
+        activeTab,
+        languageCompartment.current,
+        settingsCompartment.current,
+      )
     }
 
     return () => {
-      cancelLanguage?.()
+      cancelHeavy?.()
     }
     // Recreate/swap only when the tab identity / epoch / loadability changes — not on content flushes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -785,7 +867,7 @@ export default function Editor() {
 
   const revealInSidebar = (path: string) => {
     setView('explorer')
-    void revealFileInTree(path)
+    void revealFileInTree(path, { force: true })
   }
 
   const revealPath = async (path: string) => {
@@ -939,6 +1021,11 @@ export default function Editor() {
   }
 
   const openContextMenu = (event: ReactMouseEvent) => {
+    // Minimap owns its own menu; do not steal right-clicks from that overlay.
+    if ((event.target as Element | null)?.closest?.('.editor-minimap')) {
+      event.preventDefault()
+      return
+    }
     event.preventDefault()
     event.stopPropagation()
     viewRef.current?.focus()
@@ -978,9 +1065,14 @@ export default function Editor() {
       <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-bg text-fg-muted">
         <LoaderCircle size={28} className="animate-spin text-accent" aria-hidden />
         <p className="text-sm">{t('正在打开文件…')}</p>
-        <p className="max-w-md truncate px-6 font-mono text-[11px] text-fg-dim" title={activeTab.path}>
-          {activeTab.path}
-        </p>
+        <Tooltip
+          label={activeTab.path}
+          side="bottom"
+          onlyWhenOverflow
+          wrapperClassName="max-w-md block px-6"
+        >
+          <p className="truncate font-mono text-[11px] text-fg-dim">{activeTab.path}</p>
+        </Tooltip>
       </div>
     )
   }

@@ -335,8 +335,11 @@ pub fn run() {
             commands::create_file,
             commands::create_directory,
             commands::rename_path,
+            commands::move_path,
+            commands::copy_path_into,
             commands::delete_path,
             commands::directory_delete_stats,
+            commands::directory_entry_counts,
             commands::check_symlink_write,
             format::format_document,
             path_guard::sync_project_roots,
@@ -369,6 +372,7 @@ pub fn run() {
             file_watcher::suppress_fs_watch,
             file_watcher::is_fs_watch_suppressed,
             file_watcher::file_mtime,
+            file_watcher::file_ctime,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

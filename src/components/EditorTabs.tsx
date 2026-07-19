@@ -195,7 +195,7 @@ export default function EditorTabs() {
 
   const revealInSidebar = (path: string) => {
     setView('explorer')
-    void revealFileInTree(path)
+    void revealFileInTree(path, { force: true })
   }
 
   const closeWithConfirm = async (tabsToClose: EditorTab[], close: () => void) => {

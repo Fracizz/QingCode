@@ -13,6 +13,7 @@
 ### Changed
 
 - 本机打包统一为 `pnpm package`：一次产出 Windows x64 便携版与 NSIS 安装包（ARM64/macOS 仍走 CI）
+- 悬停提示统一为应用内 `Tooltip`：移除空编辑器「最近打开」等处的浏览器原生 `title` tip；设计文档明确禁止原生提示，并由 ESLint 约束
 
 ## [0.1.4] - 2026-07-18
 

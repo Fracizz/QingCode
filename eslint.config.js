@@ -32,6 +32,8 @@ export default tseslint.config(
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
       'no-console': ['warn', { allow: ['error', 'warn'] }],
+      // Ban browser-native tooltips; use shared Tooltip (see DESIGN.md).
+      'react/forbid-dom-props': ['error', { forbid: ['title'] }],
     },
     settings: {
       react: { version: 'detect' },

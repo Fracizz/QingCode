@@ -21,7 +21,7 @@ Global `default-settings.json` and workspace `.qingcode/project-settings.json` a
 
 ## Coding Style & Naming Conventions
 
-Match the surrounding code: TypeScript uses two-space indentation, functional React components, PascalCase component filenames (for example, `PromptDialog.tsx`), and camelCase helpers. Name stores by responsibility, such as `editorStore.ts`. Rust follows `rustfmt` and snake_case naming. Route frontend calls through `safeInvoke` in `src/lib/tauri.ts`; new commands must be registered in `src-tauri/src/lib.rs`. Reuse shared overlays, tooltips, and dialogs rather than adding browser-native prompts or duplicate UI patterns.
+Match the surrounding code: TypeScript uses two-space indentation, functional React components, PascalCase component filenames (for example, `PromptDialog.tsx`), and camelCase helpers. Name stores by responsibility, such as `editorStore.ts`. Rust follows `rustfmt` and snake_case naming. Route frontend calls through `safeInvoke` in `src/lib/tauri.ts`; new commands must be registered in `src-tauri/src/lib.rs`. Reuse shared overlays, tooltips, and dialogs rather than adding browser-native prompts or duplicate UI patterns. Never put HTML `title` on DOM nodes for hover tips — use `Tooltip` (see `DESIGN.md`; ESLint `react/forbid-dom-props`).
 
 ## Testing Guidelines
 

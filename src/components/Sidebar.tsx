@@ -1,4 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
+import { createPortal } from 'react-dom'
 import { List, type ListImperativeAPI, type RowComponentProps } from 'react-window'
 import {
   ChevronDown,
@@ -23,6 +35,9 @@ import {
   Search as SearchIcon,
   AtSign,
   GitCompare,
+  Info,
+  Scissors,
+  ClipboardPaste,
 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useProjectStore, type FileNode } from '../store/projectStore'
@@ -34,7 +49,11 @@ import { safeInvoke } from '../lib/tauri'
 import { openGitCompareWithHead } from '../lib/gitCompare'
 import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
 import { confirmDialog } from '../store/confirmStore'
-import { promptDialog, validateEntryName } from '../store/promptStore'
+import {
+  findExplorerNameConflict,
+  resolveExplorerNameConflict,
+} from '../utils/explorerNameConflict'
+import { showPropertiesDialog } from '../store/propertiesStore'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import InlineCreateRow from './InlineCreateRow'
@@ -48,18 +67,24 @@ import {
   pathSetHas,
   pathsEqual,
 } from '../utils/fileReferences'
-import { findNodeByPath } from '../utils/fileTreeHelpers'
+import { baseName, findNodeByPath } from '../utils/fileTreeHelpers'
 import {
   createTreeDepth,
   dirsToReveal,
+  findVisibleNodeRowIndex,
   flattenVisibleNodes,
+  moveVisibleNodeSelection,
+  resolveTreeRevealScrollIndex,
   type PendingCreate,
+  type PendingRename,
   type VisibleTreeRow,
 } from '../utils/fileTreeView'
 import { relocateProjectWithDialog, addTerminalProjectWithPrompt, renameProjectWithPrompt } from '../utils/projectActions'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
 import { formatBytes } from '../utils/formatBytes'
 import { useI18n } from '../lib/i18n'
+import { isShortcutBound, shortcutMatchesEvent } from '../lib/shortcuts'
+import { useShortcutStore } from '../store/shortcutStore'
 
 type DirectoryDeleteStats = {
   path: string
@@ -77,18 +102,40 @@ function parentPath(path: string) {
   return separator > 0 ? path.slice(0, separator) : path
 }
 
+const EXPLORER_DROP_ATTR = 'data-explorer-drop'
+const DRAG_THRESHOLD_PX = 5
+
+/** Hit-test explorer drop targets (pointer DnD; avoids flaky HTML5 DnD in WebView2). */
+function resolveExplorerDropFromPoint(
+  clientX: number,
+  clientY: number,
+): { path: string; isDir: boolean } | null {
+  const el = document.elementFromPoint(clientX, clientY)
+  const row = el?.closest(`[${EXPLORER_DROP_ATTR}]`) as HTMLElement | null
+  const path = row?.getAttribute(EXPLORER_DROP_ATTR)
+  if (!path) return null
+  return { path, isDir: row?.getAttribute('data-explorer-isdir') === '1' }
+}
+
 type TreeRowProps = {
   rows: VisibleTreeRow[]
   expandedPaths: Set<string>
   loadingPaths: Set<string>
-  activeFilePath: string | null
-  revealPath: string | null
+  selectedPaths: Set<string>
+  cutPaths: Set<string>
+  dragOverPath: string | null
+  draggingPaths: Set<string>
   gitStatusFor: (path: string, isDir: boolean) => string | null
   onOpenContextMenu: (event: ReactMouseEvent, target: ContextTarget) => void
   onCopyPath: (path: string) => void
-  onToggleNode: (node: FileNode) => void
+  onSelectNode: (node: FileNode, event: ReactMouseEvent) => void
+  onOpenNode: (node: FileNode) => void
+  onToggleFolder: (node: FileNode) => void
   onCommitCreate: (name: string) => void
   onCancelCreate: () => void
+  onCommitRename: (name: string) => void
+  onCancelRename: () => void
+  onPointerDownNode: (event: ReactPointerEvent, node: FileNode) => void
 }
 
 function VirtualTreeRow({
@@ -98,14 +145,21 @@ function VirtualTreeRow({
   rows,
   expandedPaths,
   loadingPaths,
-  activeFilePath,
-  revealPath,
+  selectedPaths,
+  cutPaths,
+  dragOverPath,
+  draggingPaths,
   gitStatusFor,
   onOpenContextMenu,
   onCopyPath,
-  onToggleNode,
+  onSelectNode,
+  onOpenNode,
+  onToggleFolder,
   onCommitCreate,
   onCancelCreate,
+  onCommitRename,
+  onCancelRename,
+  onPointerDownNode,
 }: RowComponentProps<TreeRowProps>) {
   const row = rows[index]
   if (row.kind === 'create') {
@@ -115,37 +169,69 @@ function VirtualTreeRow({
       </div>
     )
   }
+  if (row.kind === 'rename') {
+    return (
+      <div style={style} {...ariaAttributes}>
+        <InlineCreateRow
+          directory={row.node.is_dir}
+          depth={row.depth}
+          initialName={row.node.name}
+          onSubmit={onCommitRename}
+          onCancel={onCancelRename}
+        />
+      </div>
+    )
+  }
 
   const { node, depth } = row
   const expanded = node.is_dir && pathSetHas(expandedPaths, node.path)
-  const isActive = !node.is_dir && activeFilePath != null && pathsEqual(node.path, activeFilePath)
-  const isRevealed = revealPath != null && pathsEqual(node.path, revealPath)
-  const rowStyle: CSSProperties = { ...style, paddingLeft: depth * 12 + 8 }
+  const isSelected = pathSetHas(selectedPaths, node.path)
+  const isCut = pathSetHas(cutPaths, node.path)
+  const isDragging = pathSetHas(draggingPaths, node.path)
+  const isDropTarget = dragOverPath != null && pathsEqual(node.path, dragOverPath)
+  const rowStyle: CSSProperties = {
+    ...style,
+    paddingLeft: depth * 12 + 8,
+    ...(isDropTarget
+      ? {
+          boxShadow: 'inset 3px 0 0 var(--color-accent)',
+          background: 'color-mix(in srgb, var(--color-accent) 28%, transparent)',
+        }
+      : {}),
+  }
   const gitStatus = gitStatusFor(node.path, !!node.is_dir)
   const gitGlyph = gitStatusGlyph(gitStatus)
   const gitColor = gitStatusColorClass(gitStatus)
-  // Indent guides: one faint vertical line per ancestor level, aligned to the chevron center.
-  if (depth > 1) {
-    rowStyle.backgroundImage =
-      'repeating-linear-gradient(to right, color-mix(in srgb, var(--color-border-strong) 70%, transparent) 0 1px, transparent 1px 12px)'
-    rowStyle.backgroundPosition = '27px 0'
-    rowStyle.backgroundSize = `${(depth - 1) * 12 + 1}px 100%`
-    rowStyle.backgroundRepeat = 'no-repeat'
-  }
 
   return (
     <div
       {...ariaAttributes}
-      tabIndex={0}
-      className={`flex items-center gap-1 pr-2 py-[3px] cursor-pointer text-[13px] select-none focus:outline-none
-        ${isActive || isRevealed ? 'bg-bg-active text-accent' : 'hover:bg-bg-hover focus:bg-bg-active'}`}
+      tabIndex={-1}
+      data-explorer-drop={node.path}
+      data-explorer-isdir={node.is_dir ? '1' : '0'}
+      aria-expanded={node.is_dir ? expanded : undefined}
+      className={`flex items-center gap-1 pr-2 py-[3px] cursor-default [&_button]:cursor-default text-[13px] select-none focus:outline-none
+        ${isDropTarget ? 'text-accent font-medium' : ''}
+        ${!isDropTarget && isSelected ? 'bg-bg-active text-accent' : ''}
+        ${!isDropTarget && !isSelected ? 'hover:bg-bg-hover focus-visible:bg-bg-hover' : ''}
+        ${isCut || isDragging ? 'opacity-45' : ''}`}
       style={rowStyle}
-      onClick={() => onToggleNode(node)}
+      onPointerDown={event => onPointerDownNode(event, node)}
+      onClick={event => onSelectNode(node, event)}
+      onDoubleClick={() => onOpenNode(node)}
       onContextMenu={event => {
         event.currentTarget.focus()
+        if (!pathSetHas(selectedPaths, node.path)) {
+          onSelectNode(node, event)
+        }
         onOpenContextMenu(event, { kind: 'node', node })
       }}
       onKeyDown={event => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          onOpenNode(node)
+          return
+        }
         if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
           event.preventDefault()
           onCopyPath(node.path)
@@ -154,7 +240,22 @@ function VirtualTreeRow({
     >
       {node.is_dir ? (
         <>
-          {expanded ? <ChevronDown size={14} className="text-fg-dim flex-shrink-0" /> : <ChevronRight size={14} className="text-fg-dim flex-shrink-0" />}
+          <button
+            type="button"
+            tabIndex={-1}
+            data-explorer-chevron=""
+            aria-hidden="true"
+            className="flex-shrink-0 rounded p-0 text-fg-dim hover:text-fg"
+            onPointerDown={event => event.stopPropagation()}
+            onClick={event => {
+              event.stopPropagation()
+              // IDEA: chevron click also selects the folder row.
+              onSelectNode(node, event)
+              onToggleFolder(node)
+            }}
+          >
+            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          </button>
           {expanded ? <FolderOpen size={15} className="text-accent flex-shrink-0" /> : <Folder size={15} className="text-accent flex-shrink-0" />}
         </>
       ) : (
@@ -163,7 +264,14 @@ function VirtualTreeRow({
           <FileIcon size={14} className="text-fg-muted flex-shrink-0" />
         </>
       )}
-      <span className={`truncate ${gitColor || 'text-fg'}`}>{node.name}</span>
+      <Tooltip
+        label={node.name}
+        side="right"
+        onlyWhenOverflow
+        wrapperClassName="min-w-0 flex-1"
+      >
+        <span className={`block truncate min-w-0 ${gitColor || 'text-fg'}`}>{node.name}</span>
+      </Tooltip>
       {gitGlyph && (
         <span className={`ml-auto flex-shrink-0 text-[11px] font-medium ${gitColor}`}>
           {gitGlyph}
@@ -207,6 +315,7 @@ export default function Sidebar() {
   const clearPendingNewFile = useUIStore(s => s.clearPendingNewFile)
   const renameEditorPath = useEditorStore(s => s.renamePath)
   const closeTabsForPath = useEditorStore(s => s.closeTabsForPath)
+  const renameShortcut = useShortcutStore(s => s.shortcuts.renameInExplorer)
   const [refreshing, setRefreshing] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -214,20 +323,65 @@ export default function Sidebar() {
     target: ContextTarget
   } | null>(null)
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null)
+  const [pendingRename, setPendingRename] = useState<PendingRename | null>(null)
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(() => new Set())
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(() => new Set())
+  /** Primary selection (keyboard / range anchor). */
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set())
+  const [clipboard, setClipboard] = useState<{ mode: 'cut' | 'copy'; paths: string[] } | null>(
+    null,
+  )
+  const [dragOverPath, setDragOverPath] = useState<string | null>(null)
+  const [draggingPaths, setDraggingPaths] = useState<Set<string>>(() => new Set())
+  const [dragGhost, setDragGhost] = useState<{
+    x: number
+    y: number
+    label: string
+  } | null>(null)
   const listRef = useRef<ListImperativeAPI>(null)
+  const treeFocusRef = useRef<HTMLDivElement>(null)
+  const selectionAnchorRef = useRef<string | null>(null)
+  const suppressTreeClickRef = useRef(false)
+  const explorerDragRef = useRef<{
+    paths: string[]
+    startX: number
+    startY: number
+    active: boolean
+    pointerId: number
+  } | null>(null)
+  const scrolledRevealSeqRef = useRef(0)
+  const preserveScrollTopRef = useRef<number | null>(null)
   const treeRevealPath = useProjectStore(s => s.treeRevealPath)
   const treeRevealSeq = useProjectStore(s => s.treeRevealSeq)
   const tree = currentProject ? projectTrees[currentProject.id] ?? [] : []
   const visibleTreeRows = useMemo(
-    () => flattenVisibleNodes(tree, expandedPaths, pendingCreate),
-    [expandedPaths, pendingCreate, tree],
+    () => flattenVisibleNodes(tree, expandedPaths, pendingCreate, pendingRename),
+    [expandedPaths, pendingCreate, pendingRename, tree],
   )
-  const revealingProjectRoot =
-    !!currentProject &&
-    !!treeRevealPath &&
-    pathsEqual(treeRevealPath, currentProject.path)
+  const cutPaths = useMemo(
+    () => new Set(clipboard?.mode === 'cut' ? clipboard.paths : []),
+    [clipboard],
+  )
+  const isProjectRootSelected =
+    !!currentProject && selectedPath != null && pathsEqual(selectedPath, currentProject.path)
+
+  const replaceSelection = useCallback((path: string | null) => {
+    setSelectedPath(path)
+    setSelectedPaths(path ? new Set([path]) : new Set())
+    selectionAnchorRef.current = path
+  }, [])
+
+  useEffect(() => {
+    replaceSelection(null)
+    setClipboard(null)
+    setPendingRename(null)
+    scrolledRevealSeqRef.current = 0
+  }, [currentProject?.id, replaceSelection])
+
+  useEffect(() => {
+    if (treeRevealPath) replaceSelection(treeRevealPath)
+  }, [treeRevealPath, treeRevealSeq, replaceSelection])
 
   useEffect(() => {
     if (!currentProject || !treeRevealPath || !isDescendantOf(treeRevealPath, currentProject.path)) return
@@ -238,7 +392,7 @@ export default function Sidebar() {
     const toExpand = [
       ...ancestors.map(path => findNodeByPath(tree, path)?.path ?? path),
       ...(target?.is_dir ? [target.path] : []),
-    ]
+    ].filter(path => isDescendantOf(path, currentProject.path) || pathsEqual(path, currentProject.path))
     if (toExpand.length === 0) return
 
     setExpandedPaths(existing => {
@@ -265,26 +419,32 @@ export default function Sidebar() {
 
   useEffect(() => {
     if (!treeRevealPath || !currentProject) return
-    if (pathsEqual(treeRevealPath, currentProject.path)) {
-      listRef.current?.scrollToRow({ index: 0, align: 'start', behavior: 'smooth' })
-      return
-    }
-    const targetIndex = pendingCreate
-      ? visibleTreeRows.findIndex(row => row.kind === 'create')
-      : visibleTreeRows.findIndex(
-          row => row.kind === 'node' && pathsEqual(row.node.path, treeRevealPath),
-        )
-    if (targetIndex >= 0) {
-      listRef.current?.scrollToRow({ index: targetIndex, align: 'smart', behavior: 'smooth' })
-    }
+    // Only scroll for an explicit reveal (treeRevealSeq bump). Row-count changes from
+    // manual expand/collapse must not re-run scroll-into-view for the active tab path.
+    if (scrolledRevealSeqRef.current === treeRevealSeq) return
+
+    const targetIndex = resolveTreeRevealScrollIndex(
+      visibleTreeRows,
+      treeRevealPath,
+      currentProject.path,
+      pendingCreate,
+    )
+    if (targetIndex == null || visibleTreeRows.length === 0) return
+
+    listRef.current?.scrollToRow({ index: targetIndex, align: 'smart', behavior: 'auto' })
+    scrolledRevealSeqRef.current = treeRevealSeq
   }, [currentProject, pendingCreate, treeRevealPath, treeRevealSeq, visibleTreeRows])
 
-  const toggleTreeNode = async (node: FileNode) => {
-    if (!node.is_dir) {
-      void useEditorStore.getState().openFile(node.path)
-      return
-    }
-    if (!currentProject) return
+  useLayoutEffect(() => {
+    if (preserveScrollTopRef.current == null) return
+    const top = preserveScrollTopRef.current
+    preserveScrollTopRef.current = null
+    listRef.current?.element?.scrollTo({ top, behavior: 'instant' })
+  }, [visibleTreeRows])
+
+  const toggleFolderExpand = async (node: FileNode) => {
+    if (!node.is_dir || !currentProject) return
+    preserveScrollTopRef.current = listRef.current?.element?.scrollTop ?? null
     const expanding = !pathSetHas(expandedPaths, node.path)
     setExpandedPaths(paths => {
       if (expanding) return addPathToSet(paths, node.path)
@@ -307,21 +467,137 @@ export default function Sidebar() {
     }
   }
 
+  const selectTreeNode = (node: FileNode, event?: ReactMouseEvent) => {
+    if (suppressTreeClickRef.current) {
+      event?.preventDefault()
+      event?.stopPropagation()
+      return
+    }
+    treeFocusRef.current?.focus()
+    const ctrl = Boolean(event?.ctrlKey || event?.metaKey)
+    const shift = Boolean(event?.shiftKey)
+
+    if (shift) {
+      const anchor = selectionAnchorRef.current ?? selectedPath ?? node.path
+      const start = findVisibleNodeRowIndex(visibleTreeRows, anchor)
+      const end = findVisibleNodeRowIndex(visibleTreeRows, node.path)
+      if (start >= 0 && end >= 0) {
+        const [lo, hi] = start < end ? [start, end] : [end, start]
+        const next = new Set<string>()
+        for (let i = lo; i <= hi; i++) {
+          const row = visibleTreeRows[i]
+          if (row?.kind === 'node' || row?.kind === 'rename') next.add(row.node.path)
+        }
+        setSelectedPaths(next)
+        setSelectedPath(node.path)
+        return
+      }
+    }
+
+    if (ctrl) {
+      setSelectedPaths(prev => {
+        const next = new Set(prev)
+        if (pathSetHas(next, node.path)) {
+          const filtered = [...next].filter(p => !pathsEqual(p, node.path))
+          return new Set(filtered)
+        }
+        return addPathToSet(next, node.path)
+      })
+      setSelectedPath(node.path)
+      selectionAnchorRef.current = node.path
+      return
+    }
+
+    replaceSelection(node.path)
+  }
+
+  const scrollTreeRowIntoView = useCallback(
+    (path: string) => {
+      const index = findVisibleNodeRowIndex(visibleTreeRows, path)
+      if (index >= 0) {
+        listRef.current?.scrollToRow({ index, align: 'smart', behavior: 'auto' })
+      }
+    },
+    [visibleTreeRows],
+  )
+
+  const openTreeNode = (node: FileNode) => {
+    if (node.is_dir) {
+      void toggleFolderExpand(node)
+      return
+    }
+    void useEditorStore.getState().openFile(node.path)
+  }
+
+  const handleTreeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (visibleTreeRows.length === 0) return
+
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+        event.preventDefault()
+        const direction =
+          event.key === 'ArrowDown'
+            ? 'down'
+            : event.key === 'ArrowUp'
+              ? 'up'
+              : event.key === 'Home'
+                ? 'home'
+                : 'end'
+        const next = moveVisibleNodeSelection(visibleTreeRows, selectedPath, direction)
+        if (next) {
+          if (event.shiftKey) {
+            selectTreeNode(next, {
+              shiftKey: true,
+              ctrlKey: false,
+              metaKey: false,
+            } as ReactMouseEvent)
+          } else {
+            replaceSelection(next.path)
+          }
+          scrollTreeRowIntoView(next.path)
+        }
+        return
+      }
+
+      if ((event.key === 'ArrowRight' || event.key === 'ArrowLeft') && selectedPath) {
+        const node = findNodeByPath(tree, selectedPath)
+        if (!node?.is_dir) return
+        event.preventDefault()
+        const expanded = pathSetHas(expandedPaths, node.path)
+        if (event.key === 'ArrowRight' && !expanded) void toggleFolderExpand(node)
+        else if (event.key === 'ArrowLeft' && expanded) void toggleFolderExpand(node)
+        return
+      }
+
+      if (event.key === 'Enter' && selectedPath) {
+        const node = findNodeByPath(tree, selectedPath)
+        if (!node) return
+        event.preventDefault()
+        openTreeNode(node)
+      }
+    },
+    [
+      expandedPaths,
+      replaceSelection,
+      scrollTreeRowIntoView,
+      selectedPath,
+      selectTreeNode,
+      tree,
+      visibleTreeRows,
+    ],
+  )
+
   const handleLocateActiveFile = () => {
     if (!activeTabPath) return
     setView('explorer')
-    void revealFileInTree(activeTabPath)
+    void revealFileInTree(activeTabPath, { force: true })
   }
 
   const handleRefresh = async () => {
     if (refreshing || !currentProject) return
     setRefreshing(true)
-    setExpandedPaths(new Set())
     try {
-      await Promise.all([
-        refreshProjectTree(currentProject),
-        new Promise<void>(resolve => window.setTimeout(resolve, 1000)),
-      ])
+      await refreshProjectTree(currentProject)
     } finally {
       setRefreshing(false)
     }
@@ -399,11 +675,41 @@ export default function Sidebar() {
   const refreshDirectory = async (path: string) => {
     const project = projectOfPath(path)
     if (!project) return
-    if (path === project.path) await refreshProjectTree(project)
-    else await expandProjectDir(project.id, path)
+    // Must force-reload: expandProjectDir no-ops when already loaded, which left
+    // deleted/moved entries visible after mutations.
+    if (pathsEqual(path, project.path)) await refreshProjectTree(project)
+    else await expandProjectDir(project.id, path, { force: true })
+  }
+
+  const pruneTreePaths = (removedPaths: string[]) => {
+    if (removedPaths.length === 0) return
+    const isGone = (path: string) =>
+      removedPaths.some(removed => pathsEqual(path, removed) || isDescendantOf(path, removed))
+
+    setExpandedPaths(prev => {
+      const next = new Set<string>()
+      for (const path of prev) {
+        if (!isGone(path)) next.add(path)
+      }
+      return next.size === prev.size ? prev : next
+    })
+    setSelectedPaths(prev => {
+      const next = new Set([...prev].filter(path => !isGone(path)))
+      return next.size === prev.size ? prev : next
+    })
+    if (selectedPath && isGone(selectedPath)) {
+      setSelectedPath(null)
+      selectionAnchorRef.current = null
+    }
+    setClipboard(prev => {
+      if (!prev) return prev
+      const paths = prev.paths.filter(path => !isGone(path))
+      return paths.length === 0 ? null : { ...prev, paths }
+    })
   }
 
   const cancelCreate = () => setPendingCreate(null)
+  const cancelRename = () => setPendingRename(null)
 
   const commitCreate = async (name: string) => {
     if (!pendingCreate) return
@@ -438,12 +744,265 @@ export default function Sidebar() {
       await expandProjectDir(projectId, dir)
     }
 
+    setPendingRename(null)
     setPendingCreate({
       projectId,
       parentPath: parent,
       directory,
       depth: createTreeDepth(parent, project.path),
     })
+  }
+
+  const startInlineRename = (node: FileNode) => {
+    setPendingCreate(null)
+    setPendingRename({
+      path: node.path,
+      name: node.name,
+      isDir: node.is_dir,
+      depth: createTreeDepth(parentPath(node.path), currentProject?.path ?? parentPath(node.path)),
+    })
+    replaceSelection(node.path)
+  }
+
+  const commitRename = async (name: string) => {
+    if (!pendingRename) return
+    const { path, name: oldName } = pendingRename
+    if (!name || name === oldName) {
+      setPendingRename(null)
+      return
+    }
+    setPendingRename(null)
+    try {
+      const newPath = await safeInvoke<string>('重命名', 'rename_path', {
+        path,
+        newName: name,
+      })
+      renameEditorPath(path, newPath)
+      await refreshDirectory(parentPath(path))
+      replaceSelection(newPath)
+      useProjectStore.getState().pushToast('success', t('已重命名为: {name}', { name }))
+    } catch (e) {
+      useProjectStore.getState().pushToast('error', `${String(e)}`)
+    }
+  }
+
+  const pathsForClipboardAction = (anchorPath?: string): string[] => {
+    if (selectedPaths.size > 0) {
+      if (!anchorPath || pathSetHas(selectedPaths, anchorPath)) {
+        return [...selectedPaths]
+      }
+    }
+    return anchorPath ? [anchorPath] : selectedPath ? [selectedPath] : []
+  }
+
+  const cutExplorerPaths = (anchorPath?: string) => {
+    const paths = pathsForClipboardAction(anchorPath)
+    if (paths.length === 0) return
+    setClipboard({ mode: 'cut', paths })
+    useProjectStore.getState().pushToast('success', t('已剪切 {count} 项', { count: paths.length }))
+  }
+
+  const copyExplorerPaths = (anchorPath?: string) => {
+    const paths = pathsForClipboardAction(anchorPath)
+    if (paths.length === 0) return
+    setClipboard({ mode: 'copy', paths })
+    useProjectStore.getState().pushToast('success', t('已复制 {count} 项', { count: paths.length }))
+  }
+
+  const resolvePasteDest = (hintPath?: string): string | null => {
+    if (!currentProject) return null
+    const path = hintPath ?? selectedPath ?? currentProject.path
+    if (pathsEqual(path, currentProject.path)) return currentProject.path
+    const node = findNodeByPath(tree, path)
+    if (node?.is_dir) return node.path
+    return parentPath(path)
+  }
+
+  const transferExplorerPaths = async (
+    paths: string[],
+    destDir: string,
+    mode: 'cut' | 'copy',
+  ): Promise<number> => {
+    let ok = 0
+    const parentsToRefresh = new Set<string>([destDir])
+    const movedSources: string[] = []
+    const applyAll: { current: 'overwrite' | 'skip' | null } = { current: null }
+    const pending = paths.filter(source => {
+      if (mode === 'cut' && (pathsEqual(source, destDir) || isDescendantOf(destDir, source))) {
+        return false
+      }
+      if (mode === 'cut' && pathsEqual(parentPath(source), destDir)) return false
+      return true
+    })
+
+    for (let i = 0; i < pending.length; i++) {
+      const source = pending[i]
+      const conflict = await findExplorerNameConflict(source, destDir)
+      let conflictPolicy: 'overwrite' | 'fail' = 'fail'
+      let destName: string | undefined
+      if (conflict) {
+        const decision = await resolveExplorerNameConflict({
+          conflict,
+          operation: mode === 'cut' ? 'move' : 'copy',
+          remainingCount: pending.length - i,
+          applyAll,
+        })
+        if (decision.action === 'cancel') break
+        if (decision.action === 'skip') continue
+        if (decision.action === 'overwrite') {
+          conflictPolicy = 'overwrite'
+          closeTabsForPath(conflict.destPath)
+        } else {
+          destName = decision.newName
+          // Custom name: fail if that name also exists (dialog already asked for a new name).
+          conflictPolicy = 'fail'
+        }
+      }
+
+      const command = mode === 'cut' ? 'move_path' : 'copy_path_into'
+      const newPath = await safeInvoke<string>(mode === 'cut' ? t('移动') : t('复制'), command, {
+        path: source,
+        destDir,
+        conflictPolicy,
+        ...(destName ? { destName } : {}),
+      })
+      if (mode === 'cut') {
+        renameEditorPath(source, newPath)
+        parentsToRefresh.add(parentPath(source))
+        movedSources.push(source)
+      }
+      ok += 1
+    }
+
+    if (mode === 'cut' && movedSources.length > 0) pruneTreePaths(movedSources)
+    for (const parent of parentsToRefresh) {
+      await refreshDirectory(parent)
+    }
+    if (ok > 0) setExpandedPaths(existing => addPathToSet(existing, destDir))
+    return ok
+  }
+
+  const pasteExplorerClipboard = async (hintPath?: string) => {
+    if (!clipboard || !currentProject) return
+    const destDir = resolvePasteDest(hintPath)
+    if (!destDir) return
+    const { mode, paths } = clipboard
+    try {
+      const ok = await transferExplorerPaths(paths, destDir, mode)
+      if (mode === 'cut') setClipboard(null)
+      if (ok > 0) {
+        useProjectStore
+          .getState()
+          .pushToast('success', t('已粘贴 {count} 项', { count: ok }))
+      }
+    } catch (e) {
+      useProjectStore.getState().pushToast('error', t('粘贴失败: {error}', { error: String(e) }))
+    }
+  }
+
+  const moveExplorerPaths = async (paths: string[], destDir: string) => {
+    if (!currentProject || paths.length === 0) return
+    try {
+      const moved = await transferExplorerPaths(paths, destDir, 'cut')
+      if (moved > 0) {
+        useProjectStore.getState().pushToast('success', t('已移动 {count} 项', { count: moved }))
+      }
+    } catch (e) {
+      useProjectStore.getState().pushToast('error', t('移动失败: {error}', { error: String(e) }))
+    }
+  }
+
+  const handlePointerDownNode = (event: ReactPointerEvent, node: FileNode) => {
+    if (event.button !== 0 || pendingRename || pendingCreate) return
+    if ((event.target as HTMLElement | null)?.closest?.('[data-explorer-chevron]')) return
+
+    const paths =
+      pathSetHas(selectedPaths, node.path) && selectedPaths.size > 0
+        ? [...selectedPaths]
+        : [node.path]
+    const sourceLabel =
+      paths.length === 1 ? node.name : t('移动 {count} 项', { count: paths.length })
+    explorerDragRef.current = {
+      paths,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      pointerId: event.pointerId,
+    }
+
+    const dropDestLabel = (destDir: string): string => {
+      if (currentProject && pathsEqual(destDir, currentProject.path)) return currentProject.name
+      return baseName(destDir)
+    }
+
+    const clearListeners = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const session = explorerDragRef.current
+      if (!session || moveEvent.pointerId !== session.pointerId) return
+      const dx = moveEvent.clientX - session.startX
+      const dy = moveEvent.clientY - session.startY
+      if (!session.active) {
+        if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return
+        session.active = true
+        suppressTreeClickRef.current = true
+        setDraggingPaths(new Set(session.paths))
+        if (!pathSetHas(selectedPaths, node.path)) replaceSelection(node.path)
+      }
+
+      const target = resolveExplorerDropFromPoint(moveEvent.clientX, moveEvent.clientY)
+      const invalid =
+        !target || session.paths.some(p => pathsEqual(p, target.path))
+      if (invalid) {
+        setDragOverPath(null)
+        setDragGhost({
+          x: moveEvent.clientX,
+          y: moveEvent.clientY,
+          label: sourceLabel,
+        })
+        return
+      }
+
+      const destDir = target.isDir ? target.path : parentPath(target.path)
+      // Same-folder drop is a no-op; still show destination so the hint stays clear.
+      setDragOverPath(prev => (prev != null && pathsEqual(prev, target.path) ? prev : target.path))
+      setDragGhost({
+        x: moveEvent.clientX,
+        y: moveEvent.clientY,
+        label: t('移动到 {name}', { name: dropDestLabel(destDir) }),
+      })
+    }
+
+    const onUp = (upEvent: PointerEvent) => {
+      const session = explorerDragRef.current
+      clearListeners()
+      explorerDragRef.current = null
+      setDraggingPaths(new Set())
+      setDragOverPath(null)
+      setDragGhost(null)
+      if (!session || upEvent.pointerId !== session.pointerId || !session.active) {
+        window.setTimeout(() => {
+          suppressTreeClickRef.current = false
+        }, 0)
+        return
+      }
+
+      const target = resolveExplorerDropFromPoint(upEvent.clientX, upEvent.clientY)
+      window.setTimeout(() => {
+        suppressTreeClickRef.current = false
+      }, 0)
+      if (!target || session.paths.some(p => pathsEqual(p, target.path))) return
+      const destDir = target.isDir ? target.path : parentPath(target.path)
+      void moveExplorerPaths(session.paths, destDir)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
   }
 
   useEffect(() => {
@@ -459,28 +1018,6 @@ export default function Sidebar() {
     // Consume once per pending flag; startCreateEntry uses latest project state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingNewFile])
-
-  const handleRenameNode = async (node: FileNode) => {
-    const name = await promptDialog({
-      title: t('重命名'),
-      message: node.is_dir ? t('文件夹新名称') : t('文件新名称'),
-      defaultValue: node.name,
-      validate: validateEntryName,
-      confirmLabel: t('重命名'),
-    })
-    if (!name || name === node.name) return
-    try {
-      const newPath = await safeInvoke<string>('重命名', 'rename_path', {
-        path: node.path,
-        newName: name,
-      })
-      renameEditorPath(node.path, newPath)
-      await refreshDirectory(parentPath(node.path))
-      useProjectStore.getState().pushToast('success', t('已重命名为: {name}', { name }))
-    } catch (e) {
-      useProjectStore.getState().pushToast('error', `${String(e)}`)
-    }
-  }
 
   const handleDeleteNode = async (node: FileNode) => {
     const confirmed = await confirmDialog({
@@ -525,11 +1062,16 @@ export default function Sidebar() {
     try {
       await safeInvoke('删除', 'delete_path', { path: node.path })
       closeTabsForPath(node.path)
+      pruneTreePaths([node.path])
       await refreshDirectory(parentPath(node.path))
       useProjectStore.getState().pushToast('success', t('已删除: {name}', { name: node.name }))
     } catch (e) {
       useProjectStore.getState().pushToast('error', `${String(e)}`)
     }
+  }
+
+  const showEntryProperties = (path: string, name: string, isDir: boolean) => {
+    void showPropertiesDialog(path, name, isDir)
   }
 
   const revealNode = async (node: FileNode) => {
@@ -609,6 +1151,13 @@ export default function Sidebar() {
           action: () => activateThen(() => startCreateEntry(project.path, true, project.id)),
         },
         {
+          label: t('粘贴'),
+          icon: <ClipboardPaste size={14} />,
+          shortcut: 'Ctrl+V',
+          disabled: unavailable || !clipboard,
+          action: () => void pasteExplorerClipboard(project.path),
+        },
+        {
           label: t('刷新项目'),
           icon: <RefreshCw size={14} />,
           disabled: unavailable,
@@ -631,6 +1180,12 @@ export default function Sidebar() {
           label: t('复制为文件引用'),
           icon: <AtSign size={14} />,
           action: () => copyAsReference(project.path),
+        },
+        {
+          label: t('显示属性'),
+          icon: <Info size={14} />,
+          separatorBefore: true,
+          action: () => showEntryProperties(project.path, project.name, true),
         },
         {
           label: t('重命名项目'),
@@ -712,10 +1267,31 @@ export default function Sidebar() {
             },
           ]),
       {
+        label: t('剪切'),
+        icon: <Scissors size={14} />,
+        shortcut: 'Ctrl+X',
+        separatorBefore: true,
+        action: () => cutExplorerPaths(node.path),
+      },
+      {
+        label: t('复制'),
+        icon: <Copy size={14} />,
+        shortcut: 'Ctrl+C',
+        action: () => copyExplorerPaths(node.path),
+      },
+      {
+        label: t('粘贴'),
+        icon: <ClipboardPaste size={14} />,
+        shortcut: 'Ctrl+V',
+        disabled: !clipboard,
+        action: () => void pasteExplorerClipboard(node.is_dir ? node.path : parent),
+      },
+      {
         label: t('重命名'),
         icon: <Pencil size={14} />,
+        ...(isShortcutBound(renameShortcut) ? { shortcut: renameShortcut } : {}),
         separatorBefore: true,
-        action: () => handleRenameNode(node),
+        action: () => startInlineRename(node),
       },
       {
         label: t('复制路径'),
@@ -727,6 +1303,12 @@ export default function Sidebar() {
         label: t('复制为文件引用'),
         icon: <AtSign size={14} />,
         action: () => copyAsReference(node.path),
+      },
+      {
+        label: t('显示属性'),
+        icon: <Info size={14} />,
+        separatorBefore: true,
+        action: () => showEntryProperties(node.path, node.name, node.is_dir),
       },
       {
         label: node.is_dir ? t('在文件管理器中打开') : t('在文件管理器中显示'),
@@ -810,12 +1392,29 @@ export default function Sidebar() {
             return (
               <>
                 <div
-                  className={`group flex items-center gap-1 pl-3 pr-2 py-[5px] text-[13px] select-none cursor-default ${
-                    revealingProjectRoot ? 'bg-bg-active text-accent' : 'text-fg'
+                  data-explorer-drop={currentProject.path}
+                  data-explorer-isdir="1"
+                  className={`group flex items-center gap-1 pl-3 pr-2 py-[5px] text-[13px] select-none cursor-default [&_button]:cursor-default ${
+                    dragOverPath != null && pathsEqual(dragOverPath, currentProject.path)
+                      ? 'text-accent font-medium'
+                      : isProjectRootSelected
+                        ? 'bg-bg-active text-accent'
+                        : 'text-fg'
                   }`}
-                  onContextMenu={event =>
-                    showContextMenu(event, { kind: 'project', project: currentProject })
+                  style={
+                    dragOverPath != null && pathsEqual(dragOverPath, currentProject.path)
+                      ? {
+                          boxShadow: 'inset 3px 0 0 var(--color-accent)',
+                          background:
+                            'color-mix(in srgb, var(--color-accent) 28%, transparent)',
+                        }
+                      : undefined
                   }
+                  onClick={() => replaceSelection(currentProject.path)}
+                  onContextMenu={event => {
+                    replaceSelection(currentProject.path)
+                    showContextMenu(event, { kind: 'project', project: currentProject })
+                  }}
                 >
                   {unavailable ? (
                     <AlertTriangle size={15} className="text-warn flex-shrink-0" />
@@ -945,28 +1544,76 @@ export default function Sidebar() {
                           <div className="px-4 py-2 text-[12px] text-fg-muted">{t('空文件夹')}</div>
                         )}
                       {visibleTreeRows.length > 0 && (
-                        <List
-                          listRef={listRef}
-                          rowComponent={VirtualTreeRow}
-                          rowCount={visibleTreeRows.length}
-                          rowHeight={index => visibleTreeRows[index]?.kind === 'create' ? 30 : 26}
-                          rowProps={{
-                            rows: visibleTreeRows,
-                            expandedPaths,
-                            loadingPaths,
-                            activeFilePath: activeTabPath,
-                            revealPath: treeRevealPath,
-                            gitStatusFor,
-                            onOpenContextMenu: showContextMenu,
-                            onCopyPath: copyPath,
-                            onToggleNode: toggleTreeNode,
-                            onCommitCreate: name => void commitCreate(name),
-                            onCancelCreate: cancelCreate,
+                        <div
+                          ref={treeFocusRef}
+                          tabIndex={0}
+                          className="flex-1 min-h-0 outline-none"
+                          onKeyDown={event => {
+                            if (pendingRename || pendingCreate) return
+                            if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+                              const key = event.key.toLowerCase()
+                              if (key === 'x') {
+                                event.preventDefault()
+                                cutExplorerPaths()
+                                return
+                              }
+                              if (key === 'c' && !event.shiftKey) {
+                                event.preventDefault()
+                                copyExplorerPaths()
+                                return
+                              }
+                              if (key === 'v') {
+                                event.preventDefault()
+                                void pasteExplorerClipboard()
+                                return
+                              }
+                            }
+                            if (
+                              selectedPath &&
+                              shortcutMatchesEvent(renameShortcut, event.nativeEvent)
+                            ) {
+                              const node = findNodeByPath(tree, selectedPath)
+                              if (!node) return
+                              event.preventDefault()
+                              startInlineRename(node)
+                              return
+                            }
+                            handleTreeKeyDown(event)
                           }}
-                          overscanCount={12}
-                          className="flex-1 min-h-0"
-                          style={{ width: '100%' }}
-                        />
+                        >
+                          <List
+                            listRef={listRef}
+                            rowComponent={VirtualTreeRow}
+                            rowCount={visibleTreeRows.length}
+                            rowHeight={index => {
+                              const kind = visibleTreeRows[index]?.kind
+                              return kind === 'create' || kind === 'rename' ? 30 : 26
+                            }}
+                            rowProps={{
+                              rows: visibleTreeRows,
+                              expandedPaths,
+                              loadingPaths,
+                              selectedPaths,
+                              cutPaths,
+                              dragOverPath,
+                              draggingPaths,
+                              gitStatusFor,
+                              onOpenContextMenu: showContextMenu,
+                              onCopyPath: copyPath,
+                              onSelectNode: selectTreeNode,
+                              onOpenNode: openTreeNode,
+                              onToggleFolder: node => void toggleFolderExpand(node),
+                              onCommitCreate: name => void commitCreate(name),
+                              onCancelCreate: cancelCreate,
+                              onCommitRename: name => void commitRename(name),
+                              onCancelRename: cancelRename,
+                              onPointerDownNode: handlePointerDownNode,
+                            }}
+                            overscanCount={12}
+                            className="h-full"
+                            style={{ width: '100%' }}
+                          />
+                        </div>
                       )}
                     </>
                   )}
@@ -984,6 +1631,16 @@ export default function Sidebar() {
           onClose={() => setContextMenu(null)}
         />
       )}
+      {dragGhost &&
+        createPortal(
+          <div
+            className="pointer-events-none fixed z-[300] max-w-[240px] truncate rounded border border-accent bg-bg-elevated px-2.5 py-1 text-[12px] font-medium text-accent shadow-lg shadow-black/50"
+            style={{ left: dragGhost.x + 14, top: dragGhost.y + 14 }}
+          >
+            {dragGhost.label}
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }

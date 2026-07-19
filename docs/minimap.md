@@ -28,13 +28,14 @@
 | 点击 / 拖拽跳转 | 按比例滚动 | Must |
 | 视口框 | 随滚动同步 | Must |
 | Caret 线 | 当前行高亮 | Must |
-| 语法色 | ≤1MB 用 Lezer `highlightTree` 按字符块着色（约 3×4px，长文件滚动窗口而非压成 1px） | Must |
-| Quick View | 预览区悬停约 1s 首次显示附近约 12 行，显示后随指针即时更新；视口遮罩上不显示（离开后需重新等待 1s） | Must |
-| 右键菜单 | 关闭、宽度预设、隐藏编辑器滚动条 | Must |
+| 选中匹配 | 双击/选中单词后，小地图同步标出主选区与其他出现处（其他更暗） | Should |
+| 语法色 | ≤1MB 默认 **字符预览**（8px 等宽字；颜色同步编辑器 CM 高亮 + 主题变量并柔化）；1–5MB 自动降级色块 | Must |
+| Quick View | 预览区悬停约 0.5s 首次显示附近约 12 行 | Must |
+| 右键菜单 | 划过滚动条显示、隐藏编辑器滚动条 | Must |
 | 体积分级 | ≤1MB full；1–5MB density；>5MB 隐藏 | Must |
 | Markdown | 仅源码区；纯预览可无 | Must |
 | 不适用 | diff、打开失败、加载中、`LargeFileViewer` | Must |
-| 宽度 | 可拖拽 80–360px，默认 120；右键预设含更大档；`localStorage` | Should |
+| 宽度 | 左缘 `PanelResizer` 拖拽 80–360px（与侧边栏同款 grip / `ew-resize`）；默认 120；`localStorage` | Should |
 | Error / VCS stripe | 不做（编辑器尚无诊断 / VCS gutter） | Won't |
 
 ### A.3 性能验收
@@ -56,13 +57,14 @@ Editor.tsx
     ├── .editor-pane__host  → CodeMirror
     └── .editor-minimap     → absolute overlay
         ├── canvas / viewport
+        ├── PanelResizer（左缘拖宽，复用 sidebar 样式）
         ├── Quick View（portal）
         └── 右键菜单（portal）
 ```
 
 | 文件 | 职责 |
 |---|---|
-| `src/components/EditorMinimap.tsx` | UI、跳转、拖宽、右键、Quick View |
+| `src/components/EditorMinimap.tsx` | UI、跳转、拖宽（`PanelResizer`）、右键、Quick View |
 | `src/lib/minimapPaint.ts` | Lezer 着色、density、caret |
 | `src/lib/minimapPolicy.ts` | 档位 / 宽度 / 视口 / 采样 |
 | `src/lib/minimapSettings.ts` | `editor.minimap.enabled` |

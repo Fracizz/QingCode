@@ -18,7 +18,7 @@ export const LARGE_DOC_CHARS = 512 * 1024
 export const HUGE_DOC_CHARS = EDIT_WARN_BYTES
 
 /** Max cached EditorState entries for non-plain tabs (LRU). */
-const EDITOR_STATE_CACHE_MAX = 3
+export const EDITOR_STATE_CACHE_MAX = 12
 
 export interface EditorScrollPos {
   top: number
@@ -184,6 +184,12 @@ export function takeCachedEditorState(tabId: string): EditorState | undefined {
     if (idx >= 0) stateLru.splice(idx, 1)
   }
   return state
+}
+
+/** Drop all cached EditorStates (e.g. after extension-set changes that are not compartmentalized). */
+export function clearCachedEditorStates() {
+  states.clear()
+  stateLru.length = 0
 }
 
 /** Drop Zustand content copy for active plain tabs (CM is source of truth). */

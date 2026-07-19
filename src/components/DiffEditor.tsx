@@ -14,6 +14,7 @@ import type { EditorTab } from '../types'
 import { getResolvedTheme, THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
 import { useI18n } from '../lib/i18n'
+import Tooltip from './Tooltip'
 
 /** 差异对比文件大小上限：超过此值的文件不显示差异对比（5MB） */
 const DIFF_MAX_BYTES = 5 * 1024 * 1024
@@ -267,22 +268,26 @@ export default function DiffEditor({ tab }: Props) {
             </span>
           )}
           <div className="ml-auto flex items-center gap-1">
-            <button
-              type="button"
-              onClick={handlePrevDiff}
-              title={t('上一个差异')}
-              className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-deep"
-            >
-              <ChevronUp size={12} />
-            </button>
-            <button
-              type="button"
-              onClick={handleNextDiff}
-              title={t('下一个差异')}
-              className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-deep"
-            >
-              <ChevronDown size={12} />
-            </button>
+            <Tooltip label={t('上一个差异')} side="bottom">
+              <button
+                type="button"
+                onClick={handlePrevDiff}
+                aria-label={t('上一个差异')}
+                className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-deep"
+              >
+                <ChevronUp size={12} />
+              </button>
+            </Tooltip>
+            <Tooltip label={t('下一个差异')} side="bottom">
+              <button
+                type="button"
+                onClick={handleNextDiff}
+                aria-label={t('下一个差异')}
+                className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-deep"
+              >
+                <ChevronDown size={12} />
+              </button>
+            </Tooltip>
           </div>
         </div>
       </div>

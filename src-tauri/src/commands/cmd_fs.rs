@@ -434,6 +434,167 @@ pub fn rename_path(
     Ok(target.to_string_lossy().to_string())
 }
 
+fn unique_child_path(dest_dir: &Path, file_name: &std::ffi::OsStr) -> Result<std::path::PathBuf, String> {
+    let mut candidate = dest_dir.join(file_name);
+    if !candidate.exists() {
+        return Ok(candidate);
+    }
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("item");
+    let ext = Path::new(file_name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{}", e))
+        .unwrap_or_default();
+    for i in 1..1000 {
+        let name = if i == 1 {
+            format!("{} - Copy{}", stem, ext)
+        } else {
+            format!("{} - Copy ({}){}", stem, i, ext)
+        };
+        candidate = dest_dir.join(&name);
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err("无法生成可用的目标文件名".to_string())
+}
+
+fn copy_entry_recursive(source: &Path, target: &Path) -> Result<(), String> {
+    let meta = fs::symlink_metadata(source).map_err(|e| format!("读取源路径失败: {}", e))?;
+    if meta.is_dir() {
+        fs::create_dir(target).map_err(|e| format!("创建目标文件夹失败: {}", e))?;
+        for entry in fs::read_dir(source).map_err(|e| format!("读取源文件夹失败: {}", e))? {
+            let entry = entry.map_err(|e| format!("读取目录项失败: {}", e))?;
+            let child_target = target.join(entry.file_name());
+            copy_entry_recursive(&entry.path(), &child_target)?;
+        }
+        Ok(())
+    } else {
+        fs::copy(source, target).map_err(|e| format!("复制文件失败: {}", e))?;
+        Ok(())
+    }
+}
+
+fn remove_path_entry(target: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取目标路径失败: {}", e))?;
+    if metadata.is_dir() {
+        fs::remove_dir_all(target).map_err(|e| format!("删除目标文件夹失败: {}", e))
+    } else {
+        fs::remove_file(target).map_err(|e| format!("删除目标文件失败: {}", e))
+    }
+}
+
+/// Resolve destination child path.
+/// `conflict_policy`: `overwrite` | `rename` | `fail` (default `fail` when omitted).
+fn resolve_dest_child(
+    dest: &Path,
+    file_name: &std::ffi::OsStr,
+    conflict_policy: Option<&str>,
+) -> Result<(std::path::PathBuf, bool), String> {
+    let preferred = dest.join(file_name);
+    if !preferred.exists() {
+        return Ok((preferred, false));
+    }
+    match conflict_policy.unwrap_or("fail") {
+        "overwrite" => Ok((preferred, true)),
+        "rename" => Ok((unique_child_path(dest, file_name)?, false)),
+        "fail" => Err("目标名称已存在".to_string()),
+        other => Err(format!("未知的冲突策略: {}", other)),
+    }
+}
+
+fn resolve_transfer_file_name(
+    source: &Path,
+    dest_name: Option<&str>,
+) -> Result<std::ffi::OsString, String> {
+    if let Some(name) = dest_name {
+        validate_entry_name(name)?;
+        return Ok(std::ffi::OsString::from(name));
+    }
+    source
+        .file_name()
+        .map(|n| n.to_os_string())
+        .ok_or_else(|| "无法解析源文件名".to_string())
+}
+
+/// Move a file or folder into `dest_dir`.
+/// `dest_name`: optional new basename (IDEA-style rename-on-conflict).
+#[tauri::command]
+pub fn move_path(
+    path: String,
+    dest_dir: String,
+    conflict_policy: Option<String>,
+    dest_name: Option<String>,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<String, String> {
+    allowlist.ensure_writable(&path)?;
+    allowlist.ensure_writable(&dest_dir)?;
+    let source = Path::new(&path);
+    let dest = Path::new(&dest_dir);
+    let dest_meta = fs::symlink_metadata(dest).map_err(|e| format!("读取目标文件夹失败: {}", e))?;
+    if !dest_meta.is_dir() {
+        return Err("目标不是文件夹".to_string());
+    }
+    let file_name = resolve_transfer_file_name(source, dest_name.as_deref())?;
+    // Refuse moving a folder into itself / a descendant.
+    if source.is_dir() {
+        let src_norm = source
+            .canonicalize()
+            .unwrap_or_else(|_| source.to_path_buf());
+        let dest_norm = dest.canonicalize().unwrap_or_else(|_| dest.to_path_buf());
+        if dest_norm.starts_with(&src_norm) {
+            return Err("不能将文件夹移动到其自身或子目录中".to_string());
+        }
+    }
+    let (target, overwrite) = resolve_dest_child(dest, &file_name, conflict_policy.as_deref())?;
+    allowlist.ensure_writable(&target.to_string_lossy())?;
+    if overwrite {
+        remove_path_entry(&target)?;
+    }
+    fs::rename(source, &target).map_err(|e| format!("移动失败: {}", e))?;
+    Ok(target.to_string_lossy().to_string())
+}
+
+/// Copy a file or folder into `dest_dir` (recursive for directories).
+/// `dest_name`: optional new basename (IDEA-style rename-on-conflict).
+#[tauri::command]
+pub fn copy_path_into(
+    path: String,
+    dest_dir: String,
+    conflict_policy: Option<String>,
+    dest_name: Option<String>,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<String, String> {
+    allowlist.ensure_allowed(&path)?;
+    allowlist.ensure_writable(&dest_dir)?;
+    let source = Path::new(&path);
+    let dest = Path::new(&dest_dir);
+    let dest_meta = fs::symlink_metadata(dest).map_err(|e| format!("读取目标文件夹失败: {}", e))?;
+    if !dest_meta.is_dir() {
+        return Err("目标不是文件夹".to_string());
+    }
+    let file_name = resolve_transfer_file_name(source, dest_name.as_deref())?;
+    if source.is_dir() {
+        let src_norm = source
+            .canonicalize()
+            .unwrap_or_else(|_| source.to_path_buf());
+        let dest_norm = dest.canonicalize().unwrap_or_else(|_| dest.to_path_buf());
+        if dest_norm.starts_with(&src_norm) {
+            return Err("不能将文件夹复制到其自身或子目录中".to_string());
+        }
+    }
+    let (target, overwrite) = resolve_dest_child(dest, &file_name, conflict_policy.as_deref())?;
+    allowlist.ensure_writable(&target.to_string_lossy())?;
+    if overwrite {
+        remove_path_entry(&target)?;
+    }
+    copy_entry_recursive(source, &target)?;
+    Ok(target.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 pub fn delete_path(path: String, allowlist: State<'_, PathAllowlist>) -> Result<(), String> {
     allowlist.ensure_writable(&path)?;
@@ -476,6 +637,71 @@ pub fn directory_delete_stats(
         file_count,
         total_size,
     })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectoryEntryCounts {
+    pub path: String,
+    pub file_count: u64,
+    pub folder_count: u64,
+    pub total_size: u64,
+}
+
+/// Recursively count files/folders and sum file sizes (does not follow dir symlinks).
+#[tauri::command]
+pub fn directory_entry_counts(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<DirectoryEntryCounts, String> {
+    allowlist.ensure_allowed(&path)?;
+    let target = Path::new(&path);
+    let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
+    if !metadata.is_dir() {
+        return Err("路径不是文件夹".to_string());
+    }
+
+    let mut file_count = 0u64;
+    let mut folder_count = 0u64;
+    let mut total_size = 0u64;
+    collect_directory_entry_counts(target, &mut file_count, &mut folder_count, &mut total_size)?;
+
+    Ok(DirectoryEntryCounts {
+        path: display_path(target),
+        file_count,
+        folder_count,
+        total_size,
+    })
+}
+
+fn collect_directory_entry_counts(
+    dir: &Path,
+    file_count: &mut u64,
+    folder_count: &mut u64,
+    total_size: &mut u64,
+) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|e| format!("读取目录失败: {}", e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取目录项失败: {}", e))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("读取文件类型失败: {}", e))?;
+        if file_type.is_dir() && !file_type.is_symlink() {
+            *folder_count += 1;
+            collect_directory_entry_counts(
+                &entry.path(),
+                file_count,
+                folder_count,
+                total_size,
+            )?;
+        } else {
+            *file_count += 1;
+            if let Ok(meta) = entry.metadata() {
+                *total_size = total_size.saturating_add(meta.len());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn collect_directory_delete_stats(
@@ -617,6 +843,29 @@ mod tests {
         collect_directory_delete_stats(&dir, &mut file_count, &mut total_size).unwrap();
         assert_eq!(file_count, 2);
         assert_eq!(total_size, 12);
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn directory_entry_counts_counts_nested_entries() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-dir-counts-{nonce}"));
+        fs::create_dir_all(dir.join("nested")).unwrap();
+        fs::write(dir.join("a.txt"), "hello").unwrap();
+        fs::write(dir.join("nested/b.txt"), "world!!").unwrap();
+
+        let mut file_count = 0u64;
+        let mut folder_count = 0u64;
+        let mut total_size = 0u64;
+        collect_directory_entry_counts(&dir, &mut file_count, &mut folder_count, &mut total_size)
+            .unwrap();
+        assert_eq!(file_count, 2);
+        assert_eq!(folder_count, 1);
+        assert_eq!(total_size, 12); // "hello" + "world!!"
 
         fs::remove_dir_all(dir).unwrap();
     }

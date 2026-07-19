@@ -6,27 +6,12 @@ const STORAGE_KEY = 'qingcode:shortcuts'
 function loadShortcuts(): ShortcutMap {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<ShortcutMap>
-    return {
-      searchAllProjects: typeof saved.searchAllProjects === 'string' ? saved.searchAllProjects : DEFAULT_SHORTCUTS.searchAllProjects,
-      toggleTerminal: typeof saved.toggleTerminal === 'string' ? saved.toggleTerminal : DEFAULT_SHORTCUTS.toggleTerminal,
-      openSettings: typeof saved.openSettings === 'string' ? saved.openSettings : DEFAULT_SHORTCUTS.openSettings,
-      openCommandPalette:
-        typeof saved.openCommandPalette === 'string'
-          ? saved.openCommandPalette
-          : DEFAULT_SHORTCUTS.openCommandPalette,
-      quickOpen:
-        typeof saved.quickOpen === 'string' ? saved.quickOpen : DEFAULT_SHORTCUTS.quickOpen,
-      goToSymbolInEditor:
-        typeof saved.goToSymbolInEditor === 'string'
-          ? saved.goToSymbolInEditor
-          : DEFAULT_SHORTCUTS.goToSymbolInEditor,
-      goToLine:
-        typeof saved.goToLine === 'string' ? saved.goToLine : DEFAULT_SHORTCUTS.goToLine,
-      toggleMinimap:
-        typeof saved.toggleMinimap === 'string'
-          ? saved.toggleMinimap
-          : DEFAULT_SHORTCUTS.toggleMinimap,
+    const shortcuts = { ...DEFAULT_SHORTCUTS }
+    for (const key of Object.keys(DEFAULT_SHORTCUTS) as ShortcutCommand[]) {
+      // Empty string is a valid unbound override; only fall back when missing/non-string.
+      if (typeof saved[key] === 'string') shortcuts[key] = saved[key]!
     }
+    return shortcuts
   } catch {
     return { ...DEFAULT_SHORTCUTS }
   }

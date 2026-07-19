@@ -26,7 +26,7 @@
 
 1. **Add a project**: Click the **「+」** button on the right side of the title bar and select a local folder to add to the project list.
 2. **Switch projects**: Click a project chip in the title bar to switch; editor and terminal states are automatically preserved.
-3. **Open a file**: Click a file in the left file tree to open it in the editor.
+3. **Open a file**: Single-click a file in the left file tree to select it, then double-click (or press `Enter`) to open it in the editor.
 4. **Open a terminal**: Press `` Ctrl+` `` to show the terminal panel; the terminal starts in the project root by default.
 5. **Save a file**: Press `Ctrl+S` to save the current file.
 
@@ -76,7 +76,8 @@ Suitable for quick notes or trying out commands without selecting an existing fo
 
 ### Basic Operations
 
-- **Open a file**: Click a file in the file tree.
+- **Open a file**: Single-click to select in the file tree, then double-click (or press `Enter`) to open.
+- **Multi-select & arrange**: `Ctrl`/`Shift` multi-select; drag-drop or `Ctrl+X`/`C`/`V` to cut, copy, paste; `F2` for inline rename.
 - **Switch tabs**: Click the tab bar, or use `Ctrl+Tab`.
 - **Close a tab**: Click the `×` on the tab, or middle-click the tab.
 - **Save a file**: `Ctrl+S`.
@@ -105,7 +106,7 @@ The editor automatically detects file encoding:
 
 - A code overview appears on the right side of the editor (on by default) for structure awareness and quick jumps.
 - **Toggle**: Settings → Text Editor → Minimap (`editor.minimap.enabled`), or `Ctrl+Shift+G` / Command Palette “Toggle Minimap”.
-- **Interaction**: Click or drag to jump; hover for a Quick View of nearby source; right-click to change width or hide the editor scrollbar.
+- **Interaction**: Click or drag to jump; hover for a Quick View of nearby source; drag the **left edge** to resize (same `PanelResizer` as the sidebar: `ew-resize`, line + grip); right-click to toggle “show minimap on scrollbar hover” and “hide editor scrollbar”.
 - **Size tiers**: ≤1MB syntax-colored; 1–5MB density bars; hidden above 5MB. Not shown on diff tabs or the large-file viewer.
 
 ---

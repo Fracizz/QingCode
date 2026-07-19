@@ -90,6 +90,23 @@ export function dirsToReveal(filePath: string, project: Project): string[] {
   return collectAncestorDirs(filePath, project.path)
 }
 
+/** Directories under `tree` that still need lazy loading before `filePath` is visible. */
+export function dirsNeedingLoad(tree: FileNode[], dirs: string[]): string[] {
+  return dirs.filter(dir => !findNodeByPath(tree, dir)?.loaded)
+}
+
+/** True when ancestor folders must be loaded before `filePath` can appear in the tree. */
+export function revealNeedsTreeLoad(
+  tree: FileNode[],
+  filePath: string,
+  project: Project,
+): boolean {
+  const dirs = dirsToReveal(filePath, project)
+  if (dirsNeedingLoad(tree, dirs).length > 0) return true
+  const target = findNodeByPath(tree, filePath)
+  return !!(target?.is_dir && !target.loaded)
+}
+
 export function findOwningProject(
   projects: Project[],
   filePath: string,

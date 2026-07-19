@@ -22,6 +22,12 @@
   --color-tab-active: #1e1e1e;
   --color-tab-inactive: #2d2d30;
 
+  --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 42%, var(--color-bg));
+  --minimap-empty-line: color-mix(in srgb, var(--color-fg) 7%, transparent);
+  --minimap-vp-idle-fill: color-mix(in srgb, var(--color-fg) 6%, transparent);
+  --minimap-vp-hover-fill: color-mix(in srgb, #ffffff 8%, transparent);
+  --minimap-vp-active-fill: color-mix(in srgb, #ffffff 14%, transparent);
+
   --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     "Segoe UI Variable", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas,
@@ -63,6 +69,11 @@ html[data-theme="light"] {
 
   --color-tab-active: #f0f0f0;
   --color-tab-inactive: #e2e2e2;
+
+  --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 38%, var(--color-bg));
+  --minimap-empty-line: color-mix(in srgb, var(--color-fg) 6%, transparent);
+  --minimap-vp-hover-fill: color-mix(in srgb, #ffffff 10%, transparent);
+  --minimap-vp-active-fill: color-mix(in srgb, #ffffff 18%, transparent);
 }
 
 /* JetBrains Material Theme UI — Material Forest. */
@@ -89,6 +100,10 @@ html[data-theme="forest"] {
 
   --color-tab-active: #002626;
   --color-tab-inactive: #002e2e;
+
+  --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 48%, var(--color-bg));
+  --minimap-empty-line: color-mix(in srgb, var(--color-fg) 8%, transparent);
+  --minimap-vp-idle-fill: color-mix(in srgb, var(--color-fg) 10%, var(--color-bg-deep) 5%);
 }
 
 html[data-theme="forest"] .cm-editor .cm-content {

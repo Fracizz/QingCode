@@ -390,33 +390,43 @@ export default function ProjectManager() {
                           ) : (
                             <Folder size={13} className="text-accent flex-shrink-0" />
                           )}
-                          <button
-                            type="button"
-                            onClick={() => void handleActivate(project)}
-                            disabled={unavailable}
-                            className={`truncate max-w-[160px] text-left ${
-                              unavailable
-                                ? 'text-fg-dim cursor-default'
-                                : isCurrent
-                                ? 'text-fg font-medium'
-                                : 'text-fg hover:text-accent'
-                            }`}
-                            title={unavailable ? t('目录不可用，请重新定位') : project.name}
+                          <Tooltip
+                            label={unavailable ? t('目录不可用，请重新定位') : project.name}
+                            side="bottom"
+                            onlyWhenOverflow={!unavailable}
+                            wrapperClassName="max-w-[160px] min-w-0"
                           >
-                            {project.name}
-                            {isCurrent && (
-                              <Check size={11} className="inline-block ml-1 text-accent align-middle" />
-                            )}
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleActivate(project)}
+                              disabled={unavailable}
+                              className={`truncate max-w-[160px] text-left ${
+                                unavailable
+                                  ? 'text-fg-dim cursor-default'
+                                  : isCurrent
+                                  ? 'text-fg font-medium'
+                                  : 'text-fg hover:text-accent'
+                              }`}
+                            >
+                              {project.name}
+                              {isCurrent && (
+                                <Check size={11} className="inline-block ml-1 text-accent align-middle" />
+                              )}
+                            </button>
+                          </Tooltip>
                         </div>
                       </td>
                       <td className="px-3 py-2 align-middle">
-                        <span
-                          className="block truncate max-w-[260px] text-fg-muted"
-                          title={project.path}
+                        <Tooltip
+                          label={project.path}
+                          side="bottom"
+                          onlyWhenOverflow
+                          wrapperClassName="block truncate max-w-[260px]"
                         >
-                          {project.path}
-                        </span>
+                          <span className="block truncate max-w-[260px] text-fg-muted">
+                            {project.path}
+                          </span>
+                        </Tooltip>
                       </td>
                       <td className="px-3 py-2 align-middle whitespace-nowrap text-fg-muted text-[12px]">
                         {timeAgo(project.last_opened_at, t)}

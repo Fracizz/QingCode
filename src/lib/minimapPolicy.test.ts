@@ -1,13 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   MINIMAP_CHAR_HEIGHT,
   MINIMAP_FULL_MAX_BYTES,
   MINIMAP_HIDE_BYTES,
   MINIMAP_QUICK_VIEW_DELAY_MS,
+  MINIMAP_TEXT_CHAR_WIDTH,
+  MINIMAP_TEXT_LINE_HEIGHT,
   MINIMAP_WIDTH_DEFAULT,
   MINIMAP_WIDTH_MAX,
   MINIMAP_WIDTH_MIN,
   clampMinimapWidth,
+  loadMinimapHoverShow,
+  saveMinimapHoverShow,
   resolveMinimapByteSize,
   resolveMinimapCharSize,
   resolveMinimapContentHeight,
@@ -16,6 +20,7 @@ import {
   resolveMinimapLineY,
   resolveMinimapMaxWidth,
   resolveMinimapMode,
+  resolveMinimapPaintStyle,
   resolveMinimapScrollOffset,
   resolveMinimapScrollbarThumb,
   resolveMinimapViewport,
@@ -29,8 +34,8 @@ describe('minimapPolicy', () => {
     expect(MINIMAP_HIDE_BYTES).toBe(5 * 1024 * 1024)
   })
 
-  it('waits 1s before showing Quick View', () => {
-    expect(MINIMAP_QUICK_VIEW_DELAY_MS).toBe(1000)
+  it('waits briefly before showing Quick View', () => {
+    expect(MINIMAP_QUICK_VIEW_DELAY_MS).toBe(500)
   })
 
   it('prefers fileSize over doc.length', () => {
@@ -49,9 +54,18 @@ describe('minimapPolicy', () => {
   })
 
   it('uses a readable fixed character scale', () => {
-    expect(resolveMinimapCharSize('full')).toEqual({ charWidth: 3, charHeight: 4 })
-    expect(resolveMinimapCharSize('density')).toEqual({ charWidth: 2, charHeight: 3 })
+    expect(resolveMinimapCharSize('full', 'text')).toEqual({
+      charWidth: MINIMAP_TEXT_CHAR_WIDTH,
+      charHeight: MINIMAP_TEXT_LINE_HEIGHT,
+    })
+    expect(resolveMinimapCharSize('full', 'blocks')).toEqual({ charWidth: 3, charHeight: 4 })
+    expect(resolveMinimapCharSize('density', 'text')).toEqual({ charWidth: 2, charHeight: 3 })
     expect(resolveMinimapContentHeight(100, MINIMAP_CHAR_HEIGHT)).toBe(400)
+  })
+
+  it('falls back to blocks for density tier', () => {
+    expect(resolveMinimapPaintStyle('density', 'text')).toBe('blocks')
+    expect(resolveMinimapPaintStyle('full', 'text')).toBe('text')
   })
 
   it('clamps width into the supported range', () => {
@@ -104,6 +118,24 @@ describe('minimapPolicy', () => {
     expect(resolveMinimapScrollbarThumb(0, 1000, 100, 200)).toEqual({ top: 0, height: 24 })
     expect(resolveMinimapScrollbarThumb(900, 1000, 100, 200)).toEqual({ top: 176, height: 24 })
     expect(resolveMinimapScrollbarThumb(0, 100, 100, 200)).toEqual({ top: 0, height: 200 })
+  })
+
+  it('loads hover-to-show as off by default', () => {
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        store.set(key, value)
+      },
+      removeItem: (key: string) => {
+        store.delete(key)
+      },
+    })
+    expect(loadMinimapHoverShow()).toBe(false)
+    saveMinimapHoverShow(true)
+    expect(loadMinimapHoverShow()).toBe(true)
+    saveMinimapHoverShow(false)
+    expect(loadMinimapHoverShow()).toBe(false)
   })
 
   it('maps line numbers to y and back for jump/caret', () => {

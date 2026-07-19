@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { GitCompare } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
+import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 
 export type FileCompareAction = {
@@ -82,9 +83,9 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
             <h2 id="compare-title" className="text-[14px] font-semibold text-fg truncate">
               {t('比较：{name}', { name })}
             </h2>
-            <p className="text-[11px] text-fg-dim truncate" title={path}>
-              {path}
-            </p>
+            <Tooltip label={path} side="bottom" onlyWhenOverflow wrapperClassName="block min-w-0">
+              <p className="text-[11px] text-fg-dim truncate">{path}</p>
+            </Tooltip>
           </div>
         </div>
         <div className="grid min-h-0 flex-1 grid-cols-2 gap-px bg-border">

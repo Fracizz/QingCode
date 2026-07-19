@@ -39,6 +39,7 @@ import {
   loadProjectRootTree,
   patchDirChildren,
   preserveLoadedChildren,
+  revealNeedsTreeLoad,
   type FileNode,
 } from '../lib/fileTreeCache'
 import { authorizePaths, syncRootsFromProjects } from '../lib/pathAllowlist'
@@ -93,8 +94,12 @@ interface ProjectState {
   ensureProjectTree: (project: Project) => Promise<void>
   refreshProjectTree: (project: Project) => Promise<void>
   toggleProjectExpanded: (projectId: string) => void
-  expandProjectDir: (projectId: string, path: string) => Promise<void>
-  revealFileInTree: (filePath: string) => Promise<void>
+  expandProjectDir: (
+    projectId: string,
+    path: string,
+    options?: { force?: boolean },
+  ) => Promise<void>
+  revealFileInTree: (filePath: string, options?: { force?: boolean }) => Promise<void>
   pushToast: (kind: ToastKind, text: string, detail?: string) => void
   dismissToast: (id: string) => void
 }
@@ -637,6 +642,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   expandDir: async (path: string) => {
     const proj = get().currentProject
     if (!proj) return
+    const node = findNodeByPath(get().fileTree, path)
+    if (node?.loaded) return
     try {
       const children = await loadDirChildren(path, proj.path, proj)
       set(s => ({
@@ -715,17 +722,26 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       },
     })),
 
-  expandProjectDir: async (projectId: string, path: string) => {
+  expandProjectDir: async (projectId: string, path: string, options?: { force?: boolean }) => {
     const project = get().projects.find(p => p.id === projectId)
     if (!project) return
+    const tree = get().projectTrees[projectId] ?? []
+    const node = findNodeByPath(tree, path)
+    if (!options?.force && node?.loaded) return
     try {
       const children = await loadDirChildren(path, project.path, project)
       set(s => {
         const tree = s.projectTrees[projectId] ?? []
+        const previous = findNodeByPath(tree, path)
+        // Force reload drops deleted entries; keep expanded descendants that still exist.
+        const nextChildren =
+          options?.force && previous?.children?.length
+            ? preserveLoadedChildren(children, previous.children)
+            : children
         return {
           projectTrees: {
             ...s.projectTrees,
-            [projectId]: patchDirChildren(tree, path, children),
+            [projectId]: patchDirChildren(tree, path, nextChildren),
           },
         }
       })
@@ -735,9 +751,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  revealFileInTree: async (filePath: string) => {
+  revealFileInTree: async (filePath: string, options?: { force?: boolean }) => {
     const project = findOwningProject(get().projects, filePath)
     if (!project) return
+
+    await get().ensureProjectTree(project)
+
+    const tree = get().projectTrees[project.id] ?? []
+    const needsWork = revealNeedsTreeLoad(tree, filePath, project)
+    if (!options?.force && !needsWork) return
 
     set(s => ({
       treeRevealPath: filePath,
@@ -745,15 +767,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       expandedProjects: { ...s.expandedProjects, [project.id]: true },
     }))
 
-    await get().ensureProjectTree(project)
-
     for (const dir of dirsToReveal(filePath, project)) {
       await get().expandProjectDir(project.id, dir)
     }
 
     // Folder targets: load children so revealing a breadcrumb folder actually opens it.
-    const tree = get().projectTrees[project.id] ?? []
-    const target = findNodeByPath(tree, filePath)
+    const updatedTree = get().projectTrees[project.id] ?? []
+    const target = findNodeByPath(updatedTree, filePath)
     if (target) {
       if (target.path !== filePath) {
         set({ treeRevealPath: target.path })

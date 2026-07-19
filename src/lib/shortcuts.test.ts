@@ -31,6 +31,18 @@ describe('shortcutMatchesEvent', () => {
     expect(shortcutMatchesEvent('Shift+Alt+F', event)).toBe(true)
     expect(shortcutMatchesEvent('Alt+Shift+F', event)).toBe(true)
   })
+
+  it('does not match unbound (empty) shortcuts', () => {
+    const event = keyEvent({ key: 'F2' })
+    expect(shortcutMatchesEvent('', event)).toBe(false)
+    expect(shortcutMatchesEvent('   ', event)).toBe(false)
+  })
+
+  it('matches bare function keys', () => {
+    const event = keyEvent({ key: 'F2' })
+    expect(shortcutFromKeyboardEvent(event)).toBe('F2')
+    expect(shortcutMatchesEvent('F2', event)).toBe(true)
+  })
 })
 
 describe('isReservedShortcut', () => {

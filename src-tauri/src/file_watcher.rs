@@ -275,11 +275,36 @@ fn file_mtime_inner(path: String) -> Result<Option<u64>, String> {
     let modified = meta
         .modified()
         .map_err(|e| format!("读取文件时间失败: {e}"))?;
-    let millis = modified
-        .duration_since(UNIX_EPOCH)
+    Ok(Some(file_time_to_millis(modified)))
+}
+
+/// Creation time in Unix milliseconds, or null if unavailable (e.g. unsupported platform).
+#[tauri::command]
+pub fn file_ctime(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<Option<u64>, String> {
+    allowlist.ensure_allowed(&path)?;
+    file_ctime_inner(path)
+}
+
+fn file_ctime_inner(path: String) -> Result<Option<u64>, String> {
+    let meta = match std::fs::metadata(&path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(format!("读取文件时间失败: {e}")),
+    };
+    let created = match meta.created() {
+        Ok(t) => t,
+        Err(_) => return Ok(None),
+    };
+    Ok(Some(file_time_to_millis(created)))
+}
+
+fn file_time_to_millis(time: std::time::SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    Ok(Some(millis))
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -295,6 +320,12 @@ mod tests {
     #[test]
     fn file_mtime_missing_returns_none() {
         let result = file_mtime_inner(r"D:\definitely\missing\qingcode-test-mtime.txt".into());
+        assert_eq!(result.unwrap(), None);
+    }
+
+    #[test]
+    fn file_ctime_missing_returns_none() {
+        let result = file_ctime_inner(r"D:\definitely\missing\qingcode-test-ctime.txt".into());
         assert_eq!(result.unwrap(), None);
     }
 

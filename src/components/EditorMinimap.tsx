@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -8,18 +9,23 @@ import {
   type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
-import type { EditorView } from '@codemirror/view'
+import { EditorView } from '@codemirror/view'
+import { getContextMenuStylePosition } from './contextMenuPosition'
 import { setMinimapUpdateHandler } from '../lib/minimapBridge'
 import {
+  MINIMAP_HOVER_COLLAPSE_DELAY_MS,
   MINIMAP_QUICK_VIEW_DELAY_MS,
   MINIMAP_QUICK_VIEW_GAP,
   MINIMAP_QUICK_VIEW_RADIUS,
   MINIMAP_REPAINT_THROTTLE_MS,
   MINIMAP_SCROLLBAR_WIDTH,
+  MINIMAP_STYLE_DEFAULT,
   MINIMAP_WIDTH_DEFAULT,
-  MINIMAP_WIDTH_PRESETS,
+  MINIMAP_WIDTH_MAX,
+  MINIMAP_WIDTH_MIN,
   clampMinimapWidth,
   loadMinimapHideScrollbar,
+  loadMinimapHoverShow,
   loadMinimapWidth,
   resolveMinimapByteSize,
   resolveMinimapCharSize,
@@ -27,10 +33,12 @@ import {
   resolveMinimapLineAtY,
   resolveMinimapMaxWidth,
   resolveMinimapMode,
+  resolveMinimapPaintStyle,
   resolveMinimapScrollOffset,
   resolveMinimapScrollbarThumb,
   resolveMinimapViewport,
   saveMinimapHideScrollbar,
+  saveMinimapHoverShow,
   saveMinimapWidth,
   type MinimapRenderMode,
 } from '../lib/minimapPolicy'
@@ -51,16 +59,13 @@ import {
   collectQuickViewLines,
   MINIMAP_CANVAS_MAX_CSS_PX,
   paintMinimap,
+  readMinimapFont,
   readMinimapPalette,
 } from '../lib/minimapPaint'
-import {
-  getMinimapEnabled,
-  notifyMinimapEnabledChanged,
-  saveScopedMinimapEnabled,
-} from '../lib/minimapSettings'
-import { useProjectStore } from '../store/projectStore'
+import { FONT_SETTINGS_EVENT } from '../lib/fontSettings'
+import { beginPanelResize, endPanelResize } from '../lib/panelResize'
 import { useI18n } from '../lib/i18n'
-import Tooltip from './Tooltip'
+import PanelResizer from './PanelResizer'
 import '../styles/minimap.css'
 
 type Props = {
@@ -95,7 +100,6 @@ export default function EditorMinimap({
   onHideScrollbarChange,
 }: Props) {
   const { t } = useI18n()
-  const currentProject = useProjectStore(s => s.currentProject)
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
@@ -105,7 +109,11 @@ export default function EditorMinimap({
   const [scrollingThumb, setScrollingThumb] = useState(false)
   const [scrollingViewport, setScrollingViewport] = useState(false)
   const [hideScrollbar, setHideScrollbar] = useState(() => loadMinimapHideScrollbar())
+  const [hoverToShow, setHoverToShow] = useState(() => loadMinimapHoverShow())
+  const [pointerInside, setPointerInside] = useState(false)
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const [menuPos, setMenuPos] = useState({ x: 0, y: 0 })
+  const menuRef = useRef<HTMLDivElement>(null)
   const [quickView, setQuickView] = useState<QuickViewState | null>(null)
   const [mode, setMode] = useState<MinimapRenderMode>(() =>
     resolveMinimapMode(resolveMinimapByteSize(fileSize, 0)),
@@ -119,14 +127,11 @@ export default function EditorMinimap({
   const pendingRepaintRef = useRef(false)
   const resizingRef = useRef(false)
   const quickViewTimerRef = useRef(0)
+  const quickViewLeaveTimerRef = useRef(0)
+  const hoverCollapseTimerRef = useRef(0)
+  const quickViewHoverRef = useRef(false)
   const quickViewPendingRef = useRef<{ centerLine: number; clientY: number } | null>(null)
-  const dragWidthRef = useRef<{
-    pointerId: number
-    startX: number
-    startWidth: number
-    bodyCursor: string
-    bodyUserSelect: string
-  } | null>(null)
+  const dragWidthRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const dragScrollRef = useRef<{
     pointerId: number
     startY: number
@@ -150,6 +155,8 @@ export default function EditorMinimap({
 
   widthRef.current = width
   modeRef.current = mode
+  // Full tier always uses character preview; density (1–5MB) auto-falls back to blocks.
+  const effectivePaintStyle = resolveMinimapPaintStyle(mode, MINIMAP_STYLE_DEFAULT)
 
   useEffect(() => {
     onHideScrollbarChange?.(hideScrollbar)
@@ -169,7 +176,7 @@ export default function EditorMinimap({
     if (!view || !root) return null
     const scrollDOM = view.scrollDOM
     const mapHeight = resolveMinimapMapHeight(root, view)
-    const { charHeight } = resolveMinimapCharSize(modeRef.current)
+    const { charHeight } = resolveMinimapCharSize(modeRef.current, MINIMAP_STYLE_DEFAULT)
     const contentHeight = resolveMinimapContentHeight(view.state.doc.lines, charHeight)
     const scrollOffset = resolveMinimapScrollOffset(
       scrollDOM.scrollTop,
@@ -246,12 +253,13 @@ export default function EditorMinimap({
       return
     }
 
-    // Prefer the minimap root (not canvas.clientWidth): paint sets canvas style
-    // size explicitly, so a stale canvas width would block drag-resize growth.
+    // Prefer the wider of root vs saved width so hover-collapsed (rail-only)
+    // still paints a full glance ready to expand; root alone would be ~12px.
     const cssWidth = Math.min(
       Math.max(
         1,
-        (root.clientWidth || widthRef.current || MINIMAP_WIDTH_DEFAULT) - MINIMAP_SCROLLBAR_WIDTH,
+        Math.max(root.clientWidth, widthRef.current || 0, MINIMAP_WIDTH_DEFAULT) -
+          MINIMAP_SCROLLBAR_WIDTH,
       ),
       MINIMAP_CANVAS_MAX_CSS_PX,
     )
@@ -263,14 +271,17 @@ export default function EditorMinimap({
     const head = view.state.selection.main.head
     const caretLine = view.state.doc.lineAt(head).number
     const scrollDOM = view.scrollDOM
+    const rootEl = rootRef.current ?? document.documentElement
     paintMinimap({
       canvas,
       doc,
       state: view.state,
       mode: nextMode,
+      paintStyle: MINIMAP_STYLE_DEFAULT,
       cssWidth,
       cssHeight,
-      palette: readMinimapPalette(),
+      palette: readMinimapPalette(rootEl, view.dom),
+      font: readMinimapFont(rootEl),
       scrollTop: scrollDOM.scrollTop,
       scrollHeight: scrollDOM.scrollHeight,
       clientHeight: scrollDOM.clientHeight,
@@ -302,13 +313,48 @@ export default function EditorMinimap({
     }, delay)
   }
 
-  const clearQuickView = () => {
+  const clearQuickView = (force = false) => {
+    if (!force && quickViewHoverRef.current) return
+    if (quickViewLeaveTimerRef.current) {
+      window.clearTimeout(quickViewLeaveTimerRef.current)
+      quickViewLeaveTimerRef.current = 0
+    }
     if (quickViewTimerRef.current) {
       window.clearTimeout(quickViewTimerRef.current)
       quickViewTimerRef.current = 0
     }
     quickViewPendingRef.current = null
+    quickViewHoverRef.current = false
     setQuickView(null)
+  }
+
+  const scheduleClearQuickView = () => {
+    if (quickViewLeaveTimerRef.current) return
+    quickViewLeaveTimerRef.current = window.setTimeout(() => {
+      quickViewLeaveTimerRef.current = 0
+      clearQuickView(true)
+    }, 180)
+  }
+
+  const cancelClearQuickView = () => {
+    if (quickViewLeaveTimerRef.current) {
+      window.clearTimeout(quickViewLeaveTimerRef.current)
+      quickViewLeaveTimerRef.current = 0
+    }
+  }
+
+  const scrollEditorToLine = (lineNumber: number) => {
+    const view = viewRef.current
+    if (!view) return
+    try {
+      const line = view.state.doc.line(lineNumber)
+      view.dispatch({
+        effects: EditorView.scrollIntoView(line.from, { y: 'center' }),
+      })
+      requestRepaint(true)
+    } catch {
+      // ignore invalid line
+    }
   }
 
   const showQuickViewAt = (centerLine: number, clientY: number) => {
@@ -381,7 +427,6 @@ export default function EditorMinimap({
       const next = clampMinimapWidth(widthRef.current, resolveMinimapMaxWidth(pane.clientWidth))
       if (next === widthRef.current) return
       widthRef.current = next
-      root.style.width = `${next}px`
       setWidth(next)
       saveMinimapWidth(next)
     }
@@ -437,13 +482,13 @@ export default function EditorMinimap({
 
     const onTheme = () => requestRepaint(true)
     window.addEventListener('qingcode:theme-changed', onTheme)
+    window.addEventListener(FONT_SETTINGS_EVENT, onTheme)
 
     return () => {
       cancelled = true
       const drag = dragWidthRef.current
       if (drag) {
-        document.body.style.cursor = drag.bodyCursor
-        document.body.style.userSelect = drag.bodyUserSelect
+        endPanelResize('vertical')
         dragWidthRef.current = null
         resizingRef.current = false
       }
@@ -473,52 +518,77 @@ export default function EditorMinimap({
         cancelAnimationFrame(viewportFrameRef.current)
         viewportFrameRef.current = 0
       }
-      clearQuickView()
+      if (quickViewLeaveTimerRef.current) {
+        window.clearTimeout(quickViewLeaveTimerRef.current)
+        quickViewLeaveTimerRef.current = 0
+      }
+      if (hoverCollapseTimerRef.current) {
+        window.clearTimeout(hoverCollapseTimerRef.current)
+        hoverCollapseTimerRef.current = 0
+      }
+      clearQuickView(true)
       setMinimapUpdateHandler(null)
       detachScroll()
       ro?.disconnect()
       window.removeEventListener('qingcode:theme-changed', onTheme)
+      window.removeEventListener(FONT_SETTINGS_EVENT, onTheme)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabId, fileSize, viewRef])
 
   useEffect(() => {
     if (!menu) return
-    const close = () => setMenu(null)
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
+    const close = (event: PointerEvent) => {
+      // Keep menu open across right-button down so a second right-click can reposition.
+      if (event.button === 2) return
+      setMenu(null)
     }
-    window.addEventListener('mousedown', close)
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenu(null)
+    }
+    window.addEventListener('pointerdown', close)
     window.addEventListener('keydown', onKey)
     return () => {
-      window.removeEventListener('mousedown', close)
+      window.removeEventListener('pointerdown', close)
       window.removeEventListener('keydown', onKey)
     }
   }, [menu])
 
-  /** Place the viewport so its center tracks `clientY` (scrollbar-thumb mapping). */
+  // Minimap sits on the right edge — open to the left of the cursor, then clamp.
+  useLayoutEffect(() => {
+    if (!menu) return
+    const el = menuRef.current
+    if (!el) return
+    const zoom = Number.parseFloat(getComputedStyle(el).zoom) || 1
+    const size = { width: el.offsetWidth, height: el.scrollHeight }
+    const placed = getContextMenuStylePosition(
+      menu.x - size.width,
+      menu.y,
+      size,
+      { width: window.innerWidth, height: window.innerHeight },
+      false,
+      zoom,
+    )
+    el.style.maxHeight = `${placed.maxHeight}px`
+    setMenuPos({ x: placed.x, y: placed.y })
+  }, [menu])
+
+  /** Map a minimap click Y to the corresponding source line (fixed-scale glance). */
   const jumpToClientY = (clientY: number) => {
     const metrics = readScrollMetrics()
-    if (!metrics) return
-    const { root, scrollDOM, contentHeight, scrollOffset, mapHeight } = metrics
-    const maxScroll = Math.max(0, scrollDOM.scrollHeight - scrollDOM.clientHeight)
-    if (maxScroll <= 0) return
+    const view = viewRef.current
+    if (!metrics || !view) return
     const canvas = canvasRef.current
-    const rect = (canvas ?? root).getBoundingClientRect()
-    const { height: vpHeight } = resolveMinimapViewport(
-      scrollDOM.scrollTop,
-      scrollDOM.scrollHeight,
-      scrollDOM.clientHeight,
-      mapHeight,
-      contentHeight,
-      scrollOffset,
+    const root = rootRef.current
+    const rect = (canvas ?? root)?.getBoundingClientRect()
+    if (!rect) return
+    const lineNumber = resolveMinimapLineAtY(
+      clientY - rect.top,
+      metrics.charHeight,
+      metrics.scrollOffset,
+      view.state.doc.lines,
     )
-    const usable = Math.max(1, mapHeight - vpHeight)
-    const ratio = Math.min(
-      1,
-      Math.max(0, (clientY - rect.top - vpHeight / 2) / usable),
-    )
-    scrollDOM.scrollTop = ratio * maxScroll
+    scrollEditorToLine(lineNumber)
   }
 
   const beginViewportDrag = (
@@ -528,7 +598,7 @@ export default function EditorMinimap({
     if (event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
-    clearQuickView()
+    clearQuickView(true)
     setMenu(null)
 
     if (options.jump) jumpToClientY(event.clientY)
@@ -558,7 +628,6 @@ export default function EditorMinimap({
     }
     setScrollingThumb(true)
     setScrollingViewport(true)
-    document.body.style.cursor = 'grabbing'
     document.body.style.userSelect = 'none'
   }
 
@@ -585,6 +654,7 @@ export default function EditorMinimap({
     document.body.style.userSelect = drag.bodyUserSelect
     setScrollingThumb(false)
     setScrollingViewport(false)
+    syncPointerInsideFromHover()
     requestRepaint(true)
   }
 
@@ -604,7 +674,7 @@ export default function EditorMinimap({
     if (event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
-    clearQuickView()
+    clearQuickView(true)
     setMenu(null)
 
     const metrics = readScrollMetrics()
@@ -636,7 +706,6 @@ export default function EditorMinimap({
       bodyUserSelect: document.body.style.userSelect,
     }
     setScrollingThumb(true)
-    document.body.style.cursor = 'grabbing'
     document.body.style.userSelect = 'none'
   }
 
@@ -662,23 +731,27 @@ export default function EditorMinimap({
     document.body.style.cursor = drag.bodyCursor
     document.body.style.userSelect = drag.bodyUserSelect
     setScrollingThumb(false)
+    syncPointerInsideFromHover()
   }
 
   const onCanvasPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     beginViewportDrag(event, { jump: true })
   }
 
-  const onCanvasContextMenu = (event: ReactMouseEvent) => {
+  /** Root-level: viewport/scrollbar sit above the canvas and must not bubble to Editor. */
+  const onMinimapContextMenu = (event: ReactMouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    clearQuickView()
+    clearQuickView(true)
+    // Seed position at cursor; useLayoutEffect shifts left + clamps to viewport.
+    setMenuPos({ x: event.clientX, y: event.clientY })
     setMenu({ x: event.clientX, y: event.clientY })
   }
 
   const onCanvasMouseMove = (event: ReactMouseEvent) => {
     if (menu || resizingRef.current || dragViewportRef.current || dragScrollRef.current) return
     if (isClientOverViewport(event.clientX, event.clientY)) {
-      clearQuickView()
+      clearQuickView(true)
       return
     }
     const metrics = readScrollMetrics()
@@ -703,87 +776,103 @@ export default function EditorMinimap({
     }
   }
 
-  const finishResize = (target: HTMLElement, pointerId: number) => {
-    const drag = dragWidthRef.current
-    if (!drag || drag.pointerId !== pointerId) return
-    if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
-    dragWidthRef.current = null
-    resizingRef.current = false
-    document.body.style.cursor = drag.bodyCursor
-    document.body.style.userSelect = drag.bodyUserSelect
-    setResizing(false)
-    setWidth(widthRef.current)
-    saveMinimapWidth(widthRef.current)
-    requestRepaint(true)
-  }
-
-  const onResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return
+  const onResizeMouseDown = (event: React.MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    clearQuickView()
+    clearQuickView(true)
     setMenu(null)
-    event.currentTarget.setPointerCapture(event.pointerId)
-    dragWidthRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      startWidth: widthRef.current,
-      bodyCursor: document.body.style.cursor,
-      bodyUserSelect: document.body.style.userSelect,
-    }
+    dragWidthRef.current = { startX: event.clientX, startWidth: widthRef.current }
     resizingRef.current = true
     setResizing(true)
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-  }
 
-  const onResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = dragWidthRef.current
-    const root = rootRef.current
-    const pane = root?.parentElement
-    if (!drag || drag.pointerId !== event.pointerId || !root || !pane) return
-    const maxWidth = resolveMinimapMaxWidth(pane.clientWidth)
-    // Dragging the left edge left makes the minimap wider; right makes it narrower.
-    const next = clampMinimapWidth(drag.startWidth + (drag.startX - event.clientX), maxWidth)
-    if (next === widthRef.current) return
-    widthRef.current = next
-    // Stretch the existing bitmap while dragging; repaint once on release.
-    root.style.width = `${next}px`
-  }
-
-  const applyWidthPreset = (preset: number) => {
-    const root = rootRef.current
-    const pane = root?.parentElement
-    const maxWidth = pane ? resolveMinimapMaxWidth(pane.clientWidth) : undefined
-    const next = clampMinimapWidth(preset, maxWidth)
-    widthRef.current = next
-    if (root) root.style.width = `${next}px`
-    setWidth(next)
-    saveMinimapWidth(next)
-    setMenu(null)
-    requestRepaint(true)
-  }
-
-  const toggleEnabled = async () => {
-    setMenu(null)
-    const next = !getMinimapEnabled()
-    notifyMinimapEnabledChanged(next)
-    try {
-      await saveScopedMinimapEnabled('global', next, currentProject)
-    } catch {
-      notifyMinimapEnabledChanged(!next)
+    const onMove = (ev: MouseEvent) => {
+      const drag = dragWidthRef.current
+      const root = rootRef.current
+      const pane = root?.parentElement
+      if (!drag || !root) return
+      const maxWidth = pane ? resolveMinimapMaxWidth(pane.clientWidth) : MINIMAP_WIDTH_MAX
+      const next = clampMinimapWidth(drag.startWidth + (drag.startX - ev.clientX), maxWidth)
+      if (next === widthRef.current) return
+      widthRef.current = next
+      root.style.width = `${next}px`
     }
+
+    const onUp = () => {
+      dragWidthRef.current = null
+      resizingRef.current = false
+      setResizing(false)
+      setWidth(widthRef.current)
+      saveMinimapWidth(widthRef.current)
+      requestRepaint(true)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      endPanelResize('vertical')
+      syncPointerInsideFromHover()
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    beginPanelResize('vertical')
   }
 
   const toggleHideScrollbar = () => {
     const next = !hideScrollbar
     setHideScrollbar(next)
     saveMinimapHideScrollbar(next)
-    setMenu(null)
+  }
+
+  const cancelHoverCollapse = () => {
+    if (hoverCollapseTimerRef.current) {
+      window.clearTimeout(hoverCollapseTimerRef.current)
+      hoverCollapseTimerRef.current = 0
+    }
+  }
+
+  const scheduleHoverCollapse = () => {
+    cancelHoverCollapse()
+    hoverCollapseTimerRef.current = window.setTimeout(() => {
+      hoverCollapseTimerRef.current = 0
+      if (dragScrollRef.current || dragViewportRef.current || resizingRef.current) return
+      setPointerInside(false)
+    }, MINIMAP_HOVER_COLLAPSE_DELAY_MS)
+  }
+
+  const syncPointerInsideFromHover = () => {
+    const root = rootRef.current
+    if (root?.matches(':hover')) {
+      cancelHoverCollapse()
+      setPointerInside(true)
+    }
+  }
+
+  const toggleHoverToShow = () => {
+    const next = !hoverToShow
+    setHoverToShow(next)
+    saveMinimapHoverShow(next)
+    if (next) {
+      // Checked = folded to the right rail by default; close menu so fold is visible now.
+      cancelHoverCollapse()
+      setPointerInside(false)
+      setMenu(null)
+      clearQuickView(true)
+    } else {
+      cancelHoverCollapse()
+      setPointerInside(true)
+    }
   }
 
   if (mode === 'hidden') return null
 
+  // Hover-to-show: fold to the right scroll rail; expand on hover / drag / open menu.
+  const expanded =
+    !hoverToShow ||
+    pointerInside ||
+    !!menu ||
+    resizing ||
+    scrollingThumb ||
+    scrollingViewport ||
+    !!quickView
+  const displayWidth = expanded ? width : MINIMAP_SCROLLBAR_WIDTH
   const resizeHint = t('左右拖拽调整小地图宽度')
 
   return (
@@ -792,10 +881,20 @@ export default function EditorMinimap({
         ref={rootRef}
         className={`editor-minimap${resizing ? ' editor-minimap--resizing' : ''}${
           scrollingThumb ? ' editor-minimap--scrolling' : ''
-        }`}
-        style={{ width }}
+        }${hoverToShow && !expanded ? ' editor-minimap--hover-collapsed' : ''}`}
+        style={{ width: displayWidth }}
         aria-hidden
-        onMouseLeave={clearQuickView}
+        data-block-native-context-menu
+        onContextMenu={onMinimapContextMenu}
+        onMouseEnter={() => {
+          cancelHoverCollapse()
+          setPointerInside(true)
+          cancelClearQuickView()
+        }}
+        onMouseLeave={() => {
+          scheduleHoverCollapse()
+          scheduleClearQuickView()
+        }}
       >
         <div
           className="editor-minimap__scrollbar"
@@ -807,31 +906,28 @@ export default function EditorMinimap({
         >
           <div ref={scrollbarThumbRef} className="editor-minimap__scrollbar-thumb" />
         </div>
-        <Tooltip
-          label={resizeHint}
-          side="left"
-          delay={280}
-          wrapperClassName="editor-minimap__resizer-tip"
-        >
-          <div
-            className="editor-minimap__resizer"
-            onPointerDown={onResizePointerDown}
-            onPointerMove={onResizePointerMove}
-            onPointerUp={event => finishResize(event.currentTarget, event.pointerId)}
-            onPointerCancel={event => finishResize(event.currentTarget, event.pointerId)}
-            aria-label={resizeHint}
-          />
-        </Tooltip>
+        <PanelResizer
+          orientation="vertical"
+          active={resizing}
+          tooltip={resizeHint}
+          tooltipSide="left"
+          onMouseDown={onResizeMouseDown}
+          ariaValueNow={width}
+          ariaValueMin={MINIMAP_WIDTH_MIN}
+          ariaValueMax={MINIMAP_WIDTH_MAX}
+          className="editor-minimap__panel-resizer"
+        />
         <canvas
           ref={canvasRef}
-          className="editor-minimap__canvas"
+          className={`editor-minimap__canvas${
+            effectivePaintStyle === 'blocks' ? ' editor-minimap__canvas--blocks' : ''
+          }`}
           onPointerDown={onCanvasPointerDown}
           onPointerMove={onViewportPointerMove}
           onPointerUp={event => finishViewportDrag(event.currentTarget, event.pointerId)}
           onPointerCancel={event => finishViewportDrag(event.currentTarget, event.pointerId)}
-          onContextMenu={onCanvasContextMenu}
           onMouseMove={onCanvasMouseMove}
-          onMouseLeave={clearQuickView}
+          onMouseLeave={scheduleClearQuickView}
         />
         <div
           ref={viewportRef}
@@ -842,8 +938,8 @@ export default function EditorMinimap({
           onPointerMove={onViewportPointerMove}
           onPointerUp={event => finishViewportDrag(event.currentTarget, event.pointerId)}
           onPointerCancel={event => finishViewportDrag(event.currentTarget, event.pointerId)}
-          onMouseEnter={clearQuickView}
-          onMouseMove={clearQuickView}
+          onMouseEnter={() => clearQuickView(true)}
+          onMouseMove={() => clearQuickView(true)}
         />
       </div>
       {quickView &&
@@ -857,6 +953,11 @@ export default function EditorMinimap({
                 '--minimap-qv-arrow-top': `${quickView.arrowTop}px`,
               } as CSSProperties
             }
+            onMouseEnter={() => {
+              quickViewHoverRef.current = true
+              cancelClearQuickView()
+            }}
+            onMouseLeave={scheduleClearQuickView}
           >
             <div className="editor-minimap__quick-view-body">
               {quickView.lines.map((line, index) => {
@@ -868,6 +969,10 @@ export default function EditorMinimap({
                     className={`editor-minimap__quick-view-line${
                       isCenter ? ' editor-minimap__quick-view-line--center' : ''
                     }`}
+                    onClick={() => {
+                      scrollEditorToLine(lineNumber)
+                      clearQuickView(true)
+                    }}
                   >
                     <span className="editor-minimap__quick-view-gutter">{lineNumber}</span>
                     <span className="editor-minimap__quick-view-code">{line || ' '}</span>
@@ -875,33 +980,36 @@ export default function EditorMinimap({
                 )
               })}
             </div>
+            <button
+              type="button"
+              className="editor-minimap__quick-view-rail"
+              aria-label={t('跳转到对应行')}
+              onClick={() => {
+                scrollEditorToLine(quickView.centerLine)
+                clearQuickView(true)
+              }}
+            />
           </div>,
           document.body,
         )}
       {menu &&
         createPortal(
           <div
-            className="editor-minimap__menu"
-            style={{ left: menu.x, top: menu.y }}
+            ref={menuRef}
+            className="editor-minimap__menu ui-font-scaled"
+            style={{ left: menuPos.x, top: menuPos.y }}
+            onPointerDown={event => event.stopPropagation()}
             onMouseDown={event => event.stopPropagation()}
           >
-            <button type="button" className="editor-minimap__menu-item" onClick={() => void toggleEnabled()}>
-              {t('关闭小地图')}
+            <button
+              type="button"
+              className={`editor-minimap__menu-check${
+                hoverToShow ? ' editor-minimap__menu-check--on' : ''
+              }`}
+              onClick={toggleHoverToShow}
+            >
+              {t('划过滚动条显示小地图')}
             </button>
-            <div className="editor-minimap__menu-sep" />
-            {MINIMAP_WIDTH_PRESETS.map(preset => (
-              <button
-                key={preset}
-                type="button"
-                className={`editor-minimap__menu-item${
-                  width === preset ? ' editor-minimap__menu-item--active' : ''
-                }`}
-                onClick={() => applyWidthPreset(preset)}
-              >
-                {t('宽度 {n}px', { n: preset })}
-              </button>
-            ))}
-            <div className="editor-minimap__menu-sep" />
             <button
               type="button"
               className={`editor-minimap__menu-check${

@@ -6,22 +6,40 @@ import { useI18n } from '../lib/i18n'
 interface Props {
   directory: boolean
   depth: number
+  /** When set, acts as inline rename (prefilled, selects stem). */
+  initialName?: string
   onSubmit: (name: string) => void
   onCancel: () => void
 }
 
-/** VS Code-style inline name input in the explorer tree. */
-export default function InlineCreateRow({ directory, depth, onSubmit, onCancel }: Props) {
+/** VS Code / IDEA-style inline name input in the explorer tree (create or rename). */
+export default function InlineCreateRow({
+  directory,
+  depth,
+  initialName = '',
+  onSubmit,
+  onCancel,
+}: Props) {
   const { t } = useI18n()
   const inputRef = useRef<HTMLInputElement>(null)
   const submittingRef = useRef(false)
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(initialName)
   const [error, setError] = useState<string | null>(null)
+  const renaming = Boolean(initialName)
 
   useEffect(() => {
-    const t = window.setTimeout(() => inputRef.current?.focus(), 0)
-    return () => window.clearTimeout(t)
-  }, [])
+    const timer = window.setTimeout(() => {
+      const input = inputRef.current
+      if (!input) return
+      input.focus()
+      if (renaming) {
+        const dot = initialName.lastIndexOf('.')
+        const end = !directory && dot > 0 ? dot : initialName.length
+        input.setSelectionRange(0, end)
+      }
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [directory, initialName, renaming])
 
   const submit = () => {
     const err = validateEntryName(value)
@@ -72,7 +90,15 @@ export default function InlineCreateRow({ directory, depth, onSubmit, onCancel }
         }}
         className={`flex-1 min-w-0 h-[22px] px-1.5 text-[13px] bg-bg border rounded-sm outline-none text-fg
           ${error ? 'border-danger' : 'border-accent'}`}
-        aria-label={directory ? t('新建文件夹名称') : t('新建文件名称')}
+        aria-label={
+          renaming
+            ? directory
+              ? t('文件夹新名称')
+              : t('文件新名称')
+            : directory
+              ? t('新建文件夹名称')
+              : t('新建文件名称')
+        }
         aria-invalid={error ? true : undefined}
       />
     </div>

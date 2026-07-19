@@ -477,7 +477,7 @@ export default function LargeFileViewer({ tab }: Props) {
             className="inline-flex items-center gap-1 text-accent hover:underline"
             onClick={() => {
               setView('explorer')
-              void revealFileInTree(tab.path)
+              void revealFileInTree(tab.path, { force: true })
             }}
           >
             <LocateFixed size={12} />

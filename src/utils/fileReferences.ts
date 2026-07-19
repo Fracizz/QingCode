@@ -73,11 +73,10 @@ export function isDescendantOf(childPath: string, ancestorPath: string) {
 
 /** Directory paths from project root down to the file's parent (excluding root). */
 export function collectAncestorDirs(filePath: string, rootPath: string) {
-  const normRoot = normalizePath(rootPath).toLowerCase()
+  if (!isDescendantOf(filePath, rootPath)) return []
   const dirs: string[] = []
   let current = parentPath(filePath)
-  while (normalizePath(current).toLowerCase().length >= normRoot.length) {
-    if (normalizePath(current).toLowerCase() === normRoot) break
+  while (isDescendantOf(current, rootPath) && !pathsEqual(current, rootPath)) {
     dirs.unshift(current)
     current = parentPath(current)
   }

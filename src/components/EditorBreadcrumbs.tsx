@@ -4,6 +4,7 @@ import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
 import { isDescendantOf, normalizePath, parentPath, pathsEqual } from '../utils/fileReferences'
+import Tooltip from './Tooltip'
 
 function projectRelativePath(projectPath: string, filePath: string) {
   const root = normalizePath(projectPath)
@@ -49,21 +50,22 @@ export default function EditorBreadcrumbs() {
     // and its expand/scroll effects observe the new treeRevealSeq.
     setView('explorer')
     window.requestAnimationFrame(() => {
-      void useProjectStore.getState().revealFileInTree(path)
+      void useProjectStore.getState().revealFileInTree(path, { force: true })
     })
   }
 
   return (
     <div className="ui-font-scaled flex h-[22px] flex-shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-bg-deep pl-0 pr-3 text-[11px] text-fg-muted select-none">
-      <button
-        type="button"
-        className="max-w-[140px] cursor-pointer truncate rounded px-1.5 bg-bg-hover/80 text-fg hover:bg-bg-active"
-        title={currentProject.path}
-        aria-label={t('在资源管理器中定位')}
-        onClick={() => revealInExplorer(currentProject.path)}
-      >
-        {currentProject.name}
-      </button>
+      <Tooltip label={currentProject.path} side="bottom" wrapperClassName="max-w-[140px] shrink-0">
+        <button
+          type="button"
+          className="max-w-[140px] cursor-pointer truncate rounded px-1.5 bg-bg-hover/80 text-fg hover:bg-bg-active"
+          aria-label={t('在资源管理器中定位')}
+          onClick={() => revealInExplorer(currentProject.path)}
+        >
+          {currentProject.name}
+        </button>
+      </Tooltip>
       {segments.map((segment, index) => {
         const isLast = index === segments.length - 1
         const targetPath = fileInProject
@@ -74,23 +76,24 @@ export default function EditorBreadcrumbs() {
         return (
           <span key={`${segment}-${index}`} className="flex min-w-0 items-center gap-0.5">
             <ChevronRight size={12} className="flex-shrink-0 opacity-60" aria-hidden />
-            <button
-              type="button"
-              disabled={!clickable}
-              className={`max-w-[180px] truncate rounded px-1 transition-colors ${
-                clickable
-                  ? 'cursor-pointer hover:bg-bg-hover hover:text-fg'
-                  : 'cursor-default'
-              } ${isLast ? 'text-fg' : ''}`}
-              title={targetPath}
-              aria-label={t('在资源管理器中定位')}
-              onClick={() => {
-                if (!clickable) return
-                revealInExplorer(targetPath)
-              }}
-            >
-              {segment}
-            </button>
+            <Tooltip label={targetPath} side="bottom" wrapperClassName="max-w-[180px] min-w-0">
+              <button
+                type="button"
+                disabled={!clickable}
+                className={`max-w-[180px] truncate rounded px-1 transition-colors ${
+                  clickable
+                    ? 'cursor-pointer hover:bg-bg-hover hover:text-fg'
+                    : 'cursor-default'
+                } ${isLast ? 'text-fg' : ''}`}
+                aria-label={t('在资源管理器中定位')}
+                onClick={() => {
+                  if (!clickable) return
+                  revealInExplorer(targetPath)
+                }}
+              >
+                {segment}
+              </button>
+            </Tooltip>
           </span>
         )
       })}

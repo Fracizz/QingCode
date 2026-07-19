@@ -526,7 +526,7 @@ export default function SettingsEditor() {
                   <SettingItem
                     title={t('编辑器: 小地图')}
                     description={t(
-                      '在编辑区右侧显示代码缩略图，便于快速跳转。大于 5MB 的文件会自动隐藏。对应 editor.minimap.enabled。',
+                      '在编辑区右侧显示代码缩略图，便于快速跳转。大于 5MB 的文件会自动隐藏。',
                     )}
                     modified={minimapEnabled !== DEFAULT_GLOBAL_SETTINGS['editor.minimap.enabled']}
                     locked={scope === 'workspace' && !currentProject}
@@ -817,12 +817,16 @@ export default function SettingsEditor() {
                               : ''}
                           </span>
                           {openWith?.exe_path ? (
-                            <span
-                              className="text-[11px] text-fg-dim font-mono truncate max-w-full"
-                              title={openWith.exe_path}
+                            <Tooltip
+                              label={openWith.exe_path}
+                              side="bottom"
+                              onlyWhenOverflow
+                              wrapperClassName="block max-w-full min-w-0"
                             >
-                              {t('当前程序：{path}', { path: openWith.exe_path })}
-                            </span>
+                              <span className="text-[11px] text-fg-dim font-mono truncate max-w-full block">
+                                {t('当前程序：{path}', { path: openWith.exe_path })}
+                              </span>
+                            </Tooltip>
                           ) : null}
                           <div className="flex flex-wrap justify-end gap-2">
                             <button

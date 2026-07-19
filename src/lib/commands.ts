@@ -102,7 +102,10 @@ export function resolveCommandShortcut(
   command: AppCommand,
   shortcuts: ShortcutMap,
 ): string | undefined {
-  if (command.shortcutCommand) return shortcuts[command.shortcutCommand]
+  if (command.shortcutCommand) {
+    const binding = shortcuts[command.shortcutCommand]
+    return binding.trim() ? binding : undefined
+  }
   return command.shortcut
 }
 

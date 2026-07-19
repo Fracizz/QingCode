@@ -5,7 +5,12 @@ import {
   classifyLineFallback,
   collectQuickViewLines,
   colorForLineKind,
+  findMinimapSelectionMatchIndexes,
+  normalizeMinimapLine,
   resolveLineCharColors,
+  resolveMinimapSelectionMatchQuery,
+  softenColor,
+  syntaxHighlightAvailable,
   type MinimapPalette,
 } from './minimapPaint'
 
@@ -20,6 +25,9 @@ const palette: MinimapPalette = {
   property: '#999',
   density: '#555',
   caret: '#48f',
+  emptyLine: 'rgba(255,255,255,0.1)',
+  selectionMatch: 'rgba(153, 255, 119, 0.2)',
+  selectionMatchMain: 'rgba(153, 255, 119, 0.5)',
 }
 
 describe('minimapPaint', () => {
@@ -49,8 +57,32 @@ describe('minimapPaint', () => {
 
   it('returns a color per character for a line prefix', () => {
     const state = EditorState.create({ doc: 'const x = 1' })
+    expect(syntaxHighlightAvailable(state)).toBe(false)
     const colors = resolveLineCharColors(state, 0, 'const x = 1', palette, palette.code)
     expect(colors).toHaveLength(11)
-    expect(colors.every(color => typeof color === 'string' && color.length > 0)).toBe(true)
+    expect(colors.every(color => color === palette.code)).toBe(true)
+  })
+
+  it('normalizes tabs for minimap display', () => {
+    expect(normalizeMinimapLine('\tfoo')).toBe('  foo')
+  })
+
+  it('softens bright syntax colors toward the background', () => {
+    expect(softenColor('rgb(255, 0, 0)', 'rgb(0, 0, 0)', 0.5)).toBe('rgb(128, 0, 0)')
+  })
+
+  it('resolves a single-line selection query for minimap matches', () => {
+    const state = EditorState.create({ doc: 'foo path bar path' })
+    const withSel = state.update({
+      selection: { anchor: 4, head: 8 },
+    }).state
+    expect(resolveMinimapSelectionMatchQuery(withSel)).toBe('path')
+    expect(resolveMinimapSelectionMatchQuery(state)).toBeNull()
+  })
+
+  it('finds capped non-overlapping match indexes on a line', () => {
+    expect(findMinimapSelectionMatchIndexes('path path path', 'path', 20)).toEqual([0, 5, 10])
+    // Cap 9 keeps "path path" so the second hit at index 5 is included.
+    expect(findMinimapSelectionMatchIndexes('path path path', 'path', 9)).toEqual([0, 5])
   })
 })

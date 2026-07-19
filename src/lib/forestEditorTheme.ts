@@ -14,8 +14,10 @@ export const FOREST_THEME = EditorView.theme(
     },
     '.cm-activeLine': { backgroundColor: M.highlight },
     '.cm-activeLineGutter': { backgroundColor: M.highlight, color: M.foreground },
-    '.cm-selectionBackground, ::selection': { backgroundColor: M.selectionBg },
-    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+    // Only tint CM's drawn selection layer. Do not style ::selection color/background —
+    // WebView2 turns selected token text white when ::selection sets `color`.
+    '.cm-selectionBackground': { backgroundColor: M.selectionBg },
+    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
       backgroundColor: M.selectionBg,
     },
     '.cm-cursor, .cm-dropCursor': { borderLeftColor: M.accent },
@@ -25,6 +27,12 @@ export const FOREST_THEME = EditorView.theme(
     },
     '.cm-searchMatch': { backgroundColor: M.buttons },
     '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: M.highlight },
+    // Match highlights: background only — never set `color` (keeps syntax tokens).
+    '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },
+    '.cm-selectionMatchMainLayer .cm-selectionMatchMain': {
+      backgroundColor: 'rgba(153, 255, 119, 0.5)',
+    },
+    '.cm-searchMatch .cm-selectionMatch': { backgroundColor: 'transparent' },
   },
   { dark: true },
 )

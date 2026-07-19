@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Replace } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
+import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import {
   applyWorkspaceReplace,
@@ -99,13 +100,18 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
               </div>
               <ul className="mt-1 space-y-0.5">
                 {file.samples.map(sample => (
-                  <li
-                    key={`${file.path}:${sample.line}:${sample.matchStart}`}
-                    className="font-mono text-[11px] text-fg-muted truncate"
-                    title={sample.text}
-                  >
-                    <span className="text-fg-dim mr-2">{sample.line}</span>
-                    {sample.text}
+                  <li key={`${file.path}:${sample.line}:${sample.matchStart}`}>
+                    <Tooltip
+                      label={sample.text}
+                      side="bottom"
+                      onlyWhenOverflow
+                      wrapperClassName="block min-w-0"
+                    >
+                      <div className="font-mono text-[11px] text-fg-muted truncate">
+                        <span className="text-fg-dim mr-2">{sample.line}</span>
+                        {sample.text}
+                      </div>
+                    </Tooltip>
                   </li>
                 ))}
               </ul>

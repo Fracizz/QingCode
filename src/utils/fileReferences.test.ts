@@ -41,6 +41,13 @@ describe('normalizePath / parentPath / pathsEqual', () => {
     expect(addPathToSet(set, 'D:/proj/test')).toBe(set)
     expect(addPathToSet(set, 'D:/proj/other').has('D:/proj/other')).toBe(true)
   })
+
+  it('pathSetHas does not match path-prefix siblings (eman vs eman-commonmng)', () => {
+    const expanded = addPathToSet(new Set(), 'D:/repo/eman-nem/src/main/java/com/eman')
+    expect(pathSetHas(expanded, 'D:/repo/eman-commonmng')).toBe(false)
+    expect(pathSetHas(expanded, 'D:/repo/eman-nem/src/main/java/com/eman-commonmng')).toBe(false)
+    expect(pathSetHas(addPathToSet(new Set(), 'D:/repo/eman'), 'D:/repo/eman-commonmng')).toBe(false)
+  })
 })
 
 describe('isDescendantOf / collectAncestorDirs / findProjectForPath', () => {
@@ -55,6 +62,22 @@ describe('isDescendantOf / collectAncestorDirs / findProjectForPath', () => {
       'D:/proj/src',
       'D:/proj/src/util',
     ])
+  })
+
+  it('does not treat string-prefix sibling folders as ancestors', () => {
+    expect(
+      collectAncestorDirs('D:/repo/eman-nem/src/main/java/com/eman/Foo.java', 'D:/repo'),
+    ).toEqual([
+      'D:/repo/eman-nem',
+      'D:/repo/eman-nem/src',
+      'D:/repo/eman-nem/src/main',
+      'D:/repo/eman-nem/src/main/java',
+      'D:/repo/eman-nem/src/main/java/com',
+      'D:/repo/eman-nem/src/main/java/com/eman',
+    ])
+    expect(collectAncestorDirs('D:/repo/eman-commonmng/src/Foo.java', 'D:/repo/eman-nem')).toEqual(
+      [],
+    )
   })
 
   it('picks the longest matching project root', () => {

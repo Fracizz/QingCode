@@ -10,6 +10,8 @@ import Toaster from './components/Toaster'
 import ConfirmDialog from './components/ConfirmDialog'
 import ChoiceDialog from './components/ChoiceDialog'
 import PromptDialog from './components/PromptDialog'
+import ExplorerConflictDialog from './components/ExplorerConflictDialog'
+import PropertiesDialog from './components/PropertiesDialog'
 import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
 import FileCompareDialog from './components/FileCompareDialog'
@@ -384,6 +386,8 @@ function App() {
       <ConfirmDialog />
       <ChoiceDialog />
       <PromptDialog />
+      <ExplorerConflictDialog />
+      <PropertiesDialog />
       <CommandPalette />
       <SymbolPicker />
       {fileCompare && <FileCompareDialog {...fileCompare} />}

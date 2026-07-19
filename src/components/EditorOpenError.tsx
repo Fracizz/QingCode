@@ -8,6 +8,7 @@ import { copyToClipboard } from '../utils/fileReferences'
 import { openFileErrorTitle } from '../lib/openFileError'
 import type { EditorTab } from '../types'
 import { useI18n } from '../lib/i18n'
+import Tooltip from './Tooltip'
 
 interface Props {
   tab: EditorTab
@@ -34,7 +35,7 @@ export default function EditorOpenError({ tab }: Props) {
 
   const revealInSidebar = () => {
     setView('explorer')
-    void revealFileInTree(tab.path)
+    void revealFileInTree(tab.path, { force: true })
   }
 
   const revealPath = async () => {
@@ -65,12 +66,9 @@ export default function EditorOpenError({ tab }: Props) {
         {tab.openError && tab.openError !== title ? (
           <p className="text-xs leading-relaxed text-fg-muted">{tab.openError}</p>
         ) : null}
-        <p
-          className="truncate font-mono text-[11px] text-fg-dim"
-          title={tab.path}
-        >
-          {tab.path}
-        </p>
+        <Tooltip label={tab.path} side="bottom" onlyWhenOverflow wrapperClassName="block max-w-full">
+          <p className="truncate font-mono text-[11px] text-fg-dim">{tab.path}</p>
+        </Tooltip>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[13px]">
         <ActionButton

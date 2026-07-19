@@ -28,6 +28,7 @@ import {
 } from '../lib/terminalCursorSettings'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import { TerminalOscParser } from '../utils/terminalOsc'
+import Tooltip from './Tooltip'
 import { translate } from '../lib/i18n'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import '@xterm/xterm/css/xterm.css'
@@ -464,14 +465,20 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       }}
     >
       {terminal?.launchCommand.trim() ? (
-        <div
-          className="shrink-0 border-b border-border bg-bg-deep px-2.5 py-1 text-fg-dim truncate"
-          style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--terminal-font-size)' }}
-          title={terminal.launchCommand.trim()}
+        <Tooltip
+          label={terminal.launchCommand.trim()}
+          side="bottom"
+          onlyWhenOverflow
+          wrapperClassName="shrink-0 block min-w-0"
         >
-          {'> '}
-          {terminal.launchCommand.trim()}
-        </div>
+          <div
+            className="border-b border-border bg-bg-deep px-2.5 py-1 text-fg-dim truncate"
+            style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--terminal-font-size)' }}
+          >
+            {'> '}
+            {terminal.launchCommand.trim()}
+          </div>
+        </Tooltip>
       ) : null}
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 py-2">
         <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />

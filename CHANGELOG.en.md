@@ -13,6 +13,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 ### Changed
 
 - Local packaging unified as `pnpm package`: one pass builds Windows x64 portable + NSIS installer (ARM64/macOS remain CI)
+- Hover tips use in-app `Tooltip` only: removed browser-native `title` tips (e.g. empty-editor recent files); design docs ban native tips, enforced by ESLint
 
 ## [0.1.4] - 2026-07-18
 

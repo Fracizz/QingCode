@@ -210,34 +210,37 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 
 文件：`src/components/Tooltip.tsx`
 
-**原则：所有悬停提示必须在应用内渲染，禁止使用浏览器原生 `title` 属性。**
+**原则：所有悬停提示必须在应用内渲染，禁止使用浏览器原生 `title` 属性（白底系统 tip）。**
+
+ESLint 以 `react/forbid-dom-props` 禁止 DOM 节点上的 `title`；新增悬停提示只允许 `Tooltip`。
 
 | 项 | 约定 |
 |----|------|
 | 组件 | 统一使用 `Tooltip`，从 `./Tooltip` 导入 |
-| 样式 | `bg-bg-elevated` + `border-border-strong` + 阴影，11px 字号 |
-| 延迟 | 默认 **2000ms**（`SHOW_DELAY`）：悬停约两秒后再显示，减少误触；密集交互处可用 `delay` 覆盖为更短 |
+| 样式 | `bg-bg-elevated` + `border-border-strong` + 阴影，11px 字号；长文案 `max-w` 内换行，与深色/浅色主题一致 |
+| 延迟 | 默认 **600ms**（`SHOW_DELAY`）；截断文本用 `onlyWhenOverflow` 时默认 **1000ms**（`OVERFLOW_TOOLTIP_DELAY`）；可用 `delay` 覆盖 |
 | 焦点 | 默认 **`showOnFocus={false}`**：点击/聚焦不立刻弹出提示；指针按下时立即隐藏 |
 | 文案 | 使用 `t()` / `translate()` 的中文 key，英文走 `en.json`；**禁止**硬编码英文（如标题栏 Minimize/Maximize） |
-| 位置 | 活动栏 / 侧边栏图标 → `right`；标题栏窗口按钮 → `bottom`；面板内按钮 / 工具栏 → `bottom`；状态栏 → `top`；拖拽条按方向适配 |
-| 截断文本 | 对 `truncate` 元素用 `Tooltip` 展示完整路径或说明，`wrapperClassName` 保留布局 |
+| 位置 | 活动栏 / 侧边栏图标 → `right`；标题栏窗口按钮 → `bottom`；面板内按钮 / 工具栏 / 空编辑器列表 → `bottom`；状态栏 → `top`；拖拽条按方向适配 |
+| 截断文本 | 对 `truncate` 元素用 `Tooltip` + `onlyWhenOverflow` 展示完整路径或说明，`wrapperClassName` 保留布局（如空编辑器「最近打开的文件」、面包屑、项目管理路径列） |
 | 无障碍 | 纯图标按钮同时设置 `aria-label`（与 tip 文案一致、已 i18n）；`Tooltip` 浮层带 `role="tooltip"` |
 
-**适用范围（与默认 2s 延迟一致）：**
+**适用范围：**
 
 - 活动栏视图/动作图标
 - 标题栏窗口控制（最小化 / 最大化·还原 / 关闭窗口）
 - 侧边栏、面板工具栏、状态栏等同类图标按钮提示
+- 截断路径 / 文件名 / 命令行等需展示完整文案的列表与标签
 
 **禁止：**
 
-- HTML `title` 属性（含 JSX `title={...}`）
+- HTML `title` 属性（含 JSX 写在 DOM 元素上的 `title={...}`）
 - 依赖浏览器默认白底系统 tooltip 的任何交互提示
 - 窗口按钮等 chrome 控件硬编码英文 label
 
 **允许例外（非 UI 提示）：**
 
-- React 组件 props 名为 `title` 但仅作展示文案（如面板标题 `Header title="运行配置"`）
+- React 组件 props 名为 `title` 但仅作展示文案（如面板标题 `Header title="运行配置"`、`EmptyState` / `SettingItem` 的标题 prop）
 - SVG `<title>` 元素用于图形语义（若有）
 
 **用法示例：**
@@ -253,7 +256,7 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 截断路径：
 
 ```tsx
-<Tooltip label={fullPath} side="bottom" wrapperClassName="truncate min-w-0 flex-1">
+<Tooltip label={fullPath} side="bottom" onlyWhenOverflow wrapperClassName="truncate min-w-0 flex-1">
   <span className="truncate block">{displayName}</span>
 </Tooltip>
 ```
@@ -262,20 +265,23 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 
 文件：`src/components/PanelResizer.tsx`
 
-终端（横向）与侧边栏（纵向）共用同一组件与样式（`.panel-resizer`）。
+终端（横向）与侧边栏（纵向）、**编辑器小地图左缘**（纵向）共用同一组件与样式（`.panel-resizer`）。
 
 | 状态 | 表现 |
 |------|------|
 | 默认 | 分隔线与 grip 隐藏 |
 | 悬停 | 1px 分隔线 + 三点 grip 淡入 |
-| 拖拽 | 2px `accent` 线 + grip 高亮 |
+| 拖拽 | 2px `accent` 线 + grip 高亮；`body.panel-resizing` + `data-panel-resize="vertical"` 时全局 `ew-resize` |
 
 提示格式：
 
 ```
 拖动调整终端高度 · 120–640px · 当前 260px
 拖动调整侧边栏宽度 · 180–520px · 当前 260px
+左右拖拽调整小地图宽度 · 80–360px · 当前 120px
 ```
+
+小地图宽度拖拽：`EditorMinimap` 左缘挂载 `PanelResizer`（`orientation="vertical"`），拖拽逻辑与 `ResizableSidebar` 一致（`beginPanelResize` / `endPanelResize`），**禁止**单独实现 `col-resize` 或自定义 grip 样式。
 
 ### 编辑器标签（EditorTabs）
 
@@ -295,12 +301,24 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 - **可点击项**：Git 分支 → 打开源代码管理视图；终端计数 → 切换终端面板（`uiStore.toggleTerminalPanel`）；均带 hover 背景与 Tooltip
 - **光标位置**：有活动标签时显示 `行 X, 列 Y`（`editorStore.cursor`，由 Editor 的 `updateListener` 上报，英文界面为 `Ln X, Col Y`）
 
-### 文件树缩进参考线
+### 文件树交互（IntelliJ IDEA 风格）
 
-文件：`src/components/Sidebar.tsx`
+文件：`src/components/Sidebar.tsx`、`src/utils/fileTreeView.ts`、`src/components/InlineCreateRow.tsx`
 
-- 深度 ≥2 的行用 `repeating-linear-gradient` 绘制每祖先层一条 1px 竖线，对齐父级 chevron 中心（起始 27px，周期 12px）
-- 颜色为 70% 透明的 `border-strong`，位于 hover 背景色之上
+| 操作 | 文件 | 文件夹 |
+|------|------|--------|
+| 单击 | 选中（不打开） | 选中（不展开） |
+| `Ctrl`/`⌘`+单击 | 切换多选 | 同左 |
+| `Shift`+单击 / `Shift`+方向键 | 范围多选 | 同左 |
+| 双击 | 打开 | 展开 / 折叠 |
+| Chevron | 选中并展开 / 折叠 | 同左 |
+| `Enter`（树聚焦时） | 打开 | 展开 / 折叠 |
+| `renameInExplorer`（默认 `F2`，可在快捷键设置中改绑或清空）/ 右键「重命名」 | 行内重命名（`InlineCreateRow`） | 同左 |
+| 按住拖放到文件夹 / 项目根 | 移动（指针 DnD + `move_path`；浮层提示「移动到 xxx」） | 同左 |
+| `Ctrl+X` / `C` / `V` | 剪切 / 复制 / 粘贴；同名冲突弹 IDEA 式对话框（输入新名称重命名 / 覆盖 / 跳过，可全部应用） | 同左 |
+
+- 多选时所有选中行显示 `bg-bg-active`；剪切项半透明。`revealFileInTree` 仅滚动定位并替换为单选，不再高亮祖先路径。
+- 切换标签或「在侧边栏定位当前文件」时，选中项随 `treeRevealPath` 同步。
 
 ### Prompt（文本输入）
 
@@ -315,7 +333,7 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 | 校验 | 新建/重命名文件与文件夹使用 `validateEntryName` |
 | 快捷键 | `Enter` 确认，`Escape` 取消；打开时自动聚焦并选中默认值 |
 
-**资源管理器新建（与 VS Code 一致）：** 使用 `InlineCreateRow` 在文件树目标目录下内联输入；`Enter` 创建、`Escape`/失焦取消；自动展开父文件夹。新建文件/文件夹**不使用** `promptDialog`。
+**资源管理器新建/重命名（与 VS Code / IDEA 一致）：** 使用 `InlineCreateRow` 在文件树目标行内联输入；`Enter` 确认、`Escape`/失焦取消；新建时自动展开父文件夹。新建与树内重命名**不使用** `promptDialog`。
 
 ### Toast
 
@@ -330,7 +348,7 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 | `.modal-overlay-enter` | 对话框遮罩淡入 | 140ms |
 | `.modal-content-enter` | 对话框面板上浮 + 缩放 | 160ms |
 | `.menu-enter` | 右键/下拉菜单淡入 + 轻微缩放 | 120ms |
-| `.tooltip-enter` | Tooltip 淡入（配合默认 2000ms 悬停延迟） | 120ms |
+| `.tooltip-enter` | Tooltip 淡入（配合默认 600ms 悬停延迟） | 120ms |
 | `.dirty-pulse` | 未保存圆点 / 运行中终端圆点呼吸 | 2.2s 循环 |
 | `html.theme-transition` | 主题切换时由 `applyTheme` 临时挂载 260ms，全局颜色 200ms 过渡 | 200ms |
 
@@ -343,6 +361,7 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 
 - 挂在 `.editor-pane` 内 absolute overlay（右侧），不占 flex 兄弟以免塌高；正文只读共享 `EditorView` 的 `doc`
 - 观感对齐 CodeGlance：语法色采样、光标行、视口框、可选隐藏 CM 竖滚动条、悬停 Quick View
+- **宽度拖拽**：左缘复用 `PanelResizer`（与侧边栏同款竖向分隔线 + 三点 grip、`ew-resize`），宽度限制见 `minimapPolicy`
 - 详细需求与性能约束见 [`docs/minimap.md`](./docs/minimap.md)
 
 ---
@@ -358,11 +377,11 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 ## 新增 UI 检查清单
 
 - [ ] 颜色使用 `@theme` token，不写死 hex（图标 SVG 除外）
-- [ ] 悬停提示用 `Tooltip`（默认悬停约 2s），文案走 i18n，**禁止** HTML `title`（可用 `rg 'title=' src/components` 自查）
-- [ ] 文本输入用 `promptDialog`，**禁止** `window.prompt`
+- [ ] 悬停提示用 `Tooltip`（默认约 600ms；截断用 `onlyWhenOverflow`），文案走 i18n，**禁止** DOM `title` / 原生 tip（ESLint `react/forbid-dom-props`）
+- [ ] 文本输入用 `promptDialog`，**禁止** `window.prompt` / 浏览器原生 `window.alert` / `window.confirm`
 - [ ] 模态对话框使用 `ModalOverlay` 居中，不手写偏移定位
 - [ ] 图标来自 lucide-react，尺寸与活动栏协调
-- [ ] 可调整面板复用 `PanelResizer` + `panelLayout` / `sidebarLayout` 限制
+- [ ] 可调整面板复用 `PanelResizer` + `panelLayout` / `sidebarLayout` / `minimapPolicy` 限制（含小地图左缘拖宽）
 - [ ] 深色/浅色主题下均验证对比度
 - [ ] 修改 `app-icon.svg` 后运行 `pnpm icon:sync`（打 exe 时自动执行）
 

@@ -3,12 +3,14 @@ import { RotateCcw } from 'lucide-react'
 import {
   canonicalizeShortcut,
   isReservedShortcut,
+  isShortcutBound,
   isShortcutInputTarget,
   shortcutFromKeyboardEvent,
   type ShortcutCommand,
 } from '../lib/shortcuts'
 import { useShortcutStore } from '../store/shortcutStore'
 import { useI18n } from '../lib/i18n'
+import Tooltip from './Tooltip'
 
 const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = [
   {
@@ -51,6 +53,11 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
     label: '切换小地图',
     description: '显示或隐藏编辑区右侧的代码小地图。',
   },
+  {
+    id: 'renameInExplorer',
+    label: '资源管理器: 重命名',
+    description: '在文件树中行内重命名当前选中的文件或文件夹。',
+  },
 ]
 
 /** Editor-bound shortcuts shown as read-only (not remappable here). */
@@ -88,13 +95,25 @@ export default function ShortcutSettings() {
   const captureShortcut = (event: ReactKeyboardEvent<HTMLInputElement>, command: ShortcutCommand) => {
     if (isShortcutInputTarget(event.target) && event.key === 'Escape') {
       setCapturing(null)
+      setMessage(null)
       return
     }
+
+    // Clear / unbind: Backspace or Delete while capturing.
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      event.preventDefault()
+      event.stopPropagation()
+      setShortcut(command, '')
+      setCapturing(null)
+      setMessage(null)
+      return
+    }
+
     const shortcut = shortcutFromKeyboardEvent(event.nativeEvent)
     event.preventDefault()
     event.stopPropagation()
     if (!shortcut) {
-      setMessage(t('请输入 Ctrl、Alt、Shift 或 Meta 加按键的组合。'))
+      setMessage(t('请输入 Ctrl、Alt、Shift 或 Meta 加按键的组合；或按 Backspace 清空。'))
       return
     }
     if (isReservedShortcut(shortcut)) {
@@ -104,6 +123,7 @@ export default function ShortcutSettings() {
     const conflict = COMMANDS.find(
       item =>
         item.id !== command &&
+        isShortcutBound(shortcuts[item.id]) &&
         canonicalizeShortcut(shortcuts[item.id]) === canonicalizeShortcut(shortcut),
     )
     if (conflict) {
@@ -117,29 +137,42 @@ export default function ShortcutSettings() {
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-xs text-fg-muted">{t('点击输入框后按新的组合键。')}</p>
-      {COMMANDS.map(command => (
-        <label key={command.id} className="flex items-center gap-3 rounded border border-border bg-bg/40 px-3 py-2">
-          <span className="min-w-0 flex-1">
-            <span className="block text-[13px] text-fg">{t(command.label)}</span>
-            <span className="mt-0.5 block text-[11px] text-fg-muted">{t(command.description)}</span>
-          </span>
-          <input
-            readOnly
-            value={shortcuts[command.id]}
-            onFocus={() => {
-              setCapturing(command.id)
-              setMessage(null)
-            }}
-            onBlur={() => setCapturing(current => (current === command.id ? null : current))}
-            onKeyDown={event => captureShortcut(event, command.id)}
-            aria-label={t(command.label)}
-            className={`w-32 rounded border bg-bg-deep px-2 py-1 text-center font-mono text-[12px] outline-none ${
-              capturing === command.id ? 'border-accent text-fg' : 'border-border-strong text-fg-muted'
-            }`}
-          />
-        </label>
-      ))}
+      <p className="text-xs text-fg-muted">
+        {t('点击输入框后按新的组合键。按 Backspace 或 Delete 可清空（未绑定）。')}
+      </p>
+      {COMMANDS.map(command => {
+        const bound = isShortcutBound(shortcuts[command.id])
+        return (
+          <label
+            key={command.id}
+            className="flex items-center gap-3 rounded border border-border bg-bg/40 px-3 py-2"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] text-fg">{t(command.label)}</span>
+              <span className="mt-0.5 block text-[11px] text-fg-muted">{t(command.description)}</span>
+            </span>
+            <input
+              readOnly
+              value={bound ? shortcuts[command.id] : ''}
+              placeholder={t('未绑定')}
+              onFocus={() => {
+                setCapturing(command.id)
+                setMessage(null)
+              }}
+              onBlur={() => setCapturing(current => (current === command.id ? null : current))}
+              onKeyDown={event => captureShortcut(event, command.id)}
+              aria-label={t(command.label)}
+              className={`w-36 rounded border bg-bg-deep px-2 py-1 text-center font-mono text-[12px] outline-none placeholder:text-fg-dim ${
+                capturing === command.id
+                  ? 'border-accent text-fg'
+                  : bound
+                    ? 'border-border-strong text-fg-muted'
+                    : 'border-border text-fg-dim'
+              }`}
+            />
+          </label>
+        )
+      })}
 
       <p className="pt-1 text-xs text-fg-muted">{t('以下快捷键由编辑器保留，不可在此修改：')}</p>
       {FIXED_SHORTCUTS.map(item => (
@@ -151,12 +184,11 @@ export default function ShortcutSettings() {
             <span className="block text-[13px] text-fg">{t(item.label)}</span>
             <span className="mt-0.5 block text-[11px] text-fg-muted">{t(item.description)}</span>
           </span>
-          <span
-            className="inline-flex h-[30px] w-32 items-center justify-center rounded border border-border bg-bg-deep px-2 font-mono text-[12px] text-fg-dim"
-            title={t('不可修改')}
-          >
-            {item.shortcut}
-          </span>
+          <Tooltip label={t('不可修改')} side="left">
+            <span className="inline-flex h-[30px] w-36 items-center justify-center rounded border border-border bg-bg-deep px-2 font-mono text-[12px] text-fg-dim">
+              {item.shortcut}
+            </span>
+          </Tooltip>
         </div>
       ))}
 

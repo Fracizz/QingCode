@@ -18,6 +18,7 @@ describe('isPinnedSettingsTab', () => {
 describe('guessLanguage', () => {
   it('maps common extensions', () => {
     expect(guessLanguage('a.ts')).toBe('typescript')
+    expect(guessLanguage('a.java')).toBe('java')
     expect(guessLanguage('a.rs')).toBe('rust')
     expect(guessLanguage('a.unknown')).toBe('plain')
   })

@@ -183,9 +183,16 @@ export default function WorkspaceManager() {
                             {t('{count} 个项目', { count: workspace.members.length })}
                           </span>
                         </div>
-                        <div className="mt-1 text-[12px] text-fg-muted truncate" title={workspace.members.map(m => m.name).join(' · ')}>
-                          {workspace.members.map(m => m.name).join(' · ')}
-                        </div>
+                        <Tooltip
+                          label={workspace.members.map(m => m.name).join(' · ')}
+                          side="bottom"
+                          onlyWhenOverflow
+                          wrapperClassName="mt-1 block min-w-0"
+                        >
+                          <div className="text-[12px] text-fg-muted truncate">
+                            {workspace.members.map(m => m.name).join(' · ')}
+                          </div>
+                        </Tooltip>
                       </div>
                       <div className="flex items-center gap-0.5 flex-shrink-0">
                         <ActBtn
