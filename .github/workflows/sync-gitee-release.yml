@@ -18,7 +18,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: sync-gitee-${{ github.event.inputs.tag || 'v0.1.4' }}
+  # Tag-scoped for manual sync; push-of-workflow uses run_id so it won't cancel an active tag sync.
+  group: sync-gitee-${{ github.event.inputs.tag || github.run_id }}
   cancel-in-progress: true
 
 jobs:
@@ -53,14 +54,30 @@ jobs:
           "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "notes=$notes" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Download GitHub Release assets
+      - name: Download canonical GitHub assets
         shell: pwsh
         run: |
           $tag = '${{ steps.meta.outputs.tag }}'
+          $ver = '${{ steps.meta.outputs.version }}'
+          $keep = @(
+            "QingCode_${ver}-windows-x64.exe",
+            "QingCode_${ver}-windows-x64-setup.exe",
+            "QingCode_${ver}-windows-arm64.exe",
+            "QingCode_${ver}-windows-arm64-setup.exe",
+            "QingCode_${ver}-macos-arm64.dmg",
+            "QingCode_${ver}-macos-arm64.zip"
+          )
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
-          gh release download $tag --repo '${{ github.repository }}' --dir release-assets
-          Get-ChildItem release-assets | Format-Table Name, Length
-          if (-not (Get-ChildItem release-assets -File)) { throw 'No assets downloaded' }
+          foreach ($name in $keep) {
+            Write-Host "download $name"
+            gh release download $tag --repo '${{ github.repository }}' --dir release-assets --pattern $name
+          }
+          Get-ChildItem release-assets -File | Format-Table Name, Length
+          $got = @(Get-ChildItem release-assets -File | ForEach-Object { $_.Name })
+          $missing = @($keep | Where-Object { $got -notcontains $_ })
+          if ($missing.Count -gt 0) {
+            throw "Missing canonical assets on GitHub Release ${tag}: $($missing -join ', ')"
+          }
 
       - name: Publish to Gitee
         shell: pwsh
