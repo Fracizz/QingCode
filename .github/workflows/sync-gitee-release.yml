@@ -1,6 +1,7 @@
 name: Sync Gitee Release
 
 # Mirror a GitHub Release (notes + assets) to Gitee. Requires secret GITEE_TOKEN.
+# Manual only — do not auto-run on workflow file pushes (avoids cancelling / double-uploading).
 on:
   workflow_dispatch:
     inputs:
@@ -9,17 +10,12 @@ on:
         required: true
         type: string
         default: 'v0.1.4'
-  push:
-    branches: [master]
-    paths:
-      - '.github/workflows/sync-gitee-release.yml'
 
 permissions:
   contents: read
 
 concurrency:
-  # Tag-scoped for manual sync; push-of-workflow uses run_id so it won't cancel an active tag sync.
-  group: sync-gitee-${{ github.event.inputs.tag || github.run_id }}
+  group: sync-gitee-${{ github.event.inputs.tag }}
   cancel-in-progress: true
 
 jobs:
