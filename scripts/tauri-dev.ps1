@@ -57,15 +57,42 @@ function Get-AvailableDevPort {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
     try {
       $listener.Start()
-      $listener.Stop()
-      return $port
-    } catch {
+    }
+    catch {
       if ($listener) {
         try { $listener.Stop() } catch {}
       }
+      continue
     }
+    $listener.Stop()
+    return $port
   }
   throw "No free dev port found in range $StartPort..$($StartPort + $MaxAttempts - 1)."
+}
+
+function Wait-DevServer {
+  param(
+    [int]$Port,
+    [System.Diagnostics.Process]$ViteProcess,
+    [int]$TimeoutMs = 45000
+  )
+
+  $deadline = [Environment]::TickCount64 + $TimeoutMs
+  while ([Environment]::TickCount64 -lt $deadline) {
+    if ($ViteProcess.HasExited) {
+      throw "Vite exited early with code $($ViteProcess.ExitCode) before becoming ready."
+    }
+    try {
+      $client = [System.Net.Sockets.TcpClient]::new()
+      $client.Connect([System.Net.IPAddress]::Loopback, $Port)
+      $client.Close()
+      return
+    }
+    catch {
+      Start-Sleep -Milliseconds 200
+    }
+  }
+  throw "Vite did not become ready on 127.0.0.1:$Port within ${TimeoutMs}ms."
 }
 
 $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
@@ -89,18 +116,46 @@ $devDir = Join-Path $projectRoot '.dev'
 New-Item -ItemType Directory -Force -Path $devDir | Out-Null
 
 $overridePath = Join-Path $devDir 'tauri-dev-override.json'
-$overrideJson = @{ build = @{ devUrl = "http://127.0.0.1:$devPort" } } | ConvertTo-Json -Depth 3
+# On Windows, Tauri hosts beforeDevCommand via `cmd /C`. That process often
+# exits with -1 shortly after the app window opens, tearing down `tauri dev`
+# even though Vite was healthy. Own Vite in this script and clear the hook.
+$overrideJson = @{
+  build = @{
+    devUrl = "http://127.0.0.1:$devPort"
+    beforeDevCommand = ''
+  }
+} | ConvertTo-Json -Depth 3
 # Avoid UTF-8 BOM (breaks some Tauri config merges on Windows PowerShell 5).
 [System.IO.File]::WriteAllText($overridePath, $overrideJson + "`n", (New-Object System.Text.UTF8Encoding $false))
 
 Write-Host "Using dev server port $devPort"
 
+$pnpm = (Get-Command pnpm.cmd -ErrorAction SilentlyContinue)?.Source
+if (-not $pnpm) { $pnpm = (Get-Command pnpm).Source }
+
+$viteProcess = $null
 Push-Location $projectRoot
 try {
+  Write-Host "Starting Vite outside Tauri beforeDevCommand..."
+  $viteProcess = Start-Process `
+    -FilePath $pnpm `
+    -ArgumentList @('exec', 'vite', '--strictPort', '--host', '127.0.0.1') `
+    -WorkingDirectory $projectRoot `
+    -PassThru `
+    -NoNewWindow
+
+  Wait-DevServer -Port $devPort -ViteProcess $viteProcess
+  Write-Host "Vite ready at http://127.0.0.1:$devPort"
+
   pnpm tauri dev --config $overridePath
   if ($LASTEXITCODE -ne 0) {
     throw "Tauri dev failed with exit code $LASTEXITCODE."
   }
-} finally {
+}
+finally {
+  if ($viteProcess -and -not $viteProcess.HasExited) {
+    Write-Host "Stopping Vite (PID $($viteProcess.Id))"
+    Stop-ProcessTree -ProcessId $viteProcess.Id
+  }
   Pop-Location
 }

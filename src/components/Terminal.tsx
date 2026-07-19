@@ -39,7 +39,6 @@ import {
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
-import Tooltip from './Tooltip'
 import { translate } from '../lib/i18n'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import TerminalSearchBar from './TerminalSearchBar'
@@ -619,22 +618,6 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         setContextMenu({ x: event.clientX, y: event.clientY })
       }}
     >
-      {terminal?.launchCommand.trim() ? (
-        <Tooltip
-          label={terminal.launchCommand.trim()}
-          side="bottom"
-          onlyWhenOverflow
-          wrapperClassName="shrink-0 block min-w-0"
-        >
-          <div
-            className="border-b border-border bg-bg-deep px-2.5 py-1 text-fg-dim truncate"
-            style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--terminal-font-size)' }}
-          >
-            {'> '}
-            {terminal.launchCommand.trim()}
-          </div>
-        </Tooltip>
-      ) : null}
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 py-2">
         {searchOpen ? (
           <TerminalSearchBar

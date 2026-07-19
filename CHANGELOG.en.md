@@ -6,23 +6,14 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-07-19
+
 ### Added
 
 - Editor minimap (CodeGlance-inspired): Lezer syntax colors, caret line, hover Quick View, right-click quick config, `Ctrl+Shift+G` toggle; setting `editor.minimap.enabled` (on by default; ≤1MB full / 1–5MB density / >5MB hidden)
 - Find in terminal (`Ctrl+F`) and clear buffer (`Ctrl+Shift+K` / context menu / command palette)
 - Global default terminal shell (Settings → Terminal): Windows defaults to `pwsh` (cmd / WSL / Windows PowerShell available); macOS/Linux defaults to `zsh` (Bash / pwsh available); built-in Ordinary Terminal follows this setting; custom profiles may override
 - Terminal busy detection: ignore console-host noise children; honor shell-integration OSC 133/633 “command running”; only one-shot run tasks stay always-busy
-
-### Changed
-
-- Local packaging unified as `pnpm package`: one pass builds Windows x64 portable + NSIS installer (ARM64/macOS remain CI)
-- Hover tips use in-app `Tooltip` only: removed browser-native `title` tips (e.g. empty-editor recent files); design docs ban native tips, enforced by ESLint
-- Terminal profiles launch via a single `interactive` spawn path (keep shell after command); auto-respawn prompt when OpenCode tears down ConPTY; PTY created after xterm fit with real size
-
-## [0.1.4] - 2026-07-18
-
-### Added
-
 - VS-style large-file editing tiers: full / degraded / plain-text / read-only by file size to reduce freezes on huge files
 - Workspace trust: untrusted projects restrict high-risk capabilities when opening unfamiliar repos
 - Document formatting: `Shift+Alt+F` runs Prettier / rustfmt / shfmt / ruff·black / gofmt when installed locally
@@ -46,6 +37,9 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ### Fixed
 
+- Keyboard access for project chips and editor/terminal tabs; Escape closes the project-add dialog; settings activity-bar active state
+- Terminal kill/write failures surface as toasts instead of being swallowed
+- Windows `pnpm tauri:dev`: host Vite outside Tauri so a dying `beforeDevCommand` no longer tears down the whole session
 - Source Control resolves Git path records correctly for Chinese names, spaces, and renames
 - Startup white screen caused by Diff theme
 - Expanded folder children cleared when a root refresh finishes after directory expansion
@@ -53,7 +47,10 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ### Changed
 
-- Reserved settings keys that will not be implemented (minimap, linked editing) are marked “not planned”; other common keys are wired up
+- Local packaging unified as `pnpm package`: one pass builds Windows x64 portable + NSIS installer (ARM64/macOS remain CI)
+- Hover tips use in-app `Tooltip` only (no DOM `title`); terminal launch command tip moved to tab hover instead of a permanent banner
+- Terminal profiles launch via a single `interactive` spawn path (keep shell after command); auto-respawn prompt when OpenCode tears down ConPTY; PTY created after xterm fit with real size
+- Reserved settings keys that will not be implemented (e.g. linked editing) are marked “not planned”; minimap and other common keys are wired up
 - Help docs follow UI language: Chinese UI shows `帮助文档.md`, non-Chinese shows `HELP.md`
 - Terminal collapse/close; tooltips appear after ~2s hover; window button labels are localized
 - Faster Source Control panel open with large change sets

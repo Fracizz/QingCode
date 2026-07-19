@@ -29,8 +29,9 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. ignore native/build/dev-data dirs so SQLite writes under `.dev/`
+      // do not thrash HMR while `pnpm tauri:dev` is running.
+      ignored: ["**/src-tauri/**", "**/.dev/**", "**/release/**", "**/coverage/**"],
     },
   },
   build: {

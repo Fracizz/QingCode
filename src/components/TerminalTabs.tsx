@@ -443,7 +443,15 @@ export default function TerminalTabs() {
                     />
                   </>
                 ) : (
-                  <Tooltip label={t.name} side="top" wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]">
+                  <Tooltip
+                    label={
+                      t.launchCommand.trim() && t.launchCommand.trim() !== t.name
+                        ? `${t.name}\n> ${t.launchCommand.trim()}`
+                        : t.name
+                    }
+                    side="top"
+                    wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]"
+                  >
                     <Circle
                       size={7}
                       fill="currentColor"
