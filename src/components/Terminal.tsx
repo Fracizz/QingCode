@@ -28,6 +28,7 @@ import {
 } from '../lib/terminalCursorSettings'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import { TerminalOscParser } from '../utils/terminalOsc'
+import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import Tooltip from './Tooltip'
 import { translate } from '../lib/i18n'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -138,7 +139,9 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   isActiveRef.current = isActive
   const writeToTerminal = useTerminalStore(s => s.writeToTerminal)
   const resizeTerminal = useTerminalStore(s => s.resizeTerminal)
+  const spawnPendingTerminal = useTerminalStore(s => s.spawnPendingTerminal)
   const terminal = useTerminalStore(s => s.terminals.find(tab => tab.id === terminalId))
+  const ptySpawnPending = terminal?.ptySpawnPending === true
 
   const isTerminalWritable = () =>
     useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.status !== 'exited'
@@ -203,7 +206,18 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         if (!term) return
         try {
           fitAddonRef.current?.fit()
-          if (refresh) term.refresh(0, term.rows - 1)
+          const pending = useTerminalStore
+            .getState()
+            .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
+          if (pending) {
+            // Spawn PTY only after the real grid is known — OpenCode centers on
+            // whatever size it sees at process start.
+            void spawnPendingTerminal(terminalId, term.cols, term.rows)
+          }
+          if (refresh) {
+            term.refresh(0, term.rows - 1)
+            term.scrollToBottom()
+          }
           if (focusAfter && isActiveRef.current) term.focus()
         } catch {}
       })
@@ -380,7 +394,9 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
         const cleaned = oscParser.feed(data, title => {
           const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
-          if (current?.allowTitleRename !== false && title) {
+          // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.
+          // Generic ConPTY/PowerShell titles are ignored (see shouldApplyOscTabTitle).
+          if (shouldApplyOscTabTitle(current, title)) {
             useTerminalStore.getState().renameTerminal(terminalId, title)
           }
         })
@@ -424,12 +440,18 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       container.replaceChildren()
       xtermRef.current = null
     }
-  }, [terminalId, writeToTerminal, resizeTerminal])
+  }, [terminalId, writeToTerminal, resizeTerminal, spawnPendingTerminal])
 
   useEffect(() => {
     if (!isActive) return
     scheduleFit(true, true)
   }, [isActive, layoutKey])
+
+  // Restart / deferred create: fit again as soon as a PTY is requested.
+  useEffect(() => {
+    if (!ptySpawnPending) return
+    scheduleFit(true, isActiveRef.current)
+  }, [ptySpawnPending, terminalId])
 
   useEffect(() => {
     const term = xtermRef.current

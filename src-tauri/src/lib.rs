@@ -137,12 +137,14 @@ fn get_column_migrations() -> Vec<Migration> {
 fn create_terminal(
     id: String,
     cwd: String,
+    cols: Option<u16>,
+    rows: Option<u16>,
     app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
     allowlist: tauri::State<'_, PathAllowlist>,
 ) -> Result<(), String> {
     allowlist.ensure_executable(&cwd)?;
-    state.spawn(id, &cwd, app)
+    state.spawn(id, &cwd, cols.unwrap_or(80), rows.unwrap_or(24), app)
 }
 
 #[tauri::command]
@@ -224,15 +226,17 @@ fn spawn_script(
     shell_kind: String,
     target: String,
     env: std::collections::HashMap<String, String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
     app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
     allowlist: tauri::State<'_, PathAllowlist>,
 ) -> Result<(), String> {
     allowlist.ensure_executable(&cwd)?;
-    // Script file targets must stay inside the sandbox. Inline `command` strings
-    // are intentionally unrestricted once the cwd is trusted (UI confirms run).
+    // Script file targets must stay inside the sandbox. Inline `command` /
+    // `interactive` strings are unrestricted once the cwd is trusted (UI confirms).
     let kind = shell_kind.as_str();
-    if kind != "command" {
+    if kind != "command" && kind != "interactive" {
         let target_path = {
             let p = Path::new(&target);
             if p.is_absolute() {
@@ -243,7 +247,16 @@ fn spawn_script(
         };
         allowlist.ensure_allowed(&target_path)?;
     }
-    state.spawn_script(id, &cwd, &shell_kind, &target, env, app)
+    state.spawn_script(
+        id,
+        &cwd,
+        &shell_kind,
+        &target,
+        env,
+        cols.unwrap_or(80),
+        rows.unwrap_or(24),
+        app,
+    )
 }
 
 #[cfg(target_os = "windows")]

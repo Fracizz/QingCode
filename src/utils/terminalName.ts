@@ -16,6 +16,46 @@ function shortenTerminalLabel(name: string): string {
   return name.length > 36 ? `${name.slice(0, 33)}…` : name
 }
 
+const GENERIC_SHELL_LABELS = new Set([
+  'PowerShell',
+  'PowerShell 7',
+  '命令提示符',
+  'Bash',
+  'WSL',
+])
+
+/**
+ * PowerShell/ConPTY often emit OSC titles like `powershell` on startup.
+ * Those must not overwrite intentional tab labels such as「终端 1」or「OpenCode」.
+ */
+export function isGenericShellOscTitle(title: string): boolean {
+  const cleaned = title.trim()
+  if (!cleaned) return true
+  if (/^(administrator:\s*)?windows\s*powershell(\s+\d+(\.\d+)*)?$/i.test(cleaned)) {
+    return true
+  }
+  if (/^(powershell|pwsh|cmd|bash|wsl|sh|zsh|fish)(\.exe)?$/i.test(cleaned)) {
+    return true
+  }
+  return GENERIC_SHELL_LABELS.has(shortenTerminalLabel(cleaned))
+}
+
+/**
+ * Whether an OSC window title should rename the tab.
+ * Keeps run-config labels fixed; blocks generic shell/ConPTY noise; allows
+ * cwd / app titles (e.g. OpenCode, `npm run dev`, folder names).
+ */
+export function shouldApplyOscTabTitle(
+  tab: { shellKind?: string } | null | undefined,
+  title: string,
+): boolean {
+  if (!tab || !title.trim()) return false
+  if (isGenericShellOscTitle(title)) return false
+  // Run-config / script tasks keep their fixed task name.
+  if (tab.shellKind && tab.shellKind !== 'interactive') return false
+  return true
+}
+
 export function formatTerminalName(name: string) {
   return formatTerminalNumber(name) ?? shortenTerminalLabel(name)
 }

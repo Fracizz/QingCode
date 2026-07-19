@@ -29,6 +29,8 @@ export interface UseTerminalPanelReturn {
   terminalHeight: number
   setTerminalHeight: React.Dispatch<React.SetStateAction<number>>
   isTerminalResizing: boolean
+  /** Live drag height — share with TerminalPanel so mid-drag re-renders do not snap back. */
+  dragHeightRef: React.MutableRefObject<number>
   onResizerMouseDown: (e: React.MouseEvent) => void
   terminalPanelRef: React.RefObject<HTMLDivElement | null>
 }
@@ -89,6 +91,7 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
     terminalHeight,
     setTerminalHeight,
     isTerminalResizing,
+    dragHeightRef,
     onResizerMouseDown,
     terminalPanelRef,
   }

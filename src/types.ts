@@ -60,16 +60,21 @@ export interface TerminalTab {
   /** Command/script path shown in the terminal and reused on restart. */
   launchCommand: string
   /** When set, spawn/restart uses `spawn_script` with this kind (run-config tasks). */
-  shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'script'
+  shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
   env?: Record<string, string>
   /** Profile used to spawn this terminal (settings → 终端). */
   profileId?: string
-  /** When true, OSC/window title updates may rename the tab (profile terminals). */
+  /** Legacy flag; OSC follow is decided by shellKind + generic-title filter. */
   allowTitleRename?: boolean
   status: 'starting' | 'running' | 'exited'
   exitCode: number | null
   /** Wall-clock ms when the process was spawned; used to detect quick failures. */
   startedAt?: number
+  /**
+   * True until xterm has fitted and the PTY is created with that size.
+   * Avoids OpenCode/TUI laying out against the default 80×24 grid.
+   */
+  ptySpawnPending?: boolean
   /**
    * Set when terminal metadata was restored after app restart; cleared after
    * the first spawn attempt so user-exited tabs are not auto-restarted.

@@ -5,9 +5,10 @@ body.panel-resizing * {
   user-select: none !important;
 }
 
-/* Live drag must not fight CSS height transitions */
-body.panel-resizing [data-terminal-panel] {
+/* Live drag must not fight CSS height transitions / layout thrash */
+body.panel-resizing[data-panel-resize='horizontal'] [data-terminal-panel] {
   transition: none !important;
+  will-change: height;
 }
 
 body.panel-resizing[data-panel-resize='vertical'],

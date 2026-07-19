@@ -38,22 +38,33 @@ impl TerminalManager {
         }
     }
 
-    pub fn spawn(&self, id: String, cwd: &str, app: AppHandle) -> Result<(), String> {
-        let shell = if cfg!(target_os = "windows") {
-            "powershell.exe"
+    pub fn spawn(
+        &self,
+        id: String,
+        cwd: &str,
+        cols: u16,
+        rows: u16,
+        app: AppHandle,
+    ) -> Result<(), String> {
+        let mut cmd = if cfg!(target_os = "windows") {
+            let mut command = CommandBuilder::new("powershell.exe");
+            // Quieter banner when OpenCode tears down ConPTY and we respawn.
+            command.arg("-NoLogo");
+            command
         } else {
-            "bash"
+            CommandBuilder::new("bash")
         };
-        let mut cmd = CommandBuilder::new(shell);
         if !cwd.is_empty() {
             cmd.cwd(cwd);
         }
-        self.spawn_with(id, cmd, app)
+        self.spawn_with(id, cmd, cols, rows, app)
     }
 
     /// Spawn a pty running a user-configured script/command. `shell_kind` is one
-    /// of "ps1" | "bat" | "sh" | "command" | "script". For "script", the target
-    /// is a file path and the kind is inferred from its extension.
+    /// of "ps1" | "bat" | "sh" | "command" | "interactive" | "script".
+    /// `interactive` runs the command inside a login shell that stays open after
+    /// the command exits (terminal profiles). For "script", the target is a file
+    /// path and the kind is inferred from its extension.
     pub fn spawn_script(
         &self,
         id: String,
@@ -61,21 +72,25 @@ impl TerminalManager {
         shell_kind: &str,
         target: &str,
         env: HashMap<String, String>,
+        cols: u16,
+        rows: u16,
         app: AppHandle,
     ) -> Result<(), String> {
         let cmd = build_script_command(shell_kind, target, cwd, env)?;
-        self.spawn_with(id, cmd, app)
+        self.spawn_with(id, cmd, cols, rows, app)
     }
 
-    fn spawn_with(&self, id: String, cmd: CommandBuilder, app: AppHandle) -> Result<(), String> {
+    fn spawn_with(
+        &self,
+        id: String,
+        cmd: CommandBuilder,
+        cols: u16,
+        rows: u16,
+        app: AppHandle,
+    ) -> Result<(), String> {
         let pty_system = NativePtySystem::default();
         let pair: PtyPair = pty_system
-            .openpty(PtySize {
-                rows: 24,
-                cols: 80,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
+            .openpty(clamp_pty_size(cols, rows))
             .map_err(|e| e.to_string())?;
 
         let mut child = pair.slave.spawn_command(cmd).map_err(|e| e.to_string())?;
@@ -171,12 +186,7 @@ impl TerminalManager {
         if let Some(session) = sessions.get_mut(id) {
             session
                 .master
-                .resize(PtySize {
-                    rows,
-                    cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                })
+                .resize(clamp_pty_size(cols, rows))
                 .map_err(|e| e.to_string())
         } else {
             Ok(())
@@ -221,6 +231,16 @@ impl TerminalManager {
 impl Drop for TerminalManager {
     fn drop(&mut self) {
         self.kill_all();
+    }
+}
+
+/// Keep ConPTY / portable-pty sizes in a sane range (matches frontend clamp).
+fn clamp_pty_size(cols: u16, rows: u16) -> PtySize {
+    PtySize {
+        cols: cols.clamp(2, 1000),
+        rows: rows.clamp(1, 500),
+        pixel_width: 0,
+        pixel_height: 0,
     }
 }
 
@@ -302,6 +322,31 @@ fn resolve_script_command(
                 (
                     "bash".to_string(),
                     vec!["-c".to_string(), target.to_string()],
+                )
+            }
+        }
+        // Terminal profiles: run the startup command, then keep a shell prompt.
+        "interactive" => {
+            if cfg!(target_os = "windows") {
+                // Wrap in `& { ... }` so -NoExit reliably returns to a prompt after
+                // native TUIs (e.g. OpenCode) exit; bare `-Command opencode` often
+                // tears down the whole ConPTY session.
+                (
+                    "powershell.exe".to_string(),
+                    vec![
+                        "-NoLogo".to_string(),
+                        "-NoExit".to_string(),
+                        "-Command".to_string(),
+                        format!("& {{ {target} }}"),
+                    ],
+                )
+            } else {
+                (
+                    "bash".to_string(),
+                    vec![
+                        "-lc".to_string(),
+                        format!("{target}; exec bash"),
+                    ],
                 )
             }
         }
@@ -442,6 +487,28 @@ mod tests {
     }
 
     #[test]
+    fn resolve_script_command_builds_interactive_shell() {
+        let spec =
+            resolve_script_command("interactive", "opencode", "C:\\tmp", HashMap::new()).unwrap();
+        if cfg!(target_os = "windows") {
+            assert_eq!(spec.program, "powershell.exe");
+            assert_eq!(
+                spec.args,
+                vec![
+                    "-NoLogo".to_string(),
+                    "-NoExit".to_string(),
+                    "-Command".to_string(),
+                    "& { opencode }".to_string(),
+                ]
+            );
+        } else {
+            assert_eq!(spec.program, "bash");
+            assert_eq!(spec.args, vec!["-lc".to_string(), "opencode; exec bash".to_string()]);
+        }
+        assert_eq!(spec.cwd.as_deref(), Some("C:\\tmp"));
+    }
+
+    #[test]
     fn should_emit_terminal_exit_only_for_current_generation() {
         assert!(should_emit_terminal_exit(Some(3), 3));
         assert!(!should_emit_terminal_exit(Some(4), 3));
@@ -453,5 +520,18 @@ mod tests {
         assert_eq!(resolve_exit_code(Some(0)), 0);
         assert_eq!(resolve_exit_code(Some(42)), 42);
         assert_eq!(resolve_exit_code(None), 1);
+    }
+
+    #[test]
+    fn clamp_pty_size_bounds() {
+        let size = clamp_pty_size(120, 40);
+        assert_eq!(size.cols, 120);
+        assert_eq!(size.rows, 40);
+        let min = clamp_pty_size(0, 0);
+        assert_eq!(min.cols, 2);
+        assert_eq!(min.rows, 1);
+        let max = clamp_pty_size(u16::MAX, u16::MAX);
+        assert_eq!(max.cols, 1000);
+        assert_eq!(max.rows, 500);
     }
 }

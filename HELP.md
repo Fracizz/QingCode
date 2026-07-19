@@ -127,7 +127,7 @@ You can configure default startup commands for terminals:
 2. Add a profile (name + startup command).
 3. When creating a new terminal, right-click the **「+」** button to select a profile.
 
-> Common scenario: one-click entry into an AI CLI (e.g., `opencode`) or a project-specific script environment.
+> Common scenario: one-click entry into an AI CLI (e.g., `opencode`) or a project-specific script environment. Same as a normal terminal: a shell starts first, the startup command is typed automatically, and you can keep typing after it exits.
 
 ### Relationship Between Run Configurations and Terminal Profiles
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef } from 'react'
+import { lazy, Suspense, type MutableRefObject, type RefObject } from 'react'
 import { Terminal as TerminalIcon } from 'lucide-react'
 import PanelResizer from './PanelResizer'
 import TerminalTabs from './TerminalTabs'
@@ -22,14 +22,17 @@ export interface TerminalPanelProps {
   terminalOpen: boolean
   terminalHeight: number
   isTerminalResizing: boolean
+  /** Same ref the drag handler updates — keeps React style.height in sync mid-drag. */
+  dragHeightRef: MutableRefObject<number>
   onResizerMouseDown: (e: React.MouseEvent) => void
-  terminalPanelRef: React.RefObject<HTMLDivElement | null>
+  terminalPanelRef: RefObject<HTMLDivElement | null>
 }
 
 export default function TerminalPanel({
   terminalOpen,
   terminalHeight,
   isTerminalResizing,
+  dragHeightRef,
   onResizerMouseDown,
   terminalPanelRef,
 }: TerminalPanelProps) {
@@ -37,12 +40,8 @@ export default function TerminalPanel({
   const terminals = useTerminalStore(s => s.terminals)
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
   const currentProject = useProjectStore(s => s.currentProject)
-  const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
-  const dragHeightRef = useRef(terminalHeight)
-
-  useEffect(() => {
-    dragHeightRef.current = terminalHeight
-  }, [terminalHeight])
+  const projectTerminals = terminals.filter(term => term.projectId === currentProject?.id)
+  const liveHeight = isTerminalResizing ? dragHeightRef.current : terminalHeight
 
   return (
     <>
@@ -50,10 +49,10 @@ export default function TerminalPanel({
         <PanelResizer
           orientation="horizontal"
           active={isTerminalResizing}
-          tooltip={terminalResizerHint(terminalHeight)}
+          tooltip={terminalResizerHint(liveHeight)}
           tooltipSide="top"
           onMouseDown={onResizerMouseDown}
-          ariaValueNow={terminalHeight}
+          ariaValueNow={liveHeight}
           ariaValueMin={TERMINAL_MIN_HEIGHT}
           ariaValueMax={getTerminalMaxHeight()}
         />
@@ -63,16 +62,12 @@ export default function TerminalPanel({
         ref={terminalPanelRef}
         data-terminal-panel
         className={`flex-col flex-shrink-0 min-h-0 overflow-hidden border-t border-border ${
-          isTerminalResizing ? '' : 'transition-all duration-200 ease-out'
+          isTerminalResizing ? '' : 'transition-[height,opacity] duration-200 ease-out'
         } ${
           terminalOpen ? 'flex opacity-100' : 'opacity-0 pointer-events-none h-0 border-t-0'
         }`}
         style={{
-          height: terminalOpen
-            ? isTerminalResizing
-              ? dragHeightRef.current
-              : terminalHeight
-            : 0,
+          height: terminalOpen ? liveHeight : 0,
         }}
       >
         <TerminalTabs />

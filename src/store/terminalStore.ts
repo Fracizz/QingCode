@@ -24,6 +24,12 @@ import {
   saveTerminalOutputSnapshot,
   truncateScrollbackBytes,
 } from '../lib/terminalSessionPersist'
+import {
+  DEFAULT_PTY_COLS,
+  DEFAULT_PTY_ROWS,
+  normalizePtySize,
+} from '../lib/terminalPtySize'
+import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 /** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
@@ -32,8 +38,146 @@ const OUTPUT_PERSIST_DEBOUNCE_MS = 800
 
 /** 够"快"才算启动失败：进程在此时长（毫秒）内非零退出，视为秒退并提示。 */
 const QUICK_FAIL_THRESHOLD_MS = 2000
+/** Max wait for the first PTY bytes before typing a profile startup command. */
+const SHELL_READY_TIMEOUT_MS = 800
+/** If xterm never reports a size (panel closed), spawn with defaults. */
+const PTY_SPAWN_FALLBACK_MS = 2500
+
+const ptySpawnInFlight = new Set<string>()
+const ptySpawnFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>()
+/** Last fitted size per tab — used when restarting before the next fit. */
+const lastPtySize = new Map<string, { cols: number; rows: number }>()
+/** Kills from close/restart — do not auto-respawn a shell for these. */
+const intentionalPtyKills = new Set<string>()
+
+function clearPtySpawnFallback(id: string) {
+  const timer = ptySpawnFallbackTimers.get(id)
+  if (timer !== undefined) {
+    clearTimeout(timer)
+    ptySpawnFallbackTimers.delete(id)
+  }
+}
+
+function rememberPtySize(id: string, cols: number, rows: number) {
+  lastPtySize.set(id, normalizePtySize(cols, rows))
+}
+
+function schedulePtySpawnFallback(id: string, spawn: () => void) {
+  clearPtySpawnFallback(id)
+  ptySpawnFallbackTimers.set(
+    id,
+    setTimeout(() => {
+      ptySpawnFallbackTimers.delete(id)
+      spawn()
+    }, PTY_SPAWN_FALLBACK_MS),
+  )
+}
+
+function markIntentionalPtyKill(id: string) {
+  intentionalPtyKills.add(id)
+}
+
+function consumeIntentionalPtyKill(id: string): boolean {
+  if (!intentionalPtyKills.has(id)) return false
+  intentionalPtyKills.delete(id)
+  return true
+}
 
 type TerminalOutputListener = (data: Uint8Array) => void
+
+/**
+ * Profile terminals should behave like a normal shell: start PowerShell/bash,
+ * type the startup command, and keep the prompt after it exits.
+ */
+function isProfileStartupTerminal(tab: Pick<TerminalTab, 'launchCommand' | 'shellKind' | 'profileId'>): boolean {
+  if (!tab.launchCommand.trim()) return false
+  // Run-config tasks always set a concrete script kind; profiles use interactive or omit it.
+  if (tab.shellKind && tab.shellKind !== 'interactive') return false
+  return true
+}
+
+async function waitForShellReady(id: string): Promise<void> {
+  await new Promise<void>(resolve => {
+    let settled = false
+    let unlisten: UnlistenFn | null = null
+    const finish = () => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(fallback)
+      unlisten?.()
+      unlisten = null
+      resolve()
+    }
+    const fallback = window.setTimeout(finish, SHELL_READY_TIMEOUT_MS)
+    void listen<{ id: string }>('terminal-data', event => {
+      if (event.payload.id === id) finish()
+    }).then(fn => {
+      if (settled) {
+        fn()
+        return
+      }
+      unlisten = fn
+    })
+  })
+  // Let the prompt finish painting before we type.
+  await new Promise<void>(resolve => {
+    window.setTimeout(resolve, 60)
+  })
+}
+
+async function injectStartupCommand(id: string, command: string): Promise<void> {
+  const line = command.trim()
+  if (!line) return
+  await waitForShellReady(id)
+  try {
+    await safeInvoke('终端输入', 'write_terminal', { id, data: `${line}\r` })
+  } catch {
+    // Shell may have exited during the wait; restart UI will surface that.
+  }
+}
+
+/** Re-open a shell after OpenCode/TUI tore down the ConPTY; keep scrollback. */
+async function respawnShellAfterExit(id: string): Promise<void> {
+  const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+  if (!tab || tab.ptySpawnPending) return
+  if (ptySpawnInFlight.has(id)) return
+  ptySpawnInFlight.add(id)
+  const size = lastPtySize.get(id) ?? {
+    cols: DEFAULT_PTY_COLS,
+    rows: DEFAULT_PTY_ROWS,
+  }
+  useTerminalStore.setState(s => ({
+    terminals: s.terminals.map(terminal =>
+      terminal.id === id
+        ? {
+            ...terminal,
+            status: 'running',
+            exitCode: null,
+            startedAt: Date.now(),
+          }
+        : terminal
+    ),
+  }))
+  try {
+    await safeInvoke('新建终端', 'create_terminal', {
+      id,
+      cwd: tab.cwd,
+      cols: size.cols,
+      rows: size.rows,
+    })
+  } catch (e) {
+    console.error('respawnShellAfterExit failed:', e)
+    useTerminalStore.setState(s => ({
+      terminals: s.terminals.map(terminal =>
+        terminal.id === id
+          ? { ...terminal, status: 'exited', exitCode: null }
+          : terminal
+      ),
+    }))
+  } finally {
+    ptySpawnInFlight.delete(id)
+  }
+}
 
 /** Late-subscriber catch-up (cleared once a live listener attaches). */
 const terminalOutputBuffers = new Map<string, Uint8Array>()
@@ -205,7 +349,7 @@ function recordTypedInput(id: string, data: string) {
   scheduleTerminalOutputPersist()
 }
 
-export type ShellKind = 'ps1' | 'bat' | 'sh' | 'command' | 'script'
+export type ShellKind = 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
 
 interface TerminalState {
   terminals: TerminalTab[]
@@ -246,6 +390,11 @@ interface TerminalState {
   setActiveTerminal: (id: string) => void
   writeToTerminal: (id: string, data: string) => Promise<void>
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<void>
+  /**
+   * Create the PTY after xterm has fitted. Idempotent while `ptySpawnPending`.
+   * Pass measured cols/rows so TUIs (e.g. OpenCode) start on the real grid.
+   */
+  spawnPendingTerminal: (id: string, cols: number, rows: number) => Promise<void>
   renameTerminal: (id: string, name: string) => void
   initializeTerminalEvents: () => Promise<UnlistenFn>
 }
@@ -304,45 +453,25 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       projectId,
       cwd: projectPath,
       profileId: profile.id,
-      launchCommand: profile.command.trim().replace(/\s*\n+\s*/g, ' && '),
+      // Typed into a normal shell; `;` joins multi-line profile commands for PowerShell.
+      launchCommand: profile.command.trim().replace(/\s*\n+\s*/g, '; '),
+      // OSC titles rename the tab (cwd / apps); generic shell noise is filtered in UI.
       allowTitleRename: true,
       status: 'starting',
       exitCode: null,
       startedAt: Date.now(),
+      ptySpawnPending: true,
     }
     set(s => ({
       terminals: [...s.terminals, tab],
       activeTerminalId: id,
       activeTerminalByProject: { ...s.activeTerminalByProject, [projectId]: id },
     }))
-    try {
-      if (tab.launchCommand) {
-        await safeInvoke('启动终端配置', 'spawn_script', {
-          id,
-          cwd: projectPath,
-          shellKind: 'command',
-          target: tab.launchCommand,
-          env: {},
-        })
-      } else {
-        await safeInvoke('新建终端', 'create_terminal', { id, cwd: projectPath })
-      }
-      set(s => ({
-        terminals: s.terminals.map(terminal =>
-          terminal.id === id && terminal.status === 'starting'
-            ? { ...terminal, status: 'running' }
-            : terminal
-        ),
-      }))
-    } catch (e) {
-      console.error('create_terminal failed:', e)
-      set(s => ({
-        terminals: s.terminals.map(terminal =>
-          terminal.id === id ? { ...terminal, status: 'exited', exitCode: null } : terminal
-        ),
-      }))
-      useProjectStore.getState().pushToast('error', `新建终端失败: ${String(e)}`)
-    }
+    // Ensure the panel has a non-zero height before xterm fit → PTY spawn.
+    useUIStore.getState().openTerminalPanel()
+    schedulePtySpawnFallback(id, () => {
+      void get().spawnPendingTerminal(id, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS)
+    })
     return id
   },
 
@@ -385,40 +514,25 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       status: 'starting',
       exitCode: null,
       startedAt: Date.now(),
+      ptySpawnPending: true,
     }
     set(s => ({
       terminals: [...s.terminals, tab],
       activeTerminalId: id,
       activeTerminalByProject: { ...s.activeTerminalByProject, [projectId]: id },
     }))
-    try {
-      await safeInvoke('启动任务', 'spawn_script', {
-        id,
-        cwd,
-        shellKind,
-        target,
-        env,
-      })
-      set(s => ({
-        terminals: s.terminals.map(terminal =>
-          terminal.id === id && terminal.status === 'starting'
-            ? { ...terminal, status: 'running' }
-            : terminal
-        ),
-      }))
-    } catch (e) {
-      console.error('spawn_script failed:', e)
-      set(s => ({
-        terminals: s.terminals.map(terminal =>
-          terminal.id === id ? { ...terminal, status: 'exited', exitCode: null } : terminal
-        ),
-      }))
-      useProjectStore.getState().pushToast('error', `启动任务失败: ${String(e)}`)
-    }
+    useUIStore.getState().openTerminalPanel()
+    schedulePtySpawnFallback(id, () => {
+      void get().spawnPendingTerminal(id, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS)
+    })
     return id
   },
 
   closeTerminal: async (id: string) => {
+    clearPtySpawnFallback(id)
+    ptySpawnInFlight.delete(id)
+    lastPtySize.delete(id)
+    markIntentionalPtyKill(id)
     try {
       await safeInvoke('关闭终端', 'kill_terminal', { id })
     } catch {}
@@ -446,6 +560,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const others = get()
       .terminals.filter(t => t.projectId === keep.projectId && t.id !== id)
       .map(t => t.id)
+    for (const tid of others) {
+      clearPtySpawnFallback(tid)
+      ptySpawnInFlight.delete(tid)
+      lastPtySize.delete(tid)
+      markIntentionalPtyKill(tid)
+    }
     await Promise.all(
       others.map(tid => safeInvoke('关闭终端', 'kill_terminal', { id: tid }).catch(() => undefined))
     )
@@ -462,6 +582,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const ids = get()
       .terminals.filter(t => t.projectId === projectId)
       .map(t => t.id)
+    for (const id of ids) {
+      clearPtySpawnFallback(id)
+      ptySpawnInFlight.delete(id)
+      lastPtySize.delete(id)
+      markIntentionalPtyKill(id)
+    }
     await Promise.all(
       ids.map(id => safeInvoke('关闭终端', 'kill_terminal', { id }).catch(() => undefined))
     )
@@ -481,6 +607,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const ids = get()
       .terminals.filter(terminal => terminal.projectId === projectId)
       .map(terminal => terminal.id)
+    for (const id of ids) {
+      clearPtySpawnFallback(id)
+      ptySpawnInFlight.delete(id)
+      lastPtySize.delete(id)
+      markIntentionalPtyKill(id)
+    }
     await Promise.all(
       ids.map(id => safeInvoke('关闭终端', 'kill_terminal', { id }).catch(() => undefined))
     )
@@ -520,6 +652,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       terminalOutputBuffers.delete(id)
       terminalInputPending.delete(id)
     }
+    clearPtySpawnFallback(id)
+    ptySpawnInFlight.delete(id)
+    markIntentionalPtyKill(id)
+    try {
+      await safeInvoke('关闭终端', 'kill_terminal', { id })
+    } catch {}
     set(s => ({
       terminals: s.terminals.map(terminal =>
         terminal.id === id
@@ -530,39 +668,23 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
               startedAt: Date.now(),
               awaitingRestoreSpawn: false,
               restorePreservedOutput: options?.preserveOutput === true,
+              ptySpawnPending: true,
             }
           : terminal
       ),
     }))
-    try {
-      if (tab.launchCommand) {
-        // Banner is written by Terminal.tsx after reset; avoid double echo.
-        await safeInvoke('重启终端配置', 'spawn_script', {
-          id,
-          cwd: tab.cwd,
-          shellKind: tab.shellKind ?? 'command',
-          target: tab.launchCommand,
-          env: tab.env ?? {},
-        })
-      } else {
-        await safeInvoke('重启终端', 'create_terminal', { id, cwd: tab.cwd })
-      }
-      set(s => ({
-        terminals: s.terminals.map(terminal =>
-          terminal.id === id && terminal.status === 'starting'
-            ? { ...terminal, status: 'running', restorePreservedOutput: undefined }
-            : terminal
-        ),
-      }))
-    } catch (e) {
-      set(s => ({
-        terminals: s.terminals.map(terminal =>
-          terminal.id === id
-            ? { ...terminal, status: 'exited', exitCode: null, restorePreservedOutput: undefined }
-            : terminal
-        ),
-      }))
-      useProjectStore.getState().pushToast('error', `重启终端失败: ${String(e)}`)
+    useUIStore.getState().openTerminalPanel()
+    const remembered = lastPtySize.get(id)
+    schedulePtySpawnFallback(id, () => {
+      void get().spawnPendingTerminal(
+        id,
+        remembered?.cols ?? DEFAULT_PTY_COLS,
+        remembered?.rows ?? DEFAULT_PTY_ROWS,
+      )
+    })
+    // Prefer an immediate respawn when we already know the grid (xterm still mounted).
+    if (remembered) {
+      void get().spawnPendingTerminal(id, remembered.cols, remembered.rows)
     }
   },
 
@@ -585,6 +707,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const outgoing = get()
       .terminals.filter(t => replace.has(t.projectId))
       .map(t => t.id)
+    for (const id of outgoing) markIntentionalPtyKill(id)
     await Promise.all(
       outgoing.map(id => safeInvoke('关闭终端', 'kill_terminal', { id }).catch(() => undefined)),
     )
@@ -670,9 +793,80 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   resizeTerminal: async (id: string, cols: number, rows: number) => {
+    const size = normalizePtySize(cols, rows)
+    rememberPtySize(id, size.cols, size.rows)
     try {
-      await safeInvoke('终端尺寸', 'resize_terminal', { id, cols, rows })
+      await safeInvoke('终端尺寸', 'resize_terminal', {
+        id,
+        cols: size.cols,
+        rows: size.rows,
+      })
     } catch {}
+  },
+
+  spawnPendingTerminal: async (id: string, cols: number, rows: number) => {
+    const tab = get().terminals.find(terminal => terminal.id === id)
+    if (!tab?.ptySpawnPending) return
+    if (ptySpawnInFlight.has(id)) return
+    ptySpawnInFlight.add(id)
+    clearPtySpawnFallback(id)
+    const size = normalizePtySize(cols, rows)
+    rememberPtySize(id, size.cols, size.rows)
+    // Clear pending before await so concurrent fit callbacks do not double-spawn.
+    set(s => ({
+      terminals: s.terminals.map(terminal =>
+        terminal.id === id ? { ...terminal, ptySpawnPending: false } : terminal
+      ),
+    }))
+    try {
+      if (tab.launchCommand && tab.shellKind && tab.shellKind !== 'interactive') {
+        await safeInvoke('启动任务', 'spawn_script', {
+          id,
+          cwd: tab.cwd,
+          shellKind: tab.shellKind,
+          target: tab.launchCommand,
+          env: tab.env ?? {},
+          cols: size.cols,
+          rows: size.rows,
+        })
+      } else {
+        // Profile / plain shell: spawn shell at real size, then type startup cmd.
+        await safeInvoke('新建终端', 'create_terminal', {
+          id,
+          cwd: tab.cwd,
+          cols: size.cols,
+          rows: size.rows,
+        })
+        if (isProfileStartupTerminal(tab)) {
+          void injectStartupCommand(id, tab.launchCommand)
+        }
+      }
+      set(s => ({
+        terminals: s.terminals.map(terminal =>
+          terminal.id === id && terminal.status === 'starting'
+            ? { ...terminal, status: 'running', restorePreservedOutput: undefined }
+            : terminal
+        ),
+      }))
+    } catch (e) {
+      console.error('spawnPendingTerminal failed:', e)
+      set(s => ({
+        terminals: s.terminals.map(terminal =>
+          terminal.id === id
+            ? {
+                ...terminal,
+                status: 'exited',
+                exitCode: null,
+                restorePreservedOutput: undefined,
+                ptySpawnPending: false,
+              }
+            : terminal
+        ),
+      }))
+      useProjectStore.getState().pushToast('error', `新建终端失败: ${String(e)}`)
+    } finally {
+      ptySpawnInFlight.delete(id)
+    }
   },
 
   renameTerminal: (id, name) =>
@@ -690,9 +884,30 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       listen<{ id: string; exit_code: number }>('terminal-exit', event => {
         const { id, exit_code } = event.payload
         const tab = get().terminals.find(t => t.id === id)
-        const startedAt = tab?.startedAt
+        if (!tab) {
+          consumeIntentionalPtyKill(id)
+          return
+        }
+        // close / restart / replace — do not treat as a soft shell death.
+        if (consumeIntentionalPtyKill(id)) {
+          if (tab.ptySpawnPending || tab.status === 'starting') return
+          set(s => ({
+            terminals: s.terminals.map(terminal =>
+              terminal.id === id
+                ? { ...terminal, status: 'exited', exitCode: exit_code }
+                : terminal
+            ),
+          }))
+          return
+        }
+        // OpenCode etc. often kill the whole ConPTY; reopen a shell so the
+        // user can keep typing instead of seeing「进程已退出」.
+        if (shouldKeepShellAfterExit(tab)) {
+          void respawnShellAfterExit(id)
+          return
+        }
+        const startedAt = tab.startedAt
         const quickFail =
-          !!tab &&
           !!startedAt &&
           Date.now() - startedAt < QUICK_FAIL_THRESHOLD_MS &&
           exit_code !== 0
@@ -707,7 +922,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
               : terminal
           ),
         }))
-        if (quickFail && tab) {
+        if (quickFail) {
           // 进程秒退且非零退出：切到该终端并提示，便于直接看到报错。
           useUIStore.getState().openTerminalPanel()
           get().setActiveTerminal(id)

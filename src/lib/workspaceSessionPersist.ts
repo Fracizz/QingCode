@@ -32,7 +32,7 @@ export type PersistedTerminalMeta = {
   name: string
   cwd: string
   launchCommand: string
-  shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'script'
+  shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
   env?: Record<string, string>
   profileId?: string
   allowTitleRename?: boolean
@@ -69,7 +69,7 @@ export type TerminalSnapshotInput = {
   projectId: string
   cwd: string
   launchCommand: string
-  shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'script'
+  shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
   env?: Record<string, string>
   profileId?: string
   allowTitleRename?: boolean
@@ -129,6 +129,7 @@ function parseTerminal(value: unknown): PersistedTerminalMeta | null {
     shellKind === 'bat' ||
     shellKind === 'sh' ||
     shellKind === 'command' ||
+    shellKind === 'interactive' ||
     shellKind === 'script'
   ) {
     terminal.shellKind = shellKind

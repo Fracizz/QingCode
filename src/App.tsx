@@ -142,6 +142,7 @@ function App() {
     setTerminalOpen,
     terminalHeight,
     isTerminalResizing,
+    dragHeightRef,
     onResizerMouseDown,
     terminalPanelRef,
   } = useTerminalPanel()
@@ -376,6 +377,7 @@ function App() {
           terminalOpen={terminalOpen}
           terminalHeight={terminalHeight}
           isTerminalResizing={isTerminalResizing}
+          dragHeightRef={dragHeightRef}
           onResizerMouseDown={onResizerMouseDown}
           terminalPanelRef={terminalPanelRef}
         />
