@@ -26,6 +26,7 @@ import { useEditorStore, type ProjectEditorSession } from '../store/editorStore'
 import { persistTerminalOutputNow, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
 import type { EditorTab, TerminalTab } from '../types'
+import { isTerminalShellId, normalizeTerminalShell } from './terminalShell'
 
 const PERSIST_DEBOUNCE_MS = 400
 
@@ -90,6 +91,7 @@ export function terminalFromPersisted(
     launchCommand: meta.launchCommand,
     shellKind: meta.shellKind,
     env: meta.env,
+    shell: isTerminalShellId(meta.shell) ? normalizeTerminalShell(meta.shell) : undefined,
     profileId: meta.profileId,
     allowTitleRename: meta.allowTitleRename,
     status: 'exited',
@@ -285,6 +287,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
         projectId: t.projectId,
         cwd: t.cwd,
         launchCommand: t.launchCommand,
+        shell: t.shell,
         shellKind: t.shellKind,
         env: t.env,
         profileId: t.profileId,

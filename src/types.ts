@@ -1,4 +1,5 @@
 import type { OpenFileErrorKind } from './lib/openFileError'
+import type { TerminalShellId } from './lib/terminalShell'
 
 export interface Project {
   id: string
@@ -62,6 +63,8 @@ export interface TerminalTab {
   /** When set, spawn/restart uses `spawn_script` with this kind (run-config tasks). */
   shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
   env?: Record<string, string>
+  /** Host shell for profile terminals: powershell / pwsh / cmd / wsl / bash. */
+  shell?: TerminalShellId
   /** Profile used to spawn this terminal (settings → 终端). */
   profileId?: string
   /** Legacy flag; OSC follow is decided by shellKind + generic-title filter. */

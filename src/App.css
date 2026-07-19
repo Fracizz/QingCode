@@ -5,6 +5,7 @@
 @import "./styles/codemirror.css";
 @import "./styles/markdown.css";
 @import "./styles/xterm.css";
+@import "./styles/terminal-search.css";
 @import "./styles/animations.css";
 @import "./styles/panel-resizer.css";
 @import "./styles/settings.css";

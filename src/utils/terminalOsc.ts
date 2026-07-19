@@ -15,12 +15,38 @@ export function sanitizeOscTitle(title: string): string {
   return cleaned
 }
 
-/** Strip OSC title sequences from PTY output and surface titles for tab renaming. */
+export type TerminalOscHandlers = {
+  onTitle?: (title: string) => void
+  /** Foreground command started (FinalTerm / VS Code shell integration). */
+  onCommandStart?: () => void
+  /** Foreground command finished or prompt returned. */
+  onCommandEnd?: () => void
+}
+
+/**
+ * Parse shell-integration markers.
+ * - `133;C` / `633;C` → command executed
+ * - `133;D` / `633;D` → command finished
+ * - `133;A` / `633;A` → prompt start (treat as idle)
+ */
+export function parseShellIntegrationOsc(
+  body: string,
+): 'start' | 'end' | null {
+  // body is everything after `OSC ` / `]` — e.g. `133;C` or `633;D;0`
+  const match = /^(?:133|633);([A-Za-z])/.exec(body)
+  if (!match) return null
+  const code = match[1].toUpperCase()
+  if (code === 'C') return 'start'
+  if (code === 'D' || code === 'A') return 'end'
+  return null
+}
+
+/** Strip OSC title / shell-integration sequences from PTY output. */
 export class TerminalOscParser {
   private carry = ''
   private readonly decoder = new TextDecoder('utf-8', { fatal: false })
 
-  feed(data: Uint8Array, onTitle?: (title: string) => void): Uint8Array {
+  feed(data: Uint8Array, handlers?: TerminalOscHandlers): Uint8Array {
     const input = this.carry + this.decoder.decode(data, { stream: true })
 
     const output: string[] = []
@@ -55,11 +81,19 @@ export class TerminalOscParser {
       }
 
       const sequence = input.slice(start, end + endLength)
-      const match =
-        /^\x1b\]([012]);([\s\S]*)\x07$/.exec(sequence) ??
-        /^\x1b\]([012]);([\s\S]*)\x1b\\$/.exec(sequence)
-      const title = match?.[2]?.trim()
-      if (title) onTitle?.(sanitizeOscTitle(title))
+      const bodyMatch =
+        /^\x1b\]([\s\S]*)\x07$/.exec(sequence) ?? /^\x1b\]([\s\S]*)\x1b\\$/.exec(sequence)
+      const body = bodyMatch?.[1] ?? ''
+
+      const titleMatch = /^(?:0|1|2);([\s\S]*)$/.exec(body)
+      if (titleMatch) {
+        const title = titleMatch[1]?.trim()
+        if (title) handlers?.onTitle?.(sanitizeOscTitle(title))
+      } else {
+        const marker = parseShellIntegrationOsc(body)
+        if (marker === 'start') handlers?.onCommandStart?.()
+        else if (marker === 'end') handlers?.onCommandEnd?.()
+      }
 
       index = end + endLength
     }

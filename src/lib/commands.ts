@@ -27,6 +27,9 @@ import { openGitCompareWithHead } from './gitCompare'
 import {
   saveVisibleProjectsAsWorkspace,
 } from './namedWorkspaceActions'
+import { requestTerminalClear, requestTerminalSearch } from './terminalViewBridge'
+import { cyclePanelLayoutTemplate } from './panelLayoutTemplate'
+import { useTerminalStore } from '../store/terminalStore'
 
 export type AppCommand = {
   id: string
@@ -364,11 +367,50 @@ export function buildCommands(): AppCommand[] {
       },
     },
     {
+      id: 'view.toggleActivityBar',
+      title: '切换活动栏',
+      keywords: 'toggle activity bar hide show',
+      run: () => useUIStore.getState().toggleActivityBar(),
+    },
+    {
       id: 'view.toggleTerminal',
       title: '切换终端',
       keywords: 'terminal console',
       shortcutCommand: 'toggleTerminal',
       run: () => requestToggleTerminal(),
+    },
+    {
+      id: 'view.togglePanelLayout',
+      title: '切换面板布局',
+      keywords: 'layout panel terminal sidebar classic side',
+      shortcutCommand: 'togglePanelLayout',
+      run: () => {
+        cyclePanelLayoutTemplate()
+      },
+    },
+    {
+      id: 'terminal.find',
+      title: '在终端中查找',
+      keywords: 'terminal find search',
+      shortcutCommand: 'findInTerminal',
+      when: () => useTerminalStore.getState().terminals.length > 0,
+      run: () => {
+        useUIStore.getState().openTerminalPanel()
+        const id = useTerminalStore.getState().activeTerminalId
+        requestTerminalSearch(id ?? undefined)
+      },
+    },
+    {
+      id: 'terminal.clear',
+      title: '清空终端',
+      keywords: 'terminal clear',
+      shortcutCommand: 'clearTerminal',
+      when: () => useTerminalStore.getState().terminals.length > 0,
+      run: () => {
+        useUIStore.getState().openTerminalPanel()
+        const id = useTerminalStore.getState().activeTerminalId
+        requestTerminalClear(id ?? undefined)
+      },
     },
     {
       id: 'view.toggleMinimap',

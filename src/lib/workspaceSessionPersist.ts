@@ -34,6 +34,8 @@ export type PersistedTerminalMeta = {
   launchCommand: string
   shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
   env?: Record<string, string>
+  /** Host shell id: powershell / pwsh / cmd / wsl / bash. */
+  shell?: string
   profileId?: string
   allowTitleRename?: boolean
 }
@@ -71,6 +73,7 @@ export type TerminalSnapshotInput = {
   launchCommand: string
   shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
   env?: Record<string, string>
+  shell?: string
   profileId?: string
   allowTitleRename?: boolean
 }
@@ -140,6 +143,9 @@ function parseTerminal(value: unknown): PersistedTerminalMeta | null {
       if (typeof entry === 'string') env[key] = entry
     }
     if (Object.keys(env).length > 0) terminal.env = env
+  }
+  if (typeof value.shell === 'string' && value.shell.trim()) {
+    terminal.shell = value.shell.trim()
   }
   if (typeof value.profileId === 'string') terminal.profileId = value.profileId
   if (typeof value.allowTitleRename === 'boolean') {
@@ -262,6 +268,7 @@ export function serializeTerminalMeta(terminal: TerminalSnapshotInput): Persiste
   }
   if (terminal.shellKind) out.shellKind = terminal.shellKind
   if (terminal.env && Object.keys(terminal.env).length > 0) out.env = { ...terminal.env }
+  if (terminal.shell) out.shell = terminal.shell
   if (terminal.profileId) out.profileId = terminal.profileId
   if (typeof terminal.allowTitleRename === 'boolean') {
     out.allowTitleRename = terminal.allowTitleRename

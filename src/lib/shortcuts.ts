@@ -7,7 +7,10 @@ export type ShortcutCommand =
   | 'goToSymbolInEditor'
   | 'goToLine'
   | 'toggleMinimap'
+  | 'togglePanelLayout'
   | 'renameInExplorer'
+  | 'findInTerminal'
+  | 'clearTerminal'
 
 export type ShortcutMap = Record<ShortcutCommand, string>
 
@@ -21,7 +24,12 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   goToSymbolInEditor: 'Ctrl+Shift+O',
   goToLine: 'Ctrl+G',
   toggleMinimap: 'Ctrl+Shift+G',
+  /** Unbound by default — set in Shortcut Settings if desired. */
+  togglePanelLayout: '',
   renameInExplorer: 'F2',
+  /** Only applied when focus is inside the terminal (.xterm). */
+  findInTerminal: 'Ctrl+F',
+  clearTerminal: 'Ctrl+Shift+K',
 }
 
 export function isShortcutBound(shortcut: string): boolean {

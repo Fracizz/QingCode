@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -26,13 +27,38 @@ import {
   TERMINAL_CURSOR_SETTINGS_EVENT,
   getTerminalCursorBlinking,
 } from '../lib/terminalCursorSettings'
+import {
+  TERMINAL_CLEAR_EVENT,
+  TERMINAL_SEARCH_EVENT,
+  type TerminalViewBridgeDetail,
+} from '../lib/terminalViewBridge'
+import {
+  markTerminalCommandFinished,
+  markTerminalCommandStarted,
+} from '../lib/terminalCommandActivity'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import Tooltip from './Tooltip'
 import { translate } from '../lib/i18n'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
+import TerminalSearchBar from './TerminalSearchBar'
 import '@xterm/xterm/css/xterm.css'
+
+/** Highlight + count require decorations; colors must be #RRGGBB. */
+const TERMINAL_SEARCH_DECORATIONS: NonNullable<ISearchOptions['decorations']> = {
+  matchBackground: '#613214',
+  activeMatchBackground: '#515c6a',
+  matchOverviewRuler: '#d18616',
+  activeMatchColorOverviewRuler: '#f3a600',
+}
+
+function terminalSearchOptions(incremental = false): ISearchOptions {
+  return {
+    incremental,
+    decorations: TERMINAL_SEARCH_DECORATIONS,
+  }
+}
 
 // Backgrounds match App.css --color-bg-deep so the caret/outline stays visible.
 const DARK_THEME = {
@@ -133,9 +159,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   const containerRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
+  const searchAddonRef = useRef<SearchAddon | null>(null)
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchMatchIndex, setSearchMatchIndex] = useState(-1)
+  const [searchMatchTotal, setSearchMatchTotal] = useState(0)
   isActiveRef.current = isActive
   const writeToTerminal = useTerminalStore(s => s.writeToTerminal)
   const resizeTerminal = useTerminalStore(s => s.resizeTerminal)
@@ -173,6 +204,42 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     xtermRef.current?.selectAll()
   }
 
+  const clearBuffer = () => {
+    const term = xtermRef.current
+    if (!term) return
+    term.clear()
+    term.scrollToBottom()
+  }
+
+  const resetSearchMatch = () => {
+    setSearchMatchIndex(-1)
+    setSearchMatchTotal(0)
+  }
+
+  const openSearch = () => {
+    setSearchOpen(true)
+    resetSearchMatch()
+  }
+
+  const closeSearch = () => {
+    searchAddonRef.current?.clearDecorations()
+    setSearchOpen(false)
+    resetSearchMatch()
+    if (isActiveRef.current) xtermRef.current?.focus()
+  }
+
+  const runFind = (direction: 'next' | 'previous') => {
+    const addon = searchAddonRef.current
+    const query = searchQuery
+    if (!addon || !query.trim()) {
+      resetSearchMatch()
+      return
+    }
+    const opts = terminalSearchOptions(false)
+    if (direction === 'next') addon.findNext(query, opts)
+    else addon.findPrevious(query, opts)
+  }
+
   const contextMenuItems = (): ContextMenuItem[] => [
     {
       label: translate('复制'),
@@ -194,6 +261,17 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       label: translate('全选'),
       separatorBefore: true,
       action: selectAll,
+    },
+    {
+      label: translate('在终端中查找'),
+      shortcut: 'Ctrl+F',
+      separatorBefore: true,
+      action: openSearch,
+    },
+    {
+      label: translate('清空终端'),
+      shortcut: 'Ctrl+Shift+K',
+      action: clearBuffer,
     },
   ]
 
@@ -249,6 +327,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     })
 
     const fitAddon = new FitAddon()
+    const searchAddon = new SearchAddon()
     const linkAddon = new WebLinksAddon((_event, uri) => {
       // Ctrl/Cmd + 点击链接：用系统默认浏览器打开（Tauri opener 插件）。
       void openUrl(uri).catch(e => {
@@ -258,11 +337,17 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     const clipboardAddon = new ClipboardAddon()
     const unicode11 = new Unicode11Addon()
     term.loadAddon(fitAddon)
+    term.loadAddon(searchAddon)
     term.loadAddon(linkAddon)
     term.loadAddon(clipboardAddon)
     term.loadAddon(unicode11)
     term.unicode.activeVersion = '11'
     term.open(containerRef.current)
+    searchAddonRef.current = searchAddon
+    const searchResultsSub = searchAddon.onDidChangeResults(event => {
+      setSearchMatchIndex(event.resultIndex)
+      setSearchMatchTotal(event.resultCount)
+    })
 
     // Prefer WebGL so customGlyphs apply; fall back silently to canvas.
     try {
@@ -297,6 +382,16 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       if (event.type !== 'keydown') return true
       const mod = event.ctrlKey || event.metaKey
       const key = event.key.toLowerCase()
+      if (mod && !event.altKey && !event.shiftKey && key === 'f') {
+        event.preventDefault()
+        openSearch()
+        return false
+      }
+      if (mod && event.shiftKey && !event.altKey && key === 'k') {
+        event.preventDefault()
+        clearBuffer()
+        return false
+      }
       if (mod && !event.altKey && !event.shiftKey && key === 'c') {
         if (term.hasSelection()) {
           void copySelection()
@@ -392,13 +487,17 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     const oscParser = new TerminalOscParser()
     const subscribeTimer = window.setTimeout(() => {
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
-        const cleaned = oscParser.feed(data, title => {
-          const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
-          // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.
-          // Generic ConPTY/PowerShell titles are ignored (see shouldApplyOscTabTitle).
-          if (shouldApplyOscTabTitle(current, title)) {
-            useTerminalStore.getState().renameTerminal(terminalId, title)
-          }
+        const cleaned = oscParser.feed(data, {
+          onTitle: title => {
+            const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+            // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.
+            // Generic ConPTY/PowerShell titles are ignored (see shouldApplyOscTabTitle).
+            if (shouldApplyOscTabTitle(current, title)) {
+              useTerminalStore.getState().renameTerminal(terminalId, title)
+            }
+          },
+          onCommandStart: () => markTerminalCommandStarted(terminalId),
+          onCommandEnd: () => markTerminalCommandFinished(terminalId),
         })
         term.write(cleaned)
       })
@@ -434,11 +533,13 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       window.removeEventListener(TERMINAL_CURSOR_SETTINGS_EVENT, updateCursor)
       window.removeEventListener(THEME_SETTINGS_EVENT, updateTheme)
       ro.disconnect()
+      searchResultsSub.dispose()
       container.removeEventListener('paste', onPaste, true)
       container.removeEventListener('mousedown', onMouseDown)
       term.dispose()
       container.replaceChildren()
       xtermRef.current = null
+      searchAddonRef.current = null
     }
   }, [terminalId, writeToTerminal, resizeTerminal, spawnPendingTerminal])
 
@@ -452,6 +553,38 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     if (!ptySpawnPending) return
     scheduleFit(true, isActiveRef.current)
   }, [ptySpawnPending, terminalId])
+
+  useEffect(() => {
+    const matches = (detail?: TerminalViewBridgeDetail) => {
+      if (detail?.terminalId && detail.terminalId !== terminalId) return false
+      return isActiveRef.current || detail?.terminalId === terminalId
+    }
+    const onClear = (event: Event) => {
+      const detail = (event as CustomEvent<TerminalViewBridgeDetail>).detail
+      if (!matches(detail)) return
+      clearBuffer()
+    }
+    const onSearch = (event: Event) => {
+      const detail = (event as CustomEvent<TerminalViewBridgeDetail>).detail
+      if (!matches(detail)) return
+      openSearch()
+    }
+    window.addEventListener(TERMINAL_CLEAR_EVENT, onClear)
+    window.addEventListener(TERMINAL_SEARCH_EVENT, onSearch)
+    return () => {
+      window.removeEventListener(TERMINAL_CLEAR_EVENT, onClear)
+      window.removeEventListener(TERMINAL_SEARCH_EVENT, onSearch)
+    }
+  }, [terminalId])
+
+  useEffect(() => {
+    if (!searchOpen || !searchQuery.trim()) {
+      resetSearchMatch()
+      searchAddonRef.current?.clearDecorations()
+      return
+    }
+    searchAddonRef.current?.findNext(searchQuery, terminalSearchOptions(true))
+  }, [searchQuery, searchOpen])
 
   useEffect(() => {
     const term = xtermRef.current
@@ -502,7 +635,18 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
           </div>
         </Tooltip>
       ) : null}
-      <div className="min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 py-2">
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 py-2">
+        {searchOpen ? (
+          <TerminalSearchBar
+            query={searchQuery}
+            onQueryChange={setSearchQuery}
+            onFindNext={() => runFind('next')}
+            onFindPrevious={() => runFind('previous')}
+            onClose={closeSearch}
+            matchIndex={searchMatchIndex}
+            matchTotal={searchMatchTotal}
+          />
+        ) : null}
         <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
       </div>
       {contextMenu && (

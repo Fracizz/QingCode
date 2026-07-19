@@ -9,11 +9,15 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 ### Added
 
 - Editor minimap (CodeGlance-inspired): Lezer syntax colors, caret line, hover Quick View, right-click quick config, `Ctrl+Shift+G` toggle; setting `editor.minimap.enabled` (on by default; ≤1MB full / 1–5MB density / >5MB hidden)
+- Find in terminal (`Ctrl+F`) and clear buffer (`Ctrl+Shift+K` / context menu / command palette)
+- Global default terminal shell (Settings → Terminal): Windows defaults to `pwsh` (cmd / WSL / Windows PowerShell available); macOS/Linux defaults to `zsh` (Bash / pwsh available); built-in Ordinary Terminal follows this setting; custom profiles may override
+- Terminal busy detection: ignore console-host noise children; honor shell-integration OSC 133/633 “command running”; only one-shot run tasks stay always-busy
 
 ### Changed
 
 - Local packaging unified as `pnpm package`: one pass builds Windows x64 portable + NSIS installer (ARM64/macOS remain CI)
 - Hover tips use in-app `Tooltip` only: removed browser-native `title` tips (e.g. empty-editor recent files); design docs ban native tips, enforced by ESLint
+- Terminal profiles launch via a single `interactive` spawn path (keep shell after command); auto-respawn prompt when OpenCode tears down ConPTY; PTY created after xterm fit with real size
 
 ## [0.1.4] - 2026-07-18
 

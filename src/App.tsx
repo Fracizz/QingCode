@@ -44,6 +44,12 @@ import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
 import { useTerminalPanel } from './hooks/useTerminalPanel'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
 import {
+  loadPanelLayoutTemplate,
+  PANEL_LAYOUT_CHANGED_EVENT,
+  terminalPositionForTemplate,
+  type PanelLayoutTemplate,
+} from './lib/panelLayoutTemplate'
+import {
   markWorkspaceSessionPersistReady,
   pruneWorkspaceSessions,
 } from './lib/workspaceSessionSync'
@@ -141,14 +147,27 @@ function App() {
     terminalOpen,
     setTerminalOpen,
     terminalHeight,
+    terminalWidth,
     isTerminalResizing,
     dragHeightRef,
+    dragWidthRef,
     onResizerMouseDown,
+    onWidthResizerMouseDown,
     terminalPanelRef,
   } = useTerminalPanel()
 
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth)
   const [projectsReady, setProjectsReady] = useState(false)
+  const [panelLayout, setPanelLayout] = useState<PanelLayoutTemplate>(() =>
+    loadPanelLayoutTemplate(),
+  )
+  const terminalPosition = terminalPositionForTemplate(panelLayout)
+
+  useEffect(() => {
+    const sync = () => setPanelLayout(loadPanelLayoutTemplate())
+    window.addEventListener(PANEL_LAYOUT_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(PANEL_LAYOUT_CHANGED_EVENT, sync)
+  }, [])
 
   useAppKeyboardShortcuts({ shortcuts, setView, openPalette, openSymbolPicker })
 
@@ -335,6 +354,21 @@ function App() {
             </ResizableSidebar>
           )}
 
+          {terminalPosition === 'side' && (
+            <TerminalPanel
+              position="side"
+              terminalOpen={terminalOpen}
+              terminalHeight={terminalHeight}
+              terminalWidth={terminalWidth}
+              isTerminalResizing={isTerminalResizing}
+              dragHeightRef={dragHeightRef}
+              dragWidthRef={dragWidthRef}
+              onResizerMouseDown={onResizerMouseDown}
+              onWidthResizerMouseDown={onWidthResizerMouseDown}
+              terminalPanelRef={terminalPanelRef}
+            />
+          )}
+
           <div className="flex-1 flex flex-col overflow-hidden min-w-0">
             {view === 'settings' ? (
               <Suspense fallback={<LazyFallback />}>
@@ -373,14 +407,20 @@ function App() {
           </div>
         </div>
 
-        <TerminalPanel
-          terminalOpen={terminalOpen}
-          terminalHeight={terminalHeight}
-          isTerminalResizing={isTerminalResizing}
-          dragHeightRef={dragHeightRef}
-          onResizerMouseDown={onResizerMouseDown}
-          terminalPanelRef={terminalPanelRef}
-        />
+        {terminalPosition === 'bottom' && (
+          <TerminalPanel
+            position="bottom"
+            terminalOpen={terminalOpen}
+            terminalHeight={terminalHeight}
+            terminalWidth={terminalWidth}
+            isTerminalResizing={isTerminalResizing}
+            dragHeightRef={dragHeightRef}
+            dragWidthRef={dragWidthRef}
+            onResizerMouseDown={onResizerMouseDown}
+            onWidthResizerMouseDown={onWidthResizerMouseDown}
+            terminalPanelRef={terminalPanelRef}
+          />
+        )}
       </div>
 
       <StatusBar />

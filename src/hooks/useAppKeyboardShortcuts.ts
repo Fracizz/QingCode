@@ -1,9 +1,14 @@
 import { useEffect } from 'react'
 import { formatDocument } from '../lib/formatDocument'
+import { requestTerminalClear, requestTerminalSearch } from '../lib/terminalViewBridge'
 import { isShortcutInputTarget, shortcutMatchesEvent } from '../lib/shortcuts'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import type { ShortcutMap } from '../lib/shortcuts'
+
+function isTerminalKeyTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest('.xterm'))
+}
 
 export interface UseAppKeyboardShortcutsDeps {
   shortcuts: ShortcutMap
@@ -77,6 +82,25 @@ export function useAppKeyboardShortcuts({
           const command = buildCommands().find(item => item.id === 'view.toggleMinimap')
           if (command && (!command.when || command.when())) void command.run()
         })
+      } else if (shortcutMatchesEvent(shortcuts.togglePanelLayout, event)) {
+        event.preventDefault()
+        void import('../lib/commands').then(({ buildCommands }) => {
+          const command = buildCommands().find(item => item.id === 'view.togglePanelLayout')
+          if (command && (!command.when || command.when())) void command.run()
+        })
+      } else if (
+        shortcutMatchesEvent(shortcuts.findInTerminal, event) &&
+        isTerminalKeyTarget(event.target)
+      ) {
+        event.preventDefault()
+        useUIStore.getState().openTerminalPanel()
+        requestTerminalSearch()
+      } else if (
+        shortcutMatchesEvent(shortcuts.clearTerminal, event) &&
+        isTerminalKeyTarget(event.target)
+      ) {
+        event.preventDefault()
+        requestTerminalClear()
       } else if (shortcutMatchesEvent('Shift+Alt+F', event)) {
         // Handle in capture phase so format works even when CodeMirror has focus.
         // (Previously skipped .cm-editor and relied on CM keymap, which often missed

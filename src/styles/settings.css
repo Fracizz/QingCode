@@ -82,6 +82,40 @@ html[data-theme='forest'] .setting-control {
     linear-gradient(135deg, var(--color-fg) 50%, transparent 50%);
 }
 
+/* Custom SettingSelect trigger — chevron via Lucide, not CSS triangles. */
+button.setting-select-trigger,
+button.setting-select-trigger:hover:not(:disabled) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  padding-right: 8px;
+  background-image: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+button.setting-select-trigger.setting-control-wide {
+  width: 100%;
+}
+
+.setting-select-trigger-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setting-select-trigger-chevron {
+  flex: 0 0 auto;
+  color: var(--color-fg-muted);
+}
+
+button.setting-select-trigger:hover:not(:disabled) .setting-select-trigger-chevron {
+  color: var(--color-fg);
+}
+
 .setting-control option,
 .setting-control optgroup {
   background: var(--color-bg-elevated);

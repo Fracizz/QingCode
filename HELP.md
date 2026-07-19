@@ -121,10 +121,16 @@ The editor automatically detects file encoding:
 
 ### Terminal Profiles
 
-You can configure default startup commands for terminals:
+Global default shell (user setting):
 
-1. Open **「Settings」** → **「Features」** → **「Terminal Profiles」**.
-2. Add a profile (name + startup command).
+1. Open **「Settings」** → **「Terminal」** → **「Default Shell」**.
+2. On **Windows** the default is `pwsh` (PowerShell 7); you can pick Command Prompt / WSL / Windows PowerShell. On **macOS/Linux** the default is `zsh`; you can pick Bash / pwsh.
+3. The built-in Ordinary Terminal always uses this global default; custom profiles may override the shell.
+
+You can also configure startup commands for terminals:
+
+1. Open **「Settings」** → **「Features」** → **「Terminal Profiles」** (or the profile list under Settings → Terminal).
+2. Add a profile (name + shell + startup command).
 3. When creating a new terminal, right-click the **「+」** button to select a profile.
 
 > Common scenario: one-click entry into an AI CLI (e.g., `opencode`) or a project-specific script environment. Same as a normal terminal: a shell starts first, the startup command is typed automatically, and you can keep typing after it exits.

@@ -1,7 +1,19 @@
-import { FolderCode, Search, Terminal, Settings, FolderPlus, BugPlay, ListChecks, GitBranch } from 'lucide-react'
+import {
+  FolderCode,
+  Search,
+  Terminal,
+  Settings,
+  FolderPlus,
+  BugPlay,
+  ListChecks,
+  GitBranch,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { useGitStatusStore } from '../store/gitStatusStore'
+import { useUIStore } from '../store/uiStore'
 
 interface Props {
   active: 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
@@ -24,6 +36,23 @@ export default function ActivityBar({
 }: Props) {
   const { t } = useI18n()
   const gitChanges = useGitStatusStore(s => s.dirtyCount)
+  const activityBarHidden = useUIStore(s => s.activityBarHidden)
+  const setActivityBarHidden = useUIStore(s => s.setActivityBarHidden)
+
+  if (activityBarHidden) {
+    return (
+      <Tooltip label={t('展开活动栏')} side="right" wrapperClassName="flex-shrink-0 h-full">
+        <button
+          type="button"
+          aria-label={t('展开活动栏')}
+          onClick={() => setActivityBarHidden(false)}
+          className="ui-font-scaled flex h-full w-4 flex-shrink-0 flex-col items-center justify-center border-r border-border bg-bg-deep text-fg-dim transition-colors hover:bg-bg-hover hover:text-fg"
+        >
+          <ChevronRight size={14} />
+        </button>
+      </Tooltip>
+    )
+  }
 
   return (
     <div className="ui-font-scaled w-[var(--activity-bar-width)] flex-shrink-0 bg-bg-deep border-r border-border flex flex-col items-center py-2">
@@ -59,18 +88,27 @@ export default function ActivityBar({
         onClick={() => onActiveChange('settings')}
       />
 
-      <div className="w-6 h-px my-2 bg-border" aria-hidden="true" />
+      <Tooltip
+        label={t('向左收起活动栏')}
+        side="right"
+        wrapperClassName="w-full flex justify-center"
+      >
+        <button
+          type="button"
+          aria-label={t('向左收起活动栏')}
+          aria-expanded={true}
+          onClick={() => setActivityBarHidden(true)}
+          className="my-1 flex h-5 w-10 items-center justify-center rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
+        >
+          <span className="relative flex w-6 items-center justify-center">
+            <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border" aria-hidden />
+            <ChevronLeft size={12} className="relative bg-bg-deep text-fg-muted" />
+          </span>
+        </button>
+      </Tooltip>
 
-      <Item
-        icon={<FolderPlus size={22} />}
-        label={t('添加项目')}
-        onClick={onAddProject}
-      />
-      <Item
-        icon={<ListChecks size={22} />}
-        label={t('项目管理')}
-        onClick={onManageProjects}
-      />
+      <Item icon={<FolderPlus size={22} />} label={t('添加项目')} onClick={onAddProject} />
+      <Item icon={<ListChecks size={22} />} label={t('项目管理')} onClick={onManageProjects} />
       <Item
         icon={<Terminal size={22} />}
         label={t('终端')}

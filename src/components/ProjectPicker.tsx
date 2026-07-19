@@ -29,6 +29,7 @@ import {
 } from '../utils/projectActions'
 import Tooltip from './Tooltip'
 import WorkspaceMenu from './WorkspaceMenu'
+import ProjectAddDialog from './ProjectAddDialog'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
 
@@ -43,7 +44,6 @@ export default function ProjectPicker() {
   const currentProject = useProjectStore(s => s.currentProject)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
-  const addEmptyProject = useProjectStore(s => s.addEmptyProject)
   const hideProject = useProjectStore(s => s.hideProject)
   const setView = useUIStore(s => s.setView)
   const openProjectManager = useUIStore(s => s.openProjectManager)
@@ -53,12 +53,11 @@ export default function ProjectPicker() {
   const measureRef = useRef<HTMLDivElement>(null)
   const overflowBtnRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
-  const addBtnRef = useRef<HTMLButtonElement>(null)
 
   const [visibleCount, setVisibleCount] = useState(projects.length)
   const [overflowOpen, setOverflowOpen] = useState(false)
+  const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({})
-  const [addingEmpty, setAddingEmpty] = useState(false)
 
   // Recompute how many chips fit whenever projects or container width change.
   useLayoutEffect(() => {
@@ -133,17 +132,6 @@ export default function ProjectPicker() {
     await switchProject(project)
   }
 
-  const handleAddEmpty = async () => {
-    if (addingEmpty) return
-    setAddingEmpty(true)
-    setView('explorer')
-    try {
-      await addEmptyProject()
-    } finally {
-      setAddingEmpty(false)
-    }
-  }
-
   const handleRename = (project: Project) => {
     closeDropdown()
     void renameProjectWithPrompt(project.id, project.name)
@@ -182,6 +170,12 @@ export default function ProjectPicker() {
     event.stopPropagation()
     positionDropdown()
     setOverflowOpen(v => !v)
+  }
+
+  const openAddDialog = (event: ReactMouseEvent) => {
+    event.stopPropagation()
+    closeDropdown()
+    setAddDialogOpen(true)
   }
 
   const visibleProjects = projects.slice(0, visibleCount)
@@ -229,16 +223,14 @@ export default function ProjectPicker() {
           </Tooltip>
         )}
 
-        <Tooltip label={t('新建临时项目')} side="bottom" wrapperClassName="flex-shrink-0">
+        <Tooltip label={t('添加项目')} side="bottom" wrapperClassName="flex-shrink-0">
           <button
-            ref={addBtnRef}
             type="button"
-            aria-label={t('新建临时项目')}
-            disabled={addingEmpty}
-            onClick={() => void handleAddEmpty()}
+            aria-label={t('添加项目')}
+            aria-haspopup="dialog"
+            onClick={openAddDialog}
             onDoubleClick={event => event.stopPropagation()}
-            className={`flex items-center justify-center h-6 w-7 rounded text-[13px] flex-shrink-0 transition-colors
-              ${addingEmpty ? 'opacity-50 cursor-not-allowed' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
+            className="flex items-center justify-center h-6 w-7 rounded text-[13px] flex-shrink-0 transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
           >
             <Plus size={14} />
           </button>
@@ -247,11 +239,13 @@ export default function ProjectPicker() {
         {projects.length === 0 && (
           <button
             type="button"
-            onClick={() => void handleAddEmpty()}
+            aria-label={t('添加项目')}
+            aria-haspopup="dialog"
+            onClick={openAddDialog}
             onDoubleClick={event => event.stopPropagation()}
-            className="flex items-center h-6 px-2 rounded text-[13px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="flex items-center h-6 px-2 rounded text-[13px] transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
           >
-            {t('新建临时项目')}
+            {t('添加项目')}
           </button>
         )}
       </div>
@@ -416,6 +410,7 @@ export default function ProjectPicker() {
           document.body,
         )}
 
+      <ProjectAddDialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)} />
     </div>
   )
 }

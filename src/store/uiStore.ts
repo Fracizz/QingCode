@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { loadActivityBarHidden, saveActivityBarHidden } from '../lib/activityBarLayout'
 
 export type View = 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
 
@@ -6,6 +7,8 @@ interface UIState {
   view: View
   /** Whether the left sidebar panel is visible (VS Code-style toggle). */
   sidebarOpen: boolean
+  /** Whether the activity bar is tucked away to the left edge. */
+  activityBarHidden: boolean
   /** When set, search is restricted to this directory path (absolute). */
   searchRoot: string | null
   /** Incremented when the search shortcut opens the search view. */
@@ -27,6 +30,8 @@ interface UIState {
   setView: (view: View) => void
   /** Activity bar click: switch view, or collapse when clicking the active view again. */
   toggleActivityView: (view: View) => void
+  setActivityBarHidden: (hidden: boolean) => void
+  toggleActivityBar: () => void
   setSearchRoot: (path: string | null) => void
   /** Switch to the search view, optionally scoped to a directory. */
   requestSearch: (root?: string | null) => void
@@ -51,6 +56,7 @@ interface UIState {
 export const useUIStore = create<UIState>((set) => ({
   view: 'explorer',
   sidebarOpen: true,
+  activityBarHidden: loadActivityBarHidden(),
   searchRoot: null,
   globalSearchSignal: 0,
   terminalOpenSignal: 0,
@@ -65,6 +71,16 @@ export const useUIStore = create<UIState>((set) => ({
     set(state => {
       if (state.view === view && state.sidebarOpen) return { sidebarOpen: false }
       return { view, sidebarOpen: true }
+    }),
+  setActivityBarHidden: hidden => {
+    saveActivityBarHidden(hidden)
+    set({ activityBarHidden: hidden })
+  },
+  toggleActivityBar: () =>
+    set(state => {
+      const activityBarHidden = !state.activityBarHidden
+      saveActivityBarHidden(activityBarHidden)
+      return { activityBarHidden }
     }),
   setSearchRoot: path => set({ searchRoot: path }),
   requestSearch: root => set({ view: 'search', searchRoot: root ?? null, sidebarOpen: true }),

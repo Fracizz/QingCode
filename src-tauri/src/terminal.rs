@@ -42,21 +42,12 @@ impl TerminalManager {
         &self,
         id: String,
         cwd: &str,
+        host_shell: Option<&str>,
         cols: u16,
         rows: u16,
         app: AppHandle,
     ) -> Result<(), String> {
-        let mut cmd = if cfg!(target_os = "windows") {
-            let mut command = CommandBuilder::new("powershell.exe");
-            // Quieter banner when OpenCode tears down ConPTY and we respawn.
-            command.arg("-NoLogo");
-            command
-        } else {
-            CommandBuilder::new("bash")
-        };
-        if !cwd.is_empty() {
-            cmd.cwd(cwd);
-        }
+        let cmd = build_host_shell_command(host_shell, cwd)?;
         self.spawn_with(id, cmd, cols, rows, app)
     }
 
@@ -65,6 +56,8 @@ impl TerminalManager {
     /// `interactive` runs the command inside a login shell that stays open after
     /// the command exits (terminal profiles). For "script", the target is a file
     /// path and the kind is inferred from its extension.
+    /// `host_shell` selects powershell / pwsh / cmd / wsl / bash / zsh for interactive
+    /// profile startups (ignored for one-shot script kinds).
     pub fn spawn_script(
         &self,
         id: String,
@@ -72,11 +65,12 @@ impl TerminalManager {
         shell_kind: &str,
         target: &str,
         env: HashMap<String, String>,
+        host_shell: Option<&str>,
         cols: u16,
         rows: u16,
         app: AppHandle,
     ) -> Result<(), String> {
-        let cmd = build_script_command(shell_kind, target, cwd, env)?;
+        let cmd = build_script_command(shell_kind, target, cwd, env, host_shell)?;
         self.spawn_with(id, cmd, cols, rows, app)
     }
 
@@ -215,7 +209,7 @@ impl TerminalManager {
         if !process_exists(pid) {
             return Ok(false);
         }
-        Ok(count_child_processes(pid) > 0)
+        Ok(count_meaningful_child_processes(pid) > 0)
     }
 
     pub fn kill_all(&self) {
@@ -253,6 +247,129 @@ struct ScriptCommandSpec {
     env: Vec<(String, String)>,
 }
 
+fn default_host_shell() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "pwsh"
+    } else {
+        "zsh"
+    }
+}
+
+fn normalize_host_shell(shell: Option<&str>) -> Result<&'static str, String> {
+    let raw = shell.map(str::trim).filter(|s| !s.is_empty()).unwrap_or_else(|| default_host_shell());
+    match raw {
+        "powershell" => Ok("powershell"),
+        "pwsh" => Ok("pwsh"),
+        "cmd" => {
+            if cfg!(target_os = "windows") {
+                Ok("cmd")
+            } else {
+                Err("命令提示符 (cmd) 仅在 Windows 上可用".to_string())
+            }
+        }
+        "wsl" => {
+            if cfg!(target_os = "windows") {
+                Ok("wsl")
+            } else {
+                Err("WSL 仅在 Windows 上可用".to_string())
+            }
+        }
+        "bash" => Ok("bash"),
+        "zsh" => Ok("zsh"),
+        other => Err(format!("不支持的终端 Shell: {other}")),
+    }
+}
+
+/// Bare interactive shell (no startup command).
+fn pwsh_program() -> String {
+    if cfg!(target_os = "windows") {
+        "pwsh.exe".to_string()
+    } else {
+        "pwsh".to_string()
+    }
+}
+
+fn resolve_host_shell(shell: Option<&str>) -> Result<(String, Vec<String>), String> {
+    match normalize_host_shell(shell)? {
+        "powershell" => Ok((
+            "powershell.exe".to_string(),
+            vec!["-NoLogo".to_string()],
+        )),
+        "pwsh" => Ok((pwsh_program(), vec!["-NoLogo".to_string()])),
+        "cmd" => Ok(("cmd.exe".to_string(), vec![])),
+        "wsl" => Ok(("wsl.exe".to_string(), vec![])),
+        "bash" => Ok(("bash".to_string(), vec![])),
+        "zsh" => Ok(("zsh".to_string(), vec![])),
+        _ => unreachable!(),
+    }
+}
+
+/// Profile startup: run `target`, then keep a usable prompt in the chosen shell.
+fn resolve_interactive_shell(
+    shell: Option<&str>,
+    target: &str,
+) -> Result<(String, Vec<String>), String> {
+    let target = target.trim();
+    match normalize_host_shell(shell)? {
+        "powershell" => Ok((
+            "powershell.exe".to_string(),
+            vec![
+                "-NoLogo".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                format!("& {{ {target} }}"),
+            ],
+        )),
+        "pwsh" => Ok((
+            pwsh_program(),
+            vec![
+                "-NoLogo".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                format!("& {{ {target} }}"),
+            ],
+        )),
+        "cmd" => Ok((
+            "cmd.exe".to_string(),
+            vec![
+                "/d".to_string(),
+                "/k".to_string(),
+                target.to_string(),
+            ],
+        )),
+        "wsl" => Ok((
+            "wsl.exe".to_string(),
+            vec![
+                "-e".to_string(),
+                "bash".to_string(),
+                "-lc".to_string(),
+                format!("{target}; exec bash"),
+            ],
+        )),
+        "bash" => Ok((
+            "bash".to_string(),
+            vec!["-lc".to_string(), format!("{target}; exec bash")],
+        )),
+        "zsh" => Ok((
+            "zsh".to_string(),
+            vec!["-lc".to_string(), format!("{target}; exec zsh")],
+        )),
+        _ => unreachable!(),
+    }
+}
+
+fn build_host_shell_command(shell: Option<&str>, cwd: &str) -> Result<CommandBuilder, String> {
+    let (program, args) = resolve_host_shell(shell)?;
+    let mut cmd = CommandBuilder::new(&program);
+    for arg in &args {
+        cmd.arg(arg);
+    }
+    if !cwd.is_empty() {
+        cmd.cwd(cwd);
+    }
+    Ok(cmd)
+}
+
 /// Build a `CommandBuilder` for a run-config task. `cwd` is applied when
 /// non-empty; `env` entries are overlaid on top of the inherited environment.
 fn build_script_command(
@@ -260,8 +377,9 @@ fn build_script_command(
     target: &str,
     cwd: &str,
     env: HashMap<String, String>,
+    host_shell: Option<&str>,
 ) -> Result<CommandBuilder, String> {
-    let spec = resolve_script_command(shell_kind, target, cwd, env)?;
+    let spec = resolve_script_command(shell_kind, target, cwd, env, host_shell)?;
     let mut cmd = CommandBuilder::new(&spec.program);
     for arg in &spec.args {
         cmd.arg(arg);
@@ -280,6 +398,7 @@ fn resolve_script_command(
     target: &str,
     cwd: &str,
     env: HashMap<String, String>,
+    host_shell: Option<&str>,
 ) -> Result<ScriptCommandSpec, String> {
     if target.trim().is_empty() {
         return Err("运行任务 target 不能为空".to_string());
@@ -326,30 +445,7 @@ fn resolve_script_command(
             }
         }
         // Terminal profiles: run the startup command, then keep a shell prompt.
-        "interactive" => {
-            if cfg!(target_os = "windows") {
-                // Wrap in `& { ... }` so -NoExit reliably returns to a prompt after
-                // native TUIs (e.g. OpenCode) exit; bare `-Command opencode` often
-                // tears down the whole ConPTY session.
-                (
-                    "powershell.exe".to_string(),
-                    vec![
-                        "-NoLogo".to_string(),
-                        "-NoExit".to_string(),
-                        "-Command".to_string(),
-                        format!("& {{ {target} }}"),
-                    ],
-                )
-            } else {
-                (
-                    "bash".to_string(),
-                    vec![
-                        "-lc".to_string(),
-                        format!("{target}; exec bash"),
-                    ],
-                )
-            }
-        }
+        "interactive" => resolve_interactive_shell(host_shell, target)?,
         other => {
             return Err(format!("不支持的运行任务类型: {}", other));
         }
@@ -402,14 +498,36 @@ fn process_exists(pid: u32) -> bool {
     system.process(Pid::from_u32(pid)).is_some()
 }
 
-fn count_child_processes(parent_pid: u32) -> usize {
+/// Console host helpers that sit under the shell even when the prompt is idle.
+fn is_console_noise_process(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    matches!(
+        lower.as_str(),
+        "conhost.exe"
+            | "conhost"
+            | "openconsole.exe"
+            | "openconsole"
+            | "winpty-agent.exe"
+            | "winpty-agent"
+            | "wslhost.exe"
+            | "wslhost"
+    )
+}
+
+fn count_meaningful_child_processes(parent_pid: u32) -> usize {
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
     let parent = Pid::from_u32(parent_pid);
     system
         .processes()
         .values()
-        .filter(|process| process.parent() == Some(parent))
+        .filter(|process| {
+            if process.parent() != Some(parent) {
+                return false;
+            }
+            let name = process.name().to_string_lossy();
+            !is_console_noise_process(name.as_ref())
+        })
         .count()
 }
 
@@ -427,13 +545,13 @@ mod tests {
 
     #[test]
     fn resolve_script_command_rejects_empty_target() {
-        let err = resolve_script_command("command", "  ", "", HashMap::new()).unwrap_err();
+        let err = resolve_script_command("command", "  ", "", HashMap::new(), None).unwrap_err();
         assert!(err.contains("不能为空"), "err={err}");
     }
 
     #[test]
     fn resolve_script_command_rejects_unknown_kind() {
-        let err = resolve_script_command("ruby", "puts 1", "", HashMap::new()).unwrap_err();
+        let err = resolve_script_command("ruby", "puts 1", "", HashMap::new(), None).unwrap_err();
         assert!(err.contains("不支持"), "err={err}");
     }
 
@@ -441,7 +559,8 @@ mod tests {
     fn resolve_script_command_builds_ps1() {
         let mut env = HashMap::new();
         env.insert("FOO".to_string(), "1".to_string());
-        let spec = resolve_script_command("ps1", r"D:\run\task.ps1", r"D:\work", env).unwrap();
+        let spec =
+            resolve_script_command("ps1", r"D:\run\task.ps1", r"D:\work", env, None).unwrap();
         assert_eq!(spec.program, "powershell.exe");
         assert_eq!(
             spec.args,
@@ -459,7 +578,8 @@ mod tests {
 
     #[test]
     fn resolve_script_command_infers_kind_for_script() {
-        let spec = resolve_script_command("script", "tools/setup.sh", "", HashMap::new()).unwrap();
+        let spec =
+            resolve_script_command("script", "tools/setup.sh", "", HashMap::new(), None).unwrap();
         assert_eq!(spec.program, "bash");
         assert_eq!(spec.args, vec!["tools/setup.sh".to_string()]);
     }
@@ -467,7 +587,8 @@ mod tests {
     #[test]
     fn resolve_script_command_builds_inline_command() {
         let spec =
-            resolve_script_command("command", "echo hello", "C:\\tmp", HashMap::new()).unwrap();
+            resolve_script_command("command", "echo hello", "C:\\tmp", HashMap::new(), None)
+                .unwrap();
         if cfg!(target_os = "windows") {
             assert_eq!(spec.program, "cmd.exe");
             assert_eq!(
@@ -488,10 +609,16 @@ mod tests {
 
     #[test]
     fn resolve_script_command_builds_interactive_shell() {
-        let spec =
-            resolve_script_command("interactive", "opencode", "C:\\tmp", HashMap::new()).unwrap();
+        let spec = resolve_script_command(
+            "interactive",
+            "opencode",
+            "C:\\tmp",
+            HashMap::new(),
+            None,
+        )
+        .unwrap();
         if cfg!(target_os = "windows") {
-            assert_eq!(spec.program, "powershell.exe");
+            assert_eq!(spec.program, pwsh_program());
             assert_eq!(
                 spec.args,
                 vec![
@@ -502,10 +629,45 @@ mod tests {
                 ]
             );
         } else {
-            assert_eq!(spec.program, "bash");
-            assert_eq!(spec.args, vec!["-lc".to_string(), "opencode; exec bash".to_string()]);
+            assert_eq!(spec.program, "zsh");
+            assert_eq!(
+                spec.args,
+                vec!["-lc".to_string(), "opencode; exec zsh".to_string()]
+            );
         }
         assert_eq!(spec.cwd.as_deref(), Some("C:\\tmp"));
+    }
+
+    #[test]
+    fn resolve_interactive_shell_variants() {
+        let pwsh = resolve_interactive_shell(Some("pwsh"), "opencode").unwrap();
+        assert_eq!(pwsh.0, pwsh_program());
+        assert!(pwsh.1.iter().any(|a| a == "-NoExit"));
+
+        if cfg!(target_os = "windows") {
+            let cmd = resolve_interactive_shell(Some("cmd"), "opencode").unwrap();
+            assert_eq!(cmd.0, "cmd.exe");
+            assert_eq!(cmd.1, vec!["/d", "/k", "opencode"]);
+
+            let wsl = resolve_interactive_shell(Some("wsl"), "opencode").unwrap();
+            assert_eq!(wsl.0, "wsl.exe");
+            assert_eq!(
+                wsl.1,
+                vec!["-e", "bash", "-lc", "opencode; exec bash"]
+            );
+
+            let bare = resolve_host_shell(Some("wsl")).unwrap();
+            assert_eq!(bare.0, "wsl.exe");
+            assert_eq!(default_host_shell(), "pwsh");
+        } else {
+            assert!(resolve_interactive_shell(Some("wsl"), "x").is_err());
+            assert!(resolve_interactive_shell(Some("cmd"), "x").is_err());
+            let zsh = resolve_interactive_shell(Some("zsh"), "opencode").unwrap();
+            assert_eq!(zsh.0, "zsh");
+            assert_eq!(zsh.1, vec!["-lc", "opencode; exec zsh"]);
+            assert_eq!(default_host_shell(), "zsh");
+            assert_eq!(resolve_host_shell(None).unwrap().0, "zsh");
+        }
     }
 
     #[test]
@@ -533,5 +695,14 @@ mod tests {
         let max = clamp_pty_size(u16::MAX, u16::MAX);
         assert_eq!(max.cols, 1000);
         assert_eq!(max.rows, 500);
+    }
+
+    #[test]
+    fn console_noise_process_names() {
+        assert!(is_console_noise_process("conhost.exe"));
+        assert!(is_console_noise_process("OpenConsole"));
+        assert!(is_console_noise_process("wslhost.exe"));
+        assert!(!is_console_noise_process("opencode.exe"));
+        assert!(!is_console_noise_process("node"));
     }
 }

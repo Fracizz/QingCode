@@ -17,13 +17,15 @@ import { confirmDialog } from '../store/confirmStore'
 import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '../lib/terminalProfiles'
 import { formatTerminalName } from '../utils/terminalName'
 import { canCloseTerminalDirectly, isTerminalBusy, listBusyTerminals } from '../lib/terminalClose'
+import { subscribeTerminalCommandActivity } from '../lib/terminalCommandActivity'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
 import { useI18n } from '../lib/i18n'
 
 const CLOSE_ARM_MS = 4000
-const BUSY_POLL_MS = 800
+/** Child-process probe interval; shell-integration updates refresh immediately. */
+const BUSY_POLL_MS = 1200
 
 function sameIdSet(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false
@@ -98,9 +100,13 @@ export default function TerminalTabs() {
     }
     void syncBusy()
     const timer = window.setInterval(() => void syncBusy(), BUSY_POLL_MS)
+    const unsubscribe = subscribeTerminalCommandActivity(() => {
+      void syncBusy()
+    })
     return () => {
       cancelled = true
       window.clearInterval(timer)
+      unsubscribe()
     }
   }, [terminals, currentProject?.id])
 

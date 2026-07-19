@@ -54,9 +54,24 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
     description: '显示或隐藏编辑区右侧的代码小地图。',
   },
   {
+    id: 'togglePanelLayout',
+    label: '切换面板布局',
+    description: '在经典布局（终端底部）与侧栏旁终端（侧栏 | 终端 | 编辑器）之间切换。',
+  },
+  {
     id: 'renameInExplorer',
     label: '资源管理器: 重命名',
     description: '在文件树中行内重命名当前选中的文件或文件夹。',
+  },
+  {
+    id: 'findInTerminal',
+    label: '终端: 查找',
+    description: '在终端输出中查找文本（需焦点在终端内）。',
+  },
+  {
+    id: 'clearTerminal',
+    label: '终端: 清空',
+    description: '清空当前终端缓冲区（需焦点在终端内）。',
   },
 ]
 

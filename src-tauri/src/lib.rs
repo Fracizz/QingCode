@@ -139,12 +139,20 @@ fn create_terminal(
     cwd: String,
     cols: Option<u16>,
     rows: Option<u16>,
+    shell: Option<String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
     allowlist: tauri::State<'_, PathAllowlist>,
 ) -> Result<(), String> {
     allowlist.ensure_executable(&cwd)?;
-    state.spawn(id, &cwd, cols.unwrap_or(80), rows.unwrap_or(24), app)
+    state.spawn(
+        id,
+        &cwd,
+        shell.as_deref(),
+        cols.unwrap_or(80),
+        rows.unwrap_or(24),
+        app,
+    )
 }
 
 #[tauri::command]
@@ -228,6 +236,7 @@ fn spawn_script(
     env: std::collections::HashMap<String, String>,
     cols: Option<u16>,
     rows: Option<u16>,
+    shell: Option<String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
     allowlist: tauri::State<'_, PathAllowlist>,
@@ -253,6 +262,7 @@ fn spawn_script(
         &shell_kind,
         &target,
         env,
+        shell.as_deref(),
         cols.unwrap_or(80),
         rows.unwrap_or(24),
         app,

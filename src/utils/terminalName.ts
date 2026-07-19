@@ -65,7 +65,9 @@ export function resolveNewTerminalName(
   profileName: string,
   command: string,
   nextNumber: number,
-  defaultProfileLabel = '普通终端'
+  defaultProfileLabel = '普通终端',
+  /** When the default profile has no command, prefer the shell display name. */
+  shellLabel?: string,
 ): string {
   const cmd = command.trim()
   const name = profileName.trim()
@@ -76,6 +78,9 @@ export function resolveNewTerminalName(
     const fromCommand = shortenTerminalLabel(cmd)
     if (fromCommand) return fromCommand
   }
+
+  const shell = shellLabel?.trim()
+  if (shell) return shell
 
   return `终端 ${nextNumber}`
 }

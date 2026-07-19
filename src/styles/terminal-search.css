@@ -1,0 +1,117 @@
+/* Terminal find — float top-right like the editor Find widget. */
+.terminal-search-bar {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  z-index: 20;
+  max-width: min(100% - 16px, 360px);
+  pointer-events: auto;
+}
+
+.terminal-search-bar__widget {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 280px;
+  padding: 4px 28px 4px 6px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  color: var(--color-fg);
+}
+
+.terminal-search-bar__input-wrap {
+  display: flex;
+  align-items: center;
+  flex: 1 1 160px;
+  min-width: 120px;
+  height: 26px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-bg-deep);
+}
+
+.terminal-search-bar__input-wrap:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+.terminal-search-bar__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--color-fg);
+  font-size: 13px;
+  outline: none;
+}
+
+.terminal-search-bar__input::placeholder {
+  color: var(--color-fg-dim);
+}
+
+/* Hide native search clear chrome so layout stays tight. */
+.terminal-search-bar__input::-webkit-search-decoration,
+.terminal-search-bar__input::-webkit-search-cancel-button,
+.terminal-search-bar__input::-webkit-search-results-button,
+.terminal-search-bar__input::-webkit-search-results-decoration {
+  display: none;
+}
+
+.terminal-search-bar__count {
+  flex: 0 0 auto;
+  min-width: 3.5rem;
+  padding: 0 4px;
+  color: var(--color-fg-muted);
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.terminal-search-bar__count.is-empty {
+  color: var(--color-danger);
+}
+
+.terminal-search-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+
+.terminal-search-bar__btn,
+.terminal-search-bar__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--color-fg-muted);
+  cursor: pointer;
+}
+
+.terminal-search-bar__btn:hover:not(:disabled),
+.terminal-search-bar__close:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-fg);
+}
+
+.terminal-search-bar__btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.terminal-search-bar__close {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+}

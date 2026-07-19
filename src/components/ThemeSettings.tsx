@@ -8,6 +8,7 @@ import {
   type ResolvedTheme,
 } from '../lib/themeSettings'
 import { useI18n } from '../lib/i18n'
+import SettingSelect from './SettingSelect'
 
 export default function ThemeSettings() {
   const { t } = useI18n()
@@ -25,18 +26,15 @@ export default function ThemeSettings() {
 
   return (
     <div className="flex flex-col gap-2">
-      <select
+      <SettingSelect
         value={theme}
-        onChange={e => update(e.target.value as AppTheme)}
+        onChange={next => update(next as AppTheme)}
         aria-label={t('颜色主题')}
-        className="setting-control setting-select"
-      >
-        {THEMES.map(option => (
-          <option key={option.value} value={option.value}>
-            {t(option.label)}
-          </option>
-        ))}
-      </select>
+        options={THEMES.map(option => ({
+          value: option.value,
+          label: t(option.label),
+        }))}
+      />
 
       {theme === 'auto' && (
         <p className="text-[12px] text-fg-muted">

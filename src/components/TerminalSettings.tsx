@@ -6,12 +6,22 @@ import {
   type TerminalProfile,
   type TerminalProfileSettings,
 } from '../lib/terminalProfiles'
+import {
+  availableTerminalShells,
+  terminalShellLabelKey,
+  type TerminalShellId,
+} from '../lib/terminalShell'
 import { useState } from 'react'
 import { useI18n } from '../lib/i18n'
+import SettingSelect from './SettingSelect'
 
 export default function TerminalSettings() {
   const { t } = useI18n()
   const [settings, setSettings] = useState(loadTerminalProfileSettings)
+  const shellOptions = availableTerminalShells().map(id => ({
+    value: id,
+    label: t(terminalShellLabelKey(id)),
+  }))
 
   const save = (next: TerminalProfileSettings) => {
     setSettings(next)
@@ -32,7 +42,12 @@ export default function TerminalSettings() {
       ...settings,
       profiles: [
         ...settings.profiles,
-        { id: crypto.randomUUID(), name: t('新终端配置'), command: '' },
+        {
+          id: crypto.randomUUID(),
+          name: t('新终端配置'),
+          command: '',
+          shell: settings.defaultShell,
+        },
       ],
     })
   }
@@ -41,6 +56,7 @@ export default function TerminalSettings() {
     if (id === DEFAULT_TERMINAL_PROFILE.id) return
     const profiles = settings.profiles.filter(profile => profile.id !== id)
     save({
+      ...settings,
       profiles,
       defaultProfileId: settings.defaultProfileId === id ? null : settings.defaultProfileId,
     })
@@ -49,29 +65,55 @@ export default function TerminalSettings() {
   return (
     <div className="flex flex-col gap-4">
       <label className="block">
+        <span className="block font-medium text-fg">{t('默认 Shell')}</span>
+        <span className="mt-1 block text-xs text-fg-muted">
+          {t(
+            '新建「普通终端」时使用的主机 Shell（全局）。Windows 默认 PowerShell 7 (pwsh)，可选 cmd / WSL；macOS/Linux 默认 Zsh，可选 Bash / pwsh。自定义配置可单独指定 Shell。',
+          )}
+        </span>
+        <div className="mt-2">
+          <SettingSelect
+            value={settings.defaultShell}
+            className="setting-control-wide !h-9 !rounded !px-2.5"
+            aria-label={t('默认 Shell')}
+            onChange={next =>
+              save({
+                ...settings,
+                defaultShell: next as TerminalShellId,
+              })
+            }
+            options={shellOptions}
+          />
+        </div>
+      </label>
+
+      <label className="block">
         <span className="block font-medium text-fg">{t('默认启动配置')}</span>
         <span className="mt-1 block text-xs text-fg-muted">
-          {t('可不选；未指定时使用内置普通 PowerShell 终端。')}
+          {t('可不选；未指定时使用内置普通终端。')}
         </span>
-        <select
-          value={settings.defaultProfileId ?? ''}
-          onChange={event =>
-            save({
-              ...settings,
-              defaultProfileId: event.target.value ? event.target.value : null,
-            })
-          }
-          className="mt-2 w-full rounded border border-border-strong bg-bg-elevated px-2.5 py-2 text-fg outline-none focus:border-accent"
-        >
-          <option value="">{t('未指定（内置默认）')}</option>
-          {settings.profiles
-            .filter(profile => profile.id !== DEFAULT_TERMINAL_PROFILE.id)
-            .map(profile => (
-              <option key={profile.id} value={profile.id}>
-                {profile.name.trim() || t('未命名配置')}
-              </option>
-            ))}
-        </select>
+        <div className="mt-2">
+          <SettingSelect
+            value={settings.defaultProfileId ?? ''}
+            className="setting-control-wide !h-9 !rounded !px-2.5"
+            aria-label={t('默认启动配置')}
+            onChange={next =>
+              save({
+                ...settings,
+                defaultProfileId: next ? next : null,
+              })
+            }
+            options={[
+              { value: '', label: t('未指定（内置默认）') },
+              ...settings.profiles
+                .filter(profile => profile.id !== DEFAULT_TERMINAL_PROFILE.id)
+                .map(profile => ({
+                  value: profile.id,
+                  label: profile.name.trim() || t('未命名配置'),
+                })),
+            ]}
+          />
+        </div>
       </label>
 
       <div className="flex items-center justify-between">
@@ -86,44 +128,74 @@ export default function TerminalSettings() {
       </div>
 
       <div className="flex flex-col gap-3">
-        {settings.profiles.map(profile => (
-          <div key={profile.id} className="rounded-md border border-border bg-bg/40 p-3">
-            <div className="flex items-center gap-2">
-              <input
-                value={profile.name}
-                onChange={event => updateProfile(profile.id, { name: event.target.value })}
-                placeholder={t('配置名称')}
-                aria-label={t('配置名称')}
-                className="min-w-0 flex-1 rounded border border-border bg-bg-deep px-2 py-1.5 text-[12px] text-fg outline-none focus:border-accent"
-              />
-              {profile.id !== DEFAULT_TERMINAL_PROFILE.id && (
-                <button
-                  type="button"
-                  aria-label={t('删除{value}', { value: profile.name || t('终端配置') })}
-                  onClick={() => removeProfile(profile.id)}
-                  className="rounded p-1.5 text-fg-dim hover:bg-danger/10 hover:text-danger"
-                >
-                  <Trash2 size={14} />
-                </button>
-              )}
+        {settings.profiles.map(profile => {
+          const isBuiltin = profile.id === DEFAULT_TERMINAL_PROFILE.id
+          return (
+            <div key={profile.id} className="rounded-md border border-border bg-bg/40 p-3">
+              <div className="flex items-center gap-2">
+                <input
+                  value={profile.name}
+                  onChange={event => updateProfile(profile.id, { name: event.target.value })}
+                  placeholder={t('配置名称')}
+                  aria-label={t('配置名称')}
+                  disabled={isBuiltin}
+                  className="min-w-0 flex-1 rounded border border-border bg-bg-deep px-2 py-1.5 text-[12px] text-fg outline-none focus:border-accent disabled:opacity-70"
+                />
+                {!isBuiltin && (
+                  <button
+                    type="button"
+                    aria-label={t('删除{value}', { value: profile.name || t('终端配置') })}
+                    onClick={() => removeProfile(profile.id)}
+                    className="rounded p-1.5 text-fg-dim hover:bg-danger/10 hover:text-danger"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+              <label className="mt-2 block">
+                <span className="text-[11px] text-fg-muted">{t('Shell')}</span>
+                {isBuiltin ? (
+                  <p className="mt-1 text-[12px] text-fg-dim">
+                    {t('使用全局默认 Shell')}（{t(terminalShellLabelKey(settings.defaultShell))}）
+                  </p>
+                ) : (
+                  <div className="mt-1">
+                    <SettingSelect
+                      value={profile.shell}
+                      className="setting-control-wide !h-9 !rounded !px-2.5"
+                      aria-label={t('{name} Shell', { name: profile.name || t('终端配置') })}
+                      onChange={next =>
+                        updateProfile(profile.id, { shell: next as TerminalShellId })
+                      }
+                      options={shellOptions}
+                    />
+                  </div>
+                )}
+              </label>
+              <label className="mt-2 block">
+                <span className="text-[11px] text-fg-muted">{t('启动命令')}</span>
+                <textarea
+                  value={profile.command}
+                  onChange={event => updateProfile(profile.id, { command: event.target.value })}
+                  placeholder={
+                    isBuiltin
+                      ? t('留空：仅启动所选 Shell')
+                      : t('例如：opencode')
+                  }
+                  aria-label={t('{name}启动命令', { name: profile.name || t('终端配置') })}
+                  rows={2}
+                  spellCheck={false}
+                  className="mt-1 w-full min-h-[3rem] resize-y rounded border border-border bg-bg-deep px-2 py-1.5 font-mono text-[12px] text-fg outline-none focus:border-accent wrap-break-word"
+                />
+              </label>
             </div>
-            <label className="mt-2 block">
-              <span className="text-[11px] text-fg-muted">{t('启动命令')}</span>
-              <textarea
-                value={profile.command}
-                onChange={event => updateProfile(profile.id, { command: event.target.value })}
-                placeholder={profile.id === DEFAULT_TERMINAL_PROFILE.id ? t('留空：启动 PowerShell') : t('例如：opencode')}
-                aria-label={t('{name}启动命令', { name: profile.name || t('终端配置') })}
-                rows={2}
-                spellCheck={false}
-                className="mt-1 w-full min-h-[3rem] resize-y rounded border border-border bg-bg-deep px-2 py-1.5 font-mono text-[12px] text-fg outline-none focus:border-accent wrap-break-word"
-              />
-            </label>
-          </div>
-        ))}
+          )
+        })}
       </div>
       <p className="text-[12px] leading-relaxed text-fg-dim">
-        {t('点击 + 使用默认配置；右键 + 可选择其它配置。启动命令留空时启动 PowerShell；程序（如 opencode）可通过窗口标题自动重命名标签，也可双击标签手动修改。')}
+        {t(
+          '点击 + 使用默认配置；右键 + 可选择其它配置。主机 Shell 由全局默认或各配置指定；启动命令留空时只打开所选 Shell。程序（如 opencode）可通过窗口标题自动重命名标签，也可双击标签手动修改。',
+        )}
       </p>
     </div>
   )

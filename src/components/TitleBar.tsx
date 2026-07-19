@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Minus, Square, Copy, X } from 'lucide-react'
+import { Minus, Square, Copy, X, PanelBottom, PanelLeft } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { requestAppClose } from '../lib/appClose'
 import { isTauri } from '../lib/tauri'
@@ -9,12 +9,27 @@ import FileMenu from './FileMenu'
 import Tooltip from './Tooltip'
 import ProjectPicker from './ProjectPicker'
 import { translate, useI18n } from '../lib/i18n'
+import {
+  cyclePanelLayoutTemplate,
+  loadPanelLayoutTemplate,
+  PANEL_LAYOUT_CHANGED_EVENT,
+  type PanelLayoutTemplate,
+} from '../lib/panelLayoutTemplate'
 
 export default function TitleBar() {
   const { t } = useI18n()
   const [maximized, setMaximized] = useState(false)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
+  const [panelLayout, setPanelLayout] = useState<PanelLayoutTemplate>(() =>
+    loadPanelLayoutTemplate(),
+  )
   const inTauri = isTauri()
+
+  useEffect(() => {
+    const sync = () => setPanelLayout(loadPanelLayoutTemplate())
+    window.addEventListener(PANEL_LAYOUT_CHANGED_EVENT, sync)
+    return () => window.removeEventListener(PANEL_LAYOUT_CHANGED_EVENT, sync)
+  }, [])
 
   useEffect(() => {
     const onFocus = () => setWindowFocused(true)
@@ -121,26 +136,49 @@ export default function TitleBar() {
         </span>
       </div>
 
-      {inTauri && (
-        <div
-          className="flex h-full flex-shrink-0"
-          onDoubleClick={event => event.stopPropagation()}
+      <div
+        className="flex h-full flex-shrink-0 items-center"
+        onDoubleClick={event => event.stopPropagation()}
+      >
+        <Tooltip
+          label={
+            panelLayout === 'classic'
+              ? t('当前：经典布局（终端在底部）。点击切换为侧栏旁终端。')
+              : t('当前：侧栏旁终端（侧栏 | 终端 | 编辑器）。点击切换为经典布局。')
+          }
+          side="bottom"
         >
-          <WindowButton label={t('最小化')} onClick={handleMinimize}>
-            <Minus size={14} strokeWidth={1.5} />
-          </WindowButton>
-          <WindowButton label={maximized ? t('还原') : t('最大化')} onClick={toggleMaximize}>
-            {maximized ? (
-              <Copy size={12} strokeWidth={1.5} />
+          <button
+            type="button"
+            aria-label={t('切换面板布局')}
+            className="w-[46px] h-full flex items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
+            onClick={() => cyclePanelLayoutTemplate()}
+          >
+            {panelLayout === 'classic' ? (
+              <PanelBottom size={14} strokeWidth={1.5} />
             ) : (
-              <Square size={12} strokeWidth={1.5} />
+              <PanelLeft size={14} strokeWidth={1.5} />
             )}
-          </WindowButton>
-          <WindowButton label={t('关闭窗口')} onClick={handleClose} danger>
-            <X size={14} strokeWidth={1.5} />
-          </WindowButton>
-        </div>
-      )}
+          </button>
+        </Tooltip>
+        {inTauri && (
+          <>
+            <WindowButton label={t('最小化')} onClick={handleMinimize}>
+              <Minus size={14} strokeWidth={1.5} />
+            </WindowButton>
+            <WindowButton label={maximized ? t('还原') : t('最大化')} onClick={toggleMaximize}>
+              {maximized ? (
+                <Copy size={12} strokeWidth={1.5} />
+              ) : (
+                <Square size={12} strokeWidth={1.5} />
+              )}
+            </WindowButton>
+            <WindowButton label={t('关闭窗口')} onClick={handleClose} danger>
+              <X size={14} strokeWidth={1.5} />
+            </WindowButton>
+          </>
+        )}
+      </div>
     </div>
   )
 }

@@ -9,11 +9,15 @@
 ### Added
 
 - 编辑器小地图（CodeGlance 风格）：Lezer 语法着色、光标行、悬停 Quick View、右键快捷配置、`Ctrl+Shift+G` 开关；设置键 `editor.minimap.enabled`（默认开启；≤1MB 全彩 / 1–5MB 密度 / >5MB 隐藏）
+- 终端内查找（`Ctrl+F`）与清空缓冲区（`Ctrl+Shift+K` / 右键菜单 / 命令面板）
+- 终端全局默认 Shell（设置 → 终端）：Windows 默认 `pwsh`，可选 cmd / WSL / Windows PowerShell；macOS/Linux 默认 `zsh`，可选 Bash / pwsh；内置「普通终端」跟随该设置，自定义配置可单独指定
+- 终端忙碌检测：忽略 conhost 等噪声子进程；识别 Shell Integration（OSC 133/633）的「命令在跑」；仅一次性运行任务始终视为忙碌
 
 ### Changed
 
 - 本机打包统一为 `pnpm package`：一次产出 Windows x64 便携版与 NSIS 安装包（ARM64/macOS 仍走 CI）
 - 悬停提示统一为应用内 `Tooltip`：移除空编辑器「最近打开」等处的浏览器原生 `title` tip；设计文档明确禁止原生提示，并由 ESLint 约束
+- 终端配置启动统一为 `interactive` spawn（跑完保留 shell）；OpenCode 等拆掉 ConPTY 时自动重拉提示符；fit 后再按真实尺寸创建 PTY
 
 ## [0.1.4] - 2026-07-18
 

@@ -30,6 +30,9 @@ import {
   normalizePtySize,
 } from '../lib/terminalPtySize'
 import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
+import { planTerminalSpawn } from '../lib/terminalSpawnPlan'
+import { normalizeTerminalShell, terminalShellLabelKey } from '../lib/terminalShell'
+import { clearTerminalCommandActivity } from '../lib/terminalCommandActivity'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 /** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
@@ -38,8 +41,6 @@ const OUTPUT_PERSIST_DEBOUNCE_MS = 800
 
 /** 够"快"才算启动失败：进程在此时长（毫秒）内非零退出，视为秒退并提示。 */
 const QUICK_FAIL_THRESHOLD_MS = 2000
-/** Max wait for the first PTY bytes before typing a profile startup command. */
-const SHELL_READY_TIMEOUT_MS = 800
 /** If xterm never reports a size (panel closed), spawn with defaults. */
 const PTY_SPAWN_FALLBACK_MS = 2500
 
@@ -85,57 +86,6 @@ function consumeIntentionalPtyKill(id: string): boolean {
 
 type TerminalOutputListener = (data: Uint8Array) => void
 
-/**
- * Profile terminals should behave like a normal shell: start PowerShell/bash,
- * type the startup command, and keep the prompt after it exits.
- */
-function isProfileStartupTerminal(tab: Pick<TerminalTab, 'launchCommand' | 'shellKind' | 'profileId'>): boolean {
-  if (!tab.launchCommand.trim()) return false
-  // Run-config tasks always set a concrete script kind; profiles use interactive or omit it.
-  if (tab.shellKind && tab.shellKind !== 'interactive') return false
-  return true
-}
-
-async function waitForShellReady(id: string): Promise<void> {
-  await new Promise<void>(resolve => {
-    let settled = false
-    let unlisten: UnlistenFn | null = null
-    const finish = () => {
-      if (settled) return
-      settled = true
-      window.clearTimeout(fallback)
-      unlisten?.()
-      unlisten = null
-      resolve()
-    }
-    const fallback = window.setTimeout(finish, SHELL_READY_TIMEOUT_MS)
-    void listen<{ id: string }>('terminal-data', event => {
-      if (event.payload.id === id) finish()
-    }).then(fn => {
-      if (settled) {
-        fn()
-        return
-      }
-      unlisten = fn
-    })
-  })
-  // Let the prompt finish painting before we type.
-  await new Promise<void>(resolve => {
-    window.setTimeout(resolve, 60)
-  })
-}
-
-async function injectStartupCommand(id: string, command: string): Promise<void> {
-  const line = command.trim()
-  if (!line) return
-  await waitForShellReady(id)
-  try {
-    await safeInvoke('终端输入', 'write_terminal', { id, data: `${line}\r` })
-  } catch {
-    // Shell may have exited during the wait; restart UI will surface that.
-  }
-}
-
 /** Re-open a shell after OpenCode/TUI tore down the ConPTY; keep scrollback. */
 async function respawnShellAfterExit(id: string): Promise<void> {
   const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
@@ -164,6 +114,7 @@ async function respawnShellAfterExit(id: string): Promise<void> {
       cwd: tab.cwd,
       cols: size.cols,
       rows: size.rows,
+      shell: tab.shell ?? null,
     })
   } catch (e) {
     console.error('respawnShellAfterExit failed:', e)
@@ -232,6 +183,7 @@ function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   terminalCommandHistory.delete(id)
   terminalInputPending.delete(id)
   terminalRingUpdatedAt.delete(id)
+  clearTerminalCommandActivity(id)
   if (options?.persist !== false) scheduleTerminalOutputPersist()
 }
 
@@ -432,6 +384,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     const profile = getTerminalProfile(profileId)
     if (!(await ensureTerminalProfileTrust(profile))) return null
+    const shell = normalizeTerminalShell(profile.shell)
     const id = crypto.randomUUID()
     const nextNumber =
       sameProject.reduce((max, terminal) => {
@@ -442,7 +395,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       profile.name,
       profile.command,
       nextNumber,
-      DEFAULT_TERMINAL_PROFILE.name
+      DEFAULT_TERMINAL_PROFILE.name,
+      translate(terminalShellLabelKey(shell)),
     )
     const tab: TerminalTab = {
       id,
@@ -453,7 +407,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       projectId,
       cwd: projectPath,
       profileId: profile.id,
-      // Typed into a normal shell; `;` joins multi-line profile commands for PowerShell.
+      shell,
+      // `;` joins multi-line profile commands for PowerShell-family shells.
       launchCommand: profile.command.trim().replace(/\s*\n+\s*/g, '; '),
       // OSC titles rename the tab (cwd / apps); generic shell noise is filtered in UI.
       allowTitleRename: true,
@@ -819,27 +774,37 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       ),
     }))
     try {
-      if (tab.launchCommand && tab.shellKind && tab.shellKind !== 'interactive') {
+      const plan = planTerminalSpawn(tab)
+      if (plan.mode === 'script') {
         await safeInvoke('启动任务', 'spawn_script', {
           id,
           cwd: tab.cwd,
-          shellKind: tab.shellKind,
-          target: tab.launchCommand,
-          env: tab.env ?? {},
+          shellKind: plan.shellKind,
+          target: plan.target,
+          env: plan.env,
           cols: size.cols,
           rows: size.rows,
         })
+      } else if (plan.mode === 'interactive') {
+        // Profiles (e.g. OpenCode): one path — run command, keep shell via -NoExit.
+        await safeInvoke('启动终端配置', 'spawn_script', {
+          id,
+          cwd: tab.cwd,
+          shellKind: 'interactive',
+          target: plan.command,
+          env: tab.env ?? {},
+          cols: size.cols,
+          rows: size.rows,
+          shell: tab.shell ?? null,
+        })
       } else {
-        // Profile / plain shell: spawn shell at real size, then type startup cmd.
         await safeInvoke('新建终端', 'create_terminal', {
           id,
           cwd: tab.cwd,
           cols: size.cols,
           rows: size.rows,
+          shell: tab.shell ?? null,
         })
-        if (isProfileStartupTerminal(tab)) {
-          void injectStartupCommand(id, tab.launchCommand)
-        }
       }
       set(s => ({
         terminals: s.terminals.map(terminal =>
@@ -883,6 +848,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }),
       listen<{ id: string; exit_code: number }>('terminal-exit', event => {
         const { id, exit_code } = event.payload
+        clearTerminalCommandActivity(id)
         const tab = get().terminals.find(t => t.id === id)
         if (!tab) {
           consumeIntentionalPtyKill(id)

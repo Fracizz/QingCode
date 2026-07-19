@@ -25,6 +25,7 @@ import {
   type FontSettings,
 } from '../lib/fontSettings'
 import FontFamilySelect from './FontFamilySelect'
+import SettingSelect from './SettingSelect'
 import {
   DEFAULT_THEME,
   THEMES,
@@ -38,6 +39,12 @@ import {
   saveTerminalProfileSettings,
   type TerminalProfileSettings,
 } from '../lib/terminalProfiles'
+import {
+  availableTerminalShells,
+  defaultTerminalShell,
+  terminalShellLabelKey,
+  type TerminalShellId,
+} from '../lib/terminalShell'
 import { useShortcutStore } from '../store/shortcutStore'
 import { DEFAULT_SHORTCUTS, type ShortcutCommand } from '../lib/shortcuts'
 import ShortcutSettings from './ShortcutSettings'
@@ -291,7 +298,7 @@ export default function SettingsEditor() {
           '小地图',
           'minimap',
         )
-      if (cat.id === 'terminal') return match('终端', '默认启动配置', '终端字号')
+      if (cat.id === 'terminal') return match('终端', '默认启动配置', '终端字号', '默认 Shell', 'pwsh', 'WSL', 'Zsh')
       if (cat.id === 'features') {
         return match(
           '快捷键',
@@ -439,18 +446,16 @@ export default function SettingsEditor() {
                     locked={workspaceLocked}
                     lockHint={t('此设置仅在用户作用域中可用')}
                   >
-                    <select
+                    <SettingSelect
                       value={theme}
                       disabled={workspaceLocked}
-                      onChange={e => updateTheme(e.target.value as AppTheme)}
-                      className="setting-control setting-select"
-                    >
-                      {THEMES.map(option => (
-                        <option key={option.value} value={option.value}>
-                          {t(option.label)}
-                        </option>
-                      ))}
-                    </select>
+                      aria-label={t('颜色主题')}
+                      onChange={next => updateTheme(next as AppTheme)}
+                      options={THEMES.map(option => ({
+                        value: option.value,
+                        label: t(option.label),
+                      }))}
+                    />
                   </SettingItem>
                 )}
                 {match('界面字号', '字体') && (
@@ -461,16 +466,16 @@ export default function SettingsEditor() {
                     locked={workspaceLocked}
                     lockHint={t('此设置仅在用户作用域中可用')}
                   >
-                    <select
-                      value={fonts.interfaceFontSize}
+                    <SettingSelect
+                      value={String(fonts.interfaceFontSize)}
                       disabled={workspaceLocked}
-                      onChange={e => updateFonts('interfaceFontSize', Number(e.target.value))}
-                      className="setting-control setting-select"
-                    >
-                      {FONT_SIZE_OPTIONS.map(size => (
-                        <option key={size} value={size}>{size}</option>
-                      ))}
-                    </select>
+                      aria-label={t('界面字号')}
+                      onChange={next => updateFonts('interfaceFontSize', Number(next))}
+                      options={FONT_SIZE_OPTIONS.map(size => ({
+                        value: String(size),
+                        label: String(size),
+                      }))}
+                    />
                   </SettingItem>
                 )}
               </Section>
@@ -490,18 +495,16 @@ export default function SettingsEditor() {
                   locked={workspaceLocked}
                   lockHint={t('此设置仅在用户作用域中可用')}
                 >
-                  <select
+                  <SettingSelect
                     value={theme}
                     disabled={workspaceLocked}
-                    onChange={e => updateTheme(e.target.value as AppTheme)}
-                    className="setting-control setting-select"
-                  >
-                    {THEMES.map(option => (
-                      <option key={option.value} value={option.value}>
-                        {t(option.label)}
-                      </option>
-                    ))}
-                  </select>
+                    aria-label={t('颜色主题')}
+                    onChange={next => updateTheme(next as AppTheme)}
+                    options={THEMES.map(option => ({
+                      value: option.value,
+                      label: t(option.label),
+                    }))}
+                  />
                 </SettingItem>
               </Section>
             )}
@@ -652,7 +655,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('终端', '默认启动配置', '终端字号') && (
+            {match('终端', '默认启动配置', '终端字号', '默认 Shell', 'pwsh', 'WSL', 'Zsh') && (
               <Section
                 id="terminal"
                 title={t('终端')}
@@ -678,37 +681,64 @@ export default function SettingsEditor() {
                   </select>
                 </SettingItem>
                 <SettingItem
+                  title={t('终端 › 集成: 默认 Shell')}
+                  description={t(
+                    '新建「普通终端」时使用的主机 Shell（全局）。Windows 默认 PowerShell 7 (pwsh)，可选 cmd / WSL；macOS/Linux 默认 Zsh，可选 Bash / pwsh。自定义配置可单独指定 Shell。',
+                  )}
+                  modified={terminal.defaultShell !== defaultTerminalShell()}
+                  locked={workspaceLocked}
+                  lockHint={t('此设置仅在用户作用域中可用')}
+                >
+                  <SettingSelect
+                    value={terminal.defaultShell}
+                    disabled={workspaceLocked}
+                    className="setting-control-wide"
+                    aria-label={t('终端 › 集成: 默认 Shell')}
+                    onChange={next =>
+                      updateTerminal({
+                        ...terminal,
+                        defaultShell: next as TerminalShellId,
+                      })
+                    }
+                    options={availableTerminalShells().map(id => ({
+                      value: id,
+                      label: t(terminalShellLabelKey(id)),
+                    }))}
+                  />
+                </SettingItem>
+                <SettingItem
                   title={t('终端 › 集成: 默认配置文件')}
-                  description={t('新建终端时使用的默认配置。未指定时使用内置普通 PowerShell 终端。')}
+                  description={t('新建终端时使用的默认配置。未指定时使用内置普通终端。')}
                   modified={terminal.defaultProfileId != null}
                   locked={workspaceLocked}
                   lockHint={t('此设置仅在用户作用域中可用')}
                 >
-                  <select
+                  <SettingSelect
                     value={terminal.defaultProfileId ?? ''}
                     disabled={workspaceLocked}
-                    onChange={e =>
+                    className="setting-control-wide"
+                    aria-label={t('终端 › 集成: 默认配置文件')}
+                    onChange={next =>
                       updateTerminal({
                         ...terminal,
-                        defaultProfileId: e.target.value ? e.target.value : null,
+                        defaultProfileId: next ? next : null,
                       })
                     }
-                    className="setting-control setting-control-wide setting-select"
-                  >
-                    <option value="">{t('未指定（内置默认）')}</option>
-                    {terminal.profiles
-                      .filter(profile => profile.id !== DEFAULT_TERMINAL_PROFILE.id)
-                      .map(profile => (
-                        <option key={profile.id} value={profile.id}>
-                          {profile.name.trim() || t('未命名配置')}
-                        </option>
-                      ))}
-                  </select>
+                    options={[
+                      { value: '', label: t('未指定（内置默认）') },
+                      ...terminal.profiles
+                        .filter(profile => profile.id !== DEFAULT_TERMINAL_PROFILE.id)
+                        .map(profile => ({
+                          value: profile.id,
+                          label: profile.name.trim() || t('未命名配置'),
+                        })),
+                    ]}
+                  />
                 </SettingItem>
                 {!workspaceLocked && (
                   <div className="pl-3 border-l-2 border-transparent">
                     <p className="text-[12px] text-fg-muted mb-2">
-                      {t('终端配置文件可在下方管理（名称与启动命令）。')}
+                      {t('终端配置文件可在下方管理（名称、Shell 与启动命令）。')}
                     </p>
                     <TerminalProfilesInline settings={terminal} onChange={updateTerminal} />
                   </div>
@@ -1147,23 +1177,60 @@ function TerminalProfilesInline({
 }) {
   const { t } = useI18n()
   const customProfiles = settings.profiles.filter(p => p.id !== DEFAULT_TERMINAL_PROFILE.id)
+  const shellOptions = availableTerminalShells().map(id => ({
+    value: id,
+    label: t(terminalShellLabelKey(id)),
+  }))
 
   return (
     <div className="flex flex-col gap-2">
       {customProfiles.map(profile => (
-        <div key={profile.id} className="grid grid-cols-[1fr_1.4fr_auto] gap-2">
-          <input
-            value={profile.name}
-            onChange={e =>
+        <div key={profile.id} className="flex flex-col gap-1.5 rounded border border-border p-2">
+          <div className="grid grid-cols-[1fr_auto] gap-2">
+            <input
+              value={profile.name}
+              onChange={e =>
+                onChange({
+                  ...settings,
+                  profiles: settings.profiles.map(item =>
+                    item.id === profile.id ? { ...item, name: e.target.value } : item,
+                  ),
+                })
+              }
+              placeholder={t('名称')}
+              className="setting-control setting-control-wide !w-full"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                const profiles = settings.profiles.filter(item => item.id !== profile.id)
+                onChange({
+                  ...settings,
+                  profiles,
+                  defaultProfileId:
+                    settings.defaultProfileId === profile.id ? null : settings.defaultProfileId,
+                })
+              }}
+              className="h-[26px] px-2 rounded-sm text-[12px] text-danger hover:bg-bg-hover"
+            >
+              {t('删除')}
+            </button>
+          </div>
+          <SettingSelect
+            value={profile.shell}
+            className="setting-control setting-control-wide !w-full !h-[26px]"
+            aria-label={t('Shell')}
+            onChange={next =>
               onChange({
                 ...settings,
                 profiles: settings.profiles.map(item =>
-                  item.id === profile.id ? { ...item, name: e.target.value } : item,
+                  item.id === profile.id
+                    ? { ...item, shell: next as TerminalShellId }
+                    : item,
                 ),
               })
             }
-            placeholder={t('名称')}
-            className="setting-control setting-control-wide !w-full"
+            options={shellOptions}
           />
           <input
             value={profile.command}
@@ -1178,20 +1245,6 @@ function TerminalProfilesInline({
             placeholder={t('启动命令')}
             className="setting-control setting-control-wide !w-full font-mono"
           />
-          <button
-            type="button"
-            onClick={() => {
-              const profiles = settings.profiles.filter(item => item.id !== profile.id)
-              onChange({
-                profiles,
-                defaultProfileId:
-                  settings.defaultProfileId === profile.id ? null : settings.defaultProfileId,
-              })
-            }}
-            className="h-[26px] px-2 rounded-sm text-[12px] text-danger hover:bg-bg-hover"
-          >
-            {t('删除')}
-          </button>
         </div>
       ))}
       <button
@@ -1201,7 +1254,12 @@ function TerminalProfilesInline({
             ...settings,
             profiles: [
               ...settings.profiles,
-              { id: crypto.randomUUID(), name: t('新终端配置'), command: '' },
+              {
+                id: crypto.randomUUID(),
+                name: t('新终端配置'),
+                command: '',
+                shell: settings.defaultShell,
+              },
             ],
           })
         }
