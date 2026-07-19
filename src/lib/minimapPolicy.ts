@@ -14,6 +14,8 @@ export const MINIMAP_WIDTH_STORAGE_KEY = 'qingcode:minimap-width'
 /** Min interval between canvas repaints after doc changes (ms). */
 export const MINIMAP_REPAINT_THROTTLE_MS = 48
 
+export const MINIMAP_VIEWPORT_MIN_HEIGHT = 8
+
 export type MinimapRenderMode = 'full' | 'density' | 'hidden'
 
 /** Prefer disk `fileSize`; fall back to CM `doc.length` when unknown. */
@@ -32,6 +34,58 @@ export function resolveMinimapMode(byteSize: number): MinimapRenderMode {
   if (byteSize > MINIMAP_HIDE_BYTES) return 'hidden'
   if (byteSize > MINIMAP_FULL_MAX_BYTES) return 'density'
   return 'full'
+}
+
+export type MinimapLineSample = {
+  lineNumber: number
+  y: number
+}
+
+/** Sample at most one source line per canvas row, preserving the first and last line. */
+export function resolveMinimapLineSamples(
+  totalLines: number,
+  cssHeight: number,
+): MinimapLineSample[] {
+  const lines = Math.max(1, Math.floor(totalLines))
+  const height = Math.max(0, Math.floor(cssHeight))
+  const count = Math.min(lines, height)
+  if (count <= 0) return []
+  if (count === 1) return [{ lineNumber: 1, y: 0 }]
+
+  return Array.from({ length: count }, (_, index) => ({
+    lineNumber: Math.round((index * (lines - 1)) / (count - 1)) + 1,
+    y: Math.round((index * (height - 1)) / (count - 1)),
+  }))
+}
+
+export type MinimapViewport = {
+  top: number
+  height: number
+}
+
+/** Map editor scroll metrics to a viewport that always stays inside the minimap. */
+export function resolveMinimapViewport(
+  scrollTop: number,
+  scrollHeight: number,
+  clientHeight: number,
+  mapHeight: number,
+): MinimapViewport {
+  const safeMapHeight = Math.max(0, mapHeight)
+  if (safeMapHeight === 0) return { top: 0, height: 0 }
+
+  const safeScrollHeight = Math.max(1, scrollHeight)
+  const safeClientHeight = Math.max(0, clientHeight)
+  const maxScroll = Math.max(0, safeScrollHeight - safeClientHeight)
+  const height =
+    maxScroll === 0
+      ? safeMapHeight
+      : Math.min(
+          safeMapHeight,
+          Math.max(MINIMAP_VIEWPORT_MIN_HEIGHT, (safeClientHeight / safeScrollHeight) * safeMapHeight),
+        )
+  const clampedScrollTop = Math.min(maxScroll, Math.max(0, scrollTop))
+  const top = maxScroll === 0 ? 0 : (clampedScrollTop / maxScroll) * (safeMapHeight - height)
+  return { top, height }
 }
 
 export function clampMinimapWidth(width: number): number {

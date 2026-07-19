@@ -14,7 +14,9 @@ import {
   clampMinimapWidth,
   loadMinimapWidth,
   resolveMinimapByteSize,
+  resolveMinimapLineSamples,
   resolveMinimapMode,
+  resolveMinimapViewport,
   saveMinimapWidth,
   type MinimapRenderMode,
 } from '../lib/minimapPolicy'
@@ -103,14 +105,15 @@ function paintMinimap(
 
   const totalLines = Math.max(1, doc.lines)
   const colors = readThemeColors()
-  const sampleRows = Math.max(1, Math.floor(cssHeight))
+  const samples = resolveMinimapLineSamples(totalLines, cssHeight)
+  const horizontalPadding = 4
+  const contentWidth = Math.max(1, cssWidth - horizontalPadding * 2)
 
-  for (let y = 0; y < sampleRows; y++) {
-    const lineNum = Math.min(totalLines, Math.floor((y / sampleRows) * totalLines) + 1)
+  for (const { lineNumber, y } of samples) {
     let lineText = ''
     let lineLen = 0
     try {
-      const line = doc.line(lineNum)
+      const line = doc.line(lineNumber)
       lineLen = line.length
       if (mode === 'full') {
         // Sample a short prefix only — never materialize the whole document.
@@ -125,16 +128,21 @@ function paintMinimap(
       if (density <= 0) continue
       ctx.fillStyle = colors.density
       ctx.globalAlpha = 0.35 + density * 0.55
-      ctx.fillRect(0, y, Math.max(1, cssWidth * density), 1)
+      ctx.fillRect(horizontalPadding, y, Math.max(1, contentWidth * density), 1)
       ctx.globalAlpha = 1
       continue
     }
 
     const kind = classifyLine(lineText)
     if (kind === 'empty') continue
-    const bar = Math.min(1, Math.max(0.12, lineLen / 80))
+    const leadingWhitespace = lineText.length - lineText.trimStart().length
+    const indent = Math.min(contentWidth * 0.35, leadingWhitespace * 1.2)
+    const x = horizontalPadding + indent
+    const availableWidth = Math.max(1, cssWidth - horizontalPadding - x)
+    const visibleLength = Math.max(1, lineLen - leadingWhitespace)
+    const bar = Math.min(1, Math.max(0.12, visibleLength / 80))
     ctx.fillStyle = colorForKind(kind, colors)
-    ctx.fillRect(0, y, Math.max(1, cssWidth * bar), 1)
+    ctx.fillRect(x, y, Math.max(1, availableWidth * bar), 1)
   }
 }
 
@@ -149,6 +157,8 @@ export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
   const widthRef = useRef(width)
   const modeRef = useRef(mode)
   const scheduleRef = useRef(0)
+  const repaintFrameRef = useRef(0)
+  const viewportFrameRef = useRef(0)
   const lastRepaintAtRef = useRef(0)
   const pendingRepaintRef = useRef(false)
   const dragWidthRef = useRef<{ startX: number; startWidth: number } | null>(null)
@@ -164,26 +174,33 @@ export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
     setMode(next)
   }, [tabId, fileSize, viewRef])
 
-  const updateViewport = () => {
+  const updateViewportNow = () => {
     const view = viewRef.current
     const viewport = viewportRef.current
     const root = rootRef.current
     if (!view || !viewport || !root) return
     const scrollDOM = view.scrollDOM
-    const scrollHeight = Math.max(1, scrollDOM.scrollHeight)
-    const clientHeight = scrollDOM.clientHeight
-    const mapH = root.clientHeight
-    const top = (scrollDOM.scrollTop / scrollHeight) * mapH
-    const height = Math.max(8, (clientHeight / scrollHeight) * mapH)
-    viewport.style.top = `${top}px`
-    viewport.style.height = `${Math.min(mapH, height)}px`
+    const { top, height } = resolveMinimapViewport(
+      scrollDOM.scrollTop,
+      scrollDOM.scrollHeight,
+      scrollDOM.clientHeight,
+      root.clientHeight,
+    )
+    viewport.style.transform = `translate3d(0, ${top}px, 0)`
+    viewport.style.height = `${height}px`
+  }
+
+  const requestViewportUpdate = () => {
+    if (viewportFrameRef.current) return
+    viewportFrameRef.current = requestAnimationFrame(() => {
+      viewportFrameRef.current = 0
+      updateViewportNow()
+    })
   }
 
   const repaintNow = () => {
     const view = viewRef.current
-    const canvas = canvasRef.current
-    const root = rootRef.current
-    if (!view || !canvas || !root) return
+    if (!view) return
 
     const doc = view.state.doc
     const bytes = resolveMinimapByteSize(fileSize, doc.length)
@@ -194,25 +211,41 @@ export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
     }
     if (nextMode === 'hidden') return
 
+    const canvas = canvasRef.current
+    const root = rootRef.current
+    if (!canvas || !root) {
+      requestRepaint(true)
+      return
+    }
+
     const cssWidth = root.clientWidth || widthRef.current || MINIMAP_WIDTH_DEFAULT
     const cssHeight = root.clientHeight
     if (cssHeight <= 0) return
 
     paintMinimap(canvas, doc, nextMode, cssWidth, cssHeight)
-    updateViewport()
+    updateViewportNow()
     lastRepaintAtRef.current = performance.now()
   }
 
   const requestRepaint = (force = false) => {
+    // The queued frame reads the latest EditorView state, so another frame would be redundant.
+    if (repaintFrameRef.current) return
     pendingRepaintRef.current = true
-    if (scheduleRef.current) return
+    if (scheduleRef.current) {
+      if (!force) return
+      window.clearTimeout(scheduleRef.current)
+      scheduleRef.current = 0
+    }
     const elapsed = performance.now() - lastRepaintAtRef.current
     const delay = force ? 0 : Math.max(0, MINIMAP_REPAINT_THROTTLE_MS - elapsed)
     scheduleRef.current = window.setTimeout(() => {
       scheduleRef.current = 0
       if (!pendingRepaintRef.current) return
       pendingRepaintRef.current = false
-      requestAnimationFrame(repaintNow)
+      repaintFrameRef.current = requestAnimationFrame(() => {
+        repaintFrameRef.current = 0
+        repaintNow()
+      })
     }, delay)
   }
 
@@ -225,7 +258,7 @@ export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
 
     const detachScroll = () => {
       if (scrollEl) {
-        scrollEl.removeEventListener('scroll', updateViewport)
+        scrollEl.removeEventListener('scroll', requestViewportUpdate)
         scrollEl = null
       }
     }
@@ -241,15 +274,14 @@ export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
       }
       detachScroll()
       scrollEl = view.scrollDOM
-      scrollEl.addEventListener('scroll', updateViewport, { passive: true })
+      scrollEl.addEventListener('scroll', requestViewportUpdate, { passive: true })
       requestRepaint(true)
     }
 
     setMinimapUpdateHandler(update => {
       if (update.docChanged) requestRepaint(false)
       if (update.geometryChanged) {
-        updateViewport()
-        requestRepaint(false)
+        requestViewportUpdate()
       }
     })
 
@@ -272,6 +304,14 @@ export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
         window.clearTimeout(scheduleRef.current)
         scheduleRef.current = 0
       }
+      if (repaintFrameRef.current) {
+        cancelAnimationFrame(repaintFrameRef.current)
+        repaintFrameRef.current = 0
+      }
+      if (viewportFrameRef.current) {
+        cancelAnimationFrame(viewportFrameRef.current)
+        viewportFrameRef.current = 0
+      }
       setMinimapUpdateHandler(null)
       detachScroll()
       ro?.disconnect()
@@ -289,7 +329,7 @@ export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
     const scrollDOM = view.scrollDOM
     const maxScroll = Math.max(0, scrollDOM.scrollHeight - scrollDOM.clientHeight)
     scrollDOM.scrollTop = ratio * maxScroll
-    updateViewport()
+    requestViewportUpdate()
   }
 
   const onCanvasPointerDown = (event: ReactMouseEvent) => {

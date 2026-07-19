@@ -4,7 +4,9 @@ import {
   MINIMAP_HIDE_BYTES,
   clampMinimapWidth,
   resolveMinimapByteSize,
+  resolveMinimapLineSamples,
   resolveMinimapMode,
+  resolveMinimapViewport,
 } from './minimapPolicy'
 import { EDIT_DEGRADED_BYTES } from './fileSizePolicy'
 
@@ -34,5 +36,29 @@ describe('minimapPolicy', () => {
     expect(clampMinimapWidth(10)).toBe(64)
     expect(clampMinimapWidth(999)).toBe(180)
     expect(clampMinimapWidth(Number.NaN)).toBe(96)
+  })
+
+  it('draws each short-file line once across the available height', () => {
+    expect(resolveMinimapLineSamples(3, 9)).toEqual([
+      { lineNumber: 1, y: 0 },
+      { lineNumber: 2, y: 4 },
+      { lineNumber: 3, y: 8 },
+    ])
+  })
+
+  it('samples long files without exceeding the canvas height', () => {
+    const samples = resolveMinimapLineSamples(1000, 3)
+    expect(samples).toEqual([
+      { lineNumber: 1, y: 0 },
+      { lineNumber: 501, y: 1 },
+      { lineNumber: 1000, y: 2 },
+    ])
+  })
+
+  it('keeps the viewport inside the minimap at both scroll limits', () => {
+    expect(resolveMinimapViewport(0, 1000, 100, 200)).toEqual({ top: 0, height: 20 })
+    expect(resolveMinimapViewport(900, 1000, 100, 200)).toEqual({ top: 180, height: 20 })
+    expect(resolveMinimapViewport(9900, 10000, 100, 200)).toEqual({ top: 192, height: 8 })
+    expect(resolveMinimapViewport(50, 100, 100, 200)).toEqual({ top: 0, height: 200 })
   })
 })

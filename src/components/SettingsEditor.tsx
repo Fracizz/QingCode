@@ -515,15 +515,16 @@ export default function SettingsEditor() {
                     locked={scope === 'workspace' && !currentProject}
                     lockHint={t('请先选择项目，再配置工作区小地图。')}
                   >
-                    <label className="inline-flex items-center gap-2 text-[12px] text-fg">
-                      <input
-                        type="checkbox"
-                        checked={minimapEnabled}
-                        disabled={scope === 'workspace' && !currentProject}
-                        onChange={e => void updateMinimapEnabled(e.target.checked)}
-                      />
-                      {t('启用小地图')}
-                    </label>
+                    <select
+                      value={minimapEnabled ? 'on' : 'off'}
+                      disabled={scope === 'workspace' && !currentProject}
+                      onChange={e => void updateMinimapEnabled(e.target.value === 'on')}
+                      className="setting-control setting-select"
+                      aria-label={t('编辑器: 小地图')}
+                    >
+                      <option value="on">{t('开启')}</option>
+                      <option value="off">{t('关闭')}</option>
+                    </select>
                   </SettingItem>
                 )}
                 {match('自动保存', 'files.autoSave') && (
