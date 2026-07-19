@@ -445,6 +445,7 @@
     "小地图": "Minimap",
     "保存小地图设置失败: {error}": "Failed to save minimap setting: {error}",
     "请先选择项目，再配置工作区小地图。": "Select a project first to configure the workspace minimap.",
+    "左右拖曳调整小地图宽度": "Drag left or right to resize the minimap",
     "进程未启动": "Process not started",
     "进程已退出，退出码 {code}": "Process exited with code {code}",
     "，可从终端标签重启": "; restart from the terminal tab",

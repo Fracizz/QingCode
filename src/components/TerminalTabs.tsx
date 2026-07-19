@@ -444,6 +444,7 @@ export default function TerminalTabs() {
                 <Tooltip
                   label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
                   side="top"
+                  forceOpen={isCloseArmed}
                 >
                   <button
                     type="button"

@@ -3,6 +3,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react'
 import type { EditorView } from '@codemirror/view'
@@ -14,12 +15,14 @@ import {
   clampMinimapWidth,
   loadMinimapWidth,
   resolveMinimapByteSize,
-  resolveMinimapLineSamples,
+  resolveMinimapMaxWidth,
   resolveMinimapMode,
   resolveMinimapViewport,
   saveMinimapWidth,
   type MinimapRenderMode,
 } from '../lib/minimapPolicy'
+import { useI18n } from '../lib/i18n'
+import Tooltip from './Tooltip'
 import '../styles/minimap.css'
 
 type Props = {
@@ -81,6 +84,7 @@ function colorForKind(kind: LineKind, colors: ReturnType<typeof readThemeColors>
   }
 }
 
+/** Dense first-version look: one sample per canvas row keeps structure readable. */
 function paintMinimap(
   canvas: HTMLCanvasElement,
   doc: Text,
@@ -105,15 +109,14 @@ function paintMinimap(
 
   const totalLines = Math.max(1, doc.lines)
   const colors = readThemeColors()
-  const samples = resolveMinimapLineSamples(totalLines, cssHeight)
-  const horizontalPadding = 4
-  const contentWidth = Math.max(1, cssWidth - horizontalPadding * 2)
+  const sampleRows = Math.max(1, Math.floor(cssHeight))
 
-  for (const { lineNumber, y } of samples) {
+  for (let y = 0; y < sampleRows; y++) {
+    const lineNum = Math.min(totalLines, Math.floor((y / sampleRows) * totalLines) + 1)
     let lineText = ''
     let lineLen = 0
     try {
-      const line = doc.line(lineNumber)
+      const line = doc.line(lineNum)
       lineLen = line.length
       if (mode === 'full') {
         // Sample a short prefix only — never materialize the whole document.
@@ -128,29 +131,26 @@ function paintMinimap(
       if (density <= 0) continue
       ctx.fillStyle = colors.density
       ctx.globalAlpha = 0.35 + density * 0.55
-      ctx.fillRect(horizontalPadding, y, Math.max(1, contentWidth * density), 1)
+      ctx.fillRect(0, y, Math.max(1, cssWidth * density), 1)
       ctx.globalAlpha = 1
       continue
     }
 
     const kind = classifyLine(lineText)
     if (kind === 'empty') continue
-    const leadingWhitespace = lineText.length - lineText.trimStart().length
-    const indent = Math.min(contentWidth * 0.35, leadingWhitespace * 1.2)
-    const x = horizontalPadding + indent
-    const availableWidth = Math.max(1, cssWidth - horizontalPadding - x)
-    const visibleLength = Math.max(1, lineLen - leadingWhitespace)
-    const bar = Math.min(1, Math.max(0.12, visibleLength / 80))
+    const bar = Math.min(1, Math.max(0.12, lineLen / 80))
     ctx.fillStyle = colorForKind(kind, colors)
-    ctx.fillRect(x, y, Math.max(1, availableWidth * bar), 1)
+    ctx.fillRect(0, y, Math.max(1, cssWidth * bar), 1)
   }
 }
 
 export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
+  const { t } = useI18n()
   const rootRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(() => loadMinimapWidth())
+  const [resizing, setResizing] = useState(false)
   const [mode, setMode] = useState<MinimapRenderMode>(() =>
     resolveMinimapMode(resolveMinimapByteSize(fileSize, 0)),
   )
@@ -161,7 +161,14 @@ export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
   const viewportFrameRef = useRef(0)
   const lastRepaintAtRef = useRef(0)
   const pendingRepaintRef = useRef(false)
-  const dragWidthRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const resizingRef = useRef(false)
+  const dragWidthRef = useRef<{
+    pointerId: number
+    startX: number
+    startWidth: number
+    bodyCursor: string
+    bodyUserSelect: string
+  } | null>(null)
 
   widthRef.current = width
   modeRef.current = mode
@@ -288,17 +295,40 @@ export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
     attach()
 
     const root = rootRef.current
+    const pane = root?.parentElement
+    const enforceSafeWidth = () => {
+      if (!root || !pane || resizingRef.current) return
+      const next = clampMinimapWidth(widthRef.current, resolveMinimapMaxWidth(pane.clientWidth))
+      if (next === widthRef.current) return
+      widthRef.current = next
+      root.style.width = `${next}px`
+      setWidth(next)
+      saveMinimapWidth(next)
+    }
     const ro =
       root && typeof ResizeObserver !== 'undefined'
-        ? new ResizeObserver(() => requestRepaint(true))
+        ? new ResizeObserver(() => {
+            if (resizingRef.current) return
+            enforceSafeWidth()
+            requestRepaint(true)
+          })
         : null
     if (root && ro) ro.observe(root)
+    if (pane && ro) ro.observe(pane)
+    enforceSafeWidth()
 
     const onTheme = () => requestRepaint(true)
     window.addEventListener('qingcode:theme-changed', onTheme)
 
     return () => {
       cancelled = true
+      const drag = dragWidthRef.current
+      if (drag) {
+        document.body.style.cursor = drag.bodyCursor
+        document.body.style.userSelect = drag.bodyUserSelect
+        dragWidthRef.current = null
+        resizingRef.current = false
+      }
       window.clearTimeout(retryTimer)
       if (scheduleRef.current) {
         window.clearTimeout(scheduleRef.current)
@@ -346,45 +376,78 @@ export default function EditorMinimap({ viewRef, tabId, fileSize }: Props) {
     window.addEventListener('mouseup', onUp)
   }
 
-  const onResizePointerDown = (event: ReactMouseEvent) => {
+  const finishResize = (target: HTMLElement, pointerId: number) => {
+    const drag = dragWidthRef.current
+    if (!drag || drag.pointerId !== pointerId) return
+    if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
+    dragWidthRef.current = null
+    resizingRef.current = false
+    document.body.style.cursor = drag.bodyCursor
+    document.body.style.userSelect = drag.bodyUserSelect
+    setResizing(false)
+    setWidth(widthRef.current)
+    saveMinimapWidth(widthRef.current)
+    requestRepaint(true)
+  }
+
+  const onResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
-    dragWidthRef.current = { startX: event.clientX, startWidth: widthRef.current }
+    event.currentTarget.setPointerCapture(event.pointerId)
+    dragWidthRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: widthRef.current,
+      bodyCursor: document.body.style.cursor,
+      bodyUserSelect: document.body.style.userSelect,
+    }
+    resizingRef.current = true
+    setResizing(true)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
 
-    const onMove = (e: MouseEvent) => {
-      const drag = dragWidthRef.current
-      if (!drag) return
-      // Dragging left edge: move left → wider.
-      const next = clampMinimapWidth(drag.startWidth + (drag.startX - e.clientX))
-      widthRef.current = next
-      setWidth(next)
-    }
-    const onUp = () => {
-      dragWidthRef.current = null
-      saveMinimapWidth(widthRef.current)
-      requestRepaint(true)
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
+  const onResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragWidthRef.current
+    const root = rootRef.current
+    const pane = root?.parentElement
+    if (!drag || drag.pointerId !== event.pointerId || !root || !pane) return
+    const maxWidth = resolveMinimapMaxWidth(pane.clientWidth)
+    // Dragging the left edge left makes the minimap wider; right makes it narrower.
+    const next = clampMinimapWidth(drag.startWidth + (drag.startX - event.clientX), maxWidth)
+    if (next === widthRef.current) return
+    widthRef.current = next
+    // Stretch the existing bitmap while dragging; repaint once on release.
+    root.style.width = `${next}px`
   }
 
   if (mode === 'hidden') return null
 
+  const resizeHint = t('左右拖曳调整小地图宽度')
+
   return (
     <div
       ref={rootRef}
-      className="editor-minimap"
+      className={`editor-minimap${resizing ? ' editor-minimap--resizing' : ''}`}
       style={{ width }}
       aria-hidden
     >
-      <div
-        className="editor-minimap__resizer"
-        onMouseDown={onResizePointerDown}
-        title="Drag to resize"
-      />
+      <Tooltip
+        label={resizeHint}
+        side="left"
+        delay={280}
+        wrapperClassName="editor-minimap__resizer-tip"
+      >
+        <div
+          className="editor-minimap__resizer"
+          onPointerDown={onResizePointerDown}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={event => finishResize(event.currentTarget, event.pointerId)}
+          onPointerCancel={event => finishResize(event.currentTarget, event.pointerId)}
+          aria-label={resizeHint}
+        />
+      </Tooltip>
       <canvas
         ref={canvasRef}
         className="editor-minimap__canvas"

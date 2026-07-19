@@ -44,17 +44,31 @@
   will-change: transform, height;
 }
 
-.editor-minimap__resizer {
+.editor-minimap__resizer-tip {
   position: absolute;
   top: 0;
   bottom: 0;
   left: 0;
-  width: 4px;
-  cursor: col-resize;
+  width: 8px;
   z-index: 2;
+  display: block;
+}
+
+.editor-minimap__resizer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
 }
 
 .editor-minimap__resizer:hover,
-.editor-minimap__resizer:active {
+.editor-minimap__resizer:active,
+.editor-minimap--resizing .editor-minimap__resizer {
   background: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.editor-minimap--resizing {
+  border-left-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
 }

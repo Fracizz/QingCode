@@ -109,6 +109,8 @@ interface Props {
   label: string
   side?: TooltipSide
   delay?: number
+  /** Keep the tooltip visible without waiting for hover (for transient guidance). */
+  forceOpen?: boolean
   /** When false, focus does not open the tip (avoids tip-on-click). Default false. */
   showOnFocus?: boolean
   wrapperClassName?: string
@@ -119,6 +121,7 @@ export default function Tooltip({
   label,
   side = 'right',
   delay = SHOW_DELAY,
+  forceOpen = false,
   showOnFocus = false,
   wrapperClassName = 'inline-flex shrink-0',
   children,
@@ -126,6 +129,7 @@ export default function Tooltip({
   const triggerRef = useRef<HTMLSpanElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
+  const visible = forceOpen || open
   const [style, setStyle] = useState<CSSProperties>({})
   const timerRef = useRef<number | undefined>(undefined)
 
@@ -174,7 +178,7 @@ export default function Tooltip({
   useEffect(() => () => clearTimer(), [])
 
   useLayoutEffect(() => {
-    if (!open) return
+    if (!visible) return
     updatePosition()
     const onLayoutChange = () => updatePosition()
     window.addEventListener('scroll', onLayoutChange, true)
@@ -183,7 +187,7 @@ export default function Tooltip({
       window.removeEventListener('scroll', onLayoutChange, true)
       window.removeEventListener('resize', onLayoutChange)
     }
-  }, [open, side, label])
+  }, [visible, side, label])
 
   return (
     <>
@@ -198,7 +202,7 @@ export default function Tooltip({
       >
         {children}
       </span>
-      {open &&
+      {visible &&
         createPortal(
           <div
             ref={tipRef}

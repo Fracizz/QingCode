@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   MINIMAP_FULL_MAX_BYTES,
   MINIMAP_HIDE_BYTES,
+  MINIMAP_WIDTH_MAX,
+  MINIMAP_WIDTH_MIN,
   clampMinimapWidth,
   resolveMinimapByteSize,
   resolveMinimapLineSamples,
+  resolveMinimapMaxWidth,
   resolveMinimapMode,
   resolveMinimapViewport,
 } from './minimapPolicy'
@@ -36,6 +39,13 @@ describe('minimapPolicy', () => {
     expect(clampMinimapWidth(10)).toBe(64)
     expect(clampMinimapWidth(999)).toBe(180)
     expect(clampMinimapWidth(Number.NaN)).toBe(96)
+  })
+
+  it('leaves a safe editor width while resizing', () => {
+    expect(resolveMinimapMaxWidth(900)).toBe(MINIMAP_WIDTH_MAX)
+    expect(resolveMinimapMaxWidth(480)).toBe(120)
+    expect(resolveMinimapMaxWidth(380)).toBe(MINIMAP_WIDTH_MIN)
+    expect(clampMinimapWidth(180, resolveMinimapMaxWidth(480))).toBe(120)
   })
 
   it('draws each short-file line once across the available height', () => {

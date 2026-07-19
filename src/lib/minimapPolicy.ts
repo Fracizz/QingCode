@@ -9,6 +9,8 @@ export const MINIMAP_HIDE_BYTES = EDIT_DEGRADED_BYTES
 export const MINIMAP_WIDTH_DEFAULT = 96
 export const MINIMAP_WIDTH_MIN = 64
 export const MINIMAP_WIDTH_MAX = 180
+/** Space that resizing must leave for the actual editor content. */
+export const MINIMAP_EDITOR_SAFE_WIDTH = 360
 export const MINIMAP_WIDTH_STORAGE_KEY = 'qingcode:minimap-width'
 
 /** Min interval between canvas repaints after doc changes (ms). */
@@ -88,9 +90,18 @@ export function resolveMinimapViewport(
   return { top, height }
 }
 
-export function clampMinimapWidth(width: number): number {
+export function resolveMinimapMaxWidth(containerWidth: number): number {
+  if (!Number.isFinite(containerWidth) || containerWidth <= 0) return MINIMAP_WIDTH_MAX
+  return Math.max(
+    MINIMAP_WIDTH_MIN,
+    Math.min(MINIMAP_WIDTH_MAX, Math.floor(containerWidth - MINIMAP_EDITOR_SAFE_WIDTH)),
+  )
+}
+
+export function clampMinimapWidth(width: number, maxWidth = MINIMAP_WIDTH_MAX): number {
   if (!Number.isFinite(width)) return MINIMAP_WIDTH_DEFAULT
-  return Math.min(MINIMAP_WIDTH_MAX, Math.max(MINIMAP_WIDTH_MIN, Math.round(width)))
+  const safeMax = Math.max(MINIMAP_WIDTH_MIN, Math.min(MINIMAP_WIDTH_MAX, maxWidth))
+  return Math.min(safeMax, Math.max(MINIMAP_WIDTH_MIN, Math.round(width)))
 }
 
 export function loadMinimapWidth(): number {
