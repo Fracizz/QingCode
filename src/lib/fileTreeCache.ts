@@ -4,12 +4,13 @@ import { collectAncestorDirs, findProjectForPath } from '../utils/fileReferences
 import {
   findNodeByPath,
   patchTree,
+  removeNodeFromTree,
   type FileNode,
 } from '../utils/fileTreeHelpers'
 import { loadExcludeSettingsForProject } from './excludeSettings'
 
 export type { FileNode }
-export { findNodeByPath, patchTree }
+export { findNodeByPath, patchTree, removeNodeFromTree }
 
 /** Mark directory nodes as not yet expanded. */
 export function withLoadedFlags(nodes: FileNode[]): FileNode[] {

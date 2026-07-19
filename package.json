@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.1.4",
   "type": "module",
+  "packageManager": "pnpm@11.0.8",
+  "engines": {
+    "node": ">=22"
+  },
   "pnpm": {
     "onlyBuiltDependencies": [
       "esbuild"
@@ -14,9 +18,11 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "check": "pnpm check:frontend && pnpm check:rust",
-    "check:frontend": "tsc --noEmit && vitest run",
+    "check:frontend": "tsc --noEmit && vitest run --coverage && pnpm lint",
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml",
+    "lint": "eslint .",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "smoke:start": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/smoke-start.ps1",
     "tauri": "tauri",
@@ -84,11 +90,13 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.7.0",
     "prettier": "^3.9.5",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.64.0",

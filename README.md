@@ -145,3 +145,7 @@ pnpm tauri:dev    # 完整桌面应用
 ## 技术栈
 
 Tauri 2 · React 19 · TypeScript · Vite · CodeMirror 6 · xterm.js · Zustand · Tailwind CSS · Rust
+
+## 许可证
+
+[MIT](./LICENSE)

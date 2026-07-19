@@ -30,20 +30,45 @@ impl PathAllowlist {
 
     pub fn sync_project_roots(&self, roots: Vec<String>) {
         if let Ok(mut state) = self.inner.lock() {
-            state.project_roots = roots.into_iter().map(PathBuf::from).collect();
+            state.project_roots = roots
+                .into_iter()
+                .map(PathBuf::from)
+                .filter(|root| is_grantable_path(root))
+                .collect();
         }
     }
 
+    /// Only accept trust for roots already registered as project roots.
+    /// Prevents a compromised WebView from widening write/terminal scope to arbitrary paths.
     pub fn sync_trusted_roots(&self, roots: Vec<String>) {
         if let Ok(mut state) = self.inner.lock() {
-            state.trusted_roots = roots.into_iter().map(PathBuf::from).collect();
+            state.trusted_roots = roots
+                .into_iter()
+                .map(PathBuf::from)
+                .filter(|root| {
+                    is_grantable_path(root)
+                        && state
+                            .project_roots
+                            .iter()
+                            .any(|project| paths_equal_loose(root, project))
+                })
+                .collect();
         }
     }
 
+    /// Explicit grants (Save As / Open with / symlink confirm). Rejects relative paths
+    /// and filesystem roots; caps growth so a compromised frontend cannot flood memory.
     pub fn authorize_paths(&self, paths: Vec<String>) {
+        const MAX_AUTHORIZED: usize = 256;
         if let Ok(mut state) = self.inner.lock() {
             for path in paths {
+                if state.authorized.len() >= MAX_AUTHORIZED {
+                    break;
+                }
                 let buf = PathBuf::from(path);
+                if !is_grantable_path(&buf) {
+                    continue;
+                }
                 if !state.authorized.iter().any(|existing| existing == &buf) {
                     state.authorized.push(buf);
                 }
@@ -84,6 +109,11 @@ impl PathAllowlist {
             .map_err(|_| "路径沙箱状态不可用".to_string())?;
         Ok(f(&state))
     }
+}
+
+/// Absolute paths that are not the filesystem root (drive root / `/`).
+fn is_grantable_path(path: &Path) -> bool {
+    path.is_absolute() && path.parent().is_some()
 }
 
 /// Reject relative paths and filesystem roots; require project root or authorization.
@@ -602,5 +632,51 @@ mod tests {
         assert!(ensure_path_writable(&file, &state).is_ok());
 
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn sync_trusted_roots_ignores_paths_outside_project_roots() {
+        let base = temp_base("trust-filter");
+        let project = base.join("project");
+        let outside = base.join("outside");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+
+        let allowlist = PathAllowlist::new();
+        allowlist.sync_project_roots(vec![project.to_string_lossy().into_owned()]);
+        allowlist.sync_trusted_roots(vec![
+            project.to_string_lossy().into_owned(),
+            outside.to_string_lossy().into_owned(),
+        ]);
+
+        assert!(allowlist
+            .ensure_executable(&project.to_string_lossy())
+            .is_ok());
+        assert!(allowlist
+            .ensure_executable(&outside.to_string_lossy())
+            .is_err());
+
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn authorize_paths_rejects_relative_and_root() {
+        let allowlist = PathAllowlist::new();
+        allowlist.authorize_paths(vec![
+            "relative.txt".into(),
+            if cfg!(windows) {
+                r"C:\".into()
+            } else {
+                "/".into()
+            },
+        ]);
+        // Nothing grantable — ensure_allowed still fails for a random absolute file.
+        let probe = if cfg!(windows) {
+            r"C:\Windows\System32\drivers\etc\hosts"
+        } else {
+            "/etc/hosts"
+        };
+        let err = allowlist.ensure_allowed(probe).unwrap_err();
+        assert!(err.contains("未经授权") || err.contains("不在"), "{err}");
     }
 }

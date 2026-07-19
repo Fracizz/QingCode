@@ -229,6 +229,20 @@ fn spawn_script(
     allowlist: tauri::State<'_, PathAllowlist>,
 ) -> Result<(), String> {
     allowlist.ensure_executable(&cwd)?;
+    // Script file targets must stay inside the sandbox. Inline `command` strings
+    // are intentionally unrestricted once the cwd is trusted (UI confirms run).
+    let kind = shell_kind.as_str();
+    if kind != "command" {
+        let target_path = {
+            let p = Path::new(&target);
+            if p.is_absolute() {
+                target.clone()
+            } else {
+                Path::new(&cwd).join(p).to_string_lossy().into_owned()
+            }
+        };
+        allowlist.ensure_allowed(&target_path)?;
+    }
     state.spawn_script(id, &cwd, &shell_kind, &target, env, app)
 }
 

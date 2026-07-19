@@ -13,6 +13,7 @@ import { resolveReadEncoding } from '../lib/fileEncoding'
 import { editorPerfProfile, resolveEditMaxBytes } from '../lib/fileSizePolicy'
 import { translate } from '../lib/i18n'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
+import { shouldSkipWatcherTreeRefresh } from '../lib/watcherTreeRefresh'
 import type { EditorTab, Project } from '../types'
 
 export type FsChangePayload = {
@@ -42,11 +43,16 @@ async function refreshTreeForPath(path: string) {
       ? store.currentProject
       : null)
   if (!project || project.ephemeral) return
-  const dir = path.endsWith('/') || path.endsWith('\\') ? path.replace(/[/\\]+$/, '') : parentPath(path)
-  if (pathsEqual(dir, project.path) || pathsEqual(path, project.path)) {
+  if (await shouldSkipWatcherTreeRefresh(path, project)) return
+
+  // Always refresh the *parent* listing. Expanding the changed path itself is wrong when
+  // the event is a short-lived directory that has already been deleted (Cargo deps temps).
+  const changed = path.replace(/[/\\]+$/, '')
+  const dir = pathsEqual(changed, project.path) ? project.path : parentPath(changed)
+  if (pathsEqual(dir, project.path) || pathsEqual(changed, project.path)) {
     await store.refreshProjectTree(project)
   } else {
-    await store.expandProjectDir(project.id, dir)
+    await store.expandProjectDir(project.id, dir, { force: true })
   }
 }
 

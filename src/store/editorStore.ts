@@ -35,6 +35,7 @@ import { authorizePaths } from '../lib/pathAllowlist'
 import { loadEffectiveAutoSaveSettings, notifyAutoSaveSettingsChanged } from '../lib/autoSaveSettings'
 import { choiceDialog } from './choiceStore'
 import { useProjectStore } from './projectStore'
+import { registerEditorSessionApi } from './editorSessionBridge'
 import type { EditorTab } from '../types'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
 import { guessLanguage, isPinnedSettingsTab, tabNameFromPath } from '../utils/editorHelpers'
@@ -1122,3 +1123,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })
   },
 }))
+
+registerEditorSessionApi({
+  activateProjectSession: (previousId, nextId) =>
+    useEditorStore.getState().activateProjectSession(previousId, nextId),
+  renamePath: (from, to) => useEditorStore.getState().renamePath(from, to),
+})

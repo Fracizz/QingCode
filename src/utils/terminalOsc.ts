@@ -21,7 +21,7 @@ export class TerminalOscParser {
   private readonly decoder = new TextDecoder('utf-8', { fatal: false })
 
   feed(data: Uint8Array, onTitle?: (title: string) => void): Uint8Array {
-    let input = this.carry + this.decoder.decode(data, { stream: true })
+    const input = this.carry + this.decoder.decode(data, { stream: true })
 
     const output: string[] = []
     let index = 0

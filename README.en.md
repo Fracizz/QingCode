@@ -145,3 +145,7 @@ See [AGENTS.md](./AGENTS.md) for repo conventions and [HELP.md](./HELP.md) for u
 ## Stack
 
 Tauri 2 · React 19 · TypeScript · Vite · CodeMirror 6 · xterm.js · Zustand · Tailwind CSS · Rust
+
+## License
+
+[MIT](./LICENSE)

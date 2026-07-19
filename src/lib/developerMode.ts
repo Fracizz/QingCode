@@ -1,5 +1,4 @@
-import { invoke } from '@tauri-apps/api/core'
-import { isTauri } from './tauri'
+import { isTauri, safeInvoke } from './tauri'
 
 let devBuild: boolean | null = null
 
@@ -10,7 +9,7 @@ async function resolveDevBuild(): Promise<boolean> {
     return devBuild
   }
   try {
-    devBuild = await invoke<boolean>('is_dev_build')
+    devBuild = await safeInvoke<boolean>('检查开发构建', 'is_dev_build')
   } catch {
     devBuild = false
   }
@@ -53,7 +52,7 @@ export function installDeveloperMode() {
         event.preventDefault()
         event.stopPropagation()
         try {
-          await invoke('plugin:webview|internal_toggle_devtools')
+          await safeInvoke('切换开发者工具', 'plugin:webview|internal_toggle_devtools')
         } catch {
           // Devtools API unavailable outside debug builds.
         }

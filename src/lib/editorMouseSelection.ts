@@ -41,7 +41,7 @@ export function reliableClickType(event: MouseEvent): number {
 export function selectionGroupAt(state: EditorState, pos: number, bias = 1): SelectionRange {
   const categorize = state.charCategorizer(pos)
   const line = state.doc.lineAt(pos)
-  let linePos = pos - line.from
+  const linePos = pos - line.from
   if (line.length === 0) return EditorSelection.cursor(pos)
   if (linePos === 0) bias = 1
   else if (linePos === line.length) bias = -1
@@ -73,7 +73,7 @@ export function selectionForClickType(
   if (type === 1) return EditorSelection.cursor(pos, assoc)
   if (type === 2) return selectionGroupAt(state, pos, assoc || 1)
   const line = state.doc.lineAt(pos)
-  let from = line.from
+  const from = line.from
   let to = line.to
   if (to < state.doc.length && to === line.to) to++
   return EditorSelection.range(from, to)

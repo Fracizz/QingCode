@@ -45,6 +45,17 @@ export function patchTree(
   })
 }
 
+/** Remove a node (and its subtree) anywhere under `nodes`. */
+export function removeNodeFromTree(nodes: FileNode[], targetPath: string): FileNode[] {
+  return nodes
+    .filter(n => !pathsMatch(n.path, targetPath))
+    .map(n =>
+      n.children
+        ? { ...n, children: removeNodeFromTree(n.children, targetPath) }
+        : n,
+    )
+}
+
 export function baseName(path: string): string {
   const norm = path.replace(/\\/g, '/')
   const parts = norm.split('/').filter(Boolean)

@@ -469,7 +469,7 @@ export function formatSettings(
       )
     } else if (!text.includes(`"${UPDATE_SKIPPED_VERSION_KEY}"`)) {
       text = text.replace(
-        /(\n  \/\/ ============================== 自定义扩展)/,
+        /(\n {2}\/\/ ============================== 自定义扩展)/,
         `\n${line}$1`,
       )
     }

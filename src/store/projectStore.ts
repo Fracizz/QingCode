@@ -4,7 +4,7 @@ import { tempDir } from '@tauri-apps/api/path'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import type { Project, RecentFile } from '../types'
 import { baseName, findNodeByPath } from '../utils/fileTreeHelpers'
-import { useEditorStore } from './editorStore'
+import { activateProjectSession, renameEditorPaths } from './editorSessionBridge'
 import { translate } from '../lib/i18n'
 import {
   formatExpandDirErrorToast,
@@ -39,6 +39,7 @@ import {
   loadProjectRootTree,
   patchDirChildren,
   preserveLoadedChildren,
+  removeNodeFromTree,
   revealNeedsTreeLoad,
   type FileNode,
 } from '../lib/fileTreeCache'
@@ -316,7 +317,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         expandedProjects: { ...s.expandedProjects, [id]: true },
       }))
       void syncAllowlistRoots(get().projects)
-      useEditorStore.getState().activateProjectSession(previousId, id)
+      activateProjectSession(previousId, id)
       void get().ensureProjectTree(project)
       get().pushToast('success', `已新建临时项目: ${name}（退出后将从列表移除；文件保留在系统临时目录）`)
       return true
@@ -483,7 +484,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           ),
         }))
         void syncAllowlistRoots(get().projects)
-        if (previousPath) useEditorStore.getState().renamePath(previousPath, path)
+        if (previousPath) renameEditorPaths(previousPath, path)
         if (wasCurrent) {
           const relocated = get().projects.find(project => project.id === id)
           if (relocated) await get().switchProject(relocated)
@@ -492,7 +493,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         return true
       }
       await relocateProjectRows(id, path, baseName(path))
-      if (previousPath) useEditorStore.getState().renamePath(previousPath, path)
+      if (previousPath) renameEditorPaths(previousPath, path)
       await get().loadProjects()
       const relocated = get().projects.find(project => project.id === id)
       if (wasCurrent && relocated) await get().switchProject(relocated)
@@ -572,7 +573,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         expandedProjects: { ...s.expandedProjects, [project.id]: true },
       }))
       // Keep the previous project's tabs/drafts/CM state; restore the target's.
-      useEditorStore.getState().activateProjectSession(previousId, project.id)
+      activateProjectSession(previousId, project.id)
       // Refresh on switch — inactive durable projects have no root watcher.
       if (project.ephemeral) void get().ensureProjectTree(project)
       else void get().refreshProjectTree(project)
@@ -651,6 +652,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }))
     } catch (e) {
       console.error('expandDir failed:', e)
+      // Ephemeral dirs (Cargo deps temp, etc.) vanish between list and expand.
+      if (isDirectoryUnavailableError(e)) {
+        set(s => ({ fileTree: removeNodeFromTree(s.fileTree, path) }))
+        return
+      }
       get().pushToast('error', formatExpandDirErrorToast(e))
     }
   },
@@ -747,6 +753,16 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       })
     } catch (e) {
       console.error('expandProjectDir failed:', e)
+      // Stale / ephemeral directories (e.g. Cargo `target/**/deps/<tmp>`) — prune quietly.
+      if (isDirectoryUnavailableError(e)) {
+        set(s => ({
+          projectTrees: {
+            ...s.projectTrees,
+            [projectId]: removeNodeFromTree(s.projectTrees[projectId] ?? [], path),
+          },
+        }))
+        return
+      }
       get().pushToast('error', formatExpandDirErrorToast(e))
     }
   },

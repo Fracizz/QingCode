@@ -2,7 +2,8 @@
 name = "qingcode"
 version = "0.1.4"
 description = "QingCode — a lightweight multi-project code editor"
-authors = ["you"]
+authors = ["Franciz"]
+license = "MIT"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

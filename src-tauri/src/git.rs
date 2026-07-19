@@ -1,7 +1,18 @@
 use crate::file_encoding::{self, FileEncoding};
+use crate::path_guard::PathAllowlist;
 use serde::Serialize;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output};
+use tauri::State;
+
+/// Reject paths outside the registered project / authorized sandbox before any Git I/O.
+fn ensure_git_root(path: &str, allowlist: &PathAllowlist) -> Result<(), String> {
+    allowlist.ensure_allowed(path)?;
+    if !Path::new(path).is_dir() {
+        return Err("Git 项目目录不可用".to_string());
+    }
+    Ok(())
+}
 
 const MAX_DIFF_BYTES: usize = 1_000_000;
 
@@ -238,11 +249,9 @@ fn collect_file_diff(root: &Path, relative: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn git_status(path: String) -> Result<GitStatus, String> {
+pub fn git_status(path: String, allowlist: State<'_, PathAllowlist>) -> Result<GitStatus, String> {
+    ensure_git_root(&path, &allowlist)?;
     let root = Path::new(&path);
-    if !root.is_dir() {
-        return Err("Git 项目目录不可用".to_string());
-    }
     let output = run_git(root, &["status", "--porcelain=v1", "--branch", "-z"])?;
     if !output.status.success() {
         if is_not_repository_error(&output) {
@@ -261,11 +270,13 @@ pub fn git_status(path: String) -> Result<GitStatus, String> {
 }
 
 #[tauri::command]
-pub fn git_diff(path: String, file: String) -> Result<String, String> {
+pub fn git_diff(
+    path: String,
+    file: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<String, String> {
+    ensure_git_root(&path, &allowlist)?;
     let root = Path::new(&path);
-    if !root.is_dir() {
-        return Err("Git 项目目录不可用".to_string());
-    }
     let relative = resolve_relative(root, &file)?;
     collect_file_diff(root, &relative)
 }
@@ -300,11 +311,13 @@ fn read_working_tree_text(root: &Path, relative: &str) -> String {
 
 /// Pair of HEAD vs working-tree contents for the side-by-side editor diff.
 #[tauri::command]
-pub fn git_file_contents(path: String, file: String) -> Result<GitFileContents, String> {
+pub fn git_file_contents(
+    path: String,
+    file: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<GitFileContents, String> {
+    ensure_git_root(&path, &allowlist)?;
     let root = Path::new(&path);
-    if !root.is_dir() {
-        return Err("Git 项目目录不可用".to_string());
-    }
     let relative = resolve_relative(root, &file)?;
     Ok(GitFileContents {
         original: git_show_revision(root, "HEAD", &relative),
@@ -315,6 +328,45 @@ pub fn git_file_contents(path: String, file: String) -> Result<GitFileContents, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_base(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("qingcode-git-{label}-{nonce}"))
+    }
+
+    #[test]
+    fn ensure_git_root_rejects_path_outside_allowlist() {
+        let base = temp_base("outside");
+        let project = base.join("project");
+        let outside = base.join("outside");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+
+        let allowlist = PathAllowlist::new();
+        allowlist.sync_project_roots(vec![project.to_string_lossy().into_owned()]);
+        let err = ensure_git_root(&outside.to_string_lossy(), &allowlist).unwrap_err();
+        assert!(err.contains("未经授权") || err.contains("不在"), "{err}");
+
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn ensure_git_root_allows_registered_project() {
+        let base = temp_base("under");
+        let project = base.join("project");
+        fs::create_dir_all(&project).unwrap();
+
+        let allowlist = PathAllowlist::new();
+        allowlist.sync_project_roots(vec![project.to_string_lossy().into_owned()]);
+        assert!(ensure_git_root(&project.to_string_lossy(), &allowlist).is_ok());
+
+        fs::remove_dir_all(base).unwrap();
+    }
 
     #[test]
     fn parses_branch_and_changed_files() {

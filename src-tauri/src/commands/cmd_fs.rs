@@ -434,7 +434,10 @@ pub fn rename_path(
     Ok(target.to_string_lossy().to_string())
 }
 
-fn unique_child_path(dest_dir: &Path, file_name: &std::ffi::OsStr) -> Result<std::path::PathBuf, String> {
+fn unique_child_path(
+    dest_dir: &Path,
+    file_name: &std::ffi::OsStr,
+) -> Result<std::path::PathBuf, String> {
     let mut candidate = dest_dir.join(file_name);
     if !candidate.exists() {
         return Ok(candidate);
@@ -688,12 +691,7 @@ fn collect_directory_entry_counts(
             .map_err(|e| format!("读取文件类型失败: {}", e))?;
         if file_type.is_dir() && !file_type.is_symlink() {
             *folder_count += 1;
-            collect_directory_entry_counts(
-                &entry.path(),
-                file_count,
-                folder_count,
-                total_size,
-            )?;
+            collect_directory_entry_counts(&entry.path(), file_count, folder_count, total_size)?;
         } else {
             *file_count += 1;
             if let Ok(meta) = entry.metadata() {

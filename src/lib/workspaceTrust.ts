@@ -1,7 +1,7 @@
 import type { Project } from '../types'
 import { confirmDialog } from '../store/confirmStore'
 import { translate } from './i18n'
-import { syncTrustedRoots } from './pathAllowlist'
+import { syncRootsFromProjects, syncTrustedRoots } from './pathAllowlist'
 
 /** New storage; migrates once from legacy `qingcode:run-trust`. */
 export const WORKSPACE_TRUST_STORAGE_KEY = 'qingcode:workspace-trust'
@@ -145,7 +145,7 @@ export function isProjectRestricted(project: Pick<Project, 'id' | 'path'>): bool
 
 export function trustProject(project: Pick<Project, 'id' | 'path'>): void {
   const path = normalizeProjectPath(project.path)
-  let store = removeFromLists(readStore(), project)
+  const store = removeFromLists(readStore(), project)
   if (!store.trustedIds.includes(project.id)) store.trustedIds.push(project.id)
   if (path && !store.trustedPaths.includes(path)) store.trustedPaths.push(path)
   writeStore(store)
@@ -153,7 +153,7 @@ export function trustProject(project: Pick<Project, 'id' | 'path'>): void {
 
 export function restrictProject(project: Pick<Project, 'id' | 'path'>): void {
   const path = normalizeProjectPath(project.path)
-  let store = removeFromLists(readStore(), project)
+  const store = removeFromLists(readStore(), project)
   if (!store.restrictedIds.includes(project.id)) store.restrictedIds.push(project.id)
   if (path && !store.restrictedPaths.includes(path)) store.restrictedPaths.push(path)
   writeStore(store)
@@ -164,10 +164,15 @@ export function untrustProject(project: Pick<Project, 'id' | 'path'>): void {
   writeStore(removeFromLists(readStore(), project))
 }
 
-/** Sync currently trusted project roots into the Rust sandbox. */
+/**
+ * Sync currently trusted project roots into the Rust sandbox.
+ * Always refreshes project roots first — native trust sync only accepts
+ * paths that are already registered as project roots.
+ */
 export async function pushTrustedRootsToNative(
   projects: Array<Pick<Project, 'id' | 'path' | 'ephemeral'>>,
 ): Promise<void> {
+  await syncRootsFromProjects(projects)
   const roots = projects
     .filter(project => project.ephemeral || isProjectTrusted(project))
     .map(project => project.path)
