@@ -6,9 +6,9 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
-### Added
+### Removed
 
-- Editor minimap (`editor.minimap.enabled`, on by default): thumbnail, viewport indicator, click/drag jump; size tiers (≤1MB full / 1–5MB density / >5MB hidden)
+- Removed the editor minimap (including `editor.minimap.enabled`, related shortcuts, and commands)
 
 ### Changed
 

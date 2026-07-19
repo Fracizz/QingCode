@@ -95,14 +95,6 @@ The editor automatically detects file encoding:
 - Files exceeding a certain size are automatically downgraded to read-only viewing to avoid lag.
 - Very large files only provide a plain text viewing mode.
 
-### Minimap
-
-- A code thumbnail and viewport indicator appear on the right of the editor; click or drag to jump.
-- Enabled by default; turn off under **Settings → Text Editor**, or set `editor.minimap.enabled`.
-- Drag the left edge to resize (remembered locally).
-- **≤1MB** full thumbnail; **1–5MB** density bars; **>5MB** hidden automatically.
-- Shown only on the Markdown source pane; not shown for diff tabs or the read-only large-file viewer.
-
 ### Formatting
 
 - **Manual formatting**: `Shift+Alt+F`, calls locally installed Prettier / rustfmt / shfmt / ruff·black / gofmt.
@@ -210,7 +202,7 @@ Both `default-settings.json` and `.qingcode/project-settings.json` are **JSON5**
 
 ### Common Settings
 
-- **Editor**: `editor.fontSize`, `editor.tabSize`, `editor.wordWrap`, `editor.lineNumbers`, `editor.minimap.enabled`
+- **Editor**: `editor.fontSize`, `editor.tabSize`, `editor.wordWrap`, `editor.lineNumbers`
 - **Files**: `files.autoSave`, `files.exclude`, `files.encoding`
 - **Search**: `search.exclude`, `search.useIgnoreFiles`
 - **Terminal**: `terminal.integrated.scrollback`, `terminal.integrated.cursorBlinking`

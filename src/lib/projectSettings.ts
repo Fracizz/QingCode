@@ -46,7 +46,6 @@ function buildSharedDefaults(): SettingsFile {
     'editor.wordWrap': 'off',
     'editor.lineNumbers': 'on',
     'editor.renderWhitespace': 'selection',
-    'editor.minimap.enabled': true,
     'editor.formatOnSave': false,
     'editor.formatOnPaste': false,
     'editor.linkedEditing': false,
@@ -126,8 +125,6 @@ const SHARED_SETTINGS_BODY = `
   "editor.lineNumbers": "on",
   // editor.renderWhitespace：空白字符渲染 none | boundary | selection | trailing | all
   "editor.renderWhitespace": "selection",
-  // editor.minimap.enabled：编辑器右侧代码小地图（缩略图 + 视口框；>5MB 自动隐藏）
-  "editor.minimap.enabled": true,
   // editor.formatOnSave：保存时自动格式化（format_document；可用 Shift+Alt+F 手动格式化）
   "editor.formatOnSave": false,
   // editor.formatOnPaste：粘贴后自动格式化（大文件/不支持语言会跳过）

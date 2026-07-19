@@ -6,9 +6,9 @@
 
 ## [Unreleased]
 
-### Added
+### Removed
 
-- 编辑器右侧代码小地图（`editor.minimap.enabled`，默认开启）：缩略图、视口框、点击/拖拽跳转；按体积分级（≤1MB 完整 / 1–5MB 密度条 / >5MB 隐藏）
+- 移除编辑器小地图（含 `editor.minimap.enabled`、相关快捷键与命令）
 
 ### Changed
 

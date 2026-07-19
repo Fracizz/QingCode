@@ -62,7 +62,6 @@ const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'))
 const SettingsEditor = lazy(() => import('./components/SettingsEditor'))
 
 migrateLegacySettings()
-void import('./lib/minimapSettings').then(m => m.migrateLegacyMinimapSetting())
 
 function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
   return <div className={className} aria-hidden="true" />
