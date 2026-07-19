@@ -256,7 +256,10 @@ fn default_host_shell() -> &'static str {
 }
 
 fn normalize_host_shell(shell: Option<&str>) -> Result<&'static str, String> {
-    let raw = shell.map(str::trim).filter(|s| !s.is_empty()).unwrap_or_else(|| default_host_shell());
+    let raw = shell
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| default_host_shell());
     match raw {
         "powershell" => Ok("powershell"),
         "pwsh" => Ok("pwsh"),
@@ -291,10 +294,7 @@ fn pwsh_program() -> String {
 
 fn resolve_host_shell(shell: Option<&str>) -> Result<(String, Vec<String>), String> {
     match normalize_host_shell(shell)? {
-        "powershell" => Ok((
-            "powershell.exe".to_string(),
-            vec!["-NoLogo".to_string()],
-        )),
+        "powershell" => Ok(("powershell.exe".to_string(), vec!["-NoLogo".to_string()])),
         "pwsh" => Ok((pwsh_program(), vec!["-NoLogo".to_string()])),
         "cmd" => Ok(("cmd.exe".to_string(), vec![])),
         "wsl" => Ok(("wsl.exe".to_string(), vec![])),
@@ -331,11 +331,7 @@ fn resolve_interactive_shell(
         )),
         "cmd" => Ok((
             "cmd.exe".to_string(),
-            vec![
-                "/d".to_string(),
-                "/k".to_string(),
-                target.to_string(),
-            ],
+            vec!["/d".to_string(), "/k".to_string(), target.to_string()],
         )),
         "wsl" => Ok((
             "wsl.exe".to_string(),
@@ -586,9 +582,8 @@ mod tests {
 
     #[test]
     fn resolve_script_command_builds_inline_command() {
-        let spec =
-            resolve_script_command("command", "echo hello", "C:\\tmp", HashMap::new(), None)
-                .unwrap();
+        let spec = resolve_script_command("command", "echo hello", "C:\\tmp", HashMap::new(), None)
+            .unwrap();
         if cfg!(target_os = "windows") {
             assert_eq!(spec.program, "cmd.exe");
             assert_eq!(
@@ -609,14 +604,9 @@ mod tests {
 
     #[test]
     fn resolve_script_command_builds_interactive_shell() {
-        let spec = resolve_script_command(
-            "interactive",
-            "opencode",
-            "C:\\tmp",
-            HashMap::new(),
-            None,
-        )
-        .unwrap();
+        let spec =
+            resolve_script_command("interactive", "opencode", "C:\\tmp", HashMap::new(), None)
+                .unwrap();
         if cfg!(target_os = "windows") {
             assert_eq!(spec.program, pwsh_program());
             assert_eq!(
@@ -651,10 +641,7 @@ mod tests {
 
             let wsl = resolve_interactive_shell(Some("wsl"), "opencode").unwrap();
             assert_eq!(wsl.0, "wsl.exe");
-            assert_eq!(
-                wsl.1,
-                vec!["-e", "bash", "-lc", "opencode; exec bash"]
-            );
+            assert_eq!(wsl.1, vec!["-e", "bash", "-lc", "opencode; exec bash"]);
 
             let bare = resolve_host_shell(Some("wsl")).unwrap();
             assert_eq!(bare.0, "wsl.exe");

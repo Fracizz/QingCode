@@ -11,9 +11,11 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 ### Added
 
 - Editor minimap (CodeGlance-inspired): Lezer syntax colors, caret line, hover Quick View, right-click quick config, `Ctrl+Shift+G` toggle; setting `editor.minimap.enabled` (on by default; ≤1MB full / 1–5MB density / >5MB hidden)
-- Find in terminal (`Ctrl+F`) and clear buffer (`Ctrl+Shift+K` / context menu / command palette)
+- Find in terminal (`Ctrl+F`, floating widget with match count / highlights) and clear buffer (`Ctrl+Shift+K` / context menu / command palette)
 - Global default terminal shell (Settings → Terminal): Windows defaults to `pwsh` (cmd / WSL / Windows PowerShell available); macOS/Linux defaults to `zsh` (Bash / pwsh available); built-in Ordinary Terminal follows this setting; custom profiles may override
 - Terminal busy detection: ignore console-host noise children; honor shell-integration OSC 133/633 “command running”; only one-shot run tasks stay always-busy
+- Title-bar Select Project dialog: filter known projects, restore hidden, open folder / new temp project; collapsible activity-bar action zone
+- Themed settings dropdowns (`SettingSelect`); title-bar toggle between classic and side-terminal layouts
 - VS-style large-file editing tiers: full / degraded / plain-text / read-only by file size to reduce freezes on huge files
 - Workspace trust: untrusted projects restrict high-risk capabilities when opening unfamiliar repos
 - Document formatting: `Shift+Alt+F` runs Prettier / rustfmt / shfmt / ruff·black / gofmt when installed locally
