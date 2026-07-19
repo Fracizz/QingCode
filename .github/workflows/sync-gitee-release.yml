@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: sync-gitee-${{ github.event.inputs.tag || 'v0.1.4' }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   sync:

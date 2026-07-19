@@ -15,8 +15,9 @@ permissions:
   contents: write
 
 concurrency:
+  # New tag/dispatch cancels any in-flight Release for the same ref (avoids stacked Gitee uploads).
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   meta:
@@ -361,13 +362,18 @@ jobs:
           body_path: ${{ steps.notes.outputs.path }}
           files: release-assets/*
 
+      # Gitee mirror: wipe previous attachments for this tag, then upload.
+      # continue-on-error so a slow/failed Gitee sync does not fail the whole Release
+      # after GitHub assets are already published.
       - name: Publish Gitee Release
+        id: gitee
         if: env.GITEE_TOKEN != ''
+        continue-on-error: true
         shell: pwsh
         run: |
           $ver = '${{ needs.meta.outputs.version }}'
           $tag = '${{ needs.meta.outputs.tag }}'
-          $files = Get-ChildItem -Path release-assets -File | ForEach-Object { $_.FullName }
+          $files = @(Get-ChildItem -Path release-assets -File | ForEach-Object { $_.FullName })
           if ($files.Count -eq 0) { throw 'No release assets to upload to Gitee' }
           $body = Get-Content -LiteralPath 'release-notes.md' -Raw -Encoding utf8
           ./scripts/publish-gitee-release.ps1 `
@@ -375,6 +381,16 @@ jobs:
             -Name "QingCode v$ver" `
             -Body $body.Trim() `
             -Files $files
+
+      - name: Gitee publish status
+        if: env.GITEE_TOKEN != ''
+        shell: pwsh
+        run: |
+          if ('${{ steps.gitee.outcome }}' -eq 'success') {
+            Write-Host 'Gitee release synced.'
+          } else {
+            Write-Host '::warning::Gitee release sync failed or timed out. GitHub Release is ready; re-run workflow Sync Gitee Release for tag ${{ needs.meta.outputs.tag }}.'
+          }
 
       - name: Gitee token missing
         if: env.GITEE_TOKEN == ''

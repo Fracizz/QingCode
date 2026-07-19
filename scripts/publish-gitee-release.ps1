@@ -10,7 +10,9 @@ param(
   # Optional: omit or pass @() to only create/update release notes (no asset upload).
   [string[]]$Files = @(),
   [string]$Token = $env:GITEE_TOKEN,
-  [string]$TargetCommitish = 'master'
+  [string]$TargetCommitish = 'master',
+  # Per-file upload timeout (seconds). Avoids hanging forever on slow Gitee links.
+  [int]$UploadTimeoutSec = 600
 )
 
 $ErrorActionPreference = 'Stop'
@@ -44,15 +46,9 @@ function Invoke-GiteeApi {
 function Get-ReleaseByTag([string]$TagName) {
   try {
     $found = Invoke-GiteeApi -Method Get -Path "/repos/$Owner/$Repo/releases/tags/$TagName"
-    # Gitee may respond 200 with JSON null / empty object when the tag has no release.
     if ($null -ne $found -and [int]$found.id -gt 0) { return $found }
   } catch {
-    $resp = $_.Exception.Response
-    if ($resp -and [int]$resp.StatusCode -eq 404) {
-      # Fall through to list lookup.
-    } else {
-      # Older Gitee may not support /tags/{tag}; fall back to list.
-    }
+    # Tag has no release yet, or API variant unavailable.
   }
   $page = 1
   while ($true) {
@@ -65,23 +61,20 @@ function Get-ReleaseByTag([string]$TagName) {
   }
 }
 
-function New-GiteeRelease {
-  Write-Host "Creating Gitee release $Tag ..."
-  return Invoke-GiteeApi -Method Post -Path "/repos/$Owner/$Repo/releases" -Form @{
-    tag_name         = $Tag
-    name             = $Name
-    body             = $Body
-    target_commitish = $TargetCommitish
+function Ensure-GiteeRelease {
+  $existing = Get-ReleaseByTag -TagName $Tag
+  if (-not $existing) {
+    Write-Host "Creating Gitee release $Tag ..."
+    return Invoke-GiteeApi -Method Post -Path "/repos/$Owner/$Repo/releases" -Form @{
+      tag_name         = $Tag
+      name             = $Name
+      body             = $Body
+      target_commitish = $TargetCommitish
+    }
   }
-}
 
-function Update-GiteeRelease([int]$ReleaseId) {
-  if ($ReleaseId -le 0) {
-    throw "Invalid Gitee release id=$ReleaseId for tag $Tag"
-  }
-  Write-Host "Updating Gitee release $Tag (id=$ReleaseId) notes ..."
-  # Gitee PATCH requires tag_name even when only updating notes.
-  return Invoke-GiteeApi -Method Patch -Path "/repos/$Owner/$Repo/releases/$ReleaseId" -Form @{
+  Write-Host "Updating Gitee release $Tag (id=$([int]$existing.id)) notes ..."
+  return Invoke-GiteeApi -Method Patch -Path "/repos/$Owner/$Repo/releases/$([int]$existing.id)" -Form @{
     tag_name = $Tag
     name     = $Name
     body     = $Body
@@ -96,9 +89,26 @@ function Get-AttachFiles([int]$ReleaseId) {
   }
 }
 
-function Remove-AttachFile([int]$ReleaseId, [int]$AttachId, [string]$FileName) {
-  Write-Host "  removing existing attachment: $FileName"
-  Invoke-GiteeApi -Method Delete -Path "/repos/$Owner/$Repo/releases/$ReleaseId/attach_files/$AttachId" | Out-Null
+function Remove-AllAttachFiles([int]$ReleaseId) {
+  $existing = @(Get-AttachFiles -ReleaseId $ReleaseId)
+  if ($existing.Count -eq 0) {
+    Write-Host 'No previous Gitee attachments.'
+    return
+  }
+
+  Write-Host "Clearing $($existing.Count) previous Gitee attachment(s) ..."
+  foreach ($asset in $existing) {
+    $attachId = [int]$asset.id
+    $fileName = [string]$asset.name
+    if ($attachId -le 0) { continue }
+    Write-Host "  delete: $fileName (id=$attachId)"
+    try {
+      Invoke-GiteeApi -Method Delete -Path "/repos/$Owner/$Repo/releases/$ReleaseId/attach_files/$attachId" | Out-Null
+    } catch {
+      # Best-effort cleanup — stale/missing attach ids must not block the new upload.
+      Write-Host "  warn: delete failed for $fileName — $($_.Exception.Message)"
+    }
+  }
 }
 
 function Get-CurlCommand {
@@ -106,64 +116,75 @@ function Get-CurlCommand {
     $cmd = Get-Command $name -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
   }
-  throw 'curl not found. Install curl (Windows) or ensure curl is on PATH (Linux/macOS CI).'
+  throw 'curl not found. Install curl (Windows) or ensure curl is on PATH.'
 }
 
 function Add-AttachFile([int]$ReleaseId, [string]$FilePath) {
-  if (-not (Test-Path -LiteralPath $FilePath)) {
-    throw "File not found: $FilePath"
-  }
   $item = Get-Item -LiteralPath $FilePath
-  Write-Host ("  uploading {0} ({1:N1} MB) ..." -f $item.Name, ($item.Length / 1MB))
+  Write-Host ("  upload {0} ({1:N1} MB, timeout {2}s) ..." -f $item.Name, ($item.Length / 1MB), $UploadTimeoutSec)
 
   $uri = "$api/repos/$Owner/$Repo/releases/$ReleaseId/attach_files"
   $curl = Get-CurlCommand
+  # No -f: do not abort the whole publish on a single HTTP blip; we inspect exit code.
   $args = @(
-    '-sS', '-f', '-X', 'POST',
+    '-sS',
+    '--connect-timeout', '30',
+    '--max-time', "$UploadTimeoutSec",
+    '-X', 'POST',
     '-F', "access_token=$Token",
     '-F', "file=@$($item.FullName);filename=$($item.Name)",
+    '-w', '%{http_code}',
+    '-o', "$env:TEMP\gitee-upload-$($item.Name).json",
     $uri
   )
-  & $curl @args
-  if ($LASTEXITCODE -ne 0) {
-    throw "Failed to upload $($item.Name) to Gitee (curl exit $LASTEXITCODE). Check token permissions and Gitee attachment size limits."
+  $httpCode = & $curl @args
+  $exit = $LASTEXITCODE
+  if ($exit -ne 0) {
+    throw "upload failed: $($item.Name) (curl exit $exit)"
   }
-  Write-Host "  uploaded $($item.Name)"
+  if ($httpCode -notmatch '^(200|201)$') {
+    $bodyHint = ''
+    $outPath = "$env:TEMP\gitee-upload-$($item.Name).json"
+    if (Test-Path -LiteralPath $outPath) {
+      $bodyHint = (Get-Content -LiteralPath $outPath -Raw -ErrorAction SilentlyContinue)
+      if ($bodyHint.Length -gt 200) { $bodyHint = $bodyHint.Substring(0, 200) + '…' }
+    }
+    throw "upload failed: $($item.Name) HTTP $httpCode $bodyHint"
+  }
+  Write-Host "  ok $($item.Name)"
 }
 
-$release = Get-ReleaseByTag -TagName $Tag
-if (-not $release) {
-  $release = New-GiteeRelease
-} else {
-  $release = Update-GiteeRelease -ReleaseId ([int]$release.id)
-}
-
+$release = Ensure-GiteeRelease
 $releaseId = [int]$release.id
-$fileList = @($Files | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if ($fileList.Count -gt 0) {
-  $existing = Get-AttachFiles -ReleaseId $releaseId
-  $fileNames = @()
-  foreach ($path in $fileList) {
-    $resolved = Resolve-Path -LiteralPath $path
-    foreach ($r in $resolved) {
-      $fileNames += (Get-Item -LiteralPath $r.Path).Name
-    }
-  }
+if ($releaseId -le 0) {
+  throw "Gitee release id missing after create/update for tag $Tag"
+}
 
-  foreach ($asset in $existing) {
-    if ($fileNames -contains $asset.name) {
-      Remove-AttachFile -ReleaseId $releaseId -AttachId ([int]$asset.id) -FileName $asset.name
-    }
-  }
+# Always inspect and clear previous attachments before uploading this run's assets.
+Remove-AllAttachFiles -ReleaseId $releaseId
 
-  foreach ($path in $fileList) {
-    $resolved = Resolve-Path -LiteralPath $path
-    foreach ($r in $resolved) {
-      Add-AttachFile -ReleaseId $releaseId -FilePath $r.Path
-    }
-  }
+$fileList = @(
+  $Files |
+    Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+    ForEach-Object { (Resolve-Path -LiteralPath $_).Path }
+)
+
+if ($fileList.Count -eq 0) {
+  Write-Host 'No files provided; notes-only update.'
 } else {
-  Write-Host 'No files provided; skipped asset upload (notes only).'
+  Write-Host "Uploading $($fileList.Count) file(s) ..."
+  $failed = New-Object System.Collections.Generic.List[string]
+  foreach ($path in $fileList) {
+    try {
+      Add-AttachFile -ReleaseId $releaseId -FilePath $path
+    } catch {
+      Write-Host "  ERROR: $($_.Exception.Message)"
+      $failed.Add([IO.Path]::GetFileName($path)) | Out-Null
+    }
+  }
+  if ($failed.Count -gt 0) {
+    throw ("Gitee upload incomplete ({0}/{1} failed): {2}" -f $failed.Count, $fileList.Count, ($failed -join ', '))
+  }
 }
 
 $url = "https://gitee.com/$Owner/$Repo/releases/tag/$Tag"
