@@ -264,7 +264,10 @@ mod tests {
         let Ok(bytes) = std::fs::read(path) else {
             return; // skip when the doc is absent from the checkout
         };
-        assert!(bytes.len() > 8192, "fixture should exceed the detect sample size");
+        assert!(
+            bytes.len() > 8192,
+            "fixture should exceed the detect sample size"
+        );
         let sample = &bytes[..8192];
         assert!(
             std::str::from_utf8(sample).is_err(),
