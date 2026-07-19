@@ -71,6 +71,12 @@ export function useAppKeyboardShortcuts({
       } else if (shortcutMatchesEvent(shortcuts.openSettings, event)) {
         event.preventDefault()
         setView('settings')
+      } else if (shortcutMatchesEvent(shortcuts.toggleMinimap, event)) {
+        event.preventDefault()
+        void import('../lib/commands').then(({ buildCommands }) => {
+          const command = buildCommands().find(item => item.id === 'view.toggleMinimap')
+          if (command && (!command.when || command.when())) void command.run()
+        })
       } else if (shortcutMatchesEvent('Shift+Alt+F', event)) {
         // Handle in capture phase so format works even when CodeMirror has focus.
         // (Previously skipped .cm-editor and relied on CM keymap, which often missed

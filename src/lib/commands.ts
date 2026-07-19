@@ -368,6 +368,25 @@ export function buildCommands(): AppCommand[] {
       run: () => requestToggleTerminal(),
     },
     {
+      id: 'view.toggleMinimap',
+      title: '切换小地图',
+      keywords: 'minimap glance codeglance overview',
+      shortcutCommand: 'toggleMinimap',
+      run: () => {
+        void import('./minimapSettings').then(async ({ getMinimapEnabled, saveScopedMinimapEnabled }) => {
+          const project = useProjectStore.getState().currentProject
+          const next = !getMinimapEnabled()
+          try {
+            await saveScopedMinimapEnabled('global', next, project)
+          } catch (error) {
+            useProjectStore
+              .getState()
+              .pushToast('error', translate('保存小地图设置失败: {error}', { error: String(error) }))
+          }
+        })
+      },
+    },
+    {
       id: 'view.theme',
       title: '切换颜色主题',
       keywords: 'theme dark light forest toggle',

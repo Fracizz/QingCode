@@ -48,6 +48,7 @@ function buildSharedDefaults(): SettingsFile {
     'editor.renderWhitespace': 'selection',
     'editor.formatOnSave': false,
     'editor.formatOnPaste': false,
+    'editor.minimap.enabled': true,
     'editor.linkedEditing': false,
     'editor.bracketPairColorization.enabled': true,
     'editor.guides.bracketPairs': true,
@@ -129,6 +130,8 @@ const SHARED_SETTINGS_BODY = `
   "editor.formatOnSave": false,
   // editor.formatOnPaste：粘贴后自动格式化（大文件/不支持语言会跳过）
   "editor.formatOnPaste": false,
+  // editor.minimap.enabled：编辑区右侧代码小地图（≤1MB 语法色；1–5MB 密度条；>5MB 隐藏）
+  "editor.minimap.enabled": true,
   // editor.linkedEditing：【不计划】链接编辑 / HTML 标签同步改名（保留键以免旧配置报错）
   "editor.linkedEditing": false,
   // editor.bracketPairColorization.enabled：括号对着色（按嵌套深度分色）

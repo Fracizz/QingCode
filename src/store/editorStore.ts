@@ -851,6 +851,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         void import('../lib/formatOnSaveSettings').then(({ loadEffectiveFormatOnSave }) =>
           loadEffectiveFormatOnSave(project),
         )
+        void import('../lib/minimapSettings').then(({ loadEffectiveMinimapEnabled }) =>
+          loadEffectiveMinimapEnabled(project),
+        )
         void import('../lib/terminalScrollbackSettings').then(({ loadEffectiveTerminalScrollback }) =>
           loadEffectiveTerminalScrollback(project),
         )

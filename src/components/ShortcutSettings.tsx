@@ -46,6 +46,11 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
     label: '转到行',
     description: '跳转到当前文件中的指定行号。',
   },
+  {
+    id: 'toggleMinimap',
+    label: '切换小地图',
+    description: '显示或隐藏编辑区右侧的代码小地图。',
+  },
 ]
 
 /** Editor-bound shortcuts shown as read-only (not remappable here). */

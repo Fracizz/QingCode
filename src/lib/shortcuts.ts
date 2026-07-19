@@ -6,6 +6,7 @@ export type ShortcutCommand =
   | 'quickOpen'
   | 'goToSymbolInEditor'
   | 'goToLine'
+  | 'toggleMinimap'
 
 export type ShortcutMap = Record<ShortcutCommand, string>
 
@@ -17,6 +18,7 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   quickOpen: 'Ctrl+P',
   goToSymbolInEditor: 'Ctrl+Shift+O',
   goToLine: 'Ctrl+G',
+  toggleMinimap: 'Ctrl+Shift+G',
 }
 
 /** Display form (VS Code style). Matching uses canonicalizeShortcut. */

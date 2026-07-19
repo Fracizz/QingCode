@@ -101,6 +101,13 @@ The editor automatically detects file encoding:
 - **Format on save**: Enable `editor.formatOnSave` in settings.
 - **Format on paste**: Enable `editor.formatOnPaste` in settings.
 
+### Minimap
+
+- A code overview appears on the right side of the editor (on by default) for structure awareness and quick jumps.
+- **Toggle**: Settings → Text Editor → Minimap (`editor.minimap.enabled`), or `Ctrl+Shift+G` / Command Palette “Toggle Minimap”.
+- **Interaction**: Click or drag to jump; hover for a Quick View of nearby source; right-click to change width or hide the editor scrollbar.
+- **Size tiers**: ≤1MB syntax-colored; 1–5MB density bars; hidden above 5MB. Not shown on diff tabs or the large-file viewer.
+
 ---
 
 ## Terminal

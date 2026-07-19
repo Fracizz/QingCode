@@ -6,9 +6,9 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
-### Removed
+### Added
 
-- Removed the editor minimap (including `editor.minimap.enabled`, related shortcuts, and commands)
+- Editor minimap (CodeGlance-inspired): Lezer syntax colors, caret line, hover Quick View, right-click quick config, `Ctrl+Shift+G` toggle; setting `editor.minimap.enabled` (on by default; ≤1MB full / 1–5MB density / >5MB hidden)
 
 ### Changed
 

@@ -22,6 +22,10 @@ function loadShortcuts(): ShortcutMap {
           : DEFAULT_SHORTCUTS.goToSymbolInEditor,
       goToLine:
         typeof saved.goToLine === 'string' ? saved.goToLine : DEFAULT_SHORTCUTS.goToLine,
+      toggleMinimap:
+        typeof saved.toggleMinimap === 'string'
+          ? saved.toggleMinimap
+          : DEFAULT_SHORTCUTS.toggleMinimap,
     }
   } catch {
     return { ...DEFAULT_SHORTCUTS }

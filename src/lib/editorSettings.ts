@@ -69,6 +69,19 @@ function asFontSize(value: unknown, fallback: number): number {
   return Math.min(48, Math.max(8, Math.round(n)))
 }
 
+/**
+ * User-scoped editor font size: global settings (+ optional in-flight UI value),
+ * never workspace defaults (templates pin 14 and would undo the Settings control).
+ */
+export function resolveUserEditorFontSize(
+  globalFontSize: unknown,
+  pending: number | null = null,
+  fallback: number = DEFAULT_EDITOR_PREFERENCES.fontSize,
+): number {
+  if (pending != null) return asFontSize(pending, fallback)
+  return asFontSize(globalFontSize, fallback)
+}
+
 function asBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
@@ -174,9 +187,17 @@ export async function loadEffectiveEditorPreferences(
   const global = await loadGlobalSettings()
   const workspace = project ? await loadProjectSettings(project) : null
   const prefs = readEditorPreferences(mergeSettings(global, workspace))
+  // editor.fontSize is user-scoped in the Settings UI. Workspace templates always
+  // ship `"editor.fontSize": 14`, which previously overwrote the user choice whenever
+  // the editor remounted after leaving Settings.
+  const { getPendingEditorFontSize, syncEditorFontSizeFromPreferences } = await import(
+    './fontSettings'
+  )
+  prefs.fontSize = resolveUserEditorFontSize(
+    global['editor.fontSize'],
+    getPendingEditorFontSize(),
+  )
   notifyEditorSettingsChanged(prefs)
-  // Single source of truth: settings JSON drives --editor-font-size / UI mirror.
-  const { syncEditorFontSizeFromPreferences } = await import('./fontSettings')
   syncEditorFontSizeFromPreferences(prefs.fontSize)
   return prefs
 }

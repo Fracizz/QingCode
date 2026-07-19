@@ -6,9 +6,9 @@
 
 ## [Unreleased]
 
-### Removed
+### Added
 
-- 移除编辑器小地图（含 `editor.minimap.enabled`、相关快捷键与命令）
+- 编辑器小地图（CodeGlance 风格）：Lezer 语法着色、光标行、悬停 Quick View、右键快捷配置、`Ctrl+Shift+G` 开关；设置键 `editor.minimap.enabled`（默认开启；≤1MB 全彩 / 1–5MB 密度 / >5MB 隐藏）
 
 ### Changed
 

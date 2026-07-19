@@ -56,6 +56,10 @@ export function buildEditorPreferenceExtensions(
     : []
 
   return [
+    EditorView.theme({
+      '&': { fontSize: `${prefs.fontSize}px` },
+      '.cm-scroller': { fontSize: `${prefs.fontSize}px` },
+    }),
     EditorState.tabSize.of(tabSize),
     indentUnit.of(indent),
     wrapOn ? EditorView.lineWrapping : [],

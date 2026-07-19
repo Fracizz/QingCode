@@ -284,19 +284,31 @@ export function syncEditorFontSizeFromPreferences(fontSize: number) {
   applyStoredFontSettings({ ...current, editorFontSize: size })
 }
 
+/** In-flight UI → settings.json write; protects remount before disk flush. */
+let pendingEditorFontSize: number | null = null
+
+/** Size chosen in Settings that may not be on disk yet. */
+export function getPendingEditorFontSize(): number | null {
+  return pendingEditorFontSize
+}
+
 async function syncEditorFontSizeToGlobalSettings(fontSize: number) {
+  pendingEditorFontSize = fontSize
   try {
-    const { loadGlobalSettings, saveGlobalSettings } = await import('./projectSettings')
-    const global = await loadGlobalSettings()
-    if (global['editor.fontSize'] === fontSize) return
-    await saveGlobalSettings({ ...global, 'editor.fontSize': fontSize })
     const { getEditorPreferences, notifyEditorSettingsChanged } = await import('./editorSettings')
     const prefs = getEditorPreferences()
     if (prefs.fontSize !== fontSize) {
       notifyEditorSettingsChanged({ ...prefs, fontSize })
     }
+    const { loadGlobalSettings, saveGlobalSettings } = await import('./projectSettings')
+    const global = await loadGlobalSettings()
+    if (global['editor.fontSize'] !== fontSize) {
+      await saveGlobalSettings({ ...global, 'editor.fontSize': fontSize })
+    }
   } catch (e) {
     console.error('sync editor.fontSize to settings failed:', e)
+  } finally {
+    if (pendingEditorFontSize === fontSize) pendingEditorFontSize = null
   }
 }
 
