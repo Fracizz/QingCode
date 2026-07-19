@@ -72,7 +72,8 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          # Match package.json "packageManager" (do not pin a different major here).
+          version: 11.0.8
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -106,7 +107,8 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          # Match package.json "packageManager" (do not pin a different major here).
+          version: 11.0.8
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -171,7 +173,8 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          # Match package.json "packageManager" (do not pin a different major here).
+          version: 11.0.8
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -232,7 +235,8 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          # Match package.json "packageManager" (do not pin a different major here).
+          version: 11.0.8
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
