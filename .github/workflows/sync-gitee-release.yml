@@ -75,5 +75,5 @@ jobs:
             -Tag $tag `
             -Name "QingCode v$ver" `
             -Body $body.Trim() `
-            -Files $files
+            -Files ([string[]]$files)
           Write-Host "Synced $tag → https://gitee.com/FrancizTest_admin/qing-code/releases/tag/$tag"

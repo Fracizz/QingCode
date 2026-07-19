@@ -81,11 +81,42 @@ function Ensure-GiteeRelease {
   }
 }
 
+function ConvertTo-Int32Scalar {
+  param($Value)
+  if ($null -eq $Value) { return 0 }
+  $candidate = $Value
+  # Gitee/PowerShell may surface ids as Object[]; unwrap before [int] cast.
+  while ($candidate -is [System.Array]) {
+    if ($candidate.Length -eq 0) { return 0 }
+    $candidate = $candidate[0]
+  }
+  return [int]$candidate
+}
+
 function Get-AttachFiles([int]$ReleaseId) {
   try {
-    return @(Invoke-GiteeApi -Method Get -Path "/repos/$Owner/$Repo/releases/$ReleaseId/attach_files")
+    $raw = Invoke-GiteeApi -Method Get -Path "/repos/$Owner/$Repo/releases/$ReleaseId/attach_files"
   } catch {
-    return @()
+    return
+  }
+  if ($null -eq $raw) { return }
+
+  # Emit one attachment object per pipeline item (never a nested Object[] as $asset).
+  foreach ($item in @($raw)) {
+    if ($null -eq $item) { continue }
+    if ($item -is [System.Array]) {
+      foreach ($inner in $item) {
+        if ($null -ne $inner) { $inner }
+      }
+      continue
+    }
+    if ($item.PSObject.Properties['attach_files']) {
+      foreach ($inner in @($item.attach_files)) {
+        if ($null -ne $inner) { $inner }
+      }
+      continue
+    }
+    $item
   }
 }
 
@@ -98,9 +129,13 @@ function Remove-AllAttachFiles([int]$ReleaseId) {
 
   Write-Host "Clearing $($existing.Count) previous Gitee attachment(s) ..."
   foreach ($asset in $existing) {
-    $attachId = [int]$asset.id
+    if ($null -eq $asset) { continue }
+    $attachId = ConvertTo-Int32Scalar $asset.id
     $fileName = [string]$asset.name
-    if ($attachId -le 0) { continue }
+    if ($attachId -le 0) {
+      Write-Host "  skip: attachment without scalar id ($fileName)"
+      continue
+    }
     Write-Host "  delete: $fileName (id=$attachId)"
     try {
       Invoke-GiteeApi -Method Delete -Path "/repos/$Owner/$Repo/releases/$ReleaseId/attach_files/$attachId" | Out-Null
@@ -155,7 +190,7 @@ function Add-AttachFile([int]$ReleaseId, [string]$FilePath) {
 }
 
 $release = Ensure-GiteeRelease
-$releaseId = [int]$release.id
+$releaseId = ConvertTo-Int32Scalar $release.id
 if ($releaseId -le 0) {
   throw "Gitee release id missing after create/update for tag $Tag"
 }
