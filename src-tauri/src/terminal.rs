@@ -58,6 +58,7 @@ impl TerminalManager {
     /// path and the kind is inferred from its extension.
     /// `host_shell` selects powershell / pwsh / cmd / wsl / bash / zsh for interactive
     /// profile startups (ignored for one-shot script kinds).
+    #[allow(clippy::too_many_arguments)]
     pub fn spawn_script(
         &self,
         id: String,

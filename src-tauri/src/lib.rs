@@ -134,6 +134,7 @@ fn get_column_migrations() -> Vec<Migration> {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn create_terminal(
     id: String,
     cwd: String,
