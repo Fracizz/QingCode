@@ -146,15 +146,9 @@ jobs:
         run: |
           $ver = '${{ needs.meta.outputs.version }}'
           New-Item -ItemType Directory -Force -Path dist-release | Out-Null
+          # One file per platform/channel — no unversioned / legacy aliases.
           Copy-Item "release/QingCode_$ver.exe" "dist-release/QingCode_$ver-windows-x64.exe"
-          Copy-Item "release/QingCode.exe" "dist-release/QingCode-windows-x64.exe"
-          # Keep legacy names for existing download links / docs.
-          Copy-Item "release/QingCode_$ver.exe" "dist-release/QingCode_$ver.exe"
-          Copy-Item "release/QingCode.exe" "dist-release/QingCode.exe"
           Copy-Item "release/QingCode_$ver-setup.exe" "dist-release/QingCode_$ver-windows-x64-setup.exe"
-          Copy-Item "release/QingCode-setup.exe" "dist-release/QingCode-windows-x64-setup.exe"
-          Copy-Item "release/QingCode_$ver-setup.exe" "dist-release/QingCode_$ver-setup.exe"
-          Copy-Item "release/QingCode-setup.exe" "dist-release/QingCode-setup.exe"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -215,9 +209,7 @@ jobs:
           $ver = '${{ needs.meta.outputs.version }}'
           New-Item -ItemType Directory -Force -Path dist-release | Out-Null
           Copy-Item "release/QingCode_$ver-windows-arm64.exe" "dist-release/"
-          Copy-Item "release/QingCode-windows-arm64.exe" "dist-release/"
           Copy-Item "release/QingCode_$ver-windows-arm64-setup.exe" "dist-release/"
-          Copy-Item "release/QingCode-windows-arm64-setup.exe" "dist-release/"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -270,10 +262,8 @@ jobs:
           set -euo pipefail
           VER='${{ needs.meta.outputs.version }}'
           mkdir -p dist-release
-          cp -f "release/QingCode_${VER}-macos-arm64.dmg" dist-release/ || true
-          cp -f "release/QingCode-macos-arm64.dmg" dist-release/ || true
-          cp -f "release/QingCode_${VER}-macos-arm64.zip" dist-release/ || true
-          cp -f "release/QingCode-macos-arm64.zip" dist-release/ || true
+          cp -f "release/QingCode_${VER}-macos-arm64.dmg" dist-release/
+          cp -f "release/QingCode_${VER}-macos-arm64.zip" dist-release/
           ls -la dist-release
           test -n "$(ls -A dist-release)"
 
@@ -323,8 +313,8 @@ jobs:
 
           | 平台 | 文件 |
           |------|------|
-          | Windows x64 便携 | ``QingCode_${ver}-windows-x64.exe``（兼 ``QingCode_${ver}.exe``） |
-          | Windows x64 安装包 | ``QingCode_${ver}-windows-x64-setup.exe``（兼 ``QingCode_${ver}-setup.exe``） |
+          | Windows x64 便携 | ``QingCode_${ver}-windows-x64.exe`` |
+          | Windows x64 安装包 | ``QingCode_${ver}-windows-x64-setup.exe`` |
           | Windows ARM64 便携 | ``QingCode_${ver}-windows-arm64.exe`` |
           | Windows ARM64 安装包 | ``QingCode_${ver}-windows-arm64-setup.exe`` |
           | macOS Apple Silicon | ``QingCode_${ver}-macos-arm64.dmg`` / ``.zip`` |
@@ -338,8 +328,8 @@ jobs:
 
           | Platform | File |
           |----------|------|
-          | Windows x64 portable | ``QingCode_${ver}-windows-x64.exe`` (also ``QingCode_${ver}.exe``) |
-          | Windows x64 installer | ``QingCode_${ver}-windows-x64-setup.exe`` (also ``QingCode_${ver}-setup.exe``) |
+          | Windows x64 portable | ``QingCode_${ver}-windows-x64.exe`` |
+          | Windows x64 installer | ``QingCode_${ver}-windows-x64-setup.exe`` |
           | Windows ARM64 portable | ``QingCode_${ver}-windows-arm64.exe`` |
           | Windows ARM64 installer | ``QingCode_${ver}-windows-arm64-setup.exe`` |
           | macOS Apple Silicon | ``QingCode_${ver}-macos-arm64.dmg`` / ``.zip`` |
@@ -352,6 +342,35 @@ jobs:
           }
           echo "path=$out" >> $env:GITHUB_OUTPUT
 
+      - name: Prune obsolete GitHub assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ver = '${{ needs.meta.outputs.version }}'
+          $tag = '${{ needs.meta.outputs.tag }}'
+          $keep = @(
+            "QingCode_${ver}-windows-x64.exe",
+            "QingCode_${ver}-windows-x64-setup.exe",
+            "QingCode_${ver}-windows-arm64.exe",
+            "QingCode_${ver}-windows-arm64-setup.exe",
+            "QingCode_${ver}-macos-arm64.dmg",
+            "QingCode_${ver}-macos-arm64.zip"
+          )
+          $existing = @()
+          try {
+            $existing = @(gh release view $tag --json assets --jq '.assets[].name')
+          } catch {
+            Write-Host "No existing GitHub release for $tag (first publish)."
+            exit 0
+          }
+          foreach ($name in $existing) {
+            if ([string]::IsNullOrWhiteSpace($name)) { continue }
+            if ($keep -contains $name) { continue }
+            Write-Host "Removing obsolete asset: $name"
+            gh release delete-asset $tag $name --yes
+          }
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -361,6 +380,8 @@ jobs:
           generate_release_notes: true
           body_path: ${{ steps.notes.outputs.path }}
           files: release-assets/*
+          # Replace same-named assets when re-publishing a tag.
+          make_latest: true
 
       # Gitee mirror: wipe previous attachments for this tag, then upload.
       # continue-on-error so a slow/failed Gitee sync does not fail the whole Release
