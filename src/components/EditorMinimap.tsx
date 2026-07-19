@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { Check } from 'lucide-react'
 import { EditorView } from '@codemirror/view'
 import { getContextMenuStylePosition } from './contextMenuPosition'
 import { setMinimapUpdateHandler } from '../lib/minimapBridge'
@@ -1003,20 +1004,22 @@ export default function EditorMinimap({
           >
             <button
               type="button"
-              className={`editor-minimap__menu-check${
-                hoverToShow ? ' editor-minimap__menu-check--on' : ''
-              }`}
+              className="editor-minimap__menu-check"
               onClick={toggleHoverToShow}
             >
+              <span className="editor-minimap__menu-check-icon" aria-hidden>
+                {hoverToShow ? <Check size={14} className="text-accent" /> : null}
+              </span>
               {t('划过滚动条显示小地图')}
             </button>
             <button
               type="button"
-              className={`editor-minimap__menu-check${
-                hideScrollbar ? ' editor-minimap__menu-check--on' : ''
-              }`}
+              className="editor-minimap__menu-check"
               onClick={toggleHideScrollbar}
             >
+              <span className="editor-minimap__menu-check-icon" aria-hidden>
+                {hideScrollbar ? <Check size={14} className="text-accent" /> : null}
+              </span>
               {t('隐藏编辑器滚动条')}
             </button>
           </div>,

@@ -1,7 +1,6 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   AppWindow,
-  Clock,
   FileDown,
   FilePlus,
   FolderOpen,
@@ -31,13 +30,11 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
   const [autoSaveOn, setAutoSaveOn] = useState(() => isAutoSaveEnabled())
 
   const currentProject = useProjectStore(s => s.currentProject)
-  const recentFiles = useProjectStore(s => s.recentFiles)
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const pushToast = useProjectStore(s => s.pushToast)
   const requestNewFile = useUIStore(s => s.requestNewFile)
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
-  const openFile = useEditorStore(s => s.openFile)
   const saveFile = useEditorStore(s => s.saveFile)
   const saveAs = useEditorStore(s => s.saveAs)
   const closeTab = useEditorStore(s => s.closeTab)
@@ -131,12 +128,6 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
       separatorBefore: true,
       action: () => void addProjectFromDialog(),
     },
-    ...recentFiles.slice(0, 10).map((file, index) => ({
-      label: file.path.split(/[/\\]/).pop() || file.path,
-      icon: <Clock size={14} />,
-      separatorBefore: index === 0,
-      action: () => void openFile(file.path),
-    })),
     {
       label: t('保存'),
       icon: <Save size={14} />,

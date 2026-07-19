@@ -310,13 +310,10 @@ html[data-theme='light'] .editor-minimap__viewport {
   background: var(--color-border);
 }
 
-.editor-minimap__menu-check::before {
-  content: '';
-  width: 12px;
-  flex: 0 0 12px;
-}
-
-.editor-minimap__menu-check--on::before {
-  content: '✓';
-  color: var(--color-accent);
+.editor-minimap__menu-check-icon {
+  display: flex;
+  width: 14px;
+  flex: 0 0 14px;
+  align-items: center;
+  justify-content: center;
 }

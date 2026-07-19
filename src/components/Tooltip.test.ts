@@ -49,6 +49,38 @@ describe('getTooltipPosition', () => {
     expect(style.left).toBeLessThan(idealLeft)
   })
 
+  it('clamps top tooltips near the right edge without shrinking past tip width', () => {
+    const nearRight = {
+      left: 370,
+      right: 398,
+      top: 200,
+      bottom: 228,
+      width: 28,
+      height: 28,
+    }
+    const wideTip = { width: 160, height: 24 }
+    const style = getTooltipPosition(nearRight, 'top', wideTip, viewport)
+    expect(style.left).toBe(400 - 160 - 8)
+    expect(style.top).toBe(200 - 8 - 24)
+  })
+
+  it('divides by zoom so a right-edge tip stays on-screen', () => {
+    const zoom = 16 / 13
+    const nearRight = {
+      left: 360,
+      right: 388,
+      top: 40,
+      bottom: 68,
+      width: 28,
+      height: 28,
+    }
+    const style = getTooltipPosition(nearRight, 'bottom', tip, viewport, zoom)
+    const visualLeft = (style.left as number) * zoom
+    const visualWidth = tip.width * zoom
+    expect(visualLeft + visualWidth).toBeLessThanOrEqual(400 - 8 + 0.001)
+    expect(visualLeft).toBeGreaterThanOrEqual(8 - 0.001)
+  })
+
   it('uses transform centering before tip size is measured', () => {
     const style = getTooltipPosition(trigger, 'bottom')
     expect(style.left).toBe(100 + 14)

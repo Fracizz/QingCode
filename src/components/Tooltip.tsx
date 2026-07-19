@@ -26,94 +26,114 @@ export function resolveOverflowElement(trigger: HTMLElement): HTMLElement | null
 type Size = { width: number; height: number }
 type Viewport = { width: number; height: number }
 
-/** Pure placement helper — exported for unit tests. */
+/** Read CSS `zoom` from a scaled tip, falling back to `--ui-font-scale`. */
+export function readTooltipZoom(el?: HTMLElement | null): number {
+  if (el) {
+    const fromEl = Number.parseFloat(getComputedStyle(el).zoom)
+    if (Number.isFinite(fromEl) && fromEl > 0) return fromEl
+  }
+  const scale = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue('--ui-font-scale'),
+  )
+  return Number.isFinite(scale) && scale > 0 ? scale : 1
+}
+
+/**
+ * Pure placement helper — exported for unit tests.
+ *
+ * `rect` is viewport-space (e.g. getBoundingClientRect). When the tip uses
+ * `.ui-font-scaled` (`zoom`), pass layout tip size + zoom so returned `left`/`top`
+ * are pre-zoom style values (same approach as getContextMenuStylePosition).
+ */
 export function getTooltipPosition(
   rect: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom' | 'width' | 'height'>,
   side: TooltipSide,
   tip?: Size,
   viewport: Viewport = { width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY },
+  zoom = 1,
 ): CSSProperties {
   const clamp = (value: number, min: number, max: number) =>
     max < min ? min : Math.min(Math.max(value, min), max)
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  const tipW = tip ? tip.width * z : 0
+  const tipH = tip ? tip.height * z : 0
 
   switch (side) {
     case 'right': {
       if (!tip) {
         return {
-          left: rect.right + OFFSET,
-          top: rect.top + rect.height / 2,
+          left: (rect.right + OFFSET) / z,
+          top: (rect.top + rect.height / 2) / z,
           transform: 'translateY(-50%)',
         }
       }
       return {
-        left: clamp(rect.right + OFFSET, VIEWPORT_MARGIN, viewport.width - tip.width - VIEWPORT_MARGIN),
-        top: clamp(
-          rect.top + rect.height / 2 - tip.height / 2,
-          VIEWPORT_MARGIN,
-          viewport.height - tip.height - VIEWPORT_MARGIN,
-        ),
+        left: clamp(rect.right + OFFSET, VIEWPORT_MARGIN, viewport.width - tipW - VIEWPORT_MARGIN) / z,
+        top:
+          clamp(
+            rect.top + rect.height / 2 - tipH / 2,
+            VIEWPORT_MARGIN,
+            viewport.height - tipH - VIEWPORT_MARGIN,
+          ) / z,
         transform: 'none',
       }
     }
     case 'left': {
       if (!tip) {
         return {
-          left: rect.left - OFFSET,
-          top: rect.top + rect.height / 2,
+          left: (rect.left - OFFSET) / z,
+          top: (rect.top + rect.height / 2) / z,
           transform: 'translate(-100%, -50%)',
         }
       }
       return {
-        left: clamp(
-          rect.left - OFFSET - tip.width,
-          VIEWPORT_MARGIN,
-          viewport.width - tip.width - VIEWPORT_MARGIN,
-        ),
-        top: clamp(
-          rect.top + rect.height / 2 - tip.height / 2,
-          VIEWPORT_MARGIN,
-          viewport.height - tip.height - VIEWPORT_MARGIN,
-        ),
+        left:
+          clamp(rect.left - OFFSET - tipW, VIEWPORT_MARGIN, viewport.width - tipW - VIEWPORT_MARGIN) / z,
+        top:
+          clamp(
+            rect.top + rect.height / 2 - tipH / 2,
+            VIEWPORT_MARGIN,
+            viewport.height - tipH - VIEWPORT_MARGIN,
+          ) / z,
         transform: 'none',
       }
     }
     case 'top': {
       if (!tip) {
         return {
-          left: rect.left + rect.width / 2,
-          top: rect.top - OFFSET,
+          left: (rect.left + rect.width / 2) / z,
+          top: (rect.top - OFFSET) / z,
           transform: 'translate(-50%, -100%)',
         }
       }
       return {
-        left: clamp(
-          rect.left + rect.width / 2 - tip.width / 2,
-          VIEWPORT_MARGIN,
-          viewport.width - tip.width - VIEWPORT_MARGIN,
-        ),
-        top: clamp(
-          rect.top - OFFSET - tip.height,
-          VIEWPORT_MARGIN,
-          viewport.height - tip.height - VIEWPORT_MARGIN,
-        ),
+        left:
+          clamp(
+            rect.left + rect.width / 2 - tipW / 2,
+            VIEWPORT_MARGIN,
+            viewport.width - tipW - VIEWPORT_MARGIN,
+          ) / z,
+        top:
+          clamp(rect.top - OFFSET - tipH, VIEWPORT_MARGIN, viewport.height - tipH - VIEWPORT_MARGIN) / z,
         transform: 'none',
       }
     }
     case 'bottom': {
       if (!tip) {
         return {
-          left: rect.left + rect.width / 2,
-          top: rect.bottom + OFFSET,
+          left: (rect.left + rect.width / 2) / z,
+          top: (rect.bottom + OFFSET) / z,
           transform: 'translateX(-50%)',
         }
       }
       return {
-        left: clamp(
-          rect.left + rect.width / 2 - tip.width / 2,
-          VIEWPORT_MARGIN,
-          viewport.width - tip.width - VIEWPORT_MARGIN,
-        ),
-        top: clamp(rect.bottom + OFFSET, VIEWPORT_MARGIN, viewport.height - tip.height - VIEWPORT_MARGIN),
+        left:
+          clamp(
+            rect.left + rect.width / 2 - tipW / 2,
+            VIEWPORT_MARGIN,
+            viewport.width - tipW - VIEWPORT_MARGIN,
+          ) / z,
+        top: clamp(rect.bottom + OFFSET, VIEWPORT_MARGIN, viewport.height - tipH - VIEWPORT_MARGIN) / z,
         transform: 'none',
       }
     }
@@ -188,7 +208,8 @@ export default function Tooltip({
       ? { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
       : undefined
     const viewport = { width: window.innerWidth, height: window.innerHeight }
-    setStyle(getTooltipPosition(rect, side, tip, viewport))
+    const zoom = readTooltipZoom(tipEl)
+    setStyle(getTooltipPosition(rect, side, tip, viewport, zoom))
   }
 
   const scheduleShow = () => {
@@ -199,7 +220,7 @@ export default function Tooltip({
       const rect = triggerRect()
       if (!rect) return
       // Approximate first paint with transform centering; refined after mount.
-      setStyle(getTooltipPosition(rect, side))
+      setStyle(getTooltipPosition(rect, side, undefined, undefined, readTooltipZoom()))
       setOpen(true)
     }, showDelay)
   }
@@ -241,8 +262,8 @@ export default function Tooltip({
           <div
             ref={tipRef}
             role="tooltip"
-            className="tooltip-enter fixed z-[100] pointer-events-none max-w-[min(480px,calc(100vw-16px))] rounded px-2 py-1 text-[11px] leading-4 text-fg border border-border-strong bg-bg-elevated shadow-lg shadow-black/40 break-all whitespace-normal"
-            style={{ ...style, fontSize: 'var(--ui-font-size)' }}
+            className="tooltip-enter ui-font-scaled fixed z-[100] pointer-events-none w-max max-w-[min(480px,calc(100vw-16px))] rounded px-2 py-1 text-[11px] leading-4 text-fg border border-border-strong bg-bg-elevated shadow-lg shadow-black/40 break-words whitespace-normal"
+            style={style}
           >
             {label}
           </div>,
