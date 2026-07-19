@@ -874,7 +874,11 @@ export default function EditorMinimap({
     scrollingViewport ||
     !!quickView
   const displayWidth = expanded ? width : MINIMAP_SCROLLBAR_WIDTH
-  const resizeHint = t('左右拖拽调整小地图宽度')
+  const resizeHint = t('左右拖拽调整小地图宽度 · {min}–{max}px · 当前 {current}px', {
+    min: MINIMAP_WIDTH_MIN,
+    max: MINIMAP_WIDTH_MAX,
+    current: Math.round(width),
+  })
 
   return (
     <>

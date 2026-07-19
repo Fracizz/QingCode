@@ -128,6 +128,7 @@ type TreeRowProps = {
   gitStatusFor: (path: string, isDir: boolean) => string | null
   onOpenContextMenu: (event: ReactMouseEvent, target: ContextTarget) => void
   onCopyPath: (path: string) => void
+  onCopyAsReference: (path: string) => void
   onSelectNode: (node: FileNode, event: ReactMouseEvent) => void
   onOpenNode: (node: FileNode) => void
   onToggleFolder: (node: FileNode) => void
@@ -152,6 +153,7 @@ function VirtualTreeRow({
   gitStatusFor,
   onOpenContextMenu,
   onCopyPath,
+  onCopyAsReference,
   onSelectNode,
   onOpenNode,
   onToggleFolder,
@@ -232,9 +234,14 @@ function VirtualTreeRow({
           onOpenNode(node)
           return
         }
-        if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'c') {
+        if (shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)) {
           event.preventDefault()
           onCopyPath(node.path)
+          return
+        }
+        if (shortcutMatchesEvent('Alt+C', event.nativeEvent)) {
+          event.preventDefault()
+          onCopyAsReference(node.path)
         }
       }}
     >
@@ -1179,6 +1186,7 @@ export default function Sidebar() {
         {
           label: t('复制为文件引用'),
           icon: <AtSign size={14} />,
+          shortcut: 'Alt+C',
           action: () => copyAsReference(project.path),
         },
         {
@@ -1302,6 +1310,7 @@ export default function Sidebar() {
       {
         label: t('复制为文件引用'),
         icon: <AtSign size={14} />,
+        shortcut: 'Alt+C',
         action: () => copyAsReference(node.path),
       },
       {
@@ -1547,6 +1556,7 @@ export default function Sidebar() {
                         <div
                           ref={treeFocusRef}
                           tabIndex={0}
+                          data-qingcode-explorer=""
                           className="flex-1 min-h-0 outline-none"
                           onKeyDown={event => {
                             if (pendingRename || pendingCreate) return
@@ -1567,6 +1577,22 @@ export default function Sidebar() {
                                 void pasteExplorerClipboard()
                                 return
                               }
+                            }
+                            if (
+                              selectedPath &&
+                              shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)
+                            ) {
+                              event.preventDefault()
+                              void copyPath(selectedPath)
+                              return
+                            }
+                            if (
+                              selectedPath &&
+                              shortcutMatchesEvent('Alt+C', event.nativeEvent)
+                            ) {
+                              event.preventDefault()
+                              void copyAsReference(selectedPath)
+                              return
                             }
                             if (
                               selectedPath &&
@@ -1600,6 +1626,7 @@ export default function Sidebar() {
                               gitStatusFor,
                               onOpenContextMenu: showContextMenu,
                               onCopyPath: copyPath,
+                              onCopyAsReference: path => void copyAsReference(path),
                               onSelectNode: selectTreeNode,
                               onOpenNode: openTreeNode,
                               onToggleFolder: node => void toggleFolderExpand(node),

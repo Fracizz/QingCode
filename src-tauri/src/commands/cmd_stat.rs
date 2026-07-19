@@ -203,7 +203,13 @@ pub fn detect_file_encoding(
     buf.truncate(n);
     file_encoding::detect(&buf)
         .map(|encoding| encoding.as_str().to_string())
-        .map_err(|_| unsupported_text_file_message(&path))
+        .map_err(|reason| {
+            format!(
+                "无法识别文件编码（{}）：{}",
+                reason,
+                display_file_name(&path)
+            )
+        })
 }
 
 fn read_file_inner(path: String, encoding: Option<&str>) -> Result<String, String> {

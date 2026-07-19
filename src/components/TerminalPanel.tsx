@@ -121,7 +121,7 @@ export default function TerminalPanel({
           <PanelResizer
             orientation="vertical"
             active={isTerminalResizing}
-            tooltip={terminalWidthResizerHint(liveWidth)}
+            tooltip={terminalWidthResizerHint(liveWidth, t)}
             tooltipSide="right"
             onMouseDown={onWidthResizerMouseDown}
             ariaValueNow={liveWidth}
@@ -139,7 +139,7 @@ export default function TerminalPanel({
         <PanelResizer
           orientation="horizontal"
           active={isTerminalResizing}
-          tooltip={terminalResizerHint(liveHeight)}
+          tooltip={terminalResizerHint(liveHeight, t)}
           tooltipSide="top"
           onMouseDown={onResizerMouseDown}
           ariaValueNow={liveHeight}

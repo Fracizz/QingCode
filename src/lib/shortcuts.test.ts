@@ -43,11 +43,25 @@ describe('shortcutMatchesEvent', () => {
     expect(shortcutFromKeyboardEvent(event)).toBe('F2')
     expect(shortcutMatchesEvent('F2', event)).toBe(true)
   })
+
+  it('matches copy-path and copy-file-reference reserved bindings', () => {
+    const copyPath = keyEvent({ key: 'c', ctrlKey: true, shiftKey: true })
+    expect(shortcutMatchesEvent('Ctrl+Shift+C', copyPath)).toBe(true)
+
+    const copyRef = keyEvent({ key: 'c', altKey: true })
+    expect(shortcutFromKeyboardEvent(copyRef)).toBe('Alt+C')
+    expect(shortcutMatchesEvent('Alt+C', copyRef)).toBe(true)
+  })
 })
 
 describe('isReservedShortcut', () => {
   it('recognizes format shortcut regardless of modifier spelling order', () => {
     expect(isReservedShortcut('Shift+Alt+F')).toBe(true)
     expect(isReservedShortcut('Alt+Shift+F')).toBe(true)
+  })
+
+  it('recognizes copy-path and copy-file-reference shortcuts', () => {
+    expect(isReservedShortcut('Ctrl+Shift+C')).toBe(true)
+    expect(isReservedShortcut('Alt+C')).toBe(true)
   })
 })

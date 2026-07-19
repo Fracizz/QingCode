@@ -7,6 +7,7 @@ import {
 } from '../lib/sidebarLayout'
 import { beginPanelResize, endPanelResize } from '../lib/panelResize'
 import { sidebarResizerHint } from '../lib/panelLayout'
+import { useI18n } from '../lib/i18n'
 
 interface Props {
   width: number
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export default function ResizableSidebar({ width, onWidthChange, children, className }: Props) {
+  const { t } = useI18n()
   const [active, setActive] = useState(false)
   const dragRef = useRef<{ startX: number; startW: number } | null>(null)
 
@@ -54,7 +56,7 @@ export default function ResizableSidebar({ width, onWidthChange, children, class
       <PanelResizer
         orientation="vertical"
         active={active}
-        tooltip={sidebarResizerHint(width)}
+        tooltip={sidebarResizerHint(width, t)}
         tooltipSide="right"
         onMouseDown={onMouseDown}
         ariaValueNow={width}

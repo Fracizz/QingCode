@@ -1,3 +1,4 @@
+import { translate } from './i18n'
 import {
   ACTIVITY_BAR_WIDTH,
   SIDEBAR_EDITOR_MIN_WIDTH,
@@ -11,6 +12,8 @@ export const TERMINAL_MAX_HEIGHT_RATIO = 0.8
 export const TERMINAL_MIN_WIDTH = 200
 export const TERMINAL_DEFAULT_WIDTH = 400
 export const TERMINAL_MAX_WIDTH_RATIO = 0.5
+
+type TranslateFn = (source: string, values?: Record<string, string | number>) => string
 
 export function getTerminalMaxHeight() {
   const titleBar = 32
@@ -36,14 +39,26 @@ export function clampTerminalWidth(width: number): number {
   return Math.min(max, Math.max(TERMINAL_MIN_WIDTH, width))
 }
 
-export function terminalResizerHint(height: number) {
-  return `拖动调整终端高度 · ${TERMINAL_MIN_HEIGHT}–${getTerminalMaxHeight()}px · 当前 ${Math.round(height)}px`
+export function terminalResizerHint(height: number, t: TranslateFn = translate) {
+  return t('拖动调整终端高度 · {min}–{max}px · 当前 {current}px', {
+    min: TERMINAL_MIN_HEIGHT,
+    max: getTerminalMaxHeight(),
+    current: Math.round(height),
+  })
 }
 
-export function terminalWidthResizerHint(width: number) {
-  return `拖动调整终端宽度 · ${TERMINAL_MIN_WIDTH}–${getTerminalMaxWidth()}px · 当前 ${Math.round(width)}px`
+export function terminalWidthResizerHint(width: number, t: TranslateFn = translate) {
+  return t('拖动调整终端宽度 · {min}–{max}px · 当前 {current}px', {
+    min: TERMINAL_MIN_WIDTH,
+    max: getTerminalMaxWidth(),
+    current: Math.round(width),
+  })
 }
 
-export function sidebarResizerHint(width: number) {
-  return `拖动调整侧边栏宽度 · ${SIDEBAR_MIN_WIDTH}–${SIDEBAR_MAX_WIDTH}px · 当前 ${Math.round(width)}px`
+export function sidebarResizerHint(width: number, t: TranslateFn = translate) {
+  return t('拖动调整侧边栏宽度 · {min}–{max}px · 当前 {current}px', {
+    min: SIDEBAR_MIN_WIDTH,
+    max: SIDEBAR_MAX_WIDTH,
+    current: Math.round(width),
+  })
 }

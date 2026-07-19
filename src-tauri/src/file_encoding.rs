@@ -57,6 +57,18 @@ fn charset(enc: FileEncoding) -> &'static Encoding {
     }
 }
 
+/// True when `bytes` is valid UTF-8, or a valid UTF-8 prefix truncated mid-character.
+///
+/// Detection samples are often capped (e.g. first 8KB). Cutting inside a multi-byte
+/// Chinese/emoji sequence must not make a UTF-8 file look non-text.
+fn is_utf8_or_truncated_prefix(bytes: &[u8]) -> bool {
+    match std::str::from_utf8(bytes) {
+        Ok(_) => true,
+        // `error_len() == None` means unexpected end of input (incomplete sequence).
+        Err(err) => err.error_len().is_none() && err.valid_up_to() < bytes.len(),
+    }
+}
+
 /// Detect a supported text encoding without silently replacing bytes.
 ///
 /// GBK is a subset of GB18030, so non-UTF-8 legacy text is intentionally
@@ -79,7 +91,7 @@ pub fn detect(bytes: &[u8]) -> Result<FileEncoding, String> {
     if bytes.contains(&0) {
         return Err("binary content".to_string());
     }
-    if std::str::from_utf8(bytes).is_ok() {
+    if is_utf8_or_truncated_prefix(bytes) {
         return Ok(FileEncoding::Utf8);
     }
     let (_text, _used, had_errors) = GB18030.decode(bytes);
@@ -231,5 +243,34 @@ mod tests {
             FileEncoding::Gb18030
         );
         assert!(detect(&[0, 1, 2]).is_err());
+    }
+
+    #[test]
+    fn detect_accepts_utf8_truncated_at_sample_boundary() {
+        // "中" is E4 B8 AD — drop the last byte as an 8KB-style sample cut would.
+        let truncated = &"hello中文".as_bytes()[..7]; // "hello" + E4 B8 (incomplete 中)
+        assert!(std::str::from_utf8(truncated).is_err());
+        assert_eq!(detect(truncated).unwrap(), FileEncoding::Utf8);
+
+        // Invalid byte in the middle is not a truncated UTF-8 prefix.
+        let invalid = [b'a', 0xFF, b'b'];
+        assert_ne!(detect(&invalid).ok(), Some(FileEncoding::Utf8));
+    }
+
+    #[test]
+    fn detect_help_document_sample_is_utf8() {
+        // Reproduce the 帮助文档.md failure: first 8KB cuts inside a multi-byte char.
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../帮助文档.md");
+        let Ok(bytes) = std::fs::read(path) else {
+            return; // skip when the doc is absent from the checkout
+        };
+        assert!(bytes.len() > 8192, "fixture should exceed the detect sample size");
+        let sample = &bytes[..8192];
+        assert!(
+            std::str::from_utf8(sample).is_err(),
+            "fixture must actually truncate mid-character at 8192"
+        );
+        assert_eq!(detect(sample).unwrap(), FileEncoding::Utf8);
+        assert_eq!(detect(&bytes).unwrap(), FileEncoding::Utf8);
     }
 }

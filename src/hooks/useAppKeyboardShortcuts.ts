@@ -1,4 +1,8 @@
 import { useEffect } from 'react'
+import {
+  copyActiveFileReferenceAction,
+  copyActivePathAction,
+} from '../lib/copyFileActions'
 import { formatDocument } from '../lib/formatDocument'
 import { requestTerminalClear, requestTerminalSearch } from '../lib/terminalViewBridge'
 import { isShortcutInputTarget, shortcutMatchesEvent } from '../lib/shortcuts'
@@ -8,6 +12,13 @@ import type { ShortcutMap } from '../lib/shortcuts'
 
 function isTerminalKeyTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('.xterm'))
+}
+
+function isExplorerKeyTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    Boolean(target.closest('[data-qingcode-explorer], [data-explorer-drop]'))
+  )
 }
 
 export interface UseAppKeyboardShortcutsDeps {
@@ -114,6 +125,22 @@ export function useAppKeyboardShortcuts({
         event.preventDefault()
         event.stopPropagation()
         void formatDocument()
+      } else if (shortcutMatchesEvent('Ctrl+Shift+C', event)) {
+        // Capture-phase: same Windows/IME reliability as format. Explorer has its own
+        // binding for the selected tree path — do not steal those keystrokes.
+        if (isTerminalKeyTarget(event.target) || isExplorerKeyTarget(event.target)) {
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        void copyActivePathAction()
+      } else if (shortcutMatchesEvent('Alt+C', event)) {
+        if (isTerminalKeyTarget(event.target) || isExplorerKeyTarget(event.target)) {
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        void copyActiveFileReferenceAction()
       }
     }
     window.addEventListener('keydown', onKeyDown, true)
