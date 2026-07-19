@@ -1,6 +1,7 @@
 import { useEffect, useRef, type FormEvent, type KeyboardEvent } from 'react'
 import { ChevronDown, ChevronUp, X } from 'lucide-react'
 import { translate } from '../lib/i18n'
+import Tooltip from './Tooltip'
 
 export interface TerminalSearchBarProps {
   query: string
@@ -84,34 +85,39 @@ export default function TerminalSearchBar({
           {label}
         </span>
         <div className="terminal-search-bar__actions">
-          <button
-            type="button"
-            className="terminal-search-bar__btn"
-            title={translate('上一个')}
-            onClick={onFindPrevious}
-            disabled={!query.trim() || matchTotal === 0}
-          >
-            <ChevronUp size={14} />
-          </button>
-          <button
-            type="button"
-            className="terminal-search-bar__btn"
-            title={translate('下一个')}
-            onClick={onFindNext}
-            disabled={!query.trim() || matchTotal === 0}
-          >
-            <ChevronDown size={14} />
-          </button>
+          <Tooltip label={translate('上一个')} side="bottom">
+            <button
+              type="button"
+              className="terminal-search-bar__btn"
+              aria-label={translate('上一个')}
+              onClick={onFindPrevious}
+              disabled={!query.trim() || matchTotal === 0}
+            >
+              <ChevronUp size={14} />
+            </button>
+          </Tooltip>
+          <Tooltip label={translate('下一个')} side="bottom">
+            <button
+              type="button"
+              className="terminal-search-bar__btn"
+              aria-label={translate('下一个')}
+              onClick={onFindNext}
+              disabled={!query.trim() || matchTotal === 0}
+            >
+              <ChevronDown size={14} />
+            </button>
+          </Tooltip>
         </div>
-        <button
-          type="button"
-          className="terminal-search-bar__close"
-          title={translate('关闭')}
-          aria-label={translate('关闭')}
-          onClick={onClose}
-        >
-          <X size={14} />
-        </button>
+        <Tooltip label={translate('关闭')} side="bottom">
+          <button
+            type="button"
+            className="terminal-search-bar__close"
+            aria-label={translate('关闭')}
+            onClick={onClose}
+          >
+            <X size={14} />
+          </button>
+        </Tooltip>
       </div>
     </form>
   )

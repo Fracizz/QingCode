@@ -8,6 +8,7 @@ import {
   ListChecks,
 } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
+import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -65,6 +66,18 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
   }, [open])
 
   useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, onClose])
+
+  useEffect(() => {
     setActiveIndex(i => (filtered.length === 0 ? 0 : Math.min(i, filtered.length - 1)))
   }, [filtered.length])
 
@@ -111,6 +124,11 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
   }
 
   const onInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      onClose()
+      return
+    }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setActiveIndex(i => (filtered.length === 0 ? 0 : (i + 1) % filtered.length))
@@ -175,32 +193,38 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
               const isCurrent = currentProject?.id === project.id
               const active = index === activeIndex
               return (
-                <button
+                <Tooltip
                   key={project.id}
-                  type="button"
-                  role="option"
-                  title={project.path}
-                  aria-selected={active || isCurrent}
-                  data-project-index={index}
-                  onMouseEnter={() => setActiveIndex(index)}
-                  onClick={() => void selectProject(project)}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors
-                    ${active ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover'}`}
+                  label={project.path}
+                  side="right"
+                  wrapperClassName="block w-full"
                 >
-                  <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
-                    {unavailable ? (
-                      <AlertTriangle size={13} className="text-warn" />
-                    ) : isCurrent ? (
-                      <Check size={12} className="text-accent" />
-                    ) : (
-                      <Folder size={13} className="text-accent" />
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
-                  {project.hidden ? (
-                    <span className="flex-shrink-0 text-[10px] text-fg-dim">{t('已隐藏')}</span>
-                  ) : null}
-                </button>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-label={`${project.name} — ${project.path}`}
+                    aria-selected={active || isCurrent}
+                    data-project-index={index}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => void selectProject(project)}
+                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors
+                      ${active ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover'}`}
+                  >
+                    <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                      {unavailable ? (
+                        <AlertTriangle size={13} className="text-warn" />
+                      ) : isCurrent ? (
+                        <Check size={12} className="text-accent" />
+                      ) : (
+                        <Folder size={13} className="text-accent" />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
+                    {project.hidden ? (
+                      <span className="flex-shrink-0 text-[10px] text-fg-dim">{t('已隐藏')}</span>
+                    ) : null}
+                  </button>
+                </Tooltip>
               )
             })
           )}
@@ -215,16 +239,22 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
             <FolderOpen size={13} />
             {t('打开文件夹')}
           </button>
-          <button
-            type="button"
-            disabled={addingEmpty}
-            onClick={() => void handleAddEmpty()}
-            title={t('退出后从列表移除')}
-            className="inline-flex flex-1 items-center justify-center gap-1 rounded px-1.5 py-1 text-[11px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50"
+          <Tooltip
+            label={t('退出后从列表移除')}
+            side="top"
+            wrapperClassName="inline-flex flex-1 min-w-0"
           >
-            <FilePlus2 size={13} />
-            {t('临时项目')}
-          </button>
+            <button
+              type="button"
+              disabled={addingEmpty}
+              onClick={() => void handleAddEmpty()}
+              aria-label={`${t('临时项目')} — ${t('退出后从列表移除')}`}
+              className="inline-flex w-full items-center justify-center gap-1 rounded px-1.5 py-1 text-[11px] text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50"
+            >
+              <FilePlus2 size={13} />
+              {t('临时项目')}
+            </button>
+          </Tooltip>
           <button
             type="button"
             onClick={handleManage}

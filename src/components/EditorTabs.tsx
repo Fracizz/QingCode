@@ -302,7 +302,22 @@ export default function EditorTabs() {
   return (
     <>
       <div className="ui-font-scaled relative flex h-[var(--tab-height)] flex-shrink-0 border-b border-border bg-bg-deep">
-        <div ref={stripRef} className="flex min-w-0 flex-1 overflow-hidden">
+        <div
+          ref={stripRef}
+          role="tablist"
+          aria-label={t('显示所有打开的文件')}
+          className="flex min-w-0 flex-1 overflow-hidden"
+          onKeyDown={event => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+            const current = indices.findIndex(i => tabs[i]?.id === activeTabId)
+            if (current < 0 || indices.length === 0) return
+            event.preventDefault()
+            const delta = event.key === 'ArrowRight' ? 1 : -1
+            const next = indices[(current + delta + indices.length) % indices.length]
+            const nextTab = tabs[next]
+            if (nextTab) setActiveTab(nextTab.id)
+          }}
+        >
           {indices.map((index, visiblePos) => {
             const tab = tabs[index]
             if (!tab) return null
@@ -311,12 +326,21 @@ export default function EditorTabs() {
             return (
               <div
                 key={tab.id}
+                role="tab"
+                tabIndex={active ? 0 : -1}
+                aria-selected={active}
                 draggable
                 className={`group relative flex h-full cursor-pointer items-center gap-2 whitespace-nowrap pl-3 pr-2 transition-colors
                 ${active ? 'bg-tab-active text-fg' : 'bg-tab-inactive text-fg-muted hover:bg-bg-elevated hover:text-fg'}
                 ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}
                 ${dropIndex === index && dragIndex !== index ? 'ring-1 ring-inset ring-accent/60' : ''}`}
                 onClick={() => setActiveTab(tab.id)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    setActiveTab(tab.id)
+                  }
+                }}
                 onDragStart={event => {
                   setDragIndex(index)
                   event.dataTransfer.effectAllowed = 'move'
@@ -366,6 +390,8 @@ export default function EditorTabs() {
                 )}
                 <TabChrome tab={tab} />
                 <button
+                  type="button"
+                  aria-label={t('关闭文件')}
                   className="ml-1 flex h-4 w-4 items-center justify-center rounded hover:bg-bg-active"
                   onClick={e => {
                     e.stopPropagation()

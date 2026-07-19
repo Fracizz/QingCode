@@ -229,6 +229,7 @@ export default function StatusBar() {
         <Tooltip label={t('切换终端面板')} side="top">
           <button
             type="button"
+            aria-label={t('切换终端面板')}
             className="flex max-w-[180px] items-center gap-1.5 rounded px-1.5 py-px hover:bg-bg-hover transition-colors"
             onClick={requestToggleTerminal}
           >

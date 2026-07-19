@@ -490,7 +490,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     markIntentionalPtyKill(id)
     try {
       await safeInvoke('关闭终端', 'kill_terminal', { id })
-    } catch {}
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast(
+          'error',
+          translate('关闭终端失败: {error}', { error: String(error) }),
+        )
+    }
     set(s => {
       const closed = s.terminals.find(t => t.id === id)
       const terminals = s.terminals.filter(t => t.id !== id)
@@ -612,7 +619,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     markIntentionalPtyKill(id)
     try {
       await safeInvoke('关闭终端', 'kill_terminal', { id })
-    } catch {}
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast(
+          'error',
+          translate('结束终端进程失败: {error}', { error: String(error) }),
+        )
+    }
     set(s => ({
       terminals: s.terminals.map(terminal =>
         terminal.id === id
@@ -744,7 +758,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     recordTypedInput(id, data)
     try {
       await safeInvoke('终端输入', 'write_terminal', { id, data })
-    } catch {}
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast(
+          'error',
+          translate('终端输入失败: {error}', { error: String(error) }),
+        )
+    }
   },
 
   resizeTerminal: async (id: string, cols: number, rows: number) => {
@@ -756,7 +777,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         cols: size.cols,
         rows: size.rows,
       })
-    } catch {}
+    } catch (error) {
+      console.warn('resize_terminal failed:', error)
+    }
   },
 
   spawnPendingTerminal: async (id: string, cols: number, rows: number) => {

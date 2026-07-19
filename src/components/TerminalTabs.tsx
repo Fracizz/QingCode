@@ -359,17 +359,42 @@ export default function TerminalTabs() {
         <div className="flex items-center gap-1.5 px-3 text-[11px] font-semibold tracking-wide text-fg-muted">
           <TerminalIcon size={13} /> {translate('终端')}
         </div>
-        <div className="flex flex-1 min-w-0 overflow-x-auto items-center">
+        <div
+          role="tablist"
+          aria-label={translate('终端')}
+          className="flex flex-1 min-w-0 overflow-x-auto items-center"
+          onKeyDown={event => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+            if (projectTerminals.length === 0) return
+            const current = projectTerminals.findIndex(term => term.id === activeTerminalId)
+            if (current < 0) return
+            event.preventDefault()
+            const delta = event.key === 'ArrowRight' ? 1 : -1
+            const next =
+              projectTerminals[(current + delta + projectTerminals.length) % projectTerminals.length]
+            if (next) setActiveTerminal(next.id)
+          }}
+        >
           {projectTerminals.map(t => {
             const isCloseArmed = closeArmId === t.id
+            const isActive = t.id === activeTerminalId
             return (
               <div
                 key={t.id}
+                role="tab"
+                tabIndex={isActive ? 0 : -1}
+                aria-selected={isActive}
                 className={`group flex items-center gap-1.5 pl-3 pr-2 h-9 cursor-pointer border-r border-border whitespace-nowrap transition-colors
-                  ${t.id === activeTerminalId ? 'bg-bg text-fg' : 'bg-bg-deep text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
+                  ${isActive ? 'bg-bg text-fg' : 'bg-bg-deep text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
                 onClick={() => {
                   setActiveTerminal(t.id)
                   if (closeArmId && closeArmId !== t.id) setCloseArmId(null)
+                }}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault()
+                    setActiveTerminal(t.id)
+                  }
                 }}
                 onDoubleClick={event => {
                   event.preventDefault()
@@ -437,6 +462,8 @@ export default function TerminalTabs() {
                     side="top"
                   >
                     <button
+                      type="button"
+                      aria-label={translate('重启终端{exitCode}', { exitCode: '' })}
                       className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
                       onClick={e => {
                         e.stopPropagation()

@@ -435,10 +435,25 @@ function Chip({
   onOpenInExplorer: () => void
 }) {
   const { t } = useI18n()
+  const activate = () => {
+    if (!unavailable) onSwitch()
+  }
   return (
     <div
       data-chip-id={measure ? project.id : undefined}
-      onClick={() => !unavailable && onSwitch()}
+      role={measure ? undefined : 'button'}
+      tabIndex={measure || unavailable ? -1 : 0}
+      aria-current={isCurrent ? 'true' : undefined}
+      aria-disabled={unavailable || undefined}
+      aria-label={project.name}
+      onClick={activate}
+      onKeyDown={event => {
+        if (measure || unavailable) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          activate()
+        }
+      }}
       onDoubleClick={event => event.stopPropagation()}
       className={`group flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-colors
         ${

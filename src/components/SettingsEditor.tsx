@@ -384,6 +384,7 @@ export default function SettingsEditor() {
               {query && (
                 <button
                   type="button"
+                  aria-label={t('清除搜索')}
                   onClick={() => setQuery('')}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
                 >

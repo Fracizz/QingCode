@@ -84,7 +84,7 @@ export default function ActivityBar({
       <Item
         icon={<Settings size={22} />}
         label={t('设置')}
-        active={active === 'settings' && sidebarOpen}
+        active={active === 'settings'}
         onClick={() => onActiveChange('settings')}
       />
 
@@ -137,6 +137,7 @@ function Item({
       <button
         type="button"
         aria-label={label}
+        aria-pressed={active === true}
         onClick={onClick}
         className={`relative w-10 h-10 flex items-center justify-center rounded-md mb-1 transition-colors
         ${active ? 'text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
