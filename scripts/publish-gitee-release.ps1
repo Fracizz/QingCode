@@ -43,10 +43,22 @@ function Invoke-GiteeApi {
   return Invoke-RestMethod -Method $Method -Uri $uri.Uri
 }
 
+function ConvertTo-Int32Scalar {
+  param($Value)
+  if ($null -eq $Value) { return 0 }
+  $candidate = $Value
+  # Gitee/PowerShell may surface ids as Object[]; unwrap before [int] cast.
+  while ($candidate -is [System.Array]) {
+    if ($candidate.Length -eq 0) { return 0 }
+    $candidate = $candidate[0]
+  }
+  return [int]$candidate
+}
+
 function Get-ReleaseByTag([string]$TagName) {
   try {
     $found = Invoke-GiteeApi -Method Get -Path "/repos/$Owner/$Repo/releases/tags/$TagName"
-    if ($null -ne $found -and [int]$found.id -gt 0) { return $found }
+    if ($null -ne $found -and (ConvertTo-Int32Scalar $found.id) -gt 0) { return $found }
   } catch {
     # Tag has no release yet, or API variant unavailable.
   }
@@ -54,7 +66,9 @@ function Get-ReleaseByTag([string]$TagName) {
   while ($true) {
     $list = Invoke-GiteeApi -Method Get -Path "/repos/$Owner/$Repo/releases" -Query @{ page = "$page"; per_page = '50' }
     if (-not $list -or $list.Count -eq 0) { return $null }
-    $hit = $list | Where-Object { $_.tag_name -eq $TagName -and [int]$_.id -gt 0 } | Select-Object -First 1
+    $hit = $list | Where-Object {
+      $_.tag_name -eq $TagName -and (ConvertTo-Int32Scalar $_.id) -gt 0
+    } | Select-Object -First 1
     if ($hit) { return $hit }
     if ($list.Count -lt 50) { return $null }
     $page++
@@ -73,24 +87,13 @@ function Ensure-GiteeRelease {
     }
   }
 
-  Write-Host "Updating Gitee release $Tag (id=$([int]$existing.id)) notes ..."
-  return Invoke-GiteeApi -Method Patch -Path "/repos/$Owner/$Repo/releases/$([int]$existing.id)" -Form @{
+  $existingId = ConvertTo-Int32Scalar $existing.id
+  Write-Host "Updating Gitee release $Tag (id=$existingId) notes ..."
+  return Invoke-GiteeApi -Method Patch -Path "/repos/$Owner/$Repo/releases/$existingId" -Form @{
     tag_name = $Tag
     name     = $Name
     body     = $Body
   }
-}
-
-function ConvertTo-Int32Scalar {
-  param($Value)
-  if ($null -eq $Value) { return 0 }
-  $candidate = $Value
-  # Gitee/PowerShell may surface ids as Object[]; unwrap before [int] cast.
-  while ($candidate -is [System.Array]) {
-    if ($candidate.Length -eq 0) { return 0 }
-    $candidate = $candidate[0]
-  }
-  return [int]$candidate
 }
 
 function Get-AttachFiles([int]$ReleaseId) {
@@ -156,37 +159,44 @@ function Get-CurlCommand {
 
 function Add-AttachFile([int]$ReleaseId, [string]$FilePath) {
   $item = Get-Item -LiteralPath $FilePath
-  Write-Host ("  upload {0} ({1:N1} MB, timeout {2}s) ..." -f $item.Name, ($item.Length / 1MB), $UploadTimeoutSec)
+  $maxAttempts = 3
+  for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+    Write-Host ("  upload {0} ({1:N1} MB, timeout {2}s, attempt {3}/{4}) ..." -f $item.Name, ($item.Length / 1MB), $UploadTimeoutSec, $attempt, $maxAttempts)
 
-  $uri = "$api/repos/$Owner/$Repo/releases/$ReleaseId/attach_files"
-  $curl = Get-CurlCommand
-  # No -f: do not abort the whole publish on a single HTTP blip; we inspect exit code.
-  $args = @(
-    '-sS',
-    '--connect-timeout', '30',
-    '--max-time', "$UploadTimeoutSec",
-    '-X', 'POST',
-    '-F', "access_token=$Token",
-    '-F', "file=@$($item.FullName);filename=$($item.Name)",
-    '-w', '%{http_code}',
-    '-o', "$env:TEMP\gitee-upload-$($item.Name).json",
-    $uri
-  )
-  $httpCode = & $curl @args
-  $exit = $LASTEXITCODE
-  if ($exit -ne 0) {
-    throw "upload failed: $($item.Name) (curl exit $exit)"
-  }
-  if ($httpCode -notmatch '^(200|201)$') {
+    $uri = "$api/repos/$Owner/$Repo/releases/$ReleaseId/attach_files"
+    $curl = Get-CurlCommand
+    # No -f: do not abort the whole publish on a single HTTP blip; we inspect exit code.
+    $args = @(
+      '-sS',
+      '--connect-timeout', '30',
+      '--max-time', "$UploadTimeoutSec",
+      '-X', 'POST',
+      '-F', "access_token=$Token",
+      '-F', "file=@$($item.FullName);filename=$($item.Name)",
+      '-w', '%{http_code}',
+      '-o', "$env:TEMP\gitee-upload-$($item.Name).json",
+      $uri
+    )
+    $httpCode = & $curl @args
+    $exit = $LASTEXITCODE
+    if ($exit -eq 0 -and $httpCode -match '^(200|201)$') {
+      Write-Host "  ok $($item.Name)"
+      return
+    }
+
     $bodyHint = ''
     $outPath = "$env:TEMP\gitee-upload-$($item.Name).json"
     if (Test-Path -LiteralPath $outPath) {
       $bodyHint = (Get-Content -LiteralPath $outPath -Raw -ErrorAction SilentlyContinue)
       if ($bodyHint.Length -gt 200) { $bodyHint = $bodyHint.Substring(0, 200) + '…' }
     }
-    throw "upload failed: $($item.Name) HTTP $httpCode $bodyHint"
+    $reason = if ($exit -ne 0) { "curl exit $exit" } else { "HTTP $httpCode $bodyHint" }
+    if ($attempt -ge $maxAttempts) {
+      throw "upload failed: $($item.Name) ($reason)"
+    }
+    Write-Host "  warn: $($item.Name) failed ($reason); retrying..."
+    Start-Sleep -Seconds (5 * $attempt)
   }
-  Write-Host "  ok $($item.Name)"
 }
 
 $release = Ensure-GiteeRelease
@@ -198,11 +208,19 @@ if ($releaseId -le 0) {
 # Always inspect and clear previous attachments before uploading this run's assets.
 Remove-AllAttachFiles -ReleaseId $releaseId
 
-$fileList = @(
+. (Join-Path $PSScriptRoot 'canonical-release-assets.ps1')
+$resolved = @(
   $Files |
     Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
     ForEach-Object { (Resolve-Path -LiteralPath $_).Path }
 )
+# Prefer the 6 canonical names; fall back to whatever the caller passed if version filter fails.
+try {
+  $fileList = @(Select-CanonicalReleaseFiles -Version $Tag -Paths $resolved)
+} catch {
+  Write-Host "warn: $($_.Exception.Message); uploading caller file list as-is."
+  $fileList = $resolved
+}
 
 if ($fileList.Count -eq 0) {
   Write-Host 'No files provided; notes-only update.'
@@ -227,3 +245,4 @@ Write-Host ""
 Write-Host "OK Gitee release ready: $url" -ForegroundColor Green
 Write-Host "  tag: $Tag"
 Write-Host "  name: $Name"
+

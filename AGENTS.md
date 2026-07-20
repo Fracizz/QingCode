@@ -16,7 +16,7 @@ Global `default-settings.json` and workspace `.qingcode/project-settings.json` a
 - `pnpm check` runs frontend typecheck + Vitest, then Rust `fmt` / `clippy -D warnings` / `test`.
 - `cargo test` (from `src-tauri/`) runs Rust unit tests; `cargo fmt --all -- --check` verifies Rust formatting; `cargo clippy --all-targets -- -D warnings` enforces lint cleanliness.
 - `pnpm tauri build --no-bundle` validates the production desktop build without producing an installer. Local Windows packaging: `pnpm package` builds **x64 portable + NSIS installer** in one pass (`release/QingCode.exe`, `release/QingCode-setup.exe`); `pnpm package:fast` skips frontend/icons. Separate `package:exe` / `package:installer` remain for single artifacts; ARM64 (`package:*:arm64`) and `package:macos` are for CI / other hosts. `pnpm smoke:start` smokes `release/QingCode.exe`.
-- Release CI (`.github/workflows/release.yml`) builds **Windows x64**, **Windows ARM64** (`windows-11-arm`), and **macOS arm64** (`macos-14`), then uploads assets to GitHub Release (and Gitee when `GITEE_TOKEN` is set).
+- Release CI (`.github/workflows/release.yml`) builds **Windows x64**, **Windows ARM64** (`windows-11-arm`), and **macOS arm64** (`macos-14`), then uploads assets to GitHub Release. After a successful **tag** Release, `Sync Gitee Release` mirrors the 6 canonical assets to Gitee when `GITEE_TOKEN` is set (also runnable manually).
 - `pnpm register:open-with` / `pnpm unregister:open-with` register or remove Explorer “Open with” entries for the portable `release/QingCode.exe` (HKCU, no admin). Settings → 功能 also exposes the same action for the running exe.
 
 ## Coding Style & Naming Conventions

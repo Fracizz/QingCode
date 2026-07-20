@@ -1,25 +1,33 @@
 name: Sync Gitee Release
 
-# Mirror a GitHub Release (notes + assets) to Gitee. Requires secret GITEE_TOKEN.
-# Manual only — do not auto-run on workflow file pushes (avoids cancelling / double-uploading).
+# Mirror a GitHub Release (notes + canonical assets) to Gitee. Requires secret GITEE_TOKEN.
+# Auto-runs after a successful Release workflow; also available via workflow_dispatch.
 on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to sync (e.g. v0.1.4)'
-        required: true
+        description: 'Tag to sync (e.g. v0.1.5). Leave empty to use the latest GitHub Release.'
+        required: false
         type: string
-        default: 'v0.1.5'
+        default: ''
 
 permissions:
   contents: read
 
 concurrency:
-  group: sync-gitee-${{ github.event.inputs.tag }}
+  # One sync per tag; cancel older in-flight syncs for the same tag.
+  group: sync-gitee-${{ github.event.inputs.tag || github.event.workflow_run.head_branch || github.run_id }}
   cancel-in-progress: true
 
 jobs:
   sync:
+    # Skip failed / cancelled Release runs (workflow_run). Manual dispatch always runs.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     # Windows: curl.exe + faster uploads to Gitee than ubuntu-latest in practice.
     runs-on: windows-latest
     env:
@@ -40,33 +48,48 @@ jobs:
         id: meta
         shell: pwsh
         run: |
-          $tag = '${{ github.event.inputs.tag }}'
-          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = 'v0.1.5' }
+          . ./scripts/canonical-release-assets.ps1
+          $tag = '${{ github.event.inputs.tag }}'.Trim()
+          if ('${{ github.event_name }}' -eq 'workflow_run') {
+            $head = '${{ github.event.workflow_run.head_branch }}'.Trim()
+            # Tag pushes set head_branch to the tag (e.g. v0.1.5). Branch / draft dispatches do not.
+            if ($head -notmatch '^v\d') {
+              Write-Host "Release head_branch='$head' is not a version tag; skip auto Gitee sync (use workflow_dispatch)."
+              "skip=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+              exit 0
+            }
+            $tag = $head
+            Write-Host "Tag from Release head_branch: $tag"
+          }
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $tag = (gh release list --repo '${{ github.repository }}' --limit 1 --json tagName --jq '.[0].tagName').Trim()
+            if ([string]::IsNullOrWhiteSpace($tag)) { throw 'Could not resolve a GitHub Release tag to sync' }
+            Write-Host "Tag from latest GitHub Release: $tag"
+          }
           if (-not $tag.StartsWith('v')) { $tag = "v$tag" }
           $ver = $tag.Substring(1)
           $notes = "docs/release-notes/$tag.md"
           if (-not (Test-Path -LiteralPath $notes)) { throw "Missing notes file: $notes" }
+          "skip=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "notes=$notes" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Download canonical GitHub assets
+        if: steps.meta.outputs.skip != 'true'
         shell: pwsh
         run: |
+          . ./scripts/canonical-release-assets.ps1
           $tag = '${{ steps.meta.outputs.tag }}'
           $ver = '${{ steps.meta.outputs.version }}'
-          $keep = @(
-            "QingCode_${ver}-windows-x64.exe",
-            "QingCode_${ver}-windows-x64-setup.exe",
-            "QingCode_${ver}-windows-arm64.exe",
-            "QingCode_${ver}-windows-arm64-setup.exe",
-            "QingCode_${ver}-macos-arm64.dmg",
-            "QingCode_${ver}-macos-arm64.zip"
-          )
+          $keep = Get-CanonicalReleaseAssetNames -Version $ver
           New-Item -ItemType Directory -Force -Path release-assets | Out-Null
           foreach ($name in $keep) {
             Write-Host "download $name"
             gh release download $tag --repo '${{ github.repository }}' --dir release-assets --pattern $name
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to download $name from GitHub Release $tag"
+            }
           }
           Get-ChildItem release-assets -File | Format-Table Name, Length
           $got = @(Get-ChildItem release-assets -File | ForEach-Object { $_.Name })
@@ -76,6 +99,7 @@ jobs:
           }
 
       - name: Publish to Gitee
+        if: steps.meta.outputs.skip != 'true'
         shell: pwsh
         run: |
           $tag = '${{ steps.meta.outputs.tag }}'

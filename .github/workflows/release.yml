@@ -60,6 +60,11 @@ jobs:
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && -z "${{ inputs.tag }}" ]]; then
             DRAFT=true
           fi
+          NOTES="docs/release-notes/${TAG}.md"
+          if [[ "$DRAFT" != "true" && ! -f "$NOTES" ]]; then
+            echo "Missing release notes: $NOTES (required for non-draft releases)" >&2
+            exit 1
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "draft=${DRAFT}" >> "$GITHUB_OUTPUT"
@@ -347,16 +352,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          . ./scripts/canonical-release-assets.ps1
           $ver = '${{ needs.meta.outputs.version }}'
           $tag = '${{ needs.meta.outputs.tag }}'
-          $keep = @(
-            "QingCode_${ver}-windows-x64.exe",
-            "QingCode_${ver}-windows-x64-setup.exe",
-            "QingCode_${ver}-windows-arm64.exe",
-            "QingCode_${ver}-windows-arm64-setup.exe",
-            "QingCode_${ver}-macos-arm64.dmg",
-            "QingCode_${ver}-macos-arm64.zip"
-          )
+          $keep = Get-CanonicalReleaseAssetNames -Version $ver
           # Native `gh` exit codes are not PowerShell exceptions — check LASTEXITCODE.
           $viewJson = gh release view $tag --json assets 2>$null
           if ($LASTEXITCODE -ne 0) {
@@ -390,36 +389,13 @@ jobs:
           # Replace same-named assets when re-publishing a tag.
           make_latest: true
 
-      # Gitee mirror: wipe previous attachments for this tag, then upload.
-      # continue-on-error so a slow/failed Gitee sync does not fail the whole Release
-      # after GitHub assets are already published.
-      - name: Publish Gitee Release
-        id: gitee
-        if: env.GITEE_TOKEN != ''
-        continue-on-error: true
+      # Gitee mirror is handled by workflow Sync Gitee Release (auto after successful tag Release,
+      # or manual workflow_dispatch). Keeps one upload path and avoids double/cancelled syncs.
+      - name: Gitee sync note
         shell: pwsh
         run: |
-          $ver = '${{ needs.meta.outputs.version }}'
-          $tag = '${{ needs.meta.outputs.tag }}'
-          $files = @(Get-ChildItem -Path release-assets -File | ForEach-Object { $_.FullName })
-          if ($files.Count -eq 0) { throw 'No release assets to upload to Gitee' }
-          $body = Get-Content -LiteralPath 'release-notes.md' -Raw -Encoding utf8
-          ./scripts/publish-gitee-release.ps1 `
-            -Tag $tag `
-            -Name "QingCode v$ver" `
-            -Body $body.Trim() `
-            -Files $files
-
-      - name: Gitee publish status
-        if: env.GITEE_TOKEN != ''
-        shell: pwsh
-        run: |
-          if ('${{ steps.gitee.outcome }}' -eq 'success') {
-            Write-Host 'Gitee release synced.'
+          if (-not [string]::IsNullOrWhiteSpace($env:GITEE_TOKEN)) {
+            Write-Host 'GitHub Release published. Sync Gitee Release will run automatically after this workflow succeeds (tag pushes).'
           } else {
-            Write-Host '::warning::Gitee release sync failed or timed out. GitHub Release is ready; re-run workflow Sync Gitee Release for tag ${{ needs.meta.outputs.tag }}.'
+            Write-Host '::warning::GITEE_TOKEN secret is not set; Gitee mirror will be skipped until it is configured.'
           }
-
-      - name: Gitee token missing
-        if: env.GITEE_TOKEN == ''
-        run: echo "::warning::GITEE_TOKEN secret is not set; skipped Gitee release upload."
