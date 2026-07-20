@@ -502,7 +502,9 @@ mod tests {
             .map(|e| e.path.replace('\\', "/"))
             .collect();
         assert!(
-            paths.iter().any(|p| p.ends_with("/.qingcode/run.json") || p.ends_with(".qingcode/run.json")),
+            paths
+                .iter()
+                .any(|p| p.ends_with("/.qingcode/run.json") || p.ends_with(".qingcode/run.json")),
             "expected expanded untracked file, got {paths:?}"
         );
         assert!(
