@@ -357,18 +357,25 @@ jobs:
             "QingCode_${ver}-macos-arm64.dmg",
             "QingCode_${ver}-macos-arm64.zip"
           )
-          $existing = @()
-          try {
-            $existing = @(gh release view $tag --json assets --jq '.assets[].name')
-          } catch {
+          # Native `gh` exit codes are not PowerShell exceptions — check LASTEXITCODE.
+          $viewJson = gh release view $tag --json assets 2>$null
+          if ($LASTEXITCODE -ne 0) {
             Write-Host "No existing GitHub release for $tag (first publish)."
             exit 0
+          }
+          $existing = @()
+          if (-not [string]::IsNullOrWhiteSpace($viewJson)) {
+            $parsed = $viewJson | ConvertFrom-Json
+            $existing = @($parsed.assets | ForEach-Object { [string]$_.name })
           }
           foreach ($name in $existing) {
             if ([string]::IsNullOrWhiteSpace($name)) { continue }
             if ($keep -contains $name) { continue }
             Write-Host "Removing obsolete asset: $name"
             gh release delete-asset $tag $name --yes
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to delete obsolete asset: $name"
+            }
           }
 
       - name: Publish GitHub Release
