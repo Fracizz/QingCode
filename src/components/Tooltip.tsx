@@ -37,6 +37,23 @@ export function resolveOverflowElement(trigger: HTMLElement): HTMLElement | null
 
 type Size = { width: number; height: number }
 type Viewport = { width: number; height: number }
+type RectLike = Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom' | 'width' | 'height'>
+
+/**
+ * Copy a DOMRect-like box, optionally overriding `top`.
+ * Do NOT use object spread on `getBoundingClientRect()` — DOMRect fields are
+ * prototype getters and spread yields `{}`, which parks tips at the left edge.
+ */
+export function copyTooltipRect(rect: RectLike, top = rect.top): RectLike {
+  return {
+    left: rect.left,
+    right: rect.right,
+    top,
+    bottom: rect.bottom,
+    width: rect.width,
+    height: rect.height,
+  }
+}
 
 /** Read CSS `zoom` from a scaled tip, falling back to `--ui-font-scale`. */
 export function readTooltipZoom(el?: HTMLElement | null): number {
@@ -58,7 +75,7 @@ export function readTooltipZoom(el?: HTMLElement | null): number {
  * are pre-zoom style values (same approach as getContextMenuStylePosition).
  */
 export function getTooltipPosition(
-  rect: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom' | 'width' | 'height'>,
+  rect: RectLike,
   side: TooltipSide,
   tip?: Size,
   viewport: Viewport = { width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY },
@@ -257,14 +274,14 @@ export default function Tooltip({
     return trigger != null && resolveOverflowElement(trigger) != null
   }
 
-  const resolveClearanceLineTop = (rect: DOMRect) =>
+  const resolveClearanceLineTop = (rect: RectLike) =>
     clearanceTop?.() ?? readStatusBarRowTop(triggerRef.current) ?? rect.top
 
   const updatePosition = () => {
     const rect = triggerRect()
     if (!rect) return
     const lineTop = resolveClearanceLineTop(rect)
-    const placementRect = { ...rect, top: lineTop }
+    const placementRect = copyTooltipRect(rect, lineTop)
     const tipEl = tipRef.current
     const tip = tipEl
       ? { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
@@ -320,7 +337,7 @@ export default function Tooltip({
       if (!rect) return
       const zoom = readTooltipZoom()
       const lineTop = resolveClearanceLineTop(rect)
-      const placementRect = { ...rect, top: lineTop }
+      const placementRect = copyTooltipRect(rect, lineTop)
       // Approximate first paint with transform centering; refined after mount.
       setStyle(
         getTooltipPosition(

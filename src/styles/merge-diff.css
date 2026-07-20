@@ -1,21 +1,31 @@
-/* Git side-by-side diff (CodeMirror MergeView) fills the editor pane. */
+/* Git side-by-side diff (CodeMirror MergeView) fills the editor pane.
+ *
+ * MergeView intentionally sets `.cm-editor` / `.cm-scroller` to
+ * `height: auto !important` and `overflow-y: visible !important` so both sides
+ * grow with content and stay vertically aligned. Scrolling must happen on
+ * `.cm-mergeView` (upstream docs + its own `overflow-y: auto` style).
+ *
+ * Do NOT force `height: 100%` on editors / editor wrappers — that clips
+ * content inside an overflow:hidden shell and leaves no scrollbar.
+ */
 .cm-merge-host {
+  position: relative;
+  min-height: 0;
   height: 100%;
+  overflow: hidden;
 }
-.cm-merge-host .cm-mergeView,
-.cm-merge-host .cm-mergeViewEditors {
+.cm-merge-host .cm-mergeView {
+  box-sizing: border-box;
   height: 100%;
+  overflow: auto;
 }
 .cm-merge-host .cm-mergeViewEditors {
   display: flex;
+  align-items: stretch;
 }
 .cm-merge-host .cm-mergeViewEditors > * {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
-  height: 100%;
-}
-.cm-merge-host .cm-editor {
-  height: 100%;
 }
 
 /* Keep gutters even between panes; avoid bright ticks stretching wide. */

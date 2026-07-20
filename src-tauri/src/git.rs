@@ -256,6 +256,8 @@ fn collect_git_status(root: &Path) -> Result<GitStatus, String> {
             "--porcelain=v1",
             "--branch",
             "-z",
+            // Match VS Code SCM: expand untracked directories to file paths.
+            "--untracked-files=all",
             "--ignore-submodules=dirty",
         ],
     )?;
@@ -394,6 +396,16 @@ mod tests {
         assert_eq!(status.changes.len(), 2);
         assert_eq!(status.changes[0].status, "M");
         assert_eq!(status.changes[1].path, "notes.txt");
+    }
+
+    #[test]
+    fn parses_expanded_untracked_nested_files() {
+        // Output shape from `git status -z --untracked-files=all`.
+        let status = parse_status(b"## main\0?? .qingcode/run.json\0?? nested/a.txt\0");
+        assert_eq!(status.changes.len(), 2);
+        assert_eq!(status.changes[0].path, ".qingcode/run.json");
+        assert_eq!(status.changes[0].status, "??");
+        assert_eq!(status.changes[1].path, "nested/a.txt");
     }
 
     #[test]

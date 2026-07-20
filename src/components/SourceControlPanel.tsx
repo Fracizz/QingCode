@@ -112,6 +112,7 @@ function ChangeRowComponent(props: {
   const active = selected === change.path
   const glyph = gitStatusGlyph(change.status) ?? change.status
   const glyphColor = gitStatusColorClass(change.status)
+  const dirName = fileDirName(change.path)
 
   return (
     <div style={style}>
@@ -126,8 +127,15 @@ function ChangeRowComponent(props: {
         <span className={`${STATUS_COL} ${glyphColor}`}>{glyph}</span>
         <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
           <span className="flex-shrink-0 font-medium text-fg">{fileBaseName(change.path)}</span>
-          {fileDirName(change.path) && (
-            <span className="min-w-0 truncate text-[11px] text-fg-dim">{fileDirName(change.path)}</span>
+          {dirName && (
+            <Tooltip
+              label={dirName}
+              side="bottom"
+              onlyWhenOverflow
+              wrapperClassName="min-w-0 truncate"
+            >
+              <span className="block truncate text-[11px] text-fg-dim">{dirName}</span>
+            </Tooltip>
           )}
         </span>
       </button>

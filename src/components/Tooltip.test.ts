@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  copyTooltipRect,
   getTooltipArrowOffsetX,
   getTooltipPosition,
   isOverflowing,
@@ -156,5 +157,42 @@ describe('getTooltipArrowOffsetX', () => {
     const offset = getTooltipArrowOffsetX(8, 160, 390, 1)
     expect(offset).toBeGreaterThanOrEqual(10)
     expect(offset).toBeLessThanOrEqual(160 - 10 - 12)
+  })
+})
+
+describe('copyTooltipRect', () => {
+  it('keeps left/width when overriding top (DOMRect spread is empty)', () => {
+    // Mimic DOMRect: geometry lives on the prototype, not as own props.
+    const proto = {
+      get left() {
+        return 900
+      },
+      get right() {
+        return 980
+      },
+      get top() {
+        return 700
+      },
+      get bottom() {
+        return 724
+      },
+      get width() {
+        return 80
+      },
+      get height() {
+        return 24
+      },
+    }
+    const domRectLike = Object.create(proto) as typeof trigger
+    expect({ ...domRectLike }).toEqual({})
+    const copied = copyTooltipRect(domRectLike, 698)
+    expect(copied.left).toBe(900)
+    expect(copied.width).toBe(80)
+    expect(copied.top).toBe(698)
+    const style = getTooltipPosition(copied, 'top', tip, { width: 1280, height: 800 }, 1, {
+      gap: TOOLTIP_ARROW_GAP,
+    })
+    // Tip should sit near the right-side trigger, not at the left margin.
+    expect(style.left as number).toBeGreaterThan(800)
   })
 })

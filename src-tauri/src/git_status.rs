@@ -231,7 +231,8 @@ pub fn read_git_workdir_status(path: &Path) -> Option<GitWorkdirStatus> {
         &[
             "status",
             "--porcelain",
-            "--untracked-files=normal",
+            // Match VS Code SCM: list files inside untracked dirs (`-uall`), not just the dir.
+            "--untracked-files=all",
             "--ignore-submodules=dirty",
         ],
     )?;
@@ -485,17 +486,46 @@ mod tests {
 
         fs::write(root.join("tracked.txt"), "v2\n").unwrap();
         fs::write(root.join("new.txt"), "untracked\n").unwrap();
+        fs::create_dir_all(root.join(".qingcode")).unwrap();
+        fs::write(root.join(".qingcode").join("run.json"), "{}\n").unwrap();
 
         let status = read_git_workdir_status(&root).expect("porcelain status");
-        assert!(status.dirty_count >= 2);
+        assert!(status.dirty_count >= 3);
         let codes: Vec<_> = status.entries.iter().map(|e| e.status.as_str()).collect();
         assert!(codes.iter().any(|c| *c == "M" || c.contains('M')));
         assert!(codes.contains(&"??"));
+
+        // `-uall`: nested untracked files appear; the bare directory does not.
+        let paths: Vec<_> = status
+            .entries
+            .iter()
+            .map(|e| e.path.replace('\\', "/"))
+            .collect();
+        assert!(
+            paths.iter().any(|p| p.ends_with("/.qingcode/run.json") || p.ends_with(".qingcode/run.json")),
+            "expected expanded untracked file, got {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| {
+                let trimmed = p.trim_end_matches('/');
+                trimmed.ends_with("/.qingcode") || trimmed.ends_with(".qingcode")
+            }),
+            "untracked directory should not appear as a single entry, got {paths:?}"
+        );
 
         let head = read_git_show_head(&root.join("tracked.txt")).expect("HEAD blob");
         assert_eq!(head, "v1\n");
         assert!(read_git_show_head(&root.join("new.txt")).is_none());
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn parse_porcelain_untracked_dir_trailing_slash() {
+        // Still parse directory-style porcelain lines if Git emits them (rare with -uall).
+        assert_eq!(
+            parse_porcelain_line("?? .qingcode/"),
+            Some((".qingcode/".into(), "??".into()))
+        );
     }
 }

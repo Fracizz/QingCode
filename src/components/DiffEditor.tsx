@@ -13,7 +13,7 @@ import { ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
 import type { EditorTab } from '../types'
 import { getResolvedTheme, THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
-import { useI18n } from '../lib/i18n'
+import { translateFor, useI18n } from '../lib/i18n'
 import Tooltip from './Tooltip'
 
 /** 差异对比文件大小上限：超过此值的文件不显示差异对比（5MB） */
@@ -72,31 +72,19 @@ const diffTheme = EditorView.baseTheme({
   },
 })
 
+/* Colors only — MergeView forces editor/scroller height:auto + overflow visible
+   so both panes grow together; scrolling is on `.cm-mergeView` (merge-diff.css). */
 const lightTheme = EditorView.theme(
   {
-    '&': { backgroundColor: '#f0f0f0', color: '#1f1f1f', height: '100%' },
-    '.cm-scroller': { overflow: 'auto' },
+    '&': { backgroundColor: '#f0f0f0', color: '#1f1f1f' },
     '.cm-gutters': { backgroundColor: '#ebebeb', color: '#757575', borderRight: '1px solid #d0d0d0' },
   },
   { dark: false },
 )
 
-const darkTheme = [
-  oneDark,
-  EditorView.theme({
-    '&': { height: '100%' },
-    '.cm-scroller': { overflow: 'auto' },
-  }),
-]
+const darkTheme = [oneDark]
 
-const forestTheme = [
-  FOREST_THEME,
-  forestSyntax,
-  EditorView.theme({
-    '&': { height: '100%' },
-    '.cm-scroller': { overflow: 'auto' },
-  }),
-]
+const forestTheme = [FOREST_THEME, forestSyntax]
 
 function editorThemeExtension() {
   const resolved = getResolvedTheme()
@@ -118,7 +106,10 @@ const LANG_MAP: Record<string, () => import('@codemirror/language').LanguageSupp
   python: () => python(),
 }
 
-function sideExtensions(language?: string) {
+/** CodeMirror merge collapse marker; `$` is replaced by the line count via `EditorState.phrase`. */
+const COLLAPSE_UNCHANGED_PHRASE = '$ unchanged lines'
+
+function sideExtensions(language: string | undefined, collapseUnchangedLabel: string) {
   const lang = language ? LANG_MAP[language]?.() : undefined
   return [
     EditorView.editable.of(false),
@@ -126,6 +117,7 @@ function sideExtensions(language?: string) {
     EditorView.lineWrapping,
     editorThemeExtension(),
     diffTheme,
+    EditorState.phrases.of({ [COLLAPSE_UNCHANGED_PHRASE]: collapseUnchangedLabel }),
     lang ?? [],
   ]
 }
@@ -159,7 +151,7 @@ type Props = {
 
 /** Read-only side-by-side compare: HEAD (left) ↔ working tree (right). */
 export default function DiffEditor({ tab }: Props) {
-  const { t } = useI18n()
+  const { t, language } = useI18n()
   const hostRef = useRef<HTMLDivElement>(null)
   const mergeRef = useRef<MergeView | null>(null)
   const [stats, setStats] = useState({ added: 0, removed: 0 })
@@ -169,16 +161,18 @@ export default function DiffEditor({ tab }: Props) {
   const isTooLarge = contentSize > DIFF_MAX_BYTES
 
   const buildMergeView = useCallback((parent: HTMLElement) => {
+    // `@codemirror/merge` renders collapses via phrase("$ unchanged lines", n).
+    const collapseUnchangedLabel = translateFor(language, '$ 行未更改')
     mergeRef.current?.destroy()
     mergeRef.current = new MergeView({
       a: {
         doc: tab.originalContent ?? '',
-        extensions: sideExtensions(tab.language),
+        extensions: sideExtensions(tab.language, collapseUnchangedLabel),
       },
       b: {
         doc: tab.content ?? '',
         extensions: [
-          ...sideExtensions(tab.language),
+          ...sideExtensions(tab.language, collapseUnchangedLabel),
           keymap.of([
             { key: 'Mod-ArrowDown', run: goToNextChunk },
             { key: 'Mod-ArrowUp', run: goToPreviousChunk },
@@ -190,7 +184,7 @@ export default function DiffEditor({ tab }: Props) {
       gutter: true,
       highlightChanges: true,
     })
-  }, [tab.originalContent, tab.content, tab.language])
+  }, [tab.originalContent, tab.content, tab.language, language])
 
   useEffect(() => {
     if (!hostRef.current || isTooLarge) return
@@ -209,7 +203,7 @@ export default function DiffEditor({ tab }: Props) {
       mergeRef.current?.destroy()
       mergeRef.current = null
     }
-  }, [tab.id, tab.originalContent, tab.content, tab.language, buildMergeView, isTooLarge])
+  }, [tab.id, tab.originalContent, tab.content, tab.language, language, buildMergeView, isTooLarge])
 
   const handlePrevDiff = useCallback(() => {
     const b = mergeRef.current?.b
@@ -226,7 +220,7 @@ export default function DiffEditor({ tab }: Props) {
   // 文件过大时显示提示，不渲染差异对比
   if (isTooLarge) {
     return (
-      <div className="flex h-full min-h-0 flex-col bg-bg">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
         <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-[11px]">
           <div className="flex flex-1 items-center border-r border-border px-3 py-1.5 text-fg-muted">
             <span className="truncate">{t('HEAD（原文件）')}</span>
@@ -249,7 +243,7 @@ export default function DiffEditor({ tab }: Props) {
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-bg">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
       {/* Header: 文件信息 + 差异统计 + 导航 */}
       <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-[11px]">
         <div className="flex flex-1 items-center border-r border-border px-3 py-1.5 text-fg-muted">
@@ -291,7 +285,8 @@ export default function DiffEditor({ tab }: Props) {
           </div>
         </div>
       </div>
-      <div ref={hostRef} className="cm-merge-host min-h-0 flex-1 overflow-hidden" />
+      {/* Scroll lives on `.cm-mergeView` (see merge-diff.css), not per-pane `.cm-scroller`. */}
+      <div ref={hostRef} className="cm-merge-host min-h-0 flex-1" />
     </div>
   )
 }

@@ -816,6 +816,7 @@
     "打开差异对比失败：{error}": "Could not open diff: {error}",
     "HEAD（原文件）": "HEAD (Original)",
     "工作区（当前）": "Working Tree (Current)",
+    "$ 行未更改": "$ unchanged lines",
     "差异对比": "Diff",
     "未跟踪文件尚无 Git Diff；添加到仓库后即可查看。": "Untracked files have no Git diff yet. Add the file to the repository to view one.",
     "该文件当前没有可显示的未暂存差异。": "This file has no unstaged diff to display.",

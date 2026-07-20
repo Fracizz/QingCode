@@ -42,18 +42,19 @@ export function absoluteGitPath(projectPath: string, relativePath: string): stri
   return rel ? `${root}/${rel}` : root
 }
 
-/** Strip trailing separators (Git often reports untracked dirs as `name/`). */
+/** Strip trailing separators (legacy untracked-dir lines may use `name/`). */
 export function normalizeGitChangePath(path: string): string {
   return path.replace(/[/\\]+$/, '')
 }
 
-/** True when porcelain path itself marks a directory (`foo/` / `foo\`). */
+/** True when porcelain path itself marks a directory (`foo/` / `foo\`). Rare with `-uall`. */
 export function gitChangePathLooksLikeDirectory(path: string): boolean {
   return /[/\\]$/.test(path)
 }
 
 /**
- * Untracked / ignored entries may be directories even without a trailing slash.
+ * Untracked / ignored entries may still be directories (empty dir, or without trailing slash).
+ * SCM uses `--untracked-files=all`, so file paths are usual; keep this for defensive UI.
  * Tracked status codes refer to files (Git does not track empty dirs).
  */
 export function gitStatusMayBeDirectory(status: string): boolean {

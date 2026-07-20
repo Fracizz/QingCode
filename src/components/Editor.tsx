@@ -1084,7 +1084,7 @@ export default function Editor() {
 
   if (activeTab.kind === 'diff') {
     return (
-      <Suspense fallback={<div className="flex-1 bg-bg" aria-hidden="true" />}>
+      <Suspense fallback={<div className="min-h-0 flex-1 bg-bg" aria-hidden="true" />}>
         <DiffEditor tab={activeTab} />
       </Suspense>
     )
