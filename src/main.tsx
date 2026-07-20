@@ -7,6 +7,7 @@ import { applyTheme, loadTheme } from './lib/themeSettings'
 import { revealAppWindow } from './lib/appWindow'
 import { initializeLanguage } from './lib/i18n'
 import { installStartupSplashGuard } from './lib/startupSplash'
+import { installWebviewShortcutGuard } from './lib/webviewShortcutGuard'
 import { initWindowSession } from './lib/windowSession'
 import {
   hydrateWorkspaceSessionsIfNeeded,
@@ -22,6 +23,7 @@ applyTheme(loadTheme())
 void initializeLanguage()
 paintStartupSplashLogo()
 applyFontSettings(loadFontSettings())
+installWebviewShortcutGuard()
 // Apply global terminal settings ASAP (project overlay loads later).
 void import('./lib/terminalScrollbackSettings').then(m => m.loadEffectiveTerminalScrollback(null))
 void import('./lib/terminalCursorSettings').then(m =>
@@ -43,8 +45,6 @@ installStartupSplashGuard()
 // Non-critical guards after first paint; keep splash reveal ownership in index.html.
 queueMicrotask(() => {
   void import('./lib/contextMenuGuard').then(m => m.installContextMenuGuard())
-  void import('./lib/browserReloadGuard').then(m => m.installBrowserReloadGuard())
-  void import('./lib/developerMode').then(m => m.installDeveloperMode())
 })
 
 // Fallback only — HTML splash script should already have shown the window.

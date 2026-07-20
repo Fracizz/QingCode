@@ -1,3 +1,4 @@
+import { language } from '@codemirror/language'
 import { EditorState, RangeSetBuilder, type Extension } from '@codemirror/state'
 import {
   Decoration,
@@ -121,17 +122,28 @@ export function snapIndentLane(col: number, tabSize: number): number {
   return lane > 0 ? lane : tabSize
 }
 
-/** Indent-guide columns for one line (VS Code `editor.guides.indentation`).
- * Guides sit in leading whitespace only — never on the first content column
- * (so a lone `{` / `}` line does not get a rail through the brace).
- */
+/** VS Code indentation level for a content line; blank lines are resolved by context. */
+export function lineIndentLevel(text: string, tabSize: number): number {
+  if (!text.trim()) return -1
+  return Math.ceil(lineIndentColumn(text, tabSize) / tabSize)
+}
+
+/** VS Code guide columns for a content line (0-based visual columns). */
 export function indentGuideColumnsForLine(text: string, tabSize: number): number[] {
-  const indent = lineIndentColumn(text, tabSize)
-  const cols: number[] = []
-  for (let c = tabSize; c < indent; c += tabSize) {
-    cols.push(c)
+  return indentGuideColumnsForLevel(lineIndentLevel(text, tabSize), tabSize)
+}
+
+export function indentGuideColumnsForLevel(level: number, tabSize: number): number[] {
+  if (level <= 0) return []
+  return Array.from({ length: level }, (_, i) => i * tabSize)
+}
+
+function visualColumnAt(text: string, offset: number, tabSize: number): number {
+  let col = 0
+  for (let i = 0; i < Math.min(offset, text.length); i++) {
+    col = text[i] === '\t' ? col + tabSize - (col % tabSize) : col + 1
   }
-  return cols
+  return col
 }
 
 function minInnerIndent(
@@ -146,14 +158,10 @@ function minInnerIndent(
     if (!row.text.trim()) continue
     minInner = Math.min(minInner, lineIndentColumn(row.text, tabSize))
   }
-  return minInner === Infinity ? null : snapIndentLane(minInner, tabSize)
+  return minInner === Infinity ? null : minInner
 }
 
-/**
- * VS Code active bracket-pair guide column (`editor.guides.bracketPairs`):
- * - brace alone on its line → column of `{` / `[`
- * - `fn() {` at EOL → first body indent lane
- */
+/** VS Code bracket guide column: minimum opener, closer, and inner indentation. */
 export function blockGuideColumn(
   lineTexts: { number: number; text: string }[],
   openLineNo: number,
@@ -165,48 +173,16 @@ export function blockGuideColumn(
   if (!openRow) return tabSize
 
   const openText = openRow.text
-  const openIndent = lineIndentColumn(openText, tabSize)
   const openCol =
-    openColInLine != null ? openColInLine : openIndent
-  const trimmed = openText.trim()
-  const braceOnlyLine =
-    trimmed === '{' ||
-    trimmed === '{,' ||
-    trimmed === '[' ||
-    trimmed === '],' ||
-    /^[\[{]\s*,?\s*$/.test(trimmed)
-
-  // `      {` — rail sits on the brace column (VS).
-  if (braceOnlyLine) return openCol
-
-  // `function f() {` / `"obj": {` — body indent; `"tasks": [` — key/closer indent.
-  const braceAfterCode = /\S.*[\{\[]\s*$/.test(openText)
-  if (braceAfterCode) {
-    const closeRow = lineTexts.find(l => l.number === closeLineNo)
-    const closeIndent = closeRow ? lineIndentColumn(closeRow.text, tabSize) : openIndent
-    const closeTrim = closeRow?.text.trim() ?? ''
-    const closeAlone = /^[\]\}],?\s*$/.test(closeTrim)
-    const openCh = openText.trimEnd().slice(-1)
-    // JSON arrays: `    "tasks": [ … ]` — rail at the key/`]` indent, not inner `{`.
-    if (openCh === '[' && closeAlone && closeIndent === openIndent && openIndent > 0) {
-      return openIndent
-    }
-    const inner = minInnerIndent(lineTexts, openLineNo, closeLineNo, tabSize)
-    if (inner != null) return inner
-    if (closeRow) return closeIndent
-    return openIndent + tabSize
-  }
-
-  if (openCol > 0) return openCol
-
-  const inner = minInnerIndent(lineTexts, openLineNo, closeLineNo, tabSize)
-  if (inner != null) return inner
-
+    openColInLine != null
+      ? visualColumnAt(openText, openColInLine, tabSize)
+      : lineIndentColumn(openText, tabSize)
   const closeRow = lineTexts.find(l => l.number === closeLineNo)
-  if (closeRow && closeLineNo > openLineNo) {
-    return lineIndentColumn(closeRow.text, tabSize)
-  }
-  return tabSize
+  const closeCol = closeRow
+    ? lineIndentColumn(closeRow.text, tabSize)
+    : openCol
+  const inner = minInnerIndent(lineTexts, openLineNo, closeLineNo, tabSize)
+  return Math.min(openCol, closeCol, inner ?? Number.POSITIVE_INFINITY)
 }
 
 /** @deprecated Use {@link blockGuideColumn}; kept for tests. */
@@ -218,7 +194,13 @@ export function bracketGuideColumn(
   _closeOffsetInLine: number,
   tabSize: number,
 ): number {
-  return blockGuideColumn(lineTexts, openLineNo, closeLineNo, tabSize)
+  return blockGuideColumn(
+    lineTexts,
+    openLineNo,
+    closeLineNo,
+    tabSize,
+    _openOffsetInLine,
+  )
 }
 
 export type ActiveBracketGuide = {
@@ -313,15 +295,87 @@ export function activeBlockGuide(view: EditorView): ActiveBlockGuide | null {
   }
 }
 
-/** VS Code `editor.guides.highlightActiveIndentation`: cursor line indent lane. */
-export function activeIndentGuideColumn(view: EditorView): number | null {
-  const head = view.state.selection.main.head
-  const line = view.state.doc.lineAt(head)
-  const text = view.state.doc.sliceString(line.from, line.to)
-  const tabSize = view.state.facet(EditorState.tabSize)
-  const indent = lineIndentColumn(text, tabSize)
-  if (indent <= 0) return null
-  return snapIndentLane(indent, tabSize)
+/** VS Code effective indent levels, including its blank-line interpolation. */
+export function indentLevelsForLines(
+  lines: string[],
+  tabSize: number,
+  offSide = false,
+): number[] {
+  const indents = lines.map(text =>
+    text.trim() ? lineIndentColumn(text, tabSize) : -1,
+  )
+  const above = new Array<number>(lines.length).fill(-1)
+  const below = new Array<number>(lines.length).fill(-1)
+
+  let nearest = -1
+  for (let i = 0; i < indents.length; i++) {
+    above[i] = nearest
+    if (indents[i] >= 0) nearest = indents[i]
+  }
+  nearest = -1
+  for (let i = indents.length - 1; i >= 0; i--) {
+    below[i] = nearest
+    if (indents[i] >= 0) nearest = indents[i]
+  }
+
+  return indents.map((indent, i) => {
+    if (indent >= 0) return Math.ceil(indent / tabSize)
+    const aboveIndent = above[i]
+    const belowIndent = below[i]
+    if (aboveIndent < 0 || belowIndent < 0) return 0
+    if (aboveIndent < belowIndent) return 1 + Math.floor(aboveIndent / tabSize)
+    if (aboveIndent === belowIndent) return Math.ceil(belowIndent / tabSize)
+    return offSide
+      ? Math.ceil(belowIndent / tabSize)
+      : 1 + Math.floor(belowIndent / tabSize)
+  })
+}
+
+export type ActiveIndentGuide = ActiveBlockGuide & { level: number }
+
+/** Port of VS Code `getActiveIndentGuide`: one contiguous active indent scope. */
+export function activeIndentGuideForLines(
+  lines: string[],
+  cursorLine: number,
+  tabSize: number,
+  offSide = false,
+): ActiveIndentGuide | null {
+  const levels = indentLevelsForLines(lines, tabSize, offSide)
+  return activeIndentGuideForLevels(levels, cursorLine, tabSize)
+}
+
+export function activeIndentGuideForLevels(
+  levels: number[],
+  cursorLine: number,
+  tabSize: number,
+): ActiveIndentGuide | null {
+  if (cursorLine < 1 || cursorLine > levels.length) return null
+  const index = cursorLine - 1
+  const initial = levels[index]
+  let level = initial
+  let fromLine = cursorLine
+  let toLine = cursorLine
+
+  if (levels[index + 1] === initial + 1) {
+    level = levels[index + 1]
+    fromLine = cursorLine + 1
+    toLine = cursorLine + 1
+  } else if (levels[index - 1] === initial + 1) {
+    level = levels[index - 1]
+    fromLine = cursorLine - 1
+    toLine = cursorLine - 1
+  }
+  if (level <= 0) return null
+
+  while (fromLine > 1 && levels[fromLine - 2] >= level) fromLine--
+  while (toLine < levels.length && levels[toLine] >= level) toLine++
+
+  return {
+    fromLine,
+    toLine,
+    level,
+    column: (level - 1) * tabSize,
+  }
 }
 
 /** Solid 1px rails via box-shadow (no gradient AA / inter-line dots). */
@@ -343,61 +397,41 @@ export function buildGuideBoxShadow(
     .join(', ')
 }
 
-function guideColumnsForLine(
-  text: string,
+export function guideColumnsForLine(
+  indentLevel: number,
   tabSize: number,
-  lineNo: number,
-  block: ActiveBlockGuide | null,
   indentationGuides: boolean,
+  activeCol: number | null,
 ): number[] {
   const cols = new Set<number>()
   if (indentationGuides) {
-    for (const c of indentGuideColumnsForLine(text, tabSize)) cols.add(c)
+    for (const c of indentGuideColumnsForLevel(indentLevel, tabSize)) cols.add(c)
   }
-  // Active rail only where this line still has whitespace at that column
-  // (never paint on the `{` / `}` characters themselves).
-  if (
-    block &&
-    lineNo >= block.fromLine &&
-    lineNo <= block.toLine &&
-    lineIndentColumn(text, tabSize) > block.column
-  ) {
-    cols.add(block.column)
-  }
+  if (activeCol != null) cols.add(activeCol)
   return [...cols].sort((a, b) => a - b)
 }
 
-function activeGuideColumnForLine(
+export function activeGuideColumnForLine(
   lineNo: number,
-  lineIndent: number,
-  block: ActiveBlockGuide | null,
-  cursorIndentCol: number | null,
-  blockScopeGuides: boolean,
-  highlightActiveIndentation: boolean,
+  bracket: ActiveBlockGuide | null,
+  indent: ActiveIndentGuide | null,
 ): number | null {
   if (
-    blockScopeGuides &&
-    block &&
-    lineNo >= block.fromLine &&
-    lineNo <= block.toLine &&
-    lineIndent > block.column
+    bracket &&
+    lineNo >= bracket.fromLine &&
+    lineNo <= bracket.toLine
   ) {
-    return block.column
+    return bracket.column
   }
-  if (blockScopeGuides && block) return null
-  if (
-    highlightActiveIndentation &&
-    cursorIndentCol != null &&
-    lineIndent > cursorIndentCol
-  ) {
-    return cursorIndentCol
+  if (indent && lineNo >= indent.fromLine && lineNo <= indent.toLine) {
+    return indent.column
   }
   return null
 }
 
 type GuideBuildOptions = {
   indentationGuides: boolean
-  blockScopeGuides: boolean
+  bracketPairGuides: boolean
   highlightActiveIndentation: boolean
 }
 
@@ -405,11 +439,7 @@ function buildGuideDecorations(
   view: EditorView,
   options: GuideBuildOptions,
 ): DecorationSet {
-  if (
-    !options.indentationGuides &&
-    !options.blockScopeGuides &&
-    !options.highlightActiveIndentation
-  ) {
+  if (!options.indentationGuides && !options.bracketPairGuides) {
     return Decoration.none
   }
 
@@ -417,10 +447,21 @@ function buildGuideDecorations(
     const tabSize = view.state.facet(EditorState.tabSize)
     const charWidth = view.defaultCharacterWidth || 8
     const doc = view.state.doc
-    const block = options.blockScopeGuides ? activeBlockGuide(view) : null
-    const cursorIndentCol = options.highlightActiveIndentation
-      ? activeIndentGuideColumn(view)
-      : null
+    const lines = Array.from({ length: doc.lines }, (_, i) => {
+      const line = doc.line(i + 1)
+      return doc.sliceString(line.from, line.to)
+    })
+    const offSide = view.state.facet(language)?.name === 'python'
+    const indentLevels = indentLevelsForLines(lines, tabSize, offSide)
+    const bracket = options.bracketPairGuides ? activeBlockGuide(view) : null
+    const indent =
+      options.indentationGuides && options.highlightActiveIndentation
+        ? activeIndentGuideForLevels(
+            indentLevels,
+            doc.lineAt(view.state.selection.main.head).number,
+            tabSize,
+          )
+        : null
 
     const builder = new RangeSetBuilder<Decoration>()
 
@@ -428,23 +469,16 @@ function buildGuideDecorations(
       let pos = from
       while (pos <= to) {
         const line = doc.lineAt(pos)
-        const text = doc.sliceString(line.from, line.to)
-        const lineIndent = lineIndentColumn(text, tabSize)
-        const columns = guideColumnsForLine(
-          text,
-          tabSize,
-          line.number,
-          block,
-          options.indentationGuides,
-        )
-
         const activeCol = activeGuideColumnForLine(
           line.number,
-          lineIndent,
-          block,
-          cursorIndentCol,
-          options.blockScopeGuides,
-          options.highlightActiveIndentation,
+          bracket,
+          indent,
+        )
+        const columns = guideColumnsForLine(
+          indentLevels[line.number - 1],
+          tabSize,
+          options.indentationGuides,
+          activeCol,
         )
 
         if (columns.length > 0) {
@@ -483,22 +517,18 @@ export function bracketDecorationExtensions(
   options: BracketDecorationOptions,
 ): Extension {
   const indentationGuides = options.indentationGuides !== false
-  // Vertical brace-pair rails are easy to mis-place vs VS; keep matching via
-  // bracketMatching + active *indent* highlight instead.
-  const blockScopeGuides = false
-  const highlightActiveIndentation =
-    options.highlightActiveIndentation !== false || options.guides !== false
+  const bracketPairGuides = options.guides !== false
+  const highlightActiveIndentation = options.highlightActiveIndentation !== false
   const guideOpts: GuideBuildOptions = {
     indentationGuides,
-    blockScopeGuides,
+    bracketPairGuides,
     highlightActiveIndentation,
   }
 
   if (
     !options.colorization &&
     !indentationGuides &&
-    !blockScopeGuides &&
-    !highlightActiveIndentation
+    !bracketPairGuides
   ) {
     return []
   }
@@ -521,7 +551,7 @@ export function bracketDecorationExtensions(
     : []
 
   const guidePlugin =
-    indentationGuides || blockScopeGuides || highlightActiveIndentation
+    indentationGuides || bracketPairGuides
       ? ViewPlugin.fromClass(
           class {
             decorations: DecorationSet
@@ -535,7 +565,8 @@ export function bracketDecorationExtensions(
                 update.docChanged ||
                 update.selectionSet ||
                 update.geometryChanged ||
-                update.viewportChanged
+                update.viewportChanged ||
+                update.startState.facet(language) !== update.state.facet(language)
               ) {
                 this.decorations = buildGuideDecorations(update.view, guideOpts)
               }

@@ -1,4 +1,13 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../lib/tauri', async importOriginal => {
+  const actual = await importOriginal<typeof import('../lib/tauri')>()
+  return {
+    ...actual,
+    isTauri: () => true,
+    safeInvoke: vi.fn(),
+  }
+})
 import {
   activeTerminalsForConfig,
   buildRunningMapsFromTerminals,
@@ -12,6 +21,9 @@ import {
 } from './runConfigStore'
 import { useTerminalStore } from './terminalStore'
 import type { TerminalTab } from '../types'
+
+const originalAddScriptTerminal = useTerminalStore.getState().addScriptTerminal
+const originalCloseTerminal = useTerminalStore.getState().closeTerminal
 
 const sampleConfigs: RunConfig[] = [
   {
@@ -41,6 +53,8 @@ describe('run config runtime helpers', () => {
       terminals: [],
       activeTerminalId: null,
       activeTerminalByProject: {},
+      addScriptTerminal: originalAddScriptTerminal,
+      closeTerminal: originalCloseTerminal,
     })
     useRunConfigStore.setState({ runningByTask: {}, runningConfigs: {} })
   })
@@ -172,5 +186,79 @@ describe('run config runtime helpers', () => {
     rehydrateRunningFromTerminals(sampleConfigs)
     expect(useTerminalStore.getState().terminals[0].runConfigId).toBe('cfg')
     expect(useRunConfigStore.getState().runningByTask['cfg:backend']).toBe('t1')
+  })
+
+  it('runs, stops, and starts a multi-task configuration again', async () => {
+    let sequence = 0
+    const addScriptTerminal: typeof originalAddScriptTerminal = async (
+      projectId,
+      cwd,
+      shellKind,
+      target,
+      env,
+      name,
+      linkage,
+    ) => {
+      const id = `terminal-${++sequence}`
+      useTerminalStore.setState(state => ({
+        terminals: [
+          ...state.terminals,
+          baseTab({
+            id,
+            name,
+            projectId,
+            cwd,
+            launchCommand: target,
+            shellKind,
+            env,
+            runConfigId: linkage?.runConfigId,
+            runTaskId: linkage?.runTaskId,
+          }),
+        ],
+        activeTerminalId: id,
+        activeTerminalByProject: { ...state.activeTerminalByProject, [projectId]: id },
+      }))
+      return id
+    }
+    const closeTerminal: typeof originalCloseTerminal = async id => {
+      useTerminalStore.setState(state => ({
+        terminals: state.terminals.filter(terminal => terminal.id !== id),
+      }))
+    }
+    useTerminalStore.setState({ addScriptTerminal, closeTerminal })
+
+    const project = {
+      id: 'p1',
+      name: 'project',
+      path: 'D:/project',
+      created_at: 1,
+      last_opened_at: 1,
+      ephemeral: true,
+    }
+    const config = sampleConfigs[0]
+
+    await useRunConfigStore.getState().runConfig(project, config)
+    expect(useTerminalStore.getState().terminals).toHaveLength(2)
+    expect(useTerminalStore.getState().terminals.map(terminal => terminal.name)).toEqual([
+      '前后端 · 后端',
+      '前后端 · 前端',
+    ])
+    expect(useRunConfigStore.getState().runningConfigs.cfg).toEqual([
+      'cfg:backend',
+      'cfg:frontend',
+    ])
+    expect(useRunConfigStore.getState().isConfigRunning('cfg')).toBe(true)
+
+    await useRunConfigStore.getState().stopConfig(config)
+    expect(useTerminalStore.getState().terminals).toEqual([])
+    expect(useRunConfigStore.getState().runningConfigs.cfg).toBeUndefined()
+    expect(useRunConfigStore.getState().isConfigRunning('cfg')).toBe(false)
+
+    await useRunConfigStore.getState().runConfig(project, config)
+    expect(useTerminalStore.getState().terminals.map(terminal => terminal.id)).toEqual([
+      'terminal-3',
+      'terminal-4',
+    ])
+    expect(useRunConfigStore.getState().isConfigRunning('cfg')).toBe(true)
   })
 })

@@ -140,10 +140,10 @@ function Item({
         aria-pressed={active === true}
         onClick={onClick}
         className={`relative w-10 h-10 flex items-center justify-center rounded-md mb-1 transition-colors
-        ${active ? 'text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
+        ${active ? 'bg-brand/10 text-brand' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
       >
         {active && (
-          <span className="absolute left-[-8px] top-1 bottom-1 w-[2px] rounded bg-accent" />
+          <span className="absolute left-[-8px] top-1 bottom-1 w-[2px] rounded bg-brand" />
         )}
         {icon}
         {badge !== undefined && (

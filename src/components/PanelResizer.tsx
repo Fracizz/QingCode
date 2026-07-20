@@ -5,7 +5,8 @@ interface Props {
   active: boolean
   tooltip: string
   tooltipSide?: TooltipSide
-  onMouseDown: (e: React.MouseEvent) => void
+  onMouseDown?: (e: React.MouseEvent<HTMLDivElement>) => void
+  onPointerDown?: (e: React.PointerEvent<HTMLDivElement>) => void
   ariaValueNow?: number
   ariaValueMin?: number
   ariaValueMax?: number
@@ -18,6 +19,7 @@ export default function PanelResizer({
   tooltip,
   tooltipSide = orientation === 'horizontal' ? 'top' : 'right',
   onMouseDown,
+  onPointerDown,
   ariaValueNow,
   ariaValueMin,
   ariaValueMax,
@@ -34,6 +36,7 @@ export default function PanelResizer({
     >
       <div
         onMouseDown={onMouseDown}
+        onPointerDown={onPointerDown}
         role="separator"
         aria-orientation={orientation === 'horizontal' ? 'horizontal' : 'vertical'}
         aria-valuenow={ariaValueNow}

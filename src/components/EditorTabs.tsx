@@ -380,7 +380,7 @@ export default function EditorTabs() {
                 }}
               >
                 {active && (
-                  <span className="absolute top-0 left-0 right-0 h-[2px] bg-accent" aria-hidden="true" />
+                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand" aria-hidden="true" />
                 )}
                 {showDivider && (
                   <span

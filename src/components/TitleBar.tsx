@@ -125,7 +125,7 @@ export default function TitleBar() {
           } : undefined}
         />
         <span
-          className="px-3 text-[13px] text-fg-dim truncate flex-shrink-0 h-full flex items-center"
+          className="flex h-full flex-shrink-0 items-center truncate px-3 text-[13px] font-semibold tracking-[0.01em] text-brand"
           data-tauri-drag-region={inTauri ? true : undefined}
           onDoubleClick={inTauri ? event => {
             event.stopPropagation()

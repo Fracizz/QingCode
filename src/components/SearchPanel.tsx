@@ -1,5 +1,4 @@
 import {
-  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -8,14 +7,12 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
   Search,
   SearchX,
   AlertCircle,
-  File as FileIcon,
   Folder,
   CaseSensitive,
   Type,
@@ -54,6 +51,7 @@ import { getContextMenuStylePosition } from './contextMenuPosition'
 import { buildReplacePreview, type ReplacePreview } from '../lib/workspaceReplace'
 import { loadExcludeSettingsForProject } from '../lib/excludeSettings'
 import { useI18n } from '../lib/i18n'
+import { SearchResultRow, SearchToggle, type SearchRowProps } from './SearchPanelParts'
 
 interface SearchHit {
   name: string
@@ -548,7 +546,7 @@ export default function SearchPanel() {
     <>
     <div className="h-full flex flex-col bg-bg-sidebar text-fg">
       <div className="px-4 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
-        <Search size={13} /> {t('搜索')}
+        <Search size={13} className="text-brand" /> {t('搜索')}
       </div>
 
       {!searchRoot && (
@@ -680,7 +678,7 @@ export default function SearchPanel() {
         )}
 
         <div className="flex items-center gap-1.5 flex-wrap">
-          <Toggle
+          <SearchToggle
             active={ignoreCase}
             onClick={() => setIgnoreCase(v => !v)}
             tooltip={t('忽略大小写')}
@@ -689,7 +687,7 @@ export default function SearchPanel() {
           />
           {mode === 'filename' && (
             <>
-              <Toggle
+              <SearchToggle
                 active={fuzzy}
                 onClick={() => setFuzzy(v => !v)}
                 tooltip={t('模糊匹配（子序列）')}
@@ -697,7 +695,7 @@ export default function SearchPanel() {
                 label={t('模糊')}
                 locked={useGlob}
               />
-              <Toggle
+              <SearchToggle
                 active={matchSuffix}
                 onClick={toggleSuffix}
                 tooltip={t('按后缀/扩展名匹配')}
@@ -880,7 +878,7 @@ export default function SearchPanel() {
                 listRef={listRef}
                 rowCount={rows.length}
                 rowHeight={(index: number) => rowHeightOf(rows[index])}
-                rowComponent={SearchRowComponent}
+                rowComponent={SearchResultRow}
                 rowProps={rowProps}
                 overscanCount={8}
                 className="h-full"
@@ -907,165 +905,5 @@ export default function SearchPanel() {
       />
     )}
     </>
-  )
-}
-
-interface SearchRowProps {
-  rows: Row[]
-  activeIndex: number
-  onToggleFile: (path: string) => void
-  onOpenMatch: (path: string, line: number) => void
-  onOpenFilename: (path: string, isDir: boolean) => void
-}
-
-const SearchRowComponent = (props: {
-  ariaAttributes: { 'aria-posinset': number; 'aria-setsize': number; role: 'listitem' }
-  index: number
-  style: CSSProperties
-} & SearchRowProps) => {
-  const { t } = useI18n()
-  const { index, style, rows, activeIndex, onToggleFile, onOpenMatch, onOpenFilename } = props
-  const row = rows[index]
-  if (!row) return null
-  const active = index === activeIndex
-  const baseCls = 'absolute left-0 right-0 flex items-center'
-  const activeCls = active ? 'bg-bg-active' : ''
-
-  if (row.kind === 'file') {
-    return (
-      <div style={style} className={`${baseCls} ${activeCls} px-3 text-[12px]`}>
-        <button
-          className="w-full flex items-center gap-1 h-full text-left hover:bg-bg-hover"
-          onClick={() => onToggleFile(row.path)}
-        >
-          {row.collapsed ? (
-            <ChevronRight size={13} className="text-fg-dim flex-shrink-0" />
-          ) : (
-            <ChevronDown size={13} className="text-fg-dim flex-shrink-0" />
-          )}
-          <FileIcon size={13} className="text-fg-muted flex-shrink-0" />
-          <span className="truncate font-medium">{row.name}</span>
-          {row.dir && (
-            <Tooltip label={row.dir} side="bottom" wrapperClassName="truncate min-w-0 ml-1">
-              <span className="truncate text-fg-dim text-[11px] block">
-                {row.dir}
-              </span>
-            </Tooltip>
-          )}
-          <span className="ml-auto text-[11px] text-fg-dim flex-shrink-0">
-            {row.matchCount}
-          </span>
-        </button>
-      </div>
-    )
-  }
-
-  if (row.kind === 'match') {
-    return (
-      <button
-        style={style}
-        onClick={() => onOpenMatch(row.path, row.line)}
-        className={`${baseCls} ${activeCls} pl-9 pr-3 gap-2 text-[12px] text-left hover:bg-bg-hover`}
-      >
-        <span className="w-8 flex-shrink-0 text-right text-fg-dim tabular-nums">
-          {row.line}
-        </span>
-        <span className="truncate text-fg-muted">
-          <MatchHighlight text={row.text} start={row.matchStart} end={row.matchEnd} />
-        </span>
-      </button>
-    )
-  }
-
-  if (row.kind === 'more') {
-    return (
-      <div style={style} className={`${baseCls} pl-9 pr-3 text-[11px] text-fg-dim`}>
-        {t('…可能还有更多匹配')}
-      </div>
-    )
-  }
-
-  if (row.kind === 'dir') {
-    return (
-      <div style={style} className={`${baseCls} px-4 text-[11px] text-fg-dim`}>
-        <Tooltip label={row.dir} side="bottom" wrapperClassName="truncate min-w-0 w-full">
-          <span className="truncate block">{row.dir}</span>
-        </Tooltip>
-      </div>
-    )
-  }
-
-  // filename result
-  return (
-    <button
-      style={style}
-      onClick={() => onOpenFilename(row.hit.path, row.hit.is_dir)}
-      className={`${baseCls} ${activeCls} pl-6 pr-3 gap-1.5 text-[13px] text-left hover:bg-bg-hover`}
-    >
-      {row.hit.is_dir ? (
-        <Folder size={14} className="text-accent flex-shrink-0" />
-      ) : (
-        <FileIcon size={14} className="text-fg-muted flex-shrink-0" />
-      )}
-      <span className="truncate">{row.hit.name}</span>
-      <span className="ml-auto text-[11px] text-fg-dim truncate max-w-[40%]">
-        {row.hit.relative}
-      </span>
-    </button>
-  )
-}
-
-const MatchHighlight = memo(function MatchHighlight({
-  text,
-  start,
-  end,
-}: {
-  text: string
-  start: number
-  end: number
-}) {
-  const before = text.slice(0, start)
-  const match = text.slice(start, end)
-  const after = text.slice(end)
-  return (
-    <>
-      {before}
-      <mark className="bg-accent/30 text-fg rounded-sm px-0.5">{match}</mark>
-      {after}
-    </>
-  )
-})
-
-function Toggle({
-  active,
-  onClick,
-  tooltip,
-  icon,
-  label,
-  locked,
-}: {
-  active: boolean
-  onClick: () => void
-  tooltip: string
-  icon: ReactNode
-  label: string
-  locked?: boolean
-}) {
-  const { t } = useI18n()
-  const tooltipLabel = locked ? `${tooltip}${t('（已由后缀筛选锁定）')}` : tooltip
-  return (
-    <Tooltip label={tooltipLabel} side="bottom">
-      <button
-        onClick={onClick}
-        className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
-          ${active
-            ? 'bg-bg-active text-fg border-border-strong'
-            : 'bg-bg-deep text-fg-muted border-border hover:text-fg'}
-          ${locked ? 'opacity-60 cursor-default' : ''}`}
-      >
-        {icon}
-        <span>{label}</span>
-      </button>
-    </Tooltip>
   )
 }

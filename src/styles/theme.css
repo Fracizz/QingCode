@@ -10,13 +10,14 @@
   --color-border-strong: #3c3c3c;
 
   --color-fg: #d4d4d4;
-  --color-fg-muted: #858585;
-  --color-fg-dim: #6b6b6b;
+  --color-fg-muted: #a8a8a8;
+  --color-fg-dim: #a0a0a0;
   /* Explorer file/folder names (default “white” tier); softer than --color-fg. */
   --color-tree-fg: #c2c2c2;
 
+  /* Qing = product identity/current context; accent = interaction/focus/progress. */
+  --color-brand: #4ecdb5;
   --color-accent: #4d9eff;
-  --color-accent-soft: #244a66;
   --color-danger: #f48771;
   --color-warn: #e2c08d;
   --color-ok: #89d185;
@@ -48,11 +49,11 @@
   --editor-font-size: 14px;
   --terminal-font-size: 13px;
 
-  /* Idle = soft solid gray; active = clearer solid (not accent cyan). */
-  --editor-indent-guide: #ffffff14;
-  --editor-indent-guide-active: #ffffff38;
-  --editor-matching-bracket-bg: color-mix(in srgb, var(--color-fg) 16%, transparent);
-  --editor-matching-bracket-outline: color-mix(in srgb, var(--color-fg) 34%, transparent);
+  /* Idle = soft solid; active / cursor-bracket = a bit stronger. */
+  --editor-indent-guide: #ffffff18;
+  --editor-indent-guide-active: #ffffff72;
+  --editor-matching-bracket-bg: #ffffff28;
+  --editor-matching-bracket-outline: #ffffff66;
 }
 
 html[data-theme="light"] {
@@ -66,12 +67,12 @@ html[data-theme="light"] {
   --color-border-strong: #bcbcbc;
 
   --color-fg: #1f1f1f;
-  --color-fg-muted: #555555;
-  --color-fg-dim: #757575;
+  --color-fg-muted: #454545;
+  --color-fg-dim: #545454;
   --color-tree-fg: #1f1f1f;
 
+  --color-brand: #00685c;
   --color-accent: #005fb8;
-  --color-accent-soft: #b4d7f7;
   --color-danger: #c41e3a;
   --color-warn: #b88000;
   --color-ok: #107c10;
@@ -85,51 +86,66 @@ html[data-theme="light"] {
   --minimap-vp-active-fill: color-mix(in srgb, #ffffff 18%, transparent);
 }
 
-/* JetBrains Material Theme UI — Material Forest. */
+/* QingCode-tuned Material Forest: deep pine surfaces + warm functional accent. */
 html[data-theme="forest"] {
-  --color-bg: #002626;
-  --color-bg-deep: #002020;
-  --color-bg-sidebar: #002e2e;
-  --color-bg-elevated: #003535;
-  --color-bg-hover: #003f3f;
-  --color-bg-active: #104110;
-  --color-border: #003838;
-  --color-border-strong: #005454;
+  --color-bg: #072a27;
+  --color-bg-deep: #041f1d;
+  --color-bg-sidebar: #0b322e;
+  --color-bg-elevated: #103a35;
+  --color-bg-hover: #16453e;
+  --color-bg-active: #1b5046;
+  --color-border: #17413b;
+  --color-border-strong: #2a5a51;
 
-  --color-fg: #b2c2b0;
-  --color-fg-muted: #49694d;
-  --color-fg-dim: #005454;
-  --color-tree-fg: #a8b8a6;
+  --color-fg: #d5e2dd;
+  --color-fg-muted: #b6c6c0;
+  --color-fg-dim: #aabbb5;
+  --color-tree-fg: #c6d4cf;
 
   /* Muted amber: Material Forest's #ffcc80 is too luminous for filled CTAs. */
-  --color-accent: #b8894a;
-  --color-accent-soft: #104110;
-  --color-danger: #f07178;
-  --color-warn: #d4b06a;
-  --color-ok: #89d185;
+  --color-brand: #5ad6be;
+  --color-accent: #d3a15b;
+  --color-danger: #f27980;
+  --color-warn: #d9b96e;
+  --color-ok: #93ce91;
 
-  --color-tab-active: #002626;
-  --color-tab-inactive: #002e2e;
+  --color-tab-active: #072a27;
+  --color-tab-inactive: #0b322e;
 
   --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 48%, var(--color-bg));
   --minimap-empty-line: color-mix(in srgb, var(--color-fg) 8%, transparent);
   --minimap-vp-idle-fill: color-mix(in srgb, var(--color-fg) 10%, var(--color-bg-deep) 5%);
 
-  --editor-indent-guide: #b2c2b018;
-  --editor-indent-guide-active: #c5d4c840;
-  --editor-matching-bracket-bg: color-mix(in srgb, var(--color-fg) 14%, transparent);
-  --editor-matching-bracket-outline: color-mix(in srgb, var(--color-fg) 30%, transparent);
+  --editor-indent-guide: #d5e2dd22;
+  --editor-indent-guide-active: #d5e2dd72;
+  --editor-matching-bracket-bg: #d5e2dd30;
+  --editor-matching-bracket-outline: #d5e2dd70;
 }
 
 html[data-theme="forest"] .cm-editor .cm-content {
-  color: #d1e0e0;
+  color: #d5e2dd;
 }
 
+/* Kill CM default pair marks (both ends get cm-matchingBracket). */
 .cm-editor .cm-matchingBracket,
-.cm-editor.cm-focused .cm-matchingBracket {
-  /* Only the caret/selection marks the chosen brace — do not light the pair. */
-  background-color: transparent;
-  outline: none;
+.cm-editor.cm-focused .cm-matchingBracket,
+.cm-editor .cm-nonmatchingBracket,
+.cm-editor.cm-focused .cm-nonmatchingBracket {
+  background-color: transparent !important;
+  outline: none !important;
+}
+
+/* Matched pair ends (qingBasicSetup renderMatch → cm-cursorBracket). */
+.cm-editor .cm-cursorBracket,
+.cm-editor.cm-focused .cm-cursorBracket {
+  background-color: var(--editor-matching-bracket-bg) !important;
+  outline: 1px solid var(--editor-matching-bracket-outline);
+}
+
+.cm-editor .cm-cursorBracketBad,
+.cm-editor.cm-focused .cm-cursorBracketBad {
+  background-color: color-mix(in srgb, var(--color-danger) 28%, transparent) !important;
+  outline: 1px solid color-mix(in srgb, var(--color-danger) 55%, transparent);
 }
 
 html[data-theme="light"] * {
@@ -137,7 +153,7 @@ html[data-theme="light"] * {
 }
 
 html[data-theme="forest"] * {
-  scrollbar-color: #003838 transparent;
+  scrollbar-color: #2a5a51 transparent;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb {
@@ -145,7 +161,7 @@ html[data-theme="light"] *::-webkit-scrollbar-thumb {
 }
 
 html[data-theme="forest"] *::-webkit-scrollbar-thumb {
-  background: #003838;
+  background: #2a5a51;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
@@ -153,7 +169,7 @@ html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
 }
 
 html[data-theme="forest"] *::-webkit-scrollbar-thumb:hover {
-  background: #005454;
+  background: #3c7368;
 }
 
 /* Smooth color cross-fade while switching themes (class applied briefly by applyTheme). */

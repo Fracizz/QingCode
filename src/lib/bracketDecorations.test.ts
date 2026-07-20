@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
+  activeGuideColumnForLine,
+  activeIndentGuideForLines,
   blockGuideColumn,
   bracketGuideColumn,
   bracketGuideLineRange,
   buildGuideBoxShadow,
   findActiveGuidePair,
   findEnclosingPair,
+  guideColumnsForLine,
   indentGuideColumnsForLine,
+  indentLevelsForLines,
   scanBracketPairs,
   snapIndentLane,
 } from './bracketDecorations'
@@ -68,12 +72,65 @@ describe('buildGuideBoxShadow', () => {
   })
 })
 
+describe('activeGuideColumnForLine', () => {
+  const bracket = { fromLine: 6, toLine: 10, column: 4 }
+  const indent = { fromLine: 7, toLine: 8, column: 8, level: 3 }
+
+  it('uses one bracket guide first, then one scoped indent guide', () => {
+    expect(activeGuideColumnForLine(7, bracket, indent)).toBe(4)
+    expect(activeGuideColumnForLine(7, null, indent)).toBe(8)
+    expect(activeGuideColumnForLine(3, bracket, indent)).toBeNull()
+  })
+})
+
 describe('indentGuideColumnsForLine', () => {
-  it('lists tab lanes strictly inside leading whitespace (not on content)', () => {
-    expect(indentGuideColumnsForLine('    const x = 1', 2)).toEqual([2])
-    expect(indentGuideColumnsForLine('      {', 2)).toEqual([2, 4])
-    expect(indentGuideColumnsForLine('        "id": 1', 2)).toEqual([2, 4, 6])
+  it('lists every VS Code indentation level from the outermost lane', () => {
+    expect(indentGuideColumnsForLine('    const x = 1', 2)).toEqual([0, 2])
+    expect(indentGuideColumnsForLine('      {', 2)).toEqual([0, 2, 4])
+    expect(indentGuideColumnsForLine('        "id": 1', 2)).toEqual([0, 2, 4, 6])
     expect(indentGuideColumnsForLine('export function f() {', 2)).toEqual([])
+  })
+})
+
+describe('guideColumnsForLine', () => {
+  it('keeps the active guide when ordinary guides are suppressed', () => {
+    expect(guideColumnsForLine(2, 4, false, 4)).toEqual([4])
+    expect(guideColumnsForLine(2, 4, false, null)).toEqual([])
+  })
+})
+
+describe('VS Code active indentation scope', () => {
+  const lines = [
+    'def f():',
+    '    if first:',
+    '        one()',
+    '        two()',
+    '    if second:',
+    '        three()',
+    '    return None',
+  ]
+
+  it('highlights only the contiguous Python block containing the cursor', () => {
+    expect(activeIndentGuideForLines(lines, 3, 4, true)).toEqual({
+      fromLine: 3,
+      toLine: 4,
+      level: 2,
+      column: 4,
+    })
+  })
+
+  it('selects a child block from its opener without activating siblings', () => {
+    expect(activeIndentGuideForLines(lines, 5, 4, true)).toEqual({
+      fromLine: 6,
+      toLine: 6,
+      level: 2,
+      column: 4,
+    })
+  })
+
+  it('uses Python off-side rules for blank lines at a dedent', () => {
+    const withBlank = ['if ok:', '    work()', '', 'done()']
+    expect(indentLevelsForLines(withBlank, 4, true)).toEqual([0, 1, 0, 0])
   })
 })
 
@@ -109,7 +166,7 @@ describe('blockGuideColumn', () => {
       { number: 2, text: '  const x = 1' },
       { number: 14, text: '}' },
     ]
-    expect(blockGuideColumn(lines, 1, 14, tab)).toBe(2)
+    expect(blockGuideColumn(lines, 1, 14, tab)).toBe(0)
   })
 
   it('uses brace column when brace is alone on the line (JSON)', () => {
@@ -142,7 +199,7 @@ describe('bracketGuideColumn', () => {
       { number: 2, text: '        "preferred": "msedge",' },
       { number: 3, text: '    }' },
     ]
-    expect(bracketGuideColumn(lines, 1, 3, 15, 4, tab)).toBe(8)
+    expect(bracketGuideColumn(lines, 1, 3, 15, 4, tab)).toBe(4)
   })
 
   it('uses close-line indent for empty blocks', () => {

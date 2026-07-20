@@ -275,7 +275,7 @@ function Header({
   return (
     <div className="px-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted flex-shrink-0">
       <span className="flex items-center gap-2 min-w-0">
-        <BugPlay size={13} className="flex-shrink-0" />
+        <BugPlay size={13} className="flex-shrink-0 text-brand" />
         <span className="truncate">{title}</span>
       </span>
       <span className="flex items-center gap-0.5 flex-shrink-0">

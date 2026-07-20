@@ -429,7 +429,7 @@ export default function SourceControlPanel() {
     <div className="flex h-full flex-col overflow-hidden bg-bg-sidebar text-fg">
       <div className="flex h-9 flex-shrink-0 items-center justify-between px-4 text-[11px] font-semibold tracking-wide text-fg-muted">
         <span className="flex min-w-0 items-center gap-2">
-          <GitBranch size={13} className="flex-shrink-0" />
+          <GitBranch size={13} className="flex-shrink-0 text-brand" />
           <span className="truncate">{t('源代码管理')}</span>
         </span>
         <Tooltip label={t('刷新')} side="bottom">

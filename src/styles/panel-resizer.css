@@ -10,23 +10,26 @@ body.panel-resizing[data-panel-resize='vertical'] * {
   cursor: ew-resize !important;
 }
 
-/* Spacer holds flex layout steady while the dock is position:fixed. */
-[data-terminal-resize-spacer] {
-  background: var(--color-bg-deep);
-  pointer-events: none;
-}
-
-/* Live dock overlay: never animate; clip frozen xterm (no mid-drag fit). */
+/*
+ * Live sash: clip frozen xterm; isolate editor column so fewer composites flash.
+ */
 body.panel-resizing [data-terminal-dock] {
   transition: none !important;
   overflow: hidden !important;
 }
 
-body.panel-resizing [data-terminal-dock] .xterm,
-body.panel-resizing [data-terminal-dock] .xterm-viewport,
-body.panel-resizing [data-terminal-dock] .xterm-screen {
-  /* Keep last-fit pixel size — do not CSS-stretch the WebGL canvas. */
-  max-width: none !important;
+body.panel-resizing [data-terminal-dock] .xterm {
+  flex-shrink: 0 !important;
+}
+
+body.panel-resizing[data-panel-resize='horizontal'] [data-editor-column] {
+  contain: strict;
+  pointer-events: none;
+}
+
+[data-terminal-resize-spacer] {
+  background: var(--color-bg-deep);
+  pointer-events: none;
 }
 
 .panel-resizer {
@@ -55,7 +58,7 @@ body.panel-resizing [data-terminal-dock] .xterm-screen {
   position: absolute;
   background: var(--color-border-strong);
   opacity: 0;
-  transition: opacity 120ms ease, background 120ms ease;
+  transition: opacity 160ms ease, background 160ms ease;
   pointer-events: none;
 }
 
@@ -82,7 +85,7 @@ body.panel-resizing [data-terminal-dock] .xterm-screen {
   align-items: center;
   justify-content: center;
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity 160ms ease;
   pointer-events: none;
 }
 

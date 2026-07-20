@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Clock, FileText, FolderOpen, Settings, Terminal as TerminalIcon } from 'lucide-react'
 import AppIcon from './AppIcon'
 import Kbd from './Kbd'
@@ -20,11 +21,17 @@ export default function EmptyEditor() {
   const recent = recentFiles.slice(0, 8)
   const recentProjects = projects.filter(p => !p.hidden).slice(0, 5)
 
-  const actions = [
+  const actions: Array<{
+    icon: ReactNode
+    label: string
+    onClick: () => void
+    primary?: boolean
+  }> = [
     {
       icon: <FolderOpen size={14} />,
       label: t('打开项目'),
       onClick: () => void addProjectFromDialog(),
+      primary: true,
     },
     {
       icon: <TerminalIcon size={14} />,
@@ -42,15 +49,19 @@ export default function EmptyEditor() {
     <div className="ui-font-scaled flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-6 px-6 select-none">
       {/* Decorative background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full bg-accent/[0.03] blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full bg-brand/[0.04] blur-3xl" />
       </div>
 
       <div className="flex flex-col items-center gap-3 relative">
         <div className="relative">
-          <div className="absolute inset-0 bg-accent/10 blur-xl rounded-full scale-150" aria-hidden="true" />
+          <div className="absolute inset-0 bg-brand/15 blur-xl rounded-full scale-150" aria-hidden="true" />
           <AppIcon size={52} />
         </div>
-        <p className="text-sm text-fg-muted">{t('从侧边栏打开文件开始编辑')}</p>
+        <div className="flex flex-col items-center gap-1 text-center">
+          <p className="text-[15px] font-semibold tracking-[0.02em] text-fg">QingCode</p>
+          <span className="h-[2px] w-10 rounded bg-brand/80" aria-hidden />
+          <p className="text-sm text-fg-muted">{t('从侧边栏打开文件开始编辑')}</p>
+        </div>
       </div>
 
       <div className="flex items-center gap-2 relative">
@@ -59,7 +70,11 @@ export default function EmptyEditor() {
             key={action.label}
             type="button"
             onClick={action.onClick}
-            className="flex items-center gap-1.5 rounded-md border border-border-strong bg-bg-elevated/80 px-3.5 py-2 text-[13px] text-fg-muted transition-all duration-150 hover:bg-bg-active hover:text-fg hover:shadow-sm hover:-translate-y-[1px] active:translate-y-0"
+            className={`flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[13px] transition-all duration-150 hover:shadow-sm hover:-translate-y-[1px] active:translate-y-0 ${
+              action.primary
+                ? 'border-brand/50 bg-brand/10 text-brand hover:border-brand/70 hover:bg-brand/20'
+                : 'border-border-strong bg-bg-elevated/80 text-fg-muted hover:bg-bg-active hover:text-fg'
+            }`}
           >
             {action.icon}
             {action.label}
@@ -81,7 +96,7 @@ export default function EmptyEditor() {
                 <button
                   type="button"
                   onClick={() => void switchProject(project)}
-                  className="max-w-[180px] truncate rounded-full border border-border px-3 py-1 text-[12px] text-fg-muted transition-all duration-150 hover:border-border-strong hover:bg-bg-hover hover:text-fg hover:shadow-sm"
+                  className="max-w-[180px] truncate rounded-full border border-border px-3 py-1 text-[12px] text-fg-muted transition-all duration-150 hover:border-brand/60 hover:bg-bg-hover hover:text-fg hover:shadow-sm"
                 >
                   {project.name}
                 </button>

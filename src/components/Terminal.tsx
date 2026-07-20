@@ -40,7 +40,9 @@ import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
 import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
 import {
   isPanelResizing,
+  PANEL_RESIZE_BEGIN_EVENT,
   PANEL_RESIZE_END_EVENT,
+  PANEL_RESIZE_SETTLE_EVENT,
 } from '../lib/panelResize'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
@@ -166,6 +168,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const fitRafRef = useRef(0)
   const pendingFitFlagsRef = useRef({ refresh: false, focusAfter: false })
+  const pendingPtySizeRef = useRef<{ cols: number; rows: number } | null>(null)
   const lastFitSizeRef = useRef({ w: 0, h: 0 })
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
@@ -282,50 +285,44 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     },
   ]
 
-  const scheduleFit = (refresh = false, focusAfter = false) => {
-    // Coalesce to one fit per frame.
-    if (fitRafRef.current !== 0) {
-      pendingFitFlagsRef.current = {
-        refresh: pendingFitFlagsRef.current.refresh || refresh,
-        focusAfter: pendingFitFlagsRef.current.focusAfter || focusAfter,
+  const fitNow = (refresh = false, focusAfter = false) => {
+    const container = containerRef.current
+    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+    const term = xtermRef.current
+    if (!term) return
+    const w = container.clientWidth
+    const h = container.clientHeight
+    if (!refresh && w === lastFitSizeRef.current.w && h === lastFitSizeRef.current.h) return
+    lastFitSizeRef.current = { w, h }
+    try {
+      fitAddonRef.current?.fit()
+      const pending = useTerminalStore
+        .getState()
+        .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
+      if (pending) {
+        void spawnPendingTerminal(terminalId, term.cols, term.rows)
       }
-      return
+      if (refresh) {
+        term.refresh(0, term.rows - 1)
+        term.scrollToBottom()
+      }
+      if (focusAfter && isActiveRef.current) term.focus()
+    } catch {}
+  }
+
+  const scheduleFit = (refresh = false, focusAfter = false) => {
+    pendingFitFlagsRef.current = {
+      refresh: pendingFitFlagsRef.current.refresh || refresh,
+      focusAfter: pendingFitFlagsRef.current.focusAfter || focusAfter,
     }
-    pendingFitFlagsRef.current = { refresh, focusAfter }
+    // Coalesce to one fit per frame and retain requests made during sash drag.
+    if (fitRafRef.current !== 0 || isPanelResizing()) return
     fitRafRef.current = window.requestAnimationFrame(() => {
       fitRafRef.current = 0
-      // Live sash pins the dock out of flow; never fit until mouseup.
       if (isPanelResizing()) return
       const flags = pendingFitFlagsRef.current
       pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
-      const container = containerRef.current
-      if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
-      const term = xtermRef.current
-      if (!term) return
-      const w = container.clientWidth
-      const h = container.clientHeight
-      if (
-        !flags.refresh &&
-        w === lastFitSizeRef.current.w &&
-        h === lastFitSizeRef.current.h
-      ) {
-        return
-      }
-      lastFitSizeRef.current = { w, h }
-      try {
-        fitAddonRef.current?.fit()
-        const pending = useTerminalStore
-          .getState()
-          .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
-        if (pending) {
-          void spawnPendingTerminal(terminalId, term.cols, term.rows)
-        }
-        if (flags.refresh) {
-          term.refresh(0, term.rows - 1)
-          term.scrollToBottom()
-        }
-        if (flags.focusAfter && isActiveRef.current) term.focus()
-      } catch {}
+      fitNow(flags.refresh, flags.focusAfter)
     })
   }
 
@@ -501,6 +498,12 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     })
 
     term.onResize(({ cols, rows }) => {
+      // Defer PTY size until sash mouseup — shell full redraws every frame = flicker.
+      if (isPanelResizing()) {
+        pendingPtySizeRef.current = { cols, rows }
+        return
+      }
+      pendingPtySizeRef.current = null
       void resizeTerminal(terminalId, cols, rows)
     })
     term.onData(data => {
@@ -544,12 +547,32 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     })
     if (containerRef.current) ro.observe(containerRef.current)
 
-    const onPanelResizeEnd = () => {
-      if (!isActiveRef.current) return
-      // One fit after the dock returns to flex flow at the final size.
-      lastFitSizeRef.current = { w: 0, h: 0 }
-      scheduleFit(false, false)
+    const onPanelResizeBegin = () => {
+      if (isActiveRef.current) term.options.cursorBlink = false
     }
+    const onPanelResizeSettle = () => {
+      if (!isActiveRef.current) return
+      if (fitRafRef.current !== 0) {
+        window.cancelAnimationFrame(fitRafRef.current)
+        fitRafRef.current = 0
+      }
+      const flags = pendingFitFlagsRef.current
+      pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
+      lastFitSizeRef.current = { w: 0, h: 0 }
+      // The final flex geometry is active, while the old WebGL surface is still clipped.
+      fitNow(flags.refresh, flags.focusAfter)
+    }
+    const onPanelResizeEnd = () => {
+      term.options.cursorBlink = getTerminalCursorBlinking()
+      if (!isActiveRef.current) return
+      const pendingPtySize = pendingPtySizeRef.current
+      pendingPtySizeRef.current = null
+      if (pendingPtySize) {
+        void resizeTerminal(terminalId, pendingPtySize.cols, pendingPtySize.rows)
+      }
+    }
+    window.addEventListener(PANEL_RESIZE_BEGIN_EVENT, onPanelResizeBegin)
+    window.addEventListener(PANEL_RESIZE_SETTLE_EVENT, onPanelResizeSettle)
     window.addEventListener(PANEL_RESIZE_END_EVENT, onPanelResizeEnd)
 
     return () => {
@@ -564,6 +587,8 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
       window.removeEventListener(TERMINAL_CURSOR_SETTINGS_EVENT, updateCursor)
       window.removeEventListener(THEME_SETTINGS_EVENT, updateTheme)
+      window.removeEventListener(PANEL_RESIZE_BEGIN_EVENT, onPanelResizeBegin)
+      window.removeEventListener(PANEL_RESIZE_SETTLE_EVENT, onPanelResizeSettle)
       window.removeEventListener(PANEL_RESIZE_END_EVENT, onPanelResizeEnd)
       ro.disconnect()
       searchResultsSub.dispose()

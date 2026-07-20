@@ -11,6 +11,10 @@ import { flushLiveEditorContent, getLiveEditorContent } from '../lib/editorSessi
 import { getEditorPreferences } from '../lib/editorSettings'
 import { resolveReadEncoding } from '../lib/fileEncoding'
 import { editorPerfProfile, resolveEditMaxBytes } from '../lib/fileSizePolicy'
+import {
+  decideExternalChangeAfterRead,
+  decideExternalChangeBeforeRead,
+} from '../lib/externalFileChange'
 import { translate } from '../lib/i18n'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
 import { shouldSkipWatcherTreeRefresh } from '../lib/watcherTreeRefresh'
@@ -198,26 +202,21 @@ export function useFileWatcher() {
           const mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', {
             path: tab.path,
           })
-
+          const editMaxBytes = resolveEditMaxBytes(tab.path)
+          const profile = editorPerfProfile(tab.fileSize ?? 0, editMaxBytes)
+          const beforeRead = decideExternalChangeBeforeRead({
+            viewMode: tab.viewMode,
+            profile,
+            diskMtime: tab.diskMtime,
+            nextMtime: mtime,
+          })
+          if (beforeRead === 'ignore') return
           // Read-only slice viewer: never pull full content into the WebView.
-          if (tab.viewMode === 'view') {
-            if (mtime != null && mtime === tab.diskMtime) return
+          if (beforeRead === 'notify-view') {
             editor.setDiskMtime(tab.id, mtime)
             useProjectStore
               .getState()
               .pushToast('info', translate('磁盘文件已更改（只读预览）：{name}', { name: tab.name }))
-            return
-          }
-
-          const editMaxBytes = resolveEditMaxBytes(tab.path)
-          const profile = editorPerfProfile(tab.fileSize ?? 0, editMaxBytes)
-          // Plain/degraded: skip full read when mtime is unchanged.
-          if (
-            (profile === 'plain' || profile === 'degraded') &&
-            mtime != null &&
-            tab.diskMtime != null &&
-            mtime === tab.diskMtime
-          ) {
             return
           }
 
@@ -230,13 +229,18 @@ export function useFileWatcher() {
             encoding,
           })
           const local = getLiveEditorContent(tab.id) ?? tab.content ?? ''
+          const afterRead = decideExternalChangeAfterRead({
+            dirty: tab.dirty,
+            localContent: local,
+            diskContent,
+          })
 
-          if (!tab.dirty && local === diskContent) {
+          if (afterRead === 'update-mtime') {
             editor.setDiskMtime(tab.id, mtime)
             return
           }
 
-          if (!tab.dirty && local !== diskContent) {
+          if (afterRead === 'reload') {
             // Clean tab, external edit — reload quietly.
             await editor.reloadFromDisk(tab.id, diskContent, mtime)
             useProjectStore

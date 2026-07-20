@@ -31,8 +31,8 @@ export interface TerminalPanelProps {
   isTerminalResizing: boolean
   dragHeightRef: MutableRefObject<number>
   dragWidthRef: MutableRefObject<number>
-  onResizerMouseDown: (e: React.MouseEvent) => void
-  onWidthResizerMouseDown: (e: React.MouseEvent) => void
+  onResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
+  onWidthResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
   terminalPanelRef: RefObject<HTMLDivElement | null>
 }
 
@@ -44,8 +44,8 @@ export default function TerminalPanel({
   isTerminalResizing,
   dragHeightRef,
   dragWidthRef,
-  onResizerMouseDown,
-  onWidthResizerMouseDown,
+  onResizerPointerDown,
+  onWidthResizerPointerDown,
   terminalPanelRef,
 }: TerminalPanelProps) {
   const { t } = useI18n()
@@ -79,6 +79,7 @@ export default function TerminalPanel({
           return (
             <div
               key={term.id}
+              data-terminal-active={isActive ? 'true' : undefined}
               className={`absolute inset-0 min-w-0 ${
                 isActive ? 'z-10 visible' : 'invisible pointer-events-none z-0'
               }`}
@@ -118,7 +119,7 @@ export default function TerminalPanel({
             active={isTerminalResizing}
             tooltip={terminalWidthResizerHint(liveWidth, t)}
             tooltipSide="right"
-            onMouseDown={onWidthResizerMouseDown}
+            onPointerDown={onWidthResizerPointerDown}
             ariaValueNow={liveWidth}
             ariaValueMin={TERMINAL_MIN_WIDTH}
             ariaValueMax={getTerminalMaxWidth()}
@@ -145,7 +146,7 @@ export default function TerminalPanel({
           active={isTerminalResizing}
           tooltip={terminalResizerHint(liveHeight, t)}
           tooltipSide="top"
-          onMouseDown={onResizerMouseDown}
+          onPointerDown={onResizerPointerDown}
           ariaValueNow={liveHeight}
           ariaValueMin={TERMINAL_MIN_HEIGHT}
           ariaValueMax={getTerminalMaxHeight()}

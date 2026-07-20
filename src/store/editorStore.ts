@@ -40,10 +40,17 @@ import type { EditorTab } from '../types'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
 import { guessLanguage, isPinnedSettingsTab, tabNameFromPath } from '../utils/editorHelpers'
 import { MAX_OPEN_EDITOR_TABS, pickEvictableTabId } from '../lib/editorTabsLayout'
+import {
+  buildTabMru,
+  fileNameFromPath,
+  mapTabEverywhere,
+  pendingRevealAt,
+  splitPinned,
+  type PendingReveal,
+  type ProjectEditorSession,
+} from './editorStoreHelpers'
 
-function fileNameFromPath(path: string) {
-  return path.split('\\').pop() || path.split('/').pop() || path
-}
+export type { PendingReveal, ProjectEditorSession } from './editorStoreHelpers'
 
 function resolveTabContent(tab: EditorTab): string | undefined {
   return getLiveEditorContent(tab.id) ?? tab.content
@@ -157,28 +164,6 @@ async function populateTabFromDisk(id: string, path: string, line?: number, colu
   }
 }
 
-export type PendingReveal = {
-  path: string
-  line: number
-  /** 1-based column; when set (and `from` is not), Editor places the caret on this column. */
-  column?: number
-  /** Optional document offset; when set, Editor scrolls/selects here instead of line/column. */
-  from?: number
-}
-
-function pendingRevealAt(path: string, line?: number, column?: number): PendingReveal | null {
-  if (!line || line < 1) return null
-  const reveal: PendingReveal = { path, line }
-  if (column !== undefined && column >= 1) reveal.column = column
-  return reveal
-}
-
-export interface ProjectEditorSession {
-  tabs: EditorTab[]
-  activeTabId: string | null
-  pendingReveal: PendingReveal | null
-}
-
 interface EditorState {
   tabs: EditorTab[]
   activeTabId: string | null
@@ -247,12 +232,6 @@ interface EditorState {
   loadMissingTabContents: () => Promise<void>
 }
 
-function buildTabMru(tabs: EditorTab[], activeTabId: string | null): string[] {
-  const ids = tabs.map(tab => tab.id)
-  if (!activeTabId) return ids
-  return [activeTabId, ...ids.filter(id => id !== activeTabId)]
-}
-
 /** Close least-recent clean tabs until there is room for one more open. */
 function ensureOpenTabCapacity(): boolean {
   const get = () => useEditorStore.getState()
@@ -271,43 +250,6 @@ function ensureOpenTabCapacity(): boolean {
     get().closeTab(victim)
   }
   return true
-}
-
-function splitPinned(tabs: EditorTab[]) {
-  const pinned: EditorTab[] = []
-  const projectTabs: EditorTab[] = []
-  for (const tab of tabs) {
-    if (isPinnedSettingsTab(tab.path)) pinned.push(tab)
-    else projectTabs.push(tab)
-  }
-  return { pinned, projectTabs }
-}
-
-function mapTabEverywhere(
-  s: Pick<EditorState, 'tabs' | 'projectSessions'>,
-  id: string,
-  fn: (tab: EditorTab) => EditorTab,
-): Pick<EditorState, 'tabs' | 'projectSessions'> | null {
-  if (s.tabs.some(t => t.id === id)) {
-    return {
-      tabs: s.tabs.map(t => (t.id === id ? fn(t) : t)),
-      projectSessions: s.projectSessions,
-    }
-  }
-  for (const [projectId, session] of Object.entries(s.projectSessions)) {
-    if (!session.tabs.some(t => t.id === id)) continue
-    return {
-      tabs: s.tabs,
-      projectSessions: {
-        ...s.projectSessions,
-        [projectId]: {
-          ...session,
-          tabs: session.tabs.map(t => (t.id === id ? fn(t) : t)),
-        },
-      },
-    }
-  }
-  return null
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({

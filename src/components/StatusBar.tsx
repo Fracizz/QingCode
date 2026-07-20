@@ -229,12 +229,12 @@ export default function StatusBar() {
     <div
       ref={rowRef}
       {...{ [STATUS_BAR_ROW_ATTR]: '' }}
-      className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-accent-soft text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
+      className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-bg-deep text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
     >
       {/* Workspace context: project · git */}
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
         <span className="flex min-w-0 max-w-[28%] items-center gap-1.5">
-          <Folder size={13} className="flex-shrink-0 text-fg-muted" />
+          <Folder size={13} className="flex-shrink-0 text-brand" />
           <span className="truncate">{currentProject ? currentProject.name : t('未选择项目')}</span>
         </span>
         {restricted && (

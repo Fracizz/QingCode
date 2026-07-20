@@ -11,9 +11,8 @@ import { syncScrollTop } from '../utils/scrollSync'
 import { minimalSetup } from 'codemirror'
 import { search } from '@codemirror/search'
 import { qingBasicSetup } from '../lib/editorBasicSetup'
-import { Compartment, EditorState, StateEffect, StateField, type Extension } from '@codemirror/state'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import {
-  Decoration,
   EditorView,
   crosshairCursor,
   drawSelection,
@@ -23,7 +22,6 @@ import {
   keymap,
   lineNumbers,
   rectangularSelection,
-  type DecorationSet,
 } from '@codemirror/view'
 import { createEditorFindReplacePanel } from './EditorFindReplacePanel'
 import {
@@ -36,7 +34,6 @@ import {
   undo,
   undoDepth,
 } from '@codemirror/commands'
-import { oneDark } from '@codemirror/theme-one-dark'
 import {
   AtSign,
   BookOpen,
@@ -64,8 +61,7 @@ import {
   formatFileReference,
   projectRelativePath,
 } from '../utils/fileReferences'
-import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
-import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
+import { THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import {
   EDITOR_SETTINGS_EVENT,
   getEditorPreferences,
@@ -80,7 +76,13 @@ import {
   occurrenceHighlightMarker,
   preserveSelectionTokenColors,
   selectionMatchMainHighlight,
+  OCCURRENCE_HIGHLIGHT_REV,
 } from '../lib/selectionMatchMainHighlight'
+import {
+  editorHasCursorBracketHighlight,
+  cursorBracketHighlightMarker,
+  CURSOR_BRACKET_HIGHLIGHT_REV,
+} from '../lib/editorBasicSetup'
 import { translate, useI18n } from '../lib/i18n'
 import { notifyEditorBlur, notifyEditorContentChanged } from '../lib/autoSave'
 import {
@@ -105,6 +107,17 @@ import {
   isSupportedEditorLanguage,
   loadLanguageSupport,
 } from '../lib/editorLanguages'
+import {
+  clearFlashEffect,
+  editorThemeExtension,
+  flashField,
+  flashLineEffect,
+  hasNonEmptySelection,
+  isMarkdownTab,
+  scheduleIdle,
+  selectedText,
+  selectionLineRange,
+} from '../lib/editorViewHelpers'
 
 // Drop in-memory EditorState cache after occurrence-highlight wiring changes so
 // background tabs reopen with match highlighting (large/degraded included).
@@ -127,124 +140,6 @@ import LargeFileViewer from './LargeFileViewer'
 import EditorMinimap from './EditorMinimap'
 import Tooltip from './Tooltip'
 const DiffEditor = lazy(() => import('./DiffEditor'))
-
-// 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
-const lightTheme = EditorView.theme(
-  {
-    '&': { backgroundColor: '#f0f0f0', color: '#1f1f1f' },
-    '.cm-gutters': { backgroundColor: '#ebebeb', color: '#757575', borderRight: '1px solid #d0d0d0' },
-    '.cm-activeLine': { backgroundColor: '#e8edf2' },
-    '.cm-activeLineGutter': { backgroundColor: '#e2e8ef', color: '#1f1f1f' },
-    '.cm-selectionBackground': { backgroundColor: '#cfe3fb' },
-    '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
-      backgroundColor: '#b9d6f5',
-    },
-    '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#1a1a1a' },
-    '.cm-searchMatch': { backgroundColor: '#ffe9a8' },
-    '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: '#ffd56b' },
-    '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },
-    '.cm-selectionMatchMainLayer .cm-selectionMatchMain': {
-      backgroundColor: 'rgba(153, 255, 119, 0.5)',
-    },
-    '.cm-searchMatch .cm-selectionMatch': { backgroundColor: 'transparent' },
-  },
-  { dark: false },
-)
-
-/** Soften oneDark’s near-white default body; leave syntax token colors alone. */
-const darkDefaultFgTheme = EditorView.theme(
-  {
-    '&': { color: '#cccccc' },
-    '.cm-content': { color: '#cccccc' },
-  },
-  { dark: true },
-)
-
-/** Selection-match colors for oneDark (main overlay + other hits). */
-const darkSelectionMatchTheme = EditorView.theme(
-  {
-    '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },
-    '.cm-selectionMatchMainLayer .cm-selectionMatchMain': {
-      backgroundColor: 'rgba(153, 255, 119, 0.5)',
-    },
-    '.cm-searchMatch .cm-selectionMatch': { backgroundColor: 'transparent' },
-  },
-  { dark: true },
-)
-
-function editorThemeExtension() {
-  const resolved = getResolvedTheme()
-  if (resolved === 'forest') return [FOREST_THEME, forestSyntax]
-  if (resolved === 'dark') return [oneDark, darkDefaultFgTheme, darkSelectionMatchTheme]
-  return lightTheme
-}
-
-const flashLineEffect = StateEffect.define<number>()
-const clearFlashEffect = StateEffect.define<void>()
-
-const flashField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update(value, tr) {
-    value = value.map(tr.changes)
-    for (const e of tr.effects) {
-      if (e.is(flashLineEffect)) {
-        const lines = tr.state.doc.lines
-        const n = Math.min(Math.max(1, e.value), lines)
-        const line = tr.state.doc.line(n)
-        return Decoration.set([Decoration.mark({ class: 'cm-search-reveal-flash' }).range(line.from, line.to)])
-      }
-      if (e.is(clearFlashEffect)) {
-        return Decoration.none
-      }
-    }
-    return value
-  },
-  provide: f => EditorView.decorations.from(f),
-})
-
-function hasNonEmptySelection(view: EditorView) {
-  return !view.state.selection.main.empty
-}
-
-function selectedText(view: EditorView) {
-  const { from, to } = view.state.selection.main
-  return view.state.sliceDoc(from, to)
-}
-
-function selectionLineRange(view: EditorView) {
-  const selection = view.state.selection.main
-  const startLine = view.state.doc.lineAt(selection.from).number
-  const endPosition = selection.empty
-    ? selection.head
-    : Math.max(selection.from, selection.to - 1)
-  const endLine = view.state.doc.lineAt(endPosition).number
-  return { startLine, endLine }
-}
-
-function scheduleIdle(fn: () => void, timeoutMs = 800): () => void {
-  let cancelled = false
-  const run = () => {
-    if (!cancelled) fn()
-  }
-  if (typeof window.requestIdleCallback === 'function') {
-    const id = window.requestIdleCallback(run, { timeout: timeoutMs })
-    return () => {
-      cancelled = true
-      window.cancelIdleCallback(id)
-    }
-  }
-  const timer = window.setTimeout(run, 0)
-  return () => {
-    cancelled = true
-    window.clearTimeout(timer)
-  }
-}
-
-function isMarkdownTab(tab: EditorTab | undefined | null): boolean {
-  if (!tab) return false
-  if (tab.language === 'markdown') return true
-  return /\.md$/i.test(tab.path)
-}
 
 function plainEditorBase(showLineNumbers: boolean): Extension[] {
   return [
@@ -290,6 +185,7 @@ function createTabEditorState(
   // Own occurrence highlighter for every profile (main overlay + other hits).
   const occurrenceHighlight: Extension[] = [
     occurrenceHighlightMarker(),
+    cursorBracketHighlightMarker(),
     selectionMatchMainHighlight(),
   ]
 
@@ -502,7 +398,12 @@ function bindTabToView(
   }
 
   const cached = takeCachedEditorState(tab.id)
-  const usableCache = cached && editorHasOccurrenceHighlight(cached) ? cached : undefined
+  const usableCache =
+    cached &&
+    editorHasOccurrenceHighlight(cached) &&
+    editorHasCursorBracketHighlight(cached)
+      ? cached
+      : undefined
   const fresh = !usableCache
   // Prefer live buffer when rebuilding a stale active state (keeps unsaved edits).
   const tabForState =
@@ -636,7 +537,9 @@ export default function Editor() {
 
     const previousTabId = boundTabIdRef.current
     const epoch = activeTab.contentEpoch ?? 0
-    const staleOccurrence = !editorHasOccurrenceHighlight(view.state)
+    const staleExtensions =
+      !editorHasOccurrenceHighlight(view.state) ||
+      !editorHasCursorBracketHighlight(view.state)
     let cancelHeavy: (() => void) | undefined
     if (previousTabId !== activeTab.id) {
       const bind = bindTabToView(
@@ -661,9 +564,9 @@ export default function Editor() {
           settingsCompartment.current,
         )
       }
-    } else if (epoch !== boundEpochRef.current || staleOccurrence) {
-      // External reload / draft restore, or occurrence-highlight extensions missing
-      // (stale HMR / pre-fix EditorState still bound to this tab).
+    } else if (epoch !== boundEpochRef.current || staleExtensions) {
+      // External reload / draft restore, or stale HMR EditorState (old occurrence /
+      // bracket-match plugins still bound to this tab).
       boundEpochRef.current = epoch
       unregisterEditorView(activeTab.id, view)
       const bind = bindTabToView(
@@ -702,6 +605,8 @@ export default function Editor() {
     markDirty,
     saveFile,
     setCursor,
+    CURSOR_BRACKET_HIGHLIGHT_REV,
+    OCCURRENCE_HIGHLIGHT_REV,
   ])
 
   // 主题切换时即时重配置编辑器主题（不重建 view）。

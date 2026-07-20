@@ -152,8 +152,8 @@ function App() {
     isTerminalResizing,
     dragHeightRef,
     dragWidthRef,
-    onResizerMouseDown,
-    onWidthResizerMouseDown,
+    onResizerPointerDown,
+    onWidthResizerPointerDown,
     terminalPanelRef,
   } = useTerminalPanel()
 
@@ -360,13 +360,13 @@ function App() {
               isTerminalResizing={isTerminalResizing}
               dragHeightRef={dragHeightRef}
               dragWidthRef={dragWidthRef}
-              onResizerMouseDown={onResizerMouseDown}
-              onWidthResizerMouseDown={onWidthResizerMouseDown}
+              onResizerPointerDown={onResizerPointerDown}
+              onWidthResizerPointerDown={onWidthResizerPointerDown}
               terminalPanelRef={terminalPanelRef}
             />
           )}
 
-          <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <div className="flex-1 flex flex-col overflow-hidden min-w-0" data-editor-column>
             {view === 'settings' ? (
               <Suspense fallback={<LazyFallback />}>
                 <SettingsEditor />
@@ -413,8 +413,8 @@ function App() {
             isTerminalResizing={isTerminalResizing}
             dragHeightRef={dragHeightRef}
             dragWidthRef={dragWidthRef}
-            onResizerMouseDown={onResizerMouseDown}
-            onWidthResizerMouseDown={onWidthResizerMouseDown}
+            onResizerPointerDown={onResizerPointerDown}
+            onWidthResizerPointerDown={onWidthResizerPointerDown}
             terminalPanelRef={terminalPanelRef}
           />
         )}

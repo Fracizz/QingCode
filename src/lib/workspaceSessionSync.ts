@@ -9,11 +9,8 @@ import {
   buildWorkspaceSessionSnapshot,
   loadWorkspaceSession,
   saveWorkspaceSession,
-  type PersistedEditorTab,
-  type PersistedProjectSession,
   type WorkspaceSessionSnapshot,
 } from './workspaceSessionPersist'
-import { clearDraft, getDraft } from './draftRecovery'
 import {
   flushAllLiveEditorContents,
   getEditorScroll,
@@ -22,13 +19,23 @@ import {
 } from './editorSession'
 import { shouldRestoreWorkspace } from './windowSession'
 import { isSessionPersistEnabled } from './sessionPersistSettings'
-import { isPinnedSettingsTab, guessLanguage, tabNameFromPath } from '../utils/editorHelpers'
+import { isPinnedSettingsTab } from '../utils/editorHelpers'
 import { useEditorStore, type ProjectEditorSession } from '../store/editorStore'
 import { persistTerminalOutputNow, useTerminalStore } from '../store/terminalStore'
 import { rehydrateRunningFromTerminals } from '../store/runConfigStore'
 import { useProjectStore } from '../store/projectStore'
 import type { EditorTab, TerminalTab } from '../types'
-import { isTerminalShellId, normalizeTerminalShell } from './terminalShell'
+import {
+  projectSessionFromPersisted,
+  tabFromPersisted,
+  terminalFromPersisted,
+} from './workspaceSessionRestore'
+
+export {
+  projectSessionFromPersisted,
+  tabFromPersisted,
+  terminalFromPersisted,
+} from './workspaceSessionRestore'
 
 const PERSIST_DEBOUNCE_MS = 400
 
@@ -49,59 +56,6 @@ function splitPinned(tabs: EditorTab[]) {
     else projectTabs.push(tab)
   }
   return { pinned, projectTabs }
-}
-
-export function tabFromPersisted(tab: PersistedEditorTab): EditorTab {
-  const draft = tab.dirty ? getDraft(tab.path) : null
-  if (tab.dirty && draft) {
-    clearDraft(tab.path)
-  }
-  const dirty = tab.dirty && !!draft
-  const editorTab: EditorTab = {
-    id: tab.id,
-    path: tab.path,
-    name: tab.name || tabNameFromPath(tab.path),
-    dirty: tab.viewMode === 'view' ? false : dirty,
-    language: tab.language || guessLanguage(tab.path),
-    viewMode: tab.viewMode === 'view' ? 'view' : 'edit',
-  }
-  if (draft && tab.viewMode !== 'view') {
-    editorTab.content = draft.content
-  }
-  return editorTab
-}
-
-export function projectSessionFromPersisted(session: PersistedProjectSession): ProjectEditorSession {
-  const tabs = session.tabs
-    .filter(t => !isPinnedSettingsTab(t.path))
-    .map(tabFromPersisted)
-  let activeTabId = session.activeTabId
-  if (activeTabId && !tabs.some(t => t.id === activeTabId)) activeTabId = null
-  if (!activeTabId) activeTabId = tabs[0]?.id ?? null
-  return { tabs, activeTabId, pendingReveal: null }
-}
-
-export function terminalFromPersisted(
-  projectId: string,
-  meta: PersistedProjectSession['terminals'][number],
-): TerminalTab {
-  return {
-    id: meta.id,
-    name: meta.name,
-    projectId,
-    cwd: meta.cwd,
-    launchCommand: meta.launchCommand,
-    shellKind: meta.shellKind,
-    env: meta.env,
-    shell: isTerminalShellId(meta.shell) ? normalizeTerminalShell(meta.shell) : undefined,
-    profileId: meta.profileId,
-    allowTitleRename: meta.allowTitleRename,
-    runConfigId: meta.runConfigId,
-    runTaskId: meta.runTaskId,
-    status: 'exited',
-    exitCode: null,
-    awaitingRestoreSpawn: true,
-  }
 }
 
 function applyScrollHints(snapshot: WorkspaceSessionSnapshot) {

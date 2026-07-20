@@ -299,20 +299,20 @@ export default function ProjectPicker() {
                     role="menuitem"
                     tabIndex={unavailable ? -1 : 0}
                     onClick={() => !unavailable && handleSwitch(project)}
-                    className={`group flex items-center gap-2 px-3 py-1.5 text-[13px] outline-none
+                    className={`group flex items-center gap-2 border-l-2 px-3 py-1.5 text-[13px] outline-none
                       ${
                         isCurrent
-                          ? 'bg-bg-active text-fg'
+                          ? 'border-brand bg-bg-active text-fg'
                           : unavailable
-                          ? 'text-fg-dim'
-                          : 'text-fg hover:bg-bg-hover focus:bg-bg-active cursor-pointer'
+                          ? 'border-transparent text-fg-dim'
+                          : 'cursor-pointer border-transparent text-fg hover:bg-bg-hover focus:bg-bg-active'
                       }`}
                   >
                     <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
                       {unavailable ? (
                         <AlertTriangle size={14} className="text-warn" />
                       ) : isCurrent ? (
-                        <Check size={13} className="text-accent" />
+                        <Check size={13} className="text-brand" />
                       ) : (
                         <Folder size={14} className="text-accent" />
                       )}
@@ -468,7 +468,7 @@ function Chip({
         }
       }}
       onDoubleClick={event => event.stopPropagation()}
-      className={`group flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-colors
+      className={`group relative flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-colors
         ${
           isCurrent
             ? 'bg-bg-active text-fg'
@@ -477,13 +477,16 @@ function Chip({
             : 'text-fg-muted hover:text-fg hover:bg-bg-hover cursor-pointer'
         }`}
     >
+      {isCurrent && (
+        <span className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand" aria-hidden />
+      )}
       {unavailable ? (
         <span className="inline-flex items-center justify-center w-4 h-4 flex-shrink-0">
           <AlertTriangle size={12} className="text-warn" />
         </span>
       ) : (
         <span className="inline-flex items-center justify-center w-4 h-4 flex-shrink-0">
-          <Folder size={12} className="text-accent" />
+          <Folder size={12} className={isCurrent ? 'text-brand' : 'text-accent'} />
         </span>
       )}
       <span className="truncate max-w-[140px]">{project.name}</span>

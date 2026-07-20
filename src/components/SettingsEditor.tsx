@@ -3,8 +3,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type MutableRefObject,
-  type ReactNode,
 } from 'react'
 import {
   CircleHelp,
@@ -90,16 +88,14 @@ import {
   saveSessionPersistEnabled,
 } from '../lib/sessionPersistSettings'
 import { checkForAppUpdate, promptAppUpdate } from '../lib/appUpdate'
+import {
+  SettingsSection as Section,
+  SettingItem,
+  type SettingsCategoryId as CategoryId,
+} from './SettingsLayout'
+import TerminalProfilesInline from './TerminalProfilesInline'
 
 type SettingsScope = 'user' | 'workspace'
-type CategoryId =
-  | 'common'
-  | 'appearance'
-  | 'editor'
-  | 'terminal'
-  | 'features'
-  | 'language'
-  | 'json'
 
 /** Survives Strict Mode remounts so a stale deep-link is not reapplied. */
 let appliedSettingsFocusSignal = 0
@@ -341,8 +337,9 @@ export default function SettingsEditor() {
     <div className="ui-font-scaled h-full flex flex-col bg-bg text-fg min-w-0">
       {/* Tab strip like VS Code */}
       <div className="flex-shrink-0 h-[var(--tab-height)] flex items-stretch border-b border-border bg-bg-sidebar">
-        <div className="flex items-center gap-2 px-3 border-r border-border bg-bg min-w-0">
-          <Settings2 size={14} className="text-fg-muted flex-shrink-0" />
+        <div className="relative flex items-center gap-2 px-3 border-r border-border bg-bg min-w-0">
+          <span className="absolute inset-x-0 bottom-0 h-[2px] bg-brand" aria-hidden />
+          <Settings2 size={14} className="text-brand flex-shrink-0" />
           <span className="text-[13px] truncate">{t('设置')}</span>
         </div>
       </div>
@@ -425,10 +422,10 @@ export default function SettingsEditor() {
                 }
                 scrollTo(cat.id)
               }}
-              className={`block w-full px-4 py-1.5 text-left text-[13px] truncate transition-colors ${
+              className={`block w-full border-l-2 px-4 py-1.5 text-left text-[13px] truncate transition-colors ${
                 category === cat.id
-                  ? 'bg-bg-active text-fg'
-                  : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                  ? 'border-brand bg-bg-active text-fg'
+                  : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
               }`}
             >
               {t(cat.label)}
@@ -1135,185 +1132,6 @@ export default function SettingsEditor() {
       </div>
 
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
-    </div>
-  )
-}
-
-function Section({
-  id,
-  title,
-  children,
-  sectionRefs,
-  onVisible,
-}: {
-  id: CategoryId
-  title: string
-  children: ReactNode
-  sectionRefs: MutableRefObject<Partial<Record<CategoryId, HTMLElement | null>>>
-  onVisible: (id: CategoryId) => void
-}) {
-  useEffect(() => {
-    const el = sectionRefs.current[id]
-    if (!el) return
-    const observer = new IntersectionObserver(
-      entries => {
-        if (entries.some(entry => entry.isIntersecting)) onVisible(id)
-      },
-      { rootMargin: '-20% 0px -60% 0px', threshold: 0 },
-    )
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [id, onVisible, sectionRefs])
-
-  return (
-    <section
-      ref={node => {
-        sectionRefs.current[id] = node
-      }}
-      className="scroll-mt-4"
-    >
-      <h2 className="text-[18px] font-semibold text-fg mb-3 pb-2 border-b border-border">
-        {title}
-      </h2>
-      <div className="flex flex-col gap-5">{children}</div>
-    </section>
-  )
-}
-
-function SettingItem({
-  title,
-  description,
-  modified,
-  locked,
-  lockHint,
-  children,
-}: {
-  title: string
-  description: string
-  modified?: boolean
-  locked?: boolean
-  lockHint?: string
-  children: ReactNode
-}) {
-  return (
-    <div
-      className={`relative pl-3 ${modified ? 'border-l-2 border-accent' : 'border-l-2 border-transparent'} ${
-        locked ? 'opacity-70' : ''
-      }`}
-    >
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-        <div className="min-w-[12rem] flex-1 basis-0">
-          <div className="text-[13px] font-medium text-fg">{title}</div>
-          <p className="mt-1 text-[12px] leading-relaxed text-fg-muted break-words">{description}</p>
-          {locked && lockHint && (
-            <p className="mt-1 text-[11px] text-warn break-words">{lockHint}</p>
-          )}
-        </div>
-        <div className="w-full sm:w-auto sm:max-w-[min(100%,320px)] sm:flex-shrink-0 pt-0.5">{children}</div>
-      </div>
-    </div>
-  )
-}
-
-function TerminalProfilesInline({
-  settings,
-  onChange,
-}: {
-  settings: TerminalProfileSettings
-  onChange: (next: TerminalProfileSettings) => void
-}) {
-  const { t } = useI18n()
-  const customProfiles = settings.profiles.filter(p => p.id !== DEFAULT_TERMINAL_PROFILE.id)
-  const shellOptions = availableTerminalShells().map(id => ({
-    value: id,
-    label: t(terminalShellLabelKey(id)),
-  }))
-
-  return (
-    <div className="flex flex-col gap-2">
-      {customProfiles.map(profile => (
-        <div key={profile.id} className="flex flex-col gap-1.5 rounded border border-border p-2">
-          <div className="grid grid-cols-[1fr_auto] gap-2">
-            <input
-              value={profile.name}
-              onChange={e =>
-                onChange({
-                  ...settings,
-                  profiles: settings.profiles.map(item =>
-                    item.id === profile.id ? { ...item, name: e.target.value } : item,
-                  ),
-                })
-              }
-              placeholder={t('名称')}
-              className="setting-control setting-control-wide !w-full"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                const profiles = settings.profiles.filter(item => item.id !== profile.id)
-                onChange({
-                  ...settings,
-                  profiles,
-                  defaultProfileId:
-                    settings.defaultProfileId === profile.id ? null : settings.defaultProfileId,
-                })
-              }}
-              className="h-[26px] px-2 rounded-sm text-[12px] text-danger hover:bg-bg-hover"
-            >
-              {t('删除')}
-            </button>
-          </div>
-          <SettingSelect
-            value={profile.shell}
-            className="setting-control setting-control-wide !w-full !h-[26px]"
-            aria-label={t('Shell')}
-            onChange={next =>
-              onChange({
-                ...settings,
-                profiles: settings.profiles.map(item =>
-                  item.id === profile.id
-                    ? { ...item, shell: next as TerminalShellId }
-                    : item,
-                ),
-              })
-            }
-            options={shellOptions}
-          />
-          <input
-            value={profile.command}
-            onChange={e =>
-              onChange({
-                ...settings,
-                profiles: settings.profiles.map(item =>
-                  item.id === profile.id ? { ...item, command: e.target.value } : item,
-                ),
-              })
-            }
-            placeholder={t('启动命令')}
-            className="setting-control setting-control-wide !w-full font-mono"
-          />
-        </div>
-      ))}
-      <button
-        type="button"
-        onClick={() =>
-          onChange({
-            ...settings,
-            profiles: [
-              ...settings.profiles,
-              {
-                id: crypto.randomUUID(),
-                name: t('新终端配置'),
-                command: '',
-                shell: settings.defaultShell,
-              },
-            ],
-          })
-        }
-        className="self-start rounded border border-border-strong px-2 py-1 text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg"
-      >
-        {t('添加终端配置')}
-      </button>
     </div>
   )
 }

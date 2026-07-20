@@ -159,4 +159,54 @@ describe('editorStore tab lifecycle', () => {
     expect(safeInvoke).not.toHaveBeenCalled()
     expect(useEditorStore.getState().activeTabId).toBe('plain')
   })
+
+  it('switches project sessions without losing dirty buffers or pinned settings', () => {
+    const pinned = makeTab({
+      id: 'settings',
+      path: 'C:\\Users\\tester\\.qingcode\\default-settings.json',
+      content: '{ /* settings */ }',
+    })
+    const dirty = makeTab({
+      id: 'p1-dirty',
+      path: 'D:\\project-one\\src\\draft.ts',
+      content: 'unsaved change',
+      dirty: true,
+    })
+    const incoming = makeTab({
+      id: 'p2-file',
+      path: 'D:\\project-two\\src\\index.ts',
+      content: 'project two',
+    })
+    useEditorStore.setState({
+      tabs: [dirty, pinned],
+      activeTabId: dirty.id,
+      pendingReveal: { path: dirty.path, line: 4 },
+      projectSessions: {
+        p2: {
+          tabs: [incoming],
+          activeTabId: incoming.id,
+          pendingReveal: { path: incoming.path, line: 8 },
+        },
+      },
+    })
+
+    useEditorStore.getState().activateProjectSession('p1', 'p2')
+
+    expect(useEditorStore.getState().tabs.map(tab => tab.id)).toEqual(['p2-file', 'settings'])
+    expect(useEditorStore.getState().activeTabId).toBe('p2-file')
+    expect(useEditorStore.getState().pendingReveal).toEqual({ path: incoming.path, line: 8 })
+    expect(useEditorStore.getState().projectSessions.p1.tabs[0]).toMatchObject({
+      id: 'p1-dirty',
+      content: 'unsaved change',
+      dirty: true,
+    })
+
+    useEditorStore.getState().activateProjectSession('p2', 'p1')
+
+    expect(useEditorStore.getState().tabs.map(tab => tab.id)).toEqual(['p1-dirty', 'settings'])
+    expect(useEditorStore.getState().findTab('p1-dirty')).toMatchObject({
+      content: 'unsaved change',
+      dirty: true,
+    })
+  })
 })

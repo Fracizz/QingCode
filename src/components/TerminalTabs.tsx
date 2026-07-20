@@ -363,14 +363,14 @@ export default function TerminalTabs() {
 
   return (
     <>
-    <div className="ui-font-scaled h-9 flex bg-bg-deep border-t border-border items-center flex-shrink-0">
-        <div className="flex items-center gap-1.5 px-3 text-[11px] font-semibold tracking-wide text-fg-muted">
+    <div className="ui-font-scaled relative flex h-[var(--tab-height)] flex-shrink-0 items-center border-b border-border bg-bg-deep">
+        <div className="flex h-full flex-shrink-0 items-center gap-1.5 border-r border-border px-3 text-[11px] font-semibold tracking-wide text-fg-muted">
           <TerminalIcon size={13} /> {translate('终端')}
         </div>
         <div
           role="tablist"
           aria-label={translate('终端')}
-          className="flex flex-1 min-w-0 overflow-x-auto items-center"
+          className="flex h-full min-w-0 flex-1 items-center overflow-x-auto"
           onKeyDown={event => {
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
             if (projectTerminals.length === 0) return
@@ -383,17 +383,18 @@ export default function TerminalTabs() {
             if (next) setActiveTerminal(next.id)
           }}
         >
-          {projectTerminals.map(t => {
+          {projectTerminals.map((t, index) => {
             const isCloseArmed = closeArmId === t.id
             const isActive = t.id === activeTerminalId
+            const showDivider = index < projectTerminals.length - 1
             return (
               <div
                 key={t.id}
                 role="tab"
                 tabIndex={isActive ? 0 : -1}
                 aria-selected={isActive}
-                className={`group flex items-center gap-1.5 pl-3 pr-2 h-9 cursor-pointer border-r border-border whitespace-nowrap transition-colors
-                  ${isActive ? 'bg-bg text-fg' : 'bg-bg-deep text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
+                className={`group relative flex h-full cursor-pointer items-center gap-1.5 whitespace-nowrap pl-3 pr-2 transition-colors
+                  ${isActive ? 'bg-tab-active text-fg' : 'bg-tab-inactive text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
                 onClick={() => {
                   setActiveTerminal(t.id)
                   if (closeArmId && closeArmId !== t.id) setCloseArmId(null)
@@ -415,6 +416,15 @@ export default function TerminalTabs() {
                   setContextMenu({ x: event.clientX, y: event.clientY, terminal: t })
                 }}
               >
+                {isActive && (
+                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand" aria-hidden="true" />
+                )}
+                {showDivider && (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border-strong"
+                  />
+                )}
                 {renamingId === t.id ? (
                   <>
                     <Circle
@@ -563,12 +573,12 @@ export default function TerminalTabs() {
             </button>
           </Tooltip>
         </div>
-        <div className="flex flex-shrink-0 items-center gap-0.5 pr-1.5 pl-1 border-l border-border">
+        <div className="flex h-full flex-shrink-0 items-center gap-0.5 border-l border-border pr-1.5 pl-1">
           <Tooltip label={translate('收起终端（任务继续在后台运行）')} side="top">
             <button
               type="button"
               aria-label={translate('收起终端')}
-              className="flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
+              className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
               onClick={() => requestToggleTerminal()}
             >
               <ChevronDown size={15} />
@@ -579,7 +589,7 @@ export default function TerminalTabs() {
               type="button"
               aria-label={translate('关闭全部终端')}
               disabled={projectTerminals.length === 0}
-              className="flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
               onClick={() => void handleCloseAll()}
             >
               <X size={15} />
