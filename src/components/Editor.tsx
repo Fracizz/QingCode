@@ -155,6 +155,15 @@ const lightTheme = EditorView.theme(
   { dark: false },
 )
 
+/** Soften oneDark’s near-white default body; leave syntax token colors alone. */
+const darkDefaultFgTheme = EditorView.theme(
+  {
+    '&': { color: '#cccccc' },
+    '.cm-content': { color: '#cccccc' },
+  },
+  { dark: true },
+)
+
 /** Selection-match colors for oneDark (main overlay + other hits). */
 const darkSelectionMatchTheme = EditorView.theme(
   {
@@ -170,7 +179,7 @@ const darkSelectionMatchTheme = EditorView.theme(
 function editorThemeExtension() {
   const resolved = getResolvedTheme()
   if (resolved === 'forest') return [FOREST_THEME, forestSyntax]
-  if (resolved === 'dark') return [oneDark, darkSelectionMatchTheme]
+  if (resolved === 'dark') return [oneDark, darkDefaultFgTheme, darkSelectionMatchTheme]
   return lightTheme
 }
 

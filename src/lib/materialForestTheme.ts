@@ -27,10 +27,11 @@ export const MATERIAL_FOREST = {
     orange: '#f78c6c',
     cyan: '#89ddff',
     gray: '#005454',
-    white: '#eeffff',
+    /** Soft default / variable fg — avoid Material's near-white #eeffff glare. */
+    white: '#c8d6c8',
     error: '#ff5370',
     comments: '#005454',
-    variables: '#eeffff',
+    variables: '#c8d6c8',
     links: '#80cbc4',
     functions: '#82aaff',
     keywords: '#c792ea',

@@ -126,7 +126,7 @@ function ChangeRowComponent(props: {
       >
         <span className={`${STATUS_COL} ${glyphColor}`}>{glyph}</span>
         <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-          <span className="flex-shrink-0 font-medium text-fg">{fileBaseName(change.path)}</span>
+          <span className="flex-shrink-0 font-medium text-tree-fg">{fileBaseName(change.path)}</span>
           {dirName && (
             <Tooltip
               label={dirName}

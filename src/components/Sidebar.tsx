@@ -298,7 +298,7 @@ function VirtualTreeRow({
         onlyWhenOverflow
         wrapperClassName="min-w-0 flex-1"
       >
-        <span className={`block truncate min-w-0 ${gitColor || 'text-fg'}`}>{node.name}</span>
+        <span className={`block truncate min-w-0 ${gitColor || 'text-tree-fg'}`}>{node.name}</span>
       </Tooltip>
       {gitGlyph && (
         <span className={`ml-auto flex-shrink-0 text-[11px] font-medium ${gitColor}`}>
@@ -1447,7 +1447,7 @@ export default function Sidebar() {
                       ? 'text-accent font-medium'
                       : isProjectRootSelected
                         ? 'bg-bg-active text-accent'
-                        : 'text-fg'
+                        : 'text-tree-fg'
                   }`}
                   style={
                     dragOverPath != null && pathsEqual(dragOverPath, currentProject.path)
