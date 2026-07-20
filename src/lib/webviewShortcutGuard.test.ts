@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isWebviewNativeShortcut } from './webviewShortcutGuard'
+import {
+  isWebviewNativeShortcut,
+  preventWebviewNativeShortcut,
+} from './webviewShortcutGuard'
 
 function keyEvent(init: Partial<KeyboardEvent>): KeyboardEvent {
   return {
@@ -39,5 +42,13 @@ describe('isWebviewNativeShortcut', () => {
     { key: 'c', ctrlKey: true, shiftKey: true, altKey: true },
   ])('keeps QingCode shortcut $key available', shortcut => {
     expect(isWebviewNativeShortcut(keyEvent(shortcut))).toBe(false)
+  })
+
+  it('cancels the WebView default without stopping QingCode event propagation', () => {
+    const event = keyEvent({ key: 'c', ctrlKey: true, shiftKey: true })
+
+    expect(preventWebviewNativeShortcut(event)).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(event.stopPropagation).not.toHaveBeenCalled()
   })
 })

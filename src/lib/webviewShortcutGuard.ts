@@ -15,6 +15,12 @@ export function isWebviewNativeShortcut(event: KeyboardEvent): boolean {
   return DEVTOOLS_KEYS.has(key) && (windowsDevtools || macDevtools)
 }
 
+export function preventWebviewNativeShortcut(event: KeyboardEvent): boolean {
+  if (!isWebviewNativeShortcut(event)) return false
+  event.preventDefault()
+  return true
+}
+
 let installed = false
 
 /** Cancel WebView defaults without stopping QingCode handlers for the same keystroke. */
@@ -25,8 +31,7 @@ export function installWebviewShortcutGuard() {
   document.addEventListener(
     'keydown',
     event => {
-      if (!isWebviewNativeShortcut(event)) return
-      event.preventDefault()
+      preventWebviewNativeShortcut(event)
     },
     true,
   )
