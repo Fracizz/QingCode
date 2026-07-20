@@ -74,7 +74,7 @@ export default function ContextMenu({
     )
     menu.style.maxHeight = `${placed.maxHeight}px`
 
-    let nextX = placed.x
+    const nextX = placed.x
     let nextY = placed.y
     // Apply immediately so the caret can be measured in this frame.
     shell.style.left = `${nextX}px`
