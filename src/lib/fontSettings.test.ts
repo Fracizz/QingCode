@@ -17,9 +17,10 @@ describe('primaryFontFamilyNameFromStack', () => {
 
 describe('withCurrentFontOption', () => {
   it('uses family name instead of generic custom label', () => {
-    const value = '"Microsoft YaHei", "Segoe UI", sans-serif'
+    // Must not match any INTERFACE_FONT_OPTIONS preset value.
+    const value = '"Noto Sans SC", "Segoe UI", sans-serif'
     const next = withCurrentFontOption(INTERFACE_FONT_OPTIONS, value)
-    expect(next[0]).toEqual({ label: 'Microsoft YaHei', value })
+    expect(next[0]).toEqual({ label: 'Noto Sans SC', value })
   })
 
   it('does not duplicate when value is already a preset', () => {
