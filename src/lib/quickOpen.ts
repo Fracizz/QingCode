@@ -84,6 +84,43 @@ export function quickOpenEntriesFromSearchHits(
 }
 
 /** Prefer the immediately available tree results, then fill gaps from native search. */
+const QUICK_OPEN_LOCATION_SUFFIX_RE = /:(\d+)(?::(\d+))?$/
+
+export type QuickOpenLocation = {
+  fileQuery: string
+  line?: number
+  column?: number
+}
+
+/** Split `file:line` / `file:line:column` from the fuzzy file query (Windows-drive safe). */
+export function parseQuickOpenLocation(query: string): QuickOpenLocation {
+  const trimmed = query.trim()
+  if (!trimmed) return { fileQuery: '' }
+
+  const match = trimmed.match(QUICK_OPEN_LOCATION_SUFFIX_RE)
+  if (!match || match.index === undefined) {
+    return { fileQuery: trimmed }
+  }
+
+  const fileQuery = trimmed.slice(0, match.index)
+  if (fileQuery === '' && /^[a-zA-Z]:/.test(trimmed)) {
+    return { fileQuery: trimmed }
+  }
+  if (/^[a-zA-Z]$/.test(fileQuery) && /^[a-zA-Z]:\d/.test(trimmed)) {
+    return { fileQuery: trimmed }
+  }
+
+  const line = Number.parseInt(match[1]!, 10)
+  const column = match[2] !== undefined ? Number.parseInt(match[2], 10) : undefined
+  if (!Number.isFinite(line) || line < 1) {
+    return { fileQuery: trimmed }
+  }
+  if (column !== undefined && (!Number.isFinite(column) || column < 1)) {
+    return { fileQuery: trimmed, line }
+  }
+  return { fileQuery, line, column }
+}
+
 export function mergeQuickOpenEntries(...groups: ReadonlyArray<readonly QuickOpenEntry[]>): QuickOpenEntry[] {
   const seen = new Set<string>()
   const merged: QuickOpenEntry[] = []
@@ -103,14 +140,14 @@ export function filterQuickOpenFiles(
   query: string,
   limit = 12,
 ): Array<QuickOpenEntry & { score: number }> {
-  const trimmed = query.trim()
-  if (!trimmed) {
+  const { fileQuery } = parseQuickOpenLocation(query)
+  if (!fileQuery) {
     return entries.slice(0, limit).map(entry => ({ ...entry, score: 1 }))
   }
   const ranked = entries
     .map(entry => {
       const haystack = `${entry.label} ${entry.relativePath} ${entry.projectName}`
-      const score = fuzzyScore(query, haystack)
+      const score = fuzzyScore(fileQuery, haystack)
       return score > 0 ? { ...entry, score } : null
     })
     .filter((entry): entry is QuickOpenEntry & { score: number } => entry !== null)

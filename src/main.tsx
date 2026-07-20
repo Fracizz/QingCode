@@ -29,6 +29,8 @@ void import('./lib/terminalCursorSettings').then(m =>
 )
 void import('./lib/formatOnSaveSettings').then(m => m.loadEffectiveFormatOnSave(null))
 void import('./lib/minimapSettings').then(m => m.loadEffectiveMinimapEnabled(null))
+// Sync session-persist cache from default-settings.json for the next boot.
+void import('./lib/sessionPersistSettings').then(m => m.loadSessionPersistEnabled())
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

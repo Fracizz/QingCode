@@ -36,10 +36,14 @@ export function isShortcutBound(shortcut: string): boolean {
   return shortcut.trim().length > 0
 }
 
+/** Editor-reserved: copy project-relative path (POSIX slashes). */
+export const COPY_RELATIVE_PATH_SHORTCUT = 'Ctrl+Shift+Alt+C'
+
 /** Display form (VS Code style). Matching uses canonicalizeShortcut. */
 export const RESERVED_SHORTCUTS = new Set([
   'Ctrl+S',
   'Ctrl+Shift+C',
+  COPY_RELATIVE_PATH_SHORTCUT,
   'Alt+C',
   'Shift+Alt+F',
   'Ctrl+Shift+I',

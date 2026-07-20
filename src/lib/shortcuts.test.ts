@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   canonicalizeShortcut,
+  COPY_RELATIVE_PATH_SHORTCUT,
   isReservedShortcut,
   shortcutFromKeyboardEvent,
   shortcutMatchesEvent,
@@ -48,6 +49,9 @@ describe('shortcutMatchesEvent', () => {
     const copyPath = keyEvent({ key: 'c', ctrlKey: true, shiftKey: true })
     expect(shortcutMatchesEvent('Ctrl+Shift+C', copyPath)).toBe(true)
 
+    const copyRelative = keyEvent({ key: 'c', ctrlKey: true, shiftKey: true, altKey: true })
+    expect(shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, copyRelative)).toBe(true)
+
     const copyRef = keyEvent({ key: 'c', altKey: true })
     expect(shortcutFromKeyboardEvent(copyRef)).toBe('Alt+C')
     expect(shortcutMatchesEvent('Alt+C', copyRef)).toBe(true)
@@ -62,6 +66,7 @@ describe('isReservedShortcut', () => {
 
   it('recognizes copy-path and copy-file-reference shortcuts', () => {
     expect(isReservedShortcut('Ctrl+Shift+C')).toBe(true)
+    expect(isReservedShortcut(COPY_RELATIVE_PATH_SHORTCUT)).toBe(true)
     expect(isReservedShortcut('Alt+C')).toBe(true)
   })
 })

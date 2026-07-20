@@ -54,7 +54,7 @@ type FileStat = { size: number; is_dir: boolean }
 /**
  * Stat → tier → edit (`read_file`) or view-only tab. Shared by open / retry / restore.
  */
-async function populateTabFromDisk(id: string, path: string, line?: number) {
+async function populateTabFromDisk(id: string, path: string, line?: number, column?: number) {
   const get = () => useEditorStore.getState()
   const set = useEditorStore.setState
 
@@ -128,7 +128,7 @@ async function populateTabFromDisk(id: string, path: string, line?: number) {
     if (!next) return s
     return {
       ...next,
-      pendingReveal: line ? { path, line } : s.pendingReveal,
+      pendingReveal: pendingRevealAt(path, line, column) ?? s.pendingReveal,
     }
   })
 
@@ -160,8 +160,17 @@ async function populateTabFromDisk(id: string, path: string, line?: number) {
 export type PendingReveal = {
   path: string
   line: number
-  /** Optional document offset; when set, Editor scrolls/selects here instead of line start. */
+  /** 1-based column; when set (and `from` is not), Editor places the caret on this column. */
+  column?: number
+  /** Optional document offset; when set, Editor scrolls/selects here instead of line/column. */
   from?: number
+}
+
+function pendingRevealAt(path: string, line?: number, column?: number): PendingReveal | null {
+  if (!line || line < 1) return null
+  const reveal: PendingReveal = { path, line }
+  if (column !== undefined && column >= 1) reveal.column = column
+  return reveal
 }
 
 export interface ProjectEditorSession {
@@ -180,7 +189,7 @@ interface EditorState {
   cursor: { line: number; col: number } | null
   /** Most-recently-used tab order for Ctrl+Tab cycling. */
   tabMru: string[]
-  openFile: (path: string, line?: number) => Promise<void>
+  openFile: (path: string, line?: number, column?: number) => Promise<void>
   retryOpenFile: (id: string) => Promise<void>
   /** Open a read-only HEAD ↔ working-tree compare tab for a project-relative file. */
   openDiff: (projectPath: string, relativePath: string, absolutePath: string) => Promise<void>
@@ -333,13 +342,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     return tabs
   },
 
-  openFile: async (path: string, line?: number) => {
+  openFile: async (path: string, line?: number, column?: number) => {
+    const reveal = pendingRevealAt(path, line, column)
     const existing = get().tabs.find(t => t.kind !== 'diff' && t.path === path)
     if (existing) {
       if (existing.loading) {
         set({
           activeTabId: existing.id,
-          pendingReveal: line ? { path, line } : get().pendingReveal,
+          pendingReveal: reveal ?? get().pendingReveal,
         })
         void useProjectStore.getState().revealFileInTree(path)
         return
@@ -348,7 +358,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (prev && prev !== existing.id) flushLiveEditorContent(prev)
       set({
         activeTabId: existing.id,
-        pendingReveal: line && !existing.openError ? { path, line } : null,
+        pendingReveal: reveal && !existing.openError ? reveal : null,
       })
       void useProjectStore.getState().revealFileInTree(path)
       if (!existing.openError) void useProjectStore.getState().addRecentFile(path)
@@ -372,14 +382,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return {
         tabs,
         activeTabId: id,
-        pendingReveal: line ? { path, line } : null,
+        pendingReveal: reveal,
         tabMru: buildTabMru(tabs, id),
       }
     })
     void useProjectStore.getState().revealFileInTree(path)
 
     try {
-      await populateTabFromDisk(id, path, line)
+      await populateTabFromDisk(id, path, line, column)
       void useProjectStore.getState().addRecentFile(path)
     } catch (e) {
       console.error('openFile failed:', e)

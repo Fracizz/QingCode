@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { X, Plus, Trash2, Wand2 } from 'lucide-react'
+import { X, Plus, Trash2, Wand2, CircleHelp } from 'lucide-react'
 import Tooltip from './Tooltip'
 import ModalOverlay from './ModalOverlay'
 import { useRunConfigStore, defaultConfigs, RUN_CONFIG_RELATIVE_PATH, stripRedundantCdPrefix, type RunConfig, type RunTask, type RunTaskType } from '../store/runConfigStore'
@@ -112,19 +112,19 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           </button>
         </div>
 
-        <div className="flex-1 overflow-auto px-4 py-3 flex flex-col gap-3">
+        <div className="flex-1 overflow-auto px-4 py-2 flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <label className="text-[12px] text-fg-muted w-16 flex-shrink-0">{t('名称')}</label>
             <input
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={t('如：前后端')}
-              className="flex-1 px-2 py-1.5 text-[13px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+              className="flex-1 px-2 py-1 text-[13px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
             />
             <Tooltip label={t('从常见模板填充（Python 后端 + 前端）')} side="bottom">
               <button
                 onClick={loadTemplate}
-                className="inline-flex items-center gap-1 text-[12px] px-2 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border text-fg-muted hover:text-fg"
+                className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded bg-bg-elevated hover:bg-bg-active border border-border text-fg-muted hover:text-fg"
               >
                 <Wand2 size={13} /> {t('模板')}
               </button>
@@ -142,7 +142,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           </div>
 
           {tasks.length === 0 ? (
-            <div className="text-[12px] text-fg-dim py-4 text-center border border-dashed border-border rounded">
+            <div className="text-[12px] text-fg-dim py-3 text-center border border-dashed border-border rounded">
               {t('点击“添加任务”或“模板”快速开始')}
             </div>
           ) : (
@@ -158,7 +158,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-3 px-4 h-12 border-t border-border flex-shrink-0">
+        <div className="flex items-center justify-between gap-3 px-4 h-11 border-t border-border flex-shrink-0">
           <p className="text-[11px] text-fg-dim truncate">
             {t('保存至')}{' '}
             <code className="font-mono text-fg-muted">{RUN_CONFIG_RELATIVE_PATH}</code>
@@ -206,20 +206,24 @@ function TaskEditor({
     onChange({ env: Object.keys(env).length > 0 ? env : undefined })
   }
 
+  const commandHelp = t(
+    'Windows 下使用 CMD，可用 && 连接命令；换行会自动转为 &&。工作目录已填时无需再写 cd。',
+  )
+
   return (
-    <div className="rounded-md border border-border bg-bg/40 p-3 flex flex-col gap-2">
+    <div className="rounded-md border border-border bg-bg/40 p-2 flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
         <span className="text-[11px] text-fg-dim w-6 flex-shrink-0">#{index + 1}</span>
         <input
           value={task.name ?? ''}
           onChange={e => onChange({ name: e.target.value })}
           placeholder={t('任务名（可选，如：后端）')}
-          className="flex-1 px-2 py-1 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+          className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
         />
         <select
           value={task.type}
           onChange={e => onChange({ type: e.target.value as RunTaskType })}
-          className="px-2 py-1 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+          className="max-w-[9.5rem] px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
         >
           {TYPE_OPTIONS.map(taskType => (
             <option key={taskType} value={taskType}>
@@ -230,23 +234,28 @@ function TaskEditor({
         <Tooltip label={t('删除任务')} side="bottom">
           <button
             onClick={onRemove}
-            className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
+            className="p-0.5 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
           >
             <Trash2 size={13} />
           </button>
         </Tooltip>
       </div>
       {task.type === 'command' ? (
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] text-fg-muted">{t('命令')}</label>
+        <div className="flex items-start gap-2">
+          <div className="flex items-center gap-0.5 w-16 flex-shrink-0 pt-1">
+            <label className="text-[11px] text-fg-muted">{t('命令')}</label>
+            <Tooltip label={commandHelp} side="bottom" wrapperClassName="inline-flex">
+              <span className="text-fg-dim hover:text-fg-muted cursor-default" aria-hidden>
+                <CircleHelp size={11} />
+              </span>
+            </Tooltip>
+          </div>
           <CommandTextarea
             value={task.target}
             onChange={value => onChange({ target: value })}
             placeholder="python manage.py runserver"
+            className="flex-1 min-w-0"
           />
-          <p className="text-[11px] text-fg-dim">
-            {t('Windows 下使用 CMD，可用 && 连接命令；换行会自动转为 &&。工作目录已填时无需再写 cd。')}
-          </p>
         </div>
       ) : (
         <div className="flex items-center gap-2">
@@ -255,7 +264,7 @@ function TaskEditor({
             value={task.target}
             onChange={e => onChange({ target: e.target.value })}
             placeholder="scripts/run_backend.ps1"
-            className="flex-1 px-2 py-1 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+            className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
           />
         </div>
       )}
@@ -265,50 +274,49 @@ function TaskEditor({
           value={task.cwd ?? ''}
           onChange={e => onChange({ cwd: e.target.value })}
           placeholder={t('留空=项目根；可相对，如 backend/')}
-          className="flex-1 px-2 py-1 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+          className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
         />
       </div>
       <div className="flex flex-col gap-1">
-        <div className="flex items-center justify-between">
-          <label className="text-[11px] text-fg-muted">{t('环境变量')}</label>
+        <div className="flex items-center gap-2">
+          <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">{t('环境变量')}</label>
+          {envEntries.length > 0 && <span className="flex-1 min-w-0" />}
           <button
+            type="button"
             onClick={() => setEnv([...envEntries, ['', '']])}
-            className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded text-accent hover:bg-bg-hover"
+            className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded text-accent hover:bg-bg-hover shrink-0"
           >
             <Plus size={11} /> {t('添加')}
           </button>
         </div>
-        {envEntries.length === 0 ? (
-          <div className="text-[11px] text-fg-dim">{t('无')}</div>
-        ) : (
-          envEntries.map(([k, v], i) => (
-            <div key={i} className="flex items-center gap-1.5">
-              <input
-                value={k}
-                onChange={e =>
-                  setEnv(envEntries.map((entry, idx) => (idx === i ? [e.target.value, entry[1]] : entry)))
-                }
-                placeholder="KEY"
-                className="w-28 px-1.5 py-1 text-[11px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
-              />
-              <span className="text-fg-dim">=</span>
-              <input
-                value={v}
-                onChange={e =>
-                  setEnv(envEntries.map((entry, idx) => (idx === i ? [entry[0], e.target.value] : entry)))
-                }
-                placeholder="value"
-                className="flex-1 px-1.5 py-1 text-[11px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
-              />
-              <button
-                onClick={() => setEnv(envEntries.filter((_, idx) => idx !== i))}
-                className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
-              >
-                <X size={11} />
-              </button>
-            </div>
-          ))
-        )}
+        {envEntries.map(([k, v], i) => (
+          <div key={i} className="flex items-center gap-1.5 pl-[4.5rem]">
+            <input
+              value={k}
+              onChange={e =>
+                setEnv(envEntries.map((entry, idx) => (idx === i ? [e.target.value, entry[1]] : entry)))
+              }
+              placeholder="KEY"
+              className="w-28 px-1.5 py-0.5 text-[11px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+            />
+            <span className="text-fg-dim">=</span>
+            <input
+              value={v}
+              onChange={e =>
+                setEnv(envEntries.map((entry, idx) => (idx === i ? [entry[0], e.target.value] : entry)))
+              }
+              placeholder="value"
+              className="flex-1 min-w-0 px-1.5 py-0.5 text-[11px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+            />
+            <button
+              type="button"
+              onClick={() => setEnv(envEntries.filter((_, idx) => idx !== i))}
+              className="p-0.5 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
+            >
+              <X size={11} />
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -322,21 +330,23 @@ function CommandTextarea({
   value,
   onChange,
   placeholder,
+  className,
 }: {
   value: string
   onChange: (value: string) => void
   placeholder?: string
+  className?: string
 }) {
   const ref = useRef<HTMLTextAreaElement>(null)
-  const minRows = 2
+  const minRows = 1
   const maxRows = 8
 
   const resize = () => {
     const el = ref.current
     if (!el) return
     el.style.height = 'auto'
-    const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight) || 20
-    const padding = 12
+    const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight) || 18
+    const padding = 8
     const maxHeight = lineHeight * maxRows + padding
     el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`
   }
@@ -354,7 +364,7 @@ function CommandTextarea({
       placeholder={placeholder}
       onChange={e => onChange(e.target.value)}
       onInput={resize}
-      className="w-full min-h-[3.25rem] max-h-40 px-2.5 py-1.5 text-[12px] leading-5 rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono resize-y overflow-y-auto wrap-break-word"
+      className={`w-full min-h-[1.75rem] max-h-40 px-2 py-1 text-[12px] leading-[18px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono resize-y overflow-y-auto wrap-break-word ${className ?? ''}`}
     />
   )
 }

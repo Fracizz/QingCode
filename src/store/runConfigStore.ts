@@ -10,7 +10,31 @@ import {
 import { useProjectStore } from './projectStore'
 import { useTerminalStore, type ShellKind } from './terminalStore'
 import { useUIStore } from './uiStore'
-import type { Project } from '../types'
+import type { Project, TerminalTab } from '../types'
+
+/** Terminal still counts as a live run-config instance (incl. awaiting restore spawn). */
+export function isActiveRunTerminal(
+  t: Pick<TerminalTab, 'status' | 'awaitingRestoreSpawn'>,
+): boolean {
+  return t.awaitingRestoreSpawn === true || t.status !== 'exited'
+}
+
+/** Rebuild in-memory run maps from terminals that carry runConfigId/runTaskId. */
+export function buildRunningMapsFromTerminals(
+  terminals: Array<Pick<TerminalTab, 'id' | 'runConfigId' | 'runTaskId'>>,
+): { runningByTask: Record<string, string>; runningConfigs: Record<string, string[]> } {
+  const runningByTask: Record<string, string> = {}
+  const runningConfigs: Record<string, string[]> = {}
+  for (const t of terminals) {
+    if (!t.runConfigId || !t.runTaskId) continue
+    const key = `${t.runConfigId}:${t.runTaskId}`
+    runningByTask[key] = t.id
+    const list = runningConfigs[t.runConfigId] ?? []
+    if (!list.includes(key)) list.push(key)
+    runningConfigs[t.runConfigId] = list
+  }
+  return { runningByTask, runningConfigs }
+}
 
 export type RunTaskType = 'ps1' | 'bat' | 'sh' | 'command' | 'script'
 
@@ -264,7 +288,8 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
         task.type as ShellKind,
         task.target,
         task.env ?? {},
-        name
+        name,
+        { runConfigId: config.id, runTaskId: task.id },
       )
       if (terminalId) {
         const key = `${config.id}:${task.id}`
@@ -293,7 +318,13 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
   isConfigRunning: (configId: string) => {
     const keys = get().runningConfigs[configId] ?? []
     const byTask = get().runningByTask
-    return keys.some(k => byTask[k] && useTerminalStore.getState().terminals.some(t => t.id === byTask[k] && t.status !== 'exited'))
+    return keys.some(k => {
+      const tid = byTask[k]
+      if (!tid) return false
+      return useTerminalStore
+        .getState()
+        .terminals.some(t => t.id === tid && isActiveRunTerminal(t))
+    })
   },
 
   taskTerminalId: (configId: string, taskId: string) => get().runningByTask[`${configId}:${taskId}`],
@@ -308,5 +339,13 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
       return { runningByTask, runningConfigs }
     }),
 }))
+
+/** Apply run-config ↔ terminal linkage after session / named-workspace hydrate. */
+export function rehydrateRunningFromTerminals(): void {
+  const { runningByTask, runningConfigs } = buildRunningMapsFromTerminals(
+    useTerminalStore.getState().terminals,
+  )
+  useRunConfigStore.setState({ runningByTask, runningConfigs })
+}
 
 export { runConfigPath, defaultConfigs, stripRedundantCdPrefix }

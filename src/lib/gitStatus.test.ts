@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
+  absoluteGitPath,
   buildStatusMap,
+  changesFromWorkdirEntries,
   dirGitStatus,
   dirHasGitChanges,
   gitStatusColorClass,
+  gitStatusFromWorkdirEntries,
   gitStatusGlyph,
   gitStatusKey,
 } from './gitStatus'
@@ -37,5 +40,29 @@ describe('gitStatus helpers', () => {
   it('dir with only untracked children shows ??', () => {
     const map = buildStatusMap([{ path: 'D:/repo/tmp/x.txt', status: '??' }])
     expect(dirGitStatus(map, 'D:/repo/tmp')).toBe('??')
+  })
+
+  it('converts workdir entries into SCM panel changes', () => {
+    expect(absoluteGitPath('D:\\repo', 'src\\a.ts')).toBe('D:/repo/src/a.ts')
+    expect(
+      changesFromWorkdirEntries('D:\\repo', [
+        { path: 'D:\\repo\\src\\a.ts', status: 'M' },
+        { path: 'D:/repo/new.ts', status: '??' },
+      ]),
+    ).toEqual([
+      { path: 'src/a.ts', status: 'M' },
+      { path: 'new.ts', status: '??' },
+    ])
+    expect(
+      gitStatusFromWorkdirEntries(
+        'D:\\repo',
+        [{ path: 'D:\\repo\\src\\a.ts', status: 'M' }],
+        'main',
+      ),
+    ).toEqual({
+      is_repository: true,
+      branch: 'main',
+      changes: [{ path: 'src/a.ts', status: 'M' }],
+    })
   })
 })

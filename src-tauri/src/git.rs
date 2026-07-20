@@ -248,11 +248,17 @@ fn collect_file_diff(root: &Path, relative: &str) -> Result<String, String> {
     Ok(String::new())
 }
 
-#[tauri::command]
-pub fn git_status(path: String, allowlist: State<'_, PathAllowlist>) -> Result<GitStatus, String> {
-    ensure_git_root(&path, &allowlist)?;
-    let root = Path::new(&path);
-    let output = run_git(root, &["status", "--porcelain=v1", "--branch", "-z"])?;
+fn collect_git_status(root: &Path) -> Result<GitStatus, String> {
+    let output = run_git(
+        root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "--branch",
+            "-z",
+            "--ignore-submodules=dirty",
+        ],
+    )?;
     if !output.status.success() {
         if is_not_repository_error(&output) {
             return Ok(GitStatus {
@@ -267,6 +273,18 @@ pub fn git_status(path: String, allowlist: State<'_, PathAllowlist>) -> Result<G
         ));
     }
     Ok(parse_status(&output.stdout))
+}
+
+#[tauri::command]
+pub async fn git_status(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<GitStatus, String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || collect_git_status(&root))
+        .await
+        .map_err(|error| format!("读取 Git 状态失败：{error}"))?
 }
 
 #[tauri::command]

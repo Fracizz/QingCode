@@ -2,10 +2,15 @@ import { useEffect } from 'react'
 import {
   copyActiveFileReferenceAction,
   copyActivePathAction,
+  copyActiveRelativePathAction,
 } from '../lib/copyFileActions'
 import { formatDocument } from '../lib/formatDocument'
 import { requestTerminalClear, requestTerminalSearch } from '../lib/terminalViewBridge'
-import { isShortcutInputTarget, shortcutMatchesEvent } from '../lib/shortcuts'
+import {
+  COPY_RELATIVE_PATH_SHORTCUT,
+  isShortcutInputTarget,
+  shortcutMatchesEvent,
+} from '../lib/shortcuts'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import type { ShortcutMap } from '../lib/shortcuts'
@@ -134,6 +139,13 @@ export function useAppKeyboardShortcuts({
         event.preventDefault()
         event.stopPropagation()
         void copyActivePathAction()
+      } else if (shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event)) {
+        if (isTerminalKeyTarget(event.target) || isExplorerKeyTarget(event.target)) {
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        void copyActiveRelativePathAction()
       } else if (shortcutMatchesEvent('Alt+C', event)) {
         if (isTerminalKeyTarget(event.target) || isExplorerKeyTarget(event.target)) {
           return

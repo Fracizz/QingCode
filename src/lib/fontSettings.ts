@@ -321,10 +321,24 @@ export function saveFontSettings(
   void syncEditorFontSizeToGlobalSettings(settings.editorFontSize)
 }
 
+/** First concrete family in a CSS font-family stack (for select labels). */
+export function primaryFontFamilyNameFromStack(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  const quoted = trimmed.match(/^"((?:\\.|[^"\\])*)"/)
+  if (quoted) {
+    return quoted[1].replace(/\\"/g, '"').replace(/\\\\/g, '\\')
+  }
+  const first = trimmed.split(',')[0]?.trim()
+  if (!first) return null
+  return first.replace(/^["']|["']$/g, '') || null
+}
+
 /** Keep unknown persisted values selectable after preset lists change. */
 export function withCurrentFontOption(options: FontOption[], value: string): FontOption[] {
   if (options.some(option => option.value === value)) return options
-  return [{ label: '自定义', value }, ...options]
+  const label = primaryFontFamilyNameFromStack(value) ?? '自定义'
+  return [{ label, value }, ...options]
 }
 
 export type FontKind = 'sans' | 'mono'

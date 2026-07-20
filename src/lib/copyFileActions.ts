@@ -8,6 +8,7 @@ import {
   findProjectForPath,
   formatFileReference,
   pathsEqual,
+  projectRelativePath,
 } from '../utils/fileReferences'
 
 function activeEditableTab() {
@@ -31,6 +32,24 @@ export async function copyPathAction(path: string): Promise<void> {
   try {
     await copyToClipboard(path)
     pushToast('success', translate('路径已复制'))
+  } catch (error) {
+    pushToast('error', translate('复制路径失败: {error}', { error: String(error) }))
+  }
+}
+
+/** Copy project-relative path with POSIX slashes (Ctrl+Shift+Alt+C). */
+export async function copyRelativePathAction(path: string): Promise<void> {
+  const pushToast = useProjectStore.getState().pushToast
+  const projectState = useProjectStore.getState()
+  const project =
+    findProjectForPath(projectState.projects, path) ?? projectState.currentProject
+  if (!project) {
+    pushToast('error', translate('无法确定该路径所属项目'))
+    return
+  }
+  try {
+    await copyToClipboard(projectRelativePath(project.path, path))
+    pushToast('success', translate('相对路径已复制'))
   } catch (error) {
     pushToast('error', translate('复制路径失败: {error}', { error: String(error) }))
   }
@@ -78,11 +97,17 @@ export async function copyFileReferenceAction(
   }
 }
 
-/** Ctrl+Shift+C / Alt+C for the active editor tab (app-level keybindings). */
+/** Ctrl+Shift+C / Ctrl+Shift+Alt+C / Alt+C for the active editor tab. */
 export async function copyActivePathAction(): Promise<void> {
   const tab = activeEditableTab()
   if (!tab?.path) return
   await copyPathAction(tab.path)
+}
+
+export async function copyActiveRelativePathAction(): Promise<void> {
+  const tab = activeEditableTab()
+  if (!tab?.path) return
+  await copyRelativePathAction(tab.path)
 }
 
 export async function copyActiveFileReferenceAction(): Promise<void> {

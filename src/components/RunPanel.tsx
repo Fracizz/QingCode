@@ -11,7 +11,14 @@ import {
   ShieldOff,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
-import { useRunConfigStore, type RunConfig, type RunTask, type RunTaskType, RUN_CONFIG_RELATIVE_PATH } from '../store/runConfigStore'
+import {
+  useRunConfigStore,
+  isActiveRunTerminal,
+  type RunConfig,
+  type RunTask,
+  type RunTaskType,
+  RUN_CONFIG_RELATIVE_PATH,
+} from '../store/runConfigStore'
 import { useTerminalStore } from '../store/terminalStore'
 import {
   isProjectRestricted,
@@ -84,7 +91,12 @@ export default function RunPanel() {
       const tids: string[] = []
       for (const k of keys) {
         const tid = runningByTask[k]
-        if (tid && terminals.some(t => t.id === tid && t.status !== 'exited')) tids.push(tid)
+        if (
+          tid &&
+          terminals.some(t => t.id === tid && isActiveRunTerminal(t))
+        ) {
+          tids.push(tid)
+        }
       }
       if (tids.length > 0) map.set(configId, tids)
     }

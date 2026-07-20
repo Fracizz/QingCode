@@ -38,6 +38,9 @@ export type PersistedTerminalMeta = {
   shell?: string
   profileId?: string
   allowTitleRename?: boolean
+  /** Run-config task linkage (rehydrated into runningByTask after restart). */
+  runConfigId?: string
+  runTaskId?: string
 }
 
 export type PersistedProjectSession = {
@@ -76,6 +79,8 @@ export type TerminalSnapshotInput = {
   shell?: string
   profileId?: string
   allowTitleRename?: boolean
+  runConfigId?: string
+  runTaskId?: string
 }
 
 export type ProjectEditorSessionInput = {
@@ -150,6 +155,12 @@ function parseTerminal(value: unknown): PersistedTerminalMeta | null {
   if (typeof value.profileId === 'string') terminal.profileId = value.profileId
   if (typeof value.allowTitleRename === 'boolean') {
     terminal.allowTitleRename = value.allowTitleRename
+  }
+  if (typeof value.runConfigId === 'string' && value.runConfigId) {
+    terminal.runConfigId = value.runConfigId
+  }
+  if (typeof value.runTaskId === 'string' && value.runTaskId) {
+    terminal.runTaskId = value.runTaskId
   }
   return terminal
 }
@@ -273,6 +284,8 @@ export function serializeTerminalMeta(terminal: TerminalSnapshotInput): Persiste
   if (typeof terminal.allowTitleRename === 'boolean') {
     out.allowTitleRename = terminal.allowTitleRename
   }
+  if (terminal.runConfigId) out.runConfigId = terminal.runConfigId
+  if (terminal.runTaskId) out.runTaskId = terminal.runTaskId
   return out
 }
 

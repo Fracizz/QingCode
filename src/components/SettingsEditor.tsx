@@ -84,6 +84,11 @@ import {
   loadUpdateSettings,
   saveCheckOnStartup,
 } from '../lib/updateSettings'
+import {
+  DEFAULT_SESSION_PERSIST,
+  loadSessionPersistEnabled,
+  saveSessionPersistEnabled,
+} from '../lib/sessionPersistSettings'
 import { checkForAppUpdate, promptAppUpdate } from '../lib/appUpdate'
 
 type SettingsScope = 'user' | 'workspace'
@@ -135,6 +140,7 @@ export default function SettingsEditor() {
   const [openWith, setOpenWith] = useState<OpenWithStatus | null>(null)
   const [openWithBusy, setOpenWithBusy] = useState(false)
   const [checkOnStartup, setCheckOnStartup] = useState(DEFAULT_UPDATE_SETTINGS.checkOnStartup)
+  const [sessionPersist, setSessionPersist] = useState(DEFAULT_SESSION_PERSIST)
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const sectionRefs = useRef<Partial<Record<CategoryId, HTMLElement | null>>>({})
@@ -150,6 +156,7 @@ export default function SettingsEditor() {
 
   useEffect(() => {
     void loadUpdateSettings().then(settings => setCheckOnStartup(settings.checkOnStartup))
+    void loadSessionPersistEnabled().then(setSessionPersist)
   }, [])
 
   useEffect(() => {
@@ -747,7 +754,16 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('功能', '快捷键', '打开方式', 'Open with', '检查更新', '自动检查更新') &&
+            {match(
+              '功能',
+              '快捷键',
+              '打开方式',
+              'Open with',
+              '检查更新',
+              '自动检查更新',
+              '会话状态',
+              '会话状态保存',
+            ) &&
               !workspaceLocked && (
               <Section
                 id="features"
@@ -755,6 +771,36 @@ export default function SettingsEditor() {
                 sectionRefs={sectionRefs}
                 onVisible={setCategory}
               >
+                {match('会话状态', '会话状态保存', '会话') && (
+                  <SettingItem
+                    title={t('会话状态保存')}
+                    description={t(
+                      '重启后恢复编辑器标签、终端与运行配置关联。关闭后不再保存或恢复，并清除已缓存的会话快照。',
+                    )}
+                    modified={sessionPersist !== DEFAULT_SESSION_PERSIST}
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
+                  >
+                    <select
+                      value={sessionPersist ? 'on' : 'off'}
+                      disabled={workspaceLocked}
+                      onChange={e => {
+                        const enabled = e.target.value === 'on'
+                        setSessionPersist(enabled)
+                        void saveSessionPersistEnabled(enabled).catch(error =>
+                          pushToast(
+                            'error',
+                            t('保存会话设置失败: {error}', { error: String(error) }),
+                          ),
+                        )
+                      }}
+                      className="setting-control setting-select"
+                    >
+                      <option value="on">{t('开启')}</option>
+                      <option value="off">{t('关闭')}</option>
+                    </select>
+                  </SettingItem>
+                )}
                 {match('检查更新', '自动检查更新', '更新') && (
                   <>
                     <SettingItem

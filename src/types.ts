@@ -88,4 +88,7 @@ export interface TerminalTab {
    * separator instead of resetting xterm.
    */
   restorePreservedOutput?: boolean
+  /** Run-config linkage — survives session restore so status/Stop stay wired. */
+  runConfigId?: string
+  runTaskId?: string
 }

@@ -8,6 +8,7 @@ import { promptDialog, validateEntryName } from '../store/promptStore'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useTerminalStore } from '../store/terminalStore'
+import { rehydrateRunningFromTerminals } from '../store/runConfigStore'
 import { useUIStore } from '../store/uiStore'
 import { translate } from './i18n'
 import { setEditorScroll } from './editorSession'
@@ -280,6 +281,7 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
   await useTerminalStore
     .getState()
     .replaceTerminalSessionsForProjects(memberIds, terminals, activeTerminalByProject)
+  rehydrateRunningFromTerminals()
 
   // Prefer a project whose directory still exists on disk.
   let activeId = remapped.activeProjectId

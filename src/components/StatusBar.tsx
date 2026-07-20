@@ -263,9 +263,11 @@ export default function StatusBar() {
                     onClick={event => {
                       const rect = event.currentTarget.getBoundingClientRect()
                       const menuWidth = 260
+                      // preferAbove: y is the menu bottom edge. Leave a small gap
+                      // above the status bar (button is inset within the 24px bar).
                       setEncodingMenu({
                         x: Math.max(8, rect.right - menuWidth),
-                        y: Math.max(8, rect.top - 4),
+                        y: Math.max(8, rect.top - 12),
                       })
                     }}
                   >

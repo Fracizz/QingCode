@@ -12,6 +12,7 @@ import {
   collectQuickOpenFiles,
   filterQuickOpenFiles,
   mergeQuickOpenEntries,
+  parseQuickOpenLocation,
   quickOpenEntriesFromSearchHits,
   type QuickOpenEntry,
   type QuickOpenSearchHit,
@@ -87,7 +88,7 @@ export default function CommandPalette() {
   // run at most one native search at a time; stale responses are never rendered.
   useEffect(() => {
     const requestId = ++searchRequestId.current
-    const needle = query.trim()
+    const { fileQuery: needle } = parseQuickOpenLocation(query)
     setNativeEntries([])
     if (!open || isCommandMode(query) || !needle || !isTauri()) return
 
@@ -180,7 +181,8 @@ export default function CommandPalette() {
         await item.command.run()
         return
       }
-      await openFile(item.entry.path)
+      const { line, column } = parseQuickOpenLocation(query)
+      await openFile(item.entry.path, line, column)
     } catch (error) {
       console.error('palette action failed:', error)
     }

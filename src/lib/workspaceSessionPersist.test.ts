@@ -57,6 +57,15 @@ describe('parseWorkspaceSession', () => {
               launchCommand: '',
               profileId: 'powershell',
             },
+            {
+              id: 'term2',
+              name: '前后端 · 后端',
+              cwd: 'D:/a',
+              launchCommand: 'npm run dev',
+              shellKind: 'command',
+              runConfigId: 'cfg1',
+              runTaskId: 'task1',
+            },
           ],
           activeTerminalId: 'term1',
         },
@@ -66,6 +75,8 @@ describe('parseWorkspaceSession', () => {
     expect(parsed!.projects.p1.tabs).toHaveLength(1)
     expect(parsed!.projects.p1.tabs[0].dirty).toBe(true)
     expect(parsed!.projects.p1.terminals[0].profileId).toBe('powershell')
+    expect(parsed!.projects.p1.terminals[1].runConfigId).toBe('cfg1')
+    expect(parsed!.projects.p1.terminals[1].runTaskId).toBe('task1')
     expect(parsed!.projects.p1.activeTabId).toBe('t1')
   })
 
@@ -195,6 +206,8 @@ describe('localStorage roundtrip', () => {
           cwd: 'D:/',
           launchCommand: 'echo hi',
           shellKind: 'command',
+          runConfigId: 'cfg-a',
+          runTaskId: 'task-b',
         },
       ],
       activeTerminalByProject: { p1: 'term1' },
@@ -204,5 +217,6 @@ describe('localStorage roundtrip', () => {
     saveWorkspaceSession(snapshot)
     expect(localStorage.getItem(WORKSPACE_SESSION_KEY)).toBeTruthy()
     expect(loadWorkspaceSession()).toEqual(snapshot)
+    expect(loadWorkspaceSession()!.projects.p1.terminals[0].runConfigId).toBe('cfg-a')
   })
 })

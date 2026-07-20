@@ -79,11 +79,21 @@ import {
   type PendingRename,
   type VisibleTreeRow,
 } from '../utils/fileTreeView'
-import { relocateProjectWithDialog, addTerminalProjectWithPrompt, renameProjectWithPrompt } from '../utils/projectActions'
+import {
+  relocateProjectWithDialog,
+  addTerminalProjectWithPrompt,
+  renameProjectWithPrompt,
+  removeProjectWithConfirm,
+} from '../utils/projectActions'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
 import { formatBytes } from '../utils/formatBytes'
 import { useI18n } from '../lib/i18n'
-import { isShortcutBound, shortcutMatchesEvent } from '../lib/shortcuts'
+import {
+  COPY_RELATIVE_PATH_SHORTCUT,
+  isShortcutBound,
+  shortcutMatchesEvent,
+} from '../lib/shortcuts'
+import { copyRelativePathAction } from '../lib/copyFileActions'
 import { useShortcutStore } from '../store/shortcutStore'
 
 type DirectoryDeleteStats = {
@@ -128,6 +138,7 @@ type TreeRowProps = {
   gitStatusFor: (path: string, isDir: boolean) => string | null
   onOpenContextMenu: (event: ReactMouseEvent, target: ContextTarget) => void
   onCopyPath: (path: string) => void
+  onCopyRelativePath: (path: string) => void
   onCopyAsReference: (path: string) => void
   onSelectNode: (node: FileNode, event: ReactMouseEvent) => void
   onOpenNode: (node: FileNode) => void
@@ -153,6 +164,7 @@ function VirtualTreeRow({
   gitStatusFor,
   onOpenContextMenu,
   onCopyPath,
+  onCopyRelativePath,
   onCopyAsReference,
   onSelectNode,
   onOpenNode,
@@ -219,8 +231,12 @@ function VirtualTreeRow({
         ${isCut || isDragging ? 'opacity-45' : ''}`}
       style={rowStyle}
       onPointerDown={event => onPointerDownNode(event, node)}
-      onClick={event => onSelectNode(node, event)}
-      onDoubleClick={() => onOpenNode(node)}
+      onClick={event => {
+        onSelectNode(node, event)
+        // Plain click opens files / toggles folders; modifier clicks stay selection-only.
+        if (event.ctrlKey || event.metaKey || event.shiftKey) return
+        onOpenNode(node)
+      }}
       onContextMenu={event => {
         event.currentTarget.focus()
         if (!pathSetHas(selectedPaths, node.path)) {
@@ -237,6 +253,11 @@ function VirtualTreeRow({
         if (shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)) {
           event.preventDefault()
           onCopyPath(node.path)
+          return
+        }
+        if (shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event.nativeEvent)) {
+          event.preventDefault()
+          onCopyRelativePath(node.path)
           return
         }
         if (shortcutMatchesEvent('Alt+C', event.nativeEvent)) {
@@ -256,7 +277,7 @@ function VirtualTreeRow({
             onPointerDown={event => event.stopPropagation()}
             onClick={event => {
               event.stopPropagation()
-              // IDEA: chevron click also selects the folder row.
+              // Chevron selects and toggles without relying on the row click path.
               onSelectNode(node, event)
               onToggleFolder(node)
             }}
@@ -529,6 +550,8 @@ export default function Sidebar() {
   )
 
   const openTreeNode = (node: FileNode) => {
+    // Skip activation after a drag (pointerup still synthesizes a click).
+    if (suppressTreeClickRef.current) return
     if (node.is_dir) {
       void toggleFolderExpand(node)
       return
@@ -614,7 +637,11 @@ export default function Sidebar() {
     await useProjectStore.getState().addProjectFromDialog()
   }
 
-  const handleRemoveProject = (id: string, _name: string, _path: string) => {
+  const handleRemoveProject = (id: string, name: string, path: string) => {
+    if (useProjectStore.getState().unavailableProjectIds.includes(id)) {
+      void removeProjectWithConfirm(id, name, path)
+      return
+    }
     void hideProject(id)
   }
 
@@ -1184,6 +1211,12 @@ export default function Sidebar() {
           action: () => copyPath(project.path),
         },
         {
+          label: t('复制相对路径'),
+          icon: <Copy size={14} />,
+          shortcut: COPY_RELATIVE_PATH_SHORTCUT,
+          action: () => void copyRelativePathAction(project.path),
+        },
+        {
           label: t('复制为文件引用'),
           icon: <AtSign size={14} />,
           shortcut: 'Alt+C',
@@ -1306,6 +1339,12 @@ export default function Sidebar() {
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+Shift+C',
         action: () => copyPath(node.path),
+      },
+      {
+        label: t('复制相对路径'),
+        icon: <Copy size={14} />,
+        shortcut: COPY_RELATIVE_PATH_SHORTCUT,
+        action: () => void copyRelativePathAction(node.path),
       },
       {
         label: t('复制为文件引用'),
@@ -1494,19 +1533,38 @@ export default function Sidebar() {
                     </button>
                   </Tooltip>
                   {unavailable ? (
-                    <Tooltip label={t('重新定位项目')} side="bottom">
-                      <button
-                        type="button"
-                        aria-label={t('重新定位项目')}
-                        className="p-0.5 text-warn hover:text-fg"
-                        onClick={event => {
-                          event.stopPropagation()
-                          handleRelocateProject(currentProject.id)
-                        }}
-                      >
-                        <LocateFixed size={13} />
-                      </button>
-                    </Tooltip>
+                    <>
+                      <Tooltip label={t('重新定位项目')} side="bottom">
+                        <button
+                          type="button"
+                          aria-label={t('重新定位项目')}
+                          className="p-0.5 text-warn hover:text-fg"
+                          onClick={event => {
+                            event.stopPropagation()
+                            handleRelocateProject(currentProject.id)
+                          }}
+                        >
+                          <LocateFixed size={13} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip label={t('移除项目')} side="bottom">
+                        <button
+                          type="button"
+                          aria-label={t('移除项目')}
+                          className="p-0.5 text-fg-dim hover:text-danger"
+                          onClick={event => {
+                            event.stopPropagation()
+                            handleRemoveProject(
+                              currentProject.id,
+                              currentProject.name,
+                              currentProject.path,
+                            )
+                          }}
+                        >
+                          <X size={13} />
+                        </button>
+                      </Tooltip>
+                    </>
                   ) : (
                     <Tooltip label={t('从顶栏隐藏')} side="bottom">
                       <button
@@ -1588,6 +1646,14 @@ export default function Sidebar() {
                             }
                             if (
                               selectedPath &&
+                              shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event.nativeEvent)
+                            ) {
+                              event.preventDefault()
+                              void copyRelativePathAction(selectedPath)
+                              return
+                            }
+                            if (
+                              selectedPath &&
                               shortcutMatchesEvent('Alt+C', event.nativeEvent)
                             ) {
                               event.preventDefault()
@@ -1626,6 +1692,7 @@ export default function Sidebar() {
                               gitStatusFor,
                               onOpenContextMenu: showContextMenu,
                               onCopyPath: copyPath,
+                              onCopyRelativePath: path => void copyRelativePathAction(path),
                               onCopyAsReference: path => void copyAsReference(path),
                               onSelectNode: selectTreeNode,
                               onOpenNode: openTreeNode,

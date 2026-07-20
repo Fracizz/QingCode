@@ -2,6 +2,7 @@ import { useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { RotateCcw } from 'lucide-react'
 import {
   canonicalizeShortcut,
+  COPY_RELATIVE_PATH_SHORTCUT,
   isReservedShortcut,
   isShortcutBound,
   isShortcutInputTarget,
@@ -86,6 +87,11 @@ const FIXED_SHORTCUTS: { shortcut: string; label: string; description: string }[
     shortcut: 'Ctrl+Shift+C',
     label: '复制路径',
     description: '复制当前文件或选中项的完整路径。',
+  },
+  {
+    shortcut: COPY_RELATIVE_PATH_SHORTCUT,
+    label: '复制相对路径',
+    description: '复制当前文件相对项目根目录的路径（POSIX 斜杠）。',
   },
   {
     shortcut: 'Alt+C',

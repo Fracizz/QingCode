@@ -25,7 +25,7 @@ export function formatFileReference(
   return `@${project.name}/${relative}${lineSuffix}`
 }
 
-function projectRelativePath(projectPath: string, filePath: string) {
+export function projectRelativePath(projectPath: string, filePath: string) {
   const root = normalizePath(projectPath)
   const file = normalizePath(filePath)
   if (file.toLowerCase().startsWith(`${root.toLowerCase()}/`)) {

@@ -1,4 +1,5 @@
-import { normalizePath } from '../utils/fileReferences'
+import type { GitChange, GitStatus } from './git'
+import { normalizePath, projectRelativePath } from '../utils/fileReferences'
 
 export type GitStatusEntry = {
   path: string
@@ -8,6 +9,37 @@ export type GitStatusEntry = {
 export type GitWorkdirStatus = {
   entries: GitStatusEntry[]
   dirty_count: number
+}
+
+/** Absolute dirty entries → SCM panel relative changes. */
+export function changesFromWorkdirEntries(
+  projectPath: string,
+  entries: GitStatusEntry[],
+): GitChange[] {
+  return entries.map(entry => ({
+    path: projectRelativePath(projectPath, entry.path),
+    status: entry.status,
+  }))
+}
+
+/** Build a SCM snapshot from the lightweight workdir store (instant panel open). */
+export function gitStatusFromWorkdirEntries(
+  projectPath: string,
+  entries: GitStatusEntry[],
+  branch: string | null = null,
+): GitStatus {
+  return {
+    is_repository: true,
+    branch,
+    changes: changesFromWorkdirEntries(projectPath, entries),
+  }
+}
+
+/** Absolute path for a porcelain relative change (stable `/` keys). */
+export function absoluteGitPath(projectPath: string, relativePath: string): string {
+  const root = normalizePath(projectPath)
+  const rel = relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
+  return rel ? `${root}/${rel}` : root
 }
 
 /** Normalize path keys for case-insensitive lookup (Windows). */

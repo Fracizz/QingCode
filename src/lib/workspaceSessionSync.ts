@@ -21,9 +21,11 @@ import {
   type EditorScrollPos,
 } from './editorSession'
 import { shouldRestoreWorkspace } from './windowSession'
+import { isSessionPersistEnabled } from './sessionPersistSettings'
 import { isPinnedSettingsTab, guessLanguage, tabNameFromPath } from '../utils/editorHelpers'
 import { useEditorStore, type ProjectEditorSession } from '../store/editorStore'
 import { persistTerminalOutputNow, useTerminalStore } from '../store/terminalStore'
+import { rehydrateRunningFromTerminals } from '../store/runConfigStore'
 import { useProjectStore } from '../store/projectStore'
 import type { EditorTab, TerminalTab } from '../types'
 import { isTerminalShellId, normalizeTerminalShell } from './terminalShell'
@@ -94,6 +96,8 @@ export function terminalFromPersisted(
     shell: isTerminalShellId(meta.shell) ? normalizeTerminalShell(meta.shell) : undefined,
     profileId: meta.profileId,
     allowTitleRename: meta.allowTitleRename,
+    runConfigId: meta.runConfigId,
+    runTaskId: meta.runTaskId,
     status: 'exited',
     exitCode: null,
     awaitingRestoreSpawn: true,
@@ -118,6 +122,7 @@ export function hydrateWorkspaceSessionsIfNeeded(): boolean {
   if (hydrated) return false
   hydrated = true
   if (!shouldRestoreWorkspace()) return false
+  if (!isSessionPersistEnabled()) return false
 
   const snapshot = loadWorkspaceSession()
   if (!snapshot) return false
@@ -151,6 +156,7 @@ export function hydrateWorkspaceSessionsIfNeeded(): boolean {
     activeTabId: pinnedTabs[0]?.id ?? null,
   })
   useTerminalStore.getState().hydrateTerminalSessions(terminals, activeTerminalByProject)
+  rehydrateRunningFromTerminals()
   return true
 }
 
@@ -292,6 +298,8 @@ export function captureWorkspaceSessionSnapshot(options?: {
         env: t.env,
         profileId: t.profileId,
         allowTitleRename: t.allowTitleRename,
+        runConfigId: t.runConfigId,
+        runTaskId: t.runTaskId,
       })),
     activeTerminalByProject: terminalState.activeTerminalByProject,
     excludeProjectIds: [...ephemeralIds, ...unknownIds],
@@ -301,6 +309,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
 
 function persistNow() {
   if (!shouldRestoreWorkspace() || !persistReady) return
+  if (!isSessionPersistEnabled()) return
   saveWorkspaceSession(captureWorkspaceSessionSnapshot())
   // Keep bulky scrollback in sync when session metadata flushes.
   persistTerminalOutputNow()
@@ -308,6 +317,7 @@ function persistNow() {
 
 export function scheduleWorkspaceSessionPersist() {
   if (!shouldRestoreWorkspace()) return
+  if (!isSessionPersistEnabled()) return
   if (persistTimer) clearTimeout(persistTimer)
   persistTimer = setTimeout(() => {
     persistTimer = null

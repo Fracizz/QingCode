@@ -4,16 +4,23 @@ import {
   useMemo,
   useState,
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
+  Copy,
+  ExternalLink,
+  FileIcon,
   Folder,
   GitBranch,
+  GitCompare,
   LoaderCircle,
+  LocateFixed,
   RefreshCw,
 } from 'lucide-react'
+import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { List, useListRef } from 'react-window'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
@@ -25,8 +32,12 @@ import {
 import type { GitChange, GitStatus } from '../lib/git'
 import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
 import { isTauri, safeInvoke } from '../lib/tauri'
+import { useUIStore } from '../store/uiStore'
+import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
+import { copyToClipboard } from '../utils/fileReferences'
 import Tooltip from './Tooltip'
 import EmptyState from './EmptyState'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import { translate, useI18n } from '../lib/i18n'
 
 const ROW_HEIGHT = 32
@@ -49,10 +60,22 @@ function fileDirName(path: string) {
   return separator > 0 ? path.slice(0, separator + 1) : ''
 }
 
+/** Worktree column of `git status --short` (second character). */
+function gitWorktreeCode(status: string): string {
+  if (status === '??' || status === '!!') return status
+  if (status.length >= 2) return status[1] ?? status[0]
+  return status
+}
+
+function canOpenFileInEditor(status: string): boolean {
+  return gitWorktreeCode(status) !== 'D'
+}
+
 type ChangeRowProps = {
   changes: GitChange[]
   selected: string | null
   onOpenChange: (change: GitChange) => void
+  onOpenContextMenu: (event: ReactMouseEvent, change: GitChange) => void
 }
 
 function ChangeRowComponent(props: {
@@ -60,7 +83,7 @@ function ChangeRowComponent(props: {
   index: number
   style: CSSProperties
 } & ChangeRowProps) {
-  const { index, style, changes, selected, onOpenChange } = props
+  const { index, style, changes, selected, onOpenChange, onOpenContextMenu } = props
   const change = changes[index]
   if (!change) return null
 
@@ -73,6 +96,7 @@ function ChangeRowComponent(props: {
       <button
         type="button"
         onClick={() => onOpenChange(change)}
+        onContextMenu={event => onOpenContextMenu(event, change)}
         className={`flex h-8 w-full items-center gap-2 px-4 text-left text-[12px] hover:bg-bg-hover ${
           active ? 'bg-bg-active' : ''
         }`}
@@ -91,18 +115,27 @@ function ChangeRowComponent(props: {
   )
 }
 
+function seedSourceControlStatus(projectPath: string): GitStatus | null {
+  return peekSourceControlCache(projectPath) ?? useGitStatusStore.getState().peekPanelStatus(projectPath)
+}
+
 export default function SourceControlPanel() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
   const projectPath = currentProject?.path ?? null
 
   const [status, setStatus] = useState<GitStatus | null>(() =>
-    projectPath ? peekSourceControlCache(projectPath) : null,
+    projectPath ? seedSourceControlStatus(projectPath) : null,
   )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; change: GitChange } | null>(
+    null,
+  )
   const listRef = useListRef(null)
+  const setView = useUIStore(s => s.setView)
+  const revealFileInTree = useProjectStore(s => s.revealFileInTree)
 
   const refresh = useCallback(async (opts?: { soft?: boolean }) => {
     const soft = opts?.soft ?? false
@@ -123,18 +156,40 @@ export default function SourceControlPanel() {
     if (!soft) setLoading(true)
 
     try {
+      // Soft path reuses the shared workdir refresh (coalesced with badge/tree).
+      // Hard refresh uses full git_status so branch + rename paths stay accurate.
+      if (soft) {
+        await useGitStatusStore.getState().refresh(path)
+        let next = seedSourceControlStatus(path)
+        if (next?.is_repository && !next.branch) {
+          try {
+            const head = await safeInvoke<{ name: string } | null>('读取 Git 分支', 'get_git_head', {
+              path,
+            })
+            if (head?.name) {
+              next = { ...next, branch: head.name }
+              useSourceControlStore.getState().setCache(path, next)
+            }
+          } catch {
+            /* keep null branch; hard refresh can recover */
+          }
+        }
+        if (next) {
+          setStatus(next)
+          setError(null)
+        }
+        return
+      }
+
       const next = await safeInvoke<GitStatus>('读取 Git 状态', 'git_status', {
         path,
       })
       setStatus(next)
       setError(null)
-      useSourceControlStore.getState().setCache(path, next)
-      if (!soft) {
-        setSelected(null)
-      }
-      useGitStatusStore.getState().scheduleRefresh(path, 0)
+      useGitStatusStore.getState().applyFromGitStatus(path, next)
+      setSelected(null)
     } catch (reason) {
-      if (!soft || !peekSourceControlCache(path)) {
+      if (!soft || !seedSourceControlStatus(path)) {
         setStatus(null)
       }
       setError(String(reason))
@@ -150,9 +205,9 @@ export default function SourceControlPanel() {
       setSelected(null)
       return
     }
-    const cached = peekSourceControlCache(projectPath)
-    if (cached) {
-      setStatus(cached)
+    const seeded = seedSourceControlStatus(projectPath)
+    if (seeded) {
+      setStatus(seeded)
       setError(null)
       void refresh({ soft: true })
     } else {
@@ -161,24 +216,16 @@ export default function SourceControlPanel() {
     }
   }, [projectPath, refresh])
 
-  // Refresh only while this panel is mounted, and only after a debounced file
-  // watcher event for the active project. This keeps the fast cached open path
-  // while making terminal/external edits visible without a polling loop.
+  // Follow shared workdir updates (file watcher / focus) without a second git_status.
   useEffect(() => {
     if (!projectPath || !isTauri()) return
-    let timer: number | null = null
-    const onWorktreeChange = (event: Event) => {
-      const detail = (event as CustomEvent<{ projectPath?: string }>).detail
-      if (detail?.projectPath !== projectPath) return
-      if (timer) window.clearTimeout(timer)
-      timer = window.setTimeout(() => void refresh({ soft: true }), 700)
-    }
-    window.addEventListener('qingcode:git-worktree-changed', onWorktreeChange)
-    return () => {
-      if (timer) window.clearTimeout(timer)
-      window.removeEventListener('qingcode:git-worktree-changed', onWorktreeChange)
-    }
-  }, [projectPath, refresh])
+    return useGitStatusStore.subscribe((state, prev) => {
+      if (state.projectPath !== projectPath) return
+      if (state.entries === prev.entries && state.dirtyCount === prev.dirtyCount) return
+      const next = seedSourceControlStatus(projectPath)
+      if (next) setStatus(next)
+    })
+  }, [projectPath])
 
   const openChange = useCallback(
     (change: GitChange) => {
@@ -190,6 +237,91 @@ export default function SourceControlPanel() {
     [currentProject],
   )
 
+  const copyAbsolutePath = async (path: string) => {
+    try {
+      await copyToClipboard(path)
+      useProjectStore.getState().pushToast('success', t('路径已复制'))
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const copyRelativePath = async (relativePath: string) => {
+    try {
+      await copyToClipboard(relativePath.replace(/\\/g, '/'))
+      useProjectStore.getState().pushToast('success', t('相对路径已复制'))
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const revealInSidebar = (absolutePath: string) => {
+    setView('explorer')
+    void revealFileInTree(absolutePath)
+  }
+
+  const revealInFileManager = async (absolutePath: string) => {
+    try {
+      await revealItemInDir(absolutePath)
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('在文件管理器中打开失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const showChangeContextMenu = useCallback((event: ReactMouseEvent, change: GitChange) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setContextMenu({ x: event.clientX, y: event.clientY, change })
+  }, [])
+
+  const contextMenuItems = (change: GitChange): ContextMenuItem[] => {
+    if (!currentProject) return []
+    const abs = absoluteFilePath(currentProject.path, change.path)
+    return [
+      {
+        label: t('打开更改'),
+        icon: <GitCompare size={14} />,
+        action: () => openChange(change),
+      },
+      {
+        label: t('打开文件'),
+        icon: <FileIcon size={14} />,
+        disabled: !canOpenFileInEditor(change.status),
+        action: () => void useEditorStore.getState().openFile(abs),
+      },
+      {
+        label: t('在资源管理器中定位'),
+        icon: <LocateFixed size={14} />,
+        separatorBefore: true,
+        action: () => revealInSidebar(abs),
+      },
+      {
+        label: t('在文件管理器中显示'),
+        icon: <ExternalLink size={14} />,
+        action: () => void revealInFileManager(abs),
+      },
+      {
+        label: t('复制路径'),
+        icon: <Copy size={14} />,
+        shortcut: 'Ctrl+Shift+C',
+        separatorBefore: true,
+        action: () => void copyAbsolutePath(abs),
+      },
+      {
+        label: t('复制相对路径'),
+        icon: <Copy size={14} />,
+        shortcut: COPY_RELATIVE_PATH_SHORTCUT,
+        action: () => void copyRelativePath(change.path),
+      },
+    ]
+  }
+
   const changes = status?.changes ?? []
 
   const rowProps = useMemo(
@@ -197,8 +329,9 @@ export default function SourceControlPanel() {
       changes,
       selected,
       onOpenChange: openChange,
+      onOpenContextMenu: showChangeContextMenu,
     }),
-    [changes, selected, openChange],
+    [changes, selected, openChange, showChangeContextMenu],
   )
 
   let body: ReactNode
@@ -266,6 +399,14 @@ export default function SourceControlPanel() {
         </Tooltip>
       </div>
       {body}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenuItems(contextMenu.change)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   )
 }

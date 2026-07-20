@@ -3,6 +3,7 @@ import {
   peekSourceControlCache,
   useSourceControlStore,
 } from './sourceControlStore'
+import { useGitStatusStore } from './gitStatusStore'
 import type { GitStatus } from '../lib/git'
 
 const sample: GitStatus = {
@@ -17,6 +18,7 @@ const sample: GitStatus = {
 describe('sourceControlStore', () => {
   beforeEach(() => {
     useSourceControlStore.getState().clearCache()
+    useGitStatusStore.getState().clear()
   })
 
   it('stores and peeks status by project path', () => {
@@ -31,5 +33,16 @@ describe('sourceControlStore', () => {
     expect(peekSourceControlCache('D:\\repo')).toEqual(sample)
     useSourceControlStore.getState().clearCache('D:\\repo')
     expect(peekSourceControlCache('D:\\repo')).toBeNull()
+  })
+
+  it('applyFromGitStatus seeds badge store and SCM cache without a second fetch', () => {
+    useGitStatusStore.getState().applyFromGitStatus('D:\\repo', sample)
+    expect(useGitStatusStore.getState().dirtyCount).toBe(2)
+    expect(useGitStatusStore.getState().statusFor('D:\\repo\\a.ts')).toBe(' M')
+    expect(peekSourceControlCache('D:\\repo')).toEqual(sample)
+    expect(useGitStatusStore.getState().peekPanelStatus('D:\\repo')?.changes).toEqual([
+      { path: 'a.ts', status: ' M' },
+      { path: 'b.ts', status: '??' },
+    ])
   })
 })

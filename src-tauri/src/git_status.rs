@@ -261,17 +261,20 @@ pub fn read_git_workdir_status(path: &Path) -> Option<GitWorkdirStatus> {
 }
 
 #[tauri::command]
-pub fn get_git_workdir_status(
+pub async fn get_git_workdir_status(
     path: String,
     allowlist: State<'_, PathAllowlist>,
-) -> Option<GitWorkdirStatus> {
+) -> Result<Option<GitWorkdirStatus>, String> {
     if path.trim().is_empty() {
-        return None;
+        return Ok(None);
     }
     if allowlist.ensure_allowed(&path).is_err() {
-        return None;
+        return Ok(None);
     }
-    read_git_workdir_status(Path::new(&path))
+    let root = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || read_git_workdir_status(&root))
+        .await
+        .map_err(|error| format!("读取 Git 状态失败：{error}"))
 }
 
 /// Read file contents at `HEAD:path` via `git show`. `None` when the path is not in HEAD

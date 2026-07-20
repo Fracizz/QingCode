@@ -41,14 +41,6 @@ export default function FontFamilySelect({
     }
   }, [])
 
-  const presetOptions = useMemo(() => {
-    const withCurrent = withCurrentFontOption(presets, value)
-    const presetValues = new Set(presets.map(option => option.value))
-    return withCurrent.filter(
-      option => presetValues.has(option.value) || option.value === value,
-    )
-  }, [presets, value])
-
   const systemOptions = useMemo(() => {
     const presetValues = new Set(presets.map(option => option.value))
     const presetLabels = presets.map(option => option.label)
@@ -56,6 +48,18 @@ export default function FontFamilySelect({
       option => !presetValues.has(option.value),
     )
   }, [kind, presets, systemFamilies])
+
+  const presetOptions = useMemo(() => {
+    const withCurrent = withCurrentFontOption(presets, value)
+    const presetValues = new Set(presets.map(option => option.value))
+    const systemValues = new Set(systemOptions.map(option => option.value))
+    return withCurrent.filter(option => {
+      if (presetValues.has(option.value)) return true
+      if (option.value !== value) return false
+      // Avoid duplicate <option value> — browsers show the first match ("自定义" in 预设).
+      return !systemValues.has(value)
+    })
+  }, [presets, value, systemOptions])
 
   const knownValues = useMemo(() => {
     const values = new Set<string>()

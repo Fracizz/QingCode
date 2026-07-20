@@ -25,6 +25,7 @@ import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import {
   relocateProjectWithDialog,
+  removeProjectWithConfirm,
   renameProjectWithPrompt,
 } from '../utils/projectActions'
 import Tooltip from './Tooltip'
@@ -148,6 +149,10 @@ export default function ProjectPicker() {
 
   const handleRemove = (project: Project) => {
     closeDropdown()
+    if (unavailableProjectIds.includes(project.id)) {
+      void removeProjectWithConfirm(project.id, project.name, project.path)
+      return
+    }
     void hideProject(project.id)
   }
 
@@ -365,11 +370,19 @@ export default function ProjectPicker() {
                         </button>
                       </Tooltip>
                     )}
-                    <Tooltip label={t('从顶栏隐藏')} side="right" wrapperClassName="flex-shrink-0">
+                    <Tooltip
+                      label={unavailable ? t('移除项目') : t('从顶栏隐藏')}
+                      side="right"
+                      wrapperClassName="flex-shrink-0"
+                    >
                       <button
                         type="button"
-                        aria-label={t('从顶栏隐藏')}
-                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-danger"
+                        aria-label={unavailable ? t('移除项目') : t('从顶栏隐藏')}
+                        className={`${
+                          unavailable
+                            ? 'text-fg-dim hover:text-danger'
+                            : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-danger'
+                        }`}
                         onClick={event => {
                           event.stopPropagation()
                           handleRemove(project)
@@ -490,19 +503,34 @@ function Chip({
         </Tooltip>
       )}
       {unavailable ? (
-        <Tooltip label={t('重新定位项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
-          <button
-            type="button"
-            aria-label={t('重新定位项目')}
-            className="inline-flex items-center justify-center text-warn hover:text-fg w-4 h-4"
-            onClick={event => {
-              event.stopPropagation()
-              onRelocate()
-            }}
-          >
-            <LocateFixed size={12} />
-          </button>
-        </Tooltip>
+        <>
+          <Tooltip label={t('重新定位项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+            <button
+              type="button"
+              aria-label={t('重新定位项目')}
+              className="inline-flex items-center justify-center text-warn hover:text-fg w-4 h-4"
+              onClick={event => {
+                event.stopPropagation()
+                onRelocate()
+              }}
+            >
+              <LocateFixed size={12} />
+            </button>
+          </Tooltip>
+          <Tooltip label={t('移除项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+            <button
+              type="button"
+              aria-label={t('移除项目')}
+              className="inline-flex items-center justify-center text-fg-dim hover:text-danger w-4 h-4"
+              onClick={event => {
+                event.stopPropagation()
+                onRemove()
+              }}
+            >
+              <X size={12} />
+            </button>
+          </Tooltip>
+        </>
       ) : (
         <Tooltip label={t('从顶栏隐藏')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
           <button

@@ -35,6 +35,8 @@ export const PROJECTS_KEY = 'qingcode.projects'
 export const PROJECTS_SYNC_ON_STARTUP_KEY = 'qingcode.projects.syncOnStartup'
 export const UPDATE_CHECK_ON_STARTUP_KEY = 'qingcode.update.checkOnStartup'
 export const UPDATE_SKIPPED_VERSION_KEY = 'qingcode.update.skippedVersion'
+/** Persist/restore editor tabs + terminal sessions across app restarts. */
+export const SESSION_PERSIST_KEY = 'qingcode.session.persist'
 
 function buildSharedDefaults(): SettingsFile {
   return {
@@ -102,6 +104,7 @@ export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   [PROJECTS_SYNC_ON_STARTUP_KEY]: true,
   [PROJECTS_KEY]: [] as SettingsProjectEntry[],
   [UPDATE_CHECK_ON_STARTUP_KEY]: true,
+  [SESSION_PERSIST_KEY]: true,
 }
 
 /** Workspace `.qingcode/project-settings.json` defaults (no project list — global-only). */
@@ -259,6 +262,11 @@ ${SHARED_SETTINGS_BODY}
   // qingcode.update.skippedVersion
   //   跳过的版本号（不含 v）；与远端最新版本相同时不再弹窗提示
   // "qingcode.update.skippedVersion": "0.1.4",
+  //
+  // qingcode.session.persist
+  //   true  = 重启后恢复编辑器标签、终端元数据与滚动缓冲（默认）
+  //   false = 不保存/不恢复会话状态；关闭后会清除已缓存的会话快照
+  "qingcode.session.persist": true,
 
   // ============================== 自定义扩展 ==============================
   // custom：自由键值，供后续功能读取；请勿删除整个 custom 对象

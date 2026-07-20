@@ -132,8 +132,20 @@ try {
   $sw = [Diagnostics.Stopwatch]::StartNew()
   # One Rust build produces both the app exe and the NSIS setup.
   $tauriArgs = @('tauri', 'build', '--bundles', 'nsis', '--ci')
+  # Pass override via file: PowerShell strips quotes from inline JSON in @args.
   if (-not $Force -and -not (Test-FrontendStale) -and (Test-Path $distIndex)) {
-    $tauriArgs += @('--config', '{"build":{"beforeBuildCommand":""}}')
+    $devDir = Join-Path $projectRoot '.dev'
+    if (-not (Test-Path $devDir)) {
+      New-Item -ItemType Directory -Path $devDir | Out-Null
+    }
+    $skipFrontendConfig = Join-Path $devDir 'tauri-package-override.json'
+    $overrideJson = (@{ build = @{ beforeBuildCommand = '' } } | ConvertTo-Json -Depth 3) + "`n"
+    [System.IO.File]::WriteAllText(
+      $skipFrontendConfig,
+      $overrideJson,
+      (New-Object System.Text.UTF8Encoding $false)
+    )
+    $tauriArgs += @('--config', $skipFrontendConfig)
   }
   & pnpm @tauriArgs
   if ($LASTEXITCODE -ne 0) {

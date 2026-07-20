@@ -62,6 +62,7 @@ import {
   copyToClipboard,
   findProjectForPath,
   formatFileReference,
+  projectRelativePath,
 } from '../utils/fileReferences'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
 import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
@@ -98,6 +99,8 @@ import {
 } from '../lib/editorSession'
 import { editorPerfProfileForTab, type EditorPerfProfile } from '../lib/fileSizePolicy'
 import { formatDocument } from '../lib/formatDocument'
+import { copyRelativePathAction } from '../lib/copyFileActions'
+import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import {
   isSupportedEditorLanguage,
   loadLanguageSupport,
@@ -347,6 +350,30 @@ function createTabEditorState(
             void copyToClipboard(tabPath)
               .then(() =>
                 useProjectStore.getState().pushToast('success', translate('路径已复制'))
+              )
+              .catch(error =>
+                useProjectStore
+                  .getState()
+                  .pushToast(
+                    'error',
+                    translate('复制路径失败: {error}', { error: String(error) })
+                  )
+              )
+            return true
+          },
+        },
+        {
+          key: 'Ctrl-Shift-Alt-c',
+          run: () => {
+            const projectState = useProjectStore.getState()
+            const project =
+              findProjectForPath(projectState.projects, tabPath) ??
+              projectState.currentProject
+            if (!project) return false
+            const relative = projectRelativePath(project.path, tabPath)
+            void copyToClipboard(relative)
+              .then(() =>
+                useProjectStore.getState().pushToast('success', translate('相对路径已复制'))
               )
               .catch(error =>
                 useProjectStore
@@ -816,7 +843,12 @@ export default function Editor() {
     const pos =
       typeof pendingReveal.from === 'number'
         ? Math.min(Math.max(0, pendingReveal.from), doc.length)
-        : line.from
+        : typeof pendingReveal.column === 'number'
+          ? Math.min(
+              Math.max(line.from, line.from + pendingReveal.column - 1),
+              line.to,
+            )
+          : line.from
     viewRef.current.dispatch({
       effects: [
         EditorView.scrollIntoView(pos, { y: 'center' }),
@@ -985,6 +1017,12 @@ export default function Editor() {
         shortcut: 'Ctrl+Shift+C',
         separatorBefore: true,
         action: () => copyPath(path),
+      },
+      {
+        label: t('复制相对路径'),
+        icon: <Copy size={14} />,
+        shortcut: COPY_RELATIVE_PATH_SHORTCUT,
+        action: () => void copyRelativePathAction(path),
       },
       {
         label: t('复制为文件引用'),

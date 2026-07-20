@@ -33,6 +33,7 @@ import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
 import { planTerminalSpawn } from '../lib/terminalSpawnPlan'
 import { normalizeTerminalShell, terminalShellLabelKey } from '../lib/terminalShell'
 import { clearTerminalCommandActivity } from '../lib/terminalCommandActivity'
+import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 /** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
@@ -210,6 +211,7 @@ export function seedTerminalOutputFromPersist(
 
 /** Hydrate all persisted scrollback/history entries that match known tab ids. */
 export function hydrateTerminalOutputForTabs(terminalIds: Iterable<string>) {
+  if (!isSessionPersistEnabled()) return
   const snapshot = loadTerminalOutputSnapshot()
   if (!snapshot) return
   const wanted = new Set(terminalIds)
@@ -270,6 +272,7 @@ export function persistTerminalOutputNow() {
     clearTimeout(outputPersistTimer)
     outputPersistTimer = null
   }
+  if (!isSessionPersistEnabled()) return
   const terminals = collectOutputPersistPayload()
   const snapshot = buildTerminalOutputSnapshot({
     terminals,
@@ -314,7 +317,8 @@ interface TerminalState {
     shellKind: ShellKind,
     target: string,
     env: Record<string, string>,
-    name: string
+    name: string,
+    linkage?: { runConfigId: string; runTaskId: string },
   ) => Promise<string | null>
   closeTerminal: (id: string) => Promise<void>
   closeOtherTerminals: (id: string) => Promise<void>
@@ -436,7 +440,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     shellKind: ShellKind,
     target: string,
     env: Record<string, string>,
-    name: string
+    name: string,
+    linkage?,
   ) => {
     const project =
       useProjectStore.getState().projects.find(p => p.id === projectId) ??
@@ -470,6 +475,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       exitCode: null,
       startedAt: Date.now(),
       ptySpawnPending: true,
+      ...(linkage?.runConfigId && linkage.runTaskId
+        ? { runConfigId: linkage.runConfigId, runTaskId: linkage.runTaskId }
+        : {}),
     }
     set(s => ({
       terminals: [...s.terminals, tab],

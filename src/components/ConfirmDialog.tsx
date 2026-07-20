@@ -48,7 +48,13 @@ export default function ConfirmDialog() {
   const meta = KIND_META[kind]
   const Icon = meta.icon
   const hasAlt = Boolean(request.altLabel)
-  const wide = hasAlt || Boolean(request.detail && request.detail.includes('\n'))
+  const detailText = request.detail ? t(request.detail) : ''
+  // Paths / multi-line dumps keep mono; short prose tips (e.g. busy terminals) use a callout.
+  const detailIsTechnical =
+    detailText.includes('\n') ||
+    /[\\/]/.test(detailText) ||
+    detailText.length > 120
+  const wide = hasAlt || detailIsTechnical
 
   return (
     <ModalOverlay onDismiss={() => answer(false)} zIndex="z-[110]">
@@ -74,9 +80,15 @@ export default function ConfirmDialog() {
             <p id="confirm-message" className="mt-1.5 text-[13px] leading-relaxed text-fg">
               {t(request.message)}
             </p>
-            {request.detail && (
-              <p className="mt-2 max-h-[240px] overflow-auto rounded border border-border bg-bg-deep/60 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-fg-muted whitespace-pre-wrap break-all">
-                {t(request.detail)}
+            {detailText && (
+              <p
+                className={
+                  detailIsTechnical
+                    ? 'mt-2 max-h-[240px] overflow-auto rounded border border-border bg-bg-deep/60 px-2.5 py-2 font-mono text-[11px] leading-relaxed text-fg-muted whitespace-pre-wrap break-all'
+                    : 'mt-2 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 text-[12px] leading-5 text-fg'
+                }
+              >
+                {detailText}
               </p>
             )}
           </div>

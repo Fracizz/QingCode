@@ -16,6 +16,7 @@
 - [Run Configurations](#run-configurations)
 - [Settings](#settings)
 - [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Save Session State](#save-session-state)
 - [Check for Updates](#check-for-updates)
 - [FAQ](#faq)
 - [Language Pack Development](#language-pack-development)
@@ -26,7 +27,7 @@
 
 1. **Add a project**: Click the **「+」** button on the right side of the title bar and select a local folder to add to the project list.
 2. **Switch projects**: Click a project chip in the title bar to switch; editor and terminal states are automatically preserved.
-3. **Open a file**: Single-click a file in the left file tree to select it, then double-click (or press `Enter`) to open it in the editor.
+3. **Open a file**: Single-click a file in the left file tree to open it (folders expand/collapse on single-click). Use `Ctrl`/`Shift`+click for multi-select; `Enter` also opens/expands the selection.
 4. **Open a terminal**: Press `` Ctrl+` `` to show the terminal panel; the terminal starts in the project root by default.
 5. **Save a file**: Press `Ctrl+S` to save the current file.
 
@@ -76,7 +77,7 @@ Suitable for quick notes or trying out commands without selecting an existing fo
 
 ### Basic Operations
 
-- **Open a file**: Single-click to select in the file tree, then double-click (or press `Enter`) to open.
+- **Open a file**: Single-click a file in the tree to open it; single-click a folder to expand/collapse. `Ctrl`/`Shift`+click multi-selects without opening; `Enter` also opens/expands.
 - **Multi-select & arrange**: `Ctrl`/`Shift` multi-select; drag-drop or `Ctrl+X`/`C`/`V` to cut, copy, paste; `F2` for inline rename.
 - **Switch tabs**: Click the tab bar, or use `Ctrl+Tab`.
 - **Close a tab**: Click the `×` on the tab, or middle-click the tab.
@@ -189,6 +190,7 @@ Configure a set of 「run configurations」 for a project to start multiple serv
 - Click the **「Launch」** button on the configuration card.
 - Each task automatically opens a terminal, ideal for starting API, frontend, worker, etc. simultaneously.
 - Click **「Stop」** to stop all tasks in the configuration group.
+- With **Save Session State** enabled, after an app restart those terminals are restored and re-linked to the matching run configuration (status no longer stuck on Idle).
 
 ### Configuration Storage Location
 
@@ -253,6 +255,14 @@ Both `default-settings.json` and `.qingcode/project-settings.json` are **JSON5**
 > Editor-reserved shortcuts (e.g., `Ctrl+S`, `Ctrl+Shift+C`) are displayed as read-only and cannot be modified.
 
 ---
+
+## Save Session State
+
+Enabled by default: after restart, QingCode restores editor tabs, terminal metadata/scrollback, and run-config ↔ terminal links (status and Stop stay wired).
+
+- **Settings** → **「Features」** → **「Save Session State」** can be set to **「Off」**.
+- When off, session state is neither saved nor restored; any cached session snapshot is cleared (project files and `run.json` are untouched).
+- Global settings key: `qingcode.session.persist` (`default-settings.json`).
 
 ## Check for Updates
 
