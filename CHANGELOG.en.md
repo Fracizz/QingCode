@@ -6,6 +6,25 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-07-20
+
+### Added
+
+- Status bar shows process memory usage
+- Source Control: hover ~1s on truncated paths to show the full path
+
+### Changed
+
+- Source Control expands untracked directories to file rows (VS Code–like / `git status -uall`)
+- Diff collapse label is localized (Chinese: “N 行未更改”)
+- Block F5 / Ctrl+R (and Cmd variants) from reloading the WebView
+
+### Fixed
+
+- Side-by-side diff scrolling: MergeView layout so the outer pane scrolls through all hunks
+- Session restore, explorer single-click open, and Git panel performance with many changes
+- Status bar tooltip arrow radius and spacing
+
 ## [0.1.4] - 2026-07-19
 
 ### Added
