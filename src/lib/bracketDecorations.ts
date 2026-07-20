@@ -1,4 +1,4 @@
-import { language } from '@codemirror/language'
+import { getIndentUnit, language, syntaxTree } from '@codemirror/language'
 import { EditorState, RangeSetBuilder, type Extension } from '@codemirror/state'
 import {
   Decoration,
@@ -22,17 +22,20 @@ export type BracketPair = {
 export function scanBracketPairs(
   text: string,
   maxPairs = 8000,
+  includePosition: (position: number, bracket: string) => boolean = () => true,
 ): BracketPair[] {
   const stack: { pos: number; ch: string; depth: number }[] = []
   const pairs: BracketPair[] = []
   for (let i = 0; i < text.length; i++) {
     const ch = text[i]
     if (OPENERS.has(ch)) {
+      if (!includePosition(i, ch)) continue
       stack.push({ pos: i, ch, depth: stack.length })
       continue
     }
     const want = CLOSERS[ch]
     if (!want) continue
+    if (!includePosition(i, ch)) continue
     for (let j = stack.length - 1; j >= 0; j--) {
       if (stack[j].ch !== want) continue
       const open = stack[j]
@@ -48,6 +51,26 @@ export function scanBracketPairs(
     }
   }
   return pairs
+}
+
+/** Ignore bracket-looking characters inside strings/comments using Lezer tokens. */
+export function scanStateBracketPairs(state: EditorState): BracketPair[] {
+  const tree = syntaxTree(state)
+  return scanBracketPairs(state.doc.toString(), 8000, (position, bracket) => {
+    let node = tree.resolveInner(position, 1)
+    if (
+      node.from <= position &&
+      node.to >= position + 1 &&
+      (node.name === bracket || node.type.name === bracket)
+    ) {
+      return true
+    }
+    for (; node; node = node.parent!) {
+      if (/(?:String|Comment|RegExp|Template)/i.test(node.name)) return false
+      if (!node.parent) break
+    }
+    return true
+  })
 }
 
 /** Innermost pair containing `pos`, including the open/close bracket characters. */
@@ -73,8 +96,8 @@ const colorMark = Array.from({ length: COLOR_COUNT }, (_, i) =>
   Decoration.mark({ class: colorClass(i) }),
 )
 
-function buildColorDecorations(doc: string): DecorationSet {
-  const pairs = scanBracketPairs(doc)
+function buildColorDecorations(state: EditorState): DecorationSet {
+  const pairs = scanStateBracketPairs(state)
   const builder = new RangeSetBuilder<Decoration>()
   const marks: { from: number; to: number; depth: number }[] = []
   for (const p of pairs) {
@@ -95,6 +118,15 @@ export function bracketGuideLineRange(
 ): { from: number; to: number } | null {
   if (closeLine <= openLine) return null
   return { from: openLine, to: closeLine }
+}
+
+/** Body-only range used by active bracket rails. */
+export function bracketBodyGuideLineRange(
+  openLine: number,
+  closeLine: number,
+): { from: number; to: number } | null {
+  if (closeLine <= openLine + 1) return null
+  return { from: openLine + 1, to: closeLine - 1 }
 }
 
 /** Visual column of leading whitespace (tabs expanded). */
@@ -123,21 +155,33 @@ export function snapIndentLane(col: number, tabSize: number): number {
 }
 
 /** VS Code indentation level for a content line; blank lines are resolved by context. */
-export function lineIndentLevel(text: string, tabSize: number): number {
+export function lineIndentLevel(
+  text: string,
+  tabSize: number,
+  indentSize = tabSize,
+): number {
   if (!text.trim()) return -1
-  return Math.ceil(lineIndentColumn(text, tabSize) / tabSize)
+  return Math.ceil(lineIndentColumn(text, tabSize) / indentSize)
 }
 
 /** VS Code guide columns for a content line (0-based visual columns). */
-export function indentGuideColumnsForLine(text: string, tabSize: number): number[] {
-  return indentGuideColumnsForLevel(lineIndentLevel(text, tabSize), tabSize)
+export function indentGuideColumnsForLine(
+  text: string,
+  tabSize: number,
+  indentSize = tabSize,
+): number[] {
+  return indentGuideColumnsForLevel(
+    lineIndentLevel(text, tabSize, indentSize),
+    indentSize,
+  )
 }
 
-export function indentGuideColumnsForLevel(level: number, tabSize: number): number[] {
-  // The deepest lane sits immediately beside the line's text and reads like a
-  // stray short rail. Match VS Code by drawing only the enclosing indent lanes.
-  if (level <= 1) return []
-  return Array.from({ length: level - 1 }, (_, i) => i * tabSize)
+export function indentGuideColumnsForLevel(
+  level: number,
+  indentSize: number,
+): number[] {
+  if (level <= 0) return []
+  return Array.from({ length: level }, (_, i) => i * indentSize)
 }
 
 function visualColumnAt(text: string, offset: number, tabSize: number): number {
@@ -161,6 +205,16 @@ function minInnerIndent(
     minInner = Math.min(minInner, lineIndentColumn(row.text, tabSize))
   }
   return minInner === Infinity ? null : minInner
+}
+
+/** Active bracket rail: align to the body content, not the outer closing brace. */
+export function bracketBodyGuideColumn(
+  lineTexts: { number: number; text: string }[],
+  openLineNo: number,
+  closeLineNo: number,
+  tabSize: number,
+): number | null {
+  return minInnerIndent(lineTexts, openLineNo, closeLineNo, tabSize)
 }
 
 /** VS Code bracket guide column: minimum opener, closer, and inner indentation. */
@@ -212,38 +266,30 @@ export type ActiveBracketGuide = {
   closeLineNo: number
 }
 
-/**
- * Pick the multi-line pair to highlight (VS behavior):
- * prefer a pair that opens/closes on the cursor line (even if caret is in
- * leading whitespace before `{`), else innermost enclosing pair.
- */
+/** Pick the innermost multi-line pair strictly containing the cursor. */
 export function findActiveGuidePair(
   pairs: BracketPair[],
   pos: number,
-  lineFrom: number,
-  lineTo: number,
+  _lineFrom: number,
+  _lineTo: number,
   lineOfPos: (index: number) => { number: number },
 ): BracketPair | null {
-  let onLine: BracketPair | null = null
+  let enclosing: BracketPair | null = null
   for (const p of pairs) {
     const openLine = lineOfPos(p.open).number
     const closeLine = lineOfPos(p.close).number
     if (closeLine <= openLine) continue
-    const touches =
-      (p.open >= lineFrom && p.open <= lineTo) ||
-      (p.close >= lineFrom && p.close <= lineTo)
-    if (!touches) continue
-    if (!onLine || p.depth >= onLine.depth) onLine = p
+    if (p.open >= pos || p.close <= pos) continue
+    if (!enclosing || p.depth >= enclosing.depth) enclosing = p
   }
-  if (onLine) return onLine
-  return findEnclosingPair(pairs, pos)
+  return enclosing
 }
 
 /** Active bracket-pair guide metadata for the current cursor (or null). */
 export function activeBracketGuide(view: EditorView): ActiveBracketGuide | null {
   const head = view.state.selection.main.head
   const doc = view.state.doc
-  const pairs = scanBracketPairs(doc.toString())
+  const pairs = scanStateBracketPairs(view.state)
   const cursorLine = doc.lineAt(head)
   const enclosing = findActiveGuidePair(
     pairs,
@@ -265,18 +311,22 @@ export function activeBracketGuide(view: EditorView): ActiveBracketGuide | null 
     const line = doc.line(lineNo)
     lineTexts.push({ number: lineNo, text: doc.sliceString(line.from, line.to) })
   }
-  const column = blockGuideColumn(
+  const column = bracketBodyGuideColumn(
     lineTexts,
     openLine.number,
     closeLine.number,
     tabSize,
-    enclosing.open - openLine.from,
   )
+  const bodyRange = bracketBodyGuideLineRange(
+    openLine.number,
+    closeLine.number,
+  )
+  if (column == null || !bodyRange) return null
   return {
     enclosing,
     column,
-    openLineNo: openLine.number,
-    closeLineNo: closeLine.number,
+    openLineNo: bodyRange.from,
+    closeLineNo: bodyRange.to,
   }
 }
 
@@ -302,6 +352,7 @@ export function indentLevelsForLines(
   lines: string[],
   tabSize: number,
   offSide = false,
+  indentSize = tabSize,
 ): number[] {
   const indents = lines.map(text =>
     text.trim() ? lineIndentColumn(text, tabSize) : -1,
@@ -321,15 +372,15 @@ export function indentLevelsForLines(
   }
 
   return indents.map((indent, i) => {
-    if (indent >= 0) return Math.ceil(indent / tabSize)
+    if (indent >= 0) return Math.ceil(indent / indentSize)
     const aboveIndent = above[i]
     const belowIndent = below[i]
     if (aboveIndent < 0 || belowIndent < 0) return 0
-    if (aboveIndent < belowIndent) return 1 + Math.floor(aboveIndent / tabSize)
-    if (aboveIndent === belowIndent) return Math.ceil(belowIndent / tabSize)
+    if (aboveIndent < belowIndent) return 1 + Math.floor(aboveIndent / indentSize)
+    if (aboveIndent === belowIndent) return Math.ceil(belowIndent / indentSize)
     return offSide
-      ? Math.ceil(belowIndent / tabSize)
-      : 1 + Math.floor(belowIndent / tabSize)
+      ? Math.ceil(belowIndent / indentSize)
+      : 1 + Math.floor(belowIndent / indentSize)
   })
 }
 
@@ -341,15 +392,16 @@ export function activeIndentGuideForLines(
   cursorLine: number,
   tabSize: number,
   offSide = false,
+  indentSize = tabSize,
 ): ActiveIndentGuide | null {
-  const levels = indentLevelsForLines(lines, tabSize, offSide)
-  return activeIndentGuideForLevels(levels, cursorLine, tabSize)
+  const levels = indentLevelsForLines(lines, tabSize, offSide, indentSize)
+  return activeIndentGuideForLevels(levels, cursorLine, indentSize)
 }
 
 export function activeIndentGuideForLevels(
   levels: number[],
   cursorLine: number,
-  tabSize: number,
+  indentSize: number,
 ): ActiveIndentGuide | null {
   if (cursorLine < 1 || cursorLine > levels.length) return null
   const index = cursorLine - 1
@@ -376,7 +428,7 @@ export function activeIndentGuideForLevels(
     fromLine,
     toLine,
     level,
-    column: (level - 1) * tabSize,
+    column: (level - 1) * indentSize,
   }
 }
 
@@ -401,14 +453,14 @@ export function buildGuideBoxShadow(
 
 export function guideColumnsForLine(
   indentLevel: number,
-  tabSize: number,
+  indentSize: number,
   indentationGuides: boolean,
   activeCol: number | null,
   addActiveColumn = true,
 ): number[] {
   const cols = new Set<number>()
   if (indentationGuides) {
-    for (const c of indentGuideColumnsForLevel(indentLevel, tabSize)) cols.add(c)
+    for (const c of indentGuideColumnsForLevel(indentLevel, indentSize)) cols.add(c)
   }
   if (addActiveColumn && activeCol != null) cols.add(activeCol)
   return [...cols].sort((a, b) => a - b)
@@ -448,6 +500,7 @@ function buildGuideDecorations(
 
   try {
     const tabSize = view.state.facet(EditorState.tabSize)
+    const indentSize = getIndentUnit(view.state)
     const charWidth = view.defaultCharacterWidth || 8
     const doc = view.state.doc
     const lines = Array.from({ length: doc.lines }, (_, i) => {
@@ -455,14 +508,19 @@ function buildGuideDecorations(
       return doc.sliceString(line.from, line.to)
     })
     const offSide = view.state.facet(language)?.name === 'python'
-    const indentLevels = indentLevelsForLines(lines, tabSize, offSide)
+    const indentLevels = indentLevelsForLines(
+      lines,
+      tabSize,
+      offSide,
+      indentSize,
+    )
     const bracket = options.bracketPairGuides ? activeBlockGuide(view) : null
     const indent =
       options.indentationGuides && options.highlightActiveIndentation
         ? activeIndentGuideForLevels(
             indentLevels,
             doc.lineAt(view.state.selection.main.head).number,
-            tabSize,
+            indentSize,
           )
         : null
 
@@ -485,7 +543,7 @@ function buildGuideDecorations(
         const activeCol = bracketCol ?? indentCol
         const columns = guideColumnsForLine(
           indentLevels[line.number - 1],
-          tabSize,
+          indentSize,
           options.indentationGuides,
           activeCol,
           bracketCol != null,
@@ -548,11 +606,14 @@ export function bracketDecorationExtensions(
         class {
           decorations: DecorationSet
           constructor(view: EditorView) {
-            this.decorations = buildColorDecorations(view.state.doc.toString())
+            this.decorations = buildColorDecorations(view.state)
           }
           update(update: ViewUpdate) {
-            if (update.docChanged) {
-              this.decorations = buildColorDecorations(update.state.doc.toString())
+            if (
+              update.docChanged ||
+              update.startState.facet(language) !== update.state.facet(language)
+            ) {
+              this.decorations = buildColorDecorations(update.state)
             }
           }
         },
@@ -597,8 +658,7 @@ export function bracketDecorationExtensions(
     '.cm-line.cm-line-guides::before': {
       content: '""',
       position: 'absolute',
-      // CodeMirror lines have 6px left padding. Start from the text origin so
-      // guide columns line up with indentation columns instead of the line box.
+      // CodeMirror's content origin is the line's 6px left padding.
       left: '6px',
       top: '0',
       bottom: '0',
