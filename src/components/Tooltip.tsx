@@ -1,5 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { readStatusBarRowTop } from './statusBarRowContext'
+import {
+  TipArrow,
+  syncStyleTopToTipArrowClearance,
+  tipArrowBoxGap,
+  TIP_ARROW_CLEARANCE,
+  TIP_ARROW_W,
+} from './tipArrow'
 
 export type TooltipSide = 'top' | 'right' | 'bottom' | 'left'
 
@@ -9,6 +17,10 @@ const SHOW_DELAY = 600
 /** Hover delay for truncated labels (file tree, tabs, etc.). */
 export const OVERFLOW_TOOLTIP_DELAY = 1000
 const VIEWPORT_MARGIN = 8
+const ARROW_EDGE_PAD = 10
+/** @deprecated use tipArrowBoxGap(zoom); kept for tests at zoom=1 */
+export const TOOLTIP_ARROW_GAP = tipArrowBoxGap(1)
+export { TIP_ARROW_CLEARANCE }
 
 /** True when `text-overflow: ellipsis` is clipping visible text. */
 export function isOverflowing(el: HTMLElement): boolean {
@@ -51,10 +63,12 @@ export function getTooltipPosition(
   tip?: Size,
   viewport: Viewport = { width: Number.POSITIVE_INFINITY, height: Number.POSITIVE_INFINITY },
   zoom = 1,
+  options?: { gap?: number },
 ): CSSProperties {
   const clamp = (value: number, min: number, max: number) =>
     max < min ? min : Math.min(Math.max(value, min), max)
   const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  const gap = Math.max(0, options?.gap ?? OFFSET)
   const tipW = tip ? tip.width * z : 0
   const tipH = tip ? tip.height * z : 0
 
@@ -62,13 +76,13 @@ export function getTooltipPosition(
     case 'right': {
       if (!tip) {
         return {
-          left: (rect.right + OFFSET) / z,
+          left: (rect.right + gap) / z,
           top: (rect.top + rect.height / 2) / z,
           transform: 'translateY(-50%)',
         }
       }
       return {
-        left: clamp(rect.right + OFFSET, VIEWPORT_MARGIN, viewport.width - tipW - VIEWPORT_MARGIN) / z,
+        left: clamp(rect.right + gap, VIEWPORT_MARGIN, viewport.width - tipW - VIEWPORT_MARGIN) / z,
         top:
           clamp(
             rect.top + rect.height / 2 - tipH / 2,
@@ -81,14 +95,14 @@ export function getTooltipPosition(
     case 'left': {
       if (!tip) {
         return {
-          left: (rect.left - OFFSET) / z,
+          left: (rect.left - gap) / z,
           top: (rect.top + rect.height / 2) / z,
           transform: 'translate(-100%, -50%)',
         }
       }
       return {
         left:
-          clamp(rect.left - OFFSET - tipW, VIEWPORT_MARGIN, viewport.width - tipW - VIEWPORT_MARGIN) / z,
+          clamp(rect.left - gap - tipW, VIEWPORT_MARGIN, viewport.width - tipW - VIEWPORT_MARGIN) / z,
         top:
           clamp(
             rect.top + rect.height / 2 - tipH / 2,
@@ -102,7 +116,7 @@ export function getTooltipPosition(
       if (!tip) {
         return {
           left: (rect.left + rect.width / 2) / z,
-          top: (rect.top - OFFSET) / z,
+          top: (rect.top - gap) / z,
           transform: 'translate(-50%, -100%)',
         }
       }
@@ -114,7 +128,7 @@ export function getTooltipPosition(
             viewport.width - tipW - VIEWPORT_MARGIN,
           ) / z,
         top:
-          clamp(rect.top - OFFSET - tipH, VIEWPORT_MARGIN, viewport.height - tipH - VIEWPORT_MARGIN) / z,
+          clamp(rect.top - gap - tipH, VIEWPORT_MARGIN, viewport.height - tipH - VIEWPORT_MARGIN) / z,
         transform: 'none',
       }
     }
@@ -122,7 +136,7 @@ export function getTooltipPosition(
       if (!tip) {
         return {
           left: (rect.left + rect.width / 2) / z,
-          top: (rect.bottom + OFFSET) / z,
+          top: (rect.bottom + gap) / z,
           transform: 'translateX(-50%)',
         }
       }
@@ -133,11 +147,26 @@ export function getTooltipPosition(
             VIEWPORT_MARGIN,
             viewport.width - tipW - VIEWPORT_MARGIN,
           ) / z,
-        top: clamp(rect.bottom + OFFSET, VIEWPORT_MARGIN, viewport.height - tipH - VIEWPORT_MARGIN) / z,
+        top: clamp(rect.bottom + gap, VIEWPORT_MARGIN, viewport.height - tipH - VIEWPORT_MARGIN) / z,
         transform: 'none',
       }
     }
   }
+}
+
+/** Local X offset of a bottom caret so it points at the trigger center. */
+export function getTooltipArrowOffsetX(
+  tipLeftStyle: number,
+  tipWidth: number,
+  triggerCenterX: number,
+  zoom = 1,
+): number {
+  const z = Number.isFinite(zoom) && zoom > 0 ? zoom : 1
+  const tipLeftVisual = tipLeftStyle * z
+  const ideal = (triggerCenterX - tipLeftVisual) / z - TIP_ARROW_W / 2
+  const min = ARROW_EDGE_PAD
+  const max = Math.max(min, tipWidth - ARROW_EDGE_PAD - TIP_ARROW_W)
+  return Math.min(Math.max(ideal, min), max)
 }
 
 interface Props {
@@ -150,6 +179,22 @@ interface Props {
   forceOpen?: boolean
   /** When false, focus does not open the tip (avoids tip-on-click). Default false. */
   showOnFocus?: boolean
+  /** Speech-bubble caret pointing at the trigger (status-bar tips). */
+  arrow?: boolean
+  /**
+   * Which box to anchor against. Status-bar tips use `wrapper` so clearance is
+   * measured to the full-height hit target, not a shorter centered child.
+   */
+  anchor?: 'child' | 'wrapper'
+  /**
+   * Viewport Y for vertical caret clearance (e.g. status-bar row top).
+   * When set, arrow tips sit {@link TIP_ARROW_CLEARANCE} above this line.
+   */
+  clearanceTop?: () => number | undefined
+  /** Fired when the tip becomes visible (after delay / forceOpen). */
+  onShow?: () => void
+  /** Fired when the tip is hidden. */
+  onHide?: () => void
   wrapperClassName?: string
   children: ReactNode
 }
@@ -161,6 +206,11 @@ export default function Tooltip({
   onlyWhenOverflow = false,
   forceOpen = false,
   showOnFocus = false,
+  arrow = false,
+  anchor = 'child',
+  clearanceTop,
+  onShow,
+  onHide,
   wrapperClassName = 'inline-flex shrink-0',
   children,
 }: Props) {
@@ -170,7 +220,13 @@ export default function Tooltip({
   const [open, setOpen] = useState(false)
   const visible = forceOpen || open
   const [style, setStyle] = useState<CSSProperties>({})
+  const [arrowOffset, setArrowOffset] = useState<number | null>(null)
   const timerRef = useRef<number | undefined>(undefined)
+  const onShowRef = useRef(onShow)
+  const onHideRef = useRef(onHide)
+  const wasVisibleRef = useRef(false)
+  onShowRef.current = onShow
+  onHideRef.current = onHide
 
   const clearTimer = () => {
     if (timerRef.current !== undefined) {
@@ -185,13 +241,14 @@ export default function Tooltip({
     if (onlyWhenOverflow) {
       return resolveOverflowElement(trigger) ?? (trigger.firstElementChild as HTMLElement | null) ?? trigger
     }
+    if (anchor === 'wrapper') return trigger
     return (trigger.firstElementChild as HTMLElement | null) ?? trigger
   }
 
   const triggerRect = () => {
-    const anchor = overflowElement()
-    if (!anchor) return null
-    return anchor.getBoundingClientRect()
+    const el = overflowElement()
+    if (!el) return null
+    return el.getBoundingClientRect()
   }
 
   const shouldShowForOverflow = () => {
@@ -200,16 +257,58 @@ export default function Tooltip({
     return trigger != null && resolveOverflowElement(trigger) != null
   }
 
+  const resolveClearanceLineTop = (rect: DOMRect) =>
+    clearanceTop?.() ?? readStatusBarRowTop(triggerRef.current) ?? rect.top
+
   const updatePosition = () => {
     const rect = triggerRect()
     if (!rect) return
+    const lineTop = resolveClearanceLineTop(rect)
+    const placementRect = { ...rect, top: lineTop }
     const tipEl = tipRef.current
     const tip = tipEl
       ? { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
       : undefined
     const viewport = { width: window.innerWidth, height: window.innerHeight }
     const zoom = readTooltipZoom(tipEl)
-    setStyle(getTooltipPosition(rect, side, tip, viewport, zoom))
+    const gap = arrow ? tipArrowBoxGap(zoom) : undefined
+    let next = getTooltipPosition(
+      placementRect,
+      side,
+      tip,
+      viewport,
+      zoom,
+      gap != null ? { gap } : undefined,
+    )
+
+    // Apply immediately, then sync caret tip → trigger top to TIP_ARROW_CLEARANCE.
+    if (tipEl) {
+      if (typeof next.left === 'number') tipEl.style.left = `${next.left}px`
+      if (typeof next.top === 'number') tipEl.style.top = `${next.top}px`
+      tipEl.style.transform = typeof next.transform === 'string' ? next.transform : ''
+    }
+    let arrowOffsetX: number | null = null
+    if (arrow && tip && typeof next.left === 'number' && (side === 'top' || side === 'bottom')) {
+      arrowOffsetX = getTooltipArrowOffsetX(next.left, tip.width, rect.left + rect.width / 2, zoom)
+      const arrowEl = tipEl?.querySelector<SVGSVGElement>('[data-tip-arrow]')
+      if (arrowEl) {
+        arrowEl.style.left = `${arrowOffsetX}px`
+        arrowEl.style.marginLeft = '0'
+      }
+    }
+
+    if (arrow && tipEl && side === 'top' && typeof next.top === 'number') {
+      const arrowEl = tipEl.querySelector<SVGSVGElement>('[data-tip-arrow]')
+      if (arrowEl) {
+        next = {
+          ...next,
+          top: syncStyleTopToTipArrowClearance(tipEl, next.top, zoom, lineTop, arrowEl),
+        }
+      }
+    }
+
+    setStyle(next)
+    setArrowOffset(arrowOffsetX)
   }
 
   const scheduleShow = () => {
@@ -219,8 +318,20 @@ export default function Tooltip({
       if (!shouldShowForOverflow()) return
       const rect = triggerRect()
       if (!rect) return
+      const zoom = readTooltipZoom()
+      const lineTop = resolveClearanceLineTop(rect)
+      const placementRect = { ...rect, top: lineTop }
       // Approximate first paint with transform centering; refined after mount.
-      setStyle(getTooltipPosition(rect, side, undefined, undefined, readTooltipZoom()))
+      setStyle(
+        getTooltipPosition(
+          placementRect,
+          side,
+          undefined,
+          undefined,
+          zoom,
+          arrow ? { gap: tipArrowBoxGap(zoom) } : undefined,
+        ),
+      )
       setOpen(true)
     }, showDelay)
   }
@@ -232,6 +343,15 @@ export default function Tooltip({
 
   useEffect(() => () => clearTimer(), [])
 
+  useEffect(() => {
+    if (visible && !wasVisibleRef.current) {
+      onShowRef.current?.()
+    } else if (!visible && wasVisibleRef.current) {
+      onHideRef.current?.()
+    }
+    wasVisibleRef.current = visible
+  }, [visible])
+
   useLayoutEffect(() => {
     if (!visible) return
     updatePosition()
@@ -242,7 +362,11 @@ export default function Tooltip({
       window.removeEventListener('scroll', onLayoutChange, true)
       window.removeEventListener('resize', onLayoutChange)
     }
-  }, [visible, side, label])
+  }, [visible, side, label, arrow, anchor, clearanceTop])
+
+  // Render caret whenever `arrow` is set (don't wait for offset) so first
+  // measure uses the final borderless tip chrome.
+  const showArrow = Boolean(arrow && (side === 'top' || side === 'bottom'))
 
   return (
     <>
@@ -262,10 +386,26 @@ export default function Tooltip({
           <div
             ref={tipRef}
             role="tooltip"
-            className="tooltip-enter ui-font-scaled fixed z-[100] pointer-events-none w-max max-w-[min(480px,calc(100vw-16px))] rounded px-2 py-1 text-[11px] leading-4 text-fg border border-border-strong bg-bg-elevated shadow-lg shadow-black/40 break-words whitespace-normal"
-            style={style}
+            className={`tooltip-enter ui-font-scaled fixed z-[100] pointer-events-none w-max rounded px-2.5 py-1.5 text-[11px] leading-5 text-fg break-words whitespace-pre-line ${
+              showArrow
+                ? 'max-w-[min(320px,calc(100vw-16px))] bg-bg-elevated'
+                : 'max-w-[min(480px,calc(100vw-16px))] border border-border-strong bg-bg-elevated shadow-lg shadow-black/40'
+            }`}
+            style={{
+              ...style,
+              filter: showArrow ? 'drop-shadow(0 4px 14px rgba(0,0,0,0.42))' : undefined,
+            }}
           >
             {label}
+            {showArrow && (
+              <TipArrow
+                direction={side === 'top' ? 'down' : 'up'}
+                style={{
+                  left: arrowOffset ?? '50%',
+                  marginLeft: arrowOffset == null ? -(TIP_ARROW_W / 2) : undefined,
+                }}
+              />
+            )}
           </div>,
           document.body,
         )}

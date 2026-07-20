@@ -833,6 +833,8 @@
     "重新打开：{encoding}": "重新打开：{encoding}",
     "打开源代码管理": "打开源代码管理",
     "切换终端面板": "切换终端面板",
+    "内存 {size}": "内存 {size}",
+    "主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒": "主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒",
     "打开终端面板": "打开终端面板",
     "行 {line}, 列 {col}": "行 {line}, 列 {col}",
     "显示所有打开的文件": "显示所有打开的文件",

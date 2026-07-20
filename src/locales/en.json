@@ -837,6 +837,8 @@
     "重新打开：{encoding}": "Reopen with {encoding}",
     "打开源代码管理": "Open Source Control",
     "切换终端面板": "Toggle Terminal Panel",
+    "内存 {size}": "Memory {size}",
+    "主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒": "Main {main}\nWebView2 {webview} · Terminals {terminal}\nAbout every {tipSec}s while hovered · every {idleSec}s otherwise",
     "打开终端面板": "Open Terminal Panel",
     "行 {line}, 列 {col}": "Ln {line}, Col {col}",
     "显示所有打开的文件": "Show All Opened Files",

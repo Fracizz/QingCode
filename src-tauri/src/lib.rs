@@ -1,3 +1,4 @@
+mod app_memory;
 mod commands;
 mod content_search;
 mod exclude;
@@ -227,6 +228,16 @@ fn terminal_has_child_processes(
     state.has_child_processes(&id)
 }
 
+/// Status-bar memory: main + WebView2 + associated terminal process trees.
+/// Pass `force: true` to bypass the short TTL cache (hover tip / terminal churn).
+#[tauri::command]
+fn get_app_memory(
+    force: Option<bool>,
+    state: tauri::State<'_, TerminalManager>,
+) -> app_memory::AppMemoryInfo {
+    app_memory::sample_app_memory(&state.shell_pids(), force.unwrap_or(false))
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 fn spawn_script(
@@ -395,6 +406,7 @@ pub fn run() {
             kill_terminal,
             resize_terminal,
             terminal_has_child_processes,
+            get_app_memory,
             spawn_script,
             db_url,
             default_settings_path,

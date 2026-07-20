@@ -213,6 +213,15 @@ impl TerminalManager {
         Ok(count_meaningful_child_processes(pid) > 0)
     }
 
+    /// Shell PIDs for live sessions (used by low-cost app memory sampling).
+    pub fn shell_pids(&self) -> Vec<u32> {
+        let sessions = self.sessions.lock().unwrap();
+        sessions
+            .values()
+            .filter_map(|session| session.shell_pid)
+            .collect()
+    }
+
     pub fn kill_all(&self) {
         let mut sessions = self.sessions.lock().unwrap();
         for (_, mut session) in sessions.drain() {

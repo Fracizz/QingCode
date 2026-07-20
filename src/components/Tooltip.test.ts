@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  getTooltipArrowOffsetX,
   getTooltipPosition,
   isOverflowing,
   OVERFLOW_TOOLTIP_DELAY,
   resolveOverflowElement,
+  TOOLTIP_ARROW_GAP,
 } from './Tooltip'
 
 const trigger = {
@@ -31,6 +33,17 @@ describe('getTooltipPosition', () => {
     expect(style.left).toBe(100 + 14 - 36)
     expect(style.top).toBe(40 - 8 - 24)
     expect(style.transform).toBe('none')
+  })
+
+  it('lifts arrow tips farther above the trigger so they clear the status bar', () => {
+    // Use a mid-viewport trigger so the larger arrow gap is not clamped by the top edge.
+    const statusTrigger = { ...trigger, top: 200, bottom: 228 }
+    const style = getTooltipPosition(statusTrigger, 'top', tip, viewport, 1, {
+      gap: TOOLTIP_ARROW_GAP,
+    })
+    expect(style.top).toBe(200 - TOOLTIP_ARROW_GAP - 24)
+    // Tip bottom + caret tip leave TIP_ARROW_CLEARANCE above the anchor top.
+    expect((style.top as number) + tip.height + TOOLTIP_ARROW_GAP).toBe(200)
   })
 
   it('clamps bottom tooltips that would overflow the right edge', () => {
@@ -130,5 +143,18 @@ describe('resolveOverflowElement', () => {
 describe('OVERFLOW_TOOLTIP_DELAY', () => {
   it('is at least one second for truncated labels', () => {
     expect(OVERFLOW_TOOLTIP_DELAY).toBeGreaterThanOrEqual(1000)
+  })
+})
+
+describe('getTooltipArrowOffsetX', () => {
+  it('centers the caret under the trigger when the tip is centered', () => {
+    // tip left 78, width 72, trigger center 114 → caret left = 114-78-6
+    expect(getTooltipArrowOffsetX(78, 72, 114, 1)).toBe(30)
+  })
+
+  it('clamps the caret inside the tip when the tip is shifted left', () => {
+    const offset = getTooltipArrowOffsetX(8, 160, 390, 1)
+    expect(offset).toBeGreaterThanOrEqual(10)
+    expect(offset).toBeLessThanOrEqual(160 - 10 - 12)
   })
 })

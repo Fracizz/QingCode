@@ -540,6 +540,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     }
     if (!ensureOpenTabCapacity()) return
     try {
+      try {
+        const stat = await safeInvoke<FileStat>('读取文件信息', 'file_stat', { path: absolutePath })
+        if (stat.is_dir) {
+          useProjectStore.getState().pushToast(
+            'info',
+            translate('无法在文本编辑器中打开文件夹。'),
+          )
+          return
+        }
+      } catch {
+        // Deleted / missing paths can still show a HEAD-side diff.
+      }
       const pair = await safeInvoke<GitFileContents>('读取 Git 文件内容', 'git_file_contents', {
         path: projectPath,
         file: absolutePath,

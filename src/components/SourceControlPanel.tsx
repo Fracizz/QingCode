@@ -30,7 +30,13 @@ import {
   useSourceControlStore,
 } from '../store/sourceControlStore'
 import type { GitChange, GitStatus } from '../lib/git'
-import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
+import {
+  gitChangePathLooksLikeDirectory,
+  gitStatusColorClass,
+  gitStatusGlyph,
+  gitStatusMayBeDirectory,
+  normalizeGitChangePath,
+} from '../lib/gitStatus'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { useUIStore } from '../store/uiStore'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
@@ -40,24 +46,40 @@ import EmptyState from './EmptyState'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import { translate, useI18n } from '../lib/i18n'
 
-const ROW_HEIGHT = 32
+const ROW_HEIGHT = 34
 /** Fixed status column so M / U / D share one vertical edge with filenames. */
 const STATUS_COL = 'w-4 shrink-0 text-center font-mono text-[12px] font-semibold leading-none'
 
 function absoluteFilePath(projectPath: string, relativePath: string) {
   const root = projectPath.replace(/[\\/]+$/, '')
-  const rel = relativePath.replace(/\//g, '\\')
+  const rel = normalizeGitChangePath(relativePath).replace(/\//g, '\\')
   return `${root}\\${rel}`
 }
 
 function fileBaseName(path: string) {
-  const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
-  return separator >= 0 ? path.slice(separator + 1) : path
+  const cleaned = normalizeGitChangePath(path)
+  const separator = Math.max(cleaned.lastIndexOf('/'), cleaned.lastIndexOf('\\'))
+  return separator >= 0 ? cleaned.slice(separator + 1) : cleaned
 }
 
 function fileDirName(path: string) {
-  const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
-  return separator > 0 ? path.slice(0, separator + 1) : ''
+  const cleaned = normalizeGitChangePath(path)
+  const separator = Math.max(cleaned.lastIndexOf('/'), cleaned.lastIndexOf('\\'))
+  return separator > 0 ? cleaned.slice(0, separator + 1) : ''
+}
+
+async function changeIsDirectory(projectPath: string, change: GitChange): Promise<boolean> {
+  if (gitChangePathLooksLikeDirectory(change.path)) return true
+  if (!gitStatusMayBeDirectory(change.status)) return false
+  try {
+    const abs = absoluteFilePath(projectPath, change.path)
+    const stat = await safeInvoke<{ size: number; is_dir: boolean }>('读取文件信息', 'file_stat', {
+      path: abs,
+    })
+    return Boolean(stat.is_dir)
+  } catch {
+    return false
+  }
 }
 
 /** Worktree column of `git status --short` (second character). */
@@ -92,22 +114,20 @@ function ChangeRowComponent(props: {
   const glyphColor = gitStatusColorClass(change.status)
 
   return (
-    <div style={style} className="overflow-hidden">
+    <div style={style}>
       <button
         type="button"
         onClick={() => onOpenChange(change)}
         onContextMenu={event => onOpenContextMenu(event, change)}
-        className={`flex h-8 w-full items-center gap-2 px-4 text-left text-[12px] hover:bg-bg-hover ${
+        className={`flex h-full w-full items-center gap-2 px-4 text-left text-[12px] leading-5 hover:bg-bg-hover ${
           active ? 'bg-bg-active' : ''
         }`}
       >
         <span className={`${STATUS_COL} ${glyphColor}`}>{glyph}</span>
-        <span className="min-w-0 flex flex-1 items-center gap-1.5 overflow-hidden">
-          <span className="flex-shrink-0 font-medium leading-none text-fg">{fileBaseName(change.path)}</span>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+          <span className="flex-shrink-0 font-medium text-fg">{fileBaseName(change.path)}</span>
           {fileDirName(change.path) && (
-            <span className="min-w-0 truncate text-[11px] leading-none text-fg-dim">
-              {fileDirName(change.path)}
-            </span>
+            <span className="min-w-0 truncate text-[11px] text-fg-dim">{fileDirName(change.path)}</span>
           )}
         </span>
       </button>
@@ -227,14 +247,27 @@ export default function SourceControlPanel() {
     })
   }, [projectPath])
 
+  const revealInSidebar = useCallback(
+    (absolutePath: string) => {
+      setView('explorer')
+      void revealFileInTree(absolutePath)
+    },
+    [revealFileInTree, setView],
+  )
+
   const openChange = useCallback(
-    (change: GitChange) => {
+    async (change: GitChange) => {
       if (!currentProject) return
       setSelected(change.path)
-      const abs = absoluteFilePath(currentProject.path, change.path)
-      void useEditorStore.getState().openDiff(currentProject.path, change.path, abs)
+      const rel = normalizeGitChangePath(change.path)
+      const abs = absoluteFilePath(currentProject.path, rel)
+      if (await changeIsDirectory(currentProject.path, change)) {
+        revealInSidebar(abs)
+        return
+      }
+      void useEditorStore.getState().openDiff(currentProject.path, rel, abs)
     },
-    [currentProject],
+    [currentProject, revealInSidebar],
   )
 
   const copyAbsolutePath = async (path: string) => {
@@ -250,18 +283,13 @@ export default function SourceControlPanel() {
 
   const copyRelativePath = async (relativePath: string) => {
     try {
-      await copyToClipboard(relativePath.replace(/\\/g, '/'))
+      await copyToClipboard(normalizeGitChangePath(relativePath).replace(/\\/g, '/'))
       useProjectStore.getState().pushToast('success', t('相对路径已复制'))
     } catch (error) {
       useProjectStore
         .getState()
         .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
     }
-  }
-
-  const revealInSidebar = (absolutePath: string) => {
-    setView('explorer')
-    void revealFileInTree(absolutePath)
   }
 
   const revealInFileManager = async (absolutePath: string) => {
@@ -282,18 +310,28 @@ export default function SourceControlPanel() {
 
   const contextMenuItems = (change: GitChange): ContextMenuItem[] => {
     if (!currentProject) return []
-    const abs = absoluteFilePath(currentProject.path, change.path)
+    const projectPath = currentProject.path
+    const abs = absoluteFilePath(projectPath, change.path)
+    const looksLikeDir = gitChangePathLooksLikeDirectory(change.path)
     return [
       {
         label: t('打开更改'),
         icon: <GitCompare size={14} />,
-        action: () => openChange(change),
+        action: () => void openChange(change),
       },
       {
         label: t('打开文件'),
         icon: <FileIcon size={14} />,
-        disabled: !canOpenFileInEditor(change.status),
-        action: () => void useEditorStore.getState().openFile(abs),
+        disabled: !canOpenFileInEditor(change.status) || looksLikeDir,
+        action: () => {
+          void (async () => {
+            if (await changeIsDirectory(projectPath, change)) {
+              revealInSidebar(abs)
+              return
+            }
+            await useEditorStore.getState().openFile(abs)
+          })()
+        },
       },
       {
         label: t('在资源管理器中定位'),
@@ -344,7 +382,7 @@ export default function SourceControlPanel() {
   } else if (status) {
     body = (
       <>
-        <div className="border-y border-border px-4 py-2 text-[12px] text-fg-muted">
+        <div className="flex-shrink-0 border-y border-border px-4 py-2 text-[12px] leading-5 text-fg-muted">
           <div className="flex items-center gap-1.5 text-fg">
             <GitBranch size={13} className="text-accent" />
             <span>{status.branch ?? t('游离 HEAD')}</span>
@@ -355,7 +393,7 @@ export default function SourceControlPanel() {
         {status.changes.length === 0 ? (
           <EmptyState icon={<CheckCircle2 size={28} strokeWidth={1.2} className="text-ok" />} title={t('工作区没有未提交的更改')} />
         ) : (
-          <div className="flex-1 min-h-0">
+          <div className="min-h-0 flex-1 overflow-hidden">
             <List
               listRef={listRef}
               rowCount={status.changes.length}
@@ -380,9 +418,9 @@ export default function SourceControlPanel() {
   }
 
   return (
-    <div className="h-full flex flex-col bg-bg-sidebar text-fg">
-      <div className="px-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted flex-shrink-0">
-        <span className="flex items-center gap-2 min-w-0">
+    <div className="flex h-full flex-col overflow-hidden bg-bg-sidebar text-fg">
+      <div className="flex h-9 flex-shrink-0 items-center justify-between px-4 text-[11px] font-semibold tracking-wide text-fg-muted">
+        <span className="flex min-w-0 items-center gap-2">
           <GitBranch size={13} className="flex-shrink-0" />
           <span className="truncate">{t('源代码管理')}</span>
         </span>
@@ -398,7 +436,7 @@ export default function SourceControlPanel() {
           </button>
         </Tooltip>
       </div>
-      {body}
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{body}</div>
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}

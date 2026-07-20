@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { GitBranch, Folder, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
 import { formatTerminalName } from '../utils/terminalName'
-import Tooltip from './Tooltip'
+import StatusTip from './StatusTip'
 import { useI18n } from '../lib/i18n'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import {
@@ -20,13 +20,26 @@ import {
   formatFileEncoding,
 } from '../lib/fileEncoding'
 import { checkForAppUpdate } from '../lib/appUpdate'
+import { formatAppMemoryMb } from '../lib/appMemory'
+import { readStatusBarRowTop, STATUS_BAR_ROW_ATTR, StatusBarRowContext } from './statusBarRowContext'
 
 type GitHeadInfo = {
   name: string
   detached: boolean
 }
 
+type AppMemoryInfo = {
+  totalBytes: number
+  mainBytes: number
+  webviewBytes: number
+  terminalBytes: number
+}
+
 const GIT_HEAD_REFRESH_MS = 15_000
+/** Background poll while the window is visible. */
+const APP_MEMORY_REFRESH_MS = 10_000
+/** Faster poll while the memory tip is open. */
+const APP_MEMORY_TIP_REFRESH_MS = 5_000
 
 /** Subtle vertical rule between logical status-bar groups. */
 function StatusDivider() {
@@ -47,11 +60,18 @@ export default function StatusBar() {
   const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [devBuild, setDevBuild] = useState(false)
+  const [appMemory, setAppMemory] = useState<AppMemoryInfo | null>(null)
+  const [memoryTipOpen, setMemoryTipOpen] = useState(false)
   const [updateBusy, setUpdateBusy] = useState(false)
   const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
   const gitDirtyCount = useGitStatusStore(s => s.dirtyCount)
-  const [encodingMenu, setEncodingMenu] = useState<{ x: number; y: number } | null>(null)
+  const [encodingMenu, setEncodingMenu] = useState<{
+    x: number
+    y: number
+    anchorCenterX: number
+  } | null>(null)
   const pushToast = useProjectStore(s => s.pushToast)
+  const rowRef = useRef<HTMLDivElement>(null)
 
   /** Save-encoding + reopen-encoding in one themed menu (not duplicate actions). */
   const encodingMenuItems = () => {
@@ -114,6 +134,54 @@ export default function StatusBar() {
     }
   }, [])
 
+  // Memory refresh strategy:
+  // - background poll every 10s while visible (uses Rust TTL cache)
+  // - focus / tab visible → refresh
+  // - tip open → force sample + 3s poll so the breakdown stays live
+  // - terminal count changes → force sample (shell trees moved)
+  useEffect(() => {
+    if (!isTauri()) {
+      setAppMemory(null)
+      return
+    }
+
+    let cancelled = false
+
+    const loadMemory = async (force = false) => {
+      if (typeof document !== 'undefined' && document.hidden && !force) return
+      try {
+        const info = await safeInvoke<AppMemoryInfo>('读取应用内存', 'get_app_memory', {
+          force,
+        })
+        if (!cancelled) setAppMemory(info)
+      } catch {
+        if (!cancelled) setAppMemory(null)
+      }
+    }
+
+    // Tip open / terminal churn both want a fresh sample immediately.
+    void loadMemory(true)
+    const onFocus = () => {
+      void loadMemory(true)
+    }
+    const onVisibility = () => {
+      if (!document.hidden) void loadMemory(true)
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    const intervalMs = memoryTipOpen ? APP_MEMORY_TIP_REFRESH_MS : APP_MEMORY_REFRESH_MS
+    const intervalId = window.setInterval(() => {
+      void loadMemory(memoryTipOpen)
+    }, intervalMs)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.clearInterval(intervalId)
+    }
+  }, [memoryTipOpen, runningTerminals])
+
   useEffect(() => {
     const projectPath = currentProject?.path
     if (!projectPath || !isTauri()) {
@@ -154,10 +222,15 @@ export default function StatusBar() {
   const showEncoding =
     activeTab?.kind === 'diff' ||
     Boolean(activeTab && !activeTab.openError && activeTab.viewMode !== 'view')
-  const showMetaGroup = showEncoding || Boolean(appVersion)
+  const showMetaGroup = showEncoding || Boolean(appVersion) || Boolean(appMemory)
 
   return (
-    <div className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-accent-soft text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border">
+    <StatusBarRowContext.Provider value={rowRef}>
+    <div
+      ref={rowRef}
+      {...{ [STATUS_BAR_ROW_ATTR]: '' }}
+      className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-accent-soft text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
+    >
       {/* Workspace context: project · git */}
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
         <span className="flex min-w-0 max-w-[28%] items-center gap-1.5">
@@ -165,17 +238,17 @@ export default function StatusBar() {
           <span className="truncate">{currentProject ? currentProject.name : t('未选择项目')}</span>
         </span>
         {restricted && (
-          <Tooltip label={t('受限模式：只能浏览，无法编辑或运行')} side="top">
+          <StatusTip label={t('受限模式：只能浏览，无法编辑或运行')}>
             <span className="flex flex-shrink-0 items-center gap-1 text-warn">
               <ShieldAlert size={13} />
               {t('受限')}
             </span>
-          </Tooltip>
+          </StatusTip>
         )}
         {gitHead && (
           <>
             <StatusDivider />
-            <Tooltip
+            <StatusTip
               label={
                 gitHead.detached
                   ? t('分离的 HEAD（未在分支上）')
@@ -183,7 +256,6 @@ export default function StatusBar() {
                     ? t('当前 Git 分支 · {count} 个更改', { count: gitDirtyCount })
                     : t('当前 Git 分支')
               }
-              side="top"
             >
               <button
                 type="button"
@@ -198,7 +270,7 @@ export default function StatusBar() {
                   <span className="flex-shrink-0 text-warn">*{gitDirtyCount}</span>
                 )}
               </button>
-            </Tooltip>
+            </StatusTip>
           </>
         )}
       </div>
@@ -213,20 +285,19 @@ export default function StatusBar() {
                   {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
                 </span>
               )}
-              <Tooltip
+              <StatusTip
                 label={t('Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用')}
-                side="top"
               >
                 <span className="hidden lg:inline">
                   {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
                 </span>
-              </Tooltip>
+              </StatusTip>
             </div>
             <StatusDivider />
           </>
         )}
 
-        <Tooltip label={t('切换终端面板')} side="top">
+        <StatusTip label={t('切换终端面板')}>
           <button
             type="button"
             aria-label={t('切换终端面板')}
@@ -241,7 +312,7 @@ export default function StatusBar() {
               ) : null}
             </span>
           </button>
-        </Tooltip>
+        </StatusTip>
 
         {showMetaGroup && (
           <>
@@ -250,10 +321,7 @@ export default function StatusBar() {
               {activeTab?.kind === 'diff' ? (
                 <span>{t('差异对比')}</span>
               ) : activeTab && !activeTab.openError && activeTab.viewMode !== 'view' ? (
-                <Tooltip
-                  label={t('转换编码（下次保存）· 或按编码重新打开')}
-                  side="top"
-                >
+                <StatusTip label={t('转换编码（下次保存）· 或按编码重新打开')}>
                   <button
                     type="button"
                     aria-label={t('文件编码')}
@@ -263,21 +331,43 @@ export default function StatusBar() {
                     onClick={event => {
                       const rect = event.currentTarget.getBoundingClientRect()
                       const menuWidth = 260
-                      // preferAbove: y is the menu bottom edge. Leave a small gap
-                      // above the status bar (button is inset within the 24px bar).
+                      const anchorCenterX = rect.left + rect.width / 2
+                      const rowTop = readStatusBarRowTop(event.currentTarget) ?? rect.top
                       setEncodingMenu({
-                        x: Math.max(8, rect.right - menuWidth),
-                        y: Math.max(8, rect.top - 12),
+                        x: anchorCenterX - menuWidth / 2,
+                        y: rowTop,
+                        anchorCenterX,
                       })
                     }}
                   >
                     {formatFileEncoding(activeTab.encoding)}
                   </button>
-                </Tooltip>
+                </StatusTip>
               ) : null}
-              {showEncoding && appVersion ? <StatusDivider /> : null}
+              {showEncoding && (appMemory || appVersion) ? <StatusDivider /> : null}
+              {appMemory && (
+                <StatusTip
+                  label={t(
+                    '主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒',
+                    {
+                      main: formatAppMemoryMb(appMemory.mainBytes),
+                      webview: formatAppMemoryMb(appMemory.webviewBytes),
+                      terminal: formatAppMemoryMb(appMemory.terminalBytes),
+                      tipSec: APP_MEMORY_TIP_REFRESH_MS / 1000,
+                      idleSec: APP_MEMORY_REFRESH_MS / 1000,
+                    },
+                  )}
+                  onShow={() => setMemoryTipOpen(true)}
+                  onHide={() => setMemoryTipOpen(false)}
+                >
+                  <span className="rounded px-1 -mx-1 tabular-nums">
+                    {t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) })}
+                  </span>
+                </StatusTip>
+              )}
+              {appMemory && appVersion ? <StatusDivider /> : null}
               {appVersion && (
-                <Tooltip
+                <StatusTip
                   label={
                     updateBusy
                       ? t('正在检查…')
@@ -287,7 +377,6 @@ export default function StatusBar() {
                             : t('正式构建：项目数据在 %APPDATA%\\com.qingcode.app\\；主题字体等与开发版不共用')
                         }\n${t('点击检查更新')}`
                   }
-                  side="top"
                 >
                   <button
                     type="button"
@@ -313,7 +402,7 @@ export default function StatusBar() {
                     v{appVersion}
                     {devBuild ? ' · dev' : ''}
                   </button>
-                </Tooltip>
+                </StatusTip>
               )}
             </div>
           </>
@@ -323,11 +412,14 @@ export default function StatusBar() {
         <ContextMenu
           x={encodingMenu.x}
           y={encodingMenu.y}
+          arrowAnchorX={encodingMenu.anchorCenterX}
           items={encodingMenuItems()}
           onClose={() => setEncodingMenu(null)}
           preferAbove
+          arrow="bottom-end"
         />
       )}
     </div>
+    </StatusBarRowContext.Provider>
   )
 }

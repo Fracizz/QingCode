@@ -38,8 +38,26 @@ export function gitStatusFromWorkdirEntries(
 /** Absolute path for a porcelain relative change (stable `/` keys). */
 export function absoluteGitPath(projectPath: string, relativePath: string): string {
   const root = normalizePath(projectPath)
-  const rel = relativePath.replace(/\\/g, '/').replace(/^\/+/, '')
+  const rel = relativePath.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+$/, '')
   return rel ? `${root}/${rel}` : root
+}
+
+/** Strip trailing separators (Git often reports untracked dirs as `name/`). */
+export function normalizeGitChangePath(path: string): string {
+  return path.replace(/[/\\]+$/, '')
+}
+
+/** True when porcelain path itself marks a directory (`foo/` / `foo\`). */
+export function gitChangePathLooksLikeDirectory(path: string): boolean {
+  return /[/\\]$/.test(path)
+}
+
+/**
+ * Untracked / ignored entries may be directories even without a trailing slash.
+ * Tracked status codes refer to files (Git does not track empty dirs).
+ */
+export function gitStatusMayBeDirectory(status: string): boolean {
+  return status === '??' || status === '!!'
 }
 
 /** Normalize path keys for case-insensitive lookup (Windows). */

@@ -48,4 +48,34 @@ describe('getContextMenuStylePosition', () => {
     )
     expect(placed.y).toBe(580)
   })
+
+  it('reserves tip arrow gap when opening upward', () => {
+    const placed = getContextMenuStylePosition(
+      100,
+      700,
+      { width: 220, height: 120 },
+      { width: 1280, height: 800 },
+      true,
+      1,
+      { arrowGap: 9 },
+    )
+    expect(placed.y).toBe(571)
+  })
+
+  it('shrinks tall upward menus so the bottom stays above the anchor', () => {
+    const placed = getContextMenuStylePosition(
+      100,
+      700,
+      { width: 260, height: 900 },
+      { width: 1280, height: 800 },
+      true,
+      1,
+      { arrowGap: 10 },
+    )
+    // Available above anchor: 700 - 10 - 8 = 682
+    expect(placed.maxHeight).toBe(682)
+    expect(placed.y).toBe(8)
+    // Menu bottom + gap lands on the anchor, not past it into the status bar.
+    expect(placed.y + placed.maxHeight + 10).toBe(700)
+  })
 })
