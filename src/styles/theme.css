@@ -86,44 +86,44 @@ html[data-theme="light"] {
   --minimap-vp-active-fill: color-mix(in srgb, #ffffff 18%, transparent);
 }
 
-/* QingCode-tuned Material Forest: deep pine surfaces + warm functional accent. */
+/* IDEA Material Theme UI — Material Forest, with readable secondary text. */
 html[data-theme="forest"] {
-  --color-bg: #072a27;
-  --color-bg-deep: #041f1d;
-  --color-bg-sidebar: #0b322e;
-  --color-bg-elevated: #103a35;
-  --color-bg-hover: #16453e;
-  --color-bg-active: #1b5046;
-  --color-border: #17413b;
-  --color-border-strong: #2a5a51;
+  --color-bg: #002626;
+  --color-bg-deep: #002020;
+  --color-bg-sidebar: #002e2e;
+  --color-bg-elevated: #003535;
+  --color-bg-hover: #003f3f;
+  --color-bg-active: #104110;
+  --color-border: #003838;
+  --color-border-strong: #005454;
 
-  --color-fg: #d5e2dd;
-  --color-fg-muted: #b6c6c0;
-  --color-fg-dim: #aabbb5;
-  --color-tree-fg: #c6d4cf;
+  --color-fg: #b2c2b0;
+  --color-fg-muted: #9caf9d;
+  --color-fg-dim: #94a596;
+  --color-tree-fg: #a8b8a6;
 
-  /* Muted amber: Material Forest's #ffcc80 is too luminous for filled CTAs. */
-  --color-brand: #5ad6be;
-  --color-accent: #d3a15b;
-  --color-danger: #f27980;
-  --color-warn: #d9b96e;
-  --color-ok: #93ce91;
+  /* Shell accent is darkened from the official #ffcc80 for existing white-label CTAs. */
+  --color-brand: #4ecdb5;
+  --color-accent: #b8894a;
+  --color-danger: #f07178;
+  --color-warn: #d4b06a;
+  --color-ok: #89d185;
 
-  --color-tab-active: #072a27;
-  --color-tab-inactive: #0b322e;
+  --color-tab-active: #002626;
+  --color-tab-inactive: #002e2e;
 
   --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 48%, var(--color-bg));
   --minimap-empty-line: color-mix(in srgb, var(--color-fg) 8%, transparent);
   --minimap-vp-idle-fill: color-mix(in srgb, var(--color-fg) 10%, var(--color-bg-deep) 5%);
 
-  --editor-indent-guide: #d5e2dd22;
-  --editor-indent-guide-active: #d5e2dd72;
-  --editor-matching-bracket-bg: #d5e2dd30;
-  --editor-matching-bracket-outline: #d5e2dd70;
+  --editor-indent-guide: #b2c2b022;
+  --editor-indent-guide-active: #e0f0e072;
+  --editor-matching-bracket-bg: #d0e0d830;
+  --editor-matching-bracket-outline: #d0e0d870;
 }
 
 html[data-theme="forest"] .cm-editor .cm-content {
-  color: #d5e2dd;
+  color: #d1e0e0;
 }
 
 /* Kill CM default pair marks (both ends get cm-matchingBracket). */
@@ -153,7 +153,7 @@ html[data-theme="light"] * {
 }
 
 html[data-theme="forest"] * {
-  scrollbar-color: #2a5a51 transparent;
+  scrollbar-color: #003838 transparent;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb {
@@ -161,7 +161,7 @@ html[data-theme="light"] *::-webkit-scrollbar-thumb {
 }
 
 html[data-theme="forest"] *::-webkit-scrollbar-thumb {
-  background: #2a5a51;
+  background: #003838;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
@@ -169,7 +169,7 @@ html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
 }
 
 html[data-theme="forest"] *::-webkit-scrollbar-thumb:hover {
-  background: #3c7368;
+  background: #005454;
 }
 
 /* Smooth color cross-fade while switching themes (class applied briefly by applyTheme). */

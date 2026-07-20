@@ -110,7 +110,10 @@ export default function TerminalPanel({
         } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         style={{ width: terminalOpen ? liveWidth : 0 }}
       >
-        <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-r border-border">
+        <div
+          data-terminal-surface
+          className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-r border-border"
+        >
           {body}
         </div>
         {terminalOpen && (
@@ -152,7 +155,10 @@ export default function TerminalPanel({
           ariaValueMax={getTerminalMaxHeight()}
         />
       )}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border">
+      <div
+        data-terminal-surface
+        className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border"
+      >
         {body}
       </div>
     </div>

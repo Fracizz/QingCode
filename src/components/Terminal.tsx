@@ -129,7 +129,7 @@ const FOREST_THEME = {
   magenta: M.syntax.purple,
   cyan: M.syntax.cyan,
   white: M.syntax.white,
-  brightBlack: M.disabled,
+  brightBlack: M.syntax.comments,
   brightRed: M.syntax.red,
   brightGreen: M.syntax.green,
   brightYellow: M.syntax.yellow,

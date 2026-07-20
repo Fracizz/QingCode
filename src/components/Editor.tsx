@@ -354,17 +354,20 @@ function scheduleHeavyEditorFeatures(
   const large = isLargeDocument(tab.content)
   const langId = tab.language
 
+  // Start language loading immediately. The idle callback is cancelled during
+  // new-tab initialization rerenders, but the bound-tab guard below safely
+  // discards a result after an actual tab switch.
+  if (langId && isSupportedEditorLanguage(langId)) {
+    void loadLanguageSupport(langId).then(lang => {
+      const live = viewRef.current
+      if (!live || boundTabIdRef.current !== tabId) return
+      live.dispatch({ effects: languageCompartment.reconfigure(lang) })
+    })
+  }
+
   return scheduleIdle(() => {
     const current = viewRef.current
     if (!current || boundTabIdRef.current !== tabId) return
-
-    if (langId && isSupportedEditorLanguage(langId)) {
-      void loadLanguageSupport(langId).then(lang => {
-        const live = viewRef.current
-        if (!live || boundTabIdRef.current !== tabId) return
-        live.dispatch({ effects: languageCompartment.reconfigure(lang) })
-      })
-    }
 
     if (!large) {
       const prefs = getEditorPreferences()

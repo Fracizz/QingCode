@@ -34,6 +34,29 @@ function freezeTerminalSurfaces() {
     })
 }
 
+/** Keep the bottom terminal's flex subtree at its last painted height while dragging. */
+function freezeTerminalLayout(orientation: PanelResizeOrientation) {
+  if (orientation !== 'horizontal') return
+  document
+    .querySelectorAll<HTMLElement>('[data-terminal-dock="bottom"] [data-terminal-surface]')
+    .forEach(el => {
+      if (el.dataset.resizeLayoutFrozen === '1') return
+      const rect = el.getBoundingClientRect()
+      el.dataset.resizeLayoutFrozen = '1'
+      el.style.height = `${Math.round(rect.height)}px`
+      el.style.flex = 'none'
+    })
+}
+
+function unfreezeTerminalLayouts() {
+  document.querySelectorAll<HTMLElement>('[data-terminal-surface]').forEach(el => {
+    if (el.dataset.resizeLayoutFrozen !== '1') return
+    delete el.dataset.resizeLayoutFrozen
+    el.style.height = ''
+    el.style.flex = ''
+  })
+}
+
 function unfreezeTerminalSurfaces() {
   document.querySelectorAll<HTMLElement>('[data-terminal-dock] .xterm').forEach(el => {
     if (el.dataset.resizeFrozen !== '1') return
@@ -49,17 +72,21 @@ export function beginPanelResize(orientation: PanelResizeOrientation = 'horizont
   document.body.classList.add(RESIZING_CLASS)
   document.body.dataset.panelResize = orientation
   document.body.style.userSelect = 'none'
+  freezeTerminalLayout(orientation)
   freezeTerminalSurfaces()
   window.dispatchEvent(new CustomEvent(PANEL_RESIZE_BEGIN_EVENT))
 }
 
 /** Fit the final grid while its old surface is still clipped, then reveal it next frame. */
 export function settlePanelResize(orientation: PanelResizeOrientation = 'horizontal') {
+  // Restore final flex geometry before xterm fits, but keep its WebGL surface frozen.
+  unfreezeTerminalLayouts()
   window.dispatchEvent(new CustomEvent(PANEL_RESIZE_SETTLE_EVENT))
   window.requestAnimationFrame(() => endPanelResize(orientation))
 }
 
 export function endPanelResize(_orientation: PanelResizeOrientation = 'horizontal') {
+  unfreezeTerminalLayouts()
   unfreezeTerminalSurfaces()
   document.body.classList.remove(RESIZING_CLASS)
   delete document.body.dataset.panelResize

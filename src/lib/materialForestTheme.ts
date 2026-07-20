@@ -1,24 +1,23 @@
 /**
- * QingCode-tuned JetBrains Material Theme UI — Material Forest palette.
- * UI surfaces are separated more clearly and secondary code stays AA-readable.
+ * JetBrains Material Theme UI — Material Forest palette.
+ * Official UI/syntax colors are retained; text and comments are lifted for readability.
  * @see https://material-theme.com/docs/reference/color-palette/
  */
 export const MATERIAL_FOREST = {
-  background: '#072A27',
-  foreground: '#D5E2DD',
-  text: '#AABBB5',
-  selectionBg: '#255A4D',
+  background: '#002626',
+  foreground: '#B2C2B0',
+  text: '#94A596',
+  selectionBg: '#1E611E',
   selectionFg: '#FFFFFF',
-  secondBackground: '#0B322E',
-  contrast: '#041F1D',
-  buttons: '#103A35',
-  active: '#1B5046',
-  border: '#17413B',
-  highlight: '#16453E',
-  disabled: '#789B94',
-  /** UI accent (cursor, CTAs); muted from Material Forest #FFCC80 for filled buttons. */
-  accent: '#D3A15B',
-  excluded: '#214437',
+  secondBackground: '#002E2E',
+  contrast: '#002020',
+  buttons: '#003535',
+  active: '#104110',
+  border: '#003838',
+  highlight: '#003F3F',
+  disabled: '#005454',
+  accent: '#FFCC80',
+  excluded: '#113711',
   syntax: {
     green: '#c3e88d',
     yellow: '#ffcb6b',
@@ -27,12 +26,12 @@ export const MATERIAL_FOREST = {
     purple: '#c792ea',
     orange: '#f78c6c',
     cyan: '#89ddff',
-    gray: '#789b94',
-    /** Soft default / variable fg, aligned with the application shell. */
-    white: '#d5e2dd',
+    gray: '#005454',
+    /** Softened from official #eeffff to reduce glare in long editing sessions. */
+    white: '#d1e0e0',
     error: '#ff5370',
     comments: '#789b94',
-    variables: '#d5e2dd',
+    variables: '#d1e0e0',
     links: '#80cbc4',
     functions: '#82aaff',
     keywords: '#c792ea',
