@@ -140,10 +140,6 @@ const lightTheme = EditorView.theme(
       backgroundColor: '#b9d6f5',
     },
     '.cm-cursor, .cm-dropCursor': { borderLeftColor: '#1a1a1a' },
-    '.cm-matchingBracket, &.cm-focused .cm-matchingBracket': {
-      backgroundColor: '#e9f5d0',
-      outline: '1px solid #c2e08a',
-    },
     '.cm-searchMatch': { backgroundColor: '#ffe9a8' },
     '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: '#ffd56b' },
     '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },

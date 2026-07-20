@@ -27,6 +27,9 @@ export default function PanelResizer({
     <Tooltip
       label={tooltip}
       side={tooltipSide}
+      forceOpen={active}
+      liveTip={active}
+      delay={0}
       wrapperClassName={orientation === 'horizontal' ? 'flex w-full shrink-0' : 'flex shrink-0'}
     >
       <div

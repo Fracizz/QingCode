@@ -25,6 +25,7 @@ import { useCompareStore } from './store/compareStore'
 import { useCommandPaletteStore } from './store/commandPaletteStore'
 import { useSymbolPickerStore } from './store/symbolPickerStore'
 import { isTauri } from './lib/tauri'
+import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
 import { startSystemThemeListener } from './lib/themeSettings'
 import {
@@ -242,11 +243,7 @@ function App() {
     }
   }, [initializeTerminalEvents])
 
-  const tabsNeedContentLoad = useEditorStore(s =>
-    s.tabs.some(
-      t => !t.openError && !t.loading && (t.content === undefined || t.diskMtime === undefined),
-    ),
-  )
+  const tabsNeedContentLoad = useEditorStore(s => s.tabs.some(tabNeedsDiskContent))
 
   // After project session restore, load disk (or keep draft) bodies for open tabs.
   useEffect(() => {

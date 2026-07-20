@@ -19,14 +19,89 @@ export function isActiveRunTerminal(
   return t.awaitingRestoreSpawn === true || t.status !== 'exited'
 }
 
+/** Tab title used when spawning a run-config task (must stay stable for legacy relink). */
+export function runTaskTerminalName(
+  config: Pick<RunConfig, 'name'>,
+  task: Pick<RunTask, 'name'>,
+): string {
+  return task.name ? `${config.name} · ${task.name}` : config.name
+}
+
+const RUN_TASK_SHELL_KINDS = new Set<string>(['ps1', 'bat', 'sh', 'command', 'script'])
+
+/**
+ * Resolve run-config linkage for a terminal. Prefers stamped ids; otherwise
+ * recovers from the stable tab name (and uniquely matching launchCommand).
+ */
+export function findRunLinkageForTerminal(
+  terminal: Pick<TerminalTab, 'name' | 'launchCommand' | 'shellKind' | 'runConfigId' | 'runTaskId'>,
+  configs: RunConfig[],
+): { runConfigId: string; runTaskId: string } | null {
+  if (terminal.runConfigId && terminal.runTaskId) {
+    return { runConfigId: terminal.runConfigId, runTaskId: terminal.runTaskId }
+  }
+  if (!terminal.shellKind || !RUN_TASK_SHELL_KINDS.has(terminal.shellKind)) return null
+
+  for (const config of configs) {
+    for (const task of config.tasks) {
+      if (terminal.name === runTaskTerminalName(config, task)) {
+        return { runConfigId: config.id, runTaskId: task.id }
+      }
+    }
+  }
+
+  if (!terminal.launchCommand) return null
+  const byCommand: Array<{ runConfigId: string; runTaskId: string }> = []
+  for (const config of configs) {
+    for (const task of config.tasks) {
+      if (task.target === terminal.launchCommand) {
+        byCommand.push({ runConfigId: config.id, runTaskId: task.id })
+      }
+    }
+  }
+  return byCommand.length === 1 ? byCommand[0] : null
+}
+
+/**
+ * Stamp runConfigId/runTaskId onto restored/legacy task terminals that lack them.
+ * Returns how many tabs were updated.
+ */
+export function stampMissingRunLinkage(configs: RunConfig[]): number {
+  if (configs.length === 0) return 0
+  const terminals = useTerminalStore.getState().terminals
+  let stamped = 0
+  const next = terminals.map(t => {
+    if (t.runConfigId && t.runTaskId) return t
+    const link = findRunLinkageForTerminal(t, configs)
+    if (!link) return t
+    stamped += 1
+    return { ...t, runConfigId: link.runConfigId, runTaskId: link.runTaskId }
+  })
+  if (stamped > 0) useTerminalStore.setState({ terminals: next })
+  return stamped
+}
+
+/** Active terminals belonging to a run config (source of truth for UI / stop). */
+export function activeTerminalsForConfig(
+  configId: string,
+  terminals: Array<Pick<TerminalTab, 'id' | 'runConfigId' | 'status' | 'awaitingRestoreSpawn'>>,
+): string[] {
+  return terminals
+    .filter(t => t.runConfigId === configId && isActiveRunTerminal(t))
+    .map(t => t.id)
+}
+
 /** Rebuild in-memory run maps from terminals that carry runConfigId/runTaskId. */
 export function buildRunningMapsFromTerminals(
-  terminals: Array<Pick<TerminalTab, 'id' | 'runConfigId' | 'runTaskId'>>,
+  terminals: Array<
+    Pick<TerminalTab, 'id' | 'runConfigId' | 'runTaskId' | 'status' | 'awaitingRestoreSpawn'>
+  >,
 ): { runningByTask: Record<string, string>; runningConfigs: Record<string, string[]> } {
   const runningByTask: Record<string, string> = {}
   const runningConfigs: Record<string, string[]> = {}
   for (const t of terminals) {
     if (!t.runConfigId || !t.runTaskId) continue
+    if (!isActiveRunTerminal(t)) continue
     const key = `${t.runConfigId}:${t.runTaskId}`
     runningByTask[key] = t.id
     const list = runningConfigs[t.runConfigId] ?? []
@@ -281,7 +356,7 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
     const taskKeys: string[] = []
     for (const task of config.tasks) {
       const cwd = task.cwd ? joinPath(project.path, task.cwd) : project.path
-      const name = task.name ? `${config.name} · ${task.name}` : config.name
+      const name = runTaskTerminalName(config, task)
       const terminalId = await addScriptTerminal(
         project.id,
         cwd,
@@ -304,28 +379,20 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
   },
 
   stopConfig: async (config: RunConfig) => {
-    const keys = get().runningConfigs[config.id] ?? []
     const kill = useTerminalStore.getState().closeTerminal
-    await Promise.all(
-      keys.map(async key => {
-        const tid = get().runningByTask[key]
-        if (tid) await kill(tid).catch(() => undefined)
-      })
+    const tids = new Set(
+      activeTerminalsForConfig(config.id, useTerminalStore.getState().terminals),
     )
+    for (const key of get().runningConfigs[config.id] ?? []) {
+      const tid = get().runningByTask[key]
+      if (tid) tids.add(tid)
+    }
+    await Promise.all([...tids].map(tid => kill(tid).catch(() => undefined)))
     get().clearStopped(config)
   },
 
-  isConfigRunning: (configId: string) => {
-    const keys = get().runningConfigs[configId] ?? []
-    const byTask = get().runningByTask
-    return keys.some(k => {
-      const tid = byTask[k]
-      if (!tid) return false
-      return useTerminalStore
-        .getState()
-        .terminals.some(t => t.id === tid && isActiveRunTerminal(t))
-    })
-  },
+  isConfigRunning: (configId: string) =>
+    activeTerminalsForConfig(configId, useTerminalStore.getState().terminals).length > 0,
 
   taskTerminalId: (configId: string, taskId: string) => get().runningByTask[`${configId}:${taskId}`],
 
@@ -340,8 +407,12 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
     }),
 }))
 
-/** Apply run-config ↔ terminal linkage after session / named-workspace hydrate. */
-export function rehydrateRunningFromTerminals(): void {
+/**
+ * Apply run-config ↔ terminal linkage after session hydrate or when configs load.
+ * Pass configs to recover legacy restored tabs that lack stamped runConfigId.
+ */
+export function rehydrateRunningFromTerminals(configs?: RunConfig[]): void {
+  if (configs && configs.length > 0) stampMissingRunLinkage(configs)
   const { runningByTask, runningConfigs } = buildRunningMapsFromTerminals(
     useTerminalStore.getState().terminals,
   )

@@ -38,6 +38,8 @@ export type EditorPreferenceSettings = {
   formatOnPaste: boolean
   bracketPairColorization: boolean
   bracketPairGuides: boolean
+  indentationGuides: boolean
+  highlightActiveIndentation: boolean
 }
 
 export const DEFAULT_EDITOR_PREFERENCES: EditorPreferenceSettings = {
@@ -55,6 +57,8 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferenceSettings = {
   formatOnPaste: false,
   bracketPairColorization: true,
   bracketPairGuides: true,
+  indentationGuides: true,
+  highlightActiveIndentation: true,
 }
 
 function asNumber(value: unknown, fallback: number): number {
@@ -166,6 +170,14 @@ export function readEditorPreferences(settings: SettingsFile): EditorPreferenceS
     bracketPairGuides: asBoolean(
       settings['editor.guides.bracketPairs'],
       DEFAULT_EDITOR_PREFERENCES.bracketPairGuides,
+    ),
+    indentationGuides: asBoolean(
+      settings['editor.guides.indentation'],
+      DEFAULT_EDITOR_PREFERENCES.indentationGuides,
+    ),
+    highlightActiveIndentation: asBoolean(
+      settings['editor.guides.highlightActiveIndentation'],
+      DEFAULT_EDITOR_PREFERENCES.highlightActiveIndentation,
     ),
   }
 }

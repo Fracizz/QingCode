@@ -5,15 +5,28 @@ body.panel-resizing * {
   user-select: none !important;
 }
 
-/* Live drag must not fight CSS height transitions / layout thrash */
-body.panel-resizing[data-panel-resize='horizontal'] [data-terminal-panel] {
-  transition: none !important;
-  will-change: height;
-}
-
 body.panel-resizing[data-panel-resize='vertical'],
 body.panel-resizing[data-panel-resize='vertical'] * {
   cursor: ew-resize !important;
+}
+
+/* Spacer holds flex layout steady while the dock is position:fixed. */
+[data-terminal-resize-spacer] {
+  background: var(--color-bg-deep);
+  pointer-events: none;
+}
+
+/* Live dock overlay: never animate; clip frozen xterm (no mid-drag fit). */
+body.panel-resizing [data-terminal-dock] {
+  transition: none !important;
+  overflow: hidden !important;
+}
+
+body.panel-resizing [data-terminal-dock] .xterm,
+body.panel-resizing [data-terminal-dock] .xterm-viewport,
+body.panel-resizing [data-terminal-dock] .xterm-screen {
+  /* Keep last-fit pixel size — do not CSS-stretch the WebGL canvas. */
+  max-width: none !important;
 }
 
 .panel-resizer {
@@ -98,7 +111,6 @@ body.panel-resizing[data-panel-resize='vertical'] * {
   opacity: 1;
 }
 
-/* Glow effect on hover */
 .panel-resizer:hover {
   filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-accent) 30%, transparent));
 }

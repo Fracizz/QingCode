@@ -10,6 +10,7 @@ import {
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 import { getContextMenuStylePosition } from './contextMenuPosition'
+import Tooltip from './Tooltip'
 
 export type SettingSelectOption = {
   value: string
@@ -165,7 +166,14 @@ export default function SettingSelect({
         }}
         onKeyDown={onTriggerKeyDown}
       >
-        <span className="setting-select-trigger-label">{selected?.label ?? ''}</span>
+        <Tooltip
+          label={selected?.label ?? ''}
+          side="bottom"
+          onlyWhenOverflow
+          wrapperClassName="setting-select-trigger-label min-w-0"
+        >
+          <span className="block min-w-0 truncate">{selected?.label ?? ''}</span>
+        </Tooltip>
         <ChevronDown size={12} className="setting-select-trigger-chevron" aria-hidden />
       </button>
       {open &&
@@ -213,7 +221,14 @@ export default function SettingSelect({
                   <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                     {isSelected ? <Check size={14} className="text-fg" /> : null}
                   </span>
-                  <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                  <Tooltip
+                    label={option.label}
+                    side="right"
+                    onlyWhenOverflow
+                    wrapperClassName="min-w-0 flex-1"
+                  >
+                    <span className="block min-w-0 truncate">{option.label}</span>
+                  </Tooltip>
                 </button>
               )
             })}

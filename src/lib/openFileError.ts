@@ -61,11 +61,39 @@ export function isLoadingTab(tab: {
   content?: string
   openError?: string
   viewMode?: 'edit' | 'view'
+  /** Set after a successful disk open; kept when plain tabs clear the Zustand buffer. */
+  fileSize?: number
+  diskMtime?: number | null
 }): boolean {
   if (tab.openError) return false
   // View-mode tabs never hold full `content`; only the progressive spinner matters.
   if (tab.viewMode === 'view') return Boolean(tab.loading)
-  return Boolean(tab.loading) || tab.content === undefined
+  if (tab.loading) return true
+  // Plain-profile tabs clear `content` after bind (CM owns the buffer) but keep
+  // fileSize/diskMtime — that must not look like "still opening".
+  if (tab.content !== undefined) return false
+  return tab.fileSize === undefined && tab.diskMtime === undefined
+}
+
+/**
+ * Whether App / loadMissingTabContents should (re)hydrate this tab from disk.
+ * Distinct from {@link isLoadingTab}: plain tabs may have `content === undefined`
+ * after bind without needing another read_file.
+ */
+export function tabNeedsDiskContent(tab: {
+  loading?: boolean
+  content?: string
+  openError?: string
+  viewMode?: 'edit' | 'view'
+  fileSize?: number
+  diskMtime?: number | null
+}): boolean {
+  if (tab.openError || tab.loading) return false
+  if (tab.viewMode === 'view') return tab.fileSize === undefined
+  // Draft-restored buffers already have content; only mtime may be missing.
+  if (tab.content !== undefined) return tab.diskMtime === undefined
+  // Session restore / progressive open: never finished a disk populate.
+  return tab.fileSize === undefined || tab.diskMtime === undefined
 }
 
 export function isViewOnlyTab(tab: { viewMode?: 'edit' | 'view'; openError?: string }): boolean {

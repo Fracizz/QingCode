@@ -213,6 +213,8 @@ interface Props {
   /** Fired when the tip is hidden. */
   onHide?: () => void
   wrapperClassName?: string
+  /** Mark tip text for DOM updates during sash drag (no React re-render). */
+  liveTip?: boolean
   children: ReactNode
 }
 
@@ -229,6 +231,7 @@ export default function Tooltip({
   onShow,
   onHide,
   wrapperClassName = 'inline-flex shrink-0',
+  liveTip = false,
   children,
 }: Props) {
   const showDelay = delay ?? (onlyWhenOverflow ? OVERFLOW_TOOLTIP_DELAY : SHOW_DELAY)
@@ -391,10 +394,10 @@ export default function Tooltip({
         ref={triggerRef}
         className={wrapperClassName}
         onMouseEnter={scheduleShow}
-        onMouseLeave={hide}
+        onMouseLeave={forceOpen ? undefined : hide}
         onFocus={showOnFocus ? scheduleShow : undefined}
-        onBlur={hide}
-        onPointerDown={hide}
+        onBlur={forceOpen ? undefined : hide}
+        onPointerDown={forceOpen ? undefined : hide}
       >
         {children}
       </span>
@@ -413,7 +416,7 @@ export default function Tooltip({
               filter: showArrow ? 'drop-shadow(0 4px 14px rgba(0,0,0,0.42))' : undefined,
             }}
           >
-            {label}
+            {liveTip ? <span data-panel-resize-live-tip>{label}</span> : label}
             {showArrow && (
               <TipArrow
                 direction={side === 'top' ? 'down' : 'up'}

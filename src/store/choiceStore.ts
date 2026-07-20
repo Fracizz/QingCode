@@ -12,6 +12,8 @@ export interface ChoiceRequest {
   title: string
   message: string
   detail?: string
+  /** When true, render `detail` as GFM Markdown in a scrollable pane. */
+  detailMarkdown?: boolean
   options: ChoiceOption[]
 }
 

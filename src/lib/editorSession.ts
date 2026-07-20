@@ -126,6 +126,11 @@ export function applyEditorDocument(tabId: string, content: string): boolean {
 export function flushLiveEditorContent(tabId: string) {
   const content = getLiveEditorContent(tabId)
   if (content === null) return
+  // Never let a transient empty EditorView wipe a real buffer (create→bind race).
+  if (content === '') {
+    const tab = useEditorStore.getState().findTab(tabId)
+    if (tab?.content && tab.content.length > 0) return
+  }
   useEditorStore.getState().setTabContent(tabId, content)
 }
 

@@ -177,7 +177,7 @@ pnpm icon:sync
 
 | 文件 | 职责 |
 |------|------|
-| `index.html` `#startup-splash` | 内联 Logo、品牌名、青色进度条与「正在启动」；HTML 解析后立即可见 |
+| `index.html` `#startup-splash` | 内联 Logo（**160px**）、品牌名、青色进度条与「正在启动」；HTML 解析后立即可见 |
 | `index.html` 内联脚本 | `DOMContentLoaded` 时立刻 `show()`（不再等待尺寸 IPC） |
 | `src-tauri/src/lib.rs` | 窗口 `visible: false` 创建；Windows 在隐藏态修复 ~14×14 尺寸，**不**提前 `show()` |
 | `src/lib/startupSplash.ts` | 主界面首帧绘制后淡出并移除 splash |

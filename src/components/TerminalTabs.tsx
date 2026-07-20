@@ -17,6 +17,7 @@ import { confirmDialog } from '../store/confirmStore'
 import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '../lib/terminalProfiles'
 import { formatTerminalName } from '../utils/terminalName'
 import { canCloseTerminalDirectly, isTerminalBusy, listBusyTerminals } from '../lib/terminalClose'
+import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
 import { subscribeTerminalCommandActivity } from '../lib/terminalCommandActivity'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
@@ -330,6 +331,13 @@ export default function TerminalTabs() {
       },
     },
     {
+      label: translate('重新加载'),
+      icon: <RotateCcw size={14} />,
+      action: () => {
+        void restartTerminal(terminal.id)
+      },
+    },
+    {
       label: translate('新建终端（默认配置）'),
       icon: <Plus size={14} />,
       disabled: atLimit,
@@ -464,14 +472,30 @@ export default function TerminalTabs() {
                 )}
                 {t.status === 'exited' && renamingId !== t.id && (
                   <Tooltip
-                    label={translate('重启终端{exitCode}', {
-                      exitCode: t.exitCode === null ? '' : translate('（退出码 {code}）', { code: t.exitCode }),
-                    })}
+                    label={
+                      !shouldKeepShellAfterExit(t)
+                        ? translate('按原运行配置重启{exitCode}', {
+                            exitCode:
+                              t.exitCode === null
+                                ? ''
+                                : translate('（退出码 {code}）', { code: t.exitCode }),
+                          })
+                        : translate('重启终端{exitCode}', {
+                            exitCode:
+                              t.exitCode === null
+                                ? ''
+                                : translate('（退出码 {code}）', { code: t.exitCode }),
+                          })
+                    }
                     side="top"
                   >
                     <button
                       type="button"
-                      aria-label={translate('重启终端{exitCode}', { exitCode: '' })}
+                      aria-label={
+                        !shouldKeepShellAfterExit(t)
+                          ? translate('按原运行配置重启{exitCode}', { exitCode: '' })
+                          : translate('重启终端{exitCode}', { exitCode: '' })
+                      }
                       className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
                       onClick={e => {
                         e.stopPropagation()

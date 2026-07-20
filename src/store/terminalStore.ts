@@ -46,6 +46,8 @@ const QUICK_FAIL_THRESHOLD_MS = 2000
 const PTY_SPAWN_FALLBACK_MS = 2500
 
 const ptySpawnInFlight = new Set<string>()
+/** Prevents concurrent App effects from double-respawning restored tabs. */
+const restoreSpawnInFlight = new Set<string>()
 const ptySpawnFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** Last fitted size per tab — used when restarting before the next fit. */
 const lastPtySize = new Map<string, { cols: number; rows: number }>()
@@ -712,19 +714,21 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   spawnRestoredTerminals: async (projectId: string) => {
     const pending = get().terminals.filter(
-      t => t.projectId === projectId && t.awaitingRestoreSpawn,
+      t => t.projectId === projectId && t.awaitingRestoreSpawn && !restoreSpawnInFlight.has(t.id),
     )
     if (pending.length === 0) return
-    // Clear flags first so concurrent effect runs do not double-spawn.
-    set(s => ({
-      terminals: s.terminals.map(t =>
-        t.projectId === projectId && t.awaitingRestoreSpawn
-          ? { ...t, awaitingRestoreSpawn: false }
-          : t,
-      ),
-    }))
-    // Preserve scrollback across restore respawn (manual restart still clears).
-    await Promise.all(pending.map(t => get().restartTerminal(t.id, { preserveOutput: true })))
+    for (const t of pending) restoreSpawnInFlight.add(t.id)
+    try {
+      // Keep awaitingRestoreSpawn until restartTerminal flips status to
+      // starting — otherwise run-config UI briefly treats tabs as idle.
+      // Preserve scrollback across restore respawn (manual restart still clears).
+      await Promise.all(pending.map(t => get().restartTerminal(t.id, { preserveOutput: true })))
+    } finally {
+      for (const t of pending) restoreSpawnInFlight.delete(t.id)
+    }
+    // Maps may have been empty before spawn (or linkage stamped later); refresh.
+    const { rehydrateRunningFromTerminals } = await import('./runConfigStore')
+    rehydrateRunningFromTerminals()
   },
 
   activateProject: (projectId: string) =>

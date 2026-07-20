@@ -29,7 +29,6 @@ export interface TerminalPanelProps {
   terminalHeight: number
   terminalWidth: number
   isTerminalResizing: boolean
-  /** Same ref the drag handler updates — keeps React style in sync mid-drag. */
   dragHeightRef: MutableRefObject<number>
   dragWidthRef: MutableRefObject<number>
   onResizerMouseDown: (e: React.MouseEvent) => void
@@ -75,7 +74,6 @@ export default function TerminalPanel({
             />
           </div>
         )}
-        {/* Only mount the current project's terminals to avoid xterm cost across projects. */}
         {projectTerminals.map(term => {
           const isActive = term.id === activeTerminalId
           return (
@@ -104,14 +102,11 @@ export default function TerminalPanel({
       <div
         ref={terminalPanelRef}
         data-terminal-panel
+        data-terminal-dock="side"
         data-terminal-position="side"
         className={`flex flex-shrink-0 h-full min-h-0 overflow-hidden ${
           isTerminalResizing ? '' : 'transition-[width,opacity] duration-200 ease-out'
-        } ${
-          terminalOpen
-            ? 'opacity-100'
-            : 'opacity-0 pointer-events-none'
-        }`}
+        } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
         style={{ width: terminalOpen ? liveWidth : 0 }}
       >
         <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-r border-border">
@@ -134,7 +129,16 @@ export default function TerminalPanel({
   }
 
   return (
-    <>
+    <div
+      ref={terminalPanelRef}
+      data-terminal-panel
+      data-terminal-dock="bottom"
+      data-terminal-position="bottom"
+      className={`flex flex-col flex-shrink-0 min-h-0 overflow-hidden ${
+        isTerminalResizing ? '' : 'transition-[height,opacity] duration-200 ease-out'
+      } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none h-0'}`}
+      style={{ height: terminalOpen ? liveHeight : 0 }}
+    >
       {terminalOpen && (
         <PanelResizer
           orientation="horizontal"
@@ -147,22 +151,9 @@ export default function TerminalPanel({
           ariaValueMax={getTerminalMaxHeight()}
         />
       )}
-
-      <div
-        ref={terminalPanelRef}
-        data-terminal-panel
-        data-terminal-position="bottom"
-        className={`flex-col flex-shrink-0 min-h-0 overflow-hidden border-t border-border ${
-          isTerminalResizing ? '' : 'transition-[height,opacity] duration-200 ease-out'
-        } ${
-          terminalOpen ? 'flex opacity-100' : 'opacity-0 pointer-events-none h-0 border-t-0'
-        }`}
-        style={{
-          height: terminalOpen ? liveHeight : 0,
-        }}
-      >
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border">
         {body}
       </div>
-    </>
+    </div>
   )
 }

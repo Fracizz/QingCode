@@ -43,7 +43,7 @@ export async function promptAppUpdate(info: AppUpdateInfo): Promise<string | nul
       latest: info.latest,
     }),
     info.source ? translate('来源：{source}', { source: info.source }) : null,
-    info.notes,
+    info.notes?.trim() || null,
   ].filter(Boolean)
 
   const choice = await choiceDialog({
@@ -52,6 +52,7 @@ export async function promptAppUpdate(info: AppUpdateInfo): Promise<string | nul
       version: info.latest,
     }),
     detail: detailParts.join('\n\n'),
+    detailMarkdown: true,
     options: [
       { id: 'download', label: translate('打开下载页'), primary: true },
       { id: 'skip', label: translate('跳过此版本') },

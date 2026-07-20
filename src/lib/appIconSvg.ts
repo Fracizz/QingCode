@@ -27,7 +27,7 @@ export function renderAppIconSvg(
 }
 
 /** Inject startup splash logo from the same SVG file. */
-export function paintStartupSplashLogo(size = 80, theme: ResolvedTheme = getResolvedTheme(loadTheme())) {
+export function paintStartupSplashLogo(size = 160, theme: ResolvedTheme = getResolvedTheme(loadTheme())) {
   const slot = document.querySelector<HTMLElement>('.startup-logo')
   if (!slot) return
   slot.innerHTML = renderAppIconSvg(size, undefined, theme)

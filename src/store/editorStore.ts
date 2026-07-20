@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { save } from '@tauri-apps/plugin-dialog'
 import { safeInvoke, isTauri } from '../lib/tauri'
-import { parseOpenFileError } from '../lib/openFileError'
+import { parseOpenFileError, tabNeedsDiskContent } from '../lib/openFileError'
 import {
   EDIT_DEGRADED_BYTES,
   EDIT_WARN_BYTES,
@@ -356,6 +356,41 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
       const prev = get().activeTabId
       if (prev && prev !== existing.id) flushLiveEditorContent(prev)
+      // Session-restored / never-hydrated tabs: activate and load — do not leave an empty editor.
+      if (tabNeedsDiskContent(existing) && existing.content === undefined) {
+        set({
+          activeTabId: existing.id,
+          pendingReveal: reveal && !existing.openError ? reveal : null,
+        })
+        void useProjectStore.getState().revealFileInTree(path)
+        set(s => {
+          const next = mapTabEverywhere(s, existing.id, t =>
+            t.openError ? t : { ...t, loading: true, openError: undefined, openErrorKind: undefined },
+          )
+          return next ?? s
+        })
+        try {
+          await populateTabFromDisk(existing.id, path, line, column)
+          void useProjectStore.getState().addRecentFile(path)
+        } catch (e) {
+          console.error('openFile failed:', e)
+          if (!get().findTab(existing.id)) return
+          const { message, kind } = parseOpenFileError(e)
+          set(s => {
+            const next = mapTabEverywhere(s, existing.id, t => ({
+              ...t,
+              loading: false,
+              content: undefined,
+              viewMode: 'edit',
+              openError: message,
+              openErrorKind: kind,
+            }))
+            if (!next) return s
+            return { ...next, pendingReveal: null }
+          })
+        }
+        return
+      }
       set({
         activeTabId: existing.id,
         pendingReveal: reveal && !existing.openError ? reveal : null,
@@ -692,15 +727,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   loadMissingTabContents: async () => {
     const targets = get()
-      .tabs.filter(
-        t =>
-          t.kind !== 'diff' &&
-          !t.openError &&
-          !t.loading &&
-          (t.viewMode === 'view'
-            ? t.fileSize === undefined
-            : t.content === undefined || t.diskMtime === undefined),
-      )
+      .tabs.filter(t => t.kind !== 'diff' && tabNeedsDiskContent(t))
       .map(t => t.id)
     if (targets.length === 0) return
 

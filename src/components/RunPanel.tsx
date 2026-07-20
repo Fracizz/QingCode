@@ -13,7 +13,8 @@ import {
 import { useProjectStore } from '../store/projectStore'
 import {
   useRunConfigStore,
-  isActiveRunTerminal,
+  activeTerminalsForConfig,
+  rehydrateRunningFromTerminals,
   type RunConfig,
   type RunTask,
   type RunTaskType,
@@ -58,8 +59,6 @@ export default function RunPanel() {
   const runConfig = useRunConfigStore(s => s.runConfig)
   const stopConfig = useRunConfigStore(s => s.stopConfig)
   const removeConfig = useRunConfigStore(s => s.removeConfig)
-  const runningConfigs = useRunConfigStore(s => s.runningConfigs)
-  const runningByTask = useRunConfigStore(s => s.runningByTask)
   const terminals = useTerminalStore(s => s.terminals)
   const setActiveTerminal = useTerminalStore(s => s.setActiveTerminal)
 
@@ -70,7 +69,12 @@ export default function RunPanel() {
   const [projectRestricted, setProjectRestricted] = useState(false)
 
   useEffect(() => {
-    if (currentProject) void loadConfigs(currentProject)
+    if (!currentProject) return
+    void loadConfigs(currentProject).then(configs => {
+      // Recover linkage for restored task tabs (esp. pre-stamp sessions), then
+      // rebuild running maps so Stop / 「运行中」 match live terminals.
+      rehydrateRunningFromTerminals(configs)
+    })
   }, [currentProject?.id, loadConfigs, currentProject])
 
   useEffect(() => {
@@ -87,21 +91,12 @@ export default function RunPanel() {
 
   const runningTerminalsByConfig = useMemo(() => {
     const map = new Map<string, string[]>()
-    for (const [configId, keys] of Object.entries(runningConfigs)) {
-      const tids: string[] = []
-      for (const k of keys) {
-        const tid = runningByTask[k]
-        if (
-          tid &&
-          terminals.some(t => t.id === tid && isActiveRunTerminal(t))
-        ) {
-          tids.push(tid)
-        }
-      }
-      if (tids.length > 0) map.set(configId, tids)
+    for (const config of configs) {
+      const tids = activeTerminalsForConfig(config.id, terminals)
+      if (tids.length > 0) map.set(config.id, tids)
     }
     return map
-  }, [runningConfigs, runningByTask, terminals])
+  }, [configs, terminals])
 
   if (!currentProject) {
     return (

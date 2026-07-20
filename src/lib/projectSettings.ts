@@ -54,6 +54,8 @@ function buildSharedDefaults(): SettingsFile {
     'editor.linkedEditing': false,
     'editor.bracketPairColorization.enabled': true,
     'editor.guides.bracketPairs': true,
+    'editor.guides.indentation': true,
+    'editor.guides.highlightActiveIndentation': true,
     'files.autoSave': 'off',
     'files.autoSaveDelay': 1000,
     'files.eol': 'auto',
@@ -139,8 +141,12 @@ const SHARED_SETTINGS_BODY = `
   "editor.linkedEditing": false,
   // editor.bracketPairColorization.enabled：括号对着色（按嵌套深度分色）
   "editor.bracketPairColorization.enabled": true,
-  // editor.guides.bracketPairs：光标所在括号对之间的竖向参考线
+  // editor.guides.bracketPairs：光标所在块（{…} 行范围）内高亮对应缩进列实线
   "editor.guides.bracketPairs": true,
+  // editor.guides.indentation：各级缩进参考线（默认浅色虚线）
+  "editor.guides.indentation": true,
+  // editor.guides.highlightActiveIndentation：高亮光标所在行的缩进参考线（实线）
+  "editor.guides.highlightActiveIndentation": true,
 
   // ============================== 文件 ==============================
   // files.autoSave：自动保存 off | afterDelay | onFocusChange | onWindowChange

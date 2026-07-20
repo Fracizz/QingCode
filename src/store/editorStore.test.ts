@@ -13,9 +13,11 @@ vi.mock('../lib/editorSession', () => ({
   getLiveEditorContent: vi.fn(() => null),
 }))
 
+const safeInvoke = vi.fn()
+
 vi.mock('../lib/tauri', () => ({
-  isTauri: () => false,
-  safeInvoke: vi.fn(),
+  isTauri: () => true,
+  safeInvoke: (...args: unknown[]) => safeInvoke(...args),
 }))
 
 vi.mock('./projectStore', () => ({
@@ -23,6 +25,7 @@ vi.mock('./projectStore', () => ({
     getState: () => ({
       pushToast: vi.fn(),
       revealFileInTree: vi.fn(),
+      addRecentFile: vi.fn(),
       currentProject: null,
       projects: [],
     }),
@@ -44,6 +47,7 @@ function makeTab(partial: Partial<EditorTab> & Pick<EditorTab, 'id' | 'path'>): 
 
 describe('editorStore tab lifecycle', () => {
   beforeEach(() => {
+    safeInvoke.mockReset()
     useEditorStore.setState({
       tabs: [
         makeTab({ id: 'a', path: 'D:\\proj\\src\\a.ts', content: 'a', dirty: false }),
@@ -107,5 +111,52 @@ describe('editorStore tab lifecycle', () => {
     const tab = useEditorStore.getState().findTab('a')
     expect(tab?.encoding).toBe('gb18030')
     expect(tab?.dirty).toBe(true)
+  })
+
+  it('openFile rehydrates a session-restored tab that has no content yet', async () => {
+    const path = 'D:\\proj\\src\\restored.ts'
+    useEditorStore.setState({
+      tabs: [makeTab({ id: 'restored', path, content: undefined })],
+      activeTabId: 'restored',
+      pendingReveal: null,
+      projectSessions: {},
+    })
+    safeInvoke.mockImplementation(async (_label: string, cmd: string) => {
+      if (cmd === 'file_stat') return { size: 5, is_dir: false }
+      if (cmd === 'file_mtime') return 42
+      if (cmd === 'read_file') return 'hello'
+      return null
+    })
+
+    await useEditorStore.getState().openFile(path)
+
+    const tab = useEditorStore.getState().findTab('restored')
+    expect(tab?.content).toBe('hello')
+    expect(tab?.loading).toBe(false)
+    expect(tab?.diskMtime).toBe(42)
+    expect(tab?.fileSize).toBe(5)
+  })
+
+  it('openFile does not re-read a plain tab that only cleared its Zustand buffer', async () => {
+    const path = 'D:\\proj\\src\\big.log'
+    useEditorStore.setState({
+      tabs: [
+        makeTab({
+          id: 'plain',
+          path,
+          content: undefined,
+          fileSize: 30 * 1024 * 1024,
+          diskMtime: 7,
+        }),
+      ],
+      activeTabId: null,
+      pendingReveal: null,
+      projectSessions: {},
+    })
+
+    await useEditorStore.getState().openFile(path)
+
+    expect(safeInvoke).not.toHaveBeenCalled()
+    expect(useEditorStore.getState().activeTabId).toBe('plain')
   })
 })

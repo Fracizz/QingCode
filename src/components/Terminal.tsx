@@ -37,6 +37,11 @@ import {
   markTerminalCommandStarted,
 } from '../lib/terminalCommandActivity'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
+import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
+import {
+  isPanelResizing,
+  PANEL_RESIZE_END_EVENT,
+} from '../lib/panelResize'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
@@ -159,6 +164,9 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
+  const fitRafRef = useRef(0)
+  const pendingFitFlagsRef = useRef({ refresh: false, focusAfter: false })
+  const lastFitSizeRef = useRef({ w: 0, h: 0 })
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
@@ -275,29 +283,49 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   ]
 
   const scheduleFit = (refresh = false, focusAfter = false) => {
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        const container = containerRef.current
-        if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
-        const term = xtermRef.current
-        if (!term) return
-        try {
-          fitAddonRef.current?.fit()
-          const pending = useTerminalStore
-            .getState()
-            .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
-          if (pending) {
-            // Spawn PTY only after the real grid is known — OpenCode centers on
-            // whatever size it sees at process start.
-            void spawnPendingTerminal(terminalId, term.cols, term.rows)
-          }
-          if (refresh) {
-            term.refresh(0, term.rows - 1)
-            term.scrollToBottom()
-          }
-          if (focusAfter && isActiveRef.current) term.focus()
-        } catch {}
-      })
+    // Coalesce to one fit per frame.
+    if (fitRafRef.current !== 0) {
+      pendingFitFlagsRef.current = {
+        refresh: pendingFitFlagsRef.current.refresh || refresh,
+        focusAfter: pendingFitFlagsRef.current.focusAfter || focusAfter,
+      }
+      return
+    }
+    pendingFitFlagsRef.current = { refresh, focusAfter }
+    fitRafRef.current = window.requestAnimationFrame(() => {
+      fitRafRef.current = 0
+      // Live sash pins the dock out of flow; never fit until mouseup.
+      if (isPanelResizing()) return
+      const flags = pendingFitFlagsRef.current
+      pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
+      const container = containerRef.current
+      if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+      const term = xtermRef.current
+      if (!term) return
+      const w = container.clientWidth
+      const h = container.clientHeight
+      if (
+        !flags.refresh &&
+        w === lastFitSizeRef.current.w &&
+        h === lastFitSizeRef.current.h
+      ) {
+        return
+      }
+      lastFitSizeRef.current = { w, h }
+      try {
+        fitAddonRef.current?.fit()
+        const pending = useTerminalStore
+          .getState()
+          .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
+        if (pending) {
+          void spawnPendingTerminal(terminalId, term.cols, term.rows)
+        }
+        if (flags.refresh) {
+          term.refresh(0, term.rows - 1)
+          term.scrollToBottom()
+        }
+        if (flags.focusAfter && isActiveRef.current) term.focus()
+      } catch {}
     })
   }
 
@@ -473,7 +501,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     })
 
     term.onResize(({ cols, rows }) => {
-      resizeTerminal(terminalId, cols, rows)
+      void resizeTerminal(terminalId, cols, rows)
     })
     term.onData(data => {
       const status = useTerminalStore
@@ -511,26 +539,32 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const ro = new ResizeObserver(() => {
       if (!isActiveRef.current) return
-      // Terminal height drag updates the panel via DOM every frame; defer xterm
-      // fit until mouseup (layoutKey commit) so resize stays smooth.
-      if (
-        document.body.classList.contains('panel-resizing') &&
-        document.body.dataset.panelResize === 'horizontal'
-      ) {
-        return
-      }
+      if (isPanelResizing()) return
       scheduleFit()
     })
     if (containerRef.current) ro.observe(containerRef.current)
 
+    const onPanelResizeEnd = () => {
+      if (!isActiveRef.current) return
+      // One fit after the dock returns to flex flow at the final size.
+      lastFitSizeRef.current = { w: 0, h: 0 }
+      scheduleFit(false, false)
+    }
+    window.addEventListener(PANEL_RESIZE_END_EVENT, onPanelResizeEnd)
+
     return () => {
       window.clearTimeout(subscribeTimer)
       for (const id of fitTimers) window.clearTimeout(id)
+      if (fitRafRef.current !== 0) {
+        window.cancelAnimationFrame(fitRafRef.current)
+        fitRafRef.current = 0
+      }
       unsubscribeOutput?.()
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
       window.removeEventListener(TERMINAL_CURSOR_SETTINGS_EVENT, updateCursor)
       window.removeEventListener(THEME_SETTINGS_EVENT, updateTheme)
+      window.removeEventListener(PANEL_RESIZE_END_EVENT, onPanelResizeEnd)
       ro.disconnect()
       searchResultsSub.dispose()
       container.removeEventListener('paste', onPaste, true)
@@ -544,8 +578,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
   useEffect(() => {
     if (!isActive) return
+    // Size-only: fit without full refresh/scrollToBottom (avoids end-of-drag flash).
+    scheduleFit(false, false)
+  }, [layoutKey])
+
+  useEffect(() => {
+    if (!isActive) return
     scheduleFit(true, true)
-  }, [isActive, layoutKey])
+  }, [isActive])
 
   // Restart / deferred create: fit again as soon as a PTY is requested.
   useEffect(() => {
@@ -597,11 +637,24 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         term.writeln(`\x1b[90m${translate('正在重启终端…')}\x1b[0m`)
       }
     } else if (terminal.status === 'exited' && previous !== 'exited') {
-      const detail =
-        terminal.exitCode === null
-          ? translate('进程未启动')
-          : translate('进程已退出，退出码 {code}', { code: String(terminal.exitCode) })
-      term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
+      if (terminal.exitCode === null) {
+        term.writeln(`\r\n\x1b[90m[${translate('进程未启动')}${translate('，可从终端标签重启')}]\x1b[0m`)
+      } else if (!shouldKeepShellAfterExit(terminal)) {
+        // Run-config / one-shot tasks: PTY is gone — explain why typing is disabled.
+        term.writeln(
+          `\r\n\x1b[90m── ${translate('运行配置任务已结束（退出码 {code}）', {
+            code: String(terminal.exitCode),
+          })} ──\x1b[0m`,
+        )
+        term.writeln(
+          `\x1b[90m${translate(
+            '由运行配置拉起，结束后不能继续输入。点标签「重启」再跑，或新开普通终端。',
+          )}\x1b[0m`,
+        )
+      } else {
+        const detail = translate('进程已退出，退出码 {code}', { code: String(terminal.exitCode) })
+        term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
+      }
     }
     previousStatusRef.current = terminal.status
   }, [terminal])

@@ -435,6 +435,7 @@ export default function EditorMinimap({
       root && typeof ResizeObserver !== 'undefined'
         ? new ResizeObserver(() => {
             if (resizingRef.current) return
+            if (document.body.classList.contains('panel-resizing')) return
             enforceSafeWidth()
             requestRepaint(true)
           })

@@ -47,6 +47,12 @@
   --ui-font-scale: 1;
   --editor-font-size: 14px;
   --terminal-font-size: 13px;
+
+  /* Idle = soft solid gray; active = clearer solid (not accent cyan). */
+  --editor-indent-guide: #ffffff14;
+  --editor-indent-guide-active: #ffffff38;
+  --editor-matching-bracket-bg: color-mix(in srgb, var(--color-fg) 16%, transparent);
+  --editor-matching-bracket-outline: color-mix(in srgb, var(--color-fg) 34%, transparent);
 }
 
 html[data-theme="light"] {
@@ -108,10 +114,22 @@ html[data-theme="forest"] {
   --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 48%, var(--color-bg));
   --minimap-empty-line: color-mix(in srgb, var(--color-fg) 8%, transparent);
   --minimap-vp-idle-fill: color-mix(in srgb, var(--color-fg) 10%, var(--color-bg-deep) 5%);
+
+  --editor-indent-guide: #b2c2b018;
+  --editor-indent-guide-active: #c5d4c840;
+  --editor-matching-bracket-bg: color-mix(in srgb, var(--color-fg) 14%, transparent);
+  --editor-matching-bracket-outline: color-mix(in srgb, var(--color-fg) 30%, transparent);
 }
 
 html[data-theme="forest"] .cm-editor .cm-content {
-  color: #c8d6c8;
+  color: #d1e0e0;
+}
+
+.cm-editor .cm-matchingBracket,
+.cm-editor.cm-focused .cm-matchingBracket {
+  /* Only the caret/selection marks the chosen brace — do not light the pair. */
+  background-color: transparent;
+  outline: none;
 }
 
 html[data-theme="light"] * {

@@ -1,5 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useChoiceStore } from '../store/choiceStore'
 import ModalOverlay from './ModalOverlay'
 import { useI18n } from '../lib/i18n'
@@ -22,6 +24,8 @@ export default function ChoiceDialog() {
 
   if (!request) return null
 
+  const markdownDetail = Boolean(request.detailMarkdown && request.detail)
+
   return (
     <ModalOverlay onDismiss={() => answer(null)} zIndex="z-[110]">
       <div
@@ -29,9 +33,13 @@ export default function ChoiceDialog() {
         aria-modal="true"
         aria-labelledby="choice-title"
         aria-describedby="choice-message"
-        className="modal-content-enter relative w-full max-w-[460px] rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className={
+          markdownDetail
+            ? 'modal-content-enter relative flex max-h-[80vh] w-full max-w-[min(90vw,640px)] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50'
+            : 'modal-content-enter relative w-full max-w-[460px] rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50'
+        }
       >
-        <div className="flex gap-3 px-4 pt-4 pb-3">
+        <div className={`flex gap-3 px-4 pt-4 pb-3 ${markdownDetail ? 'flex-shrink-0' : ''}`}>
           <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-bg-active text-warn">
             <AlertTriangle size={18} />
           </div>
@@ -42,14 +50,36 @@ export default function ChoiceDialog() {
             <p id="choice-message" className="mt-1.5 text-[13px] leading-relaxed text-fg">
               {t(request.message)}
             </p>
-            {request.detail && (
+            {!markdownDetail && request.detail && (
               <p className="mt-2 text-[12px] leading-relaxed text-fg-muted whitespace-pre-line break-all">
                 {request.detail}
               </p>
             )}
           </div>
         </div>
-        <div className="flex flex-wrap justify-end gap-2 border-t border-border px-4 py-3">
+        {markdownDetail && request.detail && (
+          <div className="min-h-0 flex-1 overflow-auto border-t border-border px-4 py-3">
+            <div className="qing-md-preview text-[13px] leading-relaxed text-fg">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  a: ({ href, children }) => (
+                    <a href={href} target="_blank" rel="noreferrer noopener">
+                      {children}
+                    </a>
+                  ),
+                }}
+              >
+                {request.detail}
+              </ReactMarkdown>
+            </div>
+          </div>
+        )}
+        <div
+          className={`flex flex-wrap justify-end gap-2 border-t border-border px-4 py-3 ${
+            markdownDetail ? 'flex-shrink-0' : ''
+          }`}
+        >
           {request.options.map((option, index) => {
             const isPrimary = option.primary || (!request.options.some(o => o.primary) && index === 0)
             return (
