@@ -414,6 +414,7 @@ pub fn run() {
             user_locales::list_user_locales,
             is_dev_build,
             update::check_app_update,
+            update::download_app_update,
             take_launch_files,
             file_associations::get_open_with_status,
             file_associations::register_file_open_with,

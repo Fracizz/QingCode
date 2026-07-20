@@ -84,10 +84,10 @@ describe('activeGuideColumnForLine', () => {
 })
 
 describe('indentGuideColumnsForLine', () => {
-  it('lists every VS Code indentation level from the outermost lane', () => {
-    expect(indentGuideColumnsForLine('    const x = 1', 2)).toEqual([0, 2])
-    expect(indentGuideColumnsForLine('      {', 2)).toEqual([0, 2, 4])
-    expect(indentGuideColumnsForLine('        "id": 1', 2)).toEqual([0, 2, 4, 6])
+  it('lists enclosing lanes without the innermost line beside the text', () => {
+    expect(indentGuideColumnsForLine('    const x = 1', 2)).toEqual([0])
+    expect(indentGuideColumnsForLine('      {', 2)).toEqual([0, 2])
+    expect(indentGuideColumnsForLine('        "id": 1', 2)).toEqual([0, 2, 4])
     expect(indentGuideColumnsForLine('export function f() {', 2)).toEqual([])
   })
 })
@@ -96,6 +96,10 @@ describe('guideColumnsForLine', () => {
   it('keeps the active guide when ordinary guides are suppressed', () => {
     expect(guideColumnsForLine(2, 4, false, 4)).toEqual([4])
     expect(guideColumnsForLine(2, 4, false, null)).toEqual([])
+  })
+
+  it('does not restore a removed innermost indentation guide', () => {
+    expect(guideColumnsForLine(2, 4, true, 4, false)).toEqual([0])
   })
 })
 

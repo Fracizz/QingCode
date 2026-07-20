@@ -831,7 +831,7 @@ export default function SettingsEditor() {
                     <SettingItem
                       title={t('检查更新')}
                       description={t(
-                        '查询远端最新便携版；发现新版本时提示打开下载页，不会自动安装。',
+                        '查询远端最新安装包；发现新版本时可下载安装包，不会自动安装。',
                       )}
                       modified={false}
                       locked={workspaceLocked}

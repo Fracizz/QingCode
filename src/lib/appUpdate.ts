@@ -1,5 +1,6 @@
-import { openUrl } from '@tauri-apps/plugin-opener'
+import { openPath } from '@tauri-apps/plugin-opener'
 import { choiceDialog } from '../store/choiceStore'
+import { useProjectStore } from '../store/projectStore'
 import { isTauri, safeInvoke } from './tauri'
 import { translate } from './i18n'
 import {
@@ -27,9 +28,25 @@ export async function fetchAppUpdateInfo(currentVersion: string): Promise<AppUpd
   })
 }
 
-export async function openUpdateDownload(info: AppUpdateInfo): Promise<void> {
-  const url = info.download_url || info.page_url
-  await openUrl(url)
+export async function downloadAppUpdate(info: AppUpdateInfo): Promise<string> {
+  const url = info.download_url?.trim()
+  if (!url) {
+    throw new Error(translate('未找到安装包下载地址'))
+  }
+  return safeInvoke<string>('下载更新', 'download_app_update', { url })
+}
+
+export async function runAppUpdateDownload(info: AppUpdateInfo): Promise<void> {
+  const pushToast = useProjectStore.getState().pushToast
+  pushToast('info', translate('正在下载安装包…'))
+  try {
+    const savedPath = await downloadAppUpdate(info)
+    await openPath(savedPath)
+    pushToast('success', translate('安装包已下载，正在打开安装程序'))
+  } catch (error) {
+    pushToast('error', translate('下载失败: {error}', { error: String(error) }))
+    throw error
+  }
 }
 
 /**
@@ -48,20 +65,20 @@ export async function promptAppUpdate(info: AppUpdateInfo): Promise<string | nul
 
   const choice = await choiceDialog({
     title: translate('发现新版本'),
-    message: translate('QingCode {version} 可用。是否打开下载页？', {
+    message: translate('QingCode {version} 可用。是否下载安装包？', {
       version: info.latest,
     }),
     detail: detailParts.join('\n\n'),
     detailMarkdown: true,
     options: [
-      { id: 'download', label: translate('打开下载页'), primary: true },
+      { id: 'download', label: translate('下载安装包'), primary: true },
       { id: 'skip', label: translate('跳过此版本') },
       { id: 'later', label: translate('稍后') },
     ],
   })
 
   if (choice === 'download') {
-    await openUpdateDownload(info)
+    await runAppUpdateDownload(info)
   } else if (choice === 'skip') {
     await saveSkippedVersion(info.latest)
   }

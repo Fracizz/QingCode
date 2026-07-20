@@ -134,8 +134,10 @@ export function indentGuideColumnsForLine(text: string, tabSize: number): number
 }
 
 export function indentGuideColumnsForLevel(level: number, tabSize: number): number[] {
-  if (level <= 0) return []
-  return Array.from({ length: level }, (_, i) => i * tabSize)
+  // The deepest lane sits immediately beside the line's text and reads like a
+  // stray short rail. Match VS Code by drawing only the enclosing indent lanes.
+  if (level <= 1) return []
+  return Array.from({ length: level - 1 }, (_, i) => i * tabSize)
 }
 
 function visualColumnAt(text: string, offset: number, tabSize: number): number {
@@ -402,12 +404,13 @@ export function guideColumnsForLine(
   tabSize: number,
   indentationGuides: boolean,
   activeCol: number | null,
+  addActiveColumn = true,
 ): number[] {
   const cols = new Set<number>()
   if (indentationGuides) {
     for (const c of indentGuideColumnsForLevel(indentLevel, tabSize)) cols.add(c)
   }
-  if (activeCol != null) cols.add(activeCol)
+  if (addActiveColumn && activeCol != null) cols.add(activeCol)
   return [...cols].sort((a, b) => a - b)
 }
 
@@ -469,16 +472,23 @@ function buildGuideDecorations(
       let pos = from
       while (pos <= to) {
         const line = doc.lineAt(pos)
-        const activeCol = activeGuideColumnForLine(
+        const bracketCol = activeGuideColumnForLine(
           line.number,
           bracket,
+          null,
+        )
+        const indentCol = activeGuideColumnForLine(
+          line.number,
+          null,
           indent,
         )
+        const activeCol = bracketCol ?? indentCol
         const columns = guideColumnsForLine(
           indentLevels[line.number - 1],
           tabSize,
           options.indentationGuides,
           activeCol,
+          bracketCol != null,
         )
 
         if (columns.length > 0) {
@@ -587,7 +597,9 @@ export function bracketDecorationExtensions(
     '.cm-line.cm-line-guides::before': {
       content: '""',
       position: 'absolute',
-      left: '0',
+      // CodeMirror lines have 6px left padding. Start from the text origin so
+      // guide columns line up with indentation columns instead of the line box.
+      left: '6px',
       top: '0',
       bottom: '0',
       width: '1px',

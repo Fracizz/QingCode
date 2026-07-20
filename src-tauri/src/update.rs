@@ -1,5 +1,8 @@
 //! Check for a newer QingCode release on Gitee (preferred) then GitHub.
 
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -59,11 +62,15 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 fn prefer_asset_names() -> &'static [&'static str] {
     #[cfg(all(windows, target_arch = "aarch64"))]
     {
-        &["-windows-arm64.exe", "qingcode-windows-arm64.exe"]
+        &[
+            "-windows-arm64-setup.exe",
+            "-setup.exe",
+            "qingcode-setup.exe",
+        ]
     }
     #[cfg(all(windows, not(target_arch = "aarch64")))]
     {
-        &["-windows-x64.exe", "qingcode.exe"]
+        &["-windows-x64-setup.exe", "-setup.exe", "qingcode-setup.exe"]
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
@@ -71,7 +78,7 @@ fn prefer_asset_names() -> &'static [&'static str] {
     }
     #[cfg(not(any(windows, all(target_os = "macos", target_arch = "aarch64"))))]
     {
-        &[".exe", ".dmg", ".zip"]
+        &["-setup.exe", ".dmg", ".zip"]
     }
 }
 
@@ -89,22 +96,98 @@ fn pick_download_url(assets: &[ReleaseAsset]) -> Option<String> {
         }
     }
 
-    let mut fallback: Option<String> = None;
+    let mut portable_fallback: Option<String> = None;
     for asset in assets {
         let name = asset.name.as_deref().unwrap_or("").to_ascii_lowercase();
         let Some(url) = asset.browser_download_url.clone() else {
             continue;
         };
-        if name == "qingcode.exe" || (name.starts_with("qingcode_") && name.ends_with(".exe")) {
+        if name.ends_with("-setup.exe")
+            || (name.contains("setup") && name.ends_with(".exe"))
+            || name.ends_with(".dmg")
+        {
             return Some(url);
         }
-        if (name.ends_with(".exe") || name.ends_with(".dmg") || name.ends_with(".zip"))
-            && fallback.is_none()
-        {
-            fallback = Some(url);
+        if (name.ends_with(".exe") || name.ends_with(".zip")) && portable_fallback.is_none() {
+            portable_fallback = Some(url);
         }
     }
-    fallback
+    portable_fallback
+}
+
+fn sanitize_filename(name: &str) -> Option<String> {
+    let base = Path::new(name.trim()).file_name()?.to_str()?;
+    if base.is_empty()
+        || base.contains("..")
+        || base.contains('/')
+        || base.contains('\\')
+        || base.contains(':')
+    {
+        return None;
+    }
+    Some(base.to_string())
+}
+
+fn filename_from_url(url: &str) -> Option<String> {
+    let trimmed = url.trim();
+    let without_query = trimmed.split(['?', '#']).next().unwrap_or(trimmed);
+    let segment = without_query.rsplit('/').next()?;
+    sanitize_filename(segment)
+}
+
+fn default_download_filename() -> &'static str {
+    #[cfg(all(windows, target_arch = "aarch64"))]
+    {
+        "QingCode-setup.exe"
+    }
+    #[cfg(all(windows, not(target_arch = "aarch64")))]
+    {
+        "QingCode-setup.exe"
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        "QingCode.dmg"
+    }
+    #[cfg(not(any(windows, all(target_os = "macos", target_arch = "aarch64"))))]
+    {
+        "QingCode-setup.exe"
+    }
+}
+
+fn download_dir() -> Result<PathBuf, String> {
+    dirs::download_dir()
+        .or_else(dirs::home_dir)
+        .ok_or_else(|| "无法定位下载目录".to_string())
+}
+
+/// Download a release asset into the user's Downloads folder and return the saved path.
+pub fn download_release_asset(url: &str) -> Result<String, String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("下载地址为空".to_string());
+    }
+    let filename = filename_from_url(trimmed).unwrap_or_else(|| default_download_filename().to_string());
+    let dest = download_dir()?.join(&filename);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建下载目录失败：{e}"))?;
+    }
+
+    let response = ureq::get(trimmed)
+        .set("User-Agent", USER_AGENT)
+        .call()
+        .map_err(|e| format!("下载失败：{e}"))?;
+    if !(200..300).contains(&response.status()) {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    let mut reader = response.into_reader();
+    let mut file =
+        std::fs::File::create(&dest).map_err(|e| format!("创建文件失败：{e}"))?;
+    io::copy(&mut reader, &mut file).map_err(|e| format!("写入文件失败：{e}"))?;
+    file.flush()
+        .map_err(|e| format!("写入文件失败：{e}"))?;
+
+    Ok(dest.to_string_lossy().into_owned())
 }
 
 fn fetch_release(url: &str) -> Result<ReleaseJson, String> {
@@ -189,6 +272,11 @@ pub fn check_app_update(current_version: String) -> Result<AppUpdateInfo, String
     check_latest(&current_version)
 }
 
+#[tauri::command]
+pub fn download_app_update(url: String) -> Result<String, String> {
+    download_release_asset(&url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    fn pick_download_prefers_qingcode_exe() {
+    fn pick_download_prefers_installer_asset() {
         let assets = vec![
             ReleaseAsset {
                 name: Some("notes.txt".into()),
@@ -222,22 +310,32 @@ mod tests {
                 ),
             },
             ReleaseAsset {
-                name: Some("QingCode_0.1.4-windows-arm64.exe".into()),
+                name: Some("QingCode_0.1.4-windows-x64-setup.exe".into()),
                 browser_download_url: Some(
-                    "https://example.com/QingCode_0.1.4-windows-arm64.exe".into(),
+                    "https://example.com/QingCode_0.1.4-windows-x64-setup.exe".into(),
                 ),
             },
             ReleaseAsset {
-                name: Some("QingCode_0.1.4.exe".into()),
-                browser_download_url: Some("https://example.com/QingCode_0.1.4.exe".into()),
+                name: Some("QingCode_0.1.4-windows-arm64-setup.exe".into()),
+                browser_download_url: Some(
+                    "https://example.com/QingCode_0.1.4-windows-arm64-setup.exe".into(),
+                ),
             },
         ];
         let picked = pick_download_url(&assets).unwrap();
         #[cfg(all(windows, target_arch = "aarch64"))]
-        assert!(picked.contains("windows-arm64"));
+        assert!(picked.contains("windows-arm64-setup"));
         #[cfg(all(windows, not(target_arch = "aarch64")))]
-        assert!(picked.contains("windows-x64") || picked.ends_with("QingCode_0.1.4.exe"));
+        assert!(picked.contains("windows-x64-setup"));
         #[cfg(not(windows))]
         assert!(!picked.is_empty());
+    }
+
+    #[test]
+    fn filename_from_url_strips_query() {
+        assert_eq!(
+            filename_from_url("https://example.com/QingCode_0.1.5-setup.exe?token=abc"),
+            Some("QingCode_0.1.5-setup.exe".into())
+        );
     }
 }
