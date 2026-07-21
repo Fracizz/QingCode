@@ -18,6 +18,7 @@ import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '../li
 import { formatTerminalName } from '../utils/terminalName'
 import { canCloseTerminalDirectly, isTerminalBusy, listBusyTerminals } from '../lib/terminalClose'
 import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
+import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { subscribeTerminalCommandActivity } from '../lib/terminalCommandActivity'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
@@ -410,8 +411,7 @@ export default function TerminalTabs() {
                   startRename(t.id, t.name)
                 }}
                 onContextMenu={(event: ReactMouseEvent) => {
-                  event.preventDefault()
-                  event.stopPropagation()
+                  if (!shouldShowAppContextMenu(event)) return
                   if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus()
                   setContextMenu({ x: event.clientX, y: event.clientY, terminal: t })
                 }}
@@ -565,7 +565,7 @@ export default function TerminalTabs() {
               onClick={() => handleNewTerminal()}
               onContextMenu={event => {
                 if (!currentProject || atLimit || creatingTerminal) return
-                event.preventDefault()
+                if (!shouldShowAppContextMenu(event)) return
                 setProfileMenu({ x: event.clientX, y: event.clientY })
               }}
             >

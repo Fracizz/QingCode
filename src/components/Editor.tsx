@@ -11,6 +11,7 @@ import { syncScrollTop } from '../utils/scrollSync'
 import { minimalSetup } from 'codemirror'
 import { search } from '@codemirror/search'
 import { qingBasicSetup } from '../lib/editorBasicSetup'
+import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import {
   EditorView,
@@ -974,11 +975,9 @@ export default function Editor() {
   const openContextMenu = (event: ReactMouseEvent) => {
     // Minimap owns its own menu; do not steal right-clicks from that overlay.
     if ((event.target as Element | null)?.closest?.('.editor-minimap')) {
-      event.preventDefault()
       return
     }
-    event.preventDefault()
-    event.stopPropagation()
+    if (!shouldShowAppContextMenu(event)) return
     viewRef.current?.focus()
     setContextMenu({ x: event.clientX, y: event.clientY })
   }

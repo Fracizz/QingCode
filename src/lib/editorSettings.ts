@@ -3,6 +3,10 @@ import {
   DEFAULT_GLOBAL_SETTINGS,
   loadGlobalSettings,
   loadProjectSettings,
+  resolveProjectSettingsPath,
+  saveGlobalSettings,
+  saveProjectSettings,
+  settingsFileExists,
   type SettingsFile,
 } from './projectSettings'
 import { mergeSettings } from './autoSaveSettings'
@@ -37,6 +41,7 @@ export type EditorPreferenceSettings = {
   encoding: FileEncoding
   formatOnPaste: boolean
   bracketPairColorization: boolean
+  guidesEnabled: boolean
   bracketPairGuides: boolean
   indentationGuides: boolean
   highlightActiveIndentation: boolean
@@ -56,6 +61,7 @@ export const DEFAULT_EDITOR_PREFERENCES: EditorPreferenceSettings = {
   encoding: 'auto',
   formatOnPaste: false,
   bracketPairColorization: true,
+  guidesEnabled: true,
   bracketPairGuides: true,
   indentationGuides: true,
   highlightActiveIndentation: true,
@@ -167,6 +173,10 @@ export function readEditorPreferences(settings: SettingsFile): EditorPreferenceS
       settings['editor.bracketPairColorization.enabled'],
       DEFAULT_EDITOR_PREFERENCES.bracketPairColorization,
     ),
+    guidesEnabled: asBoolean(
+      settings['editor.guides.enabled'],
+      DEFAULT_EDITOR_PREFERENCES.guidesEnabled,
+    ),
     bracketPairGuides: asBoolean(
       settings['editor.guides.bracketPairs'],
       DEFAULT_EDITOR_PREFERENCES.bracketPairGuides,
@@ -197,8 +207,19 @@ export async function loadEffectiveEditorPreferences(
   project?: Project | null,
 ): Promise<EditorPreferenceSettings> {
   const global = await loadGlobalSettings()
+  const workspaceExists = project
+    ? await settingsFileExists(await resolveProjectSettingsPath(project))
+    : false
   const workspace = project ? await loadProjectSettings(project) : null
   const prefs = readEditorPreferences(mergeSettings(global, workspace))
+  // A missing workspace file resolves to the full workspace defaults. Do not
+  // let that synthetic `true` override the user's global master switch.
+  if (project && !workspaceExists) {
+    prefs.guidesEnabled = asBoolean(
+      global['editor.guides.enabled'],
+      DEFAULT_EDITOR_PREFERENCES.guidesEnabled,
+    )
+  }
   // editor.fontSize is user-scoped in the Settings UI. Workspace templates always
   // ship `"editor.fontSize": 14`, which previously overwrote the user choice whenever
   // the editor remounted after leaving Settings.
@@ -212,6 +233,37 @@ export async function loadEffectiveEditorPreferences(
   notifyEditorSettingsChanged(prefs)
   syncEditorFontSizeFromPreferences(prefs.fontSize)
   return prefs
+}
+
+export async function loadScopedEditorGuidesEnabled(
+  scope: 'global' | 'project',
+  project?: Project | null,
+): Promise<boolean> {
+  const settings =
+    scope === 'project' && project
+      ? await loadProjectSettings(project)
+      : await loadGlobalSettings()
+  return asBoolean(
+    settings['editor.guides.enabled'],
+    DEFAULT_EDITOR_PREFERENCES.guidesEnabled,
+  )
+}
+
+export async function saveScopedEditorGuidesEnabled(
+  scope: 'global' | 'project',
+  enabled: boolean,
+  project?: Project | null,
+): Promise<void> {
+  if (scope === 'project' && project) {
+    const current = await loadProjectSettings(project)
+    current['editor.guides.enabled'] = enabled
+    await saveProjectSettings(project, current)
+  } else {
+    const current = await loadGlobalSettings()
+    current['editor.guides.enabled'] = enabled
+    await saveGlobalSettings(current)
+  }
+  await loadEffectiveEditorPreferences(project)
 }
 
 /** Prepare buffer for disk using files.* save settings. */
@@ -349,7 +401,10 @@ export function detectIndentFromContent(
   }
 
   if (tabIndents === 0 && spaceIndents === 0) return null
-  const insertSpaces = tabIndents < spaceIndents
+  const insertSpaces =
+    tabIndents === spaceIndents
+      ? cached.insertSpaces
+      : tabIndents < spaceIndents
   if (!insertSpaces) return { tabSize: cached.tabSize, insertSpaces: false }
 
   let tabSize = cached.tabSize

@@ -45,6 +45,7 @@ import Tooltip from './Tooltip'
 import EmptyState from './EmptyState'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import { translate, useI18n } from '../lib/i18n'
+import { shouldShowAppContextMenu } from '../lib/devBuild'
 
 const ROW_HEIGHT = 34
 /** Fixed status column so M / U / D share one vertical edge with filenames. */
@@ -311,8 +312,7 @@ export default function SourceControlPanel() {
   }
 
   const showChangeContextMenu = useCallback((event: ReactMouseEvent, change: GitChange) => {
-    event.preventDefault()
-    event.stopPropagation()
+    if (!shouldShowAppContextMenu(event)) return
     setContextMenu({ x: event.clientX, y: event.clientY, change })
   }, [])
 

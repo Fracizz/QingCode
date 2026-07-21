@@ -51,8 +51,8 @@ export function buildEditorPreferenceExtensions(
   const bracketExt = bracketsEnabled
     ? bracketDecorationExtensions({
         colorization: prefs.bracketPairColorization,
-        guides: prefs.bracketPairGuides,
-        indentationGuides: prefs.indentationGuides,
+        guides: prefs.guidesEnabled && prefs.bracketPairGuides,
+        indentationGuides: prefs.guidesEnabled && prefs.indentationGuides,
         highlightActiveIndentation: prefs.highlightActiveIndentation,
       })
     : []

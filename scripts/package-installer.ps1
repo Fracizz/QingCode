@@ -88,7 +88,22 @@ try {
     $env:Path = "$cargoBin;$env:Path"
   }
 
-  Write-Step 'Prepare'
+  if (Get-Command sccache -ErrorAction SilentlyContinue) {
+    $env:RUSTC_WRAPPER = 'sccache'
+    Write-Host 'Using sccache for Rust compilation cache.' -ForegroundColor DarkGray
+  }
+
+  if (-not $Target) {
+    $arch = $env:PROCESSOR_ARCHITECTURE
+    if ($arch -eq 'ARM64') {
+      throw "本机打包仅支持 Windows x64。当前为 ARM64，请用 CI 或 pnpm package:installer:arm64 / package:exe:arm64。"
+    }
+    if ($arch -notin @('AMD64', 'x86')) {
+      Write-Host "  warning: unexpected PROCESSOR_ARCHITECTURE=$arch; continuing as host x64 build." -ForegroundColor Yellow
+    }
+  }
+
+  Write-Step 'Prepare (Windows x64 NSIS installer)'
   Sync-IconsIfNeeded
 
   if ($SkipFrontend) {
@@ -179,6 +194,7 @@ try {
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
   Write-Host "Install notes: Start Menu shortcut always; desktop shortcut checked by default on finish page." -ForegroundColor DarkGray
+  Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {
   Pop-Location
 }

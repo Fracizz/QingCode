@@ -58,6 +58,14 @@ describe('detectIndentFromContent', () => {
     })
   })
 
+  it('keeps the configured default when tab and space evidence is tied', () => {
+    const source = 'if first:\n\twork()\nif second:\n    work()\n'
+    expect(detectIndentFromContent(source)).toEqual({
+      tabSize: DEFAULT_EDITOR_PREFERENCES.tabSize,
+      insertSpaces: DEFAULT_EDITOR_PREFERENCES.insertSpaces,
+    })
+  })
+
   it('returns no override when content has no indentation evidence', () => {
     expect(detectIndentFromContent('const value = 1\n')).toBeNull()
   })

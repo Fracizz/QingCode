@@ -78,6 +78,10 @@ import {
   saveScopedMinimapEnabled,
 } from '../lib/minimapSettings'
 import {
+  loadScopedEditorGuidesEnabled,
+  saveScopedEditorGuidesEnabled,
+} from '../lib/editorSettings'
+import {
   DEFAULT_UPDATE_SETTINGS,
   loadUpdateSettings,
   saveCheckOnStartup,
@@ -133,6 +137,9 @@ export default function SettingsEditor() {
     DEFAULT_GLOBAL_SETTINGS['files.autoSaveDelay'] as number,
   )
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
+  const [editorGuidesEnabled, setEditorGuidesEnabled] = useState(
+    DEFAULT_GLOBAL_SETTINGS['editor.guides.enabled'] !== false,
+  )
   const [openWith, setOpenWith] = useState<OpenWithStatus | null>(null)
   const [openWithBusy, setOpenWithBusy] = useState(false)
   const [checkOnStartup, setCheckOnStartup] = useState(DEFAULT_UPDATE_SETTINGS.checkOnStartup)
@@ -186,6 +193,9 @@ export default function SettingsEditor() {
       setAutoSaveDelay(settings.delay)
     })
     void loadScopedMinimapEnabled(settingsScope, currentProject).then(setMinimapEnabled)
+    void loadScopedEditorGuidesEnabled(settingsScope, currentProject).then(
+      setEditorGuidesEnabled,
+    )
   }, [scope, currentProject])
 
   const workspaceLocked = scope === 'workspace'
@@ -232,6 +242,17 @@ export default function SettingsEditor() {
       await saveScopedMinimapEnabled(settingsScope, enabled, currentProject)
     } catch (error) {
       pushToast('error', t('保存小地图设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const updateEditorGuidesEnabled = async (enabled: boolean) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setEditorGuidesEnabled(enabled)
+    try {
+      await saveScopedEditorGuidesEnabled(settingsScope, enabled, currentProject)
+    } catch (error) {
+      pushToast('error', t('保存编辑器参考线设置失败: {error}', { error: String(error) }))
     }
   }
 
@@ -523,6 +544,9 @@ export default function SettingsEditor() {
               '自动保存',
               '小地图',
               'minimap',
+              '参考线',
+              '缩进线',
+              'editor.guides.enabled',
             ) && (
               <Section
                 id="editor"
@@ -530,6 +554,30 @@ export default function SettingsEditor() {
                 sectionRefs={sectionRefs}
                 onVisible={setCategory}
               >
+                {match('参考线', '缩进线', '括号线', 'editor.guides.enabled') && (
+                  <SettingItem
+                    title={t('编辑器: 参考线')}
+                    description={t(
+                      '控制普通缩进线、活动高亮线和括号参考线。关闭后这些线全部隐藏。',
+                    )}
+                    modified={
+                      editorGuidesEnabled !== DEFAULT_GLOBAL_SETTINGS['editor.guides.enabled']
+                    }
+                    locked={scope === 'workspace' && !currentProject}
+                    lockHint={t('请先选择项目，再配置工作区编辑器参考线。')}
+                  >
+                    <select
+                      value={editorGuidesEnabled ? 'on' : 'off'}
+                      disabled={scope === 'workspace' && !currentProject}
+                      onChange={e => void updateEditorGuidesEnabled(e.target.value === 'on')}
+                      className="setting-control setting-select"
+                      aria-label={t('编辑器: 参考线')}
+                    >
+                      <option value="on">{t('开启')}</option>
+                      <option value="off">{t('关闭')}</option>
+                    </select>
+                  </SettingItem>
+                )}
                 {match('小地图', 'minimap', 'editor.minimap.enabled') && (
                   <SettingItem
                     title={t('编辑器: 小地图')}

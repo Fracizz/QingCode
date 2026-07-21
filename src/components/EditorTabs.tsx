@@ -12,6 +12,7 @@ import { useGitStatusStore } from '../store/gitStatusStore'
 import { getFileIcon } from '../utils/fileIcons'
 import { copyToClipboard } from '../utils/fileReferences'
 import { safeInvoke } from '../lib/tauri'
+import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { openGitCompareWithHead } from '../lib/gitCompare'
 import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
 import {
@@ -373,8 +374,7 @@ export default function EditorTabs() {
                   if (event.button === 1) event.preventDefault()
                 }}
                 onContextMenu={(event: ReactMouseEvent) => {
-                  event.preventDefault()
-                  event.stopPropagation()
+                  if (!shouldShowAppContextMenu(event)) return
                   if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus()
                   setContextMenu({ x: event.clientX, y: event.clientY, tab })
                 }}

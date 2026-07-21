@@ -33,6 +33,7 @@ import WorkspaceMenu from './WorkspaceMenu'
 import ProjectAddDialog from './ProjectAddDialog'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
+import { deferToNativeContextMenuInDev } from '../lib/devBuild'
 
 const CHIP_GAP = 4
 const ADD_BTN_W = 28
@@ -284,7 +285,9 @@ export default function ProjectPicker() {
             className="ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
             style={dropdownStyle}
             onPointerDown={event => event.stopPropagation()}
-            onContextMenu={event => event.preventDefault()}
+            onContextMenu={event => {
+              if (!deferToNativeContextMenuInDev()) event.preventDefault()
+            }}
           >
             <div className="px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted">
               {t('更多项目')}

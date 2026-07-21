@@ -19,6 +19,7 @@ import {
   getResolvedTerminalFontSize,
 } from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
+import { shouldShowAppContextMenu } from '../lib/devBuild'
 import {
   TERMINAL_SCROLLBACK_SETTINGS_EVENT,
   getTerminalScrollback,
@@ -691,8 +692,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         if (isActive) xtermRef.current?.focus()
       }}
       onContextMenu={(event: ReactMouseEvent) => {
-        event.preventDefault()
-        event.stopPropagation()
+        if (!shouldShowAppContextMenu(event)) return
         setContextMenu({ x: event.clientX, y: event.clientY })
       }}
     >

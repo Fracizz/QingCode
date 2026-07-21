@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom'
 import { Check } from 'lucide-react'
 import { EditorView } from '@codemirror/view'
 import { getContextMenuStylePosition } from './contextMenuPosition'
+import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { setMinimapUpdateHandler } from '../lib/minimapBridge'
 import {
   MINIMAP_HOVER_COLLAPSE_DELAY_MS,
@@ -742,8 +743,7 @@ export default function EditorMinimap({
 
   /** Root-level: viewport/scrollbar sit above the canvas and must not bubble to Editor. */
   const onMinimapContextMenu = (event: ReactMouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
+    if (!shouldShowAppContextMenu(event)) return
     clearQuickView(true)
     // Seed position at cursor; useLayoutEffect shifts left + clamps to viewport.
     setMenuPos({ x: event.clientX, y: event.clientY })

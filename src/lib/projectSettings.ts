@@ -53,6 +53,7 @@ function buildSharedDefaults(): SettingsFile {
     'editor.minimap.enabled': true,
     'editor.linkedEditing': false,
     'editor.bracketPairColorization.enabled': true,
+    'editor.guides.enabled': true,
     'editor.guides.bracketPairs': true,
     'editor.guides.indentation': true,
     'editor.guides.highlightActiveIndentation': true,
@@ -141,7 +142,9 @@ const SHARED_SETTINGS_BODY = `
   "editor.linkedEditing": false,
   // editor.bracketPairColorization.enabled：括号对着色（按嵌套深度分色）
   "editor.bracketPairColorization.enabled": true,
-  // editor.guides.bracketPairs：光标所在块（{…} 行范围）内高亮对应缩进列实线
+  // editor.guides.enabled：参考线总开关（普通缩进线、活动高亮线和括号线）
+  "editor.guides.enabled": true,
+  // editor.guides.bracketPairs：显示多行括号对参考线；光标所在括号线只切换为高亮色
   "editor.guides.bracketPairs": true,
   // editor.guides.indentation：各级缩进参考线（默认浅色虚线）
   "editor.guides.indentation": true,

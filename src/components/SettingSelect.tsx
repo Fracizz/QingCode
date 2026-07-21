@@ -10,6 +10,7 @@ import {
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown } from 'lucide-react'
 import { getContextMenuStylePosition } from './contextMenuPosition'
+import { deferToNativeContextMenuInDev } from '../lib/devBuild'
 import Tooltip from './Tooltip'
 
 export type SettingSelectOption = {
@@ -188,7 +189,9 @@ export default function SettingSelect({
             style={menuStyle}
             onKeyDown={onMenuKeyDown}
             onPointerDown={event => event.stopPropagation()}
-            onContextMenu={event => event.preventDefault()}
+            onContextMenu={event => {
+              if (!deferToNativeContextMenuInDev()) event.preventDefault()
+            }}
           >
             {options.map((option, index) => {
               const isSelected = option.value === value

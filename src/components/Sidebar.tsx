@@ -82,6 +82,7 @@ import {
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
 import { formatBytes } from '../utils/formatBytes'
 import { useI18n } from '../lib/i18n'
+import { shouldShowAppContextMenu } from '../lib/devBuild'
 import {
   COPY_RELATIVE_PATH_SHORTCUT,
   isShortcutBound,
@@ -468,8 +469,7 @@ export default function Sidebar() {
   }
 
   const showContextMenu = (event: ReactMouseEvent, target: ContextTarget) => {
-    event.preventDefault()
-    event.stopPropagation()
+    if (!shouldShowAppContextMenu(event)) return
     if (event.currentTarget instanceof HTMLElement) {
       event.currentTarget.focus()
     }

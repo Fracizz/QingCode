@@ -111,22 +111,14 @@ function buildColorDecorations(state: EditorState): DecorationSet {
   return builder.finish()
 }
 
-/** Inclusive line numbers for the active bracket-pair guide (VS-style rail). */
+/** Lines covered by a VS Code vertical bracket guide. */
 export function bracketGuideLineRange(
   openLine: number,
   closeLine: number,
+  includeCloseLine = false,
 ): { from: number; to: number } | null {
   if (closeLine <= openLine) return null
-  return { from: openLine, to: closeLine }
-}
-
-/** Body-only range used by active bracket rails. */
-export function bracketBodyGuideLineRange(
-  openLine: number,
-  closeLine: number,
-): { from: number; to: number } | null {
-  if (closeLine <= openLine + 1) return null
-  return { from: openLine + 1, to: closeLine - 1 }
+  return { from: openLine, to: closeLine - (includeCloseLine ? 0 : 1) }
 }
 
 /** Visual column of leading whitespace (tabs expanded). */
@@ -197,24 +189,25 @@ function minInnerIndent(
   openLineNo: number,
   closeLineNo: number,
   tabSize: number,
+  closeColInLine?: number,
 ): number | null {
   let minInner = Infinity
   for (const row of lineTexts) {
-    if (row.number <= openLineNo || row.number >= closeLineNo) continue
+    if (row.number <= openLineNo || row.number > closeLineNo) continue
     if (!row.text.trim()) continue
+    if (row.number === closeLineNo) {
+      const firstNonWhitespace = row.text.search(/\S/)
+      if (
+        closeColInLine == null ||
+        firstNonWhitespace < 0 ||
+        firstNonWhitespace >= closeColInLine
+      ) {
+        continue
+      }
+    }
     minInner = Math.min(minInner, lineIndentColumn(row.text, tabSize))
   }
   return minInner === Infinity ? null : minInner
-}
-
-/** Active bracket rail: align to the body content, not the outer closing brace. */
-export function bracketBodyGuideColumn(
-  lineTexts: { number: number; text: string }[],
-  openLineNo: number,
-  closeLineNo: number,
-  tabSize: number,
-): number | null {
-  return minInnerIndent(lineTexts, openLineNo, closeLineNo, tabSize)
 }
 
 /** VS Code bracket guide column: minimum opener, closer, and inner indentation. */
@@ -224,6 +217,7 @@ export function blockGuideColumn(
   closeLineNo: number,
   tabSize: number,
   openColInLine?: number,
+  closeColInLine?: number,
 ): number {
   const openRow = lineTexts.find(l => l.number === openLineNo)
   if (!openRow) return tabSize
@@ -235,9 +229,17 @@ export function blockGuideColumn(
       : lineIndentColumn(openText, tabSize)
   const closeRow = lineTexts.find(l => l.number === closeLineNo)
   const closeCol = closeRow
-    ? lineIndentColumn(closeRow.text, tabSize)
+    ? closeColInLine != null
+      ? visualColumnAt(closeRow.text, closeColInLine, tabSize)
+      : lineIndentColumn(closeRow.text, tabSize)
     : openCol
-  const inner = minInnerIndent(lineTexts, openLineNo, closeLineNo, tabSize)
+  const inner = minInnerIndent(
+    lineTexts,
+    openLineNo,
+    closeLineNo,
+    tabSize,
+    closeColInLine,
+  )
   return Math.min(openCol, closeCol, inner ?? Number.POSITIVE_INFINITY)
 }
 
@@ -256,14 +258,16 @@ export function bracketGuideColumn(
     closeLineNo,
     tabSize,
     _openOffsetInLine,
+    _closeOffsetInLine,
   )
 }
 
-export type ActiveBracketGuide = {
+export type BracketPairGuide = {
   enclosing: BracketPair
+  fromLine: number
+  toLine: number
   column: number
-  openLineNo: number
-  closeLineNo: number
+  active: boolean
 }
 
 /** Pick the innermost multi-line pair strictly containing the cursor. */
@@ -279,72 +283,126 @@ export function findActiveGuidePair(
     const openLine = lineOfPos(p.open).number
     const closeLine = lineOfPos(p.close).number
     if (closeLine <= openLine) continue
-    if (p.open >= pos || p.close <= pos) continue
+    // VS Code's pair range ends after the closing bracket. A caret immediately
+    // before that bracket is therefore still strictly inside the pair.
+    if (p.open >= pos || p.close < pos) continue
     if (!enclosing || p.depth >= enclosing.depth) enclosing = p
   }
   return enclosing
 }
 
-/** Active bracket-pair guide metadata for the current cursor (or null). */
-export function activeBracketGuide(view: EditorView): ActiveBracketGuide | null {
-  const head = view.state.selection.main.head
-  const doc = view.state.doc
-  const pairs = scanStateBracketPairs(view.state)
+type MinIndentTree = {
+  offset: number
+  values: number[]
+}
+
+function buildMinIndentTree(lines: readonly string[], tabSize: number): MinIndentTree {
+  let offset = 1
+  while (offset < lines.length) offset *= 2
+  const values = new Array<number>(offset * 2).fill(Number.POSITIVE_INFINITY)
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim()) values[offset + i] = lineIndentColumn(lines[i], tabSize)
+  }
+  for (let i = offset - 1; i > 0; i--) {
+    values[i] = Math.min(values[i * 2], values[i * 2 + 1])
+  }
+  return { offset, values }
+}
+
+function minIndentInRange(
+  tree: MinIndentTree,
+  fromIndex: number,
+  toIndex: number,
+): number | null {
+  if (fromIndex >= toIndex) return null
+  let from = fromIndex + tree.offset
+  let to = toIndex + tree.offset
+  let result = Number.POSITIVE_INFINITY
+  while (from < to) {
+    if (from % 2 === 1) result = Math.min(result, tree.values[from++])
+    if (to % 2 === 1) result = Math.min(result, tree.values[--to])
+    from = Math.floor(from / 2)
+    to = Math.floor(to / 2)
+  }
+  return Number.isFinite(result) ? result : null
+}
+
+/** Stable bracket-guide geometry; cursor movement changes only `active`. */
+export function bracketPairGuidesForState(
+  state: EditorState,
+  lineTexts?: readonly string[],
+): BracketPairGuide[] {
+  const doc = state.doc
+  const lines =
+    lineTexts ??
+    Array.from({ length: doc.lines }, (_, i) => {
+      const line = doc.line(i + 1)
+      return doc.sliceString(line.from, line.to)
+    })
+  const tabSize = state.facet(EditorState.tabSize)
+  const minIndentTree = buildMinIndentTree(lines, tabSize)
+  const pairs = scanStateBracketPairs(state)
+  const head = state.selection.main.head
   const cursorLine = doc.lineAt(head)
-  const enclosing = findActiveGuidePair(
+  const activePair = findActiveGuidePair(
     pairs,
     head,
     cursorLine.from,
     cursorLine.to,
     i => doc.lineAt(i),
   )
-  if (!enclosing) return null
+  const guides: BracketPairGuide[] = []
+  for (const pair of pairs) {
+    const openLine = doc.lineAt(pair.open)
+    const closeLine = doc.lineAt(pair.close)
+    if (closeLine.number <= openLine.number) continue
 
-  const openLine = doc.lineAt(enclosing.open)
-  const closeLine = doc.lineAt(enclosing.close)
-  const range = bracketGuideLineRange(openLine.number, closeLine.number)
-  if (!range) return null
+    const openText = lines[openLine.number - 1]
+    const closeText = lines[closeLine.number - 1]
+    const openOffsetInLine = pair.open - openLine.from
+    const closeOffsetInLine = pair.close - closeLine.from
+    const firstNonWhitespace = closeText.search(/\S/)
+    const hasTextBeforeCloser =
+      firstNonWhitespace >= 0 && firstNonWhitespace < closeOffsetInLine
+    const range = bracketGuideLineRange(
+      openLine.number,
+      closeLine.number,
+      hasTextBeforeCloser,
+    )
+    if (!range) continue
 
-  const tabSize = view.state.facet(EditorState.tabSize)
-  const lineTexts: { number: number; text: string }[] = []
-  for (let lineNo = range.from; lineNo <= range.to; lineNo++) {
-    const line = doc.line(lineNo)
-    lineTexts.push({ number: lineNo, text: doc.sliceString(line.from, line.to) })
+    let innerIndent = minIndentInRange(
+      minIndentTree,
+      openLine.number,
+      closeLine.number - 1,
+    )
+    if (hasTextBeforeCloser) {
+      const closeLineIndent = lineIndentColumn(closeText, tabSize)
+      innerIndent = Math.min(
+        innerIndent ?? Number.POSITIVE_INFINITY,
+        closeLineIndent,
+      )
+    }
+    const column = Math.min(
+      visualColumnAt(openText, openOffsetInLine, tabSize),
+      visualColumnAt(closeText, closeOffsetInLine, tabSize),
+      innerIndent ?? Number.POSITIVE_INFINITY,
+    )
+    guides.push({
+      enclosing: pair,
+      fromLine: range.from,
+      toLine: range.to,
+      column,
+      active: pair === activePair,
+    })
   }
-  const column = bracketBodyGuideColumn(
-    lineTexts,
-    openLine.number,
-    closeLine.number,
-    tabSize,
-  )
-  const bodyRange = bracketBodyGuideLineRange(
-    openLine.number,
-    closeLine.number,
-  )
-  if (column == null || !bodyRange) return null
-  return {
-    enclosing,
-    column,
-    openLineNo: bodyRange.from,
-    closeLineNo: bodyRange.to,
-  }
+  return guides
 }
 
-/** Active `{…}` / `[…]` block guide span (VS bracket-pairs rail at indent lane). */
 export type ActiveBlockGuide = {
   fromLine: number
   toLine: number
   column: number
-}
-
-export function activeBlockGuide(view: EditorView): ActiveBlockGuide | null {
-  const g = activeBracketGuide(view)
-  if (!g) return null
-  return {
-    fromLine: g.openLineNo,
-    toLine: g.closeLineNo,
-    column: g.column,
-  }
 }
 
 /** VS Code effective indent levels, including its blank-line interpolation. */
@@ -432,7 +490,7 @@ export function activeIndentGuideForLevels(
   }
 }
 
-/** Solid 1px rails via box-shadow (no gradient AA / inter-line dots). */
+/** Solid 1px rails in one pseudo-element (no layered gradients). */
 export function buildGuideBoxShadow(
   columns: number[],
   charWidth: number,
@@ -441,7 +499,7 @@ export function buildGuideBoxShadow(
   const w = Math.max(1, charWidth)
   return columns
     .map(col => {
-      const x = Math.max(0, Math.round(col * w))
+      const x = Math.max(0, col * w)
       const color =
         activeCol != null && col === activeCol
           ? 'var(--editor-indent-guide-active)'
@@ -457,11 +515,13 @@ export function guideColumnsForLine(
   indentationGuides: boolean,
   activeCol: number | null,
   addActiveColumn = true,
+  bracketColumns: readonly number[] = [],
 ): number[] {
   const cols = new Set<number>()
   if (indentationGuides) {
     for (const c of indentGuideColumnsForLevel(indentLevel, indentSize)) cols.add(c)
   }
+  for (const column of bracketColumns) cols.add(column)
   if (addActiveColumn && activeCol != null) cols.add(activeCol)
   return [...cols].sort((a, b) => a - b)
 }
@@ -514,7 +574,9 @@ function buildGuideDecorations(
       offSide,
       indentSize,
     )
-    const bracket = options.bracketPairGuides ? activeBlockGuide(view) : null
+    const bracketGuides = options.bracketPairGuides
+      ? bracketPairGuidesForState(view.state, lines)
+      : []
     const indent =
       options.indentationGuides && options.highlightActiveIndentation
         ? activeIndentGuideForLevels(
@@ -525,28 +587,52 @@ function buildGuideDecorations(
         : null
 
     const builder = new RangeSetBuilder<Decoration>()
+    const bracketGuidesByLine = new Map<number, BracketPairGuide[]>()
+    if (bracketGuides.length > 0 && view.visibleRanges.length > 0) {
+      const visibleFromLine = doc.lineAt(view.visibleRanges[0].from).number
+      const lastVisibleRange = view.visibleRanges[view.visibleRanges.length - 1]
+      const visibleToLine = doc.lineAt(lastVisibleRange.to).number
+      for (const guide of bracketGuides) {
+        const fromLine = Math.max(guide.fromLine, visibleFromLine)
+        const toLine = Math.min(guide.toLine, visibleToLine)
+        for (let lineNo = fromLine; lineNo <= toLine; lineNo++) {
+          const lineGuides = bracketGuidesByLine.get(lineNo)
+          if (lineGuides) lineGuides.push(guide)
+          else bracketGuidesByLine.set(lineNo, [guide])
+        }
+      }
+    }
 
+    let lastDecoratedLine = 0
     for (const { from, to } of view.visibleRanges) {
       let pos = from
       while (pos <= to) {
         const line = doc.lineAt(pos)
-        const bracketCol = activeGuideColumnForLine(
-          line.number,
-          bracket,
-          null,
+        if (line.number === lastDecoratedLine) {
+          pos = line.to + 1
+          continue
+        }
+        lastDecoratedLine = line.number
+        const lineBracketGuides = bracketGuidesByLine.get(line.number) ?? []
+        const drawableBracketGuides = lineBracketGuides.filter(
+          guide => line.number > guide.fromLine,
         )
+        const activeBracketCol =
+          drawableBracketGuides.find(guide => guide.active)?.column ?? null
         const indentCol = activeGuideColumnForLine(
           line.number,
           null,
           indent,
         )
-        const activeCol = bracketCol ?? indentCol
+        const activeCol =
+          activeBracketCol ?? (lineBracketGuides.length === 0 ? indentCol : null)
         const columns = guideColumnsForLine(
           indentLevels[line.number - 1],
           indentSize,
           options.indentationGuides,
           activeCol,
-          bracketCol != null,
+          false,
+          drawableBracketGuides.map(guide => guide.column),
         )
 
         if (columns.length > 0) {

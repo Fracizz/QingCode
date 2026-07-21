@@ -125,7 +125,8 @@ Local packaging (Windows x64 host):
 
 ```bash
 pnpm install
-pnpm package                  # portable + NSIS installer in one pass (x64 only)
+pnpm package                  # NSIS installer (x64 only)
+# pnpm package:exe            # portable single-file exe
 # pnpm package:fast           # skip frontend/icons; Rust only
 ```
 

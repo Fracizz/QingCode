@@ -125,7 +125,8 @@ QingCode **刻意不做**完整 IntelliSense、调试器和插件市场；你继
 
 ```bash
 pnpm install
-pnpm package                  # 一次产出便携版 + NSIS 安装包（仅 x64）
+pnpm package                  # 本机 x64：NSIS 安装包（release/QingCode-setup.exe）
+# pnpm package:exe            # 便携版单文件 exe
 # pnpm package:fast           # 跳过前端/图标，仅重编 Rust
 ```
 

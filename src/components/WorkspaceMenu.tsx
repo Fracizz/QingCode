@@ -11,6 +11,7 @@ import { Check, ChevronDown, Layers, Plus, Settings2 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
+import { deferToNativeContextMenuInDev } from '../lib/devBuild'
 import {
   activateNamedWorkspace,
   getActiveNamedWorkspaceId,
@@ -187,7 +188,9 @@ export default function WorkspaceMenu() {
             className="ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
             style={dropdownStyle}
             onPointerDown={event => event.stopPropagation()}
-            onContextMenu={event => event.preventDefault()}
+            onContextMenu={event => {
+              if (!deferToNativeContextMenuInDev()) event.preventDefault()
+            }}
           >
             <div className="px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted">
               {t('多项目工作区')}
