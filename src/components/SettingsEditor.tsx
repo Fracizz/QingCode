@@ -419,7 +419,7 @@ export default function SettingsEditor() {
             </div>
 
             {scope === 'workspace' && (
-              <p className="mt-2 text-[12px] text-fg-muted max-w-[800px]">
+              <p className="text-ui-sm mt-2 max-w-[800px] text-fg-muted">
                 {t('工作区设置作用于当前项目「{name}」。多数界面设置仅用户作用域可用；工作区主要用于 project-settings.json。', {
                   name: currentProject?.name ?? '',
                 })}
@@ -790,7 +790,7 @@ export default function SettingsEditor() {
                 </SettingItem>
                 {!workspaceLocked && (
                   <div className="pl-3 border-l-2 border-transparent">
-                    <p className="text-[12px] text-fg-muted mb-2">
+                    <p className="text-ui-sm mb-2 text-fg-muted">
                       {t('终端配置文件可在下方管理（名称、Shell 与启动命令）。')}
                     </p>
                     <TerminalProfilesInline settings={terminal} onChange={updateTerminal} />
@@ -927,12 +927,12 @@ export default function SettingsEditor() {
                   >
                     <div className="flex flex-col items-end gap-2 max-w-md">
                       {!isTauri() || openWith?.supported === false ? (
-                        <span className="text-[12px] text-fg-dim">
+                        <span className="text-ui-sm text-fg-dim">
                           {t('仅 Windows 桌面版支持此功能。')}
                         </span>
                       ) : (
                         <>
-                          <span className="text-[12px] text-fg-muted text-right">
+                          <span className="text-ui-sm text-right text-fg-muted">
                             {openWith?.registered ? t('已注册到「打开方式」') : t('尚未注册')}
                             {openWith?.extensions?.length
                               ? ` · ${t('已注册 {count} 种扩展名', { count: openWith.extensions.length })}`
@@ -945,7 +945,7 @@ export default function SettingsEditor() {
                               onlyWhenOverflow
                               wrapperClassName="block max-w-full min-w-0"
                             >
-                              <span className="text-[11px] text-fg-dim font-mono truncate max-w-full block">
+                              <span className="text-ui-sm block max-w-full truncate font-mono text-fg-dim">
                                 {t('当前程序：{path}', { path: openWith.exe_path })}
                               </span>
                             </Tooltip>
@@ -1017,7 +1017,7 @@ export default function SettingsEditor() {
                           DEFAULT_SHORTCUTS[key as ShortcutCommand],
                       )}
                     >
-                      <span className="text-[12px] text-fg-dim">{t('见下方列表')}</span>
+                      <span className="text-ui-sm text-fg-dim">{t('见下方列表')}</span>
                     </SettingItem>
                     <div className="pl-3">
                       <ShortcutSettings />
@@ -1171,7 +1171,7 @@ export default function SettingsEditor() {
                     'files.exclude / search.exclude / useIgnoreFiles / followSymlinks、explorer.excludeGitIgnore、files.encoding、editor.minimap.enabled、editor.formatOnSave / formatOnPaste、括号着色与参考线、terminal.integrated.scrollback / cursorBlinking 已生效。标有「不计划」的键（如 linkedEditing）会保存但不会改变行为。详见帮助文档。',
                   )}
                 >
-                  <span className="text-[12px] text-fg-dim">{t('见 JSON 注释 / 帮助文档')}</span>
+                  <span className="text-ui-sm text-fg-dim">{t('见 JSON 注释 / 帮助文档')}</span>
                 </SettingItem>
               </Section>
             )}

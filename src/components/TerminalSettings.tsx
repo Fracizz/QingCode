@@ -155,7 +155,7 @@ export default function TerminalSettings() {
               <label className="mt-2 block">
                 <span className="text-[11px] text-fg-muted">{t('Shell')}</span>
                 {isBuiltin ? (
-                  <p className="mt-1 text-[12px] text-fg-dim">
+                  <p className="text-ui-sm mt-1 text-fg-dim">
                     {t('使用全局默认 Shell')}（{t(terminalShellLabelKey(settings.defaultShell))}）
                   </p>
                 ) : (
@@ -192,7 +192,7 @@ export default function TerminalSettings() {
           )
         })}
       </div>
-      <p className="text-[12px] leading-relaxed text-fg-dim">
+      <p className="text-ui-sm leading-relaxed text-fg-dim">
         {t(
           '点击 + 使用默认配置；右键 + 可选择其它配置。主机 Shell 由全局默认或各配置指定；启动命令留空时只打开所选 Shell。程序（如 opencode）可通过窗口标题自动重命名标签，也可双击标签手动修改。',
         )}

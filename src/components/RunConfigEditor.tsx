@@ -159,7 +159,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
         </div>
 
         <div className="flex items-center justify-between gap-3 px-4 h-11 border-t border-border flex-shrink-0">
-          <p className="text-[11px] text-fg-dim truncate">
+          <p className="text-ui-sm truncate text-fg-dim">
             {t('保存至')}{' '}
             <code className="font-mono text-fg-muted">{RUN_CONFIG_RELATIVE_PATH}</code>
           </p>

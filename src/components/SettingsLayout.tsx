@@ -74,9 +74,9 @@ export function SettingItem({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
         <div className="min-w-[12rem] flex-1 basis-0">
           <div className="text-[13px] font-medium text-fg">{title}</div>
-          <p className="mt-1 text-[12px] leading-relaxed text-fg-muted break-words">{description}</p>
+          <p className="text-ui-sm mt-1 leading-relaxed text-fg-muted break-words">{description}</p>
           {locked && lockHint && (
-            <p className="mt-1 text-[11px] text-warn break-words">{lockHint}</p>
+            <p className="text-ui-sm mt-1 text-warn break-words">{lockHint}</p>
           )}
         </div>
         <div className="w-full sm:w-auto sm:max-w-[min(100%,320px)] sm:flex-shrink-0 pt-0.5">

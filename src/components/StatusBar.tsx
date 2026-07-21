@@ -317,7 +317,7 @@ export default function StatusBar() {
         {showMetaGroup && (
           <>
             <StatusDivider />
-            <div className="flex items-center font-mono text-[11px] text-fg-muted">
+            <div className="text-ui-sm flex items-center font-mono text-fg-muted">
               {activeTab?.kind === 'diff' ? (
                 <span>{t('差异对比')}</span>
               ) : activeTab && !activeTab.openError && activeTab.viewMode !== 'view' ? (

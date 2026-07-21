@@ -127,7 +127,7 @@ export default function WorkspaceManager() {
           <div className="flex items-center gap-2 text-[14px] font-semibold text-fg">
             <Layers size={16} className="text-fg-muted" />
             {t('多项目工作区')}
-            <span className="text-[12px] text-fg-muted font-normal">
+            <span className="text-ui-sm font-normal text-fg-muted">
               {t('共 {count} 个', { count: workspaces.length })}
             </span>
           </div>
@@ -150,7 +150,7 @@ export default function WorkspaceManager() {
           >
             <Plus size={13} /> {t('保存当前顶栏项目')}
           </button>
-          <span className="text-[12px] text-fg-muted">
+          <span className="text-ui-sm text-fg-muted">
             {t('将当前顶栏可见项目及其标签/终端快照打包')}
           </span>
         </div>
@@ -189,7 +189,7 @@ export default function WorkspaceManager() {
                           onlyWhenOverflow
                           wrapperClassName="mt-1 block min-w-0"
                         >
-                          <div className="text-[12px] text-fg-muted truncate">
+                          <div className="text-ui-sm mt-1 truncate text-fg-muted">
                             {workspace.members.map(m => m.name).join(' · ')}
                           </div>
                         </Tooltip>

@@ -84,7 +84,7 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
               {t('比较：{name}', { name })}
             </h2>
             <Tooltip label={path} side="bottom" onlyWhenOverflow wrapperClassName="block min-w-0">
-              <p className="text-[11px] text-fg-dim truncate">{path}</p>
+              <p className="text-ui-sm truncate text-fg-dim">{path}</p>
             </Tooltip>
           </div>
         </div>

@@ -223,7 +223,7 @@ export default function ProjectManager() {
           <div className="flex items-center gap-2 text-[14px] font-semibold text-fg">
             <Folders size={16} className="text-fg-muted" />
             {t('项目管理')}
-            <span className="text-[12px] text-fg-muted font-normal">
+            <span className="text-ui-sm font-normal text-fg-muted">
               {t('共 {total} 个 · 显示 {visible} · 隐藏 {hidden}', { total: projects.length, visible: visibleCount, hidden: hiddenCount })}
             </span>
           </div>
@@ -276,7 +276,7 @@ export default function ProjectManager() {
             onChange={setFilter}
           />
 
-          <div className="flex items-center gap-1 text-[12px] text-fg-muted">
+          <div className="text-ui-sm flex items-center gap-1 text-fg-muted">
             {t('排序')}
             <select
               value={sortKey}
@@ -303,7 +303,7 @@ export default function ProjectManager() {
         {/* Selection action bar — only visible while rows are checked. */}
         {selectedIds.size > 0 && (
           <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border flex-shrink-0 bg-bg-active/40">
-            <span className="text-[12px] text-fg-muted">{t('已选 {count} 项', { count: selectedIds.size })}</span>
+            <span className="text-ui-sm text-fg-muted">{t('已选 {count} 项', { count: selectedIds.size })}</span>
             <button
               type="button"
               onClick={() => void handleBatchDelete()}
@@ -496,7 +496,7 @@ export default function ProjectManager() {
 
         {/* Footer */}
         <div className="flex items-center justify-between px-4 py-2.5 border-t border-border-strong flex-shrink-0">
-          <span className="text-[12px] text-fg-muted">
+          <span className="text-ui-sm text-fg-muted">
             {t('顶栏 ✕ 仅隐藏显示；此处「永久删除」才会清除项目记录')}
           </span>
           <button

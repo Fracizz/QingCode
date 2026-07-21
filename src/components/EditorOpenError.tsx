@@ -64,10 +64,10 @@ export default function EditorOpenError({ tab }: Props) {
       <div className="max-w-xl space-y-2">
         <p className="text-sm leading-relaxed text-fg">{title}</p>
         {tab.openError && tab.openError !== title ? (
-          <p className="text-xs leading-relaxed text-fg-muted">{tab.openError}</p>
+          <p className="text-ui-sm leading-relaxed text-fg-muted">{tab.openError}</p>
         ) : null}
         <Tooltip label={tab.path} side="bottom" onlyWhenOverflow wrapperClassName="block max-w-full">
-          <p className="truncate font-mono text-[11px] text-fg-dim">{tab.path}</p>
+          <p className="text-ui-sm truncate font-mono text-fg-dim">{tab.path}</p>
         </Tooltip>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[13px]">

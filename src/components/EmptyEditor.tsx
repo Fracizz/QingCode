@@ -128,7 +128,7 @@ export default function EmptyEditor() {
                     <span className="truncate font-medium text-fg">
                       {file.path.split(/[/\\]/).pop() || file.path}
                     </span>
-                    <span className="ml-auto truncate text-[11px] text-fg-dim max-w-[55%]">
+                    <span className="text-ui-sm ml-auto max-w-[55%] truncate text-fg-dim">
                       {file.path}
                     </span>
                   </button>

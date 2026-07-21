@@ -37,7 +37,7 @@ export default function ThemeSettings() {
       />
 
       {theme === 'auto' && (
-        <p className="text-[12px] text-fg-muted">
+        <p className="text-ui-sm text-fg-muted">
           {t('当前解析为：')}<span className="text-fg">{t(resolved === 'dark' ? '深色' : '浅色')}</span>
           {t('（操作系统切换明暗时自动跟随）')}
         </p>

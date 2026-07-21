@@ -123,7 +123,7 @@ export default function RunPanel() {
           void pushTrustedRootsToNative(projects)
         }}
       />
-      <div className="px-4 pb-2 text-[11px] text-fg-dim">
+      <div className="text-ui-sm px-4 pb-2 text-fg-dim">
         {t('配置保存在')}{' '}
         <code className="font-mono text-fg-muted">{RUN_CONFIG_RELATIVE_PATH}</code>
         <span className="text-fg-dim">{t('（项目根目录相对路径）')}</span>
@@ -193,7 +193,7 @@ export default function RunPanel() {
                       side="bottom"
                       wrapperClassName="block min-w-0 w-full"
                     >
-                      <div className="text-[11px] text-fg-dim truncate mt-0.5">
+                      <div className="text-ui-sm mt-0.5 truncate text-fg-dim">
                         {taskOverview(config.tasks, t)}
                       </div>
                     </Tooltip>

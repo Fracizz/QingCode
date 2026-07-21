@@ -78,11 +78,11 @@ export default function ExplorerConflictDialog() {
               {t(request.message)}
             </p>
             {request.detail && (
-              <p className="mt-2 text-[12px] leading-relaxed text-fg-muted whitespace-pre-line break-all">
+              <p className="text-ui-sm mt-2 leading-relaxed text-fg-muted whitespace-pre-line break-all">
                 {request.detail}
               </p>
             )}
-            <label className="mt-3 block text-[12px] text-fg-muted" htmlFor="explorer-conflict-name">
+            <label className="text-ui-sm mt-3 block text-fg-muted" htmlFor="explorer-conflict-name">
               {t('新名称')}
             </label>
             <input
@@ -100,11 +100,10 @@ export default function ExplorerConflictDialog() {
                   submitRename()
                 }
               }}
-              className={`mt-1 w-full rounded border bg-bg px-2.5 py-2 text-[13px] text-fg outline-none transition-colors
-                ${error ? 'border-danger' : 'border-border-strong focus:border-accent'}`}
+              className={`modal-field-input mt-1 ${error ? 'modal-field-input--invalid' : ''}`}
               aria-invalid={error ? true : undefined}
             />
-            {error && <p className="mt-1.5 text-[12px] text-danger">{error}</p>}
+            {error && <p className="text-ui-sm mt-1.5 text-danger">{error}</p>}
           </div>
         </div>
         <div className="flex flex-wrap justify-end gap-2 border-t border-border px-4 py-3">

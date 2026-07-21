@@ -218,7 +218,7 @@ export default function CommandPalette() {
         aria-label={commandMode ? t('命令面板') : t('快速打开')}
         className="ui-font-scaled modal-content-enter relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
       >
-        <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+        <div className="flex items-center gap-2 border-b border-border px-2.5 py-2">
           {commandMode ? (
             <Command size={16} className="flex-shrink-0 text-fg-muted" aria-hidden />
           ) : (
@@ -235,7 +235,7 @@ export default function CommandPalette() {
             aria-activedescendant={
               results[activeIndex] ? `command-palette-item-${activeIndex}` : undefined
             }
-            className="min-w-0 flex-1 bg-transparent text-[13px] text-fg outline-none placeholder:text-fg-dim"
+            className="modal-search-input"
           />
           <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] text-fg-dim sm:inline">
             Esc
@@ -275,7 +275,7 @@ export default function CommandPalette() {
                       {t(item.command.title, item.command.titleValues)}
                     </span>
                     {shortcut && (
-                      <span className="flex-shrink-0 font-mono text-[11px] text-fg-dim">{shortcut}</span>
+                      <span className="text-ui-sm flex-shrink-0 font-mono text-fg-dim">{shortcut}</span>
                     )}
                   </button>
                 )
@@ -299,7 +299,7 @@ export default function CommandPalette() {
                   <Icon size={15} className="flex-shrink-0 opacity-80" />
                   <span className="min-w-0 flex-1 truncate">
                     <span>{item.entry.label}</span>
-                    <span className="ml-2 text-[11px] text-fg-dim">
+                    <span className="text-ui-sm ml-2 text-fg-dim">
                       {item.entry.relativePath}
                       {projects.length > 1 ? ` · ${item.entry.projectName}` : ''}
                     </span>

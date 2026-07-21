@@ -135,7 +135,7 @@ export default function HelpDialog({ onClose }: Props) {
               onChange={event => setQuery(event.target.value)}
               placeholder={t('搜索帮助文档')}
               aria-label={t('搜索帮助文档')}
-              className="setting-input h-8 w-full pl-8 pr-8 text-[13px]"
+              className="setting-input w-full py-1.5 pl-8 pr-8 text-[13px] leading-5"
             />
             {query && (
               <button

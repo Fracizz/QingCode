@@ -6,7 +6,7 @@ const dev = { allowNativeContextMenu: true } as const
 
 describe('shouldPreventNativeContextMenu', () => {
   it.each([null, {} as EventTarget])(
-    'does not prevent native menus in dev builds',
+    'does not prevent native menus when allowNativeContextMenu is true',
     target => {
       expect(shouldPreventNativeContextMenu(target, dev)).toBe(false)
     },

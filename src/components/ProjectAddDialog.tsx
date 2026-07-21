@@ -158,7 +158,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
         className="ui-font-scaled modal-content-enter relative flex w-full max-w-[340px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={event => event.stopPropagation()}
       >
-        <div className="flex flex-shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-border px-2.5 py-2">
           <input
             ref={inputRef}
             type="text"
@@ -167,7 +167,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
             onKeyDown={onInputKeyDown}
             placeholder={t('选择项目…')}
             aria-controls="project-add-list"
-            className="h-7 min-w-0 flex-1 bg-transparent text-[13px] leading-7 text-fg outline-none placeholder:text-fg-dim"
+            className="modal-search-input"
           />
           <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] leading-none text-fg-dim sm:inline">
             Esc
@@ -182,7 +182,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
           className="max-h-[min(240px,36vh)] overflow-y-auto py-0.5"
         >
           {filtered.length === 0 ? (
-            <p className="px-3 py-5 text-center text-[12px] text-fg-dim">
+            <p className="text-ui-sm px-3 py-5 text-center text-fg-dim">
               {projects.length === 0
                 ? t('暂无项目，可打开文件夹添加')
                 : t('没有匹配的项目')}

@@ -467,11 +467,11 @@ export default function LargeFileViewer({ tab }: Props) {
           {t('查找上一个')}
         </button>
         {searchQuery && matches.length > 0 && (
-          <span className="font-mono text-[11px] text-fg-dim">
+          <span className="text-ui-sm font-mono text-fg-dim">
             {activeMatch + 1}/{matches.length}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-3 text-[12px]">
+        <div className="text-ui-sm ml-auto flex items-center gap-3">
           <button
             type="button"
             className="inline-flex items-center gap-1 text-accent hover:underline"
@@ -513,7 +513,7 @@ export default function LargeFileViewer({ tab }: Props) {
 
       <div className="relative min-h-0 flex-1 overflow-auto">
         {loading && (
-          <div className="pointer-events-none absolute right-3 top-2 text-[11px] text-fg-dim">
+          <div className="text-ui-sm pointer-events-none absolute right-3 top-2 text-fg-dim">
             {t('加载中…')}
           </div>
         )}

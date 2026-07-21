@@ -15,7 +15,7 @@ export default function EmptyState({ icon, title, hint, action, className = '' }
     <div className={`flex flex-col items-center justify-center gap-2 px-4 py-8 text-center ${className}`}>
       {icon && <div className="text-fg-dim">{icon}</div>}
       <p className="text-[13px] text-fg-muted">{title}</p>
-      {hint && <p className="text-[12px] text-fg-dim">{hint}</p>}
+      {hint && <p className="text-ui-sm text-fg-dim">{hint}</p>}
       {action && <div className="mt-1.5">{action}</div>}
     </div>
   )

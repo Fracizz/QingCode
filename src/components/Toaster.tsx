@@ -39,7 +39,7 @@ export default function Toaster() {
             <div className="flex-1 min-w-0">
               <p className="font-medium text-fg leading-snug">{t.text}</p>
               {t.detail ? (
-                <p className="mt-1 text-xs leading-relaxed text-fg-muted">{t.detail}</p>
+                <p className="text-ui-sm mt-1 leading-relaxed text-fg-muted">{t.detail}</p>
               ) : null}
             </div>
             <button

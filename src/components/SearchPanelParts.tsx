@@ -46,10 +46,10 @@ export function SearchResultRow(props: {
           <span className="truncate font-medium">{row.name}</span>
           {row.dir && (
             <Tooltip label={row.dir} side="bottom" wrapperClassName="truncate min-w-0 ml-1">
-              <span className="truncate text-fg-dim text-[11px] block">{row.dir}</span>
+              <span className="text-ui-sm block truncate text-fg-dim">{row.dir}</span>
             </Tooltip>
           )}
-          <span className="ml-auto text-[11px] text-fg-dim flex-shrink-0">
+          <span className="text-ui-sm ml-auto flex-shrink-0 text-fg-dim">
             {row.matchCount}
           </span>
         </button>
@@ -76,7 +76,7 @@ export function SearchResultRow(props: {
 
   if (row.kind === 'more') {
     return (
-      <div style={style} className={`${baseCls} pl-9 pr-3 text-[11px] text-fg-dim`}>
+      <div style={style} className={`${baseCls} text-ui-sm pl-9 pr-3 text-fg-dim`}>
         {t('…可能还有更多匹配')}
       </div>
     )
@@ -84,7 +84,7 @@ export function SearchResultRow(props: {
 
   if (row.kind === 'dir') {
     return (
-      <div style={style} className={`${baseCls} px-4 text-[11px] text-fg-dim`}>
+      <div style={style} className={`${baseCls} text-ui-sm px-4 text-fg-dim`}>
         <Tooltip label={row.dir} side="bottom" wrapperClassName="truncate min-w-0 w-full">
           <span className="truncate block">{row.dir}</span>
         </Tooltip>
@@ -104,7 +104,7 @@ export function SearchResultRow(props: {
         <FileIcon size={14} className="text-fg-muted flex-shrink-0" />
       )}
       <span className="truncate">{row.hit.name}</span>
-      <span className="ml-auto text-[11px] text-fg-dim truncate max-w-[40%]">
+      <span className="text-ui-sm ml-auto max-w-[40%] truncate text-fg-dim">
         {row.hit.relative}
       </span>
     </button>

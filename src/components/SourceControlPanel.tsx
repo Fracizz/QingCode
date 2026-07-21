@@ -135,7 +135,7 @@ function ChangeRowComponent(props: {
               onlyWhenOverflow
               wrapperClassName="min-w-0 truncate"
             >
-              <span className="block truncate text-[11px] text-fg-dim">{dirName}</span>
+              <span className="text-ui-sm block truncate text-fg-dim">{dirName}</span>
             </Tooltip>
           )}
         </span>
@@ -390,7 +390,7 @@ export default function SourceControlPanel() {
   } else if (status) {
     body = (
       <>
-        <div className="flex-shrink-0 border-y border-border px-4 py-2 text-[12px] leading-5 text-fg-muted">
+        <div className="text-ui-sm flex-shrink-0 border-y border-border px-4 py-2 leading-5 text-fg-muted">
           <div className="flex items-center gap-1.5 text-fg">
             <GitBranch size={13} className="text-accent" />
             <span>{status.branch ?? t('游离 HEAD')}</span>

@@ -86,13 +86,12 @@ export default function PromptDialog() {
                 }
               }}
               placeholder={request.placeholder ? t(request.placeholder) : undefined}
-              className={`mt-3 w-full rounded border bg-bg px-2.5 py-2 text-[13px] text-fg outline-none transition-colors
-                ${error ? 'border-danger' : 'border-border-strong focus:border-accent'}`}
+              className={`modal-field-input mt-3 ${error ? 'modal-field-input--invalid' : ''}`}
               aria-invalid={error ? true : undefined}
               aria-describedby={error ? 'prompt-error' : undefined}
             />
             {error && (
-              <p id="prompt-error" className="mt-1.5 text-[12px] text-danger">
+              <p id="prompt-error" className="text-ui-sm mt-1.5 text-danger">
                 {error}
               </p>
             )}

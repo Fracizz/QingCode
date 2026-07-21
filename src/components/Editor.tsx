@@ -1021,7 +1021,7 @@ export default function Editor() {
           onlyWhenOverflow
           wrapperClassName="max-w-md block px-6"
         >
-          <p className="truncate font-mono text-[11px] text-fg-dim">{activeTab.path}</p>
+          <p className="text-ui-sm truncate font-mono text-fg-dim">{activeTab.path}</p>
         </Tooltip>
       </div>
     )

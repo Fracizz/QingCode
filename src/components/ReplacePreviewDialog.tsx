@@ -71,7 +71,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
             <h2 id="replace-preview-title" className="text-[14px] font-semibold text-fg">
               {t('替换预览')}
             </h2>
-            <p className="text-[12px] text-fg-muted">
+            <p className="text-ui-sm text-fg-muted">
               {t('将把「{query}」替换为「{replacement}」', {
                 query: preview.query,
                 replacement: preview.replacement,
@@ -80,7 +80,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
           </div>
         </div>
 
-        <div className="flex-shrink-0 border-b border-border px-4 py-2 text-[12px] text-fg-muted">
+        <div className="text-ui-sm flex-shrink-0 border-b border-border px-4 py-2 text-fg-muted">
           {t('{files} 个文件 · {matches} 处匹配', {
             files: preview.files.length,
             matches: preview.matchCount,
@@ -91,7 +91,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
         <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
           {preview.files.map(file => (
             <div key={file.path} className="mb-2 rounded border border-border bg-bg px-2 py-1.5">
-              <div className="flex items-baseline gap-2 text-[12px]">
+              <div className="text-ui-sm flex items-baseline gap-2">
                 <span className="font-medium text-fg truncate">{file.name}</span>
                 <span className="text-fg-dim truncate">{file.relative}</span>
                 <span className="ml-auto flex-shrink-0 text-fg-muted">
@@ -107,7 +107,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
                       onlyWhenOverflow
                       wrapperClassName="block min-w-0"
                     >
-                      <div className="font-mono text-[11px] text-fg-muted truncate">
+                      <div className="text-ui-sm truncate font-mono text-fg-muted">
                         <span className="text-fg-dim mr-2">{sample.line}</span>
                         {sample.text}
                       </div>
@@ -120,7 +120,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
         </div>
 
         <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
-          <span className="text-[12px] text-fg-dim truncate">{progress}</span>
+          <span className="text-ui-sm truncate text-fg-dim">{progress}</span>
           <div className="flex gap-2 flex-shrink-0">
             <button
               ref={cancelRef}

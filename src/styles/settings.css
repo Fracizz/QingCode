@@ -11,7 +11,9 @@
 .setting-input::placeholder {
   color: var(--color-fg-dim);
 }
-.setting-input:focus {
+.setting-input:focus,
+.setting-input:focus-visible {
+  outline: none !important;
   border-color: var(--color-accent);
 }
 

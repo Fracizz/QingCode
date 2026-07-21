@@ -170,7 +170,7 @@ export default function ShortcutSettings() {
           >
             <span className="min-w-0 flex-1">
               <span className="block text-[13px] text-fg">{t(command.label)}</span>
-              <span className="mt-0.5 block text-[11px] text-fg-muted">{t(command.description)}</span>
+              <span className="text-ui-sm mt-0.5 block text-fg-muted">{t(command.description)}</span>
             </span>
             <input
               readOnly
@@ -203,7 +203,7 @@ export default function ShortcutSettings() {
         >
           <span className="min-w-0 flex-1">
             <span className="block text-[13px] text-fg">{t(item.label)}</span>
-            <span className="mt-0.5 block text-[11px] text-fg-muted">{t(item.description)}</span>
+            <span className="text-ui-sm mt-0.5 block text-fg-muted">{t(item.description)}</span>
           </span>
           <Tooltip label={t('不可修改')} side="left">
             <span className="inline-flex h-[30px] w-36 items-center justify-center rounded border border-border bg-bg-deep px-2 font-mono text-[12px] text-fg-dim">

@@ -44,6 +44,7 @@ installStartupSplashGuard()
 
 // Non-critical guards after first paint; keep splash reveal ownership in index.html.
 queueMicrotask(() => {
+  void import('./lib/devBuild').then(m => m.installDevNativeContextMenuToggle())
   void import('./lib/contextMenuGuard').then(m => m.installContextMenuGuard())
 })
 

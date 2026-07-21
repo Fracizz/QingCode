@@ -1,4 +1,4 @@
-import { isFrontendDevBuild } from './devBuild'
+import { isFrontendDevBuild, isNativeContextMenuPreferredInDev } from './devBuild'
 
 export type ContextMenuGuardOptions = {
   /** Dev builds may use the WebView native context menu (inspect, copy, etc.). */
@@ -6,7 +6,7 @@ export type ContextMenuGuardOptions = {
 }
 
 function resolveAllowNativeContextMenu(options?: ContextMenuGuardOptions): boolean {
-  return options?.allowNativeContextMenu ?? isFrontendDevBuild()
+  return options?.allowNativeContextMenu ?? false
 }
 
 /** Selectors that keep the browser/WebView native context menu (copy, paste, etc.). */
@@ -54,13 +54,11 @@ export function installContextMenuGuard(options?: ContextMenuGuardOptions) {
   if (installed || typeof document === 'undefined') return
   installed = true
 
-  const allowNative = resolveAllowNativeContextMenu(options)
-  if (allowNative) return
-
   document.addEventListener(
     'contextmenu',
     event => {
-      if (shouldPreventNativeContextMenu(event.target)) {
+      if (isFrontendDevBuild() && isNativeContextMenuPreferredInDev()) return
+      if (shouldPreventNativeContextMenu(event.target, options)) {
         event.preventDefault()
       }
     },
