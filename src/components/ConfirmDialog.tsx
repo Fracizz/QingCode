@@ -63,7 +63,7 @@ export default function ConfirmDialog() {
         aria-modal="true"
         aria-labelledby="confirm-title"
         aria-describedby="confirm-message"
-        className={`modal-content-enter relative w-full rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50 ${
+        className={`ui-font-scaled modal-content-enter relative w-full rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50 ${
           wide ? 'max-w-[520px]' : 'max-w-[420px]'
         }`}
       >

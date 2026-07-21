@@ -158,18 +158,18 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
         className="ui-font-scaled modal-content-enter relative flex w-full max-w-[340px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={event => event.stopPropagation()}
       >
-        <div className="flex items-center gap-2 border-b border-border px-3 py-2 flex-shrink-0">
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
           <input
             ref={inputRef}
-            type="search"
+            type="text"
             value={query}
             onChange={event => setQuery(event.target.value)}
             onKeyDown={onInputKeyDown}
             placeholder={t('选择项目…')}
             aria-controls="project-add-list"
-            className="min-w-0 flex-1 bg-transparent text-[13px] text-fg outline-none placeholder:text-fg-dim"
+            className="h-7 min-w-0 flex-1 bg-transparent text-[13px] leading-7 text-fg outline-none placeholder:text-fg-dim"
           />
-          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] text-fg-dim sm:inline">
+          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] leading-none text-fg-dim sm:inline">
             Esc
           </kbd>
         </div>

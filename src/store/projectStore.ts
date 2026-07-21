@@ -254,10 +254,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const name = baseName(path)
       const id = crypto.randomUUID()
       const now = Date.now()
+      // Ask trust before writing the project into the list / top bar.
+      const trust = await ensureWorkspaceTrust({ id, name, path })
+      if (trust === false) return false
       await insertProject(id, name, path, now)
       await get().loadProjects()
-      // Switch to the newly added project (it's now the most recent).
-      const created = get().projects.find(p => p.path === path)
+      const created = get().projects.find(p => p.id === id)
       if (created) await get().switchProject(created)
       get().pushToast('success', `已添加项目: ${name}`)
       return true
