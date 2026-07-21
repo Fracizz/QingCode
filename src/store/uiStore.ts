@@ -1,5 +1,10 @@
 import { create } from 'zustand'
 import { loadActivityBarHidden, saveActivityBarHidden } from '../lib/activityBarLayout'
+import {
+  cyclePanelLayoutTemplate,
+  loadPanelLayoutTemplate,
+  type PanelLayoutTemplate,
+} from '../lib/panelLayoutTemplate'
 
 export type View = 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
 
@@ -19,6 +24,8 @@ interface UIState {
   terminalToggleSignal: number
   /** When true, explorer should start inline “new file” at the project root. */
   pendingNewFile: boolean
+  /** Terminal dock template shared by the title bar, commands, and app layout. */
+  panelLayout: PanelLayoutTemplate
   /** Search query for the latest Settings deep-link (e.g. files.autoSave). */
   settingsFocusQuery: string | null
   /** Incremented when opening Settings with a focus query. */
@@ -47,6 +54,8 @@ interface UIState {
   openTerminalPanel: () => void
   /** Toggle the terminal panel open/closed. */
   requestToggleTerminal: () => void
+  /** Persist and switch between the bottom and side terminal layouts. */
+  togglePanelLayout: () => void
   openProjectManager: () => void
   closeProjectManager: () => void
   openWorkspaceManager: () => void
@@ -62,6 +71,7 @@ export const useUIStore = create<UIState>((set) => ({
   terminalOpenSignal: 0,
   terminalToggleSignal: 0,
   pendingNewFile: false,
+  panelLayout: loadPanelLayoutTemplate(),
   settingsFocusQuery: null,
   settingsFocusSignal: 0,
   projectManagerOpen: false,
@@ -101,6 +111,12 @@ export const useUIStore = create<UIState>((set) => ({
     })),
   openTerminalPanel: () => set(s => ({ terminalOpenSignal: s.terminalOpenSignal + 1 })),
   requestToggleTerminal: () => set(s => ({ terminalToggleSignal: s.terminalToggleSignal + 1 })),
+  togglePanelLayout: () =>
+    set(state => ({
+      panelLayout: cyclePanelLayoutTemplate(),
+      // A layout change must be visible even when the terminal was previously hidden.
+      terminalOpenSignal: state.terminalOpenSignal + 1,
+    })),
   openProjectManager: () => set({ projectManagerOpen: true }),
   closeProjectManager: () => set({ projectManagerOpen: false }),
   openWorkspaceManager: () => set({ workspaceManagerOpen: true }),

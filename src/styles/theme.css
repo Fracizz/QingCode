@@ -50,9 +50,10 @@
   --editor-font-size: 14px;
   --terminal-font-size: 13px;
 
-  /* Idle = soft solid; active / cursor-bracket = a bit stronger. */
-  --editor-indent-guide: #ffffff18;
-  --editor-indent-guide-active: #ffffff72;
+  /* Idle guides must stay visible at class/method scope (VS Code-like);
+     #18 was so faint only the active innermost rail read as “having a line”. */
+  --editor-indent-guide: #ffffff32;
+  --editor-indent-guide-active: #ffffff78;
   --editor-matching-bracket-bg: #ffffff28;
   --editor-matching-bracket-outline: #ffffff66;
 }
@@ -117,8 +118,8 @@ html[data-theme="forest"] {
   --minimap-empty-line: color-mix(in srgb, var(--color-fg) 8%, transparent);
   --minimap-vp-idle-fill: color-mix(in srgb, var(--color-fg) 10%, var(--color-bg-deep) 5%);
 
-  --editor-indent-guide: #b2c2b022;
-  --editor-indent-guide-active: #e0f0e072;
+  --editor-indent-guide: #b2c2b038;
+  --editor-indent-guide-active: #e0f0e078;
   --editor-matching-bracket-bg: #d0e0d830;
   --editor-matching-bracket-outline: #d0e0d870;
 }

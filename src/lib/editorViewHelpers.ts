@@ -9,9 +9,13 @@ import type { EditorTab } from '../types'
 const lightTheme = EditorView.theme(
   {
     '&': { backgroundColor: '#f0f0f0', color: '#1f1f1f' },
-    '.cm-gutters': { backgroundColor: '#ebebeb', color: '#757575', borderRight: '1px solid #d0d0d0' },
+    '.cm-gutters': {
+      backgroundColor: 'var(--color-bg)',
+      color: 'var(--color-fg-muted)',
+      borderRight: 'none',
+    },
     '.cm-activeLine': { backgroundColor: '#e8edf2' },
-    '.cm-activeLineGutter': { backgroundColor: '#e2e8ef', color: '#1f1f1f' },
+    '.cm-activeLineGutter': { backgroundColor: '#e8edf2', color: '#1f1f1f' },
     '.cm-selectionBackground': { backgroundColor: '#cfe3fb' },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
       backgroundColor: '#b9d6f5',
@@ -33,6 +37,15 @@ const darkDefaultFgTheme = EditorView.theme(
   {
     '&': { color: '#cccccc' },
     '.cm-content': { color: '#cccccc' },
+    '.cm-gutters': {
+      backgroundColor: 'var(--color-bg)',
+      color: 'var(--color-fg-muted)',
+      borderRight: 'none',
+    },
+    '.cm-activeLineGutter': {
+      backgroundColor: 'color-mix(in srgb, var(--color-bg-hover) 70%, transparent)',
+      color: 'var(--color-fg)',
+    },
   },
   { dark: true },
 )

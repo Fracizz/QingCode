@@ -77,7 +77,11 @@ const diffTheme = EditorView.baseTheme({
 const lightTheme = EditorView.theme(
   {
     '&': { backgroundColor: '#f0f0f0', color: '#1f1f1f' },
-    '.cm-gutters': { backgroundColor: '#ebebeb', color: '#757575', borderRight: '1px solid #d0d0d0' },
+    '.cm-gutters': {
+      backgroundColor: 'var(--color-bg)',
+      color: 'var(--color-fg-muted)',
+      borderRight: 'none',
+    },
   },
   { dark: false },
 )

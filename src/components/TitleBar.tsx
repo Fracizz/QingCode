@@ -9,27 +9,15 @@ import FileMenu from './FileMenu'
 import Tooltip from './Tooltip'
 import ProjectPicker from './ProjectPicker'
 import { translate, useI18n } from '../lib/i18n'
-import {
-  cyclePanelLayoutTemplate,
-  loadPanelLayoutTemplate,
-  PANEL_LAYOUT_CHANGED_EVENT,
-  type PanelLayoutTemplate,
-} from '../lib/panelLayoutTemplate'
+import { useUIStore } from '../store/uiStore'
 
 export default function TitleBar() {
   const { t } = useI18n()
   const [maximized, setMaximized] = useState(false)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
-  const [panelLayout, setPanelLayout] = useState<PanelLayoutTemplate>(() =>
-    loadPanelLayoutTemplate(),
-  )
+  const panelLayout = useUIStore(s => s.panelLayout)
+  const togglePanelLayout = useUIStore(s => s.togglePanelLayout)
   const inTauri = isTauri()
-
-  useEffect(() => {
-    const sync = () => setPanelLayout(loadPanelLayoutTemplate())
-    window.addEventListener(PANEL_LAYOUT_CHANGED_EVENT, sync)
-    return () => window.removeEventListener(PANEL_LAYOUT_CHANGED_EVENT, sync)
-  }, [])
 
   useEffect(() => {
     const onFocus = () => setWindowFocused(true)
@@ -152,7 +140,7 @@ export default function TitleBar() {
             type="button"
             aria-label={t('切换面板布局')}
             className="w-[46px] h-full flex items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
-            onClick={() => cyclePanelLayoutTemplate()}
+            onClick={togglePanelLayout}
           >
             {panelLayout === 'classic' ? (
               <PanelBottom size={14} strokeWidth={1.5} />

@@ -28,7 +28,6 @@ import {
   saveVisibleProjectsAsWorkspace,
 } from './namedWorkspaceActions'
 import { requestTerminalClear, requestTerminalSearch } from './terminalViewBridge'
-import { cyclePanelLayoutTemplate } from './panelLayoutTemplate'
 import { useTerminalStore } from '../store/terminalStore'
 
 export type AppCommand = {
@@ -385,7 +384,7 @@ export function buildCommands(): AppCommand[] {
       keywords: 'layout panel terminal sidebar classic side',
       shortcutCommand: 'togglePanelLayout',
       run: () => {
-        cyclePanelLayoutTemplate()
+        useUIStore.getState().togglePanelLayout()
       },
     },
     {

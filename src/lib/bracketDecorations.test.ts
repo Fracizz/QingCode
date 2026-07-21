@@ -15,8 +15,11 @@ import {
   findEnclosingPair,
   guideColumnsForLine,
   indentGuideColumnsForLine,
+  indentLevelForLineGuides,
   indentLevelsForLines,
+  mergeGuideColumnsForLine,
   resolveActiveGuideColumn,
+  resolveActiveGuideColumns,
   scanBracketPairs,
   scanStateBracketPairs,
   snapIndentLane,
@@ -107,7 +110,8 @@ describe('activeIndentGuideColumn', () => {
 describe('buildGuideBoxShadow', () => {
   it('emits solid box-shadow offsets (no gradient / dash)', () => {
     const shadow = buildGuideBoxShadow([0, 2, 4], 8, 4)
-    expect(shadow).toContain('0px 0 0 0 var(--editor-indent-guide)')
+    // Column 0 is nudged to 1px so the class-body rail actually paints.
+    expect(shadow).toContain('1px 0 0 0 var(--editor-indent-guide)')
     expect(shadow).toContain('16px 0 0 0')
     expect(shadow).toContain('32px 0 0 0')
     expect(shadow).toContain('var(--editor-indent-guide-active)')
@@ -119,6 +123,10 @@ describe('buildGuideBoxShadow', () => {
   it('keeps fractional character widths aligned with CodeMirror text', () => {
     expect(buildGuideBoxShadow([2], 7.5, null)).toContain('15px 0 0 0')
     expect(buildGuideBoxShadow([1], 7.25, null)).toContain('7.25px 0 0 0')
+  })
+
+  it('keeps the outermost indent rail paintable for class bodies', () => {
+    expect(buildGuideBoxShadow([0], 8, null)).toContain('1px 0 0 0')
   })
 })
 
@@ -133,30 +141,82 @@ describe('activeGuideColumnForLine', () => {
   })
 })
 
-describe('resolveActiveGuideColumn', () => {
-  it('keeps active indent lit when inactive bracket guides are present', () => {
-    expect(resolveActiveGuideColumn(null, 0)).toBe(0)
-    expect(resolveActiveGuideColumn(4, 0)).toBe(4)
-    expect(resolveActiveGuideColumn(null, null)).toBeNull()
+describe('resolveActiveGuideColumns', () => {
+  it('keeps the outer active indent lit even when a bracket rail is present', () => {
+    expect(resolveActiveGuideColumns(null, 0)).toEqual([0])
+    expect(resolveActiveGuideColumns(15, 0)).toEqual([0, 15])
+    expect(resolveActiveGuideColumns(4, 4)).toEqual([4])
   })
 
-  it('lights the outer indent rail through a deeper list continuation line', () => {
-    const lines = [
-      'def options(self, request):',
-      '    queryset = hosts',
-      "    data = [{'value': h['id'], 'label': h['name']}",
-      '            for h in queryset]',
-      '    return Response(data)',
-    ]
-    const indent = activeIndentGuideForLines(lines, 2, 4, true)
-    expect(indent).toEqual({
-      fromLine: 2,
-      toLine: 5,
-      level: 1,
-      column: 0,
-    })
-    // Continuation line carries bracket guides, but active indent must stay lit.
-    expect(resolveActiveGuideColumn(null, indent!.column)).toBe(0)
+  it('lights both rails so the function guide has no gap through […for…]', () => {
+    // Cursor on return → active indent col 0; for-line also has bracket at 15.
+    expect(resolveActiveGuideColumns(15, 0)).toContain(0)
+    expect(buildGuideBoxShadow([0, 4, 15], 8, resolveActiveGuideColumns(15, 0))).toContain(
+      '1px 0 0 0 var(--editor-indent-guide-active)',
+    )
+  })
+})
+
+describe('resolveActiveGuideColumn', () => {
+  it('returns the first active column for backward-compatible callers', () => {
+    expect(resolveActiveGuideColumn(null, 0, true)).toBe(0)
+    expect(resolveActiveGuideColumn(4, 0, true)).toBe(0)
+  })
+})
+
+describe('mergeGuideColumnsForLine', () => {
+  it('lets a same-column bracket rail replace the indent lane (VS Code)', () => {
+    // Indent levels 1..2 → cols 0,4; bracket at 4 replaces indent at 4.
+    expect(mergeGuideColumnsForLine(2, 4, true, [4])).toEqual([0, 4])
+    expect(mergeGuideColumnsForLine(2, 4, true, [4])).toEqual(
+      guideColumnsForLine(2, 4, true, null, false, [4]),
+    )
+  })
+
+  it('keeps non-indent bracket columns so list rails under [ still show', () => {
+    expect(mergeGuideColumnsForLine(2, 4, true, [15])).toEqual([0, 4, 15])
+  })
+
+  it('does not draw indent lanes when indentation guides are off', () => {
+    expect(mergeGuideColumnsForLine(3, 4, false, [2, 8])).toEqual([2, 8])
+  })
+})
+
+describe('indentLevelForLineGuides', () => {
+  it('caps hang-indent continuation to the bracket opener indent (VS Code look)', () => {
+    // data= line level 2; for-continuation level 4 → only opener rails + bracket.
+    const levels = [1, 1, 2, 2, 2, 4, 2]
+    expect(indentLevelForLineGuides(4, [5], levels)).toBe(2)
+    expect(
+      guideColumnsForLine(
+        indentLevelForLineGuides(4, [5], levels),
+        4,
+        true,
+        null,
+        false,
+        [15],
+      ),
+    ).toEqual([0, 4, 15])
+  })
+
+  it('keeps the gutter-adjacent rail for module-level paren continuations', () => {
+    // PACKAGES = (  → level 0; body lines level 1 must still show col 0.
+    const levels = [0, 1, 1, 0]
+    expect(indentLevelForLineGuides(1, [1], levels)).toBe(1)
+    expect(
+      guideColumnsForLine(
+        indentLevelForLineGuides(1, [1], levels),
+        4,
+        true,
+        null,
+        false,
+        [4],
+      ),
+    ).toEqual([0, 4])
+  })
+
+  it('does not cap when the line has no bracket guides', () => {
+    expect(indentLevelForLineGuides(4, [], [1, 2, 4])).toBe(4)
   })
 })
 
@@ -192,6 +252,11 @@ describe('guideColumnsForLine', () => {
       'var(--editor-indent-guide-active)',
       'var(--editor-indent-guide)',
     )).toBe(buildGuideBoxShadow(inactive, 8, null))
+  })
+
+  it('does not double-draw when bracket and indent share a column', () => {
+    // Without merge, Set dedupe also collapses; merge must still yield one rail.
+    expect(guideColumnsForLine(2, 4, true, null, false, [0, 4])).toEqual([0, 4])
   })
 })
 

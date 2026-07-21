@@ -8,9 +8,9 @@ export const FOREST_THEME = EditorView.theme(
   {
     '&': { backgroundColor: M.background, color: M.syntax.variables },
     '.cm-gutters': {
-      backgroundColor: M.contrast,
+      backgroundColor: M.background,
       color: M.text,
-      borderRight: `1px solid ${M.border}`,
+      borderRight: 'none',
     },
     '.cm-activeLine': { backgroundColor: M.highlight },
     '.cm-activeLineGutter': { backgroundColor: M.highlight, color: M.foreground },

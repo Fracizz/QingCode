@@ -45,10 +45,7 @@ import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
 import { useTerminalPanel } from './hooks/useTerminalPanel'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
 import {
-  loadPanelLayoutTemplate,
-  PANEL_LAYOUT_CHANGED_EVENT,
   terminalPositionForTemplate,
-  type PanelLayoutTemplate,
 } from './lib/panelLayoutTemplate'
 import {
   markWorkspaceSessionPersistReady,
@@ -131,6 +128,7 @@ function App() {
   const toggleActivityView = useUIStore(s => s.toggleActivityView)
   const terminalOpenSignal = useUIStore(s => s.terminalOpenSignal)
   const terminalToggleSignal = useUIStore(s => s.terminalToggleSignal)
+  const panelLayout = useUIStore(s => s.panelLayout)
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
   const workspaceManagerOpen = useUIStore(s => s.workspaceManagerOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
@@ -159,16 +157,7 @@ function App() {
 
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth)
   const [projectsReady, setProjectsReady] = useState(false)
-  const [panelLayout, setPanelLayout] = useState<PanelLayoutTemplate>(() =>
-    loadPanelLayoutTemplate(),
-  )
   const terminalPosition = terminalPositionForTemplate(panelLayout)
-
-  useEffect(() => {
-    const sync = () => setPanelLayout(loadPanelLayoutTemplate())
-    window.addEventListener(PANEL_LAYOUT_CHANGED_EVENT, sync)
-    return () => window.removeEventListener(PANEL_LAYOUT_CHANGED_EVENT, sync)
-  }, [])
 
   useAppKeyboardShortcuts({ shortcuts, setView, openPalette, openSymbolPicker })
 

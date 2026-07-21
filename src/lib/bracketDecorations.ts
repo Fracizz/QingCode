@@ -494,19 +494,87 @@ export function activeIndentGuideForLevels(
 export function buildGuideBoxShadow(
   columns: number[],
   charWidth: number,
-  activeCol: number | null,
+  activeCol: number | null | readonly number[],
 ): string {
+  const active =
+    activeCol == null
+      ? new Set<number>()
+      : new Set(typeof activeCol === 'number' ? [activeCol] : activeCol)
   const w = Math.max(1, charWidth)
   return columns
     .map(col => {
-      const x = Math.max(0, col * w)
-      const color =
-        activeCol != null && col === activeCol
-          ? 'var(--editor-indent-guide-active)'
-          : 'var(--editor-indent-guide)'
+      // A 0px-offset shadow on a transparent box often fails to paint, which
+      // hides the class-body rail (only column 0). Nudge it by 1px — same
+      // visual lane as VS Code's first indent guide.
+      const x = col <= 0 ? 1 : col * w
+      const color = active.has(col)
+        ? 'var(--editor-indent-guide-active)'
+        : 'var(--editor-indent-guide)'
       return `${x}px 0 0 0 ${color}`
     })
     .join(', ')
+}
+
+/**
+ * Port of VS Code `IndentGuidesOverlay.getGuidesByLine` column merge:
+ * walk indent lanes left-to-right; flush earlier bracket rails; when a bracket
+ * lands on the same column as an indent lane, skip the indent (bracket wins).
+ * Remaining bracket rails (including non-indent columns) are appended.
+ */
+export function mergeGuideColumnsForLine(
+  indentLevel: number,
+  indentSize: number,
+  indentationGuides: boolean,
+  bracketColumns: readonly number[],
+): number[] {
+  const brackets = [...bracketColumns].sort((a, b) => a - b)
+  let bi = 0
+  const cols: number[] = []
+
+  const takeBracketsWhile = (pred: (col: number) => boolean) => {
+    while (bi < brackets.length && pred(brackets[bi])) {
+      cols.push(brackets[bi++])
+    }
+  }
+
+  if (indentationGuides && indentLevel > 0) {
+    for (let indentLvl = 1; indentLvl <= indentLevel; indentLvl++) {
+      const indentCol = (indentLvl - 1) * indentSize
+      takeBracketsWhile(col => col < indentCol)
+      const peeked = bi < brackets.length ? brackets[bi] : null
+      // Same-column bracket replaces the indent lane (VS Code peek equality).
+      if (peeked !== indentCol) cols.push(indentCol)
+    }
+  }
+  takeBracketsWhile(() => true)
+  return cols
+}
+
+/**
+ * Hang-indent continuation lines (`data = [\\n        for x]`) are deeper than
+ * the opener. Prefer the opener's indent rails plus the bracket rail under `[`
+ * — not intermediate stubs at every hang-indent stop.
+ *
+ * When the opener is at column 0 (module-level `(...)` / `[...]`), still keep
+ * at least indent level 1 so the outer gutter-adjacent rail does not vanish
+ * on continuation lines (that gap looks like the line-number border “covering”
+ * the guide).
+ */
+export function indentLevelForLineGuides(
+  lineIndentLevel: number,
+  bracketFromLines: readonly number[],
+  indentLevels: readonly number[],
+): number {
+  if (bracketFromLines.length === 0) return lineIndentLevel
+  let openerLevel = lineIndentLevel
+  for (const fromLine of bracketFromLines) {
+    const level = indentLevels[fromLine - 1]
+    if (level != null) openerLevel = Math.min(openerLevel, level)
+  }
+  if (lineIndentLevel > openerLevel) {
+    return Math.max(openerLevel, 1)
+  }
+  return lineIndentLevel
 }
 
 export function guideColumnsForLine(
@@ -517,11 +585,14 @@ export function guideColumnsForLine(
   addActiveColumn = true,
   bracketColumns: readonly number[] = [],
 ): number[] {
-  const cols = new Set<number>()
-  if (indentationGuides) {
-    for (const c of indentGuideColumnsForLevel(indentLevel, indentSize)) cols.add(c)
-  }
-  for (const column of bracketColumns) cols.add(column)
+  const cols = new Set(
+    mergeGuideColumnsForLine(
+      indentLevel,
+      indentSize,
+      indentationGuides,
+      bracketColumns,
+    ),
+  )
   if (addActiveColumn && activeCol != null) cols.add(activeCol)
   return [...cols].sort((a, b) => a - b)
 }
@@ -545,15 +616,31 @@ export function activeGuideColumnForLine(
 }
 
 /**
- * VS Code: active bracket rail wins; otherwise keep the active indent highlight
- * even on lines that also carry inactive bracket-pair guides (e.g. list
- * continuation lines must not punch a gap in the lit indent rail).
+ * Active rails for a line. VS Code can light the active indent guide and the
+ * active bracket guide at once (`highlightActiveIndentation: 'always'` style);
+ * we always keep the active indent lit so the outer function rail does not
+ * punch a gap through multi-line `[`…`]` continuations.
  */
+export function resolveActiveGuideColumns(
+  activeBracketCol: number | null,
+  indentCol: number | null,
+): number[] {
+  const cols: number[] = []
+  if (indentCol != null) cols.push(indentCol)
+  if (activeBracketCol != null && activeBracketCol !== indentCol) {
+    cols.push(activeBracketCol)
+  }
+  return cols
+}
+
+/** @deprecated Prefer {@link resolveActiveGuideColumns}. */
 export function resolveActiveGuideColumn(
   activeBracketCol: number | null,
   indentCol: number | null,
+  _hasBracketGuides = false,
+  _highlightActiveIndentation: boolean | 'always' = true,
 ): number | null {
-  return activeBracketCol ?? indentCol
+  return resolveActiveGuideColumns(activeBracketCol, indentCol)[0] ?? null
 }
 
 type GuideBuildOptions = {
@@ -636,18 +723,33 @@ function buildGuideDecorations(
           null,
           indent,
         )
-        const activeCol = resolveActiveGuideColumn(activeBracketCol, indentCol)
-        const columns = guideColumnsForLine(
+        // Keep outer active indent lit through bracket-guide lines; also light
+        // the active bracket rail when present (multi-active, VS Code-like).
+        const activeCols = resolveActiveGuideColumns(
+          activeBracketCol,
+          indentCol,
+        )
+        const guideIndentLevel = indentLevelForLineGuides(
           indentLevels[line.number - 1],
+          drawableBracketGuides.map(guide => guide.fromLine),
+          indentLevels,
+        )
+        const columns = guideColumnsForLine(
+          guideIndentLevel,
           indentSize,
           options.indentationGuides,
-          activeCol,
+          activeCols[0] ?? null,
           false,
           drawableBracketGuides.map(guide => guide.column),
         )
+        // Ensure every active rail is present in the shadow geometry.
+        for (const col of activeCols) {
+          if (!columns.includes(col)) columns.push(col)
+        }
+        columns.sort((a, b) => a - b)
 
         if (columns.length > 0) {
-          const shadow = buildGuideBoxShadow(columns, charWidth, activeCol)
+          const shadow = buildGuideBoxShadow(columns, charWidth, activeCols)
           builder.add(
             line.from,
             line.from,
@@ -751,7 +853,7 @@ export function bracketDecorationExtensions(
     '.cm-bracket-color-3': { color: '#56b6c2' },
     '.cm-bracket-color-4': { color: '#61afef' },
     '.cm-bracket-color-5': { color: '#c678dd' },
-    '.cm-line': { position: 'relative' },
+    '.cm-line': { position: 'relative', overflow: 'visible' },
     '.cm-line.cm-line-guides::before': {
       content: '""',
       position: 'absolute',
@@ -761,7 +863,7 @@ export function bracketDecorationExtensions(
       bottom: '0',
       width: '1px',
       pointerEvents: 'none',
-      zIndex: '0',
+      zIndex: '1',
       background: 'transparent',
       boxShadow: 'var(--cm-guide-shadow)',
     },

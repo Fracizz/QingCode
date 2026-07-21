@@ -35,12 +35,41 @@
   color: var(--color-fg);
 }
 .cm-editor .cm-gutters {
-  background-color: var(--color-bg-sidebar);
+  /* Match editor surface (VS Code); no separator border. */
+  background-color: var(--color-bg) !important;
   color: var(--color-fg-muted);
-  border-right: 1px solid var(--color-border);
+  border-right: none !important;
+}
+.cm-editor .cm-activeLineGutter {
+  background-color: color-mix(in srgb, var(--color-bg-hover) 70%, transparent);
+  color: var(--color-fg);
 }
 .cm-editor.cm-hide-linenumbers .cm-gutters {
   display: none;
+}
+
+/* VS Code–style hover glyph to the left of the line number (theme brand).
+   Keep the reserved strip tight so it does not read as a “middle gap”. */
+.cm-editor .cm-lineNumbers .cm-gutterElement {
+  position: relative;
+  padding-left: 10px !important;
+}
+.cm-editor .cm-lineNumbers .cm-gutterElement::before {
+  content: '';
+  position: absolute;
+  left: 1px;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--color-brand);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.08s ease;
+}
+.cm-editor .cm-lineNumbers .cm-gutterElement:hover::before {
+  opacity: 0.92;
 }
 
 .cm-editor.cm-focused {
