@@ -45,6 +45,14 @@ import {
   PANEL_RESIZE_END_EVENT,
   PANEL_RESIZE_SETTLE_EVENT,
 } from '../lib/panelResize'
+import {
+  getTerminalPtyResizeDelay,
+  isValidTerminalGridSize,
+  shouldDeferTerminalColumns,
+  terminalGridSizeChanged,
+  TERMINAL_COLUMN_RESIZE_DELAY_MS,
+  type TerminalGridSize,
+} from '../lib/terminalResizePolicy'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
@@ -168,6 +176,10 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const fitRafRef = useRef(0)
+  const gridResizeRafRef = useRef(0)
+  const columnResizeTimerRef = useRef<number | null>(null)
+  const pendingGridSizeRef = useRef<TerminalGridSize | null>(null)
+  const ptyResizeTimerRef = useRef<number | null>(null)
   const pendingFitFlagsRef = useRef({ refresh: false, focusAfter: false })
   const pendingPtySizeRef = useRef<{ cols: number; rows: number } | null>(null)
   const lastFitSizeRef = useRef({ w: 0, h: 0 })
@@ -286,6 +298,109 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     },
   ]
 
+  const clearColumnResizeTimer = () => {
+    if (columnResizeTimerRef.current === null) return
+    window.clearTimeout(columnResizeTimerRef.current)
+    columnResizeTimerRef.current = null
+  }
+
+  const clearPtyResizeTimer = () => {
+    if (ptyResizeTimerRef.current === null) return
+    window.clearTimeout(ptyResizeTimerRef.current)
+    ptyResizeTimerRef.current = null
+  }
+
+  const commitGridSize = (next: TerminalGridSize) => {
+    const term = xtermRef.current
+    if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return
+    // 直接 resize，避开 FitAddon.fit() 对 WebGL 渲染面的同步 clear。
+    term.resize(next.cols, next.rows)
+  }
+
+  const applyGridSize = (next: TerminalGridSize, forceColumns = false) => {
+    const term = xtermRef.current
+    if (!term) return
+    const current = { cols: term.cols, rows: term.rows }
+    if (!terminalGridSizeChanged(current, next)) {
+      pendingGridSizeRef.current = null
+      clearColumnResizeTimer()
+      return
+    }
+
+    if (
+      !forceColumns &&
+      shouldDeferTerminalColumns(term.buffer.normal.length, current, next)
+    ) {
+      pendingGridSizeRef.current = next
+      // 行数变化成本较低，先跟手；列数等待短暂空闲后再重排历史行。
+      if (current.rows !== next.rows) commitGridSize({ cols: current.cols, rows: next.rows })
+      clearColumnResizeTimer()
+      columnResizeTimerRef.current = window.setTimeout(() => {
+        columnResizeTimerRef.current = null
+        const pending = pendingGridSizeRef.current
+        pendingGridSizeRef.current = null
+        if (pending) commitGridSize(pending)
+      }, TERMINAL_COLUMN_RESIZE_DELAY_MS)
+      return
+    }
+
+    pendingGridSizeRef.current = null
+    clearColumnResizeTimer()
+    commitGridSize(next)
+  }
+
+  const readProposedGridSize = (): TerminalGridSize | undefined => {
+    const container = containerRef.current
+    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return undefined
+    const next = fitAddonRef.current?.proposeDimensions()
+    return isValidTerminalGridSize(next) ? next : undefined
+  }
+
+  const resizeGridFromContainer = (forceColumns = false) => {
+    const container = containerRef.current
+    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+    lastFitSizeRef.current = { w: container.clientWidth, h: container.clientHeight }
+    const next = readProposedGridSize()
+    if (next) applyGridSize(next, forceColumns)
+  }
+
+  const scheduleDragGridResize = () => {
+    if (gridResizeRafRef.current !== 0) return
+    gridResizeRafRef.current = window.requestAnimationFrame(() => {
+      gridResizeRafRef.current = 0
+      resizeGridFromContainer(false)
+    })
+  }
+
+  const flushDragGridResize = () => {
+    if (gridResizeRafRef.current !== 0) {
+      window.cancelAnimationFrame(gridResizeRafRef.current)
+      gridResizeRafRef.current = 0
+    }
+    // 松手或布局结束时立即提交最后的列数，不遗留延迟任务。
+    pendingGridSizeRef.current = null
+    clearColumnResizeTimer()
+    resizeGridFromContainer(true)
+  }
+
+  const flushPendingPtyResize = () => {
+    clearPtyResizeTimer()
+    const pending = pendingPtySizeRef.current
+    pendingPtySizeRef.current = null
+    if (pending) void resizeTerminal(terminalId, pending.cols, pending.rows)
+  }
+
+  const schedulePtyResize = (next: TerminalGridSize) => {
+    const term = xtermRef.current
+    pendingPtySizeRef.current = next
+    clearPtyResizeTimer()
+    const delay = getTerminalPtyResizeDelay(term?.buffer.active.type ?? 'normal')
+    ptyResizeTimerRef.current = window.setTimeout(() => {
+      ptyResizeTimerRef.current = null
+      flushPendingPtyResize()
+    }, delay)
+  }
+
   const fitNow = (refresh = false, focusAfter = false) => {
     const container = containerRef.current
     if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
@@ -296,7 +411,8 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     if (!refresh && w === lastFitSizeRef.current.w && h === lastFitSizeRef.current.h) return
     lastFitSizeRef.current = { w, h }
     try {
-      fitAddonRef.current?.fit()
+      const next = readProposedGridSize()
+      if (next) applyGridSize(next, true)
       const pending = useTerminalStore
         .getState()
         .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
@@ -316,7 +432,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       refresh: pendingFitFlagsRef.current.refresh || refresh,
       focusAfter: pendingFitFlagsRef.current.focusAfter || focusAfter,
     }
-    // Coalesce to one fit per frame and retain requests made during sash drag.
+    // 非拖动场景每帧最多计算一次字符网格；拖动由独立调度器处理。
     if (fitRafRef.current !== 0 || isPanelResizing()) return
     fitRafRef.current = window.requestAnimationFrame(() => {
       fitRafRef.current = 0
@@ -499,11 +615,12 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     })
 
     term.onResize(({ cols, rows }) => {
-      // Defer PTY size until sash mouseup — shell full redraws every frame = flicker.
+      // 拖动时合并 ConPTY 整屏刷新；暂停或松手后再发送最新行列。
       if (isPanelResizing()) {
-        pendingPtySizeRef.current = { cols, rows }
+        schedulePtyResize({ cols, rows })
         return
       }
+      clearPtyResizeTimer()
       pendingPtySizeRef.current = null
       void resizeTerminal(terminalId, cols, rows)
     })
@@ -543,7 +660,10 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const ro = new ResizeObserver(() => {
       if (!isActiveRef.current) return
-      if (isPanelResizing()) return
+      if (isPanelResizing()) {
+        scheduleDragGridResize()
+        return
+      }
       scheduleFit()
     })
     if (containerRef.current) ro.observe(containerRef.current)
@@ -559,18 +679,25 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       }
       const flags = pendingFitFlagsRef.current
       pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
-      lastFitSizeRef.current = { w: 0, h: 0 }
-      // The final flex geometry is active, while the old WebGL surface is still clipped.
-      fitNow(flags.refresh, flags.focusAfter)
+      // 最终像素布局已生效，直接提交字符网格并立即 flush PTY。
+      flushDragGridResize()
+      const pending = useTerminalStore
+        .getState()
+        .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
+      if (pending) void spawnPendingTerminal(terminalId, term.cols, term.rows)
+      if (flags.refresh) {
+        term.refresh(0, term.rows - 1)
+        term.scrollToBottom()
+      }
+      if (flags.focusAfter && isActiveRef.current) term.focus()
+      flushPendingPtyResize()
     }
     const onPanelResizeEnd = () => {
       term.options.cursorBlink = getTerminalCursorBlinking()
       if (!isActiveRef.current) return
-      const pendingPtySize = pendingPtySizeRef.current
-      pendingPtySizeRef.current = null
-      if (pendingPtySize) {
-        void resizeTerminal(terminalId, pendingPtySize.cols, pendingPtySize.rows)
-      }
+      // 侧栏等直接 end 的拖动也必须提交最终列数和 PTY 尺寸。
+      flushDragGridResize()
+      flushPendingPtyResize()
     }
     window.addEventListener(PANEL_RESIZE_BEGIN_EVENT, onPanelResizeBegin)
     window.addEventListener(PANEL_RESIZE_SETTLE_EVENT, onPanelResizeSettle)
@@ -583,6 +710,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         window.cancelAnimationFrame(fitRafRef.current)
         fitRafRef.current = 0
       }
+      if (gridResizeRafRef.current !== 0) {
+        window.cancelAnimationFrame(gridResizeRafRef.current)
+        gridResizeRafRef.current = 0
+      }
+      clearColumnResizeTimer()
+      clearPtyResizeTimer()
+      pendingGridSizeRef.current = null
+      pendingPtySizeRef.current = null
       unsubscribeOutput?.()
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)

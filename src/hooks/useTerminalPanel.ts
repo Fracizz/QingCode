@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   clampTerminalWidth,
   getTerminalMaxHeight,
@@ -9,13 +9,11 @@ import {
 } from '../lib/panelLayout'
 import {
   beginPanelResize,
-  resolvePanelResizeSpacerSize,
   settlePanelResize,
 } from '../lib/panelResize'
 import { translate } from '../lib/i18n'
 
 const TERMINAL_PANEL_KEY = 'qingcode:terminal-panel'
-const SPACER_ATTR = 'data-terminal-resize-spacer'
 
 function loadTerminalPanelState() {
   try {
@@ -40,58 +38,6 @@ function writeLiveResizeTip(text: string) {
   if (tip) tip.textContent = text
 }
 
-function clearDockOverlay(dock: HTMLElement) {
-  dock.style.position = ''
-  dock.style.left = ''
-  dock.style.right = ''
-  dock.style.top = ''
-  dock.style.bottom = ''
-  dock.style.width = ''
-  dock.style.height = ''
-  dock.style.zIndex = ''
-  dock.style.margin = ''
-}
-
-/** Overlay terminal growth; released space can still expand the editor. */
-function pinDockBottom(dock: HTMLElement) {
-  const rect = dock.getBoundingClientRect()
-  const spacer = document.createElement('div')
-  spacer.setAttribute(SPACER_ATTR, 'bottom')
-  spacer.style.height = `${rect.height}px`
-  spacer.style.flexShrink = '0'
-  dock.parentElement?.insertBefore(spacer, dock)
-
-  dock.style.position = 'fixed'
-  dock.style.left = `${rect.left}px`
-  dock.style.right = `${window.innerWidth - rect.right}px`
-  dock.style.bottom = `${window.innerHeight - rect.bottom}px`
-  dock.style.height = `${rect.height}px`
-  dock.style.zIndex = '40'
-  dock.style.width = 'auto'
-}
-
-function pinDockSide(dock: HTMLElement) {
-  const rect = dock.getBoundingClientRect()
-  const spacer = document.createElement('div')
-  spacer.setAttribute(SPACER_ATTR, 'side')
-  spacer.style.width = `${rect.width}px`
-  spacer.style.flexShrink = '0'
-  spacer.style.height = '100%'
-  dock.parentElement?.insertBefore(spacer, dock)
-
-  dock.style.position = 'fixed'
-  dock.style.top = `${rect.top}px`
-  dock.style.bottom = `${window.innerHeight - rect.bottom}px`
-  dock.style.left = `${rect.left}px`
-  dock.style.width = `${rect.width}px`
-  dock.style.zIndex = '40'
-  dock.style.height = 'auto'
-}
-
-function removeSpacer() {
-  document.querySelector(`[${SPACER_ATTR}]`)?.remove()
-}
-
 export interface UseTerminalPanelReturn {
   terminalOpen: boolean
   setTerminalOpen: React.Dispatch<React.SetStateAction<boolean>>
@@ -108,11 +54,7 @@ export interface UseTerminalPanelReturn {
 }
 
 /**
- * Live sash (keeps flicker low):
- * - ≤1 layout/frame via rAF
- * - latest pointer position without a trailing animation loop
- * - fixed dock overlay; editor only reflows when the terminal shrinks
- * - xterm fit / PTY atomically settled after pointerup
+ * Pointer Capture 拖动：每帧只应用最新像素尺寸，字符网格由终端独立调度。
  */
 export function useTerminalPanel(): UseTerminalPanelReturn {
   const initialTerminalPanel = useRef(loadTerminalPanelState()).current
@@ -125,7 +67,6 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
   const widthDragStateRef = useRef<{ startX: number; startW: number } | null>(null)
   const dragHeightRef = useRef(terminalHeight)
   const dragWidthRef = useRef(terminalWidth)
-  const resizeOrientationRef = useRef<'horizontal' | 'vertical' | null>(null)
   const targetSizeRef = useRef(0)
   const lastAppliedPxRef = useRef(0)
   const sizeRafRef = useRef(0)
@@ -137,17 +78,6 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
   useEffect(() => {
     dragWidthRef.current = terminalWidth
   }, [terminalWidth])
-
-  useLayoutEffect(() => {
-    if (!isTerminalResizing) return
-    const dock = terminalPanelRef.current
-    if (!dock || dock.style.position !== 'fixed') return
-    if (resizeOrientationRef.current === 'horizontal') {
-      dock.style.height = `${dragHeightRef.current}px`
-    } else if (resizeOrientationRef.current === 'vertical') {
-      dock.style.width = `${dragWidthRef.current}px`
-    }
-  })
 
   const cancelSizeFrame = useCallback(() => {
     if (sizeRafRef.current !== 0) {
@@ -163,26 +93,17 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
       const dock = terminalPanelRef.current
       if (!dock) return
 
+      // 每帧读取一次最新目标，丢弃同一帧内的中间 pointermove。
       const px = Math.round(targetSizeRef.current)
       if (px !== lastAppliedPxRef.current) {
         lastAppliedPxRef.current = px
         if (orientation === 'horizontal') {
           dragHeightRef.current = px
           dock.style.height = `${px}px`
-          const startH = dragStateRef.current?.startH
-          const spacer = document.querySelector<HTMLElement>(`[${SPACER_ATTR}="bottom"]`)
-          if (startH !== undefined && spacer) {
-            spacer.style.height = `${resolvePanelResizeSpacerSize(startH, px)}px`
-          }
           writeLiveResizeTip(terminalResizerHint(px, translate))
         } else {
           dragWidthRef.current = px
           dock.style.width = `${px}px`
-          const startW = widthDragStateRef.current?.startW
-          const spacer = document.querySelector<HTMLElement>(`[${SPACER_ATTR}="side"]`)
-          if (startW !== undefined && spacer) {
-            spacer.style.width = `${resolvePanelResizeSpacerSize(startW, px)}px`
-          }
           writeLiveResizeTip(terminalWidthResizerHint(px, translate))
         }
       }
@@ -201,12 +122,10 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
 
       const startH = dragHeightRef.current
       dragStateRef.current = { startY: e.clientY, startH }
-      resizeOrientationRef.current = 'horizontal'
       targetSizeRef.current = startH
       lastAppliedPxRef.current = startH
       setIsTerminalResizing(true)
       beginPanelResize('horizontal')
-      pinDockBottom(dock)
       writeLiveResizeTip(terminalResizerHint(startH, translate))
 
       let finished = false
@@ -234,7 +153,6 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
         finished = true
         cleanup()
         dragStateRef.current = null
-        resizeOrientationRef.current = null
         cancelSizeFrame()
         const maxH = getTerminalMaxHeight()
         const next = Math.min(
@@ -242,8 +160,6 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
           Math.max(TERMINAL_MIN_HEIGHT, Math.round(targetSizeRef.current))
         )
         dragHeightRef.current = next
-        clearDockOverlay(dock)
-        removeSpacer()
         dock.style.height = `${next}px`
         setTerminalHeight(next)
         setIsTerminalResizing(false)
@@ -277,12 +193,10 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
 
       const startW = dragWidthRef.current
       widthDragStateRef.current = { startX: e.clientX, startW }
-      resizeOrientationRef.current = 'vertical'
       targetSizeRef.current = startW
       lastAppliedPxRef.current = startW
       setIsTerminalResizing(true)
       beginPanelResize('vertical')
-      pinDockSide(dock)
       writeLiveResizeTip(terminalWidthResizerHint(startW, translate))
 
       let finished = false
@@ -306,12 +220,9 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
         finished = true
         cleanup()
         widthDragStateRef.current = null
-        resizeOrientationRef.current = null
         cancelSizeFrame()
         const next = clampTerminalWidth(Math.round(targetSizeRef.current))
         dragWidthRef.current = next
-        clearDockOverlay(dock)
-        removeSpacer()
         dock.style.width = `${next}px`
         setTerminalWidth(next)
         setIsTerminalResizing(false)

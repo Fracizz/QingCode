@@ -10,25 +10,12 @@ body.panel-resizing[data-panel-resize='vertical'] * {
   cursor: ew-resize !important;
 }
 
-/*
- * Live sash: clip frozen xterm; isolate editor column so fewer composites flash.
- */
+/* 拖动时只关闭过渡；终端和编辑区继续使用同一套 flex 布局。 */
 body.panel-resizing [data-terminal-dock] {
   transition: none !important;
-  overflow: hidden !important;
-}
-
-body.panel-resizing [data-terminal-dock] .xterm {
-  flex-shrink: 0 !important;
 }
 
 body.panel-resizing[data-panel-resize='horizontal'] [data-editor-column] {
-  contain: strict;
-  pointer-events: none;
-}
-
-[data-terminal-resize-spacer] {
-  background: var(--color-bg-deep);
   pointer-events: none;
 }
 

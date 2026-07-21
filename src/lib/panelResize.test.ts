@@ -4,29 +4,13 @@ import {
   PANEL_RESIZE_BEGIN_EVENT,
   PANEL_RESIZE_END_EVENT,
   PANEL_RESIZE_SETTLE_EVENT,
-  resolvePanelResizeSpacerSize,
   settlePanelResize,
 } from './panelResize'
-
-function terminalSurface(width: number, height: number) {
-  return {
-    dataset: {} as Record<string, string>,
-    style: {} as Record<string, string>,
-    getBoundingClientRect: () => ({ width, height }),
-  }
-}
 
 describe('panel resize lifecycle', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('lets the spacer follow panel shrink but not panel growth', () => {
-    expect(resolvePanelResizeSpacerSize(300, 180)).toBe(180)
-    expect(resolvePanelResizeSpacerSize(300, 420)).toBe(300)
-  })
-
-  it('freezes only the active terminal until the settle frame completes', () => {
-    const active = terminalSurface(640, 240)
-    const inactive = terminalSurface(320, 120)
+  it('keeps the resize lifecycle active until the settle frame completes', () => {
     const classes = new Set<string>()
     const body = {
       classList: {
@@ -45,8 +29,6 @@ describe('panel resize lifecycle', () => {
     })
     vi.stubGlobal('document', {
       body,
-      querySelectorAll: (selector: string) =>
-        selector.includes('[data-terminal-active="true"]') ? [active] : [active, inactive],
     })
     vi.stubGlobal('window', {
       dispatchEvent: (event: Event) => {
@@ -64,18 +46,9 @@ describe('panel resize lifecycle', () => {
     expect(events).toEqual([PANEL_RESIZE_BEGIN_EVENT])
     expect(classes.has('panel-resizing')).toBe(true)
     expect(body.dataset.panelResize).toBe('horizontal')
-    expect(active.dataset.resizeFrozen).toBe('1')
-    expect(active.style).toMatchObject({
-      width: '640px',
-      height: '240px',
-      maxWidth: 'none',
-      maxHeight: 'none',
-    })
-    expect(inactive.dataset.resizeFrozen).toBeUndefined()
     settlePanelResize('horizontal')
 
     expect(events).toEqual([PANEL_RESIZE_BEGIN_EVENT, PANEL_RESIZE_SETTLE_EVENT])
-    expect(active.dataset.resizeFrozen).toBe('1')
     expect(classes.has('panel-resizing')).toBe(true)
     expect(body.dataset.panelResize).toBe('horizontal')
     settleFrame?.(0)
@@ -85,8 +58,6 @@ describe('panel resize lifecycle', () => {
       PANEL_RESIZE_SETTLE_EVENT,
       PANEL_RESIZE_END_EVENT,
     ])
-    expect(active.dataset.resizeFrozen).toBeUndefined()
-    expect(active.style).toMatchObject({ width: '', height: '', maxWidth: '', maxHeight: '' })
     expect(classes.has('panel-resizing')).toBe(false)
     expect(body.dataset.panelResize).toBeUndefined()
   })

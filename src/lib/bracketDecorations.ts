@@ -270,7 +270,7 @@ export type BracketPairGuide = {
   active: boolean
 }
 
-/** Pick the innermost multi-line pair strictly containing the cursor. */
+/** Pick the innermost multi-line pair containing the cursor (VS Code range). */
 export function findActiveGuidePair(
   pairs: BracketPair[],
   pos: number,
@@ -283,9 +283,9 @@ export function findActiveGuidePair(
     const openLine = lineOfPos(p.open).number
     const closeLine = lineOfPos(p.close).number
     if (closeLine <= openLine) continue
-    // VS Code's pair range ends after the closing bracket. A caret immediately
-    // before that bracket is therefore still strictly inside the pair.
-    if (p.open >= pos || p.close < pos) continue
+    // VS Code's pair range is [open, close+1): caret on either bracket, or
+    // immediately after the closer (typical end-of-line caret), still counts.
+    if (pos < p.open || pos > p.close + 1) continue
     if (!enclosing || p.depth >= enclosing.depth) enclosing = p
   }
   return enclosing

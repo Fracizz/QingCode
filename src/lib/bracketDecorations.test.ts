@@ -256,19 +256,66 @@ describe('findActiveGuidePair', () => {
     expect(findActiveGuidePair(pairs, 0, 0, 3, i => ({ number: i + 1 }))).toBeNull()
   })
 
-  it('keeps the pair active when the caret is immediately before its closer', () => {
+  it('keeps the pair active when the caret is on or immediately after its closer', () => {
     const text = '{\n  value\n}'
     const pairs = scanBracketPairs(text)
     const close = text.lastIndexOf('}')
+    const lineOfPos = (i: number) => ({
+      number: i < 2 ? 1 : i < close ? 2 : 3,
+    })
     expect(
-      findActiveGuidePair(pairs, close, close, close, i => ({
-        number: i < 2 ? 1 : i < close ? 2 : 3,
+      findActiveGuidePair(pairs, close, close, close, lineOfPos),
+    ).toEqual(expect.objectContaining({ openCh: '{' }))
+    expect(
+      findActiveGuidePair(pairs, close + 1, close + 1, close + 1, lineOfPos),
+    ).toEqual(expect.objectContaining({ openCh: '{' }))
+  })
+
+  it('activates a pair when the caret is on its opener', () => {
+    const text = '{\n  value\n}'
+    const pairs = scanBracketPairs(text)
+    expect(
+      findActiveGuidePair(pairs, 0, 0, 0, i => ({
+        number: i < 2 ? 1 : i < text.lastIndexOf('}') ? 2 : 3,
       })),
     ).toEqual(expect.objectContaining({ openCh: '{' }))
   })
 })
 
 describe('bracket-pair guide activation', () => {
+  it('highlights the brace-column guide when the caret is after a JSON object closer', () => {
+    const doc = [
+      '{',
+      '  "configs": [',
+      '    {',
+      '      "id": "x",',
+      '      "tasks": [',
+      '        {',
+      '          "name": "dev"',
+      '        }',
+      '      ]',
+      '    }',
+      '  ]',
+      '}',
+    ].join('\n')
+    const close = doc.indexOf('}', doc.indexOf('"name"'))
+    const state = EditorState.create({
+      doc,
+      // End-of-line caret sits immediately after `}` (CodeMirror line.to).
+      selection: { anchor: close + 1 },
+      extensions: [json(), EditorState.tabSize.of(2)],
+    })
+    const active = bracketPairGuidesForState(state).filter(guide => guide.active)
+    expect(active).toHaveLength(1)
+    expect(active[0]).toMatchObject({
+      column: 8,
+      fromLine: 6,
+      toLine: 7,
+    })
+    expect(state.doc.lineAt(active[0].enclosing.open).number).toBe(6)
+    expect(state.doc.lineAt(active[0].enclosing.close).number).toBe(8)
+  })
+
   it('changes only color state, never the guide column or line range', () => {
     const doc = [
       '{',
