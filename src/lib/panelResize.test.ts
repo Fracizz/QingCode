@@ -27,7 +27,6 @@ describe('panel resize lifecycle', () => {
   it('freezes only the active terminal until the settle frame completes', () => {
     const active = terminalSurface(640, 240)
     const inactive = terminalSurface(320, 120)
-    const surface = terminalSurface(640, 272)
     const classes = new Set<string>()
     const body = {
       classList: {
@@ -46,10 +45,8 @@ describe('panel resize lifecycle', () => {
     })
     vi.stubGlobal('document', {
       body,
-      querySelectorAll: (selector: string) => {
-        if (selector.includes('[data-terminal-surface]')) return [surface]
-        return selector.includes('[data-terminal-active="true"]') ? [active] : [active, inactive]
-      },
+      querySelectorAll: (selector: string) =>
+        selector.includes('[data-terminal-active="true"]') ? [active] : [active, inactive],
     })
     vi.stubGlobal('window', {
       dispatchEvent: (event: Event) => {
@@ -75,18 +72,12 @@ describe('panel resize lifecycle', () => {
       maxHeight: 'none',
     })
     expect(inactive.dataset.resizeFrozen).toBeUndefined()
-    expect(surface.dataset.resizeLayoutFrozen).toBe('1')
-    expect(surface.style).toMatchObject({ height: '272px', flex: 'none' })
-
     settlePanelResize('horizontal')
 
     expect(events).toEqual([PANEL_RESIZE_BEGIN_EVENT, PANEL_RESIZE_SETTLE_EVENT])
     expect(active.dataset.resizeFrozen).toBe('1')
     expect(classes.has('panel-resizing')).toBe(true)
     expect(body.dataset.panelResize).toBe('horizontal')
-    expect(surface.dataset.resizeLayoutFrozen).toBeUndefined()
-    expect(surface.style).toMatchObject({ height: '', flex: '' })
-
     settleFrame?.(0)
 
     expect(events).toEqual([

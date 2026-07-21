@@ -111,7 +111,6 @@ export default function TerminalPanel({
         style={{ width: terminalOpen ? liveWidth : 0 }}
       >
         <div
-          data-terminal-surface
           className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-r border-border"
         >
           {body}
@@ -156,7 +155,6 @@ export default function TerminalPanel({
         />
       )}
       <div
-        data-terminal-surface
         className="flex min-h-0 flex-1 flex-col overflow-hidden border-t border-border"
       >
         {body}
