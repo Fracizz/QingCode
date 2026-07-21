@@ -22,6 +22,19 @@ if ($Target) {
   $bundleDir = Join-Path $projectRoot 'src-tauri\target\release\bundle'
 }
 
+# Cursor/CI may redirect Cargo output via CARGO_TARGET_DIR; copy from there.
+if ($env:CARGO_TARGET_DIR) {
+  $cargoTarget = $env:CARGO_TARGET_DIR.TrimEnd('\', '/')
+  if ($Target) {
+    $altBundle = Join-Path $cargoTarget "$Target\release\bundle"
+  } else {
+    $altBundle = Join-Path $cargoTarget 'release\bundle'
+  }
+  if (Test-Path $altBundle) {
+    $bundleDir = $altBundle
+  }
+}
+
 $archSuffix = switch -Regex ($Target) {
   'aarch64-pc-windows' { '-windows-arm64' }
   'x86_64-pc-windows' { '-windows-x64' }

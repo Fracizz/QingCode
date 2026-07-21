@@ -118,7 +118,7 @@ Download from [GitHub Releases](https://github.com/Fracizz/QingCode/releases) or
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` or `.zip` |
 
-- Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)  
+- Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/). The installer tries an automatic download first; on failure, Yes opens the bootstrapper download and No opens the product page  
 - macOS: unsigned builds may need right-click → Open the first time  
 
 Local packaging (Windows x64 host):
