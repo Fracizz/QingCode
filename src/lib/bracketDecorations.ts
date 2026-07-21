@@ -544,6 +544,18 @@ export function activeGuideColumnForLine(
   return null
 }
 
+/**
+ * VS Code: active bracket rail wins; otherwise keep the active indent highlight
+ * even on lines that also carry inactive bracket-pair guides (e.g. list
+ * continuation lines must not punch a gap in the lit indent rail).
+ */
+export function resolveActiveGuideColumn(
+  activeBracketCol: number | null,
+  indentCol: number | null,
+): number | null {
+  return activeBracketCol ?? indentCol
+}
+
 type GuideBuildOptions = {
   indentationGuides: boolean
   bracketPairGuides: boolean
@@ -624,8 +636,7 @@ function buildGuideDecorations(
           null,
           indent,
         )
-        const activeCol =
-          activeBracketCol ?? (lineBracketGuides.length === 0 ? indentCol : null)
+        const activeCol = resolveActiveGuideColumn(activeBracketCol, indentCol)
         const columns = guideColumnsForLine(
           indentLevels[line.number - 1],
           indentSize,

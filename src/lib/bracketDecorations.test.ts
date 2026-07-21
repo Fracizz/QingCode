@@ -16,6 +16,7 @@ import {
   guideColumnsForLine,
   indentGuideColumnsForLine,
   indentLevelsForLines,
+  resolveActiveGuideColumn,
   scanBracketPairs,
   scanStateBracketPairs,
   snapIndentLane,
@@ -129,6 +130,33 @@ describe('activeGuideColumnForLine', () => {
     expect(activeGuideColumnForLine(7, bracket, indent)).toBe(4)
     expect(activeGuideColumnForLine(7, null, indent)).toBe(8)
     expect(activeGuideColumnForLine(3, bracket, indent)).toBeNull()
+  })
+})
+
+describe('resolveActiveGuideColumn', () => {
+  it('keeps active indent lit when inactive bracket guides are present', () => {
+    expect(resolveActiveGuideColumn(null, 0)).toBe(0)
+    expect(resolveActiveGuideColumn(4, 0)).toBe(4)
+    expect(resolveActiveGuideColumn(null, null)).toBeNull()
+  })
+
+  it('lights the outer indent rail through a deeper list continuation line', () => {
+    const lines = [
+      'def options(self, request):',
+      '    queryset = hosts',
+      "    data = [{'value': h['id'], 'label': h['name']}",
+      '            for h in queryset]',
+      '    return Response(data)',
+    ]
+    const indent = activeIndentGuideForLines(lines, 2, 4, true)
+    expect(indent).toEqual({
+      fromLine: 2,
+      toLine: 5,
+      level: 1,
+      column: 0,
+    })
+    // Continuation line carries bracket guides, but active indent must stay lit.
+    expect(resolveActiveGuideColumn(null, indent!.column)).toBe(0)
   })
 })
 

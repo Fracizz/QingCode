@@ -5,6 +5,36 @@
   background: var(--color-bg-deep);
 }
 
+/*
+ * 【终端防闪烁关键样式，请勿轻易修改】快照覆盖真实 xterm，但必须保持截图时的
+ * 原始像素尺寸，禁止 width/height: 100% 拉伸字符。扩大区域只显示终端背景，
+ * 缩小区域直接裁剪；收到 xterm onRender 并再合成一帧后才移除快照。
+ */
+.terminal-resize-snapshot-host {
+  position: relative;
+  overflow: hidden;
+}
+
+.terminal-resize-snapshot-host::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 19;
+  background: var(--color-bg-deep);
+  pointer-events: none;
+}
+
+.terminal-resize-snapshot {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  display: block;
+  max-width: none;
+  max-height: none;
+  pointer-events: none;
+}
+
 /* xterm.css hardcodes viewport/composition to #000 — follow theme surfaces */
 .xterm .xterm-viewport {
   background-color: var(--color-bg-deep) !important;

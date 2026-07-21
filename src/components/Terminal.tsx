@@ -44,6 +44,7 @@ import {
   PANEL_RESIZE_BEGIN_EVENT,
   PANEL_RESIZE_END_EVENT,
   PANEL_RESIZE_SETTLE_EVENT,
+  type PanelResizeSettleDetail,
 } from '../lib/panelResize'
 import {
   getTerminalPtyResizeDelay,
@@ -51,6 +52,7 @@ import {
   terminalGridSizeChanged,
   type TerminalGridSize,
 } from '../lib/terminalResizePolicy'
+import { waitForTerminalRender } from '../lib/terminalRenderBarrier'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
@@ -301,9 +303,10 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
   const commitGridSize = (next: TerminalGridSize) => {
     const term = xtermRef.current
-    if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return
-    // 直接 resize，避开 FitAddon.fit() 对 WebGL 渲染面的同步 clear。
+    if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return false
+    // 直接 resize 便于准确判断是否需要等待下方的 onRender 屏障。
     term.resize(next.cols, next.rows)
+    return true
   }
 
   const readProposedGridSize = (): TerminalGridSize | undefined => {
@@ -315,16 +318,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
   const resizeGridFromContainer = () => {
     const container = containerRef.current
-    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return false
     lastFitSizeRef.current = { w: container.clientWidth, h: container.clientHeight }
     const next = readProposedGridSize()
-    if (next) commitGridSize(next)
+    return next ? commitGridSize(next) : false
   }
 
   const fitSettledPanelGrid = () => {
-    // Called outside xterm's render rAF. The WebGL canvas can clear now and
-    // redraw in the next frame before panelResize reveals the resized surface.
-    resizeGridFromContainer()
+    return resizeGridFromContainer()
   }
 
   const flushPendingPtyResize = () => {
@@ -436,7 +437,10 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     // Prefer WebGL so customGlyphs apply; fall back silently to canvas.
     try {
-      const webgl = new WebglAddon()
+      // 【终端防闪烁关键配置，请勿改回 false】拖动开始时 panelResize.ts 要把
+      // 当前 WebGL canvas 复制成静态快照；preserveDrawingBuffer=false 时浏览器
+      // 合成后允许丢弃像素，快照会随机变成空白。修改前必须替换整套快照方案。
+      const webgl = new WebglAddon(true)
       webgl.onContextLoss(() => {
         try {
           webgl.dispose()
@@ -615,7 +619,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     const onPanelResizeBegin = () => {
       if (isActiveRef.current) term.options.cursorBlink = false
     }
-    const onPanelResizeSettle = () => {
+    const onPanelResizeSettle = (event: Event) => {
       if (!isActiveRef.current) return
       if (fitRafRef.current !== 0) {
         window.cancelAnimationFrame(fitRafRef.current)
@@ -623,26 +627,36 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       }
       const flags = pendingFitFlagsRef.current
       pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
-      // 【终端防闪烁关键时序】此时 xterm 表面仍由 panelResize.ts 冻结。
-      // 这里只提交一次最终网格并立即 flush PTY；重绘帧注册完成后才允许解冻。
-      fitSettledPanelGrid()
-      const pending = useTerminalStore
-        .getState()
-        .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
-      if (pending) void spawnPendingTerminal(terminalId, term.cols, term.rows)
-      if (flags.refresh) {
-        term.refresh(0, term.rows - 1)
-        term.scrollToBottom()
-      }
-      if (flags.focusAfter && isActiveRef.current) term.focus()
-      flushPendingPtyResize()
+      // 【终端防闪烁关键时序，请勿改成固定 rAF】先订阅 onRender，再执行最终
+      // resize；panelResize.ts 会一直覆盖旧画面，直到这个 Promise 完成并再合成一帧。
+      const renderReady = waitForTerminalRender(term, () => {
+        let requestedRender = fitSettledPanelGrid()
+        const pending = useTerminalStore
+          .getState()
+          .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
+        if (pending) void spawnPendingTerminal(terminalId, term.cols, term.rows)
+        if (flags.refresh) {
+          term.refresh(0, term.rows - 1)
+          term.scrollToBottom()
+          requestedRender = true
+        }
+        if (flags.focusAfter && isActiveRef.current) term.focus()
+        return requestedRender
+      })
+      const detail = (event as CustomEvent<PanelResizeSettleDetail>).detail
+      detail?.waitUntil(renderReady)
+
+      // PTY/TUI 整屏重排必须与本地 WebGL 换帧错开；onResize 已记录最终尺寸，
+      // 这里从画面就绪时重新开始 100/500ms 合并窗口，不能在 end 中立即 flush。
+      void renderReady.then(() => {
+        const pendingSize = pendingPtySizeRef.current
+        if (pendingSize && isActiveRef.current) schedulePtyResize(pendingSize)
+      })
     }
     const onPanelResizeEnd = () => {
       term.options.cursorBlink = getTerminalCursorBlinking()
-      if (!isActiveRef.current) return
-      // Direct end events (sidebar/minimap) normally leave terminal geometry
-      // unchanged. If it did change, ResizeObserver schedules a regular fit.
-      flushPendingPtyResize()
+      // 不要在这里 flush PTY resize：它会与刚揭开的 WebGL 画面同时触发 TUI
+      // 整屏刷新。等待 schedulePtyResize 的合并计时器自然提交最终尺寸。
     }
     window.addEventListener(PANEL_RESIZE_BEGIN_EVENT, onPanelResizeBegin)
     window.addEventListener(PANEL_RESIZE_SETTLE_EVENT, onPanelResizeSettle)
