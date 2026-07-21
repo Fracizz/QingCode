@@ -604,8 +604,9 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const ro = new ResizeObserver(() => {
       if (!isActiveRef.current) return
-      // The last complete WebGL surface is pinned for the whole sash drag.
-      // Fitting here would clear it in this rAF and expose an empty frame.
+      // 【终端防闪烁关键逻辑，请勿移除】拖动期间严禁在 ResizeObserver/rAF 中
+      // 调用 fit/term.resize。WebGL canvas 会立刻清空，而内容下一帧才重绘，
+      // WebView2 因此会显示空白帧。拖动的最终网格只能由下面的 settle 提交。
       if (isPanelResizing()) return
       scheduleFit()
     })
@@ -622,7 +623,8 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       }
       const flags = pendingFitFlagsRef.current
       pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
-      // 最终像素布局已生效，直接提交字符网格并立即 flush PTY。
+      // 【终端防闪烁关键时序】此时 xterm 表面仍由 panelResize.ts 冻结。
+      // 这里只提交一次最终网格并立即 flush PTY；重绘帧注册完成后才允许解冻。
       fitSettledPanelGrid()
       const pending = useTerminalStore
         .getState()

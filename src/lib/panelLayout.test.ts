@@ -5,6 +5,7 @@ import {
   getTerminalMaxHeight,
   getTerminalMaxWidth,
   sidebarResizerHint,
+  TERMINAL_MAX_HEIGHT_RATIO,
   TERMINAL_MIN_HEIGHT,
   TERMINAL_MIN_WIDTH,
   terminalResizerHint,
@@ -26,6 +27,13 @@ describe('clampTerminalWidth', () => {
     expect(clampTerminalWidth(50)).toBe(TERMINAL_MIN_WIDTH)
     expect(clampTerminalWidth(400)).toBe(400)
     expect(clampTerminalWidth(2000)).toBe(getTerminalMaxWidth())
+  })
+})
+
+describe('getTerminalMaxHeight', () => {
+  it('allows the terminal to use 90% of the window after reserved chrome', () => {
+    expect(TERMINAL_MAX_HEIGHT_RATIO).toBe(0.9)
+    expect(getTerminalMaxHeight()).toBe(706)
   })
 })
 

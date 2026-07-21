@@ -10,6 +10,7 @@ import {
 describe('panel resize lifecycle', () => {
   afterEach(() => vi.unstubAllGlobals())
 
+  // 防闪烁回归保护：旧终端画面必须贯穿 settle，直到最终重绘帧才解冻。
   it('keeps the resize lifecycle active until the settle frame completes', () => {
     const classes = new Set<string>()
     const terminalSurface = {

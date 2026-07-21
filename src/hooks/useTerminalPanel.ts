@@ -4,14 +4,11 @@ import {
   getTerminalMaxHeight,
   TERMINAL_DEFAULT_WIDTH,
   TERMINAL_MIN_HEIGHT,
-  terminalResizerHint,
-  terminalWidthResizerHint,
 } from '../lib/panelLayout'
 import {
   beginPanelResize,
   settlePanelResize,
 } from '../lib/panelResize'
-import { translate } from '../lib/i18n'
 
 const TERMINAL_PANEL_KEY = 'qingcode:terminal-panel'
 
@@ -31,11 +28,6 @@ function loadTerminalPanelState() {
   } catch {
     return { open: true, height: 260, width: TERMINAL_DEFAULT_WIDTH }
   }
-}
-
-function writeLiveResizeTip(text: string) {
-  const tip = document.querySelector('[data-panel-resize-live-tip]')
-  if (tip) tip.textContent = text
 }
 
 export interface UseTerminalPanelReturn {
@@ -100,11 +92,9 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
         if (orientation === 'horizontal') {
           dragHeightRef.current = px
           dock.style.height = `${px}px`
-          writeLiveResizeTip(terminalResizerHint(px, translate))
         } else {
           dragWidthRef.current = px
           dock.style.width = `${px}px`
-          writeLiveResizeTip(terminalWidthResizerHint(px, translate))
         }
       }
     })
@@ -126,7 +116,6 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
       lastAppliedPxRef.current = startH
       setIsTerminalResizing(true)
       beginPanelResize('horizontal')
-      writeLiveResizeTip(terminalResizerHint(startH, translate))
 
       let finished = false
       const onMove = (ev: PointerEvent) => {
@@ -197,7 +186,6 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
       lastAppliedPxRef.current = startW
       setIsTerminalResizing(true)
       beginPanelResize('vertical')
-      writeLiveResizeTip(terminalWidthResizerHint(startW, translate))
 
       let finished = false
       const onMove = (ev: PointerEvent) => {

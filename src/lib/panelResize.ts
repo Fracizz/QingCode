@@ -12,11 +12,14 @@ export function isPanelResizing(): boolean {
 }
 
 /**
- * Keep the last completed xterm frame visible while its parent flex box moves.
+ * 【终端防闪烁关键逻辑，请勿轻易修改或删除】
  *
- * Resizing the WebGL canvas clears it synchronously, while xterm redraws on the
- * next animation frame. Pinning the surface prevents ResizeObserver from
- * resizing that canvas in a frame that WebView2 could present as empty.
+ * 拖动面板时必须固定 xterm 最后一张完整画面的像素尺寸。WebGL canvas 在
+ * resize 时会同步清空，但 xterm 要到下一帧才重绘；如果拖动中解除固定，
+ * WebView2 会合成出空白帧，表现为终端界面闪烁。
+ *
+ * 修改这里时必须同时检查 Terminal.tsx 的 ResizeObserver / settle 逻辑，
+ * 并在 Tauri 窗口中连续上下拖动终端面板验证无文字消失或白/黑帧。
  */
 function freezeTerminalSurfaces() {
   document
@@ -52,8 +55,11 @@ export function beginPanelResize(orientation: PanelResizeOrientation = 'horizont
 }
 
 /**
- * Submit the final grid while the old surface remains pinned. xterm schedules
- * its redraw first; the later callback reveals the completed WebGL frame.
+ * 【终端防闪烁关键时序，请勿改成直接 endPanelResize】
+ *
+ * settle 事件先让 Terminal.tsx 提交最终字符网格，此时旧画面仍处于冻结状态；
+ * xterm 会先注册重绘帧，随后这里注册解冻帧，从而保证展示的是完成后的 WebGL
+ * 画面。调整事件顺序或提前解冻都会重新引入拖动结束闪烁。
  */
 export function settlePanelResize(orientation: PanelResizeOrientation = 'horizontal') {
   window.dispatchEvent(new CustomEvent(PANEL_RESIZE_SETTLE_EVENT))

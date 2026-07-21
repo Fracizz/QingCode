@@ -7,7 +7,7 @@ import {
 } from './sidebarLayout'
 
 export const TERMINAL_MIN_HEIGHT = 120
-export const TERMINAL_MAX_HEIGHT_RATIO = 0.8
+export const TERMINAL_MAX_HEIGHT_RATIO = 0.9
 
 export const TERMINAL_MIN_WIDTH = 200
 export const TERMINAL_DEFAULT_WIDTH = 400
