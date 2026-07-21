@@ -12,6 +12,11 @@ describe('panel resize lifecycle', () => {
 
   it('keeps the resize lifecycle active until the settle frame completes', () => {
     const classes = new Set<string>()
+    const terminalSurface = {
+      dataset: {} as Record<string, string>,
+      style: {} as Record<string, string>,
+      getBoundingClientRect: () => ({ width: 801.4, height: 234.6 }),
+    }
     const body = {
       classList: {
         add: (name: string) => classes.add(name),
@@ -29,6 +34,10 @@ describe('panel resize lifecycle', () => {
     })
     vi.stubGlobal('document', {
       body,
+      querySelectorAll: (selector: string) =>
+        selector.includes('[data-terminal-active="true"]') || selector.endsWith('.xterm')
+          ? [terminalSurface]
+          : [],
     })
     vi.stubGlobal('window', {
       dispatchEvent: (event: Event) => {
@@ -46,11 +55,19 @@ describe('panel resize lifecycle', () => {
     expect(events).toEqual([PANEL_RESIZE_BEGIN_EVENT])
     expect(classes.has('panel-resizing')).toBe(true)
     expect(body.dataset.panelResize).toBe('horizontal')
+    expect(terminalSurface.dataset.resizeFrozen).toBe('1')
+    expect(terminalSurface.style).toMatchObject({
+      width: '801px',
+      height: '235px',
+      maxWidth: 'none',
+      maxHeight: 'none',
+    })
     settlePanelResize('horizontal')
 
     expect(events).toEqual([PANEL_RESIZE_BEGIN_EVENT, PANEL_RESIZE_SETTLE_EVENT])
     expect(classes.has('panel-resizing')).toBe(true)
     expect(body.dataset.panelResize).toBe('horizontal')
+    expect(terminalSurface.dataset.resizeFrozen).toBe('1')
     settleFrame?.(0)
 
     expect(events).toEqual([
@@ -60,5 +77,12 @@ describe('panel resize lifecycle', () => {
     ])
     expect(classes.has('panel-resizing')).toBe(false)
     expect(body.dataset.panelResize).toBeUndefined()
+    expect(terminalSurface.dataset.resizeFrozen).toBeUndefined()
+    expect(terminalSurface.style).toMatchObject({
+      width: '',
+      height: '',
+      maxWidth: '',
+      maxHeight: '',
+    })
   })
 })

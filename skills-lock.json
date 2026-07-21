@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "commit-push": {
+      "source": "192.168.252.227",
+      "sourceType": "well-known",
+      "computedHash": "43d306b014bb1e84b74bc2969384e35b535971e56512936b469df65d1d2c2b6a"
+    }
+  }
+}

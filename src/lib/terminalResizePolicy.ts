@@ -3,9 +3,6 @@ export interface TerminalGridSize {
   rows: number
 }
 
-/** 长缓冲区横向 resize 会重排历史行，因此只合并列数变化。 */
-export const TERMINAL_LONG_BUFFER_THRESHOLD = 200
-export const TERMINAL_COLUMN_RESIZE_DELAY_MS = 100
 export const TERMINAL_ALTERNATE_PTY_DELAY_MS = 100
 export const TERMINAL_NORMAL_PTY_DELAY_MS = 500
 
@@ -24,16 +21,6 @@ export function terminalGridSizeChanged(
   next: TerminalGridSize,
 ): boolean {
   return current.cols !== next.cols || current.rows !== next.rows
-}
-
-export function shouldDeferTerminalColumns(
-  normalBufferLength: number,
-  current: TerminalGridSize,
-  next: TerminalGridSize,
-): boolean {
-  return (
-    normalBufferLength >= TERMINAL_LONG_BUFFER_THRESHOLD && current.cols !== next.cols
-  )
 }
 
 /** ConPTY 全屏程序更需要及时响应，普通缓冲区则优先合并整屏刷新。 */
