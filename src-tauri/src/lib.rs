@@ -179,6 +179,14 @@ fn is_dev_build() -> bool {
     cfg!(debug_assertions)
 }
 
+/// Absolute path of the running QingCode executable (for Settings → copy CLI skill).
+#[tauri::command]
+fn app_exe_path() -> Result<String, String> {
+    std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .map_err(|e| format!("locate exe: {e}"))
+}
+
 /// Consume CLI file paths once (Explorer → Open with / `QingCode.exe path`).
 #[tauri::command]
 fn take_launch_files(state: tauri::State<'_, LaunchFiles>) -> Vec<String> {
@@ -384,6 +392,7 @@ pub fn run() {
             spawn_script,
             db_url,
             default_settings_path,
+            app_exe_path,
             user_locales::user_locales_dir,
             user_locales::list_user_locales,
             is_dev_build,
