@@ -292,10 +292,7 @@ fn push_current(root: &Path) -> Result<String, String> {
 }
 
 fn list_unmerged_paths(root: &Path) -> Result<Vec<String>, String> {
-    let output = run_git(
-        root,
-        &["diff", "--name-only", "--diff-filter=U", "-z"],
-    )?;
+    let output = run_git(root, &["diff", "--name-only", "--diff-filter=U", "-z"])?;
     if !output.status.success() {
         return Ok(vec![]);
     }
@@ -327,10 +324,7 @@ fn pull_current(root: &Path) -> Result<GitPullResult, String> {
     if has_conflicts {
         let summary = if pull_output.status.success() {
             if conflict_paths.len() == 1 {
-                format!(
-                    "拉取完成，但存在未解决的合并冲突：{}",
-                    conflict_paths[0]
-                )
+                format!("拉取完成，但存在未解决的合并冲突：{}", conflict_paths[0])
             } else {
                 format!(
                     "拉取完成，但存在 {} 个未解决的合并冲突",
@@ -604,6 +598,300 @@ pub async fn git_pull(
         .map_err(|error| format!("Git 拉取失败：{error}"))?
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct GitBranchInfo {
+    pub name: String,
+    pub current: bool,
+    pub upstream: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct GitBranchList {
+    pub local: Vec<GitBranchInfo>,
+    pub remote: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct GitCommitInfo {
+    pub hash: String,
+    pub short_hash: String,
+    pub subject: String,
+    pub author: String,
+    pub date: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct GitCommitFileChange {
+    /// Single-letter status: A / M / D / R / C / T …
+    pub status: String,
+    pub path: String,
+    /// Present for renames/copies (destination is `path`).
+    pub previous_path: Option<String>,
+}
+
+fn validate_local_branch_name(branch: &str) -> Result<&str, String> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("分支名不能为空".to_string());
+    }
+    if branch.starts_with('-')
+        || branch.contains("..")
+        || branch.contains('\\')
+        || branch.contains('\0')
+        || branch.contains(' ')
+    {
+        return Err("无效的分支名".to_string());
+    }
+    // Reject remote-style refs (origin/main) while still allowing local feature/foo.
+    if branch.starts_with("refs/") || branch.starts_with("remotes/") {
+        return Err("无效的分支名".to_string());
+    }
+    Ok(branch)
+}
+
+fn list_branches(root: &Path) -> Result<GitBranchList, String> {
+    let local_output = run_git(
+        root,
+        &[
+            "for-each-ref",
+            // One line per ref: name<TAB>head_marker<TAB>upstream
+            "--format=%(refname:short)%09%(HEAD)%09%(upstream:short)",
+            "refs/heads",
+        ],
+    )?;
+    if !local_output.status.success() {
+        return Err(format!(
+            "读取本地分支失败：{}",
+            git_output_text(&local_output)
+        ));
+    }
+
+    let mut local = Vec::new();
+    for line in decode_git_text(&local_output.stdout).lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.splitn(3, '\t');
+        let name = parts.next().unwrap_or("").trim();
+        if name.is_empty() {
+            continue;
+        }
+        let head_marker = parts.next().unwrap_or("");
+        let upstream_raw = parts.next().unwrap_or("").trim();
+        local.push(GitBranchInfo {
+            name: name.to_string(),
+            current: head_marker == "*",
+            upstream: if upstream_raw.is_empty() {
+                None
+            } else {
+                Some(upstream_raw.to_string())
+            },
+        });
+    }
+
+    let remote_output = run_git(
+        root,
+        &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+    )?;
+    let mut remote = Vec::new();
+    if remote_output.status.success() {
+        for line in decode_git_text(&remote_output.stdout).lines() {
+            let name = line.trim();
+            if name.is_empty() || name.ends_with("/HEAD") {
+                continue;
+            }
+            remote.push(name.to_string());
+        }
+    }
+
+    Ok(GitBranchList { local, remote })
+}
+
+fn switch_branch(root: &Path, branch: &str) -> Result<(), String> {
+    let branch = validate_local_branch_name(branch)?;
+    let output = run_git(root, &["switch", branch])?;
+    ensure_git_success("切换 Git 分支", output)?;
+    Ok(())
+}
+
+fn list_commits(root: &Path, limit: usize, skip: usize) -> Result<Vec<GitCommitInfo>, String> {
+    let limit = limit.clamp(1, 100);
+    let skip = skip.min(100_000);
+    let limit_arg = format!("-n{limit}");
+    let format_arg = "--format=%H%x00%h%x00%s%x00%an%x00%cI";
+    let output = if skip == 0 {
+        run_git(root, &["log", &limit_arg, format_arg])?
+    } else {
+        let skip_arg = format!("--skip={skip}");
+        run_git(root, &["log", &skip_arg, &limit_arg, format_arg])?
+    };
+    if !output.status.success() {
+        let message = git_output_text(&output).to_ascii_lowercase();
+        if message.contains("bad revision")
+            || message.contains("unknown revision")
+            || message.contains("does not have any commits")
+            || message.contains("你的当前分支尚无任何提交")
+            || message.contains("does not have any commits yet")
+        {
+            return Ok(vec![]);
+        }
+        // Unborn / empty repo often fails with "fatal: your current branch ... does not have any commits yet"
+        if !has_head(root)? {
+            return Ok(vec![]);
+        }
+        return Err(format!("读取提交记录失败：{}", git_output_text(&output)));
+    }
+
+    let mut commits = Vec::new();
+    let raw = decode_git_text(&output.stdout);
+    // Each commit ends with newline after the 5 NUL-separated fields when using %x00.
+    // Format is: hash\0short\0subject\0author\date\n
+    for line in raw.split('\n') {
+        if line.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('\0').collect();
+        if parts.len() < 5 {
+            continue;
+        }
+        commits.push(GitCommitInfo {
+            hash: parts[0].to_string(),
+            short_hash: parts[1].to_string(),
+            subject: parts[2].to_string(),
+            author: parts[3].to_string(),
+            date: parts[4].trim().to_string(),
+        });
+    }
+    Ok(commits)
+}
+
+#[tauri::command]
+pub async fn git_branch_list(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<GitBranchList, String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || list_branches(&root))
+        .await
+        .map_err(|error| format!("读取分支列表失败：{error}"))?
+}
+
+#[tauri::command]
+pub async fn git_switch(
+    path: String,
+    branch: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<(), String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || switch_branch(&root, &branch))
+        .await
+        .map_err(|error| format!("切换 Git 分支失败：{error}"))?
+}
+
+#[tauri::command]
+pub async fn git_log(
+    path: String,
+    limit: Option<u32>,
+    skip: Option<u32>,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<Vec<GitCommitInfo>, String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    let limit = limit.unwrap_or(40) as usize;
+    let skip = skip.unwrap_or(0) as usize;
+    tauri::async_runtime::spawn_blocking(move || list_commits(&root, limit, skip))
+        .await
+        .map_err(|error| format!("读取提交记录失败：{error}"))?
+}
+
+fn validate_commit_rev(rev: &str) -> Result<&str, String> {
+    let rev = rev.trim();
+    if rev.is_empty() || rev.len() > 64 || !rev.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("无效的提交哈希".to_string());
+    }
+    Ok(rev)
+}
+
+fn list_commit_files(root: &Path, rev: &str) -> Result<Vec<GitCommitFileChange>, String> {
+    let rev = validate_commit_rev(rev)?;
+    let output = run_git(
+        root,
+        &[
+            "show",
+            "--name-status",
+            "--pretty=format:",
+            "--no-renames",
+            rev,
+        ],
+    )?;
+    if !output.status.success() {
+        return Err(format!("读取提交文件失败：{}", git_output_text(&output)));
+    }
+
+    let mut files = Vec::new();
+    for line in decode_git_text(&output.stdout).lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.splitn(2, '\t');
+        let status_raw = parts.next().unwrap_or("").trim();
+        let path = parts.next().unwrap_or("").trim();
+        if status_raw.is_empty() || path.is_empty() {
+            continue;
+        }
+        let status = status_raw
+            .chars()
+            .next()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| status_raw.to_string());
+        files.push(GitCommitFileChange {
+            status,
+            path: path.replace('\\', "/"),
+            previous_path: None,
+        });
+    }
+    Ok(files)
+}
+
+fn commit_file_contents(root: &Path, rev: &str, file: &str) -> Result<GitFileContents, String> {
+    let rev = validate_commit_rev(rev)?;
+    let relative = resolve_relative(root, file)?;
+    let parent = format!("{rev}^");
+    let original = git_show_revision(root, &parent, &relative);
+    let modified = git_show_revision(root, rev, &relative);
+    Ok(GitFileContents { original, modified })
+}
+
+#[tauri::command]
+pub async fn git_commit_files(
+    path: String,
+    rev: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<Vec<GitCommitFileChange>, String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || list_commit_files(&root, &rev))
+        .await
+        .map_err(|error| format!("读取提交文件失败：{error}"))?
+}
+
+#[tauri::command]
+pub async fn git_commit_file_contents(
+    path: String,
+    rev: String,
+    file: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<GitFileContents, String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || commit_file_contents(&root, &rev, &file))
+        .await
+        .map_err(|error| format!("读取提交文件内容失败：{error}"))?
+}
+
 #[tauri::command]
 pub fn git_diff(
     path: String,
@@ -865,10 +1153,7 @@ mod tests {
         unstage_all(&root).unwrap();
         let unstaged = collect_git_status(&root).unwrap();
         assert_eq!(unstaged.changes.len(), 2);
-        assert!(unstaged
-            .changes
-            .iter()
-            .all(|change| change.status == "??"));
+        assert!(unstaged.changes.iter().all(|change| change.status == "??"));
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -952,6 +1237,82 @@ mod tests {
 
         let error = push_current(&root).unwrap_err();
         assert!(error.starts_with("Git 推送失败："), "{error}");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lists_and_switches_local_branches() {
+        let root = init_test_repo("branch-switch");
+        fs::write(root.join("README.md"), "v1\n").unwrap();
+        stage_files(&root, &["README.md".into()]).unwrap();
+        commit_staged(&root, "initial").unwrap();
+        git_success(&root, &["branch", "feature/demo"]);
+
+        let listed = list_branches(&root).unwrap();
+        assert!(listed.local.iter().any(|b| b.current));
+        assert!(listed.local.iter().any(|b| b.name == "feature/demo"));
+
+        switch_branch(&root, "feature/demo").unwrap();
+        let after = list_branches(&root).unwrap();
+        let current = after.local.iter().find(|b| b.current).unwrap();
+        assert_eq!(current.name, "feature/demo");
+
+        assert!(validate_local_branch_name("-bad").is_err());
+        assert!(validate_local_branch_name("../x").is_err());
+        assert!(validate_local_branch_name("feature/demo").is_ok());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn lists_recent_commits_in_order() {
+        let root = init_test_repo("commit-log");
+        fs::write(root.join("a.txt"), "1\n").unwrap();
+        stage_files(&root, &["a.txt".into()]).unwrap();
+        commit_staged(&root, "first").unwrap();
+        fs::write(root.join("a.txt"), "2\n").unwrap();
+        stage_files(&root, &["a.txt".into()]).unwrap();
+        commit_staged(&root, "second").unwrap();
+
+        let commits = list_commits(&root, 50, 0).unwrap();
+        assert!(commits.len() >= 2);
+        assert_eq!(commits[0].subject, "second");
+        assert_eq!(commits[1].subject, "first");
+        assert!(!commits[0].short_hash.is_empty());
+        assert!(!commits[0].hash.is_empty());
+
+        let page = list_commits(&root, 1, 1).unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].subject, "first");
+
+        let empty = init_test_repo("commit-log-empty");
+        assert!(list_commits(&empty, 20, 0).unwrap().is_empty());
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(empty).unwrap();
+    }
+
+    #[test]
+    fn lists_files_changed_in_a_commit() {
+        let root = init_test_repo("commit-files");
+        fs::write(root.join("a.txt"), "1\n").unwrap();
+        fs::write(root.join("b.txt"), "b\n").unwrap();
+        stage_files(&root, &["a.txt".into(), "b.txt".into()]).unwrap();
+        commit_staged(&root, "initial").unwrap();
+        fs::write(root.join("a.txt"), "2\n").unwrap();
+        fs::write(root.join("c.txt"), "c\n").unwrap();
+        stage_files(&root, &["a.txt".into(), "c.txt".into()]).unwrap();
+        commit_staged(&root, "update").unwrap();
+
+        let head = list_commits(&root, 1, 0).unwrap();
+        assert_eq!(head[0].subject, "update");
+        let files = list_commit_files(&root, &head[0].hash).unwrap();
+        assert!(files.iter().any(|f| f.path == "a.txt" && f.status == "M"));
+        assert!(files.iter().any(|f| f.path == "c.txt" && f.status == "A"));
+
+        let pair = commit_file_contents(&root, &head[0].hash, "a.txt").unwrap();
+        assert_eq!(pair.original, "1\n");
+        assert_eq!(pair.modified, "2\n");
 
         fs::remove_dir_all(root).unwrap();
     }

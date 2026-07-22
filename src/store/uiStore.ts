@@ -79,6 +79,11 @@ export const useUIStore = create<UIState>((set) => ({
   setView: view => set({ view, sidebarOpen: true }),
   toggleActivityView: view =>
     set(state => {
+      // Full-page views (SCM / Settings): click again returns to explorer.
+      if (view === 'sourceControl' || view === 'settings') {
+        if (state.view === view) return { view: 'explorer', sidebarOpen: true }
+        return { view, sidebarOpen: true }
+      }
       if (state.view === view && state.sidebarOpen) return { sidebarOpen: false }
       return { view, sidebarOpen: true }
     }),

@@ -50,8 +50,10 @@ export default function SymbolPicker() {
 
   useEffect(() => {
     if (!open) return
-    setQuery('')
-    setActiveIndex(0)
+    queueMicrotask(() => {
+      setQuery('')
+      setActiveIndex(0)
+    })
     const id = window.setTimeout(() => {
       inputRef.current?.focus()
       inputRef.current?.select()
@@ -60,7 +62,7 @@ export default function SymbolPicker() {
   }, [open])
 
   useEffect(() => {
-    setActiveIndex(0)
+    queueMicrotask(() => setActiveIndex(0))
   }, [query, symbols])
 
   useEffect(() => {
@@ -124,9 +126,16 @@ export default function SymbolPicker() {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={t('转到编辑器中的符号')}
+        aria-labelledby="symbol-picker-title"
+        aria-describedby="symbol-picker-description"
         className="ui-font-scaled modal-content-enter relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
       >
+        <h2 id="symbol-picker-title" className="sr-only">
+          {t('转到编辑器中的符号')}
+        </h2>
+        <p id="symbol-picker-description" className="sr-only">
+          {t('搜索并跳转到当前编辑器文档中的符号。')}
+        </p>
         <div className="flex items-center gap-2 border-b border-border px-2.5 py-2">
           <ListTree size={16} className="flex-shrink-0 text-fg-muted" aria-hidden />
           <input

@@ -32,6 +32,7 @@ import {
 import RunConfigEditor from './RunConfigEditor'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
+import { confirmDialog } from '../store/confirmStore'
 
 const TASK_TYPE_LABEL: Record<RunTaskType, string> = {
   ps1: 'ps1',
@@ -40,6 +41,8 @@ const TASK_TYPE_LABEL: Record<RunTaskType, string> = {
   command: '命令',
   script: '脚本',
 }
+
+const EMPTY_RUN_CONFIGS: RunConfig[] = []
 
 function taskOverview(tasks: RunTask[], t: (source: string) => string): string {
   if (tasks.length === 0) return t('无任务')
@@ -85,9 +88,27 @@ export default function RunPanel() {
     sync()
     window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
     return () => window.removeEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
-  }, [currentProject?.id, currentProject?.path])
+  }, [currentProject])
 
-  const configs = currentProject ? configsByProject[currentProject.id] ?? [] : []
+  const configs = useMemo(
+    () => (currentProject ? configsByProject[currentProject.id] ?? EMPTY_RUN_CONFIGS : EMPTY_RUN_CONFIGS),
+    [configsByProject, currentProject],
+  )
+
+  const requestRemove = async (config: RunConfig) => {
+    if (!currentProject) return
+    const confirmed = await confirmDialog({
+      title: t('删除运行配置？'),
+      message: t('将删除「{name}」及其任务定义。', { name: config.name }),
+      detail: activeTerminalsForConfig(config.id, terminals).length > 0
+        ? t('该配置仍在运行。删除会先停止关联终端；随后可在短时间内撤销。')
+        : t('删除后可在短时间内撤销。'),
+      kind: 'danger',
+      confirmLabel: t('删除'),
+    })
+    if (!confirmed) return
+    await removeConfig(currentProject, config.id)
+  }
 
   const runningTerminalsByConfig = useMemo(() => {
     const map = new Map<string, string[]>()
@@ -147,6 +168,7 @@ export default function RunPanel() {
           <div className="px-4 py-6 text-center">
             <p className="text-[13px] text-fg-muted mb-3">{t('尚未配置运行任务')}</p>
             <button
+              type="button"
               onClick={() => setCreating(true)}
               className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
             >
@@ -165,6 +187,12 @@ export default function RunPanel() {
                 <div className="flex items-center gap-2 px-2 py-2">
                   <Tooltip label={running ? t('停止') : t('运行')} side="bottom">
                     <button
+                      type="button"
+                      aria-label={
+                        running
+                          ? t('停止「{name}」', { name: config.name })
+                          : t('运行「{name}」', { name: config.name })
+                      }
                       onClick={() =>
                         running
                           ? void stopConfig(config)
@@ -201,6 +229,8 @@ export default function RunPanel() {
                   <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                     <Tooltip label={t('编辑')} side="bottom">
                       <button
+                        type="button"
+                        aria-label={t('编辑运行配置「{name}」', { name: config.name })}
                         className="p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover"
                         onClick={() => setEditing(config)}
                       >
@@ -209,8 +239,10 @@ export default function RunPanel() {
                     </Tooltip>
                     <Tooltip label={t('删除')} side="bottom">
                       <button
+                        type="button"
+                        aria-label={t('删除运行配置「{name}」', { name: config.name })}
                         className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
-                        onClick={() => void removeConfig(currentProject, config.id)}
+                        onClick={() => void requestRemove(config)}
                       >
                         <Trash2 size={13} />
                       </button>
@@ -306,6 +338,8 @@ function Header({
         {onAdd && (
           <Tooltip label={t('新建运行配置')} side="bottom">
             <button
+              type="button"
+              aria-label={t('新建运行配置')}
               onClick={onAdd}
               className="text-fg-dim hover:text-fg p-1 rounded hover:bg-bg-hover"
             >

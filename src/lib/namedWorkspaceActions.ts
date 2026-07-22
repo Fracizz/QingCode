@@ -12,12 +12,14 @@ import { rehydrateRunningFromTerminals } from '../store/runConfigStore'
 import { useUIStore } from '../store/uiStore'
 import { translate } from './i18n'
 import { setEditorScroll } from './editorSession'
+import { setProjectHidden } from './projectRepository'
 import {
   buildNamedWorkspace,
   DEFAULT_NAMED_WORKSPACE_NAME,
   formatNamedWorkspaceName,
   loadNamedWorkspaceCatalog,
   normalizeNamedWorkspaceName,
+  planTitleBarVisibilityUpdates,
   remapWorkspaceSessions,
   removeNamedWorkspace,
   saveNamedWorkspaceCatalog,
@@ -33,6 +35,32 @@ import {
   terminalFromPersisted,
 } from './workspaceSessionSync'
 import type { PersistedProjectSession } from './workspaceSessionPersist'
+
+/**
+ * Align title-bar chips with workspace members only (quiet: no per-project toasts).
+ * Non-members are hidden; members are unhidden. Ephemeral rows update in memory only.
+ */
+async function syncTitleBarToWorkspaceMembers(memberIds: Iterable<string>): Promise<void> {
+  const updates = planTitleBarVisibilityUpdates(useProjectStore.getState().projects, memberIds)
+  if (updates.length === 0) return
+
+  for (const update of updates) {
+    if (update.ephemeral) continue
+    try {
+      await setProjectHidden(update.id, update.hidden)
+    } catch (e) {
+      console.error('syncTitleBarToWorkspaceMembers failed:', e)
+    }
+  }
+
+  const byId = new Map(updates.map(u => [u.id, u.hidden]))
+  useProjectStore.setState(s => ({
+    projects: s.projects.map(p => {
+      const hidden = byId.get(p.id)
+      return hidden === undefined ? p : { ...p, hidden }
+    }),
+  }))
+}
 
 function applyScrollFromSessions(sessions: Record<string, PersistedProjectSession>) {
   for (const session of Object.values(sessions)) {
@@ -223,8 +251,8 @@ export async function deleteNamedWorkspace(workspaceId: string): Promise<boolean
 }
 
 /**
- * Activate a named workspace: unhide members, restore editor/terminal sessions,
- * switch to the saved active project.
+ * Activate a named workspace: show only its members in the title bar,
+ * restore editor/terminal sessions, and switch to the saved active project.
  */
 export async function activateNamedWorkspace(workspaceId: string): Promise<boolean> {
   const catalog = loadNamedWorkspaceCatalog()
@@ -245,12 +273,9 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
     return false
   }
 
-  const projectStore = useProjectStore.getState()
-  for (const { project } of remapped.resolved) {
-    if (project.hidden) {
-      await projectStore.unhideProject(project.id)
-    }
-  }
+  const memberIds = remapped.resolved.map(r => r.project.id)
+  // Title bar must show only this workspace's members (hide leftover chips).
+  await syncTitleBarToWorkspaceMembers(memberIds)
 
   // Disk-missing folders stay in the project list but are marked unavailable.
   const unavailableIds = new Set(useProjectStore.getState().unavailableProjectIds)
@@ -267,7 +292,6 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
     ]),
   )
 
-  const memberIds = remapped.resolved.map(r => r.project.id)
   const terminals = []
   const activeTerminalByProject: Record<string, string> = {}
   for (const [projectId, session] of Object.entries(remapped.sessionsByProjectId)) {

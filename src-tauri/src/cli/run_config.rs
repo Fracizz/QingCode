@@ -174,7 +174,9 @@ fn parse_upsert_body(raw: &str) -> Result<RunConfig, String> {
     }
     if let Some(tasks) = map.get_mut("tasks").and_then(|v| v.as_array_mut()) {
         for task in tasks {
-            let Some(t) = task.as_object_mut() else { continue };
+            let Some(t) = task.as_object_mut() else {
+                continue;
+            };
             if t.get("id")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
@@ -185,7 +187,11 @@ fn parse_upsert_body(raw: &str) -> Result<RunConfig, String> {
                     serde_json::Value::String(uuid::Uuid::new_v4().to_string()),
                 );
             }
-            if t.get("type").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+            if t.get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .is_empty()
+            {
                 t.insert("type".into(), serde_json::Value::String("command".into()));
             }
         }

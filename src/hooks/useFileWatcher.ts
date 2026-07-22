@@ -139,7 +139,7 @@ export function useFileWatcher() {
       window.removeEventListener('focus', onFocus)
       window.clearInterval(intervalId)
     }
-  }, [currentProject?.id, currentProject?.path, currentProject?.ephemeral])
+  }, [currentProject])
 
   useEffect(() => {
     if (!isTauri()) return

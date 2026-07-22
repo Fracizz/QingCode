@@ -119,15 +119,16 @@ export default function WorkspaceManager() {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={t('多项目工作区')}
+        aria-labelledby="workspace-manager-title"
+        aria-describedby="workspace-manager-description"
         className="ui-font-scaled modal-content-enter relative w-full max-w-[560px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 h-12 border-b border-border-strong flex-shrink-0">
           <div className="flex items-center gap-2 text-[14px] font-semibold text-fg">
             <Layers size={16} className="text-fg-muted" />
-            {t('多项目工作区')}
-            <span className="text-ui-sm font-normal text-fg-muted">
+            <h2 id="workspace-manager-title">{t('多项目工作区')}</h2>
+            <span id="workspace-manager-description" className="text-ui-sm font-normal text-fg-muted">
               {t('共 {count} 个', { count: workspaces.length })}
             </span>
           </div>

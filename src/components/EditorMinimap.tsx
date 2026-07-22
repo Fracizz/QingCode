@@ -113,6 +113,7 @@ export default function EditorMinimap({
   const [hideScrollbar, setHideScrollbar] = useState(() => loadMinimapHideScrollbar())
   const [hoverToShow, setHoverToShow] = useState(() => loadMinimapHoverShow())
   const [pointerInside, setPointerInside] = useState(false)
+  const [preventTextSelection, setPreventTextSelection] = useState(false)
   const [menu, setMenu] = useState<MenuState | null>(null)
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 })
   const menuRef = useRef<HTMLDivElement>(null)
@@ -125,7 +126,6 @@ export default function EditorMinimap({
   const scheduleRef = useRef(0)
   const repaintFrameRef = useRef(0)
   const viewportFrameRef = useRef(0)
-  const lastRepaintAtRef = useRef(0)
   const pendingRepaintRef = useRef(false)
   const resizingRef = useRef(false)
   const quickViewTimerRef = useRef(0)
@@ -141,8 +141,6 @@ export default function EditorMinimap({
     trackHeight: number
     thumbHeight: number
     maxScroll: number
-    bodyCursor: string
-    bodyUserSelect: string
   } | null>(null)
   /** Canvas / viewport mask drag — delta-based so scrollOffset cannot feedback-loop. */
   const dragViewportRef = useRef<{
@@ -151,14 +149,27 @@ export default function EditorMinimap({
     startScrollTop: number
     usable: number
     maxScroll: number
-    bodyCursor: string
-    bodyUserSelect: string
   } | null>(null)
 
-  widthRef.current = width
-  modeRef.current = mode
   // Full tier always uses character preview; density (1–5MB) auto-falls back to blocks.
   const effectivePaintStyle = resolveMinimapPaintStyle(mode, MINIMAP_STYLE_DEFAULT)
+
+  useEffect(() => {
+    widthRef.current = width
+  }, [width])
+
+  useEffect(() => {
+    modeRef.current = mode
+  }, [mode])
+
+  useEffect(() => {
+    if (!preventTextSelection) return
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.userSelect = 'none'
+    return () => {
+      document.body.style.userSelect = previousUserSelect
+    }
+  }, [preventTextSelection])
 
   useEffect(() => {
     onHideScrollbarChange?.(hideScrollbar)
@@ -290,7 +301,6 @@ export default function EditorMinimap({
       caretLine,
     })
     updateViewportNow()
-    lastRepaintAtRef.current = performance.now()
   }
 
   const requestRepaint = (force = false) => {
@@ -302,8 +312,7 @@ export default function EditorMinimap({
       window.clearTimeout(scheduleRef.current)
       scheduleRef.current = 0
     }
-    const elapsed = performance.now() - lastRepaintAtRef.current
-    const delay = force ? 0 : Math.max(0, MINIMAP_REPAINT_THROTTLE_MS - elapsed)
+    const delay = force ? 0 : MINIMAP_REPAINT_THROTTLE_MS
     scheduleRef.current = window.setTimeout(() => {
       scheduleRef.current = 0
       if (!pendingRepaintRef.current) return
@@ -497,14 +506,10 @@ export default function EditorMinimap({
       }
       const scrollDrag = dragScrollRef.current
       if (scrollDrag) {
-        document.body.style.cursor = scrollDrag.bodyCursor
-        document.body.style.userSelect = scrollDrag.bodyUserSelect
         dragScrollRef.current = null
       }
       const viewportDrag = dragViewportRef.current
       if (viewportDrag) {
-        document.body.style.cursor = viewportDrag.bodyCursor
-        document.body.style.userSelect = viewportDrag.bodyUserSelect
         dragViewportRef.current = null
         setScrollingViewport(false)
       }
@@ -626,12 +631,10 @@ export default function EditorMinimap({
       startScrollTop: scrollDOM.scrollTop,
       usable: Math.max(1, mapHeight - vpHeight),
       maxScroll,
-      bodyCursor: document.body.style.cursor,
-      bodyUserSelect: document.body.style.userSelect,
     }
     setScrollingThumb(true)
     setScrollingViewport(true)
-    document.body.style.userSelect = 'none'
+    setPreventTextSelection(true)
   }
 
   const onViewportPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
@@ -653,8 +656,7 @@ export default function EditorMinimap({
     if (!drag || drag.pointerId !== pointerId) return
     if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
     dragViewportRef.current = null
-    document.body.style.cursor = drag.bodyCursor
-    document.body.style.userSelect = drag.bodyUserSelect
+    setPreventTextSelection(false)
     setScrollingThumb(false)
     setScrollingViewport(false)
     syncPointerInsideFromHover()
@@ -705,11 +707,9 @@ export default function EditorMinimap({
       trackHeight: mapHeight,
       thumbHeight: rail.height,
       maxScroll: Math.max(0, scrollDOM.scrollHeight - scrollDOM.clientHeight),
-      bodyCursor: document.body.style.cursor,
-      bodyUserSelect: document.body.style.userSelect,
     }
     setScrollingThumb(true)
-    document.body.style.userSelect = 'none'
+    setPreventTextSelection(true)
   }
 
   const onScrollbarPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -731,8 +731,7 @@ export default function EditorMinimap({
     if (!drag || drag.pointerId !== pointerId) return
     if (target.hasPointerCapture(pointerId)) target.releasePointerCapture(pointerId)
     dragScrollRef.current = null
-    document.body.style.cursor = drag.bodyCursor
-    document.body.style.userSelect = drag.bodyUserSelect
+    setPreventTextSelection(false)
     setScrollingThumb(false)
     syncPointerInsideFromHover()
   }

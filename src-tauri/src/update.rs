@@ -166,7 +166,8 @@ pub fn download_release_asset(url: &str) -> Result<String, String> {
     if trimmed.is_empty() {
         return Err("下载地址为空".to_string());
     }
-    let filename = filename_from_url(trimmed).unwrap_or_else(|| default_download_filename().to_string());
+    let filename =
+        filename_from_url(trimmed).unwrap_or_else(|| default_download_filename().to_string());
     let dest = download_dir()?.join(&filename);
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建下载目录失败：{e}"))?;
@@ -181,11 +182,9 @@ pub fn download_release_asset(url: &str) -> Result<String, String> {
     }
 
     let mut reader = response.into_reader();
-    let mut file =
-        std::fs::File::create(&dest).map_err(|e| format!("创建文件失败：{e}"))?;
+    let mut file = std::fs::File::create(&dest).map_err(|e| format!("创建文件失败：{e}"))?;
     io::copy(&mut reader, &mut file).map_err(|e| format!("写入文件失败：{e}"))?;
-    file.flush()
-        .map_err(|e| format!("写入文件失败：{e}"))?;
+    file.flush().map_err(|e| format!("写入文件失败：{e}"))?;
 
     Ok(dest.to_string_lossy().into_owned())
 }

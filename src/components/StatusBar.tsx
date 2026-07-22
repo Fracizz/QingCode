@@ -47,6 +47,12 @@ function StatusDivider() {
   return <span className="mx-1.5 h-3 w-px flex-shrink-0 bg-border" aria-hidden />
 }
 
+/** Clickable status-bar chips: primary text, hover lift only — never accent fill. */
+const STATUS_ACTION =
+  'rounded px-1 -mx-1 text-fg hover:bg-bg-hover transition-colors'
+/** Secondary / meta copy: brighter than global fg-muted for 24px bar readability. */
+const STATUS_SECONDARY = 'text-fg/85'
+
 export default function StatusBar() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
@@ -142,7 +148,7 @@ export default function StatusBar() {
   // - terminal count changes → force sample (shell trees moved)
   useEffect(() => {
     if (!isTauri()) {
-      setAppMemory(null)
+      queueMicrotask(() => setAppMemory(null))
       return
     }
 
@@ -187,12 +193,12 @@ export default function StatusBar() {
     const projectPath = currentProject?.path
     // Non-git / ephemeral / browser preview: hide the chip (no placeholder).
     if (!projectPath || !isTauri() || currentProject?.ephemeral) {
-      setGitHead(null)
+      queueMicrotask(() => setGitHead(null))
       return
     }
 
     let cancelled = false
-    let retryTimers: number[] = []
+    const retryTimers: number[] = []
 
     const applyHead = (info: GitHeadInfo | null) => {
       if (!cancelled) setGitHead(info)
@@ -321,11 +327,11 @@ export default function StatusBar() {
             >
               <button
                 type="button"
-                className="inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-1 -mx-1 text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+                className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap ${STATUS_ACTION}`}
                 onClick={() => setView('sourceControl')}
               >
                 <GitBranch size={13} className="flex-shrink-0" />
-                <span className="text-fg">
+                <span>
                   {gitHead.detached ? t('分离 HEAD · {sha}', { sha: gitHead.name }) : gitHead.name}
                 </span>
                 {gitDirtyCount > 0 && (
@@ -349,7 +355,7 @@ export default function StatusBar() {
       <div className="flex flex-shrink-0 items-center">
         {showEditorHints && (
           <>
-            <div className="flex items-center gap-2.5 text-fg-muted">
+            <div className={`flex items-center gap-2.5 ${STATUS_SECONDARY}`}>
               {cursor && (
                 <span className="hidden sm:inline">
                   {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
@@ -371,14 +377,14 @@ export default function StatusBar() {
           <button
             type="button"
             aria-label={t('切换终端面板')}
-            className="flex max-w-[180px] items-center gap-1.5 rounded px-1.5 py-px hover:bg-bg-hover transition-colors"
+            className={`flex max-w-[180px] items-center gap-1.5 px-1.5 py-px ${STATUS_ACTION}`}
             onClick={requestToggleTerminal}
           >
-            <TerminalIcon size={13} className="flex-shrink-0 text-fg-muted" />
+            <TerminalIcon size={13} className="flex-shrink-0" />
             <span className="truncate">
               {t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}
               {activeTerm ? (
-                <span className="text-fg-muted">{` · ${formatTerminalName(activeTerm.name)}`}</span>
+                <span className={STATUS_SECONDARY}>{` · ${formatTerminalName(activeTerm.name)}`}</span>
               ) : null}
             </span>
           </button>
@@ -387,7 +393,7 @@ export default function StatusBar() {
         {showMetaGroup && (
           <>
             <StatusDivider />
-            <div className="text-ui-sm flex items-center font-mono text-fg-muted">
+            <div className={`text-ui-sm flex items-center font-mono ${STATUS_SECONDARY}`}>
               {activeTab?.kind === 'diff' ? (
                 <span>{t('差异对比')}</span>
               ) : activeTab && !activeTab.openError && activeTab.viewMode !== 'view' ? (
@@ -397,7 +403,7 @@ export default function StatusBar() {
                     aria-label={t('文件编码')}
                     aria-haspopup="menu"
                     aria-expanded={encodingMenu != null}
-                    className="max-w-[140px] truncate rounded px-1 -mx-1 hover:bg-bg-hover hover:text-fg transition-colors"
+                    className={`max-w-[140px] truncate ${STATUS_ACTION}`}
                     onClick={event => {
                       const rect = event.currentTarget.getBoundingClientRect()
                       const menuWidth = 260
@@ -451,7 +457,7 @@ export default function StatusBar() {
                   <button
                     type="button"
                     disabled={updateBusy || !isTauri()}
-                    className="rounded px-1 -mx-1 hover:bg-bg-hover hover:text-fg disabled:opacity-40 transition-colors"
+                    className={`${STATUS_ACTION} disabled:opacity-40`}
                     onClick={() => {
                       if (!isTauri() || updateBusy) return
                       setUpdateBusy(true)

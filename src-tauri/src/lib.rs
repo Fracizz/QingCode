@@ -170,7 +170,12 @@ fn default_settings_path() -> String {
 
 /// Frontend completes an IPC CLI request started by the local IPC server.
 #[tauri::command]
-fn resolve_cli_request(id: String, ok: bool, data: Option<serde_json::Value>, error: Option<String>) {
+fn resolve_cli_request(
+    id: String,
+    ok: bool,
+    data: Option<serde_json::Value>,
+    error: Option<String>,
+) {
     ipc::resolve_request(&id, ok, data, error);
 }
 
@@ -385,6 +390,11 @@ pub fn run() {
             git::git_commit,
             git::git_push,
             git::git_pull,
+            git::git_branch_list,
+            git::git_switch,
+            git::git_log,
+            git::git_commit_files,
+            git::git_commit_file_contents,
             git::git_diff,
             git::git_file_contents,
             fonts::list_system_fonts,

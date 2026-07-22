@@ -11,6 +11,7 @@ import { html } from '@codemirror/lang-html'
 import { python } from '@codemirror/lang-python'
 import { ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
 import type { EditorTab } from '../types'
+import { FONT_SETTINGS_EVENT } from '../lib/fontSettings'
 import { getResolvedTheme, THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
 import { translateFor, useI18n } from '../lib/i18n'
@@ -196,14 +197,18 @@ export default function DiffEditor({ tab }: Props) {
     buildMergeView(hostRef.current)
     setStats(countDiffLines(tab.originalContent ?? '', tab.content ?? ''))
 
-    const onTheme = () => {
+    const rebuild = () => {
       const parent = hostRef.current
       if (!parent) return
       buildMergeView(parent)
+      mergeRef.current?.a.requestMeasure()
+      mergeRef.current?.b.requestMeasure()
     }
-    window.addEventListener(THEME_SETTINGS_EVENT, onTheme)
+    window.addEventListener(THEME_SETTINGS_EVENT, rebuild)
+    window.addEventListener(FONT_SETTINGS_EVENT, rebuild)
     return () => {
-      window.removeEventListener(THEME_SETTINGS_EVENT, onTheme)
+      window.removeEventListener(THEME_SETTINGS_EVENT, rebuild)
+      window.removeEventListener(FONT_SETTINGS_EVENT, rebuild)
       mergeRef.current?.destroy()
       mergeRef.current = null
     }

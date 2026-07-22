@@ -71,7 +71,7 @@ export default function ActivityBar({
       <Item
         icon={<GitBranch size={22} />}
         label={t('源代码管理')}
-        active={active === 'sourceControl' && sidebarOpen}
+        active={active === 'sourceControl'}
         badge={gitChanges > 0 ? gitChanges : undefined}
         onClick={() => onActiveChange('sourceControl')}
       />

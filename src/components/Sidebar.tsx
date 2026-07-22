@@ -110,6 +110,7 @@ function parentPath(path: string) {
 
 const EXPLORER_DROP_ATTR = 'data-explorer-drop'
 const DRAG_THRESHOLD_PX = 5
+const EMPTY_TREE: FileNode[] = []
 
 /** Hit-test explorer drop targets (pointer DnD; avoids flaky HTML5 DnD in WebView2). */
 function resolveExplorerDropFromPoint(
@@ -159,7 +160,7 @@ export default function Sidebar() {
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
-    target: ContextTarget
+    items: ContextMenuItem[]
   } | null>(null)
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null)
   const [pendingRename, setPendingRename] = useState<PendingRename | null>(null)
@@ -180,7 +181,6 @@ export default function Sidebar() {
   } | null>(null)
   const listRef = useRef<ListImperativeAPI>(null)
   const treeFocusRef = useRef<HTMLDivElement>(null)
-  const selectionAnchorRef = useRef<string | null>(null)
   const suppressTreeClickRef = useRef(false)
   const explorerDragRef = useRef<{
     paths: string[]
@@ -193,7 +193,7 @@ export default function Sidebar() {
   const preserveScrollTopRef = useRef<number | null>(null)
   const treeRevealPath = useProjectStore(s => s.treeRevealPath)
   const treeRevealSeq = useProjectStore(s => s.treeRevealSeq)
-  const tree = currentProject ? projectTrees[currentProject.id] ?? [] : []
+  const tree = currentProject ? projectTrees[currentProject.id] ?? EMPTY_TREE : EMPTY_TREE
   const visibleTreeRows = useMemo(
     () => flattenVisibleNodes(tree, expandedPaths, pendingCreate, pendingRename),
     [expandedPaths, pendingCreate, pendingRename, tree],
@@ -208,18 +208,19 @@ export default function Sidebar() {
   const replaceSelection = useCallback((path: string | null) => {
     setSelectedPath(path)
     setSelectedPaths(path ? new Set([path]) : new Set())
-    selectionAnchorRef.current = path
   }, [])
 
   useEffect(() => {
-    replaceSelection(null)
-    setClipboard(null)
-    setPendingRename(null)
+    queueMicrotask(() => {
+      replaceSelection(null)
+      setClipboard(null)
+      setPendingRename(null)
+    })
     scrolledRevealSeqRef.current = 0
   }, [currentProject?.id, replaceSelection])
 
   useEffect(() => {
-    if (treeRevealPath) replaceSelection(treeRevealPath)
+    if (treeRevealPath) queueMicrotask(() => replaceSelection(treeRevealPath))
   }, [treeRevealPath, treeRevealSeq, replaceSelection])
 
   useEffect(() => {
@@ -234,11 +235,13 @@ export default function Sidebar() {
     ].filter(path => isDescendantOf(path, currentProject.path) || pathsEqual(path, currentProject.path))
     if (toExpand.length === 0) return
 
-    setExpandedPaths(existing => {
-      let next = existing
-      for (const path of toExpand) next = addPathToSet(next, path)
-      return next === existing ? existing : new Set(next)
-    })
+    queueMicrotask(() =>
+      setExpandedPaths(existing => {
+        let next = existing
+        for (const path of toExpand) next = addPathToSet(next, path)
+        return next === existing ? existing : new Set(next)
+      }),
+    )
 
     if (target?.is_dir && !target.loaded) {
       void expandProjectDir(currentProject.id, target.path)
@@ -247,13 +250,15 @@ export default function Sidebar() {
 
   useEffect(() => {
     if (!pendingCreate || !currentProject || pendingCreate.projectId !== currentProject.id) return
-    setExpandedPaths(existing => {
-      let next = existing
-      for (const path of dirsToReveal(pendingCreate.parentPath, currentProject.path)) {
-        next = addPathToSet(next, path)
-      }
-      return next === existing ? existing : new Set(next)
-    })
+    queueMicrotask(() =>
+      setExpandedPaths(existing => {
+        let next = existing
+        for (const path of dirsToReveal(pendingCreate.parentPath, currentProject.path)) {
+          next = addPathToSet(next, path)
+        }
+        return next === existing ? existing : new Set(next)
+      }),
+    )
   }, [currentProject, pendingCreate])
 
   useEffect(() => {
@@ -281,74 +286,79 @@ export default function Sidebar() {
     listRef.current?.element?.scrollTo({ top, behavior: 'instant' })
   }, [visibleTreeRows])
 
-  const toggleFolderExpand = async (node: FileNode) => {
-    if (!node.is_dir || !currentProject) return
-    preserveScrollTopRef.current = listRef.current?.element?.scrollTop ?? null
-    const expanding = !pathSetHas(expandedPaths, node.path)
-    setExpandedPaths(paths => {
-      if (expanding) return addPathToSet(paths, node.path)
-      const next = new Set<string>()
-      for (const path of paths) {
-        if (!pathsEqual(path, node.path)) next.add(path)
-      }
-      return next
-    })
-    if (!expanding || node.loaded) return
-    setLoadingPaths(paths => new Set(paths).add(node.path))
-    try {
-      await expandProjectDir(currentProject.id, node.path)
-    } finally {
-      setLoadingPaths(paths => {
-        const next = new Set(paths)
-        next.delete(node.path)
+  const toggleFolderExpand = useCallback(
+    async (node: FileNode) => {
+      if (!node.is_dir || !currentProject) return
+      preserveScrollTopRef.current = listRef.current?.element?.scrollTop ?? null
+      const expanding = !pathSetHas(expandedPaths, node.path)
+      setExpandedPaths(paths => {
+        if (expanding) return addPathToSet(paths, node.path)
+        const next = new Set<string>()
+        for (const path of paths) {
+          if (!pathsEqual(path, node.path)) next.add(path)
+        }
         return next
       })
-    }
-  }
+      if (!expanding || node.loaded) return
+      setLoadingPaths(paths => new Set(paths).add(node.path))
+      try {
+        await expandProjectDir(currentProject.id, node.path)
+      } finally {
+        setLoadingPaths(paths => {
+          const next = new Set(paths)
+          next.delete(node.path)
+          return next
+        })
+      }
+    },
+    [currentProject, expandedPaths, expandProjectDir],
+  )
 
-  const selectTreeNode = (node: FileNode, event?: ReactMouseEvent) => {
-    if (suppressTreeClickRef.current) {
-      event?.preventDefault()
-      event?.stopPropagation()
-      return
-    }
-    treeFocusRef.current?.focus()
-    const ctrl = Boolean(event?.ctrlKey || event?.metaKey)
-    const shift = Boolean(event?.shiftKey)
+  const selectTreeNode = useCallback(
+    (node: FileNode, event?: ReactMouseEvent) => {
+      if (suppressTreeClickRef.current) {
+        event?.preventDefault()
+        event?.stopPropagation()
+        return
+      }
+      treeFocusRef.current?.focus()
+      const ctrl = Boolean(event?.ctrlKey || event?.metaKey)
+      const shift = Boolean(event?.shiftKey)
 
-    if (shift) {
-      const anchor = selectionAnchorRef.current ?? selectedPath ?? node.path
-      const start = findVisibleNodeRowIndex(visibleTreeRows, anchor)
-      const end = findVisibleNodeRowIndex(visibleTreeRows, node.path)
-      if (start >= 0 && end >= 0) {
-        const [lo, hi] = start < end ? [start, end] : [end, start]
-        const next = new Set<string>()
-        for (let i = lo; i <= hi; i++) {
-          const row = visibleTreeRows[i]
-          if (row?.kind === 'node' || row?.kind === 'rename') next.add(row.node.path)
+      if (shift) {
+        const anchor = selectedPath ?? node.path
+        const start = findVisibleNodeRowIndex(visibleTreeRows, anchor)
+        const end = findVisibleNodeRowIndex(visibleTreeRows, node.path)
+        if (start >= 0 && end >= 0) {
+          const [lo, hi] = start < end ? [start, end] : [end, start]
+          const next = new Set<string>()
+          for (let i = lo; i <= hi; i++) {
+            const row = visibleTreeRows[i]
+            if (row?.kind === 'node' || row?.kind === 'rename') next.add(row.node.path)
+          }
+          setSelectedPaths(next)
+          setSelectedPath(node.path)
+          return
         }
-        setSelectedPaths(next)
+      }
+
+      if (ctrl) {
+        setSelectedPaths(prev => {
+          const next = new Set(prev)
+          if (pathSetHas(next, node.path)) {
+            const filtered = [...next].filter(p => !pathsEqual(p, node.path))
+            return new Set(filtered)
+          }
+          return addPathToSet(next, node.path)
+        })
         setSelectedPath(node.path)
         return
       }
-    }
 
-    if (ctrl) {
-      setSelectedPaths(prev => {
-        const next = new Set(prev)
-        if (pathSetHas(next, node.path)) {
-          const filtered = [...next].filter(p => !pathsEqual(p, node.path))
-          return new Set(filtered)
-        }
-        return addPathToSet(next, node.path)
-      })
-      setSelectedPath(node.path)
-      selectionAnchorRef.current = node.path
-      return
-    }
-
-    replaceSelection(node.path)
-  }
+      replaceSelection(node.path)
+    },
+    [replaceSelection, selectedPath, visibleTreeRows],
+  )
 
   const scrollTreeRowIntoView = useCallback(
     (path: string) => {
@@ -360,15 +370,18 @@ export default function Sidebar() {
     [visibleTreeRows],
   )
 
-  const openTreeNode = (node: FileNode) => {
-    // Skip activation after a drag (pointerup still synthesizes a click).
-    if (suppressTreeClickRef.current) return
-    if (node.is_dir) {
-      void toggleFolderExpand(node)
-      return
-    }
-    void useEditorStore.getState().openFile(node.path)
-  }
+  const openTreeNode = useCallback(
+    (node: FileNode) => {
+      // Skip activation after a drag (pointerup still synthesizes a click).
+      if (suppressTreeClickRef.current) return
+      if (node.is_dir) {
+        void toggleFolderExpand(node)
+        return
+      }
+      void useEditorStore.getState().openFile(node.path)
+    },
+    [toggleFolderExpand],
+  )
 
   const handleTreeKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -424,6 +437,8 @@ export default function Sidebar() {
       selectedPath,
       selectTreeNode,
       tree,
+      openTreeNode,
+      toggleFolderExpand,
       visibleTreeRows,
     ],
   )
@@ -473,7 +488,11 @@ export default function Sidebar() {
     if (event.currentTarget instanceof HTMLElement) {
       event.currentTarget.focus()
     }
-    setContextMenu({ x: event.clientX, y: event.clientY, target })
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: contextMenuItems(target),
+    })
   }
 
   const copyPath = async (path: string) => {
@@ -543,7 +562,6 @@ export default function Sidebar() {
     })
     if (selectedPath && isGone(selectedPath)) {
       setSelectedPath(null)
-      selectionAnchorRef.current = null
     }
     setClipboard(prev => {
       if (!prev) return prev
@@ -858,7 +876,7 @@ export default function Sidebar() {
       useProjectStore.getState().pushToast('info', t('目录不可用，请重新定位'))
       return
     }
-    void startCreateEntry(project.path, false, project.id)
+    queueMicrotask(() => void startCreateEntry(project.path, false, project.id))
     // Consume once per pending flag; startCreateEntry uses latest project state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingNewFile])
@@ -927,7 +945,7 @@ export default function Sidebar() {
     }
   }
 
-  const contextMenuItems = (target: ContextTarget): ContextMenuItem[] => {
+  function contextMenuItems(target: ContextTarget): ContextMenuItem[] {
     if (target.kind === 'empty') {
       return [
         {
@@ -1183,6 +1201,51 @@ export default function Sidebar() {
     ]
   }
 
+  const handleExplorerKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      if (pendingRename || pendingCreate) return
+      if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+        const key = event.key.toLowerCase()
+        if (key === 'x') {
+          event.preventDefault()
+          cutExplorerPaths()
+          return
+        }
+        if (key === 'c' && !event.shiftKey) {
+          event.preventDefault()
+          copyExplorerPaths()
+          return
+        }
+        if (key === 'v') {
+          event.preventDefault()
+          void pasteExplorerClipboard()
+          return
+        }
+      }
+      if (selectedPath && shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)) {
+        event.preventDefault()
+        void copyPath(selectedPath)
+        return
+      }
+      if (selectedPath && shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event.nativeEvent)) {
+        event.preventDefault()
+        void copyRelativePathAction(selectedPath)
+        return
+      }
+      if (selectedPath && shortcutMatchesEvent('Alt+C', event.nativeEvent)) {
+        event.preventDefault()
+        void copyAsReference(selectedPath)
+        return
+      }
+      if (selectedPath && shortcutMatchesEvent(renameShortcut, event.nativeEvent)) {
+        const node = findNodeByPath(tree, selectedPath)
+        if (!node) return
+        event.preventDefault()
+        startInlineRename(node)
+        return
+      }
+    handleTreeKeyDown(event)
+  }
+
   return (
     <div
       className="ui-font-scaled h-full flex flex-col bg-bg-sidebar text-fg"
@@ -1429,62 +1492,7 @@ export default function Sidebar() {
                           tabIndex={0}
                           data-qingcode-explorer=""
                           className="flex-1 min-h-0 outline-none"
-                          onKeyDown={event => {
-                            if (pendingRename || pendingCreate) return
-                            if ((event.ctrlKey || event.metaKey) && !event.altKey) {
-                              const key = event.key.toLowerCase()
-                              if (key === 'x') {
-                                event.preventDefault()
-                                cutExplorerPaths()
-                                return
-                              }
-                              if (key === 'c' && !event.shiftKey) {
-                                event.preventDefault()
-                                copyExplorerPaths()
-                                return
-                              }
-                              if (key === 'v') {
-                                event.preventDefault()
-                                void pasteExplorerClipboard()
-                                return
-                              }
-                            }
-                            if (
-                              selectedPath &&
-                              shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)
-                            ) {
-                              event.preventDefault()
-                              void copyPath(selectedPath)
-                              return
-                            }
-                            if (
-                              selectedPath &&
-                              shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event.nativeEvent)
-                            ) {
-                              event.preventDefault()
-                              void copyRelativePathAction(selectedPath)
-                              return
-                            }
-                            if (
-                              selectedPath &&
-                              shortcutMatchesEvent('Alt+C', event.nativeEvent)
-                            ) {
-                              event.preventDefault()
-                              void copyAsReference(selectedPath)
-                              return
-                            }
-                            if (
-                              selectedPath &&
-                              shortcutMatchesEvent(renameShortcut, event.nativeEvent)
-                            ) {
-                              const node = findNodeByPath(tree, selectedPath)
-                              if (!node) return
-                              event.preventDefault()
-                              startInlineRename(node)
-                              return
-                            }
-                            handleTreeKeyDown(event)
-                          }}
+                          onKeyDown={handleExplorerKeyDown}
                         >
                           <List
                             listRef={listRef}
@@ -1494,6 +1502,7 @@ export default function Sidebar() {
                               const kind = visibleTreeRows[index]?.kind
                               return kind === 'create' || kind === 'rename' ? 30 : 26
                             }}
+                            /* eslint-disable react-hooks/refs -- react-window invokes these callbacks after render. */
                             rowProps={{
                               rows: visibleTreeRows,
                               expandedPaths,
@@ -1516,6 +1525,7 @@ export default function Sidebar() {
                               onCancelRename: cancelRename,
                               onPointerDownNode: handlePointerDownNode,
                             }}
+                            /* eslint-enable react-hooks/refs */
                             overscanCount={12}
                             className="h-full"
                             style={{ width: '100%' }}
@@ -1534,7 +1544,7 @@ export default function Sidebar() {
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          items={contextMenuItems(contextMenu.target)}
+          items={contextMenu.items}
           onClose={() => setContextMenu(null)}
         />
       )}

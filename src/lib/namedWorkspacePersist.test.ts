@@ -10,6 +10,7 @@ import {
   normalizeNamedWorkspaceName,
   parseNamedWorkspace,
   parseNamedWorkspaceCatalog,
+  planTitleBarVisibilityUpdates,
   remapWorkspaceSessions,
   removeNamedWorkspace,
   resolveWorkspaceMember,
@@ -99,6 +100,37 @@ describe('parseNamedWorkspace', () => {
     expect(parsed!.sessions.p1).toBeTruthy()
     expect(parsed!.sessions.orphan).toBeUndefined()
     expect(parsed!.activeProjectId).toBe('p1')
+  })
+})
+
+describe('planTitleBarVisibilityUpdates', () => {
+  it('hides non-members and unhides members', () => {
+    const updates = planTitleBarVisibilityUpdates(
+      [
+        { id: 'a', path: 'D:/a', name: 'a', hidden: 0 },
+        { id: 'b', path: 'D:/b', name: 'b', hidden: 1 },
+        { id: 'c', path: 'D:/c', name: 'c', hidden: 0 },
+        { id: 'tmp', path: 'D:/tmp', name: 'tmp', ephemeral: true, hidden: 0 },
+      ],
+      ['b', 'c'],
+    )
+    expect(updates).toEqual([
+      { id: 'a', hidden: 1, ephemeral: false },
+      { id: 'b', hidden: 0, ephemeral: false },
+      { id: 'tmp', hidden: 1, ephemeral: true },
+    ])
+  })
+
+  it('returns empty when already aligned', () => {
+    expect(
+      planTitleBarVisibilityUpdates(
+        [
+          { id: 'a', path: 'D:/a', name: 'a', hidden: 0 },
+          { id: 'b', path: 'D:/b', name: 'b', hidden: 1 },
+        ],
+        ['a'],
+      ),
+    ).toEqual([])
   })
 })
 

@@ -108,17 +108,19 @@ export default function ProjectManager() {
 
   // Drop selections for projects that no longer exist (deleted/filtered out).
   useEffect(() => {
-    setSelectedIds(prev => {
-      if (prev.size === 0) return prev
-      const valid = new Set(sortedProjects.map(p => p.id))
-      let changed = false
-      const next = new Set<string>()
-      for (const id of prev) {
-        if (valid.has(id)) next.add(id)
-        else changed = true
-      }
-      return changed ? next : prev
-    })
+    queueMicrotask(() =>
+      setSelectedIds(prev => {
+        if (prev.size === 0) return prev
+        const valid = new Set(sortedProjects.map(p => p.id))
+        let changed = false
+        const next = new Set<string>()
+        for (const id of prev) {
+          if (valid.has(id)) next.add(id)
+          else changed = true
+        }
+        return changed ? next : prev
+      }),
+    )
   }, [sortedProjects])
 
   const selectableIds = useMemo(() => sortedProjects.map(p => p.id), [sortedProjects])
@@ -214,7 +216,8 @@ export default function ProjectManager() {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={t('项目管理')}
+        aria-labelledby="project-manager-title"
+        aria-describedby="project-manager-description"
         className="ui-font-scaled modal-content-enter relative w-full max-w-[760px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={e => e.stopPropagation()}
       >
@@ -222,8 +225,8 @@ export default function ProjectManager() {
         <div className="flex items-center justify-between px-4 h-12 border-b border-border-strong flex-shrink-0">
           <div className="flex items-center gap-2 text-[14px] font-semibold text-fg">
             <Folders size={16} className="text-fg-muted" />
-            {t('项目管理')}
-            <span className="text-ui-sm font-normal text-fg-muted">
+            <h2 id="project-manager-title">{t('项目管理')}</h2>
+            <span id="project-manager-description" className="text-ui-sm font-normal text-fg-muted">
               {t('共 {total} 个 · 显示 {visible} · 隐藏 {hidden}', { total: projects.length, visible: visibleCount, hidden: hiddenCount })}
             </span>
           </div>

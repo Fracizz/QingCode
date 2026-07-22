@@ -59,8 +59,10 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
 
   useEffect(() => {
     if (!open) return
-    setQuery('')
-    setActiveIndex(0)
+    queueMicrotask(() => {
+      setQuery('')
+      setActiveIndex(0)
+    })
     const timer = window.setTimeout(() => inputRef.current?.focus(), 0)
     return () => window.clearTimeout(timer)
   }, [open])
@@ -78,7 +80,9 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
   }, [open, onClose])
 
   useEffect(() => {
-    setActiveIndex(i => (filtered.length === 0 ? 0 : Math.min(i, filtered.length - 1)))
+    queueMicrotask(() =>
+      setActiveIndex(i => (filtered.length === 0 ? 0 : Math.min(i, filtered.length - 1))),
+    )
   }, [filtered.length])
 
   useEffect(() => {
@@ -154,10 +158,17 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={t('选择项目')}
+        aria-labelledby="project-add-title"
+        aria-describedby="project-add-description"
         className="ui-font-scaled modal-content-enter relative flex w-full max-w-[340px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={event => event.stopPropagation()}
       >
+        <h2 id="project-add-title" className="sr-only">
+          {t('选择项目')}
+        </h2>
+        <p id="project-add-description" className="sr-only">
+          {t('从已添加项目中切换，或打开文件夹添加项目。')}
+        </p>
         <div className="flex flex-shrink-0 items-center gap-2 border-b border-border px-2.5 py-2">
           <input
             ref={inputRef}

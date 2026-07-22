@@ -141,23 +141,25 @@ export default function SearchPanel() {
 
   useEffect(() => {
     if (globalSearchSignal === 0) return
-    setSearchRoot(null)
-    setSearchScope('current')
+    queueMicrotask(() => {
+      setSearchRoot(null)
+      setSearchScope('current')
+    })
     window.requestAnimationFrame(() => searchInputRef.current?.focus())
   }, [globalSearchSignal, setSearchRoot])
 
   useEffect(() => {
-    setCollapsedFiles(new Set())
+    queueMicrotask(() => setCollapsedFiles(new Set()))
   }, [query, mode, typeFilter])
 
   useEffect(() => {
     if (typeFilter?.kind !== 'star') return
     if (otherExts.length === 0) {
-      setTypeFilter(null)
+      queueMicrotask(() => setTypeFilter(null))
       return
     }
-    setTypeFilter({ kind: 'star', exts: otherExts })
-  }, [otherExts])
+    queueMicrotask(() => setTypeFilter({ kind: 'star', exts: otherExts }))
+  }, [otherExts, setTypeFilter, typeFilter?.kind])
 
   const closeExtPicker = useCallback(() => setExtPickerOpen(false), [])
 
@@ -213,17 +215,21 @@ export default function SearchPanel() {
 
   useEffect(() => {
     if (searchRoots.length === 0) {
-      setProjectExts([])
-      setProjectExtsLoading(false)
+      queueMicrotask(() => {
+        setProjectExts([])
+        setProjectExtsLoading(false)
+      })
       return
     }
     if (!isTauri()) {
-      setProjectExts([])
-      setProjectExtsLoading(false)
+      queueMicrotask(() => {
+        setProjectExts([])
+        setProjectExtsLoading(false)
+      })
       return
     }
     const id = ++extScanId.current
-    setProjectExtsLoading(true)
+    queueMicrotask(() => setProjectExtsLoading(true))
     const roots = searchRoots.map(root => root.path)
     void safeInvoke<string[]>('扫描项目扩展名', 'list_file_extensions', {
       roots,
@@ -244,31 +250,39 @@ export default function SearchPanel() {
 
   useEffect(() => {
     if (searchRoots.length === 0) {
-      setFilenameResults([])
-      setContentResults(null)
+      queueMicrotask(() => {
+        setFilenameResults([])
+        setContentResults(null)
+      })
       return
     }
     if (mode === 'content') {
       if (!query.trim()) {
-        setContentResults(null)
-        setError(null)
+        queueMicrotask(() => {
+          setContentResults(null)
+          setError(null)
+        })
         return
       }
     } else if (!query.trim() && !typeFilter) {
-      setFilenameResults([])
-      setContentResults(null)
-      setError(null)
+      queueMicrotask(() => {
+        setFilenameResults([])
+        setContentResults(null)
+        setError(null)
+      })
       return
     }
     if (!isTauri()) {
-      setError(new NotInTauriError('文件搜索').message)
-      setFilenameResults([])
-      setContentResults(null)
+      queueMicrotask(() => {
+        setError(new NotInTauriError('文件搜索').message)
+        setFilenameResults([])
+        setContentResults(null)
+      })
       return
     }
 
     const id = ++reqId.current
-    setLoading(true)
+    queueMicrotask(() => setLoading(true))
     const debounce = mode === 'content' ? CONTENT_DEBOUNCE_MS : FILENAME_DEBOUNCE_MS
     const perRootLimit = Math.max(50, Math.ceil(500 / searchRoots.length))
 
@@ -457,7 +471,7 @@ export default function SearchPanel() {
   }, [rows])
 
   useEffect(() => {
-    setActiveIndex(navigableIndexes[0] ?? 0)
+    queueMicrotask(() => setActiveIndex(navigableIndexes[0] ?? 0))
   }, [navigableIndexes])
 
   const toggleFileCollapse = useCallback((path: string) => {

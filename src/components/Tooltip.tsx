@@ -1,4 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react'
 import { createPortal } from 'react-dom'
 import { readStatusBarRowTop } from './statusBarRowContext'
 import {
@@ -245,17 +253,20 @@ export default function Tooltip({
   const onShowRef = useRef(onShow)
   const onHideRef = useRef(onHide)
   const wasVisibleRef = useRef(false)
-  onShowRef.current = onShow
-  onHideRef.current = onHide
 
-  const clearTimer = () => {
+  useEffect(() => {
+    onShowRef.current = onShow
+    onHideRef.current = onHide
+  }, [onHide, onShow])
+
+  const clearTimer = useCallback(() => {
     if (timerRef.current !== undefined) {
       window.clearTimeout(timerRef.current)
       timerRef.current = undefined
     }
-  }
+  }, [])
 
-  const overflowElement = () => {
+  const overflowElement = useCallback(() => {
     const trigger = triggerRef.current
     if (!trigger) return null
     if (onlyWhenOverflow) {
@@ -263,24 +274,26 @@ export default function Tooltip({
     }
     if (anchor === 'wrapper') return trigger
     return (trigger.firstElementChild as HTMLElement | null) ?? trigger
-  }
+  }, [anchor, onlyWhenOverflow])
 
-  const triggerRect = () => {
+  const triggerRect = useCallback(() => {
     const el = overflowElement()
     if (!el) return null
     return el.getBoundingClientRect()
-  }
+  }, [overflowElement])
 
-  const shouldShowForOverflow = () => {
+  const shouldShowForOverflow = useCallback(() => {
     if (!onlyWhenOverflow) return true
     const trigger = triggerRef.current
     return trigger != null && resolveOverflowElement(trigger) != null
-  }
+  }, [onlyWhenOverflow])
 
-  const resolveClearanceLineTop = (rect: RectLike) =>
-    clearanceTop?.() ?? readStatusBarRowTop(triggerRef.current) ?? rect.top
+  const resolveClearanceLineTop = useCallback(
+    (rect: RectLike) => clearanceTop?.() ?? readStatusBarRowTop(triggerRef.current) ?? rect.top,
+    [clearanceTop],
+  )
 
-  const updatePosition = () => {
+  const updatePosition = useCallback(() => {
     const rect = triggerRect()
     if (!rect) return
     const lineTop = resolveClearanceLineTop(rect)
@@ -329,7 +342,7 @@ export default function Tooltip({
 
     setStyle(next)
     setArrowOffset(arrowOffsetX)
-  }
+  }, [arrow, resolveClearanceLineTop, side, triggerRect])
 
   const scheduleShow = () => {
     clearTimer()
@@ -361,7 +374,7 @@ export default function Tooltip({
     setOpen(false)
   }
 
-  useEffect(() => () => clearTimer(), [])
+  useEffect(() => () => clearTimer(), [clearTimer])
 
   useEffect(() => {
     if (visible && !wasVisibleRef.current) {
@@ -382,7 +395,7 @@ export default function Tooltip({
       window.removeEventListener('scroll', onLayoutChange, true)
       window.removeEventListener('resize', onLayoutChange)
     }
-  }, [visible, side, label, arrow, anchor, clearanceTop])
+  }, [anchor, arrow, clearanceTop, label, side, updatePosition, visible])
 
   // Render caret whenever `arrow` is set (don't wait for offset) so first
   // measure uses the final borderless tip chrome.

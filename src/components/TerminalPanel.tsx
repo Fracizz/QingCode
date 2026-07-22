@@ -1,4 +1,4 @@
-import { lazy, Suspense, type MutableRefObject, type RefObject } from 'react'
+import { lazy, Suspense, type RefObject } from 'react'
 import { Terminal as TerminalIcon } from 'lucide-react'
 import PanelResizer from './PanelResizer'
 import TerminalTabs from './TerminalTabs'
@@ -29,8 +29,6 @@ export interface TerminalPanelProps {
   terminalHeight: number
   terminalWidth: number
   isTerminalResizing: boolean
-  dragHeightRef: MutableRefObject<number>
-  dragWidthRef: MutableRefObject<number>
   onResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
   onWidthResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
   terminalPanelRef: RefObject<HTMLDivElement | null>
@@ -42,8 +40,6 @@ export default function TerminalPanel({
   terminalHeight,
   terminalWidth,
   isTerminalResizing,
-  dragHeightRef,
-  dragWidthRef,
   onResizerPointerDown,
   onWidthResizerPointerDown,
   terminalPanelRef,
@@ -53,8 +49,6 @@ export default function TerminalPanel({
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
   const currentProject = useProjectStore(s => s.currentProject)
   const projectTerminals = terminals.filter(term => term.projectId === currentProject?.id)
-  const liveHeight = isTerminalResizing ? dragHeightRef.current : terminalHeight
-  const liveWidth = isTerminalResizing ? dragWidthRef.current : terminalWidth
   const isSide = position === 'side'
 
   const body = (
@@ -108,7 +102,7 @@ export default function TerminalPanel({
         className={`flex flex-shrink-0 h-full min-h-0 overflow-hidden ${
           isTerminalResizing ? '' : 'transition-[width,opacity] duration-200 ease-out'
         } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-        style={{ width: terminalOpen ? liveWidth : 0 }}
+        style={{ width: terminalOpen ? terminalWidth : 0 }}
       >
         <div
           className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-r border-border"
@@ -119,10 +113,10 @@ export default function TerminalPanel({
           <PanelResizer
             orientation="vertical"
             active={isTerminalResizing}
-            tooltip={terminalWidthResizerHint(liveWidth, t)}
+            tooltip={terminalWidthResizerHint(terminalWidth, t)}
             tooltipSide="right"
             onPointerDown={onWidthResizerPointerDown}
-            ariaValueNow={liveWidth}
+            ariaValueNow={terminalWidth}
             ariaValueMin={TERMINAL_MIN_WIDTH}
             ariaValueMax={getTerminalMaxWidth()}
           />
@@ -140,16 +134,16 @@ export default function TerminalPanel({
       className={`flex flex-col flex-shrink-0 min-h-0 overflow-hidden ${
         isTerminalResizing ? '' : 'transition-[height,opacity] duration-200 ease-out'
       } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none h-0'}`}
-      style={{ height: terminalOpen ? liveHeight : 0 }}
+      style={{ height: terminalOpen ? terminalHeight : 0 }}
     >
       {terminalOpen && (
         <PanelResizer
           orientation="horizontal"
           active={isTerminalResizing}
-          tooltip={terminalResizerHint(liveHeight, t)}
+          tooltip={terminalResizerHint(terminalHeight, t)}
           tooltipSide="top"
           onPointerDown={onResizerPointerDown}
-          ariaValueNow={liveHeight}
+          ariaValueNow={terminalHeight}
           ariaValueMin={TERMINAL_MIN_HEIGHT}
           ariaValueMax={getTerminalMaxHeight()}
         />

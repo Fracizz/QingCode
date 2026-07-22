@@ -35,6 +35,11 @@ body {
   zoom: var(--ui-font-scale);
 }
 
+/* Editor / Diff surfaces nested under scaled chrome keep independent --editor-font-size. */
+.ui-font-scaled .editor-font-independent {
+  zoom: calc(1 / var(--ui-font-scale));
+}
+
 /* Auxiliary copy = 界面字号 − 1（基准 12px）。
    Outside `.ui-font-scaled`: multiply by --ui-font-scale.
    Inside `.ui-font-scaled`: keep 12px so parent `zoom` does not double-scale. */

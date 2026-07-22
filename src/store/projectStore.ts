@@ -57,6 +57,10 @@ export interface Toast {
   kind: ToastKind
   text: string
   detail?: string
+  action?: {
+    label: string
+    onAction: () => void | Promise<void>
+  }
 }
 
 interface ProjectState {
@@ -101,7 +105,12 @@ interface ProjectState {
     options?: { force?: boolean },
   ) => Promise<void>
   revealFileInTree: (filePath: string, options?: { force?: boolean }) => Promise<void>
-  pushToast: (kind: ToastKind, text: string, detail?: string) => void
+  pushToast: (
+    kind: ToastKind,
+    text: string,
+    detail?: string,
+    action?: Toast['action'],
+  ) => void
   dismissToast: (id: string) => void
 }
 
@@ -157,7 +166,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   loading: false,
   toasts: [],
 
-  pushToast: (kind, text, detail) => {
+  pushToast: (kind, text, detail, action) => {
     const normalizedDetail = detail?.trim() || undefined
     const duplicate = get().toasts.some(
       t => t.kind === kind && t.text === text && (t.detail ?? '') === (normalizedDetail ?? ''),
@@ -166,9 +175,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
     const id = crypto.randomUUID()
     set(s => ({
-      toasts: [...s.toasts, { id, kind, text, detail: normalizedDetail }],
+      toasts: [...s.toasts, { id, kind, text, detail: normalizedDetail, action }],
     }))
-    setTimeout(() => get().dismissToast(id), normalizedDetail ? 6000 : 4000)
+    setTimeout(() => get().dismissToast(id), action ? 8000 : normalizedDetail ? 6000 : 4000)
   },
   dismissToast: id => set(s => ({ toasts: s.toasts.filter(t => t.id !== id) })),
 

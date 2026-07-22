@@ -63,9 +63,11 @@ export default function CommandPalette() {
 
   useEffect(() => {
     if (!open) return
-    setQuery(seedQuery)
-    setActiveIndex(0)
-    setTick(n => n + 1)
+    queueMicrotask(() => {
+      setQuery(seedQuery)
+      setActiveIndex(0)
+      setTick(n => n + 1)
+    })
     const id = window.setTimeout(() => {
       inputRef.current?.focus()
       inputRef.current?.select()
@@ -89,7 +91,7 @@ export default function CommandPalette() {
   useEffect(() => {
     const requestId = ++searchRequestId.current
     const { fileQuery: needle } = parseQuickOpenLocation(query)
-    setNativeEntries([])
+    queueMicrotask(() => setNativeEntries([]))
     if (!open || isCommandMode(query) || !needle || !isTauri()) return
 
     const roots = projects
@@ -151,7 +153,7 @@ export default function CommandPalette() {
   }, [commandMode, query, t, tick, allFileEntries])
 
   useEffect(() => {
-    setActiveIndex(0)
+    queueMicrotask(() => setActiveIndex(0))
   }, [query, tick])
 
   useEffect(() => {
@@ -215,9 +217,16 @@ export default function CommandPalette() {
       <div
         role="dialog"
         aria-modal="true"
-        aria-label={commandMode ? t('命令面板') : t('快速打开')}
+        aria-labelledby="command-palette-title"
+        aria-describedby="command-palette-description"
         className="ui-font-scaled modal-content-enter relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
       >
+        <h2 id="command-palette-title" className="sr-only">
+          {commandMode ? t('命令面板') : t('快速打开')}
+        </h2>
+        <p id="command-palette-description" className="sr-only">
+          {commandMode ? t('搜索并执行命令。') : t('搜索并打开项目中的文件。')}
+        </p>
         <div className="flex items-center gap-2 border-b border-border px-2.5 py-2">
           {commandMode ? (
             <Command size={16} className="flex-shrink-0 text-fg-muted" aria-hidden />

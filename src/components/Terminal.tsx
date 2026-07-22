@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
@@ -182,22 +182,31 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   const lastFitSizeRef = useRef({ w: 0, h: 0 })
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    items: ContextMenuItem[]
+  } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchMatchIndex, setSearchMatchIndex] = useState(-1)
   const [searchMatchTotal, setSearchMatchTotal] = useState(0)
-  isActiveRef.current = isActive
   const writeToTerminal = useTerminalStore(s => s.writeToTerminal)
   const resizeTerminal = useTerminalStore(s => s.resizeTerminal)
   const spawnPendingTerminal = useTerminalStore(s => s.spawnPendingTerminal)
   const terminal = useTerminalStore(s => s.terminals.find(tab => tab.id === terminalId))
   const ptySpawnPending = terminal?.ptySpawnPending === true
 
-  const isTerminalWritable = () =>
-    useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.status !== 'exited'
+  useEffect(() => {
+    isActiveRef.current = isActive
+  }, [isActive])
 
-  const copySelection = async () => {
+  const isTerminalWritable = useCallback(
+    () => useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.status !== 'exited',
+    [terminalId],
+  )
+
+  const copySelection = useCallback(async () => {
     const term = xtermRef.current
     if (!term?.hasSelection()) return
     const selection = term.getSelection()
@@ -207,9 +216,9 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     } catch (error) {
       console.error('Terminal copy failed:', error)
     }
-  }
+  }, [])
 
-  const pasteFromClipboard = async () => {
+  const pasteFromClipboard = useCallback(async () => {
     const term = xtermRef.current
     if (!term || !isTerminalWritable()) return
     try {
@@ -218,41 +227,41 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     } catch (error) {
       console.error('Terminal paste failed:', error)
     }
-  }
+  }, [isTerminalWritable])
 
-  const selectAll = () => {
+  const selectAll = useCallback(() => {
     xtermRef.current?.selectAll()
-  }
+  }, [])
 
-  const clearBuffer = () => {
+  const clearBuffer = useCallback(() => {
     const term = xtermRef.current
     if (!term) return
     term.clear()
     term.scrollToBottom()
-  }
+  }, [])
 
-  const resetSearchMatch = () => {
+  const resetSearchMatch = useCallback(() => {
     setSearchMatchIndex(-1)
     setSearchMatchTotal(0)
-  }
+  }, [])
 
-  const openSearch = () => {
+  const openSearch = useCallback(() => {
     setSearchOpen(true)
     resetSearchMatch()
-  }
+  }, [resetSearchMatch])
 
-  const closeSearch = () => {
+  const closeSearch = useCallback(() => {
     searchAddonRef.current?.clearDecorations()
     setSearchOpen(false)
     resetSearchMatch()
     if (isActiveRef.current) xtermRef.current?.focus()
-  }
+  }, [resetSearchMatch])
 
   const runFind = (direction: 'next' | 'previous') => {
     const addon = searchAddonRef.current
     const query = searchQuery
     if (!addon || !query.trim()) {
-      resetSearchMatch()
+      queueMicrotask(resetSearchMatch)
       return
     }
     const opts = terminalSearchOptions(false)
@@ -295,47 +304,47 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     },
   ]
 
-  const clearPtyResizeTimer = () => {
+  const clearPtyResizeTimer = useCallback(() => {
     if (ptyResizeTimerRef.current === null) return
     window.clearTimeout(ptyResizeTimerRef.current)
     ptyResizeTimerRef.current = null
-  }
+  }, [])
 
-  const commitGridSize = (next: TerminalGridSize) => {
+  const commitGridSize = useCallback((next: TerminalGridSize) => {
     const term = xtermRef.current
     if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return false
     // 直接 resize 便于准确判断是否需要等待下方的 onRender 屏障。
     term.resize(next.cols, next.rows)
     return true
-  }
+  }, [])
 
-  const readProposedGridSize = (): TerminalGridSize | undefined => {
+  const readProposedGridSize = useCallback((): TerminalGridSize | undefined => {
     const container = containerRef.current
     if (!container || container.clientWidth === 0 || container.clientHeight === 0) return undefined
     const next = fitAddonRef.current?.proposeDimensions()
     return isValidTerminalGridSize(next) ? next : undefined
-  }
+  }, [])
 
-  const resizeGridFromContainer = () => {
+  const resizeGridFromContainer = useCallback(() => {
     const container = containerRef.current
     if (!container || container.clientWidth === 0 || container.clientHeight === 0) return false
     lastFitSizeRef.current = { w: container.clientWidth, h: container.clientHeight }
     const next = readProposedGridSize()
     return next ? commitGridSize(next) : false
-  }
+  }, [commitGridSize, readProposedGridSize])
 
-  const fitSettledPanelGrid = () => {
+  const fitSettledPanelGrid = useCallback(() => {
     return resizeGridFromContainer()
-  }
+  }, [resizeGridFromContainer])
 
-  const flushPendingPtyResize = () => {
+  const flushPendingPtyResize = useCallback(() => {
     clearPtyResizeTimer()
     const pending = pendingPtySizeRef.current
     pendingPtySizeRef.current = null
     if (pending) void resizeTerminal(terminalId, pending.cols, pending.rows)
-  }
+  }, [clearPtyResizeTimer, resizeTerminal, terminalId])
 
-  const schedulePtyResize = (next: TerminalGridSize) => {
+  const schedulePtyResize = useCallback((next: TerminalGridSize) => {
     const term = xtermRef.current
     pendingPtySizeRef.current = next
     clearPtyResizeTimer()
@@ -344,9 +353,9 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       ptyResizeTimerRef.current = null
       flushPendingPtyResize()
     }, delay)
-  }
+  }, [clearPtyResizeTimer, flushPendingPtyResize])
 
-  const fitNow = (refresh = false, focusAfter = false) => {
+  const fitNow = useCallback((refresh = false, focusAfter = false) => {
     const container = containerRef.current
     if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
     const term = xtermRef.current
@@ -370,9 +379,9 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       }
       if (focusAfter && isActiveRef.current) term.focus()
     } catch {}
-  }
+  }, [commitGridSize, readProposedGridSize, spawnPendingTerminal, terminalId])
 
-  const scheduleFit = (refresh = false, focusAfter = false) => {
+  const scheduleFit = useCallback((refresh = false, focusAfter = false) => {
     pendingFitFlagsRef.current = {
       refresh: pendingFitFlagsRef.current.refresh || refresh,
       focusAfter: pendingFitFlagsRef.current.focusAfter || focusAfter,
@@ -386,7 +395,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
       fitNow(flags.refresh, flags.focusAfter)
     })
-  }
+  }, [fitNow])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -688,24 +697,38 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       xtermRef.current = null
       searchAddonRef.current = null
     }
-  }, [terminalId, writeToTerminal, resizeTerminal, spawnPendingTerminal])
+  }, [
+    clearBuffer,
+    clearPtyResizeTimer,
+    copySelection,
+    fitSettledPanelGrid,
+    isTerminalWritable,
+    openSearch,
+    pasteFromClipboard,
+    resizeTerminal,
+    scheduleFit,
+    schedulePtyResize,
+    spawnPendingTerminal,
+    terminalId,
+    writeToTerminal,
+  ])
 
   useEffect(() => {
     if (!isActive) return
     // Size-only: fit without full refresh/scrollToBottom (avoids end-of-drag flash).
     scheduleFit(false, false)
-  }, [layoutKey])
+  }, [isActive, layoutKey, scheduleFit])
 
   useEffect(() => {
     if (!isActive) return
     scheduleFit(true, true)
-  }, [isActive])
+  }, [isActive, scheduleFit])
 
   // Restart / deferred create: fit again as soon as a PTY is requested.
   useEffect(() => {
     if (!ptySpawnPending) return
     scheduleFit(true, isActiveRef.current)
-  }, [ptySpawnPending, terminalId])
+  }, [ptySpawnPending, scheduleFit])
 
   useEffect(() => {
     const matches = (detail?: TerminalViewBridgeDetail) => {
@@ -728,16 +751,16 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       window.removeEventListener(TERMINAL_CLEAR_EVENT, onClear)
       window.removeEventListener(TERMINAL_SEARCH_EVENT, onSearch)
     }
-  }, [terminalId])
+  }, [clearBuffer, openSearch, terminalId])
 
   useEffect(() => {
     if (!searchOpen || !searchQuery.trim()) {
-      resetSearchMatch()
+      queueMicrotask(() => resetSearchMatch())
       searchAddonRef.current?.clearDecorations()
       return
     }
     searchAddonRef.current?.findNext(searchQuery, terminalSearchOptions(true))
-  }, [searchQuery, searchOpen])
+  }, [resetSearchMatch, searchQuery, searchOpen])
 
   useEffect(() => {
     const term = xtermRef.current
@@ -781,7 +804,11 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       }}
       onContextMenu={(event: ReactMouseEvent) => {
         if (!shouldShowAppContextMenu(event)) return
-        setContextMenu({ x: event.clientX, y: event.clientY })
+        setContextMenu({
+          x: event.clientX,
+          y: event.clientY,
+          items: contextMenuItems(),
+        })
       }}
     >
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 py-2">
@@ -802,7 +829,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          items={contextMenuItems()}
+          items={contextMenu.items}
           onClose={() => setContextMenu(null)}
         />
       )}

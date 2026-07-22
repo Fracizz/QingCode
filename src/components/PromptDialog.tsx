@@ -14,21 +14,18 @@ export default function PromptDialog() {
 
   useEffect(() => {
     if (!request) return
-    setValue(request.defaultValue ?? '')
-    setError(null)
+    queueMicrotask(() => {
+      setValue(request.defaultValue ?? '')
+      setError(null)
+    })
     const t = window.setTimeout(() => {
       const input = inputRef.current
       if (!input) return
       input.focus()
       input.select()
     }, 0)
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') answer(null)
-    }
-    window.addEventListener('keydown', onKeyDown)
     return () => {
       window.clearTimeout(t)
-      window.removeEventListener('keydown', onKeyDown)
     }
   }, [request, answer])
 
@@ -73,6 +70,7 @@ export default function PromptDialog() {
             )}
             <input
               ref={inputRef}
+              data-modal-autofocus
               type="text"
               value={value}
               onChange={event => {

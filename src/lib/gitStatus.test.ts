@@ -6,6 +6,7 @@ import {
   changesFromWorkdirEntries,
   dirGitStatus,
   dirHasGitChanges,
+  formatRelativeCommitTime,
   formatScmDisplayPath,
   collectUnmergedChanges,
   gitChangeIsUnmerged,
@@ -145,6 +146,14 @@ describe('gitStatus helpers', () => {
     expect(scmStatusBadgeTone('D ', 'staged')).toBe('deleted')
     expect(scmStatusBadgeTone('M ', 'unstaged')).toBe('modified')
     expect(scmStatusBadgeTone('UU', 'unstaged')).toBe('conflict')
+  })
+
+  it('formats relative commit times', () => {
+    const now = Date.parse('2026-07-22T12:00:00.000Z')
+    expect(formatRelativeCommitTime('2026-07-22T11:59:30.000Z', now)).toBe('刚刚')
+    expect(formatRelativeCommitTime('2026-07-22T11:30:00.000Z', now)).toBe('30 分钟前')
+    expect(formatRelativeCommitTime('2026-07-21T12:00:00.000Z', now)).toBe('昨天')
+    expect(formatRelativeCommitTime('2026-06-01T00:00:00.000Z', now)).toMatch(/2026-06-01/)
   })
 
   it('detects unmerged conflict statuses', () => {

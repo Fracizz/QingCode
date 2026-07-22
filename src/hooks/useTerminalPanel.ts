@@ -49,7 +49,7 @@ export interface UseTerminalPanelReturn {
  * Pointer Capture 拖动：每帧只应用最新像素尺寸，字符网格由终端独立调度。
  */
 export function useTerminalPanel(): UseTerminalPanelReturn {
-  const initialTerminalPanel = useRef(loadTerminalPanelState()).current
+  const [initialTerminalPanel] = useState(loadTerminalPanelState)
   const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)
   const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)
   const [terminalWidth, setTerminalWidth] = useState(initialTerminalPanel.width)

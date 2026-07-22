@@ -75,6 +75,7 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
         role="dialog"
         aria-modal="true"
         aria-labelledby="compare-title"
+        aria-describedby="compare-description"
         className="relative flex h-[min(80vh,640px)] w-full max-w-[920px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
@@ -84,7 +85,7 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
               {t('比较：{name}', { name })}
             </h2>
             <Tooltip label={path} side="bottom" onlyWhenOverflow wrapperClassName="block min-w-0">
-              <p className="text-ui-sm truncate text-fg-dim">{path}</p>
+              <p id="compare-description" className="text-ui-sm truncate text-fg-dim">{path}</p>
             </Tooltip>
           </div>
         </div>

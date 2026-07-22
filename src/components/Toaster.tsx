@@ -27,7 +27,7 @@ export default function Toaster() {
               ? 'bg-ok'
               : 'bg-accent'
         // Mirrors the auto-dismiss timers in projectStore.pushToast.
-        const durationMs = t.detail ? 6000 : 4000
+        const durationMs = t.action ? 8000 : t.detail ? 6000 : 4000
         return (
           <div
             key={t.id}
@@ -41,8 +41,22 @@ export default function Toaster() {
               {t.detail ? (
                 <p className="text-ui-sm mt-1 leading-relaxed text-fg-muted">{t.detail}</p>
               ) : null}
+              {t.action ? (
+                <button
+                  type="button"
+                  className="mt-2 rounded border border-border-strong px-2 py-1 text-[12px] font-medium text-fg hover:bg-bg-hover"
+                  onClick={() => {
+                    dismiss(t.id)
+                    void t.action?.onAction()
+                  }}
+                >
+                  {t.action.label}
+                </button>
+              ) : null}
             </div>
             <button
+              type="button"
+              aria-label="关闭通知"
               onClick={() => dismiss(t.id)}
               className="text-fg-dim hover:text-fg flex-shrink-0"
             >

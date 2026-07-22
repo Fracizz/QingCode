@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -10,18 +9,6 @@ export default function ChoiceDialog() {
   const { t } = useI18n()
   const request = useChoiceStore(s => s.request)
   const answer = useChoiceStore(s => s.answer)
-  const primaryRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    if (!request) return
-    primaryRef.current?.focus()
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') answer(null)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [request, answer])
-
   if (!request) return null
 
   const markdownDetail = Boolean(request.detailMarkdown && request.detail)
@@ -85,8 +72,8 @@ export default function ChoiceDialog() {
             return (
               <button
                 key={option.id}
-                ref={isPrimary ? primaryRef : undefined}
                 type="button"
+                data-modal-autofocus={isPrimary || undefined}
                 className={
                   option.danger
                     ? 'px-3 py-1.5 text-[13px] rounded bg-danger/90 hover:bg-danger text-white transition-colors'

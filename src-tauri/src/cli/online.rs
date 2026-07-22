@@ -86,9 +86,7 @@ fn dispatch(req: IpcRequest) -> i32 {
                 )
             }
         }
-        Err(ipc::ClientError::AppNotRunning(msg)) => {
-            output::fail(EXIT_APP_NOT_RUNNING, msg)
-        }
+        Err(ipc::ClientError::AppNotRunning(msg)) => output::fail(EXIT_APP_NOT_RUNNING, msg),
         Err(ipc::ClientError::Other(msg)) => output::fail(EXIT_ERROR, msg),
     }
 }

@@ -227,8 +227,11 @@ pub fn remove_project(conn: &Connection, query: &str) -> Result<ProjectRow, Stri
     let projects = list_projects(conn)?;
     let target = resolve_project(&projects, query)?;
     let removed = target.clone();
-    conn.execute("DELETE FROM recent_files WHERE project_id = ?1", params![removed.id])
-        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM recent_files WHERE project_id = ?1",
+        params![removed.id],
+    )
+    .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM projects WHERE id = ?1", params![removed.id])
         .map_err(|e| e.to_string())?;
     Ok(removed)

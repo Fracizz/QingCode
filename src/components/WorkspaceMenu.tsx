@@ -93,7 +93,7 @@ export default function WorkspaceMenu() {
 
   useEffect(() => {
     if (!open) return
-    refresh()
+    queueMicrotask(refresh)
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node
       if (dropdownRef.current?.contains(target)) return

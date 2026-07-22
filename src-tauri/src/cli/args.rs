@@ -4,10 +4,18 @@
 pub enum Command {
     Help,
     ProjectList,
-    ProjectAdd { paths: Vec<String> },
-    ProjectRemove { query: String },
-    ProjectSwitch { query: String },
-    RunList { project: Option<String> },
+    ProjectAdd {
+        paths: Vec<String>,
+    },
+    ProjectRemove {
+        query: String,
+    },
+    ProjectSwitch {
+        query: String,
+    },
+    RunList {
+        project: Option<String>,
+    },
     RunGet {
         query: String,
         project: Option<String>,
@@ -28,9 +36,15 @@ pub enum Command {
         query: String,
         project: Option<String>,
     },
-    RunStatus { project: Option<String> },
-    TrustGrant { path: String },
-    Open { targets: Vec<String> },
+    RunStatus {
+        project: Option<String>,
+    },
+    TrustGrant {
+        path: String,
+    },
+    Open {
+        targets: Vec<String>,
+    },
 }
 
 const ROOT_COMMANDS: &[&str] = &["project", "run", "trust", "open", "help"];
@@ -111,7 +125,10 @@ fn parse_project(args: &[&str]) -> Result<Command, String> {
     }
 }
 
-fn take_flag_value<'a>(args: &[&'a str], name: &str) -> Result<(Option<&'a str>, Vec<&'a str>), String> {
+fn take_flag_value<'a>(
+    args: &[&'a str],
+    name: &str,
+) -> Result<(Option<&'a str>, Vec<&'a str>), String> {
     let mut value = None;
     let mut rest = Vec::new();
     let mut i = 0;

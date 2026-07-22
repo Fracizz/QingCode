@@ -16,7 +16,7 @@ export default function ThemeSettings() {
   const [resolved, setResolved] = useState<ResolvedTheme>(() => getResolvedTheme(theme))
 
   useEffect(() => {
-    setResolved(getResolvedTheme(theme))
+    queueMicrotask(() => setResolved(getResolvedTheme(theme)))
   }, [theme])
 
   const update = (value: AppTheme) => {

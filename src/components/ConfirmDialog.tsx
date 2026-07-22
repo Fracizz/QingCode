@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react'
 import { AlertTriangle, Info, Trash2 } from 'lucide-react'
 import { useConfirmStore, type ConfirmKind } from '../store/confirmStore'
 import ModalOverlay from './ModalOverlay'
@@ -29,19 +28,6 @@ export default function ConfirmDialog() {
   const { t } = useI18n()
   const request = useConfirmStore(s => s.request)
   const answer = useConfirmStore(s => s.answer)
-  const cancelRef = useRef<HTMLButtonElement>(null)
-  const confirmRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    if (!request) return
-    confirmRef.current?.focus()
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') answer(false)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [request, answer])
-
   if (!request) return null
 
   const kind = request.kind ?? 'warning'
@@ -95,8 +81,8 @@ export default function ConfirmDialog() {
         </div>
         <div className="flex flex-wrap justify-end gap-2 border-t border-border px-4 py-3">
           <button
-            ref={cancelRef}
             type="button"
+            data-modal-autofocus
             className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             onClick={() => answer(false)}
           >
@@ -112,7 +98,6 @@ export default function ConfirmDialog() {
             </button>
           )}
           <button
-            ref={confirmRef}
             type="button"
             className={`px-3 py-1.5 text-[13px] rounded transition-colors ${meta.confirmClass}`}
             onClick={() => answer(true)}

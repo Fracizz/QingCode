@@ -262,6 +262,29 @@ export function buildNamedWorkspace(input: {
   }
 }
 
+/**
+ * Compute title-bar hide/unhide updates so only `memberIds` stay visible.
+ * Returns only projects whose `hidden` flag must change.
+ */
+export function planTitleBarVisibilityUpdates(
+  projects: ProjectLike[],
+  memberIds: Iterable<string>,
+): Array<{ id: string; hidden: 0 | 1; ephemeral: boolean }> {
+  const memberIdSet = new Set(memberIds)
+  const updates: Array<{ id: string; hidden: 0 | 1; ephemeral: boolean }> = []
+  for (const project of projects) {
+    const wantHidden: 0 | 1 = memberIdSet.has(project.id) ? 0 : 1
+    const isHidden: 0 | 1 = project.hidden ? 1 : 0
+    if (wantHidden === isHidden) continue
+    updates.push({
+      id: project.id,
+      hidden: wantHidden,
+      ephemeral: Boolean(project.ephemeral),
+    })
+  }
+  return updates
+}
+
 /** Remap saved sessions onto current project ids (when path match remapped the id). */
 export function remapWorkspaceSessions(
   workspace: NamedWorkspace,

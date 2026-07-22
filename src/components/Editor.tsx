@@ -483,7 +483,11 @@ export default function Editor() {
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
   const currentProject = useProjectStore(s => s.currentProject)
   const setView = useUIStore(s => s.setView)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    items: ContextMenuItem[]
+  } | null>(null)
   const [mdPreviewMode, setMdPreviewMode] = useState<MdPreviewMode>('off')
   const [previewContent, setPreviewContent] = useState('')
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
@@ -640,7 +644,7 @@ export default function Editor() {
     void import('../lib/terminalCursorSettings').then(m =>
       m.loadEffectiveTerminalCursorBlinking(currentProject),
     )
-  }, [currentProject?.id])
+  }, [currentProject])
 
   useEffect(() => {
     const onMinimap = (event: Event) => {
@@ -694,16 +698,16 @@ export default function Editor() {
 
   useEffect(() => {
     if (!showPreviewPane || !activeTab) {
-      setPreviewContent('')
+      queueMicrotask(() => setPreviewContent(''))
       return
     }
     const sync = () => {
       setPreviewContent(getLiveEditorContent(activeTab.id) ?? activeTab.content ?? '')
     }
-    sync()
+    queueMicrotask(sync)
     const timer = window.setInterval(sync, 400)
     return () => window.clearInterval(timer)
-  }, [showPreviewPane, activeTab?.id, activeTab?.content, activeTab?.dirty])
+  }, [showPreviewPane, activeTab])
 
   // Side-by-side Markdown: keep editor ↔ preview vertical scroll in sync.
   useEffect(() => {
@@ -733,7 +737,7 @@ export default function Editor() {
   }, [mdPreviewMode, showSourcePane, showPreviewPane, activeTabId, previewContent])
 
   useEffect(() => {
-    if (!markdownTab) setMdPreviewMode('off')
+    if (!markdownTab) queueMicrotask(() => setMdPreviewMode('off'))
   }, [markdownTab, activeTabId])
 
   useEffect(() => {
@@ -978,8 +982,13 @@ export default function Editor() {
       return
     }
     if (!shouldShowAppContextMenu(event)) return
+    if (!activeTab) return
     viewRef.current?.focus()
-    setContextMenu({ x: event.clientX, y: event.clientY })
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      items: menuItems(activeTab.path),
+    })
   }
 
   if (!activeTab) {
@@ -1116,7 +1125,7 @@ export default function Editor() {
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          items={menuItems(activeTab.path)}
+          items={contextMenu.items}
           onClose={() => setContextMenu(null)}
         />
       )}

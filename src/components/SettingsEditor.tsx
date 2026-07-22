@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -108,7 +109,6 @@ let appliedSettingsFocusSignal = 0
 
 const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: 'common', label: '常用设置' },
-  { id: 'appearance', label: '外观' },
   { id: 'editor', label: '文本编辑器' },
   { id: 'terminal', label: '终端' },
   { id: 'ai', label: 'AI' },
@@ -151,6 +151,9 @@ export default function SettingsEditor() {
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const sectionRefs = useRef<Partial<Record<CategoryId, HTMLElement | null>>>({})
+  const onSectionRef = useCallback((id: CategoryId, node: HTMLElement | null) => {
+    sectionRefs.current[id] = node
+  }, [])
 
   useEffect(() => {
     searchRef.current?.focus()
@@ -175,11 +178,13 @@ export default function SettingsEditor() {
   useEffect(() => {
     if (settingsFocusSignal === 0 || settingsFocusSignal <= appliedSettingsFocusSignal) return
     appliedSettingsFocusSignal = settingsFocusSignal
-    setScope('user')
-    if (settingsFocusQuery) {
-      setQuery(settingsFocusQuery)
-      setCategory('editor')
-    }
+    queueMicrotask(() => {
+      setScope('user')
+      if (settingsFocusQuery) {
+        setQuery(settingsFocusQuery)
+        setCategory('editor')
+      }
+    })
     requestAnimationFrame(() => {
       sectionRefs.current.editor?.scrollIntoView({ behavior: 'smooth', block: 'start' })
       searchRef.current?.focus()
@@ -187,7 +192,7 @@ export default function SettingsEditor() {
   }, [settingsFocusSignal, settingsFocusQuery])
 
   useEffect(() => {
-    if (scope === 'workspace' && !currentProject) setScope('user')
+    if (scope === 'workspace' && !currentProject) queueMicrotask(() => setScope('user'))
   }, [scope, currentProject])
 
   useEffect(() => {
@@ -205,10 +210,13 @@ export default function SettingsEditor() {
   const workspaceLocked = scope === 'workspace'
   const q = query.trim().toLowerCase()
 
-  const match = (...texts: string[]) => {
-    if (!q) return true
-    return texts.some(text => t(text).toLowerCase().includes(q) || text.toLowerCase().includes(q))
-  }
+  const match = useCallback(
+    (...texts: string[]) => {
+      if (!q) return true
+      return texts.some(text => t(text).toLowerCase().includes(q) || text.toLowerCase().includes(q))
+    },
+    [q, t],
+  )
 
   const updateTheme = (value: AppTheme) => {
     setThemeState(value)
@@ -313,9 +321,8 @@ export default function SettingsEditor() {
         )
       }
       if (cat.id === 'common') {
-        return match('颜色主题', '界面字号', '常用设置')
+        return match('颜色主题', '界面字号', '常用设置', '外观', '深色', '浅色')
       }
-      if (cat.id === 'appearance') return match('颜色主题', '外观', '深色', '浅色')
       if (cat.id === 'editor')
         return match(
           '界面字体',
@@ -359,7 +366,7 @@ export default function SettingsEditor() {
       }
       return true
     })
-  }, [q, language, shortcuts])
+  }, [match, q])
 
   return (
     <div className="ui-font-scaled h-full flex flex-col bg-bg text-fg min-w-0">
@@ -464,14 +471,14 @@ export default function SettingsEditor() {
         {/* Content */}
         <div className="flex-1 min-w-0 overflow-auto px-6 py-4">
           <div className="max-w-[800px] flex flex-col gap-6">
-            {match('常用设置', '颜色主题', '界面字号') && (
+            {match('常用设置', '颜色主题', '界面字号', '外观', '深色', '浅色') && (
               <Section
                 id="common"
                 title={t('常用设置')}
-                sectionRefs={sectionRefs}
+                onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
-                {match('颜色主题', '外观') && (
+                {match('颜色主题', '外观', '深色', '浅色') && (
                   <SettingItem
                     title={t('颜色主题')}
                     description={t('指定 QingCode 使用的颜色主题。选择“跟随系统”时随操作系统明暗切换。')}
@@ -514,34 +521,6 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('外观', '颜色主题') && (
-              <Section
-                id="appearance"
-                title={t('外观')}
-                sectionRefs={sectionRefs}
-                onVisible={setCategory}
-              >
-                <SettingItem
-                  title={t('颜色主题')}
-                  description={t('指定 QingCode 使用的颜色主题。')}
-                  modified={theme !== DEFAULT_THEME}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <SettingSelect
-                    value={theme}
-                    disabled={workspaceLocked}
-                    aria-label={t('颜色主题')}
-                    onChange={next => updateTheme(next as AppTheme)}
-                    options={THEMES.map(option => ({
-                      value: option.value,
-                      label: t(option.label),
-                    }))}
-                  />
-                </SettingItem>
-              </Section>
-            )}
-
             {match(
               '文本编辑器',
               '界面字体',
@@ -558,7 +537,7 @@ export default function SettingsEditor() {
               <Section
                 id="editor"
                 title={t('文本编辑器')}
-                sectionRefs={sectionRefs}
+                onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
                 {match('参考线', '缩进线', '括号线', 'editor.guides.enabled') && (
@@ -719,7 +698,7 @@ export default function SettingsEditor() {
               <Section
                 id="terminal"
                 title={t('终端')}
-                sectionRefs={sectionRefs}
+                onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
                 <SettingItem
@@ -811,7 +790,7 @@ export default function SettingsEditor() {
               <Section
                 id="ai"
                 title={t('AI')}
-                sectionRefs={sectionRefs}
+                onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
                 <SettingItem
@@ -870,7 +849,7 @@ export default function SettingsEditor() {
               <Section
                 id="features"
                 title={t('功能')}
-                sectionRefs={sectionRefs}
+                onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
                 {match('会话状态', '会话状态保存', '会话') && (
@@ -1088,7 +1067,7 @@ export default function SettingsEditor() {
               <Section
                 id="language"
                 title={t('语言')}
-                sectionRefs={sectionRefs}
+                onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
                 <SettingItem
@@ -1184,7 +1163,7 @@ export default function SettingsEditor() {
               <Section
                 id="json"
                 title={t('打开设置 JSON')}
-                sectionRefs={sectionRefs}
+                onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
                 <SettingItem

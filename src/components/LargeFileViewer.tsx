@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type MutableRefObject,
   type ReactNode,
 } from 'react'
 import { Copy, ExternalLink, Eye, LocateFixed, Search } from 'lucide-react'
@@ -67,14 +66,12 @@ function renderHighlighted(
   text: string,
   query: string,
   activeIndex: number,
-  markRefs: MutableRefObject<(HTMLElement | null)[]>,
 ): ReactNode {
   if (!query) return text
   const matches = findAllMatches(text, query)
   if (matches.length === 0) return text
   const nodes: ReactNode[] = []
   let cursor = 0
-  markRefs.current = []
   matches.forEach((start, i) => {
     if (start > cursor) nodes.push(text.slice(cursor, start))
     const end = start + query.length
@@ -82,9 +79,7 @@ function renderHighlighted(
     nodes.push(
       <mark
         key={`${start}-${i}`}
-        ref={el => {
-          markRefs.current[i] = el
-        }}
+        data-search-match-index={i}
         className={
           isActive
             ? 'rounded-sm bg-accent/40 text-fg ring-1 ring-accent'
@@ -117,7 +112,6 @@ export default function LargeFileViewer({ tab }: Props) {
   const [activeMatch, setActiveMatch] = useState(0)
   const [statusLine, setStatusLine] = useState<number | null>(null)
   const requestId = useRef(0)
-  const markRefs = useRef<(HTMLElement | null)[]>([])
   const preRef = useRef<HTMLPreElement>(null)
   // 行偏移索引缓存，避免重复计算
   const lineIndexRef = useRef<LineIndex | null>(null)
@@ -154,12 +148,14 @@ export default function LargeFileViewer({ tab }: Props) {
   )
 
   useEffect(() => {
-    void loadSlice(0)
-    setStatusLine(null)
-    setSearchQuery('')
-    setSearchInput('')
-    setActiveMatch(0)
-    setLineInput('')
+    queueMicrotask(() => void loadSlice(0))
+    queueMicrotask(() => {
+      setStatusLine(null)
+      setSearchQuery('')
+      setSearchInput('')
+      setActiveMatch(0)
+      setLineInput('')
+    })
   }, [loadSlice, tab.path])
 
   const matches = useMemo(
@@ -169,14 +165,16 @@ export default function LargeFileViewer({ tab }: Props) {
 
   useEffect(() => {
     if (matches.length === 0) {
-      setActiveMatch(0)
+      queueMicrotask(() => setActiveMatch(0))
       return
     }
-    if (activeMatch >= matches.length) setActiveMatch(0)
+    if (activeMatch >= matches.length) queueMicrotask(() => setActiveMatch(0))
   }, [matches, activeMatch])
 
   useEffect(() => {
-    const el = markRefs.current[activeMatch]
+    const el = preRef.current?.querySelector<HTMLElement>(
+      `[data-search-match-index="${activeMatch}"]`,
+    )
     if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [activeMatch, text, searchQuery])
 
@@ -525,7 +523,7 @@ export default function LargeFileViewer({ tab }: Props) {
             className="m-0 whitespace-pre-wrap break-all p-4 font-mono text-[12px] leading-5 text-fg"
           >
             {text
-              ? renderHighlighted(text, searchQuery, activeMatch, markRefs)
+              ? renderHighlighted(text, searchQuery, activeMatch)
               : loading
                 ? ''
                 : t('（空）')}

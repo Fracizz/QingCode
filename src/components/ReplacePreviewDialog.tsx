@@ -63,6 +63,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
         role="dialog"
         aria-modal="true"
         aria-labelledby="replace-preview-title"
+        aria-describedby="replace-preview-description"
         className="modal-content-enter relative flex h-[min(78vh,620px)] w-full max-w-[640px] flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
@@ -71,7 +72,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
             <h2 id="replace-preview-title" className="text-[14px] font-semibold text-fg">
               {t('替换预览')}
             </h2>
-            <p className="text-ui-sm text-fg-muted">
+            <p id="replace-preview-description" className="text-ui-sm text-fg-muted">
               {t('将把「{query}」替换为「{replacement}」', {
                 query: preview.query,
                 replacement: preview.replacement,

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, lazy, Suspense } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import './App.css'
 import ActivityBar from './components/ActivityBar'
 import Sidebar from './components/Sidebar'
@@ -97,7 +97,6 @@ function scheduleDeferredWork(fn: () => void, timeoutMs = 600): () => void {
 
 function App() {
   const { t } = useI18n()
-  const initialSidebarWidth = useRef(loadSidebarWidth()).current
   const addTerminal = useTerminalStore(s => s.addTerminal)
   const activateProject = useTerminalStore(s => s.activateProject)
   const spawnRestoredTerminals = useTerminalStore(s => s.spawnRestoredTerminals)
@@ -149,14 +148,12 @@ function App() {
     terminalHeight,
     terminalWidth,
     isTerminalResizing,
-    dragHeightRef,
-    dragWidthRef,
     onResizerPointerDown,
     onWidthResizerPointerDown,
     terminalPanelRef,
   } = useTerminalPanel()
 
-  const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth)
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
   const [projectsReady, setProjectsReady] = useState(false)
   const terminalPosition = terminalPositionForTemplate(panelLayout)
 
@@ -245,7 +242,7 @@ function App() {
   useEffect(() => {
     if (!currentProject || !tabsNeedContentLoad) return
     void loadMissingTabContents()
-  }, [currentProject?.id, tabsNeedContentLoad, loadMissingTabContents])
+  }, [currentProject, tabsNeedContentLoad, loadMissingTabContents])
 
   // Ensure the current project has at least one terminal, and that the active
   // terminal belongs to the current project. Defer PTY spawn so first project
@@ -273,8 +270,14 @@ function App() {
       }
       void addTerminal(projectPath, projectId)
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProject?.id, terminalOpen, projectTrusted])
+  }, [
+    activateProject,
+    addTerminal,
+    currentProject,
+    projectTrusted,
+    spawnRestoredTerminals,
+    terminalOpen,
+  ])
 
   const handleAddProject = () => {
     setView('explorer')
@@ -323,18 +326,6 @@ function App() {
             </ResizableSidebar>
           )}
 
-          {sidebarOpen && view === 'sourceControl' && (
-            <ResizableSidebar
-              width={sidebarWidth}
-              onWidthChange={setSidebarWidth}
-              className="ui-font-scaled bg-bg-sidebar"
-            >
-              <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                <SourceControlPanel />
-              </Suspense>
-            </ResizableSidebar>
-          )}
-
           {sidebarOpen && view === 'run' && (
             <ResizableSidebar
               width={sidebarWidth}
@@ -354,8 +345,6 @@ function App() {
               terminalHeight={terminalHeight}
               terminalWidth={terminalWidth}
               isTerminalResizing={isTerminalResizing}
-              dragHeightRef={dragHeightRef}
-              dragWidthRef={dragWidthRef}
               onResizerPointerDown={onResizerPointerDown}
               onWidthResizerPointerDown={onWidthResizerPointerDown}
               terminalPanelRef={terminalPanelRef}
@@ -366,6 +355,10 @@ function App() {
             {view === 'settings' ? (
               <Suspense fallback={<LazyFallback />}>
                 <SettingsEditor />
+              </Suspense>
+            ) : view === 'sourceControl' ? (
+              <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                <SourceControlPanel />
               </Suspense>
             ) : (
               <>
@@ -407,8 +400,6 @@ function App() {
             terminalHeight={terminalHeight}
             terminalWidth={terminalWidth}
             isTerminalResizing={isTerminalResizing}
-            dragHeightRef={dragHeightRef}
-            dragWidthRef={dragWidthRef}
             onResizerPointerDown={onResizerPointerDown}
             onWidthResizerPointerDown={onWidthResizerPointerDown}
             terminalPanelRef={terminalPanelRef}

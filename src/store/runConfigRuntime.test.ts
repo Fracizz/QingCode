@@ -20,6 +20,7 @@ import {
   type RunConfig,
 } from './runConfigStore'
 import { useTerminalStore } from './terminalStore'
+import { useProjectStore } from './projectStore'
 import type { TerminalTab } from '../types'
 
 const originalAddScriptTerminal = useTerminalStore.getState().addScriptTerminal
@@ -260,5 +261,37 @@ describe('run config runtime helpers', () => {
       'terminal-4',
     ])
     expect(useRunConfigStore.getState().isConfigRunning('cfg')).toBe(true)
+  })
+
+  it('keeps a deleted configuration recoverable through the undo toast', async () => {
+    const project = {
+      id: 'p1',
+      name: 'project',
+      path: 'D:/project',
+      created_at: 1,
+      last_opened_at: 1,
+      ephemeral: true,
+    }
+    const saveConfigs = vi.fn(async (_project, configs: RunConfig[]) => {
+      useRunConfigStore.setState({ configsByProject: { p1: configs } })
+    })
+    const stopConfig = vi.fn().mockResolvedValue(undefined)
+    useProjectStore.setState({ toasts: [] })
+    useRunConfigStore.setState({
+      configsByProject: { p1: sampleConfigs },
+      saveConfigs,
+      stopConfig,
+    })
+
+    await useRunConfigStore.getState().removeConfig(project, 'cfg')
+
+    expect(stopConfig).toHaveBeenCalledWith(sampleConfigs[0])
+    expect(useRunConfigStore.getState().configsByProject.p1).toEqual([])
+    const undoToast = useProjectStore.getState().toasts.at(-1)
+    expect(undoToast?.text).toContain('已删除运行配置')
+    expect(undoToast?.action?.label).toBe('撤销')
+
+    await undoToast?.action?.onAction()
+    expect(useRunConfigStore.getState().configsByProject.p1).toEqual(sampleConfigs)
   })
 })

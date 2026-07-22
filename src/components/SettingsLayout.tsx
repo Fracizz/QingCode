@@ -1,8 +1,7 @@
-import { useEffect, type MutableRefObject, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, type ReactNode } from 'react'
 
 export type SettingsCategoryId =
   | 'common'
-  | 'appearance'
   | 'editor'
   | 'terminal'
   | 'ai'
@@ -14,17 +13,19 @@ export function SettingsSection({
   id,
   title,
   children,
-  sectionRefs,
+  onSectionRef,
   onVisible,
 }: {
   id: SettingsCategoryId
   title: string
   children: ReactNode
-  sectionRefs: MutableRefObject<Partial<Record<SettingsCategoryId, HTMLElement | null>>>
+  onSectionRef: (id: SettingsCategoryId, node: HTMLElement | null) => void
   onVisible: (id: SettingsCategoryId) => void
 }) {
+  const localRef = useRef<HTMLElement | null>(null)
+
   useEffect(() => {
-    const el = sectionRefs.current[id]
+    const el = localRef.current
     if (!el) return
     const observer = new IntersectionObserver(
       entries => {
@@ -34,13 +35,19 @@ export function SettingsSection({
     )
     observer.observe(el)
     return () => observer.disconnect()
-  }, [id, onVisible, sectionRefs])
+  }, [id, onVisible])
+
+  const setSectionRef = useCallback(
+    (node: HTMLElement | null) => {
+      localRef.current = node
+      onSectionRef(id, node)
+    },
+    [id, onSectionRef],
+  )
 
   return (
     <section
-      ref={node => {
-        sectionRefs.current[id] = node
-      }}
+      ref={setSectionRef}
       className="scroll-mt-4"
     >
       <h2 className="text-[18px] font-semibold text-fg mb-3 pb-2 border-b border-border">

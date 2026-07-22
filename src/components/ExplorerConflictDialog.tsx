@@ -16,8 +16,10 @@ export default function ExplorerConflictDialog() {
 
   useEffect(() => {
     if (!request) return
-    setValue(request.defaultName)
-    setError(null)
+    queueMicrotask(() => {
+      setValue(request.defaultName)
+      setError(null)
+    })
     const timer = window.setTimeout(() => {
       const input = inputRef.current
       if (!input) return

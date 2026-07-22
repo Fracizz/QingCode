@@ -336,6 +336,28 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
     if (target) await get().stopConfig(target)
     const next = current.filter(c => c.id !== configId)
     await get().saveConfigs(project, next)
+    if (!target) return
+
+    useProjectStore.getState().pushToast(
+      'success',
+      translate('已删除运行配置「{name}」', { name: target.name }),
+      undefined,
+      {
+        label: translate('撤销'),
+        onAction: async () => {
+          const latest = get().configsByProject[project.id] ?? []
+          if (latest.some(config => config.id === target.id)) return
+          try {
+            await get().saveConfigs(project, [...latest, target])
+            useProjectStore
+              .getState()
+              .pushToast('success', translate('已恢复运行配置「{name}」', { name: target.name }))
+          } catch {
+            // saveConfigs has already shown the actionable error toast.
+          }
+        },
+      },
+    )
   },
 
   runConfig: async (project: Project, config: RunConfig) => {

@@ -91,12 +91,8 @@ fn serve(app: AppHandle) -> Result<(), String> {
 }
 
 fn handle_client(app: AppHandle, stream: TcpStream) -> Result<(), String> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .ok();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(30)))
-        .ok();
+    stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(30))).ok();
     let mut reader = BufReader::new(stream.try_clone().map_err(|e| e.to_string())?);
     let mut writer = stream;
     let mut line = String::new();
@@ -116,10 +112,7 @@ fn handle_client(app: AppHandle, stream: TcpStream) -> Result<(), String> {
         .insert(req.id.clone(), tx);
 
     if let Err(e) = app.emit("cli-request", &req) {
-        pending()
-            .lock()
-            .ok()
-            .map(|mut g| g.remove(&req.id));
+        pending().lock().ok().map(|mut g| g.remove(&req.id));
         return Err(format!("emit cli-request: {e}"));
     }
 
@@ -131,10 +124,7 @@ fn handle_client(app: AppHandle, stream: TcpStream) -> Result<(), String> {
             data: None,
             error: Some("frontend did not respond in time".into()),
         });
-    pending()
-        .lock()
-        .ok()
-        .map(|mut g| g.remove(&req.id));
+    pending().lock().ok().map(|mut g| g.remove(&req.id));
 
     let out = serde_json::to_string(&resp).map_err(|e| e.to_string())?;
     writeln!(writer, "{out}").map_err(|e| format!("write response: {e}"))?;
@@ -164,12 +154,8 @@ pub fn client_request(req: &IpcRequest) -> Result<IpcResponse, ClientError> {
             endpoint.port
         ))
     })?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(20)))
-        .ok();
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .ok();
+    stream.set_read_timeout(Some(Duration::from_secs(20))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
     let body = serde_json::to_string(req).map_err(|e| ClientError::Other(e.to_string()))?;
     writeln!(stream, "{body}").map_err(|e| ClientError::Other(format!("send: {e}")))?;
     let mut reader = BufReader::new(stream);

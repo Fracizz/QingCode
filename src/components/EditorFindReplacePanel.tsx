@@ -117,10 +117,22 @@ function EditorFindReplaceView({ view, panel }: PanelProps) {
     input.select()
   }, [])
 
+  const currentQuery = useMemo(
+    () =>
+      new SearchQuery({
+        search,
+        replace,
+        caseSensitive,
+        regexp,
+        wholeWord,
+      }),
+    [caseSensitive, regexp, replace, search, wholeWord],
+  )
+
   const matchInfo = useMemo(() => {
     void docTick
-    return countMatches(view, queryRef.current)
-  }, [view, search, caseSensitive, regexp, wholeWord, docTick])
+    return countMatches(view, currentQuery)
+  }, [currentQuery, docTick, view])
 
   const commit = (next: {
     search?: string

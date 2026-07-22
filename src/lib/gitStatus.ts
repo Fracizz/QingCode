@@ -133,6 +133,23 @@ export function canCommitStagedChanges(
   return !busy && stagedCount > 0 && message.trim().length > 0
 }
 
+/** Lightweight relative time for SCM commit rows (no i18n / no new deps). */
+export function formatRelativeCommitTime(isoDate: string, nowMs = Date.now()): string {
+  const parsed = Date.parse(isoDate)
+  if (Number.isNaN(parsed)) return isoDate
+  const diffSec = Math.round((nowMs - parsed) / 1000)
+  if (diffSec < 60) return '刚刚'
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前`
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`
+  if (diffSec < 172800) return '昨天'
+  if (diffSec < 86400 * 30) return `${Math.floor(diffSec / 86400)} 天前`
+  const date = new Date(parsed)
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 /** Predict porcelain after staging one change (optimistic SCM refresh). */
 export function predictAfterStageChange(change: GitChange): GitChange {
   if (!gitChangeHasUnstaged(change)) return change
