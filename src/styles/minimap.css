@@ -161,56 +161,29 @@ html[data-theme='light'] .editor-minimap__viewport {
 }
 
 .editor-minimap__quick-view {
-  /* CodeGlance-style callout: rounded panel + right-pointing border beak. */
-  --qv-arrow-w: 9px;
-  --qv-arrow-h: 14px;
-  --qv-radius: 4px;
-  --qv-fill: color-mix(in srgb, var(--color-bg) 94%, var(--color-bg-sidebar));
-  --qv-stroke: color-mix(in srgb, var(--color-fg-muted) 78%, var(--color-accent));
+  /* TipArrow right + bubble gap; keep in sync with tipArrow.tsx constants. */
+  --qv-arrow-gap: 4px;
+  --qv-arrow-w: 7px;
   position: fixed;
   z-index: 40;
   left: auto;
   min-width: 220px;
   max-width: min(480px, 46vw);
   pointer-events: auto;
-  filter: drop-shadow(0 8px 22px color-mix(in srgb, #000 38%, transparent));
+  filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.42));
 }
 
 .editor-minimap__quick-view-body {
   max-height: min(320px, 50vh);
   overflow: auto;
   padding: 8px 10px;
-  border: 1px solid var(--qv-stroke);
-  border-radius: var(--qv-radius);
-  background: var(--qv-fill);
+  border-radius: 6px;
+  background: var(--color-bg-elevated, var(--color-bg));
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   font-size: var(--editor-font-size);
   line-height: 1.5;
   color: var(--color-fg);
   white-space: pre;
-}
-
-/* Filled beak + matching stroke (sits on the rounded panel's right edge). */
-.editor-minimap__quick-view::before,
-.editor-minimap__quick-view::after {
-  content: '';
-  position: absolute;
-  top: var(--minimap-qv-arrow-top, 50%);
-  transform: translateY(-50%);
-  width: var(--qv-arrow-w);
-  height: var(--qv-arrow-h);
-  pointer-events: none;
-  clip-path: polygon(0 0, 0 100%, 100% 50%);
-}
-
-.editor-minimap__quick-view::before {
-  right: calc(-1 * var(--qv-arrow-w) - 1px);
-  background: var(--qv-stroke);
-}
-
-.editor-minimap__quick-view::after {
-  right: calc(-1 * var(--qv-arrow-w) + 1px);
-  background: var(--qv-fill);
 }
 
 .editor-minimap__quick-view-line {
@@ -248,8 +221,8 @@ html[data-theme='light'] .editor-minimap__viewport {
 .editor-minimap__quick-view-rail {
   position: absolute;
   top: 0;
-  right: -4px;
-  width: 18px;
+  right: calc(-1 * (var(--qv-arrow-gap) + var(--qv-arrow-w) + 2px));
+  width: calc(var(--qv-arrow-gap) + var(--qv-arrow-w) + 10px);
   height: 100%;
   padding: 0;
   border: 0;

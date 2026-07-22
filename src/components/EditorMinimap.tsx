@@ -12,6 +12,7 @@ import { createPortal } from 'react-dom'
 import { Check } from 'lucide-react'
 import { EditorView } from '@codemirror/view'
 import { getContextMenuStylePosition } from './contextMenuPosition'
+import { TipArrow } from './tipArrow'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { setMinimapUpdateHandler } from '../lib/minimapBridge'
 import {
@@ -952,13 +953,10 @@ export default function EditorMinimap({
         createPortal(
           <div
             className="editor-minimap__quick-view"
-            style={
-              {
-                right: quickView.right,
-                top: quickView.y,
-                '--minimap-qv-arrow-top': `${quickView.arrowTop}px`,
-              } as CSSProperties
-            }
+            style={{
+              right: quickView.right,
+              top: quickView.y,
+            }}
             onMouseEnter={() => {
               quickViewHoverRef.current = true
               cancelClearQuickView()
@@ -986,6 +984,13 @@ export default function EditorMinimap({
                 )
               })}
             </div>
+            <TipArrow
+              direction="right"
+              style={{
+                top: quickView.arrowTop,
+                transform: 'translateY(-50%)',
+              }}
+            />
             <button
               type="button"
               className="editor-minimap__quick-view-rail"

@@ -36,6 +36,7 @@ import {
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
 import { listenForOpenFileRequests, openLaunchFiles } from './lib/launchFiles'
+import { listenForCliRequests } from './lib/cliBridge'
 import { useI18n } from './lib/i18n'
 import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
@@ -187,15 +188,21 @@ function App() {
   useEffect(() => {
     if (!isTauri()) return
     let cancelled = false
-    let unlisten: (() => void) | undefined
+    let unlistenOpen: (() => void) | undefined
+    let unlistenCli: (() => void) | undefined
     void listenForOpenFileRequests().then(fn => {
       if (cancelled) fn()
-      else unlisten = fn
+      else unlistenOpen = fn
+    })
+    void listenForCliRequests().then(fn => {
+      if (cancelled) fn()
+      else unlistenCli = fn
     })
     void openLaunchFiles()
     return () => {
       cancelled = true
-      unlisten?.()
+      unlistenOpen?.()
+      unlistenCli?.()
     }
   }, [])
 

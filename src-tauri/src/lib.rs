@@ -1,4 +1,6 @@
 mod app_memory;
+mod app_paths;
+mod cli;
 mod commands;
 mod content_search;
 mod exclude;
@@ -9,6 +11,7 @@ mod fonts;
 mod format;
 mod git;
 mod git_status;
+mod ipc;
 mod path_guard;
 mod terminal;
 mod update;
@@ -34,39 +37,8 @@ fn legacy_database_paths(data_dir: &Path) -> [PathBuf; 2] {
     ]
 }
 
-/// dev 构建用项目内的 .dev/qingcode.db；release 用应用数据目录下的 qingcode.db。
-/// 两者通过 `db_url` 命令暴露给前端，确保前端 Database.load 与后端 migrations 用同一个连接标签。
-fn dev_db_file() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let project_root = manifest.parent().expect("CARGO_MANIFEST_DIR has no parent");
-    project_root.join(".dev").join("qingcode.db")
-}
-
-fn resolved_db_file() -> PathBuf {
-    if cfg!(debug_assertions) {
-        dev_db_file()
-    } else {
-        dirs::data_dir()
-            .expect("no data dir")
-            .join("com.qingcode.app")
-            .join("qingcode.db")
-    }
-}
-
-/// 返回 tauri-plugin-sql 的连接标签。dev 用绝对路径（覆盖插件默认的 app_config_dir 解析），
-/// release 用相对名（由插件解析到 app_config_dir = %APPDATA%\com.qingcode.app\）。
-fn build_db_url() -> String {
-    if cfg!(debug_assertions) {
-        let db = dev_db_file();
-        let _ = std::fs::create_dir_all(db.parent().expect("no parent"));
-        format!("sqlite:{}", db.display())
-    } else {
-        "sqlite:qingcode.db".to_string()
-    }
-}
-
 fn migrate_legacy_database() {
-    let new_db = resolved_db_file();
+    let new_db = app_paths::db_file();
     if new_db.exists() {
         return;
     }
@@ -184,25 +156,22 @@ fn resize_terminal(
 
 #[tauri::command]
 fn db_url() -> String {
-    build_db_url()
+    app_paths::build_db_url()
 }
 
 /// Absolute path to the global `default-settings.json`.
 /// Dev builds write beside the project `.dev` database; release uses app data dir.
 #[tauri::command]
 fn default_settings_path() -> String {
-    let dir = if cfg!(debug_assertions) {
-        let db = dev_db_file();
-        db.parent().expect("dev db has parent").to_path_buf()
-    } else {
-        dirs::data_dir()
-            .expect("no data dir")
-            .join("com.qingcode.app")
-    };
-    let _ = std::fs::create_dir_all(&dir);
-    dir.join("default-settings.json")
+    app_paths::default_settings_file()
         .to_string_lossy()
         .into_owned()
+}
+
+/// Frontend completes an IPC CLI request started by the local IPC server.
+#[tauri::command]
+fn resolve_cli_request(id: String, ok: bool, data: Option<serde_json::Value>, error: Option<String>) {
+    ipc::resolve_request(&id, ok, data, error);
 }
 
 #[tauri::command]
@@ -316,6 +285,10 @@ fn repair_windows_main_window_size(window: &tauri::WebviewWindow) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Some(code) = cli::try_run_as_cli() {
+        std::process::exit(code);
+    }
+
     let launch_files = file_associations::collect_cli_file_paths(std::env::args());
 
     tauri::Builder::default()
@@ -323,7 +296,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_sql::Builder::default()
-                .add_migrations(&build_db_url(), {
+                .add_migrations(&app_paths::build_db_url(), {
                     let mut m = get_migrations();
                     m.extend(get_column_migrations());
                     m
@@ -336,6 +309,7 @@ pub fn run() {
         .manage(LaunchFiles(Mutex::new(launch_files)))
         .setup(|app| {
             migrate_legacy_database();
+            ipc::start_server(app.handle().clone());
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
                 // Keep visible:false from config so the HTML splash owns the first show().
                 // Pin an explicit inner size on Windows so borderless+hidden does not boot
@@ -416,6 +390,7 @@ pub fn run() {
             update::check_app_update,
             update::download_app_update,
             take_launch_files,
+            resolve_cli_request,
             file_associations::get_open_with_status,
             file_associations::register_file_open_with,
             file_associations::unregister_file_open_with,
