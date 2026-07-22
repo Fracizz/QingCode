@@ -13,6 +13,7 @@ import {
   WORKSPACE_TRUST_CHANGED_EVENT,
 } from '../lib/workspaceTrust'
 import { useGitStatusStore } from '../store/gitStatusStore'
+import { peekSourceControlCache, useSourceControlStore } from '../store/sourceControlStore'
 import ContextMenu from './ContextMenu'
 import {
   FILE_ENCODING_OPTIONS,
@@ -184,39 +185,108 @@ export default function StatusBar() {
 
   useEffect(() => {
     const projectPath = currentProject?.path
-    if (!projectPath || !isTauri()) {
+    // Non-git / ephemeral / browser preview: hide the chip (no placeholder).
+    if (!projectPath || !isTauri() || currentProject?.ephemeral) {
       setGitHead(null)
       return
     }
 
     let cancelled = false
+    let retryTimers: number[] = []
 
+    const applyHead = (info: GitHeadInfo | null) => {
+      if (!cancelled) setGitHead(info)
+    }
+
+    /** Prefer filesystem HEAD; fall back to SCM cache branch when present. */
     const loadGitHead = async () => {
+      const cached = peekSourceControlCache(projectPath)
       try {
         const info = await safeInvoke<GitHeadInfo | null>('读取 Git 分支', 'get_git_head', {
           path: projectPath,
         })
-        if (!cancelled) setGitHead(info ?? null)
+        if (cancelled) return
+        if (info) {
+          applyHead(info)
+          // Keep SCM panel branch in sync when soft refresh left it empty.
+          if (cached?.is_repository && !cached.branch) {
+            useSourceControlStore.getState().setCache(projectPath, {
+              ...cached,
+              branch: info.name,
+            })
+          }
+          return
+        }
+        if (cached?.is_repository && cached.branch) {
+          applyHead({ name: cached.branch, detached: false })
+          return
+        }
+        applyHead(null)
       } catch {
-        if (!cancelled) setGitHead(null)
+        if (cancelled) return
+        if (cached?.is_repository && cached.branch) {
+          applyHead({ name: cached.branch, detached: false })
+        } else {
+          applyHead(null)
+        }
       }
     }
 
+    // Seed immediately from SCM cache so the chip appears before IPC returns.
+    const seed = peekSourceControlCache(projectPath)
+    if (seed?.is_repository && seed.branch) {
+      applyHead({ name: seed.branch, detached: false })
+    } else {
+      applyHead(null)
+    }
+
     void loadGitHead()
+    // Allowlist sync can lag project switch; retry briefly so a race does not
+    // leave the status bar empty until the 15s poll.
+    for (const delay of [120, 400, 1000]) {
+      retryTimers.push(
+        window.setTimeout(() => {
+          void loadGitHead()
+        }, delay),
+      )
+    }
+
     const onFocus = () => {
       void loadGitHead()
     }
+    const onVisibility = () => {
+      if (!document.hidden) void loadGitHead()
+    }
+    const onWorktree = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectPath?: string }>).detail
+      if (detail?.projectPath && detail.projectPath !== projectPath) return
+      void loadGitHead()
+    }
     window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('qingcode:git-worktree-changed', onWorktree)
     const intervalId = window.setInterval(() => {
       void loadGitHead()
     }, GIT_HEAD_REFRESH_MS)
 
+    // When SCM soft-refresh fills branch later, mirror it into the status bar.
+    const unsubScm = useSourceControlStore.subscribe(state => {
+      if (cancelled || state.cachedPath !== projectPath) return
+      const branch = state.cachedStatus?.is_repository ? state.cachedStatus.branch : null
+      if (!branch) return
+      setGitHead(prev => prev ?? { name: branch, detached: false })
+    })
+
     return () => {
       cancelled = true
       window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('qingcode:git-worktree-changed', onWorktree)
       window.clearInterval(intervalId)
+      for (const id of retryTimers) window.clearTimeout(id)
+      unsubScm()
     }
-  }, [currentProject?.path])
+  }, [currentProject?.path, currentProject?.ephemeral])
 
   const showEditorHints = Boolean(activeTab)
   const showEncoding =
@@ -231,20 +301,12 @@ export default function StatusBar() {
       {...{ [STATUS_BAR_ROW_ATTR]: '' }}
       className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-bg-deep text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
     >
-      {/* Workspace context: project · git */}
+      {/* Left: folder · project · git — adjacent; project truncates, branch keeps full width. */}
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-        <span className="flex min-w-0 max-w-[28%] items-center gap-1.5">
-          <Folder size={13} className="flex-shrink-0 text-brand" />
-          <span className="truncate">{currentProject ? currentProject.name : t('未选择项目')}</span>
+        <Folder size={13} className="flex-shrink-0 text-brand" />
+        <span className="min-w-0 max-w-[28%] truncate">
+          {currentProject ? currentProject.name : t('未选择项目')}
         </span>
-        {restricted && (
-          <StatusTip label={t('受限模式：只能浏览，无法编辑或运行')}>
-            <span className="flex flex-shrink-0 items-center gap-1 text-warn">
-              <ShieldAlert size={13} />
-              {t('受限')}
-            </span>
-          </StatusTip>
-        )}
         {gitHead && (
           <>
             <StatusDivider />
@@ -259,11 +321,11 @@ export default function StatusBar() {
             >
               <button
                 type="button"
-                className="flex min-w-0 max-w-[28%] items-center gap-1.5 rounded px-1 -mx-1 text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+                className="inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded px-1 -mx-1 text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
                 onClick={() => setView('sourceControl')}
               >
                 <GitBranch size={13} className="flex-shrink-0" />
-                <span className="truncate text-fg">
+                <span className="text-fg">
                   {gitHead.detached ? t('分离 HEAD · {sha}', { sha: gitHead.name }) : gitHead.name}
                 </span>
                 {gitDirtyCount > 0 && (
@@ -272,6 +334,14 @@ export default function StatusBar() {
               </button>
             </StatusTip>
           </>
+        )}
+        {restricted && (
+          <StatusTip label={t('受限模式：只能浏览，无法编辑或运行')}>
+            <span className="flex flex-shrink-0 items-center gap-1 text-warn">
+              <ShieldAlert size={13} />
+              {t('受限')}
+            </span>
+          </StatusTip>
         )}
       </div>
 

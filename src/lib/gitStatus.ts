@@ -11,6 +11,13 @@ export type GitWorkdirStatus = {
   dirty_count: number
 }
 
+export type GitChangeGroup = 'staged' | 'unstaged'
+
+export type GitChangeGroups = {
+  staged: GitChange[]
+  unstaged: GitChange[]
+}
+
 /** Absolute dirty entries → SCM panel relative changes. */
 export function changesFromWorkdirEntries(
   projectPath: string,
@@ -61,9 +68,124 @@ export function gitStatusMayBeDirectory(status: string): boolean {
   return status === '??' || status === '!!'
 }
 
+/** Index column from a full porcelain `XY` status. */
+export function gitIndexStatus(status: string): string | null {
+  if (status === '??' || status === '!!' || status.length < 2) return null
+  const code = status[0]
+  return code && code !== ' ' ? code : null
+}
+
+/** Worktree column from a full porcelain `XY` status. */
+export function gitWorktreeStatus(status: string): string | null {
+  if (status === '??') return '?'
+  if (status === '!!') return '!'
+  // Treat legacy one-character cache entries as unstaged. This avoids silently
+  // committing a stale status snapshot while the new full XY contract settles.
+  if (status.length === 1) return status
+  const code = status[1]
+  return code && code !== ' ' ? code : null
+}
+
+export function gitChangeHasStaged(change: GitChange): boolean {
+  return gitIndexStatus(change.status) !== null
+}
+
+export function gitChangeHasUnstaged(change: GitChange): boolean {
+  return change.status !== '!!' && gitWorktreeStatus(change.status) !== null
+}
+
+/** A dual-state file (e.g. MM / AM) intentionally appears in both arrays. */
+export function splitGitChanges(changes: GitChange[]): GitChangeGroups {
+  return {
+    staged: changes.filter(gitChangeHasStaged),
+    unstaged: changes.filter(gitChangeHasUnstaged),
+  }
+}
+
+/** Group-specific letter shown in Source Control rows. */
+export function gitStatusGlyphForGroup(status: string, group: GitChangeGroup): string | null {
+  const code = group === 'staged' ? gitIndexStatus(status) : gitWorktreeStatus(status)
+  if (code === '?') return 'U'
+  if (code === '!') return 'I'
+  return code
+}
+
+export function canCommitStagedChanges(
+  message: string,
+  stagedCount: number,
+  busy: boolean,
+): boolean {
+  return !busy && stagedCount > 0 && message.trim().length > 0
+}
+
+/** Predict porcelain after staging one change (optimistic SCM refresh). */
+export function predictAfterStageChange(change: GitChange): GitChange {
+  if (!gitChangeHasUnstaged(change)) return change
+  const wt = gitWorktreeStatus(change.status)
+  if (wt === '?') return { ...change, status: 'A ' }
+  if (wt === '!' || !wt) return change
+  return { ...change, status: `${wt} ` }
+}
+
+/** Predict porcelain after unstaging one change (optimistic SCM refresh). */
+export function predictAfterUnstageChange(change: GitChange): GitChange {
+  if (!gitChangeHasStaged(change)) return change
+  const idx = gitIndexStatus(change.status)
+  if (!idx) return change
+  if (gitChangeHasUnstaged(change)) {
+    const wt = gitWorktreeStatus(change.status)
+    return { ...change, status: wt ? ` ${wt}` : change.status }
+  }
+  if (idx === 'A') return { ...change, status: '??' }
+  return { ...change, status: ` ${idx}` }
+}
+
+function keepVisibleGitChange(change: GitChange): boolean {
+  return gitChangeHasStaged(change) || gitChangeHasUnstaged(change)
+}
+
+/** Optimistic snapshot after bulk stage/unstage-all in one SCM group. */
+export function predictBulkGitStatusAfterAction(
+  status: GitStatus,
+  group: GitChangeGroup,
+): GitStatus {
+  const changes = status.changes
+    .map(change =>
+      group === 'unstaged' ? predictAfterStageChange(change) : predictAfterUnstageChange(change),
+    )
+    .filter(keepVisibleGitChange)
+  return { ...status, changes }
+}
+
 /** Normalize path keys for case-insensitive lookup (Windows). */
 export function gitStatusKey(path: string): string {
   return normalizePath(path).toLowerCase()
+}
+
+/** Stable row id for SCM selection (`staged:src/foo.ts`). */
+export function scmRowKey(group: GitChangeGroup, path: string): string {
+  return `${group}:${normalizeGitChangePath(path)}`
+}
+
+/** Middle-ellipsis path for SCM rows (reference-style long paths). */
+export function formatScmDisplayPath(path: string, maxLength = 52): string {
+  const normalized = normalizeGitChangePath(path).replace(/\\/g, '/')
+  if (normalized.length <= maxLength) return normalized
+  const prefixLen = Math.max(8, Math.floor(maxLength * 0.28))
+  const suffixLen = Math.max(12, maxLength - prefixLen - 3)
+  return `${normalized.slice(0, prefixLen)}...${normalized.slice(-suffixLen)}`
+}
+
+/** SCM badge tone from group-specific status glyph. */
+export function scmStatusBadgeTone(
+  status: string,
+  group: GitChangeGroup,
+): 'added' | 'deleted' | 'modified' | 'other' {
+  const glyph = gitStatusGlyphForGroup(status, group) ?? status.trim()
+  if (glyph === 'U' || glyph === 'A' || glyph === '?') return 'added'
+  if (glyph === 'D') return 'deleted'
+  if (glyph === 'M' || glyph === 'T' || glyph.includes('M')) return 'modified'
+  return 'other'
 }
 
 /** Build absolute-path → status map from a workdir snapshot. */
@@ -90,7 +212,7 @@ export function gitStatusGlyph(status: string | null | undefined): string | null
 /** Tailwind text color class for a git status code. */
 export function gitStatusColorClass(status: string | null | undefined): string {
   if (!status) return ''
-  const code = status === '??' ? 'U' : status.includes('D') ? 'D' : status[status.length - 1] || status[0]
+  const code = status.includes('D') ? 'D' : gitStatusGlyph(status)
   switch (code) {
     case 'U':
     case 'A':

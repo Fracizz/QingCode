@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
@@ -9,15 +10,21 @@ import {
 } from 'react'
 import {
   AlertCircle,
-  CheckCircle2,
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
+  ChevronRight,
   Copy,
   ExternalLink,
   FileIcon,
   Folder,
   GitBranch,
+  GitCommitHorizontal,
   GitCompare,
   LoaderCircle,
   LocateFixed,
+  Minus,
+  Plus,
   RefreshCw,
 } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -31,11 +38,17 @@ import {
 } from '../store/sourceControlStore'
 import type { GitChange, GitStatus } from '../lib/git'
 import {
+  type GitChangeGroup,
+  canCommitStagedChanges,
   gitChangePathLooksLikeDirectory,
-  gitStatusColorClass,
-  gitStatusGlyph,
+  gitStatusGlyphForGroup,
   gitStatusMayBeDirectory,
+  formatScmDisplayPath,
   normalizeGitChangePath,
+  predictBulkGitStatusAfterAction,
+  scmRowKey,
+  scmStatusBadgeTone,
+  splitGitChanges,
 } from '../lib/gitStatus'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { useUIStore } from '../store/uiStore'
@@ -47,9 +60,34 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import { translate, useI18n } from '../lib/i18n'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 
-const ROW_HEIGHT = 34
-/** Fixed status column so M / U / D share one vertical edge with filenames. */
-const STATUS_COL = 'w-4 shrink-0 text-center font-mono text-[12px] font-semibold leading-none'
+const ROW_HEIGHT = 28
+const SCM_TOOLBAR_H = 'h-8'
+const SCM_TOOLBAR_PAD = 'px-3'
+const SCM_ICON_SIZE = 13
+const SCM_ICON_SLOT = 'inline-flex h-6 w-6 shrink-0 items-center justify-center'
+const SCM_ICON_BUTTON =
+  'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent text-fg-dim transition-colors hover:border-border hover:bg-bg-hover hover:text-brand disabled:opacity-35'
+const STATUS_BADGE = 'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] text-[9px] font-bold leading-none'
+
+function GitScmStatusBadge({ status, group }: { status: string; group: GitChangeGroup }) {
+  const tone = scmStatusBadgeTone(status, group)
+  const glyph = gitStatusGlyphForGroup(status, group) ?? status.trim()
+  const className =
+    tone === 'added'
+      ? `${STATUS_BADGE} bg-ok text-bg`
+      : tone === 'deleted'
+        ? `${STATUS_BADGE} bg-danger text-white`
+        : tone === 'modified'
+          ? `${STATUS_BADGE} bg-warn text-bg`
+          : `${STATUS_BADGE} bg-accent/80 text-bg`
+  const label = tone === 'added' ? '+' : glyph.charAt(0) || '?'
+  return <span className={className}>{label}</span>
+}
+
+type GitOperation = {
+  kind: 'stage' | 'unstage' | 'commit' | 'push'
+  key: string
+}
 
 function absoluteFilePath(projectPath: string, relativePath: string) {
   const root = projectPath.replace(/[\\/]+$/, '')
@@ -57,16 +95,15 @@ function absoluteFilePath(projectPath: string, relativePath: string) {
   return `${root}\\${rel}`
 }
 
-function fileBaseName(path: string) {
-  const cleaned = normalizeGitChangePath(path)
-  const separator = Math.max(cleaned.lastIndexOf('/'), cleaned.lastIndexOf('\\'))
-  return separator >= 0 ? cleaned.slice(separator + 1) : cleaned
-}
-
-function fileDirName(path: string) {
-  const cleaned = normalizeGitChangePath(path)
-  const separator = Math.max(cleaned.lastIndexOf('/'), cleaned.lastIndexOf('\\'))
-  return separator > 0 ? cleaned.slice(0, separator + 1) : ''
+function selectedChangesInGroup(
+  group: GitChangeGroup,
+  changes: GitChange[],
+  selectedKeys: Set<string>,
+  focus: GitChange,
+): GitChange[] {
+  const list = changes.filter(item => selectedKeys.has(scmRowKey(group, item.path)))
+  if (list.length > 1 && list.some(item => item.path === focus.path)) return list
+  return [focus]
 }
 
 async function changeIsDirectory(projectPath: string, change: GitChange): Promise<boolean> {
@@ -83,22 +120,31 @@ async function changeIsDirectory(projectPath: string, change: GitChange): Promis
   }
 }
 
-/** Worktree column of `git status --short` (second character). */
-function gitWorktreeCode(status: string): string {
-  if (status === '??' || status === '!!') return status
-  if (status.length >= 2) return status[1] ?? status[0]
-  return status
-}
-
 function canOpenFileInEditor(status: string): boolean {
-  return gitWorktreeCode(status) !== 'D'
+  return !status.includes('D')
 }
 
 type ChangeRowProps = {
   changes: GitChange[]
-  selected: string | null
-  onOpenChange: (change: GitChange) => void
-  onOpenContextMenu: (event: ReactMouseEvent, change: GitChange) => void
+  group: GitChangeGroup
+  selectedKeys: Set<string>
+  operation: GitOperation | null
+  disabled: boolean
+  stageLabel: string
+  unstageLabel: string
+  onSelectChange: (
+    group: GitChangeGroup,
+    change: GitChange,
+    index: number,
+    event: ReactMouseEvent,
+  ) => void
+  onOpenChange: (group: GitChangeGroup, change: GitChange) => void
+  onChangeAction: (group: GitChangeGroup, changes: GitChange[], all?: boolean) => void
+  onOpenContextMenu: (
+    event: ReactMouseEvent,
+    group: GitChangeGroup,
+    change: GitChange,
+  ) => void
 }
 
 function ChangeRowComponent(props: {
@@ -106,41 +152,192 @@ function ChangeRowComponent(props: {
   index: number
   style: CSSProperties
 } & ChangeRowProps) {
-  const { index, style, changes, selected, onOpenChange, onOpenContextMenu } = props
+  const {
+    index,
+    style,
+    changes,
+    group,
+    selectedKeys,
+    operation,
+    disabled,
+    stageLabel,
+    unstageLabel,
+    onSelectChange,
+    onOpenChange,
+    onChangeAction,
+    onOpenContextMenu,
+  } = props
   const change = changes[index]
   if (!change) return null
+  const rowKey = scmRowKey(group, change.path)
+  const active = selectedKeys.has(rowKey)
+  const actionLabel = group === 'staged' ? unstageLabel : stageLabel
+  const actionBusy = operation?.key === rowKey || operation?.key === `multi:${group}`
+  const selectedInGroup = changes.filter(item => selectedKeys.has(scmRowKey(group, item.path)))
 
-  const active = selected === change.path
-  const glyph = gitStatusGlyph(change.status) ?? change.status
-  const glyphColor = gitStatusColorClass(change.status)
-  const dirName = fileDirName(change.path)
+  const runRowAction = () => {
+    if (selectedInGroup.length > 1 && active) {
+      onChangeAction(group, selectedInGroup)
+      return
+    }
+    onChangeAction(group, [change])
+  }
 
   return (
-    <div style={style}>
+    <div style={style} className="group/scm-row relative flex">
       <button
         type="button"
-        onClick={() => onOpenChange(change)}
-        onContextMenu={event => onOpenContextMenu(event, change)}
-        className={`flex h-full w-full items-center gap-2 px-4 text-left text-[12px] leading-5 hover:bg-bg-hover ${
+        onClick={event => onSelectChange(group, change, index, event)}
+        onDoubleClick={() => onOpenChange(group, change)}
+        onContextMenu={event => onOpenContextMenu(event, group, change)}
+        className={`flex h-full min-w-0 flex-1 items-center gap-2 pl-6 pr-9 text-left text-[12px] leading-5 hover:bg-bg-hover ${
           active ? 'bg-bg-active' : ''
         }`}
       >
-        <span className={`${STATUS_COL} ${glyphColor}`}>{glyph}</span>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-          <span className="flex-shrink-0 font-medium text-tree-fg">{fileBaseName(change.path)}</span>
-          {dirName && (
-            <Tooltip
-              label={dirName}
-              side="bottom"
-              onlyWhenOverflow
-              wrapperClassName="min-w-0 truncate"
-            >
-              <span className="text-ui-sm block truncate text-fg-dim">{dirName}</span>
-            </Tooltip>
-          )}
-        </span>
+        <GitScmStatusBadge status={change.status} group={group} />
+        <Tooltip
+          label={normalizeGitChangePath(change.path).replace(/\\/g, '/')}
+          side="bottom"
+          onlyWhenOverflow
+          wrapperClassName="min-w-0 flex-1 truncate font-mono text-[11px] text-tree-fg"
+        >
+          <span>{formatScmDisplayPath(change.path)}</span>
+        </Tooltip>
       </button>
+      <Tooltip label={actionLabel} side="bottom" wrapperClassName="absolute right-2 top-1/2 -translate-y-1/2">
+        <button
+          type="button"
+          disabled={disabled}
+          aria-label={`${actionLabel}: ${change.path}`}
+          onClick={runRowAction}
+          className={`rounded border border-transparent p-0.5 text-fg-dim hover:border-border hover:bg-bg-active hover:text-fg disabled:opacity-40 ${
+            actionBusy ? 'opacity-100' : 'opacity-0 group-hover/scm-row:opacity-100 focus:opacity-100'
+          }`}
+        >
+          {actionBusy ? (
+            <LoaderCircle size={12} className="animate-spin text-accent" />
+          ) : group === 'staged' ? (
+            <Minus size={12} />
+          ) : (
+            <Plus size={12} />
+          )}
+        </button>
+      </Tooltip>
     </div>
+  )
+}
+
+type ChangeGroupSectionProps = Omit<ChangeRowProps, 'changes' | 'group'> & {
+  changes: GitChange[]
+  group: GitChangeGroup
+  label: string
+  collapsed: boolean
+  allStageLabel: string
+  allUnstageLabel: string
+  onToggle: (group: GitChangeGroup) => void
+}
+
+function ChangeGroupSection({
+  changes,
+  group,
+  label,
+  collapsed,
+  allStageLabel,
+  allUnstageLabel,
+  selectedKeys,
+  operation,
+  disabled,
+  stageLabel,
+  unstageLabel,
+  onSelectChange,
+  onOpenChange,
+  onChangeAction,
+  onOpenContextMenu,
+  onToggle,
+}: ChangeGroupSectionProps) {
+  const listRef = useListRef(null)
+  const bulkLabel = group === 'staged' ? allUnstageLabel : allStageLabel
+  const bulkBusy = operation?.key === `all:${group}`
+  const rowProps = useMemo(
+    () => ({
+      changes,
+      group,
+      selectedKeys,
+      operation,
+      disabled,
+      stageLabel,
+      unstageLabel,
+      onSelectChange,
+      onOpenChange,
+      onChangeAction,
+      onOpenContextMenu,
+    }),
+    [
+      changes,
+      disabled,
+      group,
+      onChangeAction,
+      onOpenChange,
+      onOpenContextMenu,
+      onSelectChange,
+      operation,
+      selectedKeys,
+      stageLabel,
+      unstageLabel,
+    ],
+  )
+
+  return (
+    <section className={collapsed ? 'flex-none border-b border-border' : 'flex min-h-0 flex-1 flex-col border-b border-border'}>
+      <div
+        className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
+      >
+        <button
+          type="button"
+          aria-expanded={!collapsed}
+          onClick={() => onToggle(group)}
+          className={`flex h-full min-w-0 flex-1 items-center gap-1.5 ${SCM_TOOLBAR_PAD} text-left hover:bg-bg-hover hover:text-fg`}
+        >
+          <span className={SCM_ICON_SLOT}>
+            {collapsed ? <ChevronRight size={SCM_ICON_SIZE} /> : <ChevronDown size={SCM_ICON_SIZE} />}
+          </span>
+          <span className="truncate font-medium tabular-nums text-fg">{label}</span>
+        </button>
+        <div className={`flex shrink-0 items-center ${SCM_TOOLBAR_PAD} pl-0`}>
+          <Tooltip label={bulkLabel} side="bottom">
+            <button
+              type="button"
+              disabled={disabled || changes.length === 0}
+              aria-label={bulkLabel}
+              onClick={() => onChangeAction(group, changes, true)}
+              className={SCM_ICON_BUTTON}
+            >
+              {bulkBusy ? (
+                <LoaderCircle size={SCM_ICON_SIZE} className="animate-spin text-accent" />
+              ) : group === 'staged' ? (
+                <ArrowUp size={SCM_ICON_SIZE} strokeWidth={2.25} />
+              ) : (
+                <ArrowDown size={SCM_ICON_SIZE} strokeWidth={2.25} />
+              )}
+            </button>
+          </Tooltip>
+        </div>
+      </div>
+      {!collapsed && changes.length > 0 && (
+        <div className="min-h-0 flex-1 overflow-hidden bg-bg-deep/15">
+          <List
+            listRef={listRef}
+            rowCount={changes.length}
+            rowHeight={ROW_HEIGHT}
+            rowComponent={ChangeRowComponent}
+            rowProps={rowProps}
+            overscanCount={8}
+            className="h-full"
+            style={{ height: '100%' }}
+          />
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -158,11 +355,23 @@ export default function SourceControlPanel() {
   )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [selected, setSelected] = useState<string | null>(null)
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; change: GitChange } | null>(
-    null,
-  )
-  const listRef = useListRef(null)
+  const [operationError, setOperationError] = useState<string | null>(null)
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set())
+  const selectionAnchorRef = useRef<{ group: GitChangeGroup; index: number } | null>(null)
+  const [commitMessage, setCommitMessage] = useState('')
+  const [commitError, setCommitError] = useState<string | null>(null)
+  const [pushAfterCommit, setPushAfterCommit] = useState(true)
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<GitChangeGroup, boolean>>({
+    unstaged: false,
+    staged: false,
+  })
+  const [operation, setOperation] = useState<GitOperation | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    group: GitChangeGroup
+    change: GitChange
+  } | null>(null)
   const setView = useUIStore(s => s.setView)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
 
@@ -172,6 +381,7 @@ export default function SourceControlPanel() {
     if (!project) {
       setStatus(null)
       setError(null)
+      setOperationError(null)
       useSourceControlStore.getState().clearCache()
       return
     }
@@ -182,7 +392,10 @@ export default function SourceControlPanel() {
     }
 
     const path = project.path
-    if (!soft) setLoading(true)
+    if (!soft) {
+      setLoading(true)
+      setOperationError(null)
+    }
 
     try {
       // Soft path reuses the shared workdir refresh (coalesced with badge/tree).
@@ -216,7 +429,7 @@ export default function SourceControlPanel() {
       setStatus(next)
       setError(null)
       useGitStatusStore.getState().applyFromGitStatus(path, next)
-      setSelected(null)
+      setSelectedKeys(new Set())
     } catch (reason) {
       if (!soft || !seedSourceControlStatus(path)) {
         setStatus(null)
@@ -228,21 +441,29 @@ export default function SourceControlPanel() {
   }, [])
 
   useEffect(() => {
-    if (!projectPath) {
-      setStatus(null)
-      setError(null)
-      setSelected(null)
-      return
-    }
-    const seeded = seedSourceControlStatus(projectPath)
-    if (seeded) {
-      setStatus(seeded)
-      setError(null)
-      void refresh({ soft: true })
-    } else {
-      setStatus(null)
-      void refresh({ soft: false })
-    }
+    const resetTimer = window.setTimeout(() => {
+      setCommitMessage('')
+      setCommitError(null)
+      setOperationError(null)
+      setOperation(null)
+      setContextMenu(null)
+      if (!projectPath) {
+        setStatus(null)
+        setError(null)
+        setSelectedKeys(new Set())
+        return
+      }
+      const seeded = seedSourceControlStatus(projectPath)
+      if (seeded) {
+        setStatus(seeded)
+        setError(null)
+        void refresh({ soft: true })
+      } else {
+        setStatus(null)
+        void refresh({ soft: false })
+      }
+    }, 0)
+    return () => window.clearTimeout(resetTimer)
   }, [projectPath, refresh])
 
   // Follow shared workdir updates (file watcher / focus) without a second git_status.
@@ -256,6 +477,153 @@ export default function SourceControlPanel() {
     })
   }, [projectPath])
 
+  const groups = useMemo(() => splitGitChanges(status?.changes ?? []), [status])
+
+  const toggleGroup = useCallback((group: GitChangeGroup) => {
+    setCollapsedGroups(current => ({ ...current, [group]: !current[group] }))
+  }, [])
+
+  const runChangeAction = useCallback(
+    async (group: GitChangeGroup, requestedChanges: GitChange[], all = false) => {
+      const project = useProjectStore.getState().currentProject
+      if (!project || operation || loading) return
+      const currentGroups = splitGitChanges(status?.changes ?? [])
+      const changes = requestedChanges.length > 0 ? requestedChanges : currentGroups[group]
+      const files = [...new Set(changes.map(change => normalizeGitChangePath(change.path)))]
+      if (!all && files.length === 0) return
+
+      const isStage = group === 'unstaged'
+      const key = all
+        ? `all:${group}`
+        : files.length > 1
+          ? `multi:${group}`
+          : scmRowKey(group, files[0])
+      setOperation({ kind: isStage ? 'stage' : 'unstage', key })
+      setOperationError(null)
+
+      const snapshot = all && status ? status : null
+      if (snapshot) {
+        const optimistic = predictBulkGitStatusAfterAction(snapshot, group)
+        setStatus(optimistic)
+        useGitStatusStore.getState().applyFromGitStatus(project.path, optimistic)
+      }
+
+      try {
+        await safeInvoke(isStage ? '暂存 Git 更改' : '取消暂存 Git 更改', isStage ? 'git_stage' : 'git_unstage', {
+          path: project.path,
+          files: all ? [] : files,
+          all: all || null,
+        })
+        if (useProjectStore.getState().currentProject?.path === project.path) {
+          void refresh({ soft: true })
+          useProjectStore.getState().pushToast(
+            'success',
+            isStage
+              ? t('已暂存 {count} 个文件', { count: all ? changes.length : files.length })
+              : t('已取消暂存 {count} 个文件', { count: all ? changes.length : files.length }),
+          )
+        }
+      } catch (reason) {
+        if (useProjectStore.getState().currentProject?.path === project.path) {
+          if (snapshot) {
+            setStatus(snapshot)
+            useGitStatusStore.getState().applyFromGitStatus(project.path, snapshot)
+          }
+          void refresh({ soft: true })
+          const message = String(reason)
+          setOperationError(message)
+          useProjectStore.getState().pushToast(
+            'error',
+            isStage
+              ? t('暂存更改失败：{error}', { error: message })
+              : t('取消暂存失败：{error}', { error: message }),
+          )
+        }
+      } finally {
+        setOperation(null)
+      }
+    },
+    [loading, operation, refresh, status, t],
+  )
+
+  const commitStaged = useCallback(async () => {
+    const project = useProjectStore.getState().currentProject
+    if (!project || operation || loading) return
+    const message = commitMessage.trim()
+    if (!message) {
+      setCommitError(t('提交信息不能为空'))
+      return
+    }
+    if (groups.staged.length === 0) return
+
+    setOperation({ kind: 'commit', key: 'commit' })
+    setCommitError(null)
+    setOperationError(null)
+    try {
+      await safeInvoke<string>('提交 Git 更改', 'git_commit', {
+        path: project.path,
+        message,
+      })
+      if (useProjectStore.getState().currentProject?.path === project.path) {
+        setCommitMessage('')
+        await refresh({ soft: false })
+        if (pushAfterCommit) {
+          setOperation({ kind: 'push', key: 'push' })
+          try {
+            await safeInvoke<string>('推送 Git 提交', 'git_push', { path: project.path })
+          } catch (reason) {
+            if (useProjectStore.getState().currentProject?.path !== project.path) return
+            const pushError = String(reason)
+            const message = t('提交成功，但推送失败：{error}', { error: pushError })
+            setOperationError(message)
+            useProjectStore.getState().pushToast('error', message)
+            return
+          }
+          if (useProjectStore.getState().currentProject?.path !== project.path) return
+          await refresh({ soft: false })
+          useProjectStore.getState().pushToast('success', t('提交并推送成功'))
+        } else {
+          useProjectStore.getState().pushToast('success', t('提交成功'))
+        }
+      }
+    } catch (reason) {
+      if (useProjectStore.getState().currentProject?.path === project.path) {
+        await refresh({ soft: false })
+        const message = String(reason)
+        setOperationError(message)
+        useProjectStore
+          .getState()
+          .pushToast('error', t('提交失败：{error}', { error: message }))
+      }
+    } finally {
+      setOperation(null)
+    }
+  }, [commitMessage, groups.staged.length, loading, operation, pushAfterCommit, refresh, t])
+
+  const pushCurrent = useCallback(async () => {
+    const project = useProjectStore.getState().currentProject
+    if (!project || operation || loading) return
+    setOperation({ kind: 'push', key: 'push' })
+    setOperationError(null)
+    try {
+      await safeInvoke<string>('推送 Git 提交', 'git_push', { path: project.path })
+      if (useProjectStore.getState().currentProject?.path === project.path) {
+        await refresh({ soft: false })
+        useProjectStore.getState().pushToast('success', t('推送成功'))
+      }
+    } catch (reason) {
+      if (useProjectStore.getState().currentProject?.path === project.path) {
+        const message = String(reason)
+        setOperationError(message)
+        useProjectStore
+          .getState()
+          .pushToast('error', t('推送失败：{error}', { error: message }))
+      }
+    } finally {
+      setOperation(null)
+    }
+  }, [loading, operation, refresh, t])
+
   const revealInSidebar = useCallback(
     (absolutePath: string) => {
       setView('explorer')
@@ -265,9 +633,8 @@ export default function SourceControlPanel() {
   )
 
   const openChange = useCallback(
-    async (change: GitChange) => {
+    async (_group: GitChangeGroup, change: GitChange) => {
       if (!currentProject) return
-      setSelected(change.path)
       const rel = normalizeGitChangePath(change.path)
       const abs = absoluteFilePath(currentProject.path, rel)
       if (await changeIsDirectory(currentProject.path, change)) {
@@ -277,6 +644,45 @@ export default function SourceControlPanel() {
       void useEditorStore.getState().openDiff(currentProject.path, rel, abs)
     },
     [currentProject, revealInSidebar],
+  )
+
+  const selectChange = useCallback(
+    (group: GitChangeGroup, change: GitChange, index: number, event: ReactMouseEvent) => {
+      const key = scmRowKey(group, change.path)
+      const ctrl = Boolean(event.ctrlKey || event.metaKey)
+      const shift = Boolean(event.shiftKey)
+      const list = group === 'staged' ? groups.staged : groups.unstaged
+
+      if (shift) {
+        const anchorIndex =
+          selectionAnchorRef.current?.group === group ? selectionAnchorRef.current.index : index
+        const lo = Math.min(anchorIndex, index)
+        const hi = Math.max(anchorIndex, index)
+        const next = new Set<string>()
+        for (let i = lo; i <= hi; i++) {
+          const item = list[i]
+          if (item) next.add(scmRowKey(group, item.path))
+        }
+        setSelectedKeys(next)
+        return
+      }
+
+      if (ctrl) {
+        setSelectedKeys(prev => {
+          const next = new Set(prev)
+          if (next.has(key)) next.delete(key)
+          else next.add(key)
+          return next
+        })
+        selectionAnchorRef.current = { group, index }
+        return
+      }
+
+      setSelectedKeys(new Set([key]))
+      selectionAnchorRef.current = { group, index }
+      void openChange(group, change)
+    },
+    [groups.staged, groups.unstaged, openChange],
   )
 
   const copyAbsolutePath = async (path: string) => {
@@ -311,21 +717,41 @@ export default function SourceControlPanel() {
     }
   }
 
-  const showChangeContextMenu = useCallback((event: ReactMouseEvent, change: GitChange) => {
-    if (!shouldShowAppContextMenu(event)) return
-    setContextMenu({ x: event.clientX, y: event.clientY, change })
-  }, [])
+  const showChangeContextMenu = useCallback(
+    (event: ReactMouseEvent, group: GitChangeGroup, change: GitChange) => {
+      if (!shouldShowAppContextMenu(event)) return
+      setContextMenu({ x: event.clientX, y: event.clientY, group, change })
+    },
+    [],
+  )
 
-  const contextMenuItems = (change: GitChange): ContextMenuItem[] => {
+  const contextMenuItems = (group: GitChangeGroup, change: GitChange): ContextMenuItem[] => {
     if (!currentProject) return []
     const projectPath = currentProject.path
     const abs = absoluteFilePath(projectPath, change.path)
     const looksLikeDir = gitChangePathLooksLikeDirectory(change.path)
+    const isStaged = group === 'staged'
+    const groupChanges = group === 'staged' ? groups.staged : groups.unstaged
+    const actionTargets = selectedChangesInGroup(group, groupChanges, selectedKeys, change)
+    const bulkAction = actionTargets.length > 1
     return [
+      {
+        label: bulkAction
+          ? isStaged
+            ? t('取消暂存 {count} 个文件', { count: actionTargets.length })
+            : t('暂存 {count} 个文件', { count: actionTargets.length })
+          : isStaged
+            ? t('取消暂存更改')
+            : t('暂存更改'),
+        icon: isStaged ? <Minus size={14} /> : <Plus size={14} />,
+        disabled: Boolean(operation) || loading,
+        action: () => void runChangeAction(group, actionTargets),
+      },
       {
         label: t('打开更改'),
         icon: <GitCompare size={14} />,
-        action: () => void openChange(change),
+        separatorBefore: true,
+        action: () => void openChange(group, change),
       },
       {
         label: t('打开文件'),
@@ -368,18 +794,6 @@ export default function SourceControlPanel() {
     ]
   }
 
-  const changes = status?.changes ?? []
-
-  const rowProps = useMemo(
-    () => ({
-      changes,
-      selected,
-      onOpenChange: openChange,
-      onOpenContextMenu: showChangeContextMenu,
-    }),
-    [changes, selected, openChange, showChangeContextMenu],
-  )
-
   let body: ReactNode
   if (!currentProject) {
     body = <EmptyState icon={<Folder size={28} strokeWidth={1.2} />} title={t('请先选择或添加项目')} />
@@ -388,32 +802,103 @@ export default function SourceControlPanel() {
   } else if (status && !status.is_repository) {
     body = <EmptyState icon={<GitBranch size={28} strokeWidth={1.2} />} title={t('当前项目不是 Git 仓库')} />
   } else if (status) {
+    const branch = status.branch ?? t('游离 HEAD')
+    const writeDisabled = Boolean(operation) || loading
     body = (
       <>
-        <div className="text-ui-sm flex-shrink-0 border-y border-border px-4 py-2 leading-5 text-fg-muted">
-          <div className="flex items-center gap-1.5 text-fg">
-            <GitBranch size={13} className="text-accent" />
-            <span>{status.branch ?? t('游离 HEAD')}</span>
-          </div>
-          <p className="mt-1">{t('{count} 个更改', { count: status.changes.length })}</p>
-          {error && <p className="mt-1 text-danger">{error}</p>}
-        </div>
-        {status.changes.length === 0 ? (
-          <EmptyState icon={<CheckCircle2 size={28} strokeWidth={1.2} className="text-ok" />} title={t('工作区没有未提交的更改')} />
-        ) : (
-          <div className="min-h-0 flex-1 overflow-hidden">
-            <List
-              listRef={listRef}
-              rowCount={status.changes.length}
-              rowHeight={ROW_HEIGHT}
-              rowComponent={ChangeRowComponent}
-              rowProps={rowProps}
-              overscanCount={8}
-              className="h-full"
-              style={{ height: '100%' }}
-            />
+        {(error || operationError) && (
+          <div className="text-ui-sm flex-shrink-0 break-words border-y border-border bg-danger/5 px-3 py-2 text-danger">
+            {operationError ?? error}
           </div>
         )}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <ChangeGroupSection
+            group="unstaged"
+            label={t('变更（{count}）', { count: groups.unstaged.length })}
+            changes={groups.unstaged}
+            collapsed={collapsedGroups.unstaged}
+            selectedKeys={selectedKeys}
+            operation={operation}
+            disabled={writeDisabled}
+            stageLabel={t('暂存更改')}
+            unstageLabel={t('取消暂存更改')}
+            allStageLabel={t('所有文件添加至「待提交」')}
+            allUnstageLabel={t('所有文件移出「待提交」')}
+            onSelectChange={selectChange}
+            onOpenChange={openChange}
+            onChangeAction={runChangeAction}
+            onOpenContextMenu={showChangeContextMenu}
+            onToggle={toggleGroup}
+          />
+          <ChangeGroupSection
+            group="staged"
+            label={t('待提交（{count}）', { count: groups.staged.length })}
+            changes={groups.staged}
+            collapsed={collapsedGroups.staged}
+            selectedKeys={selectedKeys}
+            operation={operation}
+            disabled={writeDisabled}
+            stageLabel={t('暂存更改')}
+            unstageLabel={t('取消暂存更改')}
+            allStageLabel={t('所有文件添加至「待提交」')}
+            allUnstageLabel={t('所有文件移出「待提交」')}
+            onSelectChange={selectChange}
+            onOpenChange={openChange}
+            onChangeAction={runChangeAction}
+            onOpenContextMenu={showChangeContextMenu}
+            onToggle={toggleGroup}
+          />
+        </div>
+        <div className="flex-shrink-0 border-t border-border bg-bg-sidebar px-3 py-2.5">
+          <label className="mb-2 flex items-center gap-2 text-[12px] text-fg-muted">
+            <input
+              type="checkbox"
+              checked={pushAfterCommit}
+              disabled={writeDisabled}
+              onChange={event => setPushAfterCommit(event.target.checked)}
+              className="h-3.5 w-3.5"
+              style={{ accentColor: 'var(--color-accent)' }}
+            />
+            <span>{t('推送到远程')}</span>
+          </label>
+          <textarea
+            value={commitMessage}
+            rows={4}
+            disabled={writeDisabled}
+            onChange={event => {
+              setCommitMessage(event.target.value)
+              if (commitError) setCommitError(null)
+            }}
+            placeholder={
+              groups.staged.length === 0
+                ? t('请先暂存要提交的更改')
+                : t('提交信息（必填）')
+            }
+            aria-label={t('提交信息')}
+            aria-invalid={commitError ? true : undefined}
+            className="text-ui-sm block max-h-28 min-h-16 w-full resize-y rounded border border-border-strong bg-bg-deep/60 px-2.5 py-2 leading-5 text-fg outline-none placeholder:text-fg-dim focus:border-accent disabled:opacity-60"
+          />
+          <button
+            type="button"
+            disabled={!canCommitStagedChanges(commitMessage, groups.staged.length, writeDisabled)}
+            onClick={() => void commitStaged()}
+            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-accent px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {operation?.kind === 'commit' || operation?.kind === 'push' ? (
+              <LoaderCircle size={13} className="animate-spin" />
+            ) : (
+              <GitCommitHorizontal size={13} />
+            )}
+            {operation?.kind === 'commit'
+              ? t('正在提交…')
+              : operation?.kind === 'push'
+                ? t('正在推送…')
+                : pushAfterCommit
+                  ? t('提交并推送到 {branch}', { branch })
+                  : t('提交到 {branch}', { branch })}
+          </button>
+          {commitError && <p className="text-ui-sm mt-1.5 text-danger">{commitError}</p>}
+        </div>
       </>
     )
   } else {
@@ -427,20 +912,32 @@ export default function SourceControlPanel() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg-sidebar text-fg">
-      <div className="flex h-9 flex-shrink-0 items-center justify-between px-4 text-[11px] font-semibold tracking-wide text-fg-muted">
-        <span className="flex min-w-0 items-center gap-2">
-          <GitBranch size={13} className="flex-shrink-0 text-brand" />
+      <div
+        className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center justify-between gap-2 border-b border-border ${SCM_TOOLBAR_PAD}`}
+      >
+        <span className="flex min-w-0 items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
+          <span className={SCM_ICON_SLOT}>
+            <GitBranch size={SCM_ICON_SIZE} className="text-brand" />
+          </span>
           <span className="truncate">{t('源代码管理')}</span>
+          {status?.is_repository && (
+            <span className="max-w-[8rem] truncate rounded bg-bg-deep/80 px-1.5 py-px font-mono text-[10px] font-normal normal-case tracking-normal text-fg">
+              {status.branch ?? t('游离 HEAD')}
+            </span>
+          )}
         </span>
         <Tooltip label={t('刷新')} side="bottom">
           <button
             type="button"
             onClick={() => void refresh({ soft: false })}
-            disabled={loading || !currentProject}
+            disabled={loading || Boolean(operation) || !currentProject}
             aria-label={t('刷新')}
-            className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+            className={`${SCM_ICON_BUTTON} hover:text-fg`}
           >
-            <RefreshCw size={13} className={loading ? 'animate-spin text-accent' : undefined} />
+            <RefreshCw
+              size={SCM_ICON_SIZE}
+              className={loading ? 'animate-spin text-accent' : undefined}
+            />
           </button>
         </Tooltip>
       </div>
@@ -449,7 +946,7 @@ export default function SourceControlPanel() {
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          items={contextMenuItems(contextMenu.change)}
+          items={contextMenuItems(contextMenu.group, contextMenu.change)}
           onClose={() => setContextMenu(null)}
         />
       )}

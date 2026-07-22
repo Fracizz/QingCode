@@ -5,6 +5,7 @@ export type SettingsCategoryId =
   | 'appearance'
   | 'editor'
   | 'terminal'
+  | 'ai'
   | 'features'
   | 'language'
   | 'json'

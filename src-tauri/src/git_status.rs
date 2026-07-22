@@ -18,7 +18,7 @@ pub struct GitHeadInfo {
 pub struct GitStatusEntry {
     /// Absolute path (OS native separators).
     pub path: String,
-    /// Short UI code: `M`, `A`, `D`, `??`, `MM`, `R`, …
+    /// Full porcelain `XY`: `M `, ` M`, `MM`, `??`, …
     pub status: String,
 }
 
@@ -154,30 +154,9 @@ fn run_git(workdir: &Path, args: &[&str]) -> Option<std::process::Output> {
     cmd.output().ok()
 }
 
-/// Map porcelain `XY` to a short UI status code.
+/// Preserve porcelain `XY` so callers can distinguish index and worktree state.
 pub fn porcelain_xy_to_status(xy: &str) -> String {
-    let mut chars = xy.chars();
-    let x = chars.next().unwrap_or(' ');
-    let y = chars.next().unwrap_or(' ');
-    if x == '?' && y == '?' {
-        return "??".into();
-    }
-    if x == '!' && y == '!' {
-        return "!!".into();
-    }
-    if x != ' ' && y != ' ' {
-        if x == y {
-            return x.to_string();
-        }
-        return format!("{x}{y}");
-    }
-    if y != ' ' {
-        return y.to_string();
-    }
-    if x != ' ' {
-        return x.to_string();
-    }
-    xy.trim().to_string()
+    xy.chars().take(2).collect()
 }
 
 /// Parse one `git status --porcelain` line into (relative path, status).
@@ -397,7 +376,7 @@ mod tests {
     fn parse_porcelain_modified_and_untracked() {
         assert_eq!(
             parse_porcelain_line(" M src/main.rs"),
-            Some(("src/main.rs".into(), "M".into()))
+            Some(("src/main.rs".into(), " M".into()))
         );
         assert_eq!(
             parse_porcelain_line("?? new file.txt"),
@@ -405,15 +384,15 @@ mod tests {
         );
         assert_eq!(
             parse_porcelain_line("A  staged.ts"),
-            Some(("staged.ts".into(), "A".into()))
+            Some(("staged.ts".into(), "A ".into()))
         );
         assert_eq!(
             parse_porcelain_line("D  gone.rs"),
-            Some(("gone.rs".into(), "D".into()))
+            Some(("gone.rs".into(), "D ".into()))
         );
         assert_eq!(
             parse_porcelain_line("MM both.rs"),
-            Some(("both.rs".into(), "M".into()))
+            Some(("both.rs".into(), "MM".into()))
         );
         assert_eq!(
             parse_porcelain_line("AM added-then-mod.ts"),
@@ -425,15 +404,15 @@ mod tests {
     fn parse_porcelain_rename() {
         assert_eq!(
             parse_porcelain_line("R  old.rs -> new.rs"),
-            Some(("new.rs".into(), "R".into()))
+            Some(("new.rs".into(), "R ".into()))
         );
     }
 
     #[test]
     fn porcelain_xy_to_status_variants() {
         assert_eq!(porcelain_xy_to_status("??"), "??");
-        assert_eq!(porcelain_xy_to_status(" M"), "M");
-        assert_eq!(porcelain_xy_to_status("M "), "M");
+        assert_eq!(porcelain_xy_to_status(" M"), " M");
+        assert_eq!(porcelain_xy_to_status("M "), "M ");
         assert_eq!(porcelain_xy_to_status("MD"), "MD");
     }
 
@@ -492,7 +471,7 @@ mod tests {
         let status = read_git_workdir_status(&root).expect("porcelain status");
         assert!(status.dirty_count >= 3);
         let codes: Vec<_> = status.entries.iter().map(|e| e.status.as_str()).collect();
-        assert!(codes.iter().any(|c| *c == "M" || c.contains('M')));
+        assert!(codes.contains(&" M"));
         assert!(codes.contains(&"??"));
 
         // `-uall`: nested untracked files appear; the bare directory does not.

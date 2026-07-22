@@ -1,5 +1,6 @@
 export type GitChange = {
   path: string
+  /** Full two-character porcelain XY status (`M `, ` M`, `MM`, `??`, …). */
   status: string
 }
 

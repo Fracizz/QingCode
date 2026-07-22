@@ -143,6 +143,26 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
           dirtyCount: result.dirty_count,
         })
         syncSourceControlCache(projectPath, result.entries, true)
+        // Workdir status confirms a repo but does not include the branch name.
+        // Fill HEAD so the status bar / SCM soft-open can show it without a
+        // second full `git_status` round-trip.
+        const previous = peekSourceControlCache(projectPath)
+        if (previous?.is_repository && !previous.branch) {
+          try {
+            const head = await safeInvoke<{ name: string } | null>('读取 Git 分支', 'get_git_head', {
+              path: projectPath,
+            })
+            if (get().projectPath !== projectPath) return
+            if (head?.name) {
+              useSourceControlStore.getState().setCache(projectPath, {
+                ...previous,
+                branch: head.name,
+              })
+            }
+          } catch {
+            /* keep null branch */
+          }
+        }
         lastRefreshAt = Date.now()
       } catch {
         if (get().projectPath === projectPath) {

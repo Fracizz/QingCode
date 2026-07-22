@@ -111,6 +111,7 @@ const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: 'appearance', label: '外观' },
   { id: 'editor', label: '文本编辑器' },
   { id: 'terminal', label: '终端' },
+  { id: 'ai', label: 'AI' },
   { id: 'features', label: '功能' },
   { id: 'language', label: '语言' },
   { id: 'json', label: '打开设置 JSON' },
@@ -326,6 +327,9 @@ export default function SettingsEditor() {
           'minimap',
         )
       if (cat.id === 'terminal') return match('终端', '默认启动配置', '终端字号', '默认 Shell', 'pwsh', 'WSL', 'Zsh')
+      if (cat.id === 'ai') {
+        return match('AI', 'CLI', 'Skill', 'Agent', 'qingcode-cli', 'AI CLI Skill')
+      }
       if (cat.id === 'features') {
         return match(
           '快捷键',
@@ -340,11 +344,6 @@ export default function SettingsEditor() {
           'Windows',
           '检查更新',
           '自动检查更新',
-          'CLI',
-          'Skill',
-          'AI',
-          'Agent',
-          'qingcode-cli',
           'Alt+C',
           'Ctrl+Shift+C',
           'Ctrl+Shift+G',
@@ -807,6 +806,56 @@ export default function SettingsEditor() {
               </Section>
             )}
 
+            {match('AI', 'CLI', 'Skill', 'Agent', 'qingcode-cli', 'AI CLI Skill') &&
+              !workspaceLocked && (
+              <Section
+                id="ai"
+                title={t('AI')}
+                sectionRefs={sectionRefs}
+                onVisible={setCategory}
+              >
+                <SettingItem
+                  title={t('AI CLI Skill')}
+                  description={t(
+                    '复制 QingCode CLI 的 Skill 文本到剪贴板。请按你使用的 AI Agent 文档自行安装（例如保存为 SKILL.md），QingCode 不会自动适配或注册任何 Agent。',
+                  )}
+                  modified={false}
+                  locked={workspaceLocked}
+                  lockHint={t('此设置仅在用户作用域中可用')}
+                >
+                  <button
+                    type="button"
+                    disabled={cliSkillBusy || workspaceLocked}
+                    className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                    onClick={() => {
+                      setCliSkillBusy(true)
+                      void (async () => {
+                        try {
+                          let exe =
+                            openWith?.exe_path?.trim() ||
+                            (isTauri()
+                              ? await safeInvoke<string>('获取程序路径', 'app_exe_path')
+                              : '')
+                          if (!exe.trim()) exe = 'QingCode.exe'
+                          await copyToClipboard(buildQingcodeCliSkillMarkdown(exe))
+                          pushToast('success', t('已复制 CLI Skill，请粘贴到你的 AI Agent 中安装。'))
+                        } catch (error) {
+                          pushToast(
+                            'error',
+                            t('复制失败: {error}', { error: String(error) }),
+                          )
+                        } finally {
+                          setCliSkillBusy(false)
+                        }
+                      })()
+                    }}
+                  >
+                    {cliSkillBusy ? t('正在复制…') : t('复制 Skill 文本')}
+                  </button>
+                </SettingItem>
+              </Section>
+            )}
+
             {match(
               '功能',
               '快捷键',
@@ -816,11 +865,6 @@ export default function SettingsEditor() {
               '自动检查更新',
               '会话状态',
               '会话状态保存',
-              'CLI',
-              'Skill',
-              'AI',
-              'Agent',
-              'qingcode-cli',
             ) &&
               !workspaceLocked && (
               <Section
@@ -929,47 +973,6 @@ export default function SettingsEditor() {
                       </button>
                     </SettingItem>
                   </>
-                )}
-                {match('CLI', 'Skill', 'AI', 'Agent', 'qingcode-cli') && (
-                  <SettingItem
-                    title={t('AI CLI Skill')}
-                    description={t(
-                      '复制 QingCode CLI 的 Skill 文本到剪贴板。请按你使用的 AI Agent 文档自行安装（例如保存为 SKILL.md），QingCode 不会自动适配或注册任何 Agent。',
-                    )}
-                    modified={false}
-                    locked={workspaceLocked}
-                    lockHint={t('此设置仅在用户作用域中可用')}
-                  >
-                    <button
-                      type="button"
-                      disabled={cliSkillBusy || workspaceLocked}
-                      className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
-                      onClick={() => {
-                        setCliSkillBusy(true)
-                        void (async () => {
-                          try {
-                            let exe =
-                              openWith?.exe_path?.trim() ||
-                              (isTauri()
-                                ? await safeInvoke<string>('获取程序路径', 'app_exe_path')
-                                : '')
-                            if (!exe.trim()) exe = 'QingCode.exe'
-                            await copyToClipboard(buildQingcodeCliSkillMarkdown(exe))
-                            pushToast('success', t('已复制 CLI Skill，请粘贴到你的 AI Agent 中安装。'))
-                          } catch (error) {
-                            pushToast(
-                              'error',
-                              t('复制失败: {error}', { error: String(error) }),
-                            )
-                          } finally {
-                            setCliSkillBusy(false)
-                          }
-                        })()
-                      }}
-                    >
-                      {cliSkillBusy ? t('正在复制…') : t('复制 Skill 文本')}
-                    </button>
-                  </SettingItem>
                 )}
                 {match('打开方式', 'Open with', 'Windows') && (
                   <SettingItem
