@@ -3,19 +3,15 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
-import { useCompareStore } from '../store/compareStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { useSourceControlStore } from '../store/sourceControlStore'
-import { choiceDialog } from '../store/choiceStore'
-import { flushLiveEditorContent, getLiveEditorContent } from '../lib/editorSession'
-import { getEditorPreferences } from '../lib/editorSettings'
-import { resolveReadEncoding } from '../lib/fileEncoding'
-import { editorPerfProfile, resolveEditMaxBytes } from '../lib/fileSizePolicy'
+import { createDefaultSyncOpenFileDeps } from '../lib/syncOpenFileFromDiskDeps'
 import {
-  decideExternalChangeAfterRead,
-  decideExternalChangeBeforeRead,
-} from '../lib/externalFileChange'
-import { translate } from '../lib/i18n'
+  collectSyncableOpenTabs,
+  findOpenTabByPath,
+  syncOpenFileFromDisk,
+  syncOpenFilesOnFocus,
+} from '../lib/syncOpenFileFromDisk'
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
 import { shouldSkipWatcherTreeRefresh } from '../lib/watcherTreeRefresh'
 import type { EditorTab, Project } from '../types'
@@ -25,6 +21,9 @@ export type FsChangePayload = {
   kind: string
   isDir: boolean
 }
+
+/** Per-path debounce for rapid external writes before content sync. */
+const CONTENT_SYNC_DEBOUNCE_MS = 350
 
 function normalize(path: string): string {
   return path.replace(/\\/g, '/').toLowerCase()
@@ -93,26 +92,39 @@ function collectWatchFiles(
   return [...files]
 }
 
-function findOpenTabByPath(path: string): EditorTab | undefined {
+function listAllOpenTabs(): EditorTab[] {
   const editor = useEditorStore.getState()
-  const current = editor.tabs.find(t => pathsEqual(t.path, path))
-  if (current) return current
-  for (const session of Object.values(editor.projectSessions)) {
-    const tab = session.tabs.find(t => pathsEqual(t.path, path))
-    if (tab) return tab
-  }
-  return undefined
+  return collectSyncableOpenTabs(editor.tabs, editor.projectSessions)
+}
+
+function scheduleContentSync(
+  path: string,
+  timers: Map<string, ReturnType<typeof setTimeout>>,
+  run: (path: string) => void,
+) {
+  const key = normalize(path)
+  const existing = timers.get(key)
+  if (existing) clearTimeout(existing)
+  timers.set(
+    key,
+    setTimeout(() => {
+      timers.delete(key)
+      run(path)
+    }, CONTENT_SYNC_DEBOUNCE_MS),
+  )
 }
 
 export function useFileWatcher() {
-  const prompting = useRef(new Set<string>())
   const treeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingTreePaths = useRef<string[]>([])
+  const contentTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
+  const depsRef = useRef(createDefaultSyncOpenFileDeps())
 
   const currentProject = useProjectStore(s => s.currentProject)
   const projects = useProjectStore(s => s.projects)
   const tabs = useEditorStore(s => s.tabs)
   const projectSessions = useEditorStore(s => s.projectSessions)
+  const activeTabId = useEditorStore(s => s.activeTabId)
 
   // Watch current root + inactive projects that still have open tabs/files.
   useEffect(() => {
@@ -141,10 +153,75 @@ export function useFileWatcher() {
     }
   }, [currentProject])
 
+  // Catch missed OS events: window focus / becoming visible again.
+  useEffect(() => {
+    if (!isTauri()) return
+    let focusTimer: ReturnType<typeof setTimeout> | null = null
+
+    const runFocusSync = () => {
+      if (document.visibilityState === 'hidden') return
+      const deps = {
+        ...depsRef.current,
+        listTabs: listAllOpenTabs,
+      }
+      void syncOpenFilesOnFocus(listAllOpenTabs(), deps).catch(e => {
+        console.error('focus open-file sync failed:', e)
+      })
+    }
+
+    const onFocus = () => {
+      if (focusTimer) clearTimeout(focusTimer)
+      // Short delay so suppress windows from a just-finished save can expire.
+      focusTimer = setTimeout(runFocusSync, 200)
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') onFocus()
+    }
+
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
+      if (focusTimer) clearTimeout(focusTimer)
+    }
+  }, [])
+
+  // Activating a tab: cheap mtime check for that file only.
+  useEffect(() => {
+    if (!isTauri() || !activeTabId) return
+    const tab = useEditorStore.getState().tabs.find(t => t.id === activeTabId)
+    if (!tab || tab.kind === 'diff') return
+    const deps = {
+      ...depsRef.current,
+      listTabs: listAllOpenTabs,
+    }
+    void syncOpenFilesOnFocus([tab], deps).catch(e => {
+      console.error('activate-tab open-file sync failed:', e)
+    })
+  }, [activeTabId])
+
   useEffect(() => {
     if (!isTauri()) return
     let unlisten: UnlistenFn | undefined
     let cancelled = false
+    const deps = depsRef.current
+
+    const runPathContentSync = (changedPath: string) => {
+      const editor = useEditorStore.getState()
+      const tab = findOpenTabByPath(editor.tabs, editor.projectSessions, changedPath)
+      if (!tab) return
+      // Prefer a fresh tab snapshot at fire time.
+      const fresh =
+        editor.tabs.find(t => t.id === tab.id) ??
+        Object.values(editor.projectSessions)
+          .flatMap(s => s.tabs)
+          .find(t => t.id === tab.id)
+      if (!fresh) return
+      void syncOpenFileFromDisk(fresh, deps).catch(e => {
+        console.error('fs-change open-file sync failed:', e)
+      })
+    }
 
     void listen<FsChangePayload>('fs-change', event => {
       const payload = event.payload
@@ -183,124 +260,9 @@ export function useFileWatcher() {
       }, 500)
 
       const editor = useEditorStore.getState()
-      const tab = findOpenTabByPath(changedPath)
-      if (!tab || tab.loading || tab.openError) return
-      if (prompting.current.has(normalize(tab.path))) return
-
-      void (async () => {
-        try {
-          const suppressed = await safeInvoke<boolean>('检查监视抑制', 'is_fs_watch_suppressed', {
-            path: tab.path,
-          })
-          if (suppressed) return
-        } catch {
-          /* continue */
-        }
-
-        prompting.current.add(normalize(tab.path))
-        try {
-          const mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', {
-            path: tab.path,
-          })
-          const editMaxBytes = resolveEditMaxBytes(tab.path)
-          const profile = editorPerfProfile(tab.fileSize ?? 0, editMaxBytes)
-          const beforeRead = decideExternalChangeBeforeRead({
-            viewMode: tab.viewMode,
-            profile,
-            diskMtime: tab.diskMtime,
-            nextMtime: mtime,
-          })
-          if (beforeRead === 'ignore') return
-          // Read-only slice viewer: never pull full content into the WebView.
-          if (beforeRead === 'notify-view') {
-            editor.setDiskMtime(tab.id, mtime)
-            useProjectStore
-              .getState()
-              .pushToast('info', translate('磁盘文件已更改（只读预览）：{name}', { name: tab.name }))
-            return
-          }
-
-          const encoding = tab.encoding ?? await resolveReadEncoding(
-            tab.path,
-            getEditorPreferences().encoding,
-          )
-          const diskContent = await safeInvoke<string>('读取文件', 'read_file', {
-            path: tab.path,
-            encoding,
-          })
-          const local = getLiveEditorContent(tab.id) ?? tab.content ?? ''
-          const afterRead = decideExternalChangeAfterRead({
-            dirty: tab.dirty,
-            localContent: local,
-            diskContent,
-          })
-
-          if (afterRead === 'update-mtime') {
-            editor.setDiskMtime(tab.id, mtime)
-            return
-          }
-
-          if (afterRead === 'reload') {
-            // Clean tab, external edit — reload quietly.
-            await editor.reloadFromDisk(tab.id, diskContent, mtime)
-            useProjectStore
-              .getState()
-              .pushToast('info', translate('已重新加载外部更改：{name}', { name: tab.name }))
-            return
-          }
-
-          const allowCompare = (tab.fileSize ?? 0) <= editMaxBytes
-          // Dirty: ask user.
-          const choice = await choiceDialog({
-            title: '文件已在外部更改',
-            message: '磁盘上的文件与本地未保存修改不一致。',
-            detail: tab.path,
-            options: [
-              { id: 'reload', label: '重新加载', primary: true },
-              ...(allowCompare ? [{ id: 'compare', label: '比较' }] : []),
-              { id: 'keep', label: '保留本地修改' },
-            ],
-          })
-
-          if (choice === 'reload') {
-            await editor.reloadFromDisk(tab.id, diskContent, mtime)
-          } else if (choice === 'keep') {
-            editor.setDiskMtime(tab.id, mtime)
-          } else if (choice === 'compare' && allowCompare) {
-            flushLiveEditorContent(tab.id)
-            const localNow = getLiveEditorContent(tab.id) ?? tab.content ?? ''
-            const close = () => useCompareStore.getState().closeCompare()
-            useCompareStore.getState().openCompare({
-              path: tab.path,
-              leftTitle: translate('本地修改'),
-              rightTitle: translate('磁盘版本'),
-              leftContent: localNow,
-              rightContent: diskContent,
-              onClose: close,
-              actions: [
-                {
-                  label: translate('保留本地修改'),
-                  onClick: () => {
-                    editor.setDiskMtime(tab.id, mtime)
-                    close()
-                  },
-                },
-                {
-                  label: translate('重新加载'),
-                  primary: true,
-                  onClick: () => {
-                    void editor.reloadFromDisk(tab.id, diskContent, mtime).then(close)
-                  },
-                },
-              ],
-            })
-          }
-        } catch (e) {
-          console.error('fs-change handling failed:', e)
-        } finally {
-          prompting.current.delete(normalize(tab.path))
-        }
-      })()
+      const tab = findOpenTabByPath(editor.tabs, editor.projectSessions, changedPath)
+      if (!tab) return
+      scheduleContentSync(tab.path, contentTimers.current, runPathContentSync)
     }).then(fn => {
       if (cancelled) fn()
       else unlisten = fn
@@ -310,6 +272,8 @@ export function useFileWatcher() {
       cancelled = true
       unlisten?.()
       if (treeTimer.current) clearTimeout(treeTimer.current)
+      for (const timer of contentTimers.current.values()) clearTimeout(timer)
+      contentTimers.current.clear()
     }
   }, [])
 }

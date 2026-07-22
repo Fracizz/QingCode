@@ -8,6 +8,7 @@ import {
   SCM_FILES_MAX,
   SCM_FILES_MIN,
   SCM_LAYOUT_KEY,
+  SCM_LAYOUT_VERSION,
   SCM_LEFT_DEFAULT,
   SCM_LEFT_MAX,
   SCM_LEFT_MIN,
@@ -43,16 +44,40 @@ describe('scmLayout', () => {
 
   it('respects remaining space inside a container', () => {
     expect(clampScmLeftWidth(500, 500)).toBeLessThanOrEqual(500 - 280)
-    expect(clampScmFilesWidth(300, 400)).toBeLessThanOrEqual(400 - 240)
+    expect(clampScmFilesWidth(600, 600)).toBeLessThanOrEqual(600 - 280)
   })
 
   it('loads defaults and persists layout', () => {
     expect(loadScmLayout()).toEqual({
+      version: SCM_LAYOUT_VERSION,
       leftWidth: SCM_LEFT_DEFAULT,
       filesWidth: SCM_FILES_DEFAULT,
     })
-    saveScmLayout({ leftWidth: 400, filesWidth: 200 })
-    expect(loadScmLayout()).toEqual({ leftWidth: 400, filesWidth: 200 })
+    saveScmLayout({ leftWidth: 400, filesWidth: 360 })
+    expect(loadScmLayout()).toEqual({
+      version: SCM_LAYOUT_VERSION,
+      leftWidth: 400,
+      filesWidth: 360,
+    })
     expect(store.get(SCM_LAYOUT_KEY)).toContain('"leftWidth":400')
+    expect(store.get(SCM_LAYOUT_KEY)).toContain(`"version":${SCM_LAYOUT_VERSION}`)
+  })
+
+  it('upgrades legacy narrow file pane once', () => {
+    store.set(SCM_LAYOUT_KEY, JSON.stringify({ leftWidth: 340, filesWidth: 240 }))
+    expect(loadScmLayout()).toEqual({
+      version: SCM_LAYOUT_VERSION,
+      leftWidth: 340,
+      filesWidth: SCM_FILES_DEFAULT,
+    })
+  })
+
+  it('keeps a user-widened legacy file pane when upgrading', () => {
+    store.set(SCM_LAYOUT_KEY, JSON.stringify({ leftWidth: 320, filesWidth: 360 }))
+    expect(loadScmLayout()).toEqual({
+      version: SCM_LAYOUT_VERSION,
+      leftWidth: 320,
+      filesWidth: 360,
+    })
   })
 })

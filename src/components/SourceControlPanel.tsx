@@ -52,7 +52,7 @@ import {
   type GitChangeGroup,
   canCommitStagedChanges,
   collectUnmergedChanges,
-  formatRelativeCommitTime,
+  formatAbsoluteCommitTime,
   gitChangeIsUnmerged,
   gitChangePathLooksLikeDirectory,
   gitStatusGlyphForGroup,
@@ -115,7 +115,8 @@ const SCM_SECTION_ICON_SIZE = 13
 /** File rows nest under the section label (between tab-align and old pl-6). */
 const SCM_ROW_PAD = 'pl-5 pr-9'
 const COMMIT_HASH_COL = 'w-[7ch] shrink-0 font-mono text-[11px] tabular-nums text-accent'
-const COMMIT_TIME_COL = 'w-[4.5rem] shrink-0 truncate text-right text-[10px] text-fg-dim'
+const COMMIT_TIME_COL =
+  'w-[10.5rem] shrink-0 truncate text-right font-mono text-[10px] tabular-nums text-fg-dim'
 const SCM_ICON_SIZE = 13
 const SCM_ICON_SLOT = 'inline-flex h-6 w-6 shrink-0 items-center justify-center'
 const SCM_ICON_BUTTON =
@@ -485,7 +486,7 @@ function CommitHistoryRowComponent(
         <span className="min-w-0 flex-1 truncate text-[12px] text-fg">
           {commit.subject || noSubjectLabel}
         </span>
-        <span className={COMMIT_TIME_COL}>{formatRelativeCommitTime(commit.date)}</span>
+        <span className={COMMIT_TIME_COL}>{formatAbsoluteCommitTime(commit.date)}</span>
       </button>
     </div>
   )
@@ -1819,131 +1820,130 @@ export default function SourceControlPanel() {
             )}
           </div>
         </ScmResizableColumn>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg">
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-bg">
           {selectedCommit ? (
             <>
-              <div className="flex-shrink-0 space-y-2 border-b border-border px-5 py-3">
-                <h2 className="text-[15px] font-semibold leading-snug text-fg">
-                  {selectedCommit.subject || t('（无提交说明）')}
-                </h2>
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-fg-muted">
-                  <span>
-                    <span className="text-fg-dim">{t('作者')}</span>
-                    {' · '}
-                    {selectedCommit.author}
-                  </span>
-                  <span>
-                    <span className="text-fg-dim">{t('时间')}</span>
-                    {' · '}
-                    {formatRelativeCommitTime(selectedCommit.date)}
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <span className="text-fg-dim">{t('提交')}</span>
-                    <span className="font-mono text-[12px] text-accent">
-                      {selectedCommit.short_hash}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void copyCommitHash(selectedCommit.short_hash)}
-                      className="rounded border border-border px-2 py-0.5 text-[11px] text-fg hover:bg-bg-hover"
-                    >
-                      {t('复制哈希')}
-                    </button>
-                  </span>
-                </div>
-              </div>
-              <div className="flex min-h-0 flex-1 overflow-hidden">
-                <ScmResizableColumn
-                  width={scmFilesWidth}
-                  minWidth={SCM_FILES_MIN}
-                  maxWidth={SCM_FILES_MAX}
-                  remainingMin={SCM_FILES_REMAINING_MIN}
-                  onWidthChange={onScmFilesWidthChange}
-                  tooltip={t('拖动调整文件列表宽度 · {min}–{max}px · 当前 {current}px', {
-                    min: SCM_FILES_MIN,
-                    max: SCM_FILES_MAX,
-                    current: scmFilesWidth,
-                  })}
-                  className="bg-bg-sidebar"
-                >
-                  <div className="flex h-8 flex-shrink-0 items-center border-b border-border/60 px-3 text-[12px] font-medium text-fg">
-                    {t('更改的文件（{count}）', { count: commitFiles.length })}
-                  </div>
-                  <div className="min-h-0 flex-1 overflow-auto">
-                    {commitFilesLoading ? (
-                      <p className="flex items-center gap-2 px-3 py-2 text-[11px] text-fg-dim">
-                        <LoaderCircle size={12} className="animate-spin text-accent" />
-                        {t('正在读取提交文件…')}
-                      </p>
-                    ) : commitFilesError ? (
-                      <p className="px-3 py-2 text-[11px] text-danger">{commitFilesError}</p>
-                    ) : commitFiles.length === 0 ? (
-                      <p className="px-3 py-2 text-[11px] text-fg-dim">{t('此提交没有文件变更')}</p>
-                    ) : (
-                      <ul className="py-0.5">
-                        {commitFiles.map(file => {
-                          const active = selectedCommitFile === file.path
-                          return (
-                            <li key={file.path} style={{ minHeight: ROW_HEIGHT }}>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void loadCommitFileDiff(selectedCommit.hash, file.path)
-                                }
-                                className={`flex h-full w-full items-center gap-2 px-3 text-left text-[12px] hover:bg-bg-hover ${
-                                  active ? 'bg-bg-active' : ''
-                                }`}
-                                style={{ height: ROW_HEIGHT }}
-                              >
-                                <GitScmStatusBadge status={file.status} group="unstaged" />
-                                <Tooltip
-                                  label={file.path}
-                                  side="bottom"
-                                  onlyWhenOverflow
-                                  wrapperClassName="min-w-0 flex-1 truncate font-mono text-[11px] text-tree-fg"
-                                >
-                                  <span>{formatScmDisplayPath(file.path)}</span>
-                                </Tooltip>
-                              </button>
-                            </li>
-                          )
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                </ScmResizableColumn>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
-                  {commitFileDiffLoading ? (
-                    <EmptyState
-                      icon={<LoaderCircle size={22} className="animate-spin text-accent" />}
-                      title={t('正在读取差异…')}
-                    />
-                  ) : commitFileDiff ? (
-                    <div className="editor-font-independent flex min-h-0 flex-1 flex-col">
-                      <Suspense
-                        fallback={
-                          <EmptyState
-                            icon={<LoaderCircle size={22} className="animate-spin text-accent" />}
-                            title={t('正在读取差异…')}
-                          />
-                        }
-                      >
-                        <ScmInlineDiff
-                          path={commitFileDiff.path}
-                          name={commitFileDiff.name}
-                          original={commitFileDiff.original}
-                          modified={commitFileDiff.modified}
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
+                {commitFileDiffLoading ? (
+                  <EmptyState
+                    icon={<LoaderCircle size={22} className="animate-spin text-accent" />}
+                    title={t('正在读取差异…')}
+                  />
+                ) : commitFileDiff ? (
+                  <div className="editor-font-independent flex min-h-0 flex-1 flex-col">
+                    <Suspense
+                      fallback={
+                        <EmptyState
+                          icon={<LoaderCircle size={22} className="animate-spin text-accent" />}
+                          title={t('正在读取差异…')}
                         />
-                      </Suspense>
-                    </div>
+                      }
+                    >
+                      <ScmInlineDiff
+                        path={commitFileDiff.path}
+                        name={commitFileDiff.name}
+                        original={commitFileDiff.original}
+                        modified={commitFileDiff.modified}
+                      />
+                    </Suspense>
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon={<GitCompare size={28} strokeWidth={1.2} />}
+                    title={t('选择一个文件查看差异')}
+                  />
+                )}
+              </div>
+              <ScmResizableColumn
+                width={scmFilesWidth}
+                minWidth={SCM_FILES_MIN}
+                maxWidth={SCM_FILES_MAX}
+                remainingMin={SCM_FILES_REMAINING_MIN}
+                edge="start"
+                onWidthChange={onScmFilesWidthChange}
+                tooltip={t('拖动调整文件列表宽度 · {min}–{max}px · 当前 {current}px', {
+                  min: SCM_FILES_MIN,
+                  max: SCM_FILES_MAX,
+                  current: scmFilesWidth,
+                })}
+                className="bg-bg-sidebar"
+              >
+                <div className="flex-shrink-0 space-y-2 border-b border-border px-4 py-3">
+                  <h2 className="text-[14px] font-semibold leading-snug text-fg">
+                    {selectedCommit.subject || t('（无提交说明）')}
+                  </h2>
+                  <div className="flex flex-col gap-1 text-[12px] text-fg-muted">
+                    <span>
+                      <span className="text-fg-dim">{t('作者')}</span>
+                      {' · '}
+                      {selectedCommit.author}
+                    </span>
+                    <span>
+                      <span className="text-fg-dim">{t('时间')}</span>
+                      {' · '}
+                      {formatAbsoluteCommitTime(selectedCommit.date)}
+                    </span>
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="text-fg-dim">{t('提交')}</span>
+                      <span className="font-mono text-[12px] text-accent">
+                        {selectedCommit.short_hash}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void copyCommitHash(selectedCommit.short_hash)}
+                        className="rounded border border-border px-2 py-0.5 text-[11px] text-fg hover:bg-bg-hover"
+                      >
+                        {t('复制哈希')}
+                      </button>
+                    </span>
+                  </div>
+                </div>
+                <div className="flex h-8 flex-shrink-0 items-center border-b border-border/60 px-3 text-[12px] font-medium text-fg">
+                  {t('更改的文件（{count}）', { count: commitFiles.length })}
+                </div>
+                <div className="min-h-0 flex-1 overflow-auto">
+                  {commitFilesLoading ? (
+                    <p className="flex items-center gap-2 px-3 py-2 text-[11px] text-fg-dim">
+                      <LoaderCircle size={12} className="animate-spin text-accent" />
+                      {t('正在读取提交文件…')}
+                    </p>
+                  ) : commitFilesError ? (
+                    <p className="px-3 py-2 text-[11px] text-danger">{commitFilesError}</p>
+                  ) : commitFiles.length === 0 ? (
+                    <p className="px-3 py-2 text-[11px] text-fg-dim">{t('此提交没有文件变更')}</p>
                   ) : (
-                    <EmptyState
-                      icon={<GitCompare size={28} strokeWidth={1.2} />}
-                      title={t('选择一个文件查看差异')}
-                    />
+                    <ul className="py-0.5">
+                      {commitFiles.map(file => {
+                        const active = selectedCommitFile === file.path
+                        return (
+                          <li key={file.path} style={{ minHeight: ROW_HEIGHT }}>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                void loadCommitFileDiff(selectedCommit.hash, file.path)
+                              }
+                              className={`flex h-full w-full items-center gap-2 px-3 text-left text-[12px] hover:bg-bg-hover ${
+                                active ? 'bg-bg-active' : ''
+                              }`}
+                              style={{ height: ROW_HEIGHT }}
+                            >
+                              <GitScmStatusBadge status={file.status} group="unstaged" />
+                              <Tooltip
+                                label={file.path}
+                                side="bottom"
+                                onlyWhenOverflow
+                                wrapperClassName="min-w-0 flex-1 truncate font-mono text-[11px] text-tree-fg"
+                              >
+                                <span>{formatScmDisplayPath(file.path)}</span>
+                              </Tooltip>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
                   )}
                 </div>
-              </div>
+              </ScmResizableColumn>
             </>
           ) : (
             <EmptyState

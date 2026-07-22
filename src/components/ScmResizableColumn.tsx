@@ -6,8 +6,13 @@ type Props = {
   width: number
   minWidth: number
   maxWidth: number
-  /** Leave at least this many px for content to the right of the resizer. */
+  /** Leave at least this many px for content on the opposite side of the resizer. */
   remainingMin?: number
+  /**
+   * `end` (default): column on the left, grip on the right (drag right → wider).
+   * `start`: grip on the left, column on the right (drag left → wider).
+   */
+  edge?: 'start' | 'end'
   onWidthChange: (width: number) => void
   tooltip: string
   children: ReactNode
@@ -20,6 +25,7 @@ export default function ScmResizableColumn({
   minWidth,
   maxWidth,
   remainingMin = 0,
+  edge = 'end',
   onWidthChange,
   tooltip,
   children,
@@ -50,7 +56,9 @@ export default function ScmResizableColumn({
         const st = dragRef.current
         if (!st) return
         const parentWidth = rootRef.current?.parentElement?.clientWidth
-        onWidthChange(clampWidth(st.startW + (ev.clientX - st.startX), parentWidth))
+        const delta = ev.clientX - st.startX
+        const next = edge === 'start' ? st.startW - delta : st.startW + delta
+        onWidthChange(clampWidth(next, parentWidth))
       }
 
       const onUp = () => {
@@ -65,7 +73,28 @@ export default function ScmResizableColumn({
       window.addEventListener('mouseup', onUp)
       beginPanelResize('vertical')
     },
-    [clampWidth, onWidthChange, width],
+    [clampWidth, edge, onWidthChange, width],
+  )
+
+  const borderClass = edge === 'start' ? 'border-l border-border' : 'border-r border-border'
+  const panel = (
+    <div
+      className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden ${borderClass} ${className ?? ''}`}
+    >
+      {children}
+    </div>
+  )
+  const resizer = (
+    <PanelResizer
+      orientation="vertical"
+      active={active}
+      tooltip={tooltip}
+      tooltipSide={edge === 'start' ? 'left' : 'right'}
+      onMouseDown={onMouseDown}
+      ariaValueNow={width}
+      ariaValueMin={minWidth}
+      ariaValueMax={maxWidth}
+    />
   )
 
   return (
@@ -74,21 +103,17 @@ export default function ScmResizableColumn({
       className="flex h-full min-h-0 flex-shrink-0 overflow-hidden"
       style={{ width }}
     >
-      <div
-        className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-border ${className ?? ''}`}
-      >
-        {children}
-      </div>
-      <PanelResizer
-        orientation="vertical"
-        active={active}
-        tooltip={tooltip}
-        tooltipSide="right"
-        onMouseDown={onMouseDown}
-        ariaValueNow={width}
-        ariaValueMin={minWidth}
-        ariaValueMax={maxWidth}
-      />
+      {edge === 'start' ? (
+        <>
+          {resizer}
+          {panel}
+        </>
+      ) : (
+        <>
+          {panel}
+          {resizer}
+        </>
+      )}
     </div>
   )
 }

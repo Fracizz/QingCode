@@ -171,6 +171,23 @@ You can also configure startup commands for terminals:
 - File diffs with Chinese characters, spaces, and renamed paths.
 - Files in untracked, modified, staged, and deleted states.
 
+### Status Marks
+
+Letters next to files in the explorer, editor tabs, and Source Control list indicate Git change status:
+
+| Mark | Meaning |
+|------|---------|
+| **M** | Modified |
+| **U** | Untracked (new and not yet staged) |
+| **A** | Added (staged as new) |
+| **D** | Deleted |
+| **R** | Renamed |
+| **C** | Copied |
+| **T** | Type changed (e.g. file ↔ symlink) |
+| **I** | Ignored (matched by `.gitignore` and similar; rarely shown in the UI) |
+
+If both the index and the worktree are dirty for the same file, Source Control shows the letter for that group (for example **A** in Staged and **M** in Changes). Colors are roughly: U / A green-ish, M / T yellow-ish, D red-ish, R / C accent.
+
 > Committing and pushing are recommended to be done in your familiar Git tool or AI assistant.
 
 ---

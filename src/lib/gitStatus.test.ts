@@ -6,7 +6,7 @@ import {
   changesFromWorkdirEntries,
   dirGitStatus,
   dirHasGitChanges,
-  formatRelativeCommitTime,
+  formatAbsoluteCommitTime,
   formatScmDisplayPath,
   collectUnmergedChanges,
   gitChangeIsUnmerged,
@@ -148,12 +148,17 @@ describe('gitStatus helpers', () => {
     expect(scmStatusBadgeTone('UU', 'unstaged')).toBe('conflict')
   })
 
-  it('formats relative commit times', () => {
-    const now = Date.parse('2026-07-22T12:00:00.000Z')
-    expect(formatRelativeCommitTime('2026-07-22T11:59:30.000Z', now)).toBe('刚刚')
-    expect(formatRelativeCommitTime('2026-07-22T11:30:00.000Z', now)).toBe('30 分钟前')
-    expect(formatRelativeCommitTime('2026-07-21T12:00:00.000Z', now)).toBe('昨天')
-    expect(formatRelativeCommitTime('2026-06-01T00:00:00.000Z', now)).toMatch(/2026-06-01/)
+  it('formats absolute commit times in local timezone', () => {
+    const iso = '2026-07-22T11:30:45.000Z'
+    const expected = formatAbsoluteCommitTime(iso)
+    expect(expected).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
+    const parsed = Date.parse(iso)
+    const d = new Date(parsed)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    expect(expected).toBe(
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
+    )
+    expect(formatAbsoluteCommitTime('not-a-date')).toBe('not-a-date')
   })
 
   it('detects unmerged conflict statuses', () => {
