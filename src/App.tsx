@@ -97,7 +97,6 @@ function scheduleDeferredWork(fn: () => void, timeoutMs = 600): () => void {
 
 function App() {
   const { t } = useI18n()
-  const addTerminal = useTerminalStore(s => s.addTerminal)
   const activateProject = useTerminalStore(s => s.activateProject)
   const spawnRestoredTerminals = useTerminalStore(s => s.spawnRestoredTerminals)
   const initializeTerminalEvents = useTerminalStore(s => s.initializeTerminalEvents)
@@ -244,35 +243,22 @@ function App() {
     void loadMissingTabContents()
   }, [currentProject, tabsNeedContentLoad, loadMissingTabContents])
 
-  // Ensure the current project has at least one terminal, and that the active
-  // terminal belongs to the current project. Defer PTY spawn so first project
-  // paint is not blocked by PowerShell / ConPTY startup; skip entirely while
-  // the terminal panel is closed or the workspace is restricted.
+  // When the current project already has terminal tabs, activate them and spawn
+  // restored PTYs once the panel is open. Do not auto-create a terminal just
+  // because the project has none.
   useEffect(() => {
     if (!currentProject || !projectTrusted) return
     const projectId = currentProject.id
-    const projectPath = currentProject.path
-    if (useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
-      activateProject(projectId)
-      if (terminalOpen) {
-        return scheduleDeferredWork(() => {
-          void spawnRestoredTerminals(projectId)
-        })
-      }
+    if (!useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
       return
     }
+    activateProject(projectId)
     if (!terminalOpen) return
     return scheduleDeferredWork(() => {
-      if (useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
-        activateProject(projectId)
-        void spawnRestoredTerminals(projectId)
-        return
-      }
-      void addTerminal(projectPath, projectId)
+      void spawnRestoredTerminals(projectId)
     })
   }, [
     activateProject,
-    addTerminal,
     currentProject,
     projectTrusted,
     spawnRestoredTerminals,

@@ -235,6 +235,116 @@ fn unstage_files(root: &Path, files: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+fn is_unmerged_status(status: &str) -> bool {
+    let bytes = status.as_bytes();
+    if bytes.len() < 2 {
+        return false;
+    }
+    let index = bytes[0];
+    let worktree = bytes[1];
+    index == b'U'
+        || worktree == b'U'
+        || (index == b'A' && worktree == b'A')
+        || (index == b'D' && worktree == b'D')
+}
+
+fn delete_worktree_path(root: &Path, relative: &str) -> Result<(), String> {
+    let path = root.join(relative);
+    if !path.exists() {
+        return Ok(());
+    }
+    // Belt-and-suspenders: resolved relatives never escape, but refuse if the
+    // joined path somehow leaves the project root.
+    let root_canon = root
+        .canonicalize()
+        .unwrap_or_else(|_| root.to_path_buf());
+    let path_canon = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.clone());
+    if !path_canon.starts_with(&root_canon) {
+        return Err("仅允许丢弃当前项目内的 Git 文件".to_string());
+    }
+    if path_canon.is_dir() {
+        std::fs::remove_dir_all(&path_canon)
+            .map_err(|error| format!("删除未跟踪目录失败：{error}"))
+    } else {
+        std::fs::remove_file(&path_canon)
+            .map_err(|error| format!("删除未跟踪文件失败：{error}"))
+    }
+}
+
+fn status_map_for_files(
+    status: &GitStatus,
+    files: &[String],
+) -> Result<Vec<(String, String)>, String> {
+    let mut matched = Vec::with_capacity(files.len());
+    for file in files {
+        if let Some(change) = status.changes.iter().find(|change| change.path == *file) {
+            if is_unmerged_status(&change.status) {
+                return Err(format!("无法丢弃存在合并冲突的文件：{file}"));
+            }
+            matched.push((change.status.clone(), file.clone()));
+        }
+    }
+    Ok(matched)
+}
+
+/// Discard unstaged worktree changes, or delete untracked paths.
+fn discard_unstaged_files(root: &Path, files: &[String]) -> Result<(), String> {
+    let status = collect_git_status(root)?;
+    let matched = status_map_for_files(&status, files)?;
+    let mut restore = Vec::new();
+    let mut delete = Vec::new();
+    for (change_status, file) in matched {
+        if change_status == "??" || change_status == "!!" {
+            delete.push(file);
+            continue;
+        }
+        let worktree = change_status.as_bytes().get(1).copied().unwrap_or(b' ');
+        if worktree != b' ' {
+            restore.push(file);
+        }
+    }
+    if !restore.is_empty() {
+        let output = run_git_files(root, &["restore"], &restore)?;
+        if !output.status.success() {
+            // Older Git without `restore`: check out from the index.
+            let checkout = run_git_files(root, &["checkout", "--"], &restore)?;
+            ensure_git_success("丢弃工作区更改", checkout)?;
+        }
+    }
+    for file in delete {
+        delete_worktree_path(root, &file)?;
+    }
+    Ok(())
+}
+
+/// Discard staged changes by restoring index + worktree from HEAD (or deleting
+/// on an unborn branch).
+fn discard_staged_files(root: &Path, files: &[String]) -> Result<(), String> {
+    let status = collect_git_status(root)?;
+    let _matched = status_map_for_files(&status, files)?;
+    if has_head(root)? {
+        let restore = run_git_files(
+            root,
+            &["restore", "--source=HEAD", "--staged", "--worktree"],
+            files,
+        )?;
+        if restore.status.success() {
+            return Ok(());
+        }
+        let checkout = run_git_files(root, &["checkout", "HEAD", "--"], files)?;
+        ensure_git_success("丢弃已暂存更改", checkout)?;
+        return Ok(());
+    }
+
+    unstage_files(root, files)?;
+    for file in files {
+        delete_worktree_path(root, file)?;
+    }
+    Ok(())
+}
+
 fn commit_staged(root: &Path, message: &str) -> Result<String, String> {
     let message = message.trim();
     if message.is_empty() {
@@ -559,6 +669,29 @@ pub async fn git_unstage(
     tauri::async_runtime::spawn_blocking(move || unstage_files(&root, &files))
         .await
         .map_err(|error| format!("取消暂存 Git 文件失败：{error}"))?
+}
+
+/// Discard selected changes. `staged=true` restores from HEAD (index+worktree);
+/// otherwise discards worktree changes / deletes untracked files.
+#[tauri::command]
+pub async fn git_discard(
+    path: String,
+    files: Vec<String>,
+    staged: bool,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<(), String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    let files = resolve_files(&root, files)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if staged {
+            discard_staged_files(&root, &files)
+        } else {
+            discard_unstaged_files(&root, &files)
+        }
+    })
+    .await
+    .map_err(|error| format!("丢弃 Git 更改失败：{error}"))?
 }
 
 #[tauri::command]
@@ -1109,6 +1242,57 @@ mod tests {
             .any(|change| change.path == "-draft.txt" && change.status == "??"));
         assert!(root.join("中文 文件.txt").is_file());
         assert!(root.join("-draft.txt").is_file());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn discards_unstaged_tracked_and_untracked_files() {
+        let root = init_test_repo("discard-unstaged");
+        fs::write(root.join("tracked.txt"), "v1\n").unwrap();
+        stage_files(&root, &["tracked.txt".into()]).unwrap();
+        commit_staged(&root, "initial").unwrap();
+
+        fs::write(root.join("tracked.txt"), "v2\n").unwrap();
+        fs::write(root.join("scratch.txt"), "temp\n").unwrap();
+        discard_unstaged_files(
+            &root,
+            &["tracked.txt".into(), "scratch.txt".into()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("tracked.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "v1\n"
+        );
+        assert!(!root.join("scratch.txt").exists());
+        let status = collect_git_status(&root).unwrap();
+        assert!(status.changes.is_empty());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn discards_staged_changes_to_head() {
+        let root = init_test_repo("discard-staged");
+        fs::write(root.join("tracked.txt"), "v1\n").unwrap();
+        stage_files(&root, &["tracked.txt".into()]).unwrap();
+        commit_staged(&root, "initial").unwrap();
+
+        fs::write(root.join("tracked.txt"), "v2\n").unwrap();
+        stage_files(&root, &["tracked.txt".into()]).unwrap();
+        discard_staged_files(&root, &["tracked.txt".into()]).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(root.join("tracked.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "v1\n"
+        );
+        let status = collect_git_status(&root).unwrap();
+        assert!(status.changes.is_empty());
 
         fs::remove_dir_all(root).unwrap();
     }

@@ -125,6 +125,7 @@ export default function SearchPanel() {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
   const [activeIndex, setActiveIndex] = useState(0)
   const [replaceText, setReplaceText] = useState('')
+  const [replaceOpen, setReplaceOpen] = useState(false)
   const [replacePreview, setReplacePreview] = useState<ReplacePreview | null>(null)
   const reqId = useRef(0)
   const pushToast = useProjectStore(s => s.pushToast)
@@ -606,49 +607,64 @@ export default function SearchPanel() {
           onChange={setMode}
         />
 
-        <div className="relative">
-          {loading ? (
-            <LoaderCircle
-              size={13}
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 animate-spin text-accent"
-              aria-label={t('搜索中')}
+        <div className="flex items-center gap-0.5">
+          {mode === 'content' && (
+            <Tooltip label={replaceOpen ? t('隐藏替换') : t('显示替换')} side="bottom">
+              <button
+                type="button"
+                aria-label={replaceOpen ? t('隐藏替换') : t('显示替换')}
+                aria-expanded={replaceOpen}
+                className="flex-shrink-0 p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
+                onClick={() => setReplaceOpen(v => !v)}
+              >
+                {replaceOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </button>
+            </Tooltip>
+          )}
+          <div className="relative flex-1 min-w-0">
+            {loading ? (
+              <LoaderCircle
+                size={13}
+                className="absolute left-2.5 top-1/2 -translate-y-1/2 animate-spin text-accent"
+                aria-label={t('搜索中')}
+              />
+            ) : (
+              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
+            )}
+            <input
+              ref={searchInputRef}
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={
+                mode === 'content'
+                  ? typeFilter
+                    ? t('在 {type} 文件中搜索内容…', { type: t(typeFilterLabel(typeFilter)) })
+                    : t('搜索文件内容…')
+                  : useGlob
+                  ? t('通配符匹配，如 *.tsx 或 test*Util.ts')
+                  : typeFilter
+                  ? t('在 {type} 中搜索文件名…', { type: t(typeFilterLabel(typeFilter)) })
+                  : matchSuffix
+                  ? t('输入后缀/扩展名，如 .ts 或 ts')
+                  : fuzzy
+                  ? t('模糊匹配文件名…')
+                  : t('搜索文件名，支持 * 通配符…')
+              }
+              className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
             />
-          ) : (
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
-          )}
-          <input
-            ref={searchInputRef}
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder={
-              mode === 'content'
-                ? typeFilter
-                  ? t('在 {type} 文件中搜索内容…', { type: t(typeFilterLabel(typeFilter)) })
-                  : t('搜索文件内容…')
-                : useGlob
-                ? t('通配符匹配，如 *.tsx 或 test*Util.ts')
-                : typeFilter
-                ? t('在 {type} 中搜索文件名…', { type: t(typeFilterLabel(typeFilter)) })
-                : matchSuffix
-                ? t('输入后缀/扩展名，如 .ts 或 ts')
-                : fuzzy
-                ? t('模糊匹配文件名…')
-                : t('搜索文件名，支持 * 通配符…')
-            }
-            className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
-          />
-          {query && (
-            <button
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
-              onClick={() => setQuery('')}
-            >
-              <X size={13} />
-            </button>
-          )}
+            {query && (
+              <button
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
+                onClick={() => setQuery('')}
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
         </div>
 
-        {mode === 'content' && (
-          <div className="flex items-center gap-1.5">
+        {mode === 'content' && replaceOpen && (
+          <div className="flex items-center gap-1.5 pl-[22px]">
             <div className="relative flex-1 min-w-0">
               <Replace
                 size={13}

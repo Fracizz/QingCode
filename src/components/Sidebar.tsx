@@ -34,6 +34,7 @@ import {
   Info,
   Scissors,
   ClipboardPaste,
+  ClipboardCopy,
 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useProjectStore, type FileNode } from '../store/projectStore'
@@ -671,6 +672,22 @@ export default function Sidebar() {
     useProjectStore.getState().pushToast('success', t('已复制 {count} 项', { count: paths.length }))
   }
 
+  const copyFilesToSystemClipboard = async (anchorPath?: string) => {
+    const paths = pathsForClipboardAction(anchorPath)
+    if (paths.length === 0) return
+    try {
+      await safeInvoke('写入系统剪贴板', 'clipboard_write_files', { paths })
+      useProjectStore
+        .getState()
+        .pushToast('success', t('已复制文件到剪贴板（{count} 项）', { count: paths.length }))
+    } catch (error) {
+      useProjectStore.getState().pushToast(
+        'error',
+        t('复制文件到剪贴板失败：{error}', { error: String(error) }),
+      )
+    }
+  }
+
   const resolvePasteDest = (hintPath?: string): string | null => {
     if (!currentProject) return null
     const path = hintPath ?? selectedPath ?? currentProject.path
@@ -1147,6 +1164,11 @@ export default function Sidebar() {
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+C',
         action: () => copyExplorerPaths(node.path),
+      },
+      {
+        label: t('复制文件到剪贴板'),
+        icon: <ClipboardCopy size={14} />,
+        action: () => void copyFilesToSystemClipboard(node.path),
       },
       {
         label: t('粘贴'),

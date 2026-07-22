@@ -14,6 +14,7 @@ import {
 import { createPortal } from 'react-dom'
 import {
   AlertCircle,
+  Undo2,
   ArrowDown,
   ArrowUp,
   Check,
@@ -55,6 +56,7 @@ import {
   canCommitStagedChanges,
   collectUnmergedChanges,
   formatRelativeCommitTime,
+  gitChangeIsUnmerged,
   gitChangePathLooksLikeDirectory,
   gitStatusGlyphForGroup,
   gitStatusMayBeDirectory,
@@ -65,6 +67,7 @@ import {
   scmStatusBadgeTone,
   splitGitChanges,
 } from '../lib/gitStatus'
+import { confirmDialog } from '../store/confirmStore'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { useUIStore } from '../store/uiStore'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
@@ -141,7 +144,7 @@ function GitScmStatusBadge({ status, group }: { status: string; group: GitChange
 }
 
 type GitOperation = {
-  kind: 'stage' | 'unstage' | 'commit' | 'push' | 'pull' | 'switch'
+  kind: 'stage' | 'unstage' | 'discard' | 'commit' | 'push' | 'pull' | 'switch'
   key: string
 }
 
@@ -1107,6 +1110,69 @@ export default function SourceControlPanel() {
     [loading, operation, refresh, status, t],
   )
 
+  const discardChanges = useCallback(
+    async (group: GitChangeGroup, targets: GitChange[]) => {
+      const project = useProjectStore.getState().currentProject
+      if (!project || operation || loading || targets.length === 0) return
+      if (targets.some(change => gitChangeIsUnmerged(change.status))) {
+        useProjectStore.getState().pushToast('error', t('无法丢弃存在合并冲突的文件'))
+        return
+      }
+
+      const bulk = targets.length > 1
+      const firstName = formatScmDisplayPath(targets[0].path)
+      const confirmed = await confirmDialog({
+        title: t('丢弃更改'),
+        message: bulk
+          ? t('确定丢弃 {count} 个文件的更改？', { count: targets.length })
+          : t('确定丢弃「{name}」的更改？', { name: firstName }),
+        detail: t('此操作无法撤销。未跟踪的文件将被删除。'),
+        kind: 'danger',
+        confirmLabel: t('丢弃'),
+        cancelLabel: t('取消'),
+      })
+      if (confirmed !== true) return
+
+      const files = targets.map(change => change.path)
+      const key =
+        files.length > 1 ? `multi:${group}` : scmRowKey(group, files[0])
+      setOperation({ kind: 'discard', key })
+      setOperationError(null)
+
+      try {
+        await safeInvoke('丢弃 Git 更改', 'git_discard', {
+          path: project.path,
+          files,
+          staged: group === 'staged',
+        })
+        if (useProjectStore.getState().currentProject?.path === project.path) {
+          for (const change of targets) {
+            if (change.status === '??') {
+              useEditorStore.getState().closeTabsForPath(absoluteFilePath(project.path, change.path))
+            }
+          }
+          void refresh({ soft: true })
+          useProjectStore.getState().pushToast(
+            'success',
+            t('已丢弃 {count} 个文件的更改', { count: files.length }),
+          )
+        }
+      } catch (reason) {
+        if (useProjectStore.getState().currentProject?.path === project.path) {
+          void refresh({ soft: true })
+          const message = String(reason)
+          setOperationError(message)
+          useProjectStore
+            .getState()
+            .pushToast('error', t('丢弃更改失败：{error}', { error: message }))
+        }
+      } finally {
+        setOperation(null)
+      }
+    },
+    [loading, operation, refresh, t],
+  )
+
   const pullCurrent = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
     if (!project || operation || loading) return
@@ -1394,6 +1460,18 @@ export default function SourceControlPanel() {
         icon: isStaged ? <Minus size={14} /> : <Plus size={14} />,
         disabled: Boolean(operation) || loading,
         action: () => void runChangeAction(group, actionTargets),
+      },
+      {
+        label: bulkAction
+          ? t('丢弃 {count} 个文件的更改', { count: actionTargets.length })
+          : t('丢弃更改'),
+        icon: <Undo2 size={14} />,
+        danger: true,
+        disabled:
+          Boolean(operation) ||
+          loading ||
+          actionTargets.some(item => gitChangeIsUnmerged(item.status)),
+        action: () => void discardChanges(group, actionTargets),
       },
       {
         label: t('打开更改'),

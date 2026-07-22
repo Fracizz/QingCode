@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Info, LoaderCircle } from 'lucide-react'
+import { Folder, File as FileIcon, LoaderCircle } from 'lucide-react'
 import { usePropertiesStore } from '../store/propertiesStore'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
@@ -7,15 +7,20 @@ import { useI18n } from '../lib/i18n'
 import { formatEntryCount, formatFileTime } from '../lib/fileProperties'
 import { copyToClipboard } from '../utils/fileReferences'
 import { formatBytes } from '../utils/formatBytes'
+import { useProjectStore } from '../store/projectStore'
 
 type PropertyRow = {
   key: string
   label: string
-  title?: string
+  hint?: string
   value?: string
   loading?: boolean
   isLocation?: boolean
-  tabular?: boolean
+}
+
+type PropertySection = {
+  key: string
+  rows: PropertyRow[]
 }
 
 function RowLoading({ label }: { label: string }) {
@@ -27,15 +32,58 @@ function RowLoading({ label }: { label: string }) {
   )
 }
 
-/** UI sans mixes CJK + Latin metrics — pure digit/Latin values may need a tiny nudge. */
-function valueNeedsLatinAlign(value: string | undefined): boolean {
-  if (!value) return false
-  // Datetime etc. mix CJK + digits — skip nudge; inherits --font-sans like labels.
-  if (/[\u4e00-\u9fff]/.test(value)) return false
-  return /[0-9A-Za-z]/.test(value)
+function PropertyGrid({ rows, path }: { rows: PropertyRow[]; path: string }) {
+  const { t } = useI18n()
+  const pushToast = useProjectStore(s => s.pushToast)
+
+  return (
+    <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[13px] leading-snug">
+      {rows.map(row => (
+        <div key={row.key} className="contents">
+          <dt className="whitespace-nowrap text-fg-muted">
+            {row.hint ? (
+              <Tooltip label={row.hint} side="bottom" wrapperClassName="inline-block">
+                <span>{row.label}</span>
+              </Tooltip>
+            ) : (
+              row.label
+            )}
+          </dt>
+          <dd
+            className={`m-0 min-w-0 text-fg ${
+              row.isLocation
+                ? 'cursor-pointer select-text rounded px-1 -mx-1 hover:bg-bg-hover hover:text-accent'
+                : ''
+            }`}
+            onClick={
+              row.isLocation
+                ? () => {
+                    void copyToClipboard(path)
+                      .then(() => pushToast('success', t('路径已复制')))
+                      .catch((err: unknown) => {
+                        pushToast('error', t('复制路径失败: {error}', { error: String(err) }))
+                      })
+                  }
+                : undefined
+            }
+          >
+            {row.loading ? (
+              <RowLoading label={t('加载中…')} />
+            ) : row.isLocation ? (
+              <Tooltip label={t('点击复制完整路径')} side="bottom" wrapperClassName="block min-w-0">
+                <span className="break-all font-mono text-[12px] leading-relaxed">{row.value}</span>
+              </Tooltip>
+            ) : (
+              <span className="break-all tabular-nums">{row.value}</span>
+            )}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
 }
 
-/** Two-column properties sheet — header + divider rows, no cell backgrounds. */
+/** Two-column properties sheet — sectioned grid, left-aligned label column. */
 export default function PropertiesDialog() {
   const { t, language } = useI18n()
   const open = usePropertiesStore(s => s.open)
@@ -58,10 +106,10 @@ export default function PropertiesDialog() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [open, close])
 
-  const rows = useMemo(() => {
+  const sections = useMemo((): PropertySection[] => {
     if (!properties) return []
     const countHint = t('含所有子文件夹')
-    const items: PropertyRow[] = [
+    const general: PropertyRow[] = [
       { key: 'name', label: t('名称'), value: properties.name },
       {
         key: 'kind',
@@ -71,29 +119,21 @@ export default function PropertiesDialog() {
       { key: 'location', label: t('位置'), value: properties.location, isLocation: true },
     ]
 
+    const stats: PropertyRow[] = []
     if (properties.kind === 'file') {
-      items.push({
+      stats.push({
         key: 'size',
         label: t('大小'),
         loading: metaLoading,
-        tabular: true,
-        value:
-          metaLoading
-            ? undefined
-            : properties.size != null
-              ? formatBytes(properties.size)
-              : '—',
+        value: metaLoading ? undefined : properties.size != null ? formatBytes(properties.size) : '—',
       })
-    }
-
-    if (properties.kind === 'folder') {
-      items.push(
+    } else {
+      stats.push(
         {
           key: 'size',
           label: t('大小'),
-          title: countHint,
+          hint: countHint,
           loading: countsLoading,
-          tabular: true,
           value:
             countsLoading
               ? undefined
@@ -104,9 +144,8 @@ export default function PropertiesDialog() {
         {
           key: 'file-count',
           label: t('文件数'),
-          title: countHint,
+          hint: countHint,
           loading: countsLoading,
-          tabular: true,
           value: countsLoading
             ? undefined
             : formatEntryCount(folderCounts?.fileCount, language),
@@ -114,9 +153,8 @@ export default function PropertiesDialog() {
         {
           key: 'folder-count',
           label: t('文件夹数'),
-          title: countHint,
+          hint: countHint,
           loading: countsLoading,
-          tabular: true,
           value: countsLoading
             ? undefined
             : formatEntryCount(folderCounts?.folderCount, language),
@@ -124,7 +162,7 @@ export default function PropertiesDialog() {
       )
     }
 
-    items.push(
+    const times: PropertyRow[] = [
       {
         key: 'created',
         label: t('创建时间'),
@@ -137,11 +175,18 @@ export default function PropertiesDialog() {
         loading: metaLoading,
         value: metaLoading ? undefined : formatFileTime(properties.modifiedMs, language),
       },
-    )
-    return items
+    ]
+
+    return [
+      { key: 'general', rows: general },
+      { key: 'stats', rows: stats },
+      { key: 'times', rows: times },
+    ]
   }, [properties, folderCounts, metaLoading, countsLoading, t, language])
 
   if (!open || !properties) return null
+
+  const KindIcon = properties.kind === 'folder' ? Folder : FileIcon
 
   return (
     <ModalOverlay onDismiss={close} zIndex="z-[110]">
@@ -149,76 +194,44 @@ export default function PropertiesDialog() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="properties-title"
-        className="ui-font-scaled modal-content-enter relative w-full max-w-[460px] rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter relative w-full max-w-[440px] rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
       >
-        <div className="px-4 pt-4 pb-3">
-          <div className="flex items-center gap-3 border-b border-border pb-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bg-active text-accent">
-              <Info size={16} aria-hidden />
-            </div>
+        <div className="flex items-center gap-3 border-b border-border px-4 py-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-bg-active text-accent">
+            <KindIcon size={18} aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
             <h2
               id="properties-title"
-              className="min-w-0 flex-1 truncate text-[14px] font-semibold text-fg"
+              className="truncate text-[14px] font-semibold leading-tight text-fg"
             >
-              {t('{name} 属性', { name: title })}
+              {title}
             </h2>
+            <p className="mt-0.5 text-[11px] text-fg-muted">{t('属性')}</p>
           </div>
-          {error && (
-            <p className="pt-3 text-[13px] text-danger">{t('读取属性失败: {error}', { error })}</p>
-          )}
-          <dl className={error ? 'pt-2' : 'pt-1'}>
-            {rows.map(row => (
-              <div
-                key={row.key}
-                className="flex gap-x-3 border-b border-border py-2.5 last:border-b-0"
-              >
-                <dt className="flex w-24 shrink-0 items-center justify-end font-[family-name:var(--font-sans)] text-[13px] font-normal leading-snug text-fg-muted">
-                  {row.title ? (
-                    <Tooltip label={row.title} side="bottom" wrapperClassName="inline-block">
-                      <span>{row.label}</span>
-                    </Tooltip>
-                  ) : (
-                    row.label
-                  )}
-                </dt>
-                <dd
-                  className={`m-0 flex min-w-0 flex-1 items-center font-[family-name:var(--font-sans)] text-[13px] leading-snug text-fg ${
-                    !row.loading && valueNeedsLatinAlign(row.value)
-                      ? 'translate-y-[0.05em]'
-                      : ''
-                  } ${row.isLocation ? 'cursor-pointer select-text hover:text-accent' : ''}`}
-                  onClick={
-                    row.isLocation
-                      ? () => {
-                          void copyToClipboard(properties.location)
-                        }
-                      : undefined
-                  }
-                >
-                  {row.loading ? (
-                    <RowLoading label={t('加载中…')} />
-                  ) : row.isLocation ? (
-                    <Tooltip
-                      label={properties.path}
-                      side="bottom"
-                      wrapperClassName="block min-w-0"
-                    >
-                      <span className="break-all">{row.value}</span>
-                    </Tooltip>
-                  ) : (
-                    <span className="break-all">{row.value}</span>
-                  )}
-                </dd>
-              </div>
-            ))}
-          </dl>
         </div>
 
-        <div className="flex justify-end border-t border-border px-4 py-3">
+        <div className="px-4 py-3">
+          {error && (
+            <p className="mb-3 text-[13px] text-danger">{t('读取属性失败: {error}', { error })}</p>
+          )}
+          <div className="flex flex-col gap-3">
+            {sections.map((section, index) => (
+              <div
+                key={section.key}
+                className={index > 0 ? 'border-t border-border pt-3' : undefined}
+              >
+                <PropertyGrid rows={section.rows} path={properties.path} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex justify-end border-t border-border px-4 py-2.5">
           <button
             ref={okRef}
             type="button"
-            className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors"
+            className="rounded bg-accent px-3 py-1.5 text-[13px] text-white transition-colors hover:bg-accent/90"
             onClick={close}
           >
             {t('确定')}

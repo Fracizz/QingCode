@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::fs;
 use std::fs::File;
 use std::io::{copy, Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 
@@ -771,6 +771,46 @@ fn display_path(path: &Path) -> String {
     raw.to_string()
 }
 
+/// Absolute path suitable for OS file-list clipboard (strip Windows `\\?\` prefix).
+fn clipboard_file_path(path: &Path) -> Result<PathBuf, String> {
+    if !path.exists() {
+        return Err(format!("路径不存在：{}", path.display()));
+    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("解析相对路径失败：{error}"))?
+            .join(path)
+    };
+    let canonical = absolute.canonicalize().unwrap_or(absolute);
+    Ok(PathBuf::from(display_path(&canonical)))
+}
+
+/// Write selected project files/folders onto the **system** clipboard as a file
+/// list (`CF_HDROP` on Windows, file URLs on macOS) so Explorer / chat apps can paste.
+#[tauri::command]
+pub fn clipboard_write_files(
+    paths: Vec<String>,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<(), String> {
+    if paths.is_empty() {
+        return Err("至少选择一个文件".to_string());
+    }
+    let mut resolved = Vec::with_capacity(paths.len());
+    for path in &paths {
+        allowlist.ensure_allowed(path)?;
+        resolved.push(clipboard_file_path(Path::new(path))?);
+    }
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|error| format!("无法打开系统剪贴板：{error}"))?;
+    clipboard
+        .set()
+        .file_list(&resolved)
+        .map_err(|error| format!("写入系统剪贴板失败：{error}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -884,6 +924,32 @@ mod tests {
         let check = check_symlink_write_inner(&file, &allowlist).unwrap();
         assert!(!check.needs_confirm);
         assert!(check.resolved_path.is_none());
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn clipboard_file_path_rejects_missing() {
+        let err = clipboard_file_path(Path::new("D:/definitely-missing-qingcode-xyz")).unwrap_err();
+        assert!(err.contains("不存在"), "{err}");
+    }
+
+    #[test]
+    fn clipboard_file_path_returns_existing_absolute() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-clip-path-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        fs::write(&file, "x").unwrap();
+
+        let resolved = clipboard_file_path(&file).unwrap();
+        assert!(resolved.is_absolute());
+        assert!(resolved.ends_with("a.txt"));
+        let text = resolved.to_string_lossy();
+        assert!(!text.starts_with(r"\\?\"), "{text}");
 
         fs::remove_dir_all(dir).unwrap();
     }
