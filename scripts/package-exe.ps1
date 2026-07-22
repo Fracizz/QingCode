@@ -14,17 +14,14 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'package-common.ps1')
+
 $outDir = Join-Path $projectRoot 'release'
 $cargoManifest = Join-Path $projectRoot 'src-tauri\Cargo.toml'
 $iconSvg = Join-Path $projectRoot 'public\app-icon-file.svg'
 $iconIco = Join-Path $projectRoot 'src-tauri\icons\icon.ico'
 $distIndex = Join-Path $projectRoot 'dist\index.html'
-
-if ($Target) {
-  $releaseDir = Join-Path $projectRoot "src-tauri\target\$Target\release"
-} else {
-  $releaseDir = Join-Path $projectRoot 'src-tauri\target\release'
-}
+$releaseDir = Resolve-CargoReleaseDir -ProjectRoot $projectRoot -Target $Target
 
 # Artifact suffix for multi-arch releases. Host/default build keeps legacy names.
 $archSuffix = switch -Regex ($Target) {
@@ -46,33 +43,6 @@ function Get-FileSha256([string]$Path) {
   } finally {
     $stream.Dispose()
   }
-}
-
-function Test-FrontendStale {
-  if (-not (Test-Path $distIndex)) { return $true }
-
-  $distTime = (Get-Item $distIndex).LastWriteTimeUtc
-  $watchRoots = @(
-    (Join-Path $projectRoot 'index.html'),
-    (Join-Path $projectRoot 'vite.config.ts'),
-    (Join-Path $projectRoot 'package.json'),
-    (Join-Path $projectRoot 'tsconfig.json'),
-    (Join-Path $projectRoot 'tsconfig.node.json'),
-    (Join-Path $projectRoot 'public')
-  )
-
-  foreach ($path in $watchRoots) {
-    if (-not (Test-Path $path)) { continue }
-    if ((Get-Item $path).LastWriteTimeUtc -gt $distTime) { return $true }
-  }
-
-  $srcRoot = Join-Path $projectRoot 'src'
-  if (-not (Test-Path $srcRoot)) { return $true }
-
-  $newer = Get-ChildItem -Path $srcRoot -Recurse -File -Include *.ts,*.tsx,*.css |
-    Where-Object { $_.LastWriteTimeUtc -gt $distTime } |
-    Select-Object -First 1
-  return [bool]$newer
 }
 
 function Sync-IconsIfNeeded {
@@ -110,6 +80,10 @@ function Invoke-RustReleaseBuild {
   if ($Target) {
     Write-Host "  target: $Target" -ForegroundColor DarkGray
   }
+  if ($env:CARGO_TARGET_DIR) {
+    Write-Host "  CARGO_TARGET_DIR: $env:CARGO_TARGET_DIR" -ForegroundColor DarkGray
+    Write-Host "  release dir: $releaseDir" -ForegroundColor DarkGray
+  }
   $sw = [Diagnostics.Stopwatch]::StartNew()
   $cargoArgs = @(
     'build', '--release', '-p', 'qingcode',
@@ -143,23 +117,21 @@ try {
   Write-Step 'Prepare'
   $iconsSynced = Sync-IconsIfNeeded
 
-  $frontendStale = -not $SkipFrontend -and ($Force -or (Test-FrontendStale))
+  $frontendRebuilt = $false
   if ($SkipFrontend) {
     Write-Host '  skip frontend (-SkipFrontend)'
-  } elseif ($frontendStale) {
+    if (-not (Test-Path $distIndex)) {
+      throw 'dist/ missing; run without -SkipFrontend first.'
+    }
+  } elseif ($Force -or (Test-FrontendStale -ProjectRoot $projectRoot)) {
     Invoke-FrontendBuild
+    $frontendRebuilt = $true
   } else {
     Write-Host '  frontend up to date - skipping pnpm build'
   }
 
-  if ($iconsSynced) {
-    Write-Host '  icons changed - forcing Rust rebuild for embedded resources'
-    Push-Location (Join-Path $projectRoot 'src-tauri')
-    try {
-      cargo clean -p qingcode --quiet
-    } finally {
-      Pop-Location
-    }
+  if ($iconsSynced -or $frontendRebuilt -or $Force) {
+    Invoke-ForceQingcodeEmbedRebuild -ProjectRoot $projectRoot -Target $Target
   }
 
   Invoke-RustReleaseBuild
@@ -169,6 +141,9 @@ try {
   $version = $conf.version
 
   $base = $productName.ToLower()
+  if (-not (Test-Path $releaseDir)) {
+    throw "Cargo release directory not found: $releaseDir (CARGO_TARGET_DIR=$env:CARGO_TARGET_DIR)"
+  }
   $exe = Get-ChildItem -Path $releaseDir -Filter '*.exe' -File |
     Where-Object { $_.BaseName.ToLower() -eq $base } |
     Sort-Object LastWriteTime -Descending |

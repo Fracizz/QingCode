@@ -11,29 +11,13 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'package-common.ps1')
+
 $outDir = Join-Path $projectRoot 'release'
 $iconSvg = Join-Path $projectRoot 'public\app-icon-file.svg'
 $iconIco = Join-Path $projectRoot 'src-tauri\icons\icon.ico'
 $distIndex = Join-Path $projectRoot 'dist\index.html'
-
-if ($Target) {
-  $bundleDir = Join-Path $projectRoot "src-tauri\target\$Target\release\bundle"
-} else {
-  $bundleDir = Join-Path $projectRoot 'src-tauri\target\release\bundle'
-}
-
-# Cursor/CI may redirect Cargo output via CARGO_TARGET_DIR; copy from there.
-if ($env:CARGO_TARGET_DIR) {
-  $cargoTarget = $env:CARGO_TARGET_DIR.TrimEnd('\', '/')
-  if ($Target) {
-    $altBundle = Join-Path $cargoTarget "$Target\release\bundle"
-  } else {
-    $altBundle = Join-Path $cargoTarget 'release\bundle'
-  }
-  if (Test-Path $altBundle) {
-    $bundleDir = $altBundle
-  }
-}
+$bundleDir = Resolve-CargoBundleDir -ProjectRoot $projectRoot -Target $Target
 
 $archSuffix = switch -Regex ($Target) {
   'aarch64-pc-windows' { '-windows-arm64' }
@@ -46,37 +30,10 @@ function Write-Step([string]$Message) {
   Write-Host "> $Message" -ForegroundColor Cyan
 }
 
-function Test-FrontendStale {
-  if (-not (Test-Path $distIndex)) { return $true }
-
-  $distTime = (Get-Item $distIndex).LastWriteTimeUtc
-  $watchRoots = @(
-    (Join-Path $projectRoot 'index.html'),
-    (Join-Path $projectRoot 'vite.config.ts'),
-    (Join-Path $projectRoot 'package.json'),
-    (Join-Path $projectRoot 'tsconfig.json'),
-    (Join-Path $projectRoot 'tsconfig.node.json'),
-    (Join-Path $projectRoot 'public')
-  )
-
-  foreach ($path in $watchRoots) {
-    if (-not (Test-Path $path)) { continue }
-    if ((Get-Item $path).LastWriteTimeUtc -gt $distTime) { return $true }
-  }
-
-  $srcRoot = Join-Path $projectRoot 'src'
-  if (-not (Test-Path $srcRoot)) { return $true }
-
-  $newer = Get-ChildItem -Path $srcRoot -Recurse -File -Include *.ts,*.tsx,*.css |
-    Where-Object { $_.LastWriteTimeUtc -gt $distTime } |
-    Select-Object -First 1
-  return [bool]$newer
-}
-
 function Sync-IconsIfNeeded {
   if ($SkipIcons) {
     Write-Host '  skip icons (-SkipIcons)'
-    return
+    return $false
   }
   if (-not (Test-Path $iconSvg)) {
     throw "Icon source not found: $iconSvg"
@@ -87,9 +44,10 @@ function Sync-IconsIfNeeded {
     if ($LASTEXITCODE -ne 0) {
       throw "icon:sync failed with exit code $LASTEXITCODE."
     }
-    return
+    return $true
   }
   Write-Host '  icons up to date'
+  return $false
 }
 
 Push-Location $projectRoot
@@ -117,14 +75,15 @@ try {
   }
 
   Write-Step 'Prepare (Windows x64 NSIS installer)'
-  Sync-IconsIfNeeded
+  $iconsSynced = Sync-IconsIfNeeded
 
+  $frontendRebuilt = $false
   if ($SkipFrontend) {
     Write-Host '  skip frontend (-SkipFrontend)'
     if (-not (Test-Path $distIndex)) {
       throw 'dist/ missing; run without -SkipFrontend first.'
     }
-  } elseif ($Force -or (Test-FrontendStale)) {
+  } elseif ($Force -or (Test-FrontendStale -ProjectRoot $projectRoot)) {
     Write-Step 'Frontend build'
     $sw = [Diagnostics.Stopwatch]::StartNew()
     # tauri build also runs beforeBuildCommand; build once here so stale checks work.
@@ -133,13 +92,22 @@ try {
       throw "pnpm build failed with exit code $LASTEXITCODE."
     }
     Write-Host ("  done in {0:N1}s" -f $sw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
+    $frontendRebuilt = $true
   } else {
     Write-Host '  frontend up to date - skipping pnpm build'
+  }
+
+  if ($iconsSynced -or $frontendRebuilt -or $Force) {
+    Invoke-ForceQingcodeEmbedRebuild -ProjectRoot $projectRoot -Target $Target
   }
 
   Write-Step 'Tauri NSIS installer build'
   if ($Target) {
     Write-Host "  target: $Target" -ForegroundColor DarkGray
+  }
+  if ($env:CARGO_TARGET_DIR) {
+    Write-Host "  CARGO_TARGET_DIR: $env:CARGO_TARGET_DIR" -ForegroundColor DarkGray
+    Write-Host "  bundle dir: $bundleDir" -ForegroundColor DarkGray
   }
   $sw = [Diagnostics.Stopwatch]::StartNew()
   # Skip beforeBuildCommand when dist is already fresh to avoid a second full frontend build.
@@ -148,7 +116,7 @@ try {
     $tauriArgs += @('--target', $Target)
   }
   # Pass override via file: PowerShell strips quotes from inline JSON in @args.
-  if (-not $Force -and -not (Test-FrontendStale) -and (Test-Path $distIndex)) {
+  if (-not $Force -and -not (Test-FrontendStale -ProjectRoot $projectRoot) -and (Test-Path $distIndex)) {
     $devDir = Join-Path $projectRoot '.dev'
     if (-not (Test-Path $devDir)) {
       New-Item -ItemType Directory -Path $devDir | Out-Null
