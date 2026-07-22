@@ -7,6 +7,8 @@ import {
   dirGitStatus,
   dirHasGitChanges,
   formatScmDisplayPath,
+  collectUnmergedChanges,
+  gitChangeIsUnmerged,
   gitChangePathLooksLikeDirectory,
   gitChangeHasStaged,
   gitChangeHasUnstaged,
@@ -142,6 +144,18 @@ describe('gitStatus helpers', () => {
     expect(scmStatusBadgeTone('??', 'unstaged')).toBe('added')
     expect(scmStatusBadgeTone('D ', 'staged')).toBe('deleted')
     expect(scmStatusBadgeTone('M ', 'unstaged')).toBe('modified')
+    expect(scmStatusBadgeTone('UU', 'unstaged')).toBe('conflict')
+  })
+
+  it('detects unmerged conflict statuses', () => {
+    expect(gitChangeIsUnmerged('UU')).toBe(true)
+    expect(gitChangeIsUnmerged('AA')).toBe(true)
+    expect(gitChangeIsUnmerged('DU')).toBe(true)
+    expect(gitChangeIsUnmerged(' M')).toBe(false)
+    expect(collectUnmergedChanges([
+      { path: 'a.ts', status: 'UU' },
+      { path: 'b.ts', status: ' M' },
+    ])).toEqual([{ path: 'a.ts', status: 'UU' }])
   })
 
   it('predicts optimistic bulk stage and unstage snapshots', () => {

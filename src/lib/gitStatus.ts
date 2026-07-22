@@ -94,6 +94,21 @@ export function gitChangeHasUnstaged(change: GitChange): boolean {
   return change.status !== '!!' && gitWorktreeStatus(change.status) !== null
 }
 
+/** True for unmerged paths from merge/rebase/cherry-pick (`UU`, `AA`, `DU`, …). */
+export function gitChangeIsUnmerged(status: string): boolean {
+  if (status.length < 2) return false
+  const index = status[0]
+  const worktree = status[1]
+  return index === 'U'
+    || worktree === 'U'
+    || (index === 'A' && worktree === 'A')
+    || (index === 'D' && worktree === 'D')
+}
+
+export function collectUnmergedChanges(changes: GitChange[]): GitChange[] {
+  return changes.filter(change => gitChangeIsUnmerged(change.status))
+}
+
 /** A dual-state file (e.g. MM / AM) intentionally appears in both arrays. */
 export function splitGitChanges(changes: GitChange[]): GitChangeGroups {
   return {
@@ -180,7 +195,8 @@ export function formatScmDisplayPath(path: string, maxLength = 52): string {
 export function scmStatusBadgeTone(
   status: string,
   group: GitChangeGroup,
-): 'added' | 'deleted' | 'modified' | 'other' {
+): 'added' | 'deleted' | 'modified' | 'conflict' | 'other' {
+  if (gitChangeIsUnmerged(status)) return 'conflict'
   const glyph = gitStatusGlyphForGroup(status, group) ?? status.trim()
   if (glyph === 'U' || glyph === 'A' || glyph === '?') return 'added'
   if (glyph === 'D') return 'deleted'

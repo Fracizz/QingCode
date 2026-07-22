@@ -291,6 +291,75 @@ fn push_current(root: &Path) -> Result<String, String> {
     })
 }
 
+fn list_unmerged_paths(root: &Path) -> Result<Vec<String>, String> {
+    let output = run_git(
+        root,
+        &["diff", "--name-only", "--diff-filter=U", "-z"],
+    )?;
+    if !output.status.success() {
+        return Ok(vec![]);
+    }
+    let mut paths = Vec::new();
+    for record in output.stdout.split(|byte| *byte == 0) {
+        if record.is_empty() {
+            continue;
+        }
+        let path = String::from_utf8_lossy(record).into_owned();
+        if !path.is_empty() {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct GitPullResult {
+    pub summary: String,
+    pub has_conflicts: bool,
+    pub conflict_paths: Vec<String>,
+}
+
+fn pull_current(root: &Path) -> Result<GitPullResult, String> {
+    let pull_output = run_git(root, &["pull"])?;
+    let conflict_paths = list_unmerged_paths(root)?;
+    let has_conflicts = !conflict_paths.is_empty();
+
+    if has_conflicts {
+        let summary = if pull_output.status.success() {
+            if conflict_paths.len() == 1 {
+                format!(
+                    "拉取完成，但存在未解决的合并冲突：{}",
+                    conflict_paths[0]
+                )
+            } else {
+                format!(
+                    "拉取完成，但存在 {} 个未解决的合并冲突",
+                    conflict_paths.len()
+                )
+            }
+        } else {
+            git_output_text(&pull_output)
+        };
+        return Ok(GitPullResult {
+            summary,
+            has_conflicts: true,
+            conflict_paths,
+        });
+    }
+
+    let output = ensure_git_success("Git 拉取", pull_output)?;
+    let summary = git_output_text(&output);
+    Ok(GitPullResult {
+        summary: if summary.starts_with("Git 退出码") {
+            "拉取成功".to_string()
+        } else {
+            summary
+        },
+        has_conflicts: false,
+        conflict_paths: vec![],
+    })
+}
+
 fn decode_git_text(bytes: &[u8]) -> String {
     file_encoding::decode(bytes, FileEncoding::Auto)
         .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
@@ -521,6 +590,18 @@ pub async fn git_push(path: String, allowlist: State<'_, PathAllowlist>) -> Resu
     tauri::async_runtime::spawn_blocking(move || push_current(&root))
         .await
         .map_err(|error| format!("Git 推送失败：{error}"))?
+}
+
+#[tauri::command]
+pub async fn git_pull(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<GitPullResult, String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || pull_current(&root))
+        .await
+        .map_err(|error| format!("Git 拉取失败：{error}"))?
 }
 
 #[tauri::command]

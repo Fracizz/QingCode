@@ -36,10 +36,11 @@ import {
   peekSourceControlCache,
   useSourceControlStore,
 } from '../store/sourceControlStore'
-import type { GitChange, GitStatus } from '../lib/git'
+import type { GitChange, GitPullResult, GitStatus } from '../lib/git'
 import {
   type GitChangeGroup,
   canCommitStagedChanges,
+  collectUnmergedChanges,
   gitChangePathLooksLikeDirectory,
   gitStatusGlyphForGroup,
   gitStatusMayBeDirectory,
@@ -73,19 +74,22 @@ function GitScmStatusBadge({ status, group }: { status: string; group: GitChange
   const tone = scmStatusBadgeTone(status, group)
   const glyph = gitStatusGlyphForGroup(status, group) ?? status.trim()
   const className =
-    tone === 'added'
+    tone === 'conflict'
+      ? `${STATUS_BADGE} bg-danger text-white`
+      : tone === 'added'
       ? `${STATUS_BADGE} bg-ok text-bg`
       : tone === 'deleted'
         ? `${STATUS_BADGE} bg-danger text-white`
         : tone === 'modified'
           ? `${STATUS_BADGE} bg-warn text-bg`
           : `${STATUS_BADGE} bg-accent/80 text-bg`
-  const label = tone === 'added' ? '+' : glyph.charAt(0) || '?'
+  const label =
+    tone === 'conflict' ? '!' : tone === 'added' ? '+' : glyph.charAt(0) || '?'
   return <span className={className}>{label}</span>
 }
 
 type GitOperation = {
-  kind: 'stage' | 'unstage' | 'commit' | 'push'
+  kind: 'stage' | 'unstage' | 'commit' | 'push' | 'pull'
   key: string
 }
 
@@ -478,6 +482,10 @@ export default function SourceControlPanel() {
   }, [projectPath])
 
   const groups = useMemo(() => splitGitChanges(status?.changes ?? []), [status])
+  const unmergedChanges = useMemo(
+    () => collectUnmergedChanges(status?.changes ?? []),
+    [status],
+  )
 
   const toggleGroup = useCallback((group: GitChangeGroup) => {
     setCollapsedGroups(current => ({ ...current, [group]: !current[group] }))
@@ -545,6 +553,38 @@ export default function SourceControlPanel() {
     },
     [loading, operation, refresh, status, t],
   )
+
+  const pullCurrent = useCallback(async () => {
+    const project = useProjectStore.getState().currentProject
+    if (!project || operation || loading) return
+    setOperation({ kind: 'pull', key: 'pull' })
+    setOperationError(null)
+    try {
+      const result = await safeInvoke<GitPullResult>('拉取 Git 更改', 'git_pull', {
+        path: project.path,
+      })
+      if (useProjectStore.getState().currentProject?.path === project.path) {
+        await refresh({ soft: false })
+        if (result.has_conflicts) {
+          const message = t('拉取完成，但存在 {count} 个未解决的合并冲突', {
+            count: result.conflict_paths.length,
+          })
+          useProjectStore.getState().pushToast('error', message)
+        } else {
+          useProjectStore.getState().pushToast('success', t('拉取成功'))
+        }
+      }
+    } catch (reason) {
+      if (useProjectStore.getState().currentProject?.path === project.path) {
+        await refresh({ soft: false })
+        const message = String(reason)
+        setOperationError(message)
+        useProjectStore.getState().pushToast('error', t('拉取失败：{error}', { error: message }))
+      }
+    } finally {
+      setOperation(null)
+    }
+  }, [loading, operation, refresh, t])
 
   const commitStaged = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
@@ -806,6 +846,16 @@ export default function SourceControlPanel() {
     const writeDisabled = Boolean(operation) || loading
     body = (
       <>
+        {unmergedChanges.length > 0 && (
+          <div className="text-ui-sm flex-shrink-0 break-words border-y border-warn/30 bg-warn/10 px-3 py-2 text-warn">
+            <p className="font-medium">
+              {t('存在 {count} 个未解决的合并冲突', { count: unmergedChanges.length })}
+            </p>
+            <p className="mt-1 text-[11px] leading-5 text-fg-muted">
+              {t('请在编辑器中解决冲突标记（<<<<<<<），解决后暂存并提交。')}
+            </p>
+          </div>
+        )}
         {(error || operationError) && (
           <div className="text-ui-sm flex-shrink-0 break-words border-y border-border bg-danger/5 px-3 py-2 text-danger">
             {operationError ?? error}
@@ -926,20 +976,37 @@ export default function SourceControlPanel() {
             </span>
           )}
         </span>
-        <Tooltip label={t('刷新')} side="bottom">
-          <button
-            type="button"
-            onClick={() => void refresh({ soft: false })}
-            disabled={loading || Boolean(operation) || !currentProject}
-            aria-label={t('刷新')}
-            className={`${SCM_ICON_BUTTON} hover:text-fg`}
-          >
-            <RefreshCw
-              size={SCM_ICON_SIZE}
-              className={loading ? 'animate-spin text-accent' : undefined}
-            />
-          </button>
-        </Tooltip>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <Tooltip label={t('从远程拉取')} side="bottom">
+            <button
+              type="button"
+              onClick={() => void pullCurrent()}
+              disabled={loading || Boolean(operation) || !currentProject || !status?.is_repository}
+              aria-label={t('从远程拉取')}
+              className={`${SCM_ICON_BUTTON} hover:text-fg`}
+            >
+              {operation?.kind === 'pull' ? (
+                <LoaderCircle size={SCM_ICON_SIZE} className="animate-spin text-accent" />
+              ) : (
+                <ArrowDown size={SCM_ICON_SIZE} strokeWidth={2.25} />
+              )}
+            </button>
+          </Tooltip>
+          <Tooltip label={t('刷新')} side="bottom">
+            <button
+              type="button"
+              onClick={() => void refresh({ soft: false })}
+              disabled={loading || Boolean(operation) || !currentProject}
+              aria-label={t('刷新')}
+              className={`${SCM_ICON_BUTTON} hover:text-fg`}
+            >
+              <RefreshCw
+                size={SCM_ICON_SIZE}
+                className={loading ? 'animate-spin text-accent' : undefined}
+              />
+            </button>
+          </Tooltip>
+        </div>
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{body}</div>
       {contextMenu && (

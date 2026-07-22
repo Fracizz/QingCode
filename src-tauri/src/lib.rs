@@ -384,6 +384,7 @@ pub fn run() {
             git::git_unstage,
             git::git_commit,
             git::git_push,
+            git::git_pull,
             git::git_diff,
             git::git_file_contents,
             fonts::list_system_fonts,

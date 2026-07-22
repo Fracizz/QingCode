@@ -10,6 +10,12 @@ export type GitStatus = {
   changes: GitChange[]
 }
 
+export type GitPullResult = {
+  summary: string
+  has_conflicts: boolean
+  conflict_paths: string[]
+}
+
 export type GitFileContents = {
   original: string
   modified: string
