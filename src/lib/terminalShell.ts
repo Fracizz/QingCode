@@ -1,6 +1,6 @@
 /** Host shell used by terminal profiles (not run-config script kinds). */
 
-export type TerminalShellId = 'powershell' | 'pwsh' | 'cmd' | 'wsl' | 'bash' | 'zsh'
+export type TerminalShellId = 'auto' | 'powershell' | 'pwsh' | 'cmd' | 'wsl' | 'bash' | 'zsh'
 
 export type TerminalHostPlatform = 'win' | 'unix'
 
@@ -11,7 +11,7 @@ export function detectTerminalHostPlatform(): TerminalHostPlatform {
   return 'unix'
 }
 
-const ALL_SHELLS: TerminalShellId[] = ['powershell', 'pwsh', 'cmd', 'wsl', 'bash', 'zsh']
+const ALL_SHELLS: TerminalShellId[] = ['auto', 'powershell', 'pwsh', 'cmd', 'wsl', 'bash', 'zsh']
 
 /** Shells offered in settings for the current OS. */
 export function availableTerminalShells(
@@ -19,7 +19,7 @@ export function availableTerminalShells(
 ): TerminalShellId[] {
   if (platform === 'win') {
     // Default-first order for the global picker.
-    return ['pwsh', 'cmd', 'wsl', 'powershell']
+    return ['auto', 'pwsh', 'powershell', 'cmd', 'wsl']
   }
   return ['zsh', 'bash', 'pwsh']
 }
@@ -28,12 +28,14 @@ export function availableTerminalShells(
 export function defaultTerminalShell(
   platform: TerminalHostPlatform = detectTerminalHostPlatform(),
 ): TerminalShellId {
-  return platform === 'win' ? 'pwsh' : 'zsh'
+  return platform === 'win' ? 'auto' : 'zsh'
 }
 
 /** Chinese source keys for i18n (`translate` / locale messages). */
 export function terminalShellLabelKey(shell: TerminalShellId): string {
   switch (shell) {
+    case 'auto':
+      return '自动选择'
     case 'powershell':
       return 'Windows PowerShell'
     case 'pwsh':

@@ -10,7 +10,7 @@ export interface TerminalProfile {
   id: string
   name: string
   command: string
-  /** Host shell for this profile (powershell / pwsh / cmd / wsl / bash / zsh). */
+  /** Host shell preference (auto / powershell / pwsh / cmd / wsl / bash / zsh). */
   shell: TerminalShellId
 }
 

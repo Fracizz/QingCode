@@ -31,7 +31,12 @@ import {
 } from '../lib/terminalPtySize'
 import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
 import { planTerminalSpawn } from '../lib/terminalSpawnPlan'
-import { normalizeTerminalShell, terminalShellLabelKey } from '../lib/terminalShell'
+import {
+  isTerminalShellId,
+  normalizeTerminalShell,
+  terminalShellLabelKey,
+  type TerminalShellId,
+} from '../lib/terminalShell'
 import { clearTerminalCommandActivity } from '../lib/terminalCommandActivity'
 import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
 
@@ -53,6 +58,68 @@ const ptySpawnFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const lastPtySize = new Map<string, { cols: number; rows: number }>()
 /** Kills from close/restart — do not auto-respawn a shell for these. */
 const intentionalPtyKills = new Set<string>()
+const reportedShellFallbacks = new Set<string>()
+
+type TerminalSpawnResult = {
+  resolvedShell?: unknown
+  fallbackFrom?: unknown
+}
+
+function isGeneratedShellName(tab: TerminalTab): boolean {
+  if (/^(终端|Terminal) \d+$/.test(tab.name)) return true
+  const shellIds = [tab.shell, tab.resolvedShell].filter(
+    (shell): shell is TerminalShellId => shell !== undefined,
+  )
+  return shellIds.some(shell => {
+    const label = translate(terminalShellLabelKey(shell))
+    return tab.name === label || tab.name.startsWith(`${label} (`)
+  })
+}
+
+function applyTerminalSpawnResult(id: string, result: TerminalSpawnResult | null | undefined) {
+  const resolvedShell = isTerminalShellId(result?.resolvedShell)
+    ? result.resolvedShell
+    : undefined
+  if (resolvedShell && resolvedShell !== 'auto') {
+    useTerminalStore.setState(state => {
+      const current = state.terminals.find(terminal => terminal.id === id)
+      if (!current) return state
+      let name = current.name
+      if (
+        current.profileId === DEFAULT_TERMINAL_PROFILE.id &&
+        !current.launchCommand.trim() &&
+        isGeneratedShellName(current)
+      ) {
+        name = disambiguateTerminalName(
+          translate(terminalShellLabelKey(resolvedShell)),
+          state.terminals.filter(terminal => terminal.id !== id).map(terminal => terminal.name),
+        )
+      }
+      return {
+        terminals: state.terminals.map(terminal =>
+          terminal.id === id ? { ...terminal, name, resolvedShell } : terminal
+        ),
+      }
+    })
+  }
+
+  const fallbackFrom = isTerminalShellId(result?.fallbackFrom)
+    ? result.fallbackFrom
+    : undefined
+  if (!fallbackFrom || !resolvedShell || fallbackFrom === resolvedShell) return
+  const fallbackKey = `${fallbackFrom}->${resolvedShell}`
+  if (reportedShellFallbacks.has(fallbackKey)) return
+  reportedShellFallbacks.add(fallbackKey)
+  const resolvedLabel = translate(terminalShellLabelKey(resolvedShell))
+  const message =
+    fallbackFrom === 'auto' || fallbackFrom === 'pwsh'
+      ? translate('未检测到 PowerShell 7，已自动改用 {shell}', { shell: resolvedLabel })
+      : translate('未找到 {requested}，已自动改用 {resolved}', {
+          requested: translate(terminalShellLabelKey(fallbackFrom)),
+          resolved: resolvedLabel,
+        })
+  useProjectStore.getState().pushToast('info', message)
+}
 
 function clearPtySpawnFallback(id: string) {
   const timer = ptySpawnFallbackTimers.get(id)
@@ -112,13 +179,14 @@ async function respawnShellAfterExit(id: string): Promise<void> {
     ),
   }))
   try {
-    await safeInvoke('新建终端', 'create_terminal', {
+    const result = await safeInvoke<TerminalSpawnResult>('新建终端', 'create_terminal', {
       id,
       cwd: tab.cwd,
       cols: size.cols,
       rows: size.rows,
       shell: tab.shell ?? null,
     })
+    applyTerminalSpawnResult(id, result)
   } catch (e) {
     console.error('respawnShellAfterExit failed:', e)
     useTerminalStore.setState(s => ({
@@ -402,7 +470,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       profile.command,
       nextNumber,
       DEFAULT_TERMINAL_PROFILE.name,
-      translate(terminalShellLabelKey(shell)),
+      shell === 'auto' ? undefined : translate(terminalShellLabelKey(shell)),
     )
     const tab: TerminalTab = {
       id,
@@ -810,8 +878,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }))
     try {
       const plan = planTerminalSpawn(tab)
+      let spawnResult: TerminalSpawnResult | undefined
       if (plan.mode === 'script') {
-        await safeInvoke('启动任务', 'spawn_script', {
+        spawnResult = await safeInvoke<TerminalSpawnResult>('启动任务', 'spawn_script', {
           id,
           cwd: tab.cwd,
           shellKind: plan.shellKind,
@@ -822,7 +891,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         })
       } else if (plan.mode === 'interactive') {
         // Profiles (e.g. OpenCode): one path — run command, keep shell via -NoExit.
-        await safeInvoke('启动终端配置', 'spawn_script', {
+        spawnResult = await safeInvoke<TerminalSpawnResult>('启动终端配置', 'spawn_script', {
           id,
           cwd: tab.cwd,
           shellKind: 'interactive',
@@ -833,7 +902,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           shell: tab.shell ?? null,
         })
       } else {
-        await safeInvoke('新建终端', 'create_terminal', {
+        spawnResult = await safeInvoke<TerminalSpawnResult>('新建终端', 'create_terminal', {
           id,
           cwd: tab.cwd,
           cols: size.cols,
@@ -841,6 +910,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           shell: tab.shell ?? null,
         })
       }
+      applyTerminalSpawnResult(id, spawnResult)
       set(s => ({
         terminals: s.terminals.map(terminal =>
           terminal.id === id && terminal.status === 'starting'

@@ -34,7 +34,7 @@ export type PersistedTerminalMeta = {
   launchCommand: string
   shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
   env?: Record<string, string>
-  /** Host shell id: powershell / pwsh / cmd / wsl / bash. */
+  /** Preferred host shell id; `auto` is resolved when the PTY starts. */
   shell?: string
   profileId?: string
   allowTitleRename?: boolean

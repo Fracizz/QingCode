@@ -22,7 +22,7 @@ use path_guard::PathAllowlist;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri_plugin_sql::{Migration, MigrationKind};
-use terminal::TerminalManager;
+use terminal::{TerminalManager, TerminalSpawnResult};
 
 /// File paths passed on the command line (Explorer "Open with").
 struct LaunchFiles(Mutex<Vec<String>>);
@@ -117,7 +117,7 @@ fn create_terminal(
     app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
     allowlist: tauri::State<'_, PathAllowlist>,
-) -> Result<(), String> {
+) -> Result<TerminalSpawnResult, String> {
     allowlist.ensure_executable(&cwd)?;
     state.spawn(
         id,
@@ -221,7 +221,7 @@ fn spawn_script(
     app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
     allowlist: tauri::State<'_, PathAllowlist>,
-) -> Result<(), String> {
+) -> Result<TerminalSpawnResult, String> {
     allowlist.ensure_executable(&cwd)?;
     // Script file targets must stay inside the sandbox. Inline `command` /
     // `interactive` strings are unrestricted once the cwd is trusted (UI confirms).

@@ -68,7 +68,7 @@ export default function TerminalSettings() {
         <span className="block font-medium text-fg">{t('默认 Shell')}</span>
         <span className="mt-1 block text-xs text-fg-muted">
           {t(
-            '新建「普通终端」时使用的主机 Shell（全局）。Windows 默认 PowerShell 7 (pwsh)，可选 cmd / WSL；macOS/Linux 默认 Zsh，可选 Bash / pwsh。自定义配置可单独指定 Shell。',
+            '新建「普通终端」时使用的主机 Shell（全局）。Windows 默认自动选择 PowerShell 7、Windows PowerShell 或 CMD；macOS/Linux 默认 Zsh。自定义配置可单独指定 Shell。',
           )}
         </span>
         <div className="mt-2">

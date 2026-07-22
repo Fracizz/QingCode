@@ -48,29 +48,20 @@
 
 !macro QingOfferWebView2Download
   ${If} ${Silent}
-    Abort "Microsoft Edge WebView2 Runtime is required. Install it from ${QING_WEBVIEW2_BOOTSTRAPPER_URL} and re-run the installer."
+    Abort "Microsoft Edge WebView2 Runtime is required. Install it and re-run this setup."
   ${EndIf}
 
-  ; Yes → bootstrapper download · No → product page · Cancel → exit only.
-  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION \
-    "未检测到 Microsoft Edge WebView2 运行时。$\r$\n$\r$\nQingCode 需要 WebView2 才能运行。$\r$\n$\r$\n• 是：打开引导程序下载（浏览器将下载安装包）$\r$\n• 否：打开 WebView2 产品说明页$\r$\n• 取消：退出安装$\r$\n$\r$\nMicrosoft Edge WebView2 Runtime was not found.$\r$\nYes = download bootstrapper · No = product page · Cancel = exit" \
-    IDYES qing_wv2_dl IDNO qing_wv2_page IDCANCEL qing_wv2_cancel
-
+  ; Two jump targets only — older makensis rejects a third IDCANCEL label.
+  MessageBox MB_YESNOCANCEL|MB_ICONEXCLAMATION "WebView2 Runtime was not found.$\r$\n$\r$\nYes = download bootstrapper$\r$\nNo = open product page$\r$\nCancel = exit" IDYES qing_wv2_dl IDNO qing_wv2_page
+  Abort "WebView2 is required to continue."
   qing_wv2_dl:
     ExecShell "open" "${QING_WEBVIEW2_BOOTSTRAPPER_URL}"
     Goto qing_wv2_after_open
-
   qing_wv2_page:
     ExecShell "open" "${QING_WEBVIEW2_PAGE_URL}"
-    Goto qing_wv2_after_open
-
   qing_wv2_after_open:
-    MessageBox MB_OK|MB_ICONINFORMATION \
-      "请完成 WebView2 安装后，重新运行本安装程序。$\r$\n$\r$\nAfter WebView2 is installed, run this installer again."
+    MessageBox MB_OK|MB_ICONINFORMATION "Install WebView2, then run this setup again."
     Abort
-
-  qing_wv2_cancel:
-    Abort "需要安装 WebView2 才能继续。 / WebView2 is required to continue."
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL

@@ -35,9 +35,15 @@ body {
   zoom: var(--ui-font-scale);
 }
 
+/* Auxiliary copy = 界面字号 − 1（基准 12px）。
+   Outside `.ui-font-scaled`: multiply by --ui-font-scale.
+   Inside `.ui-font-scaled`: keep 12px so parent `zoom` does not double-scale. */
 .text-ui-sm {
-  font-size: var(--ui-font-size-sm);
+  font-size: calc(12px * var(--ui-font-scale));
   line-height: 1.25rem;
+}
+.ui-font-scaled .text-ui-sm {
+  font-size: 12px;
 }
 
 /* Keyboard focus visibility — editor (cm-content) and terminal helper manage their own focus. */

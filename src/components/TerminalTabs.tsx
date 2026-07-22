@@ -24,6 +24,7 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
 import { useI18n } from '../lib/i18n'
+import { terminalShellLabelKey } from '../lib/terminalShell'
 
 const CLOSE_ARM_MS = 4000
 /** Child-process probe interval; shell-integration updates refresh immediately. */
@@ -462,11 +463,14 @@ export default function TerminalTabs() {
                   </>
                 ) : (
                   <Tooltip
-                    label={
+                    label={[
                       t.launchCommand.trim() && t.launchCommand.trim() !== t.name
                         ? `${t.name}\n> ${t.launchCommand.trim()}`
-                        : t.name
-                    }
+                        : t.name,
+                      t.resolvedShell
+                        ? `${translate('Shell')}: ${translate(terminalShellLabelKey(t.resolvedShell))}`
+                        : null,
+                    ].filter((line): line is string => line !== null).join('\n')}
                     side="top"
                     wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]"
                   >
