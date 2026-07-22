@@ -255,21 +255,15 @@ fn delete_worktree_path(root: &Path, relative: &str) -> Result<(), String> {
     }
     // Belt-and-suspenders: resolved relatives never escape, but refuse if the
     // joined path somehow leaves the project root.
-    let root_canon = root
-        .canonicalize()
-        .unwrap_or_else(|_| root.to_path_buf());
-    let path_canon = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.clone());
+    let root_canon = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    let path_canon = path.canonicalize().unwrap_or_else(|_| path.clone());
     if !path_canon.starts_with(&root_canon) {
         return Err("仅允许丢弃当前项目内的 Git 文件".to_string());
     }
     if path_canon.is_dir() {
-        std::fs::remove_dir_all(&path_canon)
-            .map_err(|error| format!("删除未跟踪目录失败：{error}"))
+        std::fs::remove_dir_all(&path_canon).map_err(|error| format!("删除未跟踪目录失败：{error}"))
     } else {
-        std::fs::remove_file(&path_canon)
-            .map_err(|error| format!("删除未跟踪文件失败：{error}"))
+        std::fs::remove_file(&path_canon).map_err(|error| format!("删除未跟踪文件失败：{error}"))
     }
 }
 
@@ -1255,11 +1249,7 @@ mod tests {
 
         fs::write(root.join("tracked.txt"), "v2\n").unwrap();
         fs::write(root.join("scratch.txt"), "temp\n").unwrap();
-        discard_unstaged_files(
-            &root,
-            &["tracked.txt".into(), "scratch.txt".into()],
-        )
-        .unwrap();
+        discard_unstaged_files(&root, &["tracked.txt".into(), "scratch.txt".into()]).unwrap();
 
         assert_eq!(
             fs::read_to_string(root.join("tracked.txt"))

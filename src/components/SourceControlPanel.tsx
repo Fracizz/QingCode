@@ -38,10 +38,7 @@ import { List, useListRef } from 'react-window'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
-import {
-  peekSourceControlCache,
-  useSourceControlStore,
-} from '../store/sourceControlStore'
+import { peekSourceControlCache, useSourceControlStore } from '../store/sourceControlStore'
 import type {
   GitBranchList,
   GitChange,
@@ -123,7 +120,8 @@ const SCM_ICON_SIZE = 13
 const SCM_ICON_SLOT = 'inline-flex h-6 w-6 shrink-0 items-center justify-center'
 const SCM_ICON_BUTTON =
   'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent text-fg-dim transition-colors hover:border-border hover:bg-bg-hover hover:text-brand disabled:opacity-35'
-const STATUS_BADGE = 'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] text-[9px] font-bold leading-none'
+const STATUS_BADGE =
+  'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] text-[9px] font-bold leading-none'
 
 function GitScmStatusBadge({ status, group }: { status: string; group: GitChangeGroup }) {
   const tone = scmStatusBadgeTone(status, group)
@@ -132,14 +130,13 @@ function GitScmStatusBadge({ status, group }: { status: string; group: GitChange
     tone === 'conflict'
       ? `${STATUS_BADGE} bg-danger text-white`
       : tone === 'added'
-      ? `${STATUS_BADGE} bg-ok text-bg`
-      : tone === 'deleted'
-        ? `${STATUS_BADGE} bg-danger text-white`
-        : tone === 'modified'
-          ? `${STATUS_BADGE} bg-warn text-bg`
-          : `${STATUS_BADGE} bg-accent/80 text-bg`
-  const label =
-    tone === 'conflict' ? '!' : tone === 'added' ? '+' : glyph.charAt(0) || '?'
+        ? `${STATUS_BADGE} bg-ok text-bg`
+        : tone === 'deleted'
+          ? `${STATUS_BADGE} bg-danger text-white`
+          : tone === 'modified'
+            ? `${STATUS_BADGE} bg-warn text-bg`
+            : `${STATUS_BADGE} bg-accent/80 text-bg`
+  const label = tone === 'conflict' ? '!' : tone === 'added' ? '+' : glyph.charAt(0) || '?'
   return <span className={className}>{label}</span>
 }
 
@@ -158,7 +155,7 @@ function selectedChangesInGroup(
   group: GitChangeGroup,
   changes: GitChange[],
   selectedKeys: Set<string>,
-  focus: GitChange,
+  focus: GitChange
 ): GitChange[] {
   const list = changes.filter(item => selectedKeys.has(scmRowKey(group, item.path)))
   if (list.length > 1 && list.some(item => item.path === focus.path)) return list
@@ -195,22 +192,20 @@ type ChangeRowProps = {
     group: GitChangeGroup,
     change: GitChange,
     index: number,
-    event: ReactMouseEvent,
+    event: ReactMouseEvent
   ) => void
   onOpenChange: (group: GitChangeGroup, change: GitChange) => void
   onChangeAction: (group: GitChangeGroup, changes: GitChange[], all?: boolean) => void
-  onOpenContextMenu: (
-    event: ReactMouseEvent,
-    group: GitChangeGroup,
-    change: GitChange,
-  ) => void
+  onOpenContextMenu: (event: ReactMouseEvent, group: GitChangeGroup, change: GitChange) => void
 }
 
-function ChangeRowComponent(props: {
-  ariaAttributes: { 'aria-posinset': number; 'aria-setsize': number; role: 'listitem' }
-  index: number
-  style: CSSProperties
-} & ChangeRowProps) {
+function ChangeRowComponent(
+  props: {
+    ariaAttributes: { 'aria-posinset': number; 'aria-setsize': number; role: 'listitem' }
+    index: number
+    style: CSSProperties
+  } & ChangeRowProps
+) {
   const {
     index,
     style,
@@ -263,14 +258,20 @@ function ChangeRowComponent(props: {
           <span>{formatScmDisplayPath(change.path)}</span>
         </Tooltip>
       </button>
-      <Tooltip label={actionLabel} side="bottom" wrapperClassName="absolute right-2 top-1/2 -translate-y-1/2">
+      <Tooltip
+        label={actionLabel}
+        side="bottom"
+        wrapperClassName="absolute right-2 top-1/2 -translate-y-1/2"
+      >
         <button
           type="button"
           disabled={disabled}
           aria-label={`${actionLabel}: ${change.path}`}
           onClick={runRowAction}
           className={`rounded border border-transparent p-0.5 text-fg-dim hover:border-border hover:bg-bg-active hover:text-fg disabled:opacity-40 ${
-            actionBusy ? 'opacity-100' : 'opacity-0 group-hover/scm-row:opacity-100 focus:opacity-100'
+            actionBusy
+              ? 'opacity-100'
+              : 'opacity-0 group-hover/scm-row:opacity-100 focus:opacity-100'
           }`}
         >
           {actionBusy ? (
@@ -343,11 +344,17 @@ function ChangeGroupSection({
       selectedKeys,
       stageLabel,
       unstageLabel,
-    ],
+    ]
   )
 
   return (
-    <section className={collapsed ? 'flex-none border-b border-border' : 'flex min-h-0 flex-1 flex-col border-b border-border'}>
+    <section
+      className={
+        collapsed
+          ? 'flex-none border-b border-border'
+          : 'flex min-h-0 flex-1 flex-col border-b border-border'
+      }
+    >
       <div
         className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
       >
@@ -405,7 +412,9 @@ function ChangeGroupSection({
 }
 
 function seedSourceControlStatus(projectPath: string): GitStatus | null {
-  return peekSourceControlCache(projectPath) ?? useGitStatusStore.getState().peekPanelStatus(projectPath)
+  return (
+    peekSourceControlCache(projectPath) ?? useGitStatusStore.getState().peekPanelStatus(projectPath)
+  )
 }
 
 type CommitHistoryRowProps = {
@@ -419,11 +428,13 @@ type CommitHistoryRowProps = {
   onSelect: (hash: string) => void
 }
 
-function CommitHistoryRowComponent(props: {
-  ariaAttributes: { 'aria-posinset': number; 'aria-setsize': number; role: 'listitem' }
-  index: number
-  style: CSSProperties
-} & CommitHistoryRowProps) {
+function CommitHistoryRowComponent(
+  props: {
+    ariaAttributes: { 'aria-posinset': number; 'aria-setsize': number; role: 'listitem' }
+    index: number
+    style: CSSProperties
+  } & CommitHistoryRowProps
+) {
   const {
     index,
     style,
@@ -507,31 +518,30 @@ function CommitHistoryList({
       selectedHash,
       loadingMore,
       hasMore,
-      emptyExhaustedLabel:
-        commits.length >= COMMIT_PAGE_SIZE ? t('已加载全部提交') : '',
+      emptyExhaustedLabel: commits.length >= COMMIT_PAGE_SIZE ? t('已加载全部提交') : '',
       loadingMoreLabel: t('正在加载更多提交…'),
       noSubjectLabel: t('（无提交说明）'),
       onSelect,
     }),
-    [commits, hasMore, loadingMore, onSelect, selectedHash, t],
+    [commits, hasMore, loadingMore, onSelect, selectedHash, t]
   )
 
   const rowHeight = useCallback(
     (index: number) => (index >= commits.length ? COMMIT_FOOTER_HEIGHT : COMMIT_ROW_HEIGHT),
-    [commits.length],
+    [commits.length]
   )
 
   const onRowsRendered = useCallback(
     (
       _visible: { startIndex: number; stopIndex: number },
-      all: { startIndex: number; stopIndex: number },
+      all: { startIndex: number; stopIndex: number }
     ) => {
       if (!hasMore || commits.length === 0) return
       if (all.stopIndex >= commits.length - COMMIT_PREFETCH_ROWS) {
         onNearEnd()
       }
     },
-    [commits.length, hasMore, onNearEnd],
+    [commits.length, hasMore, onNearEnd]
   )
 
   // Short first page: keep prefetching until the list can scroll or data ends.
@@ -543,7 +553,9 @@ function CommitHistoryList({
   }, [commits.length, hasMore, loadingMore, listRef, onNearEnd])
 
   if (commits.length === 0) {
-    return <p className={`${SCM_SECTION_PAD_X} py-2 text-[11px] text-fg-dim`}>{t('暂无提交记录')}</p>
+    return (
+      <p className={`${SCM_SECTION_PAD_X} py-2 text-[11px] text-fg-dim`}>{t('暂无提交记录')}</p>
+    )
   }
 
   return (
@@ -572,7 +584,7 @@ export default function SourceControlPanel() {
   const projectPath = currentProject?.path ?? null
 
   const [status, setStatus] = useState<GitStatus | null>(() =>
-    projectPath ? seedSourceControlStatus(projectPath) : null,
+    projectPath ? seedSourceControlStatus(projectPath) : null
   )
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -598,10 +610,12 @@ export default function SourceControlPanel() {
   const commitsHasMoreRef = useRef(false)
   const commitsLoadingMoreRef = useRef(false)
   const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null)
+  const selectedCommitHashRef = useRef<string | null>(null)
   const [commitFiles, setCommitFiles] = useState<GitCommitFileChange[]>([])
   const [commitFilesLoading, setCommitFilesLoading] = useState(false)
   const [commitFilesError, setCommitFilesError] = useState<string | null>(null)
   const [selectedCommitFile, setSelectedCommitFile] = useState<string | null>(null)
+  const selectedCommitFileRef = useRef<string | null>(null)
   const [commitFileDiff, setCommitFileDiff] = useState<InlineDiffState | null>(null)
   const [commitFileDiffLoading, setCommitFileDiffLoading] = useState(false)
   const [inlineDiff, setInlineDiff] = useState<InlineDiffState | null>(null)
@@ -617,6 +631,10 @@ export default function SourceControlPanel() {
   })
   const branchAnchorRef = useRef<HTMLButtonElement>(null)
   const branchMenuRef = useRef<HTMLDivElement>(null)
+  const refreshSequenceRef = useRef(0)
+  const loadingRefreshSequenceRef = useRef<number | null>(null)
+  const commitFilesSequenceRef = useRef(0)
+  const commitFileDiffSequenceRef = useRef(0)
   const [operation, setOperation] = useState<GitOperation | null>(null)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -627,19 +645,28 @@ export default function SourceControlPanel() {
   const setView = useUIStore(s => s.setView)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
 
-  const onScmLeftWidthChange = useCallback((width: number) => {
-    const next = clampScmLeftWidth(width)
-    setScmLeftWidth(next)
-    saveScmLayout({ leftWidth: next, filesWidth: scmFilesWidth })
-  }, [scmFilesWidth])
+  const onScmLeftWidthChange = useCallback(
+    (width: number) => {
+      const next = clampScmLeftWidth(width)
+      setScmLeftWidth(next)
+      saveScmLayout({ leftWidth: next, filesWidth: scmFilesWidth })
+    },
+    [scmFilesWidth]
+  )
 
-  const onScmFilesWidthChange = useCallback((width: number) => {
-    const next = clampScmFilesWidth(width)
-    setScmFilesWidth(next)
-    saveScmLayout({ leftWidth: scmLeftWidth, filesWidth: next })
-  }, [scmLeftWidth])
+  const onScmFilesWidthChange = useCallback(
+    (width: number) => {
+      const next = clampScmFilesWidth(width)
+      setScmFilesWidth(next)
+      saveScmLayout({ leftWidth: scmLeftWidth, filesWidth: next })
+    },
+    [scmLeftWidth]
+  )
 
-  const loadCommits = useCallback(async (path: string) => {
+  const loadCommits = useCallback(async (path: string, refreshSequence?: number) => {
+    const isCurrentRequest = () =>
+      useProjectStore.getState().currentProject?.path === path &&
+      (refreshSequence === undefined || refreshSequenceRef.current === refreshSequence)
     if (!isTauri()) {
       setCommits([])
       commitsRef.current = []
@@ -653,16 +680,17 @@ export default function SourceControlPanel() {
         limit: COMMIT_PAGE_SIZE,
         skip: 0,
       })
-      if (useProjectStore.getState().currentProject?.path === path) {
+      if (isCurrentRequest()) {
         commitsRef.current = next
         setCommits(next)
         const more = next.length >= COMMIT_PAGE_SIZE
         commitsHasMoreRef.current = more
         setCommitsHasMore(more)
+        selectedCommitHashRef.current = null
         setSelectedCommitHash(null)
       }
     } catch {
-      if (useProjectStore.getState().currentProject?.path === path) {
+      if (isCurrentRequest()) {
         commitsRef.current = []
         setCommits([])
         commitsHasMoreRef.current = false
@@ -689,7 +717,8 @@ export default function SourceControlPanel() {
       if (useProjectStore.getState().currentProject?.path !== path) return
       const seen = new Set(commitsRef.current.map(c => c.hash))
       const appended = page.filter(c => !seen.has(c.hash))
-      const merged = appended.length === 0 ? commitsRef.current : [...commitsRef.current, ...appended]
+      const merged =
+        appended.length === 0 ? commitsRef.current : [...commitsRef.current, ...appended]
       commitsRef.current = merged
       setCommits(merged)
       const more = page.length >= COMMIT_PAGE_SIZE
@@ -712,86 +741,110 @@ export default function SourceControlPanel() {
     void loadMoreCommits()
   }, [loadMoreCommits])
 
-  const refresh = useCallback(async (opts?: { soft?: boolean }) => {
-    const soft = opts?.soft ?? false
-    const project = useProjectStore.getState().currentProject
-    if (!project) {
-      setStatus(null)
-      setError(null)
-      setOperationError(null)
-      setCommits([])
-      commitsRef.current = []
-      setCommitsHasMore(false)
-      commitsHasMoreRef.current = false
-      useSourceControlStore.getState().clearCache()
-      return
-    }
-    if (!isTauri()) {
-      setError(translate('Git 功能需要 Tauri 桌面环境'))
-      setStatus(null)
-      setCommits([])
-      commitsRef.current = []
-      setCommitsHasMore(false)
-      commitsHasMoreRef.current = false
-      return
-    }
-
-    const path = project.path
-    if (!soft) {
-      setLoading(true)
-      setOperationError(null)
-    }
-
-    try {
-      // Soft path reuses the shared workdir refresh (coalesced with badge/tree).
-      // Hard refresh uses full git_status so branch + rename paths stay accurate.
-      if (soft) {
-        await useGitStatusStore.getState().refresh(path)
-        let next = seedSourceControlStatus(path)
-        if (next?.is_repository && !next.branch) {
-          try {
-            const head = await safeInvoke<{ name: string } | null>('读取 Git 分支', 'get_git_head', {
-              path,
-            })
-            if (head?.name) {
-              next = { ...next, branch: head.name }
-              useSourceControlStore.getState().setCache(path, next)
-            }
-          } catch {
-            /* keep null branch; hard refresh can recover */
-          }
-        }
-        if (next) {
-          setStatus(next)
-          setError(null)
-        }
-        return
-      }
-
-      const next = await safeInvoke<GitStatus>('读取 Git 状态', 'git_status', {
-        path,
-      })
-      setStatus(next)
-      setError(null)
-      useGitStatusStore.getState().applyFromGitStatus(path, next)
-      setSelectedKeys(new Set())
-      if (next.is_repository) {
-        await loadCommits(path)
-      } else {
+  const refresh = useCallback(
+    async (opts?: { soft?: boolean }) => {
+      const sequence = ++refreshSequenceRef.current
+      const soft = opts?.soft ?? false
+      const project = useProjectStore.getState().currentProject
+      if (!project) {
+        loadingRefreshSequenceRef.current = null
+        setLoading(false)
+        setStatus(null)
+        setError(null)
+        setOperationError(null)
         setCommits([])
         commitsRef.current = []
         setCommitsHasMore(false)
         commitsHasMoreRef.current = false
+        useSourceControlStore.getState().clearCache()
+        return
       }
-    } catch (reason) {
-      if (!soft || !seedSourceControlStatus(path)) {
+      if (!isTauri()) {
+        loadingRefreshSequenceRef.current = null
+        setLoading(false)
+        setError(translate('Git 功能需要 Tauri 桌面环境'))
         setStatus(null)
+        setCommits([])
+        commitsRef.current = []
+        setCommitsHasMore(false)
+        commitsHasMoreRef.current = false
+        return
       }
-      setError(String(reason))
-    } finally {
-      setLoading(false)
-    }
-  }, [loadCommits])
+
+      const path = project.path
+      const isCurrentRequest = () =>
+        refreshSequenceRef.current === sequence &&
+        useProjectStore.getState().currentProject?.path === path
+      if (!soft) {
+        loadingRefreshSequenceRef.current = sequence
+        setLoading(true)
+        setOperationError(null)
+      } else if (loadingRefreshSequenceRef.current !== null) {
+        loadingRefreshSequenceRef.current = null
+        setLoading(false)
+      }
+
+      try {
+        // Soft path reuses the shared workdir refresh (coalesced with badge/tree).
+        // Hard refresh uses full git_status so branch + rename paths stay accurate.
+        if (soft) {
+          await useGitStatusStore.getState().refresh(path)
+          let next = seedSourceControlStatus(path)
+          if (next?.is_repository && !next.branch) {
+            try {
+              const head = await safeInvoke<{ name: string } | null>(
+                '读取 Git 分支',
+                'get_git_head',
+                {
+                  path,
+                }
+              )
+              if (head?.name) {
+                next = { ...next, branch: head.name }
+                useSourceControlStore.getState().setCache(path, next)
+              }
+            } catch {
+              /* keep null branch; hard refresh can recover */
+            }
+          }
+          if (next && isCurrentRequest()) {
+            setStatus(next)
+            setError(null)
+          }
+          return
+        }
+
+        const next = await safeInvoke<GitStatus>('读取 Git 状态', 'git_status', {
+          path,
+        })
+        if (!isCurrentRequest()) return
+        setStatus(next)
+        setError(null)
+        useGitStatusStore.getState().applyFromGitStatus(path, next)
+        setSelectedKeys(new Set())
+        if (next.is_repository) {
+          await loadCommits(path, sequence)
+        } else {
+          setCommits([])
+          commitsRef.current = []
+          setCommitsHasMore(false)
+          commitsHasMoreRef.current = false
+        }
+      } catch (reason) {
+        if (!isCurrentRequest()) return
+        if (!soft || !seedSourceControlStatus(path)) {
+          setStatus(null)
+        }
+        setError(String(reason))
+      } finally {
+        if (loadingRefreshSequenceRef.current === sequence) {
+          loadingRefreshSequenceRef.current = null
+          setLoading(false)
+        }
+      }
+    },
+    [loadCommits]
+  )
 
   useEffect(() => {
     const resetTimer = window.setTimeout(() => {
@@ -803,6 +856,14 @@ export default function SourceControlPanel() {
       setContextMenu(null)
       setBranchMenuOpen(false)
       setBranchList(null)
+      selectedCommitHashRef.current = null
+      selectedCommitFileRef.current = null
+      commitFilesSequenceRef.current += 1
+      commitFileDiffSequenceRef.current += 1
+      setSelectedCommitHash(null)
+      setCommitFiles([])
+      setCommitFilesError(null)
+      setCommitFileDiff(null)
       if (!projectPath) {
         setStatus(null)
         setError(null)
@@ -845,10 +906,7 @@ export default function SourceControlPanel() {
   }, [projectPath])
 
   const groups = useMemo(() => splitGitChanges(status?.changes ?? []), [status])
-  const unmergedChanges = useMemo(
-    () => collectUnmergedChanges(status?.changes ?? []),
-    [status],
-  )
+  const unmergedChanges = useMemo(() => collectUnmergedChanges(status?.changes ?? []), [status])
 
   const toggleGroup = useCallback((group: GitChangeGroup) => {
     setCollapsedGroups(current => ({ ...current, [group]: !current[group] }))
@@ -882,7 +940,9 @@ export default function SourceControlPanel() {
         setBranchMenuOpen(false)
         const message = String(reason)
         setOperationError(message)
-        useProjectStore.getState().pushToast('error', t('读取分支列表失败：{error}', { error: message }))
+        useProjectStore
+          .getState()
+          .pushToast('error', t('读取分支列表失败：{error}', { error: message }))
       }
     }
   }, [loading, operation, t])
@@ -915,7 +975,7 @@ export default function SourceControlPanel() {
         setOperation(null)
       }
     },
-    [loading, operation, refresh, t],
+    [loading, operation, refresh, t]
   )
 
   const copyCommitHash = useCallback(
@@ -929,55 +989,66 @@ export default function SourceControlPanel() {
           .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
       }
     },
-    [t],
+    [t]
   )
 
-  const loadCommitFiles = useCallback(
-    async (rev: string) => {
-      const project = useProjectStore.getState().currentProject
-      if (!project || !isTauri()) {
+  const loadCommitFiles = useCallback(async (rev: string) => {
+    const sequence = ++commitFilesSequenceRef.current
+    const project = useProjectStore.getState().currentProject
+    if (!project || !isTauri()) {
+      setCommitFiles([])
+      return
+    }
+    setCommitFilesLoading(true)
+    setCommitFilesError(null)
+    selectedCommitFileRef.current = null
+    setSelectedCommitFile(null)
+    setCommitFileDiff(null)
+    commitFileDiffSequenceRef.current += 1
+    const isCurrentRequest = () =>
+      commitFilesSequenceRef.current === sequence &&
+      selectedCommitHashRef.current === rev &&
+      useProjectStore.getState().currentProject?.path === project.path
+    try {
+      const files = await safeInvoke<GitCommitFileChange[]>('读取提交文件', 'git_commit_files', {
+        path: project.path,
+        rev,
+      })
+      if (isCurrentRequest()) {
+        setCommitFiles(files)
+      }
+    } catch (reason) {
+      if (isCurrentRequest()) {
         setCommitFiles([])
-        return
+        setCommitFilesError(String(reason))
       }
-      setCommitFilesLoading(true)
-      setCommitFilesError(null)
-      setSelectedCommitFile(null)
-      setCommitFileDiff(null)
-      try {
-        const files = await safeInvoke<GitCommitFileChange[]>('读取提交文件', 'git_commit_files', {
-          path: project.path,
-          rev,
-        })
-        if (useProjectStore.getState().currentProject?.path === project.path) {
-          setCommitFiles(files)
-        }
-      } catch (reason) {
-        if (useProjectStore.getState().currentProject?.path === project.path) {
-          setCommitFiles([])
-          setCommitFilesError(String(reason))
-        }
-      } finally {
-        if (useProjectStore.getState().currentProject?.path === project.path) {
-          setCommitFilesLoading(false)
-        }
+    } finally {
+      if (isCurrentRequest()) {
+        setCommitFilesLoading(false)
       }
-    },
-    [],
-  )
+    }
+  }, [])
 
   const loadCommitFileDiff = useCallback(
     async (rev: string, filePath: string) => {
+      const sequence = ++commitFileDiffSequenceRef.current
       const project = useProjectStore.getState().currentProject
       if (!project || !isTauri()) return
+      selectedCommitFileRef.current = filePath
       setSelectedCommitFile(filePath)
       setCommitFileDiffLoading(true)
+      const isCurrentRequest = () =>
+        commitFileDiffSequenceRef.current === sequence &&
+        selectedCommitHashRef.current === rev &&
+        selectedCommitFileRef.current === filePath &&
+        useProjectStore.getState().currentProject?.path === project.path
       try {
         const pair = await safeInvoke<GitFileContents>(
           '读取提交文件内容',
           'git_commit_file_contents',
-          { path: project.path, rev, file: filePath },
+          { path: project.path, rev, file: filePath }
         )
-        if (useProjectStore.getState().currentProject?.path !== project.path) return
+        if (!isCurrentRequest()) return
         const name = filePath.split(/[/\\]/).pop() ?? filePath
         setCommitFileDiff({
           path: `${project.path}/${filePath}`,
@@ -986,34 +1057,33 @@ export default function SourceControlPanel() {
           modified: pair.modified,
         })
       } catch (reason) {
-        if (useProjectStore.getState().currentProject?.path === project.path) {
+        if (isCurrentRequest()) {
           setCommitFileDiff(null)
           useProjectStore
             .getState()
             .pushToast('error', t('打开差异对比失败：{error}', { error: String(reason) }))
         }
       } finally {
-        if (useProjectStore.getState().currentProject?.path === project.path) {
+        if (isCurrentRequest()) {
           setCommitFileDiffLoading(false)
         }
       }
     },
-    [t],
+    [t]
   )
 
   useEffect(() => {
     if (scmTab !== 'history') return
-    const rev =
-      selectedCommitHash ??
-      commits[0]?.hash ??
-      null
+    const rev = selectedCommitHash ?? commits[0]?.hash ?? null
     if (!rev) {
+      selectedCommitHashRef.current = null
       queueMicrotask(() => {
         setCommitFiles([])
         setCommitFilesError(null)
       })
       return
     }
+    selectedCommitHashRef.current = rev
     queueMicrotask(() => void loadCommitFiles(rev))
   }, [scmTab, selectedCommitHash, commits, loadCommitFiles])
 
@@ -1073,19 +1143,25 @@ export default function SourceControlPanel() {
       }
 
       try {
-        await safeInvoke(isStage ? '暂存 Git 更改' : '取消暂存 Git 更改', isStage ? 'git_stage' : 'git_unstage', {
-          path: project.path,
-          files: all ? [] : files,
-          all: all || null,
-        })
+        await safeInvoke(
+          isStage ? '暂存 Git 更改' : '取消暂存 Git 更改',
+          isStage ? 'git_stage' : 'git_unstage',
+          {
+            path: project.path,
+            files: all ? [] : files,
+            all: all || null,
+          }
+        )
         if (useProjectStore.getState().currentProject?.path === project.path) {
           void refresh({ soft: true })
-          useProjectStore.getState().pushToast(
-            'success',
-            isStage
-              ? t('已暂存 {count} 个文件', { count: all ? changes.length : files.length })
-              : t('已取消暂存 {count} 个文件', { count: all ? changes.length : files.length }),
-          )
+          useProjectStore
+            .getState()
+            .pushToast(
+              'success',
+              isStage
+                ? t('已暂存 {count} 个文件', { count: all ? changes.length : files.length })
+                : t('已取消暂存 {count} 个文件', { count: all ? changes.length : files.length })
+            )
         }
       } catch (reason) {
         if (useProjectStore.getState().currentProject?.path === project.path) {
@@ -1096,18 +1172,20 @@ export default function SourceControlPanel() {
           void refresh({ soft: true })
           const message = String(reason)
           setOperationError(message)
-          useProjectStore.getState().pushToast(
-            'error',
-            isStage
-              ? t('暂存更改失败：{error}', { error: message })
-              : t('取消暂存失败：{error}', { error: message }),
-          )
+          useProjectStore
+            .getState()
+            .pushToast(
+              'error',
+              isStage
+                ? t('暂存更改失败：{error}', { error: message })
+                : t('取消暂存失败：{error}', { error: message })
+            )
         }
       } finally {
         setOperation(null)
       }
     },
-    [loading, operation, refresh, status, t],
+    [loading, operation, refresh, status, t]
   )
 
   const discardChanges = useCallback(
@@ -1134,8 +1212,7 @@ export default function SourceControlPanel() {
       if (confirmed !== true) return
 
       const files = targets.map(change => change.path)
-      const key =
-        files.length > 1 ? `multi:${group}` : scmRowKey(group, files[0])
+      const key = files.length > 1 ? `multi:${group}` : scmRowKey(group, files[0])
       setOperation({ kind: 'discard', key })
       setOperationError(null)
 
@@ -1148,14 +1225,15 @@ export default function SourceControlPanel() {
         if (useProjectStore.getState().currentProject?.path === project.path) {
           for (const change of targets) {
             if (change.status === '??') {
-              useEditorStore.getState().closeTabsForPath(absoluteFilePath(project.path, change.path))
+              useEditorStore
+                .getState()
+                .closeTabsForPath(absoluteFilePath(project.path, change.path))
             }
           }
           void refresh({ soft: true })
-          useProjectStore.getState().pushToast(
-            'success',
-            t('已丢弃 {count} 个文件的更改', { count: files.length }),
-          )
+          useProjectStore
+            .getState()
+            .pushToast('success', t('已丢弃 {count} 个文件的更改', { count: files.length }))
         }
       } catch (reason) {
         if (useProjectStore.getState().currentProject?.path === project.path) {
@@ -1170,7 +1248,7 @@ export default function SourceControlPanel() {
         setOperation(null)
       }
     },
-    [loading, operation, refresh, t],
+    [loading, operation, refresh, t]
   )
 
   const pullCurrent = useCallback(async () => {
@@ -1235,7 +1313,7 @@ export default function SourceControlPanel() {
             const pushError = String(reason)
             const failureMessage = t(
               '提交成功，但推送失败：{error}。提交信息已保留；请检查远程认证、网络或分支后重试。',
-              { error: pushError },
+              { error: pushError }
             )
             setOperationError(failureMessage)
             setPushRetryAvailable(true)
@@ -1256,12 +1334,10 @@ export default function SourceControlPanel() {
         await refresh({ soft: false })
         const failureMessage = t(
           '提交失败：{error}。提交信息已保留；请检查 Git 身份、冲突或暂存内容后重试。',
-          { error: String(reason) },
+          { error: String(reason) }
         )
         setOperationError(failureMessage)
-        useProjectStore
-          .getState()
-          .pushToast('error', failureMessage)
+        useProjectStore.getState().pushToast('error', failureMessage)
       }
     } finally {
       setOperation(null)
@@ -1285,7 +1361,7 @@ export default function SourceControlPanel() {
       if (useProjectStore.getState().currentProject?.path === project.path) {
         const failureMessage = t(
           '推送失败：{error}。提交信息已保留；请检查远程认证、网络或分支后重试。',
-          { error: String(reason) },
+          { error: String(reason) }
         )
         setOperationError(failureMessage)
         setPushRetryAvailable(true)
@@ -1301,7 +1377,7 @@ export default function SourceControlPanel() {
       setView('explorer')
       void revealFileInTree(absolutePath)
     },
-    [revealFileInTree, setView],
+    [revealFileInTree, setView]
   )
 
   const loadInlineDiff = useCallback(
@@ -1341,7 +1417,7 @@ export default function SourceControlPanel() {
         }
       }
     },
-    [currentProject, revealInSidebar],
+    [currentProject, revealInSidebar]
   )
 
   const openChangeInEditor = useCallback(
@@ -1356,7 +1432,7 @@ export default function SourceControlPanel() {
       setView('explorer')
       void useEditorStore.getState().openDiff(currentProject.path, rel, abs)
     },
-    [currentProject, revealInSidebar, setView],
+    [currentProject, revealInSidebar, setView]
   )
 
   const selectChange = useCallback(
@@ -1396,7 +1472,7 @@ export default function SourceControlPanel() {
       setScmTab('changes')
       void loadInlineDiff(change)
     },
-    [groups.staged, groups.unstaged, loadInlineDiff],
+    [groups.staged, groups.unstaged, loadInlineDiff]
   )
 
   const copyAbsolutePath = async (path: string) => {
@@ -1436,7 +1512,7 @@ export default function SourceControlPanel() {
       if (!shouldShowAppContextMenu(event)) return
       setContextMenu({ x: event.clientX, y: event.clientY, group, change })
     },
-    [],
+    []
   )
 
   const contextMenuItems = (group: GitChangeGroup, change: GitChange): ContextMenuItem[] => {
@@ -1523,11 +1599,23 @@ export default function SourceControlPanel() {
 
   let body: ReactNode
   if (!currentProject) {
-    body = <EmptyState icon={<Folder size={28} strokeWidth={1.2} />} title={t('请先选择或添加项目')} />
+    body = (
+      <EmptyState icon={<Folder size={28} strokeWidth={1.2} />} title={t('请先选择或添加项目')} />
+    )
   } else if (error && !status) {
-    body = <EmptyState icon={<AlertCircle size={28} strokeWidth={1.2} className="text-danger" />} title={error} />
+    body = (
+      <EmptyState
+        icon={<AlertCircle size={28} strokeWidth={1.2} className="text-danger" />}
+        title={error}
+      />
+    )
   } else if (status && !status.is_repository) {
-    body = <EmptyState icon={<GitBranch size={28} strokeWidth={1.2} />} title={t('当前项目不是 Git 仓库')} />
+    body = (
+      <EmptyState
+        icon={<GitBranch size={28} strokeWidth={1.2} />}
+        title={t('当前项目不是 Git 仓库')}
+      />
+    )
   } else if (status) {
     const branch = status.branch ?? t('游离 HEAD')
     const writeDisabled = Boolean(operation) || loading
@@ -1603,9 +1691,7 @@ export default function SourceControlPanel() {
                 if (commitError) setCommitError(null)
               }}
               placeholder={
-                groups.staged.length === 0
-                  ? t('请先暂存要提交的更改')
-                  : t('提交信息（必填）')
+                groups.staged.length === 0 ? t('请先暂存要提交的更改') : t('提交信息（必填）')
               }
               aria-label={t('提交信息')}
               aria-invalid={commitError ? true : undefined}
@@ -1672,8 +1758,7 @@ export default function SourceControlPanel() {
       </div>
     )
 
-    const selectedCommit =
-      commits.find(c => c.hash === selectedCommitHash) ?? commits[0] ?? null
+    const selectedCommit = commits.find(c => c.hash === selectedCommitHash) ?? commits[0] ?? null
 
     const historyPane = (
       <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -1692,9 +1777,7 @@ export default function SourceControlPanel() {
         >
           <div
             className={
-              commitsCollapsed
-                ? 'flex-none border-b border-border'
-                : 'flex min-h-0 flex-1 flex-col'
+              commitsCollapsed ? 'flex-none border-b border-border' : 'flex min-h-0 flex-1 flex-col'
             }
           >
             <div
@@ -1726,7 +1809,10 @@ export default function SourceControlPanel() {
                   selectedHash={selectedCommit?.hash ?? null}
                   loadingMore={commitsLoadingMore}
                   hasMore={commitsHasMore}
-                  onSelect={setSelectedCommitHash}
+                  onSelect={hash => {
+                    selectedCommitHashRef.current = hash
+                    setSelectedCommitHash(hash)
+                  }}
                   onNearEnd={onCommitListNearEnd}
                 />
               </div>
@@ -2098,7 +2184,7 @@ export default function SourceControlPanel() {
               </>
             )}
           </div>,
-          document.body,
+          document.body
         )}
     </div>
   )

@@ -39,15 +39,13 @@ import {
   loadProjectRootTree,
   patchDirChildren,
   preserveLoadedChildren,
+  reloadLoadedChildren,
   removeNodeFromTree,
   revealNeedsTreeLoad,
   type FileNode,
 } from '../lib/fileTreeCache'
 import { authorizePaths, syncRootsFromProjects } from '../lib/pathAllowlist'
-import {
-  ensureWorkspaceTrust,
-  pushTrustedRootsToNative,
-} from '../lib/workspaceTrust'
+import { ensureWorkspaceTrust, pushTrustedRootsToNative } from '../lib/workspaceTrust'
 
 export type { FileNode }
 
@@ -102,16 +100,24 @@ interface ProjectState {
   expandProjectDir: (
     projectId: string,
     path: string,
-    options?: { force?: boolean },
+    options?: { force?: boolean }
   ) => Promise<void>
   revealFileInTree: (filePath: string, options?: { force?: boolean }) => Promise<void>
-  pushToast: (
-    kind: ToastKind,
-    text: string,
-    detail?: string,
-    action?: Toast['action'],
-  ) => void
+  pushToast: (kind: ToastKind, text: string, detail?: string, action?: Toast['action']) => void
   dismissToast: (id: string) => void
+}
+
+/** Latest refresh request per project; older scans must not overwrite newer state. */
+const projectTreeRefreshSequences = new Map<string, number>()
+
+function nextProjectTreeRefreshSequence(projectId: string): number {
+  const next = (projectTreeRefreshSequences.get(projectId) ?? 0) + 1
+  projectTreeRefreshSequences.set(projectId, next)
+  return next
+}
+
+function isLatestProjectTreeRefresh(projectId: string, sequence: number): boolean {
+  return projectTreeRefreshSequences.get(projectId) === sequence
 }
 
 async function syncAllowlistRoots(projects: Project[]): Promise<void> {
@@ -142,11 +148,7 @@ async function validateDirectoryWithRetry(path: string): Promise<boolean> {
   return false
 }
 
-function withUnavailableProject(
-  ids: string[],
-  projectId: string,
-  unavailable: boolean,
-): string[] {
+function withUnavailableProject(ids: string[], projectId: string, unavailable: boolean): string[] {
   if (unavailable) {
     return ids.includes(projectId) ? ids : [...ids, projectId]
   }
@@ -169,7 +171,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   pushToast: (kind, text, detail, action) => {
     const normalizedDetail = detail?.trim() || undefined
     const duplicate = get().toasts.some(
-      t => t.kind === kind && t.text === text && (t.detail ?? '') === (normalizedDetail ?? ''),
+      t => t.kind === kind && t.text === text && (t.detail ?? '') === (normalizedDetail ?? '')
     )
     if (duplicate) return
 
@@ -188,7 +190,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       if (importedFromSettings > 0) {
         get().pushToast(
           'success',
-          translate('已从用户设置同步 {count} 个项目', { count: importedFromSettings }),
+          translate('已从用户设置同步 {count} 个项目', { count: importedFromSettings })
         )
       }
 
@@ -219,7 +221,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           projects.map(async project => ({
             id: project.id,
             ok: await validateDirectoryWithRetry(project.path),
-          })),
+          }))
         )
 
         // Merge per-id so parallel switchProject clears are not wiped.
@@ -330,7 +332,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       void syncAllowlistRoots(get().projects)
       activateProjectSession(previousId, id)
       void get().ensureProjectTree(project)
-      get().pushToast('success', `已新建临时项目: ${name}（退出后将从列表移除；文件保留在系统临时目录）`)
+      get().pushToast(
+        'success',
+        `已新建临时项目: ${name}（退出后将从列表移除；文件保留在系统临时目录）`
+      )
       return true
     } catch (e) {
       console.error('addEmptyProject failed:', e)
@@ -396,7 +401,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         const unavailable = get().unavailableProjectIds
         const next = pickAvailableProject(
           get().projects.filter(p => p.id !== id),
-          unavailable,
+          unavailable
         )
         if (next) {
           await get().switchProject(next)
@@ -417,7 +422,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         const unavailable = get().unavailableProjectIds
         const next = pickAvailableProject(
           get().projects.filter(p => p.id !== id),
-          unavailable,
+          unavailable
         )
         if (next) {
           await get().switchProject(next)
@@ -457,18 +462,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const target = get().projects.find(p => p.id === id)
     if (target?.ephemeral) {
       set(s => ({
-        projects: s.projects.map(p =>
-          p.id === id ? { ...p, sort_order: sortOrder } : p,
-        ),
+        projects: s.projects.map(p => (p.id === id ? { ...p, sort_order: sortOrder } : p)),
       }))
       return
     }
     try {
       await persistSortOrder(id, sortOrder)
       set(s => ({
-        projects: s.projects.map(p =>
-          p.id === id ? { ...p, sort_order: sortOrder } : p,
-        ),
+        projects: s.projects.map(p => (p.id === id ? { ...p, sort_order: sortOrder } : p)),
       }))
     } catch (e) {
       console.error('setProjectSortOrder failed:', e)
@@ -490,9 +491,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       })
       if (target?.ephemeral) {
         set(s => ({
-          projects: s.projects.map(p =>
-            p.id === id ? { ...p, name: baseName(path), path } : p,
-          ),
+          projects: s.projects.map(p => (p.id === id ? { ...p, name: baseName(path), path } : p)),
         }))
         void syncAllowlistRoots(get().projects)
         if (previousPath) renameEditorPaths(previousPath, path)
@@ -515,7 +514,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const message = String(e)
       get().pushToast(
         'error',
-        message.includes('UNIQUE') ? '该目录已被其他项目使用' : `重新定位项目失败: ${message}`,
+        message.includes('UNIQUE') ? '该目录已被其他项目使用' : `重新定位项目失败: ${message}`
       )
       return false
     }
@@ -560,9 +559,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const trust = await ensureWorkspaceTrust(project)
       if (trust === false) return false
       const known = get().projects
-      const forTrustSync = known.some(p => p.id === project.id)
-        ? known
-        : [...known, project]
+      const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
       await pushTrustedRootsToNative(forTrustSync)
 
       // Ephemeral/empty projects use a scratch temp directory; do not block
@@ -593,11 +590,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       console.error('switchProject failed:', e)
       if (isDirectoryUnavailableError(e)) {
         set(s => ({
-          unavailableProjectIds: withUnavailableProject(
-            s.unavailableProjectIds,
-            project.id,
-            true,
-          ),
+          unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
         }))
       }
       get().pushToast('error', `切换项目失败: ${String(e)}`)
@@ -630,21 +623,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const tree = await loadProjectRootTree(proj)
       set(s => ({
         fileTree: tree,
-        unavailableProjectIds: withUnavailableProject(
-          s.unavailableProjectIds,
-          proj.id,
-          false,
-        ),
+        unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, proj.id, false),
       }))
     } catch (e) {
       console.error('loadFileTree failed:', e)
       if (isDirectoryUnavailableError(e)) {
         set(s => ({
-          unavailableProjectIds: withUnavailableProject(
-            s.unavailableProjectIds,
-            proj.id,
-            true,
-          ),
+          unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, proj.id, true),
         }))
       }
       get().pushToast('error', formatReadDirErrorToast(e))
@@ -681,21 +666,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           ...s.projectTrees,
           [project.id]: preserveLoadedChildren(tree, s.projectTrees[project.id] ?? []),
         },
-        unavailableProjectIds: withUnavailableProject(
-          s.unavailableProjectIds,
-          project.id,
-          false,
-        ),
+        unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, false),
       }))
     } catch (e) {
       console.error('ensureProjectTree failed:', e)
       if (isDirectoryUnavailableError(e)) {
         set(s => ({
-          unavailableProjectIds: withUnavailableProject(
-            s.unavailableProjectIds,
-            project.id,
-            true,
-          ),
+          unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
         }))
       }
       get().pushToast('error', formatReadDirErrorToast(e))
@@ -703,28 +680,33 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   refreshProjectTree: async (project: Project) => {
+    const sequence = nextProjectTreeRefreshSequence(project.id)
     try {
       const tree = await loadProjectRootTree(project)
+      if (!isLatestProjectTreeRefresh(project.id, sequence)) return
+      // Capture this only after the root scan: any expansion that finished
+      // while it was pending must be included in the recursive reload.
+      const existing = get().projectTrees[project.id] ?? []
+      const next = await reloadLoadedChildren(tree, existing, project.path, project)
       set(s => ({
+        // An expansion can land while the scan is in flight. Keep that newer
+        // lazy-loaded state instead of replacing it with this scan's snapshot.
         projectTrees: {
           ...s.projectTrees,
-          [project.id]: preserveLoadedChildren(tree, s.projectTrees[project.id] ?? []),
+          ...(isLatestProjectTreeRefresh(project.id, sequence)
+            ? { [project.id]: preserveLoadedChildren(next, s.projectTrees[project.id] ?? []) }
+            : {}),
         },
-        unavailableProjectIds: withUnavailableProject(
-          s.unavailableProjectIds,
-          project.id,
-          false,
-        ),
+        unavailableProjectIds: isLatestProjectTreeRefresh(project.id, sequence)
+          ? withUnavailableProject(s.unavailableProjectIds, project.id, false)
+          : s.unavailableProjectIds,
       }))
     } catch (e) {
       console.error('refreshProjectTree failed:', e)
+      if (!isLatestProjectTreeRefresh(project.id, sequence)) return
       if (isDirectoryUnavailableError(e)) {
         set(s => ({
-          unavailableProjectIds: withUnavailableProject(
-            s.unavailableProjectIds,
-            project.id,
-            true,
-          ),
+          unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
         }))
       }
       get().pushToast('error', formatRefreshDirErrorToast(e))
@@ -747,14 +729,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     if (!options?.force && node?.loaded) return
     try {
       const children = await loadDirChildren(path, project.path, project)
+      const previous = findNodeByPath(get().projectTrees[projectId] ?? [], path)
+      const nextChildren =
+        options?.force && previous?.children?.length
+          ? await reloadLoadedChildren(children, previous.children, project.path, project)
+          : children
       set(s => {
         const tree = s.projectTrees[projectId] ?? []
-        const previous = findNodeByPath(tree, path)
-        // Force reload drops deleted entries; keep expanded descendants that still exist.
-        const nextChildren =
-          options?.force && previous?.children?.length
-            ? preserveLoadedChildren(children, previous.children)
-            : children
         return {
           projectTrees: {
             ...s.projectTrees,

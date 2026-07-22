@@ -78,17 +78,17 @@ describe('isPathExcluded / maps', () => {
 
   it('reads ignore / symlink flags from settings', () => {
     const defaults = readEffectiveExcludeSettings(DEFAULT_GLOBAL_SETTINGS)
-    expect(defaults.excludeGitIgnore).toBe(true)
+    expect(defaults.excludeGitIgnore).toBe(false)
     expect(defaults.useIgnoreFiles).toBe(true)
     expect(defaults.followSymlinks).toBe(false)
 
     const overridden = readEffectiveExcludeSettings({
       ...DEFAULT_GLOBAL_SETTINGS,
-      'explorer.excludeGitIgnore': false,
+      'explorer.excludeGitIgnore': true,
       'search.useIgnoreFiles': false,
       'search.followSymlinks': true,
     })
-    expect(overridden.excludeGitIgnore).toBe(false)
+    expect(overridden.excludeGitIgnore).toBe(true)
     expect(overridden.useIgnoreFiles).toBe(false)
     expect(overridden.followSymlinks).toBe(true)
   })

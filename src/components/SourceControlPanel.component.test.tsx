@@ -86,7 +86,7 @@ describe('SourceControlPanel', () => {
         path: project.path,
         files: [],
         all: true,
-      }),
+      })
     )
   })
 
@@ -97,7 +97,7 @@ describe('SourceControlPanel', () => {
         branch: 'main',
         changes: [{ path: 'src/app.ts', status: 'M ' }],
       },
-      { rejectFirstPush: true },
+      { rejectFirstPush: true }
     )
     render(<SourceControlPanel />)
 
@@ -111,8 +111,37 @@ describe('SourceControlPanel', () => {
     fireEvent.click(retry)
 
     await waitFor(() =>
-      expect(mocks.safeInvoke.mock.calls.filter(([, command]) => command === 'git_push')).toHaveLength(2),
+      expect(
+        mocks.safeInvoke.mock.calls.filter(([, command]) => command === 'git_push')
+      ).toHaveLength(2)
     )
     await waitFor(() => expect(message).toHaveValue(''))
+  })
+
+  it('ignores a late status response after switching projects', async () => {
+    let resolveFirstStatus: ((status: GitStatus) => void) | undefined
+    mocks.safeInvoke.mockImplementation(
+      (_label: string, command: string, args?: { path: string }) => {
+        if (command === 'git_status' && args?.path === project.path) {
+          return new Promise<GitStatus>(resolve => {
+            resolveFirstStatus = resolve
+          })
+        }
+        if (command === 'git_status') {
+          return Promise.resolve({ is_repository: true, branch: 'new-project', changes: [] })
+        }
+        if (command === 'git_log') return Promise.resolve([])
+        return Promise.resolve(undefined)
+      }
+    )
+    render(<SourceControlPanel />)
+
+    const nextProject = { ...project, id: 'repo-2', path: 'D:/other', name: '另一个仓库' }
+    useProjectStore.setState({ currentProject: nextProject, projects: [project, nextProject] })
+    await screen.findByText('new-project')
+
+    resolveFirstStatus?.({ is_repository: true, branch: 'old-project', changes: [] })
+    await waitFor(() => expect(screen.queryByText('old-project')).not.toBeInTheDocument())
+    expect(screen.getByText('new-project')).toBeInTheDocument()
   })
 })

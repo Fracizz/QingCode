@@ -94,7 +94,7 @@ function buildSharedDefaults(): SettingsFile {
     },
     'search.followSymlinks': false,
     'search.useIgnoreFiles': true,
-    'explorer.excludeGitIgnore': true,
+    'explorer.excludeGitIgnore': false,
     'terminal.integrated.scrollback': 5000,
     'terminal.integrated.cursorBlinking': true,
     custom: {},
@@ -213,8 +213,8 @@ const SHARED_SETTINGS_BODY = `
   "search.followSymlinks": false,
   // search.useIgnoreFiles：内容/文件名搜索是否读取 .gitignore、.ignore 等 ignore 文件
   "search.useIgnoreFiles": true,
-  // explorer.excludeGitIgnore：资源管理器是否按 .gitignore 等 ignore 文件隐藏条目
-  "explorer.excludeGitIgnore": true,
+  // explorer.excludeGitIgnore：资源管理器是否按 .gitignore 等 ignore 文件隐藏条目（默认 false，仍显示）
+  "explorer.excludeGitIgnore": false,
 
   // ============================== 终端 ==============================
   // terminal.integrated.scrollback：终端回滚缓冲行数（xterm scrollback + 会话输出持久化共用）

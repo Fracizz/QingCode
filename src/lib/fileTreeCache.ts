@@ -30,7 +30,7 @@ export async function scanDirectory(
     path,
     workspaceRoot: options?.workspaceRoot ?? path,
     excludePatterns: options?.excludePatterns ?? null,
-    excludeGitIgnore: options?.excludeGitIgnore ?? true,
+    excludeGitIgnore: options?.excludeGitIgnore ?? false,
   })
   return withLoadedFlags(tree)
 }
@@ -73,6 +73,9 @@ export function patchDirChildren(
  * A root scan only contains one level. Keep lazy-loaded descendants when its
  * response lands after a directory expansion, otherwise it can replace an
  * expanded folder with an unloaded copy and leave its visible row empty.
+ *
+ * Prefer {@link reloadLoadedChildren} for intentional refresh / watcher reloads
+ * so expanded folders re-read disk instead of keeping stale children.
  */
 export function preserveLoadedChildren(fresh: FileNode[], existing: FileNode[]): FileNode[] {
   return fresh.map(node => {
@@ -84,6 +87,44 @@ export function preserveLoadedChildren(fresh: FileNode[], existing: FileNode[]):
       loaded: true,
     }
   })
+}
+
+/**
+ * Re-scan every previously loaded directory under `fresh` so refresh and file
+ * watchers pick up adds/deletes/renames inside already-expanded folders.
+ */
+export async function reloadLoadedChildren(
+  fresh: FileNode[],
+  existing: FileNode[],
+  workspaceRoot: string,
+  project?: Project | null,
+): Promise<FileNode[]> {
+  const result: FileNode[] = []
+  for (const node of fresh) {
+    if (!node.is_dir) {
+      result.push(node)
+      continue
+    }
+    const previous = findNodeByPath(existing, node.path)
+    if (!previous?.is_dir || !previous.loaded) {
+      result.push(node)
+      continue
+    }
+    try {
+      const children = await loadDirChildren(node.path, workspaceRoot, project)
+      const nested = await reloadLoadedChildren(
+        children,
+        previous.children ?? [],
+        workspaceRoot,
+        project,
+      )
+      result.push({ ...node, children: nested, loaded: true })
+    } catch {
+      // Directory became unavailable — keep the unloaded placeholder from the scan.
+      result.push(node)
+    }
+  }
+  return result
 }
 
 /** Ancestor directories that must be expanded to reveal `filePath` under `project`. */

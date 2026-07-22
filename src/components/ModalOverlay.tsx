@@ -21,7 +21,7 @@ const FOCUSABLE_SELECTOR = [
 ].join(',')
 
 let nextModalId = 0
-const modalStack: number[] = []
+const modalStack: Array<{ id: number; overlay: HTMLDivElement }> = []
 
 function focusableElements(container: HTMLElement): HTMLElement[] {
   return [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(element => {
@@ -50,7 +50,7 @@ export default function ModalOverlay({
     const overlay = overlayRef.current
     restoreFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null
-    modalStack.push(modalId)
+    if (overlay) modalStack.push({ id: modalId, overlay })
 
     if (overlay) {
       const preferred = overlay.querySelector<HTMLElement>('[data-modal-autofocus]')
@@ -59,7 +59,7 @@ export default function ModalOverlay({
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (modalStack.at(-1) !== modalId) return
+      if (modalStack.at(-1)?.id !== modalId) return
 
       if (event.key === 'Escape' && onDismissRef.current) {
         event.preventDefault()
@@ -91,9 +91,17 @@ export default function ModalOverlay({
     window.addEventListener('keydown', onKeyDown, true)
     return () => {
       window.removeEventListener('keydown', onKeyDown, true)
-      const index = modalStack.lastIndexOf(modalId)
+      const index = modalStack.map(modal => modal.id).lastIndexOf(modalId)
       if (index >= 0) modalStack.splice(index, 1)
-      if (modalStack.length > 0) return
+      const parent = modalStack.at(-1)
+      if (parent) {
+        window.setTimeout(() => {
+          if (modalStack.at(-1) !== parent || !parent.overlay.isConnected) return
+          const preferred = parent.overlay.querySelector<HTMLElement>('[data-modal-autofocus]')
+          ;(preferred ?? focusableElements(parent.overlay)[0] ?? parent.overlay).focus()
+        }, 0)
+        return
+      }
 
       const previous = restoreFocusRef.current
       window.setTimeout(() => {

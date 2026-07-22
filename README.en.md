@@ -17,7 +17,7 @@ It is not another VS Code or Zed — it focuses on keeping several local project
 
 ### Source Control
 
-![Branch, changes, and diffs](./docs/screenshots/en-03-source-control.jpg)
+![Changes / History, diffs, and commit](./docs/screenshots/en-03-source-control.jpg)
 
 ### Run configurations
 
@@ -68,19 +68,35 @@ Alongside run configurations, manage **terminal profiles** (name + startup comma
 
 Run configurations answer “how do this project’s services start?”; terminal profiles answer “what should this shell open with?” — together they keep the local multi-project scene in one place.
 
+### Working with AI: external assistants, no built-in model
+
+QingCode **does not ship** a chat model or agent. Intelligence stays with Cursor / Claude / OpenCode and similar tools; QingCode focuses on projects and the running scene:
+
+- **AI CLIs in the terminal**: jump into `opencode` (and others) via terminal profiles; hand run-config terminals to an assistant when useful  
+- **Copy into chats**: copy absolute / relative paths or **file references** (with line ranges) from the explorer or editor  
+- **QingCode CLI + Skill**: Settings → **AI** → “Copy Skill text” puts an installable Skill description on the clipboard — install it yourself in your agent (e.g. as `SKILL.md`). Agents can drive `QingCode.exe` to list/add projects, edit run configs, and (with the GUI running) switch projects, start/stop runs, grant trust, and open files (JSON on stdout). QingCode **does not** auto-register with any agent  
+
+Typical loop: QingCode manages projects and services → AI edits in a terminal or external IDE → CLI / references reconnect the scene when needed.
+
 ### Focused file tree and light editing
 
-The explorer shows only the active project. Create, rename, and delete in place; copy paths or file references; open a terminal in any folder.
+The explorer shows only the active project. Create, rename, and delete in place; copy paths, relative paths, file references, or **Copy Files to Clipboard** for Explorer / apps that accept file paste; open a terminal or search in any folder. Gitignored entries stay visible by default (`explorer.excludeGitIgnore` can hide them). Disk changes auto-refresh expanded folders; the toolbar refresh rescans those subtrees as well.
 
-Multi-tab editing with on-demand highlighting for common languages; auto-detect UTF-8 / BOM / GB18030-compatible text; external changes can be reloaded or compared instead of overwritten silently. Large files degrade or open read-only. Editor and terminal sessions restore after restart.
+Multi-tab editing with on-demand highlighting for common languages; auto-detect UTF-8 / BOM / GB18030-compatible text; external changes can be reloaded or compared instead of overwritten silently. Large files degrade or open read-only. Editor and terminal sessions restore after restart (opening a project no longer auto-creates an empty terminal).
 
-### Lightweight Git review
+### Source Control workspace
 
-Source Control shows the branch, changed files, and diffs; compare any file side by side with HEAD. Chinese names, spaces, and renames use original paths. Commit and push can stay in your usual Git or AI tools — QingCode helps you see what changed first.
+Opening Source Control fills the main editor area (click again to return to the explorer):
+
+- **Changes**: staged / unstaged groups; stage or unstage one or all files, discard with confirmation, commit staged changes, and pull / push using the configured upstream  
+- **History**: browse commits, changed files, and per-file diffs  
+- Inline diffs on the right; Chinese names, spaces, and renames use original paths; pull conflicts are surfaced as a banner — resolve markers in the editor  
+
+Branch surgery, rebase, and a full merge UI stay with your usual Git or AI tools.
 
 ### Search and preferences
 
-Search file names or contents in a chosen scope. Dark / light / forest / system theme; adjustable UI and editor fonts; Simplified Chinese or English UI. Global `default-settings.json` and project `.qingcode/project-settings.json` are **JSON5**; the template states that comments must not be deleted (see [HELP.md · Settings](./HELP.md#settings)).
+Search file names or contents in a chosen scope; replace stays collapsed until you expand it. Dark / light / forest / system theme; adjustable UI and editor fonts; Simplified Chinese or English UI. Global `default-settings.json` and project `.qingcode/project-settings.json` are **JSON5**; the template states that comments must not be deleted (see [HELP.md · Settings](./HELP.md#settings)).
 
 ## How it relates to VS Code / Zed
 
@@ -90,7 +106,7 @@ Search file names or contents in a chosen scope. Dark / light / forest / system 
 | Multi-project switching | Title-bar pins; sessions kept | Workspace-centric | Typical single-project focus |
 | Service / task startup | **Multi-task run configs → many terminals** | Strong tasks / launch | Available, different shape |
 | LSP / debug / marketplace | Intentionally not a full IDE | Full stack | Strong LSP, smaller ecosystem |
-| AI | Not built-in; plays well with CLIs | Extensions or built-in | Built-in leaning |
+| AI | No built-in model; terminal profiles + CLI Skill for external agents | Extensions or built-in | Built-in leaning |
 
 QingCode **deliberately skips** full IntelliSense, a debugger, and an extension marketplace. Keep VS Code / Zed / Cursor for deep editing; use QingCode to manage which projects are open, which services are up, and which terminals are live.
 
@@ -99,7 +115,7 @@ QingCode **deliberately skips** full IntelliSense, a debugger, and an extension 
 1. Add several local project folders and pin them in the title bar  
 2. Create run configurations for common stacks (for example `dev` = API + web)  
 3. Start services in one click; each task gets its own terminal  
-4. Use terminal profiles to jump into an AI CLI or project script environment  
+4. Enter an AI CLI via a terminal profile, or copy the CLI Skill from Settings for your agent  
 5. Switch projects from the title bar — editor and terminal state remain  
 
 ## Who it is for
