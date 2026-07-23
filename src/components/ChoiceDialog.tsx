@@ -1,9 +1,10 @@
+import { lazy, Suspense } from 'react'
 import { AlertTriangle } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { useChoiceStore } from '../store/choiceStore'
 import ModalOverlay from './ModalOverlay'
 import { useI18n } from '../lib/i18n'
+
+const MarkdownRichText = lazy(() => import('./MarkdownRichText'))
 
 export default function ChoiceDialog() {
   const { t } = useI18n()
@@ -46,20 +47,9 @@ export default function ChoiceDialog() {
         </div>
         {markdownDetail && request.detail && (
           <div className="min-h-0 flex-1 overflow-auto border-t border-border px-4 py-3">
-            <div className="qing-md-preview text-[13px] leading-relaxed text-fg">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  a: ({ href, children }) => (
-                    <a href={href} target="_blank" rel="noreferrer noopener">
-                      {children}
-                    </a>
-                  ),
-                }}
-              >
-                {request.detail}
-              </ReactMarkdown>
-            </div>
+            <Suspense fallback={null}>
+              <MarkdownRichText content={request.detail} />
+            </Suspense>
           </div>
         )}
         <div

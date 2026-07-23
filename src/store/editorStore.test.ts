@@ -209,4 +209,37 @@ describe('editorStore tab lifecycle', () => {
       dirty: true,
     })
   })
+
+  it('closeDiffTabsForPath closes only compare tabs for that path', () => {
+    useEditorStore.setState({
+      tabs: [
+        makeTab({ id: 'edit', path: 'D:\\proj\\src\\a.ts', content: 'edit' }),
+        makeTab({
+          id: 'diff',
+          path: 'D:\\proj\\src\\a.ts',
+          name: 'a.ts (对比)',
+          kind: 'diff',
+          content: 'work',
+          originalContent: 'head',
+        }),
+        makeTab({
+          id: 'other-diff',
+          path: 'D:\\proj\\src\\b.ts',
+          name: 'b.ts (对比)',
+          kind: 'diff',
+          content: 'b',
+          originalContent: '',
+        }),
+      ],
+      activeTabId: 'diff',
+      projectSessions: {},
+    })
+
+    useEditorStore.getState().closeDiffTabsForPath('D:\\proj\\src\\a.ts')
+
+    const state = useEditorStore.getState()
+    expect(state.tabs.map(tab => tab.id)).toEqual(['edit', 'other-diff'])
+    expect(state.activeTabId).toBe('other-diff')
+    expect(state.findTab('edit')).toBeTruthy()
+  })
 })

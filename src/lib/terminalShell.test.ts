@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   availableTerminalShells,
   defaultTerminalShell,
+  effectiveShellForTerminalName,
   normalizeTerminalShell,
   terminalShellLabelKey,
 } from './terminalShell'
@@ -30,5 +31,12 @@ describe('terminalShell', () => {
     expect(terminalShellLabelKey('auto')).toBe('自动选择')
     expect(terminalShellLabelKey('pwsh')).toBe('PowerShell 7')
     expect(terminalShellLabelKey('zsh')).toBe('Zsh')
+  })
+
+  it('resolves auto shells for tab naming before spawn', () => {
+    expect(effectiveShellForTerminalName('auto', 'cmd', 'win')).toBe('cmd')
+    expect(effectiveShellForTerminalName('auto', 'auto', 'win')).toBe('pwsh')
+    expect(effectiveShellForTerminalName('auto', 'auto', 'unix')).toBe('zsh')
+    expect(effectiveShellForTerminalName('powershell', 'auto', 'win')).toBe('powershell')
   })
 })

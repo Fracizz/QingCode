@@ -70,7 +70,7 @@ import { confirmDialog } from '../store/confirmStore'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { useUIStore } from '../store/uiStore'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
-import { copyToClipboard } from '../utils/fileReferences'
+import { copyToClipboard, pathsEqual } from '../utils/fileReferences'
 import Tooltip from './Tooltip'
 import EmptyState from './EmptyState'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -939,6 +939,9 @@ export default function SourceControlPanel() {
         setError(null)
         useGitStatusStore.getState().applyFromGitStatus(path, next)
         setSelectedKeys(new Set())
+        setInlineDiff(null)
+        setInlineDiffLoading(false)
+        setInlineDiffError(null)
         if (next.is_repository) {
           await loadCommits(path, sequence)
         } else {
@@ -981,6 +984,9 @@ export default function SourceControlPanel() {
       setCommitFiles([])
       setCommitFilesError(null)
       setCommitFileDiff(null)
+      setInlineDiff(null)
+      setInlineDiffLoading(false)
+      setInlineDiffError(null)
       if (!projectPath) {
         setStatus(null)
         setError(null)
@@ -1029,6 +1035,41 @@ export default function SourceControlPanel() {
       filterCommitFiles(commitFiles, commitFileFilter, commitFileFilterRegex ? 'regex' : 'text'),
     [commitFileFilter, commitFileFilterRegex, commitFiles],
   )
+
+  // Drop stale selection / inline diff when status refresh removes those paths
+  // (discard, stage, watcher) — otherwise the right pane keeps a frozen snapshot.
+  const inlineDiffPath = inlineDiff?.path ?? null
+  useEffect(() => {
+    if (!projectPath) return
+    const liveKeys = new Set<string>([
+      ...groups.staged.map(change => scmRowKey('staged', change.path)),
+      ...groups.unstaged.map(change => scmRowKey('unstaged', change.path)),
+    ])
+    const liveAbs = [
+      ...groups.staged.map(change => absoluteFilePath(projectPath, change.path)),
+      ...groups.unstaged.map(change => absoluteFilePath(projectPath, change.path)),
+    ]
+
+    setSelectedKeys(prev => {
+      if (prev.size === 0) return prev
+      let changed = false
+      const next = new Set<string>()
+      for (const key of prev) {
+        if (liveKeys.has(key)) next.add(key)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+
+    if (
+      inlineDiffPath &&
+      !liveAbs.some(abs => pathsEqual(abs, inlineDiffPath))
+    ) {
+      setInlineDiff(null)
+      setInlineDiffLoading(false)
+      setInlineDiffError(null)
+    }
+  }, [groups.staged, groups.unstaged, inlineDiffPath, projectPath])
 
   const toggleGroup = useCallback((group: GitChangeGroup) => {
     setCollapsedGroups(current => ({ ...current, [group]: !current[group] }))
@@ -1346,11 +1387,13 @@ export default function SourceControlPanel() {
           staged: group === 'staged',
         })
         if (useProjectStore.getState().currentProject?.path === project.path) {
+          const editor = useEditorStore.getState()
           for (const change of targets) {
+            const abs = absoluteFilePath(project.path, change.path)
             if (change.status === '??') {
-              useEditorStore
-                .getState()
-                .closeTabsForPath(absoluteFilePath(project.path, change.path))
+              editor.closeTabsForPath(abs)
+            } else {
+              editor.closeDiffTabsForPath(abs)
             }
           }
           void refresh({ soft: true })

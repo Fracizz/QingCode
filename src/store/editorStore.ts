@@ -225,6 +225,8 @@ interface EditorState {
   applyVisibleProjectSession: (session: ProjectEditorSession) => void
   renamePath: (oldPath: string, newPath: string) => void
   closeTabsForPath: (path: string) => void
+  /** Close HEAD↔working-tree compare tabs for a path (keeps regular editor tabs). */
+  closeDiffTabsForPath: (path: string) => void
   findTab: (id: string) => EditorTab | undefined
   getAllTabs: () => EditorTab[]
   setDiskMtime: (id: string, mtime: number | null | undefined) => void
@@ -1099,6 +1101,48 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const projectSessions: Record<string, ProjectEditorSession> = {}
       for (const [id, session] of Object.entries(state.projectSessions)) {
         const sessionTabs = session.tabs.filter(tab => !isDescendantOf(tab.path, path))
+        projectSessions[id] = {
+          ...session,
+          tabs: sessionTabs,
+          activeTabId:
+            session.activeTabId && sessionTabs.some(t => t.id === session.activeTabId)
+              ? session.activeTabId
+              : sessionTabs[sessionTabs.length - 1]?.id ?? null,
+        }
+      }
+      return {
+        tabs,
+        projectSessions,
+        activeTabId: closedIds.includes(state.activeTabId ?? '')
+          ? tabs[tabs.length - 1]?.id ?? null
+          : state.activeTabId,
+      }
+    })
+  },
+
+  closeDiffTabsForPath: (path: string) => {
+    const s = get()
+    const closedIds: string[] = []
+
+    const isDiffForPath = (tab: EditorTab) =>
+      tab.kind === 'diff' && isDescendantOf(tab.path, path)
+
+    for (const tab of s.tabs) {
+      if (isDiffForPath(tab)) closedIds.push(tab.id)
+    }
+    for (const session of Object.values(s.projectSessions)) {
+      for (const tab of session.tabs) {
+        if (isDiffForPath(tab)) closedIds.push(tab.id)
+      }
+    }
+    if (closedIds.length === 0) return
+    disposeEditorSessions(closedIds)
+
+    set(state => {
+      const tabs = state.tabs.filter(tab => !closedIds.includes(tab.id))
+      const projectSessions: Record<string, ProjectEditorSession> = {}
+      for (const [id, session] of Object.entries(state.projectSessions)) {
+        const sessionTabs = session.tabs.filter(tab => !closedIds.includes(tab.id))
         projectSessions[id] = {
           ...session,
           tabs: sessionTabs,

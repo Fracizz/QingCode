@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import englishLocaleJson from '../locales/en.json'
 import chineseLocaleJson from '../locales/zh-CN.json'
 import { isTauri, safeInvoke } from './tauri'
 import {
@@ -17,12 +16,60 @@ type Values = Record<string, string | number>
 const LANGUAGE_KEY = 'qingcode:language'
 const DEFAULT_LANGUAGE: AppLanguage = 'zh-CN'
 
+/** English is loaded on demand so the default (zh-CN) startup bundle stays smaller. */
+const EN_LOCALE_STUB: LocalePackage = {
+  locale: 'en',
+  label: 'English',
+  messages: {},
+  builtin: true,
+}
+
 const builtinPackages: Record<string, LocalePackage> = {
   'zh-CN': { ...(chineseLocaleJson as LocalePackage), builtin: true },
-  en: { ...(englishLocaleJson as LocalePackage), builtin: true },
+  en: { ...EN_LOCALE_STUB },
 }
 
 let localePackages: Record<string, LocalePackage> = { ...builtinPackages }
+let englishLoadPromise: Promise<void> | null = null
+
+function englishMessagesReady(): boolean {
+  return Object.keys(localePackages.en?.messages ?? {}).length > 0
+}
+
+/** Ensure a built-in locale's message table is in memory (zh-CN is always bundled). */
+export async function ensureBuiltinLocaleLoaded(language: AppLanguage): Promise<void> {
+  if (language !== 'en') return
+  if (englishMessagesReady()) return
+  if (!englishLoadPromise) {
+    englishLoadPromise = import('../locales/en.json')
+      .then(mod => {
+        const pack: LocalePackage = {
+          ...(mod.default as LocalePackage),
+          builtin: true,
+        }
+        builtinPackages.en = pack
+        const existing = localePackages.en
+        // Preserve any user-overlay messages already merged onto the stub.
+        localePackages = {
+          ...localePackages,
+          en: existing
+            ? {
+                ...pack,
+                label: existing.label || pack.label,
+                messages: { ...pack.messages, ...existing.messages },
+                path: existing.path,
+                builtin: true,
+              }
+            : pack,
+        }
+      })
+      .catch(error => {
+        englishLoadPromise = null
+        throw error
+      })
+  }
+  await englishLoadPromise
+}
 
 function optionsFromPackages(packages: Record<string, LocalePackage>): LocaleOption[] {
   return Object.values(packages)
@@ -92,20 +139,45 @@ function replacePackages(next: Record<string, LocalePackage>) {
   localePackages = next
 }
 
+function persistAndApplyLanguage(language: AppLanguage, set: (partial: Partial<LocaleState>) => void) {
+  try {
+    localStorage.setItem(LANGUAGE_KEY, language)
+  } catch {
+    /* ignore */
+  }
+  applyLanguage(language)
+  set({ language })
+}
+
 export const useLocaleStore = create<LocaleState>((set, get) => ({
   language: readLanguage(),
   localeOptions: getLocaleOptions(),
   setLanguage: language => {
     if (!localePackages[language]) return
-    try {
-      localStorage.setItem(LANGUAGE_KEY, language)
-    } catch {
-      /* ignore */
+    if (language === 'en' && !englishMessagesReady()) {
+      void ensureBuiltinLocaleLoaded('en')
+        .then(() => {
+          if (!localePackages.en) return
+          persistAndApplyLanguage('en', set)
+          set({ localeOptions: getLocaleOptions() })
+        })
+        .catch(error => {
+          console.warn('[i18n] failed to load English locale', error)
+        })
+      return
     }
-    applyLanguage(language)
-    set({ language })
+    persistAndApplyLanguage(language, set)
   },
   reloadUserLocales: async () => {
+    // Keep English messages available when rebuilding from builtins.
+    if (readStoredLanguage() === 'en' || get().language === 'en') {
+      try {
+        await ensureBuiltinLocaleLoaded('en')
+      } catch (error) {
+        console.warn('[i18n] failed to load English locale', error)
+      }
+    }
+
     if (!isTauri()) {
       replacePackages({ ...builtinPackages })
       const options = getLocaleOptions()
@@ -145,6 +217,12 @@ export const useLocaleStore = create<LocaleState>((set, get) => ({
 }))
 
 export async function initializeLanguage() {
+  const initial = useLocaleStore.getState().language
+  try {
+    await ensureBuiltinLocaleLoaded(initial)
+  } catch (error) {
+    console.warn('[i18n] failed to load built-in locale', error)
+  }
   applyLanguage(useLocaleStore.getState().language)
   try {
     await useLocaleStore.getState().reloadUserLocales()

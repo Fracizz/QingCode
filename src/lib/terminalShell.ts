@@ -32,6 +32,20 @@ export function defaultTerminalShell(
 }
 
 /** Chinese source keys for i18n (`translate` / locale messages). */
+/**
+ * Shell id used for a new interactive tab label before PTY spawn resolves `auto`.
+ * Does not affect spawn selection — only naming / post-spawn rename eligibility.
+ */
+export function effectiveShellForTerminalName(
+  profileShell: TerminalShellId,
+  globalDefaultShell: TerminalShellId,
+  platform: TerminalHostPlatform = detectTerminalHostPlatform(),
+): TerminalShellId {
+  if (profileShell !== 'auto') return profileShell
+  if (globalDefaultShell !== 'auto') return globalDefaultShell
+  return platform === 'win' ? 'pwsh' : 'zsh'
+}
+
 export function terminalShellLabelKey(shell: TerminalShellId): string {
   switch (shell) {
     case 'auto':

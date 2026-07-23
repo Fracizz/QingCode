@@ -4,7 +4,11 @@ import { safeInvoke } from '../lib/tauri'
 import { useProjectStore } from './projectStore'
 import { useUIStore } from './uiStore'
 import type { TerminalTab } from '../types'
-import { DEFAULT_TERMINAL_PROFILE, getTerminalProfile } from '../lib/terminalProfiles'
+import {
+  DEFAULT_TERMINAL_PROFILE,
+  getTerminalProfile,
+  loadTerminalProfileSettings,
+} from '../lib/terminalProfiles'
 import { ensureTerminalProfileTrust } from '../lib/terminalProfileTrust'
 import { isProjectTrusted } from '../lib/workspaceTrust'
 import { disambiguateTerminalName, resolveNewTerminalName, terminalDisplayLabel } from '../utils/terminalName'
@@ -32,6 +36,7 @@ import {
 import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
 import { planTerminalSpawn } from '../lib/terminalSpawnPlan'
 import {
+  effectiveShellForTerminalName,
   isTerminalShellId,
   normalizeTerminalShell,
   terminalShellLabelKey,
@@ -460,17 +465,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (!(await ensureTerminalProfileTrust(profile))) return null
     const shell = normalizeTerminalShell(profile.shell)
     const id = crypto.randomUUID()
-    const nextNumber =
-      sameProject.reduce((max, terminal) => {
-        const match = /^终端 (\d+)$/.exec(terminal.name) ?? /^Terminal (\d+)$/.exec(terminal.name)
-        return match ? Math.max(max, Number(match[1])) : max
-      }, 0) + 1
+    const profileSettings = loadTerminalProfileSettings()
+    const nameShell = effectiveShellForTerminalName(shell, profileSettings.defaultShell)
+    const shellLabel = translate(terminalShellLabelKey(nameShell))
     const baseName = resolveNewTerminalName(
       profile.name,
       profile.command,
-      nextNumber,
       DEFAULT_TERMINAL_PROFILE.name,
-      shell === 'auto' ? undefined : translate(terminalShellLabelKey(shell)),
+      shellLabel,
     )
     const tab: TerminalTab = {
       id,

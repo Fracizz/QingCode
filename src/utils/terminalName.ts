@@ -26,7 +26,7 @@ const GENERIC_SHELL_LABELS = new Set([
 
 /**
  * PowerShell/ConPTY often emit OSC titles like `powershell` on startup.
- * Those must not overwrite intentional tab labels such as「终端 1」or「OpenCode」.
+ * Those must not overwrite shell placeholder labels or app titles such as「OpenCode」.
  */
 export function isGenericShellOscTitle(title: string): boolean {
   const cleaned = title.trim()
@@ -64,10 +64,9 @@ export function formatTerminalName(name: string) {
 export function resolveNewTerminalName(
   profileName: string,
   command: string,
-  nextNumber: number,
   defaultProfileLabel = '普通终端',
-  /** When the default profile has no command, prefer the shell display name. */
-  shellLabel?: string,
+  /** Shell display name when the default profile has no custom name/command. */
+  shellLabel = '',
 ): string {
   const cmd = command.trim()
   const name = profileName.trim()
@@ -79,10 +78,10 @@ export function resolveNewTerminalName(
     if (fromCommand) return fromCommand
   }
 
-  const shell = shellLabel?.trim()
+  const shell = shellLabel.trim()
   if (shell) return shell
 
-  return `终端 ${nextNumber}`
+  return '终端'
 }
 
 /** Avoid duplicate tab labels within the same project. */

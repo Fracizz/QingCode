@@ -2,6 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ReactElement } from 'react'
 
 const mocks = vi.hoisted(() => ({
   safeInvoke: vi.fn(),
@@ -18,12 +19,46 @@ vi.mock('@tauri-apps/plugin-opener', () => ({
 }))
 
 vi.mock('react-window', () => ({
-  List: () => null,
+  List: ({
+    rowCount,
+    rowComponent: Row,
+    rowProps,
+  }: {
+    rowCount: number
+    rowComponent: (props: Record<string, unknown>) => ReactElement | null
+    rowProps: Record<string, unknown>
+  }) => (
+    <div>
+      {Array.from({ length: rowCount }, (_, index) => (
+        <Row
+          key={index}
+          index={index}
+          style={{}}
+          ariaAttributes={{
+            'aria-posinset': index + 1,
+            'aria-setsize': rowCount,
+            role: 'listitem',
+          }}
+          {...rowProps}
+        />
+      ))}
+    </div>
+  ),
   useListRef: () => ({ current: null }),
 }))
 
+vi.mock('./ScmInlineDiff', () => ({
+  default: ({ name, modified }: { name: string; modified: string }) => (
+    <div data-testid="scm-inline-diff">
+      {name}:{modified}
+    </div>
+  ),
+}))
+
 import SourceControlPanel from './SourceControlPanel'
+import ConfirmDialog from './ConfirmDialog'
 import type { GitStatus } from '../lib/git'
+import { useConfirmStore } from '../store/confirmStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { useProjectStore } from '../store/projectStore'
 import { useSourceControlStore } from '../store/sourceControlStore'
@@ -51,6 +86,22 @@ function mockGit(status: GitStatus, options?: { rejectFirstPush?: boolean }) {
       return Promise.resolve('ok')
     }
     if (command === 'get_git_head') return Promise.resolve({ name: 'main' })
+    if (command === 'get_git_workdir_status') {
+      return Promise.resolve({
+        entries: status.changes.map(change => ({
+          path: `${project.path}/${change.path}`,
+          status: change.status,
+        })),
+        dirty_count: status.changes.length,
+      })
+    }
+    if (command === 'git_file_contents') {
+      return Promise.resolve({ original: '', modified: 'stale-working-tree' })
+    }
+    if (command === 'file_stat') {
+      return Promise.resolve({ size: 16, is_dir: false })
+    }
+    if (command === 'git_discard') return Promise.resolve(undefined)
     return Promise.resolve(undefined)
   })
 }
@@ -59,6 +110,7 @@ describe('SourceControlPanel', () => {
   beforeEach(() => {
     mocks.safeInvoke.mockReset()
     mocks.revealItemInDir.mockReset()
+    useConfirmStore.getState().answer(false)
     useProjectStore.setState({ currentProject: project, projects: [project], toasts: [] })
     useSourceControlStore.getState().clearCache()
     useGitStatusStore.getState().clear()
@@ -68,6 +120,7 @@ describe('SourceControlPanel', () => {
     useProjectStore.setState(initialProjectState, true)
     useSourceControlStore.getState().clearCache()
     useGitStatusStore.getState().clear()
+    useConfirmStore.getState().answer(false)
   })
 
   it('stages all pending changes through the visible keyboard action', async () => {
@@ -143,5 +196,64 @@ describe('SourceControlPanel', () => {
     resolveFirstStatus?.({ is_repository: true, branch: 'old-project', changes: [] })
     await waitFor(() => expect(screen.queryByText('old-project')).not.toBeInTheDocument())
     expect(screen.getByText('new-project')).toBeInTheDocument()
+  })
+
+  it('clears the inline diff pane after discarding the selected change', async () => {
+    let workdir: GitStatus = {
+      is_repository: true,
+      branch: 'main',
+      changes: [{ path: 'src/app.ts', status: '??' }],
+    }
+    mocks.safeInvoke.mockImplementation((_label: string, command: string) => {
+      if (command === 'git_status') return Promise.resolve(workdir)
+      if (command === 'git_log') return Promise.resolve([])
+      if (command === 'get_git_head') return Promise.resolve({ name: 'main' })
+      if (command === 'get_git_workdir_status') {
+        return Promise.resolve({
+          entries: workdir.changes.map(change => ({
+            path: `${project.path}/${change.path}`,
+            status: change.status,
+          })),
+          dirty_count: workdir.changes.length,
+        })
+      }
+      if (command === 'git_file_contents') {
+        return Promise.resolve({ original: '', modified: 'stale-working-tree' })
+      }
+      if (command === 'file_stat') {
+        return Promise.resolve({ size: 16, is_dir: false })
+      }
+      if (command === 'git_discard') {
+        workdir = { is_repository: true, branch: 'main', changes: [] }
+        return Promise.resolve(undefined)
+      }
+      return Promise.resolve(undefined)
+    })
+
+    render(
+      <>
+        <SourceControlPanel />
+        <ConfirmDialog />
+      </>
+    )
+
+    const row = await screen.findByText('src/app.ts')
+    fireEvent.click(row)
+    expect(await screen.findByTestId('scm-inline-diff')).toHaveTextContent('stale-working-tree')
+
+    fireEvent.contextMenu(row.closest('button') ?? row)
+    fireEvent.click(await screen.findByRole('menuitem', { name: '丢弃更改' }))
+    fireEvent.click(await screen.findByRole('button', { name: '丢弃' }))
+
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith('丢弃 Git 更改', 'git_discard', {
+        path: project.path,
+        files: ['src/app.ts'],
+        staged: false,
+      })
+    )
+    await waitFor(() => expect(screen.queryByTestId('scm-inline-diff')).not.toBeInTheDocument())
+    expect(screen.getByText('选择一个更改查看差异')).toBeInTheDocument()
+    expect(screen.getByText('变更（0）')).toBeInTheDocument()
   })
 })

@@ -4,7 +4,6 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { ClipboardAddon } from '@xterm/addon-clipboard'
-import { WebglAddon } from '@xterm/addon-webgl'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import {
@@ -445,20 +444,29 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     })
 
     // Prefer WebGL so customGlyphs apply; fall back silently to canvas.
-    try {
-      // 【终端防闪烁关键配置，请勿改回 false】拖动开始时 panelResize.ts 要把
-      // 当前 WebGL canvas 复制成静态快照；preserveDrawingBuffer=false 时浏览器
-      // 合成后允许丢弃像素，快照会随机变成空白。修改前必须替换整套快照方案。
-      const webgl = new WebglAddon(true)
-      webgl.onContextLoss(() => {
+    // Dynamic import keeps the heavy addon out of the initial xterm chunk.
+    let webglCancelled = false
+    void import('@xterm/addon-webgl')
+      .then(({ WebglAddon }) => {
+        if (webglCancelled || xtermRef.current !== term) return
         try {
-          webgl.dispose()
-        } catch {}
+          // 【终端防闪烁关键配置，请勿改回 false】拖动开始时 panelResize.ts 要把
+          // 当前 WebGL canvas 复制成静态快照；preserveDrawingBuffer=false 时浏览器
+          // 合成后允许丢弃像素，快照会随机变成空白。修改前必须替换整套快照方案。
+          const webgl = new WebglAddon(true)
+          webgl.onContextLoss(() => {
+            try {
+              webgl.dispose()
+            } catch {}
+          })
+          term.loadAddon(webgl)
+        } catch {
+          // Canvas renderer remains active.
+        }
       })
-      term.loadAddon(webgl)
-    } catch {
-      // Canvas renderer remains active.
-    }
+      .catch(() => {
+        // Canvas renderer remains active.
+      })
 
     xtermRef.current = term
     fitAddonRef.current = fitAddon
@@ -672,6 +680,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     window.addEventListener(PANEL_RESIZE_END_EVENT, onPanelResizeEnd)
 
     return () => {
+      webglCancelled = true
       window.clearTimeout(subscribeTimer)
       for (const id of fitTimers) window.clearTimeout(id)
       if (fitRafRef.current !== 0) {

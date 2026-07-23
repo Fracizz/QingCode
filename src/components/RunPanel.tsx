@@ -19,8 +19,10 @@ import {
   type RunTask,
   type RunTaskType,
   RUN_CONFIG_RELATIVE_PATH,
+  runConfigPath,
 } from '../store/runConfigStore'
 import { useTerminalStore } from '../store/terminalStore'
+import { useEditorStore } from '../store/editorStore'
 import {
   isProjectRestricted,
   isProjectTrusted,
@@ -146,7 +148,14 @@ export default function RunPanel() {
       />
       <div className="text-ui-sm px-4 pb-2 text-fg-dim">
         {t('配置保存在')}{' '}
-        <code className="font-mono text-fg-muted">{RUN_CONFIG_RELATIVE_PATH}</code>
+        <button
+          type="button"
+          aria-label={`${t('打开文件')}: ${RUN_CONFIG_RELATIVE_PATH}`}
+          onClick={() => void useEditorStore.getState().openFile(runConfigPath(currentProject))}
+          className="rounded bg-bg-deep/70 px-1 py-px font-mono text-fg-muted transition-colors hover:bg-bg-hover hover:text-accent hover:underline"
+        >
+          {RUN_CONFIG_RELATIVE_PATH}
+        </button>
         <span className="text-fg-dim">{t('（项目根目录相对路径）')}</span>
         {projectTrusted ? (
           <span className="ml-2 inline-flex items-center gap-1 text-ok">

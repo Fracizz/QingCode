@@ -35,33 +35,47 @@ export default defineConfig(async () => ({
     },
   },
   build: {
+    // CodeMirror core (@codemirror/view etc.) is inherently large; language packs
+    // and other heavy deps are already split. Keep the advisory threshold above
+    // the remaining shared editor vendor chunk.
+    chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (!id.includes("node_modules")) return;
+          if (!id.includes('node_modules')) return
+          // Keep dynamically imported language packs / WebGL / merge as their
+          // own async chunks — do not fold them into the shared vendor bundles.
           if (
-            id.includes("@codemirror") ||
-            id.includes("/codemirror/") ||
-            id.includes("@lezer")
+            id.includes('@codemirror/lang-') ||
+            id.includes('@codemirror/legacy-modes') ||
+            id.includes('@codemirror/merge') ||
+            id.includes('@xterm/addon-webgl')
           ) {
-            return "codemirror";
-          }
-          if (id.includes("@xterm") || id.includes("/xterm/")) {
-            return "xterm";
-          }
-          if (id.includes("@tauri-apps")) {
-            return "tauri";
+            return
           }
           if (
-            id.includes("/react-dom/") ||
-            id.includes("/react/") ||
-            id.includes("\\react-dom\\") ||
-            id.includes("\\react\\")
+            id.includes('@codemirror') ||
+            id.includes('/codemirror/') ||
+            id.includes('@lezer')
           ) {
-            return "react-vendor";
+            return 'codemirror'
+          }
+          if (id.includes('@xterm') || id.includes('/xterm/')) {
+            return 'xterm'
+          }
+          if (id.includes('@tauri-apps')) {
+            return 'tauri'
+          }
+          if (
+            id.includes('/react-dom/') ||
+            id.includes('/react/') ||
+            id.includes('\\react-dom\\') ||
+            id.includes('\\react\\')
+          ) {
+            return 'react-vendor'
           }
         },
       },
     },
   },
-}));
+}))

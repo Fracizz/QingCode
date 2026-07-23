@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { tipArrowBoxGap, TIP_ARROW_CLEARANCE, TIP_ARROW_H, TIP_ARROW_PROTRUDE, TIP_ARROW_W } from './tipArrow'
+import { tipArrowBoxGap, TIP_ARROW_CLEARANCE, TIP_ARROW_H, TIP_ARROW_PROTRUDE } from './tipArrow'
 
 /** Viewport gap: trigger top − caret tip bottom. */
 function caretTipClearance(triggerTop: number, caretTipBottom: number) {
@@ -31,6 +31,7 @@ describe('tipArrowBoxGap', () => {
 describe('horizontal TipArrow integration', () => {
   it('matches minimap Quick View CSS --qv-arrow-protrude / --qv-arrow-w', () => {
     expect(TIP_ARROW_PROTRUDE).toBe(TIP_ARROW_H - 1)
-    expect(TIP_ARROW_H).toBeCloseTo((TIP_ARROW_W * Math.sqrt(3)) / 2, 6)
+    expect(TIP_ARROW_PROTRUDE).toBe(6)
+    expect(TIP_ARROW_H).toBe(7)
   })
 })

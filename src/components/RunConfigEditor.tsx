@@ -2,7 +2,8 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { X, Plus, Trash2, Wand2, CircleHelp } from 'lucide-react'
 import Tooltip from './Tooltip'
 import ModalOverlay from './ModalOverlay'
-import { useRunConfigStore, defaultConfigs, RUN_CONFIG_RELATIVE_PATH, stripRedundantCdPrefix, type RunConfig, type RunTask, type RunTaskType } from '../store/runConfigStore'
+import { useRunConfigStore, defaultConfigs, RUN_CONFIG_RELATIVE_PATH, runConfigPath, stripRedundantCdPrefix, type RunConfig, type RunTask, type RunTaskType } from '../store/runConfigStore'
+import { useEditorStore } from '../store/editorStore'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
 
@@ -173,7 +174,14 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
         <div className="flex items-center justify-between gap-3 px-4 h-11 border-t border-border flex-shrink-0">
           <p id={descriptionId} className="text-ui-sm truncate text-fg-dim">
             {t('保存至')}{' '}
-            <code className="font-mono text-fg-muted">{RUN_CONFIG_RELATIVE_PATH}</code>
+            <button
+              type="button"
+              aria-label={`${t('打开文件')}: ${RUN_CONFIG_RELATIVE_PATH}`}
+              onClick={() => void useEditorStore.getState().openFile(runConfigPath(project))}
+              className="rounded bg-bg-deep/70 px-1 py-px font-mono text-fg-muted transition-colors hover:bg-bg-hover hover:text-accent hover:underline"
+            >
+              {RUN_CONFIG_RELATIVE_PATH}
+            </button>
           </p>
           <div className="flex items-center gap-2 flex-shrink-0">
           <button

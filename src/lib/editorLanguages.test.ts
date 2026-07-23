@@ -6,8 +6,10 @@ import {
 } from './editorLanguages'
 
 describe('editorLanguages', () => {
-  it('recognizes bundled and lazy language ids', () => {
+  it('recognizes supported language ids', () => {
     expect(isSupportedEditorLanguage('typescript')).toBe(true)
+    expect(isSupportedEditorLanguage('python')).toBe(true)
+    expect(isSupportedEditorLanguage('markdown')).toBe(true)
     expect(isSupportedEditorLanguage('java')).toBe(true)
     expect(isSupportedEditorLanguage('yaml')).toBe(true)
     expect(isSupportedEditorLanguage('toml')).toBe(true)
@@ -18,14 +20,26 @@ describe('editorLanguages', () => {
     expect(isSupportedEditorLanguage('xml')).toBe(false)
   })
 
-  it('loads bundled highlighters synchronously', () => {
-    expect(languageSupportForId('typescript')).not.toEqual([])
+  it('exposes no synchronous highlighter (all packs are lazy)', () => {
+    expect(languageSupportForId('typescript')).toEqual([])
     expect(languageSupportForId('java')).toEqual([])
-    expect(languageSupportForId('yaml')).toEqual([])
   })
 
-  it('lazy-loads Java and config/native language packs', async () => {
-    for (const id of ['java', 'yaml', 'toml', 'shell', 'rust', 'go'] as const) {
+  it('lazy-loads language packs', async () => {
+    for (const id of [
+      'typescript',
+      'python',
+      'markdown',
+      'json',
+      'css',
+      'html',
+      'java',
+      'yaml',
+      'toml',
+      'shell',
+      'rust',
+      'go',
+    ] as const) {
       const ext = await loadLanguageSupport(id)
       expect(ext, id).not.toEqual([])
     }

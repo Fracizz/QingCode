@@ -9,7 +9,7 @@ import {
 } from './terminalName'
 
 describe('formatTerminalName / terminalDisplayLabel', () => {
-  it('localizes Terminal N and shortens shell paths', () => {
+  it('localizes legacy Terminal N and shortens shell paths', () => {
     expect(formatTerminalName('Terminal 3')).toBe('终端 3')
     expect(formatTerminalName('powershell.exe')).toBe('PowerShell')
     expect(terminalDisplayLabel('C:\\Windows\\System32\\cmd.exe')).toBe('命令提示符')
@@ -18,16 +18,14 @@ describe('formatTerminalName / terminalDisplayLabel', () => {
 
 describe('resolveNewTerminalName / disambiguateTerminalName', () => {
   it('prefers custom profile name', () => {
-    expect(resolveNewTerminalName('Dev', 'powershell.exe', 2)).toBe('Dev')
+    expect(resolveNewTerminalName('Dev', 'powershell.exe', '普通终端', 'PowerShell 7')).toBe('Dev')
   })
 
-  it('falls back to command label, shell label, or numbered terminal', () => {
-    expect(resolveNewTerminalName('普通终端', 'bash.exe', 4)).toBe('Bash')
-    expect(resolveNewTerminalName('普通终端', '', 5, '普通终端', 'PowerShell 7')).toBe(
-      'PowerShell 7',
-    )
-    expect(resolveNewTerminalName('普通终端', '', 5)).toBe('终端 5')
-    expect(resolveNewTerminalName('', '', 5)).toBe('终端 5')
+  it('falls back to command label or shell label', () => {
+    expect(resolveNewTerminalName('普通终端', 'bash.exe', '普通终端', 'PowerShell 7')).toBe('Bash')
+    expect(resolveNewTerminalName('普通终端', '', '普通终端', 'PowerShell 7')).toBe('PowerShell 7')
+    expect(resolveNewTerminalName('', '', '普通终端', 'Zsh')).toBe('Zsh')
+    expect(resolveNewTerminalName('普通终端', '', '普通终端', '')).toBe('终端')
   })
 
   it('disambiguates duplicate labels', () => {

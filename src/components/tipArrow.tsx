@@ -1,17 +1,9 @@
 import type { CSSProperties, Ref } from 'react'
-import {
-  CARET_STROKE_WIDTH,
-  isoscelesCaretHeight,
-  isoscelesChevronPath,
-  isoscelesCaretSize,
-  type CaretDirection,
-} from '../lib/isoscelesArrowGeometry'
 
 /** Shared tip-caret metrics for StatusTip / Tooltip / encoding ContextMenu / minimap Quick View. */
 
-/** Base width; height follows 60° isosceles (legs ~60° from horizontal). */
-export const TIP_ARROW_W = 10
-export const TIP_ARROW_H = isoscelesCaretHeight(TIP_ARROW_W)
+export const TIP_ARROW_W = 12
+export const TIP_ARROW_H = 7
 /** Local CSS px the caret hangs past the bubble (`bottom: -PROTRUDE`). */
 export const TIP_ARROW_PROTRUDE = TIP_ARROW_H - 1
 /** Desired viewport gap: caret tip → status-bar row top (or anchor top). */
@@ -70,7 +62,48 @@ export function syncStyleTopToTipArrowClearance(
   return top
 }
 
-export type TipArrowDirection = CaretDirection
+/** Soft tip radius in viewBox units (subtle, not a blunt oval). */
+const TIP_R = 1.15
+
+/**
+ * Downward caret: base along y=0, rounded tip at bottom center.
+ * Slight quadratic at the point so the beak isn’t razor-sharp.
+ */
+const PATH_DOWN = [
+  `M 0 0`,
+  `H ${TIP_ARROW_W}`,
+  `L ${TIP_ARROW_W / 2 + TIP_R * 0.85} ${TIP_ARROW_H - TIP_R}`,
+  `Q ${TIP_ARROW_W / 2} ${TIP_ARROW_H} ${TIP_ARROW_W / 2 - TIP_R * 0.85} ${TIP_ARROW_H - TIP_R}`,
+  `Z`,
+].join(' ')
+
+const PATH_UP = [
+  `M 0 ${TIP_ARROW_H}`,
+  `H ${TIP_ARROW_W}`,
+  `L ${TIP_ARROW_W / 2 + TIP_R * 0.85} ${TIP_R}`,
+  `Q ${TIP_ARROW_W / 2} 0 ${TIP_ARROW_W / 2 - TIP_R * 0.85} ${TIP_R}`,
+  `Z`,
+].join(' ')
+
+/** Base on the left edge; tip at right center (minimap Quick View). */
+const PATH_RIGHT = [
+  `M 0 0`,
+  `V ${TIP_ARROW_W}`,
+  `L ${TIP_ARROW_H - TIP_R * 0.85} ${TIP_ARROW_W / 2 + TIP_R * 0.85}`,
+  `Q ${TIP_ARROW_H} ${TIP_ARROW_W / 2} ${TIP_ARROW_H - TIP_R * 0.85} ${TIP_ARROW_W / 2 - TIP_R * 0.85}`,
+  `Z`,
+].join(' ')
+
+/** Base on the right edge; tip at left center. */
+const PATH_LEFT = [
+  `M ${TIP_ARROW_H} 0`,
+  `V ${TIP_ARROW_W}`,
+  `L ${TIP_R * 0.85} ${TIP_ARROW_W / 2 + TIP_R * 0.85}`,
+  `Q 0 ${TIP_ARROW_W / 2} ${TIP_R * 0.85} ${TIP_ARROW_W / 2 - TIP_R * 0.85}`,
+  `Z`,
+].join(' ')
+
+export type TipArrowDirection = 'down' | 'up' | 'left' | 'right'
 
 type TipArrowProps = {
   /** `down` = tip below the bubble (StatusTip / encoding menu). */
@@ -79,6 +112,19 @@ type TipArrowProps = {
   style?: CSSProperties
   /** Forwarded for layout measurement (caret tip → trigger clearance). */
   ref?: Ref<SVGSVGElement>
+}
+
+function tipArrowPath(direction: TipArrowDirection): string {
+  switch (direction) {
+    case 'up':
+      return PATH_UP
+    case 'left':
+      return PATH_LEFT
+    case 'right':
+      return PATH_RIGHT
+    default:
+      return PATH_DOWN
+  }
 }
 
 function tipArrowEdgeStyle(direction: TipArrowDirection): CSSProperties {
@@ -96,30 +142,24 @@ function tipArrowEdgeStyle(direction: TipArrowDirection): CSSProperties {
 
 /** Shared speech-bubble caret for StatusTip / Tooltip / ContextMenu / minimap Quick View. */
 export function TipArrow({ direction = 'down', className = '', style, ref }: TipArrowProps) {
-  const { width, height } = isoscelesCaretSize(TIP_ARROW_W, TIP_ARROW_H, direction)
+  const horizontal = direction === 'left' || direction === 'right'
+  const svgW = horizontal ? TIP_ARROW_H : TIP_ARROW_W
+  const svgH = horizontal ? TIP_ARROW_W : TIP_ARROW_H
   return (
     <svg
       ref={ref}
       aria-hidden
       data-tip-arrow
-      width={width}
-      height={height}
-      viewBox={`0 0 ${width} ${height}`}
-      overflow="visible"
-      className={`pointer-events-none absolute block text-fg-muted ${className}`.trim()}
+      width={svgW}
+      height={svgH}
+      viewBox={`0 0 ${svgW} ${svgH}`}
+      className={`pointer-events-none absolute block ${className}`.trim()}
       style={{
         ...tipArrowEdgeStyle(direction),
         ...style,
       }}
     >
-      <path
-        fill="none"
-        stroke="currentColor"
-        strokeWidth={CARET_STROKE_WIDTH}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        d={isoscelesChevronPath(TIP_ARROW_W, TIP_ARROW_H, direction)}
-      />
+      <path fill="var(--color-bg-elevated)" d={tipArrowPath(direction)} />
     </svg>
   )
 }

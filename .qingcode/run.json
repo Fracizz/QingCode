@@ -11,6 +11,18 @@
           "target": "pnpm tauri:dev"
         }
       ]
+    },
+    {
+      "id": "d03a0285-10aa-44b0-884c-1f35a645bdd7",
+      "name": "打安装包",
+      "tasks": [
+        {
+          "id": "3e644a1c-bed5-4c33-9777-08dbe8dc260a",
+          "name": "打包",
+          "type": "command",
+          "target": "pnpm package"
+        }
+      ]
     }
   ]
 }

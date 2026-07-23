@@ -7,6 +7,7 @@ import ConfirmDialog from './ConfirmDialog'
 import RunConfigEditor from './RunConfigEditor'
 import RunPanel from './RunPanel'
 import { useConfirmStore } from '../store/confirmStore'
+import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useRunConfigStore, type RunConfig } from '../store/runConfigStore'
 import { useTerminalStore } from '../store/terminalStore'
@@ -122,5 +123,26 @@ describe('RunPanel', () => {
       ),
     )
     expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('opens run.json from the relative path hint', async () => {
+    const openFile = vi.fn().mockResolvedValue(undefined)
+    useRunConfigStore.setState({
+      configsByProject: { [project.id]: [config] },
+      loadConfigs: vi.fn().mockResolvedValue([config]),
+      runConfig: vi.fn(),
+      stopConfig: vi.fn(),
+      removeConfig: vi.fn(),
+    })
+    const previous = useEditorStore.getState().openFile
+    useEditorStore.setState({ openFile })
+
+    try {
+      render(<RunPanel />)
+      fireEvent.click(screen.getByRole('button', { name: '打开文件: .qingcode/run.json' }))
+      expect(openFile).toHaveBeenCalledWith('D:/example/.qingcode/run.json')
+    } finally {
+      useEditorStore.setState({ openFile: previous })
+    }
   })
 })
