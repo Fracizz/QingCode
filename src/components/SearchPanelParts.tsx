@@ -30,6 +30,17 @@ export function SearchResultRow(props: {
   const baseCls = 'absolute left-0 right-0 flex items-center'
   const activeCls = active ? 'bg-bg-active' : ''
 
+  if (row.kind === 'section') {
+    return (
+      <div
+        style={style}
+        className={`${baseCls} px-3 text-[11px] font-semibold tracking-wide text-fg-muted border-b border-border/60`}
+      >
+        <span className="truncate">{row.label}</span>
+      </div>
+    )
+  }
+
   if (row.kind === 'file') {
     return (
       <div style={style} className={`${baseCls} ${activeCls} px-3 text-[12px]`}>

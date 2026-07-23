@@ -10,10 +10,12 @@ import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { getFileIcon } from '../utils/fileIcons'
-import { copyToClipboard } from '../utils/fileReferences'
+import { copyPathAction, copyRelativePathAction } from '../lib/copyFileActions'
+import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { safeInvoke } from '../lib/tauri'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { openGitCompareWithHead } from '../lib/gitCompare'
+import { copyToClipboard } from '../utils/fileReferences'
 import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
 import {
   EDITOR_TAB_OVERFLOW_BTN_W,
@@ -138,15 +140,6 @@ export default function EditorTabs() {
 
   if (tabs.length === 0) return null
 
-  const copyPath = async (path: string) => {
-    try {
-      await copyToClipboard(path)
-      useProjectStore.getState().pushToast('success', t('路径已复制'))
-    } catch (e) {
-      useProjectStore.getState().pushToast('error', t('复制路径失败: {error}', { error: String(e) }))
-    }
-  }
-
   const copyFileName = async (path: string) => {
     try {
       await copyToClipboard(fileName(path))
@@ -263,17 +256,24 @@ export default function EditorTabs() {
     {
       label: t('复制路径'),
       icon: <Copy size={14} />,
-      action: () => copyPath(tab.path),
+      shortcut: 'Ctrl+Shift+C',
+      action: () => void copyPathAction(tab.path),
+    },
+    {
+      label: t('复制相对路径'),
+      icon: <Copy size={14} />,
+      shortcut: COPY_RELATIVE_PATH_SHORTCUT,
+      action: () => void copyRelativePathAction(tab.path),
     },
     {
       label: t('复制文件名'),
       icon: <Copy size={14} />,
-      action: () => copyFileName(tab.path),
+      action: () => void copyFileName(tab.path),
     },
     {
       label: t('在文件管理器中显示'),
       icon: <ExternalLink size={14} />,
-      action: () => revealPath(tab.path),
+      action: () => void revealPath(tab.path),
     },
     ...(tab.kind === 'diff'
       ? []
@@ -282,7 +282,7 @@ export default function EditorTabs() {
             label: t('重命名'),
             icon: <Pencil size={14} />,
             separatorBefore: true,
-            action: () => renameTab(tab),
+            action: () => void renameTab(tab),
           } satisfies ContextMenuItem,
         ]),
   ]

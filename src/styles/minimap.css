@@ -161,8 +161,8 @@ html[data-theme='light'] .editor-minimap__viewport {
 }
 
 .editor-minimap__quick-view {
-  /* TipArrow right + bubble gap; keep in sync with tipArrow.tsx constants. */
-  --qv-arrow-gap: 4px;
+  /* TipArrow right integrated; keep in sync with tipArrow.tsx TIP_ARROW_PROTRUDE / TIP_ARROW_H. */
+  --qv-arrow-protrude: 6px;
   --qv-arrow-w: 7px;
   position: fixed;
   z-index: 40;
@@ -170,6 +170,8 @@ html[data-theme='light'] .editor-minimap__viewport {
   min-width: 220px;
   max-width: min(480px, 46vw);
   pointer-events: auto;
+  border-radius: 6px;
+  background: var(--color-bg-elevated, var(--color-bg));
   filter: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.42));
 }
 
@@ -177,8 +179,6 @@ html[data-theme='light'] .editor-minimap__viewport {
   max-height: min(320px, 50vh);
   overflow: auto;
   padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--color-bg-elevated, var(--color-bg));
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
   font-size: var(--editor-font-size);
   line-height: 1.5;
@@ -221,8 +221,8 @@ html[data-theme='light'] .editor-minimap__viewport {
 .editor-minimap__quick-view-rail {
   position: absolute;
   top: 0;
-  right: calc(-1 * (var(--qv-arrow-gap) + var(--qv-arrow-w) + 2px));
-  width: calc(var(--qv-arrow-gap) + var(--qv-arrow-w) + 10px);
+  right: calc(-1 * (var(--qv-arrow-protrude) + 2px));
+  width: calc(var(--qv-arrow-protrude) + var(--qv-arrow-w) + 8px);
   height: 100%;
   padding: 0;
   border: 0;

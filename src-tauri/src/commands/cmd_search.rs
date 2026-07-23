@@ -79,8 +79,53 @@ fn matches_extensions(name: &str, extensions: Option<&[String]>) -> bool {
     }
 }
 
-fn name_matches_query(
+fn normalize_path_separators(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+fn normalize_match_text(text: &str, ignore_case: bool) -> String {
+    let normalized = normalize_path_separators(text);
+    if ignore_case {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    }
+}
+
+fn text_matches_query(
+    target: &str,
+    query: &str,
+    ignore_case: bool,
+    fuzzy: bool,
+    match_suffix: bool,
+) -> bool {
+    if query.is_empty() {
+        return false;
+    }
+    let target = normalize_match_text(target, ignore_case);
+    let q = normalize_match_text(query, ignore_case);
+
+    if is_glob_pattern(&q) {
+        return glob_match(&target, &q);
+    }
+    if match_suffix {
+        let suffix = if q.starts_with('.') {
+            q
+        } else {
+            format!(".{q}")
+        };
+        return target.ends_with(&suffix);
+    }
+    if fuzzy {
+        return fuzzy_match(&target, &q);
+    }
+    target.contains(&q)
+}
+
+fn file_matches_query(
     name: &str,
+    relative: &str,
+    full: &str,
     is_dir: bool,
     query: &str,
     ignore_case: bool,
@@ -90,32 +135,12 @@ fn name_matches_query(
     if is_dir || query.is_empty() {
         return false;
     }
-    let target_name = if ignore_case {
-        name.to_lowercase()
-    } else {
-        name.to_string()
-    };
-    let q = if ignore_case {
-        query.to_lowercase()
-    } else {
-        query.to_string()
-    };
-
-    if is_glob_pattern(&q) {
-        return glob_match(&target_name, &q);
-    }
     if match_suffix {
-        let suffix = if q.starts_with('.') {
-            q
-        } else {
-            format!(".{q}")
-        };
-        return target_name.ends_with(&suffix);
+        return text_matches_query(name, query, ignore_case, fuzzy, true);
     }
-    if fuzzy {
-        return fuzzy_match(&target_name, &q);
-    }
-    target_name.contains(&q)
+    [name, relative, full]
+        .iter()
+        .any(|field| text_matches_query(field, query, ignore_case, fuzzy, false))
 }
 
 fn fuzzy_match(haystack: &str, needle: &str) -> bool {
@@ -206,6 +231,10 @@ fn walk_matching(
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         let full = path.to_string_lossy().to_string();
+        let relative = path
+            .strip_prefix(base)
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| full.clone());
         let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false);
         let ext_ok = matches_extensions(&name, extensions);
         let matched = if query.is_empty() {
@@ -213,14 +242,19 @@ fn walk_matching(
         } else if extensions.is_some() && !ext_ok {
             false
         } else {
-            name_matches_query(&name, is_dir, query, ignore_case, fuzzy, match_suffix)
+            file_matches_query(
+                &name,
+                &relative,
+                &full,
+                is_dir,
+                query,
+                ignore_case,
+                fuzzy,
+                match_suffix,
+            )
         };
 
         if matched {
-            let relative = path
-                .strip_prefix(base)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|_| full.clone());
             out.push(SearchHit {
                 name,
                 path: full,
@@ -482,4 +516,89 @@ pub fn search_file_contents(
         search_id.unwrap_or(0),
         None,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_relative_path_segments() {
+        assert!(file_matches_query(
+            "quickOpen.ts",
+            "src/lib/quickOpen.ts",
+            r"D:\repo\src\lib\quickOpen.ts",
+            false,
+            "src/lib/quick",
+            true,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn matches_absolute_path_with_mixed_separators() {
+        assert!(file_matches_query(
+            "app.ts",
+            "src/app.ts",
+            r"D:\project\src\app.ts",
+            false,
+            "d:/project/src/app",
+            true,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn fuzzy_matches_partial_path() {
+        assert!(file_matches_query(
+            "Editor.tsx",
+            "src/components/Editor.tsx",
+            "/home/u/repo/src/components/Editor.tsx",
+            false,
+            "comp/ed",
+            true,
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn suffix_mode_still_targets_filename_only() {
+        assert!(file_matches_query(
+            "foo.ts",
+            "src/foo.ts",
+            r"D:\repo\src\foo.ts",
+            false,
+            ".ts",
+            true,
+            false,
+            true,
+        ));
+        assert!(!file_matches_query(
+            "foo.bar",
+            "src/foo.bar",
+            r"D:\repo\src\foo.bar",
+            false,
+            ".ts",
+            true,
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn glob_can_match_relative_path() {
+        assert!(file_matches_query(
+            "Button.tsx",
+            "src/components/Button.tsx",
+            "/repo/src/components/Button.tsx",
+            false,
+            "src/*.tsx",
+            true,
+            false,
+            false,
+        ));
+    }
 }

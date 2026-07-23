@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { tipArrowBoxGap, TIP_ARROW_BUBBLE_GAP, TIP_ARROW_CLEARANCE, TIP_ARROW_PROTRUDE } from './tipArrow'
+import { tipArrowBoxGap, TIP_ARROW_CLEARANCE, TIP_ARROW_H, TIP_ARROW_PROTRUDE } from './tipArrow'
 
 /** Viewport gap: trigger top − caret tip bottom. */
 function caretTipClearance(triggerTop: number, caretTipBottom: number) {
@@ -28,8 +28,10 @@ describe('tipArrowBoxGap', () => {
   })
 })
 
-describe('TIP_ARROW_BUBBLE_GAP', () => {
-  it('matches minimap Quick View CSS --qv-arrow-gap', () => {
-    expect(TIP_ARROW_BUBBLE_GAP).toBe(4)
+describe('horizontal TipArrow integration', () => {
+  it('matches minimap Quick View CSS --qv-arrow-protrude / --qv-arrow-w', () => {
+    expect(TIP_ARROW_PROTRUDE).toBe(TIP_ARROW_H - 1)
+    expect(TIP_ARROW_PROTRUDE).toBe(6)
+    expect(TIP_ARROW_H).toBe(7)
   })
 })

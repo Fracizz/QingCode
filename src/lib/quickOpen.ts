@@ -144,10 +144,16 @@ export function filterQuickOpenFiles(
   if (!fileQuery) {
     return entries.slice(0, limit).map(entry => ({ ...entry, score: 1 }))
   }
+  const needle = fileQuery.replace(/\\/g, '/')
   const ranked = entries
     .map(entry => {
-      const haystack = `${entry.label} ${entry.relativePath} ${entry.projectName}`
-      const score = fuzzyScore(fileQuery, haystack)
+      const fields = [
+        entry.label,
+        entry.relativePath.replace(/\\/g, '/'),
+        entry.path.replace(/\\/g, '/'),
+        entry.projectName,
+      ]
+      const score = Math.max(...fields.map(field => fuzzyScore(needle, field)))
       return score > 0 ? { ...entry, score } : null
     })
     .filter((entry): entry is QuickOpenEntry & { score: number } => entry !== null)

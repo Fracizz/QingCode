@@ -8,7 +8,7 @@ export const TIP_ARROW_H = 7
 export const TIP_ARROW_PROTRUDE = TIP_ARROW_H - 1
 /** Desired viewport gap: caret tip → status-bar row top (or anchor top). */
 export const TIP_ARROW_CLEARANCE = 2
-/** Visible gap between bubble edge and caret base (minimap Quick View, etc.). */
+/** @deprecated Horizontal tips now use {@link TIP_ARROW_PROTRUDE} like vertical tips. */
 export const TIP_ARROW_BUBBLE_GAP = 4
 export const TIP_ARROW_END_INSET = 22
 
@@ -132,9 +132,9 @@ function tipArrowEdgeStyle(direction: TipArrowDirection): CSSProperties {
     case 'up':
       return { top: -TIP_ARROW_PROTRUDE }
     case 'left':
-      return { left: -(TIP_ARROW_BUBBLE_GAP + TIP_ARROW_H) }
+      return { left: -TIP_ARROW_PROTRUDE }
     case 'right':
-      return { right: -(TIP_ARROW_BUBBLE_GAP + TIP_ARROW_H) }
+      return { right: -TIP_ARROW_PROTRUDE }
     default:
       return { bottom: -TIP_ARROW_PROTRUDE }
   }

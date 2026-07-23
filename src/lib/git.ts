@@ -33,6 +33,8 @@ export type GitCommitInfo = {
   subject: string
   author: string
   date: string
+  /** Branch / tag decorations (`git log %D`); may be empty. */
+  refs: string
 }
 
 export type GitCommitFileChange = {

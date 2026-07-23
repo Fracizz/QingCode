@@ -19,6 +19,7 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Copy,
   ExternalLink,
@@ -52,6 +53,7 @@ import {
   type GitChangeGroup,
   canCommitStagedChanges,
   collectUnmergedChanges,
+  filterCommitFiles,
   formatAbsoluteCommitTime,
   gitChangeIsUnmerged,
   gitChangePathLooksLikeDirectory,
@@ -115,6 +117,8 @@ const SCM_SECTION_ICON_SIZE = 13
 /** File rows nest under the section label (between tab-align and old pl-6). */
 const SCM_ROW_PAD = 'pl-5 pr-9'
 const COMMIT_HASH_COL = 'w-[7ch] shrink-0 font-mono text-[11px] tabular-nums text-accent'
+const COMMIT_AUTHOR_COL = 'w-[6.5rem] shrink-0 truncate text-[11px] text-fg-muted'
+const COMMIT_REFS_COL = 'w-[8rem] shrink-0 truncate text-[10px] text-brand'
 const COMMIT_TIME_COL =
   'w-[10.5rem] shrink-0 truncate text-right font-mono text-[10px] tabular-nums text-fg-dim'
 const SCM_ICON_SIZE = 13
@@ -412,6 +416,80 @@ function ChangeGroupSection({
   )
 }
 
+function CommitFileListRowComponent(
+  props: {
+    ariaAttributes: { 'aria-posinset': number; 'aria-setsize': number; role: 'listitem' }
+    index: number
+    style: CSSProperties
+  } & {
+    files: GitCommitFileChange[]
+    selectedPath: string | null
+    onSelect: (path: string) => void
+  }
+) {
+  const { index, style, files, selectedPath, onSelect } = props
+  const file = files[index]
+  if (!file) return null
+  const active = selectedPath === file.path
+  return (
+    <div style={style} className="flex">
+      <button
+        type="button"
+        onClick={() => onSelect(file.path)}
+        className={`flex h-full w-full items-center gap-2 px-3 text-left text-[12px] hover:bg-bg-hover ${
+          active ? 'bg-bg-active' : ''
+        }`}
+      >
+        <GitScmStatusBadge status={file.status} group="unstaged" />
+        <Tooltip
+          label={file.path}
+          side="bottom"
+          onlyWhenOverflow
+          wrapperClassName="min-w-0 flex-1 truncate font-mono text-[11px] text-tree-fg"
+        >
+          <span>{formatScmDisplayPath(file.path)}</span>
+        </Tooltip>
+      </button>
+    </div>
+  )
+}
+
+function CommitFileList({
+  files,
+  selectedPath,
+  onSelect,
+}: {
+  files: GitCommitFileChange[]
+  selectedPath: string | null
+  onSelect: (path: string) => void
+}) {
+  const listRef = useListRef(null)
+  const rowProps = useMemo(
+    () => ({ files, selectedPath, onSelect }),
+    [files, onSelect, selectedPath]
+  )
+
+  return (
+    <List
+      listRef={listRef}
+      rowCount={files.length}
+      rowHeight={ROW_HEIGHT}
+      rowComponent={CommitFileListRowComponent}
+      rowProps={rowProps}
+      overscanCount={20}
+      className="h-full overscroll-y-contain"
+      style={
+        {
+          height: '100%',
+          overscrollBehavior: 'contain',
+          contain: 'strict',
+          scrollbarGutter: 'stable',
+        } as CSSProperties
+      }
+    />
+  )
+}
+
 function seedSourceControlStatus(projectPath: string): GitStatus | null {
   return (
     peekSourceControlCache(projectPath) ?? useGitStatusStore.getState().peekPanelStatus(projectPath)
@@ -485,6 +563,28 @@ function CommitHistoryRowComponent(
         <span className={COMMIT_HASH_COL}>{commit.short_hash}</span>
         <span className="min-w-0 flex-1 truncate text-[12px] text-fg">
           {commit.subject || noSubjectLabel}
+        </span>
+        <span className={COMMIT_AUTHOR_COL}>
+          <Tooltip
+            label={commit.author}
+            side="bottom"
+            onlyWhenOverflow
+            wrapperClassName="block min-w-0 truncate"
+          >
+            <span>{commit.author}</span>
+          </Tooltip>
+        </span>
+        <span className={COMMIT_REFS_COL}>
+          {commit.refs ? (
+            <Tooltip
+              label={commit.refs}
+              side="bottom"
+              onlyWhenOverflow
+              wrapperClassName="block min-w-0 truncate"
+            >
+              <span>{commit.refs}</span>
+            </Tooltip>
+          ) : null}
         </span>
         <span className={COMMIT_TIME_COL}>{formatAbsoluteCommitTime(commit.date)}</span>
       </button>
@@ -560,22 +660,36 @@ function CommitHistoryList({
   }
 
   return (
-    <List
-      listRef={listRef}
-      rowCount={rowCount}
-      rowHeight={rowHeight}
-      rowComponent={CommitHistoryRowComponent}
-      rowProps={rowProps}
-      onRowsRendered={onRowsRendered}
-      overscanCount={16}
-      className="h-full overscroll-y-contain"
-      style={{
-        height: '100%',
-        overscrollBehavior: 'contain',
-        contain: 'strict',
-        scrollbarGutter: 'stable',
-      }}
-    />
+    <div className="flex h-full min-h-0 flex-col">
+      <div
+        className="flex flex-shrink-0 items-center gap-2 border-b border-border/50 bg-bg-sidebar/80 pl-5 pr-3 text-[10px] font-medium tracking-wide text-fg-dim"
+        style={{ height: COMMIT_FOOTER_HEIGHT }}
+      >
+        <span className={COMMIT_HASH_COL}>{t('哈希')}</span>
+        <span className="min-w-0 flex-1 truncate">{t('说明')}</span>
+        <span className={COMMIT_AUTHOR_COL}>{t('作者')}</span>
+        <span className={COMMIT_REFS_COL}>{t('引用')}</span>
+        <span className={COMMIT_TIME_COL}>{t('时间')}</span>
+      </div>
+      <div className="min-h-0 flex-1">
+        <List
+          listRef={listRef}
+          rowCount={rowCount}
+          rowHeight={rowHeight}
+          rowComponent={CommitHistoryRowComponent}
+          rowProps={rowProps}
+          onRowsRendered={onRowsRendered}
+          overscanCount={16}
+          className="h-full overscroll-y-contain"
+          style={{
+            height: '100%',
+            overscrollBehavior: 'contain',
+            contain: 'strict',
+            scrollbarGutter: 'stable',
+          } as CSSProperties}
+        />
+      </div>
+    </div>
   )
 }
 
@@ -615,6 +729,8 @@ export default function SourceControlPanel() {
   const [commitFiles, setCommitFiles] = useState<GitCommitFileChange[]>([])
   const [commitFilesLoading, setCommitFilesLoading] = useState(false)
   const [commitFilesError, setCommitFilesError] = useState<string | null>(null)
+  const [commitFileFilter, setCommitFileFilter] = useState('')
+  const [commitFileFilterRegex, setCommitFileFilterRegex] = useState(false)
   const [selectedCommitFile, setSelectedCommitFile] = useState<string | null>(null)
   const selectedCommitFileRef = useRef<string | null>(null)
   const [commitFileDiff, setCommitFileDiff] = useState<InlineDiffState | null>(null)
@@ -908,6 +1024,11 @@ export default function SourceControlPanel() {
 
   const groups = useMemo(() => splitGitChanges(status?.changes ?? []), [status])
   const unmergedChanges = useMemo(() => collectUnmergedChanges(status?.changes ?? []), [status])
+  const filteredCommitFiles = useMemo(
+    () =>
+      filterCommitFiles(commitFiles, commitFileFilter, commitFileFilterRegex ? 'regex' : 'text'),
+    [commitFileFilter, commitFileFilterRegex, commitFiles],
+  )
 
   const toggleGroup = useCallback((group: GitChangeGroup) => {
     setCollapsedGroups(current => ({ ...current, [group]: !current[group] }))
@@ -1002,6 +1123,7 @@ export default function SourceControlPanel() {
     }
     setCommitFilesLoading(true)
     setCommitFilesError(null)
+    setCommitFileFilter('')
     selectedCommitFileRef.current = null
     setSelectedCommitFile(null)
     setCommitFileDiff(null)
@@ -1760,198 +1882,231 @@ export default function SourceControlPanel() {
     )
 
     const selectedCommit = commits.find(c => c.hash === selectedCommitHash) ?? commits[0] ?? null
+    const showingCommitDiff = Boolean(commitFileDiff || commitFileDiffLoading)
+
+    const closeCommitDiff = () => {
+      selectedCommitFileRef.current = null
+      setSelectedCommitFile(null)
+      setCommitFileDiff(null)
+      setCommitFileDiffLoading(false)
+      commitFileDiffSequenceRef.current += 1
+    }
+
+    const historyDetailPane = selectedCommit ? (
+      <ScmResizableColumn
+        width={scmFilesWidth}
+        minWidth={SCM_FILES_MIN}
+        maxWidth={SCM_FILES_MAX}
+        remainingMin={SCM_FILES_REMAINING_MIN}
+        edge="start"
+        onWidthChange={onScmFilesWidthChange}
+        tooltip={t('拖动调整详情宽度 · {min}–{max}px · 当前 {current}px', {
+          min: SCM_FILES_MIN,
+          max: SCM_FILES_MAX,
+          current: scmFilesWidth,
+        })}
+        className="bg-bg-sidebar"
+      >
+        <div className="flex-shrink-0 space-y-2 border-b border-border px-4 py-3">
+          <h2 className="text-[14px] font-semibold leading-snug text-fg">
+            {selectedCommit.subject || t('（无提交说明）')}
+          </h2>
+          <div className="flex flex-col gap-1 text-[12px] text-fg-muted">
+            <span>
+              <span className="text-fg-dim">{t('作者')}</span>
+              {' · '}
+              {selectedCommit.author}
+            </span>
+            <span>
+              <span className="text-fg-dim">{t('时间')}</span>
+              {' · '}
+              {formatAbsoluteCommitTime(selectedCommit.date)}
+            </span>
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="text-fg-dim">{t('提交')}</span>
+              <span className="font-mono text-[12px] text-accent">{selectedCommit.short_hash}</span>
+              <button
+                type="button"
+                onClick={() => void copyCommitHash(selectedCommit.short_hash)}
+                className="rounded border border-border px-2 py-0.5 text-[11px] text-fg hover:bg-bg-hover"
+              >
+                {t('复制哈希')}
+              </button>
+            </span>
+          </div>
+        </div>
+        <div className="flex h-8 flex-shrink-0 items-center border-b border-border/60 px-3 text-[12px] font-medium text-fg">
+          {commitFileFilter.trim()
+            ? t('更改的文件（{shown} / {total}）', {
+                shown: filteredCommitFiles.files.length,
+                total: commitFiles.length,
+              })
+            : t('更改的文件（{count}）', { count: commitFiles.length })}
+        </div>
+        <div className="flex flex-shrink-0 items-center gap-1 border-b border-border/60 px-2 py-1.5">
+          <input
+            type="search"
+            value={commitFileFilter}
+            onChange={event => setCommitFileFilter(event.target.value)}
+            placeholder={
+              commitFileFilterRegex ? t('支持正则表达式') : t('筛选文件路径')
+            }
+            aria-label={t('筛选文件路径')}
+            className="text-ui-sm min-w-0 flex-1 rounded border border-border bg-bg-deep/60 px-2 py-1 text-fg outline-none placeholder:text-fg-dim focus:border-accent"
+          />
+          <Tooltip
+            label={commitFileFilterRegex ? t('关闭正则') : t('使用正则')}
+            side="bottom"
+          >
+            <button
+              type="button"
+              aria-pressed={commitFileFilterRegex}
+              aria-label={commitFileFilterRegex ? t('关闭正则') : t('使用正则')}
+              onClick={() => setCommitFileFilterRegex(v => !v)}
+              className={`shrink-0 rounded border px-1.5 py-1 font-mono text-[11px] leading-none transition-colors ${
+                commitFileFilterRegex
+                  ? 'border-accent bg-accent/15 text-accent'
+                  : 'border-border text-fg-dim hover:bg-bg-hover hover:text-fg'
+              }`}
+            >
+              .*
+            </button>
+          </Tooltip>
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {commitFilesLoading ? (
+            <p className="flex items-center gap-2 px-3 py-2 text-[11px] text-fg-dim">
+              <LoaderCircle size={12} className="animate-spin text-accent" />
+              {t('正在读取提交文件…')}
+            </p>
+          ) : commitFilesError ? (
+            <p className="px-3 py-2 text-[11px] text-danger">{commitFilesError}</p>
+          ) : commitFiles.length === 0 ? (
+            <p className="px-3 py-2 text-[11px] text-fg-dim">{t('此提交没有文件变更')}</p>
+          ) : filteredCommitFiles.error === 'invalid-regex' ? (
+            <p className="px-3 py-2 text-[11px] text-danger">{t('正则表达式无效')}</p>
+          ) : filteredCommitFiles.files.length === 0 ? (
+            <p className="px-3 py-2 text-[11px] text-fg-dim">{t('没有匹配的文件')}</p>
+          ) : (
+            <CommitFileList
+              files={filteredCommitFiles.files}
+              selectedPath={selectedCommitFile}
+              onSelect={path => void loadCommitFileDiff(selectedCommit.hash, path)}
+            />
+          )}
+        </div>
+      </ScmResizableColumn>
+    ) : null
 
     const historyPane = (
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <ScmResizableColumn
-          width={scmLeftWidth}
-          minWidth={SCM_LEFT_MIN}
-          maxWidth={SCM_LEFT_MAX}
-          remainingMin={SCM_LEFT_REMAINING_MIN}
-          onWidthChange={onScmLeftWidthChange}
-          tooltip={t('拖动调整列表宽度 · {min}–{max}px · 当前 {current}px', {
-            min: SCM_LEFT_MIN,
-            max: SCM_LEFT_MAX,
-            current: scmLeftWidth,
-          })}
-          className="bg-bg-sidebar"
-        >
-          <div
-            className={
-              commitsCollapsed ? 'flex-none border-b border-border' : 'flex min-h-0 flex-1 flex-col'
-            }
-          >
-            <div
-              className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
-              style={{ scrollbarGutter: 'stable' }}
-            >
-              <button
-                type="button"
-                aria-expanded={!commitsCollapsed}
-                onClick={() => setCommitsCollapsed(v => !v)}
-                className={`flex h-full min-w-0 flex-1 items-center gap-1.5 ${SCM_SECTION_PAD_X} text-left hover:bg-bg-hover hover:text-fg`}
-              >
-                <span className={SCM_SECTION_ICON_SLOT}>
-                  {commitsCollapsed ? (
-                    <ChevronRight size={SCM_SECTION_ICON_SIZE} />
-                  ) : (
-                    <ChevronDown size={SCM_SECTION_ICON_SIZE} />
-                  )}
-                </span>
-                <span className="truncate font-medium tabular-nums text-fg">
-                  {t('提交记录（{count}）', { count: commits.length })}
-                </span>
-              </button>
-            </div>
-            {!commitsCollapsed && (
-              <div className="min-h-0 flex-1 overflow-hidden bg-bg-deep/15">
-                <CommitHistoryList
-                  commits={commits}
-                  selectedHash={selectedCommit?.hash ?? null}
-                  loadingMore={commitsLoadingMore}
-                  hasMore={commitsHasMore}
-                  onSelect={hash => {
-                    selectedCommitHashRef.current = hash
-                    setSelectedCommitHash(hash)
-                  }}
-                  onNearEnd={onCommitListNearEnd}
-                />
-              </div>
-            )}
-          </div>
-        </ScmResizableColumn>
-        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-bg">
-          {selectedCommit ? (
+        {/* ~3/5: commit list by default; clicking a file covers this with the diff. */}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-bg">
+          {showingCommitDiff ? (
             <>
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
-                {commitFileDiffLoading ? (
-                  <EmptyState
-                    icon={<LoaderCircle size={22} className="animate-spin text-accent" />}
-                    title={t('正在读取差异…')}
-                  />
-                ) : commitFileDiff ? (
-                  <div className="editor-font-independent flex min-h-0 flex-1 flex-col">
-                    <Suspense
-                      fallback={
-                        <EmptyState
-                          icon={<LoaderCircle size={22} className="animate-spin text-accent" />}
-                          title={t('正在读取差异…')}
-                        />
-                      }
-                    >
-                      <ScmInlineDiff
-                        path={commitFileDiff.path}
-                        name={commitFileDiff.name}
-                        original={commitFileDiff.original}
-                        modified={commitFileDiff.modified}
-                      />
-                    </Suspense>
-                  </div>
-                ) : (
-                  <EmptyState
-                    icon={<GitCompare size={28} strokeWidth={1.2} />}
-                    title={t('选择一个文件查看差异')}
-                  />
+              <div
+                className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center gap-2 border-b border-border/60 bg-bg-sidebar px-2 text-[12px] text-fg-muted`}
+              >
+                <button
+                  type="button"
+                  onClick={closeCommitDiff}
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-fg hover:bg-bg-hover"
+                >
+                  <ChevronLeft size={14} />
+                  {t('返回提交列表')}
+                </button>
+                {commitFileDiff && (
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-dim">
+                    {commitFileDiff.name}
+                  </span>
                 )}
               </div>
-              <ScmResizableColumn
-                width={scmFilesWidth}
-                minWidth={SCM_FILES_MIN}
-                maxWidth={SCM_FILES_MAX}
-                remainingMin={SCM_FILES_REMAINING_MIN}
-                edge="start"
-                onWidthChange={onScmFilesWidthChange}
-                tooltip={t('拖动调整文件列表宽度 · {min}–{max}px · 当前 {current}px', {
-                  min: SCM_FILES_MIN,
-                  max: SCM_FILES_MAX,
-                  current: scmFilesWidth,
-                })}
-                className="bg-bg-sidebar"
-              >
-                <div className="flex-shrink-0 space-y-2 border-b border-border px-4 py-3">
-                  <h2 className="text-[14px] font-semibold leading-snug text-fg">
-                    {selectedCommit.subject || t('（无提交说明）')}
-                  </h2>
-                  <div className="flex flex-col gap-1 text-[12px] text-fg-muted">
-                    <span>
-                      <span className="text-fg-dim">{t('作者')}</span>
-                      {' · '}
-                      {selectedCommit.author}
-                    </span>
-                    <span>
-                      <span className="text-fg-dim">{t('时间')}</span>
-                      {' · '}
-                      {formatAbsoluteCommitTime(selectedCommit.date)}
-                    </span>
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="text-fg-dim">{t('提交')}</span>
-                      <span className="font-mono text-[12px] text-accent">
-                        {selectedCommit.short_hash}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => void copyCommitHash(selectedCommit.short_hash)}
-                        className="rounded border border-border px-2 py-0.5 text-[11px] text-fg hover:bg-bg-hover"
-                      >
-                        {t('复制哈希')}
-                      </button>
-                    </span>
-                  </div>
+              {commitFileDiffLoading ? (
+                <EmptyState
+                  icon={<LoaderCircle size={22} className="animate-spin text-accent" />}
+                  title={t('正在读取差异…')}
+                />
+              ) : commitFileDiff ? (
+                <div className="editor-font-independent flex min-h-0 flex-1 flex-col">
+                  <Suspense
+                    fallback={
+                      <EmptyState
+                        icon={<LoaderCircle size={22} className="animate-spin text-accent" />}
+                        title={t('正在读取差异…')}
+                      />
+                    }
+                  >
+                    <ScmInlineDiff
+                      path={commitFileDiff.path}
+                      name={commitFileDiff.name}
+                      original={commitFileDiff.original}
+                      modified={commitFileDiff.modified}
+                    />
+                  </Suspense>
                 </div>
-                <div className="flex h-8 flex-shrink-0 items-center border-b border-border/60 px-3 text-[12px] font-medium text-fg">
-                  {t('更改的文件（{count}）', { count: commitFiles.length })}
-                </div>
-                <div className="min-h-0 flex-1 overflow-auto">
-                  {commitFilesLoading ? (
-                    <p className="flex items-center gap-2 px-3 py-2 text-[11px] text-fg-dim">
-                      <LoaderCircle size={12} className="animate-spin text-accent" />
-                      {t('正在读取提交文件…')}
-                    </p>
-                  ) : commitFilesError ? (
-                    <p className="px-3 py-2 text-[11px] text-danger">{commitFilesError}</p>
-                  ) : commitFiles.length === 0 ? (
-                    <p className="px-3 py-2 text-[11px] text-fg-dim">{t('此提交没有文件变更')}</p>
-                  ) : (
-                    <ul className="py-0.5">
-                      {commitFiles.map(file => {
-                        const active = selectedCommitFile === file.path
-                        return (
-                          <li key={file.path} style={{ minHeight: ROW_HEIGHT }}>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                void loadCommitFileDiff(selectedCommit.hash, file.path)
-                              }
-                              className={`flex h-full w-full items-center gap-2 px-3 text-left text-[12px] hover:bg-bg-hover ${
-                                active ? 'bg-bg-active' : ''
-                              }`}
-                              style={{ height: ROW_HEIGHT }}
-                            >
-                              <GitScmStatusBadge status={file.status} group="unstaged" />
-                              <Tooltip
-                                label={file.path}
-                                side="bottom"
-                                onlyWhenOverflow
-                                wrapperClassName="min-w-0 flex-1 truncate font-mono text-[11px] text-tree-fg"
-                              >
-                                <span>{formatScmDisplayPath(file.path)}</span>
-                              </Tooltip>
-                            </button>
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  )}
-                </div>
-              </ScmResizableColumn>
+              ) : null}
             </>
           ) : (
+            <div
+              className={
+                commitsCollapsed ? 'flex-none border-b border-border' : 'flex min-h-0 flex-1 flex-col'
+              }
+            >
+              <div
+                className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
+                style={{ scrollbarGutter: 'stable' }}
+              >
+                <button
+                  type="button"
+                  aria-expanded={!commitsCollapsed}
+                  onClick={() => setCommitsCollapsed(v => !v)}
+                  className={`flex h-full min-w-0 flex-1 items-center gap-1.5 ${SCM_SECTION_PAD_X} text-left hover:bg-bg-hover hover:text-fg`}
+                >
+                  <span className={SCM_SECTION_ICON_SLOT}>
+                    {commitsCollapsed ? (
+                      <ChevronRight size={SCM_SECTION_ICON_SIZE} />
+                    ) : (
+                      <ChevronDown size={SCM_SECTION_ICON_SIZE} />
+                    )}
+                  </span>
+                  <span className="truncate font-medium tabular-nums text-fg">
+                    {t('提交记录（{count}）', { count: commits.length })}
+                  </span>
+                </button>
+              </div>
+              {!commitsCollapsed && (
+                <div className="min-h-0 flex-1 overflow-hidden bg-bg-deep/15">
+                  {commits.length === 0 ? (
+                    <EmptyState
+                      icon={<GitCommitHorizontal size={28} strokeWidth={1.2} />}
+                      title={t('暂无提交记录')}
+                    />
+                  ) : (
+                    <CommitHistoryList
+                      commits={commits}
+                      selectedHash={selectedCommit?.hash ?? null}
+                      loadingMore={commitsLoadingMore}
+                      hasMore={commitsHasMore}
+                      onSelect={hash => {
+                        selectedCommitHashRef.current = hash
+                        setSelectedCommitHash(hash)
+                      }}
+                      onNearEnd={onCommitListNearEnd}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        {historyDetailPane ?? (
+          <div className="flex min-h-0 w-[min(40%,520px)] flex-shrink-0 flex-col border-l border-border bg-bg-sidebar">
             <EmptyState
               icon={<GitCommitHorizontal size={28} strokeWidth={1.2} />}
               title={t('暂无提交记录')}
             />
-          )}
-        </div>
+          </div>
+        )}
       </div>
     )
 

@@ -94,4 +94,9 @@ describe('filterQuickOpenFiles with location suffix', () => {
     expect(matches).toHaveLength(1)
     expect(matches[0]?.label).toBe('foo.ts')
   })
+
+  it('matches relative and absolute path fragments', () => {
+    expect(filterQuickOpenFiles(entries, 'src/foo')).toHaveLength(1)
+    expect(filterQuickOpenFiles(entries, 'd:/example/foo.ts')).toHaveLength(1)
+  })
 })

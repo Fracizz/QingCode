@@ -8,6 +8,7 @@ import {
   dirHasGitChanges,
   formatAbsoluteCommitTime,
   formatScmDisplayPath,
+  filterCommitFiles,
   collectUnmergedChanges,
   gitChangeIsUnmerged,
   gitChangePathLooksLikeDirectory,
@@ -139,6 +140,24 @@ describe('gitStatus helpers', () => {
     const long = 'packages/arm_docker/EMIS-eman/4.2.10/eman/.env.seaweedfs.example'
     expect(formatScmDisplayPath(long, 40)).toMatch(/^packages\/ar.+seaweedfs\.example$/)
     expect(formatScmDisplayPath(long, 40)).toContain('...')
+  })
+
+  it('filters commit files by substring or regex', () => {
+    const files = [
+      { path: 'src/a.ts', status: 'M' },
+      { path: 'src/b.md', status: 'A' },
+      { path: 'docs/README.md', status: 'M' },
+    ]
+    expect(filterCommitFiles(files, '').files).toHaveLength(3)
+    expect(filterCommitFiles(files, 'readme').files.map(f => f.path)).toEqual(['docs/README.md'])
+    expect(filterCommitFiles(files, String.raw`\.md$`, 'regex').files.map(f => f.path)).toEqual([
+      'src/b.md',
+      'docs/README.md',
+    ])
+    expect(filterCommitFiles(files, '(', 'regex')).toEqual({
+      files: [],
+      error: 'invalid-regex',
+    })
   })
 
   it('maps scm badge tone', () => {

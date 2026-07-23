@@ -44,7 +44,7 @@ describe('scmLayout', () => {
 
   it('respects remaining space inside a container', () => {
     expect(clampScmLeftWidth(500, 500)).toBeLessThanOrEqual(500 - 280)
-    expect(clampScmFilesWidth(600, 600)).toBeLessThanOrEqual(600 - 280)
+    expect(clampScmFilesWidth(800, 800)).toBeLessThanOrEqual(800 - 360)
   })
 
   it('loads defaults and persists layout', () => {
@@ -63,21 +63,12 @@ describe('scmLayout', () => {
     expect(store.get(SCM_LAYOUT_KEY)).toContain(`"version":${SCM_LAYOUT_VERSION}`)
   })
 
-  it('upgrades legacy narrow file pane once', () => {
+  it('upgrades legacy layouts to the history ~2/5 detail default', () => {
     store.set(SCM_LAYOUT_KEY, JSON.stringify({ leftWidth: 340, filesWidth: 240 }))
     expect(loadScmLayout()).toEqual({
       version: SCM_LAYOUT_VERSION,
       leftWidth: 340,
       filesWidth: SCM_FILES_DEFAULT,
-    })
-  })
-
-  it('keeps a user-widened legacy file pane when upgrading', () => {
-    store.set(SCM_LAYOUT_KEY, JSON.stringify({ leftWidth: 320, filesWidth: 360 }))
-    expect(loadScmLayout()).toEqual({
-      version: SCM_LAYOUT_VERSION,
-      leftWidth: 320,
-      filesWidth: 360,
     })
   })
 })

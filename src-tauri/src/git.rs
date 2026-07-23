@@ -745,6 +745,8 @@ pub struct GitCommitInfo {
     pub subject: String,
     pub author: String,
     pub date: String,
+    /// Branch / tag decorations from `git log --format=%D` (may be empty).
+    pub refs: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -845,7 +847,7 @@ fn list_commits(root: &Path, limit: usize, skip: usize) -> Result<Vec<GitCommitI
     let limit = limit.clamp(1, 100);
     let skip = skip.min(100_000);
     let limit_arg = format!("-n{limit}");
-    let format_arg = "--format=%H%x00%h%x00%s%x00%an%x00%cI";
+    let format_arg = "--format=%H%x00%h%x00%s%x00%an%x00%cI%x00%D";
     let output = if skip == 0 {
         run_git(root, &["log", &limit_arg, format_arg])?
     } else {
@@ -871,8 +873,7 @@ fn list_commits(root: &Path, limit: usize, skip: usize) -> Result<Vec<GitCommitI
 
     let mut commits = Vec::new();
     let raw = decode_git_text(&output.stdout);
-    // Each commit ends with newline after the 5 NUL-separated fields when using %x00.
-    // Format is: hash\0short\0subject\0author\date\n
+    // Format: hash\0short\0subject\0author\date\0refs\n
     for line in raw.split('\n') {
         if line.is_empty() {
             continue;
@@ -887,6 +888,7 @@ fn list_commits(root: &Path, limit: usize, skip: usize) -> Result<Vec<GitCommitI
             subject: parts[2].to_string(),
             author: parts[3].to_string(),
             date: parts[4].trim().to_string(),
+            refs: parts.get(5).map(|s| s.trim().to_string()).unwrap_or_default(),
         });
     }
     Ok(commits)
@@ -1455,6 +1457,13 @@ mod tests {
         assert_eq!(commits[1].subject, "first");
         assert!(!commits[0].short_hash.is_empty());
         assert!(!commits[0].hash.is_empty());
+        assert!(!commits[0].author.is_empty());
+        assert!(!commits[0].date.is_empty());
+        assert!(
+            commits[0].refs.contains("HEAD"),
+            "expected HEAD decoration, got {:?}",
+            commits[0].refs
+        );
 
         let page = list_commits(&root, 1, 1).unwrap();
         assert_eq!(page.len(), 1);

@@ -32,7 +32,8 @@ import { useUIStore } from '../store/uiStore'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import { findProjectForPath } from '../utils/fileReferences'
 import {
-  dirOf,
+  buildContentResultRows,
+  buildFilenameResultRows,
   isGlobPattern,
   isNavigable,
   rowHeightOf,
@@ -68,7 +69,7 @@ interface ContentSearchResponse {
   cancelled?: boolean
 }
 
-type SearchMode = 'filename' | 'content'
+type SearchMode = 'all' | 'filename' | 'content'
 type SearchScope = 'current' | 'all'
 
 const TOP_EXT_COUNT = 5
@@ -76,6 +77,7 @@ const CONTENT_DEBOUNCE_MS = 400
 const FILENAME_DEBOUNCE_MS = 200
 const MAX_MATCHES_PER_FILE = 20
 const EXT_PICKER_WIDTH = 168
+const SCOPE_MENU_WIDTH = 140
 
 export default function SearchPanel() {
   const { t } = useI18n()
@@ -103,7 +105,9 @@ export default function SearchPanel() {
 
   const multiProjectSearch = searchRoots.length > 1
 
-  const [mode, setMode] = useState<SearchMode>('content')
+  const [mode, setMode] = useState<SearchMode>('all')
+  const wantsFilename = mode === 'all' || mode === 'filename'
+  const wantsContent = mode === 'all' || mode === 'content'
   const [query, setQuery] = useState('')
   const [ignoreCase, setIgnoreCase] = useState(true)
   const [fuzzy, setFuzzy] = useState(false)
@@ -127,13 +131,23 @@ export default function SearchPanel() {
   const [replaceText, setReplaceText] = useState('')
   const [replaceOpen, setReplaceOpen] = useState(false)
   const [replacePreview, setReplacePreview] = useState<ReplacePreview | null>(null)
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false)
+  const [scopeMenuStyle, setScopeMenuStyle] = useState<CSSProperties>({
+    visibility: 'hidden',
+    left: 0,
+    top: 0,
+    width: SCOPE_MENU_WIDTH,
+  })
   const reqId = useRef(0)
   const pushToast = useProjectStore(s => s.pushToast)
   const extScanId = useRef(0)
   const listRef = useListRef(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const scopeBtnRef = useRef<HTMLButtonElement>(null)
+  const scopeMenuRef = useRef<HTMLDivElement>(null)
   const extPickerBtnRef = useRef<HTMLButtonElement>(null)
   const extPickerRef = useRef<HTMLDivElement>(null)
+  const showReplace = mode === 'content'
   const extList = typeFilterExtensions(typeFilter)
   const useGlob = isGlobPattern(query)
   const topExts = useMemo(() => projectExts.slice(0, TOP_EXT_COUNT), [projectExts])
@@ -154,6 +168,11 @@ export default function SearchPanel() {
   }, [query, mode, typeFilter])
 
   useEffect(() => {
+    if (mode === 'content') return
+    queueMicrotask(() => setReplaceOpen(false))
+  }, [mode])
+
+  useEffect(() => {
     if (typeFilter?.kind !== 'star') return
     if (otherExts.length === 0) {
       queueMicrotask(() => setTypeFilter(null))
@@ -163,33 +182,55 @@ export default function SearchPanel() {
   }, [otherExts, setTypeFilter, typeFilter?.kind])
 
   const closeExtPicker = useCallback(() => setExtPickerOpen(false), [])
+  const closeScopeMenu = useCallback(() => setScopeMenuOpen(false), [])
+
+  const placeMenu = useCallback(
+    (
+      btn: HTMLElement,
+      menu: HTMLElement,
+      width: number,
+      setStyle: (style: CSSProperties) => void,
+      align: 'left' | 'right' = 'left',
+    ) => {
+      const rect = btn.getBoundingClientRect()
+      const zoom = Number.parseFloat(getComputedStyle(menu).zoom) || 1
+      const height = menu.scrollHeight
+      const gap = 4
+      const preferAbove = rect.bottom + gap + height * zoom > window.innerHeight - 8
+      const x = align === 'right' ? rect.right - width * zoom : rect.left
+      const placed = getContextMenuStylePosition(
+        x,
+        preferAbove ? rect.top - gap : rect.bottom + gap,
+        { width, height },
+        { width: window.innerWidth, height: window.innerHeight },
+        preferAbove,
+        zoom,
+      )
+      setStyle({
+        left: placed.x,
+        top: placed.y,
+        width,
+        visibility: 'visible',
+      })
+    },
+    [],
+  )
 
   useLayoutEffect(() => {
     if (!extPickerOpen) return
     const btn = extPickerBtnRef.current
     const menu = extPickerRef.current
     if (!btn || !menu) return
+    placeMenu(btn, menu, EXT_PICKER_WIDTH, setExtPickerStyle, 'left')
+  }, [extPickerOpen, projectExts.length, topExts.length, placeMenu])
 
-    const rect = btn.getBoundingClientRect()
-    const zoom = Number.parseFloat(getComputedStyle(menu).zoom) || 1
-    const height = menu.scrollHeight
-    const gap = 4
-    const preferAbove = rect.bottom + gap + height * zoom > window.innerHeight - 8
-    const placed = getContextMenuStylePosition(
-      rect.left,
-      preferAbove ? rect.top - gap : rect.bottom + gap,
-      { width: EXT_PICKER_WIDTH, height },
-      { width: window.innerWidth, height: window.innerHeight },
-      preferAbove,
-      zoom,
-    )
-    setExtPickerStyle({
-      left: placed.x,
-      top: placed.y,
-      width: EXT_PICKER_WIDTH,
-      visibility: 'visible',
-    })
-  }, [extPickerOpen, projectExts.length, topExts.length])
+  useLayoutEffect(() => {
+    if (!scopeMenuOpen) return
+    const btn = scopeBtnRef.current
+    const menu = scopeMenuRef.current
+    if (!btn || !menu) return
+    placeMenu(btn, menu, SCOPE_MENU_WIDTH, setScopeMenuStyle, 'right')
+  }, [scopeMenuOpen, placeMenu])
 
   useEffect(() => {
     if (!extPickerOpen) return
@@ -213,6 +254,29 @@ export default function SearchPanel() {
       window.removeEventListener('scroll', closeExtPicker, true)
     }
   }, [extPickerOpen, closeExtPicker])
+
+  useEffect(() => {
+    if (!scopeMenuOpen) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (scopeMenuRef.current?.contains(target)) return
+      if (scopeBtnRef.current?.contains(target)) return
+      closeScopeMenu()
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeScopeMenu()
+    }
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('resize', closeScopeMenu)
+    window.addEventListener('scroll', closeScopeMenu, true)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('resize', closeScopeMenu)
+      window.removeEventListener('scroll', closeScopeMenu, true)
+    }
+  }, [scopeMenuOpen, closeScopeMenu])
 
   useEffect(() => {
     if (searchRoots.length === 0) {
@@ -250,65 +314,120 @@ export default function SearchPanel() {
   }, [searchRoots])
 
   useEffect(() => {
+    if (!wantsFilename) {
+      queueMicrotask(() => setFilenameResults([]))
+    }
+    if (!wantsContent) {
+      queueMicrotask(() => setContentResults(null))
+    }
+  }, [wantsFilename, wantsContent])
+
+  useEffect(() => {
     if (searchRoots.length === 0) {
       queueMicrotask(() => {
         setFilenameResults([])
         setContentResults(null)
-      })
-      return
-    }
-    if (mode === 'content') {
-      if (!query.trim()) {
-        queueMicrotask(() => {
-          setContentResults(null)
-          setError(null)
-        })
-        return
-      }
-    } else if (!query.trim() && !typeFilter) {
-      queueMicrotask(() => {
-        setFilenameResults([])
-        setContentResults(null)
         setError(null)
+        setLoading(false)
       })
       return
     }
+
+    const q = query.trim()
+    const runFilename = wantsFilename && (q.length > 0 || typeFilter !== null)
+    const runContent = wantsContent && q.length > 0
+
+    if (!runFilename && !runContent) {
+      queueMicrotask(() => {
+        if (wantsFilename) setFilenameResults([])
+        if (wantsContent) setContentResults(null)
+        setError(null)
+        setLoading(false)
+      })
+      return
+    }
+
     if (!isTauri()) {
       queueMicrotask(() => {
         setError(new NotInTauriError('文件搜索').message)
         setFilenameResults([])
         setContentResults(null)
+        setLoading(false)
       })
       return
     }
 
     const id = ++reqId.current
     queueMicrotask(() => setLoading(true))
-    const debounce = mode === 'content' ? CONTENT_DEBOUNCE_MS : FILENAME_DEBOUNCE_MS
     const perRootLimit = Math.max(50, Math.ceil(500 / searchRoots.length))
+    let filenameTimer: ReturnType<typeof setTimeout> | undefined
+    let contentTimer: ReturnType<typeof setTimeout> | undefined
+    let pending = (runFilename ? 1 : 0) + (runContent ? 1 : 0)
+    let sawError: string | null = null
 
-    const handle = setTimeout(async () => {
-      try {
-        const q = query.trim()
-        if (mode === 'content') {
-          if (!q) {
-            if (id === reqId.current) {
-              setContentResults(null)
-              setError(null)
-              setLoading(false)
-            }
-            return
+    const finishOne = () => {
+      pending -= 1
+      if (pending <= 0 && id === reqId.current) {
+        setError(sawError)
+        setLoading(false)
+      }
+    }
+
+    const resolveProject = (rootPath: string) =>
+      findProjectForPath(projects, rootPath) ??
+      projects.find(p => p.path === rootPath) ??
+      null
+
+    if (runFilename) {
+      filenameTimer = setTimeout(async () => {
+        try {
+          const parts = await Promise.all(
+            searchRoots.map(async root => {
+              const project = resolveProject(root.path)
+              const excludes = await loadExcludeSettingsForProject(project)
+              return safeInvoke<SearchHit[]>('文件搜索', 'search_files', {
+                root: root.path,
+                query: q,
+                ignoreCase,
+                fuzzy: fuzzy && !useGlob && !matchSuffix && !extList,
+                matchSuffix: !useGlob && matchSuffix && !extList,
+                extension: null,
+                extensions: extList,
+                limit: perRootLimit,
+                excludePatterns: excludes.searchExclude,
+                useIgnoreFiles: excludes.useIgnoreFiles,
+                followSymlinks: excludes.followSymlinks,
+              })
+            }),
+          )
+          if (id !== reqId.current) return
+          let hits = parts.flat()
+          if (hits.length > 500) hits = hits.slice(0, 500)
+          setFilenameResults(hits)
+          if (!sawError) setError(null)
+        } catch (e) {
+          if (id === reqId.current) {
+            sawError = String(e)
+            setFilenameResults([])
           }
+        } finally {
+          if (id === reqId.current) finishOne()
+        }
+      }, FILENAME_DEBOUNCE_MS)
+    } else if (wantsFilename) {
+      queueMicrotask(() => setFilenameResults([]))
+    }
+
+    if (runContent) {
+      contentTimer = setTimeout(async () => {
+        try {
           const searchId = await safeInvoke<number>('开始内容搜索', 'start_content_search')
           if (id !== reqId.current) return
 
           const maxFilesScanned = Math.ceil(8000 / searchRoots.length)
           const parts = await Promise.all(
             searchRoots.map(async root => {
-              const project =
-                findProjectForPath(projects, root.path) ??
-                projects.find(p => p.path === root.path) ??
-                null
+              const project = resolveProject(root.path)
               const excludes = await loadExcludeSettingsForProject(project)
               return safeInvoke<ContentSearchResponse>('内容搜索', 'search_file_contents', {
                 root: root.path,
@@ -347,121 +466,95 @@ export default function SearchPanel() {
             merged.match_count = merged.files.reduce((n, f) => n + f.matches.length, 0)
             merged.truncated = true
           }
+          setContentResults(merged)
+          if (!sawError) setError(null)
+        } catch (e) {
           if (id === reqId.current) {
-            setContentResults(merged)
-            setFilenameResults([])
-            setError(null)
-          }
-        } else {
-          const parts = await Promise.all(
-            searchRoots.map(async root => {
-              const project =
-                findProjectForPath(projects, root.path) ??
-                projects.find(p => p.path === root.path) ??
-                null
-              const excludes = await loadExcludeSettingsForProject(project)
-              return safeInvoke<SearchHit[]>('文件搜索', 'search_files', {
-                root: root.path,
-                query: q,
-                ignoreCase,
-                fuzzy: fuzzy && !useGlob && !matchSuffix && !extList,
-                matchSuffix: !useGlob && matchSuffix && !extList,
-                extension: null,
-                extensions: extList,
-                limit: perRootLimit,
-                excludePatterns: excludes.searchExclude,
-                useIgnoreFiles: excludes.useIgnoreFiles,
-                followSymlinks: excludes.followSymlinks,
-              })
-            }),
-          )
-          if (id !== reqId.current) return
-          let hits = parts.flat()
-          if (hits.length > 500) hits = hits.slice(0, 500)
-          if (id === reqId.current) {
-            setFilenameResults(hits)
+            sawError = String(e)
             setContentResults(null)
-            setError(null)
           }
+        } finally {
+          if (id === reqId.current) finishOne()
         }
-      } catch (e) {
-        if (id === reqId.current) {
-          setError(String(e))
-          setFilenameResults([])
-          setContentResults(null)
-        }
-      } finally {
-        if (id === reqId.current) setLoading(false)
-      }
-    }, debounce)
+      }, CONTENT_DEBOUNCE_MS)
+    } else if (wantsContent) {
+      queueMicrotask(() => setContentResults(null))
+    }
 
     return () => {
-      clearTimeout(handle)
-      if (mode === 'content' && isTauri()) {
+      if (filenameTimer) clearTimeout(filenameTimer)
+      if (contentTimer) clearTimeout(contentTimer)
+      if (runContent && isTauri()) {
         void safeInvoke('取消内容搜索', 'cancel_content_search').catch(() => {})
       }
     }
-  }, [searchRoots, query, ignoreCase, fuzzy, matchSuffix, typeFilter, extList, useGlob, mode, projects])
+  }, [
+    searchRoots,
+    query,
+    ignoreCase,
+    fuzzy,
+    matchSuffix,
+    typeFilter,
+    extList,
+    useGlob,
+    wantsFilename,
+    wantsContent,
+    projects,
+  ])
 
   const toggleSuffix = () => {
-    if (mode === 'content' || useGlob) return
+    if (!wantsFilename || useGlob) return
     if (!matchSuffix && typeFilter !== null) return
     setMatchSuffix(v => !v)
   }
 
+  const projectNameOf = useCallback(
+    (path: string) => {
+      if (!multiProjectSearch) return null
+      return findProjectForPath(projects, path)?.name ?? null
+    },
+    [multiProjectSearch, projects],
+  )
+
   const rows = useMemo<Row[]>(() => {
-    if (mode === 'content') {
-      if (!contentResults || contentResults.match_count === 0) return []
+    const filenameRows =
+      wantsFilename && filenameResults.length > 0
+        ? buildFilenameResultRows(filenameResults, projectNameOf)
+        : []
+    const contentRows =
+      wantsContent && contentResults && contentResults.match_count > 0
+        ? buildContentResultRows(
+            contentResults.files,
+            collapsedFiles,
+            projectNameOf,
+            MAX_MATCHES_PER_FILE,
+          )
+        : []
+
+    if (mode === 'all') {
       const out: Row[] = []
-      for (const file of contentResults.files) {
-        const collapsed = collapsedFiles.has(file.path)
-        const project = multiProjectSearch ? findProjectForPath(projects, file.path) : null
-        const dir = dirOf(file.relative)
-        out.push({
-          kind: 'file',
-          path: file.path,
-          name: file.name,
-          dir: project && dir ? `${project.name} / ${dir}` : project ? project.name : dir,
-          matchCount: file.matches.length,
-          collapsed,
-        })
-        if (!collapsed) {
-          for (const m of file.matches) {
-            out.push({
-              kind: 'match',
-              path: file.path,
-              line: m.line,
-              text: m.text,
-              matchStart: m.match_start,
-              matchEnd: m.match_end,
-            })
-          }
-          if (file.matches.length >= MAX_MATCHES_PER_FILE) {
-            out.push({ kind: 'more', path: file.path })
-          }
-        }
+      if (filenameRows.length > 0) {
+        out.push({ kind: 'section', id: 'filename', label: t('文件名匹配') })
+        out.push(...filenameRows)
+      }
+      if (contentRows.length > 0) {
+        out.push({ kind: 'section', id: 'content', label: t('内容匹配') })
+        out.push(...contentRows)
       }
       return out
     }
-    // filename mode
-    const groups = new Map<string, SearchHit[]>()
-    for (const h of filenameResults) {
-      const sep = h.relative.includes('\\') ? '\\' : '/'
-      const parts = h.relative.split(sep)
-      const dir = parts.length > 1 ? parts.slice(0, -1).join(sep) : '(root)'
-      const project = multiProjectSearch ? findProjectForPath(projects, h.path) : null
-      const groupKey = project ? `${project.name} / ${dir}` : dir
-      const arr = groups.get(groupKey) ?? []
-      arr.push(h)
-      groups.set(groupKey, arr)
-    }
-    const out: Row[] = []
-    for (const [dir, items] of groups) {
-      out.push({ kind: 'dir', dir })
-      for (const h of items) out.push({ kind: 'fn', hit: h })
-    }
-    return out
-  }, [mode, contentResults, filenameResults, collapsedFiles, multiProjectSearch, projects])
+    if (mode === 'content') return contentRows
+    return filenameRows
+  }, [
+    mode,
+    wantsFilename,
+    wantsContent,
+    contentResults,
+    filenameResults,
+    collapsedFiles,
+    projectNameOf,
+    t,
+  ])
 
   const navigableIndexes = useMemo(() => {
     const arr: number[] = []
@@ -486,10 +579,10 @@ export default function SearchPanel() {
 
   const expandAll = useCallback(() => setCollapsedFiles(new Set()), [])
   const collapseAll = useCallback(() => {
-    if (mode === 'content' && contentResults) {
+    if (wantsContent && contentResults) {
       setCollapsedFiles(new Set(contentResults.files.map(f => f.path)))
     }
-  }, [mode, contentResults])
+  }, [wantsContent, contentResults])
 
   const onOpenMatch = useCallback(
     (path: string, line: number) => {
@@ -553,29 +646,130 @@ export default function SearchPanel() {
   )
 
   const hasQuery =
-    mode === 'content'
+    wantsContent && !wantsFilename
       ? query.trim().length > 0
       : query.trim().length > 0 || typeFilter !== null
+
+  const emptyHint =
+    mode === 'all'
+      ? t('输入关键词搜索文件名或内容')
+      : mode === 'content'
+        ? t('输入关键词搜索文件内容')
+        : t('输入关键词、通配符（*）或选择文件类型开始搜索')
+
+  const inputPlaceholder = (() => {
+    if (mode === 'all') {
+      return typeFilter
+        ? t('在 {type} 中搜索文件或内容…', { type: t(typeFilterLabel(typeFilter)) })
+        : t('搜索文件或内容…')
+    }
+    if (mode === 'content') {
+      return typeFilter
+        ? t('在 {type} 文件中搜索内容…', { type: t(typeFilterLabel(typeFilter)) })
+        : t('搜索文件内容…')
+    }
+    if (useGlob) return t('通配符匹配，如 *.tsx 或 test*Util.ts')
+    if (typeFilter) return t('在 {type} 中搜索文件名…', { type: t(typeFilterLabel(typeFilter)) })
+    if (matchSuffix) return t('输入后缀/扩展名，如 .ts 或 ts')
+    if (fuzzy) return t('模糊匹配文件名…')
+    return t('搜索文件名，支持 * 通配符…')
+  })()
+
+  const resultSummary = (() => {
+    if (mode === 'all') {
+      return t('{files} 个文件 · {matches} 个内容匹配{truncated}', {
+        files: filenameResults.length,
+        matches: contentResults?.match_count ?? 0,
+        truncated: contentResults?.truncated ? t(' · 已截断') : '',
+      })
+    }
+    if (mode === 'content') {
+      if (!contentResults) return ''
+      return t('{matches} 个匹配 · {files} 个文件{truncated}', {
+        matches: contentResults.match_count,
+        files: contentResults.files.length,
+        truncated: contentResults.truncated ? t(' · 已截断') : '',
+      })
+    }
+    return t('{count} 个结果', { count: filenameResults.length })
+  })()
+
+  const scopeLabel = searchScope === 'all' ? t('全部项目') : t('当前项目')
 
   return (
     <>
     <div className="h-full flex flex-col bg-bg-sidebar text-fg">
-      <div className="px-4 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
-        <Search size={13} className="text-brand" /> {t('搜索')}
+      <div className="px-3 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
+        <Search size={13} className="text-brand flex-shrink-0" />
+        <span className="min-w-0 truncate">{t('搜索')}</span>
+        {!searchRoot && (
+          <Tooltip label={t('搜索范围')} side="bottom" wrapperClassName="ml-auto inline-flex shrink-0">
+            <button
+              ref={scopeBtnRef}
+              type="button"
+              aria-label={t('搜索范围')}
+              aria-expanded={scopeMenuOpen}
+              aria-haspopup="listbox"
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded font-medium tracking-normal text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors whitespace-nowrap"
+              onClick={event => {
+                event.stopPropagation()
+                if (scopeMenuOpen) {
+                  closeScopeMenu()
+                  return
+                }
+                setScopeMenuStyle(prev => ({ ...prev, visibility: 'hidden' }))
+                setScopeMenuOpen(true)
+              }}
+            >
+              <span>{scopeLabel}</span>
+              <Caret
+                size={11}
+                className={`flex-shrink-0 transition-transform ${scopeMenuOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+          </Tooltip>
+        )}
       </div>
 
-      {!searchRoot && (
-        <SegmentedControl
-          className="mx-3 mb-2"
-          ariaLabel={t('搜索范围')}
-          options={[
-            { value: 'current', label: t('当前项目') },
-            { value: 'all', label: t('全部项目') },
-          ]}
-          value={searchScope}
-          onChange={setSearchScope}
-        />
-      )}
+      {scopeMenuOpen &&
+        createPortal(
+          <div
+            ref={scopeMenuRef}
+            role="listbox"
+            aria-label={t('搜索范围')}
+            className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
+            style={scopeMenuStyle}
+            onPointerDown={event => event.stopPropagation()}
+          >
+            {(
+              [
+                { value: 'current' as const, label: t('当前项目') },
+                { value: 'all' as const, label: t('全部项目') },
+              ] as const
+            ).map(option => {
+              const selected = searchScope === option.value
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  className={`w-full px-2 py-1 text-left text-[12px] rounded transition-colors
+                    ${selected
+                      ? 'bg-bg-active text-fg'
+                      : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}`}
+                  onClick={() => {
+                    setSearchScope(option.value)
+                    closeScopeMenu()
+                  }}
+                >
+                  {option.label}
+                </button>
+              )
+            })}
+          </div>,
+          document.body,
+        )}
 
       {searchRoot && (
         <div className="mx-3 mb-2 flex items-center gap-1.5 px-2 py-1 rounded border border-accent/40 bg-accent/10 text-[11px] text-fg">
@@ -600,6 +794,7 @@ export default function SearchPanel() {
         <SegmentedControl
           ariaLabel={t('搜索模式')}
           options={[
+            { value: 'all', label: t('全部') },
             { value: 'content', label: t('内容') },
             { value: 'filename', label: t('文件名') },
           ]}
@@ -607,105 +802,92 @@ export default function SearchPanel() {
           onChange={setMode}
         />
 
-        <div className="flex items-center gap-0.5">
-          {mode === 'content' && (
+        <div className="flex items-start gap-0.5">
+          {showReplace && (
             <Tooltip label={replaceOpen ? t('隐藏替换') : t('显示替换')} side="bottom">
               <button
                 type="button"
                 aria-label={replaceOpen ? t('隐藏替换') : t('显示替换')}
                 aria-expanded={replaceOpen}
-                className="flex-shrink-0 p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
+                className="flex-shrink-0 mt-1 p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
                 onClick={() => setReplaceOpen(v => !v)}
               >
                 {replaceOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </button>
             </Tooltip>
           )}
-          <div className="relative flex-1 min-w-0">
-            {loading ? (
-              <LoaderCircle
-                size={13}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 animate-spin text-accent"
-                aria-label={t('搜索中')}
+          <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+            <div className="relative">
+              {loading ? (
+                <LoaderCircle
+                  size={13}
+                  className="absolute left-2.5 top-1/2 -translate-y-1/2 animate-spin text-accent"
+                  aria-label={t('搜索中')}
+                />
+              ) : (
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
+              )}
+              <input
+                ref={searchInputRef}
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder={inputPlaceholder}
+                className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
               />
-            ) : (
-              <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
-            )}
-            <input
-              ref={searchInputRef}
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder={
-                mode === 'content'
-                  ? typeFilter
-                    ? t('在 {type} 文件中搜索内容…', { type: t(typeFilterLabel(typeFilter)) })
-                    : t('搜索文件内容…')
-                  : useGlob
-                  ? t('通配符匹配，如 *.tsx 或 test*Util.ts')
-                  : typeFilter
-                  ? t('在 {type} 中搜索文件名…', { type: t(typeFilterLabel(typeFilter)) })
-                  : matchSuffix
-                  ? t('输入后缀/扩展名，如 .ts 或 ts')
-                  : fuzzy
-                  ? t('模糊匹配文件名…')
-                  : t('搜索文件名，支持 * 通配符…')
-              }
-              className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
-            />
-            {query && (
-              <button
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
-                onClick={() => setQuery('')}
-              >
-                <X size={13} />
-              </button>
+              {query && (
+                <button
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
+                  onClick={() => setQuery('')}
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            {showReplace && replaceOpen && (
+              <div className="flex items-center gap-1.5">
+                <div className="relative flex-1 min-w-0">
+                  <Replace
+                    size={13}
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim"
+                  />
+                  <input
+                    value={replaceText}
+                    onChange={e => setReplaceText(e.target.value)}
+                    placeholder={t('替换为…')}
+                    className="setting-input w-full pl-7 pr-2 py-1.5 text-[13px]"
+                  />
+                </div>
+                <Tooltip label={t('预览并确认后写入全部匹配')} side="bottom">
+                  <button
+                    type="button"
+                    disabled={
+                      !contentResults ||
+                      contentResults.files.length === 0 ||
+                      !query.trim() ||
+                      loading
+                    }
+                    className="flex-shrink-0 px-2 py-1.5 text-[11px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                    onClick={() => {
+                      if (!contentResults || !query.trim()) return
+                      setReplacePreview(
+                        buildReplacePreview(
+                          query,
+                          replaceText,
+                          ignoreCase,
+                          contentResults.files,
+                          contentResults.match_count,
+                          contentResults.truncated,
+                        ),
+                      )
+                    }}
+                  >
+                    {t('全部替换')}
+                  </button>
+                </Tooltip>
+              </div>
             )}
           </div>
         </div>
-
-        {mode === 'content' && replaceOpen && (
-          <div className="flex items-center gap-1.5 pl-[22px]">
-            <div className="relative flex-1 min-w-0">
-              <Replace
-                size={13}
-                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim"
-              />
-              <input
-                value={replaceText}
-                onChange={e => setReplaceText(e.target.value)}
-                placeholder={t('替换为…')}
-                className="setting-input w-full pl-7 pr-2 py-1.5 text-[13px]"
-              />
-            </div>
-            <Tooltip label={t('预览并确认后写入全部匹配')} side="bottom">
-              <button
-                type="button"
-                disabled={
-                  !contentResults ||
-                  contentResults.files.length === 0 ||
-                  !query.trim() ||
-                  loading
-                }
-                className="flex-shrink-0 px-2 py-1.5 text-[11px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                onClick={() => {
-                  if (!contentResults || !query.trim()) return
-                  setReplacePreview(
-                    buildReplacePreview(
-                      query,
-                      replaceText,
-                      ignoreCase,
-                      contentResults.files,
-                      contentResults.match_count,
-                      contentResults.truncated,
-                    ),
-                  )
-                }}
-              >
-                {t('全部替换')}
-              </button>
-            </Tooltip>
-          </div>
-        )}
 
         <div className="flex items-center gap-1.5 flex-wrap">
           <SearchToggle
@@ -715,7 +897,7 @@ export default function SearchPanel() {
             icon={<CaseSensitive size={13} />}
             label="Aa"
           />
-          {mode === 'filename' && (
+          {wantsFilename && (
             <>
               <SearchToggle
                 active={fuzzy}
@@ -867,10 +1049,7 @@ export default function SearchPanel() {
         ) : error ? (
           <EmptyState icon={<AlertCircle size={28} strokeWidth={1.2} className="text-danger" />} title={error} />
         ) : !hasQuery ? (
-          <EmptyState
-            icon={<Search size={28} strokeWidth={1.2} />}
-            title={mode === 'content' ? t('输入关键词搜索文件内容') : t('输入关键词、通配符（*）或选择文件类型开始搜索')}
-          />
+          <EmptyState icon={<Search size={28} strokeWidth={1.2} />} title={emptyHint} />
         ) : rows.length === 0 && loading ? (
           <EmptyState icon={<LoaderCircle size={24} className="animate-spin text-accent" />} title={t('搜索中…')} />
         ) : rows.length === 0 ? (
@@ -878,17 +1057,9 @@ export default function SearchPanel() {
         ) : (
           <>
             <div className="px-4 py-1 flex items-center gap-2 text-[11px] text-fg-dim">
-              <span className="truncate">
-                {mode === 'content'
-                  ? t('{matches} 个匹配 · {files} 个文件{truncated}', {
-                      matches: contentResults!.match_count,
-                      files: contentResults!.files.length,
-                      truncated: contentResults!.truncated ? t(' · 已截断') : '',
-                    })
-                  : t('{count} 个结果', { count: filenameResults.length })}
-              </span>
+              <span className="truncate">{resultSummary}</span>
               {loading && <LoaderCircle size={12} className="animate-spin text-accent flex-shrink-0" aria-label={t('搜索中')} />}
-              {mode === 'content' && (
+              {wantsContent && contentResults && contentResults.match_count > 0 && (
                 <span className="ml-auto flex items-center gap-2 flex-shrink-0">
                   <Tooltip label={t('展开全部')} side="bottom">
                     <button className="hover:text-fg" onClick={expandAll}>

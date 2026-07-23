@@ -205,6 +205,45 @@ export function formatScmDisplayPath(path: string, maxLength = 52): string {
   return `${normalized.slice(0, prefixLen)}...${normalized.slice(-suffixLen)}`
 }
 
+export type CommitFileFilterMode = 'text' | 'regex'
+
+export type CommitFileFilterResult<T extends { path: string }> = {
+  files: T[]
+  /** Set when `mode === 'regex'` and the pattern is invalid. */
+  error: 'invalid-regex' | null
+}
+
+/** Filter commit file paths by substring or RegExp (case-insensitive). */
+export function filterCommitFiles<T extends { path: string }>(
+  files: T[],
+  query: string,
+  mode: CommitFileFilterMode = 'text',
+): CommitFileFilterResult<T> {
+  const q = query.trim()
+  if (!q) return { files, error: null }
+
+  if (mode === 'regex') {
+    let re: RegExp
+    try {
+      re = new RegExp(q, 'i')
+    } catch {
+      return { files: [], error: 'invalid-regex' }
+    }
+    return {
+      files: files.filter(file => re.test(normalizeGitChangePath(file.path).replace(/\\/g, '/'))),
+      error: null,
+    }
+  }
+
+  const needle = q.toLowerCase()
+  return {
+    files: files.filter(file =>
+      normalizeGitChangePath(file.path).replace(/\\/g, '/').toLowerCase().includes(needle),
+    ),
+    error: null,
+  }
+}
+
 /** SCM badge tone from group-specific status glyph. */
 export function scmStatusBadgeTone(
   status: string,

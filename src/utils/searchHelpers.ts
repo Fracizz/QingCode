@@ -14,12 +14,20 @@ export interface ContentSearchFileResult {
   matches: ContentSearchMatch[]
 }
 
+export type FilenameSearchHit = {
+  name: string
+  path: string
+  relative: string
+  is_dir: boolean
+}
+
 export type SearchResultRow =
+  | { kind: 'section'; id: 'filename' | 'content'; label: string }
   | { kind: 'file'; path: string; name: string; dir: string; matchCount: number; collapsed: boolean }
   | { kind: 'match'; path: string; line: number; text: string; matchStart: number; matchEnd: number }
   | { kind: 'more'; path: string }
   | { kind: 'dir'; dir: string }
-  | { kind: 'fn'; hit: { name: string; path: string; relative: string; is_dir: boolean } }
+  | { kind: 'fn'; hit: FilenameSearchHit }
 
 export function typeFilterLabel(filter: TypeFilter | null): string {
   if (!filter) return '全部类型'
@@ -38,6 +46,8 @@ export function isGlobPattern(query: string): boolean {
 
 export function rowHeightOf(row: SearchResultRow): number {
   switch (row.kind) {
+    case 'section':
+      return 26
     case 'file':
       return 24
     case 'match':
@@ -49,6 +59,69 @@ export function rowHeightOf(row: SearchResultRow): number {
     case 'fn':
       return 22
   }
+}
+
+/** Group filename hits by directory (and project name when multi-root). */
+export function buildFilenameResultRows(
+  hits: FilenameSearchHit[],
+  projectNameOf: (path: string) => string | null,
+): SearchResultRow[] {
+  const groups = new Map<string, FilenameSearchHit[]>()
+  for (const h of hits) {
+    const sep = h.relative.includes('\\') ? '\\' : '/'
+    const parts = h.relative.split(sep)
+    const dir = parts.length > 1 ? parts.slice(0, -1).join(sep) : '(root)'
+    const project = projectNameOf(h.path)
+    const groupKey = project ? `${project} / ${dir}` : dir
+    const arr = groups.get(groupKey) ?? []
+    arr.push(h)
+    groups.set(groupKey, arr)
+  }
+  const out: SearchResultRow[] = []
+  for (const [dir, items] of groups) {
+    out.push({ kind: 'dir', dir })
+    for (const h of items) out.push({ kind: 'fn', hit: h })
+  }
+  return out
+}
+
+/** Flatten content matches into collapsible file / match / more rows. */
+export function buildContentResultRows(
+  files: ContentSearchFileResult[],
+  collapsedFiles: Set<string>,
+  projectNameOf: (path: string) => string | null,
+  maxMatchesPerFile: number,
+): SearchResultRow[] {
+  const out: SearchResultRow[] = []
+  for (const file of files) {
+    const collapsed = collapsedFiles.has(file.path)
+    const project = projectNameOf(file.path)
+    const dir = dirOf(file.relative)
+    out.push({
+      kind: 'file',
+      path: file.path,
+      name: file.name,
+      dir: project && dir ? `${project} / ${dir}` : project ? project : dir,
+      matchCount: file.matches.length,
+      collapsed,
+    })
+    if (!collapsed) {
+      for (const m of file.matches) {
+        out.push({
+          kind: 'match',
+          path: file.path,
+          line: m.line,
+          text: m.text,
+          matchStart: m.match_start,
+          matchEnd: m.match_end,
+        })
+      }
+      if (file.matches.length >= maxMatchesPerFile) {
+        out.push({ kind: 'more', path: file.path })
+      }
+    }
+  }
+  return out
 }
 
 export function dirOf(relative: string): string {

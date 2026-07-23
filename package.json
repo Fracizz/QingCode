@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "skill:sync": "node --experimental-strip-types scripts/sync-qingcode-cli-skill.mjs",
     "smoke:start": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/smoke-start.ps1",
     "tauri": "tauri",
     "tauri:dev": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",

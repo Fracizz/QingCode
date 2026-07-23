@@ -1,21 +1,23 @@
 export const SCM_LAYOUT_KEY = 'qingcode:scm-layout'
-/** Bump when defaults change so narrow legacy layouts upgrade once. */
-export const SCM_LAYOUT_VERSION = 2
+/** Bump when defaults / history layout semantics change so installs upgrade once. */
+export const SCM_LAYOUT_VERSION = 3
 
 export const SCM_LEFT_MIN = 220
-export const SCM_LEFT_DEFAULT = 300
+/** Changes tab left list default. */
+export const SCM_LEFT_DEFAULT = 340
 export const SCM_LEFT_MAX = 560
 /** Keep room for the right pane (diff / commit detail). */
 export const SCM_LEFT_REMAINING_MIN = 280
 
-export const SCM_FILES_MIN = 280
-export const SCM_FILES_DEFAULT = 440
-export const SCM_FILES_MAX = 680
-/** Keep room for the commit file diff pane. */
-export const SCM_FILES_REMAINING_MIN = 280
-
-/** Pre-v2 default; used to detect stale narrow file panes. */
-const LEGACY_FILES_DEFAULT = 240
+/**
+ * History detail column (summary + files). Default ~2/5 of a typical window so the
+ * commit list / diff side keeps ~3/5 via flex-1.
+ */
+export const SCM_FILES_MIN = 320
+export const SCM_FILES_DEFAULT = 520
+export const SCM_FILES_MAX = 720
+/** Keep room for the left history pane (commit list or diff). */
+export const SCM_FILES_REMAINING_MIN = 360
 
 export type ScmLayout = {
   version: number
@@ -60,13 +62,9 @@ export function loadScmLayout(): ScmLayout {
       typeof parsed.filesWidth === 'number' ? parsed.filesWidth : SCM_FILES_DEFAULT,
     )
 
-    // One-shot upgrade: old installs kept the narrow 240px file column.
     if (version < SCM_LAYOUT_VERSION) {
-      if (typeof parsed.filesWidth !== 'number' || parsed.filesWidth <= LEGACY_FILES_DEFAULT) {
-        filesWidth = SCM_FILES_DEFAULT
-      } else {
-        filesWidth = clampScmFilesWidth(parsed.filesWidth)
-      }
+      // History layout is now list/diff (~3/5) + detail (~2/5); refresh detail width.
+      filesWidth = SCM_FILES_DEFAULT
       const upgraded = { version: SCM_LAYOUT_VERSION, leftWidth, filesWidth }
       saveScmLayout(upgraded)
       return upgraded
