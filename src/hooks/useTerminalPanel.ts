@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   clampTerminalWidth,
+  getDefaultSideTerminalWidth,
   getTerminalMaxHeight,
-  TERMINAL_DEFAULT_WIDTH,
   TERMINAL_MIN_HEIGHT,
 } from '../lib/panelLayout'
+import { PANEL_LAYOUT_CHANGED_EVENT } from '../lib/panelLayoutTemplate'
+import { loadSidebarWidth } from '../lib/sidebarLayout'
 import {
   beginPanelResize,
   settlePanelResize,
@@ -12,21 +14,53 @@ import {
 
 const TERMINAL_PANEL_KEY = 'qingcode:terminal-panel'
 
+export type SideTerminalSplitMode = 'equal' | 'custom'
+
+function parseSideSplit(value: unknown): SideTerminalSplitMode {
+  return value === 'custom' ? 'custom' : 'equal'
+}
+
 function loadTerminalPanelState() {
   try {
     const value = JSON.parse(localStorage.getItem(TERMINAL_PANEL_KEY) ?? '{}') as {
       open?: boolean
       height?: number
       width?: number
+      sideSplit?: unknown
     }
     const maxH = getTerminalMaxHeight()
+    const sideSplit = parseSideSplit(value.sideSplit)
     return {
       open: value.open ?? true,
       height: Math.min(maxH, Math.max(TERMINAL_MIN_HEIGHT, value.height ?? 260)),
-      width: clampTerminalWidth(value.width ?? TERMINAL_DEFAULT_WIDTH),
+      sideSplit,
+      width:
+        sideSplit === 'custom'
+          ? clampTerminalWidth(
+              value.width ??
+                getDefaultSideTerminalWidth({
+                  sidebarVisible: true,
+                  sidebarWidth: loadSidebarWidth(),
+                }),
+            )
+          : clampTerminalWidth(
+              value.width ??
+                getDefaultSideTerminalWidth({
+                  sidebarVisible: true,
+                  sidebarWidth: loadSidebarWidth(),
+                }),
+            ),
     }
   } catch {
-    return { open: true, height: 260, width: TERMINAL_DEFAULT_WIDTH }
+    return {
+      open: true,
+      height: 260,
+      sideSplit: 'equal' as SideTerminalSplitMode,
+      width: getDefaultSideTerminalWidth({
+        sidebarVisible: true,
+        sidebarWidth: loadSidebarWidth(),
+      }),
+    }
   }
 }
 
@@ -37,6 +71,8 @@ export interface UseTerminalPanelReturn {
   setTerminalHeight: React.Dispatch<React.SetStateAction<number>>
   terminalWidth: number
   setTerminalWidth: React.Dispatch<React.SetStateAction<number>>
+  sideSplit: SideTerminalSplitMode
+  setSideSplit: React.Dispatch<React.SetStateAction<SideTerminalSplitMode>>
   isTerminalResizing: boolean
   dragHeightRef: React.MutableRefObject<number>
   dragWidthRef: React.MutableRefObject<number>
@@ -53,12 +89,14 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
   const [terminalOpen, setTerminalOpen] = useState(initialTerminalPanel.open)
   const [terminalHeight, setTerminalHeight] = useState(initialTerminalPanel.height)
   const [terminalWidth, setTerminalWidth] = useState(initialTerminalPanel.width)
+  const [sideSplit, setSideSplit] = useState<SideTerminalSplitMode>(initialTerminalPanel.sideSplit)
   const [isTerminalResizing, setIsTerminalResizing] = useState(false)
   const terminalPanelRef = useRef<HTMLDivElement>(null)
   const dragStateRef = useRef<{ startY: number; startH: number } | null>(null)
   const widthDragStateRef = useRef<{ startX: number; startW: number } | null>(null)
   const dragHeightRef = useRef(terminalHeight)
   const dragWidthRef = useRef(terminalWidth)
+  const sideSplitRef = useRef(sideSplit)
   const targetSizeRef = useRef(0)
   const lastAppliedPxRef = useRef(0)
   const sizeRafRef = useRef(0)
@@ -70,6 +108,19 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
   useEffect(() => {
     dragWidthRef.current = terminalWidth
   }, [terminalWidth])
+
+  useEffect(() => {
+    sideSplitRef.current = sideSplit
+  }, [sideSplit])
+
+  useEffect(() => {
+    const onLayoutChange = (event: Event) => {
+      const template = (event as CustomEvent<{ template?: string }>).detail?.template
+      if (template === 'sideTerminal') setSideSplit('equal')
+    }
+    window.addEventListener(PANEL_LAYOUT_CHANGED_EVENT, onLayoutChange)
+    return () => window.removeEventListener(PANEL_LAYOUT_CHANGED_EVENT, onLayoutChange)
+  }, [])
 
   const cancelSizeFrame = useCallback(() => {
     if (sizeRafRef.current !== 0) {
@@ -180,7 +231,15 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
       const pointerId = e.pointerId
       handle.setPointerCapture(pointerId)
 
-      const startW = dragWidthRef.current
+      let startW = dragWidthRef.current
+      if (sideSplitRef.current === 'equal') {
+        startW = Math.round(dock.getBoundingClientRect().width)
+        dragWidthRef.current = startW
+        setTerminalWidth(startW)
+        setSideSplit('custom')
+        sideSplitRef.current = 'custom'
+      }
+
       widthDragStateRef.current = { startX: e.clientX, startW }
       targetSizeRef.current = startW
       lastAppliedPxRef.current = startW
@@ -213,6 +272,7 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
         dragWidthRef.current = next
         dock.style.width = `${next}px`
         setTerminalWidth(next)
+        setSideSplit('custom')
         setIsTerminalResizing(false)
         settlePanelResize('vertical')
       }
@@ -239,13 +299,16 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
         open: terminalOpen,
         height: terminalHeight,
         width: terminalWidth,
+        sideSplit,
       })
     )
-  }, [terminalOpen, terminalHeight, terminalWidth])
+  }, [terminalOpen, terminalHeight, terminalWidth, sideSplit])
 
   useEffect(() => {
     const onResize = () => {
-      setTerminalWidth(w => clampTerminalWidth(w))
+      if (sideSplitRef.current === 'custom') {
+        setTerminalWidth(w => clampTerminalWidth(w))
+      }
       setTerminalHeight(h => {
         const maxH = getTerminalMaxHeight()
         return Math.min(maxH, Math.max(TERMINAL_MIN_HEIGHT, h))
@@ -262,6 +325,8 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
     setTerminalHeight,
     terminalWidth,
     setTerminalWidth,
+    sideSplit,
+    setSideSplit,
     isTerminalResizing,
     dragHeightRef,
     dragWidthRef,

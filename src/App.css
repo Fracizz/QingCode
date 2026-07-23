@@ -112,3 +112,72 @@ body {
 .modal-field-input.modal-field-input--invalid {
   border-color: var(--color-danger);
 }
+
+/* Workspace grid — keep terminal mounted while classic ↔ side dock changes. */
+.workspace-grid {
+  display: grid;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-grid-activity {
+  grid-area: activity;
+  min-height: 0;
+  min-width: 0;
+}
+
+.workspace-grid-sidebar {
+  grid-area: sidebar;
+  min-height: 0;
+  min-width: 0;
+}
+
+.workspace-grid-editor {
+  grid-area: editor;
+  min-height: 0;
+  min-width: 0;
+}
+
+[data-terminal-panel] {
+  grid-area: terminal;
+  min-height: 0;
+  min-width: 0;
+}
+
+.workspace-grid[data-panel-layout='classic'][data-sidebar-slot='visible'] {
+  grid-template-columns: auto auto 1fr;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'activity sidebar editor'
+    'terminal terminal terminal';
+}
+
+.workspace-grid[data-panel-layout='classic'][data-sidebar-slot='hidden'] {
+  grid-template-columns: auto 1fr;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'activity editor'
+    'terminal terminal';
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'] {
+  grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas:
+    'activity sidebar terminal editor';
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-split='custom'] {
+  grid-template-columns: auto auto auto minmax(0, 1fr);
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'] {
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas:
+    'activity terminal editor';
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-split='custom'] {
+  grid-template-columns: auto auto minmax(0, 1fr);
+}

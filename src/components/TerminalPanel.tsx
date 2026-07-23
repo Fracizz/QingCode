@@ -28,7 +28,9 @@ export interface TerminalPanelProps {
   terminalOpen: boolean
   terminalHeight: number
   terminalWidth: number
+  sideSplit?: 'equal' | 'custom'
   isTerminalResizing: boolean
+  layoutSwitching?: boolean
   onResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
   onWidthResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
   terminalPanelRef: RefObject<HTMLDivElement | null>
@@ -39,11 +41,15 @@ export default function TerminalPanel({
   terminalOpen,
   terminalHeight,
   terminalWidth,
+  sideSplit = 'equal',
   isTerminalResizing,
+  layoutSwitching = false,
   onResizerPointerDown,
   onWidthResizerPointerDown,
   terminalPanelRef,
 }: TerminalPanelProps) {
+  const skipDockTransition = isTerminalResizing || layoutSwitching
+  const sideWidthEqual = sideSplit === 'equal'
   const { t } = useI18n()
   const terminals = useTerminalStore(s => s.terminals)
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
@@ -82,7 +88,7 @@ export default function TerminalPanel({
                 <TerminalView
                   terminalId={term.id}
                   isActive={isActive}
-                  layoutKey={`${position}:${terminalOpen}:${terminalHeight}:${terminalWidth}`}
+                  layoutKey={`${position}:${terminalOpen}:${terminalHeight}:${sideSplit}:${terminalWidth}`}
                 />
               </Suspense>
             </div>
@@ -99,10 +105,14 @@ export default function TerminalPanel({
         data-terminal-panel
         data-terminal-dock="side"
         data-terminal-position="side"
-        className={`flex flex-shrink-0 h-full min-h-0 overflow-hidden ${
-          isTerminalResizing ? '' : 'transition-[width,opacity] duration-200 ease-out'
+        className={`flex h-full min-h-0 overflow-hidden ${
+          sideWidthEqual ? 'min-w-0 w-full' : 'flex-shrink-0'
+        } ${
+          skipDockTransition ? '' : 'transition-[width,opacity] duration-200 ease-out'
         } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-        style={{ width: terminalOpen ? terminalWidth : 0 }}
+        style={{
+          width: terminalOpen ? (sideWidthEqual ? '100%' : terminalWidth) : 0,
+        }}
       >
         <div
           className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-r border-border"
@@ -132,7 +142,7 @@ export default function TerminalPanel({
       data-terminal-dock="bottom"
       data-terminal-position="bottom"
       className={`flex flex-col flex-shrink-0 min-h-0 overflow-hidden ${
-        isTerminalResizing ? '' : 'transition-[height,opacity] duration-200 ease-out'
+        skipDockTransition ? '' : 'transition-[height,opacity] duration-200 ease-out'
       } ${terminalOpen ? 'opacity-100' : 'opacity-0 pointer-events-none h-0'}`}
       style={{ height: terminalOpen ? terminalHeight : 0 }}
     >

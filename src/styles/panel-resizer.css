@@ -11,7 +11,8 @@ body.panel-resizing[data-panel-resize='vertical'] * {
 }
 
 /* 拖动时只关闭过渡；终端和编辑区继续使用同一套 flex 布局。 */
-body.panel-resizing [data-terminal-dock] {
+body.panel-resizing [data-terminal-dock],
+body[data-panel-layout-switch] [data-terminal-dock] {
   transition: none !important;
 }
 

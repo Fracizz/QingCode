@@ -1,6 +1,7 @@
 import { translate } from './i18n'
 import {
   ACTIVITY_BAR_WIDTH,
+  SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_EDITOR_MIN_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
@@ -10,7 +11,6 @@ export const TERMINAL_MIN_HEIGHT = 120
 export const TERMINAL_MAX_HEIGHT_RATIO = 0.9
 
 export const TERMINAL_MIN_WIDTH = 200
-export const TERMINAL_DEFAULT_WIDTH = 400
 export const TERMINAL_MAX_WIDTH_RATIO = 0.5
 
 type TranslateFn = (source: string, values?: Record<string, string | number>) => string
@@ -37,6 +37,25 @@ export function getTerminalMaxWidth() {
 export function clampTerminalWidth(width: number): number {
   const max = getTerminalMaxWidth()
   return Math.min(max, Math.max(TERMINAL_MIN_WIDTH, width))
+}
+
+/** Default side-dock width: split the terminal|editor band evenly after chrome. */
+export function getSideTerminalEditorBandWidth(options: {
+  sidebarVisible: boolean
+  sidebarWidth?: number
+}): number {
+  const sidebar = options.sidebarVisible
+    ? (options.sidebarWidth ?? SIDEBAR_DEFAULT_WIDTH)
+    : 0
+  return window.innerWidth - ACTIVITY_BAR_WIDTH - sidebar
+}
+
+export function getDefaultSideTerminalWidth(options: {
+  sidebarVisible: boolean
+  sidebarWidth?: number
+}): number {
+  const band = getSideTerminalEditorBandWidth(options)
+  return clampTerminalWidth(Math.round(band / 2))
 }
 
 export function terminalResizerHint(height: number, t: TranslateFn = translate) {

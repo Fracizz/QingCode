@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense } from 'react'
+import { useEffect, useLayoutEffect, useState, lazy, Suspense } from 'react'
 import './App.css'
 import ActivityBar from './components/ActivityBar'
 import Sidebar from './components/Sidebar'
@@ -48,6 +48,10 @@ import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
 import {
   terminalPositionForTemplate,
 } from './lib/panelLayoutTemplate'
+import {
+  beginPanelResize,
+  settlePanelResize,
+} from './lib/panelResize'
 import {
   markWorkspaceSessionPersistReady,
   pruneWorkspaceSessions,
@@ -128,6 +132,7 @@ function App() {
   const terminalOpenSignal = useUIStore(s => s.terminalOpenSignal)
   const terminalToggleSignal = useUIStore(s => s.terminalToggleSignal)
   const panelLayout = useUIStore(s => s.panelLayout)
+  const panelLayoutSwitching = useUIStore(s => s.panelLayoutSwitching)
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
   const workspaceManagerOpen = useUIStore(s => s.workspaceManagerOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
@@ -145,8 +150,9 @@ function App() {
     terminalOpen,
     setTerminalOpen,
     terminalHeight,
-    terminalWidth,
-    isTerminalResizing,
+  terminalWidth,
+  sideSplit,
+  isTerminalResizing,
     onResizerPointerDown,
     onWidthResizerPointerDown,
     terminalPanelRef,
@@ -155,6 +161,22 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
   const [projectsReady, setProjectsReady] = useState(false)
   const terminalPosition = terminalPositionForTemplate(panelLayout)
+  const sidebarSlotVisible =
+    sidebarOpen && (view === 'explorer' || view === 'search' || view === 'run')
+
+  useLayoutEffect(() => {
+    if (!panelLayoutSwitching) return
+    document.body.dataset.panelLayoutSwitch = '1'
+    beginPanelResize(terminalPosition === 'side' ? 'vertical' : 'horizontal')
+  }, [panelLayoutSwitching, terminalPosition])
+
+  useEffect(() => {
+    if (!panelLayoutSwitching) return
+    const orientation = terminalPosition === 'side' ? 'vertical' : 'horizontal'
+    settlePanelResize(orientation)
+    delete document.body.dataset.panelLayoutSwitch
+    useUIStore.setState({ panelLayoutSwitching: false })
+  }, [panelLayoutSwitching, terminalPosition])
 
   useAppKeyboardShortcuts({ shortcuts, setView, openPalette, openSymbolPicker })
 
@@ -283,61 +305,76 @@ function App() {
         </div>
       )}
       <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
-        <div className="flex flex-1 min-h-0 overflow-hidden">
-          <ActivityBar
-            active={view}
-            sidebarOpen={sidebarOpen}
-            onActiveChange={toggleActivityView}
-            onToggleTerminal={() => setTerminalOpen(v => !v)}
-            onAddProject={handleAddProject}
-            onManageProjects={openProjectManager}
+        <div
+          className="workspace-grid flex-1 min-h-0 overflow-hidden"
+          data-panel-layout={panelLayout}
+          data-sidebar-slot={sidebarSlotVisible ? 'visible' : 'hidden'}
+          data-terminal-split={
+            panelLayout === 'sideTerminal' ? sideSplit : undefined
+          }
+        >
+          <div className="workspace-grid-activity">
+            <ActivityBar
+              active={view}
+              sidebarOpen={sidebarOpen}
+              onActiveChange={toggleActivityView}
+              onToggleTerminal={() => setTerminalOpen(v => !v)}
+              onAddProject={handleAddProject}
+              onManageProjects={openProjectManager}
+              terminalOpen={terminalOpen}
+            />
+          </div>
+
+          {sidebarSlotVisible && view === 'explorer' && (
+            <div className="workspace-grid-sidebar">
+              <ResizableSidebar width={sidebarWidth} onWidthChange={setSidebarWidth}>
+                <Sidebar />
+              </ResizableSidebar>
+            </div>
+          )}
+
+          {sidebarSlotVisible && view === 'search' && (
+            <div className="workspace-grid-sidebar">
+              <ResizableSidebar
+                width={sidebarWidth}
+                onWidthChange={setSidebarWidth}
+                className="ui-font-scaled"
+              >
+                <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                  <SearchPanel />
+                </Suspense>
+              </ResizableSidebar>
+            </div>
+          )}
+
+          {sidebarSlotVisible && view === 'run' && (
+            <div className="workspace-grid-sidebar">
+              <ResizableSidebar
+                width={sidebarWidth}
+                onWidthChange={setSidebarWidth}
+                className="ui-font-scaled bg-bg-sidebar"
+              >
+                <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
+                  <RunPanel />
+                </Suspense>
+              </ResizableSidebar>
+            </div>
+          )}
+
+          <TerminalPanel
+            position={terminalPosition}
             terminalOpen={terminalOpen}
+            terminalHeight={terminalHeight}
+            terminalWidth={terminalWidth}
+            sideSplit={sideSplit}
+            isTerminalResizing={isTerminalResizing}
+            layoutSwitching={panelLayoutSwitching}
+            onResizerPointerDown={onResizerPointerDown}
+            onWidthResizerPointerDown={onWidthResizerPointerDown}
+            terminalPanelRef={terminalPanelRef}
           />
 
-          {sidebarOpen && view === 'explorer' && (
-            <ResizableSidebar width={sidebarWidth} onWidthChange={setSidebarWidth}>
-              <Sidebar />
-            </ResizableSidebar>
-          )}
-
-          {sidebarOpen && view === 'search' && (
-            <ResizableSidebar
-              width={sidebarWidth}
-              onWidthChange={setSidebarWidth}
-              className="ui-font-scaled"
-            >
-              <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                <SearchPanel />
-              </Suspense>
-            </ResizableSidebar>
-          )}
-
-          {sidebarOpen && view === 'run' && (
-            <ResizableSidebar
-              width={sidebarWidth}
-              onWidthChange={setSidebarWidth}
-              className="ui-font-scaled bg-bg-sidebar"
-            >
-              <Suspense fallback={<LazyFallback className="h-full bg-bg-sidebar" />}>
-                <RunPanel />
-              </Suspense>
-            </ResizableSidebar>
-          )}
-
-          {terminalPosition === 'side' && (
-            <TerminalPanel
-              position="side"
-              terminalOpen={terminalOpen}
-              terminalHeight={terminalHeight}
-              terminalWidth={terminalWidth}
-              isTerminalResizing={isTerminalResizing}
-              onResizerPointerDown={onResizerPointerDown}
-              onWidthResizerPointerDown={onWidthResizerPointerDown}
-              terminalPanelRef={terminalPanelRef}
-            />
-          )}
-
-          <div className="flex-1 flex flex-col overflow-hidden min-w-0" data-editor-column>
+          <div className="workspace-grid-editor flex flex-col overflow-hidden min-w-0" data-editor-column>
             {view === 'settings' ? (
               <Suspense fallback={<LazyFallback />}>
                 <SettingsEditor />
@@ -378,19 +415,6 @@ function App() {
             )}
           </div>
         </div>
-
-        {terminalPosition === 'bottom' && (
-          <TerminalPanel
-            position="bottom"
-            terminalOpen={terminalOpen}
-            terminalHeight={terminalHeight}
-            terminalWidth={terminalWidth}
-            isTerminalResizing={isTerminalResizing}
-            onResizerPointerDown={onResizerPointerDown}
-            onWidthResizerPointerDown={onWidthResizerPointerDown}
-            terminalPanelRef={terminalPanelRef}
-          />
-        )}
       </div>
 
       <StatusBar />

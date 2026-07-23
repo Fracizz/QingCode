@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { translateFor, useLocaleStore } from './i18n'
 import {
   clampTerminalWidth,
+  getDefaultSideTerminalWidth,
+  getSideTerminalEditorBandWidth,
   getTerminalMaxHeight,
   getTerminalMaxWidth,
   sidebarResizerHint,
@@ -11,7 +13,11 @@ import {
   terminalResizerHint,
   terminalWidthResizerHint,
 } from './panelLayout'
-import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from './sidebarLayout'
+import {
+  ACTIVITY_BAR_WIDTH,
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+} from './sidebarLayout'
 
 beforeEach(() => {
   vi.stubGlobal('window', { innerWidth: 1400, innerHeight: 900 })
@@ -27,6 +33,21 @@ describe('clampTerminalWidth', () => {
     expect(clampTerminalWidth(50)).toBe(TERMINAL_MIN_WIDTH)
     expect(clampTerminalWidth(400)).toBe(400)
     expect(clampTerminalWidth(2000)).toBe(getTerminalMaxWidth())
+  })
+})
+
+describe('getDefaultSideTerminalWidth', () => {
+  it('splits the terminal|editor band evenly after activity bar and sidebar', () => {
+    const band = getSideTerminalEditorBandWidth({ sidebarVisible: true })
+    expect(getDefaultSideTerminalWidth({ sidebarVisible: true })).toBe(Math.round(band / 2))
+    expect(getDefaultSideTerminalWidth({ sidebarVisible: true, sidebarWidth: 260 })).toBe(
+      clampTerminalWidth(Math.round((window.innerWidth - ACTIVITY_BAR_WIDTH - 260) / 2)),
+    )
+  })
+
+  it('ignores sidebar width when the sidebar slot is hidden', () => {
+    const band = getSideTerminalEditorBandWidth({ sidebarVisible: false })
+    expect(getDefaultSideTerminalWidth({ sidebarVisible: false })).toBe(Math.round(band / 2))
   })
 })
 

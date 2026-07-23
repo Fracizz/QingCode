@@ -12,7 +12,7 @@ beforeEach(() => {
       memory.set(key, value)
     },
   })
-  useUIStore.setState({ panelLayout: 'classic', terminalOpenSignal: 0 })
+  useUIStore.setState({ panelLayout: 'classic', panelLayoutSwitching: false, terminalOpenSignal: 0 })
 })
 
 afterEach(() => {
