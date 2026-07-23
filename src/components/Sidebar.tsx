@@ -90,6 +90,7 @@ import {
   shortcutMatchesEvent,
 } from '../lib/shortcuts'
 import { copyRelativePathAction } from '../lib/copyFileActions'
+import { setExplorerSelectedPath } from '../lib/explorerSelection'
 import { useShortcutStore } from '../store/shortcutStore'
 import ExplorerTreeRow from './ExplorerTreeRow'
 
@@ -219,6 +220,11 @@ export default function Sidebar() {
     })
     scrolledRevealSeqRef.current = 0
   }, [currentProject?.id, replaceSelection])
+
+  useEffect(() => {
+    setExplorerSelectedPath(selectedPath)
+    return () => setExplorerSelectedPath(null)
+  }, [selectedPath])
 
   useEffect(() => {
     if (treeRevealPath) queueMicrotask(() => replaceSelection(treeRevealPath))
@@ -1268,9 +1274,14 @@ export default function Sidebar() {
     handleTreeKeyDown(event)
   }
 
+  const focusExplorer = useCallback(() => {
+    treeFocusRef.current?.focus()
+  }, [])
+
   return (
     <div
       className="ui-font-scaled h-full flex flex-col bg-bg-sidebar text-fg"
+      data-qingcode-explorer=""
       onContextMenu={event =>
         showContextMenu(
           event,
@@ -1356,9 +1367,13 @@ export default function Sidebar() {
                         }
                       : undefined
                   }
-                  onClick={() => replaceSelection(currentProject.path)}
+                  onClick={() => {
+                    replaceSelection(currentProject.path)
+                    focusExplorer()
+                  }}
                   onContextMenu={event => {
                     replaceSelection(currentProject.path)
+                    focusExplorer()
                     showContextMenu(event, { kind: 'project', project: currentProject })
                   }}
                 >
@@ -1402,20 +1417,6 @@ export default function Sidebar() {
                       <FolderPlus size={13} />
                     </button>
                   </Tooltip>
-                  <Tooltip label={t('新建终端')} side="bottom">
-                    <button
-                      type="button"
-                      aria-label={t('新建终端')}
-                      disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
-                      onClick={event => {
-                        event.stopPropagation()
-                        void addTerminal(currentProject.path, currentProject.id)
-                      }}
-                    >
-                      <TerminalIcon size={13} />
-                    </button>
-                  </Tooltip>
                   <Tooltip label={t('在文件管理器中打开')} side="bottom">
                     <button
                       type="button"
@@ -1430,7 +1431,7 @@ export default function Sidebar() {
                       <ExternalLink size={13} />
                     </button>
                   </Tooltip>
-                  {unavailable ? (
+                  {unavailable && (
                     <>
                       <Tooltip label={t('重新定位项目')} side="bottom">
                         <button
@@ -1463,24 +1464,6 @@ export default function Sidebar() {
                         </button>
                       </Tooltip>
                     </>
-                  ) : (
-                    <Tooltip label={t('从顶栏隐藏')} side="bottom">
-                      <button
-                        type="button"
-                        aria-label={t('从顶栏隐藏')}
-                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-danger"
-                        onClick={event => {
-                          event.stopPropagation()
-                          handleRemoveProject(
-                            currentProject.id,
-                            currentProject.name,
-                            currentProject.path,
-                          )
-                        }}
-                      >
-                        <X size={13} />
-                      </button>
-                    </Tooltip>
                   )}
                 </div>
 

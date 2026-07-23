@@ -811,6 +811,19 @@ pub fn clipboard_write_files(
     Ok(())
 }
 
+/// Write plain text to the OS clipboard (paths, references, etc.).
+/// Prefer this over `navigator.clipboard` in WebView — keyboard shortcuts often
+/// lack a transient user-activation grant and never reach the system clipboard.
+#[tauri::command]
+pub fn clipboard_write_text(text: String) -> Result<(), String> {
+    let mut clipboard =
+        arboard::Clipboard::new().map_err(|error| format!("无法打开系统剪贴板：{error}"))?;
+    clipboard
+        .set_text(text)
+        .map_err(|error| format!("写入系统剪贴板失败：{error}"))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -926,6 +939,19 @@ mod tests {
         assert!(check.resolved_path.is_none());
 
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn clipboard_write_text_roundtrips() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let sample = format!("qingcode-clipboard-{nonce}");
+        clipboard_write_text(sample.clone()).unwrap();
+        let mut clipboard = arboard::Clipboard::new().unwrap();
+        let got = clipboard.get_text().unwrap();
+        assert_eq!(got, sample);
     }
 
     #[test]

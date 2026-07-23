@@ -375,6 +375,7 @@ pub fn run() {
             commands::copy_path_into,
             commands::delete_path,
             commands::clipboard_write_files,
+            commands::clipboard_write_text,
             commands::directory_delete_stats,
             commands::directory_entry_counts,
             commands::check_symlink_write,

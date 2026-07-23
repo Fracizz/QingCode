@@ -1,6 +1,7 @@
 import type { EditorView } from '@codemirror/view'
 import { translate } from './i18n'
 import { getEditorView } from './editorSession'
+import { explorerPathForCopyShortcut } from './explorerSelection'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import {
@@ -14,6 +15,13 @@ import {
 function activeEditableTab() {
   const { tabs, activeTabId } = useEditorStore.getState()
   return tabs.find(t => t.id === activeTabId) ?? null
+}
+
+/** Prefer focused explorer selection; fall back to the active editor tab. */
+function pathForCopyShortcut(): string | null {
+  const fromExplorer = explorerPathForCopyShortcut()
+  if (fromExplorer) return fromExplorer
+  return activeEditableTab()?.path ?? null
 }
 
 function selectionLineRange(view: EditorView) {
@@ -97,21 +105,21 @@ export async function copyFileReferenceAction(
   }
 }
 
-/** Ctrl+Shift+C / Ctrl+Shift+Alt+C / Alt+C for the active editor tab. */
+/** Ctrl+Shift+C / Ctrl+Shift+Alt+C / Alt+C — explorer selection when focused, else active tab. */
 export async function copyActivePathAction(): Promise<void> {
-  const tab = activeEditableTab()
-  if (!tab?.path) return
-  await copyPathAction(tab.path)
+  const path = pathForCopyShortcut()
+  if (!path) return
+  await copyPathAction(path)
 }
 
 export async function copyActiveRelativePathAction(): Promise<void> {
-  const tab = activeEditableTab()
-  if (!tab?.path) return
-  await copyRelativePathAction(tab.path)
+  const path = pathForCopyShortcut()
+  if (!path) return
+  await copyRelativePathAction(path)
 }
 
 export async function copyActiveFileReferenceAction(): Promise<void> {
-  const tab = activeEditableTab()
-  if (!tab?.path) return
-  await copyFileReferenceAction(tab.path)
+  const path = pathForCopyShortcut()
+  if (!path) return
+  await copyFileReferenceAction(path)
 }

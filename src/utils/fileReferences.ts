@@ -1,6 +1,16 @@
 import type { Project } from '../types'
+import { isTauri, safeInvoke } from '../lib/tauri'
 
+/**
+ * Copy text to the system clipboard.
+ * In Tauri, prefer the native write — WebView `navigator.clipboard` often fails
+ * for keyboard shortcuts (no transient user activation).
+ */
 export async function copyToClipboard(text: string) {
+  if (isTauri()) {
+    await safeInvoke('写入剪贴板', 'clipboard_write_text', { text })
+    return
+  }
   await navigator.clipboard.writeText(text)
 }
 
