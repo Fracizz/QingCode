@@ -32,6 +32,7 @@ import {
   type DecorationSet,
 } from '@codemirror/view'
 import { clearCachedEditorStates } from './editorSession'
+import { createFoldGutterMarker } from './foldGutterMarkers'
 
 const BRACKETS = '()[]{}'
 
@@ -198,7 +199,7 @@ export function qingBasicSetup(): Extension {
     highlightActiveLineGutter(),
     highlightSpecialChars(),
     history(),
-    foldGutter(),
+    foldGutter({ markerDOM: createFoldGutterMarker }),
     drawSelection(),
     dropCursor(),
     EditorState.allowMultipleSelections.of(true),

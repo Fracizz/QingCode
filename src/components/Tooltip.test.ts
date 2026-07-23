@@ -149,14 +149,14 @@ describe('OVERFLOW_TOOLTIP_DELAY', () => {
 
 describe('getTooltipArrowOffsetX', () => {
   it('centers the caret under the trigger when the tip is centered', () => {
-    // tip left 78, width 72, trigger center 114 → caret left = 114-78-6
-    expect(getTooltipArrowOffsetX(78, 72, 114, 1)).toBe(30)
+    // tip left 78, width 72, trigger center 114 → caret left = 114-78-5
+    expect(getTooltipArrowOffsetX(78, 72, 114, 1)).toBe(31)
   })
 
   it('clamps the caret inside the tip when the tip is shifted left', () => {
     const offset = getTooltipArrowOffsetX(8, 160, 390, 1)
     expect(offset).toBeGreaterThanOrEqual(10)
-    expect(offset).toBeLessThanOrEqual(160 - 10 - 12)
+    expect(offset).toBeLessThanOrEqual(160 - 10 - 10)
   })
 })
 

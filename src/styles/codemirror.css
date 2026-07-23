@@ -72,6 +72,33 @@
   opacity: 0.92;
 }
 
+/* Fold gutter: 60° hollow chevrons; sizes in `em` track --editor-font-size on .cm-editor. */
+.cm-editor .cm-foldGutter {
+  width: 0.929em !important;
+  min-width: 0.929em !important;
+}
+.cm-editor .cm-foldGutter .cm-gutterElement {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.07em !important;
+  color: var(--color-fg-dim);
+}
+.cm-editor .cm-foldGutter .cm-foldGutter-marker {
+  display: block;
+  flex-shrink: 0;
+  width: 0.571em;
+  height: auto;
+  opacity: 0.55;
+}
+.cm-editor .cm-foldGutter .cm-gutterElement:hover .cm-foldGutter-marker {
+  opacity: 0.92;
+  color: var(--color-fg-muted);
+}
+.cm-editor.cm-focused .cm-foldGutter .cm-gutterElement:hover .cm-foldGutter-marker {
+  color: var(--color-fg);
+}
+
 .cm-editor.cm-focused {
   outline: none !important;
 }

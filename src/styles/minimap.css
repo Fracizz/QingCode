@@ -162,8 +162,8 @@ html[data-theme='light'] .editor-minimap__viewport {
 
 .editor-minimap__quick-view {
   /* TipArrow right integrated; keep in sync with tipArrow.tsx TIP_ARROW_PROTRUDE / TIP_ARROW_H. */
-  --qv-arrow-protrude: 6px;
-  --qv-arrow-w: 7px;
+  --qv-arrow-protrude: 7.66px;
+  --qv-arrow-w: 10px;
   position: fixed;
   z-index: 40;
   left: auto;
