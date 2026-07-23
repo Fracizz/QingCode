@@ -3,7 +3,7 @@ import type {
   PersistedEditorTab,
   PersistedProjectSession,
 } from './workspaceSessionPersist'
-import { isTerminalShellId, normalizeTerminalShell } from './terminalShell'
+import { isTerminalShellId, normalizeTerminalShell } from '@/lib/terminal/terminalShell'
 import type { ProjectEditorSession } from '../store/editorStore'
 import type { EditorTab, TerminalTab } from '../types'
 import { guessLanguage, isPinnedSettingsTab, tabNameFromPath } from '../utils/editorHelpers'

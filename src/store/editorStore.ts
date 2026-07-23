@@ -29,7 +29,7 @@ import { resolveReadEncoding } from '../lib/fileEncoding'
 import { loadEffectiveFileSizePreferences } from '../lib/fileSizeSettings'
 import { isSettingsJsonPath } from '../lib/projectSettings'
 import { translate } from '../lib/i18n'
-import type { GitFileContents } from '../lib/git'
+import type { GitFileContents } from '@/lib/git/git'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
 import { authorizePaths } from '../lib/pathAllowlist'
 import { loadEffectiveAutoSaveSettings, notifyAutoSaveSettingsChanged } from '../lib/autoSaveSettings'
@@ -852,10 +852,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         void import('../lib/minimapSettings').then(({ loadEffectiveMinimapEnabled }) =>
           loadEffectiveMinimapEnabled(project),
         )
-        void import('../lib/terminalScrollbackSettings').then(({ loadEffectiveTerminalScrollback }) =>
+        void import('@/lib/terminal/terminalScrollbackSettings').then(({ loadEffectiveTerminalScrollback }) =>
           loadEffectiveTerminalScrollback(project),
         )
-        void import('../lib/terminalCursorSettings').then(
+        void import('@/lib/terminal/terminalCursorSettings').then(
           ({ loadEffectiveTerminalCursorBlinking }) =>
             loadEffectiveTerminalCursorBlinking(project),
         )

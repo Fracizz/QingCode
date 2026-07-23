@@ -1,5 +1,5 @@
 import type { OpenFileErrorKind } from './lib/openFileError'
-import type { TerminalShellId } from './lib/terminalShell'
+import type { TerminalShellId } from '@/lib/terminal/terminalShell'
 
 export interface Project {
   id: string

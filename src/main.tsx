@@ -25,8 +25,8 @@ paintStartupSplashLogo()
 applyFontSettings(loadFontSettings())
 installWebviewShortcutGuard()
 // Apply global terminal settings ASAP (project overlay loads later).
-void import('./lib/terminalScrollbackSettings').then(m => m.loadEffectiveTerminalScrollback(null))
-void import('./lib/terminalCursorSettings').then(m =>
+void import('@/lib/terminal/terminalScrollbackSettings').then(m => m.loadEffectiveTerminalScrollback(null))
+void import('@/lib/terminal/terminalCursorSettings').then(m =>
   m.loadEffectiveTerminalCursorBlinking(null),
 )
 void import('./lib/formatOnSaveSettings').then(m => m.loadEffectiveFormatOnSave(null))

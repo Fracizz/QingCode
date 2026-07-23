@@ -5,12 +5,12 @@ import {
   saveTerminalProfileSettings,
   type TerminalProfile,
   type TerminalProfileSettings,
-} from '../lib/terminalProfiles'
+} from '@/lib/terminal/terminalProfiles'
 import {
   availableTerminalShells,
   terminalShellLabelKey,
   type TerminalShellId,
-} from '../lib/terminalShell'
+} from '@/lib/terminal/terminalShell'
 import { useState } from 'react'
 import { useI18n } from '../lib/i18n'
 import SettingSelect from './SettingSelect'

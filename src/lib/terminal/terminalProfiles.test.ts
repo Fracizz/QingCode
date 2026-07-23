@@ -6,8 +6,8 @@ import {
   loadTerminalProfileSettings,
   saveTerminalProfileSettings,
   TERMINAL_PROFILES_KEY,
-} from './terminalProfiles'
-import { availableTerminalShells, defaultTerminalShell } from './terminalShell'
+} from '@/lib/terminal/terminalProfiles'
+import { availableTerminalShells, defaultTerminalShell } from '@/lib/terminal/terminalShell'
 
 describe('terminalProfiles defaultShell', () => {
   beforeEach(() => {

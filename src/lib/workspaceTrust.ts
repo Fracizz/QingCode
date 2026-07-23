@@ -34,6 +34,12 @@ export function normalizeProjectPath(path: string): string {
   return path.trim().replace(/[/\\]+$/, '').replace(/\\/g, '/').toLowerCase()
 }
 
+/**
+ * One-time migration from legacy `qingcode:run-trust` to {@link WORKSPACE_TRUST_STORAGE_KEY}.
+ * Version-guarded by the new key's existence (see `readStore`): once the new key
+ * exists this path is never re-entered, so we do not re-scan the legacy key on
+ * every launch. Retained so first-time upgraders recover their trust decisions.
+ */
 function migrateLegacyRunTrust(): TrustStore | null {
   try {
     const raw = localStorage.getItem(RUN_TRUST_STORAGE_KEY)

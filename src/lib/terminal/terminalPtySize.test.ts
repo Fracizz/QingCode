@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, normalizePtySize } from './terminalPtySize'
+import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, normalizePtySize } from '@/lib/terminal/terminalPtySize'
 
 describe('normalizePtySize', () => {
   it('keeps valid dimensions', () => {

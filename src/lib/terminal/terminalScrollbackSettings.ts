@@ -1,11 +1,11 @@
-import type { Project } from '../types'
+import type { Project } from '@/types'
 import {
   DEFAULT_GLOBAL_SETTINGS,
   loadGlobalSettings,
   loadProjectSettings,
   type SettingsFile,
-} from './projectSettings'
-import { mergeSettings } from './autoSaveSettings'
+} from '@/lib/projectSettings'
+import { mergeSettings } from '@/lib/autoSaveSettings'
 
 export const TERMINAL_SCROLLBACK_SETTINGS_EVENT = 'qingcode:terminal-scrollback-changed'
 

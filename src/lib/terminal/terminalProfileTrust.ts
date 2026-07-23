@@ -1,6 +1,6 @@
-import type { TerminalProfile } from './terminalProfiles'
-import { confirmDialog } from '../store/confirmStore'
-import { translate } from './i18n'
+import type { TerminalProfile } from '@/lib/terminal/terminalProfiles'
+import { confirmDialog } from '@/store/confirmStore'
+import { translate } from '@/lib/i18n'
 
 export const TERMINAL_PROFILE_TRUST_KEY = 'qingcode:terminal-profile-trust'
 export const TERMINAL_PROFILE_TRUST_CHANGED_EVENT = 'qingcode:terminal-profile-trust-changed'

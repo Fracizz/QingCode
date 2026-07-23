@@ -57,7 +57,7 @@ vi.mock('./ScmInlineDiff', () => ({
 
 import SourceControlPanel from './SourceControlPanel'
 import ConfirmDialog from './ConfirmDialog'
-import type { GitStatus } from '../lib/git'
+import type { GitStatus } from '@/lib/git/git'
 import { useConfirmStore } from '../store/confirmStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { useProjectStore } from '../store/projectStore'

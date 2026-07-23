@@ -14,17 +14,17 @@ import { MAX_TERMINALS_PER_PROJECT, useTerminalStore } from '../store/terminalSt
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { confirmDialog } from '../store/confirmStore'
-import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '../lib/terminalProfiles'
+import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '@/lib/terminal/terminalProfiles'
 import { formatTerminalName } from '../utils/terminalName'
-import { canCloseTerminalDirectly, isTerminalBusy, listBusyTerminals } from '../lib/terminalClose'
-import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
+import { canCloseTerminalDirectly, isTerminalBusy, listBusyTerminals } from '@/lib/terminal/terminalClose'
+import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
-import { subscribeTerminalCommandActivity } from '../lib/terminalCommandActivity'
+import { subscribeTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
 import { useI18n } from '../lib/i18n'
-import { terminalShellLabelKey } from '../lib/terminalShell'
+import { terminalShellLabelKey } from '@/lib/terminal/terminalShell'
 
 const CLOSE_ARM_MS = 4000
 /** Child-process probe interval; shell-integration updates refresh immediately. */

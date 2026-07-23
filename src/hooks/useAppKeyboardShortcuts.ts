@@ -5,7 +5,7 @@ import {
   copyActiveRelativePathAction,
 } from '../lib/copyFileActions'
 import { formatDocument } from '../lib/formatDocument'
-import { requestTerminalClear, requestTerminalSearch } from '../lib/terminalViewBridge'
+import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/terminalViewBridge'
 import {
   COPY_RELATIVE_PATH_SHORTCUT,
   isShortcutInputTarget,

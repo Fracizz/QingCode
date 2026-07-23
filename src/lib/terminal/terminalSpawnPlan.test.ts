@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planTerminalSpawn } from './terminalSpawnPlan'
+import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
 
 describe('planTerminalSpawn', () => {
   it('uses a plain shell when there is no startup command', () => {

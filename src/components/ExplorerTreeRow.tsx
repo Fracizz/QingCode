@@ -13,7 +13,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import type { FileNode } from '../store/projectStore'
-import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
+import { gitStatusColorClass, gitStatusGlyph } from '@/lib/git/gitStatus'
 import { COPY_RELATIVE_PATH_SHORTCUT, shortcutMatchesEvent } from '../lib/shortcuts'
 import { pathSetHas, pathsEqual } from '../utils/fileReferences'
 import type { VisibleTreeRow } from '../utils/fileTreeView'

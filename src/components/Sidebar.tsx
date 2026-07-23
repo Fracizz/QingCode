@@ -43,7 +43,7 @@ import { useTerminalStore } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { safeInvoke } from '../lib/tauri'
-import { openGitCompareWithHead } from '../lib/gitCompare'
+import { openGitCompareWithHead } from '@/lib/git/gitCompare'
 import { confirmDialog } from '../store/confirmStore'
 import {
   findExplorerNameConflict,

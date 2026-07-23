@@ -23,11 +23,11 @@ import { promptDialog } from '../store/promptStore'
 import { useSymbolPickerStore } from '../store/symbolPickerStore'
 import { useUIStore } from '../store/uiStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
-import { openGitCompareWithHead } from './gitCompare'
+import { openGitCompareWithHead } from '@/lib/git/gitCompare'
 import {
   saveVisibleProjectsAsWorkspace,
 } from './namedWorkspaceActions'
-import { requestTerminalClear, requestTerminalSearch } from './terminalViewBridge'
+import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/terminalViewBridge'
 import { useTerminalStore } from '../store/terminalStore'
 
 export type AppCommand = {

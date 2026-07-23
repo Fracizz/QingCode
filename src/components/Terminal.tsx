@@ -22,22 +22,22 @@ import { shouldShowAppContextMenu } from '../lib/devBuild'
 import {
   TERMINAL_SCROLLBACK_SETTINGS_EVENT,
   getTerminalScrollback,
-} from '../lib/terminalScrollbackSettings'
+} from '@/lib/terminal/terminalScrollbackSettings'
 import {
   TERMINAL_CURSOR_SETTINGS_EVENT,
   getTerminalCursorBlinking,
-} from '../lib/terminalCursorSettings'
+} from '@/lib/terminal/terminalCursorSettings'
 import {
   TERMINAL_CLEAR_EVENT,
   TERMINAL_SEARCH_EVENT,
   type TerminalViewBridgeDetail,
-} from '../lib/terminalViewBridge'
+} from '@/lib/terminal/terminalViewBridge'
 import {
   markTerminalCommandFinished,
   markTerminalCommandStarted,
-} from '../lib/terminalCommandActivity'
+} from '@/lib/terminal/terminalCommandActivity'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
-import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
+import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
 import {
   isPanelResizing,
   PANEL_RESIZE_BEGIN_EVENT,
@@ -50,8 +50,8 @@ import {
   isValidTerminalGridSize,
   terminalGridSizeChanged,
   type TerminalGridSize,
-} from '../lib/terminalResizePolicy'
-import { waitForTerminalRender } from '../lib/terminalRenderBarrier'
+} from '@/lib/terminal/terminalResizePolicy'
+import { waitForTerminalRender } from '@/lib/terminal/terminalRenderBarrier'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'

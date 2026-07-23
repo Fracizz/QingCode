@@ -5,7 +5,7 @@ import {
   terminalGridSizeChanged,
   TERMINAL_ALTERNATE_PTY_DELAY_MS,
   TERMINAL_NORMAL_PTY_DELAY_MS,
-} from './terminalResizePolicy'
+} from '@/lib/terminal/terminalResizePolicy'
 
 describe('terminal resize policy', () => {
   it('only accepts usable character grids', () => {

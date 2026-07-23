@@ -17,6 +17,7 @@ import {
   deleteProjectRows,
   insertProject,
   loadProjectsFromDb,
+  persistProjectsToUserSettings,
   relocateProjectRows,
   renameProjectRow,
   setProjectHidden,
@@ -270,6 +271,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       if (trust === false) return false
       await insertProject(id, name, path, now)
       await get().loadProjects()
+      void persistProjectsToUserSettings()
       const created = get().projects.find(p => p.id === id)
       if (created) await get().switchProject(created)
       get().pushToast('success', `已添加项目: ${name}`)
@@ -383,6 +385,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         }
       })
       await get().loadProjects()
+      void persistProjectsToUserSettings()
       get().pushToast('info', '已移除项目')
     } catch (e) {
       console.error('removeProject failed:', e)
@@ -414,6 +417,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
     try {
       await setProjectHidden(id, 1)
+      void persistProjectsToUserSettings()
       const wasCurrent = get().currentProject?.id === id
       set(s => ({
         projects: s.projects.map(p => (p.id === id ? { ...p, hidden: 1 } : p)),
@@ -448,6 +452,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
     try {
       await setProjectHidden(id, 0)
+      void persistProjectsToUserSettings()
       set(s => ({
         projects: s.projects.map(p => (p.id === id ? { ...p, hidden: 0 } : p)),
       }))
@@ -468,6 +473,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
     try {
       await persistSortOrder(id, sortOrder)
+      void persistProjectsToUserSettings()
       set(s => ({
         projects: s.projects.map(p => (p.id === id ? { ...p, sort_order: sortOrder } : p)),
       }))
@@ -505,6 +511,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       await relocateProjectRows(id, path, baseName(path))
       if (previousPath) renameEditorPaths(previousPath, path)
       await get().loadProjects()
+      void persistProjectsToUserSettings()
       const relocated = get().projects.find(project => project.id === id)
       if (wasCurrent && relocated) await get().switchProject(relocated)
       get().pushToast('success', `项目已重新定位: ${baseName(path)}`)
@@ -533,6 +540,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
     try {
       await renameProjectRow(id, name)
+      void persistProjectsToUserSettings()
       set(s => ({
         projects: s.projects.map(p => (p.id === id ? { ...p, name } : p)),
         currentProject:

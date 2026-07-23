@@ -37,13 +37,13 @@ import {
   loadTerminalProfileSettings,
   saveTerminalProfileSettings,
   type TerminalProfileSettings,
-} from '../lib/terminalProfiles'
+} from '@/lib/terminal/terminalProfiles'
 import {
   availableTerminalShells,
   defaultTerminalShell,
   terminalShellLabelKey,
   type TerminalShellId,
-} from '../lib/terminalShell'
+} from '@/lib/terminal/terminalShell'
 import { useShortcutStore } from '../store/shortcutStore'
 import { DEFAULT_SHORTCUTS, type ShortcutCommand } from '../lib/shortcuts'
 import ShortcutSettings from './ShortcutSettings'

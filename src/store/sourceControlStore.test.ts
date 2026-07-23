@@ -4,7 +4,7 @@ import {
   useSourceControlStore,
 } from './sourceControlStore'
 import { useGitStatusStore } from './gitStatusStore'
-import type { GitStatus } from '../lib/git'
+import type { GitStatus } from '@/lib/git/git'
 
 const sample: GitStatus = {
   is_repository: true,

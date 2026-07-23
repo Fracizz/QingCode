@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { GitStatus } from '../lib/git'
+import type { GitStatus } from '@/lib/git/git'
 
 type SourceControlState = {
   /** Project path the cached status belongs to. */

@@ -1,12 +1,12 @@
-import { getLiveEditorContent, flushLiveEditorContent } from './editorSession'
-import { getEditorPreferences } from './editorSettings'
-import { resolveReadEncoding } from './fileEncoding'
-import { translate } from './i18n'
-import { isTauri, safeInvoke } from './tauri'
-import { useCompareStore } from '../store/compareStore'
-import { useEditorStore } from '../store/editorStore'
-import { useProjectStore } from '../store/projectStore'
-import { pathsEqual } from '../utils/fileReferences'
+import { getLiveEditorContent, flushLiveEditorContent } from '@/lib/editorSession'
+import { getEditorPreferences } from '@/lib/editorSettings'
+import { resolveReadEncoding } from '@/lib/fileEncoding'
+import { translate } from '@/lib/i18n'
+import { isTauri, safeInvoke } from '@/lib/tauri'
+import { useCompareStore } from '@/store/compareStore'
+import { useEditorStore } from '@/store/editorStore'
+import { useProjectStore } from '@/store/projectStore'
+import { pathsEqual } from '@/utils/fileReferences'
 
 /** Open a side-by-side compare of the working copy vs `git show HEAD:path`. */
 export async function openGitCompareWithHead(filePath: string): Promise<void> {

@@ -29,7 +29,7 @@ import {
   scmRowKey,
   scmStatusBadgeTone,
   splitGitChanges,
-} from './gitStatus'
+} from '@/lib/git/gitStatus'
 
 describe('gitStatus helpers', () => {
   it('normalizes path keys', () => {

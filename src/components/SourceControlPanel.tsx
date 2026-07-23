@@ -48,7 +48,7 @@ import type {
   GitFileContents,
   GitPullResult,
   GitStatus,
-} from '../lib/git'
+} from '@/lib/git/git'
 import {
   type GitChangeGroup,
   canCommitStagedChanges,
@@ -65,7 +65,7 @@ import {
   scmRowKey,
   scmStatusBadgeTone,
   splitGitChanges,
-} from '../lib/gitStatus'
+} from '@/lib/git/gitStatus'
 import { confirmDialog } from '../store/confirmStore'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { useUIStore } from '../store/uiStore'

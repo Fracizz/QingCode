@@ -143,6 +143,10 @@ function projectConfigDir(project: Project): string {
   return `${project.path}${sep}.qingcode`
 }
 
+/** Legacy workspace run-config path (former product id `.nestcode/`). Kept as a
+ * read-only fallback in `loadConfigs` so projects that still only carry a
+ * `.nestcode/run.json` auto-migrate to `.qingcode/run.json`; not deleted because
+ * user workspace files may persist long after the app rename. */
 function legacyRunConfigPath(project: Project): string {
   const sep = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
   return `${project.path}${sep}.nestcode${sep}run.json`

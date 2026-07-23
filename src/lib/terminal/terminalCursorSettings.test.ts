@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   parseTerminalCursorBlinking,
   readTerminalCursorBlinking,
-} from './terminalCursorSettings'
-import { DEFAULT_GLOBAL_SETTINGS } from './projectSettings'
+} from '@/lib/terminal/terminalCursorSettings'
+import { DEFAULT_GLOBAL_SETTINGS } from '@/lib/projectSettings'
 
 describe('terminalCursorSettings', () => {
   it('defaults to blinking when unset', () => {

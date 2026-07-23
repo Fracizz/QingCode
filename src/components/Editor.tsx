@@ -638,10 +638,10 @@ export default function Editor() {
     void migrateLegacyMinimapProjectSetting(currentProject).finally(() => {
       void loadEffectiveMinimapEnabled(currentProject)
     })
-    void import('../lib/terminalScrollbackSettings').then(m =>
+    void import('@/lib/terminal/terminalScrollbackSettings').then(m =>
       m.loadEffectiveTerminalScrollback(currentProject),
     )
-    void import('../lib/terminalCursorSettings').then(m =>
+    void import('@/lib/terminal/terminalCursorSettings').then(m =>
       m.loadEffectiveTerminalCursorBlinking(currentProject),
     )
   }, [currentProject])

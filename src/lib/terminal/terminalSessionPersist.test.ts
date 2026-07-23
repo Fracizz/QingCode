@@ -15,8 +15,8 @@ import {
   saveTerminalOutputSnapshot,
   truncateScrollbackBytes,
   truncateScrollbackText,
-} from './terminalSessionPersist'
-import { notifyTerminalScrollbackChanged } from './terminalScrollbackSettings'
+} from '@/lib/terminal/terminalSessionPersist'
+import { notifyTerminalScrollbackChanged } from '@/lib/terminal/terminalScrollbackSettings'
 
 function installMemoryLocalStorage() {
   const map = new Map<string, string>()

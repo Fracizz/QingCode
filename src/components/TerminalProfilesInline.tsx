@@ -2,12 +2,12 @@ import { useI18n } from '../lib/i18n'
 import {
   DEFAULT_TERMINAL_PROFILE,
   type TerminalProfileSettings,
-} from '../lib/terminalProfiles'
+} from '@/lib/terminal/terminalProfiles'
 import {
   availableTerminalShells,
   terminalShellLabelKey,
   type TerminalShellId,
-} from '../lib/terminalShell'
+} from '@/lib/terminal/terminalShell'
 import SettingSelect from './SettingSelect'
 
 export default function TerminalProfilesInline({

@@ -6,7 +6,7 @@ import { confirmDialog } from '../store/confirmStore'
 import { promptDialog, validateEntryName } from '../store/promptStore'
 import { isTauri } from '../lib/tauri'
 import { translate } from '../lib/i18n'
-import { listBusyTerminals } from '../lib/terminalClose'
+import { listBusyTerminals } from '@/lib/terminal/terminalClose'
 
 /** Confirm then remove a project, tearing down its terminals and editor tabs. */
 export async function removeProjectWithConfirm(id: string, name: string, path: string) {

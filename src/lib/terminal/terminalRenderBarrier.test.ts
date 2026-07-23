@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { TERMINAL_RENDER_BARRIER_TIMEOUT_MS, waitForTerminalRender } from './terminalRenderBarrier'
+import { TERMINAL_RENDER_BARRIER_TIMEOUT_MS, waitForTerminalRender } from '@/lib/terminal/terminalRenderBarrier'
 
 describe('terminal render barrier', () => {
   afterEach(() => {

@@ -1,4 +1,4 @@
-import type { TerminalTab } from '../types'
+import type { TerminalTab } from '@/types'
 
 /** One-shot run-config kinds (not profile interactive). */
 export type ScriptShellKind = 'ps1' | 'bat' | 'sh' | 'command' | 'script'

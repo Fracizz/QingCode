@@ -87,6 +87,11 @@ export async function saveScopedMinimapEnabled(
  * One-time: old templates marked minimap as「不计划」with `false`.
  * Flip those to `true` so the new default takes effect without wiping
  * intentional `false` in files that never carried the「不计划」marker.
+ *
+ * Version-guarded by {@link LEGACY_MIGRATE_FLAG}: the marker is written before
+ * the I/O pass and later starts short-circuit, so we do not re-read the global
+ * settings file on every launch. The migration logic is retained so first-time
+ * upgraders still get the flip.
  */
 export async function migrateLegacyMinimapSetting(): Promise<void> {
   if (typeof localStorage === 'undefined') return

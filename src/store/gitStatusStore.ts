@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { GitStatus } from '../lib/git'
+import type { GitStatus } from '@/lib/git/git'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import {
   absoluteGitPath,
@@ -9,7 +9,7 @@ import {
   gitStatusKey,
   type GitStatusEntry,
   type GitWorkdirStatus,
-} from '../lib/gitStatus'
+} from '@/lib/git/gitStatus'
 import { peekSourceControlCache, useSourceControlStore } from './sourceControlStore'
 
 type GitStatusState = {

@@ -122,6 +122,7 @@ fn text_matches_query(
     target.contains(&q)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn file_matches_query(
     name: &str,
     relative: &str,

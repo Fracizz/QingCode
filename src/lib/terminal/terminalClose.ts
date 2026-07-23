@@ -1,7 +1,7 @@
-import { safeInvoke } from './tauri'
-import type { TerminalTab } from '../types'
-import { resolveTerminalBusy } from './terminalBusy'
-import { getTerminalCommandRunning } from './terminalCommandActivity'
+import { safeInvoke } from '@/lib/tauri'
+import type { TerminalTab } from '@/types'
+import { resolveTerminalBusy } from '@/lib/terminal/terminalBusy'
+import { getTerminalCommandRunning } from '@/lib/terminal/terminalCommandActivity'
 
 function isTerminalNotFoundError(error: unknown): boolean {
   const message = String(error).toLowerCase()

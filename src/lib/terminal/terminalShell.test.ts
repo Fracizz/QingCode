@@ -5,7 +5,7 @@ import {
   effectiveShellForTerminalName,
   normalizeTerminalShell,
   terminalShellLabelKey,
-} from './terminalShell'
+} from '@/lib/terminal/terminalShell'
 
 describe('terminalShell', () => {
   it('defaults by platform (auto on Windows, zsh on macOS/Linux)', () => {

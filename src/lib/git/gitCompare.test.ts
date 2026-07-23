@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { EditorTab } from '../types'
+import type { EditorTab } from '@/types'
 
 const mocks = vi.hoisted(() => ({
   safeInvoke: vi.fn(),
@@ -14,29 +14,29 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('./tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   isTauri: () => true,
   safeInvoke: (...args: unknown[]) => mocks.safeInvoke(...args),
 }))
 
-vi.mock('./editorSession', () => ({
+vi.mock('@/lib/editorSession', () => ({
   flushLiveEditorContent: mocks.flushLiveEditorContent,
   getLiveEditorContent: mocks.getLiveEditorContent,
 }))
 
-vi.mock('./editorSettings', () => ({
+vi.mock('@/lib/editorSettings', () => ({
   getEditorPreferences: () => ({ encoding: 'utf8' }),
 }))
 
-vi.mock('./fileEncoding', () => ({
+vi.mock('@/lib/fileEncoding', () => ({
   resolveReadEncoding: vi.fn(async () => 'utf8'),
 }))
 
-vi.mock('./i18n', () => ({
+vi.mock('@/lib/i18n', () => ({
   translate: (text: string) => text,
 }))
 
-vi.mock('../store/compareStore', () => ({
+vi.mock('@/store/compareStore', () => ({
   useCompareStore: {
     getState: () => ({
       openCompare: mocks.openCompare,
@@ -45,19 +45,19 @@ vi.mock('../store/compareStore', () => ({
   },
 }))
 
-vi.mock('../store/editorStore', () => ({
+vi.mock('@/store/editorStore', () => ({
   useEditorStore: {
     getState: () => mocks.editorState,
   },
 }))
 
-vi.mock('../store/projectStore', () => ({
+vi.mock('@/store/projectStore', () => ({
   useProjectStore: {
     getState: () => ({ pushToast: mocks.pushToast }),
   },
 }))
 
-import { openGitCompareWithHead } from './gitCompare'
+import { openGitCompareWithHead } from '@/lib/git/gitCompare'
 
 function openTab(partial: Partial<EditorTab> = {}): EditorTab {
   return {

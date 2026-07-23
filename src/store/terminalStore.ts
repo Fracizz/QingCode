@@ -8,15 +8,15 @@ import {
   DEFAULT_TERMINAL_PROFILE,
   getTerminalProfile,
   loadTerminalProfileSettings,
-} from '../lib/terminalProfiles'
-import { ensureTerminalProfileTrust } from '../lib/terminalProfileTrust'
+} from '@/lib/terminal/terminalProfiles'
+import { ensureTerminalProfileTrust } from '@/lib/terminal/terminalProfileTrust'
 import { isProjectTrusted } from '../lib/workspaceTrust'
 import { disambiguateTerminalName, resolveNewTerminalName, terminalDisplayLabel } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
 import {
   getTerminalScrollback,
   scrollbackMaxChars,
-} from '../lib/terminalScrollbackSettings'
+} from '@/lib/terminal/terminalScrollbackSettings'
 import {
   absorbInputForHistory,
   appendScrollbackBytes,
@@ -27,22 +27,22 @@ import {
   pushCommandHistory,
   saveTerminalOutputSnapshot,
   truncateScrollbackBytes,
-} from '../lib/terminalSessionPersist'
+} from '@/lib/terminal/terminalSessionPersist'
 import {
   DEFAULT_PTY_COLS,
   DEFAULT_PTY_ROWS,
   normalizePtySize,
-} from '../lib/terminalPtySize'
-import { shouldKeepShellAfterExit } from '../lib/terminalShellLifecycle'
-import { planTerminalSpawn } from '../lib/terminalSpawnPlan'
+} from '@/lib/terminal/terminalPtySize'
+import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
+import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
 import {
   effectiveShellForTerminalName,
   isTerminalShellId,
   normalizeTerminalShell,
   terminalShellLabelKey,
   type TerminalShellId,
-} from '../lib/terminalShell'
-import { clearTerminalCommandActivity } from '../lib/terminalCommandActivity'
+} from '@/lib/terminal/terminalShell'
+import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
 import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
 
 export const MAX_TERMINALS_PER_PROJECT = 10

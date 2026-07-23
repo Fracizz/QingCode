@@ -1,5 +1,5 @@
-import type { GitChange, GitStatus } from './git'
-import { normalizePath, projectRelativePath } from '../utils/fileReferences'
+import type { GitChange, GitStatus } from '@/lib/git/git'
+import { normalizePath, projectRelativePath } from '@/utils/fileReferences'
 
 export type GitStatusEntry = {
   path: string

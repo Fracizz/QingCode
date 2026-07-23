@@ -1,4 +1,4 @@
-import type { TerminalTab } from '../types'
+import type { TerminalTab } from '@/types'
 
 /**
  * OpenCode (and similar TUIs) often tear down the whole ConPTY on exit.

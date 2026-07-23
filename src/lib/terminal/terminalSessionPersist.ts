@@ -10,7 +10,7 @@ import {
   getTerminalScrollback,
   parseTerminalScrollback,
   scrollbackMaxChars,
-} from './terminalScrollbackSettings'
+} from '@/lib/terminal/terminalScrollbackSettings'
 
 export const TERMINAL_SESSION_OUTPUT_KEY = 'qingcode:terminal-session-output'
 export const TERMINAL_SESSION_OUTPUT_VERSION = 1 as const

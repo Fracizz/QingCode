@@ -2,7 +2,7 @@ import {
   defaultTerminalShell,
   normalizeTerminalShell,
   type TerminalShellId,
-} from './terminalShell'
+} from '@/lib/terminal/terminalShell'
 
 export const TERMINAL_PROFILES_KEY = 'qingcode:terminal-profiles'
 

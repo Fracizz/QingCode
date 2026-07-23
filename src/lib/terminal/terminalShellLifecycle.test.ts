@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shouldKeepShellAfterExit } from './terminalShellLifecycle'
+import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
 
 describe('shouldKeepShellAfterExit', () => {
   it('keeps plain and profile shells alive', () => {

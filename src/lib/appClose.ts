@@ -1,6 +1,6 @@
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { translate } from './i18n'
-import { listBusyTerminals } from './terminalClose'
+import { listBusyTerminals } from '@/lib/terminal/terminalClose'
 import { confirmDialog } from '../store/confirmStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'

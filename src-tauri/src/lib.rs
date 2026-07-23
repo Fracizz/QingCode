@@ -37,6 +37,12 @@ fn legacy_database_paths(data_dir: &Path) -> [PathBuf; 2] {
     ]
 }
 
+/// One-time whole-DB copy from legacy product data directories
+/// (`com.nestcode.app` / `com.administrator.my-code-desktop`) into the current
+/// `qingcode.db`. Version-guarded by the new DB file's existence: once
+/// `qingcode.db` exists this is a no-op, so we do not re-stat the legacy paths on
+/// every launch. The logic is retained (not deleted) so users upgrading from a
+/// legacy build for the first time still recover their project list.
 fn migrate_legacy_database() {
     let new_db = app_paths::db_file();
     if new_db.exists() {

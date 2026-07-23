@@ -6,6 +6,9 @@ import {
   loadGlobalSettings,
   readProjectEntries,
   shouldSyncProjectsOnStartup,
+  saveGlobalSettings,
+  PROJECTS_KEY,
+  type SettingsProjectEntry,
 } from './projectSettings'
 
 let dbPromise: Promise<Database> | null = null
@@ -30,6 +33,14 @@ export async function withDb<T>(action: string, fn: (d: Database) => Promise<T>)
   return fn(d)
 }
 
+/**
+ * One-time row-level import from the legacy `my_code_desktop.db` (former product
+ * id) into the current `projects`/`recent_files` tables. Version-guarded by the
+ * `legacy_my_code_desktop_db_v1` settings key (plus an empty-projects check):
+ * once written, later starts short-circuit, so we do not re-open the legacy DB on
+ * every launch. Retained so first-time upgraders recover their projects when the
+ * Rust whole-DB copy did not run (e.g. dev path mismatch or pre-existing empty DB).
+ */
 export async function migrateLegacyProjects(db: Database): Promise<boolean> {
   const completed = await db.select<{ value: string }[]>('SELECT value FROM settings WHERE key = $1', [
     LEGACY_MIGRATION_KEY,
@@ -169,6 +180,50 @@ export async function syncProjectsFromUserSettings(
   }
 
   return { projects: next, imported }
+}
+
+/**
+ * Map a durable SQLite project row to a `qingcode.projects` JSON5 entry.
+ * Only the portable subset is kept; `id` / `created_at` / `last_opened_at` /
+ * `sort_order` are SQLite-only and intentionally dropped (JSON5 is a portable
+ * seed, not a full mirror). Ephemeral projects never reach the DB and are
+ * therefore never written here.
+ */
+function toSettingsProjectEntry(project: Project): SettingsProjectEntry {
+  const entry: SettingsProjectEntry = { path: project.path }
+  const name = project.name?.trim()
+  if (name) entry.name = name
+  if (project.hidden === 1) entry.hidden = true
+  const shell = project.default_shell?.trim()
+  if (shell) entry.defaultShell = shell
+  return entry
+}
+
+/**
+ * Write the durable project list back into `default-settings.json`'s
+ * `qingcode.projects` so the portable seed stays in sync with the SQLite
+ * authority after GUI/CLI mutations (add / remove / hide / unhide / sort /
+ * relocate / rename). Best-effort and non-blocking: failures only warn and
+ * never break the CRUD flow. Independent of `syncOnStartup` (which controls the
+ * startup JSON5→SQLite import direction only). The `saveSettingsToPath` guard
+ * skips the write when values are unchanged and the file still carries comments,
+ * so a no-op CRUD does not reformat the user's file.
+ */
+export async function persistProjectsToUserSettings(): Promise<void> {
+  if (!isTauri()) return
+  try {
+    await withDb('回写项目列表到设置', async d => {
+      const projects = await d.select<Project[]>(
+        'SELECT * FROM projects ORDER BY sort_order ASC, last_opened_at DESC',
+      )
+      const entries = projects.map(toSettingsProjectEntry)
+      const settings = await loadGlobalSettings()
+      settings[PROJECTS_KEY] = entries
+      await saveGlobalSettings(settings)
+    })
+  } catch (error) {
+    console.warn('persist projects to default-settings.json failed:', error)
+  }
 }
 
 /** Load projects, running legacy migration and optional settings sync. */

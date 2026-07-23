@@ -254,6 +254,8 @@ ${SHARED_SETTINGS_BODY}
   //   path         项目根目录绝对路径（必填）
   //   hidden       true 时不在顶栏项目芯片中显示
   //   defaultShell 可选，默认终端/shell 提示
+  //   注意：应用内对项目的增删改/隐藏/排序/重命名/重定位成功后，会自动回写此清单，
+  //         使其与运行态保持一致；手动编辑仍允许，syncOnStartup=true 时下次启动会再次导入。
   "qingcode.projects": [
     // {
     //   name: "示例项目",

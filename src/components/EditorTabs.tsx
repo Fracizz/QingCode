@@ -14,9 +14,9 @@ import { copyPathAction, copyRelativePathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { safeInvoke } from '../lib/tauri'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
-import { openGitCompareWithHead } from '../lib/gitCompare'
+import { openGitCompareWithHead } from '@/lib/git/gitCompare'
 import { copyToClipboard } from '../utils/fileReferences'
-import { gitStatusColorClass, gitStatusGlyph } from '../lib/gitStatus'
+import { gitStatusColorClass, gitStatusGlyph } from '@/lib/git/gitStatus'
 import {
   EDITOR_TAB_OVERFLOW_BTN_W,
   MAX_OPEN_EDITOR_TABS,

@@ -1,6 +1,14 @@
 import { defineConfig } from 'vitest/config'
+import { resolve } from 'path'
 
 export default defineConfig({
+  // Mirror the `@` -> src/ alias from vite.config.ts so test files resolve the
+  // lib/terminal and lib/git pilot subdirectories identically.
+  resolve: {
+    alias: {
+      '@': resolve(__dirname, 'src'),
+    },
+  },
   test: {
     environment: 'node',
     include: ['src/**/*.{test,spec}.{ts,tsx}'],

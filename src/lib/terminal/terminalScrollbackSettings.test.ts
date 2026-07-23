@@ -6,8 +6,8 @@ import {
   parseTerminalScrollback,
   readTerminalScrollback,
   scrollbackMaxChars,
-} from './terminalScrollbackSettings'
-import { DEFAULT_GLOBAL_SETTINGS } from './projectSettings'
+} from '@/lib/terminal/terminalScrollbackSettings'
+import { DEFAULT_GLOBAL_SETTINGS } from '@/lib/projectSettings'
 
 describe('parseTerminalScrollback', () => {
   it('falls back and clamps', () => {

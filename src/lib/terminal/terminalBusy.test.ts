@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isOneShotTaskTerminal, resolveTerminalBusy } from './terminalBusy'
+import { isOneShotTaskTerminal, resolveTerminalBusy } from '@/lib/terminal/terminalBusy'
 
 describe('isOneShotTaskTerminal', () => {
   it('treats script kinds as one-shot', () => {

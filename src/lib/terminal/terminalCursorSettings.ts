@@ -1,10 +1,10 @@
-import type { Project } from '../types'
+import type { Project } from '@/types'
 import {
   DEFAULT_GLOBAL_SETTINGS,
   loadGlobalSettings,
   loadProjectSettings,
-} from './projectSettings'
-import { mergeSettings } from './autoSaveSettings'
+} from '@/lib/projectSettings'
+import { mergeSettings } from '@/lib/autoSaveSettings'
 
 export const TERMINAL_CURSOR_SETTINGS_EVENT = 'qingcode:terminal-cursor-changed'
 

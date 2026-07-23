@@ -888,7 +888,10 @@ fn list_commits(root: &Path, limit: usize, skip: usize) -> Result<Vec<GitCommitI
             subject: parts[2].to_string(),
             author: parts[3].to_string(),
             date: parts[4].trim().to_string(),
-            refs: parts.get(5).map(|s| s.trim().to_string()).unwrap_or_default(),
+            refs: parts
+                .get(5)
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default(),
         });
     }
     Ok(commits)

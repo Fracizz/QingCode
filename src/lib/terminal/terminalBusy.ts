@@ -1,4 +1,4 @@
-import type { TerminalTab } from '../types'
+import type { TerminalTab } from '@/types'
 
 /** One-shot run-config tasks stay "busy" until the PTY exits. */
 export function isOneShotTaskTerminal(

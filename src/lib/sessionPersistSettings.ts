@@ -11,7 +11,7 @@ import {
   saveGlobalSettings,
 } from './projectSettings'
 import { clearWorkspaceSession } from './workspaceSessionPersist'
-import { clearTerminalOutputSnapshot } from './terminalSessionPersist'
+import { clearTerminalOutputSnapshot } from '@/lib/terminal/terminalSessionPersist'
 
 export { SESSION_PERSIST_KEY }
 
