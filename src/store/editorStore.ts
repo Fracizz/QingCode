@@ -37,7 +37,13 @@ import { choiceDialog } from './choiceStore'
 import { useProjectStore } from './projectStore'
 import { registerEditorSessionApi } from './editorSessionBridge'
 import type { EditorTab } from '../types'
-import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
+import {
+  findProjectForPath,
+  formatFileToastDetail,
+  isDescendantOf,
+  parentPath,
+  pathsEqual,
+} from '../utils/fileReferences'
 import { guessLanguage, isPinnedSettingsTab, tabNameFromPath } from '../utils/editorHelpers'
 import { MAX_OPEN_EDITOR_TABS, pickEvictableTabId } from '../lib/editorTabsLayout'
 import {
@@ -783,14 +789,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             path: afterFormat.path,
           })
           if (current != null && current !== afterFormat.diskMtime) {
-            useProjectStore
-              .getState()
-              .pushToast(
-                'error',
-                translate('磁盘文件已更改，请先重新加载或比较后再保存：{name}', {
-                  name: afterFormat.name,
-                }),
-              )
+            const { projects, pushToast } = useProjectStore.getState()
+            pushToast(
+              'error',
+              translate('磁盘文件已更改，请先重新加载或比较后再保存'),
+              formatFileToastDetail(projects, afterFormat.path, afterFormat.name),
+            )
             return
           }
         }

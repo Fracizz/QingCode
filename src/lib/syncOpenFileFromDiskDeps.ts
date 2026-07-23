@@ -9,6 +9,7 @@ import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useCompareStore } from '../store/compareStore'
 import { choiceDialog } from '../store/choiceStore'
+import { formatFileToastDetail } from '../utils/fileReferences'
 
 function resolveOpenTab(id: string): EditorTab | undefined {
   const editor = useEditorStore.getState()
@@ -39,20 +40,19 @@ export function createDefaultSyncOpenFileDeps(): SyncOpenFileDeps {
     reloadFromDisk: (id, content, mtime) =>
       useEditorStore.getState().reloadFromDisk(id, content, mtime),
     notifyViewChanged: tab => {
-      useProjectStore
-        .getState()
-        .pushToast('info', translate('磁盘文件已更改（只读预览）：{name}', { name: tab.name }))
-    },
-    notifyReloaded: tab => {
-      useProjectStore
-        .getState()
-        .pushToast('info', translate('已重新加载外部更改：{name}', { name: tab.name }))
+      const { projects, pushToast } = useProjectStore.getState()
+      pushToast(
+        'info',
+        translate('磁盘文件已更改（只读预览）'),
+        formatFileToastDetail(projects, tab.path, tab.name),
+      )
     },
     promptConflict: async ({ tab, allowCompare }) => {
+      const projects = useProjectStore.getState().projects
       const choice = await choiceDialog({
         title: '文件已在外部更改',
         message: '磁盘上的文件与本地未保存修改不一致。',
-        detail: tab.path,
+        detail: formatFileToastDetail(projects, tab.path, tab.name),
         options: [
           { id: 'reload', label: '重新加载', primary: true },
           ...(allowCompare ? [{ id: 'compare', label: '比较' }] : []),

@@ -44,6 +44,25 @@ export function projectRelativePath(projectPath: string, filePath: string) {
   return file.split('/').pop() || file
 }
 
+/**
+ * Toast detail for a file path: relative path under its project root.
+ * Multi-root workspaces prefix the project name (`proj · path/to/file`).
+ */
+export function formatFileToastDetail(
+  projects: Project[],
+  filePath: string,
+  fallbackName?: string,
+): string {
+  const project = findProjectForPath(projects, filePath)
+  const relative = project
+    ? projectRelativePath(project.path, filePath)
+    : fallbackName?.trim() || normalizePath(filePath).split('/').pop() || filePath
+  if (projects.length > 1 && project) {
+    return `${project.name} · ${relative}`
+  }
+  return relative
+}
+
 export function normalizePath(path: string) {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }

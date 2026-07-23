@@ -32,7 +32,6 @@ export type SyncOpenFileDeps = {
   setDiskMtime: (id: string, mtime: number | null) => void
   reloadFromDisk: (id: string, content: string, mtime: number | null) => Promise<void>
   notifyViewChanged: (tab: EditorTab) => void
-  notifyReloaded: (tab: EditorTab) => void
   promptConflict: (input: {
     tab: EditorTab
     allowCompare: boolean
@@ -125,7 +124,6 @@ export async function syncOpenFileFromDisk(
 
     if (afterRead === 'reload') {
       await deps.reloadFromDisk(fresh.id, diskContent, mtime)
-      deps.notifyReloaded(fresh)
       return 'reloaded'
     }
 

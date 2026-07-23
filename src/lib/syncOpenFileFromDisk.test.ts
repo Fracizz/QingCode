@@ -36,7 +36,6 @@ function makeDeps(overrides: Partial<SyncOpenFileDeps> = {}): SyncOpenFileDeps {
     setDiskMtime: vi.fn(),
     reloadFromDisk: vi.fn(async () => {}),
     notifyViewChanged: vi.fn(),
-    notifyReloaded: vi.fn(),
     promptConflict: vi.fn(async () => null),
     openCompare: vi.fn(),
     flushLive: vi.fn(),
@@ -99,7 +98,6 @@ describe('syncOpenFileFromDisk', () => {
     const outcome = await syncOpenFileFromDisk(tab, deps)
     expect(outcome).toBe('reloaded')
     expect(deps.reloadFromDisk).toHaveBeenCalledWith(tab.id, 'disk-new', 200)
-    expect(deps.notifyReloaded).toHaveBeenCalled()
     expect(deps.promptConflict).not.toHaveBeenCalled()
   })
 
