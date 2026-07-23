@@ -6,6 +6,29 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-07-23
+
+### Added
+
+- Editor syntax highlighting: YAML, TOML, Shell, Rust, Go
+- Search mixed layout and path quick-open improvements
+- Full-page Source Control, Git pull/conflict hints, batch actions, history layout
+- Copyable AI CLI Skill text in Settings; app CLI IPC
+- Terminal Windows shell auto-select with fallback; WebView2 download link in installer
+- Update check can open direct installer download
+
+### Changed
+
+- Side terminal defaults to equal split with editor; instant classic ↔ side layout switch without remounting
+- Explorer copy shortcuts and project hover actions; refresh shows gitignore entries by default
+- Disk sync, SCM discard/copy/properties, and related UX polish
+
+### Fixed
+
+- NSIS installer not embedding latest frontend build
+- Terminal panel drag flicker and layout-switch stutter
+- Editor indent/bracket guides, line-number gutter styling, dev context menu behavior
+
 ## [0.1.5] - 2026-07-20
 
 ### Added
