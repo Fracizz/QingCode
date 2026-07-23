@@ -20,6 +20,12 @@ describe('guessLanguage', () => {
     expect(guessLanguage('a.ts')).toBe('typescript')
     expect(guessLanguage('a.java')).toBe('java')
     expect(guessLanguage('a.rs')).toBe('rust')
+    expect(guessLanguage('a.yaml')).toBe('yaml')
+    expect(guessLanguage('a.yml')).toBe('yaml')
+    expect(guessLanguage('Cargo.toml')).toBe('toml')
+    expect(guessLanguage('run.sh')).toBe('shell')
+    expect(guessLanguage('run.bash')).toBe('shell')
+    expect(guessLanguage('main.go')).toBe('go')
     expect(guessLanguage('a.unknown')).toBe('plain')
   })
 

@@ -1,16 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { MergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge'
-import { EditorState } from '@codemirror/state'
+import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { javascript } from '@codemirror/lang-javascript'
-import { json } from '@codemirror/lang-json'
-import { markdown } from '@codemirror/lang-markdown'
-import { css } from '@codemirror/lang-css'
-import { html } from '@codemirror/lang-html'
-import { python } from '@codemirror/lang-python'
 import { ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
 import type { EditorTab } from '../types'
+import { loadLanguageSupport } from '../lib/editorLanguages'
 import { FONT_SETTINGS_EVENT } from '../lib/fontSettings'
 import { getResolvedTheme, THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
@@ -98,24 +93,10 @@ function editorThemeExtension() {
   return lightTheme
 }
 
-const LANG_MAP: Record<string, () => import('@codemirror/language').LanguageSupport> = {
-  javascript: () => javascript(),
-  typescript: () => javascript({ typescript: true }),
-  jsx: () => javascript({ jsx: true }),
-  tsx: () => javascript({ jsx: true, typescript: true }),
-  json: () => json(),
-  json5: () => javascript(),
-  markdown: () => markdown(),
-  css: () => css(),
-  html: () => html(),
-  python: () => python(),
-}
-
 /** CodeMirror merge collapse marker; `$` is replaced by the line count via `EditorState.phrase`. */
 const COLLAPSE_UNCHANGED_PHRASE = '$ unchanged lines'
 
-function sideExtensions(language: string | undefined, collapseUnchangedLabel: string) {
-  const lang = language ? LANG_MAP[language]?.() : undefined
+function sideExtensions(lang: Extension, collapseUnchangedLabel: string) {
   return [
     EditorView.editable.of(false),
     EditorState.readOnly.of(true),
@@ -123,7 +104,7 @@ function sideExtensions(language: string | undefined, collapseUnchangedLabel: st
     editorThemeExtension(),
     diffTheme,
     EditorState.phrases.of({ [COLLAPSE_UNCHANGED_PHRASE]: collapseUnchangedLabel }),
-    lang ?? [],
+    lang,
   ]
 }
 
@@ -165,19 +146,21 @@ export default function DiffEditor({ tab }: Props) {
   const contentSize = (tab.originalContent?.length ?? 0) + (tab.content?.length ?? 0)
   const isTooLarge = contentSize > DIFF_MAX_BYTES
 
-  const buildMergeView = useCallback((parent: HTMLElement) => {
+  const buildMergeView = useCallback(async (parent: HTMLElement) => {
     // `@codemirror/merge` renders collapses via phrase("$ unchanged lines", n).
     const collapseUnchangedLabel = translateFor(language, '$ 行未更改')
+    const lang = await loadLanguageSupport(tab.language)
+    if (!hostRef.current || hostRef.current !== parent) return
     mergeRef.current?.destroy()
     mergeRef.current = new MergeView({
       a: {
         doc: tab.originalContent ?? '',
-        extensions: sideExtensions(tab.language, collapseUnchangedLabel),
+        extensions: sideExtensions(lang, collapseUnchangedLabel),
       },
       b: {
         doc: tab.content ?? '',
         extensions: [
-          ...sideExtensions(tab.language, collapseUnchangedLabel),
+          ...sideExtensions(lang, collapseUnchangedLabel),
           keymap.of([
             { key: 'Mod-ArrowDown', run: goToNextChunk },
             { key: 'Mod-ArrowUp', run: goToPreviousChunk },
@@ -193,20 +176,27 @@ export default function DiffEditor({ tab }: Props) {
 
   useEffect(() => {
     if (!hostRef.current || isTooLarge) return
+    let cancelled = false
+    const parent = hostRef.current
 
-    buildMergeView(hostRef.current)
-    setStats(countDiffLines(tab.originalContent ?? '', tab.content ?? ''))
+    void buildMergeView(parent).then(() => {
+      if (cancelled) return
+      setStats(countDiffLines(tab.originalContent ?? '', tab.content ?? ''))
+    })
 
     const rebuild = () => {
-      const parent = hostRef.current
-      if (!parent) return
-      buildMergeView(parent)
-      mergeRef.current?.a.requestMeasure()
-      mergeRef.current?.b.requestMeasure()
+      const host = hostRef.current
+      if (!host) return
+      void buildMergeView(host).then(() => {
+        if (cancelled) return
+        mergeRef.current?.a.requestMeasure()
+        mergeRef.current?.b.requestMeasure()
+      })
     }
     window.addEventListener(THEME_SETTINGS_EVENT, rebuild)
     window.addEventListener(FONT_SETTINGS_EVENT, rebuild)
     return () => {
+      cancelled = true
       window.removeEventListener(THEME_SETTINGS_EVENT, rebuild)
       window.removeEventListener(FONT_SETTINGS_EVENT, rebuild)
       mergeRef.current?.destroy()

@@ -1,5 +1,5 @@
 import type { Extension } from '@codemirror/state'
-import type { LanguageSupport } from '@codemirror/language'
+import { StreamLanguage, type LanguageSupport } from '@codemirror/language'
 import { css } from '@codemirror/lang-css'
 import { html } from '@codemirror/lang-html'
 import { javascript } from '@codemirror/lang-javascript'
@@ -23,10 +23,30 @@ const SYNC_LANG_FACTORIES: Record<string, LanguageFactory> = {
   python: () => python(),
 }
 
-const LAZY_LANG_LOADERS: Record<string, () => Promise<LanguageSupport>> = {
+const LAZY_LANG_LOADERS: Record<string, () => Promise<Extension>> = {
   java: async () => {
     const { java } = await import('@codemirror/lang-java')
     return java()
+  },
+  yaml: async () => {
+    const { yaml } = await import('@codemirror/lang-yaml')
+    return yaml()
+  },
+  rust: async () => {
+    const { rust } = await import('@codemirror/lang-rust')
+    return rust()
+  },
+  go: async () => {
+    const { go } = await import('@codemirror/lang-go')
+    return go()
+  },
+  toml: async () => {
+    const { toml } = await import('@codemirror/legacy-modes/mode/toml')
+    return StreamLanguage.define(toml)
+  },
+  shell: async () => {
+    const { shell } = await import('@codemirror/legacy-modes/mode/shell')
+    return StreamLanguage.define(shell)
   },
 }
 
