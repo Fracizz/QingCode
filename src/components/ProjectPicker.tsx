@@ -19,6 +19,10 @@ import {
   Pencil,
   ListChecks,
   Layers,
+  Search,
+  RefreshCw,
+  Copy,
+  EyeOff,
 } from 'lucide-react'
 import { openPath } from '@tauri-apps/plugin-opener'
 import { useProjectStore } from '../store/projectStore'
@@ -28,12 +32,14 @@ import {
   removeProjectWithConfirm,
   renameProjectWithPrompt,
 } from '../utils/projectActions'
+import { copyPathAction } from '../lib/copyFileActions'
+import { shouldShowAppContextMenu, deferToNativeContextMenuInDev } from '../lib/devBuild'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import WorkspaceMenu from './WorkspaceMenu'
 import ProjectAddDialog from './ProjectAddDialog'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
-import { deferToNativeContextMenuInDev } from '../lib/devBuild'
 
 const CHIP_GAP = 4
 const ADD_BTN_W = 28
@@ -47,7 +53,9 @@ export default function ProjectPicker() {
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const hideProject = useProjectStore(s => s.hideProject)
+  const refreshProjectTree = useProjectStore(s => s.refreshProjectTree)
   const setView = useUIStore(s => s.setView)
+  const requestSearch = useUIStore(s => s.requestSearch)
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const openWorkspaceManager = useUIStore(s => s.openWorkspaceManager)
 
@@ -60,6 +68,11 @@ export default function ProjectPicker() {
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({})
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    project: Project
+  } | null>(null)
 
   // Recompute how many chips fit whenever projects or container width change.
   useLayoutEffect(() => {
@@ -172,6 +185,66 @@ export default function ProjectPicker() {
     void relocateProjectWithDialog(id)
   }
 
+  const projectMenuItems = (project: Project): ContextMenuItem[] => {
+    const unavailable = unavailableProjectIds.includes(project.id)
+    const activateThen = async (action: () => Promise<void>) => {
+      if (currentProject?.id !== project.id) await switchProject(project)
+      await action()
+    }
+    return [
+      {
+        label: t('在此项目内搜索'),
+        icon: <Search size={14} />,
+        disabled: unavailable,
+        action: () => void activateThen(async () => {
+          requestSearch(project.path)
+        }),
+      },
+      {
+        label: t('刷新项目'),
+        icon: <RefreshCw size={14} />,
+        separatorBefore: true,
+        disabled: unavailable,
+        action: () => void activateThen(() => refreshProjectTree(project)),
+      },
+      {
+        label: t('在文件管理器中打开'),
+        icon: <ExternalLink size={14} />,
+        disabled: unavailable,
+        action: () => void handleOpenInExplorer(project.path),
+      },
+      {
+        label: t('复制路径'),
+        icon: <Copy size={14} />,
+        shortcut: 'Ctrl+Shift+C',
+        action: () => void copyPathAction(project.path),
+      },
+      {
+        label: t('重命名项目'),
+        icon: <Pencil size={14} />,
+        separatorBefore: true,
+        action: () => handleRename(project),
+      },
+      {
+        label: t('重新定位项目'),
+        icon: <LocateFixed size={14} />,
+        action: () => handleRelocate(project.id),
+      },
+      {
+        label: unavailable ? t('移除项目') : t('从顶栏隐藏'),
+        icon: unavailable ? <X size={14} /> : <EyeOff size={14} />,
+        action: () => handleRemove(project),
+      },
+    ]
+  }
+
+  const openProjectContextMenu = (event: ReactMouseEvent, project: Project) => {
+    if (!shouldShowAppContextMenu(event)) return
+    if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus()
+    closeDropdown()
+    setContextMenu({ x: event.clientX, y: event.clientY, project })
+  }
+
   const openOverflow = (event: ReactMouseEvent) => {
     event.stopPropagation()
     positionDropdown()
@@ -205,6 +278,7 @@ export default function ProjectPicker() {
             onRemove={() => handleRemove(project)}
             onRelocate={() => handleRelocate(project.id)}
             onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
+            onContextMenu={event => openProjectContextMenu(event, project)}
           />
         ))}
 
@@ -273,6 +347,7 @@ export default function ProjectPicker() {
             onRemove={() => {}}
             onRelocate={() => {}}
             onOpenInExplorer={() => {}}
+            onContextMenu={() => {}}
           />
         ))}
       </div>
@@ -302,6 +377,7 @@ export default function ProjectPicker() {
                     role="menuitem"
                     tabIndex={unavailable ? -1 : 0}
                     onClick={() => !unavailable && handleSwitch(project)}
+                    onContextMenu={event => openProjectContextMenu(event, project)}
                     className={`group flex items-center gap-2 border-l-2 px-3 py-1.5 text-[13px] outline-none
                       ${
                         isCurrent
@@ -427,6 +503,15 @@ export default function ProjectPicker() {
         )}
 
       <ProjectAddDialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)} />
+
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={projectMenuItems(contextMenu.project)}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </div>
   )
 }
@@ -440,6 +525,7 @@ function Chip({
   onRemove,
   onRelocate,
   onOpenInExplorer,
+  onContextMenu,
 }: {
   project: Project
   isCurrent: boolean
@@ -449,6 +535,7 @@ function Chip({
   onRemove: () => void
   onRelocate: () => void
   onOpenInExplorer: () => void
+  onContextMenu: (event: ReactMouseEvent) => void
 }) {
   const { t } = useI18n()
   const activate = () => {
@@ -471,6 +558,7 @@ function Chip({
         }
       }}
       onDoubleClick={event => event.stopPropagation()}
+      onContextMenu={measure ? undefined : onContextMenu}
       className={`group relative flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-colors
         ${
           isCurrent

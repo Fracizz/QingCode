@@ -6,6 +6,10 @@ import {
   savePanelLayoutTemplate,
   type PanelLayoutTemplate,
 } from '../lib/panelLayoutTemplate'
+import {
+  loadSideEditorCollapsed,
+  saveSideEditorCollapsed,
+} from '../lib/sideEditorLayout'
 
 export type View = 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
 
@@ -29,6 +33,11 @@ interface UIState {
   panelLayout: PanelLayoutTemplate
   /** True while switching classic ↔ side terminal; suppresses dock transitions. */
   panelLayoutSwitching: boolean
+  /**
+   * When `panelLayout === 'sideTerminal'`, hide the editor column so the terminal
+   * fills the remaining width. Ignored in classic layout. Default: collapsed.
+   */
+  sideEditorCollapsed: boolean
   /** Search query for the latest Settings deep-link (e.g. files.autoSave). */
   settingsFocusQuery: string | null
   /** Incremented when opening Settings with a focus query. */
@@ -59,6 +68,11 @@ interface UIState {
   requestToggleTerminal: () => void
   /** Persist and switch between the bottom and side terminal layouts. */
   togglePanelLayout: () => void
+  /** Collapse / expand the editor column in side-terminal layout. */
+  setSideEditorCollapsed: (collapsed: boolean) => void
+  toggleSideEditorCollapsed: () => void
+  /** Ensure the editor column is visible (open file / SCM / Settings). */
+  expandSideEditor: () => void
   openProjectManager: () => void
   closeProjectManager: () => void
   openWorkspaceManager: () => void
@@ -76,6 +90,7 @@ export const useUIStore = create<UIState>((set) => ({
   pendingNewFile: false,
   panelLayout: loadPanelLayoutTemplate(),
   panelLayoutSwitching: false,
+  sideEditorCollapsed: loadSideEditorCollapsed(),
   settingsFocusQuery: null,
   settingsFocusSignal: 0,
   projectManagerOpen: false,
@@ -86,7 +101,12 @@ export const useUIStore = create<UIState>((set) => ({
       // Full-page views (SCM / Settings): click again returns to explorer.
       if (view === 'sourceControl' || view === 'settings') {
         if (state.view === view) return { view: 'explorer', sidebarOpen: true }
-        return { view, sidebarOpen: true }
+        if (state.sideEditorCollapsed) saveSideEditorCollapsed(false)
+        return {
+          view,
+          sidebarOpen: true,
+          sideEditorCollapsed: false,
+        }
       }
       if (state.view === view && state.sidebarOpen) return { sidebarOpen: false }
       return { view, sidebarOpen: true }
@@ -112,12 +132,16 @@ export const useUIStore = create<UIState>((set) => ({
   requestNewFile: () => set({ view: 'explorer', sidebarOpen: true, pendingNewFile: true }),
   clearPendingNewFile: () => set({ pendingNewFile: false }),
   requestSettings: query =>
-    set(state => ({
-      view: 'settings',
-      sidebarOpen: true,
-      settingsFocusQuery: query ?? null,
-      settingsFocusSignal: state.settingsFocusSignal + 1,
-    })),
+    set(state => {
+      if (state.sideEditorCollapsed) saveSideEditorCollapsed(false)
+      return {
+        view: 'settings',
+        sidebarOpen: true,
+        sideEditorCollapsed: false,
+        settingsFocusQuery: query ?? null,
+        settingsFocusSignal: state.settingsFocusSignal + 1,
+      }
+    }),
   openTerminalPanel: () => set(s => ({ terminalOpenSignal: s.terminalOpenSignal + 1 })),
   requestToggleTerminal: () => set(s => ({ terminalToggleSignal: s.terminalToggleSignal + 1 })),
   togglePanelLayout: () =>
@@ -130,6 +154,22 @@ export const useUIStore = create<UIState>((set) => ({
         // A layout change must be visible even when the terminal was previously hidden.
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }
+    }),
+  setSideEditorCollapsed: collapsed => {
+    saveSideEditorCollapsed(collapsed)
+    set({ sideEditorCollapsed: collapsed })
+  },
+  toggleSideEditorCollapsed: () =>
+    set(state => {
+      const sideEditorCollapsed = !state.sideEditorCollapsed
+      saveSideEditorCollapsed(sideEditorCollapsed)
+      return { sideEditorCollapsed }
+    }),
+  expandSideEditor: () =>
+    set(state => {
+      if (!state.sideEditorCollapsed) return state
+      saveSideEditorCollapsed(false)
+      return { sideEditorCollapsed: false }
     }),
   openProjectManager: () => set({ projectManagerOpen: true }),
   closeProjectManager: () => set({ projectManagerOpen: false }),

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { translateFor, useLocaleStore } from './i18n'
+import { ensureBuiltinLocaleLoaded, translateFor, useLocaleStore } from './i18n'
 import {
   clampTerminalWidth,
   getDefaultSideTerminalWidth,
@@ -8,6 +8,7 @@ import {
   getTerminalMaxWidth,
   sidebarResizerHint,
   TERMINAL_MAX_HEIGHT_RATIO,
+  TERMINAL_MAX_WIDTH_RATIO,
   TERMINAL_MIN_HEIGHT,
   TERMINAL_MIN_WIDTH,
   terminalResizerHint,
@@ -19,9 +20,10 @@ import {
   SIDEBAR_MIN_WIDTH,
 } from './sidebarLayout'
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.stubGlobal('window', { innerWidth: 1400, innerHeight: 900 })
   useLocaleStore.setState({ language: 'zh-CN' })
+  await ensureBuiltinLocaleLoaded('en')
 })
 
 afterEach(() => {
@@ -55,6 +57,14 @@ describe('getTerminalMaxHeight', () => {
   it('allows the terminal to use 90% of the window after reserved chrome', () => {
     expect(TERMINAL_MAX_HEIGHT_RATIO).toBe(0.9)
     expect(getTerminalMaxHeight()).toBe(706)
+  })
+})
+
+describe('getTerminalMaxWidth', () => {
+  it('allows the side terminal to use up to 90% of the window, capped by reserved chrome', () => {
+    expect(TERMINAL_MAX_WIDTH_RATIO).toBe(0.9)
+    // 1400 - activity(48) - sidebarMin(180) - editorMin(320) = 852 < 1400 * 0.9
+    expect(getTerminalMaxWidth()).toBe(852)
   })
 })
 

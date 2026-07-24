@@ -70,6 +70,7 @@ import { confirmDialog } from '../store/confirmStore'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { useUIStore } from '../store/uiStore'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
+import { fileNameFromPath } from '../store/editorStoreHelpers'
 import { copyToClipboard, pathsEqual } from '../utils/fileReferences'
 import Tooltip from './Tooltip'
 import EmptyState from './EmptyState'
@@ -1663,6 +1664,17 @@ export default function SourceControlPanel() {
     }
   }
 
+  const copyFileName = async (path: string) => {
+    try {
+      await copyToClipboard(fileNameFromPath(normalizeGitChangePath(path)))
+      useProjectStore.getState().pushToast('success', t('文件名已复制'))
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('复制文件名失败: {error}', { error: String(error) }))
+    }
+  }
+
   const revealInFileManager = async (absolutePath: string) => {
     try {
       await revealItemInDir(absolutePath)
@@ -1759,6 +1771,11 @@ export default function SourceControlPanel() {
         icon: <Copy size={14} />,
         shortcut: COPY_RELATIVE_PATH_SHORTCUT,
         action: () => void copyRelativePath(change.path),
+      },
+      {
+        label: t('复制文件名'),
+        icon: <Copy size={14} />,
+        action: () => void copyFileName(change.path),
       },
     ]
   }
