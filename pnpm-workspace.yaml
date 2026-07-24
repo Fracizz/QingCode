@@ -1,2 +1,7 @@
+# 单包仓库：显式声明根包，兼容 pnpm <10.4（缺 packages 会报
+# “packages field missing or empty”）。allowBuilds 供 pnpm 10+/11 使用。
+packages:
+  - '.'
+
 allowBuilds:
   esbuild: true

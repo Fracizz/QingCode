@@ -63,7 +63,7 @@ function terminalStatusDotClass(status: TerminalTab['status'], busy: boolean): s
 export default function TerminalTabs({
   /** When set, this tab strip owns one dual-terminal pane (independent header). */
   pane,
-  /** Stronger chrome when this pane owns keyboard focus. */
+  /** Stronger chrome when this pane owns focus (outer ring is drawn by TerminalPanel). */
   focused = false,
   /** Panel chrome (collapse / close all). Only one strip should show these. */
   showPanelActions = true,
@@ -472,16 +472,14 @@ export default function TerminalTabs({
   return (
     <>
     <div
-      className={`ui-font-scaled relative flex h-[var(--tab-height)] flex-shrink-0 items-center border-b bg-bg-deep ${
-        focused ? 'border-brand/50 bg-bg-active/40' : 'border-border'
+      className={`ui-font-scaled relative flex h-[var(--tab-height)] flex-shrink-0 items-center border-b border-border bg-bg-deep ${
+        focused ? 'bg-bg-active/40' : ''
       }`}
       data-terminal-pane-focused={focused ? 'true' : undefined}
     >
         <div
-          className={`flex h-full flex-shrink-0 items-center gap-1.5 border-r px-3 text-[11px] font-semibold tracking-wide ${
-            focused
-              ? 'border-brand/40 text-brand'
-              : 'border-border text-fg-muted'
+          className={`flex h-full flex-shrink-0 items-center gap-1.5 border-r border-border px-3 text-[11px] font-semibold tracking-wide ${
+            focused ? 'text-brand' : 'text-fg-muted'
           }`}
           onPointerDown={() => {
             if (pane) setTerminalFocusPane(pane)

@@ -22,6 +22,7 @@ import { useProjectStore } from '../store/projectStore'
 import { useRunConfigStore } from '../store/runConfigStore'
 import { promptDialog } from '../store/promptStore'
 import { useSymbolPickerStore } from '../store/symbolPickerStore'
+import { useWorkspaceSymbolPickerStore } from '../store/workspaceSymbolPickerStore'
 import { useUIStore } from '../store/uiStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { openGitCompareWithHead } from '@/lib/git/gitCompare'
@@ -30,6 +31,7 @@ import {
 } from './namedWorkspaceActions'
 import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/terminalViewBridge'
 import { useTerminalStore } from '../store/terminalStore'
+import { findCallsAtActiveEditor } from './symbolNavigation'
 
 export type AppCommand = {
   id: string
@@ -296,6 +298,25 @@ export function buildCommands(): AppCommand[] {
         return Boolean(tab && !tab.openError && !tab.loading)
       },
       run: () => useSymbolPickerStore.getState().openPicker(),
+    },
+    {
+      id: 'editor.goToWorkspaceSymbol',
+      title: '转到工作区中的符号',
+      keywords: 'go to workspace symbol functions classes variables',
+      shortcutCommand: 'goToSymbolInWorkspace',
+      when: () => Boolean(useProjectStore.getState().currentProject && isTauri()),
+      run: () => useWorkspaceSymbolPickerStore.getState().openPicker(),
+    },
+    {
+      id: 'editor.findCalls',
+      title: '查找调用',
+      keywords: 'find calls callers references call hierarchy',
+      shortcutCommand: 'findCalls',
+      when: () => {
+        const { tabs, activeTabId } = useEditorStore.getState()
+        return Boolean(tabs.find(tab => tab.id === activeTabId))
+      },
+      run: () => void findCallsAtActiveEditor(),
     },
     {
       id: 'editor.goToLine',

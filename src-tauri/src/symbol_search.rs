@@ -1,8 +1,8 @@
 //! Lightweight, search-based code navigation powered by Tree-sitter tags.
 //!
-//! This intentionally extracts syntax-level definitions only. Name binding and
-//! candidate ranking stay in the frontend so the feature remains useful without
-//! starting a language server or building a compiler-grade project model.
+//! This intentionally extracts syntax-level definitions and call references.
+//! Name binding and candidate ranking stay in the frontend so the feature
+//! remains useful without a language server or compiler-grade project model.
 
 use crate::path_guard::PathAllowlist;
 use ignore::{WalkBuilder, WalkState};
@@ -38,9 +38,12 @@ const RUST_VALUE_TAGS: &str = r#"
 "#;
 
 #[derive(Debug, Clone)]
-struct CachedDefinition {
+struct CachedTag {
     name: String,
     kind: String,
+    is_definition: bool,
+    range_start: usize,
+    range_end: usize,
     line: u32,
     column: u32,
     text: String,
@@ -50,7 +53,7 @@ struct CachedDefinition {
 struct CachedFile {
     modified: Option<SystemTime>,
     len: u64,
-    definitions: Vec<CachedDefinition>,
+    tags: Vec<CachedTag>,
 }
 
 #[derive(Clone, Default)]
@@ -108,6 +111,28 @@ pub struct SymbolDefinition {
 #[serde(rename_all = "camelCase")]
 pub struct SymbolSearchResponse {
     pub definitions: Vec<SymbolDefinition>,
+    pub files_scanned: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SymbolReference {
+    pub name: String,
+    pub kind: String,
+    pub caller_name: Option<String>,
+    pub caller_kind: Option<String>,
+    pub path: String,
+    pub relative: String,
+    pub line: u32,
+    pub column: u32,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SymbolReferenceResponse {
+    pub references: Vec<SymbolReference>,
     pub files_scanned: usize,
     pub truncated: bool,
 }
@@ -259,23 +284,20 @@ fn line_text(source: &[u8], range: std::ops::Range<usize>) -> String {
         .collect()
 }
 
-fn extract_definitions(
+fn extract_tags(
     context: &mut TagsContext,
     path: &Path,
     source: &[u8],
-) -> Result<Vec<CachedDefinition>, String> {
+) -> Result<Vec<CachedTag>, String> {
     let Some(config) = configuration_for_path(path)? else {
         return Ok(Vec::new());
     };
     let (tags, _) = context
         .generate_tags(config, source, None)
         .map_err(|error| error.to_string())?;
-    let mut definitions = Vec::new();
+    let mut extracted = Vec::new();
     for tag in tags {
         let tag = tag.map_err(|error| error.to_string())?;
-        if !tag.is_definition {
-            continue;
-        }
         let Some(name) = source.get(tag.name_range.clone()) else {
             continue;
         };
@@ -283,44 +305,65 @@ fn extract_definitions(
         if name.is_empty() {
             continue;
         }
-        definitions.push(CachedDefinition {
+        extracted.push(CachedTag {
             name,
             kind: config.syntax_type_name(tag.syntax_type_id).to_string(),
+            is_definition: tag.is_definition,
+            range_start: tag.range.start,
+            range_end: tag.range.end,
             line: tag.span.start.row.saturating_add(1) as u32,
             column: tag.utf16_column_range.start.saturating_add(1) as u32,
             text: line_text(source, tag.line_range),
         });
     }
     let mut seen = std::collections::HashSet::new();
-    definitions.retain(|definition| {
-        seen.insert((definition.name.clone(), definition.line, definition.column))
+    extracted.retain(|tag| {
+        seen.insert((
+            tag.name.clone(),
+            tag.kind.clone(),
+            tag.is_definition,
+            tag.line,
+            tag.column,
+        ))
     });
-    Ok(definitions)
+    Ok(extracted)
 }
 
-fn load_definitions(
+fn load_tags(
     state: &SymbolSearchState,
     context: &mut TagsContext,
     path: &Path,
     metadata: &fs::Metadata,
-) -> Result<Vec<CachedDefinition>, String> {
+) -> Result<Vec<CachedTag>, String> {
     let modified = metadata.modified().ok();
     let len = metadata.len();
     if let Some(entry) = state.cached(path, modified, len) {
-        return Ok(entry.definitions);
+        return Ok(entry.tags);
     }
 
     let source = fs::read(path).map_err(|error| format!("read {}: {error}", path.display()))?;
-    let definitions = extract_definitions(context, path, &source)?;
+    let tags = extract_tags(context, path, &source)?;
     state.insert(
         path.to_path_buf(),
         CachedFile {
             modified,
             len,
-            definitions: definitions.clone(),
+            tags: tags.clone(),
         },
     );
-    Ok(definitions)
+    Ok(tags)
+}
+
+#[cfg(test)]
+fn extract_definitions(
+    context: &mut TagsContext,
+    path: &Path,
+    source: &[u8],
+) -> Result<Vec<CachedTag>, String> {
+    Ok(extract_tags(context, path, source)?
+        .into_iter()
+        .filter(|tag| tag.is_definition)
+        .collect())
 }
 
 fn relative_path(root: &Path, path: &Path) -> String {
@@ -340,21 +383,24 @@ fn valid_symbol_name(symbol: &str) -> bool {
         && chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
 }
 
-pub fn search_definitions(
+struct ScanResult<T> {
+    items: Vec<T>,
+    files_scanned: usize,
+    truncated: bool,
+}
+
+fn scan_workspace<T, F>(
     state: &SymbolSearchState,
     root: &Path,
-    symbol: &str,
     max_results: usize,
     max_files: usize,
     generation: Option<usize>,
-) -> Result<SymbolSearchResponse, String> {
-    if !valid_symbol_name(symbol) {
-        return Ok(SymbolSearchResponse {
-            definitions: Vec::new(),
-            files_scanned: 0,
-            truncated: false,
-        });
-    }
+    collect: F,
+) -> Result<ScanResult<T>, String>
+where
+    T: Send,
+    F: Fn(&Path, &[CachedTag]) -> Vec<T> + Sync,
+{
     if !root.is_dir() {
         return Err(format!("项目目录不存在: {}", root.display()));
     }
@@ -408,6 +454,7 @@ pub fn search_definitions(
         let files_scanned = &files_scanned;
         let truncated = &truncated;
         let should_quit = &should_quit;
+        let collect = &collect;
         Box::new(move |entry| {
             if should_quit.load(Ordering::Relaxed)
                 || generation.is_some_and(|generation| !state.is_current(generation))
@@ -437,14 +484,11 @@ pub fn search_definitions(
             if metadata.len() > MAX_FILE_BYTES {
                 return WalkState::Continue;
             }
-            let Ok(definitions) = load_definitions(state, &mut context, path, &metadata) else {
+            let Ok(tags) = load_tags(state, &mut context, path, &metadata) else {
                 return WalkState::Continue;
             };
 
-            for definition in definitions
-                .into_iter()
-                .filter(|definition| definition.name == symbol)
-            {
+            for item in collect(path, &tags) {
                 let Ok(mut output) = results.lock() else {
                     return WalkState::Quit;
                 };
@@ -453,21 +497,60 @@ pub fn search_definitions(
                     should_quit.store(true, Ordering::Relaxed);
                     return WalkState::Quit;
                 }
-                output.push(SymbolDefinition {
-                    name: definition.name,
-                    kind: definition.kind,
-                    path: path.to_string_lossy().into_owned(),
-                    relative: relative_path(root, path),
-                    line: definition.line,
-                    column: definition.column,
-                    text: definition.text,
-                });
+                output.push(item);
             }
             WalkState::Continue
         })
     });
 
-    let mut definitions = results.into_inner().unwrap_or_default();
+    Ok(ScanResult {
+        items: results.into_inner().unwrap_or_default(),
+        files_scanned: files_scanned.load(Ordering::Relaxed).min(max_files),
+        truncated: truncated.load(Ordering::Relaxed),
+    })
+}
+
+fn tag_to_definition(root: &Path, path: &Path, tag: &CachedTag) -> SymbolDefinition {
+    SymbolDefinition {
+        name: tag.name.clone(),
+        kind: tag.kind.clone(),
+        path: path.to_string_lossy().into_owned(),
+        relative: relative_path(root, path),
+        line: tag.line,
+        column: tag.column,
+        text: tag.text.clone(),
+    }
+}
+
+pub fn search_definitions(
+    state: &SymbolSearchState,
+    root: &Path,
+    symbol: &str,
+    max_results: usize,
+    max_files: usize,
+    generation: Option<usize>,
+) -> Result<SymbolSearchResponse, String> {
+    if !valid_symbol_name(symbol) {
+        return Ok(SymbolSearchResponse {
+            definitions: Vec::new(),
+            files_scanned: 0,
+            truncated: false,
+        });
+    }
+    let scan = scan_workspace(
+        state,
+        root,
+        max_results,
+        max_files,
+        generation,
+        |path, tags| {
+            tags.iter()
+                .filter(|tag| tag.is_definition && tag.name == symbol)
+                .map(|tag| tag_to_definition(root, path, tag))
+                .collect()
+        },
+    )?;
+    let mut definitions = scan.items;
     definitions.sort_by(|left, right| {
         left.relative
             .cmp(&right.relative)
@@ -475,8 +558,125 @@ pub fn search_definitions(
     });
     Ok(SymbolSearchResponse {
         definitions,
-        files_scanned: files_scanned.load(Ordering::Relaxed).min(max_files),
-        truncated: truncated.load(Ordering::Relaxed),
+        files_scanned: scan.files_scanned,
+        truncated: scan.truncated,
+    })
+}
+
+fn enclosing_caller<'a>(tags: &'a [CachedTag], reference: &CachedTag) -> Option<&'a CachedTag> {
+    tags.iter()
+        .filter(|candidate| {
+            candidate.is_definition
+                && matches!(
+                    candidate.kind.as_str(),
+                    "function" | "method" | "constructor" | "macro"
+                )
+                && candidate.range_start <= reference.range_start
+                && candidate.range_end >= reference.range_end
+        })
+        .min_by_key(|candidate| candidate.range_end.saturating_sub(candidate.range_start))
+}
+
+pub fn search_references(
+    state: &SymbolSearchState,
+    root: &Path,
+    symbol: &str,
+    max_results: usize,
+    max_files: usize,
+    generation: Option<usize>,
+) -> Result<SymbolReferenceResponse, String> {
+    if !valid_symbol_name(symbol) {
+        return Ok(SymbolReferenceResponse {
+            references: Vec::new(),
+            files_scanned: 0,
+            truncated: false,
+        });
+    }
+    let scan = scan_workspace(
+        state,
+        root,
+        max_results,
+        max_files,
+        generation,
+        |path, tags| {
+            tags.iter()
+                .filter(|tag| !tag.is_definition && tag.name == symbol && tag.kind == "call")
+                .map(|reference| {
+                    let caller = enclosing_caller(tags, reference);
+                    SymbolReference {
+                        name: reference.name.clone(),
+                        kind: reference.kind.clone(),
+                        caller_name: caller.map(|tag| tag.name.clone()),
+                        caller_kind: caller.map(|tag| tag.kind.clone()),
+                        path: path.to_string_lossy().into_owned(),
+                        relative: relative_path(root, path),
+                        line: reference.line,
+                        column: reference.column,
+                        text: reference.text.clone(),
+                    }
+                })
+                .collect()
+        },
+    )?;
+    let mut references = scan.items;
+    references.sort_by(|left, right| {
+        left.relative
+            .cmp(&right.relative)
+            .then(left.line.cmp(&right.line))
+    });
+    Ok(SymbolReferenceResponse {
+        references,
+        files_scanned: scan.files_scanned,
+        truncated: scan.truncated,
+    })
+}
+
+pub fn search_workspace_definitions(
+    state: &SymbolSearchState,
+    root: &Path,
+    query: &str,
+    max_results: usize,
+    max_files: usize,
+    generation: Option<usize>,
+) -> Result<SymbolSearchResponse, String> {
+    let query = query.trim().to_lowercase();
+    if query.chars().count() > 160 {
+        return Ok(SymbolSearchResponse {
+            definitions: Vec::new(),
+            files_scanned: 0,
+            truncated: false,
+        });
+    }
+    let scan = scan_workspace(
+        state,
+        root,
+        max_results,
+        max_files,
+        generation,
+        |path, tags| {
+            tags.iter()
+                .filter(|tag| {
+                    tag.is_definition
+                        && (query.is_empty() || tag.name.to_lowercase().contains(&query))
+                })
+                .map(|tag| tag_to_definition(root, path, tag))
+                .collect()
+        },
+    )?;
+    let mut definitions = scan.items;
+    definitions.sort_by(|left, right| {
+        let left_exact = !query.is_empty() && left.name.eq_ignore_ascii_case(&query);
+        let right_exact = !query.is_empty() && right.name.eq_ignore_ascii_case(&query);
+        right_exact
+            .cmp(&left_exact)
+            .then(left.name.len().cmp(&right.name.len()))
+            .then(left.relative.cmp(&right.relative))
+            .then(left.line.cmp(&right.line))
+    });
+    Ok(SymbolSearchResponse {
+        definitions,
+        files_scanned: scan.files_scanned,
+        truncated: scan.truncated,
     })
 }
 
@@ -505,6 +705,59 @@ pub async fn search_symbol_definitions(
     })
     .await
     .map_err(|error| format!("符号搜索任务失败: {error}"))?
+}
+
+#[tauri::command]
+pub async fn search_symbol_references(
+    root: String,
+    symbol: String,
+    max_results: Option<usize>,
+    max_files: Option<usize>,
+    allowlist: State<'_, PathAllowlist>,
+    state: State<'_, SymbolSearchState>,
+) -> Result<SymbolReferenceResponse, String> {
+    allowlist.ensure_allowed(&root)?;
+    let state = state.inner().clone();
+    let generation = state.begin_search();
+    let symbol = symbol.trim().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        search_references(
+            &state,
+            Path::new(&root),
+            &symbol,
+            max_results.unwrap_or(DEFAULT_MAX_RESULTS),
+            max_files.unwrap_or(DEFAULT_MAX_FILES),
+            Some(generation),
+        )
+    })
+    .await
+    .map_err(|error| format!("调用搜索任务失败: {error}"))?
+}
+
+#[tauri::command]
+pub async fn search_workspace_symbols(
+    root: String,
+    query: String,
+    max_results: Option<usize>,
+    max_files: Option<usize>,
+    allowlist: State<'_, PathAllowlist>,
+    state: State<'_, SymbolSearchState>,
+) -> Result<SymbolSearchResponse, String> {
+    allowlist.ensure_allowed(&root)?;
+    let state = state.inner().clone();
+    let generation = state.begin_search();
+    tauri::async_runtime::spawn_blocking(move || {
+        search_workspace_definitions(
+            &state,
+            Path::new(&root),
+            &query,
+            max_results.unwrap_or(DEFAULT_MAX_RESULTS),
+            max_files.unwrap_or(DEFAULT_MAX_FILES),
+            Some(generation),
+        )
+    })
+    .await
+    .map_err(|error| format!("工作区符号搜索任务失败: {error}"))?
 }
 
 #[cfg(test)]
@@ -573,6 +826,20 @@ export const shared = 1
     }
 
     #[test]
+    fn extracts_call_references_with_the_enclosing_caller() {
+        let path = Path::new("sample.ts");
+        let source = b"function target() {}\nfunction caller() {\n  target()\n}\n";
+        let tags = extract_tags(&mut TagsContext::new(), path, source).unwrap();
+        let reference = tags
+            .iter()
+            .find(|tag| !tag.is_definition && tag.name == "target" && tag.kind == "call")
+            .expect("target call should be tagged");
+        let caller = enclosing_caller(&tags, reference).expect("call should have a caller");
+        assert_eq!(caller.name, "caller");
+        assert_eq!(caller.kind, "function");
+    }
+
+    #[test]
     fn searches_supported_files_and_ignores_build_directories() {
         let root = temp_dir("workspace");
         fs::write(root.join("main.rs"), "pub fn target() {}\n").unwrap();
@@ -583,6 +850,30 @@ export const shared = 1
             search_definitions(&SymbolSearchState::new(), &root, "target", 20, 100, None).unwrap();
         assert_eq!(response.definitions.len(), 1);
         assert_eq!(response.definitions[0].relative, "main.rs");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn searches_calls_and_workspace_symbols_from_the_shared_cache() {
+        let root = temp_dir("references");
+        fs::write(
+            root.join("main.ts"),
+            "export function target() {}\nexport function caller() { target() }\n",
+        )
+        .unwrap();
+        let state = SymbolSearchState::new();
+
+        let references = search_references(&state, &root, "target", 20, 100, None).unwrap();
+        assert_eq!(references.references.len(), 1);
+        assert_eq!(
+            references.references[0].caller_name.as_deref(),
+            Some("caller")
+        );
+
+        let symbols = search_workspace_definitions(&state, &root, "call", 20, 100, None).unwrap();
+        assert_eq!(symbols.definitions.len(), 1);
+        assert_eq!(symbols.definitions[0].name, "caller");
 
         fs::remove_dir_all(root).unwrap();
     }

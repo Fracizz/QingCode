@@ -22,6 +22,8 @@ export interface DefinitionCandidate {
   column: number
   text: string
   score: number
+  callerName?: string
+  callerKind?: string
 }
 
 interface NativeDefinition {

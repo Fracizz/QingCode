@@ -15,6 +15,7 @@ import {
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import type { ShortcutMap } from '../lib/shortcuts'
+import { findCallsAtActiveEditor } from '../lib/symbolNavigation'
 
 function isTerminalKeyTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('.xterm'))
@@ -25,6 +26,7 @@ export interface UseAppKeyboardShortcutsDeps {
   setView: (view: import('../store/uiStore').View) => void
   openPalette: (seedQuery?: string) => void
   openSymbolPicker: () => void
+  openWorkspaceSymbolPicker: () => void
 }
 
 export function useAppKeyboardShortcuts({
@@ -32,6 +34,7 @@ export function useAppKeyboardShortcuts({
   setView,
   openPalette,
   openSymbolPicker,
+  openWorkspaceSymbolPicker,
 }: UseAppKeyboardShortcutsDeps) {
   useEffect(() => {
     const isCommandPaletteShortcut = (event: KeyboardEvent) => {
@@ -61,6 +64,11 @@ export function useAppKeyboardShortcuts({
         openPalette('')
         return
       }
+      if (shortcutMatchesEvent(shortcuts.goToSymbolInWorkspace, event)) {
+        event.preventDefault()
+        openWorkspaceSymbolPicker()
+        return
+      }
 
       if (isShortcutInputTarget(event.target)) return
       if (event.ctrlKey && event.key === 'Tab' && !event.shiftKey && !event.altKey) {
@@ -83,6 +91,9 @@ export function useAppKeyboardShortcuts({
       } else if (shortcutMatchesEvent(shortcuts.goToSymbolInEditor, event)) {
         event.preventDefault()
         openSymbolPicker()
+      } else if (shortcutMatchesEvent(shortcuts.findCalls, event)) {
+        event.preventDefault()
+        void findCallsAtActiveEditor()
       } else if (shortcutMatchesEvent(shortcuts.searchAllProjects, event)) {
         event.preventDefault()
         useUIStore.getState().requestGlobalSearch()
@@ -147,5 +158,5 @@ export function useAppKeyboardShortcuts({
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [shortcuts, setView, openPalette, openSymbolPicker])
+  }, [shortcuts, setView, openPalette, openSymbolPicker, openWorkspaceSymbolPicker])
 }

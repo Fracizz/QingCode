@@ -45,6 +45,7 @@ import {
   FileText,
   LoaderCircle,
   LocateFixed,
+  GitFork,
   Redo2,
   Save,
   Scissors,
@@ -73,7 +74,8 @@ import { FONT_SETTINGS_EVENT, loadFontSettings } from '../lib/fontSettings'
 import { buildEditorPreferenceExtensions } from '../lib/editorSettingsExtensions'
 import { reliableClickMouseSelection } from '../lib/editorMouseSelection'
 import { editorDefinitionLink } from '../lib/editorDefinitionLink'
-import { goToHeuristicDefinition } from '../lib/definitionNavigation'
+import { goToHeuristicDefinition, identifierAt } from '../lib/definitionNavigation'
+import { findCallsAtActiveEditor } from '../lib/symbolNavigation'
 import {
   editorHasOccurrenceHighlight,
   occurrenceHighlightMarker,
@@ -839,6 +841,8 @@ export default function Editor() {
     const canEditSelection = !!view && hasNonEmptySelection(view)
     const canUndo = !!view && undoDepth(view.state) > 0
     const canRedo = !!view && redoDepth(view.state) > 0
+    const canFindCalls =
+      !!view && !!identifierAt(view.state, view.state.selection.main.head)
 
     return [
       {
@@ -932,6 +936,13 @@ export default function Editor() {
         action: () => {
           if (activeTabId) void formatDocument(activeTabId)
         },
+      },
+      {
+        label: t('查找调用'),
+        icon: <GitFork size={14} />,
+        shortcut: 'Shift+F12',
+        disabled: !canFindCalls,
+        action: () => void findCallsAtActiveEditor(),
       },
       {
         label: t('复制路径'),

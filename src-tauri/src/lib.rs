@@ -376,6 +376,8 @@ pub fn run() {
             commands::start_content_search,
             commands::cancel_content_search,
             symbol_search::search_symbol_definitions,
+            symbol_search::search_symbol_references,
+            symbol_search::search_workspace_symbols,
             commands::list_file_extensions,
             commands::create_file,
             commands::create_directory,

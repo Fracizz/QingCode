@@ -1,4 +1,12 @@
-import { lazy, Suspense, useEffect, useRef, useState, type RefObject } from 'react'
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from 'react'
 import { Terminal as TerminalIcon } from 'lucide-react'
 import PanelResizer from './PanelResizer'
 import TerminalTabs from './TerminalTabs'
@@ -40,7 +48,7 @@ function clampRatio(value: number): number {
   return Math.min(DUAL_RATIO_MAX, Math.max(DUAL_RATIO_MIN, value))
 }
 
-/** 仅聚焦格显示外边框；未聚焦不画框，避免四格都套边显得吵 */
+/** 聚焦格整框（标签栏+内容）画 inset 边；未聚焦不画，避免多格都套边显得吵 */
 function paneFrameClass(focused: boolean): string {
   return focused ? 'ring-2 ring-inset ring-brand' : ''
 }
@@ -68,13 +76,6 @@ function loadQuadRatios(): QuadRatios {
   } catch {
     return { col: 0.5, row: 0.5 }
   }
-}
-
-const QUAD_BODY_CELL: Record<TerminalFocusPane, { column: number; row: number }> = {
-  primary: { column: 1, row: 2 },
-  secondary: { column: 3, row: 2 },
-  bl: { column: 1, row: 5 },
-  br: { column: 3, row: 5 },
 }
 
 export type TerminalPanelPosition = 'bottom' | 'side'
@@ -291,7 +292,7 @@ export default function TerminalPanel({
     const onMove = (ev: PointerEvent) => {
       if (ev.pointerId !== pointerId) return
       const rect = split.getBoundingClientRect()
-      // Exclude both tab rows roughly by using full height minus sash; tab height is auto.
+      // Pane shells include their own tab rows; ratio is between the two stacked panes.
       const band = rect.height - DUAL_RESIZER_PX
       if (band <= 0) return
       const next = (ev.clientY - rect.top) / band
@@ -347,36 +348,84 @@ export default function TerminalPanel({
     return null
   }
 
-  const terminalViews = projectTerminals.map(term => {
+  const multiPaneList: readonly TerminalFocusPane[] = quadMode
+    ? TERMINAL_FOCUS_PANES
+    : dualMode
+      ? ['primary', 'secondary']
+      : ['primary']
+  const visiblePaneIds = new Set(
+    multiPaneList.map(paneId).filter((id): id is string => Boolean(id)),
+  )
+
+  /** Keep every project terminal mounted; park ones not shown in a visible pane. */
+  const parkedTerminalViews = projectTerminals
+    .filter(term => !visiblePaneIds.has(term.id))
+    .map(term => (
+      <div key={term.id} className="hidden" aria-hidden="true">
+        <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
+          <TerminalView terminalId={term.id} isActive={false} layoutKey={layoutKey} />
+        </Suspense>
+      </div>
+    ))
+
+  const renderPaneTerminal = (pane: TerminalFocusPane) => {
+    const termId = paneId(pane)
+    const term = termId ? projectTerminals.find(t => t.id === termId) : undefined
+    const focused = !multiPane || terminalFocusPane === pane
+    if (!term) {
+      return (
+        <EmptyState
+          className="h-full"
+          icon={<TerminalIcon size={28} strokeWidth={1.2} />}
+          title={emptyTitleForPane(pane)}
+        />
+      )
+    }
+    return (
+      <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
+        <TerminalView terminalId={term.id} isActive={focused} layoutKey={layoutKey} />
+      </Suspense>
+    )
+  }
+
+  const paneShell = (
+    pane: TerminalFocusPane,
+    options: { showPanelActions: boolean; className?: string; style?: CSSProperties },
+  ) => {
+    const focused = terminalFocusPane === pane
+    return (
+      <div
+        data-terminal-pane={pane}
+        data-terminal-active={focused ? 'true' : undefined}
+        className={`flex min-h-0 min-w-0 flex-col overflow-hidden ${paneFrameClass(focused)} ${
+          options.className ?? ''
+        }`}
+        style={options.style}
+        onPointerDown={() => setTerminalFocusPane(pane)}
+      >
+        <TerminalTabs
+          pane={pane}
+          focused={focused}
+          showPanelActions={options.showPanelActions}
+        />
+        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-bg-deep">
+          {renderPaneTerminal(pane)}
+        </div>
+      </div>
+    )
+  }
+
+  const singleTerminalViews = projectTerminals.map(term => {
     const pane = resolvePane(term.id)
-    const isFocused = pane != null && (!multiPane || terminalFocusPane === pane)
+    const isFocused = pane === 'primary'
     return (
       <div
         key={term.id}
         data-terminal-active={isFocused ? 'true' : undefined}
         data-terminal-pane={pane ?? undefined}
-        className={
-          multiPane
-            ? pane
-              ? `min-h-0 min-w-0 overflow-hidden ${paneFrameClass(isFocused)}`
-              : 'hidden'
-            : `absolute inset-0 min-w-0 ${
-                pane === 'primary' ? 'z-10 visible' : 'invisible pointer-events-none z-0'
-              }`
-        }
-        style={
-          dualMode && pane
-            ? { gridArea: pane === 'primary' ? 'leftBody' : 'rightBody' }
-            : quadMode && pane
-              ? {
-                  gridColumn: QUAD_BODY_CELL[pane].column,
-                  gridRow: QUAD_BODY_CELL[pane].row,
-                }
-              : undefined
-        }
-        onPointerDown={() => {
-          if (multiPane && pane) setTerminalFocusPane(pane)
-        }}
+        className={`absolute inset-0 min-w-0 ${
+          pane === 'primary' ? 'z-10 visible' : 'invisible pointer-events-none z-0'
+        }`}
       >
         <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
           <TerminalView terminalId={term.id} isActive={isFocused} layoutKey={layoutKey} />
@@ -385,149 +434,91 @@ export default function TerminalPanel({
     )
   })
 
-  const emptyPane = (pane: TerminalFocusPane, placement: { gridArea?: string; column?: number; row?: number }) =>
-    !paneId(pane) ? (
-      <div
-        className={`min-h-0 min-w-0 overflow-hidden ${paneFrameClass(terminalFocusPane === pane)}`}
-        style={
-          placement.gridArea
-            ? { gridArea: placement.gridArea }
-            : { gridColumn: placement.column, gridRow: placement.row }
-        }
-        onPointerDown={() => setTerminalFocusPane(pane)}
-      >
-        <EmptyState
-          className="h-full"
-          icon={<TerminalIcon size={28} strokeWidth={1.2} />}
-          title={emptyTitleForPane(pane)}
-        />
-      </div>
-    ) : null
-
   const dualBody = (
-    <div
-      ref={dualSplitRef}
-      className="grid min-h-0 flex-1 overflow-hidden bg-bg-deep"
-      style={{
-        gridTemplateColumns: `minmax(0, ${dualRatio}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - dualRatio}fr)`,
-        gridTemplateRows: 'auto minmax(0, 1fr)',
-        gridTemplateAreas: `
-          "leftTabs resizer rightTabs"
-          "leftBody resizer rightBody"
-        `,
-      }}
-    >
-      <div style={{ gridArea: 'leftTabs' }} className="min-w-0 overflow-hidden border-r border-border-strong">
-        <TerminalTabs
-          pane="primary"
-          focused={terminalFocusPane === 'primary'}
-          showPanelActions={false}
-        />
-      </div>
-      <div style={{ gridArea: 'rightTabs' }} className="min-w-0 overflow-hidden border-l border-border-strong">
-        <TerminalTabs
-          pane="secondary"
-          focused={terminalFocusPane === 'secondary'}
-          showPanelActions
-        />
-      </div>
+    <>
       <div
-        style={{ gridArea: 'resizer', gridRow: '1 / -1' }}
-        className="relative z-30 min-h-0"
+        ref={dualSplitRef}
+        className="grid min-h-0 flex-1 overflow-hidden bg-bg-deep"
+        style={{
+          gridTemplateColumns: `minmax(0, ${dualRatio}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - dualRatio}fr)`,
+          gridTemplateRows: 'minmax(0, 1fr)',
+        }}
       >
-        <PanelResizer
-          orientation="vertical"
-          active={dualResizing}
-          tooltip={t('拖动调整双终端比例')}
-          tooltipSide="right"
-          onPointerDown={onDualResizerPointerDown}
-          ariaValueNow={Math.round(dualRatio * 100)}
-          ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
-          ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
-          className="!m-0 h-full w-full"
-        />
+        {paneShell('primary', { showPanelActions: false })}
+        <div className="relative z-30 min-h-0">
+          <PanelResizer
+            orientation="vertical"
+            active={dualResizing}
+            tooltip={t('拖动调整双终端比例')}
+            tooltipSide="right"
+            onPointerDown={onDualResizerPointerDown}
+            ariaValueNow={Math.round(dualRatio * 100)}
+            ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
+            ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
+            className="!m-0 h-full w-full"
+          />
+        </div>
+        {paneShell('secondary', { showPanelActions: true })}
       </div>
-      {emptyPane('primary', { gridArea: 'leftBody' })}
-      {emptyPane('secondary', { gridArea: 'rightBody' })}
-      {terminalViews}
-    </div>
+      {parkedTerminalViews}
+    </>
   )
 
   const quadBody = (
-    <div
-      ref={quadSplitRef}
-      className="grid min-h-0 flex-1 overflow-hidden bg-bg-deep"
-      style={{
-        gridTemplateColumns: `minmax(0, ${quadRatios.col}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - quadRatios.col}fr)`,
-        gridTemplateRows: `auto minmax(0, ${quadRatios.row}fr) ${DUAL_RESIZER_PX}px auto minmax(0, ${1 - quadRatios.row}fr)`,
-      }}
-    >
-      <div style={{ gridColumn: 1, gridRow: 1 }} className="min-w-0 overflow-hidden border-r border-border-strong">
-        <TerminalTabs
-          pane="primary"
-          focused={terminalFocusPane === 'primary'}
-          showPanelActions={false}
-        />
-      </div>
-      <div style={{ gridColumn: 3, gridRow: 1 }} className="min-w-0 overflow-hidden border-l border-border-strong">
-        <TerminalTabs
-          pane="secondary"
-          focused={terminalFocusPane === 'secondary'}
-          showPanelActions
-        />
-      </div>
-      <div style={{ gridColumn: 1, gridRow: 4 }} className="min-w-0 overflow-hidden border-r border-t border-border-strong">
-        <TerminalTabs
-          pane="bl"
-          focused={terminalFocusPane === 'bl'}
-          showPanelActions={false}
-        />
-      </div>
-      <div style={{ gridColumn: 3, gridRow: 4 }} className="min-w-0 overflow-hidden border-l border-t border-border-strong">
-        <TerminalTabs
-          pane="br"
-          focused={terminalFocusPane === 'br'}
-          showPanelActions={false}
-        />
-      </div>
+    <>
       <div
-        style={{ gridColumn: 2, gridRow: '1 / -1' }}
-        className="relative z-30 min-h-0"
+        ref={quadSplitRef}
+        className="grid min-h-0 flex-1 overflow-hidden bg-bg-deep"
+        style={{
+          gridTemplateColumns: `minmax(0, ${quadRatios.col}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - quadRatios.col}fr)`,
+          gridTemplateRows: `minmax(0, ${quadRatios.row}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - quadRatios.row}fr)`,
+        }}
       >
-        <PanelResizer
-          orientation="vertical"
-          active={quadColResizing}
-          tooltip={t('拖动调整四终端列比例')}
-          tooltipSide="right"
-          onPointerDown={onQuadColResizerPointerDown}
-          ariaValueNow={Math.round(quadRatios.col * 100)}
-          ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
-          ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
-          className="!m-0 h-full w-full"
-        />
+        {paneShell('primary', {
+          showPanelActions: false,
+          style: { gridColumn: 1, gridRow: 1 },
+        })}
+        {paneShell('secondary', {
+          showPanelActions: true,
+          style: { gridColumn: 3, gridRow: 1 },
+        })}
+        {paneShell('bl', {
+          showPanelActions: false,
+          style: { gridColumn: 1, gridRow: 3 },
+        })}
+        {paneShell('br', {
+          showPanelActions: false,
+          style: { gridColumn: 3, gridRow: 3 },
+        })}
+        <div style={{ gridColumn: 2, gridRow: '1 / -1' }} className="relative z-30 min-h-0">
+          <PanelResizer
+            orientation="vertical"
+            active={quadColResizing}
+            tooltip={t('拖动调整四终端列比例')}
+            tooltipSide="right"
+            onPointerDown={onQuadColResizerPointerDown}
+            ariaValueNow={Math.round(quadRatios.col * 100)}
+            ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
+            ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
+            className="!m-0 h-full w-full"
+          />
+        </div>
+        <div style={{ gridColumn: '1 / -1', gridRow: 2 }} className="relative z-20 min-w-0">
+          <PanelResizer
+            orientation="horizontal"
+            active={quadRowResizing}
+            tooltip={t('拖动调整四终端行比例')}
+            tooltipSide="top"
+            onPointerDown={onQuadRowResizerPointerDown}
+            ariaValueNow={Math.round(quadRatios.row * 100)}
+            ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
+            ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
+            className="!m-0 h-full w-full"
+          />
+        </div>
       </div>
-      <div
-        style={{ gridColumn: '1 / -1', gridRow: 3 }}
-        className="relative z-20 min-w-0"
-      >
-        <PanelResizer
-          orientation="horizontal"
-          active={quadRowResizing}
-          tooltip={t('拖动调整四终端行比例')}
-          tooltipSide="top"
-          onPointerDown={onQuadRowResizerPointerDown}
-          ariaValueNow={Math.round(quadRatios.row * 100)}
-          ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
-          ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
-          className="!m-0 h-full w-full"
-        />
-      </div>
-      {emptyPane('primary', QUAD_BODY_CELL.primary)}
-      {emptyPane('secondary', QUAD_BODY_CELL.secondary)}
-      {emptyPane('bl', QUAD_BODY_CELL.bl)}
-      {emptyPane('br', QUAD_BODY_CELL.br)}
-      {terminalViews}
-    </div>
+      {parkedTerminalViews}
+    </>
   )
 
   const body = quadMode ? (
@@ -547,7 +538,7 @@ export default function TerminalPanel({
             />
           </div>
         )}
-        {terminalViews}
+        {singleTerminalViews}
       </div>
     </>
   )

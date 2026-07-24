@@ -34,6 +34,7 @@ function kindLabel(kind: string): string {
 export default function DefinitionPicker() {
   const { t } = useI18n()
   const open = useDefinitionPickerStore(state => state.open)
+  const mode = useDefinitionPickerStore(state => state.mode)
   const symbol = useDefinitionPickerStore(state => state.symbol)
   const candidates = useDefinitionPickerStore(state => state.candidates)
   const closePicker = useDefinitionPickerStore(state => state.closePicker)
@@ -93,7 +94,9 @@ export default function DefinitionPicker() {
         <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
           <FileCode2 size={16} className="flex-shrink-0 text-accent" aria-hidden />
           <h2 id="definition-picker-title" className="min-w-0 flex-1 truncate text-[13px] text-fg">
-            {t('选择「{symbol}」的定义', { symbol })}
+            {mode === 'reference'
+              ? t('「{symbol}」的调用', { symbol })
+              : t('选择「{symbol}」的定义', { symbol })}
           </h2>
           <span className="text-ui-sm text-fg-dim">{candidates.length}</span>
           <kbd className="rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] text-fg-dim">
@@ -103,7 +106,7 @@ export default function DefinitionPicker() {
         <div
           ref={listRef}
           role="listbox"
-          aria-label={t('定义候选')}
+          aria-label={mode === 'reference' ? t('调用位置') : t('定义候选')}
           className="max-h-[min(420px,60vh)] overflow-y-auto py-1"
         >
           {candidates.map((candidate, index) => {
@@ -122,7 +125,11 @@ export default function DefinitionPicker() {
                 onClick={() => choose(candidate)}
               >
                 <span className="flex w-full items-center gap-2 text-[12px]">
-                  <span className="min-w-0 flex-1 truncate font-mono">{candidate.relative}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono">
+                    {candidate.callerName
+                      ? `${candidate.callerName} · ${candidate.relative}`
+                      : candidate.relative}
+                  </span>
                   <span className="flex-shrink-0 text-fg-dim">{t(kindLabel(candidate.kind))}</span>
                   <span className="flex-shrink-0 font-mono text-fg-dim">
                     :{candidate.line}:{candidate.column}

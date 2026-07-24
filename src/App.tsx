@@ -14,6 +14,7 @@ import ExplorerConflictDialog from './components/ExplorerConflictDialog'
 import PropertiesDialog from './components/PropertiesDialog'
 import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
+import WorkspaceSymbolPicker from './components/WorkspaceSymbolPicker'
 import DefinitionPicker from './components/DefinitionPicker'
 import FileCompareDialog from './components/FileCompareDialog'
 import EmptyEditor from './components/EmptyEditor'
@@ -25,6 +26,7 @@ import { useUIStore } from './store/uiStore'
 import { useCompareStore } from './store/compareStore'
 import { useCommandPaletteStore } from './store/commandPaletteStore'
 import { useSymbolPickerStore } from './store/symbolPickerStore'
+import { useWorkspaceSymbolPickerStore } from './store/workspaceSymbolPickerStore'
 import { isTauri } from './lib/tauri'
 import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
@@ -143,6 +145,7 @@ function App() {
   const shortcuts = useShortcutStore(s => s.shortcuts)
   const openPalette = useCommandPaletteStore(s => s.openPalette)
   const openSymbolPicker = useSymbolPickerStore(s => s.openPicker)
+  const openWorkspaceSymbolPicker = useWorkspaceSymbolPickerStore(s => s.openPicker)
 
   useAutoSave()
   useDraftRecovery()
@@ -185,7 +188,13 @@ function App() {
     useUIStore.setState({ panelLayoutSwitching: false })
   }, [panelLayoutSwitching, terminalPosition])
 
-  useAppKeyboardShortcuts({ shortcuts, setView, openPalette, openSymbolPicker })
+  useAppKeyboardShortcuts({
+    shortcuts,
+    setView,
+    openPalette,
+    openSymbolPicker,
+    openWorkspaceSymbolPicker,
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -439,6 +448,7 @@ function App() {
       <PropertiesDialog />
       <CommandPalette />
       <SymbolPicker />
+      <WorkspaceSymbolPicker />
       <DefinitionPicker />
       {fileCompare && <FileCompareDialog {...fileCompare} />}
       {projectManagerOpen && (

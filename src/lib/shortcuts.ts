@@ -5,6 +5,8 @@ export type ShortcutCommand =
   | 'openCommandPalette'
   | 'quickOpen'
   | 'goToSymbolInEditor'
+  | 'goToSymbolInWorkspace'
+  | 'findCalls'
   | 'goToLine'
   | 'navigateBack'
   | 'navigateForward'
@@ -24,6 +26,8 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   openCommandPalette: 'Ctrl+Shift+P',
   quickOpen: 'Ctrl+P',
   goToSymbolInEditor: 'Ctrl+Shift+O',
+  goToSymbolInWorkspace: 'Ctrl+T',
+  findCalls: 'Shift+F12',
   goToLine: 'Ctrl+G',
   navigateBack: 'Alt+Left',
   navigateForward: 'Alt+Right',
