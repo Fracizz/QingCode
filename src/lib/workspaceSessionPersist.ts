@@ -48,6 +48,12 @@ export type PersistedProjectSession = {
   activeTabId: string | null
   terminals: PersistedTerminalMeta[]
   activeTerminalId: string | null
+  /** Dual right pane / 田 top-right. */
+  secondaryTerminalId?: string | null
+  /** 田 bottom-left. */
+  blTerminalId?: string | null
+  /** 田 bottom-right. */
+  brTerminalId?: string | null
 }
 
 export type WorkspaceSessionSnapshot = {
@@ -186,6 +192,16 @@ export function parseProjectSession(value: unknown): PersistedProjectSession | n
       : value.activeTerminalId === null
         ? null
         : terminals[0]?.id ?? null
+
+  const pickPaneId = (raw: unknown): string | null | undefined => {
+    if (raw === null) return null
+    if (typeof raw !== 'string' || !raw) return undefined
+    return terminals.some(t => t.id === raw) ? raw : undefined
+  }
+  const secondaryTerminalId = pickPaneId(value.secondaryTerminalId)
+  const blTerminalId = pickPaneId(value.blTerminalId)
+  const brTerminalId = pickPaneId(value.brTerminalId)
+
   return {
     tabs,
     activeTabId:
@@ -195,6 +211,9 @@ export function parseProjectSession(value: unknown): PersistedProjectSession | n
       activeTerminalId && terminals.some(t => t.id === activeTerminalId)
         ? activeTerminalId
         : terminals[0]?.id ?? null,
+    ...(secondaryTerminalId !== undefined ? { secondaryTerminalId } : {}),
+    ...(blTerminalId !== undefined ? { blTerminalId } : {}),
+    ...(brTerminalId !== undefined ? { brTerminalId } : {}),
   }
 }
 
@@ -294,6 +313,9 @@ export function buildWorkspaceSessionSnapshot(input: {
   editorSessions: Record<string, ProjectEditorSessionInput>
   terminals: TerminalSnapshotInput[]
   activeTerminalByProject: Record<string, string>
+  secondaryTerminalByProject?: Record<string, string>
+  blTerminalByProject?: Record<string, string>
+  brTerminalByProject?: Record<string, string>
   /** Global pinned settings tabs (survive project switches and restarts). */
   pinnedTabs?: EditorTabSnapshotInput[]
   /** Project ids that must not be written (e.g. ephemeral). */
@@ -314,6 +336,16 @@ export function buildWorkspaceSessionSnapshot(input: {
     ...terminalsByProject.keys(),
   ])
 
+  const pickRememberedPane = (
+    byProject: Record<string, string> | undefined,
+    projectId: string,
+    terminals: PersistedTerminalMeta[],
+  ): string | undefined => {
+    const remembered = byProject?.[projectId]
+    if (remembered && terminals.some(t => t.id === remembered)) return remembered
+    return undefined
+  }
+
   const projects: Record<string, PersistedProjectSession> = {}
   for (const projectId of projectIds) {
     if (exclude.has(projectId)) continue
@@ -330,7 +362,22 @@ export function buildWorkspaceSessionSnapshot(input: {
       remembered && terminals.some(t => t.id === remembered)
         ? remembered
         : terminals[0]?.id ?? null
-    projects[projectId] = { tabs, activeTabId, terminals, activeTerminalId }
+    const secondaryTerminalId = pickRememberedPane(
+      input.secondaryTerminalByProject,
+      projectId,
+      terminals,
+    )
+    const blTerminalId = pickRememberedPane(input.blTerminalByProject, projectId, terminals)
+    const brTerminalId = pickRememberedPane(input.brTerminalByProject, projectId, terminals)
+    projects[projectId] = {
+      tabs,
+      activeTabId,
+      terminals,
+      activeTerminalId,
+      ...(secondaryTerminalId ? { secondaryTerminalId } : {}),
+      ...(blTerminalId ? { blTerminalId } : {}),
+      ...(brTerminalId ? { brTerminalId } : {}),
+    }
   }
 
   const pinnedTabs = (input.pinnedTabs ?? []).map(serializeEditorTab)

@@ -216,6 +216,12 @@ interface EditorState {
    * the target project's session. Pinned settings tabs stay visible.
    */
   activateProjectSession: (fromProjectId: string | null, toProjectId: string) => void
+  /**
+   * Stash the active project's visible tabs into `projectSessions` and leave
+   * only pinned settings tabs visible. Call before clearing `currentProject`
+   * so close/hide of the last project still persists the session.
+   */
+  deactivateProjectSession: (projectId: string) => void
   /** Drop a project's stashed session and dispose CodeMirror runtime state. */
   discardProjectSession: (projectId: string) => void
   /**
@@ -1009,6 +1015,36 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })
   },
 
+  deactivateProjectSession: projectId => {
+    flushAllLiveEditorContents()
+
+    set(s => {
+      const { pinned, projectTabs } = splitPinned(s.tabs)
+      const projectSessions = { ...s.projectSessions }
+      const activeInProject =
+        s.activeTabId && projectTabs.some(t => t.id === s.activeTabId)
+          ? s.activeTabId
+          : projectTabs[0]?.id ?? null
+      projectSessions[projectId] = {
+        tabs: projectTabs,
+        activeTabId: activeInProject,
+        pendingReveal: s.pendingReveal,
+      }
+
+      let activeTabId =
+        s.activeTabId && pinned.some(t => t.id === s.activeTabId) ? s.activeTabId : null
+      if (!activeTabId) activeTabId = pinned[0]?.id ?? null
+
+      return {
+        projectSessions,
+        tabs: pinned,
+        activeTabId,
+        pendingReveal: null,
+        tabMru: buildTabMru(pinned, activeTabId),
+      }
+    })
+  },
+
   discardProjectSession: (projectId: string) => {
     const session = get().projectSessions[projectId]
     if (session) {
@@ -1166,5 +1202,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 registerEditorSessionApi({
   activateProjectSession: (previousId, nextId) =>
     useEditorStore.getState().activateProjectSession(previousId, nextId),
+  deactivateProjectSession: projectId =>
+    useEditorStore.getState().deactivateProjectSession(projectId),
   renamePath: (from, to) => useEditorStore.getState().renamePath(from, to),
 })

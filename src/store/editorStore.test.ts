@@ -210,6 +210,37 @@ describe('editorStore tab lifecycle', () => {
     })
   })
 
+  it('deactivates the current project by stashing tabs and leaving pinned settings', () => {
+    const pinned = makeTab({
+      id: 'settings',
+      path: 'C:\\Users\\tester\\.qingcode\\default-settings.json',
+      content: '{ /* settings */ }',
+    })
+    const dirty = makeTab({
+      id: 'p1-dirty',
+      path: 'D:\\project-one\\src\\draft.ts',
+      content: 'unsaved change',
+      dirty: true,
+    })
+    useEditorStore.setState({
+      tabs: [dirty, pinned],
+      activeTabId: dirty.id,
+      pendingReveal: { path: dirty.path, line: 4 },
+      projectSessions: {},
+    })
+
+    useEditorStore.getState().deactivateProjectSession('p1')
+
+    expect(useEditorStore.getState().tabs.map(tab => tab.id)).toEqual(['settings'])
+    expect(useEditorStore.getState().activeTabId).toBe('settings')
+    expect(useEditorStore.getState().pendingReveal).toBeNull()
+    expect(useEditorStore.getState().projectSessions.p1).toMatchObject({
+      tabs: [{ id: 'p1-dirty', content: 'unsaved change', dirty: true }],
+      activeTabId: 'p1-dirty',
+      pendingReveal: { path: dirty.path, line: 4 },
+    })
+  })
+
   it('closeDiffTabsForPath closes only compare tabs for that path', () => {
     useEditorStore.setState({
       tabs: [

@@ -89,6 +89,9 @@ export function hydrateWorkspaceSessionsIfNeeded(): boolean {
   const projectSessions: Record<string, ProjectEditorSession> = {}
   const terminals: TerminalTab[] = []
   const activeTerminalByProject: Record<string, string> = {}
+  const secondaryTerminalByProject: Record<string, string> = {}
+  const blTerminalByProject: Record<string, string> = {}
+  const brTerminalByProject: Record<string, string> = {}
 
   for (const [projectId, session] of Object.entries(snapshot.projects)) {
     projectSessions[projectId] = projectSessionFromPersisted(session)
@@ -97,6 +100,15 @@ export function hydrateWorkspaceSessionsIfNeeded(): boolean {
     }
     if (session.activeTerminalId) {
       activeTerminalByProject[projectId] = session.activeTerminalId
+    }
+    if (session.secondaryTerminalId) {
+      secondaryTerminalByProject[projectId] = session.secondaryTerminalId
+    }
+    if (session.blTerminalId) {
+      blTerminalByProject[projectId] = session.blTerminalId
+    }
+    if (session.brTerminalId) {
+      brTerminalByProject[projectId] = session.brTerminalId
     }
   }
 
@@ -109,7 +121,12 @@ export function hydrateWorkspaceSessionsIfNeeded(): boolean {
     tabs: pinnedTabs,
     activeTabId: pinnedTabs[0]?.id ?? null,
   })
-  useTerminalStore.getState().hydrateTerminalSessions(terminals, activeTerminalByProject)
+  useTerminalStore.getState().hydrateTerminalSessions(terminals, {
+    activeTerminalByProject,
+    secondaryTerminalByProject,
+    blTerminalByProject,
+    brTerminalByProject,
+  })
   rehydrateRunningFromTerminals()
   return true
 }
@@ -256,6 +273,9 @@ export function captureWorkspaceSessionSnapshot(options?: {
         runTaskId: t.runTaskId,
       })),
     activeTerminalByProject: terminalState.activeTerminalByProject,
+    secondaryTerminalByProject: terminalState.secondaryTerminalByProject,
+    blTerminalByProject: terminalState.blTerminalByProject,
+    brTerminalByProject: terminalState.brTerminalByProject,
     excludeProjectIds: [...ephemeralIds, ...unknownIds],
     now: options?.now,
   })

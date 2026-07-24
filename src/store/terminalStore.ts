@@ -425,7 +425,12 @@ interface TerminalState {
   /** Seed tabs from durable workspace session (no PTY yet). */
   hydrateTerminalSessions: (
     terminals: TerminalTab[],
-    activeTerminalByProject: Record<string, string>,
+    bindings: {
+      activeTerminalByProject: Record<string, string>
+      secondaryTerminalByProject?: Record<string, string>
+      blTerminalByProject?: Record<string, string>
+      brTerminalByProject?: Record<string, string>
+    },
   ) => void
   /**
    * Replace terminal metadata for specific projects (named workspace restore).
@@ -434,7 +439,12 @@ interface TerminalState {
   replaceTerminalSessionsForProjects: (
     projectIds: string[],
     terminals: TerminalTab[],
-    activeTerminalByProject: Record<string, string>,
+    bindings: {
+      activeTerminalByProject: Record<string, string>
+      secondaryTerminalByProject?: Record<string, string>
+      blTerminalByProject?: Record<string, string>
+      brTerminalByProject?: Record<string, string>
+    },
   ) => Promise<void>
   /** Spawn PTYs for tabs restored after restart (once). */
   spawnRestoredTerminals: (projectId: string) => Promise<void>
@@ -978,20 +988,22 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
-  hydrateTerminalSessions: (terminals, activeTerminalByProject) => {
+  hydrateTerminalSessions: (terminals, bindings) => {
     set({
       terminals,
       activeTerminalId: null,
-      activeTerminalByProject: { ...activeTerminalByProject },
+      secondaryTerminalId: null,
+      blTerminalId: null,
+      brTerminalId: null,
+      activeTerminalByProject: { ...bindings.activeTerminalByProject },
+      secondaryTerminalByProject: { ...(bindings.secondaryTerminalByProject ?? {}) },
+      blTerminalByProject: { ...(bindings.blTerminalByProject ?? {}) },
+      brTerminalByProject: { ...(bindings.brTerminalByProject ?? {}) },
     })
     hydrateTerminalOutputForTabs(terminals.map(t => t.id))
   },
 
-  replaceTerminalSessionsForProjects: async (
-    projectIds,
-    terminals,
-    activeTerminalByProject,
-  ) => {
+  replaceTerminalSessionsForProjects: async (projectIds, terminals, bindings) => {
     const replace = new Set(projectIds)
     if (replace.size === 0) return
     const outgoing = get()
@@ -1005,19 +1017,52 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set(s => {
       const kept = s.terminals.filter(t => !replace.has(t.projectId))
       const nextActiveByProject = { ...s.activeTerminalByProject }
-      for (const id of replace) delete nextActiveByProject[id]
-      for (const [projectId, terminalId] of Object.entries(activeTerminalByProject)) {
+      const nextSecondaryByProject = { ...s.secondaryTerminalByProject }
+      const nextBlByProject = { ...s.blTerminalByProject }
+      const nextBrByProject = { ...s.brTerminalByProject }
+      for (const id of replace) {
+        delete nextActiveByProject[id]
+        delete nextSecondaryByProject[id]
+        delete nextBlByProject[id]
+        delete nextBrByProject[id]
+      }
+      for (const [projectId, terminalId] of Object.entries(bindings.activeTerminalByProject)) {
         if (replace.has(projectId)) nextActiveByProject[projectId] = terminalId
+      }
+      for (const [projectId, terminalId] of Object.entries(
+        bindings.secondaryTerminalByProject ?? {},
+      )) {
+        if (replace.has(projectId)) nextSecondaryByProject[projectId] = terminalId
+      }
+      for (const [projectId, terminalId] of Object.entries(bindings.blTerminalByProject ?? {})) {
+        if (replace.has(projectId)) nextBlByProject[projectId] = terminalId
+      }
+      for (const [projectId, terminalId] of Object.entries(bindings.brTerminalByProject ?? {})) {
+        if (replace.has(projectId)) nextBrByProject[projectId] = terminalId
       }
       const nextTerminals = [...kept, ...terminals]
       const activeTerminalId =
         s.activeTerminalId && nextTerminals.some(t => t.id === s.activeTerminalId)
           ? s.activeTerminalId
           : null
+      const secondaryTerminalId =
+        s.secondaryTerminalId && nextTerminals.some(t => t.id === s.secondaryTerminalId)
+          ? s.secondaryTerminalId
+          : null
+      const blTerminalId =
+        s.blTerminalId && nextTerminals.some(t => t.id === s.blTerminalId) ? s.blTerminalId : null
+      const brTerminalId =
+        s.brTerminalId && nextTerminals.some(t => t.id === s.brTerminalId) ? s.brTerminalId : null
       return {
         terminals: nextTerminals,
         activeTerminalByProject: nextActiveByProject,
+        secondaryTerminalByProject: nextSecondaryByProject,
+        blTerminalByProject: nextBlByProject,
+        brTerminalByProject: nextBrByProject,
         activeTerminalId,
+        secondaryTerminalId,
+        blTerminalId,
+        brTerminalId,
       }
     })
     hydrateTerminalOutputForTabs(terminals.map(t => t.id))

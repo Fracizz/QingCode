@@ -168,6 +168,42 @@ describe('buildWorkspaceSessionSnapshot', () => {
     expect(collectPersistedTabPaths(snapshot)).toEqual(['D:/proj/a.ts'])
   })
 
+  it('persists dual/田 pane terminal bindings per project', () => {
+    const snapshot = buildWorkspaceSessionSnapshot({
+      editorSessions: {
+        p1: {
+          tabs: [{ id: 't1', path: 'D:/proj/a.ts', name: 'a.ts', dirty: false }],
+          activeTabId: 't1',
+        },
+      },
+      terminals: [
+        { id: 'tl', name: 'TL', projectId: 'p1', cwd: 'D:/proj', launchCommand: '' },
+        { id: 'tr', name: 'TR', projectId: 'p1', cwd: 'D:/proj', launchCommand: '' },
+        { id: 'bl', name: 'BL', projectId: 'p1', cwd: 'D:/proj', launchCommand: '' },
+        { id: 'br', name: 'BR', projectId: 'p1', cwd: 'D:/proj', launchCommand: '' },
+      ],
+      activeTerminalByProject: { p1: 'tl' },
+      secondaryTerminalByProject: { p1: 'tr' },
+      blTerminalByProject: { p1: 'bl' },
+      brTerminalByProject: { p1: 'br' },
+      now: 11,
+    })
+
+    expect(snapshot.projects.p1).toMatchObject({
+      activeTerminalId: 'tl',
+      secondaryTerminalId: 'tr',
+      blTerminalId: 'bl',
+      brTerminalId: 'br',
+    })
+
+    const parsed = parseWorkspaceSession(snapshot)
+    expect(parsed!.projects.p1).toMatchObject({
+      secondaryTerminalId: 'tr',
+      blTerminalId: 'bl',
+      brTerminalId: 'br',
+    })
+  })
+
   it('includes pinned settings tabs at the workspace root', () => {
     const snapshot = buildWorkspaceSessionSnapshot({
       editorSessions: {},

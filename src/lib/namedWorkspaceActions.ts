@@ -294,6 +294,9 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
 
   const terminals = []
   const activeTerminalByProject: Record<string, string> = {}
+  const secondaryTerminalByProject: Record<string, string> = {}
+  const blTerminalByProject: Record<string, string> = {}
+  const brTerminalByProject: Record<string, string> = {}
   for (const [projectId, session] of Object.entries(remapped.sessionsByProjectId)) {
     for (const terminal of session.terminals) {
       terminals.push(terminalFromPersisted(projectId, terminal))
@@ -301,10 +304,22 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
     if (session.activeTerminalId) {
       activeTerminalByProject[projectId] = session.activeTerminalId
     }
+    if (session.secondaryTerminalId) {
+      secondaryTerminalByProject[projectId] = session.secondaryTerminalId
+    }
+    if (session.blTerminalId) {
+      blTerminalByProject[projectId] = session.blTerminalId
+    }
+    if (session.brTerminalId) {
+      brTerminalByProject[projectId] = session.brTerminalId
+    }
   }
-  await useTerminalStore
-    .getState()
-    .replaceTerminalSessionsForProjects(memberIds, terminals, activeTerminalByProject)
+  await useTerminalStore.getState().replaceTerminalSessionsForProjects(memberIds, terminals, {
+    activeTerminalByProject,
+    secondaryTerminalByProject,
+    blTerminalByProject,
+    brTerminalByProject,
+  })
   rehydrateRunningFromTerminals()
 
   // Prefer a project whose directory still exists on disk.

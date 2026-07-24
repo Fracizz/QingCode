@@ -4,7 +4,11 @@ import { tempDir } from '@tauri-apps/api/path'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import type { Project, RecentFile } from '../types'
 import { baseName, findNodeByPath } from '../utils/fileTreeHelpers'
-import { activateProjectSession, renameEditorPaths } from './editorSessionBridge'
+import {
+  activateProjectSession,
+  deactivateProjectSession,
+  renameEditorPaths,
+} from './editorSessionBridge'
 import { translate } from '../lib/i18n'
 import {
   formatExpandDirErrorToast,
@@ -160,6 +164,29 @@ function withUnavailableProject(ids: string[], projectId: string, unavailable: b
   return ids.filter(id => id !== projectId)
 }
 
+/**
+ * Clear the active project after stashing its editor session.
+ * Without the stash, visible tabs live only in `tabs` and would be dropped
+ * from the durable workspace snapshot once `currentProject` is null.
+ */
+function clearCurrentProjectSession(
+  get: () => { currentProject: Project | null },
+  set: (partial: {
+    currentProject: null
+    recentFiles: []
+    fileTree?: []
+  }) => void,
+  options?: { clearFileTree?: boolean },
+) {
+  const currentId = get().currentProject?.id ?? null
+  if (currentId) deactivateProjectSession(currentId)
+  if (options?.clearFileTree === false) {
+    set({ currentProject: null, recentFiles: [] })
+  } else {
+    set({ currentProject: null, recentFiles: [], fileTree: [] })
+  }
+}
+
 export const useProjectStore = create<ProjectState>((set, get) => ({
   projects: [],
   currentProject: null,
@@ -247,7 +274,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           if (firstAvailable) {
             await get().switchProject(firstAvailable)
           } else {
-            set({ currentProject: null, recentFiles: [] })
+            clearCurrentProjectSession(get, set, { clearFileTree: false })
           }
         } else if (!current) {
           const firstAvailable = pickAvailableProject(get().projects, unavailable)
@@ -413,7 +440,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         if (next) {
           await get().switchProject(next)
         } else {
-          set({ currentProject: null, recentFiles: [], fileTree: [] })
+          clearCurrentProjectSession(get, set)
         }
       }
       get().pushToast('info', '已从顶栏隐藏')
@@ -435,7 +462,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         if (next) {
           await get().switchProject(next)
         } else {
-          set({ currentProject: null, recentFiles: [], fileTree: [] })
+          clearCurrentProjectSession(get, set)
         }
       }
       get().pushToast('info', '已从顶栏隐藏，可在项目管理中恢复')
@@ -480,7 +507,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         if (next) {
           await get().switchProject(next)
         } else {
-          set({ currentProject: null, recentFiles: [], fileTree: [] })
+          clearCurrentProjectSession(get, set)
         }
       }
 
