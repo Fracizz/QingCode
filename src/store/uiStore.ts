@@ -14,6 +14,7 @@ import {
 } from '../lib/panelLayoutTemplate'
 import {
   loadSideWorkspaceColumns,
+  normalizeSideWorkspaceColumns,
   saveSideWorkspaceColumns,
   type SideWorkspaceColumns,
 } from '../lib/sideWorkspaceLayout'
@@ -42,7 +43,9 @@ interface UIState {
   panelLayoutSwitching: boolean
   /** Side dock: show a second terminal column. */
   sideDualTerminal: boolean
-  /** Side dock: show the editor column (independent from dual). */
+  /** Side dock: 2×2 田 terminal grid (mutually exclusive with dual). */
+  sideQuadTerminal: boolean
+  /** Side dock: show the editor column (independent from dual/quad). */
   sideEditorVisible: boolean
   /** Search query for the latest Settings deep-link (e.g. files.autoSave). */
   settingsFocusQuery: string | null
@@ -78,8 +81,9 @@ interface UIState {
   togglePanelLayout: () => void
   setSideWorkspaceColumns: (columns: Partial<SideWorkspaceColumns>) => void
   toggleSideDualTerminal: () => void
+  toggleSideQuadTerminal: () => void
   toggleSideEditorVisible: () => void
-  /** Ensure the editor column is visible (open file / SCM / Settings); keeps dual. */
+  /** Ensure the editor column is visible (open file / SCM / Settings); keeps dual/quad. */
   expandSideEditor: () => void
   openProjectManager: () => void
   closeProjectManager: () => void
@@ -89,6 +93,26 @@ interface UIState {
 
 function persistColumns(columns: SideWorkspaceColumns) {
   saveSideWorkspaceColumns(columns)
+}
+
+function columnsFromState(state: {
+  sideDualTerminal: boolean
+  sideQuadTerminal: boolean
+  sideEditorVisible: boolean
+}): SideWorkspaceColumns {
+  return normalizeSideWorkspaceColumns({
+    dualTerminal: state.sideDualTerminal,
+    quadTerminal: state.sideQuadTerminal,
+    editorVisible: state.sideEditorVisible,
+  })
+}
+
+function applyColumns(columns: SideWorkspaceColumns) {
+  return {
+    sideDualTerminal: columns.dualTerminal,
+    sideQuadTerminal: columns.quadTerminal,
+    sideEditorVisible: columns.editorVisible,
+  }
 }
 
 const initialColumns = loadSideWorkspaceColumns()
@@ -105,6 +129,7 @@ export const useUIStore = create<UIState>((set) => ({
   panelLayout: loadPanelLayoutTemplate(),
   panelLayoutSwitching: false,
   sideDualTerminal: initialColumns.dualTerminal,
+  sideQuadTerminal: initialColumns.quadTerminal,
   sideEditorVisible: initialColumns.editorVisible,
   settingsFocusQuery: null,
   settingsFocusSignal: 0,
@@ -116,27 +141,26 @@ export const useUIStore = create<UIState>((set) => ({
       if (!needsEditor || state.sideEditorVisible) {
         return { view, sidebarOpen: true }
       }
-      const columns = {
-        dualTerminal: state.sideDualTerminal,
+      const columns = normalizeSideWorkspaceColumns({
+        ...columnsFromState(state),
         editorVisible: true,
-      }
+      })
       persistColumns(columns)
-      return { view, sidebarOpen: true, sideEditorVisible: true }
+      return { view, sidebarOpen: true, ...applyColumns(columns) }
     }),
   toggleActivityView: view =>
     set(state => {
       if (view === 'sourceControl' || view === 'settings') {
         if (state.view === view) return { view: 'explorer', sidebarOpen: true }
-        if (!state.sideEditorVisible) {
-          persistColumns({
-            dualTerminal: state.sideDualTerminal,
-            editorVisible: true,
-          })
-        }
+        const columns = normalizeSideWorkspaceColumns({
+          ...columnsFromState(state),
+          editorVisible: true,
+        })
+        if (!state.sideEditorVisible) persistColumns(columns)
         return {
           view,
           sidebarOpen: true,
-          sideEditorVisible: true,
+          ...applyColumns(columns),
         }
       }
       if (state.view === view && state.sidebarOpen) return { sidebarOpen: false }
@@ -164,16 +188,15 @@ export const useUIStore = create<UIState>((set) => ({
   clearPendingNewFile: () => set({ pendingNewFile: false }),
   requestSettings: query =>
     set(state => {
-      if (!state.sideEditorVisible) {
-        persistColumns({
-          dualTerminal: state.sideDualTerminal,
-          editorVisible: true,
-        })
-      }
+      const columns = normalizeSideWorkspaceColumns({
+        ...columnsFromState(state),
+        editorVisible: true,
+      })
+      if (!state.sideEditorVisible) persistColumns(columns)
       return {
         view: 'settings',
         sidebarOpen: true,
-        sideEditorVisible: true,
+        ...applyColumns(columns),
         settingsFocusQuery: query ?? null,
         settingsFocusSignal: state.settingsFocusSignal + 1,
       }
@@ -183,10 +206,7 @@ export const useUIStore = create<UIState>((set) => ({
   setPanelLayoutMode: mode =>
     set(state => {
       const normalized = normalizePanelLayoutMode(mode)
-      const current = resolvePanelLayoutMode(state.panelLayout, {
-        dualTerminal: state.sideDualTerminal,
-        editorVisible: state.sideEditorVisible,
-      })
+      const current = resolvePanelLayoutMode(state.panelLayout, columnsFromState(state))
       if (current === normalized) return state
 
       const { panelLayout, columns } = panelLayoutModeParts(normalized)
@@ -196,71 +216,84 @@ export const useUIStore = create<UIState>((set) => ({
 
       return {
         panelLayout,
-        sideDualTerminal: columns ? columns.dualTerminal : state.sideDualTerminal,
-        sideEditorVisible: columns ? columns.editorVisible : state.sideEditorVisible,
+        ...(columns ? applyColumns(columns) : {}),
         panelLayoutSwitching: dockChanged,
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }
     }),
   togglePanelLayout: () => {
     const state = useUIStore.getState()
-    const current = resolvePanelLayoutMode(state.panelLayout, {
-      dualTerminal: state.sideDualTerminal,
-      editorVisible: state.sideEditorVisible,
-    })
-    // Fine-tuned (editor hidden): cycle from the nearest side preset so the next
+    const current = resolvePanelLayoutMode(state.panelLayout, columnsFromState(state))
+    // Fine-tuned (editor hidden / 田): cycle from the nearest side preset so the next
     // step is predictable (dual → classic, single → dual+editor).
     const cycleFrom =
       current ??
-      (state.sideDualTerminal ? 'sideDualEditor' : 'sideTerminal')
+      (state.sideDualTerminal || state.sideQuadTerminal ? 'sideDualEditor' : 'sideTerminal')
     state.setPanelLayoutMode(nextPanelLayoutMode(cycleFrom))
   },
   setSideWorkspaceColumns: patch =>
     set(state => {
-      const columns = {
+      const columns = normalizeSideWorkspaceColumns({
         dualTerminal: patch.dualTerminal ?? state.sideDualTerminal,
+        quadTerminal: patch.quadTerminal ?? state.sideQuadTerminal,
         editorVisible: patch.editorVisible ?? state.sideEditorVisible,
-      }
+      })
       persistColumns(columns)
       return {
-        sideDualTerminal: columns.dualTerminal,
-        sideEditorVisible: columns.editorVisible,
+        ...applyColumns(columns),
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }
     }),
   toggleSideDualTerminal: () =>
     set(state => {
-      const columns = {
-        dualTerminal: !state.sideDualTerminal,
+      const nextDual = !state.sideDualTerminal
+      const columns = normalizeSideWorkspaceColumns({
+        dualTerminal: nextDual,
+        // Dual and 田 are mutually exclusive.
+        quadTerminal: false,
         editorVisible: state.sideEditorVisible,
-      }
+      })
       persistColumns(columns)
       return {
-        sideDualTerminal: columns.dualTerminal,
+        ...applyColumns(columns),
+        terminalOpenSignal: state.terminalOpenSignal + 1,
+      }
+    }),
+  toggleSideQuadTerminal: () =>
+    set(state => {
+      const nextQuad = !state.sideQuadTerminal
+      const columns = normalizeSideWorkspaceColumns({
+        dualTerminal: false,
+        quadTerminal: nextQuad,
+        editorVisible: state.sideEditorVisible,
+      })
+      persistColumns(columns)
+      return {
+        ...applyColumns(columns),
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }
     }),
   toggleSideEditorVisible: () =>
     set(state => {
-      const columns = {
-        dualTerminal: state.sideDualTerminal,
+      const columns = normalizeSideWorkspaceColumns({
+        ...columnsFromState(state),
         editorVisible: !state.sideEditorVisible,
-      }
+      })
       persistColumns(columns)
       return {
-        sideEditorVisible: columns.editorVisible,
+        ...applyColumns(columns),
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }
     }),
   expandSideEditor: () =>
     set(state => {
       if (state.sideEditorVisible) return state
-      const columns = {
-        dualTerminal: state.sideDualTerminal,
+      const columns = normalizeSideWorkspaceColumns({
+        ...columnsFromState(state),
         editorVisible: true,
-      }
+      })
       persistColumns(columns)
-      return { sideEditorVisible: true }
+      return applyColumns(columns)
     }),
   openProjectManager: () => set({ projectManagerOpen: true }),
   closeProjectManager: () => set({ projectManagerOpen: false }),

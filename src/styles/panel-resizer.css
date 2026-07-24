@@ -102,6 +102,23 @@ body.panel-resizing[data-panel-resize='horizontal'] [data-editor-column] {
   opacity: 1;
 }
 
+/* 双终端 / 田字终端：分割线常显，四格边界可一眼分清 */
+[data-terminal-dual='true'] .panel-resizer-line,
+[data-terminal-quad='true'] .panel-resizer-line {
+  opacity: 1;
+  background: var(--color-border-strong);
+}
+
+[data-terminal-dual='true'] .panel-resizer--vertical .panel-resizer-line,
+[data-terminal-quad='true'] .panel-resizer--vertical .panel-resizer-line {
+  width: 2px;
+}
+
+[data-terminal-dual='true'] .panel-resizer--horizontal .panel-resizer-line,
+[data-terminal-quad='true'] .panel-resizer--horizontal .panel-resizer-line {
+  height: 2px;
+}
+
 .panel-resizer:hover {
   filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-accent) 30%, transparent));
 }

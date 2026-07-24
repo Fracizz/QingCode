@@ -1,6 +1,8 @@
-/** Independent side-dock column flags (dual terminal × editor). */
+/** Independent side-dock column flags (dual/quad terminal × editor). */
 export type SideWorkspaceColumns = {
   dualTerminal: boolean
+  /** 2×2 田 layout; mutually exclusive with dualTerminal. */
+  quadTerminal: boolean
   editorVisible: boolean
 }
 
@@ -10,6 +12,7 @@ export const SIDE_EDITOR_COLLAPSED_KEY = 'qingcode:side-editor-collapsed'
 
 export const DEFAULT_SIDE_WORKSPACE: SideWorkspaceColumns = {
   dualTerminal: true,
+  quadTerminal: false,
   editorVisible: false,
 }
 
@@ -29,20 +32,39 @@ function migrateFromLegacyCollapsed(): SideWorkspaceColumns | null {
     const collapsed = raw === '1' || raw === 'true'
     // collapsed → dual only; expanded → single terminal + editor
     return collapsed
-      ? { dualTerminal: true, editorVisible: false }
-      : { dualTerminal: false, editorVisible: true }
+      ? { dualTerminal: true, quadTerminal: false, editorVisible: false }
+      : { dualTerminal: false, quadTerminal: false, editorVisible: true }
   } catch {
     return null
+  }
+}
+
+/** Enforce dual/quad mutual exclusion (dual wins if both are set). */
+export function normalizeSideWorkspaceColumns(
+  columns: Partial<SideWorkspaceColumns> & {
+    dualTerminal?: boolean
+    quadTerminal?: boolean
+    editorVisible?: boolean
+  },
+): SideWorkspaceColumns {
+  let dualTerminal = Boolean(columns.dualTerminal)
+  let quadTerminal = Boolean(columns.quadTerminal)
+  if (dualTerminal && quadTerminal) quadTerminal = false
+  return {
+    dualTerminal,
+    quadTerminal,
+    editorVisible: Boolean(columns.editorVisible),
   }
 }
 
 export function parseSideWorkspaceColumns(value: unknown): SideWorkspaceColumns {
   if (!value || typeof value !== 'object') return { ...DEFAULT_SIDE_WORKSPACE }
   const record = value as Record<string, unknown>
-  return {
+  return normalizeSideWorkspaceColumns({
     dualTerminal: record.dualTerminal === true,
+    quadTerminal: record.quadTerminal === true,
     editorVisible: record.editorVisible === true,
-  }
+  })
 }
 
 export function loadSideWorkspaceColumns(): SideWorkspaceColumns {
@@ -63,10 +85,7 @@ export function loadSideWorkspaceColumns(): SideWorkspaceColumns {
 }
 
 export function saveSideWorkspaceColumns(columns: SideWorkspaceColumns) {
-  const next = {
-    dualTerminal: Boolean(columns.dualTerminal),
-    editorVisible: Boolean(columns.editorVisible),
-  }
+  const next = normalizeSideWorkspaceColumns(columns)
   try {
     localStorage.setItem(SIDE_WORKSPACE_KEY, JSON.stringify(next))
     // Keep legacy key in sync for older builds / tests.

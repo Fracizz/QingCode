@@ -18,6 +18,7 @@ beforeEach(() => {
     panelLayout: 'classic',
     panelLayoutSwitching: false,
     sideDualTerminal: false,
+    sideQuadTerminal: false,
     sideEditorVisible: true,
     terminalOpenSignal: 0,
   })
@@ -32,9 +33,11 @@ describe('setPanelLayoutMode', () => {
     useUIStore.getState().setPanelLayoutMode('sideDualEditor')
     expect(useUIStore.getState().panelLayout).toBe('sideTerminal')
     expect(useUIStore.getState().sideDualTerminal).toBe(true)
+    expect(useUIStore.getState().sideQuadTerminal).toBe(false)
     expect(useUIStore.getState().sideEditorVisible).toBe(true)
     expect(JSON.parse(memory.get(SIDE_WORKSPACE_KEY) ?? '{}')).toEqual({
       dualTerminal: true,
+      quadTerminal: false,
       editorVisible: true,
     })
     expect(memory.get(PANEL_LAYOUT_KEY)).toBe('sideTerminal')
@@ -51,6 +54,7 @@ describe('setPanelLayoutMode', () => {
     useUIStore.setState({ panelLayoutSwitching: false })
     useUIStore.getState().setPanelLayoutMode('sideTerminal')
     expect(useUIStore.getState().sideDualTerminal).toBe(false)
+    expect(useUIStore.getState().sideQuadTerminal).toBe(false)
     expect(useUIStore.getState().sideEditorVisible).toBe(true)
   })
 })
@@ -77,20 +81,50 @@ describe('side workspace columns', () => {
     useUIStore.setState({
       panelLayout: 'sideTerminal',
       sideDualTerminal: false,
+      sideQuadTerminal: false,
       sideEditorVisible: true,
     })
     useUIStore.getState().toggleSideDualTerminal()
     expect(useUIStore.getState().sideDualTerminal).toBe(true)
+    expect(useUIStore.getState().sideQuadTerminal).toBe(false)
     expect(useUIStore.getState().sideEditorVisible).toBe(true)
+  })
+
+  it('quad and dual are mutually exclusive', () => {
+    useUIStore.setState({
+      panelLayout: 'sideTerminal',
+      sideDualTerminal: true,
+      sideQuadTerminal: false,
+      sideEditorVisible: true,
+    })
+    useUIStore.getState().toggleSideQuadTerminal()
+    expect(useUIStore.getState().sideQuadTerminal).toBe(true)
+    expect(useUIStore.getState().sideDualTerminal).toBe(false)
+
+    useUIStore.getState().toggleSideDualTerminal()
+    expect(useUIStore.getState().sideDualTerminal).toBe(true)
+    expect(useUIStore.getState().sideQuadTerminal).toBe(false)
   })
 
   it('expandSideEditor keeps dual terminal on', () => {
     useUIStore.setState({
       sideDualTerminal: true,
+      sideQuadTerminal: false,
       sideEditorVisible: false,
     })
     useUIStore.getState().expandSideEditor()
     expect(useUIStore.getState().sideEditorVisible).toBe(true)
     expect(useUIStore.getState().sideDualTerminal).toBe(true)
+  })
+
+  it('expandSideEditor keeps 田 terminal on', () => {
+    useUIStore.setState({
+      sideDualTerminal: false,
+      sideQuadTerminal: true,
+      sideEditorVisible: false,
+    })
+    useUIStore.getState().expandSideEditor()
+    expect(useUIStore.getState().sideEditorVisible).toBe(true)
+    expect(useUIStore.getState().sideQuadTerminal).toBe(true)
   })
 })

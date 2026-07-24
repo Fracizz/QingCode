@@ -382,16 +382,30 @@ function recordTypedInput(id: string, data: string) {
 
 export type ShellKind = 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
 
-export type TerminalFocusPane = 'primary' | 'secondary'
+/** Dual: primary|secondary. 田: primary=TL, secondary=TR, bl=BL, br=BR. */
+export type TerminalFocusPane = 'primary' | 'secondary' | 'bl' | 'br'
+
+export const TERMINAL_FOCUS_PANES: readonly TerminalFocusPane[] = [
+  'primary',
+  'secondary',
+  'bl',
+  'br',
+] as const
 
 interface TerminalState {
   terminals: TerminalTab[]
   activeTerminalId: string | null
   activeTerminalByProject: Record<string, string>
-  /** Right pane in dual-terminal (side layout with editor collapsed). */
+  /** Right pane in dual; top-right in 田. */
   secondaryTerminalId: string | null
   secondaryTerminalByProject: Record<string, string>
-  /** Which dual-terminal pane receives tab clicks / keyboard focus. */
+  /** Bottom-left pane in 田 layout. */
+  blTerminalId: string | null
+  blTerminalByProject: Record<string, string>
+  /** Bottom-right pane in 田 layout. */
+  brTerminalId: string | null
+  brTerminalByProject: Record<string, string>
+  /** Which dual/田 pane receives tab clicks / keyboard focus. */
   terminalFocusPane: TerminalFocusPane
   addTerminal: (projectPath: string, projectId: string, profileId?: string) => Promise<string | null>
   addScriptTerminal: (
@@ -434,7 +448,14 @@ interface TerminalState {
    * Picks another project tab, or leaves null for an empty pane.
    */
   ensureSecondaryTerminal: (projectId: string) => void
-  /** Terminal that should receive find/clear / status focus in dual mode. */
+  /**
+   * Ensure 田 panes have distinct terminals when possible (no auto-create).
+   * Empty panes stay null for EmptyState.
+   */
+  ensureQuadTerminals: (projectId: string) => void
+  /** Id bound to a dual/田 pane (null if empty). */
+  paneTerminalId: (pane: TerminalFocusPane) => string | null
+  /** Terminal that should receive find/clear / status focus in dual/田 mode. */
   focusedTerminalId: () => string | null
   writeToTerminal: (id: string, data: string) => Promise<void>
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<void>
@@ -454,12 +475,197 @@ try {
   /* ignore */
 }
 
+type PaneBindingSlice = {
+  activeTerminalId: string | null
+  secondaryTerminalId: string | null
+  blTerminalId: string | null
+  brTerminalId: string | null
+  activeTerminalByProject: Record<string, string>
+  secondaryTerminalByProject: Record<string, string>
+  blTerminalByProject: Record<string, string>
+  brTerminalByProject: Record<string, string>
+}
+
+function readPaneTerminalId(s: PaneBindingSlice, pane: TerminalFocusPane): string | null {
+  switch (pane) {
+    case 'primary':
+      return s.activeTerminalId
+    case 'secondary':
+      return s.secondaryTerminalId
+    case 'bl':
+      return s.blTerminalId
+    case 'br':
+      return s.brTerminalId
+  }
+}
+
+/** Assign `id` to `pane` for `projectId`, swapping if it already occupies another pane. */
+function bindTerminalToPane(
+  s: PaneBindingSlice,
+  projectId: string,
+  pane: TerminalFocusPane,
+  id: string,
+): Partial<PaneBindingSlice> {
+  const occupiedBy: Partial<Record<TerminalFocusPane, string | null>> = {
+    primary: s.activeTerminalId,
+    secondary: s.secondaryTerminalId,
+    bl: s.blTerminalId,
+    br: s.brTerminalId,
+  }
+  const previous = occupiedBy[pane] ?? null
+  let donorPane: TerminalFocusPane | null = null
+  for (const p of TERMINAL_FOCUS_PANES) {
+    if (p !== pane && occupiedBy[p] === id) {
+      donorPane = p
+      break
+    }
+  }
+
+  const next: PaneBindingSlice = {
+    activeTerminalId: s.activeTerminalId,
+    secondaryTerminalId: s.secondaryTerminalId,
+    blTerminalId: s.blTerminalId,
+    brTerminalId: s.brTerminalId,
+    activeTerminalByProject: { ...s.activeTerminalByProject },
+    secondaryTerminalByProject: { ...s.secondaryTerminalByProject },
+    blTerminalByProject: { ...s.blTerminalByProject },
+    brTerminalByProject: { ...s.brTerminalByProject },
+  }
+
+  const writePane = (target: TerminalFocusPane, terminalId: string | null) => {
+    switch (target) {
+      case 'primary':
+        next.activeTerminalId = terminalId
+        if (terminalId) next.activeTerminalByProject[projectId] = terminalId
+        else delete next.activeTerminalByProject[projectId]
+        break
+      case 'secondary':
+        next.secondaryTerminalId = terminalId
+        if (terminalId) next.secondaryTerminalByProject[projectId] = terminalId
+        else delete next.secondaryTerminalByProject[projectId]
+        break
+      case 'bl':
+        next.blTerminalId = terminalId
+        if (terminalId) next.blTerminalByProject[projectId] = terminalId
+        else delete next.blTerminalByProject[projectId]
+        break
+      case 'br':
+        next.brTerminalId = terminalId
+        if (terminalId) next.brTerminalByProject[projectId] = terminalId
+        else delete next.brTerminalByProject[projectId]
+        break
+    }
+  }
+
+  writePane(pane, id)
+  if (donorPane) writePane(donorPane, previous && previous !== id ? previous : null)
+  return next
+}
+
+function clearClosedFromPanes(
+  s: PaneBindingSlice,
+  projectId: string,
+  closedId: string,
+  projectTerminalIds: string[],
+): Partial<PaneBindingSlice> {
+  const used = new Set<string>()
+  const pickReplacement = (exclude: string | null) => {
+    for (const tid of projectTerminalIds) {
+      if (tid === exclude || tid === closedId || used.has(tid)) continue
+      used.add(tid)
+      return tid
+    }
+    return null
+  }
+
+  let activeTerminalId = s.activeTerminalId
+  let secondaryTerminalId = s.secondaryTerminalId
+  let blTerminalId = s.blTerminalId
+  let brTerminalId = s.brTerminalId
+  const activeTerminalByProject = { ...s.activeTerminalByProject }
+  const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+  const blTerminalByProject = { ...s.blTerminalByProject }
+  const brTerminalByProject = { ...s.brTerminalByProject }
+
+  if (activeTerminalId === closedId) {
+    activeTerminalId = pickReplacement(null)
+    if (activeTerminalId) activeTerminalByProject[projectId] = activeTerminalId
+    else delete activeTerminalByProject[projectId]
+  } else if (activeTerminalId) {
+    used.add(activeTerminalId)
+  }
+
+  if (secondaryTerminalId === closedId) {
+    secondaryTerminalId = pickReplacement(activeTerminalId)
+    if (secondaryTerminalId) secondaryTerminalByProject[projectId] = secondaryTerminalId
+    else delete secondaryTerminalByProject[projectId]
+  } else if (secondaryTerminalId) {
+    used.add(secondaryTerminalId)
+  }
+
+  if (blTerminalId === closedId) {
+    blTerminalId = pickReplacement(null)
+    if (blTerminalId) blTerminalByProject[projectId] = blTerminalId
+    else delete blTerminalByProject[projectId]
+  } else if (blTerminalId) {
+    used.add(blTerminalId)
+  }
+
+  if (brTerminalId === closedId) {
+    brTerminalId = pickReplacement(null)
+    if (brTerminalId) brTerminalByProject[projectId] = brTerminalId
+    else delete brTerminalByProject[projectId]
+  }
+
+  return {
+    activeTerminalId,
+    secondaryTerminalId,
+    blTerminalId,
+    brTerminalId,
+    activeTerminalByProject,
+    secondaryTerminalByProject,
+    blTerminalByProject,
+    brTerminalByProject,
+  }
+}
+
+function clearProjectPaneMaps(
+  s: PaneBindingSlice,
+  projectId: string,
+  closedIds: string[],
+): Partial<PaneBindingSlice> {
+  const activeTerminalByProject = { ...s.activeTerminalByProject }
+  const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+  const blTerminalByProject = { ...s.blTerminalByProject }
+  const brTerminalByProject = { ...s.brTerminalByProject }
+  delete activeTerminalByProject[projectId]
+  delete secondaryTerminalByProject[projectId]
+  delete blTerminalByProject[projectId]
+  delete brTerminalByProject[projectId]
+  return {
+    activeTerminalId: closedIds.includes(s.activeTerminalId ?? '') ? null : s.activeTerminalId,
+    secondaryTerminalId: closedIds.includes(s.secondaryTerminalId ?? '')
+      ? null
+      : s.secondaryTerminalId,
+    blTerminalId: closedIds.includes(s.blTerminalId ?? '') ? null : s.blTerminalId,
+    brTerminalId: closedIds.includes(s.brTerminalId ?? '') ? null : s.brTerminalId,
+    activeTerminalByProject,
+    secondaryTerminalByProject,
+    blTerminalByProject,
+    brTerminalByProject,
+  }
+}
+
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   terminals: [],
   activeTerminalId: null,
   activeTerminalByProject: {},
   secondaryTerminalId: null,
   secondaryTerminalByProject: {},
+  blTerminalId: null,
+  blTerminalByProject: {},
+  brTerminalId: null,
+  brTerminalByProject: {},
   terminalFocusPane: 'primary',
 
   addTerminal: async (projectPath: string, projectId: string, profileId?: string) => {
@@ -514,20 +720,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       ptySpawnPending: true,
     }
     set(s => {
-      if (s.terminalFocusPane === 'secondary') {
+      const pane = s.terminalFocusPane
+      if (pane === 'primary') {
         return {
           terminals: [...s.terminals, tab],
-          secondaryTerminalId: id,
-          secondaryTerminalByProject: {
-            ...s.secondaryTerminalByProject,
-            [projectId]: id,
-          },
+          activeTerminalId: id,
+          activeTerminalByProject: { ...s.activeTerminalByProject, [projectId]: id },
         }
       }
       return {
         terminals: [...s.terminals, tab],
-        activeTerminalId: id,
-        activeTerminalByProject: { ...s.activeTerminalByProject, [projectId]: id },
+        ...bindTerminalToPane(s, projectId, pane, id),
       }
     })
     // Ensure the panel has a non-zero height before xterm fit → PTY spawn.
@@ -614,30 +817,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const closed = s.terminals.find(t => t.id === id)
       const terminals = s.terminals.filter(t => t.id !== id)
       if (!closed) return { terminals }
-      const projectTerminals = terminals.filter(t => t.projectId === closed.projectId)
-      const nextProjectActive = projectTerminals[projectTerminals.length - 1]?.id
-      const activeTerminalByProject = { ...s.activeTerminalByProject }
-      if (nextProjectActive) activeTerminalByProject[closed.projectId] = nextProjectActive
-      else delete activeTerminalByProject[closed.projectId]
-      const activeTerminalId =
-        s.activeTerminalId === id
-          ? nextProjectActive ?? null
-          : s.activeTerminalId
-      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
-      let secondaryTerminalId = s.secondaryTerminalId
-      if (secondaryTerminalId === id) {
-        const nextSecondary =
-          projectTerminals.find(t => t.id !== activeTerminalId)?.id ?? null
-        secondaryTerminalId = nextSecondary
-        if (nextSecondary) secondaryTerminalByProject[closed.projectId] = nextSecondary
-        else delete secondaryTerminalByProject[closed.projectId]
-      }
+      const projectTerminalIds = terminals
+        .filter(t => t.projectId === closed.projectId)
+        .map(t => t.id)
       return {
         terminals,
-        activeTerminalId,
-        activeTerminalByProject,
-        secondaryTerminalId,
-        secondaryTerminalByProject,
+        ...clearClosedFromPanes(s, closed.projectId, id, projectTerminalIds),
       }
     })
     clearTerminalOutput(id)
@@ -663,16 +848,24 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const activeTerminalByProject = { ...s.activeTerminalByProject }
       activeTerminalByProject[keep.projectId] = id
       const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+      const blTerminalByProject = { ...s.blTerminalByProject }
+      const brTerminalByProject = { ...s.brTerminalByProject }
       delete secondaryTerminalByProject[keep.projectId]
+      delete blTerminalByProject[keep.projectId]
+      delete brTerminalByProject[keep.projectId]
       return {
         terminals,
         activeTerminalId: id,
         activeTerminalByProject,
-        secondaryTerminalId:
-          s.secondaryTerminalId && others.includes(s.secondaryTerminalId)
-            ? null
-            : s.secondaryTerminalId,
+        secondaryTerminalId: others.includes(s.secondaryTerminalId ?? '')
+          ? null
+          : s.secondaryTerminalId,
         secondaryTerminalByProject,
+        blTerminalId: others.includes(s.blTerminalId ?? '') ? null : s.blTerminalId,
+        blTerminalByProject,
+        brTerminalId: others.includes(s.brTerminalId ?? '') ? null : s.brTerminalId,
+        brTerminalByProject,
+        terminalFocusPane: 'primary' as const,
       }
     })
     others.forEach(id => clearTerminalOutput(id))
@@ -691,21 +884,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     await Promise.all(
       ids.map(id => safeInvoke('关闭终端', 'kill_terminal', { id }).catch(() => undefined))
     )
-    set(s => {
-      const activeTerminalByProject = { ...s.activeTerminalByProject }
-      delete activeTerminalByProject[projectId]
-      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
-      delete secondaryTerminalByProject[projectId]
-      return {
-        terminals: s.terminals.filter(t => t.projectId !== projectId),
-        activeTerminalId: ids.includes(s.activeTerminalId ?? '') ? null : s.activeTerminalId,
-        activeTerminalByProject,
-        secondaryTerminalId: ids.includes(s.secondaryTerminalId ?? '')
-          ? null
-          : s.secondaryTerminalId,
-        secondaryTerminalByProject,
-      }
-    })
+    set(s => ({
+      terminals: s.terminals.filter(t => t.projectId !== projectId),
+      ...clearProjectPaneMaps(s, projectId, ids),
+    }))
     ids.forEach(id => clearTerminalOutput(id))
   },
 
@@ -722,21 +904,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     await Promise.all(
       ids.map(id => safeInvoke('关闭终端', 'kill_terminal', { id }).catch(() => undefined))
     )
-    set(s => {
-      const activeTerminalByProject = { ...s.activeTerminalByProject }
-      delete activeTerminalByProject[projectId]
-      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
-      delete secondaryTerminalByProject[projectId]
-      return {
-        terminals: s.terminals.filter(terminal => terminal.projectId !== projectId),
-        activeTerminalId: ids.includes(s.activeTerminalId ?? '') ? null : s.activeTerminalId,
-        activeTerminalByProject,
-        secondaryTerminalId: ids.includes(s.secondaryTerminalId ?? '')
-          ? null
-          : s.secondaryTerminalId,
-        secondaryTerminalByProject,
-      }
-    })
+    set(s => ({
+      terminals: s.terminals.filter(terminal => terminal.projectId !== projectId),
+      ...clearProjectPaneMaps(s, projectId, ids),
+    }))
     ids.forEach(id => clearTerminalOutput(id))
   },
 
@@ -873,26 +1044,70 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   activateProject: (projectId: string) =>
     set(s => {
       const projectTerminals = s.terminals.filter(terminal => terminal.projectId === projectId)
+      const ids = new Set(projectTerminals.map(t => t.id))
       const remembered = s.activeTerminalByProject[projectId]
-      const activeTerminalId = projectTerminals.some(terminal => terminal.id === remembered)
+      const activeTerminalId = remembered && ids.has(remembered)
         ? remembered
         : projectTerminals[0]?.id ?? null
-      const rememberedSecondary = s.secondaryTerminalByProject[projectId]
-      const secondaryTerminalId =
-        rememberedSecondary &&
-        rememberedSecondary !== activeTerminalId &&
-        projectTerminals.some(terminal => terminal.id === rememberedSecondary)
-          ? rememberedSecondary
-          : null
+
+      const pickRemembered = (
+        rememberedId: string | undefined,
+        byProject: Record<string, string>,
+        taken: Set<string>,
+      ) => {
+        if (rememberedId && ids.has(rememberedId) && !taken.has(rememberedId)) {
+          return rememberedId
+        }
+        const mapped = byProject[projectId]
+        if (mapped && ids.has(mapped) && !taken.has(mapped)) return mapped
+        return null
+      }
+
+      const taken = new Set<string>()
+      if (activeTerminalId) taken.add(activeTerminalId)
+
+      const secondaryTerminalId = pickRemembered(
+        s.secondaryTerminalByProject[projectId],
+        s.secondaryTerminalByProject,
+        taken,
+      )
+      if (secondaryTerminalId) taken.add(secondaryTerminalId)
+
+      const blTerminalId = pickRemembered(
+        s.blTerminalByProject[projectId],
+        s.blTerminalByProject,
+        taken,
+      )
+      if (blTerminalId) taken.add(blTerminalId)
+
+      const brTerminalId = pickRemembered(
+        s.brTerminalByProject[projectId],
+        s.brTerminalByProject,
+        taken,
+      )
+
+      const activeTerminalByProject = { ...s.activeTerminalByProject }
       const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
-      if (!secondaryTerminalId) delete secondaryTerminalByProject[projectId]
+      const blTerminalByProject = { ...s.blTerminalByProject }
+      const brTerminalByProject = { ...s.brTerminalByProject }
+      if (activeTerminalId) activeTerminalByProject[projectId] = activeTerminalId
+      else delete activeTerminalByProject[projectId]
+      if (secondaryTerminalId) secondaryTerminalByProject[projectId] = secondaryTerminalId
+      else delete secondaryTerminalByProject[projectId]
+      if (blTerminalId) blTerminalByProject[projectId] = blTerminalId
+      else delete blTerminalByProject[projectId]
+      if (brTerminalId) brTerminalByProject[projectId] = brTerminalId
+      else delete brTerminalByProject[projectId]
+
       return {
         activeTerminalId,
-        activeTerminalByProject: activeTerminalId
-          ? { ...s.activeTerminalByProject, [projectId]: activeTerminalId }
-          : s.activeTerminalByProject,
+        activeTerminalByProject,
         secondaryTerminalId,
         secondaryTerminalByProject,
+        blTerminalId,
+        blTerminalByProject,
+        brTerminalId,
+        brTerminalByProject,
         terminalFocusPane: 'primary' as const,
       }
     }),
@@ -908,51 +1123,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set(s => {
       const terminal = s.terminals.find(tab => tab.id === id)
       if (!terminal) return s
-      if (s.terminalFocusPane === 'secondary') {
-        // Keep primary/secondary distinct — swap if the tab is already primary.
-        if (s.activeTerminalId === id) {
-          const previousSecondary = s.secondaryTerminalId
-          return {
-            activeTerminalId: previousSecondary && previousSecondary !== id ? previousSecondary : id,
-            activeTerminalByProject: {
-              ...s.activeTerminalByProject,
-              [terminal.projectId]:
-                previousSecondary && previousSecondary !== id ? previousSecondary : id,
-            },
-            secondaryTerminalId: id,
-            secondaryTerminalByProject: {
-              ...s.secondaryTerminalByProject,
-              [terminal.projectId]: id,
-            },
-          }
-        }
-        return {
-          secondaryTerminalId: id,
-          secondaryTerminalByProject: {
-            ...s.secondaryTerminalByProject,
-            [terminal.projectId]: id,
-          },
-        }
-      }
-      let secondaryTerminalId = s.secondaryTerminalId
-      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
-      if (secondaryTerminalId === id) {
-        secondaryTerminalId = s.activeTerminalId
-        if (secondaryTerminalId) {
-          secondaryTerminalByProject[terminal.projectId] = secondaryTerminalId
-        } else {
-          delete secondaryTerminalByProject[terminal.projectId]
-        }
-      }
-      return {
-        activeTerminalId: id,
-        activeTerminalByProject: {
-          ...s.activeTerminalByProject,
-          [terminal.projectId]: id,
-        },
-        secondaryTerminalId,
-        secondaryTerminalByProject,
-      }
+      return bindTerminalToPane(s, terminal.projectId, s.terminalFocusPane, id)
     }),
 
   setTerminalFocusPane: pane => set({ terminalFocusPane: pane }),
@@ -1002,12 +1173,71 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return { secondaryTerminalId: next, secondaryTerminalByProject }
     }),
 
+  ensureQuadTerminals: projectId =>
+    set(s => {
+      const projectTerminals = s.terminals.filter(t => t.projectId === projectId)
+      if (projectTerminals.length === 0) {
+        return {
+          secondaryTerminalId: null,
+          blTerminalId: null,
+          brTerminalId: null,
+        }
+      }
+
+      const used = new Set<string>()
+      const resolve = (current: string | null) => {
+        if (current && projectTerminals.some(t => t.id === current) && !used.has(current)) {
+          used.add(current)
+          return current
+        }
+        const next = projectTerminals.find(t => !used.has(t.id))?.id ?? null
+        if (next) used.add(next)
+        return next
+      }
+
+      // Keep primary as-is when valid; fill other panes with distinct tabs.
+      let activeTerminalId = s.activeTerminalId
+      if (activeTerminalId && projectTerminals.some(t => t.id === activeTerminalId)) {
+        used.add(activeTerminalId)
+      } else {
+        activeTerminalId = resolve(null)
+      }
+
+      const secondaryTerminalId = resolve(s.secondaryTerminalId)
+      const blTerminalId = resolve(s.blTerminalId)
+      const brTerminalId = resolve(s.brTerminalId)
+
+      const activeTerminalByProject = { ...s.activeTerminalByProject }
+      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+      const blTerminalByProject = { ...s.blTerminalByProject }
+      const brTerminalByProject = { ...s.brTerminalByProject }
+      if (activeTerminalId) activeTerminalByProject[projectId] = activeTerminalId
+      else delete activeTerminalByProject[projectId]
+      if (secondaryTerminalId) secondaryTerminalByProject[projectId] = secondaryTerminalId
+      else delete secondaryTerminalByProject[projectId]
+      if (blTerminalId) blTerminalByProject[projectId] = blTerminalId
+      else delete blTerminalByProject[projectId]
+      if (brTerminalId) brTerminalByProject[projectId] = brTerminalId
+      else delete brTerminalByProject[projectId]
+
+      return {
+        activeTerminalId,
+        activeTerminalByProject,
+        secondaryTerminalId,
+        secondaryTerminalByProject,
+        blTerminalId,
+        blTerminalByProject,
+        brTerminalId,
+        brTerminalByProject,
+      }
+    }),
+
+  paneTerminalId: pane => readPaneTerminalId(get(), pane),
+
   focusedTerminalId: () => {
     const s = get()
-    if (s.terminalFocusPane === 'secondary' && s.secondaryTerminalId) {
-      return s.secondaryTerminalId
-    }
-    return s.activeTerminalId
+    const focused = readPaneTerminalId(s, s.terminalFocusPane)
+    return focused ?? s.activeTerminalId
   },
 
   writeToTerminal: async (id: string, data: string) => {

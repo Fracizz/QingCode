@@ -134,6 +134,7 @@ function App() {
   const panelLayout = useUIStore(s => s.panelLayout)
   const panelLayoutSwitching = useUIStore(s => s.panelLayoutSwitching)
   const sideDualTerminal = useUIStore(s => s.sideDualTerminal)
+  const sideQuadTerminal = useUIStore(s => s.sideQuadTerminal)
   const sideEditorVisible = useUIStore(s => s.sideEditorVisible)
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
   const workspaceManagerOpen = useUIStore(s => s.workspaceManagerOpen)
@@ -164,7 +165,8 @@ function App() {
   const [projectsReady, setProjectsReady] = useState(false)
   const terminalPosition = terminalPositionForTemplate(panelLayout)
   const sideEditorSlotVisible = panelLayout !== 'sideTerminal' || sideEditorVisible
-  const sideDualActive = panelLayout === 'sideTerminal' && sideDualTerminal
+  const sideDualActive = panelLayout === 'sideTerminal' && sideDualTerminal && !sideQuadTerminal
+  const sideQuadActive = panelLayout === 'sideTerminal' && sideQuadTerminal
   const sidebarSlotVisible =
     sidebarOpen && (view === 'explorer' || view === 'search' || view === 'run')
 
@@ -315,6 +317,7 @@ function App() {
           data-sidebar-slot={sidebarSlotVisible ? 'visible' : 'hidden'}
           data-editor-slot={sideEditorSlotVisible ? 'visible' : 'collapsed'}
           data-terminal-dual={sideDualActive ? 'true' : undefined}
+          data-terminal-quad={sideQuadActive ? 'true' : undefined}
           data-terminal-split={
             panelLayout === 'sideTerminal' && sideEditorSlotVisible ? sideSplit : undefined
           }
@@ -374,6 +377,7 @@ function App() {
             terminalWidth={terminalWidth}
             sideSplit={sideSplit}
             dualTerminal={sideDualActive}
+            quadTerminal={sideQuadActive}
             editorVisible={sideEditorSlotVisible}
             isTerminalResizing={isTerminalResizing}
             layoutSwitching={panelLayoutSwitching}

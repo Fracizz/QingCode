@@ -36,6 +36,8 @@ export function resolvePanelLayoutMode(
 ): PanelLayoutMode | null {
   if (panelLayout === 'classic') return 'classic'
   if (!columns.editorVisible) return null
+  // 田 layout is title-bar fine-tune only (not a menu preset).
+  if (columns.quadTerminal) return null
   if (columns.dualTerminal) return 'sideDualEditor'
   return 'sideTerminal'
 }
@@ -57,14 +59,14 @@ export function panelLayoutModeParts(mode: PanelLayoutPreset): {
     case 'sideTerminal':
       return {
         panelLayout: 'sideTerminal',
-        columns: { dualTerminal: false, editorVisible: true },
+        columns: { dualTerminal: false, quadTerminal: false, editorVisible: true },
       }
     case 'sideDual':
     case 'sideTerminalCollapsed':
     case 'sideDualEditor':
       return {
         panelLayout: 'sideTerminal',
-        columns: { dualTerminal: true, editorVisible: true },
+        columns: { dualTerminal: true, quadTerminal: false, editorVisible: true },
       }
   }
 }

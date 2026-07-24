@@ -75,10 +75,18 @@ export default function TerminalTabs({
   const terminals = useTerminalStore(s => s.terminals)
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
   const secondaryTerminalId = useTerminalStore(s => s.secondaryTerminalId)
+  const blTerminalId = useTerminalStore(s => s.blTerminalId)
+  const brTerminalId = useTerminalStore(s => s.brTerminalId)
   const setTerminalFocusPane = useTerminalStore(s => s.setTerminalFocusPane)
   const setActiveTerminal = useTerminalStore(s => s.setActiveTerminal)
   const paneActiveId =
-    pane === 'secondary' ? secondaryTerminalId : activeTerminalId
+    pane === 'secondary'
+      ? secondaryTerminalId
+      : pane === 'bl'
+        ? blTerminalId
+        : pane === 'br'
+          ? brTerminalId
+          : activeTerminalId
   const activateForPane = (id: string) => {
     setTerminalFocusPane(pane ?? 'primary')
     setActiveTerminal(id)

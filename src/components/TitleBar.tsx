@@ -8,6 +8,7 @@ import {
   PanelLeft,
   Columns3,
   SquareSplitHorizontal,
+  LayoutGrid,
   SquareCode,
 } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -47,12 +48,15 @@ export default function TitleBar() {
   const [layoutMenu, setLayoutMenu] = useState<{ x: number; y: number } | null>(null)
   const panelLayout = useUIStore(s => s.panelLayout)
   const sideDualTerminal = useUIStore(s => s.sideDualTerminal)
+  const sideQuadTerminal = useUIStore(s => s.sideQuadTerminal)
   const sideEditorVisible = useUIStore(s => s.sideEditorVisible)
   const setPanelLayoutMode = useUIStore(s => s.setPanelLayoutMode)
   const toggleSideDualTerminal = useUIStore(s => s.toggleSideDualTerminal)
+  const toggleSideQuadTerminal = useUIStore(s => s.toggleSideQuadTerminal)
   const toggleSideEditorVisible = useUIStore(s => s.toggleSideEditorVisible)
   const layoutMode = resolvePanelLayoutMode(panelLayout, {
     dualTerminal: sideDualTerminal,
+    quadTerminal: sideQuadTerminal,
     editorVisible: sideEditorVisible,
   })
   const layoutIconMode = layoutMode ?? panelLayoutModeFallback({ dualTerminal: sideDualTerminal })
@@ -204,6 +208,25 @@ export default function TitleBar() {
                 onClick={() => toggleSideDualTerminal()}
               >
                 <SquareSplitHorizontal size={14} strokeWidth={1.5} />
+              </button>
+            </Tooltip>
+            <Tooltip
+              label={sideQuadTerminal ? t('关闭田字终端') : t('开启田字终端')}
+              side="bottom"
+            >
+              <button
+                type="button"
+                aria-label={sideQuadTerminal ? t('关闭田字终端') : t('开启田字终端')}
+                aria-pressed={sideQuadTerminal}
+                className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
+                  sideQuadTerminal
+                    ? 'bg-bg-active text-brand'
+                    : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                }`}
+                onPointerDown={event => event.stopPropagation()}
+                onClick={() => toggleSideQuadTerminal()}
+              >
+                <LayoutGrid size={14} strokeWidth={1.5} />
               </button>
             </Tooltip>
             <Tooltip

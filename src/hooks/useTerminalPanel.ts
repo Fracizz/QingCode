@@ -122,11 +122,13 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
     const onWorkspaceChange = (event: Event) => {
       const columns = (
         event as CustomEvent<{
-          columns?: { editorVisible?: boolean; dualTerminal?: boolean }
+          columns?: { editorVisible?: boolean; dualTerminal?: boolean; quadTerminal?: boolean }
         }>
       ).detail?.columns
-      // Equal split restores 1:1 (single) or 1:1:1 (dual+editor via CSS 2:1 band).
-      if (columns?.editorVisible || columns?.dualTerminal) setSideSplit('equal')
+      // Equal split restores 1:1 (single) or 1:1:1 (dual/田+editor via CSS 2:1 band).
+      if (columns?.editorVisible || columns?.dualTerminal || columns?.quadTerminal) {
+        setSideSplit('equal')
+      }
     }
     window.addEventListener(PANEL_LAYOUT_CHANGED_EVENT, onLayoutChange)
     window.addEventListener(SIDE_WORKSPACE_CHANGED_EVENT, onWorkspaceChange)

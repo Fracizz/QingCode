@@ -8,22 +8,49 @@ import {
 } from './panelLayoutMode'
 
 describe('resolvePanelLayoutMode', () => {
-  it('maps classic / side / dual+editor; editor-hidden is not a preset', () => {
-    expect(resolvePanelLayoutMode('classic', { dualTerminal: true, editorVisible: false })).toBe(
-      'classic',
-    )
+  it('maps classic / side / dual+editor; editor-hidden / 田 are not presets', () => {
     expect(
-      resolvePanelLayoutMode('sideTerminal', { dualTerminal: false, editorVisible: true }),
+      resolvePanelLayoutMode('classic', {
+        dualTerminal: true,
+        quadTerminal: false,
+        editorVisible: false,
+      }),
+    ).toBe('classic')
+    expect(
+      resolvePanelLayoutMode('sideTerminal', {
+        dualTerminal: false,
+        quadTerminal: false,
+        editorVisible: true,
+      }),
     ).toBe('sideTerminal')
     expect(
-      resolvePanelLayoutMode('sideTerminal', { dualTerminal: true, editorVisible: false }),
+      resolvePanelLayoutMode('sideTerminal', {
+        dualTerminal: true,
+        quadTerminal: false,
+        editorVisible: false,
+      }),
     ).toBeNull()
     expect(
-      resolvePanelLayoutMode('sideTerminal', { dualTerminal: false, editorVisible: false }),
+      resolvePanelLayoutMode('sideTerminal', {
+        dualTerminal: false,
+        quadTerminal: false,
+        editorVisible: false,
+      }),
     ).toBeNull()
     expect(
-      resolvePanelLayoutMode('sideTerminal', { dualTerminal: true, editorVisible: true }),
+      resolvePanelLayoutMode('sideTerminal', {
+        dualTerminal: true,
+        quadTerminal: false,
+        editorVisible: true,
+      }),
     ).toBe('sideDualEditor')
+    expect(
+      resolvePanelLayoutMode('sideTerminal', {
+        dualTerminal: false,
+        quadTerminal: true,
+        editorVisible: true,
+      }),
+    ).toBeNull()
   })
 })
 
@@ -35,18 +62,18 @@ describe('panelLayoutModeParts', () => {
     })
     expect(panelLayoutModeParts('sideTerminal')).toEqual({
       panelLayout: 'sideTerminal',
-      columns: { dualTerminal: false, editorVisible: true },
+      columns: { dualTerminal: false, quadTerminal: false, editorVisible: true },
     })
     expect(panelLayoutModeParts('sideDualEditor')).toEqual({
       panelLayout: 'sideTerminal',
-      columns: { dualTerminal: true, editorVisible: true },
+      columns: { dualTerminal: true, quadTerminal: false, editorVisible: true },
     })
   })
 
   it('maps legacy dual-only aliases to dual+editor', () => {
     expect(panelLayoutModeParts('sideDual')).toEqual({
       panelLayout: 'sideTerminal',
-      columns: { dualTerminal: true, editorVisible: true },
+      columns: { dualTerminal: true, quadTerminal: false, editorVisible: true },
     })
   })
 })

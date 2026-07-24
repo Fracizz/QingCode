@@ -387,9 +387,11 @@ export function buildCommands(): AppCommand[] {
       run: () => {
         const ui = useUIStore.getState()
         ui.togglePanelLayout()
-        const { panelLayout, sideDualTerminal, sideEditorVisible } = useUIStore.getState()
+        const { panelLayout, sideDualTerminal, sideQuadTerminal, sideEditorVisible } =
+          useUIStore.getState()
         const mode = resolvePanelLayoutMode(panelLayout, {
           dualTerminal: sideDualTerminal,
+          quadTerminal: sideQuadTerminal,
           editorVisible: sideEditorVisible,
         })
         useProjectStore.getState().pushToast(
@@ -397,7 +399,10 @@ export function buildCommands(): AppCommand[] {
           translate('已切换为：{layout}', {
             layout: translate(
               panelLayoutModeLabel(
-                mode ?? (sideDualTerminal ? 'sideDualEditor' : 'sideTerminal'),
+                mode ??
+                  (sideDualTerminal || sideQuadTerminal
+                    ? 'sideDualEditor'
+                    : 'sideTerminal'),
               ),
             ),
           }),
@@ -428,6 +433,13 @@ export function buildCommands(): AppCommand[] {
       keywords: 'layout dual terminal side',
       when: () => useUIStore.getState().panelLayout === 'sideTerminal',
       run: () => useUIStore.getState().toggleSideDualTerminal(),
+    },
+    {
+      id: 'view.toggleSideQuadTerminal',
+      title: '切换田字终端',
+      keywords: 'layout quad terminal side grid 田',
+      when: () => useUIStore.getState().panelLayout === 'sideTerminal',
+      run: () => useUIStore.getState().toggleSideQuadTerminal(),
     },
     {
       id: 'view.toggleSideEditor',

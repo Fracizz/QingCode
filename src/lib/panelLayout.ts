@@ -78,9 +78,11 @@ export function getDefaultSideTerminalWidth(options: {
   sidebarWidth?: number
   /** When true, default to 2/3 of the band for a 1:1:1 dual+editor layout. */
   dualTerminal?: boolean
+  /** 田 layout uses the same wider terminal band as dual. */
+  quadTerminal?: boolean
 }): number {
   const band = getSideTerminalEditorBandWidth(options)
-  const ratio = options.dualTerminal
+  const ratio = options.dualTerminal || options.quadTerminal
     ? SIDE_DUAL_EDITOR_TERMINAL_BAND_RATIO
     : SIDE_TERMINAL_DEFAULT_BAND_RATIO
   return clampTerminalWidth(Math.round(band * ratio))
