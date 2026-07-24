@@ -68,6 +68,18 @@ Alongside run configurations, manage **terminal profiles** (name + startup comma
 
 Run configurations answer “how do this project’s services start?”; terminal profiles answer “what should this shell open with?” — together they keep the local multi-project scene in one place.
 
+### Panel layout: classic bottom dock or side columns
+
+The title bar has a **panel layout** menu (also cycled by shortcut). The default is **Classic** (terminal at the bottom). Side-dock presets:
+
+| Layout | What you get |
+|------|------|
+| Classic (terminal at bottom) | Editor first; drag terminal height |
+| Terminal + Editor | Side single terminal \| editor (~1:1 by default) |
+| Dual Terminals + Editor | Term A \| Term B \| editor (~1:1:1); both splits drag (~10%–90%) |
+
+Each dual pane has its own tab strip, with an overflow menu when tabs don’t fit. The terminal chrome can toggle dual panes or hide the editor; opening a file / Source Control / Settings shows the editor column without turning dual terminals off.
+
 ### Working with AI: external assistants, no built-in model
 
 QingCode **does not ship** a chat model or agent. Intelligence stays with Cursor / Claude / OpenCode and similar tools; QingCode focuses on projects and the running scene:
@@ -114,9 +126,9 @@ QingCode **deliberately skips** full IntelliSense, a debugger, and an extension 
 
 1. Add several local project folders and pin them in the title bar  
 2. Create run configurations for common stacks (for example `dev` = API + web)  
-3. Start services in one click; each task gets its own terminal  
-4. Enter an AI CLI via a terminal profile, or copy the CLI Skill from Settings for your agent  
-5. Switch projects from the title bar — editor and terminal state remain  
+3. Start services in one click; use **Dual Terminals + Editor** when you want two streams side by side
+4. Enter an AI CLI via a terminal profile, or copy the CLI Skill from Settings for your agent
+5. Switch projects from the title bar — editor and terminal state remain
 
 ## Who it is for
 
