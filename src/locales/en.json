@@ -629,6 +629,8 @@
     "终端+编辑器": "Terminal + Editor",
     "侧栏旁双终端 + 编辑器": "Side dual terminals + editor",
     "双终端+编辑器": "Dual Terminals + Editor",
+    "双终端": "Dual Terminals",
+    "编辑器": "Editor",
     "开启双终端": "Enable dual terminals",
     "关闭双终端": "Disable dual terminals",
     "显示编辑器": "Show editor",

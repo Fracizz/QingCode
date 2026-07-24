@@ -168,8 +168,12 @@ body {
     'activity sidebar terminal editor';
 }
 
-/* Equal dual+editor: terminal band | editor = 2:1 → A|B|E ≈ 1:1:1. */
-.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-dual='true'][data-editor-slot='visible'] {
+/*
+ * Equal dual+editor: terminal band | editor = 2:1 → A|B|E ≈ 1:1:1.
+ * Must not apply when split is custom — that rule has lower specificity, so
+ * without :not() the 2fr band would win and the outer width drag would stick.
+ */
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-dual='true'][data-editor-slot='visible']:not([data-terminal-split='custom']) {
   grid-template-columns: auto auto minmax(0, 2fr) minmax(0, 1fr);
 }
 
@@ -190,7 +194,7 @@ body {
     'activity terminal editor';
 }
 
-.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-dual='true'][data-editor-slot='visible'] {
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-dual='true'][data-editor-slot='visible']:not([data-terminal-split='custom']) {
   grid-template-columns: auto minmax(0, 2fr) minmax(0, 1fr);
 }
 

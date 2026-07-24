@@ -3,7 +3,8 @@ import type { SideWorkspaceColumns } from './sideWorkspaceLayout'
 
 /**
  * Title-bar / shortcut layout choices.
- * Dual-only (no editor) is not a menu preset — use terminal chrome to hide the editor.
+ * Dual-only (no editor) is not a menu preset — use the title-bar dual/editor
+ * icon toggles (shown only in side layout) for those fine adjustments.
  */
 export type PanelLayoutMode = 'classic' | 'sideTerminal' | 'sideDualEditor'
 

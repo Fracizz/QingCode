@@ -15,8 +15,6 @@ import {
   XSquare,
   Files,
   ChevronDown,
-  SquareCode,
-  SquareSplitHorizontal,
 } from 'lucide-react'
 import {
   MAX_TERMINALS_PER_PROJECT,
@@ -66,7 +64,7 @@ export default function TerminalTabs({
   pane,
   /** Stronger chrome when this pane owns keyboard focus. */
   focused = false,
-  /** Panel chrome (dual toggle / collapse / close all). Only one strip should show these. */
+  /** Panel chrome (collapse / close all). Only one strip should show these. */
   showPanelActions = true,
 }: {
   pane?: TerminalFocusPane
@@ -95,11 +93,6 @@ export default function TerminalTabs({
   const addEmptyProject = useProjectStore(s => s.addEmptyProject)
   const switchProject = useProjectStore(s => s.switchProject)
   const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
-  const panelLayout = useUIStore(s => s.panelLayout)
-  const sideDualTerminal = useUIStore(s => s.sideDualTerminal)
-  const sideEditorVisible = useUIStore(s => s.sideEditorVisible)
-  const toggleSideDualTerminal = useUIStore(s => s.toggleSideDualTerminal)
-  const toggleSideEditorVisible = useUIStore(s => s.toggleSideEditorVisible)
   const [creatingTerminal, setCreatingTerminal] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -744,54 +737,6 @@ export default function TerminalTabs({
           </Tooltip>
         {showPanelActions && (
           <div className="flex h-full flex-shrink-0 items-center gap-0.5 border-l border-border pr-1.5 pl-1">
-            {panelLayout === 'sideTerminal' && (
-              <>
-                <Tooltip
-                  label={
-                    sideDualTerminal
-                      ? translate('关闭双终端')
-                      : translate('开启双终端')
-                  }
-                  side="top"
-                >
-                  <button
-                    type="button"
-                    aria-label={
-                      sideDualTerminal
-                        ? translate('关闭双终端')
-                        : translate('开启双终端')
-                    }
-                    aria-pressed={sideDualTerminal}
-                    className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
-                    onClick={() => toggleSideDualTerminal()}
-                  >
-                    <SquareSplitHorizontal size={15} />
-                  </button>
-                </Tooltip>
-                <Tooltip
-                  label={
-                    sideEditorVisible
-                      ? translate('隐藏编辑器')
-                      : translate('显示编辑器')
-                  }
-                  side="top"
-                >
-                  <button
-                    type="button"
-                    aria-label={
-                      sideEditorVisible
-                        ? translate('隐藏编辑器')
-                        : translate('显示编辑器')
-                    }
-                    aria-pressed={sideEditorVisible}
-                    className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
-                    onClick={() => toggleSideEditorVisible()}
-                  >
-                    <SquareCode size={15} />
-                  </button>
-                </Tooltip>
-              </>
-            )}
             <Tooltip label={translate('收起终端（任务继续在后台运行）')} side="top">
               <button
                 type="button"

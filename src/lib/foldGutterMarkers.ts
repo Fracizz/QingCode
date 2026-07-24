@@ -7,6 +7,8 @@ export const FOLD_MARKER_BASE_FONT = 14
 export const FOLD_MARKER_W = 8
 export const FOLD_MARKER_H =
   (FOLD_MARKER_W / 2) / Math.tan(((FOLD_MARKER_VERTEX_DEG / 2) * Math.PI) / 180)
+/** Square viewBox edge; open/folded share the same outer box so CSS size matches. */
+export const FOLD_MARKER_BOX = FOLD_MARKER_W
 /** Chevron width as `em` (8px when editor font-size is 14px). */
 export const FOLD_MARKER_W_EM = FOLD_MARKER_W / FOLD_MARKER_BASE_FONT
 /** Fold gutter column width at base font (13px). */
@@ -14,19 +16,18 @@ export const FOLD_GUTTER_W_EM = 13 / FOLD_MARKER_BASE_FONT
 const FOLD_MARKER_STROKE = 1.25
 const FOLD_MARKER_INSET = 0.5
 
-function foldGutterMarkerSize(open: boolean): { width: number; height: number } {
-  return open
-    ? { width: FOLD_MARKER_W, height: FOLD_MARKER_H }
-    : { width: FOLD_MARKER_H, height: FOLD_MARKER_W }
+function foldGutterMarkerSize(): { width: number; height: number } {
+  return { width: FOLD_MARKER_BOX, height: FOLD_MARKER_BOX }
 }
 
-/** 60° hollow chevron paths with slight inset for a tighter silhouette. */
+/** 60° hollow chevrons centered in a square viewBox (down / right). */
 export function foldGutterMarkerPath(open: boolean): string {
   const w = FOLD_MARKER_W
   const h = FOLD_MARKER_H
   const i = FOLD_MARKER_INSET
-  if (open) return `M ${i} 0 L ${w / 2} ${h} L ${w - i} 0`
-  return `M 0 ${i} L ${h} ${w / 2} L 0 ${w - i}`
+  const pad = (FOLD_MARKER_BOX - h) / 2
+  if (open) return `M ${i} ${pad} L ${w / 2} ${pad + h} L ${w - i} ${pad}`
+  return `M ${pad} ${i} L ${pad + h} ${w / 2} L ${pad} ${w - i}`
 }
 
 function applyFoldGutterStroke(path: SVGPathElement): void {
@@ -39,7 +40,7 @@ function applyFoldGutterStroke(path: SVGPathElement): void {
 
 /** SVG caret for CodeMirror `foldGutter({ markerDOM })`. */
 export function createFoldGutterMarker(open: boolean): HTMLElement {
-  const { width, height } = foldGutterMarkerSize(open)
+  const { width, height } = foldGutterMarkerSize()
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`)
   svg.setAttribute('overflow', 'visible')

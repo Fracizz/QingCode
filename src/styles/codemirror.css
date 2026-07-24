@@ -87,8 +87,9 @@
 .cm-editor .cm-foldGutter .cm-foldGutter-marker {
   display: block;
   flex-shrink: 0;
+  /* Square box matches SVG viewBox so open/folded carets render at the same size. */
   width: 0.571em;
-  height: auto;
+  height: 0.571em;
   opacity: 0.55;
 }
 .cm-editor .cm-foldGutter .cm-gutterElement:hover .cm-foldGutter-marker {

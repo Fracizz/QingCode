@@ -78,7 +78,7 @@ The title bar has a **panel layout** menu (also cycled by shortcut). The default
 | Terminal + Editor | Side single terminal \| editor (~1:1 by default) |
 | Dual Terminals + Editor | Term A \| Term B \| editor (~1:1:1); both splits drag (~10%–90%) |
 
-Each dual pane has its own tab strip, with an overflow menu when tabs don’t fit. The terminal chrome can toggle dual panes or hide the editor; opening a file / Source Control / Settings shows the editor column without turning dual terminals off.
+Each dual pane has its own tab strip, with an overflow menu when tabs don’t fit. In a side layout, title-bar icons left of the layout picker toggle dual panes or the editor; opening a file / Source Control / Settings shows the editor column without turning dual terminals off.
 
 ### Working with AI: external assistants, no built-in model
 

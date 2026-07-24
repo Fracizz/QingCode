@@ -7,6 +7,8 @@ import {
   PanelBottom,
   PanelLeft,
   Columns3,
+  SquareSplitHorizontal,
+  SquareCode,
 } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { requestAppClose } from '../lib/appClose'
@@ -46,11 +48,14 @@ export default function TitleBar() {
   const sideDualTerminal = useUIStore(s => s.sideDualTerminal)
   const sideEditorVisible = useUIStore(s => s.sideEditorVisible)
   const setPanelLayoutMode = useUIStore(s => s.setPanelLayoutMode)
+  const toggleSideDualTerminal = useUIStore(s => s.toggleSideDualTerminal)
+  const toggleSideEditorVisible = useUIStore(s => s.toggleSideEditorVisible)
   const layoutMode = resolvePanelLayoutMode(panelLayout, {
     dualTerminal: sideDualTerminal,
     editorVisible: sideEditorVisible,
   })
   const inTauri = isTauri()
+  const sideLayoutActive = panelLayout === 'sideTerminal'
 
   useEffect(() => {
     const onFocus = () => setWindowFocused(true)
@@ -178,6 +183,48 @@ export default function TitleBar() {
         className="flex h-full flex-shrink-0 items-center"
         onDoubleClick={event => event.stopPropagation()}
       >
+        {sideLayoutActive && (
+          <>
+            <Tooltip
+              label={sideDualTerminal ? t('关闭双终端') : t('开启双终端')}
+              side="bottom"
+            >
+              <button
+                type="button"
+                aria-label={sideDualTerminal ? t('关闭双终端') : t('开启双终端')}
+                aria-pressed={sideDualTerminal}
+                className={`w-9 h-full flex items-center justify-center transition-colors ${
+                  sideDualTerminal
+                    ? 'bg-bg-active text-fg'
+                    : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                }`}
+                onPointerDown={event => event.stopPropagation()}
+                onClick={() => toggleSideDualTerminal()}
+              >
+                <SquareSplitHorizontal size={14} strokeWidth={1.5} />
+              </button>
+            </Tooltip>
+            <Tooltip
+              label={sideEditorVisible ? t('隐藏编辑器') : t('显示编辑器')}
+              side="bottom"
+            >
+              <button
+                type="button"
+                aria-label={sideEditorVisible ? t('隐藏编辑器') : t('显示编辑器')}
+                aria-pressed={sideEditorVisible}
+                className={`w-9 h-full flex items-center justify-center transition-colors ${
+                  sideEditorVisible
+                    ? 'bg-bg-active text-fg'
+                    : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                }`}
+                onPointerDown={event => event.stopPropagation()}
+                onClick={() => toggleSideEditorVisible()}
+              >
+                <SquareCode size={14} strokeWidth={1.5} />
+              </button>
+            </Tooltip>
+          </>
+        )}
         <Tooltip label={t('选择面板布局')} side="bottom">
           <button
             type="button"
