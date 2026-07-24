@@ -307,7 +307,7 @@ export default function EditorTabs() {
           ref={stripRef}
           role="tablist"
           aria-label={t('显示所有打开的文件')}
-          className="flex min-w-0 flex-1 overflow-hidden"
+          className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden px-1"
           onKeyDown={event => {
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
             const current = indices.findIndex(i => tabs[i]?.id === activeTabId)
@@ -319,11 +319,10 @@ export default function EditorTabs() {
             if (nextTab) setActiveTab(nextTab.id)
           }}
         >
-          {indices.map((index, visiblePos) => {
+          {indices.map(index => {
             const tab = tabs[index]
             if (!tab) return null
             const active = tab.id === activeTabId
-            const showDivider = visiblePos < indices.length - 1
             return (
               <div
                 key={tab.id}
@@ -331,8 +330,8 @@ export default function EditorTabs() {
                 tabIndex={active ? 0 : -1}
                 aria-selected={active}
                 draggable
-                className={`group relative flex h-full cursor-pointer items-center gap-2 whitespace-nowrap pl-3 pr-2 transition-colors
-                ${active ? 'bg-tab-active text-fg' : 'bg-tab-inactive text-fg-muted hover:bg-bg-elevated hover:text-fg'}
+                className={`group relative flex h-6 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 whitespace-nowrap rounded pl-2 pr-1 text-[13px] transition-colors
+                ${active ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}
                 ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}
                 ${dropIndex === index && dragIndex !== index ? 'ring-1 ring-inset ring-accent/60' : ''}`}
                 onClick={() => setActiveTab(tab.id)}
@@ -380,12 +379,9 @@ export default function EditorTabs() {
                 }}
               >
                 {active && (
-                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand" aria-hidden="true" />
-                )}
-                {showDivider && (
                   <span
+                    className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand"
                     aria-hidden="true"
-                    className="pointer-events-none absolute right-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border-strong"
                   />
                 )}
                 <TabChrome tab={tab} />
@@ -453,7 +449,7 @@ export default function EditorTabs() {
             <div
               key={`measure-${tab.id}`}
               data-tab-measure-id={tab.id}
-              className="flex h-full items-center gap-2 whitespace-nowrap pl-3 pr-2"
+              className="flex h-6 items-center gap-1.5 whitespace-nowrap rounded pl-2 pr-1"
             >
               <TabChrome tab={tab} />
               <span className="ml-1 h-4 w-4 flex-shrink-0" />

@@ -15,6 +15,7 @@ import {
   XSquare,
   Files,
   ChevronDown,
+  PanelBottomClose,
 } from 'lucide-react'
 import {
   MAX_TERMINALS_PER_PROJECT,
@@ -26,10 +27,10 @@ import { useUIStore } from '../store/uiStore'
 import { confirmDialog } from '../store/confirmStore'
 import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '@/lib/terminal/terminalProfiles'
 import { formatTerminalName } from '../utils/terminalName'
-import {
-  EDITOR_TAB_OVERFLOW_BTN_W,
-  pickVisibleTabIndices,
-} from '../lib/editorTabsLayout'
+import { pickVisibleTabIndices } from '../lib/editorTabsLayout'
+
+/** Width reserved for the new-terminal control next to the last tab. */
+const TERMINAL_NEW_BTN_W = 32
 import { canCloseTerminalDirectly, isTerminalBusy, listBusyTerminals } from '@/lib/terminal/terminalClose'
 import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
@@ -116,6 +117,8 @@ export default function TerminalTabs({
   const [visibleIndices, setVisibleIndices] = useState<number[]>([])
   const renameInputRef = useRef<HTMLInputElement>(null)
   const renameCommittingRef = useRef(false)
+  /** Flex area that holds visible tabs + the trailing `+` (like project chips). */
+  const tabsAreaRef = useRef<HTMLDivElement>(null)
   const stripRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
 
@@ -127,10 +130,10 @@ export default function TerminalTabs({
     .join('|')
 
   useLayoutEffect(() => {
-    const strip = stripRef.current
+    const area = tabsAreaRef.current
     const measure = measureRef.current
     const count = projectTerminals.length
-    if (!strip || !measure || count === 0) {
+    if (!area || !measure || count === 0) {
       setVisibleIndices(prev => (prev.length === 0 ? prev : []))
       return
     }
@@ -140,6 +143,8 @@ export default function TerminalTabs({
         measure.querySelectorAll<HTMLElement>('[data-tab-measure-id]'),
         el => el.offsetWidth,
       )
+      // Overflow / panel actions sit outside `tabsArea`; only reserve the `+` width.
+      const available = Math.max(0, area.clientWidth - TERMINAL_NEW_BTN_W)
       const next =
         widths.length !== count
           ? Array.from({ length: count }, (_, i) => i)
@@ -149,8 +154,8 @@ export default function TerminalTabs({
                 0,
                 projectTerminals.findIndex(term => term.id === paneActiveId),
               ),
-              strip.clientWidth,
-              EDITOR_TAB_OVERFLOW_BTN_W,
+              available,
+              0,
             )
       setVisibleIndices(prev =>
         prev.length === next.length && prev.every((value, i) => value === next[i])
@@ -161,7 +166,7 @@ export default function TerminalTabs({
 
     compute()
     const ro = new ResizeObserver(compute)
-    ro.observe(strip)
+    ro.observe(area)
     return () => ro.disconnect()
   }, [projectTerminalMeasureKey, paneActiveId, renamingId, renameDraft])
 
@@ -485,196 +490,228 @@ export default function TerminalTabs({
           <TerminalIcon size={13} />{' '}
           {translate('终端')}
         </div>
+        {/* Tabs + `+` hug content on the left (same pattern as project chips). */}
         <div
-          ref={stripRef}
-          role="tablist"
-          aria-label={
-            pane === 'secondary' ? translate('终端 - 右侧') : translate('终端')
-          }
+          ref={tabsAreaRef}
           className="flex h-full min-w-0 flex-1 items-center overflow-hidden"
           onPointerDown={() => {
             if (pane) setTerminalFocusPane(pane)
           }}
-          onKeyDown={event => {
-            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-            if (visibleTabIndices.length === 0) return
-            const current = visibleTabIndices.findIndex(
-              i => projectTerminals[i]?.id === paneActiveId,
-            )
-            if (current < 0) return
-            event.preventDefault()
-            const delta = event.key === 'ArrowRight' ? 1 : -1
-            const nextIndex =
-              visibleTabIndices[
-                (current + delta + visibleTabIndices.length) % visibleTabIndices.length
-              ]
-            const next = nextIndex != null ? projectTerminals[nextIndex] : undefined
-            if (next) activateForPane(next.id)
-          }}
         >
-          {visibleTabIndices.map((index, visiblePos) => {
-            const t = projectTerminals[index]
-            if (!t) return null
-            const isCloseArmed = closeArmId === t.id
-            const isActive = t.id === paneActiveId
-            const showDivider = visiblePos < visibleTabIndices.length - 1
-            return (
-              <div
-                key={t.id}
-                role="tab"
-                tabIndex={isActive ? 0 : -1}
-                aria-selected={isActive}
-                className={`group relative flex h-full cursor-pointer items-center gap-1.5 whitespace-nowrap pl-3 pr-2 transition-colors
-                  ${isActive ? 'bg-tab-active text-fg' : 'bg-tab-inactive text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
-                onClick={() => {
-                  activateForPane(t.id)
-                  if (closeArmId && closeArmId !== t.id) setCloseArmId(null)
-                }}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault()
+          <div
+            ref={stripRef}
+            role="tablist"
+            aria-label={
+              pane === 'secondary' ? translate('终端 - 右侧') : translate('终端')
+            }
+            className="flex h-full min-w-0 shrink items-center gap-1 overflow-hidden px-1"
+            onKeyDown={event => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+              if (visibleTabIndices.length === 0) return
+              const current = visibleTabIndices.findIndex(
+                i => projectTerminals[i]?.id === paneActiveId,
+              )
+              if (current < 0) return
+              event.preventDefault()
+              const delta = event.key === 'ArrowRight' ? 1 : -1
+              const nextIndex =
+                visibleTabIndices[
+                  (current + delta + visibleTabIndices.length) % visibleTabIndices.length
+                ]
+              const next = nextIndex != null ? projectTerminals[nextIndex] : undefined
+              if (next) activateForPane(next.id)
+            }}
+          >
+            {visibleTabIndices.map(index => {
+              const t = projectTerminals[index]
+              if (!t) return null
+              const isCloseArmed = closeArmId === t.id
+              const isActive = t.id === paneActiveId
+              return (
+                <div
+                  key={t.id}
+                  role="tab"
+                  tabIndex={isActive ? 0 : -1}
+                  aria-selected={isActive}
+                  className={`group relative flex h-6 flex-shrink-0 cursor-pointer select-none items-center gap-1 whitespace-nowrap rounded pl-2 pr-1 text-[13px] transition-colors
+                    ${isActive ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}`}
+                  onClick={() => {
                     activateForPane(t.id)
-                  }
-                }}
-                onDoubleClick={event => {
-                  event.preventDefault()
-                  startRename(t.id, t.name)
-                }}
-                onContextMenu={(event: ReactMouseEvent) => {
-                  if (!shouldShowAppContextMenu(event)) return
-                  if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus()
-                  setContextMenu({ x: event.clientX, y: event.clientY, terminal: t })
-                }}
-              >
-                {isActive && (
-                  <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-brand" aria-hidden="true" />
-                )}
-                {showDivider && (
-                  <span
-                    aria-hidden="true"
-                    className="pointer-events-none absolute right-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border-strong"
-                  />
-                )}
-                {renamingId === t.id ? (
-                  <>
-                    <Circle
-                      size={7}
-                      fill="currentColor"
-                      className={terminalStatusDotClass(t.status, busyIds.has(t.id))}
+                    if (closeArmId && closeArmId !== t.id) setCloseArmId(null)
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      activateForPane(t.id)
+                    }
+                  }}
+                  onDoubleClick={event => {
+                    event.preventDefault()
+                    startRename(t.id, t.name)
+                  }}
+                  onContextMenu={(event: ReactMouseEvent) => {
+                    if (!shouldShowAppContextMenu(event)) return
+                    if (event.currentTarget instanceof HTMLElement) event.currentTarget.focus()
+                    setContextMenu({ x: event.clientX, y: event.clientY, terminal: t })
+                  }}
+                >
+                  {isActive && (
+                    <span
+                      className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand"
+                      aria-hidden="true"
                     />
-                    <input
-                      ref={renameInputRef}
-                      type="text"
-                      value={renameDraft}
-                      onClick={event => event.stopPropagation()}
-                      onChange={event => setRenameDraft(event.target.value)}
-                      onKeyDown={event => {
-                        event.stopPropagation()
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          commitRename(t.id)
-                        }
-                        if (event.key === 'Escape') {
-                          event.preventDefault()
-                          cancelRename()
-                        }
-                      }}
-                      onBlur={() => {
-                        window.setTimeout(() => {
-                          if (!renameCommittingRef.current && renamingId === t.id) {
+                  )}
+                  {renamingId === t.id ? (
+                    <>
+                      <Circle
+                        size={7}
+                        fill="currentColor"
+                        className={terminalStatusDotClass(t.status, busyIds.has(t.id))}
+                      />
+                      <input
+                        ref={renameInputRef}
+                        type="text"
+                        value={renameDraft}
+                        onClick={event => event.stopPropagation()}
+                        onChange={event => setRenameDraft(event.target.value)}
+                        onKeyDown={event => {
+                          event.stopPropagation()
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
                             commitRename(t.id)
                           }
-                        }, 80)
-                      }}
-                      className="min-w-[5rem] max-w-[14rem] h-5 px-1.5 text-[13px] bg-bg border border-accent rounded-sm outline-none text-fg"
-                      aria-label={translate('重命名终端')}
-                    />
-                  </>
-                ) : (
+                          if (event.key === 'Escape') {
+                            event.preventDefault()
+                            cancelRename()
+                          }
+                        }}
+                        onBlur={() => {
+                          window.setTimeout(() => {
+                            if (!renameCommittingRef.current && renamingId === t.id) {
+                              commitRename(t.id)
+                            }
+                          }, 80)
+                        }}
+                        className="min-w-[5rem] max-w-[14rem] h-5 px-1.5 text-[13px] bg-bg border border-accent rounded-sm outline-none text-fg"
+                        aria-label={translate('重命名终端')}
+                      />
+                    </>
+                  ) : (
+                    <Tooltip
+                      label={[
+                        t.launchCommand.trim() && t.launchCommand.trim() !== t.name
+                          ? `${t.name}\n> ${t.launchCommand.trim()}`
+                          : t.name,
+                        t.resolvedShell
+                          ? `${translate('Shell')}: ${translate(terminalShellLabelKey(t.resolvedShell))}`
+                          : null,
+                      ].filter((line): line is string => line !== null).join('\n')}
+                      side="top"
+                      wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]"
+                    >
+                      <Circle
+                        size={7}
+                        fill="currentColor"
+                        className={terminalStatusDotClass(t.status, busyIds.has(t.id))}
+                      />
+                      <span className={`text-[13px] truncate ${t.status === 'exited' ? 'opacity-60' : ''}`}>
+                        {formatTerminalName(t.name)}
+                      </span>
+                    </Tooltip>
+                  )}
+                  {t.status === 'exited' && renamingId !== t.id && (
+                    <Tooltip
+                      label={
+                        !shouldKeepShellAfterExit(t)
+                          ? translate('按原运行配置重启{exitCode}', {
+                              exitCode:
+                                t.exitCode === null
+                                  ? ''
+                                  : translate('（退出码 {code}）', { code: t.exitCode }),
+                            })
+                          : translate('重启终端{exitCode}', {
+                              exitCode:
+                                t.exitCode === null
+                                  ? ''
+                                  : translate('（退出码 {code}）', { code: t.exitCode }),
+                            })
+                      }
+                      side="top"
+                    >
+                      <button
+                        type="button"
+                        aria-label={
+                          !shouldKeepShellAfterExit(t)
+                            ? translate('按原运行配置重启{exitCode}', { exitCode: '' })
+                            : translate('重启终端{exitCode}', { exitCode: '' })
+                        }
+                        className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
+                        onClick={e => {
+                          e.stopPropagation()
+                          restartTerminal(t.id)
+                        }}
+                      >
+                        <RotateCcw size={12} />
+                      </button>
+                    </Tooltip>
+                  )}
                   <Tooltip
-                    label={[
-                      t.launchCommand.trim() && t.launchCommand.trim() !== t.name
-                        ? `${t.name}\n> ${t.launchCommand.trim()}`
-                        : t.name,
-                      t.resolvedShell
-                        ? `${translate('Shell')}: ${translate(terminalShellLabelKey(t.resolvedShell))}`
-                        : null,
-                    ].filter((line): line is string => line !== null).join('\n')}
+                    label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
                     side="top"
-                    wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]"
-                  >
-                    <Circle
-                      size={7}
-                      fill="currentColor"
-                      className={terminalStatusDotClass(t.status, busyIds.has(t.id))}
-                    />
-                    <span className={`text-[13px] truncate ${t.status === 'exited' ? 'opacity-60' : ''}`}>
-                      {formatTerminalName(t.name)}
-                    </span>
-                  </Tooltip>
-                )}
-                {t.status === 'exited' && renamingId !== t.id && (
-                  <Tooltip
-                    label={
-                      !shouldKeepShellAfterExit(t)
-                        ? translate('按原运行配置重启{exitCode}', {
-                            exitCode:
-                              t.exitCode === null
-                                ? ''
-                                : translate('（退出码 {code}）', { code: t.exitCode }),
-                          })
-                        : translate('重启终端{exitCode}', {
-                            exitCode:
-                              t.exitCode === null
-                                ? ''
-                                : translate('（退出码 {code}）', { code: t.exitCode }),
-                          })
-                    }
-                    side="top"
+                    forceOpen={isCloseArmed}
                   >
                     <button
                       type="button"
-                      aria-label={
-                        !shouldKeepShellAfterExit(t)
-                          ? translate('按原运行配置重启{exitCode}', { exitCode: '' })
-                          : translate('重启终端{exitCode}', { exitCode: '' })
-                      }
-                      className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
-                      onClick={e => {
-                        e.stopPropagation()
-                        restartTerminal(t.id)
-                      }}
+                      aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
+                      data-terminal-close={t.id}
+                      className={`ml-1 flex items-center justify-center w-4 h-4 rounded transition-colors ${
+                        isCloseArmed
+                          ? 'bg-danger/15 text-danger'
+                          : 'hover:bg-bg-active'
+                      }`}
+                      onClick={e => handleCloseClick(e, t.id)}
                     >
-                      <RotateCcw size={12} />
+                      {isCloseArmed ? (
+                        <Circle size={9} fill="currentColor" />
+                      ) : (
+                        <X size={13} className="opacity-60 group-hover:opacity-100" />
+                      )}
                     </button>
                   </Tooltip>
-                )}
-                <Tooltip
-                  label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
-                  side="top"
-                  forceOpen={isCloseArmed}
-                >
-                  <button
-                    type="button"
-                    aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
-                    data-terminal-close={t.id}
-                    className={`ml-1 flex items-center justify-center w-4 h-4 rounded transition-colors ${
-                      isCloseArmed
-                        ? 'bg-danger/15 text-danger'
-                        : 'hover:bg-bg-active'
-                    }`}
-                    onClick={e => handleCloseClick(e, t.id)}
-                  >
-                    {isCloseArmed ? (
-                      <Circle size={9} fill="currentColor" />
-                    ) : (
-                      <X size={13} className="opacity-60 group-hover:opacity-100" />
-                    )}
-                  </button>
-                </Tooltip>
-              </div>
-            )
-          })}
+                </div>
+              )
+            })}
+          </div>
+          <Tooltip
+            label={
+              currentProject && atLimit
+                ? translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
+                : currentProject
+                  ? translate('左键：默认配置；右键：选择终端配置')
+                  : translate('新建终端（无项目时将创建临时项目）')
+            }
+            side="top"
+            wrapperClassName="flex-shrink-0"
+          >
+            <button
+              type="button"
+              aria-label={translate('新建终端')}
+              className={`flex h-full w-8 flex-shrink-0 items-center justify-center transition-colors ${
+                !(currentProject && atLimit) && !creatingTerminal
+                  ? 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                  : 'text-fg-dim cursor-not-allowed'
+              }`}
+              disabled={Boolean(currentProject && atLimit) || creatingTerminal}
+              onClick={() => handleNewTerminal()}
+              onContextMenu={event => {
+                if (!currentProject || atLimit || creatingTerminal) return
+                if (!shouldShowAppContextMenu(event)) return
+                setProfileMenu({ x: event.clientX, y: event.clientY })
+              }}
+            >
+              <Plus size={15} />
+            </button>
+          </Tooltip>
         </div>
         {projectTerminals.length > 0 && (
           <Tooltip
@@ -713,36 +750,6 @@ export default function TerminalTabs({
             </button>
           </Tooltip>
         )}
-          <Tooltip
-            label={
-              currentProject && atLimit
-                ? translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
-                : currentProject
-                  ? translate('左键：默认配置；右键：选择终端配置')
-                  : translate('新建终端（无项目时将创建临时项目）')
-            }
-            side="top"
-            wrapperClassName="flex-shrink-0"
-          >
-            <button
-              type="button"
-              aria-label={translate('新建终端')}
-              className={`ml-1 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded transition-colors ${
-                !(currentProject && atLimit) && !creatingTerminal
-                  ? 'text-fg-muted hover:bg-bg-hover hover:text-fg'
-                  : 'text-fg-dim cursor-not-allowed'
-              }`}
-              disabled={Boolean(currentProject && atLimit) || creatingTerminal}
-              onClick={() => handleNewTerminal()}
-              onContextMenu={event => {
-                if (!currentProject || atLimit || creatingTerminal) return
-                if (!shouldShowAppContextMenu(event)) return
-                setProfileMenu({ x: event.clientX, y: event.clientY })
-              }}
-            >
-              <Plus size={15} />
-            </button>
-          </Tooltip>
         {showPanelActions && (
           <div className="flex h-full flex-shrink-0 items-center gap-0.5 border-l border-border pr-1.5 pl-1">
             <Tooltip label={translate('收起终端（任务继续在后台运行）')} side="top">
@@ -752,7 +759,7 @@ export default function TerminalTabs({
                 className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
                 onClick={() => requestToggleTerminal()}
               >
-                <ChevronDown size={15} />
+                <PanelBottomClose size={15} />
               </button>
             </Tooltip>
             <Tooltip label={translate('关闭全部终端')} side="top">
@@ -778,7 +785,7 @@ export default function TerminalTabs({
             <div
               key={`measure-${term.id}`}
               data-tab-measure-id={term.id}
-              className="flex h-full items-center gap-1.5 whitespace-nowrap pl-3 pr-2"
+              className="flex h-6 items-center gap-1 whitespace-nowrap rounded pl-2 pr-1"
             >
               <Circle size={7} fill="currentColor" />
               <span className="text-[13px]">{formatTerminalName(term.name)}</span>
