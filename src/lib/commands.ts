@@ -395,7 +395,11 @@ export function buildCommands(): AppCommand[] {
         useProjectStore.getState().pushToast(
           'info',
           translate('已切换为：{layout}', {
-            layout: translate(panelLayoutModeLabel(mode)),
+            layout: translate(
+              panelLayoutModeLabel(
+                mode ?? (sideDualTerminal ? 'sideDualEditor' : 'sideTerminal'),
+              ),
+            ),
           }),
         )
       },

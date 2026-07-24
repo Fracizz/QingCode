@@ -208,7 +208,12 @@ export const useUIStore = create<UIState>((set) => ({
       dualTerminal: state.sideDualTerminal,
       editorVisible: state.sideEditorVisible,
     })
-    state.setPanelLayoutMode(nextPanelLayoutMode(current))
+    // Fine-tuned (editor hidden): cycle from the nearest side preset so the next
+    // step is predictable (dual → classic, single → dual+editor).
+    const cycleFrom =
+      current ??
+      (state.sideDualTerminal ? 'sideDualEditor' : 'sideTerminal')
+    state.setPanelLayoutMode(nextPanelLayoutMode(cycleFrom))
   },
   setSideWorkspaceColumns: patch =>
     set(state => {

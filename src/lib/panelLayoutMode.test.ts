@@ -8,7 +8,7 @@ import {
 } from './panelLayoutMode'
 
 describe('resolvePanelLayoutMode', () => {
-  it('maps classic / side / dual+editor (dual-only counts as dual+editor)', () => {
+  it('maps classic / side / dual+editor; editor-hidden is not a preset', () => {
     expect(resolvePanelLayoutMode('classic', { dualTerminal: true, editorVisible: false })).toBe(
       'classic',
     )
@@ -17,7 +17,10 @@ describe('resolvePanelLayoutMode', () => {
     ).toBe('sideTerminal')
     expect(
       resolvePanelLayoutMode('sideTerminal', { dualTerminal: true, editorVisible: false }),
-    ).toBe('sideDualEditor')
+    ).toBeNull()
+    expect(
+      resolvePanelLayoutMode('sideTerminal', { dualTerminal: false, editorVisible: false }),
+    ).toBeNull()
     expect(
       resolvePanelLayoutMode('sideTerminal', { dualTerminal: true, editorVisible: true }),
     ).toBe('sideDualEditor')
@@ -53,6 +56,10 @@ describe('nextPanelLayoutMode', () => {
     expect(nextPanelLayoutMode('classic')).toBe('sideTerminal')
     expect(nextPanelLayoutMode('sideTerminal')).toBe('sideDualEditor')
     expect(nextPanelLayoutMode('sideDualEditor')).toBe('classic')
+  })
+
+  it('treats fine-tuned null as before classic in the cycle', () => {
+    expect(nextPanelLayoutMode(null)).toBe('classic')
   })
 })
 

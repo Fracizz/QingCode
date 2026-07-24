@@ -22,6 +22,7 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import { translate, useI18n } from '../lib/i18n'
 import {
   PANEL_LAYOUT_MENU_MODES,
+  panelLayoutModeFallback,
   panelLayoutModeLabel,
   resolvePanelLayoutMode,
   type PanelLayoutMode,
@@ -54,6 +55,7 @@ export default function TitleBar() {
     dualTerminal: sideDualTerminal,
     editorVisible: sideEditorVisible,
   })
+  const layoutIconMode = layoutMode ?? panelLayoutModeFallback({ dualTerminal: sideDualTerminal })
   const inTauri = isTauri()
   const sideLayoutActive = panelLayout === 'sideTerminal'
 
@@ -180,7 +182,7 @@ export default function TitleBar() {
       </div>
 
       <div
-        className="flex h-full flex-shrink-0 items-center"
+        className="flex h-full flex-shrink-0 items-center gap-1 px-1"
         onDoubleClick={event => event.stopPropagation()}
       >
         {sideLayoutActive && (
@@ -193,9 +195,9 @@ export default function TitleBar() {
                 type="button"
                 aria-label={sideDualTerminal ? t('关闭双终端') : t('开启双终端')}
                 aria-pressed={sideDualTerminal}
-                className={`w-9 h-full flex items-center justify-center transition-colors ${
+                className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
                   sideDualTerminal
-                    ? 'bg-bg-active text-fg'
+                    ? 'bg-bg-active text-brand'
                     : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                 }`}
                 onPointerDown={event => event.stopPropagation()}
@@ -212,9 +214,9 @@ export default function TitleBar() {
                 type="button"
                 aria-label={sideEditorVisible ? t('隐藏编辑器') : t('显示编辑器')}
                 aria-pressed={sideEditorVisible}
-                className={`w-9 h-full flex items-center justify-center transition-colors ${
+                className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
                   sideEditorVisible
-                    ? 'bg-bg-active text-fg'
+                    ? 'bg-bg-active text-brand'
                     : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                 }`}
                 onPointerDown={event => event.stopPropagation()}
@@ -231,7 +233,7 @@ export default function TitleBar() {
             aria-label={t('选择面板布局')}
             aria-haspopup="menu"
             aria-expanded={layoutMenu !== null}
-            className={`w-[46px] h-full flex items-center justify-center transition-colors ${
+            className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
               layoutMenu
                 ? 'bg-bg-active text-fg'
                 : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -239,7 +241,7 @@ export default function TitleBar() {
             onPointerDown={event => event.stopPropagation()}
             onClick={openLayoutMenu}
           >
-            {layoutModeIcon(layoutMode)}
+            {layoutModeIcon(layoutIconMode)}
           </button>
         </Tooltip>
         {layoutMenu && (

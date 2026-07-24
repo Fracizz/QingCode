@@ -3,8 +3,9 @@ import type { SideWorkspaceColumns } from './sideWorkspaceLayout'
 
 /**
  * Title-bar / shortcut layout choices.
- * Dual-only (no editor) is not a menu preset — use the title-bar dual/editor
- * icon toggles (shown only in side layout) for those fine adjustments.
+ * Dual-only / editor-hidden are not menu presets — use the title-bar dual/editor
+ * icon toggles (side layout only). `resolvePanelLayoutMode` returns null in those
+ * fine-tuned states so the menu checkmark and preset no-op stay accurate.
  */
 export type PanelLayoutMode = 'classic' | 'sideTerminal' | 'sideDualEditor'
 
@@ -25,13 +26,25 @@ export const PANEL_LAYOUT_MENU_MODES: PanelLayoutMode[] = [
   'sideDualEditor',
 ]
 
+/**
+ * Which title-bar preset matches the current dock + columns.
+ * `null` = side dock with editor hidden (fine-tuned; not a menu preset).
+ */
 export function resolvePanelLayoutMode(
   panelLayout: PanelLayoutTemplate,
   columns: SideWorkspaceColumns,
-): PanelLayoutMode {
+): PanelLayoutMode | null {
   if (panelLayout === 'classic') return 'classic'
+  if (!columns.editorVisible) return null
   if (columns.dualTerminal) return 'sideDualEditor'
   return 'sideTerminal'
+}
+
+/** Icon / cycle fallback when resolve returns null (editor hidden). */
+export function panelLayoutModeFallback(
+  columns: Pick<SideWorkspaceColumns, 'dualTerminal'>,
+): PanelLayoutMode {
+  return columns.dualTerminal ? 'sideDualEditor' : 'sideTerminal'
 }
 
 export function panelLayoutModeParts(mode: PanelLayoutPreset): {
@@ -56,8 +69,8 @@ export function panelLayoutModeParts(mode: PanelLayoutPreset): {
   }
 }
 
-export function nextPanelLayoutMode(current: PanelLayoutMode): PanelLayoutMode {
-  const index = PANEL_LAYOUT_MODES.indexOf(current)
+export function nextPanelLayoutMode(current: PanelLayoutMode | null): PanelLayoutMode {
+  const index = current == null ? -1 : PANEL_LAYOUT_MODES.indexOf(current)
   return PANEL_LAYOUT_MODES[(index + 1) % PANEL_LAYOUT_MODES.length] ?? 'classic'
 }
 
