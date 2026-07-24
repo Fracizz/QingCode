@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { useLocaleStore } from './i18n'
+import { ensureBuiltinLocaleLoaded, useLocaleStore } from './i18n'
 import {
   formatDirectoryErrorDetail,
   formatExpandDirErrorToast,
@@ -26,7 +26,8 @@ describe('isDirectoryUnavailableError', () => {
 })
 
 describe('formatDirectoryErrorDetail', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await ensureBuiltinLocaleLoaded('en')
     useLocaleStore.getState().setLanguage('zh-CN')
   })
 
@@ -51,7 +52,8 @@ describe('formatDirectoryErrorDetail', () => {
 })
 
 describe('formatExpandDirErrorToast', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await ensureBuiltinLocaleLoaded('en')
     useLocaleStore.getState().setLanguage('zh-CN')
   })
 

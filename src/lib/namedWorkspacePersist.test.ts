@@ -18,7 +18,7 @@ import {
   setActiveNamedWorkspaceId,
   upsertNamedWorkspace,
 } from './namedWorkspacePersist'
-import { translateFor } from './i18n'
+import { ensureBuiltinLocaleLoaded, translateFor } from './i18n'
 import type { WorkspaceSessionSnapshot } from './workspaceSessionPersist'
 
 function installMemoryLocalStorage() {
@@ -35,8 +35,9 @@ function installMemoryLocalStorage() {
   })
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   installMemoryLocalStorage()
+  await ensureBuiltinLocaleLoaded('en')
 })
 
 afterEach(() => {

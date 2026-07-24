@@ -55,7 +55,7 @@ export function loadScmLayout(): ScmLayout {
     if (!raw) return defaults()
     const parsed = JSON.parse(raw) as Partial<ScmLayout>
     const version = typeof parsed.version === 'number' ? parsed.version : 1
-    let leftWidth = clampScmLeftWidth(
+    const leftWidth = clampScmLeftWidth(
       typeof parsed.leftWidth === 'number' ? parsed.leftWidth : SCM_LEFT_DEFAULT,
     )
     let filesWidth = clampScmFilesWidth(
