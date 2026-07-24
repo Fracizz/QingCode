@@ -408,13 +408,13 @@ export function buildCommands(): AppCommand[] {
     },
     {
       id: 'view.panelLayout.sideTerminal',
-      title: '侧栏旁终端',
+      title: '终端+编辑器',
       keywords: 'layout side terminal editor',
       run: () => useUIStore.getState().setPanelLayoutMode('sideTerminal'),
     },
     {
       id: 'view.panelLayout.sideDualEditor',
-      title: '侧栏旁双终端 + 编辑器',
+      title: '双终端+编辑器',
       keywords: 'layout side terminal dual editor',
       run: () => useUIStore.getState().setPanelLayoutMode('sideDualEditor'),
     },

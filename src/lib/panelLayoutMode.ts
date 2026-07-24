@@ -65,11 +65,11 @@ export function panelLayoutModeLabel(mode: PanelLayoutPreset): string {
     case 'classic':
       return '经典布局（终端在底部）'
     case 'sideTerminal':
-      return '侧栏旁终端'
+      return '终端+编辑器'
     case 'sideDual':
     case 'sideTerminalCollapsed':
     case 'sideDualEditor':
-      return '侧栏旁双终端 + 编辑器'
+      return '双终端+编辑器'
   }
 }
 

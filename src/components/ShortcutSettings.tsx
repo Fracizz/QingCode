@@ -57,7 +57,7 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
   {
     id: 'togglePanelLayout',
     label: '切换面板布局',
-    description: '依次切换：经典 → 侧栏旁终端 → 双终端+编辑器。标题栏可直接选择。',
+    description: '依次切换：经典 → 终端+编辑器 → 双终端+编辑器。标题栏可直接选择。',
   },
   {
     id: 'renameInExplorer',
