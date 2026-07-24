@@ -1,15 +1,22 @@
 import { create } from 'zustand'
 import { loadActivityBarHidden, saveActivityBarHidden } from '../lib/activityBarLayout'
 import {
+  nextPanelLayoutMode,
+  normalizePanelLayoutMode,
+  panelLayoutModeParts,
+  resolvePanelLayoutMode,
+  type PanelLayoutPreset,
+} from '../lib/panelLayoutMode'
+import {
   loadPanelLayoutTemplate,
-  nextPanelLayoutTemplate,
   savePanelLayoutTemplate,
   type PanelLayoutTemplate,
 } from '../lib/panelLayoutTemplate'
 import {
-  loadSideEditorCollapsed,
-  saveSideEditorCollapsed,
-} from '../lib/sideEditorLayout'
+  loadSideWorkspaceColumns,
+  saveSideWorkspaceColumns,
+  type SideWorkspaceColumns,
+} from '../lib/sideWorkspaceLayout'
 
 export type View = 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
 
@@ -33,11 +40,10 @@ interface UIState {
   panelLayout: PanelLayoutTemplate
   /** True while switching classic ↔ side terminal; suppresses dock transitions. */
   panelLayoutSwitching: boolean
-  /**
-   * When `panelLayout === 'sideTerminal'`, hide the editor column so the terminal
-   * fills the remaining width. Ignored in classic layout. Default: collapsed.
-   */
-  sideEditorCollapsed: boolean
+  /** Side dock: show a second terminal column. */
+  sideDualTerminal: boolean
+  /** Side dock: show the editor column (independent from dual). */
+  sideEditorVisible: boolean
   /** Search query for the latest Settings deep-link (e.g. files.autoSave). */
   settingsFocusQuery: string | null
   /** Incremented when opening Settings with a focus query. */
@@ -66,18 +72,26 @@ interface UIState {
   openTerminalPanel: () => void
   /** Toggle the terminal panel open/closed. */
   requestToggleTerminal: () => void
-  /** Persist and switch between the bottom and side terminal layouts. */
+  /** Apply a title-bar / command layout preset. */
+  setPanelLayoutMode: (mode: PanelLayoutPreset) => void
+  /** Cycle classic → side → dual+editor. */
   togglePanelLayout: () => void
-  /** Collapse / expand the editor column in side-terminal layout. */
-  setSideEditorCollapsed: (collapsed: boolean) => void
-  toggleSideEditorCollapsed: () => void
-  /** Ensure the editor column is visible (open file / SCM / Settings). */
+  setSideWorkspaceColumns: (columns: Partial<SideWorkspaceColumns>) => void
+  toggleSideDualTerminal: () => void
+  toggleSideEditorVisible: () => void
+  /** Ensure the editor column is visible (open file / SCM / Settings); keeps dual. */
   expandSideEditor: () => void
   openProjectManager: () => void
   closeProjectManager: () => void
   openWorkspaceManager: () => void
   closeWorkspaceManager: () => void
 }
+
+function persistColumns(columns: SideWorkspaceColumns) {
+  saveSideWorkspaceColumns(columns)
+}
+
+const initialColumns = loadSideWorkspaceColumns()
 
 export const useUIStore = create<UIState>((set) => ({
   view: 'explorer',
@@ -90,22 +104,39 @@ export const useUIStore = create<UIState>((set) => ({
   pendingNewFile: false,
   panelLayout: loadPanelLayoutTemplate(),
   panelLayoutSwitching: false,
-  sideEditorCollapsed: loadSideEditorCollapsed(),
+  sideDualTerminal: initialColumns.dualTerminal,
+  sideEditorVisible: initialColumns.editorVisible,
   settingsFocusQuery: null,
   settingsFocusSignal: 0,
   projectManagerOpen: false,
   workspaceManagerOpen: false,
-  setView: view => set({ view, sidebarOpen: true }),
+  setView: view =>
+    set(state => {
+      const needsEditor = view === 'sourceControl' || view === 'settings'
+      if (!needsEditor || state.sideEditorVisible) {
+        return { view, sidebarOpen: true }
+      }
+      const columns = {
+        dualTerminal: state.sideDualTerminal,
+        editorVisible: true,
+      }
+      persistColumns(columns)
+      return { view, sidebarOpen: true, sideEditorVisible: true }
+    }),
   toggleActivityView: view =>
     set(state => {
-      // Full-page views (SCM / Settings): click again returns to explorer.
       if (view === 'sourceControl' || view === 'settings') {
         if (state.view === view) return { view: 'explorer', sidebarOpen: true }
-        if (state.sideEditorCollapsed) saveSideEditorCollapsed(false)
+        if (!state.sideEditorVisible) {
+          persistColumns({
+            dualTerminal: state.sideDualTerminal,
+            editorVisible: true,
+          })
+        }
         return {
           view,
           sidebarOpen: true,
-          sideEditorCollapsed: false,
+          sideEditorVisible: true,
         }
       }
       if (state.view === view && state.sidebarOpen) return { sidebarOpen: false }
@@ -133,43 +164,98 @@ export const useUIStore = create<UIState>((set) => ({
   clearPendingNewFile: () => set({ pendingNewFile: false }),
   requestSettings: query =>
     set(state => {
-      if (state.sideEditorCollapsed) saveSideEditorCollapsed(false)
+      if (!state.sideEditorVisible) {
+        persistColumns({
+          dualTerminal: state.sideDualTerminal,
+          editorVisible: true,
+        })
+      }
       return {
         view: 'settings',
         sidebarOpen: true,
-        sideEditorCollapsed: false,
+        sideEditorVisible: true,
         settingsFocusQuery: query ?? null,
         settingsFocusSignal: state.settingsFocusSignal + 1,
       }
     }),
   openTerminalPanel: () => set(s => ({ terminalOpenSignal: s.terminalOpenSignal + 1 })),
   requestToggleTerminal: () => set(s => ({ terminalToggleSignal: s.terminalToggleSignal + 1 })),
-  togglePanelLayout: () =>
+  setPanelLayoutMode: mode =>
     set(state => {
-      const next = nextPanelLayoutTemplate(state.panelLayout)
-      savePanelLayoutTemplate(next)
+      const normalized = normalizePanelLayoutMode(mode)
+      const current = resolvePanelLayoutMode(state.panelLayout, {
+        dualTerminal: state.sideDualTerminal,
+        editorVisible: state.sideEditorVisible,
+      })
+      if (current === normalized) return state
+
+      const { panelLayout, columns } = panelLayoutModeParts(normalized)
+      const dockChanged = state.panelLayout !== panelLayout
+      savePanelLayoutTemplate(panelLayout)
+      if (columns) persistColumns(columns)
+
       return {
-        panelLayout: next,
-        panelLayoutSwitching: true,
-        // A layout change must be visible even when the terminal was previously hidden.
+        panelLayout,
+        sideDualTerminal: columns ? columns.dualTerminal : state.sideDualTerminal,
+        sideEditorVisible: columns ? columns.editorVisible : state.sideEditorVisible,
+        panelLayoutSwitching: dockChanged,
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }
     }),
-  setSideEditorCollapsed: collapsed => {
-    saveSideEditorCollapsed(collapsed)
-    set({ sideEditorCollapsed: collapsed })
+  togglePanelLayout: () => {
+    const state = useUIStore.getState()
+    const current = resolvePanelLayoutMode(state.panelLayout, {
+      dualTerminal: state.sideDualTerminal,
+      editorVisible: state.sideEditorVisible,
+    })
+    state.setPanelLayoutMode(nextPanelLayoutMode(current))
   },
-  toggleSideEditorCollapsed: () =>
+  setSideWorkspaceColumns: patch =>
     set(state => {
-      const sideEditorCollapsed = !state.sideEditorCollapsed
-      saveSideEditorCollapsed(sideEditorCollapsed)
-      return { sideEditorCollapsed }
+      const columns = {
+        dualTerminal: patch.dualTerminal ?? state.sideDualTerminal,
+        editorVisible: patch.editorVisible ?? state.sideEditorVisible,
+      }
+      persistColumns(columns)
+      return {
+        sideDualTerminal: columns.dualTerminal,
+        sideEditorVisible: columns.editorVisible,
+        terminalOpenSignal: state.terminalOpenSignal + 1,
+      }
+    }),
+  toggleSideDualTerminal: () =>
+    set(state => {
+      const columns = {
+        dualTerminal: !state.sideDualTerminal,
+        editorVisible: state.sideEditorVisible,
+      }
+      persistColumns(columns)
+      return {
+        sideDualTerminal: columns.dualTerminal,
+        terminalOpenSignal: state.terminalOpenSignal + 1,
+      }
+    }),
+  toggleSideEditorVisible: () =>
+    set(state => {
+      const columns = {
+        dualTerminal: state.sideDualTerminal,
+        editorVisible: !state.sideEditorVisible,
+      }
+      persistColumns(columns)
+      return {
+        sideEditorVisible: columns.editorVisible,
+        terminalOpenSignal: state.terminalOpenSignal + 1,
+      }
     }),
   expandSideEditor: () =>
     set(state => {
-      if (!state.sideEditorCollapsed) return state
-      saveSideEditorCollapsed(false)
-      return { sideEditorCollapsed: false }
+      if (state.sideEditorVisible) return state
+      const columns = {
+        dualTerminal: state.sideDualTerminal,
+        editorVisible: true,
+      }
+      persistColumns(columns)
+      return { sideEditorVisible: true }
     }),
   openProjectManager: () => set({ projectManagerOpen: true }),
   closeProjectManager: () => set({ projectManagerOpen: false }),

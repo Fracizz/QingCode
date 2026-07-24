@@ -381,10 +381,17 @@ function recordTypedInput(id: string, data: string) {
 
 export type ShellKind = 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
 
+export type TerminalFocusPane = 'primary' | 'secondary'
+
 interface TerminalState {
   terminals: TerminalTab[]
   activeTerminalId: string | null
   activeTerminalByProject: Record<string, string>
+  /** Right pane in dual-terminal (side layout with editor collapsed). */
+  secondaryTerminalId: string | null
+  secondaryTerminalByProject: Record<string, string>
+  /** Which dual-terminal pane receives tab clicks / keyboard focus. */
+  terminalFocusPane: TerminalFocusPane
   addTerminal: (projectPath: string, projectId: string, profileId?: string) => Promise<string | null>
   addScriptTerminal: (
     projectId: string,
@@ -419,6 +426,15 @@ interface TerminalState {
   activateProject: (projectId: string) => void
   updateProjectPath: (projectId: string, path: string) => void
   setActiveTerminal: (id: string) => void
+  setTerminalFocusPane: (pane: TerminalFocusPane) => void
+  setSecondaryTerminal: (id: string | null) => void
+  /**
+   * Ensure the dual-terminal right pane has a distinct terminal when possible.
+   * Picks another project tab, or leaves null for an empty pane.
+   */
+  ensureSecondaryTerminal: (projectId: string) => void
+  /** Terminal that should receive find/clear / status focus in dual mode. */
+  focusedTerminalId: () => string | null
   writeToTerminal: (id: string, data: string) => Promise<void>
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<void>
   /**
@@ -441,6 +457,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   terminals: [],
   activeTerminalId: null,
   activeTerminalByProject: {},
+  secondaryTerminalId: null,
+  secondaryTerminalByProject: {},
+  terminalFocusPane: 'primary',
 
   addTerminal: async (projectPath: string, projectId: string, profileId?: string) => {
     const project =
@@ -493,11 +512,23 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       startedAt: Date.now(),
       ptySpawnPending: true,
     }
-    set(s => ({
-      terminals: [...s.terminals, tab],
-      activeTerminalId: id,
-      activeTerminalByProject: { ...s.activeTerminalByProject, [projectId]: id },
-    }))
+    set(s => {
+      if (s.terminalFocusPane === 'secondary') {
+        return {
+          terminals: [...s.terminals, tab],
+          secondaryTerminalId: id,
+          secondaryTerminalByProject: {
+            ...s.secondaryTerminalByProject,
+            [projectId]: id,
+          },
+        }
+      }
+      return {
+        terminals: [...s.terminals, tab],
+        activeTerminalId: id,
+        activeTerminalByProject: { ...s.activeTerminalByProject, [projectId]: id },
+      }
+    })
     // Ensure the panel has a non-zero height before xterm fit → PTY spawn.
     useUIStore.getState().openTerminalPanel()
     schedulePtySpawnFallback(id, () => {
@@ -591,7 +622,22 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         s.activeTerminalId === id
           ? nextProjectActive ?? null
           : s.activeTerminalId
-      return { terminals, activeTerminalId, activeTerminalByProject }
+      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+      let secondaryTerminalId = s.secondaryTerminalId
+      if (secondaryTerminalId === id) {
+        const nextSecondary =
+          projectTerminals.find(t => t.id !== activeTerminalId)?.id ?? null
+        secondaryTerminalId = nextSecondary
+        if (nextSecondary) secondaryTerminalByProject[closed.projectId] = nextSecondary
+        else delete secondaryTerminalByProject[closed.projectId]
+      }
+      return {
+        terminals,
+        activeTerminalId,
+        activeTerminalByProject,
+        secondaryTerminalId,
+        secondaryTerminalByProject,
+      }
     })
     clearTerminalOutput(id)
   },
@@ -615,7 +661,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const terminals = s.terminals.filter(t => !(t.projectId === keep.projectId && t.id !== id))
       const activeTerminalByProject = { ...s.activeTerminalByProject }
       activeTerminalByProject[keep.projectId] = id
-      return { terminals, activeTerminalId: id, activeTerminalByProject }
+      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+      delete secondaryTerminalByProject[keep.projectId]
+      return {
+        terminals,
+        activeTerminalId: id,
+        activeTerminalByProject,
+        secondaryTerminalId:
+          s.secondaryTerminalId && others.includes(s.secondaryTerminalId)
+            ? null
+            : s.secondaryTerminalId,
+        secondaryTerminalByProject,
+      }
     })
     others.forEach(id => clearTerminalOutput(id))
   },
@@ -636,10 +693,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set(s => {
       const activeTerminalByProject = { ...s.activeTerminalByProject }
       delete activeTerminalByProject[projectId]
+      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+      delete secondaryTerminalByProject[projectId]
       return {
         terminals: s.terminals.filter(t => t.projectId !== projectId),
         activeTerminalId: ids.includes(s.activeTerminalId ?? '') ? null : s.activeTerminalId,
         activeTerminalByProject,
+        secondaryTerminalId: ids.includes(s.secondaryTerminalId ?? '')
+          ? null
+          : s.secondaryTerminalId,
+        secondaryTerminalByProject,
       }
     })
     ids.forEach(id => clearTerminalOutput(id))
@@ -661,10 +724,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set(s => {
       const activeTerminalByProject = { ...s.activeTerminalByProject }
       delete activeTerminalByProject[projectId]
+      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+      delete secondaryTerminalByProject[projectId]
       return {
         terminals: s.terminals.filter(terminal => terminal.projectId !== projectId),
         activeTerminalId: ids.includes(s.activeTerminalId ?? '') ? null : s.activeTerminalId,
         activeTerminalByProject,
+        secondaryTerminalId: ids.includes(s.secondaryTerminalId ?? '')
+          ? null
+          : s.secondaryTerminalId,
+        secondaryTerminalByProject,
       }
     })
     ids.forEach(id => clearTerminalOutput(id))
@@ -808,11 +877,23 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const activeTerminalId = projectTerminals.some(terminal => terminal.id === remembered)
         ? remembered
         : projectTerminals[0]?.id ?? null
+      const rememberedSecondary = s.secondaryTerminalByProject[projectId]
+      const secondaryTerminalId =
+        rememberedSecondary &&
+        rememberedSecondary !== activeTerminalId &&
+        projectTerminals.some(terminal => terminal.id === rememberedSecondary)
+          ? rememberedSecondary
+          : null
+      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+      if (!secondaryTerminalId) delete secondaryTerminalByProject[projectId]
       return {
         activeTerminalId,
         activeTerminalByProject: activeTerminalId
           ? { ...s.activeTerminalByProject, [projectId]: activeTerminalId }
           : s.activeTerminalByProject,
+        secondaryTerminalId,
+        secondaryTerminalByProject,
+        terminalFocusPane: 'primary' as const,
       }
     }),
 
@@ -827,14 +908,107 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set(s => {
       const terminal = s.terminals.find(tab => tab.id === id)
       if (!terminal) return s
+      if (s.terminalFocusPane === 'secondary') {
+        // Keep primary/secondary distinct — swap if the tab is already primary.
+        if (s.activeTerminalId === id) {
+          const previousSecondary = s.secondaryTerminalId
+          return {
+            activeTerminalId: previousSecondary && previousSecondary !== id ? previousSecondary : id,
+            activeTerminalByProject: {
+              ...s.activeTerminalByProject,
+              [terminal.projectId]:
+                previousSecondary && previousSecondary !== id ? previousSecondary : id,
+            },
+            secondaryTerminalId: id,
+            secondaryTerminalByProject: {
+              ...s.secondaryTerminalByProject,
+              [terminal.projectId]: id,
+            },
+          }
+        }
+        return {
+          secondaryTerminalId: id,
+          secondaryTerminalByProject: {
+            ...s.secondaryTerminalByProject,
+            [terminal.projectId]: id,
+          },
+        }
+      }
+      let secondaryTerminalId = s.secondaryTerminalId
+      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+      if (secondaryTerminalId === id) {
+        secondaryTerminalId = s.activeTerminalId
+        if (secondaryTerminalId) {
+          secondaryTerminalByProject[terminal.projectId] = secondaryTerminalId
+        } else {
+          delete secondaryTerminalByProject[terminal.projectId]
+        }
+      }
       return {
         activeTerminalId: id,
         activeTerminalByProject: {
           ...s.activeTerminalByProject,
           [terminal.projectId]: id,
         },
+        secondaryTerminalId,
+        secondaryTerminalByProject,
       }
     }),
+
+  setTerminalFocusPane: pane => set({ terminalFocusPane: pane }),
+
+  setSecondaryTerminal: id =>
+    set(s => {
+      if (id == null) {
+        const projectId = useProjectStore.getState().currentProject?.id
+        const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+        if (projectId) delete secondaryTerminalByProject[projectId]
+        return { secondaryTerminalId: null, secondaryTerminalByProject }
+      }
+      const terminal = s.terminals.find(tab => tab.id === id)
+      if (!terminal) return s
+      if (s.activeTerminalId === id) return s
+      return {
+        secondaryTerminalId: id,
+        secondaryTerminalByProject: {
+          ...s.secondaryTerminalByProject,
+          [terminal.projectId]: id,
+        },
+      }
+    }),
+
+  ensureSecondaryTerminal: projectId =>
+    set(s => {
+      const projectTerminals = s.terminals.filter(t => t.projectId === projectId)
+      if (projectTerminals.length === 0) {
+        return {
+          secondaryTerminalId: null,
+        }
+      }
+      const primary = s.activeTerminalId
+      const current = s.secondaryTerminalId
+      if (
+        current &&
+        current !== primary &&
+        projectTerminals.some(t => t.id === current)
+      ) {
+        return s
+      }
+      const next =
+        projectTerminals.find(t => t.id !== primary)?.id ?? null
+      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
+      if (next) secondaryTerminalByProject[projectId] = next
+      else delete secondaryTerminalByProject[projectId]
+      return { secondaryTerminalId: next, secondaryTerminalByProject }
+    }),
+
+  focusedTerminalId: () => {
+    const s = get()
+    if (s.terminalFocusPane === 'secondary' && s.secondaryTerminalId) {
+      return s.secondaryTerminalId
+    }
+    return s.activeTerminalId
+  },
 
   writeToTerminal: async (id: string, data: string) => {
     recordTypedInput(id, data)

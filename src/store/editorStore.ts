@@ -35,6 +35,7 @@ import { authorizePaths } from '../lib/pathAllowlist'
 import { loadEffectiveAutoSaveSettings, notifyAutoSaveSettingsChanged } from '../lib/autoSaveSettings'
 import { choiceDialog } from './choiceStore'
 import { useProjectStore } from './projectStore'
+import { useUIStore } from './uiStore'
 import { registerEditorSessionApi } from './editorSessionBridge'
 import type { EditorTab } from '../types'
 import {
@@ -293,6 +294,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   openFile: async (path: string, line?: number, column?: number) => {
+    useUIStore.getState().expandSideEditor()
     const reveal = pendingRevealAt(path, line, column)
     const existing = get().tabs.find(t => t.kind !== 'diff' && t.path === path)
     if (existing) {
@@ -516,6 +518,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   openDiff: async (projectPath: string, relativePath: string, absolutePath: string) => {
+    useUIStore.getState().expandSideEditor()
     const existing = get().tabs.find(t => t.kind === 'diff' && t.path === absolutePath)
     if (existing) {
       const prev = get().activeTabId

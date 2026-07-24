@@ -133,6 +133,8 @@ function App() {
   const terminalToggleSignal = useUIStore(s => s.terminalToggleSignal)
   const panelLayout = useUIStore(s => s.panelLayout)
   const panelLayoutSwitching = useUIStore(s => s.panelLayoutSwitching)
+  const sideDualTerminal = useUIStore(s => s.sideDualTerminal)
+  const sideEditorVisible = useUIStore(s => s.sideEditorVisible)
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
   const workspaceManagerOpen = useUIStore(s => s.workspaceManagerOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
@@ -161,6 +163,8 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
   const [projectsReady, setProjectsReady] = useState(false)
   const terminalPosition = terminalPositionForTemplate(panelLayout)
+  const sideEditorSlotVisible = panelLayout !== 'sideTerminal' || sideEditorVisible
+  const sideDualActive = panelLayout === 'sideTerminal' && sideDualTerminal
   const sidebarSlotVisible =
     sidebarOpen && (view === 'explorer' || view === 'search' || view === 'run')
 
@@ -309,8 +313,10 @@ function App() {
           className="workspace-grid flex-1 min-h-0 overflow-hidden"
           data-panel-layout={panelLayout}
           data-sidebar-slot={sidebarSlotVisible ? 'visible' : 'hidden'}
+          data-editor-slot={sideEditorSlotVisible ? 'visible' : 'collapsed'}
+          data-terminal-dual={sideDualActive ? 'true' : undefined}
           data-terminal-split={
-            panelLayout === 'sideTerminal' ? sideSplit : undefined
+            panelLayout === 'sideTerminal' && sideEditorSlotVisible ? sideSplit : undefined
           }
         >
           <div className="workspace-grid-activity">
@@ -367,6 +373,8 @@ function App() {
             terminalHeight={terminalHeight}
             terminalWidth={terminalWidth}
             sideSplit={sideSplit}
+            dualTerminal={sideDualActive}
+            editorVisible={sideEditorSlotVisible}
             isTerminalResizing={isTerminalResizing}
             layoutSwitching={panelLayoutSwitching}
             onResizerPointerDown={onResizerPointerDown}

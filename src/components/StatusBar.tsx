@@ -63,6 +63,8 @@ export default function StatusBar() {
   const reopenWithEncoding = useEditorStore(s => s.reopenWithEncoding)
   const terminals = useTerminalStore(s => s.terminals)
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
+  const secondaryTerminalId = useTerminalStore(s => s.secondaryTerminalId)
+  const terminalFocusPane = useTerminalStore(s => s.terminalFocusPane)
   const setView = useUIStore(s => s.setView)
   const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
   const [appVersion, setAppVersion] = useState<string | null>(null)
@@ -115,7 +117,11 @@ export default function StatusBar() {
 
   const activeTab = tabs.find(t => t.id === activeTabId)
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
-  const activeTerm = projectTerminals.find(t => t.id === activeTerminalId)
+  const focusedTerminalId =
+    terminalFocusPane === 'secondary' && secondaryTerminalId
+      ? secondaryTerminalId
+      : activeTerminalId
+  const activeTerm = projectTerminals.find(t => t.id === focusedTerminalId)
   const runningTerminals = projectTerminals.filter(t => t.status !== 'exited').length
 
   useEffect(() => {

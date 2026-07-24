@@ -30,7 +30,9 @@ export default function PanelResizer({
       label={tooltip}
       side={tooltipSide}
       delay={0}
-      wrapperClassName={orientation === 'horizontal' ? 'flex w-full shrink-0' : 'flex shrink-0'}
+      wrapperClassName={
+        orientation === 'horizontal' ? 'flex w-full shrink-0' : 'flex h-full shrink-0'
+      }
     >
       <div
         onMouseDown={onMouseDown}

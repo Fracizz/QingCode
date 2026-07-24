@@ -160,6 +160,7 @@ body {
     'terminal terminal';
 }
 
+/* Equal: single terminal | editor = 1:1. */
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'] {
   grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -167,8 +168,19 @@ body {
     'activity sidebar terminal editor';
 }
 
+/* Equal dual+editor: terminal band | editor = 2:1 → A|B|E ≈ 1:1:1. */
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-dual='true'][data-editor-slot='visible'] {
+  grid-template-columns: auto auto minmax(0, 2fr) minmax(0, 1fr);
+}
+
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-split='custom'] {
   grid-template-columns: auto auto auto minmax(0, 1fr);
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-editor-slot='collapsed'] {
+  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-areas:
+    'activity sidebar terminal';
 }
 
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'] {
@@ -178,6 +190,20 @@ body {
     'activity terminal editor';
 }
 
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-dual='true'][data-editor-slot='visible'] {
+  grid-template-columns: auto minmax(0, 2fr) minmax(0, 1fr);
+}
+
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-split='custom'] {
   grid-template-columns: auto auto minmax(0, 1fr);
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-editor-slot='collapsed'] {
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    'activity terminal';
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-editor-slot='collapsed'] .workspace-grid-editor {
+  display: none;
 }

@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
 import {
   Circle,
   Plus,
@@ -9,13 +15,23 @@ import {
   XSquare,
   Files,
   ChevronDown,
+  SquareCode,
+  SquareSplitHorizontal,
 } from 'lucide-react'
-import { MAX_TERMINALS_PER_PROJECT, useTerminalStore } from '../store/terminalStore'
+import {
+  MAX_TERMINALS_PER_PROJECT,
+  useTerminalStore,
+  type TerminalFocusPane,
+} from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { confirmDialog } from '../store/confirmStore'
 import { loadTerminalProfileSettings, getEffectiveDefaultProfileId } from '@/lib/terminal/terminalProfiles'
 import { formatTerminalName } from '../utils/terminalName'
+import {
+  EDITOR_TAB_OVERFLOW_BTN_W,
+  pickVisibleTabIndices,
+} from '../lib/editorTabsLayout'
 import { canCloseTerminalDirectly, isTerminalBusy, listBusyTerminals } from '@/lib/terminal/terminalClose'
 import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
@@ -45,11 +61,30 @@ function terminalStatusDotClass(status: TerminalTab['status'], busy: boolean): s
   return 'text-fg-dim'
 }
 
-export default function TerminalTabs() {
+export default function TerminalTabs({
+  /** When set, this tab strip owns one dual-terminal pane (independent header). */
+  pane,
+  /** Stronger chrome when this pane owns keyboard focus. */
+  focused = false,
+  /** Panel chrome (dual toggle / collapse / close all). Only one strip should show these. */
+  showPanelActions = true,
+}: {
+  pane?: TerminalFocusPane
+  focused?: boolean
+  showPanelActions?: boolean
+} = {}) {
   const { t: translate } = useI18n()
   const terminals = useTerminalStore(s => s.terminals)
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
+  const secondaryTerminalId = useTerminalStore(s => s.secondaryTerminalId)
+  const setTerminalFocusPane = useTerminalStore(s => s.setTerminalFocusPane)
   const setActiveTerminal = useTerminalStore(s => s.setActiveTerminal)
+  const paneActiveId =
+    pane === 'secondary' ? secondaryTerminalId : activeTerminalId
+  const activateForPane = (id: string) => {
+    setTerminalFocusPane(pane ?? 'primary')
+    setActiveTerminal(id)
+  }
   const closeTerminal = useTerminalStore(s => s.closeTerminal)
   const closeOtherTerminals = useTerminalStore(s => s.closeOtherTerminals)
   const closeAllProjectTerminals = useTerminalStore(s => s.closeAllProjectTerminals)
@@ -60,6 +95,11 @@ export default function TerminalTabs() {
   const addEmptyProject = useProjectStore(s => s.addEmptyProject)
   const switchProject = useProjectStore(s => s.switchProject)
   const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
+  const panelLayout = useUIStore(s => s.panelLayout)
+  const sideDualTerminal = useUIStore(s => s.sideDualTerminal)
+  const sideEditorVisible = useUIStore(s => s.sideEditorVisible)
+  const toggleSideDualTerminal = useUIStore(s => s.toggleSideDualTerminal)
+  const toggleSideEditorVisible = useUIStore(s => s.toggleSideEditorVisible)
   const [creatingTerminal, setCreatingTerminal] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -67,15 +107,62 @@ export default function TerminalTabs() {
     terminal: TerminalTab
   } | null>(null)
   const [profileMenu, setProfileMenu] = useState<{ x: number; y: number } | null>(null)
+  const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null)
   const [closeArmId, setCloseArmId] = useState<string | null>(null)
   const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set())
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
+  const [visibleIndices, setVisibleIndices] = useState<number[]>([])
   const renameInputRef = useRef<HTMLInputElement>(null)
   const renameCommittingRef = useRef(false)
+  const stripRef = useRef<HTMLDivElement>(null)
+  const measureRef = useRef<HTMLDivElement>(null)
 
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
   const atLimit = projectTerminals.length >= MAX_TERMINALS_PER_PROJECT
+  // Stable deps for overflow measure (avoid new-array identity loops).
+  const projectTerminalMeasureKey = projectTerminals
+    .map(term => `${term.id}:${term.name}:${term.status}`)
+    .join('|')
+
+  useLayoutEffect(() => {
+    const strip = stripRef.current
+    const measure = measureRef.current
+    const count = projectTerminals.length
+    if (!strip || !measure || count === 0) {
+      setVisibleIndices(prev => (prev.length === 0 ? prev : []))
+      return
+    }
+
+    const compute = () => {
+      const widths = Array.from(
+        measure.querySelectorAll<HTMLElement>('[data-tab-measure-id]'),
+        el => el.offsetWidth,
+      )
+      const next =
+        widths.length !== count
+          ? Array.from({ length: count }, (_, i) => i)
+          : pickVisibleTabIndices(
+              widths,
+              Math.max(
+                0,
+                projectTerminals.findIndex(term => term.id === paneActiveId),
+              ),
+              strip.clientWidth,
+              EDITOR_TAB_OVERFLOW_BTN_W,
+            )
+      setVisibleIndices(prev =>
+        prev.length === next.length && prev.every((value, i) => value === next[i])
+          ? prev
+          : next,
+      )
+    }
+
+    compute()
+    const ro = new ResizeObserver(compute)
+    ro.observe(strip)
+    return () => ro.disconnect()
+  }, [projectTerminalMeasureKey, paneActiveId, renamingId, renameDraft])
 
   useEffect(() => {
     if (!renamingId) return
@@ -283,6 +370,7 @@ export default function TerminalTabs() {
     setCreatingTerminal(true)
     void (async () => {
       try {
+        if (pane) setTerminalFocusPane(pane)
         const project = currentProject ?? (await ensureProjectForTerminal())
         if (!project) {
           useProjectStore
@@ -322,6 +410,18 @@ export default function TerminalTabs() {
       action: () => handleNewTerminal(profile.id),
     }))
   }
+
+  const overflowItems = (): ContextMenuItem[] =>
+    projectTerminals.map(term => ({
+      label: term.id === paneActiveId ? `${formatTerminalName(term.name)} ●` : formatTerminalName(term.name),
+      action: () => activateForPane(term.id),
+    }))
+
+  const visibleTabIndices =
+    visibleIndices.length > 0
+      ? visibleIndices
+      : projectTerminals.map((_, i) => i)
+  const hiddenCount = Math.max(0, projectTerminals.length - visibleTabIndices.length)
 
   const menuItems = (terminal: TerminalTab): ContextMenuItem[] => [
     {
@@ -365,30 +465,58 @@ export default function TerminalTabs() {
 
   return (
     <>
-    <div className="ui-font-scaled relative flex h-[var(--tab-height)] flex-shrink-0 items-center border-b border-border bg-bg-deep">
-        <div className="flex h-full flex-shrink-0 items-center gap-1.5 border-r border-border px-3 text-[11px] font-semibold tracking-wide text-fg-muted">
-          <TerminalIcon size={13} /> {translate('终端')}
+    <div
+      className={`ui-font-scaled relative flex h-[var(--tab-height)] flex-shrink-0 items-center border-b bg-bg-deep ${
+        focused ? 'border-brand/50 bg-bg-active/40' : 'border-border'
+      }`}
+      data-terminal-pane-focused={focused ? 'true' : undefined}
+    >
+        <div
+          className={`flex h-full flex-shrink-0 items-center gap-1.5 border-r px-3 text-[11px] font-semibold tracking-wide ${
+            focused
+              ? 'border-brand/40 text-brand'
+              : 'border-border text-fg-muted'
+          }`}
+          onPointerDown={() => {
+            if (pane) setTerminalFocusPane(pane)
+          }}
+        >
+          <TerminalIcon size={13} />{' '}
+          {translate('终端')}
         </div>
         <div
+          ref={stripRef}
           role="tablist"
-          aria-label={translate('终端')}
-          className="flex h-full min-w-0 flex-1 items-center overflow-x-auto"
+          aria-label={
+            pane === 'secondary' ? translate('终端 - 右侧') : translate('终端')
+          }
+          className="flex h-full min-w-0 flex-1 items-center overflow-hidden"
+          onPointerDown={() => {
+            if (pane) setTerminalFocusPane(pane)
+          }}
           onKeyDown={event => {
             if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-            if (projectTerminals.length === 0) return
-            const current = projectTerminals.findIndex(term => term.id === activeTerminalId)
+            if (visibleTabIndices.length === 0) return
+            const current = visibleTabIndices.findIndex(
+              i => projectTerminals[i]?.id === paneActiveId,
+            )
             if (current < 0) return
             event.preventDefault()
             const delta = event.key === 'ArrowRight' ? 1 : -1
-            const next =
-              projectTerminals[(current + delta + projectTerminals.length) % projectTerminals.length]
-            if (next) setActiveTerminal(next.id)
+            const nextIndex =
+              visibleTabIndices[
+                (current + delta + visibleTabIndices.length) % visibleTabIndices.length
+              ]
+            const next = nextIndex != null ? projectTerminals[nextIndex] : undefined
+            if (next) activateForPane(next.id)
           }}
         >
-          {projectTerminals.map((t, index) => {
+          {visibleTabIndices.map((index, visiblePos) => {
+            const t = projectTerminals[index]
+            if (!t) return null
             const isCloseArmed = closeArmId === t.id
-            const isActive = t.id === activeTerminalId
-            const showDivider = index < projectTerminals.length - 1
+            const isActive = t.id === paneActiveId
+            const showDivider = visiblePos < visibleTabIndices.length - 1
             return (
               <div
                 key={t.id}
@@ -398,13 +526,13 @@ export default function TerminalTabs() {
                 className={`group relative flex h-full cursor-pointer items-center gap-1.5 whitespace-nowrap pl-3 pr-2 transition-colors
                   ${isActive ? 'bg-tab-active text-fg' : 'bg-tab-inactive text-fg-muted hover:bg-bg-elevated hover:text-fg'}`}
                 onClick={() => {
-                  setActiveTerminal(t.id)
+                  activateForPane(t.id)
                   if (closeArmId && closeArmId !== t.id) setCloseArmId(null)
                 }}
                 onKeyDown={event => {
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()
-                    setActiveTerminal(t.id)
+                    activateForPane(t.id)
                   }
                 }}
                 onDoubleClick={event => {
@@ -546,6 +674,44 @@ export default function TerminalTabs() {
               </div>
             )
           })}
+        </div>
+        {projectTerminals.length > 0 && (
+          <Tooltip
+            label={
+              hiddenCount > 0
+                ? translate('显示所有终端（{hidden} 个已折叠）', { hidden: hiddenCount })
+                : translate('显示所有终端')
+            }
+            side="top"
+            wrapperClassName="flex-shrink-0"
+          >
+            <button
+              type="button"
+              aria-label={translate('显示所有终端')}
+              aria-haspopup="menu"
+              aria-expanded={overflowMenu !== null}
+              className="relative flex h-full w-8 flex-shrink-0 items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg"
+              onPointerDown={() => {
+                if (pane) setTerminalFocusPane(pane)
+              }}
+              onClick={event => {
+                const rect = event.currentTarget.getBoundingClientRect()
+                setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
+              }}
+            >
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border-strong"
+              />
+              <ChevronDown size={14} />
+              {hiddenCount > 0 && (
+                <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-accent px-0.5 text-center text-[9px] font-semibold leading-[12px] text-white">
+                  {hiddenCount > 99 ? '99+' : hiddenCount}
+                </span>
+              )}
+            </button>
+          </Tooltip>
+        )}
           <Tooltip
             label={
               currentProject && atLimit
@@ -576,29 +742,97 @@ export default function TerminalTabs() {
               <Plus size={15} />
             </button>
           </Tooltip>
-        </div>
-        <div className="flex h-full flex-shrink-0 items-center gap-0.5 border-l border-border pr-1.5 pl-1">
-          <Tooltip label={translate('收起终端（任务继续在后台运行）')} side="top">
-            <button
-              type="button"
-              aria-label={translate('收起终端')}
-              className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
-              onClick={() => requestToggleTerminal()}
+        {showPanelActions && (
+          <div className="flex h-full flex-shrink-0 items-center gap-0.5 border-l border-border pr-1.5 pl-1">
+            {panelLayout === 'sideTerminal' && (
+              <>
+                <Tooltip
+                  label={
+                    sideDualTerminal
+                      ? translate('关闭双终端')
+                      : translate('开启双终端')
+                  }
+                  side="top"
+                >
+                  <button
+                    type="button"
+                    aria-label={
+                      sideDualTerminal
+                        ? translate('关闭双终端')
+                        : translate('开启双终端')
+                    }
+                    aria-pressed={sideDualTerminal}
+                    className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+                    onClick={() => toggleSideDualTerminal()}
+                  >
+                    <SquareSplitHorizontal size={15} />
+                  </button>
+                </Tooltip>
+                <Tooltip
+                  label={
+                    sideEditorVisible
+                      ? translate('隐藏编辑器')
+                      : translate('显示编辑器')
+                  }
+                  side="top"
+                >
+                  <button
+                    type="button"
+                    aria-label={
+                      sideEditorVisible
+                        ? translate('隐藏编辑器')
+                        : translate('显示编辑器')
+                    }
+                    aria-pressed={sideEditorVisible}
+                    className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+                    onClick={() => toggleSideEditorVisible()}
+                  >
+                    <SquareCode size={15} />
+                  </button>
+                </Tooltip>
+              </>
+            )}
+            <Tooltip label={translate('收起终端（任务继续在后台运行）')} side="top">
+              <button
+                type="button"
+                aria-label={translate('收起终端')}
+                className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+                onClick={() => requestToggleTerminal()}
+              >
+                <ChevronDown size={15} />
+              </button>
+            </Tooltip>
+            <Tooltip label={translate('关闭全部终端')} side="top">
+              <button
+                type="button"
+                aria-label={translate('关闭全部终端')}
+                disabled={projectTerminals.length === 0}
+                className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                onClick={() => void handleCloseAll()}
+              >
+                <X size={15} />
+              </button>
+            </Tooltip>
+          </div>
+        )}
+        {/* Hidden measure layer: natural tab widths for overflow fitting. */}
+        <div
+          ref={measureRef}
+          className="pointer-events-none absolute left-0 top-0 -z-10 flex h-[var(--tab-height)] opacity-0"
+          aria-hidden="true"
+        >
+          {projectTerminals.map(term => (
+            <div
+              key={`measure-${term.id}`}
+              data-tab-measure-id={term.id}
+              className="flex h-full items-center gap-1.5 whitespace-nowrap pl-3 pr-2"
             >
-              <ChevronDown size={15} />
-            </button>
-          </Tooltip>
-          <Tooltip label={translate('关闭全部终端')} side="top">
-            <button
-              type="button"
-              aria-label={translate('关闭全部终端')}
-              disabled={projectTerminals.length === 0}
-              className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-              onClick={() => void handleCloseAll()}
-            >
-              <X size={15} />
-            </button>
-          </Tooltip>
+              <Circle size={7} fill="currentColor" />
+              <span className="text-[13px]">{formatTerminalName(term.name)}</span>
+              {term.status === 'exited' && <span className="ml-1 h-4 w-4 flex-shrink-0" />}
+              <span className="ml-1 h-4 w-4 flex-shrink-0" />
+            </div>
+          ))}
         </div>
       </div>
       {contextMenu && (
@@ -615,6 +849,14 @@ export default function TerminalTabs() {
           y={profileMenu.y}
           items={profileMenuItems()}
           onClose={() => setProfileMenu(null)}
+        />
+      )}
+      {overflowMenu && (
+        <ContextMenu
+          x={overflowMenu.x}
+          y={overflowMenu.y}
+          items={overflowItems()}
+          onClose={() => setOverflowMenu(null)}
         />
       )}
     </>

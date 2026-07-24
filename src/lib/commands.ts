@@ -4,6 +4,7 @@ import { getAutoSaveSettings } from './autoSave'
 import { saveScopedAutoSaveSettings } from './autoSaveSettings'
 import { formatDocument } from './formatDocument'
 import { translate } from './i18n'
+import { panelLayoutModeLabel, resolvePanelLayoutMode } from './panelLayoutMode'
 import {
   ensureSettingsFile,
   resolveGlobalSettingsPath,
@@ -381,11 +382,55 @@ export function buildCommands(): AppCommand[] {
     {
       id: 'view.togglePanelLayout',
       title: '切换面板布局',
-      keywords: 'layout panel terminal sidebar classic side',
+      keywords: 'layout panel terminal sidebar classic side cycle',
       shortcutCommand: 'togglePanelLayout',
       run: () => {
-        useUIStore.getState().togglePanelLayout()
+        const ui = useUIStore.getState()
+        ui.togglePanelLayout()
+        const { panelLayout, sideDualTerminal, sideEditorVisible } = useUIStore.getState()
+        const mode = resolvePanelLayoutMode(panelLayout, {
+          dualTerminal: sideDualTerminal,
+          editorVisible: sideEditorVisible,
+        })
+        useProjectStore.getState().pushToast(
+          'info',
+          translate('已切换为：{layout}', {
+            layout: translate(panelLayoutModeLabel(mode)),
+          }),
+        )
       },
+    },
+    {
+      id: 'view.panelLayout.classic',
+      title: '经典布局（终端在底部）',
+      keywords: 'layout classic bottom terminal',
+      run: () => useUIStore.getState().setPanelLayoutMode('classic'),
+    },
+    {
+      id: 'view.panelLayout.sideTerminal',
+      title: '侧栏旁终端',
+      keywords: 'layout side terminal editor',
+      run: () => useUIStore.getState().setPanelLayoutMode('sideTerminal'),
+    },
+    {
+      id: 'view.panelLayout.sideDualEditor',
+      title: '侧栏旁双终端 + 编辑器',
+      keywords: 'layout side terminal dual editor',
+      run: () => useUIStore.getState().setPanelLayoutMode('sideDualEditor'),
+    },
+    {
+      id: 'view.toggleSideDualTerminal',
+      title: '切换双终端',
+      keywords: 'layout dual terminal side',
+      when: () => useUIStore.getState().panelLayout === 'sideTerminal',
+      run: () => useUIStore.getState().toggleSideDualTerminal(),
+    },
+    {
+      id: 'view.toggleSideEditor',
+      title: '切换侧栏布局编辑器',
+      keywords: 'layout editor collapse expand side terminal',
+      when: () => useUIStore.getState().panelLayout === 'sideTerminal',
+      run: () => useUIStore.getState().toggleSideEditorVisible(),
     },
     {
       id: 'terminal.find',
@@ -395,7 +440,7 @@ export function buildCommands(): AppCommand[] {
       when: () => useTerminalStore.getState().terminals.length > 0,
       run: () => {
         useUIStore.getState().openTerminalPanel()
-        const id = useTerminalStore.getState().activeTerminalId
+        const id = useTerminalStore.getState().focusedTerminalId()
         requestTerminalSearch(id ?? undefined)
       },
     },
@@ -407,7 +452,7 @@ export function buildCommands(): AppCommand[] {
       when: () => useTerminalStore.getState().terminals.length > 0,
       run: () => {
         useUIStore.getState().openTerminalPanel()
-        const id = useTerminalStore.getState().activeTerminalId
+        const id = useTerminalStore.getState().focusedTerminalId()
         requestTerminalClear(id ?? undefined)
       },
     },

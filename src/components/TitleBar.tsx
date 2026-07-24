@@ -1,5 +1,13 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { Minus, Square, Copy, X, PanelBottom, PanelLeft } from 'lucide-react'
+import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import {
+  Minus,
+  Square,
+  Copy,
+  X,
+  PanelBottom,
+  PanelLeft,
+  Columns3,
+} from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { requestAppClose } from '../lib/appClose'
 import { isTauri } from '../lib/tauri'
@@ -8,15 +16,40 @@ import AppIcon from './AppIcon'
 import FileMenu from './FileMenu'
 import Tooltip from './Tooltip'
 import ProjectPicker from './ProjectPicker'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import { translate, useI18n } from '../lib/i18n'
+import {
+  PANEL_LAYOUT_MENU_MODES,
+  panelLayoutModeLabel,
+  resolvePanelLayoutMode,
+  type PanelLayoutMode,
+} from '../lib/panelLayoutMode'
 import { useUIStore } from '../store/uiStore'
+
+function layoutModeIcon(mode: PanelLayoutMode) {
+  switch (mode) {
+    case 'classic':
+      return <PanelBottom size={14} strokeWidth={1.5} />
+    case 'sideTerminal':
+      return <PanelLeft size={14} strokeWidth={1.5} />
+    case 'sideDualEditor':
+      return <Columns3 size={14} strokeWidth={1.5} />
+  }
+}
 
 export default function TitleBar() {
   const { t } = useI18n()
   const [maximized, setMaximized] = useState(false)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
+  const [layoutMenu, setLayoutMenu] = useState<{ x: number; y: number } | null>(null)
   const panelLayout = useUIStore(s => s.panelLayout)
-  const togglePanelLayout = useUIStore(s => s.togglePanelLayout)
+  const sideDualTerminal = useUIStore(s => s.sideDualTerminal)
+  const sideEditorVisible = useUIStore(s => s.sideEditorVisible)
+  const setPanelLayoutMode = useUIStore(s => s.setPanelLayoutMode)
+  const layoutMode = resolvePanelLayoutMode(panelLayout, {
+    dualTerminal: sideDualTerminal,
+    editorVisible: sideEditorVisible,
+  })
   const inTauri = isTauri()
 
   useEffect(() => {
@@ -88,6 +121,23 @@ export default function TitleBar() {
     }
   }
 
+  const openLayoutMenu = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation()
+    if (layoutMenu) {
+      setLayoutMenu(null)
+      return
+    }
+    const rect = event.currentTarget.getBoundingClientRect()
+    setLayoutMenu({ x: Math.max(8, rect.right - 240), y: rect.bottom + 2 })
+  }
+
+  const layoutMenuItems: ContextMenuItem[] = PANEL_LAYOUT_MENU_MODES.map(mode => ({
+    label: t(panelLayoutModeLabel(mode)),
+    icon: layoutModeIcon(mode),
+    checked: layoutMode === mode,
+    action: () => setPanelLayoutMode(mode),
+  }))
+
   return (
     <div
       className={`ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none transition-opacity duration-150 ${
@@ -128,27 +178,32 @@ export default function TitleBar() {
         className="flex h-full flex-shrink-0 items-center"
         onDoubleClick={event => event.stopPropagation()}
       >
-        <Tooltip
-          label={
-            panelLayout === 'classic'
-              ? t('当前：经典布局（终端在底部）。点击切换为侧栏旁终端。')
-              : t('当前：侧栏旁终端（侧栏 | 终端 | 编辑器）。点击切换为经典布局。')
-          }
-          side="bottom"
-        >
+        <Tooltip label={t('选择面板布局')} side="bottom">
           <button
             type="button"
-            aria-label={t('切换面板布局')}
-            className="w-[46px] h-full flex items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
-            onClick={togglePanelLayout}
+            aria-label={t('选择面板布局')}
+            aria-haspopup="menu"
+            aria-expanded={layoutMenu !== null}
+            className={`w-[46px] h-full flex items-center justify-center transition-colors ${
+              layoutMenu
+                ? 'bg-bg-active text-fg'
+                : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+            }`}
+            onPointerDown={event => event.stopPropagation()}
+            onClick={openLayoutMenu}
           >
-            {panelLayout === 'classic' ? (
-              <PanelBottom size={14} strokeWidth={1.5} />
-            ) : (
-              <PanelLeft size={14} strokeWidth={1.5} />
-            )}
+            {layoutModeIcon(layoutMode)}
           </button>
         </Tooltip>
+        {layoutMenu && (
+          <ContextMenu
+            x={layoutMenu.x}
+            y={layoutMenu.y}
+            preferAbove={false}
+            items={layoutMenuItems}
+            onClose={() => setLayoutMenu(null)}
+          />
+        )}
         {inTauri && (
           <>
             <WindowButton label={t('最小化')} onClick={handleMinimize}>

@@ -6,6 +6,7 @@ import {
   TERMINAL_MIN_HEIGHT,
 } from '../lib/panelLayout'
 import { PANEL_LAYOUT_CHANGED_EVENT } from '../lib/panelLayoutTemplate'
+import { SIDE_WORKSPACE_CHANGED_EVENT } from '../lib/sideWorkspaceLayout'
 import { loadSidebarWidth } from '../lib/sidebarLayout'
 import {
   beginPanelResize,
@@ -118,8 +119,21 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
       const template = (event as CustomEvent<{ template?: string }>).detail?.template
       if (template === 'sideTerminal') setSideSplit('equal')
     }
+    const onWorkspaceChange = (event: Event) => {
+      const columns = (
+        event as CustomEvent<{
+          columns?: { editorVisible?: boolean; dualTerminal?: boolean }
+        }>
+      ).detail?.columns
+      // Equal split restores 1:1 (single) or 1:1:1 (dual+editor via CSS 2:1 band).
+      if (columns?.editorVisible || columns?.dualTerminal) setSideSplit('equal')
+    }
     window.addEventListener(PANEL_LAYOUT_CHANGED_EVENT, onLayoutChange)
-    return () => window.removeEventListener(PANEL_LAYOUT_CHANGED_EVENT, onLayoutChange)
+    window.addEventListener(SIDE_WORKSPACE_CHANGED_EVENT, onWorkspaceChange)
+    return () => {
+      window.removeEventListener(PANEL_LAYOUT_CHANGED_EVENT, onLayoutChange)
+      window.removeEventListener(SIDE_WORKSPACE_CHANGED_EVENT, onWorkspaceChange)
+    }
   }, [])
 
   const cancelSizeFrame = useCallback(() => {
