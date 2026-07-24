@@ -1,6 +1,6 @@
 import type { FileNode } from './fileTreeCache'
 import { fuzzyScore } from './commands'
-import { normalizePath } from '../utils/fileReferences'
+import { normalizePath, parseFileReference } from '../utils/fileReferences'
 
 export type QuickOpenEntry = {
   id: string
@@ -90,35 +90,59 @@ export type QuickOpenLocation = {
   fileQuery: string
   line?: number
   column?: number
+  /** From `@ProjectName/…` Alt+C references. */
+  projectName?: string
 }
 
-/** Split `file:line` / `file:line:column` from the fuzzy file query (Windows-drive safe). */
-export function parseQuickOpenLocation(query: string): QuickOpenLocation {
-  const trimmed = query.trim()
-  if (!trimmed) return { fileQuery: '' }
-
-  const match = trimmed.match(QUICK_OPEN_LOCATION_SUFFIX_RE)
+function parseColonLocation(input: string): Pick<QuickOpenLocation, 'fileQuery' | 'line' | 'column'> {
+  const match = input.match(QUICK_OPEN_LOCATION_SUFFIX_RE)
   if (!match || match.index === undefined) {
-    return { fileQuery: trimmed }
+    return { fileQuery: input }
   }
 
-  const fileQuery = trimmed.slice(0, match.index)
-  if (fileQuery === '' && /^[a-zA-Z]:/.test(trimmed)) {
-    return { fileQuery: trimmed }
+  const fileQuery = input.slice(0, match.index)
+  if (fileQuery === '' && /^[a-zA-Z]:/.test(input)) {
+    return { fileQuery: input }
   }
-  if (/^[a-zA-Z]$/.test(fileQuery) && /^[a-zA-Z]:\d/.test(trimmed)) {
-    return { fileQuery: trimmed }
+  if (/^[a-zA-Z]$/.test(fileQuery) && /^[a-zA-Z]:\d/.test(input)) {
+    return { fileQuery: input }
   }
 
   const line = Number.parseInt(match[1]!, 10)
   const column = match[2] !== undefined ? Number.parseInt(match[2], 10) : undefined
   if (!Number.isFinite(line) || line < 1) {
-    return { fileQuery: trimmed }
+    return { fileQuery: input }
   }
   if (column !== undefined && (!Number.isFinite(column) || column < 1)) {
-    return { fileQuery: trimmed, line }
+    return { fileQuery: input, line }
   }
   return { fileQuery, line, column }
+}
+
+/**
+ * Split location / project prefix from the fuzzy file query.
+ * Supports VS Code `file:line[:column]` and Alt+C `@Project/rel#Lline[-Lend]`.
+ */
+export function parseQuickOpenLocation(query: string): QuickOpenLocation {
+  const trimmed = query.trim()
+  if (!trimmed) return { fileQuery: '' }
+
+  const ref = parseFileReference(trimmed)
+  if (ref.line !== undefined) {
+    return {
+      fileQuery: ref.fileQuery,
+      line: ref.line,
+      ...(ref.projectName ? { projectName: ref.projectName } : {}),
+    }
+  }
+
+  const colon = parseColonLocation(ref.fileQuery)
+  return {
+    fileQuery: colon.fileQuery,
+    ...(colon.line !== undefined ? { line: colon.line } : {}),
+    ...(colon.column !== undefined ? { column: colon.column } : {}),
+    ...(ref.projectName ? { projectName: ref.projectName } : {}),
+  }
 }
 
 export function mergeQuickOpenEntries(...groups: ReadonlyArray<readonly QuickOpenEntry[]>): QuickOpenEntry[] {
@@ -140,16 +164,26 @@ export function filterQuickOpenFiles(
   query: string,
   limit = 12,
 ): Array<QuickOpenEntry & { score: number }> {
-  const { fileQuery } = parseQuickOpenLocation(query)
+  const { fileQuery, projectName } = parseQuickOpenLocation(query)
+  const scoped = projectName
+    ? entries.filter(entry => entry.projectName.toLowerCase() === projectName.toLowerCase())
+    : entries
+  const pool = projectName && scoped.length > 0 ? scoped : entries
+
   if (!fileQuery) {
-    return entries.slice(0, limit).map(entry => ({ ...entry, score: 1 }))
+    return pool.slice(0, limit).map(entry => ({ ...entry, score: 1 }))
   }
   const needle = fileQuery.replace(/\\/g, '/')
-  const ranked = entries
+  const needleLower = needle.toLowerCase()
+  const ranked = pool
     .map(entry => {
+      const relative = entry.relativePath.replace(/\\/g, '/')
+      if (relative.toLowerCase() === needleLower) {
+        return { ...entry, score: Number.POSITIVE_INFINITY }
+      }
       const fields = [
         entry.label,
-        entry.relativePath.replace(/\\/g, '/'),
+        relative,
         entry.path.replace(/\\/g, '/'),
         entry.projectName,
       ]

@@ -7,6 +7,7 @@ import {
   isDescendantOf,
   normalizePath,
   parentPath,
+  parseFileReference,
   pathSetHas,
   pathsEqual,
 } from './fileReferences'
@@ -93,5 +94,33 @@ describe('formatFileReference', () => {
     const p = project('D:/work/app', 'App')
     expect(formatFileReference(p, 'D:/work/app/src/a.ts', 10)).toBe('@App/src/a.ts#L10')
     expect(formatFileReference(p, 'D:/work/app/src/a.ts', 10, 12)).toBe('@App/src/a.ts#L10-L12')
+  })
+})
+
+describe('parseFileReference', () => {
+  it('parses Alt+C style @project/path#L refs', () => {
+    expect(parseFileReference('@qingcode/.qingcode/run.json#L17')).toEqual({
+      projectName: 'qingcode',
+      fileQuery: '.qingcode/run.json',
+      line: 17,
+    })
+    expect(parseFileReference('@App/src/a.ts#L10-L12')).toEqual({
+      projectName: 'App',
+      fileQuery: 'src/a.ts',
+      line: 10,
+      endLine: 12,
+    })
+  })
+
+  it('accepts bare path#L without project prefix', () => {
+    expect(parseFileReference('.qingcode/run.json#L17')).toEqual({
+      fileQuery: '.qingcode/run.json',
+      line: 17,
+    })
+  })
+
+  it('leaves non-reference paths intact', () => {
+    expect(parseFileReference('foo.ts:42')).toEqual({ fileQuery: 'foo.ts:42' })
+    expect(parseFileReference('@alone')).toEqual({ fileQuery: '@alone' })
   })
 })

@@ -35,6 +35,7 @@ import {
   resolveMinimapLineAtY,
   resolveMinimapMaxWidth,
   resolveMinimapMode,
+  resolveMinimapPaintPanelWidth,
   resolveMinimapPaintStyle,
   resolveMinimapScrollOffset,
   resolveMinimapScrollbarThumb,
@@ -266,14 +267,13 @@ export default function EditorMinimap({
       return
     }
 
-    // Prefer the wider of root vs saved width so hover-collapsed (rail-only)
-    // still paints a full glance ready to expand; root alone would be ~12px.
+    // Expanded: track the live panel width so drag-resize / CSS width transitions
+    // never leave a stale oversized canvas (left side looks blank — mostly indent).
+    // Hover-collapsed rail (~12px): keep painting at the saved glance width so the
+    // full preview is ready the moment the panel expands.
+    const panelWidth = resolveMinimapPaintPanelWidth(root.clientWidth, widthRef.current || 0)
     const cssWidth = Math.min(
-      Math.max(
-        1,
-        Math.max(root.clientWidth, widthRef.current || 0, MINIMAP_WIDTH_DEFAULT) -
-          MINIMAP_SCROLLBAR_WIDTH,
-      ),
+      Math.max(1, panelWidth - MINIMAP_SCROLLBAR_WIDTH),
       MINIMAP_CANVAS_MAX_CSS_PX,
     )
     const cssHeight = resolveMinimapMapHeight(root, view)
@@ -796,6 +796,9 @@ export default function EditorMinimap({
       if (next === widthRef.current) return
       widthRef.current = next
       root.style.width = `${next}px`
+      // Repaint while dragging so the canvas tracks the panel; otherwise a stale
+      // wider bitmap is clipped and the glance looks like an empty left gutter.
+      requestRepaint(true)
     }
 
     const onUp = () => {

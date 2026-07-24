@@ -282,6 +282,23 @@ export function resolveMinimapMaxWidth(containerWidth: number): number {
   )
 }
 
+/**
+ * Panel width used when sizing the glance canvas.
+ * Expanded panels must track the live DOM width (drag / CSS transition);
+ * the hover-collapsed rail is ~scrollbar-only, so fall back to the saved width.
+ */
+export function resolveMinimapPaintPanelWidth(
+  rootClientWidth: number,
+  savedWidth: number,
+): number {
+  const root = Number.isFinite(rootClientWidth) ? Math.max(0, rootClientWidth) : 0
+  const saved = Number.isFinite(savedWidth) ? Math.max(0, savedWidth) : 0
+  if (root <= MINIMAP_SCROLLBAR_WIDTH + 1) {
+    return Math.max(saved, MINIMAP_WIDTH_DEFAULT)
+  }
+  return root
+}
+
 export function clampMinimapWidth(width: number, maxWidth = MINIMAP_WIDTH_MAX): number {
   if (!Number.isFinite(width)) return MINIMAP_WIDTH_DEFAULT
   const safeMax = Math.max(MINIMAP_WIDTH_MIN, Math.min(MINIMAP_WIDTH_MAX, maxWidth))

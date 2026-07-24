@@ -72,6 +72,14 @@ export function useAppKeyboardShortcuts({
         event.preventDefault()
         const command = buildCommands().find(item => item.id === 'editor.goToLine')
         if (command && (!command.when || command.when())) void command.run()
+      } else if (shortcutMatchesEvent(shortcuts.navigateBack, event)) {
+        event.preventDefault()
+        const store = useEditorStore.getState()
+        if (store.canGoBack()) void store.goBack()
+      } else if (shortcutMatchesEvent(shortcuts.navigateForward, event)) {
+        event.preventDefault()
+        const store = useEditorStore.getState()
+        if (store.canGoForward()) void store.goForward()
       } else if (shortcutMatchesEvent(shortcuts.goToSymbolInEditor, event)) {
         event.preventDefault()
         openSymbolPicker()

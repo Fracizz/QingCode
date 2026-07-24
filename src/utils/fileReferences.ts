@@ -35,6 +35,56 @@ export function formatFileReference(
   return `@${project.name}/${relative}${lineSuffix}`
 }
 
+const FILE_REFERENCE_LINE_RE = /#L(\d+)(?:-L(\d+))?$/i
+
+export type ParsedFileReference = {
+  /** Project display name from `@Name/…`, if present. */
+  projectName?: string
+  /** Path portion used for fuzzy / exact matching (no `@project/` or `#L…`). */
+  fileQuery: string
+  line?: number
+  endLine?: number
+}
+
+/**
+ * Inverse of {@link formatFileReference}: parse `@Project/rel#L10` / `rel#L10-L12`.
+ * Also accepts a bare relative/absolute path with an optional `#L…` suffix.
+ */
+export function parseFileReference(input: string): ParsedFileReference {
+  const trimmed = input.trim()
+  if (!trimmed) return { fileQuery: '' }
+
+  let rest = trimmed
+  let line: number | undefined
+  let endLine: number | undefined
+
+  const lineMatch = rest.match(FILE_REFERENCE_LINE_RE)
+  if (lineMatch && lineMatch.index !== undefined) {
+    const start = Number.parseInt(lineMatch[1]!, 10)
+    if (Number.isFinite(start) && start >= 1) {
+      line = start
+      if (lineMatch[2] !== undefined) {
+        const end = Number.parseInt(lineMatch[2], 10)
+        if (Number.isFinite(end) && end >= 1) endLine = end
+      }
+      rest = rest.slice(0, lineMatch.index)
+    }
+  }
+
+  if (rest.startsWith('@')) {
+    const slash = rest.indexOf('/')
+    if (slash > 1) {
+      const projectName = rest.slice(1, slash).trim()
+      const fileQuery = rest.slice(slash + 1).replace(/\\/g, '/')
+      if (projectName && fileQuery) {
+        return { projectName, fileQuery, line, endLine }
+      }
+    }
+  }
+
+  return { fileQuery: rest.replace(/\\/g, '/'), line, endLine }
+}
+
 export function projectRelativePath(projectPath: string, filePath: string) {
   const root = normalizePath(projectPath)
   const file = normalizePath(filePath)

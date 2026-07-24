@@ -63,7 +63,7 @@ describe('parseQuickOpenLocation', () => {
 
   it('keeps Windows paths intact', () => {
     expect(parseQuickOpenLocation(String.raw`C:\src\app.ts:99`)).toEqual({
-      fileQuery: String.raw`C:\src\app.ts`,
+      fileQuery: 'C:/src/app.ts',
       line: 99,
     })
     expect(parseQuickOpenLocation('C:/src/app.ts:12:3')).toEqual({
@@ -76,6 +76,19 @@ describe('parseQuickOpenLocation', () => {
   it('does not treat a drive letter as a line suffix', () => {
     expect(parseQuickOpenLocation('C:42')).toEqual({ fileQuery: 'C:42' })
   })
+
+  it('parses Alt+C @project/path#L references', () => {
+    expect(parseQuickOpenLocation('@qingcode/.qingcode/run.json#L17')).toEqual({
+      fileQuery: '.qingcode/run.json',
+      line: 17,
+      projectName: 'qingcode',
+    })
+    expect(parseQuickOpenLocation('@App/src/a.ts#L10-L12')).toEqual({
+      fileQuery: 'src/a.ts',
+      line: 10,
+      projectName: 'App',
+    })
+  })
 })
 
 describe('filterQuickOpenFiles with location suffix', () => {
@@ -86,6 +99,20 @@ describe('filterQuickOpenFiles with location suffix', () => {
       label: 'foo.ts',
       relativePath: 'src/foo.ts',
       projectName: '示例项目',
+    },
+    {
+      id: 'D:/qingcode/.qingcode/run.json',
+      path: 'D:/qingcode/.qingcode/run.json',
+      label: 'run.json',
+      relativePath: '.qingcode/run.json',
+      projectName: 'qingcode',
+    },
+    {
+      id: 'D:/other/.qingcode/run.json',
+      path: 'D:/other/.qingcode/run.json',
+      label: 'run.json',
+      relativePath: '.qingcode/run.json',
+      projectName: 'other',
     },
   ]
 
@@ -98,5 +125,12 @@ describe('filterQuickOpenFiles with location suffix', () => {
   it('matches relative and absolute path fragments', () => {
     expect(filterQuickOpenFiles(entries, 'src/foo')).toHaveLength(1)
     expect(filterQuickOpenFiles(entries, 'd:/example/foo.ts')).toHaveLength(1)
+  })
+
+  it('scopes @project/#L refs and prefers exact relative paths', () => {
+    const matches = filterQuickOpenFiles(entries, '@qingcode/.qingcode/run.json#L17')
+    expect(matches).toHaveLength(1)
+    expect(matches[0]?.path).toBe('D:/qingcode/.qingcode/run.json')
+    expect(parseQuickOpenLocation('@qingcode/.qingcode/run.json#L17').line).toBe(17)
   })
 })

@@ -91,6 +91,8 @@ export default function SymbolPicker() {
       return
     }
     closePicker()
+    const store = useEditorStore.getState()
+    store.prepareNavigationJump({ path: activeTab.path, line: symbol.line })
     useEditorStore.setState({
       pendingReveal: { path: activeTab.path, line: symbol.line, from: symbol.from },
     })

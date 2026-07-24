@@ -50,6 +50,16 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
     description: '跳转到当前文件中的指定行号。',
   },
   {
+    id: 'navigateBack',
+    label: '后退',
+    description: '返回上一次编辑位置（打开文件、转到行、搜索跳转等）。',
+  },
+  {
+    id: 'navigateForward',
+    label: '前进',
+    description: '前进到下一次编辑位置。',
+  },
+  {
     id: 'toggleMinimap',
     label: '切换小地图',
     description: '显示或隐藏编辑区右侧的代码小地图。',

@@ -56,6 +56,16 @@ describe('shortcutMatchesEvent', () => {
     expect(shortcutFromKeyboardEvent(copyRef)).toBe('Alt+C')
     expect(shortcutMatchesEvent('Alt+C', copyRef)).toBe(true)
   })
+
+  it('matches navigate back / forward with ArrowLeft/Right keys', () => {
+    const back = keyEvent({ key: 'ArrowLeft', altKey: true })
+    expect(shortcutFromKeyboardEvent(back)).toBe('Alt+Left')
+    expect(shortcutMatchesEvent('Alt+Left', back)).toBe(true)
+
+    const forward = keyEvent({ key: 'ArrowRight', altKey: true })
+    expect(shortcutFromKeyboardEvent(forward)).toBe('Alt+Right')
+    expect(shortcutMatchesEvent('Alt+Right', forward)).toBe(true)
+  })
 })
 
 describe('isReservedShortcut', () => {

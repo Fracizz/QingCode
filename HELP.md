@@ -80,6 +80,7 @@ Suitable for quick notes or trying out commands without selecting an existing fo
 - **Open a file**: Single-click a file in the tree to open it; single-click a folder to expand/collapse. `Ctrl`/`Shift`+click multi-selects without opening; `Enter` also opens/expands.
 - **Multi-select & arrange**: `Ctrl`/`Shift` multi-select; drag-drop or `Ctrl+X`/`C`/`V` to cut, copy, paste; `F2` for inline rename.
 - **Switch tabs**: Click the tab bar, or use `Ctrl+Tab`.
+- **Navigate back / forward**: `Alt+←` / `Alt+→` moves between recent editor locations (quick open, search, go to line, go to symbol, switching files, etc.).
 - **Close a tab**: Click the `×` on the tab, or middle-click the tab.
 - **Save a file**: `Ctrl+S`.
 - **Unsaved indicator**: A yellow dot on the tab indicates unsaved changes; a save prompt appears before closing.
@@ -255,9 +256,13 @@ Both `default-settings.json` and `.qingcode/project-settings.json` are **JSON5**
 | Shortcut | Function |
 |----------|----------|
 | `Ctrl+S` | Save current file |
+| `Ctrl+P` | Quick Open (fuzzy file name / path; supports `:line` or `@project/path#Lline`) |
+| `Ctrl+Shift+P` | Command Palette |
 | `Ctrl+Shift+F` | Open search panel |
 | `` Ctrl+` `` | Show/hide terminal panel |
 | `Ctrl+,` | Open settings panel |
+| `Alt+←` / `Alt+→` | Navigate back / forward |
+| `Ctrl+G` | Go to Line |
 | `Ctrl+Shift+C` | Copy full file path |
 | `Alt+C` | Copy as file reference (with line number range) |
 | `Shift+Alt+F` | Format current file |

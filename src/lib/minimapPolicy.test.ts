@@ -20,6 +20,7 @@ import {
   resolveMinimapLineY,
   resolveMinimapMaxWidth,
   resolveMinimapMode,
+  resolveMinimapPaintPanelWidth,
   resolveMinimapPaintStyle,
   resolveMinimapScrollOffset,
   resolveMinimapScrollbarThumb,
@@ -112,6 +113,14 @@ describe('minimapPolicy', () => {
     expect(resolveMinimapViewport(0, 1000, 100, 200)).toEqual({ top: 0, height: 20 })
     expect(resolveMinimapViewport(900, 1000, 100, 200)).toEqual({ top: 180, height: 20 })
     expect(resolveMinimapViewport(50, 100, 100, 200)).toEqual({ top: 0, height: 200 })
+  })
+
+  it('uses live panel width when expanded and saved width when rail-collapsed', () => {
+    expect(resolveMinimapPaintPanelWidth(120, 200)).toBe(120)
+    expect(resolveMinimapPaintPanelWidth(80, 360)).toBe(80)
+    // Hover-collapsed rail is scrollbar-only — keep painting the saved glance.
+    expect(resolveMinimapPaintPanelWidth(12, 200)).toBe(200)
+    expect(resolveMinimapPaintPanelWidth(0, 0)).toBe(MINIMAP_WIDTH_DEFAULT)
   })
 
   it('places a left scrollbar thumb from editor scroll metrics', () => {

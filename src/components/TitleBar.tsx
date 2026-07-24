@@ -211,12 +211,12 @@ export default function TitleBar() {
               </button>
             </Tooltip>
             <Tooltip
-              label={sideQuadTerminal ? t('关闭田字终端') : t('开启田字终端')}
+              label={sideQuadTerminal ? t('关闭四终端') : t('开启四终端')}
               side="bottom"
             >
               <button
                 type="button"
-                aria-label={sideQuadTerminal ? t('关闭田字终端') : t('开启田字终端')}
+                aria-label={sideQuadTerminal ? t('关闭四终端') : t('开启四终端')}
                 aria-pressed={sideQuadTerminal}
                 className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
                   sideQuadTerminal

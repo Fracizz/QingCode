@@ -497,7 +497,7 @@ export default function TerminalPanel({
         <PanelResizer
           orientation="vertical"
           active={quadColResizing}
-          tooltip={t('拖动调整田字终端列比例')}
+          tooltip={t('拖动调整四终端列比例')}
           tooltipSide="right"
           onPointerDown={onQuadColResizerPointerDown}
           ariaValueNow={Math.round(quadRatios.col * 100)}
@@ -513,7 +513,7 @@ export default function TerminalPanel({
         <PanelResizer
           orientation="horizontal"
           active={quadRowResizing}
-          tooltip={t('拖动调整田字终端行比例')}
+          tooltip={t('拖动调整四终端行比例')}
           tooltipSide="top"
           onPointerDown={onQuadRowResizerPointerDown}
           ariaValueNow={Math.round(quadRatios.row * 100)}

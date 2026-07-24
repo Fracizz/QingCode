@@ -6,6 +6,8 @@ export type ShortcutCommand =
   | 'quickOpen'
   | 'goToSymbolInEditor'
   | 'goToLine'
+  | 'navigateBack'
+  | 'navigateForward'
   | 'toggleMinimap'
   | 'togglePanelLayout'
   | 'renameInExplorer'
@@ -23,6 +25,8 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   quickOpen: 'Ctrl+P',
   goToSymbolInEditor: 'Ctrl+Shift+O',
   goToLine: 'Ctrl+G',
+  navigateBack: 'Alt+Left',
+  navigateForward: 'Alt+Right',
   toggleMinimap: 'Ctrl+Shift+G',
   /** Unbound by default — set in Shortcut Settings if desired. */
   togglePanelLayout: '',
@@ -59,7 +63,9 @@ function normalizeKey(key: string): string | null {
   if (key === ' ') return 'Space'
   if (/^F\d{1,2}$/i.test(key)) return key.toUpperCase()
   if (key.length === 1) return key.toUpperCase()
-  if (key === 'Enter' || key === 'Escape' || key.startsWith('Arrow')) return key
+  if (key === 'Enter' || key === 'Escape') return key
+  // ArrowLeft → Left so defaults display as Alt+Left (VS Code style).
+  if (key.startsWith('Arrow') && key.length > 5) return key.slice(5)
   return null
 }
 

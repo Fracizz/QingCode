@@ -90,12 +90,15 @@ export default function CommandPalette() {
   // run at most one native search at a time; stale responses are never rendered.
   useEffect(() => {
     const requestId = ++searchRequestId.current
-    const { fileQuery: needle } = parseQuickOpenLocation(query)
+    const { fileQuery: needle, projectName } = parseQuickOpenLocation(query)
     queueMicrotask(() => setNativeEntries([]))
     if (!open || isCommandMode(query) || !needle || !isTauri()) return
 
     const roots = projects
       .filter(project => !unavailableProjectIds.includes(project.id))
+      .filter(
+        project => !projectName || project.name.toLowerCase() === projectName.toLowerCase(),
+      )
       .sort((a, b) => Number(b.id === currentProject?.id) - Number(a.id === currentProject?.id))
     if (roots.length === 0) return
 

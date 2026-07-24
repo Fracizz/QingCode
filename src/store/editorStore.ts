@@ -15,8 +15,19 @@ import {
   disposeEditorSessions,
   flushAllLiveEditorContents,
   flushLiveEditorContent,
+  getEditorView,
   getLiveEditorContent,
 } from '../lib/editorSession'
+import {
+  EMPTY_NAVIGATION_HISTORY,
+  canNavigateBack,
+  canNavigateForward,
+  navigateBack,
+  navigateForward,
+  pushNavigation,
+  type EditorLocation,
+  type NavigationHistoryState,
+} from '../lib/navigationHistory'
 import { clearDraftForTab } from '../lib/draftRecovery'
 import {
   getEditorPreferences,
@@ -175,6 +186,30 @@ async function populateTabFromDisk(id: string, path: string, line?: number, colu
   }
 }
 
+/** Suppress history pushes while Go Back / Go Forward restores a location. */
+let navigationRestoring = false
+
+function snapshotEditorLocation(): EditorLocation | null {
+  const { tabs, activeTabId, cursor } = useEditorStore.getState()
+  const tab = tabs.find(t => t.id === activeTabId)
+  if (!tab || tab.kind === 'diff' || tab.openError || tab.loading) return null
+
+  const view = getEditorView(tab.id)
+  if (view) {
+    const head = view.state.selection.main.head
+    const line = view.state.doc.lineAt(head)
+    return {
+      path: tab.path,
+      line: line.number,
+      column: head - line.from + 1,
+    }
+  }
+  if (cursor) {
+    return { path: tab.path, line: cursor.line, column: cursor.col }
+  }
+  return { path: tab.path, line: 1, column: 1 }
+}
+
 interface EditorState {
   tabs: EditorTab[]
   activeTabId: string | null
@@ -185,12 +220,21 @@ interface EditorState {
   cursor: { line: number; col: number } | null
   /** Most-recently-used tab order for Ctrl+Tab cycling. */
   tabMru: string[]
+  /** Go Back / Go Forward stack (not persisted across restarts). */
+  navigationHistory: NavigationHistoryState
   openFile: (path: string, line?: number, column?: number) => Promise<void>
   retryOpenFile: (id: string) => Promise<void>
   /** Open a read-only HEAD ↔ working-tree compare tab for a project-relative file. */
   openDiff: (projectPath: string, relativePath: string, absolutePath: string) => Promise<void>
   clearPendingReveal: () => void
   setCursor: (cursor: { line: number; col: number } | null) => void
+  /** Record current caret before an intentional jump (Go to Line / symbol / etc.). */
+  prepareNavigationJump: (next?: { path: string; line: number; column?: number }) => void
+  goBack: () => Promise<void>
+  goForward: () => Promise<void>
+  canGoBack: () => boolean
+  canGoForward: () => boolean
+  clearNavigationHistory: () => void
   closeTab: (id: string) => void
   closeOtherTabs: (id: string) => void
   closeTabsToRight: (id: string) => void
@@ -278,8 +322,55 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   projectSessions: {},
   cursor: null,
   tabMru: [],
+  navigationHistory: EMPTY_NAVIGATION_HISTORY,
 
   clearPendingReveal: () => set({ pendingReveal: null }),
+
+  prepareNavigationJump: next => {
+    if (navigationRestoring) return
+    const current = snapshotEditorLocation()
+    const nextLoc =
+      next && next.line >= 1
+        ? {
+            path: next.path,
+            line: next.line,
+            column: next.column !== undefined && next.column >= 1 ? next.column : 1,
+          }
+        : null
+    set(s => ({
+      navigationHistory: pushNavigation(s.navigationHistory, current, nextLoc),
+    }))
+  },
+
+  canGoBack: () => canNavigateBack(get().navigationHistory),
+  canGoForward: () => canNavigateForward(get().navigationHistory),
+  clearNavigationHistory: () => set({ navigationHistory: EMPTY_NAVIGATION_HISTORY }),
+
+  goBack: async () => {
+    const current = snapshotEditorLocation()
+    const result = navigateBack(get().navigationHistory, current)
+    if (!result) return
+    set({ navigationHistory: result.state })
+    navigationRestoring = true
+    try {
+      await get().openFile(result.target.path, result.target.line, result.target.column)
+    } finally {
+      navigationRestoring = false
+    }
+  },
+
+  goForward: async () => {
+    const current = snapshotEditorLocation()
+    const result = navigateForward(get().navigationHistory, current)
+    if (!result) return
+    set({ navigationHistory: result.state })
+    navigationRestoring = true
+    try {
+      await get().openFile(result.target.path, result.target.line, result.target.column)
+    } finally {
+      navigationRestoring = false
+    }
+  },
 
   setCursor: cursor => set({ cursor }),
 
@@ -306,6 +397,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   openFile: async (path: string, line?: number, column?: number) => {
     useUIStore.getState().expandSideEditor()
     const reveal = pendingRevealAt(path, line, column)
+    if (!navigationRestoring) {
+      const active = get().tabs.find(t => t.id === get().activeTabId)
+      const pathChanging = !active || !pathsEqual(active.path, path)
+      const hasLine = line !== undefined && line >= 1
+      if (pathChanging || hasLine) {
+        get().prepareNavigationJump(
+          hasLine ? { path, line: line!, column } : { path, line: 1, column: 1 },
+        )
+      }
+    }
     const existing = get().tabs.find(t => t.kind !== 'diff' && t.path === path)
     if (existing) {
       if (existing.loading) {
@@ -950,7 +1051,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   closeAllTabs: () => {
     const ids = get().tabs.map(t => t.id)
     disposeEditorSessions(ids)
-    set({ tabs: [], activeTabId: null, pendingReveal: null })
+    set({
+      tabs: [],
+      activeTabId: null,
+      pendingReveal: null,
+      navigationHistory: EMPTY_NAVIGATION_HISTORY,
+    })
   },
 
   closeTabsOutsideProject: (projectPath: string) =>
@@ -1011,6 +1117,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         activeTabId,
         pendingReveal: incoming.pendingReveal,
         tabMru: buildTabMru(tabs, activeTabId),
+        navigationHistory: EMPTY_NAVIGATION_HISTORY,
       }
     })
   },
@@ -1041,6 +1148,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         activeTabId,
         pendingReveal: null,
         tabMru: buildTabMru(pinned, activeTabId),
+        navigationHistory: EMPTY_NAVIGATION_HISTORY,
       }
     })
   },
@@ -1095,6 +1203,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         tabs,
         activeTabId,
         pendingReveal: session.pendingReveal ?? null,
+        navigationHistory: EMPTY_NAVIGATION_HISTORY,
       }
     })
   },

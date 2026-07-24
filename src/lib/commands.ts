@@ -320,10 +320,29 @@ export function buildCommands(): AppCommand[] {
           },
         })
         if (!input) return
+        const line = Math.floor(Number(input))
+        const store = useEditorStore.getState()
+        store.prepareNavigationJump({ path: activeTab.path, line })
         useEditorStore.setState({
-          pendingReveal: { path: activeTab.path, line: Math.floor(Number(input)) },
+          pendingReveal: { path: activeTab.path, line },
         })
       },
+    },
+    {
+      id: 'editor.navigateBack',
+      title: '后退',
+      keywords: 'go back navigate history previous location',
+      shortcutCommand: 'navigateBack',
+      when: () => useEditorStore.getState().canGoBack(),
+      run: () => void useEditorStore.getState().goBack(),
+    },
+    {
+      id: 'editor.navigateForward',
+      title: '前进',
+      keywords: 'go forward navigate history next location',
+      shortcutCommand: 'navigateForward',
+      when: () => useEditorStore.getState().canGoForward(),
+      run: () => void useEditorStore.getState().goForward(),
     },
     {
       id: 'view.explorer',
@@ -436,8 +455,8 @@ export function buildCommands(): AppCommand[] {
     },
     {
       id: 'view.toggleSideQuadTerminal',
-      title: '切换田字终端',
-      keywords: 'layout quad terminal side grid 田',
+      title: '切换四终端',
+      keywords: 'layout quad terminal side grid 四 田',
       when: () => useUIStore.getState().panelLayout === 'sideTerminal',
       run: () => useUIStore.getState().toggleSideQuadTerminal(),
     },
