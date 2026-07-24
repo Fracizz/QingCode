@@ -291,7 +291,7 @@ function WindowButton({
       <button
         type="button"
         aria-label={label}
-        className={`w-[46px] h-full flex items-center justify-center text-fg-muted transition-colors
+        className={`flex h-6 w-9 items-center justify-center rounded text-fg-muted transition-colors
         ${danger ? 'hover:bg-[#e81123] hover:text-white' : 'hover:bg-bg-hover hover:text-fg'}`}
         onClick={onClick}
       >
