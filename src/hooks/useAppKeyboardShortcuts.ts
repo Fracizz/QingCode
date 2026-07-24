@@ -83,6 +83,10 @@ export function useAppKeyboardShortcuts({
       } else if (shortcutMatchesEvent(shortcuts.goToSymbolInEditor, event)) {
         event.preventDefault()
         openSymbolPicker()
+      } else if (shortcutMatchesEvent(shortcuts.goToDefinition, event)) {
+        event.preventDefault()
+        const command = buildCommands().find(item => item.id === 'editor.goToDefinition')
+        if (command && (!command.when || command.when())) void command.run()
       } else if (shortcutMatchesEvent(shortcuts.searchAllProjects, event)) {
         event.preventDefault()
         useUIStore.getState().requestGlobalSearch()

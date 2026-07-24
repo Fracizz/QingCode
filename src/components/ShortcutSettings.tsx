@@ -30,6 +30,12 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
     description: '打开当前文件的符号列表，快速跳转到函数、类或标题。',
   },
   {
+    id: 'goToDefinition',
+    label: '转到定义',
+    description:
+      '跳转到光标处标识符的定义（启发式：同文件符号/变量与 import 路径）。也可用 Ctrl/Cmd+点击。',
+  },
+  {
     id: 'searchAllProjects',
     label: '打开搜索',
     description: '打开搜索面板，默认在当前项目中搜索文件与内容。',

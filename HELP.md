@@ -80,10 +80,27 @@ Suitable for quick notes or trying out commands without selecting an existing fo
 - **Open a file**: Single-click a file in the tree to open it; single-click a folder to expand/collapse. `Ctrl`/`Shift`+click multi-selects without opening; `Enter` also opens/expands.
 - **Multi-select & arrange**: `Ctrl`/`Shift` multi-select; drag-drop or `Ctrl+X`/`C`/`V` to cut, copy, paste; `F2` for inline rename.
 - **Switch tabs**: Click the tab bar, or use `Ctrl+Tab`.
-- **Navigate back / forward**: `Alt+←` / `Alt+→` moves between recent editor locations (quick open, search, go to line, go to symbol, switching files, etc.).
+- **Navigate back / forward**: `Alt+←` / `Alt+→` moves between recent editor locations (quick open, search, go to line, go to symbol, go to definition, switching files, etc.).
+- **Go to Definition**: `F12`, or hold `Ctrl` (macOS: `Cmd`) and click an identifier. Project-local heuristic navigation (not a full LSP): same-file functions/classes/methods/variables, plus cross-file `import` / `from` / `require` / `use` / `mod` for mainstream languages. Multiple matches open a chooser; otherwise you see “No definition found”.
 - **Close a tab**: Click the `×` on the tab, or middle-click the tab.
 - **Save a file**: `Ctrl+S`.
 - **Unsaved indicator**: A yellow dot on the tab indicates unsaved changes; a save prompt appears before closing.
+
+### Go to Definition (Heuristic)
+
+Lightweight go-to-definition with an IDEA/VS-like Ctrl+click gesture. **Does not** use a Language Server (e.g. Pylance).
+
+| Capability | Notes |
+|------------|--------|
+| Same file | Functions, classes, methods, locals/module variables & parameters (syntax tree) |
+| Cross-file | Follow import paths and try to land on the exported symbol |
+| Languages | Python, JavaScript / TypeScript (incl. JSX/TSX), Go, Rust, Java; Markdown headings / CSS selectors work same-file |
+| Out of scope | Type inference, precise property chains, stdlib / third-party packages, rename & diagnostics |
+
+- **Shortcut**: `F12` (remappable under Settings → Keyboard Shortcuts)
+- **Mouse**: `Ctrl`+click (macOS: `Cmd`+click); holding the modifier underlines the identifier on hover
+- **Multiple matches**: Choose from a list when several definitions match
+- **History**: Jumps are recorded; use `Alt+←` / `Alt+→` to move back
 
 ### Encoding Support
 
@@ -262,6 +279,8 @@ Both `default-settings.json` and `.qingcode/project-settings.json` are **JSON5**
 | `` Ctrl+` `` | Show/hide terminal panel |
 | `Ctrl+,` | Open settings panel |
 | `Alt+←` / `Alt+→` | Navigate back / forward |
+| `F12` | Go to Definition (heuristic; also Ctrl/Cmd+click) |
+| `Ctrl+Shift+O` | Go to Symbol in Editor |
 | `Ctrl+G` | Go to Line |
 | `Ctrl+Shift+C` | Copy full file path |
 | `Alt+C` | Copy as file reference (with line number range) |

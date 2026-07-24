@@ -1,0 +1,5 @@
+export { gotoDefinitionExtension } from './extension'
+export { runGoToDefinition, runGoToDefinitionAt } from './runGoToDefinition'
+export { resolveDefinitions } from './resolve'
+export { identifierAt } from './tokenAt'
+export type { DefinitionTarget } from './types'

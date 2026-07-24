@@ -5,6 +5,7 @@ export type ShortcutCommand =
   | 'openCommandPalette'
   | 'quickOpen'
   | 'goToSymbolInEditor'
+  | 'goToDefinition'
   | 'goToLine'
   | 'navigateBack'
   | 'navigateForward'
@@ -24,6 +25,7 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   openCommandPalette: 'Ctrl+Shift+P',
   quickOpen: 'Ctrl+P',
   goToSymbolInEditor: 'Ctrl+Shift+O',
+  goToDefinition: 'F12',
   goToLine: 'Ctrl+G',
   navigateBack: 'Alt+Left',
   navigateForward: 'Alt+Right',
@@ -51,7 +53,6 @@ export const RESERVED_SHORTCUTS = new Set([
   'Alt+C',
   'Shift+Alt+F',
   'Ctrl+Shift+I',
-  'F12',
 ])
 
 const MODIFIER_KEYS = new Set(['Control', 'Alt', 'Shift', 'Meta'])

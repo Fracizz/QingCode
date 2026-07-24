@@ -109,6 +109,7 @@ import {
   isSupportedEditorLanguage,
   loadLanguageSupport,
 } from '../lib/editorLanguages'
+import { gotoDefinitionExtension } from '../lib/gotoDefinition'
 import {
   clearFlashEffect,
   editorThemeExtension,
@@ -218,6 +219,8 @@ function createTabEditorState(
       // Kept outside compartments so every profile (incl. large/degraded) gets matches.
       occurrenceHighlight,
       reliableClickMouseSelection(),
+      // Ctrl/Cmd+click go-to-definition (heuristic); skip plain/huge text viewers.
+      profile === 'plain' || huge ? [] : gotoDefinitionExtension(),
       EditorView.updateListener.of(update => {
         emitMinimapUpdate(update)
         if (update.docChanged) {

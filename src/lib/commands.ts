@@ -22,6 +22,7 @@ import { useProjectStore } from '../store/projectStore'
 import { useRunConfigStore } from '../store/runConfigStore'
 import { promptDialog } from '../store/promptStore'
 import { useSymbolPickerStore } from '../store/symbolPickerStore'
+import { runGoToDefinition } from './gotoDefinition'
 import { useUIStore } from '../store/uiStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { openGitCompareWithHead } from '@/lib/git/gitCompare'
@@ -296,6 +297,18 @@ export function buildCommands(): AppCommand[] {
         return Boolean(tab && !tab.openError && !tab.loading)
       },
       run: () => useSymbolPickerStore.getState().openPicker(),
+    },
+    {
+      id: 'editor.goToDefinition',
+      title: '转到定义',
+      keywords: 'go to definition jump declaration f12 ctrl click',
+      shortcutCommand: 'goToDefinition',
+      when: () => {
+        const { tabs, activeTabId } = useEditorStore.getState()
+        const tab = tabs.find(t => t.id === activeTabId)
+        return Boolean(tab && !tab.openError && !tab.loading)
+      },
+      run: () => void runGoToDefinition(),
     },
     {
       id: 'editor.goToLine',
