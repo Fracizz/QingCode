@@ -14,6 +14,7 @@ import ExplorerConflictDialog from './components/ExplorerConflictDialog'
 import PropertiesDialog from './components/PropertiesDialog'
 import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
+import DefinitionPicker from './components/DefinitionPicker'
 import FileCompareDialog from './components/FileCompareDialog'
 import EmptyEditor from './components/EmptyEditor'
 import TerminalPanel from './components/TerminalPanel'
@@ -438,6 +439,7 @@ function App() {
       <PropertiesDialog />
       <CommandPalette />
       <SymbolPicker />
+      <DefinitionPicker />
       {fileCompare && <FileCompareDialog {...fileCompare} />}
       {projectManagerOpen && (
         <Suspense fallback={null}>

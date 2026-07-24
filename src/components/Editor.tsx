@@ -72,6 +72,8 @@ import {
 import { FONT_SETTINGS_EVENT, loadFontSettings } from '../lib/fontSettings'
 import { buildEditorPreferenceExtensions } from '../lib/editorSettingsExtensions'
 import { reliableClickMouseSelection } from '../lib/editorMouseSelection'
+import { editorDefinitionLink } from '../lib/editorDefinitionLink'
+import { goToHeuristicDefinition } from '../lib/definitionNavigation'
 import {
   editorHasOccurrenceHighlight,
   occurrenceHighlightMarker,
@@ -217,6 +219,9 @@ function createTabEditorState(
       preserveSelectionTokenColors(),
       // Kept outside compartments so every profile (incl. large/degraded) gets matches.
       occurrenceHighlight,
+      editorDefinitionLink((view, identifier) =>
+        goToHeuristicDefinition(view.state, tabPath, identifier)
+      ),
       reliableClickMouseSelection(),
       EditorView.updateListener.of(update => {
         emitMinimapUpdate(update)

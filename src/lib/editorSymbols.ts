@@ -1,7 +1,17 @@
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
 import type { EditorState } from '@codemirror/state'
 
-export type EditorSymbolKind = 'function' | 'class' | 'method' | 'heading' | 'selector'
+export type EditorSymbolKind =
+  | 'function'
+  | 'class'
+  | 'method'
+  | 'interface'
+  | 'type'
+  | 'enum'
+  | 'variable'
+  | 'constant'
+  | 'heading'
+  | 'selector'
 
 /** Minimal Lezer node shape used by the extractor (avoids depending on @lezer/common types). */
 type SyntaxNodeLike = {
@@ -32,8 +42,13 @@ const DEPTH_NODES = new Set([
   'FunctionDeclaration',
   'FunctionDefinition',
   'FunctionExpression',
+  'FunctionItem',
+  'FunctionDecl',
   'MethodDeclaration',
   'ArrowFunction',
+  'StructItem',
+  'EnumItem',
+  'TraitItem',
 ])
 
 function firstChildNamed(node: SyntaxNodeLike, ...names: string[]): SyntaxNodeLike | null {
@@ -102,8 +117,19 @@ export function extractEditorSymbols(state: EditorState, parseTimeoutMs = 50): E
       const node = nodeRef.node as unknown as SyntaxNodeLike
       const typeName = node.type.name
 
-      if (typeName === 'FunctionDeclaration' || typeName === 'FunctionExpression') {
-        const nameNode = firstChildNamed(node, 'VariableDefinition', 'VariableName')
+      if (
+        typeName === 'FunctionDeclaration' ||
+        typeName === 'FunctionExpression' ||
+        typeName === 'FunctionItem' ||
+        typeName === 'FunctionDecl'
+      ) {
+        const nameNode = firstChildNamed(
+          node,
+          'VariableDefinition',
+          'VariableName',
+          'BoundIdentifier',
+          'DefName'
+        )
         pushSymbol(out, state, 'function', nameNode, node.from, node.to, depth)
         depth += 1
         return
@@ -122,6 +148,9 @@ export function extractEditorSymbols(state: EditorState, parseTimeoutMs = 50): E
           'PropertyDefinition',
           'VariableDefinition',
           'VariableName',
+          'Definition',
+          'DefName',
+          'BoundIdentifier',
         )
         pushSymbol(out, state, 'method', nameNode, node.from, node.to, depth)
         depth += 1
@@ -129,9 +158,88 @@ export function extractEditorSymbols(state: EditorState, parseTimeoutMs = 50): E
       }
 
       if (typeName === 'ClassDeclaration' || typeName === 'ClassDefinition') {
-        const nameNode = firstChildNamed(node, 'VariableDefinition', 'VariableName')
+        const nameNode = firstChildNamed(
+          node,
+          'VariableDefinition',
+          'VariableName',
+          'Definition'
+        )
         pushSymbol(out, state, 'class', nameNode, node.from, node.to, depth)
         depth += 1
+        return
+      }
+
+      if (typeName === 'StructItem' || typeName === 'EnumItem') {
+        const nameNode = node.getChild('TypeIdentifier')
+        pushSymbol(
+          out,
+          state,
+          typeName === 'EnumItem' ? 'enum' : 'class',
+          nameNode,
+          node.from,
+          node.to,
+          depth
+        )
+        depth += 1
+        return
+      }
+
+      if (typeName === 'TraitItem') {
+        pushSymbol(
+          out,
+          state,
+          'interface',
+          node.getChild('TypeIdentifier'),
+          node.from,
+          node.to,
+          depth
+        )
+        depth += 1
+        return
+      }
+
+      if (typeName === 'TypeItem') {
+        pushSymbol(
+          out,
+          state,
+          'type',
+          node.getChild('TypeIdentifier'),
+          node.from,
+          node.to,
+          depth
+        )
+        return
+      }
+
+      if (
+        typeName === 'InterfaceDeclaration' ||
+        typeName === 'TypeAliasDeclaration' ||
+        typeName === 'EnumDeclaration'
+      ) {
+        const kind: EditorSymbolKind =
+          typeName === 'InterfaceDeclaration'
+            ? 'interface'
+            : typeName === 'EnumDeclaration'
+              ? 'enum'
+              : 'type'
+        const nameNode = firstChildNamed(
+          node,
+          'TypeDefinition',
+          'TypeName',
+          'VariableDefinition',
+          'Definition'
+        )
+        pushSymbol(out, state, kind, nameNode, node.from, node.to, depth)
+        return
+      }
+
+      if (typeName === 'TypeSpec') {
+        const kind: EditorSymbolKind = node.getChild('StructType')
+          ? 'class'
+          : node.getChild('InterfaceType')
+            ? 'interface'
+            : 'type'
+        pushSymbol(out, state, kind, node.getChild('DefName'), node.from, node.to, depth)
         return
       }
 
@@ -145,6 +253,61 @@ export function extractEditorSymbols(state: EditorState, parseTimeoutMs = 50): E
           }
         }
         depth += 1
+        return
+      }
+
+      if (typeName === 'VariableDefinition') {
+        const parentName = node.parent?.name
+        if (
+          parentName === 'VariableDeclaration' &&
+          !node.parent?.getChild('ArrowFunction') &&
+          !node.parent?.getChild('FunctionExpression')
+        ) {
+          pushSymbol(out, state, 'variable', node, node.from, node.to, depth)
+        } else if (parentName === 'ParamList') {
+          pushSymbol(out, state, 'variable', node, node.from, node.to, depth)
+        }
+        return
+      }
+
+      if (typeName === 'VariableName') {
+        const parent = node.parent
+        if (
+          parent?.name === 'AssignStatement' &&
+          parent.getChild('VariableName')?.from === node.from
+        ) {
+          pushSymbol(out, state, 'variable', node, node.from, node.to, depth)
+        } else if (parent?.name === 'ParamList') {
+          pushSymbol(out, state, 'variable', node, node.from, node.to, depth)
+        }
+        return
+      }
+
+      if (typeName === 'BoundIdentifier') {
+        const parentName = node.parent?.name
+        if (parentName === 'ConstItem' || parentName === 'StaticItem') {
+          pushSymbol(out, state, 'constant', node, node.from, node.to, depth)
+        } else if (parentName === 'LetDeclaration' || parentName === 'Parameter') {
+          pushSymbol(out, state, 'variable', node, node.from, node.to, depth)
+        }
+        return
+      }
+
+      if (typeName === 'Definition') {
+        const parentName = node.parent?.name
+        if (parentName === 'VariableDeclarator' || parentName === 'FormalParameter') {
+          pushSymbol(out, state, 'variable', node, node.from, node.to, depth)
+        }
+        return
+      }
+
+      if (typeName === 'DefName') {
+        const parentName = node.parent?.name
+        if (parentName === 'ConstSpec') {
+          pushSymbol(out, state, 'constant', node, node.from, node.to, depth)
+        } else if (parentName === 'VarDecl' || parentName === 'Parameter') {
+          pushSymbol(out, state, 'variable', node, node.from, node.to, depth)
+        }
         return
       }
 
@@ -203,6 +366,16 @@ export function editorSymbolKindLabel(kind: EditorSymbolKind): string {
       return '类'
     case 'method':
       return '方法'
+    case 'interface':
+      return '接口'
+    case 'type':
+      return '类型'
+    case 'enum':
+      return '枚举'
+    case 'variable':
+      return '变量'
+    case 'constant':
+      return '常量'
     case 'heading':
       return '标题'
     case 'selector':

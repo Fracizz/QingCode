@@ -13,6 +13,7 @@ mod git;
 mod git_status;
 mod ipc;
 mod path_guard;
+mod symbol_search;
 mod terminal;
 mod update;
 mod user_locales;
@@ -325,6 +326,7 @@ pub fn run() {
         .manage(TerminalManager::new())
         .manage(FileWatcherManager::new())
         .manage(PathAllowlist::new())
+        .manage(symbol_search::SymbolSearchState::new())
         .manage(LaunchFiles(Mutex::new(launch_files)))
         .setup(|app| {
             migrate_legacy_database();
@@ -373,6 +375,7 @@ pub fn run() {
             commands::search_file_contents,
             commands::start_content_search,
             commands::cancel_content_search,
+            symbol_search::search_symbol_definitions,
             commands::list_file_extensions,
             commands::create_file,
             commands::create_directory,
