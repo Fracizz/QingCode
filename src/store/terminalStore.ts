@@ -13,6 +13,7 @@ import { ensureTerminalProfileTrust } from '@/lib/terminal/terminalProfileTrust'
 import { isProjectTrusted } from '../lib/workspaceTrust'
 import { disambiguateTerminalName, resolveNewTerminalName, terminalDisplayLabel } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
+import { rehydrateRunningFromTerminals } from './runConfigStore'
 import {
   getTerminalScrollback,
   scrollbackMaxChars,
@@ -866,7 +867,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       for (const t of pending) restoreSpawnInFlight.delete(t.id)
     }
     // Maps may have been empty before spawn (or linkage stamped later); refresh.
-    const { rehydrateRunningFromTerminals } = await import('./runConfigStore')
     rehydrateRunningFromTerminals()
   },
 

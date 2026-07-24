@@ -22,6 +22,9 @@ import {
   Search,
   RefreshCw,
   Copy,
+  CopyX,
+  XSquare,
+  ArrowLeftToLine,
   EyeOff,
 } from 'lucide-react'
 import { openPath } from '@tauri-apps/plugin-opener'
@@ -53,6 +56,7 @@ export default function ProjectPicker() {
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const hideProject = useProjectStore(s => s.hideProject)
+  const hideProjectsByIds = useProjectStore(s => s.hideProjectsByIds)
   const refreshProjectTree = useProjectStore(s => s.refreshProjectTree)
   const setView = useUIStore(s => s.setView)
   const requestSearch = useUIStore(s => s.requestSearch)
@@ -187,6 +191,14 @@ export default function ProjectPicker() {
 
   const projectMenuItems = (project: Project): ContextMenuItem[] => {
     const unavailable = unavailableProjectIds.includes(project.id)
+    const index = projects.findIndex(p => p.id === project.id)
+    const leftIds = index > 0 ? projects.slice(0, index).map(p => p.id) : []
+    const rightIds = index >= 0 ? projects.slice(index + 1).map(p => p.id) : []
+    const otherIds = projects.filter(p => p.id !== project.id).map(p => p.id)
+    const closeByIds = (ids: string[]) => {
+      closeDropdown()
+      void hideProjectsByIds(ids, project.id)
+    }
     const activateThen = async (action: () => Promise<void>) => {
       if (currentProject?.id !== project.id) await switchProject(project)
       await action()
@@ -233,7 +245,26 @@ export default function ProjectPicker() {
       {
         label: unavailable ? t('移除项目') : t('从顶栏隐藏'),
         icon: unavailable ? <X size={14} /> : <EyeOff size={14} />,
+        separatorBefore: true,
         action: () => handleRemove(project),
+      },
+      {
+        label: t('关闭其它'),
+        icon: <XSquare size={14} />,
+        disabled: otherIds.length === 0,
+        action: () => closeByIds(otherIds),
+      },
+      {
+        label: t('关闭左侧'),
+        icon: <ArrowLeftToLine size={14} />,
+        disabled: leftIds.length === 0,
+        action: () => closeByIds(leftIds),
+      },
+      {
+        label: t('关闭右侧'),
+        icon: <CopyX size={14} />,
+        disabled: rightIds.length === 0,
+        action: () => closeByIds(rightIds),
       },
     ]
   }

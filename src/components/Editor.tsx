@@ -102,6 +102,7 @@ import {
 } from '../lib/editorSession'
 import { editorPerfProfileForTab, type EditorPerfProfile } from '../lib/fileSizePolicy'
 import { formatDocument } from '../lib/formatDocument'
+import { loadEffectiveTerminalScrollback } from '@/lib/terminal/terminalScrollbackSettings'
 import { copyRelativePathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import {
@@ -638,9 +639,7 @@ export default function Editor() {
     void migrateLegacyMinimapProjectSetting(currentProject).finally(() => {
       void loadEffectiveMinimapEnabled(currentProject)
     })
-    void import('@/lib/terminal/terminalScrollbackSettings').then(m =>
-      m.loadEffectiveTerminalScrollback(currentProject),
-    )
+    void loadEffectiveTerminalScrollback(currentProject)
     void import('@/lib/terminal/terminalCursorSettings').then(m =>
       m.loadEffectiveTerminalCursorBlinking(currentProject),
     )

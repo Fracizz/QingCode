@@ -33,6 +33,10 @@ import type { GitFileContents } from '@/lib/git/git'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
 import { authorizePaths } from '../lib/pathAllowlist'
 import { loadEffectiveAutoSaveSettings, notifyAutoSaveSettingsChanged } from '../lib/autoSaveSettings'
+import { loadEffectiveTerminalScrollback } from '@/lib/terminal/terminalScrollbackSettings'
+import { loadEffectiveExcludeSettings } from '../lib/excludeSettings'
+import { formatDocument } from '../lib/formatDocument'
+import { useGitStatusStore } from './gitStatusStore'
 import { choiceDialog } from './choiceStore'
 import { useProjectStore } from './projectStore'
 import { useUIStore } from './uiStore'
@@ -762,7 +766,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const { getFormatOnSave } = await import('../lib/formatOnSaveSettings')
       if (getFormatOnSave()) {
-        const { formatDocument } = await import('../lib/formatDocument')
         await formatDocument(id, { quiet: true })
       }
     } catch (e) {
@@ -822,9 +825,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       get().setTabContent(id, content)
       get().markClean(id)
       get().setDiskMtime(id, mtime)
-      void import('./gitStatusStore').then(({ useGitStatusStore }) => {
-        useGitStatusStore.getState().scheduleRefresh(undefined, 200)
-      })
+      useGitStatusStore.getState().scheduleRefresh(undefined, 200)
       set(s => {
         const next = mapTabEverywhere(s, id, t => ({
           ...t,
@@ -855,26 +856,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         void import('../lib/minimapSettings').then(({ loadEffectiveMinimapEnabled }) =>
           loadEffectiveMinimapEnabled(project),
         )
-        void import('@/lib/terminal/terminalScrollbackSettings').then(({ loadEffectiveTerminalScrollback }) =>
-          loadEffectiveTerminalScrollback(project),
-        )
+        void loadEffectiveTerminalScrollback(project)
         void import('@/lib/terminal/terminalCursorSettings').then(
           ({ loadEffectiveTerminalCursorBlinking }) =>
             loadEffectiveTerminalCursorBlinking(project),
         )
-        void import('../lib/excludeSettings').then(({ loadEffectiveExcludeSettings }) =>
-          loadEffectiveExcludeSettings(project).then(() => {
-            const store = useProjectStore.getState()
-            for (const p of store.projects) {
-              if (!p.ephemeral && store.projectTrees[p.id]) {
-                void store.refreshProjectTree(p)
-              }
+        void loadEffectiveExcludeSettings(project).then(() => {
+          const store = useProjectStore.getState()
+          for (const p of store.projects) {
+            if (!p.ephemeral && store.projectTrees[p.id]) {
+              void store.refreshProjectTree(p)
             }
-            if (project && store.fileTree.length > 0) {
-              void store.loadFileTree()
-            }
-          }),
-        )
+          }
+          if (project && store.fileTree.length > 0) {
+            void store.loadFileTree()
+          }
+        })
       }
     } catch (e) {
       console.error('saveFile failed:', e)

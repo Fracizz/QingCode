@@ -13,6 +13,9 @@ import {
   hydrateWorkspaceSessionsIfNeeded,
   installWorkspaceSessionPersistence,
 } from './lib/workspaceSessionSync'
+import { loadEffectiveTerminalScrollback } from '@/lib/terminal/terminalScrollbackSettings'
+import { loadSessionPersistEnabled } from './lib/sessionPersistSettings'
+import { installDevNativeContextMenuToggle } from './lib/devBuild'
 
 // Critical path before first paint: theme, fonts, splash logo, i18n.
 initWindowSession()
@@ -25,14 +28,14 @@ paintStartupSplashLogo()
 applyFontSettings(loadFontSettings())
 installWebviewShortcutGuard()
 // Apply global terminal settings ASAP (project overlay loads later).
-void import('@/lib/terminal/terminalScrollbackSettings').then(m => m.loadEffectiveTerminalScrollback(null))
+void loadEffectiveTerminalScrollback(null)
 void import('@/lib/terminal/terminalCursorSettings').then(m =>
   m.loadEffectiveTerminalCursorBlinking(null),
 )
 void import('./lib/formatOnSaveSettings').then(m => m.loadEffectiveFormatOnSave(null))
 void import('./lib/minimapSettings').then(m => m.loadEffectiveMinimapEnabled(null))
 // Sync session-persist cache from default-settings.json for the next boot.
-void import('./lib/sessionPersistSettings').then(m => m.loadSessionPersistEnabled())
+void loadSessionPersistEnabled()
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
@@ -44,7 +47,7 @@ installStartupSplashGuard()
 
 // Non-critical guards after first paint; keep splash reveal ownership in index.html.
 queueMicrotask(() => {
-  void import('./lib/devBuild').then(m => m.installDevNativeContextMenuToggle())
+  installDevNativeContextMenuToggle()
   void import('./lib/contextMenuGuard').then(m => m.installContextMenuGuard())
 })
 

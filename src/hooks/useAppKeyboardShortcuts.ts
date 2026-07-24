@@ -5,6 +5,7 @@ import {
   copyActiveRelativePathAction,
 } from '../lib/copyFileActions'
 import { formatDocument } from '../lib/formatDocument'
+import { buildCommands } from '../lib/commands'
 import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/terminalViewBridge'
 import {
   COPY_RELATIVE_PATH_SHORTCUT,
@@ -69,10 +70,8 @@ export function useAppKeyboardShortcuts({
       }
       if (shortcutMatchesEvent(shortcuts.goToLine, event)) {
         event.preventDefault()
-        void import('../lib/commands').then(({ buildCommands }) => {
-          const command = buildCommands().find(item => item.id === 'editor.goToLine')
-          if (command && (!command.when || command.when())) void command.run()
-        })
+        const command = buildCommands().find(item => item.id === 'editor.goToLine')
+        if (command && (!command.when || command.when())) void command.run()
       } else if (shortcutMatchesEvent(shortcuts.goToSymbolInEditor, event)) {
         event.preventDefault()
         openSymbolPicker()
@@ -87,16 +86,12 @@ export function useAppKeyboardShortcuts({
         setView('settings')
       } else if (shortcutMatchesEvent(shortcuts.toggleMinimap, event)) {
         event.preventDefault()
-        void import('../lib/commands').then(({ buildCommands }) => {
-          const command = buildCommands().find(item => item.id === 'view.toggleMinimap')
-          if (command && (!command.when || command.when())) void command.run()
-        })
+        const command = buildCommands().find(item => item.id === 'view.toggleMinimap')
+        if (command && (!command.when || command.when())) void command.run()
       } else if (shortcutMatchesEvent(shortcuts.togglePanelLayout, event)) {
         event.preventDefault()
-        void import('../lib/commands').then(({ buildCommands }) => {
-          const command = buildCommands().find(item => item.id === 'view.togglePanelLayout')
-          if (command && (!command.when || command.when())) void command.run()
-        })
+        const command = buildCommands().find(item => item.id === 'view.togglePanelLayout')
+        if (command && (!command.when || command.when())) void command.run()
       } else if (
         shortcutMatchesEvent(shortcuts.findInTerminal, event) &&
         isTerminalKeyTarget(event.target)

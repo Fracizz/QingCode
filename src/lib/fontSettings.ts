@@ -1,3 +1,7 @@
+import { isTauri, safeInvoke } from './tauri'
+import { loadGlobalSettings, saveGlobalSettings } from './projectSettings'
+import { getEditorPreferences, notifyEditorSettingsChanged } from './editorSettings'
+
 export const FONT_SETTINGS_KEY = 'qingcode:font-settings'
 export const FONT_SETTINGS_EVENT = 'qingcode:font-settings-changed'
 
@@ -295,12 +299,10 @@ export function getPendingEditorFontSize(): number | null {
 async function syncEditorFontSizeToGlobalSettings(fontSize: number) {
   pendingEditorFontSize = fontSize
   try {
-    const { getEditorPreferences, notifyEditorSettingsChanged } = await import('./editorSettings')
     const prefs = getEditorPreferences()
     if (prefs.fontSize !== fontSize) {
       notifyEditorSettingsChanged({ ...prefs, fontSize })
     }
-    const { loadGlobalSettings, saveGlobalSettings } = await import('./projectSettings')
     const global = await loadGlobalSettings()
     if (global['editor.fontSize'] !== fontSize) {
       await saveGlobalSettings({ ...global, 'editor.fontSize': fontSize })
@@ -379,7 +381,6 @@ export async function loadSystemFontFamilies(): Promise<string[]> {
   if (!systemFontPending) {
     systemFontPending = (async () => {
       try {
-        const { isTauri, safeInvoke } = await import('./tauri')
         if (!isTauri()) return []
         const fonts = await safeInvoke<string[]>('列出系统字体', 'list_system_fonts')
         return expandSystemFontFamilies(Array.isArray(fonts) ? fonts.filter(Boolean) : [])

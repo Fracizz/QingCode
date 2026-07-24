@@ -85,6 +85,10 @@ interface ProjectState {
   addEmptyProject: () => Promise<boolean>
   removeProject: (id: string) => Promise<void>
   hideProject: (id: string) => Promise<void>
+  /** Hide the given project ids from the title bar (batch). Prefer switching to `keepId` if current is hidden. */
+  hideProjectsByIds: (ids: string[], keepId?: string) => Promise<void>
+  /** Hide every visible title-bar project except `keepId`. */
+  hideOtherProjects: (keepId: string) => Promise<void>
   unhideProject: (id: string) => Promise<void>
   /** Persist a manual sort order for a project (used by the project manager). */
   setProjectSortOrder: (id: string, sortOrder: number) => Promise<void>
@@ -439,6 +443,64 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       console.error('hideProject failed:', e)
       get().pushToast('error', `隐藏项目失败: ${String(e)}`)
     }
+  },
+
+  hideProjectsByIds: async (ids: string[], keepId?: string) => {
+    const unique = [...new Set(ids)]
+    if (unique.length === 0) return
+
+    const targets = get().projects.filter(p => !p.hidden && unique.includes(p.id))
+    if (targets.length === 0) return
+
+    const ephemeralIds = new Set(targets.filter(p => p.ephemeral).map(p => p.id))
+    const persisted = targets.filter(p => !p.ephemeral)
+    const hideIds = new Set(targets.map(p => p.id))
+
+    try {
+      for (const project of persisted) {
+        await setProjectHidden(project.id, 1)
+      }
+      if (persisted.length > 0) void persistProjectsToUserSettings()
+
+      set(s => ({
+        projects: s.projects.map(p => (hideIds.has(p.id) ? { ...p, hidden: 1 } : p)),
+      }))
+
+      const currentId = get().currentProject?.id
+      if (currentId && hideIds.has(currentId)) {
+        const unavailable = get().unavailableProjectIds
+        const keep =
+          keepId && !hideIds.has(keepId)
+            ? get().projects.find(p => p.id === keepId && !p.hidden)
+            : undefined
+        const next =
+          keep && !unavailable.includes(keep.id)
+            ? keep
+            : pickAvailableProject(get().projects, unavailable)
+        if (next) {
+          await get().switchProject(next)
+        } else {
+          set({ currentProject: null, recentFiles: [], fileTree: [] })
+        }
+      }
+
+      get().pushToast(
+        'info',
+        ephemeralIds.size === targets.length
+          ? translate('已关闭其他项目')
+          : translate('已关闭其他项目，可在项目管理中恢复'),
+      )
+    } catch (e) {
+      console.error('hideProjectsByIds failed:', e)
+      get().pushToast('error', translate('关闭其他项目失败: {error}', { error: String(e) }))
+    }
+  },
+
+  hideOtherProjects: async (keepId: string) => {
+    const others = get().projects
+      .filter(p => !p.hidden && p.id !== keepId)
+      .map(p => p.id)
+    await get().hideProjectsByIds(others, keepId)
   },
 
   unhideProject: async (id: string) => {

@@ -10,6 +10,7 @@ import {
   type SettingsFile,
 } from './projectSettings'
 import { mergeSettings } from './autoSaveSettings'
+import { getPendingEditorFontSize, syncEditorFontSizeFromPreferences } from './fontSettings'
 
 export const EDITOR_SETTINGS_EVENT = 'qingcode:editor-settings-changed'
 
@@ -223,9 +224,6 @@ export async function loadEffectiveEditorPreferences(
   // editor.fontSize is user-scoped in the Settings UI. Workspace templates always
   // ship `"editor.fontSize": 14`, which previously overwrote the user choice whenever
   // the editor remounted after leaving Settings.
-  const { getPendingEditorFontSize, syncEditorFontSizeFromPreferences } = await import(
-    './fontSettings'
-  )
   prefs.fontSize = resolveUserEditorFontSize(
     global['editor.fontSize'],
     getPendingEditorFontSize(),

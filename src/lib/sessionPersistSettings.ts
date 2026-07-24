@@ -12,6 +12,7 @@ import {
 } from './projectSettings'
 import { clearWorkspaceSession } from './workspaceSessionPersist'
 import { clearTerminalOutputSnapshot } from '@/lib/terminal/terminalSessionPersist'
+import { scheduleWorkspaceSessionPersist } from './workspaceSessionSync'
 
 export { SESSION_PERSIST_KEY }
 
@@ -69,9 +70,7 @@ export async function saveSessionPersistEnabled(enabled: boolean): Promise<boole
     clearTerminalOutputSnapshot()
   } else {
     // Persist current in-memory session now that saving is allowed again.
-    void import('./workspaceSessionSync').then(m => {
-      m.scheduleWorkspaceSessionPersist()
-    })
+    scheduleWorkspaceSessionPersist()
   }
   notifySessionPersistChanged(enabled)
   return enabled
