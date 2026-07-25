@@ -16,6 +16,7 @@ import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
 import WorkspaceSymbolPicker from './components/WorkspaceSymbolPicker'
 import DefinitionPicker from './components/DefinitionPicker'
+import DefinitionPreview from './components/DefinitionPreview'
 import FileCompareDialog from './components/FileCompareDialog'
 import EmptyEditor from './components/EmptyEditor'
 import TerminalPanel from './components/TerminalPanel'
@@ -31,11 +32,7 @@ import { isTauri } from './lib/tauri'
 import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
 import { startSystemThemeListener } from './lib/themeSettings'
-import {
-  clampSidebarWidth,
-  loadSidebarWidth,
-  saveSidebarWidth,
-} from './lib/sidebarLayout'
+import { clampSidebarWidth, loadSidebarWidth, saveSidebarWidth } from './lib/sidebarLayout'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
 import { listenForOpenFileRequests, openLaunchFiles } from './lib/launchFiles'
@@ -44,17 +41,13 @@ import { useI18n } from './lib/i18n'
 import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFileWatcher } from './hooks/useFileWatcher'
+import { useSemanticIndex } from './hooks/useSemanticIndex'
 import { useDraftRecovery } from './hooks/useDraftRecovery'
 import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
 import { useTerminalPanel } from './hooks/useTerminalPanel'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
-import {
-  terminalPositionForTemplate,
-} from './lib/panelLayoutTemplate'
-import {
-  beginPanelResize,
-  settlePanelResize,
-} from './lib/panelResize'
+import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
+import { beginPanelResize, settlePanelResize } from './lib/panelResize'
 import {
   markWorkspaceSessionPersistReady,
   pruneWorkspaceSessions,
@@ -150,6 +143,7 @@ function App() {
   useAutoSave()
   useDraftRecovery()
   useFileWatcher()
+  useSemanticIndex()
   useAppUpdateCheck()
   const fileCompare = useCompareStore(s => s.request)
 
@@ -157,9 +151,9 @@ function App() {
     terminalOpen,
     setTerminalOpen,
     terminalHeight,
-  terminalWidth,
-  sideSplit,
-  isTerminalResizing,
+    terminalWidth,
+    sideSplit,
+    isTerminalResizing,
     onResizerPointerDown,
     onWidthResizerPointerDown,
     terminalPanelRef,
@@ -295,13 +289,7 @@ function App() {
     return scheduleDeferredWork(() => {
       void spawnRestoredTerminals(projectId)
     })
-  }, [
-    activateProject,
-    currentProject,
-    projectTrusted,
-    spawnRestoredTerminals,
-    terminalOpen,
-  ])
+  }, [activateProject, currentProject, projectTrusted, spawnRestoredTerminals, terminalOpen])
 
   const handleAddProject = () => {
     setView('explorer')
@@ -396,7 +384,10 @@ function App() {
             terminalPanelRef={terminalPanelRef}
           />
 
-          <div className="workspace-grid-editor flex flex-col overflow-hidden min-w-0" data-editor-column>
+          <div
+            className="workspace-grid-editor flex flex-col overflow-hidden min-w-0"
+            data-editor-column
+          >
             {view === 'settings' ? (
               <Suspense fallback={<LazyFallback />}>
                 <SettingsEditor />
@@ -450,6 +441,7 @@ function App() {
       <SymbolPicker />
       <WorkspaceSymbolPicker />
       <DefinitionPicker />
+      <DefinitionPreview />
       {fileCompare && <FileCompareDialog {...fileCompare} />}
       {projectManagerOpen && (
         <Suspense fallback={null}>

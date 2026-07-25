@@ -1,0 +1,12 @@
+[package]
+name = "qingcode-language-typescript"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+tree-sitter-javascript = "0.25.0"
+tree-sitter-typescript = "0.23.2"

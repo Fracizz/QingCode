@@ -4,6 +4,7 @@
 //! Name binding and candidate ranking stay in the frontend so the feature
 //! remains useful without a language server or compiler-grade project model.
 
+use crate::language_components;
 use crate::path_guard::PathAllowlist;
 use ignore::{WalkBuilder, WalkState};
 use serde::Serialize;
@@ -14,7 +15,6 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
 use tauri::State;
-use tree_sitter::Language;
 use tree_sitter_tags::{TagsConfiguration, TagsContext};
 
 const MAX_FILE_BYTES: u64 = 1024 * 1024;
@@ -59,7 +59,16 @@ struct CachedFile {
 #[derive(Clone, Default)]
 pub struct SymbolSearchState {
     files: Arc<Mutex<HashMap<PathBuf, CachedFile>>>,
-    generation: Arc<AtomicUsize>,
+    definition_generation: Arc<AtomicUsize>,
+    reference_generation: Arc<AtomicUsize>,
+    workspace_generation: Arc<AtomicUsize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum SearchLane {
+    Definition,
+    Reference,
+    Workspace,
 }
 
 impl SymbolSearchState {
@@ -67,12 +76,20 @@ impl SymbolSearchState {
         Self::default()
     }
 
-    fn begin_search(&self) -> usize {
-        self.generation.fetch_add(1, Ordering::SeqCst) + 1
+    fn generation(&self, lane: SearchLane) -> &AtomicUsize {
+        match lane {
+            SearchLane::Definition => &self.definition_generation,
+            SearchLane::Reference => &self.reference_generation,
+            SearchLane::Workspace => &self.workspace_generation,
+        }
     }
 
-    fn is_current(&self, generation: usize) -> bool {
-        self.generation.load(Ordering::SeqCst) == generation
+    fn begin_search(&self, lane: SearchLane) -> usize {
+        self.generation(lane).fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn is_current(&self, lane: SearchLane, generation: usize) -> bool {
+        self.generation(lane).load(Ordering::SeqCst) == generation
     }
 
     fn cached(&self, path: &Path, modified: Option<SystemTime>, len: u64) -> Option<CachedFile> {
@@ -137,143 +154,52 @@ pub struct SymbolReferenceResponse {
     pub truncated: bool,
 }
 
-fn configuration(
-    language: Language,
-    tags_query: &str,
-    locals_query: &str,
-) -> Result<TagsConfiguration, String> {
-    TagsConfiguration::new(language, tags_query, locals_query).map_err(|error| error.to_string())
-}
-
-fn javascript_configuration() -> Result<&'static TagsConfiguration, String> {
-    static CONFIG: OnceLock<Result<TagsConfiguration, String>> = OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            let tags = format!(
-                "{}\n{}",
-                tree_sitter_javascript::TAGS_QUERY,
-                JAVASCRIPT_VARIABLE_TAGS
-            );
-            configuration(
-                tree_sitter_javascript::LANGUAGE.into(),
-                &tags,
-                tree_sitter_javascript::LOCALS_QUERY,
-            )
-        })
-        .as_ref()
-        .map_err(Clone::clone)
-}
-
-fn typescript_configuration(tsx: bool) -> Result<&'static TagsConfiguration, String> {
-    static TS_CONFIG: OnceLock<Result<TagsConfiguration, String>> = OnceLock::new();
-    static TSX_CONFIG: OnceLock<Result<TagsConfiguration, String>> = OnceLock::new();
-    let config = if tsx {
-        TSX_CONFIG.get_or_init(|| {
-            let tags = format!(
-                "{}\n{}\n{}",
-                tree_sitter_javascript::TAGS_QUERY,
-                tree_sitter_typescript::TAGS_QUERY,
-                JAVASCRIPT_VARIABLE_TAGS
-            );
-            let locals = format!(
-                "{}\n{}",
-                tree_sitter_javascript::LOCALS_QUERY,
-                tree_sitter_typescript::LOCALS_QUERY
-            );
-            configuration(tree_sitter_typescript::LANGUAGE_TSX.into(), &tags, &locals)
-        })
-    } else {
-        TS_CONFIG.get_or_init(|| {
-            let tags = format!(
-                "{}\n{}\n{}",
-                tree_sitter_javascript::TAGS_QUERY,
-                tree_sitter_typescript::TAGS_QUERY,
-                JAVASCRIPT_VARIABLE_TAGS
-            );
-            let locals = format!(
-                "{}\n{}",
-                tree_sitter_javascript::LOCALS_QUERY,
-                tree_sitter_typescript::LOCALS_QUERY
-            );
-            configuration(
-                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-                &tags,
-                &locals,
-            )
-        })
+fn configuration_for_path(path: &Path) -> Result<Option<Arc<TagsConfiguration>>, String> {
+    static CONFIGS: OnceLock<Mutex<HashMap<String, Arc<TagsConfiguration>>>> = OnceLock::new();
+    let Some((grammar, loaded)) = language_components::language_for_path(path) else {
+        return Ok(None);
     };
-    config.as_ref().map_err(Clone::clone)
-}
-
-fn rust_configuration() -> Result<&'static TagsConfiguration, String> {
-    static CONFIG: OnceLock<Result<TagsConfiguration, String>> = OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            let tags = format!("{}\n{}", tree_sitter_rust::TAGS_QUERY, RUST_VALUE_TAGS);
-            configuration(tree_sitter_rust::LANGUAGE.into(), &tags, "")
-        })
-        .as_ref()
-        .map_err(Clone::clone)
-}
-
-fn python_configuration() -> Result<&'static TagsConfiguration, String> {
-    static CONFIG: OnceLock<Result<TagsConfiguration, String>> = OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            configuration(
-                tree_sitter_python::LANGUAGE.into(),
-                tree_sitter_python::TAGS_QUERY,
-                "",
-            )
-        })
-        .as_ref()
-        .map_err(Clone::clone)
-}
-
-fn go_configuration() -> Result<&'static TagsConfiguration, String> {
-    static CONFIG: OnceLock<Result<TagsConfiguration, String>> = OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            configuration(
-                tree_sitter_go::LANGUAGE.into(),
-                tree_sitter_go::TAGS_QUERY,
-                "",
-            )
-        })
-        .as_ref()
-        .map_err(Clone::clone)
-}
-
-fn java_configuration() -> Result<&'static TagsConfiguration, String> {
-    static CONFIG: OnceLock<Result<TagsConfiguration, String>> = OnceLock::new();
-    CONFIG
-        .get_or_init(|| {
-            configuration(
-                tree_sitter_java::LANGUAGE.into(),
-                tree_sitter_java::TAGS_QUERY,
-                "",
-            )
-        })
-        .as_ref()
-        .map_err(Clone::clone)
-}
-
-fn configuration_for_path(path: &Path) -> Result<Option<&'static TagsConfiguration>, String> {
-    let extension = path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    match extension.as_str() {
-        "js" | "jsx" | "mjs" | "cjs" => javascript_configuration().map(Some),
-        "ts" | "mts" | "cts" => typescript_configuration(false).map(Some),
-        "tsx" => typescript_configuration(true).map(Some),
-        "rs" => rust_configuration().map(Some),
-        "py" | "pyw" => python_configuration().map(Some),
-        "go" => go_configuration().map(Some),
-        "java" => java_configuration().map(Some),
-        _ => Ok(None),
+    let configs = CONFIGS.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(configuration) = configs
+        .lock()
+        .map_err(|_| "symbol configuration cache is unavailable".to_string())?
+        .get(&grammar)
+        .cloned()
+    {
+        return Ok(Some(configuration));
     }
+
+    let (tags, locals) = match grammar.as_str() {
+        "javascript" => (
+            format!("{}\n{}", loaded.tags_query, JAVASCRIPT_VARIABLE_TAGS),
+            loaded.locals_query.clone(),
+        ),
+        "typescript" | "tsx" => {
+            let (_, javascript) = language_components::language_for_path(Path::new("component.js"))
+                .ok_or_else(|| "TypeScript component is missing JavaScript grammar".to_string())?;
+            (
+                format!(
+                    "{}\n{}\n{}",
+                    javascript.tags_query, loaded.tags_query, JAVASCRIPT_VARIABLE_TAGS
+                ),
+                format!("{}\n{}", javascript.locals_query, loaded.locals_query),
+            )
+        }
+        "rust" => (
+            format!("{}\n{}", loaded.tags_query, RUST_VALUE_TAGS),
+            loaded.locals_query.clone(),
+        ),
+        _ => (loaded.tags_query.clone(), loaded.locals_query.clone()),
+    };
+    let configuration = Arc::new(
+        TagsConfiguration::new(loaded.language, &tags, &locals)
+            .map_err(|error| error.to_string())?,
+    );
+    configs
+        .lock()
+        .map_err(|_| "symbol configuration cache is unavailable".to_string())?
+        .insert(grammar, configuration.clone());
+    Ok(Some(configuration))
 }
 
 fn line_text(source: &[u8], range: std::ops::Range<usize>) -> String {
@@ -293,7 +219,7 @@ fn extract_tags(
         return Ok(Vec::new());
     };
     let (tags, _) = context
-        .generate_tags(config, source, None)
+        .generate_tags(&config, source, None)
         .map_err(|error| error.to_string())?;
     let mut extracted = Vec::new();
     for tag in tags {
@@ -394,7 +320,7 @@ fn scan_workspace<T, F>(
     root: &Path,
     max_results: usize,
     max_files: usize,
-    generation: Option<usize>,
+    generation: Option<(SearchLane, usize)>,
     collect: F,
 ) -> Result<ScanResult<T>, String>
 where
@@ -457,7 +383,7 @@ where
         let collect = &collect;
         Box::new(move |entry| {
             if should_quit.load(Ordering::Relaxed)
-                || generation.is_some_and(|generation| !state.is_current(generation))
+                || generation.is_some_and(|(lane, generation)| !state.is_current(lane, generation))
             {
                 return WalkState::Quit;
             }
@@ -522,13 +448,13 @@ fn tag_to_definition(root: &Path, path: &Path, tag: &CachedTag) -> SymbolDefinit
     }
 }
 
-pub fn search_definitions(
+fn search_definitions(
     state: &SymbolSearchState,
     root: &Path,
     symbol: &str,
     max_results: usize,
     max_files: usize,
-    generation: Option<usize>,
+    generation: Option<(SearchLane, usize)>,
 ) -> Result<SymbolSearchResponse, String> {
     if !valid_symbol_name(symbol) {
         return Ok(SymbolSearchResponse {
@@ -577,13 +503,13 @@ fn enclosing_caller<'a>(tags: &'a [CachedTag], reference: &CachedTag) -> Option<
         .min_by_key(|candidate| candidate.range_end.saturating_sub(candidate.range_start))
 }
 
-pub fn search_references(
+fn search_references(
     state: &SymbolSearchState,
     root: &Path,
     symbol: &str,
     max_results: usize,
     max_files: usize,
-    generation: Option<usize>,
+    generation: Option<(SearchLane, usize)>,
 ) -> Result<SymbolReferenceResponse, String> {
     if !valid_symbol_name(symbol) {
         return Ok(SymbolReferenceResponse {
@@ -631,13 +557,13 @@ pub fn search_references(
     })
 }
 
-pub fn search_workspace_definitions(
+fn search_workspace_definitions(
     state: &SymbolSearchState,
     root: &Path,
     query: &str,
     max_results: usize,
     max_files: usize,
-    generation: Option<usize>,
+    generation: Option<(SearchLane, usize)>,
 ) -> Result<SymbolSearchResponse, String> {
     let query = query.trim().to_lowercase();
     if query.chars().count() > 160 {
@@ -691,7 +617,7 @@ pub async fn search_symbol_definitions(
 ) -> Result<SymbolSearchResponse, String> {
     allowlist.ensure_allowed(&root)?;
     let state = state.inner().clone();
-    let generation = state.begin_search();
+    let generation = state.begin_search(SearchLane::Definition);
     let symbol = symbol.trim().to_string();
     tauri::async_runtime::spawn_blocking(move || {
         search_definitions(
@@ -700,7 +626,7 @@ pub async fn search_symbol_definitions(
             &symbol,
             max_results.unwrap_or(DEFAULT_MAX_RESULTS),
             max_files.unwrap_or(DEFAULT_MAX_FILES),
-            Some(generation),
+            Some((SearchLane::Definition, generation)),
         )
     })
     .await
@@ -718,7 +644,7 @@ pub async fn search_symbol_references(
 ) -> Result<SymbolReferenceResponse, String> {
     allowlist.ensure_allowed(&root)?;
     let state = state.inner().clone();
-    let generation = state.begin_search();
+    let generation = state.begin_search(SearchLane::Reference);
     let symbol = symbol.trim().to_string();
     tauri::async_runtime::spawn_blocking(move || {
         search_references(
@@ -727,7 +653,7 @@ pub async fn search_symbol_references(
             &symbol,
             max_results.unwrap_or(DEFAULT_MAX_RESULTS),
             max_files.unwrap_or(DEFAULT_MAX_FILES),
-            Some(generation),
+            Some((SearchLane::Reference, generation)),
         )
     })
     .await
@@ -745,7 +671,7 @@ pub async fn search_workspace_symbols(
 ) -> Result<SymbolSearchResponse, String> {
     allowlist.ensure_allowed(&root)?;
     let state = state.inner().clone();
-    let generation = state.begin_search();
+    let generation = state.begin_search(SearchLane::Workspace);
     tauri::async_runtime::spawn_blocking(move || {
         search_workspace_definitions(
             &state,
@@ -753,7 +679,7 @@ pub async fn search_workspace_symbols(
             &query,
             max_results.unwrap_or(DEFAULT_MAX_RESULTS),
             max_files.unwrap_or(DEFAULT_MAX_FILES),
-            Some(generation),
+            Some((SearchLane::Workspace, generation)),
         )
     })
     .await
@@ -884,5 +810,23 @@ export const shared = 1
         assert!(!valid_symbol_name("../secret"));
         assert!(valid_symbol_name("_valid42"));
         assert!(valid_symbol_name("中文名称"));
+    }
+
+    #[test]
+    fn search_lanes_cancel_only_the_same_kind_of_request() {
+        let state = SymbolSearchState::new();
+        let first_definition = state.begin_search(SearchLane::Definition);
+        let reference = state.begin_search(SearchLane::Reference);
+        let workspace = state.begin_search(SearchLane::Workspace);
+
+        assert!(state.is_current(SearchLane::Definition, first_definition));
+        assert!(state.is_current(SearchLane::Reference, reference));
+        assert!(state.is_current(SearchLane::Workspace, workspace));
+
+        let next_definition = state.begin_search(SearchLane::Definition);
+        assert!(!state.is_current(SearchLane::Definition, first_definition));
+        assert!(state.is_current(SearchLane::Definition, next_definition));
+        assert!(state.is_current(SearchLane::Reference, reference));
+        assert!(state.is_current(SearchLane::Workspace, workspace));
     }
 }

@@ -1,0 +1,7 @@
+{
+  "abiVersion": 1,
+  "id": "rust",
+  "name": "Rust",
+  "grammars": ["rust"],
+  "extensions": ["rs"]
+}

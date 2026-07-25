@@ -96,6 +96,8 @@ QingCode **不内置**聊天模型或 Agent，刻意把智能留给你已有的 
 
 多文件标签编辑，常见语言按需高亮；自动识别 UTF-8 / BOM / GB18030 兼容编码；外部改动可分类处理，避免悄悄覆盖。大文件会降级或只读预览。重启后恢复各项目的编辑与终端会话（打开项目时不再自动新建空终端）。
 
+编辑器内置不依赖完整 LSP 的轻量代码导航：`Ctrl+单击` 跳到定义并提供悬浮预览，`Shift+F12` 查找变量 / 函数引用，`Ctrl+T` 搜索工作区符号。底层以 Tree-sitter 增量索引为主，目标是日常跳转接近 IDE 的交互速度，但不承诺编译器级类型推断精度。Python、TypeScript/JavaScript、Java、Rust、Go 拆成五个独立语言组件；Windows 安装包可逐项勾选，未安装的语言只会关闭语义导航，不影响普通文本编辑。
+
 ### 源代码管理：整页工作台
 
 活动栏进入源代码管理后，主编辑区整页展示（再点一次回到资源管理器）：
@@ -117,7 +119,7 @@ QingCode **不内置**聊天模型或 Agent，刻意把智能留给你已有的 
 | 定位 | 多项目运行与管理搭子 | 扩展生态平台编辑器 | 原生高性能编辑器 |
 | 多项目切换 | 标题栏常驻，切走保留现场 | 偏单工作区 | 一般 |
 | 服务 / 任务启动 | **运行配置多任务 → 多终端** | 任务 / launch 很强 | 有，形态不同 |
-| LSP / 调试 / 扩展市场 | 不做重 IDE | 完整 | 强 LSP，生态更小 |
+| 代码导航 / 调试 / 扩展市场 | 轻量 Tree-sitter 跳转；无完整 LSP / 调试 / 市场 | 完整 | 强 LSP，生态更小 |
 | AI | 不内置模型；终端配置 + CLI Skill 外挂助手 | 扩展或内置 | 内置向 |
 
 QingCode **刻意不做**完整 IntelliSense、调试器和插件市场；你继续用 VS Code / Zed / Cursor 写深逻辑，用 QingCode 管「今天要开哪些项目、哪些服务、哪些终端」。
@@ -142,11 +144,11 @@ QingCode **刻意不做**完整 IntelliSense、调试器和插件市场；你继
 
 | 平台 | 架构 | 推荐文件 |
 |------|------|----------|
-| Windows | x64 | `QingCode_*-windows-x64.exe` 或 `QingCode_*.exe` |
+| Windows | x64 | `QingCode_*-windows-x64-setup.exe`（推荐）或便携 `.exe` |
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` 或 `.zip` |
 
-- Windows：便携 exe 或 NSIS 安装包（`*-setup.exe`）；需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）。安装包会先尝试自动下载安装；失败时可点「是」跳转引导程序下载，或「否」打开产品页  
+- Windows：便携 exe 或 NSIS 安装包（`*-setup.exe`）；需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）。安装包会先尝试自动下载安装；失败时可点「是」跳转引导程序下载，或「否」打开产品页。轻量代码导航语言组件当前由安装包按需安装：TypeScript/JavaScript、Python、Java 默认选中，Rust、Go 默认不选，五项均可自由取消或选择；便携单文件不内置这些组件
 - macOS：未签名时首次请右键 → 打开；需要 Apple Developer 签名/公证后再分发可跳过该步骤  
 
 本地打包（Windows x64 本机）：

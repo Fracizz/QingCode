@@ -109,6 +109,14 @@ Get-Process -Name 'qingcode', 'QingCode' -ErrorAction SilentlyContinue |
   Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 400
 
+# Keep grammar native code out of the main executable in development too.
+# Components are staged beside target/debug/qingcode.exe where the runtime
+# component registry discovers them.
+& (Join-Path $PSScriptRoot 'build-language-components.ps1') -Configuration Debug
+if ($LASTEXITCODE -ne 0) {
+  throw "Language component build failed with exit code $LASTEXITCODE."
+}
+
 $devPort = Get-AvailableDevPort
 $env:VITE_DEV_PORT = "$devPort"
 

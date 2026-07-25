@@ -1,15 +1,41 @@
 import { create } from 'zustand'
-import type { DefinitionCandidate } from '../lib/definitionNavigation'
+import type { DefinitionAnchor, DefinitionCandidate } from '../lib/definitionNavigation'
+import type { SemanticUsageFilter } from '../lib/semanticNavigation'
+
+export interface DefinitionPickerDetails {
+  kind?: string
+  origin?: string
+  totalCount?: number
+  filesIndexed?: number
+  complete?: boolean
+  truncated?: boolean
+  anchor?: DefinitionAnchor
+}
+
+export interface DefinitionUsagePage {
+  candidates: DefinitionCandidate[]
+  details: DefinitionPickerDetails
+}
+
+export type DefinitionUsageLoader = (
+  filter: SemanticUsageFilter,
+  offset: number,
+  maxResults: number
+) => Promise<DefinitionUsagePage>
 
 interface DefinitionPickerState {
   open: boolean
   mode: 'definition' | 'reference'
   symbol: string
   candidates: DefinitionCandidate[]
+  details: DefinitionPickerDetails | null
+  usageLoader: DefinitionUsageLoader | null
   openPicker: (
     symbol: string,
     candidates: DefinitionCandidate[],
-    mode?: 'definition' | 'reference'
+    mode?: 'definition' | 'reference',
+    details?: DefinitionPickerDetails,
+    usageLoader?: DefinitionUsageLoader
   ) => void
   closePicker: () => void
 }
@@ -19,8 +45,24 @@ export const useDefinitionPickerStore = create<DefinitionPickerState>(set => ({
   mode: 'definition',
   symbol: '',
   candidates: [],
-  openPicker: (symbol, candidates, mode = 'definition') =>
-    set({ open: true, mode, symbol, candidates }),
+  details: null,
+  usageLoader: null,
+  openPicker: (symbol, candidates, mode = 'definition', details = {}, usageLoader) =>
+    set({
+      open: true,
+      mode,
+      symbol,
+      candidates,
+      details,
+      usageLoader: usageLoader ?? null,
+    }),
   closePicker: () =>
-    set({ open: false, mode: 'definition', symbol: '', candidates: [] }),
+    set({
+      open: false,
+      mode: 'definition',
+      symbol: '',
+      candidates: [],
+      details: null,
+      usageLoader: null,
+    }),
 }))

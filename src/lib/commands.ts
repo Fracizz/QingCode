@@ -31,7 +31,7 @@ import {
 } from './namedWorkspaceActions'
 import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/terminalViewBridge'
 import { useTerminalStore } from '../store/terminalStore'
-import { findCallsAtActiveEditor } from './symbolNavigation'
+import { findUsagesAtActiveEditor } from './symbolNavigation'
 
 export type AppCommand = {
   id: string
@@ -309,14 +309,14 @@ export function buildCommands(): AppCommand[] {
     },
     {
       id: 'editor.findCalls',
-      title: '查找调用',
-      keywords: 'find calls callers references call hierarchy',
+      title: '查找用法',
+      keywords: 'find usages references calls callers reads writes imports',
       shortcutCommand: 'findCalls',
       when: () => {
         const { tabs, activeTabId } = useEditorStore.getState()
         return Boolean(tabs.find(tab => tab.id === activeTabId))
       },
-      run: () => void findCallsAtActiveEditor(),
+      run: () => void findUsagesAtActiveEditor(),
     },
     {
       id: 'editor.goToLine',

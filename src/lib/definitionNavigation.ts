@@ -6,11 +6,23 @@ import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { findProjectForPath, pathsEqual, projectRelativePath } from '../utils/fileReferences'
 import { translate } from './i18n'
+import {
+  resolveSemanticSymbol,
+  type SemanticConfidence,
+  type SemanticUsageKind,
+} from './semanticNavigation'
 
 export interface IdentifierRange {
   name: string
   from: number
   to: number
+}
+
+export interface DefinitionAnchor {
+  left: number
+  top: number
+  right: number
+  bottom: number
 }
 
 export interface DefinitionCandidate {
@@ -24,6 +36,10 @@ export interface DefinitionCandidate {
   score: number
   callerName?: string
   callerKind?: string
+  symbolId?: string
+  confidence?: SemanticConfidence
+  approximate?: boolean
+  usageKind?: SemanticUsageKind
 }
 
 interface NativeDefinition {
@@ -99,8 +115,7 @@ function isIdentifier(name: string): boolean {
 export function identifierAt(state: EditorState, position: number): IdentifierRange | null {
   const safePosition = Math.max(0, Math.min(position, state.doc.length))
   const range =
-    state.wordAt(safePosition) ??
-    (safePosition > 0 ? state.wordAt(safePosition - 1) : null)
+    state.wordAt(safePosition) ?? (safePosition > 0 ? state.wordAt(safePosition - 1) : null)
   if (!range || safePosition < range.from || safePosition > range.to) return null
   const name = state.sliceDoc(range.from, range.to)
   return isIdentifier(name) ? { name, from: range.from, to: range.to } : null
@@ -140,10 +155,7 @@ function withoutSourceExtension(path: string): string {
 function normalizeJoinedPath(path: string): string {
   const normalized = path.replace(/\\/gu, '/')
   const prefix = normalized.match(/^[A-Za-z]:/u)?.[0] ?? (normalized.startsWith('/') ? '/' : '')
-  const parts = normalized
-    .slice(prefix.length)
-    .split('/')
-    .filter(Boolean)
+  const parts = normalized.slice(prefix.length).split('/').filter(Boolean)
   const output: string[] = []
   for (const part of parts) {
     if (part === '.') continue
@@ -250,13 +262,17 @@ function currentFileCandidates(
     })
 }
 
-/** Main Ctrl+click entry point. Fast local matches win; project search is Rust-backed. */
-export async function goToHeuristicDefinition(
+/**
+ * Resolve definition candidates without changing editor state.
+ *
+ * Ctrl-hover previews and Ctrl+click navigation share this path so they cannot
+ * drift into two different resolution behaviours.
+ */
+export async function resolveDefinitionCandidates(
   state: EditorState,
   sourcePath: string,
   identifier: IdentifierRange
-): Promise<void> {
-  const request = ++navigationRequest
+): Promise<DefinitionCandidate[]> {
   const projectState = useProjectStore.getState()
   const project =
     findProjectForPath(projectState.projects, sourcePath) ?? projectState.currentProject
@@ -270,25 +286,34 @@ export async function goToHeuristicDefinition(
       candidate.column !== identifier.from - state.doc.lineAt(identifier.from).from + 1
   )
 
-  // A unique declaration in the same file is both the cheapest and usually the
-  // most scope-relevant answer. Avoid a workspace scan on this common path.
+  // Prefer scope-bound semantic resolution. The older same-name search remains
+  // below as a compatibility fallback for unsupported syntax/languages.
+  if (project && isTauri()) {
+    try {
+      const semantic = await resolveSemanticSymbol(project.path, sourcePath, state, identifier.from)
+      if (semantic.definitions.length > 0) {
+        const candidates = semantic.definitions.map((candidate): DefinitionCandidate => ({
+          ...candidate,
+          score: candidate.approximate ? 400 : 2400,
+          callerName: candidate.callerName ?? undefined,
+          callerKind: candidate.callerKind ?? undefined,
+          usageKind: candidate.usageKind ?? undefined,
+        }))
+        return rankDefinitionCandidates(candidates, sourcePath, context, importTarget)
+      }
+    } catch {
+      // Keep the established heuristic path available when the semantic index
+      // is unavailable or a grammar cannot resolve the cursor.
+    }
+  }
+
+  // A unique declaration in the same file is the cheapest fallback.
   if (localAwayFromClick.length === 1) {
-    showCandidates(
-      identifier.name,
-      rankDefinitionCandidates(localAwayFromClick, sourcePath, context, importTarget)
-    )
-    return
+    return rankDefinitionCandidates(localAwayFromClick, sourcePath, context, importTarget)
   }
 
   if (!project || !isTauri()) {
-    const ranked = rankDefinitionCandidates(local, sourcePath, context, importTarget)
-    if (ranked.length > 0) showCandidates(identifier.name, ranked)
-    else
-      projectState.pushToast(
-        'info',
-        translate('未找到「{symbol}」的定义', { symbol: identifier.name })
-      )
-    return
+    return rankDefinitionCandidates(local, sourcePath, context, importTarget)
   }
 
   try {
@@ -302,38 +327,49 @@ export async function goToHeuristicDefinition(
         maxFiles: 8000,
       }
     )
-    if (request !== navigationRequest) return
-    const native = response.definitions.map(
-      (candidate): DefinitionCandidate => ({
-        ...candidate,
-        score: 0,
-      })
-    )
+    const native = response.definitions.map((candidate): DefinitionCandidate => ({
+      ...candidate,
+      score: 0,
+    }))
     const ranked = rankDefinitionCandidates(
       deduplicate([...local, ...native]),
       sourcePath,
       context,
       importTarget
     )
-    if (ranked.length === 0) {
-      projectState.pushToast(
-        'info',
-        translate('未找到「{symbol}」的定义', { symbol: identifier.name })
-      )
+    return ranked
+  } catch (error) {
+    const ranked = rankDefinitionCandidates(local, sourcePath, context, importTarget)
+    if (ranked.length > 0) return ranked
+    throw error
+  }
+}
+
+/** Main Ctrl+click entry point. */
+export async function goToDefinition(
+  state: EditorState,
+  sourcePath: string,
+  identifier: IdentifierRange
+): Promise<void> {
+  const request = ++navigationRequest
+  try {
+    const candidates = await resolveDefinitionCandidates(state, sourcePath, identifier)
+    if (request !== navigationRequest) return
+    if (candidates.length === 0) {
+      useProjectStore
+        .getState()
+        .pushToast('info', translate('未找到「{symbol}」的定义', { symbol: identifier.name }))
       return
     }
-    showCandidates(identifier.name, ranked)
+    showCandidates(identifier.name, candidates)
   } catch (error) {
     if (request !== navigationRequest) return
-    const ranked = rankDefinitionCandidates(local, sourcePath, context, importTarget)
-    if (ranked.length > 0) {
-      showCandidates(identifier.name, ranked)
-      return
-    }
-    projectState.pushToast(
-      'error',
-      translate('查找「{symbol}」定义失败', { symbol: identifier.name }),
-      String(error)
-    )
+    useProjectStore
+      .getState()
+      .pushToast(
+        'error',
+        translate('查找「{symbol}」定义失败', { symbol: identifier.name }),
+        String(error)
+      )
   }
 }

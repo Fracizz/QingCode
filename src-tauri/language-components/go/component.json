@@ -1,0 +1,7 @@
+{
+  "abiVersion": 1,
+  "id": "go",
+  "name": "Go",
+  "grammars": ["go"],
+  "extensions": ["go"]
+}

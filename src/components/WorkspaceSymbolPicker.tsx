@@ -27,6 +27,7 @@ export default function WorkspaceSymbolPicker() {
   const [results, setResults] = useState<WorkspaceSymbolCandidate[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [partial, setPartial] = useState(false)
 
   useEffect(() => {
     if (!open) return
@@ -34,6 +35,7 @@ export default function WorkspaceSymbolPicker() {
       setQuery('')
       setResults([])
       setActiveIndex(0)
+      setPartial(false)
     })
     const id = window.setTimeout(() => inputRef.current?.focus(), 0)
     return () => window.clearTimeout(id)
@@ -42,17 +44,19 @@ export default function WorkspaceSymbolPicker() {
   useEffect(() => {
     if (!open || !project) return
     const request = ++requestRef.current
-    setLoading(true)
     const id = window.setTimeout(() => {
+      setLoading(true)
       void searchWorkspaceSymbols(project.path, query)
-        .then(items => {
+        .then(response => {
           if (request !== requestRef.current) return
-          setResults(items)
+          setResults(response.definitions)
+          setPartial(!response.complete || response.truncated)
           setActiveIndex(0)
         })
         .catch(() => {
           if (request !== requestRef.current) return
           setResults([])
+          setPartial(false)
         })
         .finally(() => {
           if (request === requestRef.current) setLoading(false)
@@ -131,6 +135,9 @@ export default function WorkspaceSymbolPicker() {
             className="modal-search-input"
           />
           <span className="text-ui-sm text-fg-dim">{results.length}</span>
+          {partial && (
+            <span className="text-ui-sm text-warn">{t('索引构建中，结果可能不完整')}</span>
+          )}
           <kbd className="rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] text-fg-dim">
             Esc
           </kbd>

@@ -73,6 +73,26 @@ class Bar:
     )
   })
 
+  it('extracts Python assignment targets for local definition navigation', () => {
+    const state = stateWith(
+      python(),
+      `xu_logger = build_logger()
+typed_logger: Logger = build_logger()
+def run():
+  local_logger = build_logger()
+  print(local_logger)
+`,
+    )
+    const symbols = extractEditorSymbols(state, 5000)
+    expect(symbols).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'xu_logger', kind: 'variable' }),
+        expect.objectContaining({ name: 'typed_logger', kind: 'variable' }),
+        expect.objectContaining({ name: 'local_logger', kind: 'variable' }),
+      ]),
+    )
+  })
+
   it('extracts Rust, Go, and Java declarations', () => {
     const rustSymbols = extractEditorSymbols(
       stateWith(

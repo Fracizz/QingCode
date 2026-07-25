@@ -1,0 +1,7 @@
+{
+  "abiVersion": 1,
+  "id": "python",
+  "name": "Python",
+  "grammars": ["python"],
+  "extensions": ["py", "pyw"]
+}

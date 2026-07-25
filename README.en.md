@@ -96,6 +96,8 @@ The explorer shows only the active project. Create, rename, and delete in place;
 
 Multi-tab editing with on-demand highlighting for common languages; auto-detect UTF-8 / BOM / GB18030-compatible text; external changes can be reloaded or compared instead of overwritten silently. Large files degrade or open read-only. Editor and terminal sessions restore after restart (opening a project no longer auto-creates an empty terminal).
 
+The editor includes lightweight code navigation without requiring a full LSP: `Ctrl+click` goes to a definition with a hover preview, `Shift+F12` finds variable / function usages, and `Ctrl+T` searches workspace symbols. A Tree-sitter incremental index keeps the interaction fast; it targets IDE-like everyday navigation, not compiler-grade type inference. Python, TypeScript/JavaScript, Java, Rust, and Go are five independent language components. The Windows installer lets you select each one, and a missing component disables only semantic navigation for that language—not normal text editing.
+
 ### Source Control workspace
 
 Opening Source Control fills the main editor area (click again to return to the explorer):
@@ -117,7 +119,7 @@ Search file names or contents in a chosen scope; replace stays collapsed until y
 | Role | Multi-project ops companion | Extensible platform editor | Native high-performance editor |
 | Multi-project switching | Title-bar pins; sessions kept | Workspace-centric | Typical single-project focus |
 | Service / task startup | **Multi-task run configs → many terminals** | Strong tasks / launch | Available, different shape |
-| LSP / debug / marketplace | Intentionally not a full IDE | Full stack | Strong LSP, smaller ecosystem |
+| Navigation / debug / marketplace | Lightweight Tree-sitter navigation; no full LSP / debugger / marketplace | Full stack | Strong LSP, smaller ecosystem |
 | AI | No built-in model; terminal profiles + CLI Skill for external agents | Extensions or built-in | Built-in leaning |
 
 QingCode **deliberately skips** full IntelliSense, a debugger, and an extension marketplace. Keep VS Code / Zed / Cursor for deep editing; use QingCode to manage which projects are open, which services are up, and which terminals are live.
@@ -142,11 +144,11 @@ Download from [GitHub Releases](https://github.com/Fracizz/QingCode/releases) or
 
 | Platform | Arch | Recommended file |
 |----------|------|------------------|
-| Windows | x64 | `QingCode_*-windows-x64.exe` or `QingCode_*.exe` |
+| Windows | x64 | `QingCode_*-windows-x64-setup.exe` (recommended) or portable `.exe` |
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` or `.zip` |
 
-- Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/). The installer tries an automatic download first; on failure, Yes opens the bootstrapper download and No opens the product page  
+- Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/). The installer tries an automatic download first; on failure, Yes opens the bootstrapper download and No opens the product page. Lightweight-navigation components are currently installed through the setup package: TypeScript/JavaScript, Python, and Java are selected by default; Rust and Go are opt-in; all five can be toggled. The portable single-file build does not embed them
 - macOS: unsigned builds may need right-click → Open the first time  
 
 Local packaging (Windows x64 host):

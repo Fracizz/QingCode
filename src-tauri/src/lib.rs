@@ -1,6 +1,7 @@
 mod app_memory;
 mod app_paths;
 mod cli;
+mod code_navigation;
 mod commands;
 mod content_search;
 mod exclude;
@@ -12,6 +13,7 @@ mod format;
 mod git;
 mod git_status;
 mod ipc;
+mod language_components;
 mod path_guard;
 mod symbol_search;
 mod terminal;
@@ -326,6 +328,7 @@ pub fn run() {
         .manage(TerminalManager::new())
         .manage(FileWatcherManager::new())
         .manage(PathAllowlist::new())
+        .manage(code_navigation::SemanticNavigationState::new())
         .manage(symbol_search::SymbolSearchState::new())
         .manage(LaunchFiles(Mutex::new(launch_files)))
         .setup(|app| {
@@ -378,6 +381,14 @@ pub fn run() {
             symbol_search::search_symbol_definitions,
             symbol_search::search_symbol_references,
             symbol_search::search_workspace_symbols,
+            code_navigation::prepare_semantic_index,
+            code_navigation::update_semantic_overlay,
+            code_navigation::clear_semantic_overlay,
+            code_navigation::resolve_symbol_at,
+            code_navigation::find_symbol_usages_at,
+            code_navigation::search_indexed_workspace_symbols,
+            code_navigation::semantic_index_status,
+            language_components::language_component_statuses,
             commands::list_file_extensions,
             commands::create_file,
             commands::create_directory,

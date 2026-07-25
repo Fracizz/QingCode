@@ -36,8 +36,8 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
   },
   {
     id: 'findCalls',
-    label: '查找调用',
-    description: '查找当前光标处函数或方法在项目中的调用位置。',
+    label: '查找用法',
+    description: '查找当前光标处符号的调用、读取、写入和导入位置。',
   },
   {
     id: 'searchAllProjects',

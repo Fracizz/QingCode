@@ -15,7 +15,7 @@ import {
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import type { ShortcutMap } from '../lib/shortcuts'
-import { findCallsAtActiveEditor } from '../lib/symbolNavigation'
+import { findUsagesAtActiveEditor } from '../lib/symbolNavigation'
 
 function isTerminalKeyTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('.xterm'))
@@ -93,7 +93,7 @@ export function useAppKeyboardShortcuts({
         openSymbolPicker()
       } else if (shortcutMatchesEvent(shortcuts.findCalls, event)) {
         event.preventDefault()
-        void findCallsAtActiveEditor()
+        void findUsagesAtActiveEditor()
       } else if (shortcutMatchesEvent(shortcuts.searchAllProjects, event)) {
         event.preventDefault()
         useUIStore.getState().requestGlobalSearch()

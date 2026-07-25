@@ -2396,7 +2396,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e9ec52138abedcc58dc17a7c6c0c00a2bdb4f3427c7f63fa97fd0d859155caf"
 dependencies = [
  "gtk-sys",
- "libloading",
+ "libloading 0.7.4",
  "once_cell",
 ]
 
@@ -2423,6 +2423,16 @@ checksum = "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f"
 dependencies = [
  "cfg-if",
  "winapi",
+]
+
+[[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link 0.2.1",
 ]
 
 [[package]]
@@ -3354,6 +3364,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "ignore",
+ "libloading 0.8.9",
  "notify",
  "notify-debouncer-mini",
  "portable-pty",
@@ -3370,6 +3381,7 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-java",
  "tree-sitter-javascript",
+ "tree-sitter-language",
  "tree-sitter-python",
  "tree-sitter-rust",
  "tree-sitter-tags",
@@ -3377,6 +3389,42 @@ dependencies = [
  "ureq",
  "uuid",
  "winreg 0.55.0",
+]
+
+[[package]]
+name = "qingcode-language-go"
+version = "0.1.0"
+dependencies = [
+ "tree-sitter-go",
+]
+
+[[package]]
+name = "qingcode-language-java"
+version = "0.1.0"
+dependencies = [
+ "tree-sitter-java",
+]
+
+[[package]]
+name = "qingcode-language-python"
+version = "0.1.0"
+dependencies = [
+ "tree-sitter-python",
+]
+
+[[package]]
+name = "qingcode-language-rust"
+version = "0.1.0"
+dependencies = [
+ "tree-sitter-rust",
+]
+
+[[package]]
+name = "qingcode-language-typescript"
+version = "0.1.0"
+dependencies = [
+ "tree-sitter-javascript",
+ "tree-sitter-typescript",
 ]
 
 [[package]]

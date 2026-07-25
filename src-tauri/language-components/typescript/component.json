@@ -1,0 +1,7 @@
+{
+  "abiVersion": 1,
+  "id": "typescript",
+  "name": "TypeScript / JavaScript",
+  "grammars": ["javascript", "typescript", "tsx"],
+  "extensions": ["js", "jsx", "mjs", "cjs", "ts", "mts", "cts", "tsx"]
+}

@@ -1,0 +1,7 @@
+{
+  "abiVersion": 1,
+  "id": "java",
+  "name": "Java",
+  "grammars": ["java"],
+  "extensions": ["java"]
+}

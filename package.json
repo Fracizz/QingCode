@@ -14,7 +14,7 @@
     "preview": "vite preview",
     "check": "pnpm check:frontend && pnpm check:rust",
     "check:frontend": "tsc --noEmit && vitest run --coverage && pnpm lint",
-    "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml",
+    "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --workspace",
     "lint": "eslint .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

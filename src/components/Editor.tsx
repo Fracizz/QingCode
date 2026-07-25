@@ -74,8 +74,14 @@ import { FONT_SETTINGS_EVENT, loadFontSettings } from '../lib/fontSettings'
 import { buildEditorPreferenceExtensions } from '../lib/editorSettingsExtensions'
 import { reliableClickMouseSelection } from '../lib/editorMouseSelection'
 import { editorDefinitionLink } from '../lib/editorDefinitionLink'
-import { goToHeuristicDefinition, identifierAt } from '../lib/definitionNavigation'
-import { findCallsAtActiveEditor } from '../lib/symbolNavigation'
+import {
+  goToDefinition,
+  identifierAt,
+  resolveDefinitionCandidates,
+} from '../lib/definitionNavigation'
+import { findUsagesAtActiveEditor, findUsagesAtEditor } from '../lib/symbolNavigation'
+import { scheduleSemanticOverlay } from '../lib/semanticNavigation'
+import { useDefinitionPreviewStore } from '../store/definitionPreviewStore'
 import {
   editorHasOccurrenceHighlight,
   occurrenceHighlightMarker,
@@ -109,10 +115,7 @@ import { formatDocument } from '../lib/formatDocument'
 import { loadEffectiveTerminalScrollback } from '@/lib/terminal/terminalScrollbackSettings'
 import { copyRelativePathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
-import {
-  isSupportedEditorLanguage,
-  loadLanguageSupport,
-} from '../lib/editorLanguages'
+import { isSupportedEditorLanguage, loadLanguageSupport } from '../lib/editorLanguages'
 import {
   clearFlashEffect,
   editorThemeExtension,
@@ -169,7 +172,7 @@ function createTabEditorState(
   settingsCompartment: Compartment,
   markDirty: (id: string) => void,
   saveFile: (id: string) => Promise<void>,
-  setCursor: (cursor: { line: number; col: number } | null) => void,
+  setCursor: (cursor: { line: number; col: number } | null) => void
 ): EditorState {
   const tabId = tab.id
   const tabPath = tab.path
@@ -179,14 +182,10 @@ function createTabEditorState(
   const deferHighlight = profile === 'full' && !huge
   const initialLang: Extension = []
   const basePrefs = getEditorPreferences()
-  const prefs =
-    profile === 'full'
-      ? basePrefs
-      : { ...basePrefs, wordWrap: 'off' as const }
+  const prefs = profile === 'full' ? basePrefs : { ...basePrefs, wordWrap: 'off' as const }
   const showLineNumbers = prefs.lineNumbers !== 'off'
   const settingsContent = profile === 'full' ? tab.content : undefined
-  const enableBracketDecorations =
-    profile === 'full' && !large && !huge && !deferHighlight
+  const enableBracketDecorations = profile === 'full' && !large && !huge && !deferHighlight
 
   // Own occurrence highlighter for every profile (main overlay + other hits).
   const occurrenceHighlight: Extension[] = [
@@ -215,15 +214,46 @@ function createTabEditorState(
       settingsCompartment.of(
         buildEditorPreferenceExtensions(prefs, settingsContent, {
           enableBracketDecorations,
-        }),
+        })
       ),
       flashField,
       preserveSelectionTokenColors(),
       // Kept outside compartments so every profile (incl. large/degraded) gets matches.
       occurrenceHighlight,
-      editorDefinitionLink((view, identifier) =>
-        goToHeuristicDefinition(view.state, tabPath, identifier)
-      ),
+      editorDefinitionLink({
+        navigate: (view, identifier) => goToDefinition(view.state, tabPath, identifier),
+        preview: async (view, identifier, anchor, requestId, isCurrent) => {
+          const preview = useDefinitionPreviewStore.getState()
+          preview.beginPreview({
+            requestId,
+            symbol: identifier.name,
+            anchor,
+            onFindUsages: () => findUsagesAtEditor(tabPath, view.state, identifier.from, anchor),
+          })
+          try {
+            const candidates = await resolveDefinitionCandidates(view.state, tabPath, identifier)
+            if (!isCurrent()) return
+            useDefinitionPreviewStore.getState().completePreview(requestId, candidates)
+          } catch {
+            if (isCurrent()) {
+              useDefinitionPreviewStore.getState().failPreview(requestId)
+            }
+          }
+        },
+        setModifierHeld: held => useDefinitionPreviewStore.getState().setModifierHeld(held),
+        dismissPreview: (modifierHeld, force = false) => {
+          const preview = useDefinitionPreviewStore.getState()
+          preview.setModifierHeld(modifierHeld)
+          if (force) {
+            preview.closePreview(true)
+            return
+          }
+          window.setTimeout(() => {
+            const current = useDefinitionPreviewStore.getState()
+            if (!current.modifierHeld) current.closePreview()
+          }, 140)
+        },
+      }),
       reliableClickMouseSelection(),
       EditorView.updateListener.of(update => {
         emitMinimapUpdate(update)
@@ -231,12 +261,9 @@ function createTabEditorState(
           // Avoid full-document copies into Zustand on every keystroke.
           markDirty(tabId)
           notifyEditorContentChanged(tabId)
+          scheduleSemanticOverlay(tabPath, update.state)
           const pasted = update.transactions.some(tr => tr.isUserEvent('input.paste'))
-          if (
-            pasted &&
-            profile === 'full' &&
-            getEditorPreferences().formatOnPaste
-          ) {
+          if (pasted && profile === 'full' && getEditorPreferences().formatOnPaste) {
             void formatDocument(tabId, { quiet: true })
           }
         }
@@ -258,16 +285,11 @@ function createTabEditorState(
           key: 'Ctrl-Shift-c',
           run: () => {
             void copyToClipboard(tabPath)
-              .then(() =>
-                useProjectStore.getState().pushToast('success', translate('路径已复制'))
-              )
+              .then(() => useProjectStore.getState().pushToast('success', translate('路径已复制')))
               .catch(error =>
                 useProjectStore
                   .getState()
-                  .pushToast(
-                    'error',
-                    translate('复制路径失败: {error}', { error: String(error) })
-                  )
+                  .pushToast('error', translate('复制路径失败: {error}', { error: String(error) }))
               )
             return true
           },
@@ -277,8 +299,7 @@ function createTabEditorState(
           run: () => {
             const projectState = useProjectStore.getState()
             const project =
-              findProjectForPath(projectState.projects, tabPath) ??
-              projectState.currentProject
+              findProjectForPath(projectState.projects, tabPath) ?? projectState.currentProject
             if (!project) return false
             const relative = projectRelativePath(project.path, tabPath)
             void copyToClipboard(relative)
@@ -288,10 +309,7 @@ function createTabEditorState(
               .catch(error =>
                 useProjectStore
                   .getState()
-                  .pushToast(
-                    'error',
-                    translate('复制路径失败: {error}', { error: String(error) })
-                  )
+                  .pushToast('error', translate('复制路径失败: {error}', { error: String(error) }))
               )
             return true
           },
@@ -301,8 +319,7 @@ function createTabEditorState(
           run: view => {
             const projectState = useProjectStore.getState()
             const project =
-              findProjectForPath(projectState.projects, tabPath) ??
-              projectState.currentProject
+              findProjectForPath(projectState.projects, tabPath) ?? projectState.currentProject
             if (!project) return false
             const { startLine, endLine } = selectionLineRange(view)
             const reference = formatFileReference(project, tabPath, startLine, endLine)
@@ -313,10 +330,7 @@ function createTabEditorState(
               .catch(error =>
                 useProjectStore
                   .getState()
-                  .pushToast(
-                    'error',
-                    translate('复制引用失败: {error}', { error: String(error) })
-                  )
+                  .pushToast('error', translate('复制引用失败: {error}', { error: String(error) }))
               )
             return true
           },
@@ -354,7 +368,7 @@ function scheduleHeavyEditorFeatures(
   boundTabIdRef: RefObject<string | null>,
   tab: EditorTab,
   languageCompartment: Compartment,
-  settingsCompartment: Compartment,
+  settingsCompartment: Compartment
 ): () => void {
   const profile = editorPerfProfileForTab(tab)
   if (profile !== 'full' || isHugeDocument(tab.content)) return () => {}
@@ -384,7 +398,7 @@ function scheduleHeavyEditorFeatures(
         effects: settingsCompartment.reconfigure(
           buildEditorPreferenceExtensions(prefs, tab.content, {
             enableBracketDecorations: true,
-          }),
+          })
         ),
       })
     }
@@ -400,7 +414,7 @@ function bindTabToView(
   markDirty: (id: string) => void,
   saveFile: (id: string) => Promise<void>,
   setCursor: (cursor: { line: number; col: number } | null) => void,
-  previousTabId: string | null,
+  previousTabId: string | null
 ): { tabId: string; fresh: boolean } {
   if (previousTabId && previousTabId !== tab.id) {
     captureEditorScroll(previousTabId, view)
@@ -411,9 +425,7 @@ function bindTabToView(
 
   const cached = takeCachedEditorState(tab.id)
   const usableCache =
-    cached &&
-    editorHasOccurrenceHighlight(cached) &&
-    editorHasCursorBracketHighlight(cached)
+    cached && editorHasOccurrenceHighlight(cached) && editorHasCursorBracketHighlight(cached)
       ? cached
       : undefined
   const fresh = !usableCache
@@ -432,7 +444,7 @@ function bindTabToView(
       settingsCompartment,
       markDirty,
       saveFile,
-      setCursor,
+      setCursor
     )
 
   view.setState(state)
@@ -451,18 +463,14 @@ function bindTabToView(
       ? getEditorPreferences()
       : { ...getEditorPreferences(), wordWrap: 'off' as const }
   const enableBracketDecorations =
-    profile === 'full' &&
-    !isLargeDocument(tab.content) &&
-    !isHugeDocument(tab.content)
+    profile === 'full' && !isLargeDocument(tab.content) && !isHugeDocument(tab.content)
   view.dispatch({
     effects: [
       themeCompartment.reconfigure(editorThemeExtension()),
       settingsCompartment.reconfigure(
-        buildEditorPreferenceExtensions(
-          prefs,
-          profile === 'full' ? tab.content : undefined,
-          { enableBracketDecorations },
-        ),
+        buildEditorPreferenceExtensions(prefs, profile === 'full' ? tab.content : undefined, {
+          enableBracketDecorations,
+        })
       ),
     ],
   })
@@ -554,8 +562,7 @@ export default function Editor() {
     const previousTabId = boundTabIdRef.current
     const epoch = activeTab.contentEpoch ?? 0
     const staleExtensions =
-      !editorHasOccurrenceHighlight(view.state) ||
-      !editorHasCursorBracketHighlight(view.state)
+      !editorHasOccurrenceHighlight(view.state) || !editorHasCursorBracketHighlight(view.state)
     let cancelHeavy: (() => void) | undefined
     if (previousTabId !== activeTab.id) {
       const bind = bindTabToView(
@@ -567,7 +574,7 @@ export default function Editor() {
         markDirty,
         saveFile,
         setCursor,
-        previousTabId,
+        previousTabId
       )
       boundTabIdRef.current = bind.tabId
       boundEpochRef.current = epoch
@@ -577,7 +584,7 @@ export default function Editor() {
           boundTabIdRef,
           activeTab,
           languageCompartment.current,
-          settingsCompartment.current,
+          settingsCompartment.current
         )
       }
     } else if (epoch !== boundEpochRef.current || staleExtensions) {
@@ -594,7 +601,7 @@ export default function Editor() {
         markDirty,
         saveFile,
         setCursor,
-        null,
+        null
       )
       boundTabIdRef.current = bind.tabId
       cancelHeavy = scheduleHeavyEditorFeatures(
@@ -602,7 +609,7 @@ export default function Editor() {
         boundTabIdRef,
         activeTab,
         languageCompartment.current,
-        settingsCompartment.current,
+        settingsCompartment.current
       )
     }
 
@@ -629,7 +636,8 @@ export default function Editor() {
   useEffect(() => {
     const onTheme = () => {
       const view = viewRef.current
-      if (view) view.dispatch({ effects: themeCompartment.current.reconfigure(editorThemeExtension()) })
+      if (view)
+        view.dispatch({ effects: themeCompartment.current.reconfigure(editorThemeExtension()) })
     }
     window.addEventListener(THEME_SETTINGS_EVENT, onTheme)
     return () => window.removeEventListener(THEME_SETTINGS_EVENT, onTheme)
@@ -638,17 +646,17 @@ export default function Editor() {
   useEffect(() => {
     void loadEffectiveEditorPreferences(currentProject)
     void import('../lib/fileSizeSettings').then(m =>
-      m.loadEffectiveFileSizePreferences(currentProject),
+      m.loadEffectiveFileSizePreferences(currentProject)
     )
     void import('../lib/formatOnSaveSettings').then(m =>
-      m.loadEffectiveFormatOnSave(currentProject),
+      m.loadEffectiveFormatOnSave(currentProject)
     )
     void migrateLegacyMinimapProjectSetting(currentProject).finally(() => {
       void loadEffectiveMinimapEnabled(currentProject)
     })
     void loadEffectiveTerminalScrollback(currentProject)
     void import('@/lib/terminal/terminalCursorSettings').then(m =>
-      m.loadEffectiveTerminalCursorBlinking(currentProject),
+      m.loadEffectiveTerminalCursorBlinking(currentProject)
     )
   }, [currentProject])
 
@@ -671,16 +679,12 @@ export default function Editor() {
           ? (prefs ?? getEditorPreferences())
           : { ...(prefs ?? getEditorPreferences()), wordWrap: 'off' as const }
       const enableBracketDecorations =
-        profile === 'full' &&
-        !isLargeDocument(tab?.content) &&
-        !isHugeDocument(tab?.content)
+        profile === 'full' && !isLargeDocument(tab?.content) && !isHugeDocument(tab?.content)
       view.dispatch({
         effects: settingsCompartment.current.reconfigure(
-          buildEditorPreferenceExtensions(
-            next,
-            profile === 'full' ? tab?.content : undefined,
-            { enableBracketDecorations },
-          ),
+          buildEditorPreferenceExtensions(next, profile === 'full' ? tab?.content : undefined, {
+            enableBracketDecorations,
+          })
         ),
       })
     }
@@ -759,7 +763,14 @@ export default function Editor() {
   }, [])
 
   useEffect(() => {
-    if (!viewRef.current || !activeTab || isOpenErrorTab(activeTab) || isLoadingTab(activeTab) || !pendingReveal) return
+    if (
+      !viewRef.current ||
+      !activeTab ||
+      isOpenErrorTab(activeTab) ||
+      isLoadingTab(activeTab) ||
+      !pendingReveal
+    )
+      return
     if (pendingReveal.path !== activeTab.path) return
     const doc = viewRef.current.state.doc
     const lineNum = Math.min(Math.max(1, pendingReveal.line), doc.lines)
@@ -768,16 +779,10 @@ export default function Editor() {
       typeof pendingReveal.from === 'number'
         ? Math.min(Math.max(0, pendingReveal.from), doc.length)
         : typeof pendingReveal.column === 'number'
-          ? Math.min(
-              Math.max(line.from, line.from + pendingReveal.column - 1),
-              line.to,
-            )
+          ? Math.min(Math.max(line.from, line.from + pendingReveal.column - 1), line.to)
           : line.from
     viewRef.current.dispatch({
-      effects: [
-        EditorView.scrollIntoView(pos, { y: 'center' }),
-        flashLineEffect.of(lineNum),
-      ],
+      effects: [EditorView.scrollIntoView(pos, { y: 'center' }), flashLineEffect.of(lineNum)],
       selection: { anchor: pos },
     })
     viewRef.current.focus()
@@ -807,9 +812,7 @@ export default function Editor() {
       useProjectStore.getState().pushToast('error', t('无法确定该路径所属项目'))
       return
     }
-    const { startLine, endLine } = view
-      ? selectionLineRange(view)
-      : { startLine: 1, endLine: 1 }
+    const { startLine, endLine } = view ? selectionLineRange(view) : { startLine: 1, endLine: 1 }
     const reference = formatFileReference(project, path, startLine, endLine)
     try {
       await copyToClipboard(reference)
@@ -841,8 +844,7 @@ export default function Editor() {
     const canEditSelection = !!view && hasNonEmptySelection(view)
     const canUndo = !!view && undoDepth(view.state) > 0
     const canRedo = !!view && redoDepth(view.state) > 0
-    const canFindCalls =
-      !!view && !!identifierAt(view.state, view.state.selection.main.head)
+    const canFindCalls = !!view && !!identifierAt(view.state, view.state.selection.main.head)
 
     return [
       {
@@ -938,11 +940,11 @@ export default function Editor() {
         },
       },
       {
-        label: t('查找调用'),
+        label: t('查找用法'),
         icon: <GitFork size={14} />,
         shortcut: 'Shift+F12',
         disabled: !canFindCalls,
-        action: () => void findCallsAtActiveEditor(),
+        action: () => void findUsagesAtActiveEditor(),
       },
       {
         label: t('复制路径'),
@@ -983,7 +985,7 @@ export default function Editor() {
               separatorBefore: true,
               action: () =>
                 setMdPreviewMode(mode =>
-                  mode === 'off' ? 'side' : mode === 'side' ? 'preview' : 'off',
+                  mode === 'off' ? 'side' : mode === 'side' ? 'preview' : 'off'
                 ),
             } satisfies ContextMenuItem,
           ]
@@ -1093,7 +1095,9 @@ export default function Editor() {
               <BookOpen size={12} />
               {t('预览')}
             </button>
-            <span className="ml-auto"><Kbd>Ctrl+Shift+V</Kbd></span>
+            <span className="ml-auto">
+              <Kbd>Ctrl+Shift+V</Kbd>
+            </span>
           </div>
         )}
         <div className="flex min-h-0 flex-1 overflow-hidden">
