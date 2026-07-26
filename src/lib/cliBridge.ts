@@ -1,14 +1,16 @@
 import { listen } from '@tauri-apps/api/event'
 import { safeInvoke, isTauri } from './tauri'
 import { authorizePaths } from './pathAllowlist'
-import {
-  normalizeProjectPath,
-  pushTrustedRootsToNative,
-  trustProject,
-} from './workspaceTrust'
+import { normalizeProjectPath, pushTrustedRootsToNative, trustProject } from './workspaceTrust'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useRunConfigStore } from '../store/runConfigStore'
+import {
+  isConfigRunning,
+  runConfig,
+  runningTaskKeysForConfig,
+  stopConfig,
+} from './runConfigRuntime'
 import type { Project } from '../types'
 
 interface CliRequest {
@@ -94,27 +96,29 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       if (!req.config) throw new Error('config is required')
       const project = resolveProject(req.project)
       const config = await resolveConfig(project, req.config)
-      await useRunConfigStore.getState().runConfig(project, config)
+      await runConfig(project, config)
       return { project: project.path, config: { id: config.id, name: config.name } }
     }
     case 'run.stop': {
       if (!req.config) throw new Error('config is required')
       const project = resolveProject(req.project)
       const config = await resolveConfig(project, req.config)
-      await useRunConfigStore.getState().stopConfig(config)
+      await stopConfig(config)
       return { project: project.path, config: { id: config.id, name: config.name } }
     }
     case 'run.status': {
       const project = resolveProject(req.project)
       const configs = await useRunConfigStore.getState().loadConfigs(project)
-      const store = useRunConfigStore.getState()
       const running = configs.map(c => ({
         id: c.id,
         name: c.name,
-        running: store.isConfigRunning(c.id),
-        terminals: store.runningConfigs[c.id] ?? [],
+        running: isConfigRunning(c.id),
+        terminals: runningTaskKeysForConfig(c.id),
       }))
-      return { project: { id: project.id, name: project.name, path: project.path }, configs: running }
+      return {
+        project: { id: project.id, name: project.name, path: project.path },
+        configs: running,
+      }
     }
     case 'trust.grant': {
       if (!req.path) throw new Error('path is required')

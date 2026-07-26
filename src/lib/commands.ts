@@ -5,30 +5,21 @@ import { saveScopedAutoSaveSettings } from './autoSaveSettings'
 import { formatDocument } from './formatDocument'
 import { translate } from './i18n'
 import { panelLayoutModeLabel, resolvePanelLayoutMode } from './panelLayoutMode'
-import {
-  ensureSettingsFile,
-  resolveGlobalSettingsPath,
-} from './projectSettings'
+import { ensureSettingsFile, resolveGlobalSettingsPath } from './projectSettings'
 import { isTauri } from './tauri'
-import {
-  getResolvedTheme,
-  loadTheme,
-  saveTheme,
-  type AppTheme,
-} from './themeSettings'
+import { getResolvedTheme, loadTheme, saveTheme, type AppTheme } from './themeSettings'
 import type { ShortcutCommand, ShortcutMap } from './shortcuts'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useRunConfigStore } from '../store/runConfigStore'
+import { runConfig } from './runConfigRuntime'
 import { promptDialog } from '../store/promptStore'
 import { useSymbolPickerStore } from '../store/symbolPickerStore'
 import { useWorkspaceSymbolPickerStore } from '../store/workspaceSymbolPickerStore'
 import { useUIStore } from '../store/uiStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { openGitCompareWithHead } from '@/lib/git/gitCompare'
-import {
-  saveVisibleProjectsAsWorkspace,
-} from './namedWorkspaceActions'
+import { saveVisibleProjectsAsWorkspace } from './namedWorkspaceActions'
 import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/terminalViewBridge'
 import { useTerminalStore } from '../store/terminalStore'
 import { findUsagesAtActiveEditor } from './symbolNavigation'
@@ -82,7 +73,7 @@ export function fuzzyScore(query: string, text: string): number {
 export function filterCommands(
   commands: AppCommand[],
   query: string,
-  translateTitle: (title: string, values?: Record<string, string | number>) => string = translate,
+  translateTitle: (title: string, values?: Record<string, string | number>) => string = translate
 ): RankedCommand[] {
   const trimmed = query.trim()
   const ranked: RankedCommand[] = []
@@ -105,7 +96,7 @@ export function filterCommands(
 
 export function resolveCommandShortcut(
   command: AppCommand,
-  shortcuts: ShortcutMap,
+  shortcuts: ShortcutMap
 ): string | undefined {
   if (command.shortcutCommand) {
     const binding = shortcuts[command.shortcutCommand]
@@ -129,7 +120,9 @@ function cycleTheme() {
   const next = order[(Math.max(0, idx) + 1) % order.length]
   saveTheme(next)
   const label = next === 'dark' ? '深色' : next === 'light' ? '浅色' : '森林'
-  useProjectStore.getState().pushToast('info', translate('已切换主题：{theme}', { theme: translate(label) }))
+  useProjectStore
+    .getState()
+    .pushToast('info', translate('已切换主题：{theme}', { theme: translate(label) }))
 }
 
 async function openUserSettingsJson() {
@@ -161,7 +154,7 @@ async function toggleAutoSave() {
     await saveScopedAutoSaveSettings('global', { mode: nextMode, delay: current.delay })
     pushToast(
       'info',
-      nextMode === 'off' ? translate('已关闭自动保存') : translate('已开启自动保存'),
+      nextMode === 'off' ? translate('已关闭自动保存') : translate('已开启自动保存')
     )
   } catch (error) {
     pushToast('error', translate('保存自动保存设置失败: {error}', { error: String(error) }))
@@ -185,10 +178,11 @@ export function buildCommands(): AppCommand[] {
   const { saveFile, saveAs, closeTab, openFile } = useEditorStore.getState()
   const activeTab = activeEditableTab()
   const activeTabId = useEditorStore.getState().activeTabId
-  const dirtyCount = useEditorStore.getState().getAllTabs().filter(t => t.dirty).length
-  const configs = project
-    ? (useRunConfigStore.getState().configsByProject[project.id] ?? [])
-    : []
+  const dirtyCount = useEditorStore
+    .getState()
+    .getAllTabs()
+    .filter(t => t.dirty).length
+  const configs = project ? (useRunConfigStore.getState().configsByProject[project.id] ?? []) : []
 
   const commands: AppCommand[] = [
     {
@@ -248,7 +242,10 @@ export function buildCommands(): AppCommand[] {
       keywords: 'save all',
       when: () => dirtyCount > 0,
       run: async () => {
-        const dirtyTabs = useEditorStore.getState().getAllTabs().filter(tab => tab.dirty)
+        const dirtyTabs = useEditorStore
+          .getState()
+          .getAllTabs()
+          .filter(tab => tab.dirty)
         await Promise.all(dirtyTabs.map(tab => saveFile(tab.id)))
       },
     },
@@ -265,8 +262,9 @@ export function buildCommands(): AppCommand[] {
       when: () => !!useEditorStore.getState().activeTabId,
       run: async () => {
         const tab =
-          useEditorStore.getState().tabs.find(t => t.id === useEditorStore.getState().activeTabId) ??
-          null
+          useEditorStore
+            .getState()
+            .tabs.find(t => t.id === useEditorStore.getState().activeTabId) ?? null
         if (!tab) return
         if (await confirmDiscardTabs([tab], '关闭文件')) closeTab(tab.id)
       },
@@ -439,13 +437,10 @@ export function buildCommands(): AppCommand[] {
           translate('已切换为：{layout}', {
             layout: translate(
               panelLayoutModeLabel(
-                mode ??
-                  (sideDualTerminal || sideQuadTerminal
-                    ? 'sideDualEditor'
-                    : 'sideTerminal'),
-              ),
+                mode ?? (sideDualTerminal || sideQuadTerminal ? 'sideDualEditor' : 'sideTerminal')
+              )
             ),
-          }),
+          })
         )
       },
     },
@@ -518,17 +513,22 @@ export function buildCommands(): AppCommand[] {
       keywords: 'minimap glance codeglance overview',
       shortcutCommand: 'toggleMinimap',
       run: () => {
-        void import('./minimapSettings').then(async ({ getMinimapEnabled, saveScopedMinimapEnabled }) => {
-          const project = useProjectStore.getState().currentProject
-          const next = !getMinimapEnabled()
-          try {
-            await saveScopedMinimapEnabled('global', next, project)
-          } catch (error) {
-            useProjectStore
-              .getState()
-              .pushToast('error', translate('保存小地图设置失败: {error}', { error: String(error) }))
+        void import('./minimapSettings').then(
+          async ({ getMinimapEnabled, saveScopedMinimapEnabled }) => {
+            const project = useProjectStore.getState().currentProject
+            const next = !getMinimapEnabled()
+            try {
+              await saveScopedMinimapEnabled('global', next, project)
+            } catch (error) {
+              useProjectStore
+                .getState()
+                .pushToast(
+                  'error',
+                  translate('保存小地图设置失败: {error}', { error: String(error) })
+                )
+            }
           }
-        })
+        )
       },
     },
     {
@@ -587,7 +587,7 @@ export function buildCommands(): AppCommand[] {
         title: '运行「{name}」',
         titleValues: { name: config.name },
         keywords: `run task ${config.name}`,
-        run: () => void useRunConfigStore.getState().runConfig(project, config),
+        run: () => void runConfig(project, config),
       })
     }
   }

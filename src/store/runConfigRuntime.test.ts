@@ -10,15 +10,18 @@ vi.mock('../lib/tauri', async importOriginal => {
 })
 import {
   activeTerminalsForConfig,
-  buildRunningMapsFromTerminals,
   findRunLinkageForTerminal,
+  isConfigRunning,
   isActiveRunTerminal,
-  rehydrateRunningFromTerminals,
+  rehydrateRunTerminals,
+  removeRunConfig,
+  runConfig,
   runTaskTerminalName,
-  stampMissingRunLinkage,
-  useRunConfigStore,
-  type RunConfig,
-} from './runConfigStore'
+  runningTaskKeysForConfig,
+  stopConfig,
+  taskTerminalId,
+} from '../lib/runConfigRuntime'
+import { useRunConfigStore, type RunConfig } from './runConfigStore'
 import { useTerminalStore } from './terminalStore'
 import { useProjectStore } from './projectStore'
 import type { TerminalTab } from '../types'
@@ -57,39 +60,34 @@ describe('run config runtime helpers', () => {
       addScriptTerminal: originalAddScriptTerminal,
       closeTerminal: originalCloseTerminal,
     })
-    useRunConfigStore.setState({ runningByTask: {}, runningConfigs: {} })
   })
 
   it('treats awaitingRestoreSpawn as active even when status is exited', () => {
-    expect(
-      isActiveRunTerminal({ status: 'exited', awaitingRestoreSpawn: true }),
-    ).toBe(true)
-    expect(
-      isActiveRunTerminal({ status: 'exited', awaitingRestoreSpawn: false }),
-    ).toBe(false)
+    expect(isActiveRunTerminal({ status: 'exited', awaitingRestoreSpawn: true })).toBe(true)
+    expect(isActiveRunTerminal({ status: 'exited', awaitingRestoreSpawn: false })).toBe(false)
     expect(isActiveRunTerminal({ status: 'running' })).toBe(true)
   })
 
-  it('builds running maps only from active stamped terminals', () => {
-    const { runningByTask, runningConfigs } = buildRunningMapsFromTerminals([
-      { id: 't1', runConfigId: 'cfg', runTaskId: 'a', status: 'running' },
-      { id: 't2', runConfigId: 'cfg', runTaskId: 'b', status: 'starting' },
-      {
-        id: 'awaiting',
-        runConfigId: 'cfg',
-        runTaskId: 'c',
-        status: 'exited',
-        awaitingRestoreSpawn: true,
-      },
-      { id: 'dead', runConfigId: 'cfg', runTaskId: 'd', status: 'exited' },
-      { id: 'plain', status: 'running' },
-    ])
-    expect(runningByTask).toEqual({
-      'cfg:a': 't1',
-      'cfg:b': 't2',
-      'cfg:c': 'awaiting',
+  it('derives running task state only from active stamped terminals', () => {
+    useTerminalStore.setState({
+      terminals: [
+        baseTab({ id: 't1', name: 'one', runConfigId: 'cfg', runTaskId: 'a', status: 'running' }),
+        baseTab({ id: 't2', name: 'two', runConfigId: 'cfg', runTaskId: 'b', status: 'starting' }),
+        baseTab({
+          id: 'awaiting',
+          name: 'awaiting',
+          runConfigId: 'cfg',
+          runTaskId: 'c',
+          status: 'exited',
+          awaitingRestoreSpawn: true,
+        }),
+        baseTab({ id: 'dead', name: 'dead', runConfigId: 'cfg', runTaskId: 'd', status: 'exited' }),
+        baseTab({ id: 'plain', name: 'plain', status: 'running' }),
+      ],
     })
-    expect(runningConfigs.cfg).toEqual(['cfg:a', 'cfg:b', 'cfg:c'])
+    expect(runningTaskKeysForConfig('cfg')).toEqual(['cfg:a', 'cfg:b', 'cfg:c'])
+    expect(taskTerminalId('cfg', 'b')).toBe('t2')
+    expect(isConfigRunning('cfg')).toBe(true)
   })
 
   it('builds stable task tab names for spawn and legacy relink', () => {
@@ -105,8 +103,8 @@ describe('run config runtime helpers', () => {
           launchCommand: 'uvicorn app:main',
           shellKind: 'command',
         },
-        sampleConfigs,
-      ),
+        sampleConfigs
+      )
     ).toEqual({ runConfigId: 'cfg', runTaskId: 'backend' })
   })
 
@@ -118,12 +116,12 @@ describe('run config runtime helpers', () => {
           launchCommand: 'pnpm dev',
           shellKind: 'command',
         },
-        sampleConfigs,
-      ),
+        sampleConfigs
+      )
     ).toEqual({ runConfigId: 'cfg', runTaskId: 'frontend' })
   })
 
-  it('stamps missing linkage and rehydrates running maps after restore', () => {
+  it('stamps missing linkage and derives running state after restore', () => {
     useTerminalStore.setState({
       terminals: [
         baseTab({
@@ -150,29 +148,21 @@ describe('run config runtime helpers', () => {
       ],
     })
 
-    expect(stampMissingRunLinkage(sampleConfigs)).toBe(2)
+    expect(rehydrateRunTerminals(sampleConfigs)).toBe(2)
     expect(useTerminalStore.getState().terminals[0].runConfigId).toBe('cfg')
     expect(useTerminalStore.getState().terminals[0].runTaskId).toBe('backend')
     expect(useTerminalStore.getState().terminals[1].runConfigId).toBe('cfg')
     expect(useTerminalStore.getState().terminals[1].runTaskId).toBe('frontend')
     expect(useTerminalStore.getState().terminals[2].runConfigId).toBeUndefined()
 
-    rehydrateRunningFromTerminals()
-    expect(useRunConfigStore.getState().runningByTask).toEqual({
-      'cfg:backend': 't-be',
-      'cfg:frontend': 't-fe',
-    })
-    expect(useRunConfigStore.getState().runningConfigs.cfg).toEqual([
-      'cfg:backend',
-      'cfg:frontend',
-    ])
+    expect(runningTaskKeysForConfig('cfg')).toEqual(['cfg:backend', 'cfg:frontend'])
     expect(activeTerminalsForConfig('cfg', useTerminalStore.getState().terminals)).toEqual([
       't-be',
       't-fe',
     ])
   })
 
-  it('rehydrateRunningFromTerminals accepts configs and stamps in one step', () => {
+  it('rehydrateRunTerminals accepts configs and stamps in one step', () => {
     useTerminalStore.setState({
       terminals: [
         baseTab({
@@ -184,9 +174,9 @@ describe('run config runtime helpers', () => {
         }),
       ],
     })
-    rehydrateRunningFromTerminals(sampleConfigs)
+    rehydrateRunTerminals(sampleConfigs)
     expect(useTerminalStore.getState().terminals[0].runConfigId).toBe('cfg')
-    expect(useRunConfigStore.getState().runningByTask['cfg:backend']).toBe('t1')
+    expect(taskTerminalId('cfg', 'backend')).toBe('t1')
   })
 
   it('runs, stops, and starts a multi-task configuration again', async () => {
@@ -198,7 +188,7 @@ describe('run config runtime helpers', () => {
       target,
       env,
       name,
-      linkage,
+      linkage
     ) => {
       const id = `terminal-${++sequence}`
       useTerminalStore.setState(state => ({
@@ -238,29 +228,26 @@ describe('run config runtime helpers', () => {
     }
     const config = sampleConfigs[0]
 
-    await useRunConfigStore.getState().runConfig(project, config)
+    await runConfig(project, config)
     expect(useTerminalStore.getState().terminals).toHaveLength(2)
     expect(useTerminalStore.getState().terminals.map(terminal => terminal.name)).toEqual([
       '前后端 · 后端',
       '前后端 · 前端',
     ])
-    expect(useRunConfigStore.getState().runningConfigs.cfg).toEqual([
-      'cfg:backend',
-      'cfg:frontend',
-    ])
-    expect(useRunConfigStore.getState().isConfigRunning('cfg')).toBe(true)
+    expect(runningTaskKeysForConfig('cfg')).toEqual(['cfg:backend', 'cfg:frontend'])
+    expect(isConfigRunning('cfg')).toBe(true)
 
-    await useRunConfigStore.getState().stopConfig(config)
+    await stopConfig(config)
     expect(useTerminalStore.getState().terminals).toEqual([])
-    expect(useRunConfigStore.getState().runningConfigs.cfg).toBeUndefined()
-    expect(useRunConfigStore.getState().isConfigRunning('cfg')).toBe(false)
+    expect(runningTaskKeysForConfig('cfg')).toEqual([])
+    expect(isConfigRunning('cfg')).toBe(false)
 
-    await useRunConfigStore.getState().runConfig(project, config)
+    await runConfig(project, config)
     expect(useTerminalStore.getState().terminals.map(terminal => terminal.id)).toEqual([
       'terminal-3',
       'terminal-4',
     ])
-    expect(useRunConfigStore.getState().isConfigRunning('cfg')).toBe(true)
+    expect(isConfigRunning('cfg')).toBe(true)
   })
 
   it('keeps a deleted configuration recoverable through the undo toast', async () => {
@@ -275,17 +262,31 @@ describe('run config runtime helpers', () => {
     const saveConfigs = vi.fn(async (_project, configs: RunConfig[]) => {
       useRunConfigStore.setState({ configsByProject: { p1: configs } })
     })
-    const stopConfig = vi.fn().mockResolvedValue(undefined)
+    const closeTerminal = vi.fn(async (id: string) => {
+      useTerminalStore.setState(state => ({
+        terminals: state.terminals.filter(terminal => terminal.id !== id),
+      }))
+    })
     useProjectStore.setState({ toasts: [] })
+    useTerminalStore.setState({
+      terminals: [
+        baseTab({
+          id: 'running',
+          name: '前后端 · 后端',
+          runConfigId: 'cfg',
+          runTaskId: 'backend',
+        }),
+      ],
+      closeTerminal,
+    })
     useRunConfigStore.setState({
       configsByProject: { p1: sampleConfigs },
       saveConfigs,
-      stopConfig,
     })
 
-    await useRunConfigStore.getState().removeConfig(project, 'cfg')
+    await removeRunConfig(project, 'cfg')
 
-    expect(stopConfig).toHaveBeenCalledWith(sampleConfigs[0])
+    expect(closeTerminal).toHaveBeenCalledWith('running')
     expect(useRunConfigStore.getState().configsByProject.p1).toEqual([])
     const undoToast = useProjectStore.getState().toasts.at(-1)
     expect(undoToast?.text).toContain('已删除运行配置')

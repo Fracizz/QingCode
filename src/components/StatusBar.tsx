@@ -8,12 +8,9 @@ import { formatTerminalName } from '../utils/terminalName'
 import StatusTip from './StatusTip'
 import { useI18n } from '../lib/i18n'
 import { isTauri, safeInvoke } from '../lib/tauri'
-import {
-  isProjectRestricted,
-  WORKSPACE_TRUST_CHANGED_EVENT,
-} from '../lib/workspaceTrust'
+import { getGitHead, type GitHeadInfo } from '../lib/ipc/git'
+import { isProjectRestricted, WORKSPACE_TRUST_CHANGED_EVENT } from '../lib/workspaceTrust'
 import { useGitStatusStore } from '../store/gitStatusStore'
-import { peekSourceControlCache, useSourceControlStore } from '../store/sourceControlStore'
 import ContextMenu from './ContextMenu'
 import {
   FILE_ENCODING_OPTIONS,
@@ -22,12 +19,11 @@ import {
 } from '../lib/fileEncoding'
 import { checkForAppUpdate } from '../lib/appUpdate'
 import { formatAppMemoryMb } from '../lib/appMemory'
-import { readStatusBarRowTop, STATUS_BAR_ROW_ATTR, StatusBarRowContext } from './statusBarRowContext'
-
-type GitHeadInfo = {
-  name: string
-  detached: boolean
-}
+import {
+  readStatusBarRowTop,
+  STATUS_BAR_ROW_ATTR,
+  StatusBarRowContext,
+} from './statusBarRowContext'
 
 type AppMemoryInfo = {
   totalBytes: number
@@ -48,8 +44,7 @@ function StatusDivider() {
 }
 
 /** Clickable status-bar chips: primary text, hover lift only — never accent fill. */
-const STATUS_ACTION =
-  'rounded px-1 -mx-1 text-fg hover:bg-bg-hover transition-colors'
+const STATUS_ACTION = 'rounded px-1 -mx-1 text-fg hover:bg-bg-hover transition-colors'
 /** Secondary / meta copy: brighter than global fg-muted for 24px bar readability. */
 const STATUS_SECONDARY = 'text-fg/85'
 
@@ -206,17 +201,15 @@ export default function StatusBar() {
 
     /** Prefer filesystem HEAD; fall back to SCM cache branch when present. */
     const loadGitHead = async () => {
-      const cached = peekSourceControlCache(projectPath)
+      const cached = useGitStatusStore.getState().peekPanelStatus(projectPath)
       try {
-        const info = await safeInvoke<GitHeadInfo | null>('读取 Git 分支', 'get_git_head', {
-          path: projectPath,
-        })
+        const info = await getGitHead(projectPath)
         if (cancelled) return
         if (info) {
           applyHead(info)
           // Keep SCM panel branch in sync when soft refresh left it empty.
           if (cached?.is_repository && !cached.branch) {
-            useSourceControlStore.getState().setCache(projectPath, {
+            useGitStatusStore.getState().setPanelStatus(projectPath, {
               ...cached,
               branch: info.name,
             })
@@ -239,7 +232,7 @@ export default function StatusBar() {
     }
 
     // Seed immediately from SCM cache so the chip appears before IPC returns.
-    const seed = peekSourceControlCache(projectPath)
+    const seed = useGitStatusStore.getState().peekPanelStatus(projectPath)
     if (seed?.is_repository && seed.branch) {
       applyHead({ name: seed.branch, detached: false })
     } else {
@@ -253,7 +246,7 @@ export default function StatusBar() {
       retryTimers.push(
         window.setTimeout(() => {
           void loadGitHead()
-        }, delay),
+        }, delay)
       )
     }
 
@@ -276,9 +269,9 @@ export default function StatusBar() {
     }, GIT_HEAD_REFRESH_MS)
 
     // When SCM soft-refresh fills branch later, mirror it into the status bar.
-    const unsubScm = useSourceControlStore.subscribe(state => {
-      if (cancelled || state.cachedPath !== projectPath) return
-      const branch = state.cachedStatus?.is_repository ? state.cachedStatus.branch : null
+    const unsubScm = useGitStatusStore.subscribe(state => {
+      if (cancelled || state.panelPath !== projectPath) return
+      const branch = state.panelStatus?.is_repository ? state.panelStatus.branch : null
       if (!branch) return
       setGitHead(prev => prev ?? { name: branch, detached: false })
     })
@@ -302,200 +295,211 @@ export default function StatusBar() {
 
   return (
     <StatusBarRowContext.Provider value={rowRef}>
-    <div
-      ref={rowRef}
-      {...{ [STATUS_BAR_ROW_ATTR]: '' }}
-      className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-bg-deep text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
-    >
-      {/* Left: folder · project · git — adjacent; project truncates, branch keeps full width. */}
-      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-        <Folder size={13} className="flex-shrink-0 text-brand" />
-        <span className="min-w-0 max-w-[28%] truncate">
-          {currentProject ? currentProject.name : t('未选择项目')}
-        </span>
-        {gitHead && (
-          <>
-            <StatusDivider />
-            <StatusTip
-              label={
-                gitHead.detached
-                  ? t('分离的 HEAD（未在分支上）')
-                  : gitDirtyCount > 0
-                    ? t('当前 Git 分支 · {count} 个更改', { count: gitDirtyCount })
-                    : t('当前 Git 分支')
-              }
-            >
-              <button
-                type="button"
-                className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap ${STATUS_ACTION}`}
-                onClick={() => setView('sourceControl')}
-              >
-                <GitBranch size={13} className="flex-shrink-0" />
-                <span>
-                  {gitHead.detached ? t('分离 HEAD · {sha}', { sha: gitHead.name }) : gitHead.name}
-                </span>
-                {gitDirtyCount > 0 && (
-                  <span className="flex-shrink-0 text-warn">*{gitDirtyCount}</span>
-                )}
-              </button>
-            </StatusTip>
-          </>
-        )}
-        {restricted && (
-          <StatusTip label={t('受限模式：只能浏览，无法编辑或运行')}>
-            <span className="flex flex-shrink-0 items-center gap-1 text-warn">
-              <ShieldAlert size={13} />
-              {t('受限')}
-            </span>
-          </StatusTip>
-        )}
-      </div>
-
-      {/* Right: hints | session actions | meta */}
-      <div className="flex flex-shrink-0 items-center">
-        {showEditorHints && (
-          <>
-            <div className={`flex items-center gap-2.5 ${STATUS_SECONDARY}`}>
-              {cursor && (
-                <span className="hidden sm:inline">
-                  {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
-                </span>
-              )}
+      <div
+        ref={rowRef}
+        {...{ [STATUS_BAR_ROW_ATTR]: '' }}
+        className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-bg-deep text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
+      >
+        {/* Left: folder · project · git — adjacent; project truncates, branch keeps full width. */}
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+          <Folder size={13} className="flex-shrink-0 text-brand" />
+          <span className="min-w-0 max-w-[28%] truncate">
+            {currentProject ? currentProject.name : t('未选择项目')}
+          </span>
+          {gitHead && (
+            <>
+              <StatusDivider />
               <StatusTip
-                label={t('Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用')}
+                label={
+                  gitHead.detached
+                    ? t('分离的 HEAD（未在分支上）')
+                    : gitDirtyCount > 0
+                      ? t('当前 Git 分支 · {count} 个更改', { count: gitDirtyCount })
+                      : t('当前 Git 分支')
+                }
               >
-                <span className="hidden lg:inline">
-                  {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
-                </span>
+                <button
+                  type="button"
+                  className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap ${STATUS_ACTION}`}
+                  onClick={() => setView('sourceControl')}
+                >
+                  <GitBranch size={13} className="flex-shrink-0" />
+                  <span>
+                    {gitHead.detached
+                      ? t('分离 HEAD · {sha}', { sha: gitHead.name })
+                      : gitHead.name}
+                  </span>
+                  {gitDirtyCount > 0 && (
+                    <span className="flex-shrink-0 text-warn">*{gitDirtyCount}</span>
+                  )}
+                </button>
               </StatusTip>
-            </div>
-            <StatusDivider />
-          </>
-        )}
+            </>
+          )}
+          {restricted && (
+            <StatusTip label={t('受限模式：只能浏览，无法编辑或运行')}>
+              <span className="flex flex-shrink-0 items-center gap-1 text-warn">
+                <ShieldAlert size={13} />
+                {t('受限')}
+              </span>
+            </StatusTip>
+          )}
+        </div>
 
-        <StatusTip label={t('切换终端面板')}>
-          <button
-            type="button"
-            aria-label={t('切换终端面板')}
-            className={`flex max-w-[180px] items-center gap-1.5 px-1.5 py-px ${STATUS_ACTION}`}
-            onClick={requestToggleTerminal}
-          >
-            <TerminalIcon size={13} className="flex-shrink-0" />
-            <span className="truncate">
-              {t('{running}/{total} 运行中', { running: runningTerminals, total: projectTerminals.length })}
-              {activeTerm ? (
-                <span className={STATUS_SECONDARY}>{` · ${formatTerminalName(activeTerm.name)}`}</span>
-              ) : null}
-            </span>
-          </button>
-        </StatusTip>
-
-        {showMetaGroup && (
-          <>
-            <StatusDivider />
-            <div className={`text-ui-sm flex items-center font-mono ${STATUS_SECONDARY}`}>
-              {activeTab?.kind === 'diff' ? (
-                <span>{t('差异对比')}</span>
-              ) : activeTab && !activeTab.openError && activeTab.viewMode !== 'view' ? (
-                <StatusTip label={t('转换编码（下次保存）· 或按编码重新打开')}>
-                  <button
-                    type="button"
-                    aria-label={t('文件编码')}
-                    aria-haspopup="menu"
-                    aria-expanded={encodingMenu != null}
-                    className={`max-w-[140px] truncate ${STATUS_ACTION}`}
-                    onClick={event => {
-                      const rect = event.currentTarget.getBoundingClientRect()
-                      const menuWidth = 260
-                      const anchorCenterX = rect.left + rect.width / 2
-                      const rowTop = readStatusBarRowTop(event.currentTarget) ?? rect.top
-                      setEncodingMenu({
-                        x: anchorCenterX - menuWidth / 2,
-                        y: rowTop,
-                        anchorCenterX,
-                      })
-                    }}
-                  >
-                    {formatFileEncoding(activeTab.encoding)}
-                  </button>
-                </StatusTip>
-              ) : null}
-              {showEncoding && (appMemory || appVersion) ? <StatusDivider /> : null}
-              {appMemory && (
+        {/* Right: hints | session actions | meta */}
+        <div className="flex flex-shrink-0 items-center">
+          {showEditorHints && (
+            <>
+              <div className={`flex items-center gap-2.5 ${STATUS_SECONDARY}`}>
+                {cursor && (
+                  <span className="hidden sm:inline">
+                    {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
+                  </span>
+                )}
                 <StatusTip
                   label={t(
-                    '主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒',
-                    {
-                      main: formatAppMemoryMb(appMemory.mainBytes),
-                      webview: formatAppMemoryMb(appMemory.webviewBytes),
-                      terminal: formatAppMemoryMb(appMemory.terminalBytes),
-                      tipSec: APP_MEMORY_TIP_REFRESH_MS / 1000,
-                      idleSec: APP_MEMORY_REFRESH_MS / 1000,
-                    },
+                    'Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用'
                   )}
-                  onShow={() => setMemoryTipOpen(true)}
-                  onHide={() => setMemoryTipOpen(false)}
                 >
-                  <span className="rounded px-1 -mx-1 tabular-nums">
-                    {t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) })}
+                  <span className="hidden lg:inline">
+                    {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
                   </span>
                 </StatusTip>
-              )}
-              {appMemory && appVersion ? <StatusDivider /> : null}
-              {appVersion && (
-                <StatusTip
-                  label={
-                    updateBusy
-                      ? t('正在检查…')
-                      : `${
-                          devBuild
-                            ? t('开发构建：项目数据在仓库 .dev/；主题字体等保存在开发服务器源下')
-                            : t('正式构建：项目数据在 %APPDATA%\\com.qingcode.app\\；主题字体等与开发版不共用')
-                        }\n${t('点击检查更新')}`
-                  }
-                >
-                  <button
-                    type="button"
-                    disabled={updateBusy || !isTauri()}
-                    className={`${STATUS_ACTION} disabled:opacity-40`}
-                    onClick={() => {
-                      if (!isTauri() || updateBusy) return
-                      setUpdateBusy(true)
-                      void checkForAppUpdate({
-                        currentVersion: appVersion,
-                        ignoreSkip: true,
-                        prompt: true,
-                      })
-                        .then(info => {
-                          if (!info) pushToast('success', t('当前已是最新版本'))
+              </div>
+              <StatusDivider />
+            </>
+          )}
+
+          <StatusTip label={t('切换终端面板')}>
+            <button
+              type="button"
+              aria-label={t('切换终端面板')}
+              className={`flex max-w-[180px] items-center gap-1.5 px-1.5 py-px ${STATUS_ACTION}`}
+              onClick={requestToggleTerminal}
+            >
+              <TerminalIcon size={13} className="flex-shrink-0" />
+              <span className="truncate">
+                {t('{running}/{total} 运行中', {
+                  running: runningTerminals,
+                  total: projectTerminals.length,
+                })}
+                {activeTerm ? (
+                  <span
+                    className={STATUS_SECONDARY}
+                  >{` · ${formatTerminalName(activeTerm.name)}`}</span>
+                ) : null}
+              </span>
+            </button>
+          </StatusTip>
+
+          {showMetaGroup && (
+            <>
+              <StatusDivider />
+              <div className={`text-ui-sm flex items-center font-mono ${STATUS_SECONDARY}`}>
+                {activeTab?.kind === 'diff' ? (
+                  <span>{t('差异对比')}</span>
+                ) : activeTab && !activeTab.openError && activeTab.viewMode !== 'view' ? (
+                  <StatusTip label={t('转换编码（下次保存）· 或按编码重新打开')}>
+                    <button
+                      type="button"
+                      aria-label={t('文件编码')}
+                      aria-haspopup="menu"
+                      aria-expanded={encodingMenu != null}
+                      className={`max-w-[140px] truncate ${STATUS_ACTION}`}
+                      onClick={event => {
+                        const rect = event.currentTarget.getBoundingClientRect()
+                        const menuWidth = 260
+                        const anchorCenterX = rect.left + rect.width / 2
+                        const rowTop = readStatusBarRowTop(event.currentTarget) ?? rect.top
+                        setEncodingMenu({
+                          x: anchorCenterX - menuWidth / 2,
+                          y: rowTop,
+                          anchorCenterX,
                         })
-                        .catch(error =>
-                          pushToast('error', t('检查更新失败: {error}', { error: String(error) })),
-                        )
-                        .finally(() => setUpdateBusy(false))
-                    }}
+                      }}
+                    >
+                      {formatFileEncoding(activeTab.encoding)}
+                    </button>
+                  </StatusTip>
+                ) : null}
+                {showEncoding && (appMemory || appVersion) ? <StatusDivider /> : null}
+                {appMemory && (
+                  <StatusTip
+                    label={t(
+                      '主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒',
+                      {
+                        main: formatAppMemoryMb(appMemory.mainBytes),
+                        webview: formatAppMemoryMb(appMemory.webviewBytes),
+                        terminal: formatAppMemoryMb(appMemory.terminalBytes),
+                        tipSec: APP_MEMORY_TIP_REFRESH_MS / 1000,
+                        idleSec: APP_MEMORY_REFRESH_MS / 1000,
+                      }
+                    )}
+                    onShow={() => setMemoryTipOpen(true)}
+                    onHide={() => setMemoryTipOpen(false)}
                   >
-                    v{appVersion}
-                    {devBuild ? ' · dev' : ''}
-                  </button>
-                </StatusTip>
-              )}
-            </div>
-          </>
+                    <span className="rounded px-1 -mx-1 tabular-nums">
+                      {t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) })}
+                    </span>
+                  </StatusTip>
+                )}
+                {appMemory && appVersion ? <StatusDivider /> : null}
+                {appVersion && (
+                  <StatusTip
+                    label={
+                      updateBusy
+                        ? t('正在检查…')
+                        : `${
+                            devBuild
+                              ? t('开发构建：项目数据在仓库 .dev/；主题字体等保存在开发服务器源下')
+                              : t(
+                                  '正式构建：项目数据在 %APPDATA%\\com.qingcode.app\\；主题字体等与开发版不共用'
+                                )
+                          }\n${t('点击检查更新')}`
+                    }
+                  >
+                    <button
+                      type="button"
+                      disabled={updateBusy || !isTauri()}
+                      className={`${STATUS_ACTION} disabled:opacity-40`}
+                      onClick={() => {
+                        if (!isTauri() || updateBusy) return
+                        setUpdateBusy(true)
+                        void checkForAppUpdate({
+                          currentVersion: appVersion,
+                          ignoreSkip: true,
+                          prompt: true,
+                        })
+                          .then(info => {
+                            if (!info) pushToast('success', t('当前已是最新版本'))
+                          })
+                          .catch(error =>
+                            pushToast('error', t('检查更新失败: {error}', { error: String(error) }))
+                          )
+                          .finally(() => setUpdateBusy(false))
+                      }}
+                    >
+                      v{appVersion}
+                      {devBuild ? ' · dev' : ''}
+                    </button>
+                  </StatusTip>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+        {encodingMenu && (
+          <ContextMenu
+            x={encodingMenu.x}
+            y={encodingMenu.y}
+            arrowAnchorX={encodingMenu.anchorCenterX}
+            items={encodingMenuItems()}
+            onClose={() => setEncodingMenu(null)}
+            preferAbove
+            arrow="bottom-end"
+          />
         )}
       </div>
-      {encodingMenu && (
-        <ContextMenu
-          x={encodingMenu.x}
-          y={encodingMenu.y}
-          arrowAnchorX={encodingMenu.anchorCenterX}
-          items={encodingMenuItems()}
-          onClose={() => setEncodingMenu(null)}
-          preferAbove
-          arrow="bottom-end"
-        />
-      )}
-    </div>
     </StatusBarRowContext.Provider>
   )
 }

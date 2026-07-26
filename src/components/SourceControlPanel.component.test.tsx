@@ -61,7 +61,6 @@ import type { GitStatus } from '@/lib/git/git'
 import { useConfirmStore } from '../store/confirmStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { useProjectStore } from '../store/projectStore'
-import { useSourceControlStore } from '../store/sourceControlStore'
 
 const project = {
   id: 'repo-1',
@@ -112,13 +111,11 @@ describe('SourceControlPanel', () => {
     mocks.revealItemInDir.mockReset()
     useConfirmStore.getState().answer(false)
     useProjectStore.setState({ currentProject: project, projects: [project], toasts: [] })
-    useSourceControlStore.getState().clearCache()
     useGitStatusStore.getState().clear()
   })
 
   afterEach(() => {
     useProjectStore.setState(initialProjectState, true)
-    useSourceControlStore.getState().clearCache()
     useGitStatusStore.getState().clear()
     useConfirmStore.getState().answer(false)
   })

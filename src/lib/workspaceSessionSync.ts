@@ -22,7 +22,6 @@ import { isSessionPersistEnabled } from './sessionPersistSettings'
 import { isPinnedSettingsTab } from '../utils/editorHelpers'
 import { useEditorStore, type ProjectEditorSession } from '../store/editorStore'
 import { persistTerminalOutputNow, useTerminalStore } from '../store/terminalStore'
-import { rehydrateRunningFromTerminals } from '../store/runConfigStore'
 import { useProjectStore } from '../store/projectStore'
 import type { EditorTab, TerminalTab } from '../types'
 import {
@@ -127,7 +126,6 @@ export function hydrateWorkspaceSessionsIfNeeded(): boolean {
     blTerminalByProject,
     brTerminalByProject,
   })
-  rehydrateRunningFromTerminals()
   return true
 }
 
@@ -152,7 +150,7 @@ function collectEditorSessionsForPersist(): Record<
     const activeInProject =
       editor.activeTabId && projectTabs.some(t => t.id === editor.activeTabId)
         ? editor.activeTabId
-        : projectTabs[0]?.id ?? null
+        : (projectTabs[0]?.id ?? null)
     sessions[currentId] = { tabs: projectTabs, activeTabId: activeInProject }
   }
 
@@ -210,9 +208,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
   now?: number
 }): WorkspaceSessionSnapshot {
   const projectState = useProjectStore.getState()
-  const durableIds = new Set(
-    projectState.projects.filter(p => !p.ephemeral).map(p => p.id),
-  )
+  const durableIds = new Set(projectState.projects.filter(p => !p.ephemeral).map(p => p.id))
   const filterIds = options?.projectIds ? new Set(options.projectIds) : null
   const includeIds = filterIds
     ? new Set([...filterIds].filter(id => durableIds.has(id)))
@@ -221,7 +217,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
   const ephemeralIds = projectState.projects.filter(p => p.ephemeral).map(p => p.id)
   // Also exclude sessions whose project was removed while the app was closed.
   const unknownIds = Object.keys(useEditorStore.getState().projectSessions).filter(
-    id => !durableIds.has(id) && !ephemeralIds.includes(id),
+    id => !durableIds.has(id) && !ephemeralIds.includes(id)
   )
   const editorSessions = collectEditorSessionsForPersist()
   const terminalState = useTerminalStore.getState()
@@ -245,7 +241,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
             })),
             activeTabId: session.activeTabId,
           },
-        ]),
+        ])
     ),
     pinnedTabs: pinnedTabs.map(tab => ({
       id: tab.id,

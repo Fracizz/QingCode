@@ -27,6 +27,7 @@ function modified(event: MouseEvent | KeyboardEvent): boolean {
 
 interface DefinitionLinkActions {
   navigate: (view: EditorView, identifier: IdentifierRange) => void | Promise<void>
+  linkEnabled?: () => boolean
   preview?: (
     view: EditorView,
     identifier: IdentifierRange,
@@ -61,7 +62,10 @@ export function editorDefinitionLink(actions: DefinitionLinkActions): Extension 
     point: { x: number; y: number } | null
   ): IdentifierRange | null => {
     const position = point ? view.posAtCoords(point) : null
-    const identifier = position === null ? null : identifierAt(view.state, position)
+    const identifier =
+      position === null || actions.linkEnabled?.() === false
+        ? null
+        : identifierAt(view.state, position)
     const key = identifier ? `${identifier.from}:${identifier.to}` : ''
     if (key === lastRange) return identifier
     cancelPreview(Boolean(point))

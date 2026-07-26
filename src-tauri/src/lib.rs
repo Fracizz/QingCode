@@ -11,6 +11,7 @@ mod file_watcher;
 mod fonts;
 mod format;
 mod git;
+mod git_command;
 mod git_status;
 mod ipc;
 mod language_components;

@@ -20,9 +20,7 @@ export const SIDE_WORKSPACE_CHANGED_EVENT = 'qingcode:side-workspace-changed'
 
 function notifySideWorkspaceChanged(columns: SideWorkspaceColumns) {
   if (typeof window === 'undefined') return
-  window.dispatchEvent(
-    new CustomEvent(SIDE_WORKSPACE_CHANGED_EVENT, { detail: { columns } }),
-  )
+  window.dispatchEvent(new CustomEvent(SIDE_WORKSPACE_CHANGED_EVENT, { detail: { columns } }))
 }
 
 function migrateFromLegacyCollapsed(): SideWorkspaceColumns | null {
@@ -45,9 +43,9 @@ export function normalizeSideWorkspaceColumns(
     dualTerminal?: boolean
     quadTerminal?: boolean
     editorVisible?: boolean
-  },
+  }
 ): SideWorkspaceColumns {
-  let dualTerminal = Boolean(columns.dualTerminal)
+  const dualTerminal = Boolean(columns.dualTerminal)
   let quadTerminal = Boolean(columns.quadTerminal)
   if (dualTerminal && quadTerminal) quadTerminal = false
   return {

@@ -4,7 +4,6 @@ import { isTauri, safeInvoke } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
-import { useSourceControlStore } from '../store/sourceControlStore'
 import { createDefaultSyncOpenFileDeps } from '../lib/syncOpenFileFromDiskDeps'
 import {
   collectSyncableOpenTabs,
@@ -62,7 +61,7 @@ async function refreshTreeForPath(path: string) {
 function collectWatchRoots(
   currentProject: Project | null,
   projects: Project[],
-  projectSessions: Record<string, { tabs: EditorTab[] }>,
+  projectSessions: Record<string, { tabs: EditorTab[] }>
 ): string[] {
   const roots = new Set<string>()
   if (currentProject && !currentProject.ephemeral) {
@@ -78,7 +77,7 @@ function collectWatchRoots(
 
 function collectWatchFiles(
   tabs: EditorTab[],
-  projectSessions: Record<string, { tabs: EditorTab[] }>,
+  projectSessions: Record<string, { tabs: EditorTab[] }>
 ): string[] {
   const files = new Set<string>()
   for (const tab of tabs) {
@@ -100,7 +99,7 @@ function listAllOpenTabs(): EditorTab[] {
 function scheduleContentSync(
   path: string,
   timers: Map<string, ReturnType<typeof setTimeout>>,
-  run: (path: string) => void,
+  run: (path: string) => void
 ) {
   const key = normalize(path)
   const existing = timers.get(key)
@@ -110,7 +109,7 @@ function scheduleContentSync(
     setTimeout(() => {
       timers.delete(key)
       run(path)
-    }, CONTENT_SYNC_DEBOUNCE_MS),
+    }, CONTENT_SYNC_DEBOUNCE_MS)
   )
 }
 
@@ -138,7 +137,6 @@ export function useFileWatcher() {
   useEffect(() => {
     if (!isTauri() || !currentProject || currentProject.ephemeral) {
       useGitStatusStore.getState().clear()
-      useSourceControlStore.getState().clearCache()
       return
     }
     void useGitStatusStore.getState().refresh(currentProject.path)
@@ -236,7 +234,7 @@ export function useFileWatcher() {
         window.dispatchEvent(
           new CustomEvent('qingcode:git-worktree-changed', {
             detail: { projectPath: current.path },
-          }),
+          })
         )
       }
 

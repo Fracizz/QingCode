@@ -2,6 +2,7 @@ import { getLiveEditorContent, flushLiveEditorContent } from '@/lib/editorSessio
 import { getEditorPreferences } from '@/lib/editorSettings'
 import { resolveReadEncoding } from '@/lib/fileEncoding'
 import { translate } from '@/lib/i18n'
+import { showGitHeadFile } from '@/lib/ipc/git'
 import { isTauri, safeInvoke } from '@/lib/tauri'
 import { useCompareStore } from '@/store/compareStore'
 import { useEditorStore } from '@/store/editorStore'
@@ -16,8 +17,9 @@ export async function openGitCompareWithHead(filePath: string): Promise<void> {
   }
 
   const editor = useEditorStore.getState()
-  const tab = editor.tabs.find(t => pathsEqual(t.path, filePath))
-    ?? Object.values(editor.projectSessions)
+  const tab =
+    editor.tabs.find(t => pathsEqual(t.path, filePath)) ??
+    Object.values(editor.projectSessions)
       .flatMap(s => s.tabs)
       .find(t => pathsEqual(t.path, filePath))
 
@@ -27,35 +29,31 @@ export async function openGitCompareWithHead(filePath: string): Promise<void> {
     leftContent = getLiveEditorContent(tab.id) ?? tab.content ?? ''
   } else {
     try {
-      const encoding = tab?.encoding ?? await resolveReadEncoding(
-        filePath,
-        getEditorPreferences().encoding,
-      )
+      const encoding =
+        tab?.encoding ?? (await resolveReadEncoding(filePath, getEditorPreferences().encoding))
       leftContent = await safeInvoke<string>('读取文件', 'read_file', { path: filePath, encoding })
     } catch (e) {
-      useProjectStore.getState().pushToast(
-        'error',
-        translate('读取文件失败: {error}', { error: String(e) }),
-      )
+      useProjectStore
+        .getState()
+        .pushToast('error', translate('读取文件失败: {error}', { error: String(e) }))
       return
     }
   }
 
   let headContent: string | null
   try {
-    headContent = await safeInvoke<string | null>('读取 Git HEAD 文件', 'git_show_head_file', {
-      path: filePath,
-    })
+    headContent = await showGitHeadFile(filePath)
   } catch (e) {
-    useProjectStore.getState().pushToast(
-      'error',
-      translate('无法读取 Git HEAD 版本: {error}', { error: String(e) }),
-    )
+    useProjectStore
+      .getState()
+      .pushToast('error', translate('无法读取 Git HEAD 版本: {error}', { error: String(e) }))
     return
   }
 
   if (headContent == null) {
-    useProjectStore.getState().pushToast('info', translate('该文件不在 Git HEAD 中（可能是新文件）'))
+    useProjectStore
+      .getState()
+      .pushToast('info', translate('该文件不在 Git HEAD 中（可能是新文件）'))
     return
   }
 

@@ -1,8 +1,8 @@
+use crate::git_command;
 use crate::path_guard::PathAllowlist;
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use tauri::State;
 
 /// Current Git HEAD for status-bar display.
@@ -133,25 +133,9 @@ pub fn get_git_head(path: String, allowlist: State<'_, PathAllowlist>) -> Option
     read_git_head(Path::new(&path))
 }
 
-fn apply_no_window(cmd: &mut Command) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-}
-
 /// Run `git` in `workdir`. Returns stdout on success; `None` when git is missing / not a repo.
 fn run_git(workdir: &Path, args: &[&str]) -> Option<std::process::Output> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(workdir)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    apply_no_window(&mut cmd);
-    cmd.output().ok()
+    git_command::output(workdir, args).ok()
 }
 
 /// Preserve porcelain `XY` so callers can distinguish index and worktree state.
@@ -289,6 +273,7 @@ pub fn git_show_head_file(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::{Command, Stdio};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(label: &str) -> PathBuf {

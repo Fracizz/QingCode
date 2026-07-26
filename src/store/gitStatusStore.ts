@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { GitStatus } from '@/lib/git/git'
-import { isTauri, safeInvoke } from '../lib/tauri'
+import { isTauri } from '../lib/tauri'
+import { getGitHead, getGitWorkdirStatus } from '../lib/ipc/git'
 import {
   absoluteGitPath,
   buildStatusMap,
@@ -10,8 +11,6 @@ import {
   type GitStatusEntry,
   type GitWorkdirStatus,
 } from '@/lib/git/gitStatus'
-import { peekSourceControlCache, useSourceControlStore } from './sourceControlStore'
-
 type GitStatusState = {
   projectPath: string | null
   /** Normalized absolute path → porcelain status. */
@@ -20,9 +19,14 @@ type GitStatusState = {
   entries: GitStatusEntry[]
   dirtyCount: number
   refreshing: boolean
+  /** Canonical SCM snapshot for the active/recent project. */
+  panelPath: string | null
+  panelStatus: GitStatus | null
   refresh: (projectPath: string | null | undefined) => Promise<void>
   /** Apply a full `git_status` snapshot without a second CLI round-trip. */
   applyFromGitStatus: (projectPath: string, status: GitStatus) => void
+  setPanelStatus: (projectPath: string, status: GitStatus | null) => void
+  clearPanelStatus: (projectPath?: string) => void
   scheduleRefresh: (projectPath?: string | null, delayMs?: number) => void
   statusFor: (path: string) => string | null
   statusForDir: (dirPath: string) => string | null
@@ -36,22 +40,14 @@ let lastRefreshAt = 0
 let inFlight: Promise<void> | null = null
 const MIN_REFRESH_GAP_MS = 1_500
 
-function syncSourceControlCache(projectPath: string, entries: GitStatusEntry[], isRepository: boolean) {
-  const previous = peekSourceControlCache(projectPath)
-  useSourceControlStore.getState().setCache(
-    projectPath,
-    isRepository
-      ? gitStatusFromWorkdirEntries(projectPath, entries, previous?.branch ?? null)
-      : { is_repository: false, branch: null, changes: [] },
-  )
-}
-
 export const useGitStatusStore = create<GitStatusState>((set, get) => ({
   projectPath: null,
   statusByPath: new Map(),
   entries: [],
   dirtyCount: 0,
   refreshing: false,
+  panelPath: null,
+  panelStatus: null,
 
   clear: () => {
     if (refreshTimer) {
@@ -64,8 +60,23 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
       entries: [],
       dirtyCount: 0,
       refreshing: false,
+      panelPath: null,
+      panelStatus: null,
     })
   },
+
+  setPanelStatus: (projectPath, status) =>
+    set({
+      panelPath: projectPath,
+      panelStatus: status,
+    }),
+
+  clearPanelStatus: projectPath =>
+    set(state =>
+      projectPath === undefined || state.panelPath === projectPath
+        ? { panelPath: null, panelStatus: null }
+        : state
+    ),
 
   statusFor: path => get().statusByPath.get(gitStatusKey(path)) ?? null,
 
@@ -73,15 +84,12 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
 
   peekPanelStatus: projectPath => {
     const state = get()
+    if (state.panelPath === projectPath && state.panelStatus) return state.panelStatus
     if (state.projectPath !== projectPath) return null
-    // Empty is ambiguous (clean repo vs not-yet-loaded); prefer SCM cache.
-    if (state.entries.length === 0 && state.dirtyCount === 0) {
-      return peekSourceControlCache(projectPath)
-    }
     return gitStatusFromWorkdirEntries(
       projectPath,
       state.entries,
-      peekSourceControlCache(projectPath)?.branch ?? null,
+      state.panelPath === projectPath ? (state.panelStatus?.branch ?? null) : null
     )
   },
 
@@ -97,8 +105,9 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
         entries: [],
         dirtyCount: 0,
         refreshing: false,
+        panelPath: projectPath,
+        panelStatus: status,
       })
-      useSourceControlStore.getState().setCache(projectPath, status)
       lastRefreshAt = Date.now()
       return
     }
@@ -112,8 +121,9 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
       entries,
       dirtyCount: status.changes.length,
       refreshing: false,
+      panelPath: projectPath,
+      panelStatus: status,
     })
-    useSourceControlStore.getState().setCache(projectPath, status)
     lastRefreshAt = Date.now()
   },
 
@@ -126,38 +136,45 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
     const run = async () => {
       set({ refreshing: true, projectPath })
       try {
-        const result = await safeInvoke<GitWorkdirStatus | null>(
-          '读取 Git 状态',
-          'get_git_workdir_status',
-          { path: projectPath },
-        )
+        const result: GitWorkdirStatus | null = await getGitWorkdirStatus(projectPath)
         if (get().projectPath !== projectPath) return
         if (!result) {
-          set({ statusByPath: new Map(), entries: [], dirtyCount: 0 })
-          syncSourceControlCache(projectPath, [], false)
+          set({
+            statusByPath: new Map(),
+            entries: [],
+            dirtyCount: 0,
+            panelPath: projectPath,
+            panelStatus: { is_repository: false, branch: null, changes: [] },
+          })
           return
         }
+        const previous = get().panelPath === projectPath ? get().panelStatus : null
+        const panelStatus = gitStatusFromWorkdirEntries(
+          projectPath,
+          result.entries,
+          previous?.branch ?? null
+        )
         set({
           statusByPath: buildStatusMap(result.entries),
           entries: result.entries,
           dirtyCount: result.dirty_count,
+          panelPath: projectPath,
+          panelStatus,
         })
-        syncSourceControlCache(projectPath, result.entries, true)
         // Workdir status confirms a repo but does not include the branch name.
         // Fill HEAD so the status bar / SCM soft-open can show it without a
         // second full `git_status` round-trip.
-        const previous = peekSourceControlCache(projectPath)
-        if (previous?.is_repository && !previous.branch) {
+        if (panelStatus.is_repository && !panelStatus.branch) {
           try {
-            const head = await safeInvoke<{ name: string } | null>('读取 Git 分支', 'get_git_head', {
-              path: projectPath,
-            })
+            const head = await getGitHead(projectPath)
             if (get().projectPath !== projectPath) return
             if (head?.name) {
-              useSourceControlStore.getState().setCache(projectPath, {
-                ...previous,
-                branch: head.name,
-              })
+              set(state => ({
+                panelStatus:
+                  state.panelPath === projectPath && state.panelStatus
+                    ? { ...state.panelStatus, branch: head.name }
+                    : state.panelStatus,
+              }))
             }
           } catch {
             /* keep null branch */

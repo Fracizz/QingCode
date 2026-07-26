@@ -31,23 +31,20 @@ import {
 import { clearDraftForTab } from '../lib/draftRecovery'
 import {
   getEditorPreferences,
-  loadEffectiveEditorPreferences,
   prepareContentForSave,
   type FileEncoding,
   type WritableFileEncoding,
 } from '../lib/editorSettings'
 import { resolveReadEncoding } from '../lib/fileEncoding'
-import { loadEffectiveFileSizePreferences } from '../lib/fileSizeSettings'
 import { isSettingsJsonPath } from '../lib/projectSettings'
 import { translate } from '../lib/i18n'
 import type { GitFileContents } from '@/lib/git/git'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
 import { authorizePaths } from '../lib/pathAllowlist'
-import { loadEffectiveAutoSaveSettings, notifyAutoSaveSettingsChanged } from '../lib/autoSaveSettings'
-import { loadEffectiveTerminalScrollback } from '@/lib/terminal/terminalScrollbackSettings'
-import { loadEffectiveExcludeSettings } from '../lib/excludeSettings'
+import { applyEffectiveSettings } from '../lib/effectiveSettings'
 import { formatDocument } from '../lib/formatDocument'
 import { useGitStatusStore } from './gitStatusStore'
+import { getGitFileContents } from '../lib/ipc/git'
 import { choiceDialog } from './choiceStore'
 import { useProjectStore } from './projectStore'
 import { useUIStore } from './uiStore'
@@ -97,9 +94,7 @@ async function populateTabFromDisk(id: string, path: string, line?: number, colu
   const editMaxBytes = resolveEditMaxBytes(path)
   const tier = fileOpenTier(stat.size, editMaxBytes)
   if (tier === 'reject') {
-    throw new Error(
-      `暂不支持打开超过 500MB 的大文件：${tabNameFromPath(path)}`,
-    )
+    throw new Error(`暂不支持打开超过 500MB 的大文件：${tabNameFromPath(path)}`)
   }
 
   let mtime: number | null = null
@@ -131,7 +126,7 @@ async function populateTabFromDisk(id: string, path: string, line?: number, colu
       'info',
       translate('已以只读预览打开大文件（{size}，不可编辑）', {
         size: formatFileSize(stat.size),
-      }),
+      })
     )
     return
   }
@@ -167,21 +162,21 @@ async function populateTabFromDisk(id: string, path: string, line?: number, colu
       'info',
       translate('文件较大（{size}），已以纯文本模式打开（限撤销、无高亮）', {
         size: formatFileSize(stat.size),
-      }),
+      })
     )
   } else if (profile === 'degraded' || stat.size >= EDIT_DEGRADED_BYTES) {
     useProjectStore.getState().pushToast(
       'info',
       translate('文件较大（{size}），已关闭高亮/换行/折叠等以保持流畅', {
         size: formatFileSize(stat.size),
-      }),
+      })
     )
   } else if (stat.size >= EDIT_WARN_BYTES) {
     useProjectStore.getState().pushToast(
       'info',
       translate('文件较大（{size}），已关闭语法高亮以保持流畅', {
         size: formatFileSize(stat.size),
-      }),
+      })
     )
   }
 }
@@ -306,7 +301,7 @@ function ensureOpenTabCapacity(): boolean {
         'warn',
         translate('已达到最多同时打开 {max} 个标签，请先关闭部分文件', {
           max: MAX_OPEN_EDITOR_TABS,
-        }),
+        })
       )
       return false
     }
@@ -403,7 +398,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const hasLine = line !== undefined && line >= 1
       if (pathChanging || hasLine) {
         get().prepareNavigationJump(
-          hasLine ? { path, line: line!, column } : { path, line: 1, column: 1 },
+          hasLine ? { path, line: line!, column } : { path, line: 1, column: 1 }
         )
       }
     }
@@ -428,7 +423,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         void useProjectStore.getState().revealFileInTree(path)
         set(s => {
           const next = mapTabEverywhere(s, existing.id, t =>
-            t.openError ? t : { ...t, loading: true, openError: undefined, openErrorKind: undefined },
+            t.openError
+              ? t
+              : { ...t, loading: true, openError: undefined, openErrorKind: undefined }
           )
           return next ?? s
         })
@@ -473,10 +470,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const prev = get().activeTabId
     if (prev) flushLiveEditorContent(prev)
     set(s => {
-      const tabs = [
-        ...s.tabs,
-        { id, path, name, dirty: false, language, loading: true },
-      ]
+      const tabs = [...s.tabs, { id, path, name, dirty: false, language, loading: true }]
       return {
         tabs,
         activeTabId: id,
@@ -544,9 +538,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set(s => {
       const tabs = s.tabs.filter(t => t.id !== id)
       if (tabs.length !== s.tabs.length) {
-        const activeTabId = s.activeTabId === id
-          ? (tabs.length > 0 ? tabs[tabs.length - 1].id : null)
-          : s.activeTabId
+        const activeTabId =
+          s.activeTabId === id ? (tabs.length > 0 ? tabs[tabs.length - 1].id : null) : s.activeTabId
         return { tabs, activeTabId, tabMru: buildTabMru(tabs, activeTabId) }
       }
       // Tab may live in a stashed project session (e.g. closed via path ops).
@@ -561,7 +554,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             tabs: sessionTabs,
             activeTabId:
               session.activeTabId === id
-                ? sessionTabs[sessionTabs.length - 1]?.id ?? null
+                ? (sessionTabs[sessionTabs.length - 1]?.id ?? null)
                 : session.activeTabId,
           },
         }
@@ -573,7 +566,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   closeOtherTabs: (id: string) => {
     flushLiveEditorContent(id)
-    const closed = get().tabs.filter(t => t.id !== id).map(t => t.id)
+    const closed = get()
+      .tabs.filter(t => t.id !== id)
+      .map(t => t.id)
     disposeEditorSessions(closed)
     set(s => {
       const tabs = s.tabs.filter(t => t.id === id)
@@ -642,19 +637,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       try {
         const stat = await safeInvoke<FileStat>('读取文件信息', 'file_stat', { path: absolutePath })
         if (stat.is_dir) {
-          useProjectStore.getState().pushToast(
-            'info',
-            translate('无法在文本编辑器中打开文件夹。'),
-          )
+          useProjectStore.getState().pushToast('info', translate('无法在文本编辑器中打开文件夹。'))
           return
         }
       } catch {
         // Deleted / missing paths can still show a HEAD-side diff.
       }
-      const pair = await safeInvoke<GitFileContents>('读取 Git 文件内容', 'git_file_contents', {
-        path: projectPath,
-        file: absolutePath,
-      })
+      const pair: GitFileContents = await getGitFileContents(projectPath, absolutePath)
       const name = fileNameFromPath(relativePath)
       const id = crypto.randomUUID()
       const prev = get().activeTabId
@@ -679,10 +668,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }))
     } catch (e) {
       console.error('openDiff failed:', e)
-      useProjectStore.getState().pushToast(
-        'error',
-        translate('打开差异对比失败：{error}', { error: String(e) }),
-      )
+      useProjectStore
+        .getState()
+        .pushToast('error', translate('打开差异对比失败：{error}', { error: String(e) }))
     }
   },
 
@@ -696,7 +684,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   clearTabContentBuffer: (id: string) => {
     set(s => {
       const next = mapTabEverywhere(s, id, t =>
-        t.openError || t.content === undefined ? t : { ...t, content: undefined },
+        t.openError || t.content === undefined ? t : { ...t, content: undefined }
       )
       return next ?? s
     })
@@ -705,7 +693,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   markDirty: (id: string) => {
     set(s => {
       const next = mapTabEverywhere(s, id, t =>
-        t.openError || t.kind === 'diff' ? t : { ...t, dirty: true },
+        t.openError || t.kind === 'diff' ? t : { ...t, dirty: true }
       )
       return next ?? s
     })
@@ -723,7 +711,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setTabEncoding: (id, encoding) => {
     set(s => {
       const next = mapTabEverywhere(s, id, t =>
-        t.kind === 'diff' || t.encoding === encoding ? t : { ...t, encoding, dirty: true },
+        t.kind === 'diff' || t.encoding === encoding ? t : { ...t, encoding, dirty: true }
       )
       return next ?? s
     })
@@ -731,7 +719,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   reopenWithEncoding: async (id, requestedEncoding) => {
     const tab = get().findTab(id)
-    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || tab.viewMode === 'view') return
+    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || tab.viewMode === 'view')
+      return
     if (!isTauri()) {
       useProjectStore.getState().pushToast('error', translate('当前环境无法重新打开文件'))
       return
@@ -740,7 +729,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const choice = await choiceDialog({
         title: translate('重新按编码打开文件？'),
         message: translate('这会放弃当前文件的未保存修改，并按 {encoding} 重新读取磁盘内容。', {
-          encoding: requestedEncoding === 'auto' ? translate('自动检测') : requestedEncoding.toUpperCase(),
+          encoding:
+            requestedEncoding === 'auto' ? translate('自动检测') : requestedEncoding.toUpperCase(),
         }),
         detail: tab.path,
         options: [
@@ -754,7 +744,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const encoding = await resolveReadEncoding(tab.path, requestedEncoding)
       const [content, mtime] = await Promise.all([
         safeInvoke<string>('读取文件', 'read_file', { path: tab.path, encoding }),
-        safeInvoke<number | null>('读取修改时间', 'file_mtime', { path: tab.path }).catch(() => null),
+        safeInvoke<number | null>('读取修改时间', 'file_mtime', { path: tab.path }).catch(
+          () => null
+        ),
       ])
       await get().reloadFromDisk(id, content, mtime)
       set(s => {
@@ -763,7 +755,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       })
       useProjectStore
         .getState()
-        .pushToast('success', translate('已按 {encoding} 重新打开：{name}', { encoding: encoding.toUpperCase(), name: tab.name }))
+        .pushToast(
+          'success',
+          translate('已按 {encoding} 重新打开：{name}', {
+            encoding: encoding.toUpperCase(),
+            name: tab.name,
+          })
+        )
     } catch (e) {
       useProjectStore
         .getState()
@@ -797,7 +795,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
     set(s => ({
       tabs: s.tabs.map(t =>
-        targets.includes(t.id) && t.content === undefined ? { ...t, loading: true } : t,
+        targets.includes(t.id) && t.content === undefined ? { ...t, loading: true } : t
       ),
     }))
 
@@ -843,7 +841,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             return next ?? s
           })
         }
-      }),
+      })
     )
   },
 
@@ -868,7 +866,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   saveFile: async (id: string) => {
     const tab = get().findTab(id)
-    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || tab.viewMode === 'view') return
+    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || tab.viewMode === 'view')
+      return
     // Format-on-save before reading the buffer for write (quiet: no success spam).
     try {
       const { getFormatOnSave } = await import('../lib/formatOnSaveSettings')
@@ -908,16 +907,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
             pushToast(
               'error',
               translate('磁盘文件已更改，请先重新加载或比较后再保存'),
-              formatFileToastDetail(projects, afterFormat.path, afterFormat.name),
+              formatFileToastDetail(projects, afterFormat.path, afterFormat.name)
             )
             return
           }
         }
       }
-      const encoding = afterFormat.encoding ?? await resolveReadEncoding(
-        afterFormat.path,
-        getEditorPreferences().encoding,
-      )
+      const encoding =
+        afterFormat.encoding ??
+        (await resolveReadEncoding(afterFormat.path, getEditorPreferences().encoding))
       await safeInvoke('保存文件', 'write_file', {
         path: afterFormat.path,
         content,
@@ -954,21 +952,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       }
       if (isSettingsJsonPath(tab.path)) {
         const project = useProjectStore.getState().currentProject
-        void loadEffectiveEditorPreferences(project)
-        void loadEffectiveFileSizePreferences(project)
-        void loadEffectiveAutoSaveSettings(project).then(notifyAutoSaveSettingsChanged)
-        void import('../lib/formatOnSaveSettings').then(({ loadEffectiveFormatOnSave }) =>
-          loadEffectiveFormatOnSave(project),
-        )
-        void import('../lib/minimapSettings').then(({ loadEffectiveMinimapEnabled }) =>
-          loadEffectiveMinimapEnabled(project),
-        )
-        void loadEffectiveTerminalScrollback(project)
-        void import('@/lib/terminal/terminalCursorSettings').then(
-          ({ loadEffectiveTerminalCursorBlinking }) =>
-            loadEffectiveTerminalCursorBlinking(project),
-        )
-        void loadEffectiveExcludeSettings(project).then(() => {
+        void applyEffectiveSettings(project).then(() => {
           const store = useProjectStore.getState()
           for (const p of store.projects) {
             if (!p.ephemeral && store.projectTrees[p.id]) {
@@ -1010,10 +994,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (!(await confirmOutsideSymlinkWrite(selected))) return
       // Explicit Save As dialog = user authorization for that write target.
       await authorizePaths([selected])
-      const encoding = tab.encoding ?? await resolveReadEncoding(tab.path, getEditorPreferences().encoding)
+      const encoding =
+        tab.encoding ?? (await resolveReadEncoding(tab.path, getEditorPreferences().encoding))
       await safeInvoke('另存为', 'write_file', { path: selected, content, encoding })
 
-      const conflict = get().getAllTabs().find(t => t.id !== id && pathsEqual(t.path, selected))
+      const conflict = get()
+        .getAllTabs()
+        .find(t => t.id !== id && pathsEqual(t.path, selected))
       if (conflict) get().closeTab(conflict.id)
 
       const name = tabNameFromPath(selected)
@@ -1041,10 +1028,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       store.pushToast('success', translate('已另存为: {name}', { name }))
     } catch (e) {
       console.error('saveAs failed:', e)
-      useProjectStore.getState().pushToast(
-        'error',
-        translate('另存为失败: {error}', { error: String(e) }),
-      )
+      useProjectStore
+        .getState()
+        .pushToast('error', translate('另存为失败: {error}', { error: String(e) }))
     }
   },
 
@@ -1066,11 +1052,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         .map(tab => tab.id)
       disposeEditorSessions(closed)
       const tabs = s.tabs.filter(
-        tab => isDescendantOf(tab.path, projectPath) || isPinnedSettingsTab(tab.path),
+        tab => isDescendantOf(tab.path, projectPath) || isPinnedSettingsTab(tab.path)
       )
       return {
         tabs,
-        activeTabId: tabs.some(tab => tab.id === s.activeTabId) ? s.activeTabId : tabs[0]?.id ?? null,
+        activeTabId: tabs.some(tab => tab.id === s.activeTabId)
+          ? s.activeTabId
+          : (tabs[0]?.id ?? null),
       }
     }),
 
@@ -1086,7 +1074,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const activeInProject =
           s.activeTabId && projectTabs.some(t => t.id === s.activeTabId)
             ? s.activeTabId
-            : projectTabs[0]?.id ?? null
+            : (projectTabs[0]?.id ?? null)
         projectSessions[fromProjectId] = {
           tabs: projectTabs,
           activeTabId: activeInProject,
@@ -1131,7 +1119,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const activeInProject =
         s.activeTabId && projectTabs.some(t => t.id === s.activeTabId)
           ? s.activeTabId
-          : projectTabs[0]?.id ?? null
+          : (projectTabs[0]?.id ?? null)
       projectSessions[projectId] = {
         tabs: projectTabs,
         activeTabId: activeInProject,
@@ -1252,14 +1240,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           activeTabId:
             session.activeTabId && sessionTabs.some(t => t.id === session.activeTabId)
               ? session.activeTabId
-              : sessionTabs[sessionTabs.length - 1]?.id ?? null,
+              : (sessionTabs[sessionTabs.length - 1]?.id ?? null),
         }
       }
       return {
         tabs,
         projectSessions,
         activeTabId: closedIds.includes(state.activeTabId ?? '')
-          ? tabs[tabs.length - 1]?.id ?? null
+          ? (tabs[tabs.length - 1]?.id ?? null)
           : state.activeTabId,
       }
     })
@@ -1269,8 +1257,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const s = get()
     const closedIds: string[] = []
 
-    const isDiffForPath = (tab: EditorTab) =>
-      tab.kind === 'diff' && isDescendantOf(tab.path, path)
+    const isDiffForPath = (tab: EditorTab) => tab.kind === 'diff' && isDescendantOf(tab.path, path)
 
     for (const tab of s.tabs) {
       if (isDiffForPath(tab)) closedIds.push(tab.id)
@@ -1294,14 +1281,14 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           activeTabId:
             session.activeTabId && sessionTabs.some(t => t.id === session.activeTabId)
               ? session.activeTabId
-              : sessionTabs[sessionTabs.length - 1]?.id ?? null,
+              : (sessionTabs[sessionTabs.length - 1]?.id ?? null),
         }
       }
       return {
         tabs,
         projectSessions,
         activeTabId: closedIds.includes(state.activeTabId ?? '')
-          ? tabs[tabs.length - 1]?.id ?? null
+          ? (tabs[tabs.length - 1]?.id ?? null)
           : state.activeTabId,
       }
     })

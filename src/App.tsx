@@ -19,7 +19,6 @@ import DefinitionPicker from './components/DefinitionPicker'
 import DefinitionPreview from './components/DefinitionPreview'
 import FileCompareDialog from './components/FileCompareDialog'
 import EmptyEditor from './components/EmptyEditor'
-import TerminalPanel from './components/TerminalPanel'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useEditorStore } from './store/editorStore'
@@ -67,6 +66,7 @@ const RunPanel = lazy(() => import('./components/RunPanel'))
 const ProjectManager = lazy(() => import('./components/ProjectManager'))
 const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'))
 const SettingsEditor = lazy(() => import('./components/SettingsEditor'))
+const TerminalPanel = lazy(() => import('./components/TerminalPanel'))
 
 migrateLegacySettings()
 void import('./lib/minimapSettings').then(m => m.migrateLegacyMinimapSetting())
@@ -368,21 +368,23 @@ function App() {
             </div>
           )}
 
-          <TerminalPanel
-            position={terminalPosition}
-            terminalOpen={terminalOpen}
-            terminalHeight={terminalHeight}
-            terminalWidth={terminalWidth}
-            sideSplit={sideSplit}
-            dualTerminal={sideDualActive}
-            quadTerminal={sideQuadActive}
-            editorVisible={sideEditorSlotVisible}
-            isTerminalResizing={isTerminalResizing}
-            layoutSwitching={panelLayoutSwitching}
-            onResizerPointerDown={onResizerPointerDown}
-            onWidthResizerPointerDown={onWidthResizerPointerDown}
-            terminalPanelRef={terminalPanelRef}
-          />
+          <Suspense fallback={null}>
+            <TerminalPanel
+              position={terminalPosition}
+              terminalOpen={terminalOpen}
+              terminalHeight={terminalHeight}
+              terminalWidth={terminalWidth}
+              sideSplit={sideSplit}
+              dualTerminal={sideDualActive}
+              quadTerminal={sideQuadActive}
+              editorVisible={sideEditorSlotVisible}
+              isTerminalResizing={isTerminalResizing}
+              layoutSwitching={panelLayoutSwitching}
+              onResizerPointerDown={onResizerPointerDown}
+              onWidthResizerPointerDown={onWidthResizerPointerDown}
+              terminalPanelRef={terminalPanelRef}
+            />
+          </Suspense>
 
           <div
             className="workspace-grid-editor flex flex-col overflow-hidden min-w-0"

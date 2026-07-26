@@ -2,6 +2,17 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const runtimeMocks = vi.hoisted(() => ({
+  runConfig: vi.fn(),
+  stopConfig: vi.fn(),
+  removeRunConfig: vi.fn(),
+}))
+
+vi.mock('../lib/runConfigRuntime', async importOriginal => {
+  const actual = await importOriginal<typeof import('../lib/runConfigRuntime')>()
+  return { ...actual, ...runtimeMocks }
+})
 import type { Project } from '../types'
 import ConfirmDialog from './ConfirmDialog'
 import RunConfigEditor from './RunConfigEditor'
@@ -33,6 +44,7 @@ const initialTerminalState = useTerminalStore.getState()
 
 describe('RunPanel', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
     useProjectStore.setState({ currentProject: project, projects: [project], toasts: [] })
     useTerminalStore.setState({ terminals: [], activeTerminalId: null })
     useConfirmStore.getState().answer(false)
@@ -47,27 +59,21 @@ describe('RunPanel', () => {
 
   it('runs, stops, and confirms deletion of a configuration', async () => {
     const loadConfigs = vi.fn().mockResolvedValue([config])
-    const runConfig = vi.fn().mockResolvedValue(undefined)
-    const stopConfig = vi.fn().mockResolvedValue(undefined)
-    const removeConfig = vi.fn().mockResolvedValue(undefined)
     useRunConfigStore.setState({
       configsByProject: { [project.id]: [config] },
       loadConfigs,
-      runConfig,
-      stopConfig,
-      removeConfig,
     })
 
     render(
       <>
         <RunPanel />
         <ConfirmDialog />
-      </>,
+      </>
     )
 
     await waitFor(() => expect(loadConfigs).toHaveBeenCalledWith(project))
     fireEvent.click(screen.getByRole('button', { name: '运行「开发服务」' }))
-    expect(runConfig).toHaveBeenCalledWith(project, config)
+    expect(runtimeMocks.runConfig).toHaveBeenCalledWith(project, config)
 
     useTerminalStore.setState({
       terminals: [
@@ -84,7 +90,7 @@ describe('RunPanel', () => {
       ],
     })
     fireEvent.click(await screen.findByRole('button', { name: '停止「开发服务」' }))
-    expect(stopConfig).toHaveBeenCalledWith(config)
+    expect(runtimeMocks.stopConfig).toHaveBeenCalledWith(config)
 
     fireEvent.click(screen.getByRole('button', { name: '删除运行配置「开发服务」' }))
     const dialog = await screen.findByRole('alertdialog')
@@ -93,7 +99,9 @@ describe('RunPanel', () => {
     expect(screen.getByRole('button', { name: '取消' })).toHaveFocus()
 
     fireEvent.click(screen.getByRole('button', { name: '删除', exact: true }))
-    await waitFor(() => expect(removeConfig).toHaveBeenCalledWith(project, config.id))
+    await waitFor(() =>
+      expect(runtimeMocks.removeRunConfig).toHaveBeenCalledWith(project, config.id)
+    )
   })
 
   it('creates a configuration from the keyboard-accessible editor', async () => {
@@ -119,8 +127,8 @@ describe('RunPanel', () => {
         expect.objectContaining({
           name: '本地开发',
           tasks: [expect.objectContaining({ type: 'command', target: 'pnpm dev' })],
-        }),
-      ),
+        })
+      )
     )
     expect(onClose).toHaveBeenCalledOnce()
   })
@@ -130,9 +138,6 @@ describe('RunPanel', () => {
     useRunConfigStore.setState({
       configsByProject: { [project.id]: [config] },
       loadConfigs: vi.fn().mockResolvedValue([config]),
-      runConfig: vi.fn(),
-      stopConfig: vi.fn(),
-      removeConfig: vi.fn(),
     })
     const previous = useEditorStore.getState().openFile
     useEditorStore.setState({ openFile })

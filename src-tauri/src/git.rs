@@ -1,4 +1,5 @@
 use crate::file_encoding::{self, FileEncoding};
+use crate::git_command;
 use crate::path_guard::PathAllowlist;
 use serde::Serialize;
 use std::io::Write;
@@ -32,22 +33,7 @@ pub struct GitStatus {
 }
 
 fn run_git(root: &Path, args: &[&str]) -> Result<Output, String> {
-    let mut command = Command::new("git");
-    command
-        .current_dir(root)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        command.creation_flags(CREATE_NO_WINDOW);
-    }
-    command
-        .output()
-        .map_err(|error| format!("无法运行 Git：{error}"))
+    git_command::output(root, args).map_err(|error| format!("无法运行 Git：{error}"))
 }
 
 fn is_not_repository_error(output: &Output) -> bool {

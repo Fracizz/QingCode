@@ -9,6 +9,7 @@ export default tseslint.config(
   {
     ignores: [
       'dist',
+      'coverage',
       'release',
       'src-tauri',
       'node_modules',
@@ -63,5 +64,5 @@ export default tseslint.config(
     settings: {
       react: { version: 'detect' },
     },
-  },
+  }
 )

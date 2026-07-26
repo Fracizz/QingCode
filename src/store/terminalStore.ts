@@ -1,6 +1,13 @@
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { safeInvoke } from '../lib/tauri'
+import {
+  createTerminal,
+  killTerminal,
+  resizeTerminal,
+  spawnTerminalScript,
+  writeTerminal,
+  type TerminalSpawnResult,
+} from '../lib/ipc/terminal'
 import { useProjectStore } from './projectStore'
 import { useUIStore } from './uiStore'
 import type { TerminalTab } from '../types'
@@ -11,9 +18,12 @@ import {
 } from '@/lib/terminal/terminalProfiles'
 import { ensureTerminalProfileTrust } from '@/lib/terminal/terminalProfileTrust'
 import { isProjectTrusted } from '../lib/workspaceTrust'
-import { disambiguateTerminalName, resolveNewTerminalName, terminalDisplayLabel } from '../utils/terminalName'
+import {
+  disambiguateTerminalName,
+  resolveNewTerminalName,
+  terminalDisplayLabel,
+} from '../utils/terminalName'
 import { translate } from '../lib/i18n'
-import { rehydrateRunningFromTerminals } from './runConfigStore'
 import {
   getTerminalScrollback,
   scrollbackMaxChars,
@@ -66,15 +76,10 @@ const lastPtySize = new Map<string, { cols: number; rows: number }>()
 const intentionalPtyKills = new Set<string>()
 const reportedShellFallbacks = new Set<string>()
 
-type TerminalSpawnResult = {
-  resolvedShell?: unknown
-  fallbackFrom?: unknown
-}
-
 function isGeneratedShellName(tab: TerminalTab): boolean {
   if (/^(终端|Terminal) \d+$/.test(tab.name)) return true
   const shellIds = [tab.shell, tab.resolvedShell].filter(
-    (shell): shell is TerminalShellId => shell !== undefined,
+    (shell): shell is TerminalShellId => shell !== undefined
   )
   return shellIds.some(shell => {
     const label = translate(terminalShellLabelKey(shell))
@@ -83,9 +88,7 @@ function isGeneratedShellName(tab: TerminalTab): boolean {
 }
 
 function applyTerminalSpawnResult(id: string, result: TerminalSpawnResult | null | undefined) {
-  const resolvedShell = isTerminalShellId(result?.resolvedShell)
-    ? result.resolvedShell
-    : undefined
+  const resolvedShell = isTerminalShellId(result?.resolvedShell) ? result.resolvedShell : undefined
   if (resolvedShell && resolvedShell !== 'auto') {
     useTerminalStore.setState(state => {
       const current = state.terminals.find(terminal => terminal.id === id)
@@ -98,7 +101,7 @@ function applyTerminalSpawnResult(id: string, result: TerminalSpawnResult | null
       ) {
         name = disambiguateTerminalName(
           translate(terminalShellLabelKey(resolvedShell)),
-          state.terminals.filter(terminal => terminal.id !== id).map(terminal => terminal.name),
+          state.terminals.filter(terminal => terminal.id !== id).map(terminal => terminal.name)
         )
       }
       return {
@@ -109,9 +112,7 @@ function applyTerminalSpawnResult(id: string, result: TerminalSpawnResult | null
     })
   }
 
-  const fallbackFrom = isTerminalShellId(result?.fallbackFrom)
-    ? result.fallbackFrom
-    : undefined
+  const fallbackFrom = isTerminalShellId(result?.fallbackFrom) ? result.fallbackFrom : undefined
   if (!fallbackFrom || !resolvedShell || fallbackFrom === resolvedShell) return
   const fallbackKey = `${fallbackFrom}->${resolvedShell}`
   if (reportedShellFallbacks.has(fallbackKey)) return
@@ -146,7 +147,7 @@ function schedulePtySpawnFallback(id: string, spawn: () => void) {
     setTimeout(() => {
       ptySpawnFallbackTimers.delete(id)
       spawn()
-    }, PTY_SPAWN_FALLBACK_MS),
+    }, PTY_SPAWN_FALLBACK_MS)
   )
 }
 
@@ -185,7 +186,7 @@ async function respawnShellAfterExit(id: string): Promise<void> {
     ),
   }))
   try {
-    const result = await safeInvoke<TerminalSpawnResult>('新建终端', 'create_terminal', {
+    const result = await createTerminal({
       id,
       cwd: tab.cwd,
       cols: size.cols,
@@ -197,9 +198,7 @@ async function respawnShellAfterExit(id: string): Promise<void> {
     console.error('respawnShellAfterExit failed:', e)
     useTerminalStore.setState(s => ({
       terminals: s.terminals.map(terminal =>
-        terminal.id === id
-          ? { ...terminal, status: 'exited', exitCode: null }
-          : terminal
+        terminal.id === id ? { ...terminal, status: 'exited', exitCode: null } : terminal
       ),
     }))
   } finally {
@@ -234,7 +233,7 @@ function publishTerminalOutput(id: string, data: number[]) {
     terminalScrollbackRings.get(id),
     bytes,
     getTerminalScrollback(),
-    maxBufferedBytes(),
+    maxBufferedBytes()
   )
   touchRing(id, ring)
 
@@ -249,7 +248,7 @@ function publishTerminalOutput(id: string, data: number[]) {
     previous,
     bytes,
     getTerminalScrollback(),
-    maxBufferedBytes(),
+    maxBufferedBytes()
   )
   terminalOutputBuffers.set(id, buffered)
 }
@@ -268,13 +267,13 @@ function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
 export function seedTerminalOutputFromPersist(
   id: string,
   scrollback: string,
-  history: string[] = [],
+  history: string[] = []
 ) {
   if (scrollback) {
     const bytes = truncateScrollbackBytes(
       encodeScrollbackText(scrollback),
       getTerminalScrollback(),
-      maxBufferedBytes(),
+      maxBufferedBytes()
     )
     terminalScrollbackRings.set(id, bytes)
     terminalOutputBuffers.set(id, bytes)
@@ -366,10 +365,7 @@ export function scheduleTerminalOutputPersist() {
 }
 
 function recordTypedInput(id: string, data: string) {
-  const { pending, commands } = absorbInputForHistory(
-    terminalInputPending.get(id) ?? '',
-    data,
-  )
+  const { pending, commands } = absorbInputForHistory(terminalInputPending.get(id) ?? '', data)
   terminalInputPending.set(id, pending)
   if (commands.length === 0) return
   let history = terminalCommandHistory.get(id) ?? []
@@ -407,7 +403,11 @@ interface TerminalState {
   brTerminalByProject: Record<string, string>
   /** Which dual/田 pane receives tab clicks / keyboard focus. */
   terminalFocusPane: TerminalFocusPane
-  addTerminal: (projectPath: string, projectId: string, profileId?: string) => Promise<string | null>
+  addTerminal: (
+    projectPath: string,
+    projectId: string,
+    profileId?: string
+  ) => Promise<string | null>
   addScriptTerminal: (
     projectId: string,
     cwd: string,
@@ -415,7 +415,7 @@ interface TerminalState {
     target: string,
     env: Record<string, string>,
     name: string,
-    linkage?: { runConfigId: string; runTaskId: string },
+    linkage?: { runConfigId: string; runTaskId: string }
   ) => Promise<string | null>
   closeTerminal: (id: string) => Promise<void>
   closeOtherTerminals: (id: string) => Promise<void>
@@ -430,7 +430,7 @@ interface TerminalState {
       secondaryTerminalByProject?: Record<string, string>
       blTerminalByProject?: Record<string, string>
       brTerminalByProject?: Record<string, string>
-    },
+    }
   ) => void
   /**
    * Replace terminal metadata for specific projects (named workspace restore).
@@ -444,7 +444,7 @@ interface TerminalState {
       secondaryTerminalByProject?: Record<string, string>
       blTerminalByProject?: Record<string, string>
       brTerminalByProject?: Record<string, string>
-    },
+    }
   ) => Promise<void>
   /** Spawn PTYs for tabs restored after restart (once). */
   spawnRestoredTerminals: (projectId: string) => Promise<void>
@@ -514,7 +514,7 @@ function bindTerminalToPane(
   s: PaneBindingSlice,
   projectId: string,
   pane: TerminalFocusPane,
-  id: string,
+  id: string
 ): Partial<PaneBindingSlice> {
   const occupiedBy: Partial<Record<TerminalFocusPane, string | null>> = {
     primary: s.activeTerminalId,
@@ -576,7 +576,7 @@ function clearClosedFromPanes(
   s: PaneBindingSlice,
   projectId: string,
   closedId: string,
-  projectTerminalIds: string[],
+  projectTerminalIds: string[]
 ): Partial<PaneBindingSlice> {
   const used = new Set<string>()
   const pickReplacement = (exclude: string | null) => {
@@ -642,7 +642,7 @@ function clearClosedFromPanes(
 function clearProjectPaneMaps(
   s: PaneBindingSlice,
   projectId: string,
-  closedIds: string[],
+  closedIds: string[]
 ): Partial<PaneBindingSlice> {
   const activeTerminalByProject = { ...s.activeTerminalByProject }
   const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
@@ -685,9 +685,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         ? useProjectStore.getState().currentProject
         : null)
     if (project && !project.ephemeral && !isProjectTrusted(project)) {
-      useProjectStore
-        .getState()
-        .pushToast('info', translate('当前为受限模式，无法打开终端'))
+      useProjectStore.getState().pushToast('info', translate('当前为受限模式，无法打开终端'))
       return null
     }
     const sameProject = get().terminals.filter(t => t.projectId === projectId)
@@ -708,7 +706,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       profile.name,
       profile.command,
       DEFAULT_TERMINAL_PROFILE.name,
-      shellLabel,
+      shellLabel
     )
     const tab: TerminalTab = {
       id,
@@ -758,7 +756,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     target: string,
     env: Record<string, string>,
     name: string,
-    linkage?,
+    linkage?
   ) => {
     const project =
       useProjectStore.getState().projects.find(p => p.id === projectId) ??
@@ -766,9 +764,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         ? useProjectStore.getState().currentProject
         : null)
     if (project && !project.ephemeral && !isProjectTrusted(project)) {
-      useProjectStore
-        .getState()
-        .pushToast('info', translate('当前为受限模式，无法运行任务'))
+      useProjectStore.getState().pushToast('info', translate('当前为受限模式，无法运行任务'))
       return null
     }
     const sameProject = get().terminals.filter(t => t.projectId === projectId)
@@ -814,14 +810,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     lastPtySize.delete(id)
     markIntentionalPtyKill(id)
     try {
-      await safeInvoke('关闭终端', 'kill_terminal', { id })
+      await killTerminal(id)
     } catch (error) {
       useProjectStore
         .getState()
-        .pushToast(
-          'error',
-          translate('关闭终端失败: {error}', { error: String(error) }),
-        )
+        .pushToast('error', translate('关闭终端失败: {error}', { error: String(error) }))
     }
     set(s => {
       const closed = s.terminals.find(t => t.id === id)
@@ -850,9 +843,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       lastPtySize.delete(tid)
       markIntentionalPtyKill(tid)
     }
-    await Promise.all(
-      others.map(tid => safeInvoke('关闭终端', 'kill_terminal', { id: tid }).catch(() => undefined))
-    )
+    await Promise.all(others.map(tid => killTerminal(tid).catch(() => undefined)))
     set(s => {
       const terminals = s.terminals.filter(t => !(t.projectId === keep.projectId && t.id !== id))
       const activeTerminalByProject = { ...s.activeTerminalByProject }
@@ -891,9 +882,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       lastPtySize.delete(id)
       markIntentionalPtyKill(id)
     }
-    await Promise.all(
-      ids.map(id => safeInvoke('关闭终端', 'kill_terminal', { id }).catch(() => undefined))
-    )
+    await Promise.all(ids.map(id => killTerminal(id).catch(() => undefined)))
     set(s => ({
       terminals: s.terminals.filter(t => t.projectId !== projectId),
       ...clearProjectPaneMaps(s, projectId, ids),
@@ -911,9 +900,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       lastPtySize.delete(id)
       markIntentionalPtyKill(id)
     }
-    await Promise.all(
-      ids.map(id => safeInvoke('关闭终端', 'kill_terminal', { id }).catch(() => undefined))
-    )
+    await Promise.all(ids.map(id => killTerminal(id).catch(() => undefined)))
     set(s => ({
       terminals: s.terminals.filter(terminal => terminal.projectId !== projectId),
       ...clearProjectPaneMaps(s, projectId, ids),
@@ -949,14 +936,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     ptySpawnInFlight.delete(id)
     markIntentionalPtyKill(id)
     try {
-      await safeInvoke('关闭终端', 'kill_terminal', { id })
+      await killTerminal(id)
     } catch (error) {
       useProjectStore
         .getState()
-        .pushToast(
-          'error',
-          translate('结束终端进程失败: {error}', { error: String(error) }),
-        )
+        .pushToast('error', translate('结束终端进程失败: {error}', { error: String(error) }))
     }
     set(s => ({
       terminals: s.terminals.map(terminal =>
@@ -979,7 +963,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       void get().spawnPendingTerminal(
         id,
         remembered?.cols ?? DEFAULT_PTY_COLS,
-        remembered?.rows ?? DEFAULT_PTY_ROWS,
+        remembered?.rows ?? DEFAULT_PTY_ROWS
       )
     })
     // Prefer an immediate respawn when we already know the grid (xterm still mounted).
@@ -1010,9 +994,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       .terminals.filter(t => replace.has(t.projectId))
       .map(t => t.id)
     for (const id of outgoing) markIntentionalPtyKill(id)
-    await Promise.all(
-      outgoing.map(id => safeInvoke('关闭终端', 'kill_terminal', { id }).catch(() => undefined)),
-    )
+    await Promise.all(outgoing.map(id => killTerminal(id).catch(() => undefined)))
     outgoing.forEach(id => clearTerminalOutput(id))
     set(s => {
       const kept = s.terminals.filter(t => !replace.has(t.projectId))
@@ -1030,7 +1012,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         if (replace.has(projectId)) nextActiveByProject[projectId] = terminalId
       }
       for (const [projectId, terminalId] of Object.entries(
-        bindings.secondaryTerminalByProject ?? {},
+        bindings.secondaryTerminalByProject ?? {}
       )) {
         if (replace.has(projectId)) nextSecondaryByProject[projectId] = terminalId
       }
@@ -1070,7 +1052,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   spawnRestoredTerminals: async (projectId: string) => {
     const pending = get().terminals.filter(
-      t => t.projectId === projectId && t.awaitingRestoreSpawn && !restoreSpawnInFlight.has(t.id),
+      t => t.projectId === projectId && t.awaitingRestoreSpawn && !restoreSpawnInFlight.has(t.id)
     )
     if (pending.length === 0) return
     for (const t of pending) restoreSpawnInFlight.add(t.id)
@@ -1082,8 +1064,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     } finally {
       for (const t of pending) restoreSpawnInFlight.delete(t.id)
     }
-    // Maps may have been empty before spawn (or linkage stamped later); refresh.
-    rehydrateRunningFromTerminals()
   },
 
   activateProject: (projectId: string) =>
@@ -1091,14 +1071,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const projectTerminals = s.terminals.filter(terminal => terminal.projectId === projectId)
       const ids = new Set(projectTerminals.map(t => t.id))
       const remembered = s.activeTerminalByProject[projectId]
-      const activeTerminalId = remembered && ids.has(remembered)
-        ? remembered
-        : projectTerminals[0]?.id ?? null
+      const activeTerminalId =
+        remembered && ids.has(remembered) ? remembered : (projectTerminals[0]?.id ?? null)
 
       const pickRemembered = (
         rememberedId: string | undefined,
         byProject: Record<string, string>,
-        taken: Set<string>,
+        taken: Set<string>
       ) => {
         if (rememberedId && ids.has(rememberedId) && !taken.has(rememberedId)) {
           return rememberedId
@@ -1114,21 +1093,21 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const secondaryTerminalId = pickRemembered(
         s.secondaryTerminalByProject[projectId],
         s.secondaryTerminalByProject,
-        taken,
+        taken
       )
       if (secondaryTerminalId) taken.add(secondaryTerminalId)
 
       const blTerminalId = pickRemembered(
         s.blTerminalByProject[projectId],
         s.blTerminalByProject,
-        taken,
+        taken
       )
       if (blTerminalId) taken.add(blTerminalId)
 
       const brTerminalId = pickRemembered(
         s.brTerminalByProject[projectId],
         s.brTerminalByProject,
-        taken,
+        taken
       )
 
       const activeTerminalByProject = { ...s.activeTerminalByProject }
@@ -1203,15 +1182,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }
       const primary = s.activeTerminalId
       const current = s.secondaryTerminalId
-      if (
-        current &&
-        current !== primary &&
-        projectTerminals.some(t => t.id === current)
-      ) {
+      if (current && current !== primary && projectTerminals.some(t => t.id === current)) {
         return s
       }
-      const next =
-        projectTerminals.find(t => t.id !== primary)?.id ?? null
+      const next = projectTerminals.find(t => t.id !== primary)?.id ?? null
       const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
       if (next) secondaryTerminalByProject[projectId] = next
       else delete secondaryTerminalByProject[projectId]
@@ -1288,14 +1262,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   writeToTerminal: async (id: string, data: string) => {
     recordTypedInput(id, data)
     try {
-      await safeInvoke('终端输入', 'write_terminal', { id, data })
+      await writeTerminal(id, data)
     } catch (error) {
       useProjectStore
         .getState()
-        .pushToast(
-          'error',
-          translate('终端输入失败: {error}', { error: String(error) }),
-        )
+        .pushToast('error', translate('终端输入失败: {error}', { error: String(error) }))
     }
   },
 
@@ -1303,11 +1274,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const size = normalizePtySize(cols, rows)
     rememberPtySize(id, size.cols, size.rows)
     try {
-      await safeInvoke('终端尺寸', 'resize_terminal', {
-        id,
-        cols: size.cols,
-        rows: size.rows,
-      })
+      await resizeTerminal(id, size.cols, size.rows)
     } catch (error) {
       console.warn('resize_terminal failed:', error)
     }
@@ -1331,7 +1298,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const plan = planTerminalSpawn(tab)
       let spawnResult: TerminalSpawnResult | undefined
       if (plan.mode === 'script') {
-        spawnResult = await safeInvoke<TerminalSpawnResult>('启动任务', 'spawn_script', {
+        spawnResult = await spawnTerminalScript({
           id,
           cwd: tab.cwd,
           shellKind: plan.shellKind,
@@ -1342,7 +1309,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         })
       } else if (plan.mode === 'interactive') {
         // Profiles (e.g. OpenCode): one path — run command, keep shell via -NoExit.
-        spawnResult = await safeInvoke<TerminalSpawnResult>('启动终端配置', 'spawn_script', {
+        spawnResult = await spawnTerminalScript({
           id,
           cwd: tab.cwd,
           shellKind: 'interactive',
@@ -1353,7 +1320,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           shell: tab.shell ?? null,
         })
       } else {
-        spawnResult = await safeInvoke<TerminalSpawnResult>('新建终端', 'create_terminal', {
+        spawnResult = await createTerminal({
           id,
           cwd: tab.cwd,
           cols: size.cols,
@@ -1415,9 +1382,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           if (tab.ptySpawnPending || tab.status === 'starting') return
           set(s => ({
             terminals: s.terminals.map(terminal =>
-              terminal.id === id
-                ? { ...terminal, status: 'exited', exitCode: exit_code }
-                : terminal
+              terminal.id === id ? { ...terminal, status: 'exited', exitCode: exit_code } : terminal
             ),
           }))
           return
@@ -1430,9 +1395,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
         const startedAt = tab.startedAt
         const quickFail =
-          !!startedAt &&
-          Date.now() - startedAt < QUICK_FAIL_THRESHOLD_MS &&
-          exit_code !== 0
+          !!startedAt && Date.now() - startedAt < QUICK_FAIL_THRESHOLD_MS && exit_code !== 0
         set(s => ({
           terminals: s.terminals.map(terminal =>
             terminal.id === id
@@ -1448,11 +1411,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           // 进程秒退且非零退出：切到该终端并提示，便于直接看到报错。
           useUIStore.getState().openTerminalPanel()
           get().setActiveTerminal(id)
-          useProjectStore.getState().pushToast(
-            'error',
-            `「${terminalDisplayLabel(tab.name)}」启动失败（退出码 ${exit_code}）`,
-            '已切换到该终端，请查看输出中的错误信息'
-          )
+          useProjectStore
+            .getState()
+            .pushToast(
+              'error',
+              `「${terminalDisplayLabel(tab.name)}」启动失败（退出码 ${exit_code}）`,
+              '已切换到该终端，请查看输出中的错误信息'
+            )
         }
       }),
     ])

@@ -8,7 +8,6 @@ import { promptDialog, validateEntryName } from '../store/promptStore'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useTerminalStore } from '../store/terminalStore'
-import { rehydrateRunningFromTerminals } from '../store/runConfigStore'
 import { useUIStore } from '../store/uiStore'
 import { translate } from './i18n'
 import { setEditorScroll } from './editorSession'
@@ -71,23 +70,19 @@ function applyScrollFromSessions(sessions: Record<string, PersistedProjectSessio
 }
 
 function listDurableVisibleProjects(): ProjectLike[] {
-  return useProjectStore
-    .getState()
-    .projects.filter(p => !p.ephemeral && !p.hidden)
+  return useProjectStore.getState().projects.filter(p => !p.ephemeral && !p.hidden)
 }
 
 function listDurableProjectsByIds(ids: Iterable<string>): ProjectLike[] {
   const want = new Set(ids)
-  return useProjectStore
-    .getState()
-    .projects.filter(p => !p.ephemeral && want.has(p.id))
+  return useProjectStore.getState().projects.filter(p => !p.ephemeral && want.has(p.id))
 }
 
 /** Persist catalog + toast helper. */
 function commitCatalog(
-  mutator: (catalog: ReturnType<typeof loadNamedWorkspaceCatalog>) => ReturnType<
-    typeof loadNamedWorkspaceCatalog
-  >,
+  mutator: (
+    catalog: ReturnType<typeof loadNamedWorkspaceCatalog>
+  ) => ReturnType<typeof loadNamedWorkspaceCatalog>
 ) {
   const next = mutator(loadNamedWorkspaceCatalog())
   saveNamedWorkspaceCatalog(next)
@@ -121,7 +116,7 @@ export async function saveVisibleProjectsAsWorkspace(): Promise<NamedWorkspace |
   if (!name) return null
   return saveProjectsAsWorkspace(
     projects.map(p => p.id),
-    normalizeNamedWorkspaceName(name),
+    normalizeNamedWorkspaceName(name)
   )
 }
 
@@ -129,7 +124,7 @@ export async function saveVisibleProjectsAsWorkspace(): Promise<NamedWorkspace |
 export async function saveProjectsAsWorkspace(
   projectIds: string[],
   name: string,
-  options?: { workspaceId?: string },
+  options?: { workspaceId?: string }
 ): Promise<NamedWorkspace | null> {
   const projects = listDurableProjectsByIds(projectIds)
   if (projects.length === 0) {
@@ -159,20 +154,18 @@ export async function saveProjectsAsWorkspace(
   }
 
   commitCatalog(catalog => upsertNamedWorkspace(catalog, workspace))
-  useProjectStore
-    .getState()
-    .pushToast(
-      'success',
-      translate('已保存多项目工作区「{name}」', {
-        name: formatNamedWorkspaceName(workspace.name, translate),
-      }),
-    )
+  useProjectStore.getState().pushToast(
+    'success',
+    translate('已保存多项目工作区「{name}」', {
+      name: formatNamedWorkspaceName(workspace.name, translate),
+    })
+  )
   return workspace
 }
 
 /** Re-capture sessions for an existing workspace from its current members (if still present). */
 export async function updateNamedWorkspaceSessions(
-  workspaceId: string,
+  workspaceId: string
 ): Promise<NamedWorkspace | null> {
   const catalog = loadNamedWorkspaceCatalog()
   const existing = catalog.workspaces.find(w => w.id === workspaceId)
@@ -182,15 +175,13 @@ export async function updateNamedWorkspaceSessions(
   }
   const remapped = remapWorkspaceSessions(existing, useProjectStore.getState().projects)
   if (remapped.resolved.length === 0) {
-    useProjectStore
-      .getState()
-      .pushToast('error', translate('工作区中的项目均不可用，无法更新会话'))
+    useProjectStore.getState().pushToast('error', translate('工作区中的项目均不可用，无法更新会话'))
     return null
   }
   return saveProjectsAsWorkspace(
     remapped.resolved.map(r => r.project.id),
     existing.name,
-    { workspaceId: existing.id },
+    { workspaceId: existing.id }
   )
 }
 
@@ -213,14 +204,12 @@ export async function renameNamedWorkspace(workspaceId: string): Promise<boolean
     updatedAt: Date.now(),
   }
   commitCatalog(catalog => upsertNamedWorkspace(catalog, updated))
-  useProjectStore
-    .getState()
-    .pushToast(
-      'success',
-      translate('已重命名为「{name}」', {
-        name: formatNamedWorkspaceName(updated.name, translate),
-      }),
-    )
+  useProjectStore.getState().pushToast(
+    'success',
+    translate('已重命名为「{name}」', {
+      name: formatNamedWorkspaceName(updated.name, translate),
+    })
+  )
   return true
 }
 
@@ -239,14 +228,12 @@ export async function deleteNamedWorkspace(workspaceId: string): Promise<boolean
   })
   if (!ok) return false
   commitCatalog(catalog => removeNamedWorkspace(catalog, workspaceId))
-  useProjectStore
-    .getState()
-    .pushToast(
-      'info',
-      translate('已删除多项目工作区「{name}」', {
-        name: formatNamedWorkspaceName(existing.name, translate),
-      }),
-    )
+  useProjectStore.getState().pushToast(
+    'info',
+    translate('已删除多项目工作区「{name}」', {
+      name: formatNamedWorkspaceName(existing.name, translate),
+    })
+  )
   return true
 }
 
@@ -289,7 +276,7 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
     Object.entries(remapped.sessionsByProjectId).map(([projectId, session]) => [
       projectId,
       projectSessionFromPersisted(session),
-    ]),
+    ])
   )
 
   const terminals = []
@@ -320,7 +307,6 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
     blTerminalByProject,
     brTerminalByProject,
   })
-  rehydrateRunningFromTerminals()
 
   // Prefer a project whose directory still exists on disk.
   let activeId = remapped.activeProjectId
@@ -370,9 +356,7 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
   if (diskUnavailableCount > 0 || missingCount > 0) {
     const details: string[] = []
     if (diskUnavailableCount > 0) {
-      details.push(
-        translate('{count} 个项目目录不可用', { count: diskUnavailableCount }),
-      )
+      details.push(translate('{count} 个项目目录不可用', { count: diskUnavailableCount }))
     }
     if (missingCount > 0) {
       details.push(translate('{count} 个项目已不在列表中', { count: missingCount }))
@@ -382,14 +366,14 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
       translate('已打开多项目工作区「{name}」（{detail}，请重新定位）', {
         name: formatNamedWorkspaceName(workspace.name, translate),
         detail: details.join(translate('、')),
-      }),
+      })
     )
   } else {
     useProjectStore.getState().pushToast(
       'success',
       translate('已打开多项目工作区「{name}」', {
         name: formatNamedWorkspaceName(workspace.name, translate),
-      }),
+      })
     )
   }
   return true
@@ -397,7 +381,7 @@ export async function activateNamedWorkspace(workspaceId: string): Promise<boole
 
 /** Prompt for a name and save the given project ids. */
 export async function saveSelectedProjectsAsWorkspace(
-  projectIds: string[],
+  projectIds: string[]
 ): Promise<NamedWorkspace | null> {
   if (projectIds.length === 0) {
     useProjectStore.getState().pushToast('info', translate('请先选择要加入工作区的项目'))

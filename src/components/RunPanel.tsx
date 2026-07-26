@@ -13,14 +13,19 @@ import {
 import { useProjectStore } from '../store/projectStore'
 import {
   useRunConfigStore,
-  activeTerminalsForConfig,
-  rehydrateRunningFromTerminals,
   type RunConfig,
   type RunTask,
   type RunTaskType,
   RUN_CONFIG_RELATIVE_PATH,
   runConfigPath,
 } from '../store/runConfigStore'
+import {
+  activeTerminalsForConfig,
+  rehydrateRunTerminals,
+  removeRunConfig,
+  runConfig,
+  stopConfig,
+} from '../lib/runConfigRuntime'
 import { useTerminalStore } from '../store/terminalStore'
 import { useEditorStore } from '../store/editorStore'
 import {
@@ -61,9 +66,6 @@ export default function RunPanel() {
   const currentProject = useProjectStore(s => s.currentProject)
   const configsByProject = useRunConfigStore(s => s.configsByProject)
   const loadConfigs = useRunConfigStore(s => s.loadConfigs)
-  const runConfig = useRunConfigStore(s => s.runConfig)
-  const stopConfig = useRunConfigStore(s => s.stopConfig)
-  const removeConfig = useRunConfigStore(s => s.removeConfig)
   const terminals = useTerminalStore(s => s.terminals)
   const setActiveTerminal = useTerminalStore(s => s.setActiveTerminal)
 
@@ -78,7 +80,7 @@ export default function RunPanel() {
     void loadConfigs(currentProject).then(configs => {
       // Recover linkage for restored task tabs (esp. pre-stamp sessions), then
       // rebuild running maps so Stop / 「运行中」 match live terminals.
-      rehydrateRunningFromTerminals(configs)
+      rehydrateRunTerminals(configs)
     })
   }, [currentProject?.id, loadConfigs, currentProject])
 
@@ -93,8 +95,11 @@ export default function RunPanel() {
   }, [currentProject])
 
   const configs = useMemo(
-    () => (currentProject ? configsByProject[currentProject.id] ?? EMPTY_RUN_CONFIGS : EMPTY_RUN_CONFIGS),
-    [configsByProject, currentProject],
+    () =>
+      currentProject
+        ? (configsByProject[currentProject.id] ?? EMPTY_RUN_CONFIGS)
+        : EMPTY_RUN_CONFIGS,
+    [configsByProject, currentProject]
   )
 
   const requestRemove = async (config: RunConfig) => {
@@ -102,14 +107,15 @@ export default function RunPanel() {
     const confirmed = await confirmDialog({
       title: t('删除运行配置？'),
       message: t('将删除「{name}」及其任务定义。', { name: config.name }),
-      detail: activeTerminalsForConfig(config.id, terminals).length > 0
-        ? t('该配置仍在运行。删除会先停止关联终端；随后可在短时间内撤销。')
-        : t('删除后可在短时间内撤销。'),
+      detail:
+        activeTerminalsForConfig(config.id, terminals).length > 0
+          ? t('该配置仍在运行。删除会先停止关联终端；随后可在短时间内撤销。')
+          : t('删除后可在短时间内撤销。'),
       kind: 'danger',
       confirmLabel: t('删除'),
     })
     if (!confirmed) return
-    await removeConfig(currentProject, config.id)
+    await removeRunConfig(currentProject, config.id)
   }
 
   const runningTerminalsByConfig = useMemo(() => {
@@ -203,14 +209,14 @@ export default function RunPanel() {
                           : t('运行「{name}」', { name: config.name })
                       }
                       onClick={() =>
-                        running
-                          ? void stopConfig(config)
-                          : void runConfig(currentProject, config)
+                        running ? void stopConfig(config) : void runConfig(currentProject, config)
                       }
                       className={`w-7 h-7 flex items-center justify-center rounded-md flex-shrink-0 transition-colors
-                        ${running
-                          ? 'bg-danger/15 text-danger hover:bg-danger/25'
-                          : 'bg-accent/15 text-accent hover:bg-accent/25'}`}
+                        ${
+                          running
+                            ? 'bg-danger/15 text-danger hover:bg-danger/25'
+                            : 'bg-accent/15 text-accent hover:bg-accent/25'
+                        }`}
                     >
                       {running ? <Square size={14} /> : <Play size={14} />}
                     </button>

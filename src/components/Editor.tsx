@@ -67,13 +67,19 @@ import { THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import {
   EDITOR_SETTINGS_EVENT,
   getEditorPreferences,
-  loadEffectiveEditorPreferences,
   type EditorPreferenceSettings,
 } from '../lib/editorSettings'
 import { FONT_SETTINGS_EVENT, loadFontSettings } from '../lib/fontSettings'
 import { buildEditorPreferenceExtensions } from '../lib/editorSettingsExtensions'
 import { reliableClickMouseSelection } from '../lib/editorMouseSelection'
 import { editorDefinitionLink } from '../lib/editorDefinitionLink'
+import {
+  cachedCodeNavigationAvailability,
+  canShowDefinitionLink,
+  codeNavigationAvailability,
+  notifyCodeNavigationUnavailable,
+  preloadCodeNavigationAvailability,
+} from '../lib/codeNavigationAvailability'
 import {
   goToDefinition,
   identifierAt,
@@ -112,7 +118,7 @@ import {
 } from '../lib/editorSession'
 import { editorPerfProfileForTab, type EditorPerfProfile } from '../lib/fileSizePolicy'
 import { formatDocument } from '../lib/formatDocument'
-import { loadEffectiveTerminalScrollback } from '@/lib/terminal/terminalScrollbackSettings'
+import { applyEffectiveSettings } from '../lib/effectiveSettings'
 import { copyRelativePathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { isSupportedEditorLanguage, loadLanguageSupport } from '../lib/editorLanguages'
@@ -134,8 +140,6 @@ clearCachedEditorStates()
 import { emitMinimapUpdate } from '../lib/minimapBridge'
 import {
   getMinimapEnabled,
-  loadEffectiveMinimapEnabled,
-  migrateLegacyMinimapProjectSetting,
   MINIMAP_SETTINGS_EVENT,
 } from '../lib/minimapSettings'
 import { loadMinimapHideScrollbar } from '../lib/minimapPolicy'
@@ -186,6 +190,8 @@ function createTabEditorState(
   const showLineNumbers = prefs.lineNumbers !== 'off'
   const settingsContent = profile === 'full' ? tab.content : undefined
   const enableBracketDecorations = profile === 'full' && !large && !huge && !deferHighlight
+  let unavailableNavigationNotified = false
+  preloadCodeNavigationAvailability()
 
   // Own occurrence highlighter for every profile (main overlay + other hits).
   const occurrenceHighlight: Extension[] = [
@@ -221,7 +227,18 @@ function createTabEditorState(
       // Kept outside compartments so every profile (incl. large/degraded) gets matches.
       occurrenceHighlight,
       editorDefinitionLink({
-        navigate: (view, identifier) => goToDefinition(view.state, tabPath, identifier),
+        linkEnabled: () =>
+          canShowDefinitionLink(cachedCodeNavigationAvailability(tabPath)),
+        navigate: async (view, identifier) => {
+          const availability = await codeNavigationAvailability(tabPath)
+          if (!canShowDefinitionLink(availability)) {
+            if (!unavailableNavigationNotified) {
+              unavailableNavigationNotified = notifyCodeNavigationUnavailable(availability)
+            }
+            return
+          }
+          await goToDefinition(view.state, tabPath, identifier)
+        },
         preview: async (view, identifier, anchor, requestId, isCurrent) => {
           const preview = useDefinitionPreviewStore.getState()
           preview.beginPreview({
@@ -644,20 +661,7 @@ export default function Editor() {
   }, [])
 
   useEffect(() => {
-    void loadEffectiveEditorPreferences(currentProject)
-    void import('../lib/fileSizeSettings').then(m =>
-      m.loadEffectiveFileSizePreferences(currentProject)
-    )
-    void import('../lib/formatOnSaveSettings').then(m =>
-      m.loadEffectiveFormatOnSave(currentProject)
-    )
-    void migrateLegacyMinimapProjectSetting(currentProject).finally(() => {
-      void loadEffectiveMinimapEnabled(currentProject)
-    })
-    void loadEffectiveTerminalScrollback(currentProject)
-    void import('@/lib/terminal/terminalCursorSettings').then(m =>
-      m.loadEffectiveTerminalCursorBlinking(currentProject)
-    )
+    void applyEffectiveSettings(currentProject)
   }, [currentProject])
 
   useEffect(() => {

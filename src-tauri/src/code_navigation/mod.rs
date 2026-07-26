@@ -4,10 +4,8 @@
 //! builds a compact scope graph, binds lexical references, resolves explicit
 //! imports, and keeps uncertain member matches marked as approximate.
 
-use crate::language_components;
 use crate::path_guard::PathAllowlist;
 use ignore::{WalkBuilder, WalkState};
-use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -17,7 +15,18 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 use tauri::State;
-use tree_sitter::{Language, Node, Parser};
+use tree_sitter::{Node, Parser};
+
+mod dto;
+mod language;
+mod query;
+
+pub use dto::{
+    FindUsagesResponse, ResolveSymbolResponse, SemanticCandidate, SemanticIndexStatus,
+    WorkspaceSymbolIndexResponse,
+};
+use language::{language_for_path, LanguageFamily};
+use query::resolve_query;
 
 // Keep background indexing focused on normal source files. The active editor
 // may still request semantic navigation for a larger file explicitly.
@@ -27,21 +36,6 @@ const DEFAULT_MAX_FILES: usize = 8000;
 const DEFAULT_MAX_RESULTS: usize = 120;
 const HARD_MAX_RESULTS: usize = 500;
 const MAX_CACHED_FILES: usize = 12_000;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LanguageFamily {
-    JavaScript,
-    Python,
-    Rust,
-    Go,
-    Java,
-}
-
-impl LanguageFamily {
-    fn supports_precise_binding(self) -> bool {
-        matches!(self, Self::JavaScript | Self::Python)
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScopeKind {
@@ -232,82 +226,6 @@ impl SemanticNavigationState {
             }
         }
     }
-}
-
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct SemanticCandidate {
-    pub symbol_id: String,
-    pub name: String,
-    pub kind: String,
-    pub path: String,
-    pub relative: String,
-    pub line: u32,
-    pub column: u32,
-    pub text: String,
-    pub confidence: String,
-    pub approximate: bool,
-    pub usage_kind: Option<String>,
-    pub caller_name: Option<String>,
-    pub caller_kind: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ResolveSymbolResponse {
-    pub symbol_id: Option<String>,
-    pub name: Option<String>,
-    pub kind: Option<String>,
-    pub definitions: Vec<SemanticCandidate>,
-    pub files_indexed: usize,
-    pub complete: bool,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FindUsagesResponse {
-    pub symbol_id: Option<String>,
-    pub name: Option<String>,
-    pub kind: Option<String>,
-    pub definition: Option<SemanticCandidate>,
-    pub usages: Vec<SemanticCandidate>,
-    pub total_count: usize,
-    pub files_indexed: usize,
-    pub complete: bool,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceSymbolIndexResponse {
-    pub definitions: Vec<SemanticCandidate>,
-    pub files_indexed: usize,
-    pub available: bool,
-    pub complete: bool,
-    pub truncated: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SemanticIndexStatus {
-    pub root: String,
-    pub files_indexed: usize,
-    pub complete: bool,
-    pub truncated: bool,
-}
-
-fn language_for_path(path: &Path) -> Option<(LanguageFamily, Language)> {
-    let (grammar, loaded) = language_components::language_for_path(path)?;
-    let family = match grammar.as_str() {
-        "javascript" | "typescript" | "tsx" => LanguageFamily::JavaScript,
-        "python" => LanguageFamily::Python,
-        "rust" => LanguageFamily::Rust,
-        "go" => LanguageFamily::Go,
-        "java" => LanguageFamily::Java,
-        _ => return None,
-    };
-    Some((family, loaded.language))
 }
 
 fn path_key(path: &Path) -> String {
@@ -2610,129 +2528,6 @@ fn reference_candidate(
         usage_kind: Some(reference.kind.clone()),
         caller_name: reference.caller_name.clone(),
         caller_kind: reference.caller_kind.clone(),
-    }
-}
-
-struct ResolvedQuery {
-    symbol_id: Option<String>,
-    name: Option<String>,
-    kind: Option<String>,
-    definitions: Vec<SemanticCandidate>,
-}
-
-fn candidate_score(
-    definition: &SemanticDefinition,
-    source_path: &Path,
-    selected_kind: Option<&str>,
-) -> i32 {
-    let mut score = 0;
-    if path_key(Path::new(&definition.path)) == path_key(source_path) {
-        score += 1000;
-    } else if Path::new(&definition.path).parent() == source_path.parent() {
-        score += 220;
-    }
-    if let Some(kind) = selected_kind {
-        if kind.contains("call")
-            && matches!(
-                definition.kind.as_str(),
-                "function" | "method" | "constructor"
-            )
-        {
-            score += 260;
-        }
-        if kind == "type"
-            && matches!(
-                definition.kind.as_str(),
-                "class" | "interface" | "enum" | "type"
-            )
-        {
-            score += 320;
-        }
-    }
-    if definition.relative.contains("/test") || definition.relative.contains("/__tests__/") {
-        score -= 90;
-    }
-    score
-}
-
-fn resolve_query(
-    workspace: &WorkspaceSemanticIndex,
-    file: &SemanticFile,
-    source_path: &Path,
-    position: usize,
-    max_results: usize,
-) -> ResolvedQuery {
-    let definition = file
-        .definitions
-        .iter()
-        .filter(|definition| definition.start <= position && position <= definition.end)
-        .min_by_key(|definition| definition.end.saturating_sub(definition.start));
-    if let Some(definition) = definition {
-        let canonical = workspace.canonical_symbol_id(&definition.symbol_id);
-        let target = workspace
-            .symbols_by_id
-            .get(&canonical)
-            .unwrap_or(definition);
-        return ResolvedQuery {
-            symbol_id: Some(canonical),
-            name: Some(target.name.clone()),
-            kind: Some(target.kind.clone()),
-            definitions: vec![definition_candidate(target, "bound", false)],
-        };
-    }
-
-    let reference = file
-        .references
-        .iter()
-        .filter(|reference| reference.start <= position && position <= reference.end)
-        .min_by_key(|reference| reference.end.saturating_sub(reference.start));
-    let Some(reference) = reference else {
-        return ResolvedQuery {
-            symbol_id: None,
-            name: None,
-            kind: None,
-            definitions: Vec::new(),
-        };
-    };
-
-    if let Some(symbol_id) = workspace.resolved_reference_symbol(reference) {
-        if let Some(target) = workspace.symbols_by_id.get(&symbol_id) {
-            return ResolvedQuery {
-                symbol_id: Some(symbol_id),
-                name: Some(target.name.clone()),
-                kind: Some(target.kind.clone()),
-                definitions: vec![definition_candidate(target, "bound", false)],
-            };
-        }
-    }
-
-    let mut definitions = workspace
-        .definitions_by_name
-        .get(&reference.name.to_lowercase())
-        .cloned()
-        .unwrap_or_default();
-    definitions.sort_by(|left, right| {
-        candidate_score(right, source_path, Some(&reference.kind))
-            .cmp(&candidate_score(left, source_path, Some(&reference.kind)))
-            .then(left.relative.cmp(&right.relative))
-            .then(left.line.cmp(&right.line))
-    });
-    definitions.truncate(max_results);
-    let candidates = definitions
-        .iter()
-        .map(|definition| definition_candidate(definition, "approximate", true))
-        .collect::<Vec<_>>();
-    let selected = (definitions.len() == 1).then(|| definitions[0].clone());
-    ResolvedQuery {
-        symbol_id: selected
-            .as_ref()
-            .map(|definition| definition.symbol_id.clone()),
-        name: Some(reference.name.clone()),
-        kind: selected
-            .as_ref()
-            .map(|definition| definition.kind.clone())
-            .or_else(|| Some(reference.kind.clone())),
-        definitions: candidates,
     }
 }
 
