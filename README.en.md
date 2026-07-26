@@ -96,7 +96,9 @@ The explorer shows only the active project. Create, rename, and delete in place;
 
 Multi-tab editing with on-demand highlighting for common languages; auto-detect UTF-8 / BOM / GB18030-compatible text; external changes can be reloaded or compared instead of overwritten silently. Large files degrade or open read-only. Editor and terminal sessions restore after restart (opening a project no longer auto-creates an empty terminal).
 
-The editor includes lightweight code navigation without requiring a full LSP: `Ctrl+click` goes to a definition with a hover preview, `Shift+F12` finds variable / function usages, and `Ctrl+T` searches workspace symbols. A Tree-sitter incremental index keeps the interaction fast; it targets IDE-like everyday navigation, not compiler-grade type inference. Python, TypeScript/JavaScript, Java, Rust, and Go are five independent language components. The Windows installer lets you select each one, and a missing component disables only semantic navigation for that language—not normal text editing.
+The editor includes lightweight code navigation without requiring a full LSP: `Ctrl+click` goes to a definition with a hover preview, `Shift+F12` finds calls, reads, writes, and imports, and `Ctrl+T` searches workspace symbols. A Tree-sitter incremental index recognizes common scopes, shadowing, imports, and cross-file candidates, marking results that cannot be resolved precisely as approximate.
+
+It is for everyday code reading, following calls across files, and fast lookup. Unlike IntelliJ IDEA, it does not provide compiler-grade type analysis, safe rename / refactoring, or debugging; use a full IDE for complex language semantics. Python, TypeScript/JavaScript, Java, Rust, and Go are five independent language components. The Windows installer lets you select each one, and a missing component disables only semantic navigation for that language—not normal text editing.
 
 ### Source Control workspace
 
@@ -112,17 +114,16 @@ Branch surgery, rebase, and a full merge UI stay with your usual Git or AI tools
 
 Search file names or contents in a chosen scope; replace stays collapsed until you expand it. Dark / light / forest / system theme; adjustable UI and editor fonts; Simplified Chinese or English UI. Global `default-settings.json` and project `.qingcode/project-settings.json` are **JSON5**; the template states that comments must not be deleted (see [HELP.md · Settings](./HELP.md#settings)).
 
-## How it relates to VS Code / Zed
+## Everyday use: compared with IDEA, VS Code, and Zed
 
-| | QingCode | VS Code | Zed |
-|--|--|--|--|
-| Role | Multi-project ops companion | Extensible platform editor | Native high-performance editor |
-| Multi-project switching | Title-bar pins; sessions kept | Workspace-centric | Typical single-project focus |
-| Service / task startup | **Multi-task run configs → many terminals** | Strong tasks / launch | Available, different shape |
-| Navigation / debug / marketplace | Lightweight Tree-sitter navigation; no full LSP / debugger / marketplace | Full stack | Strong LSP, smaller ecosystem |
-| AI | No built-in model; terminal profiles + CLI Skill for external agents | Extensions or built-in | Built-in leaning |
+| Everyday scenario | QingCode | IDEA | VS Code | Zed |
+|--|--|--|--|--|
+| Best for | Coordinating multiple projects, services, and terminals | Deep development, refactoring, and debugging | General development assembled through extensions | Fast editing and LSP-based development |
+| When switching projects | Title-bar pins; editor and terminal sessions stay live | Project / window centered | Workspace centered | Workspace centered |
+| Code navigation | Tree-sitter: definitions, usages, symbols; approximate results are labelled | Compiler-grade semantics, refactoring, and debugging | Mostly depends on language servers and extensions | Mostly depends on language servers |
+| Extensions and AI | No marketplace or built-in model; terminal + CLI connect external assistants | Plugin ecosystem and AI plugins | Broadest extension ecosystem | Built-in-AI leaning, smaller ecosystem |
 
-QingCode **deliberately skips** full IntelliSense, a debugger, and an extension marketplace. Keep VS Code / Zed / Cursor for deep editing; use QingCode to manage which projects are open, which services are up, and which terminals are live.
+A typical pairing: start API, web, and workers in QingCode and keep the scene while switching projects; open the same repository in IDEA, VS Code, or Zed when you need type inference, refactoring, or breakpoint debugging. QingCode **deliberately skips** full IntelliSense, a debugger, and an extension marketplace.
 
 ## Typical flow
 
