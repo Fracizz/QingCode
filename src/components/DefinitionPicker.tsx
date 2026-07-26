@@ -10,6 +10,8 @@ import {
 import { createPortal } from 'react-dom'
 import {
   BookOpen,
+  ChevronDown,
+  ChevronRight,
   CircleHelp,
   FileCode2,
   Files,
@@ -25,6 +27,7 @@ import { useDefinitionPickerStore } from '../store/definitionPickerStore'
 import { useI18n } from '../lib/i18n'
 import type { SemanticUsageFilter } from '../lib/semanticNavigation'
 import { getContextMenuStylePosition } from './contextMenuPosition'
+import { groupUsageCandidates } from '../lib/usageGrouping'
 
 function kindLabel(kind: string): string {
   switch (kind.toLowerCase()) {
@@ -134,6 +137,7 @@ export default function DefinitionPicker() {
   const [pagedCandidates, setPagedCandidates] = useState(candidates)
   const [pagedDetails, setPagedDetails] = useState(details)
   const [loadingUsages, setLoadingUsages] = useState(false)
+  const [collapsedUsageGroups, setCollapsedUsageGroups] = useState<Set<string>>(new Set())
   const listRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const usageRequestRef = useRef(0)
@@ -147,6 +151,19 @@ export default function DefinitionPicker() {
         : candidates,
     [candidates, mode, pagedCandidates, usageFilter, usageLoader]
   )
+  const usageGroups = useMemo(
+    () => (mode === 'reference' ? groupUsageCandidates(filteredCandidates) : []),
+    [filteredCandidates, mode]
+  )
+  const visibleCandidates = useMemo(
+    () =>
+      mode === 'reference'
+        ? usageGroups.flatMap(group =>
+            collapsedUsageGroups.has(group.key) ? [] : group.candidates
+          )
+        : filteredCandidates,
+    [collapsedUsageGroups, filteredCandidates, mode, usageGroups]
+  )
 
   useEffect(() => {
     if (!open) return
@@ -157,6 +174,7 @@ export default function DefinitionPicker() {
       setPagedCandidates(candidates)
       setPagedDetails(details)
       setLoadingUsages(false)
+      setCollapsedUsageGroups(new Set())
     })
   }, [open, candidates, details])
 
@@ -171,14 +189,14 @@ export default function DefinitionPicker() {
         event.preventDefault()
         event.stopPropagation()
         closePicker()
-      } else if (event.key === 'ArrowDown' && filteredCandidates.length > 0) {
+      } else if (event.key === 'ArrowDown' && visibleCandidates.length > 0) {
         event.preventDefault()
-        setActiveIndex(index => (index + 1) % filteredCandidates.length)
-      } else if (event.key === 'ArrowUp' && filteredCandidates.length > 0) {
+        setActiveIndex(index => (index + 1) % visibleCandidates.length)
+      } else if (event.key === 'ArrowUp' && visibleCandidates.length > 0) {
         event.preventDefault()
-        setActiveIndex(index => (index - 1 + filteredCandidates.length) % filteredCandidates.length)
+        setActiveIndex(index => (index - 1 + visibleCandidates.length) % visibleCandidates.length)
       } else if (event.key === 'Enter') {
-        const candidate = filteredCandidates[activeIndex]
+        const candidate = visibleCandidates[activeIndex]
         if (!candidate) return
         event.preventDefault()
         closePicker()
@@ -187,13 +205,13 @@ export default function DefinitionPicker() {
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [activeIndex, closePicker, filteredCandidates, open])
+  }, [activeIndex, closePicker, open, visibleCandidates])
 
   useEffect(() => {
     listRef.current
       ?.querySelector<HTMLElement>(`[data-def-index="${activeIndex}"]`)
       ?.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex, filteredCandidates])
+  }, [activeIndex, visibleCandidates])
 
   const usageAnchor = pagedDetails?.anchor ?? details?.anchor
   const anchoredReference = mode === 'reference' && Boolean(usageAnchor)
@@ -241,6 +259,7 @@ export default function DefinitionPicker() {
   const selectUsageFilter = async (filter: SemanticUsageFilter) => {
     setUsageFilter(filter)
     setActiveIndex(0)
+    setCollapsedUsageGroups(new Set())
     if (!usageLoader) return
     if (filter === 'all') {
       usageRequestRef.current += 1
@@ -297,6 +316,15 @@ export default function DefinitionPicker() {
     closePicker()
     void jumpToDefinitionCandidate(candidate)
   }
+  const toggleUsageGroup = (key: string) => {
+    setCollapsedUsageGroups(current => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+    setActiveIndex(0)
+  }
   const activeDetails = mode === 'reference' && usageLoader ? pagedDetails : details
   const totalCount = activeDetails?.totalCount ?? candidates.length
   const displayCount = activeDetails?.complete === false ? `${totalCount}+` : String(totalCount)
@@ -313,6 +341,40 @@ export default function DefinitionPicker() {
     { value: 'import', label: t('导入'), icon: <Package size={14} /> },
     { value: 'approximate', label: t('近似'), icon: <CircleHelp size={14} /> },
   ]
+  const candidateKey = (candidate: DefinitionCandidate) =>
+    `${candidate.path}:${candidate.line}:${candidate.column}:${candidate.usageKind ?? candidate.kind}`
+  const renderReferenceCandidate = (candidate: DefinitionCandidate) => {
+    const index = visibleCandidates.indexOf(candidate)
+    const active = index === activeIndex
+    return (
+      <button
+        key={candidateKey(candidate)}
+        type="button"
+        role="option"
+        aria-selected={active}
+        data-def-index={index}
+        className={`w-full py-1.5 pl-10 pr-3 text-left transition-colors ${
+          active ? 'bg-accent/20 text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+        }`}
+        onMouseEnter={() => setActiveIndex(index)}
+        onClick={() => choose(candidate)}
+      >
+        <span className="grid min-w-[680px] grid-cols-[58px_minmax(360px,1fr)_74px] items-center gap-3">
+          <span className="font-mono text-[12px] text-fg-dim">{candidate.line}</span>
+          <span className="min-w-0 truncate font-mono text-[12px]">
+            {highlightedCode(candidate.text, symbol)}
+          </span>
+          <span
+            className={`justify-self-end text-[11px] ${
+              candidate.approximate ? 'text-warn' : 'text-fg-dim'
+            }`}
+          >
+            {t(usageKindLabel(candidate.usageKind))}
+          </span>
+        </span>
+      </button>
+    )
+  }
 
   const dialog = (
     <div
@@ -407,63 +469,78 @@ export default function DefinitionPicker() {
             {loadingUsages ? t('正在加载用法…') : t('当前筛选没有匹配的用法')}
           </div>
         )}
-        {filteredCandidates.map((candidate, index) => {
-          const active = index === activeIndex
-          const path = splitRelativePath(candidate.relative)
-          return (
-            <Fragment
-              key={`${candidate.path}:${candidate.line}:${candidate.column}:${candidate.usageKind ?? candidate.kind}`}
-            >
-              {mode === 'reference' &&
-                usageFilter === 'all' &&
-                candidate.approximate &&
-                !filteredCandidates[index - 1]?.approximate && (
-                  <div
-                    role="separator"
-                    className="border-y border-border bg-bg px-3 py-1 text-[10px] text-warn"
+        {mode === 'reference'
+          ? usageGroups.map((group, groupIndex) => {
+              const collapsed = collapsedUsageGroups.has(group.key)
+              const path = splitRelativePath(group.relative)
+              return (
+                <Fragment key={group.key}>
+                  {usageFilter === 'all' &&
+                    group.approximate &&
+                    !usageGroups[groupIndex - 1]?.approximate && (
+                      <div
+                        role="separator"
+                        className="border-y border-border bg-bg px-3 py-1 text-[10px] text-warn"
+                      >
+                        {t('近似匹配（可能同名）')}
+                      </div>
+                    )}
+                  <button
+                    type="button"
+                    aria-expanded={!collapsed}
+                    aria-label={t(
+                      collapsed ? '展开用法分组 {name}' : '折叠用法分组 {name}',
+                      { name: group.callerName ?? path.file }
+                    )}
+                    className="flex w-full items-center gap-2 border-b border-border/70 bg-bg/70 px-3 py-2 text-left text-[12px] text-fg hover:bg-bg-hover"
+                    onClick={() => toggleUsageGroup(group.key)}
                   >
-                    {t('近似匹配（可能同名）')}
-                  </div>
-                )}
-              <button
-                type="button"
-                role="option"
-                aria-selected={active}
-                data-def-index={index}
-                className={`w-full px-3 py-2 text-left transition-colors ${
-                  active ? 'bg-accent/20 text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
-                }`}
-                onMouseEnter={() => setActiveIndex(index)}
-                onClick={() => choose(candidate)}
-              >
-                {mode === 'reference' ? (
-                  <span className="grid min-w-[760px] grid-cols-[minmax(170px,230px)_58px_minmax(320px,1fr)_74px] items-center gap-3">
-                    <span className="flex min-w-0 items-center gap-2">
-                      <FileCode2 size={15} className="flex-shrink-0 text-warn" aria-hidden />
-                      <span className="min-w-0">
-                        <span className="block truncate font-mono text-[12px] font-semibold text-fg">
-                          {path.file}
-                        </span>
-                        {path.directory && (
-                          <span className="block truncate font-mono text-[10px] text-fg-dim">
-                            {path.directory}
-                          </span>
-                        )}
+                    {collapsed ? (
+                      <ChevronRight size={14} className="flex-shrink-0 text-fg-dim" aria-hidden />
+                    ) : (
+                      <ChevronDown size={14} className="flex-shrink-0 text-fg-dim" aria-hidden />
+                    )}
+                    <FileCode2
+                      size={14}
+                      className={`flex-shrink-0 ${group.approximate ? 'text-warn' : 'text-accent'}`}
+                      aria-hidden
+                    />
+                    <span className="min-w-0 flex-1 truncate font-mono font-semibold">
+                      {group.callerName ?? path.file}
+                    </span>
+                    {group.callerKind && (
+                      <span className="flex-shrink-0 text-[10px] text-fg-dim">
+                        {t(kindLabel(group.callerKind))}
                       </span>
+                    )}
+                    <span className="max-w-[280px] truncate font-mono text-[10px] text-fg-dim">
+                      {group.relative}
                     </span>
-                    <span className="font-mono text-[12px] text-fg-dim">{candidate.line}</span>
-                    <span className="min-w-0 truncate font-mono text-[12px]">
-                      {highlightedCode(candidate.text, symbol)}
+                    <span className="flex-shrink-0 text-[10px] text-fg-muted">
+                      {t('{count} 处', { count: group.candidates.length })}
                     </span>
-                    <span
-                      className={`justify-self-end text-[11px] ${
-                        candidate.approximate ? 'text-warn' : 'text-fg-dim'
-                      }`}
-                    >
-                      {t(usageKindLabel(candidate.usageKind))}
-                    </span>
-                  </span>
-                ) : (
+                  </button>
+                  {!collapsed && group.candidates.map(renderReferenceCandidate)}
+                </Fragment>
+              )
+            })
+          : filteredCandidates.map((candidate, index) => {
+              const active = index === activeIndex
+              return (
+                <button
+                  key={candidateKey(candidate)}
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  data-def-index={index}
+                  className={`w-full px-3 py-2 text-left transition-colors ${
+                    active
+                      ? 'bg-accent/20 text-fg'
+                      : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                  }`}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  onClick={() => choose(candidate)}
+                >
                   <span className="flex flex-col gap-0.5">
                     <span className="flex w-full items-center gap-2 text-[12px]">
                       <span className="min-w-0 flex-1 truncate font-mono">
@@ -484,11 +561,9 @@ export default function DefinitionPicker() {
                       </span>
                     )}
                   </span>
-                )}
-              </button>
-            </Fragment>
-          )
-        })}
+                </button>
+              )
+            })}
         {mode === 'reference' && usageLoader && pagedCandidates.length < totalCount && (
           <div className="flex justify-center border-t border-border px-3 py-2">
             <button

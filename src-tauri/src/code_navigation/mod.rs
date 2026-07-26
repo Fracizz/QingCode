@@ -63,6 +63,24 @@ struct ImportBinding {
 }
 
 #[derive(Debug, Clone)]
+struct JavascriptPathMapping {
+    pattern: String,
+    targets: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct JavascriptModuleConfig {
+    base_url: PathBuf,
+    paths: Vec<JavascriptPathMapping>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct WorkspaceModuleConfig {
+    javascript: Option<JavascriptModuleConfig>,
+    go_module: Option<String>,
+}
+
+#[derive(Debug, Clone)]
 struct SemanticDefinition {
     symbol_id: String,
     name: String,
@@ -76,6 +94,7 @@ struct SemanticDefinition {
     end: usize,
     scope_id: usize,
     exported: bool,
+    default_export: bool,
     import: Option<ImportBinding>,
     inferred_type: Option<String>,
     owner_type: Option<String>,
@@ -105,6 +124,7 @@ struct SemanticFile {
     path: PathBuf,
     definitions: Vec<Arc<SemanticDefinition>>,
     references: Vec<Arc<SemanticReference>>,
+    re_exports: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -124,6 +144,7 @@ struct WorkspaceSemanticIndex {
     references_by_name: HashMap<String, Vec<Arc<SemanticReference>>>,
     symbols_by_id: HashMap<String, Arc<SemanticDefinition>>,
     aliases: HashMap<String, String>,
+    module_config: WorkspaceModuleConfig,
     complete: bool,
     files_indexed: usize,
     truncated: bool,
@@ -345,8 +366,128 @@ fn first_named_descendant<'a>(node: Node<'a>, kinds: &[&str]) -> Option<Node<'a>
     None
 }
 
+fn named_descendant_with_text<'a>(
+    node: Node<'a>,
+    source: &'a [u8],
+    kinds: &[&str],
+    expected: &str,
+) -> Option<Node<'a>> {
+    if kinds.contains(&node.kind()) && normalize_identifier(node_text(node, source)) == expected {
+        return Some(node);
+    }
+    for child in named_children(node) {
+        if let Some(found) = named_descendant_with_text(child, source, kinds, expected) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn normalize_identifier(value: &str) -> String {
     value.trim().trim_start_matches('#').to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedImport {
+    local_name: String,
+    module: String,
+    imported_name: String,
+    namespace: bool,
+}
+
+fn split_top_level(value: &str, delimiter: char) -> Vec<&str> {
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut output = Vec::new();
+    for (index, character) in value.char_indices() {
+        match character {
+            '{' => depth = depth.saturating_add(1),
+            '}' => depth = depth.saturating_sub(1),
+            _ if character == delimiter && depth == 0 => {
+                output.push(value[start..index].trim());
+                start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    output.push(value[start..].trim());
+    output
+}
+
+fn parse_rust_use_item(prefix: &str, value: &str, output: &mut Vec<ParsedImport>) {
+    let value = value.trim();
+    if value.is_empty() || value == "*" {
+        return;
+    }
+    if let (Some(open), Some(close)) = (value.find('{'), value.rfind('}')) {
+        if close > open {
+            let base = value[..open].trim().trim_end_matches("::");
+            let combined = if prefix.is_empty() {
+                base.to_string()
+            } else if base.is_empty() {
+                prefix.to_string()
+            } else {
+                format!("{prefix}::{base}")
+            };
+            for item in split_top_level(&value[open + 1..close], ',') {
+                parse_rust_use_item(&combined, item, output);
+            }
+            return;
+        }
+    }
+
+    let (path, alias) = value
+        .rsplit_once(" as ")
+        .map_or((value, None), |(path, alias)| {
+            (path.trim(), Some(alias.trim()))
+        });
+    let full_path = if prefix.is_empty() {
+        path.to_string()
+    } else if path.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{prefix}::{path}")
+    };
+    let mut parts = full_path
+        .split("::")
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let Some(imported) = parts.pop() else {
+        return;
+    };
+    if imported == "self" {
+        let Some(module_name) = parts.last().copied() else {
+            return;
+        };
+        output.push(ParsedImport {
+            local_name: alias.unwrap_or(module_name).to_string(),
+            module: parts.join("::"),
+            imported_name: "*".to_string(),
+            namespace: true,
+        });
+        return;
+    }
+    let module = if parts.is_empty() {
+        "crate".to_string()
+    } else {
+        parts.join("::")
+    };
+    output.push(ParsedImport {
+        local_name: alias.unwrap_or(imported).to_string(),
+        module,
+        imported_name: imported.to_string(),
+        namespace: false,
+    });
+}
+
+fn parse_rust_use(value: &str) -> Vec<ParsedImport> {
+    let Some(use_start) = value.find("use ") else {
+        return Vec::new();
+    };
+    let body = value[use_start + 4..].trim().trim_end_matches(';').trim();
+    let mut output = Vec::new();
+    parse_rust_use_item("", body, &mut output);
+    output
 }
 
 fn is_identifier_kind(language: LanguageFamily, kind: &str) -> bool {
@@ -375,6 +516,7 @@ struct SemanticBuilder<'a> {
     scopes: Vec<SemanticScope>,
     definitions: Vec<SemanticDefinition>,
     references: Vec<SemanticReference>,
+    re_exports: Vec<String>,
     definition_ranges: HashSet<(usize, usize)>,
     reference_skip_ranges: Vec<(usize, usize)>,
     python_globals: HashMap<usize, HashSet<String>>,
@@ -398,6 +540,7 @@ impl<'a> SemanticBuilder<'a> {
             }],
             definitions: Vec::new(),
             references: Vec::new(),
+            re_exports: Vec::new(),
             definition_ranges: HashSet::new(),
             reference_skip_ranges: Vec::new(),
             python_globals: HashMap::new(),
@@ -411,6 +554,7 @@ impl<'a> SemanticBuilder<'a> {
             path: self.path.to_path_buf(),
             definitions: self.definitions.into_iter().map(Arc::new).collect(),
             references: self.references.into_iter().map(Arc::new).collect(),
+            re_exports: self.re_exports,
         }
     }
 
@@ -511,6 +655,7 @@ impl<'a> SemanticBuilder<'a> {
             end,
             scope_id,
             exported,
+            default_export: false,
             import,
             inferred_type,
             owner_type,
@@ -655,8 +800,24 @@ impl<'a> SemanticBuilder<'a> {
     ) {
         match node.kind() {
             "export_statement" => {
+                if node.child_by_field_name("source").is_some() {
+                    self.mark_skip_references(node);
+                    self.add_javascript_reexports(node, scope_id);
+                    return;
+                }
+                let definition_start = self.definitions.len();
+                let default_export = node_text(node, self.source)
+                    .trim_start()
+                    .starts_with("export default ");
                 for child in named_children(node) {
                     self.walk_javascript_definitions(child, scope_id, owner_type.clone(), true);
+                }
+                if default_export {
+                    for definition in &mut self.definitions[definition_start..] {
+                        if definition.scope_id == scope_id {
+                            definition.default_export = true;
+                        }
+                    }
                 }
                 return;
             }
@@ -1015,12 +1176,34 @@ impl<'a> SemanticBuilder<'a> {
         imported_name: String,
         namespace: bool,
     ) {
+        self.add_import_definition_with_export(
+            node,
+            local_name,
+            scope_id,
+            module,
+            imported_name,
+            namespace,
+            false,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_import_definition_with_export(
+        &mut self,
+        node: Node<'_>,
+        local_name: String,
+        scope_id: usize,
+        module: String,
+        imported_name: String,
+        namespace: bool,
+        exported: bool,
+    ) {
         self.add_definition(
             node,
             local_name,
             "import",
             scope_id,
-            false,
+            exported,
             Some(ImportBinding {
                 module,
                 imported_name,
@@ -1087,6 +1270,54 @@ impl<'a> SemanticBuilder<'a> {
                 _ => {}
             }
         }
+    }
+
+    fn add_javascript_reexports(&mut self, node: Node<'a>, scope_id: usize) {
+        let Some(source_node) = node.child_by_field_name("source") else {
+            return;
+        };
+        let module = unquote(node_text(source_node, self.source));
+        let export_clause = named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == "export_clause");
+        if let Some(export_clause) = export_clause {
+            for specifier in named_children(export_clause)
+                .into_iter()
+                .filter(|candidate| candidate.kind() == "export_specifier")
+            {
+                let Some(imported) = specifier.child_by_field_name("name") else {
+                    continue;
+                };
+                let local = specifier.child_by_field_name("alias").unwrap_or(imported);
+                self.add_import_definition_with_export(
+                    local,
+                    unquote(node_text(local, self.source)),
+                    scope_id,
+                    module.clone(),
+                    unquote(node_text(imported, self.source)),
+                    false,
+                    true,
+                );
+            }
+            return;
+        }
+        if let Some(namespace) = named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == "namespace_export")
+            .and_then(|child| first_named_descendant(child, &["identifier"]))
+        {
+            self.add_import_definition_with_export(
+                namespace,
+                node_text(namespace, self.source).to_string(),
+                scope_id,
+                module,
+                "*".to_string(),
+                true,
+                true,
+            );
+            return;
+        }
+        self.re_exports.push(module);
     }
 
     fn walk_python_definitions(
@@ -1372,12 +1603,116 @@ impl<'a> SemanticBuilder<'a> {
         }
     }
 
+    fn add_java_import(&mut self, node: Node<'a>, scope_id: usize) {
+        let text = node_text(node, self.source)
+            .trim()
+            .trim_start_matches("import")
+            .trim();
+        let (static_import, path) = if let Some(path) = text.strip_prefix("static") {
+            (true, path.trim())
+        } else {
+            (false, text)
+        };
+        let path = path.trim_end_matches(';').trim();
+        if path.is_empty() || path.ends_with(".*") {
+            return;
+        }
+        let mut parts = path.split('.').collect::<Vec<_>>();
+        let Some(imported_name) = parts.pop() else {
+            return;
+        };
+        let module = if static_import {
+            parts.join(".")
+        } else {
+            path.to_string()
+        };
+        let Some(local) = named_descendant_with_text(
+            node,
+            self.source,
+            &["identifier", "type_identifier"],
+            imported_name,
+        ) else {
+            return;
+        };
+        self.add_import_definition(
+            local,
+            imported_name.to_string(),
+            scope_id,
+            module,
+            imported_name.to_string(),
+            false,
+        );
+    }
+
+    fn add_rust_imports(&mut self, node: Node<'a>, scope_id: usize) {
+        let source = node_text(node, self.source);
+        let exported = source.trim_start().starts_with("pub ");
+        for import in parse_rust_use(source) {
+            let local = named_descendant_with_text(
+                node,
+                self.source,
+                &["identifier", "type_identifier", "self", "crate", "super"],
+                &import.local_name,
+            )
+            .unwrap_or(node);
+            self.add_import_definition_with_export(
+                local,
+                import.local_name,
+                scope_id,
+                import.module,
+                import.imported_name,
+                import.namespace,
+                exported,
+            );
+        }
+    }
+
+    fn add_go_import(&mut self, node: Node<'a>, scope_id: usize) {
+        let Some(path_node) = node.child_by_field_name("path") else {
+            return;
+        };
+        let module = unquote(node_text(path_node, self.source));
+        let explicit_name = node.child_by_field_name("name");
+        let local_name = explicit_name
+            .map(|name| normalize_identifier(node_text(name, self.source)))
+            .unwrap_or_else(|| module.rsplit('/').next().unwrap_or_default().to_string());
+        if local_name.is_empty() || matches!(local_name.as_str(), "_" | ".") {
+            return;
+        }
+        self.add_import_definition(
+            explicit_name.unwrap_or(path_node),
+            local_name,
+            scope_id,
+            module,
+            "*".to_string(),
+            true,
+        );
+    }
+
     fn walk_generic_definitions(
         &mut self,
         node: Node<'a>,
         scope_id: usize,
         owner_type: Option<String>,
     ) {
+        match (self.language, node.kind()) {
+            (LanguageFamily::Java, "import_declaration") => {
+                self.mark_skip_references(node);
+                self.add_java_import(node, scope_id);
+                return;
+            }
+            (LanguageFamily::Rust, "use_declaration") => {
+                self.mark_skip_references(node);
+                self.add_rust_imports(node, scope_id);
+                return;
+            }
+            (LanguageFamily::Go, "import_spec") => {
+                self.mark_skip_references(node);
+                self.add_go_import(node, scope_id);
+                return;
+            }
+            _ => {}
+        }
         let function_kind = matches!(
             node.kind(),
             "function_item"
@@ -1872,9 +2207,71 @@ fn parse_semantic_source(
     Ok(Some(builder.finish()))
 }
 
+fn load_javascript_module_config(root: &Path) -> Option<JavascriptModuleConfig> {
+    for name in ["tsconfig.json", "jsconfig.json"] {
+        let path = root.join(name);
+        let Ok(source) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(value) = json5::from_str::<serde_json::Value>(&source) else {
+            continue;
+        };
+        let Some(compiler_options) = value.get("compilerOptions") else {
+            continue;
+        };
+        let config_dir = path.parent().unwrap_or(root).to_path_buf();
+        let base_url = compiler_options
+            .get("baseUrl")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(|| config_dir.clone(), |base_url| config_dir.join(base_url));
+        let paths = compiler_options
+            .get("paths")
+            .and_then(serde_json::Value::as_object)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(|(pattern, targets)| {
+                        let targets = targets
+                            .as_array()?
+                            .iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(str::to_string)
+                            .collect::<Vec<_>>();
+                        (!targets.is_empty()).then(|| JavascriptPathMapping {
+                            pattern: pattern.clone(),
+                            targets,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        return Some(JavascriptModuleConfig { base_url, paths });
+    }
+    None
+}
+
+fn load_go_module(root: &Path) -> Option<String> {
+    let source = fs::read_to_string(root.join("go.mod")).ok()?;
+    source.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("module ")
+            .map(str::trim)
+            .filter(|module| !module.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn load_workspace_module_config(root: &Path) -> WorkspaceModuleConfig {
+    WorkspaceModuleConfig {
+        javascript: load_javascript_module_config(root),
+        go_module: load_go_module(root),
+    }
+}
+
 impl WorkspaceSemanticIndex {
     fn new(root: PathBuf) -> Self {
         Self {
+            module_config: load_workspace_module_config(&root),
             root,
             ..Self::default()
         }
@@ -1934,6 +2331,7 @@ impl WorkspaceSemanticIndex {
     }
 
     fn rebuild_maps(&mut self) {
+        self.module_config = load_workspace_module_config(&self.root);
         let files = self.files.values().cloned().collect::<Vec<_>>();
         self.definitions_by_name.clear();
         self.references_by_name.clear();
@@ -1962,22 +2360,11 @@ impl WorkspaceSemanticIndex {
             if binding.namespace {
                 continue;
             }
-            let Some(module_key) =
-                self.resolve_module_key(Path::new(&definition.path), &binding.module)
-            else {
-                continue;
-            };
-            let target = self
-                .definitions_by_name
-                .get(&binding.imported_name.to_lowercase())
-                .and_then(|definitions| {
-                    definitions.iter().find(|candidate| {
-                        path_key(Path::new(&candidate.path)) == module_key
-                            && (candidate.exported
-                                || candidate.scope_id == 0
-                                || candidate.kind == "class")
-                    })
-                });
+            let target = self.resolve_exported_definition(
+                Path::new(&definition.path),
+                &binding.module,
+                &binding.imported_name,
+            );
             if let Some(target) = target {
                 self.aliases
                     .insert(definition.symbol_id.clone(), target.symbol_id.clone());
@@ -1997,26 +2384,80 @@ impl WorkspaceSemanticIndex {
         current
     }
 
-    fn resolve_module_key(&self, source_path: &Path, module: &str) -> Option<String> {
-        let source_family = language_for_path(source_path)?.0;
-        let is_absolute_python_module =
-            source_family == LanguageFamily::Python && !module.starts_with('.');
+    fn matching_file_keys(&self, candidates: Vec<PathBuf>) -> Vec<String> {
+        let mut seen = HashSet::new();
+        candidates
+            .into_iter()
+            .map(|candidate| path_key(&candidate))
+            .filter(|candidate| self.files.contains_key(candidate))
+            .filter(|candidate| seen.insert(candidate.clone()))
+            .collect()
+    }
+
+    fn unique_suffix_file_keys(&self, suffixes: &[String]) -> Vec<String> {
+        let matches = self
+            .files
+            .keys()
+            .filter(|candidate| suffixes.iter().any(|suffix| candidate.ends_with(suffix)))
+            .cloned()
+            .collect::<Vec<_>>();
+        if matches.len() == 1 {
+            matches
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn javascript_module_candidates(&self, source_path: &Path, module: &str) -> Vec<PathBuf> {
         let mut candidates = Vec::new();
-        match source_family {
-            LanguageFamily::JavaScript => {
-                if !module.starts_with('.') {
-                    return None;
-                }
-                let base = normalize_lexical(
-                    &source_path
-                        .parent()
-                        .unwrap_or(source_path)
-                        .join(module.replace('/', std::path::MAIN_SEPARATOR_STR)),
-                );
+        if module.starts_with('.') {
+            let base = normalize_lexical(
+                &source_path
+                    .parent()
+                    .unwrap_or(source_path)
+                    .join(module.replace('/', std::path::MAIN_SEPARATOR_STR)),
+            );
+            push_javascript_module_candidates(&mut candidates, &base);
+            return candidates;
+        }
+        let Some(config) = &self.module_config.javascript else {
+            return candidates;
+        };
+        for mapping in &config.paths {
+            let capture = if let Some((prefix, suffix)) = mapping.pattern.split_once('*') {
+                module
+                    .strip_prefix(prefix)
+                    .and_then(|rest| rest.strip_suffix(suffix))
+            } else {
+                (mapping.pattern == module).then_some("")
+            };
+            let Some(capture) = capture else {
+                continue;
+            };
+            for target in &mapping.targets {
+                let target = target.replace('*', capture);
+                let base = normalize_lexical(&config.base_url.join(target));
                 push_javascript_module_candidates(&mut candidates, &base);
             }
+        }
+        let base = normalize_lexical(&config.base_url.join(module));
+        push_javascript_module_candidates(&mut candidates, &base);
+        candidates
+    }
+
+    fn resolve_module_keys(&self, source_path: &Path, module: &str) -> Vec<String> {
+        let Some((source_family, _)) = language_for_path(source_path) else {
+            return Vec::new();
+        };
+        match source_family {
+            LanguageFamily::JavaScript => {
+                self.matching_file_keys(self.javascript_module_candidates(source_path, module))
+            }
             LanguageFamily::Python => {
-                let mut base = if module.starts_with('.') {
+                let absolute = !module.starts_with('.');
+                let mut base = if absolute {
+                    self.root.clone()
+                } else {
                     let dots = module
                         .chars()
                         .take_while(|character| *character == '.')
@@ -2026,8 +2467,6 @@ impl WorkspaceSemanticIndex {
                         parent = parent.parent().unwrap_or(&parent).to_path_buf();
                     }
                     parent
-                } else {
-                    self.root.clone()
                 };
                 let remainder = module.trim_start_matches('.');
                 if !remainder.is_empty() {
@@ -2035,58 +2474,264 @@ impl WorkspaceSemanticIndex {
                         base.push(part);
                     }
                 }
-                candidates.push(base.with_extension("py"));
-                candidates.push(base.join("__init__.py"));
+                let direct = self
+                    .matching_file_keys(vec![base.with_extension("py"), base.join("__init__.py")]);
+                if !direct.is_empty() || !absolute {
+                    return direct;
+                }
+                let module_path = module.replace('.', "/").to_lowercase();
+                self.unique_suffix_file_keys(&[
+                    format!("/{module_path}.py"),
+                    format!("/{module_path}/__init__.py"),
+                ])
             }
-            _ => return None,
+            LanguageFamily::Java => {
+                let module_path = module.replace('.', "/").to_lowercase();
+                let direct = self.matching_file_keys(vec![self
+                    .root
+                    .join(module.replace('.', "/"))
+                    .with_extension("java")]);
+                if !direct.is_empty() {
+                    direct
+                } else {
+                    self.unique_suffix_file_keys(&[format!("/{module_path}.java")])
+                }
+            }
+            LanguageFamily::Rust => {
+                let mut parts = module
+                    .split("::")
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<_>>();
+                let src_root = source_path
+                    .ancestors()
+                    .find(|path| path.file_name().is_some_and(|name| name == "src"))
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| self.root.clone());
+                let mut base = if parts.first().is_some_and(|part| *part == "self") {
+                    parts.remove(0);
+                    source_path.parent().unwrap_or(source_path).to_path_buf()
+                } else if parts.first().is_some_and(|part| *part == "super") {
+                    let mut parent = source_path.parent().unwrap_or(source_path).to_path_buf();
+                    while parts.first().is_some_and(|part| *part == "super") {
+                        parts.remove(0);
+                        parent = parent.parent().unwrap_or(&parent).to_path_buf();
+                    }
+                    parent
+                } else {
+                    if parts.first().is_some_and(|part| *part == "crate") {
+                        parts.remove(0);
+                    }
+                    src_root
+                };
+                for part in parts {
+                    base.push(part);
+                }
+                let candidates = vec![
+                    base.with_extension("rs"),
+                    base.join("mod.rs"),
+                    base.join("lib.rs"),
+                    base.join("main.rs"),
+                ];
+                let direct = self.matching_file_keys(candidates);
+                if !direct.is_empty() {
+                    direct
+                } else {
+                    let module_path = module
+                        .trim_start_matches("crate::")
+                        .trim_start_matches("self::")
+                        .replace("::", "/")
+                        .to_lowercase();
+                    self.unique_suffix_file_keys(&[
+                        format!("/{module_path}.rs"),
+                        format!("/{module_path}/mod.rs"),
+                    ])
+                }
+            }
+            LanguageFamily::Go => {
+                let relative = self
+                    .module_config
+                    .go_module
+                    .as_deref()
+                    .and_then(|prefix| module.strip_prefix(prefix))
+                    .map(|path| path.trim_start_matches('/'))
+                    .unwrap_or(module);
+                let direct_dir_key = path_key(&normalize_lexical(&self.root.join(relative)));
+                let mut direct = self
+                    .files
+                    .iter()
+                    .filter(|(_, file)| {
+                        file.path
+                            .parent()
+                            .is_some_and(|parent| path_key(parent) == direct_dir_key)
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect::<Vec<_>>();
+                if !direct.is_empty() {
+                    direct.sort();
+                    return direct;
+                }
+                let suffix = format!("/{}", relative.replace('\\', "/").to_lowercase());
+                let directories = self
+                    .files
+                    .values()
+                    .filter_map(|file| file.path.parent())
+                    .map(path_key)
+                    .filter(|directory| directory.ends_with(&suffix))
+                    .collect::<HashSet<_>>();
+                if directories.len() != 1 {
+                    return Vec::new();
+                }
+                let directory = directories.into_iter().next().unwrap_or_default();
+                let mut matches = self
+                    .files
+                    .iter()
+                    .filter(|(_, file)| {
+                        file.path
+                            .parent()
+                            .is_some_and(|parent| path_key(parent) == directory)
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect::<Vec<_>>();
+                matches.sort();
+                matches
+            }
         }
-        let direct_match = candidates
-            .into_iter()
-            .map(|candidate| path_key(&candidate))
-            .find(|candidate| self.files.contains_key(candidate));
-        if direct_match.is_some() || !is_absolute_python_module {
-            return direct_match;
-        }
-
-        // Python projects often keep import roots below the opened workspace
-        // (`api/`, `src/`, and similar). Use the existing index to resolve an
-        // absolute import by suffix when that match is unambiguous.
-        let module_path = module.replace('.', "/");
-        let suffixes = [
-            format!("/{module_path}.py"),
-            format!("/{module_path}/__init__.py"),
-        ];
-        let mut matches = self
-            .files
-            .keys()
-            .filter(|candidate| suffixes.iter().any(|suffix| candidate.ends_with(suffix)));
-        let resolved = matches.next()?.clone();
-        if matches.next().is_some() {
-            return None;
-        }
-        Some(resolved)
     }
 
-    fn namespace_target(&self, reference: &SemanticReference) -> Option<&SemanticDefinition> {
+    fn exported_definition_in_keys(
+        &self,
+        module_keys: &[String],
+        imported_name: &str,
+        visited: &mut HashSet<String>,
+        allow_members: bool,
+    ) -> Option<Arc<SemanticDefinition>> {
+        for module_key in module_keys {
+            let visit_key = format!("{module_key}:{}", imported_name.to_lowercase());
+            if !visited.insert(visit_key) {
+                continue;
+            }
+            let target = if imported_name == "default" {
+                self.symbols_by_id.values().find(|candidate| {
+                    path_key(Path::new(&candidate.path)) == *module_key && candidate.default_export
+                })
+            } else {
+                self.definitions_by_name
+                    .get(&imported_name.to_lowercase())
+                    .and_then(|definitions| {
+                        definitions.iter().find(|candidate| {
+                            path_key(Path::new(&candidate.path)) == *module_key
+                                && (candidate.exported
+                                    || candidate.scope_id == 0
+                                    || candidate.kind == "class"
+                                    || (allow_members
+                                        && matches!(
+                                            candidate.kind.as_str(),
+                                            "method" | "field" | "constant"
+                                        )))
+                        })
+                    })
+            };
+            if let Some(target) = target {
+                return Some(Arc::clone(target));
+            }
+            let Some(file) = self.files.get(module_key) else {
+                continue;
+            };
+            for re_export in &file.re_exports {
+                let re_export_keys = self.resolve_module_keys(&file.path, re_export);
+                if let Some(target) = self.exported_definition_in_keys(
+                    &re_export_keys,
+                    imported_name,
+                    visited,
+                    allow_members,
+                ) {
+                    return Some(target);
+                }
+            }
+        }
+        None
+    }
+
+    fn resolve_exported_definition(
+        &self,
+        source_path: &Path,
+        module: &str,
+        imported_name: &str,
+    ) -> Option<Arc<SemanticDefinition>> {
+        let module_keys = self.resolve_module_keys(source_path, module);
+        let allow_members = language_for_path(source_path)
+            .is_some_and(|(family, _)| family == LanguageFamily::Java);
+        self.exported_definition_in_keys(
+            &module_keys,
+            imported_name,
+            &mut HashSet::new(),
+            allow_members,
+        )
+    }
+
+    fn namespace_target(&self, reference: &SemanticReference) -> Option<Arc<SemanticDefinition>> {
         let receiver = reference.receiver.as_deref()?;
         let file = self.files.get(&path_key(Path::new(&reference.path)))?;
-        let import = file.definitions.iter().find(|definition| {
-            definition.name == receiver
-                && definition
-                    .import
-                    .as_ref()
-                    .is_some_and(|binding| binding.namespace)
-        })?;
-        let binding = import.import.as_ref()?;
-        let module_key = self.resolve_module_key(Path::new(&reference.path), &binding.module)?;
-        self.definitions_by_name
-            .get(&reference.name.to_lowercase())?
+        let import = file
+            .definitions
             .iter()
-            .find(|definition| path_key(Path::new(&definition.path)) == module_key)
-            .map(AsRef::as_ref)
+            .find(|definition| definition.name == receiver && definition.import.is_some())?;
+        let binding = import.import.as_ref()?;
+
+        if !binding.namespace {
+            let canonical = self.canonical_symbol_id(&import.symbol_id);
+            if let Some(target_type) = self.symbols_by_id.get(&canonical) {
+                if matches!(
+                    target_type.kind.as_str(),
+                    "class" | "interface" | "enum" | "type"
+                ) {
+                    if let Some(member) = self
+                        .definitions_by_name
+                        .get(&reference.name.to_lowercase())
+                        .and_then(|definitions| {
+                            definitions.iter().find(|definition| {
+                                definition.owner_type.as_deref() == Some(target_type.name.as_str())
+                                    && definition.path == target_type.path
+                            })
+                        })
+                    {
+                        return Some(Arc::clone(member));
+                    }
+                }
+            }
+        }
+
+        let mut modules = vec![binding.module.clone()];
+        if !binding.namespace && binding.imported_name != "*" {
+            let separator = match language_for_path(Path::new(&reference.path))?.0 {
+                LanguageFamily::JavaScript | LanguageFamily::Go => "/",
+                LanguageFamily::Python | LanguageFamily::Java => ".",
+                LanguageFamily::Rust => "::",
+            };
+            modules.insert(
+                0,
+                format!("{}{separator}{}", binding.module, binding.imported_name),
+            );
+        }
+        for module in modules {
+            let module_keys = self.resolve_module_keys(Path::new(&reference.path), &module);
+            if let Some(target) = self.exported_definition_in_keys(
+                &module_keys,
+                &reference.name,
+                &mut HashSet::new(),
+                language_for_path(Path::new(&reference.path))
+                    .is_some_and(|(family, _)| family == LanguageFamily::Java),
+            ) {
+                return Some(target);
+            }
+        }
+        None
     }
 
-    fn inferred_member_target(&self, reference: &SemanticReference) -> Option<&SemanticDefinition> {
+    fn inferred_member_target(
+        &self,
+        reference: &SemanticReference,
+    ) -> Option<Arc<SemanticDefinition>> {
         let receiver = reference.receiver.as_deref()?;
         let source_path = path_key(Path::new(&reference.path));
         let file = self.files.get(&source_path)?;
@@ -2124,7 +2769,7 @@ impl WorkspaceSemanticIndex {
                     && definition.path == target_type.path
                     && matches!(definition.kind.as_str(), "method" | "field")
             })
-            .map(AsRef::as_ref)
+            .cloned()
     }
 
     fn resolved_reference_symbol(&self, reference: &SemanticReference) -> Option<String> {
@@ -3507,6 +4152,301 @@ def outer():
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn rust_use_parser_expands_grouped_and_aliased_imports() {
+        assert_eq!(
+            parse_rust_use("pub use crate::logger::{info, warn as alert};"),
+            vec![
+                ParsedImport {
+                    local_name: "info".to_string(),
+                    module: "crate::logger".to_string(),
+                    imported_name: "info".to_string(),
+                    namespace: false,
+                },
+                ParsedImport {
+                    local_name: "alert".to_string(),
+                    module: "crate::logger".to_string(),
+                    imported_name: "warn".to_string(),
+                    namespace: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn javascript_resolves_tsconfig_paths_through_wildcard_reexports() {
+        let root = temp_workspace("tsconfig-paths");
+        fs::create_dir_all(root.join("src/services")).unwrap();
+        fs::write(
+            root.join("tsconfig.json"),
+            r#"{
+              // JSON5 is common in editor-facing tsconfig files.
+              compilerOptions: {
+                baseUrl: ".",
+                paths: { "@/*": ["src/*"], },
+              },
+            }"#,
+        )
+        .unwrap();
+        let target = Arc::new(parse(
+            &root,
+            "src/services/logger.ts",
+            "export function info() {}\n",
+        ));
+        let barrel = Arc::new(parse(
+            &root,
+            "src/logger.ts",
+            "export * from '@/services/logger'\n",
+        ));
+        let consumer_source = "import { info } from '@/logger'\ninfo()\n";
+        let consumer = Arc::new(parse(&root, "src/main.ts", consumer_source));
+        let expected = target
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "info")
+            .expect("exported info")
+            .symbol_id
+            .clone();
+        let mut workspace = WorkspaceSemanticIndex::new(root.clone());
+        workspace.insert_file_without_alias_rebuild(target);
+        workspace.insert_file_without_alias_rebuild(barrel);
+        workspace.insert_file_without_alias_rebuild(Arc::clone(&consumer));
+        workspace.rebuild_aliases();
+
+        let resolved = resolve_query(
+            &workspace,
+            &consumer,
+            &root.join("src/main.ts"),
+            consumer_source.rfind("info").unwrap() + 2,
+            20,
+        );
+        assert_eq!(resolved.symbol_id.as_deref(), Some(expected.as_str()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn javascript_resolves_named_reexports_of_default_exports() {
+        let root = temp_workspace("named-reexport");
+        fs::create_dir_all(root.join("src/services")).unwrap();
+        fs::write(
+            root.join("tsconfig.json"),
+            r#"{ compilerOptions: { paths: { "@/*": ["src/*"] } } }"#,
+        )
+        .unwrap();
+        let target = Arc::new(parse(
+            &root,
+            "src/services/logger.ts",
+            "export default class Logger {}\n",
+        ));
+        let barrel = Arc::new(parse(
+            &root,
+            "src/logger.ts",
+            "export { default as Logger } from '@/services/logger'\n",
+        ));
+        let consumer_source = "import { Logger } from '@/logger'\nnew Logger()\n";
+        let consumer = Arc::new(parse(&root, "src/main.ts", consumer_source));
+        let expected = target
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "Logger")
+            .expect("default Logger")
+            .symbol_id
+            .clone();
+        let mut workspace = WorkspaceSemanticIndex::new(root.clone());
+        workspace.insert_file_without_alias_rebuild(target);
+        workspace.insert_file_without_alias_rebuild(barrel);
+        workspace.insert_file_without_alias_rebuild(Arc::clone(&consumer));
+        workspace.rebuild_aliases();
+
+        let resolved = resolve_query(
+            &workspace,
+            &consumer,
+            &root.join("src/main.ts"),
+            consumer_source.rfind("Logger").unwrap() + 2,
+            20,
+        );
+        assert_eq!(resolved.symbol_id.as_deref(), Some(expected.as_str()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn python_relative_package_reexports_resolve_to_the_source_definition() {
+        let root = Path::new("D:/workspace");
+        let target = Arc::new(parse(
+            root,
+            "app/orders/service.py",
+            "def process_order():\n    pass\n",
+        ));
+        let package = Arc::new(parse(
+            root,
+            "app/orders/__init__.py",
+            "from .service import process_order\n",
+        ));
+        let consumer_source = "from orders import process_order\nprocess_order()\n";
+        let consumer = Arc::new(parse(root, "app/main.py", consumer_source));
+        let expected = target
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "process_order")
+            .expect("process_order")
+            .symbol_id
+            .clone();
+        let mut workspace = WorkspaceSemanticIndex::new(root.to_path_buf());
+        workspace.insert_file_without_alias_rebuild(target);
+        workspace.insert_file_without_alias_rebuild(package);
+        workspace.insert_file_without_alias_rebuild(Arc::clone(&consumer));
+        workspace.rebuild_aliases();
+
+        let resolved = resolve_query(
+            &workspace,
+            &consumer,
+            &root.join("app/main.py"),
+            consumer_source.rfind("process_order").unwrap() + 2,
+            20,
+        );
+        assert_eq!(resolved.symbol_id.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn java_imports_resolve_project_classes_and_member_calls() {
+        let root = Path::new("D:/workspace");
+        let target = Arc::new(parse(
+            root,
+            "src/main/java/com/acme/Logger.java",
+            "package com.acme; public class Logger { public void info() {} }\n",
+        ));
+        let consumer_source = r#"package com.app;
+import com.acme.Logger;
+class Service {
+    void run() {
+        Logger logger = new Logger();
+        logger.info();
+    }
+}
+"#;
+        let consumer = Arc::new(parse(
+            root,
+            "src/main/java/com/app/Service.java",
+            consumer_source,
+        ));
+        let expected = target
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "info")
+            .expect("Logger.info")
+            .symbol_id
+            .clone();
+        let mut workspace = WorkspaceSemanticIndex::new(root.to_path_buf());
+        workspace.insert_file_without_alias_rebuild(target);
+        workspace.insert_file_without_alias_rebuild(Arc::clone(&consumer));
+        workspace.rebuild_aliases();
+
+        let call = reference(&consumer, "info", "member-call", 6);
+        assert_eq!(
+            workspace.resolved_reference_symbol(call).as_deref(),
+            Some(expected.as_str())
+        );
+    }
+
+    #[test]
+    fn java_static_imports_resolve_project_members() {
+        let root = Path::new("D:/workspace");
+        let target = Arc::new(parse(
+            root,
+            "src/main/java/com/acme/Logger.java",
+            "package com.acme; public class Logger { public static void info() {} }\n",
+        ));
+        let consumer_source =
+            "import static com.acme.Logger.info;\nclass Service { void run() { info(); } }\n";
+        let consumer = Arc::new(parse(
+            root,
+            "src/main/java/com/app/Service.java",
+            consumer_source,
+        ));
+        let expected = target
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "info")
+            .expect("Logger.info")
+            .symbol_id
+            .clone();
+        let mut workspace = WorkspaceSemanticIndex::new(root.to_path_buf());
+        workspace.insert_file_without_alias_rebuild(target);
+        workspace.insert_file_without_alias_rebuild(Arc::clone(&consumer));
+        workspace.rebuild_aliases();
+
+        let resolved = resolve_query(
+            &workspace,
+            &consumer,
+            &root.join("src/main/java/com/app/Service.java"),
+            consumer_source.rfind("info").unwrap() + 2,
+            20,
+        );
+        assert_eq!(resolved.symbol_id.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn rust_use_resolves_project_module_functions() {
+        let root = Path::new("D:/workspace");
+        let target = Arc::new(parse(root, "src/logger.rs", "pub fn info() {}\n"));
+        let consumer_source = "use crate::logger::info;\nfn run() { info(); }\n";
+        let consumer = Arc::new(parse(root, "src/main.rs", consumer_source));
+        let expected = target
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "info")
+            .expect("logger::info")
+            .symbol_id
+            .clone();
+        let mut workspace = WorkspaceSemanticIndex::new(root.to_path_buf());
+        workspace.insert_file_without_alias_rebuild(target);
+        workspace.insert_file_without_alias_rebuild(Arc::clone(&consumer));
+        workspace.rebuild_aliases();
+
+        let resolved = resolve_query(
+            &workspace,
+            &consumer,
+            &root.join("src/main.rs"),
+            consumer_source.rfind("info").unwrap() + 2,
+            20,
+        );
+        assert_eq!(resolved.symbol_id.as_deref(), Some(expected.as_str()));
+    }
+
+    #[test]
+    fn go_imports_resolve_project_package_members() {
+        let root = temp_workspace("go-module");
+        fs::write(root.join("go.mod"), "module example.com/app\n").unwrap();
+        let target = Arc::new(parse(
+            &root,
+            "internal/logger/logger.go",
+            "package logger\nfunc Info() {}\n",
+        ));
+        let consumer = Arc::new(parse(
+            &root,
+            "main.go",
+            "package main\nimport \"example.com/app/internal/logger\"\nfunc main() { logger.Info() }\n",
+        ));
+        let expected = target
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "Info")
+            .expect("logger.Info")
+            .symbol_id
+            .clone();
+        let mut workspace = WorkspaceSemanticIndex::new(root.clone());
+        workspace.insert_file_without_alias_rebuild(target);
+        workspace.insert_file_without_alias_rebuild(Arc::clone(&consumer));
+        workspace.rebuild_aliases();
+
+        let call = reference(&consumer, "Info", "member-call", 3);
+        assert_eq!(
+            workspace.resolved_reference_symbol(call).as_deref(),
+            Some(expected.as_str())
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

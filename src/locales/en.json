@@ -640,6 +640,8 @@
     "{count} 个用法": "{count} usages",
     "显示 {shown} / {total}": "Showing {shown} / {total}",
     "当前筛选没有匹配的用法": "No usages match the current filter",
+    "折叠用法分组 {name}": "Collapse usage group {name}",
+    "展开用法分组 {name}": "Expand usage group {name}",
     "正在加载用法…": "Loading usages…",
     "加载更多用法": "Load More Usages",
     "索引构建中，结果可能不完整": "Indexing; results may be incomplete",
