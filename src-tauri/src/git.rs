@@ -381,6 +381,18 @@ fn push_current(root: &Path) -> Result<String, String> {
     })
 }
 
+/// Update remote-tracking refs without changing the current branch or worktree.
+fn fetch_remote(root: &Path) -> Result<String, String> {
+    let output = run_git(root, &["fetch", "--prune"])?;
+    let output = ensure_git_success("获取远程更新", output)?;
+    let summary = git_output_text(&output);
+    Ok(if summary.starts_with("Git 退出码") {
+        "已获取远程更新".to_string()
+    } else {
+        summary
+    })
+}
+
 fn list_unmerged_paths(root: &Path) -> Result<Vec<String>, String> {
     let output = run_git(root, &["diff", "--name-only", "--diff-filter=U", "-z"])?;
     if !output.status.success() {
@@ -697,6 +709,18 @@ pub async fn git_push(path: String, allowlist: State<'_, PathAllowlist>) -> Resu
     tauri::async_runtime::spawn_blocking(move || push_current(&root))
         .await
         .map_err(|error| format!("Git 推送失败：{error}"))?
+}
+
+#[tauri::command]
+pub async fn git_fetch(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<String, String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || fetch_remote(&root))
+        .await
+        .map_err(|error| format!("获取远程更新失败：{error}"))?
 }
 
 #[tauri::command]
@@ -1404,6 +1428,49 @@ mod tests {
         assert!(error.starts_with("Git 推送失败："), "{error}");
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fetches_remote_tracking_branches_without_touching_worktree() {
+        let root = init_test_repo("fetch-remote");
+        let remote = temp_base("fetch-remote-bare");
+        fs::create_dir_all(&remote).unwrap();
+        git_success(&remote, &["init", "--bare"]);
+
+        fs::write(root.join("README.md"), "v1\n").unwrap();
+        stage_files(&root, &["README.md".into()]).unwrap();
+        commit_staged(&root, "initial").unwrap();
+        let remote_path = remote.to_string_lossy().to_string();
+        git_success(&root, &["remote", "add", "origin", &remote_path]);
+        let branch = decode_git_text(
+            &run_git(&root, &["branch", "--show-current"])
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        git_success(&root, &["push", "--set-upstream", "origin", &branch]);
+
+        let other = temp_base("fetch-remote-other");
+        let other_path = other.to_string_lossy().to_string();
+        git_success(Path::new("."), &["clone", &remote_path, &other_path]);
+        git_success(&other, &["checkout", "-b", "feature/remote-only"]);
+        fs::write(other.join("remote.txt"), "remote\n").unwrap();
+        git_success(&other, &["add", "remote.txt"]);
+        git_success(&other, &["commit", "-m", "remote branch"]);
+        git_success(&other, &["push", "-u", "origin", "feature/remote-only"]);
+
+        fetch_remote(&root).unwrap();
+        let branches = list_branches(&root).unwrap();
+        assert!(branches
+            .remote
+            .iter()
+            .any(|name| name == "origin/feature/remote-only"));
+        assert_eq!(fs::read_to_string(root.join("README.md")).unwrap(), "v1\n");
+
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(remote).unwrap();
+        fs::remove_dir_all(other).unwrap();
     }
 
     #[test]

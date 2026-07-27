@@ -415,6 +415,7 @@ pub fn run() {
             git::git_discard,
             git::git_commit,
             git::git_push,
+            git::git_fetch,
             git::git_pull,
             git::git_branch_list,
             git::git_switch,

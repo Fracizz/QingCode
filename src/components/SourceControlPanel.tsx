@@ -22,6 +22,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  Download,
   ExternalLink,
   FileIcon,
   Folder,
@@ -70,6 +71,7 @@ import {
   changeGitStage,
   commitGit,
   discardGitChanges,
+  fetchGit,
   getGitBranches,
   getGitCommitFileContents,
   getGitCommitFiles,
@@ -153,7 +155,7 @@ function GitScmStatusBadge({ status, group }: { status: string; group: GitChange
 }
 
 type GitOperation = {
-  kind: 'stage' | 'unstage' | 'discard' | 'commit' | 'push' | 'pull' | 'switch'
+  kind: 'stage' | 'unstage' | 'discard' | 'commit' | 'push' | 'fetch' | 'pull' | 'switch'
   key: string
 }
 
@@ -1204,6 +1206,32 @@ export default function SourceControlPanel() {
     }
   }, [loading, operation, refresh, t])
 
+  const fetchRemote = useCallback(async () => {
+    const project = useProjectStore.getState().currentProject
+    if (!project || operation || loading) return
+    setOperation({ kind: 'fetch', key: 'fetch' })
+    setOperationError(null)
+    try {
+      await fetchGit(project.path)
+      if (useProjectStore.getState().currentProject?.path === project.path) {
+        await refresh({ soft: false })
+        const branches = await getGitBranches(project.path)
+        if (useProjectStore.getState().currentProject?.path === project.path) {
+          setBranchList(branches)
+          useProjectStore.getState().pushToast('success', t('已获取远程更新'))
+        }
+      }
+    } catch (reason) {
+      if (useProjectStore.getState().currentProject?.path === project.path) {
+        const message = String(reason)
+        setOperationError(message)
+        useProjectStore.getState().pushToast('error', t('获取远程更新失败：{error}', { error: message }))
+      }
+    } finally {
+      setOperation(null)
+    }
+  }, [loading, operation, refresh, t])
+
   const commitStaged = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
     if (!project || operation || loading) return
@@ -2020,6 +2048,21 @@ export default function SourceControlPanel() {
           )}
         </span>
         <div className="flex shrink-0 items-center gap-0.5">
+          <Tooltip label={t('获取远程更新（不合并代码）')} side="bottom">
+            <button
+              type="button"
+              onClick={() => void fetchRemote()}
+              disabled={loading || Boolean(operation) || !currentProject || !status?.is_repository}
+              aria-label={t('获取远程更新（不合并代码）')}
+              className={`${SCM_ICON_BUTTON} hover:text-fg`}
+            >
+              {operation?.kind === 'fetch' ? (
+                <LoaderCircle size={SCM_ICON_SIZE} className="animate-spin text-accent" />
+              ) : (
+                <Download size={SCM_ICON_SIZE} strokeWidth={2.25} />
+              )}
+            </button>
+          </Tooltip>
           <Tooltip label={t('从远程拉取')} side="bottom">
             <button
               type="button"

@@ -79,6 +79,10 @@ export function pushGit(path: string): Promise<string> {
   return safeInvoke('推送 Git 提交', 'git_push', { path })
 }
 
+export function fetchGit(path: string): Promise<string> {
+  return safeInvoke('获取远程更新', 'git_fetch', { path })
+}
+
 export function getGitFileContents(path: string, file: string): Promise<GitFileContents> {
   return safeInvoke('读取 Git 文件内容', 'git_file_contents', { path, file })
 }
