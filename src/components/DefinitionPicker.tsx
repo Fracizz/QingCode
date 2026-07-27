@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -64,6 +63,8 @@ function kindLabel(kind: string): string {
 
 function usageKindLabel(kind: DefinitionCandidate['usageKind']): string {
   switch (kind) {
+    case 'definition':
+      return '定义'
     case 'call':
     case 'member-call':
       return '调用'
@@ -131,6 +132,7 @@ export default function DefinitionPicker() {
   const candidates = useDefinitionPickerStore(state => state.candidates)
   const details = useDefinitionPickerStore(state => state.details)
   const usageLoader = useDefinitionPickerStore(state => state.usageLoader)
+  const afterDefinitionJump = useDefinitionPickerStore(state => state.afterDefinitionJump)
   const closePicker = useDefinitionPickerStore(state => state.closePicker)
   const [activeIndex, setActiveIndex] = useState(0)
   const [usageFilter, setUsageFilter] = useState<SemanticUsageFilter>('all')
@@ -141,6 +143,26 @@ export default function DefinitionPicker() {
   const listRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
   const usageRequestRef = useRef(0)
+  const manuallyPositionedRef = useRef(false)
+  const dragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    startLeft: number
+    startTop: number
+    zoom: number
+    maxLeft: number
+    maxTop: number
+    nextLeft: number
+    nextTop: number
+  } | null>(null)
+  const dragFrameRef = useRef(0)
+  const dragListenersRef = useRef<{
+    handle: HTMLDivElement
+    onMove: (event: PointerEvent) => void
+    onEnd: (event: PointerEvent) => void
+    onBlur: () => void
+  } | null>(null)
   const [pickerPosition, setPickerPosition] = useState({ x: 8, y: 8 })
   const filteredCandidates = useMemo(
     () =>
@@ -200,12 +222,21 @@ export default function DefinitionPicker() {
         if (!candidate) return
         event.preventDefault()
         closePicker()
-        void jumpToDefinitionCandidate(candidate)
+        void jumpToDefinitionCandidate(candidate).then(() =>
+          mode === 'definition' ? afterDefinitionJump?.(candidate) : undefined
+        )
       }
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [activeIndex, closePicker, open, visibleCandidates])
+  }, [
+    activeIndex,
+    afterDefinitionJump,
+    closePicker,
+    mode,
+    open,
+    visibleCandidates,
+  ])
 
   useEffect(() => {
     listRef.current
@@ -216,9 +247,144 @@ export default function DefinitionPicker() {
   const usageAnchor = pagedDetails?.anchor ?? details?.anchor
   const anchoredReference = mode === 'reference' && Boolean(usageAnchor)
 
+  useEffect(() => {
+    if (open) return
+    manuallyPositionedRef.current = false
+    if (dragFrameRef.current !== 0) {
+      window.cancelAnimationFrame(dragFrameRef.current)
+      dragFrameRef.current = 0
+    }
+    const listeners = dragListenersRef.current
+    if (listeners) {
+      const { handle, onMove, onEnd, onBlur } = listeners
+      handle.removeEventListener('pointermove', onMove)
+      handle.removeEventListener('pointerup', onEnd)
+      handle.removeEventListener('pointercancel', onEnd)
+      handle.removeEventListener('lostpointercapture', onEnd)
+      window.removeEventListener('blur', onBlur)
+      dragListenersRef.current = null
+    }
+    dragRef.current = null
+    const dialog = dialogRef.current
+    if (dialog) {
+      delete dialog.dataset.dragging
+      dialog.style.transform = ''
+      dialog.style.willChange = ''
+    }
+  }, [open])
+
+  const scheduleDragFrame = () => {
+    if (dragFrameRef.current !== 0) return
+    dragFrameRef.current = window.requestAnimationFrame(() => {
+      dragFrameRef.current = 0
+      const drag = dragRef.current
+      const dialog = dialogRef.current
+      if (!drag || !dialog) return
+      dialog.style.transform = `translate3d(${drag.nextLeft - drag.startLeft}px, ${drag.nextTop - drag.startTop}px, 0)`
+    })
+  }
+
+  const beginDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!anchoredReference || !event.isPrimary || event.button !== 0) return
+    const dialog = dialogRef.current
+    const handle = event.currentTarget
+    if (!dialog) return
+    const zoom = Number.parseFloat(getComputedStyle(dialog).zoom) || 1
+    const maxLeft = Math.max(8, window.innerWidth / zoom - dialog.offsetWidth - 8)
+    const maxTop = Math.max(8, window.innerHeight / zoom - dialog.offsetHeight - 8)
+    manuallyPositionedRef.current = true
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: pickerPosition.x,
+      startTop: pickerPosition.y,
+      zoom,
+      maxLeft,
+      maxTop,
+      nextLeft: pickerPosition.x,
+      nextTop: pickerPosition.y,
+    }
+    dialog.dataset.dragging = 'true'
+    dialog.style.willChange = 'transform'
+    handle.setPointerCapture?.(event.pointerId)
+    event.preventDefault()
+
+    let finished = false
+    const onMove = (moveEvent: PointerEvent) => {
+      const drag = dragRef.current
+      if (!drag || moveEvent.pointerId !== drag.pointerId) return
+      drag.nextLeft = Math.max(
+        8,
+        Math.min(
+          drag.maxLeft,
+          drag.startLeft + (moveEvent.clientX - drag.startX) / drag.zoom
+        )
+      )
+      drag.nextTop = Math.max(
+        8,
+        Math.min(
+          drag.maxTop,
+          drag.startTop + (moveEvent.clientY - drag.startY) / drag.zoom
+        )
+      )
+      scheduleDragFrame()
+    }
+    const finish = (endEvent?: PointerEvent) => {
+      if (finished) return
+      if (endEvent && dragRef.current && endEvent.pointerId !== dragRef.current.pointerId) return
+      finished = true
+      const listeners = dragListenersRef.current
+      if (listeners) {
+        const { handle: dragHandle, onMove: move, onEnd: end, onBlur } = listeners
+        dragHandle.removeEventListener('pointermove', move)
+        dragHandle.removeEventListener('pointerup', end)
+        dragHandle.removeEventListener('pointercancel', end)
+        dragHandle.removeEventListener('lostpointercapture', end)
+        window.removeEventListener('blur', onBlur)
+        dragListenersRef.current = null
+      }
+      if (dragFrameRef.current !== 0) {
+        window.cancelAnimationFrame(dragFrameRef.current)
+        dragFrameRef.current = 0
+      }
+      const drag = dragRef.current
+      const currentDialog = dialogRef.current
+      if (drag && currentDialog) {
+        currentDialog.style.left = `${drag.nextLeft}px`
+        currentDialog.style.top = `${drag.nextTop}px`
+        currentDialog.style.transform = ''
+        currentDialog.style.willChange = ''
+        delete currentDialog.dataset.dragging
+        setPickerPosition({ x: drag.nextLeft, y: drag.nextTop })
+      }
+      dragRef.current = null
+      if (endEvent?.pointerId !== undefined && handle.hasPointerCapture?.(endEvent.pointerId)) {
+        handle.releasePointerCapture(endEvent.pointerId)
+      }
+    }
+    const onEnd = (endEvent: PointerEvent) => finish(endEvent)
+    const onBlur = () => finish()
+
+    dragListenersRef.current = { handle, onMove, onEnd, onBlur }
+    handle.addEventListener('pointermove', onMove)
+    handle.addEventListener('pointerup', onEnd)
+    handle.addEventListener('pointercancel', onEnd)
+    handle.addEventListener('lostpointercapture', onEnd)
+    window.addEventListener('blur', onBlur)
+  }
+
   useLayoutEffect(() => {
     const dialog = dialogRef.current
-    if (!open || !anchoredReference || !usageAnchor || !dialog) return
+    if (
+      !open ||
+      !anchoredReference ||
+      !usageAnchor ||
+      !dialog ||
+      manuallyPositionedRef.current
+    ) {
+      return
+    }
     const zoom = Number.parseFloat(getComputedStyle(dialog).zoom) || 1
     const preferAbove =
       window.innerHeight - usageAnchor.bottom < Math.min(520, dialog.offsetHeight + 16)
@@ -314,7 +480,9 @@ export default function DefinitionPicker() {
 
   const choose = (candidate: DefinitionCandidate) => {
     closePicker()
-    void jumpToDefinitionCandidate(candidate)
+    void jumpToDefinitionCandidate(candidate).then(() =>
+      mode === 'definition' ? afterDefinitionJump?.(candidate) : undefined
+    )
   }
   const toggleUsageGroup = (key: string) => {
     setCollapsedUsageGroups(current => {
@@ -353,10 +521,11 @@ export default function DefinitionPicker() {
         role="option"
         aria-selected={active}
         data-def-index={index}
-        className={`w-full py-1.5 pl-10 pr-3 text-left transition-colors ${
-          active ? 'bg-accent/20 text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+        className={`w-full py-1.5 pl-10 pr-3 text-left ${
+          active
+            ? 'bg-accent/28 text-fg'
+            : 'text-fg-muted hover:bg-bg-hover/80 hover:text-fg'
         }`}
-        onMouseEnter={() => setActiveIndex(index)}
         onClick={() => choose(candidate)}
       >
         <span className="grid min-w-[680px] grid-cols-[58px_minmax(360px,1fr)_74px] items-center gap-3">
@@ -383,15 +552,21 @@ export default function DefinitionPicker() {
       aria-modal={anchoredReference ? undefined : true}
       aria-labelledby="definition-picker-title"
       style={anchoredReference ? { left: pickerPosition.x, top: pickerPosition.y } : undefined}
-      className={`ui-font-scaled modal-content-enter flex flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50 ${
+      className={`ui-font-scaled modal-content-enter flex flex-col overflow-hidden rounded-lg border border-border-strong shadow-2xl ${
         anchoredReference
-          ? 'fixed z-[125] max-h-[min(720px,82vh)] w-[min(980px,calc(100vw-16px))]'
-          : `relative w-full ${
+          ? 'fixed z-[125] max-h-[min(720px,82vh)] w-[min(980px,calc(100vw-16px))] bg-bg-elevated/60 shadow-black/65 backdrop-blur-md backdrop-saturate-150 data-[dragging=true]:bg-bg-elevated/88 data-[dragging=true]:backdrop-blur-none data-[dragging=true]:saturate-100'
+          : `relative w-full bg-bg-elevated shadow-black/50 ${
               mode === 'reference' ? 'max-h-[min(720px,82vh)] max-w-[980px]' : 'max-w-[680px]'
             }`
       }`}
     >
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+      <div
+        aria-label={anchoredReference ? t('拖动用法浮层') : undefined}
+        className={`flex items-center gap-2 border-b border-border px-3 py-2.5 touch-none ${
+          anchoredReference ? 'cursor-move select-none bg-bg-elevated/70' : ''
+        }`}
+        onPointerDown={beginDrag}
+      >
         <FileCode2 size={16} className="flex-shrink-0 text-accent" aria-hidden />
         <h2 id="definition-picker-title" className="min-w-0 flex-1 truncate text-[14px] text-fg">
           {mode === 'reference' ? (
@@ -414,13 +589,13 @@ export default function DefinitionPicker() {
         {mode !== 'reference' && (
           <span className="text-ui-sm text-fg-dim">{candidates.length}</span>
         )}
-        <kbd className="rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] text-fg-dim">
+        <kbd className="rounded border border-border bg-bg/50 px-1.5 py-0.5 font-mono text-[10px] text-fg-dim">
           Esc
         </kbd>
       </div>
 
       {mode === 'reference' && (
-        <div className="flex items-center gap-1.5 border-b border-border bg-bg px-2.5 py-2">
+        <div className="flex items-center gap-1.5 border-b border-border bg-bg/75 px-2.5 py-2">
           {filters.map(filter => {
             const active = usageFilter === filter.value
             return (
@@ -447,6 +622,9 @@ export default function DefinitionPicker() {
             <Files size={13} aria-hidden />
             {t('项目文件')}
           </span>
+          <span className="rounded border border-border-strong bg-bg-elevated/50 px-1.5 py-0.5 text-[10px] text-fg-muted">
+            {t('按调用者 / 文件分组')}
+          </span>
           <span className="ml-auto text-[11px] text-fg-dim">
             {t('显示 {shown} / {total}', {
               shown: filteredCandidates.length,
@@ -461,7 +639,9 @@ export default function DefinitionPicker() {
         role="listbox"
         aria-label={mode === 'reference' ? t('用法位置') : t('定义候选')}
         className={`overflow-auto py-1 ${
-          mode === 'reference' ? 'min-h-[260px] flex-1' : 'max-h-[min(420px,60vh)]'
+          mode === 'reference'
+            ? 'min-h-[260px] flex-1 bg-bg/30'
+            : 'max-h-[min(420px,60vh)]'
         }`}
       >
         {filteredCandidates.length === 0 && (
@@ -474,13 +654,17 @@ export default function DefinitionPicker() {
               const collapsed = collapsedUsageGroups.has(group.key)
               const path = splitRelativePath(group.relative)
               return (
-                <Fragment key={group.key}>
+                <section
+                  key={group.key}
+                  aria-label={t('用法分组 {name}', { name: group.callerName ?? path.file })}
+                  className="mx-2 my-1 overflow-hidden rounded-md border border-border bg-bg-elevated/55"
+                >
                   {usageFilter === 'all' &&
                     group.approximate &&
                     !usageGroups[groupIndex - 1]?.approximate && (
                       <div
                         role="separator"
-                        className="border-y border-border bg-bg px-3 py-1 text-[10px] text-warn"
+                        className="border-y border-border bg-bg/50 px-3 py-1 text-[10px] text-warn"
                       >
                         {t('近似匹配（可能同名）')}
                       </div>
@@ -492,7 +676,7 @@ export default function DefinitionPicker() {
                       collapsed ? '展开用法分组 {name}' : '折叠用法分组 {name}',
                       { name: group.callerName ?? path.file }
                     )}
-                    className="flex w-full items-center gap-2 border-b border-border/70 bg-bg/70 px-3 py-2 text-left text-[12px] text-fg hover:bg-bg-hover"
+                    className="flex w-full items-center gap-2 border-b border-border/70 bg-bg-active/70 px-3 py-2 text-left text-[12px] text-fg hover:bg-bg-hover"
                     onClick={() => toggleUsageGroup(group.key)}
                   >
                     {collapsed ? (
@@ -521,7 +705,7 @@ export default function DefinitionPicker() {
                     </span>
                   </button>
                   {!collapsed && group.candidates.map(renderReferenceCandidate)}
-                </Fragment>
+                </section>
               )
             })
           : filteredCandidates.map((candidate, index) => {

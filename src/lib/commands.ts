@@ -23,6 +23,7 @@ import { saveVisibleProjectsAsWorkspace } from './namedWorkspaceActions'
 import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/terminalViewBridge'
 import { useTerminalStore } from '../store/terminalStore'
 import { findUsagesAtActiveEditor } from './symbolNavigation'
+import { activeEditorSelectionSeed } from './editorSelectionSeed'
 
 export type AppCommand = {
   id: string
@@ -303,7 +304,10 @@ export function buildCommands(): AppCommand[] {
       keywords: 'go to workspace symbol functions classes variables',
       shortcutCommand: 'goToSymbolInWorkspace',
       when: () => Boolean(useProjectStore.getState().currentProject && isTauri()),
-      run: () => useWorkspaceSymbolPickerStore.getState().openPicker(),
+      run: () =>
+        useWorkspaceSymbolPickerStore
+          .getState()
+          .openPicker(activeEditorSelectionSeed({ maxLength: 200, singleLine: true })),
     },
     {
       id: 'editor.findCalls',
@@ -374,7 +378,8 @@ export function buildCommands(): AppCommand[] {
       title: '打开搜索',
       keywords: 'search find global',
       shortcutCommand: 'searchAllProjects',
-      run: () => requestGlobalSearch(),
+      run: () =>
+        requestGlobalSearch(activeEditorSelectionSeed({ maxLength: 500, singleLine: true })),
     },
     {
       id: 'view.run',

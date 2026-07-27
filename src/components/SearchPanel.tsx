@@ -88,6 +88,7 @@ export default function SearchPanel() {
   const searchRoot = useUIStore(s => s.searchRoot)
   const setSearchRoot = useUIStore(s => s.setSearchRoot)
   const globalSearchSignal = useUIStore(s => s.globalSearchSignal)
+  const globalSearchQuery = useUIStore(s => s.globalSearchQuery)
 
   const [searchScope, setSearchScope] = useState<SearchScope>('current')
   const searchRoots = useMemo(() => {
@@ -156,12 +157,17 @@ export default function SearchPanel() {
 
   useEffect(() => {
     if (globalSearchSignal === 0) return
-    queueMicrotask(() => {
-      setSearchRoot(null)
-      setSearchScope('current')
+    setSearchRoot(null)
+    setSearchScope('current')
+    if (globalSearchQuery) setQuery(globalSearchQuery)
+    const frame = window.requestAnimationFrame(() => {
+      const input = searchInputRef.current
+      if (!input) return
+      input.focus()
+      if (globalSearchQuery) input.select()
     })
-    window.requestAnimationFrame(() => searchInputRef.current?.focus())
-  }, [globalSearchSignal, setSearchRoot])
+    return () => window.cancelAnimationFrame(frame)
+  }, [globalSearchQuery, globalSearchSignal, setSearchRoot])
 
   useEffect(() => {
     queueMicrotask(() => setCollapsedFiles(new Set()))

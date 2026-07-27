@@ -18,6 +18,7 @@ import { useWorkspaceSymbolPickerStore } from '../store/workspaceSymbolPickerSto
 export default function WorkspaceSymbolPicker() {
   const { t } = useI18n()
   const open = useWorkspaceSymbolPickerStore(state => state.open)
+  const seedQuery = useWorkspaceSymbolPickerStore(state => state.seedQuery)
   const closePicker = useWorkspaceSymbolPickerStore(state => state.closePicker)
   const project = useProjectStore(state => state.currentProject)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -32,14 +33,14 @@ export default function WorkspaceSymbolPicker() {
   useEffect(() => {
     if (!open) return
     queueMicrotask(() => {
-      setQuery('')
+      setQuery(seedQuery)
       setResults([])
       setActiveIndex(0)
       setPartial(false)
     })
     const id = window.setTimeout(() => inputRef.current?.focus(), 0)
     return () => window.clearTimeout(id)
-  }, [open])
+  }, [open, seedQuery])
 
   useEffect(() => {
     if (!open || !project) return

@@ -3374,6 +3374,23 @@ fn collect_symbol_usage_page(
     let mut lookup_names = HashSet::from([name.to_lowercase()]);
 
     if let Some(selected_symbol) = selected_symbol {
+        // Declaration site counts as a usage (IDEA/VS Code style), so a
+        // symbol with no call sites still surfaces itself instead of "none".
+        if let Some(definition) = workspace
+            .symbols_by_id
+            .get(selected_symbol)
+            .filter(|definition| definition.kind != "import")
+        {
+            let key = format!(
+                "{}:{}:{}:definition",
+                definition.path, definition.line, definition.column
+            );
+            if seen.insert(key) {
+                let mut candidate = definition_candidate(definition, "bound", false);
+                candidate.usage_kind = Some("definition".to_string());
+                precise.push(candidate);
+            }
+        }
         for definition in workspace.symbols_by_id.values() {
             if definition.kind != "import"
                 || workspace.canonical_symbol_id(&definition.symbol_id) != selected_symbol
@@ -3565,6 +3582,91 @@ pub async fn find_symbol_usages_at(
     })
     .await
     .map_err(|error| format!("查找符号用法失败: {error}"))?
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn find_symbol_usages_by_id(
+    root: String,
+    symbol_id: String,
+    offset: Option<usize>,
+    max_results: Option<usize>,
+    usage_kinds: Option<Vec<String>>,
+    approximate_only: Option<bool>,
+    allowlist: State<'_, PathAllowlist>,
+    state: State<'_, SemanticNavigationState>,
+) -> Result<FindUsagesResponse, String> {
+    allowlist.ensure_allowed(&root)?;
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let root_path = PathBuf::from(&root);
+        Ok(with_workspace(&state, &root_path, |workspace| {
+            let canonical_id = workspace.canonical_symbol_id(&symbol_id);
+            let Some(definition) = workspace
+                .symbols_by_id
+                .get(&canonical_id)
+                .or_else(|| workspace.symbols_by_id.get(&symbol_id))
+            else {
+                return FindUsagesResponse {
+                    symbol_id: Some(canonical_id),
+                    name: None,
+                    kind: None,
+                    definition: None,
+                    usages: Vec::new(),
+                    total_count: 0,
+                    files_indexed: workspace.files_indexed,
+                    complete: workspace.complete,
+                    truncated: workspace.truncated,
+                };
+            };
+            let max_results = max_results
+                .unwrap_or(DEFAULT_MAX_RESULTS)
+                .clamp(1, HARD_MAX_RESULTS);
+            let offset = offset.unwrap_or(0);
+            let usage_kinds = usage_kinds.map(|kinds| {
+                kinds
+                    .into_iter()
+                    .map(|kind| kind.to_lowercase())
+                    .collect::<HashSet<_>>()
+            });
+            let (usages, total_count) = collect_symbol_usage_page(
+                workspace,
+                &definition.name,
+                Some(&canonical_id),
+                &definition.kind,
+                offset,
+                max_results,
+                usage_kinds.as_ref(),
+                approximate_only.unwrap_or(false),
+            );
+            let truncated =
+                workspace.truncated || offset.saturating_add(usages.len()) < total_count;
+            FindUsagesResponse {
+                symbol_id: Some(canonical_id),
+                name: Some(definition.name.clone()),
+                kind: Some(definition.kind.clone()),
+                definition: Some(definition_candidate(definition, "bound", false)),
+                usages,
+                total_count,
+                files_indexed: workspace.files_indexed,
+                complete: workspace.complete,
+                truncated,
+            }
+        })
+        .unwrap_or(FindUsagesResponse {
+            symbol_id: Some(symbol_id),
+            name: None,
+            kind: None,
+            definition: None,
+            usages: Vec::new(),
+            total_count: 0,
+            files_indexed: 0,
+            complete: false,
+            truncated: false,
+        }))
+    })
+    .await
+    .map_err(|error| format!("按符号查找用法失败: {error}"))?
 }
 
 fn fuzzy_symbol_score(name: &str, query: &str) -> Option<i32> {
@@ -3816,11 +3918,44 @@ function outer() {
             20,
         );
 
+        assert_eq!(total_count, 2);
+        assert_eq!(usages.len(), 2);
+        assert_eq!(usages[0].usage_kind.as_deref(), Some("definition"));
+        assert_eq!(usages[0].line, 1);
+        assert_eq!(usages[1].line, 3);
+        assert_eq!(usages[1].usage_kind.as_deref(), Some("read"));
+        assert!(!usages[1].approximate);
+    }
+
+    #[test]
+    fn find_usages_includes_definition_even_without_other_references() {
+        let root = Path::new("D:/nem-panel");
+        let source = Arc::new(parse(
+            root,
+            "api/app/lt_prd_control/utils.py",
+            "def normalize_db_backup_type(ids, backup_type='full'):\n    return backup_type\n",
+        ));
+        let target = source
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "normalize_db_backup_type")
+            .expect("source function");
+        let mut workspace = WorkspaceSemanticIndex::new(root.to_path_buf());
+        workspace.replace_file(Arc::clone(&source));
+
+        let (usages, total_count) = collect_symbol_usages(
+            &workspace,
+            "normalize_db_backup_type",
+            Some(&target.symbol_id),
+            "function",
+            20,
+        );
+
         assert_eq!(total_count, 1);
         assert_eq!(usages.len(), 1);
-        assert_eq!(usages[0].line, 3);
-        assert_eq!(usages[0].usage_kind.as_deref(), Some("read"));
-        assert!(!usages[0].approximate);
+        assert_eq!(usages[0].usage_kind.as_deref(), Some("definition"));
+        assert_eq!(usages[0].relative, "api/app/lt_prd_control/utils.py");
+        assert_eq!(usages[0].line, 1);
     }
 
     #[test]
@@ -4011,13 +4146,17 @@ def inner(xu_logger):
         let (usages, total_count) =
             collect_symbol_usages(&workspace, "xu_logger", Some(&symbol_id), "variable", 20);
 
-        assert_eq!(total_count, 2);
+        assert_eq!(total_count, 3);
         assert_eq!(
             usages
                 .iter()
-                .map(|candidate| candidate.line)
+                .map(|candidate| (candidate.line, candidate.usage_kind.as_deref()))
                 .collect::<Vec<_>>(),
-            vec![2, 3]
+            vec![
+                (1, Some("definition")),
+                (2, Some("read")),
+                (3, Some("read")),
+            ]
         );
         assert!(usages.iter().all(|candidate| !candidate.approximate));
     }
@@ -4480,8 +4619,11 @@ class Service {
         );
         let (usages, total_count) =
             collect_symbol_usages(&workspace, "xu_logger", Some(&target), "variable", 20);
-        assert_eq!(total_count, 2);
-        assert_eq!(usages.len(), 2);
+        assert_eq!(total_count, 3);
+        assert_eq!(usages.len(), 3);
+        assert!(usages
+            .iter()
+            .any(|candidate| candidate.usage_kind.as_deref() == Some("definition")));
         assert!(usages
             .iter()
             .any(|candidate| candidate.usage_kind.as_deref() == Some("import")));
@@ -4583,6 +4725,63 @@ class Service {
     }
 
     #[test]
+    fn python_source_symbol_id_finds_import_and_calls_after_definition_jump() {
+        let root = Path::new("D:/nem-panel");
+        let source = Arc::new(parse(
+            root,
+            "api/app/lt_prd_control/utils.py",
+            "def normalize_db_backup_type(ids, backup_type='full'):\n    return backup_type\n",
+        ));
+        let consumer = Arc::new(parse(
+            root,
+            "api/app/lt_prd_control/routes.py",
+            "from app.lt_prd_control.utils import normalize_db_backup_type\n\
+             first = normalize_db_backup_type([])\n\
+             second = normalize_db_backup_type([1], 'diff')\n\
+             third = normalize_db_backup_type([2])\n",
+        ));
+        let target = source
+            .definitions
+            .iter()
+            .find(|definition| definition.name == "normalize_db_backup_type")
+            .expect("source function")
+            .symbol_id
+            .clone();
+        let mut workspace = WorkspaceSemanticIndex::new(root.to_path_buf());
+        workspace.insert_file_without_alias_rebuild(source);
+        workspace.insert_file_without_alias_rebuild(consumer);
+        workspace.rebuild_aliases();
+
+        let (usages, total_count) = collect_symbol_usages(
+            &workspace,
+            "normalize_db_backup_type",
+            Some(&target),
+            "function",
+            20,
+        );
+
+        assert_eq!(total_count, 5);
+        assert_eq!(
+            usages
+                .iter()
+                .filter(|usage| usage.usage_kind.as_deref() == Some("definition"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            usages.iter().filter(|usage| usage.kind == "import").count(),
+            1
+        );
+        assert_eq!(
+            usages
+                .iter()
+                .filter(|usage| usage.usage_kind.as_deref() == Some("call"))
+                .count(),
+            3
+        );
+    }
+
+    #[test]
     fn python_dotted_package_imports_support_cross_file_navigation_and_usages() {
         let root = Path::new("D:/workspace");
         let source = Arc::new(parse(
@@ -4616,7 +4815,11 @@ class Service {
 
         let (usages, total_count) =
             collect_symbol_usages(&workspace, "xu_logger", Some(&target), "variable", 20);
-        assert_eq!(total_count, 2);
+        assert_eq!(total_count, 3);
+        assert!(usages.iter().any(|candidate| {
+            candidate.usage_kind.as_deref() == Some("definition")
+                && candidate.relative == "api/xu_box/xu_logger.py"
+        }));
         assert!(usages.iter().any(|candidate| {
             candidate.relative == "api/retry_decorator.py"
                 && candidate.line == 2

@@ -76,6 +76,22 @@ describe('togglePanelLayout', () => {
   })
 })
 
+describe('requestGlobalSearch', () => {
+  it('keeps the selected editor text with the focus signal', () => {
+    useUIStore.setState({ globalSearchSignal: 4, globalSearchQuery: null })
+
+    useUIStore.getState().requestGlobalSearch(' selectedName ')
+
+    expect(useUIStore.getState()).toMatchObject({
+      view: 'search',
+      sidebarOpen: true,
+      searchRoot: null,
+      globalSearchQuery: 'selectedName',
+      globalSearchSignal: 5,
+    })
+  })
+})
+
 describe('side workspace columns', () => {
   it('toggles dual without forcing the editor off', () => {
     useUIStore.setState({

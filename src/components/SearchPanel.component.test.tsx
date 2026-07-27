@@ -119,7 +119,12 @@ describe('SearchPanel', () => {
       openFile: vi.fn().mockResolvedValue(undefined),
     })
     useEditorStore.setState({ openFile: vi.fn().mockResolvedValue(undefined) })
-    useUIStore.setState({ searchRoot: null, setSearchRoot: vi.fn(), globalSearchSignal: 0 })
+    useUIStore.setState({
+      searchRoot: null,
+      setSearchRoot: vi.fn(),
+      globalSearchSignal: 0,
+      globalSearchQuery: null,
+    })
   })
 
   afterEach(() => {
@@ -149,6 +154,16 @@ describe('SearchPanel', () => {
     // The filename section header and the hit's base name both render.
     await waitFor(() => expect(screen.getByText('文件名匹配')).toBeInTheDocument())
     await waitFor(() => expect(screen.getByText('app.tsx')).toBeInTheDocument())
+  })
+
+  it('prefills the global search input from a shortcut selection', async () => {
+    render(<SearchPanel />)
+
+    useUIStore.getState().requestGlobalSearch('selectedName')
+
+    await waitFor(() =>
+      expect(screen.getByPlaceholderText('搜索文件或内容…')).toHaveValue('selectedName')
+    )
   })
 
   it('shows an empty-state prompt when no project is selected', () => {

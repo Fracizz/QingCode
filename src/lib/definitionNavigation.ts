@@ -1,5 +1,7 @@
 import type { EditorState } from '@codemirror/state'
 import { extractEditorSymbols } from './editorSymbols'
+import { getEditorView } from './editorSession'
+import { editorRevealPos, revealPosFromLineColumn } from './editorViewHelpers'
 import { isTauri, safeInvoke } from './tauri'
 import { useDefinitionPickerStore } from '../store/definitionPickerStore'
 import { useEditorStore } from '../store/editorStore'
@@ -228,15 +230,59 @@ function deduplicate(candidates: DefinitionCandidate[]): DefinitionCandidate[] {
 }
 
 export async function jumpToDefinitionCandidate(candidate: DefinitionCandidate): Promise<void> {
-  await useEditorStore.getState().openFile(candidate.path, candidate.line, candidate.column)
+  const store = useEditorStore.getState()
+  const activeTab = store.tabs.find(tab => tab.id === store.activeTabId)
+  if (
+    activeTab &&
+    activeTab.kind !== 'diff' &&
+    !activeTab.loading &&
+    !activeTab.openError &&
+    pathsEqual(activeTab.path, candidate.path)
+  ) {
+    const view = getEditorView(activeTab.id)
+    if (view) {
+      const { pos, lineNum } = revealPosFromLineColumn(
+        view.state,
+        candidate.line,
+        candidate.column
+      )
+      store.prepareNavigationJump({
+        path: candidate.path,
+        line: candidate.line,
+        column: candidate.column,
+      })
+      editorRevealPos(view, pos, lineNum)
+      view.focus()
+      return
+    }
+  }
+  await store.openFile(candidate.path, candidate.line, candidate.column)
 }
 
-function showCandidates(symbol: string, candidates: DefinitionCandidate[]) {
+export interface DefinitionNavigationOptions {
+  afterJump?: (candidate: DefinitionCandidate) => void | Promise<void>
+}
+
+async function jumpToCandidate(
+  candidate: DefinitionCandidate,
+  options: DefinitionNavigationOptions
+): Promise<void> {
+  await jumpToDefinitionCandidate(candidate)
+  await options.afterJump?.(candidate)
+}
+
+function showCandidates(
+  symbol: string,
+  candidates: DefinitionCandidate[],
+  options: DefinitionNavigationOptions
+) {
   if (candidates.length === 1) {
-    void jumpToDefinitionCandidate(candidates[0])
+    void jumpToCandidate(candidates[0], options)
     return
   }
-  useDefinitionPickerStore.getState().openPicker(symbol, candidates)
+  useDefinitionPickerStore
+    .getState()
+    .openPicker(symbol, candidates, 'definition', {}, undefined, options.afterJump)
 }
 
 function currentFileCandidates(
@@ -349,7 +395,8 @@ export async function resolveDefinitionCandidates(
 export async function goToDefinition(
   state: EditorState,
   sourcePath: string,
-  identifier: IdentifierRange
+  identifier: IdentifierRange,
+  options: DefinitionNavigationOptions = {}
 ): Promise<void> {
   const request = ++navigationRequest
   try {
@@ -361,7 +408,7 @@ export async function goToDefinition(
         .pushToast('info', translate('未找到「{symbol}」的定义', { symbol: identifier.name }))
       return
     }
-    showCandidates(identifier.name, candidates)
+    showCandidates(identifier.name, candidates, options)
   } catch (error) {
     if (request !== navigationRequest) return
     useProjectStore

@@ -387,6 +387,7 @@ pub fn run() {
             code_navigation::clear_semantic_overlay,
             code_navigation::resolve_symbol_at,
             code_navigation::find_symbol_usages_at,
+            code_navigation::find_symbol_usages_by_id,
             code_navigation::search_indexed_workspace_symbols,
             code_navigation::semantic_index_status,
             language_components::language_component_statuses,

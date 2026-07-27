@@ -31,6 +31,8 @@ interface UIState {
   searchRoot: string | null
   /** Incremented when the search shortcut opens the search view. */
   globalSearchSignal: number
+  /** Optional editor selection used to seed the latest global-search request. */
+  globalSearchQuery: string | null
   /** Incremented to request the terminal panel to open (e.g. when a run config starts). */
   terminalOpenSignal: number
   /** Incremented to toggle the terminal panel (shortcut / command palette). */
@@ -64,7 +66,7 @@ interface UIState {
   /** Switch to the search view, optionally scoped to a directory. */
   requestSearch: (root?: string | null) => void
   /** Switch to the search view and focus the query input (defaults to current project). */
-  requestGlobalSearch: () => void
+  requestGlobalSearch: (query?: string) => void
   /** Open explorer and request creating a new file at the current project root. */
   requestNewFile: () => void
   /** Clear a pending new-file request after the explorer handles it. */
@@ -123,6 +125,7 @@ export const useUIStore = create<UIState>((set) => ({
   activityBarHidden: loadActivityBarHidden(),
   searchRoot: null,
   globalSearchSignal: 0,
+  globalSearchQuery: null,
   terminalOpenSignal: 0,
   terminalToggleSignal: 0,
   pendingNewFile: false,
@@ -178,10 +181,11 @@ export const useUIStore = create<UIState>((set) => ({
     }),
   setSearchRoot: path => set({ searchRoot: path }),
   requestSearch: root => set({ view: 'search', searchRoot: root ?? null, sidebarOpen: true }),
-  requestGlobalSearch: () => set(state => ({
+  requestGlobalSearch: query => set(state => ({
     view: 'search',
     searchRoot: null,
     sidebarOpen: true,
+    globalSearchQuery: query?.trim() || null,
     globalSearchSignal: state.globalSearchSignal + 1,
   })),
   requestNewFile: () => set({ view: 'explorer', sidebarOpen: true, pendingNewFile: true }),

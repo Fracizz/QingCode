@@ -1,4 +1,4 @@
-import { StateEffect, StateField } from '@codemirror/state'
+import { StateEffect, StateField, type EditorState } from '@codemirror/state'
 import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { FOREST_THEME, forestSyntax } from './forestEditorTheme'
@@ -69,8 +69,56 @@ export function editorThemeExtension() {
   return lightTheme
 }
 
+export const FLASH_REVEAL_MS = 1200
+
 export const flashLineEffect = StateEffect.define<number>()
 export const clearFlashEffect = StateEffect.define<void>()
+
+export type EditorRevealScroll = 'if-needed' | 'center' | 'none'
+
+/** True when `pos` lies inside any currently visible editor range. */
+export function isEditorPositionVisible(view: EditorView, pos: number): boolean {
+  for (const range of view.visibleRanges) {
+    if (pos >= range.from && pos <= range.to) return true
+  }
+  return false
+}
+
+export function revealPosFromLineColumn(
+  state: EditorState,
+  line: number,
+  column?: number,
+  from?: number
+): { pos: number; lineNum: number } {
+  const lineNum = Math.min(Math.max(1, line), state.doc.lines)
+  const docLine = state.doc.line(lineNum)
+  const pos =
+    typeof from === 'number'
+      ? Math.min(Math.max(0, from), state.doc.length)
+      : typeof column === 'number'
+        ? Math.min(Math.max(docLine.from, docLine.from + column - 1), docLine.to)
+        : docLine.from
+  return { pos, lineNum }
+}
+
+/** Place the caret on a target line/column, flash it, and scroll only when needed. */
+export function editorRevealPos(
+  view: EditorView,
+  pos: number,
+  lineNum: number,
+  scroll: EditorRevealScroll = 'if-needed'
+): void {
+  const effects = [flashLineEffect.of(lineNum)]
+  const shouldScroll =
+    scroll === 'center' || (scroll === 'if-needed' && !isEditorPositionVisible(view, pos))
+  if (shouldScroll) {
+    effects.unshift(EditorView.scrollIntoView(pos, { y: 'center' }))
+  }
+  view.dispatch({
+    effects,
+    selection: { anchor: pos },
+  })
+}
 
 export const flashField = StateField.define<DecorationSet>({
   create: () => Decoration.none,

@@ -16,7 +16,6 @@ import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
 import WorkspaceSymbolPicker from './components/WorkspaceSymbolPicker'
 import DefinitionPicker from './components/DefinitionPicker'
-import DefinitionPreview from './components/DefinitionPreview'
 import FileCompareDialog from './components/FileCompareDialog'
 import EmptyEditor from './components/EmptyEditor'
 import { useTerminalStore } from './store/terminalStore'
@@ -444,7 +443,6 @@ function App() {
       <SymbolPicker />
       <WorkspaceSymbolPicker />
       <DefinitionPicker />
-      <DefinitionPreview />
       {fileCompare && <FileCompareDialog {...fileCompare} />}
       {projectManagerOpen && (
         <Suspense fallback={null}>

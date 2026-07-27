@@ -437,6 +437,8 @@ class QingFindReplacePanel implements Panel {
 
   setQueryListener(listener: ((query: SearchQuery) => void) | null) {
     this.queryListener = listener
+    // Sync immediately — setSearchQuery may have run before React attached.
+    if (listener) listener(this.query)
   }
 
   setDocListener(listener: (() => void) | null) {
@@ -454,7 +456,10 @@ class QingFindReplacePanel implements Panel {
       for (const effect of tr.effects) {
         if (effect.is(setSearchQuery) && !effect.value.eq(this.query)) {
           this.query = effect.value
-          this.queryListener?.(effect.value)
+          const listener = this.queryListener
+          if (listener) {
+            flushSync(() => listener(effect.value))
+          }
         }
       }
     }

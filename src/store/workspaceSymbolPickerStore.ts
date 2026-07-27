@@ -2,12 +2,14 @@ import { create } from 'zustand'
 
 interface WorkspaceSymbolPickerState {
   open: boolean
-  openPicker: () => void
+  seedQuery: string
+  openPicker: (seedQuery?: string) => void
   closePicker: () => void
 }
 
 export const useWorkspaceSymbolPickerStore = create<WorkspaceSymbolPickerState>(set => ({
   open: false,
-  openPicker: () => set({ open: true }),
-  closePicker: () => set({ open: false }),
+  seedQuery: '',
+  openPicker: (seedQuery = '') => set({ open: true, seedQuery: seedQuery.trim() }),
+  closePicker: () => set({ open: false, seedQuery: '' }),
 }))

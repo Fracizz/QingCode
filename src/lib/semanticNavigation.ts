@@ -7,6 +7,7 @@ import { findProjectForPath } from '../utils/fileReferences'
 
 export type SemanticConfidence = 'bound' | 'indexed' | 'approximate'
 export type SemanticUsageKind =
+  | 'definition'
   | 'call'
   | 'member-call'
   | 'read'
@@ -214,6 +215,18 @@ export async function findSemanticUsages(
 ): Promise<FindSemanticUsagesResponse> {
   return safeInvoke<FindSemanticUsagesResponse>('查找符号用法', 'find_symbol_usages_at', {
     ...semanticRequestInput(root, path, state, position),
+    ...semanticUsageQueryInput(query),
+  })
+}
+
+export async function findSemanticUsagesById(
+  root: string,
+  symbolId: string,
+  query: SemanticUsageQuery = {}
+): Promise<FindSemanticUsagesResponse> {
+  return safeInvoke<FindSemanticUsagesResponse>('查找符号用法', 'find_symbol_usages_by_id', {
+    root,
+    symbolId,
     ...semanticUsageQueryInput(query),
   })
 }

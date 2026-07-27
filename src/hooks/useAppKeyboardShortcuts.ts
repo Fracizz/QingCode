@@ -15,7 +15,9 @@ import {
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import type { ShortcutMap } from '../lib/shortcuts'
+import { openFindInActiveEditor } from '../lib/editorFind'
 import { findUsagesAtActiveEditor } from '../lib/symbolNavigation'
+import { activeEditorSelectionSeed } from '../lib/editorSelectionSeed'
 
 function isTerminalKeyTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('.xterm'))
@@ -26,7 +28,7 @@ export interface UseAppKeyboardShortcutsDeps {
   setView: (view: import('../store/uiStore').View) => void
   openPalette: (seedQuery?: string) => void
   openSymbolPicker: () => void
-  openWorkspaceSymbolPicker: () => void
+  openWorkspaceSymbolPicker: (seedQuery?: string) => void
 }
 
 export function useAppKeyboardShortcuts({
@@ -51,6 +53,31 @@ export function useAppKeyboardShortcuts({
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
+      // WebView2 may reserve F12-family accelerators before editor handlers run.
+      // Find Usages is an app command, so honor its configured binding even when
+      // an earlier native guard already marked the event as prevented.
+      if (
+        shortcutMatchesEvent(shortcuts.findCalls, event) &&
+        !isShortcutInputTarget(event.target)
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
+        void findUsagesAtActiveEditor()
+        return
+      }
+      // Ctrl+Shift+F: always seed from the editor selection (e.g. double-clicked
+      // word), even when focus is already in the search input or find panel.
+      if (
+        shortcutMatchesEvent(shortcuts.searchAllProjects, event) &&
+        !isTerminalKeyTarget(event.target)
+      ) {
+        event.preventDefault()
+        event.stopPropagation()
+        useUIStore.getState().requestGlobalSearch(
+          activeEditorSelectionSeed({ maxLength: 500, singleLine: true })
+        )
+        return
+      }
       if (event.defaultPrevented) return
 
       // Available from inputs / terminal so the palette stays globally discoverable.
@@ -66,7 +93,9 @@ export function useAppKeyboardShortcuts({
       }
       if (shortcutMatchesEvent(shortcuts.goToSymbolInWorkspace, event)) {
         event.preventDefault()
-        openWorkspaceSymbolPicker()
+        openWorkspaceSymbolPicker(
+          activeEditorSelectionSeed({ maxLength: 200, singleLine: true })
+        )
         return
       }
 
@@ -91,12 +120,6 @@ export function useAppKeyboardShortcuts({
       } else if (shortcutMatchesEvent(shortcuts.goToSymbolInEditor, event)) {
         event.preventDefault()
         openSymbolPicker()
-      } else if (shortcutMatchesEvent(shortcuts.findCalls, event)) {
-        event.preventDefault()
-        void findUsagesAtActiveEditor()
-      } else if (shortcutMatchesEvent(shortcuts.searchAllProjects, event)) {
-        event.preventDefault()
-        useUIStore.getState().requestGlobalSearch()
       } else if (shortcutMatchesEvent(shortcuts.toggleTerminal, event)) {
         event.preventDefault()
         useUIStore.getState().requestToggleTerminal()
@@ -111,13 +134,25 @@ export function useAppKeyboardShortcuts({
         event.preventDefault()
         const command = buildCommands().find(item => item.id === 'view.togglePanelLayout')
         if (command && (!command.when || command.when())) void command.run()
-      } else if (
-        shortcutMatchesEvent(shortcuts.findInTerminal, event) &&
-        isTerminalKeyTarget(event.target)
-      ) {
-        event.preventDefault()
-        useUIStore.getState().openTerminalPanel()
-        requestTerminalSearch()
+      } else if (shortcutMatchesEvent(shortcuts.findInTerminal, event)) {
+        // Same binding (Ctrl+F): terminal find vs editor find seeded from selection.
+        if (isTerminalKeyTarget(event.target)) {
+          event.preventDefault()
+          useUIStore.getState().openTerminalPanel()
+          requestTerminalSearch()
+          return
+        }
+        if (
+          !isShortcutInputTarget(event.target) &&
+          event.target instanceof HTMLElement &&
+          event.target.closest('.cm-editor') &&
+          !event.target.closest('.cm-qing-find-replace, .cm-panel')
+        ) {
+          event.preventDefault()
+          event.stopPropagation()
+          openFindInActiveEditor()
+          return
+        }
       } else if (
         shortcutMatchesEvent(shortcuts.clearTerminal, event) &&
         isTerminalKeyTarget(event.target)

@@ -64,6 +64,7 @@ import {
   scmStatusBadgeTone,
   splitGitChanges,
 } from '@/lib/git/gitStatus'
+import { gitPullErrorI18n } from '@/lib/git/gitErrorMessage'
 import { confirmDialog } from '../store/confirmStore'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import {
@@ -1298,9 +1299,10 @@ export default function SourceControlPanel() {
       } catch (reason) {
         if (useProjectStore.getState().currentProject?.path === project.path) {
           await refresh({ soft: false })
-          const message = String(reason)
+          const { key, params } = gitPullErrorI18n(String(reason))
+          const message = t(key, params)
           setOperationError(message)
-          useProjectStore.getState().pushToast('error', t('拉取失败：{error}', { error: message }))
+          useProjectStore.getState().pushToast('error', message)
         }
       } finally {
         setOperation(null)

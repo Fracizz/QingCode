@@ -42,7 +42,7 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
   {
     id: 'searchAllProjects',
     label: '打开搜索',
-    description: '打开搜索面板，默认在当前项目中搜索文件与内容。',
+    description: '打开搜索面板；若编辑器有选中文本（如双击单词），会自动填入搜索框。',
   },
   {
     id: 'toggleTerminal',
@@ -86,8 +86,9 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
   },
   {
     id: 'findInTerminal',
-    label: '终端: 查找',
-    description: '在终端输出中查找文本（需焦点在终端内）。',
+    label: '查找（编辑器 / 终端）',
+    description:
+      '编辑器内：打开查找并填入选中文本（如双击单词）。终端内：在终端输出中查找。',
   },
   {
     id: 'clearTerminal',
@@ -98,6 +99,11 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
 
 /** Editor-bound shortcuts shown as read-only (not remappable here). */
 const FIXED_SHORTCUTS: { shortcut: string; label: string; description: string }[] = [
+  {
+    shortcut: 'Ctrl+F',
+    label: '查找',
+    description: '编辑器内打开查找并填入选中文本（如双击单词）；终端内查找终端输出。',
+  },
   {
     shortcut: 'Ctrl+S',
     label: '保存文件',

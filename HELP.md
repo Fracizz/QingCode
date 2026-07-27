@@ -146,16 +146,21 @@ You can also configure startup commands for terminals:
 
 ## Search
 
-### Open Search
+### Find in File (`Ctrl+F`)
 
-- `Ctrl+Shift+F`: Open the search panel.
-- Searches in the current project by default; you can manually switch to 「All Projects」.
+- Opens the in-editor find panel.
+- If text is selected (for example after **double-clicking a word**), that text is filled into the find box automatically.
+- With focus in the terminal, the same shortcut finds in terminal output instead.
 
-### Search Scope
+### Sidebar Search (`Ctrl+Shift+F`)
 
-- **File name search**: Quickly locate files.
-- **File content search**: Search for text content within the project.
-- Supports filtering by `.gitignore` and other ignore files (can be disabled).
+- Opens the search panel; switch **Current Project / All Projects** next to the title.
+- If the editor has a selection (e.g. a double-clicked word), it is filled into the search box automatically.
+- Mode segments: **All** (default) | **Content** | **File name**.
+  - **All**: search file names and file contents; results are grouped.
+  - **Content**: search file bodies; expand the left arrow for **replace** (preview then write).
+  - **File name**: match by name / glob / `*`; fuzzy and extension filters available.
+- Extension filters apply to all modes; content/file-name search can honor `.gitignore` (toggle in Settings).
 
 ---
 
@@ -256,9 +261,10 @@ Both `default-settings.json` and `.qingcode/project-settings.json` are **JSON5**
 | Shortcut | Function |
 |----------|----------|
 | `Ctrl+S` | Save current file |
+| `Ctrl+F` | Find in file (seeds from selection); terminal find when focus is in the terminal |
 | `Ctrl+P` | Quick Open (fuzzy file name / path; supports `:line` or `@project/path#Lline`) |
 | `Ctrl+Shift+P` | Command Palette |
-| `Ctrl+Shift+F` | Open search panel |
+| `Ctrl+Shift+F` | Open search panel (seeds from selection) |
 | `` Ctrl+` `` | Show/hide terminal panel |
 | `Ctrl+,` | Open settings panel |
 | `Alt+←` / `Alt+→` | Navigate back / forward |

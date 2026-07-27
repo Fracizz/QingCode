@@ -1,12 +1,38 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment jsdom
+
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { EditorState } from '@codemirror/state'
+import { EditorView } from '@codemirror/view'
 import {
   definitionContextAt,
   identifierAt,
+  jumpToDefinitionCandidate,
   rankDefinitionCandidates,
   relativeImportTarget,
   type DefinitionCandidate,
 } from './definitionNavigation'
+import { registerEditorView, unregisterEditorView } from './editorSession'
+import { flashField } from './editorViewHelpers'
+import { useEditorStore } from '../store/editorStore'
+import type { EditorTab } from '../types'
+
+const initialEditorState = useEditorStore.getState()
+let view: EditorView | null = null
+
+beforeEach(() => {
+  useEditorStore.setState(initialEditorState, true)
+})
+
+afterEach(() => {
+  if (view) {
+    unregisterEditorView('active-tab', view)
+    view.destroy()
+    view = null
+  }
+  document.body.replaceChildren()
+  useEditorStore.setState(initialEditorState, true)
+  vi.restoreAllMocks()
+})
 
 function candidate(
   path: string,
@@ -88,5 +114,53 @@ describe('rankDefinitionCandidates', () => {
       target
     )
     expect(ranked[0].path).toBe('D:/work/src/models/widget.ts')
+  })
+})
+
+describe('jumpToDefinitionCandidate', () => {
+  it('reveals in the active editor without openFile when already on the same file', async () => {
+    const openFile = vi.fn().mockResolvedValue(undefined)
+    const tab = {
+      id: 'active-tab',
+      path: 'D:/work/utils.py',
+      name: 'utils.py',
+      language: 'python',
+      dirty: false,
+      content: 'def normalize_db_backup_type():\n  pass\n',
+    } as EditorTab
+    useEditorStore.setState({
+      openFile,
+      tabs: [tab],
+      activeTabId: tab.id,
+    })
+    const parent = document.createElement('div')
+    document.body.appendChild(parent)
+    view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: tab.content,
+        extensions: [flashField],
+      }),
+    })
+    registerEditorView(tab.id, view)
+    vi.spyOn(view, 'visibleRanges', 'get').mockReturnValue([
+      { from: 0, to: view.state.doc.length },
+    ])
+    const dispatch = vi.spyOn(view, 'dispatch')
+
+    await jumpToDefinitionCandidate({
+      name: 'normalize_db_backup_type',
+      kind: 'function',
+      path: tab.path,
+      relative: 'utils.py',
+      line: 1,
+      column: 5,
+      text: 'def normalize_db_backup_type():',
+      score: 1000,
+    })
+
+    expect(openFile).not.toHaveBeenCalled()
+    const transaction = dispatch.mock.calls.at(-1)?.[0]
+    expect(transaction?.effects?.length).toBe(1)
   })
 })

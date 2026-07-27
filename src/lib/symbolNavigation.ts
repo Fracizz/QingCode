@@ -13,6 +13,7 @@ import { useProjectStore } from '../store/projectStore'
 import { findProjectForPath } from '../utils/fileReferences'
 import {
   findSemanticUsages,
+  findSemanticUsagesById,
   searchIndexedWorkspaceSymbols,
   type FindSemanticUsagesResponse,
   type SemanticUsageFilter,
@@ -57,6 +58,12 @@ export interface WorkspaceSymbolSearchResult {
 
 let referenceRequest = 0
 
+interface SemanticUsageTarget {
+  symbolId: string
+  name: string
+  kind: string
+}
+
 function semanticSymbolOrigin(relative: string | undefined): string | undefined {
   if (!relative) return undefined
   const normalized = relative.replace(/\\/gu, '/')
@@ -74,20 +81,34 @@ function semanticSymbolOrigin(relative: string | undefined): string | undefined 
 }
 
 function semanticUsageCandidates(semantic: FindSemanticUsagesResponse): DefinitionCandidate[] {
-  return semantic.usages.map(usage => ({
+  const usages = semantic.usages.map(usage => ({
     ...usage,
     score: usage.approximate ? 0 : 1000,
     callerName: usage.callerName ?? undefined,
     callerKind: usage.callerKind ?? undefined,
     usageKind: usage.usageKind ?? undefined,
   }))
+  if (usages.length > 0 || !semantic.definition) {
+    return usages
+  }
+  // Definition site is always a usage; surface it when the index found no call sites.
+  return [
+    {
+      ...semantic.definition,
+      score: 1000,
+      callerName: semantic.definition.callerName ?? undefined,
+      callerKind: semantic.definition.callerKind ?? undefined,
+      usageKind: 'definition',
+    },
+  ]
 }
 
 function semanticUsageDetails(semantic: FindSemanticUsagesResponse, anchor?: DefinitionAnchor) {
+  const candidates = semanticUsageCandidates(semantic)
   return {
     kind: semantic.kind ?? undefined,
     origin: semanticSymbolOrigin(semantic.definition?.relative),
-    totalCount: semantic.totalCount,
+    totalCount: Math.max(semantic.totalCount, candidates.length),
     filesIndexed: semantic.filesIndexed,
     complete: semantic.complete,
     truncated: semantic.truncated,
@@ -99,11 +120,12 @@ export async function findUsagesAtEditor(
   sourcePath: string,
   state: EditorState,
   position: number,
-  anchor?: DefinitionAnchor
+  anchor?: DefinitionAnchor,
+  target?: SemanticUsageTarget
 ): Promise<void> {
   const identifier = identifierAt(state, position)
   const projects = useProjectStore.getState()
-  if (!identifier) {
+  if (!identifier && !target) {
     projects.pushToast('info', translate('请先将光标放在要查找的符号上'))
     return
   }
@@ -114,20 +136,23 @@ export async function findUsagesAtEditor(
   }
 
   const request = ++referenceRequest
+  const symbolName = target?.name ?? identifier?.name ?? ''
+  const findSemanticPage = (query?: Parameters<typeof findSemanticUsages>[4]) =>
+    target
+      ? findSemanticUsagesById(project.path, target.symbolId, query)
+      : findSemanticUsages(project.path, sourcePath, state, position, query)
   try {
-    const semantic = await findSemanticUsages(project.path, sourcePath, state, position).catch(
-      () => null
-    )
+    const semantic = await findSemanticPage().catch(() => null)
     if (request !== referenceRequest) return
-    if (semantic && semantic.usages.length > 0) {
-      const candidates = semanticUsageCandidates(semantic)
+    const candidates = semantic ? semanticUsageCandidates(semantic) : []
+    if (semantic && candidates.length > 0) {
       const loadUsagePage = async (
         filter: SemanticUsageFilter,
         offset: number,
         maxResults: number
       ) => {
         try {
-          const page = await findSemanticUsages(project.path, sourcePath, state, position, {
+          const page = await findSemanticPage({
             filter,
             offset,
             maxResults,
@@ -140,7 +165,7 @@ export async function findUsagesAtEditor(
           projects.pushToast(
             'error',
             translate('查找「{symbol}」用法失败', {
-              symbol: semantic.name ?? identifier.name,
+              symbol: semantic.name ?? symbolName,
             }),
             String(error)
           )
@@ -157,7 +182,7 @@ export async function findUsagesAtEditor(
       useDefinitionPickerStore
         .getState()
         .openPicker(
-          semantic.name ?? identifier.name,
+          semantic.name ?? symbolName,
           candidates,
           'reference',
           semanticUsageDetails(semantic, anchor),
@@ -169,7 +194,7 @@ export async function findUsagesAtEditor(
       projects.pushToast(
         'info',
         translate('未找到「{symbol}」的用法', {
-          symbol: semantic.name ?? identifier.name,
+          symbol: semantic.name ?? symbolName,
         })
       )
       return
@@ -180,26 +205,26 @@ export async function findUsagesAtEditor(
       'search_symbol_references',
       {
         root: project.path,
-        symbol: identifier.name,
+        symbol: symbolName,
         maxResults: 120,
         maxFiles: 8000,
       }
     )
     if (request !== referenceRequest) return
     if (response.references.length === 0) {
-      projects.pushToast('info', translate('未找到「{symbol}」的调用', { symbol: identifier.name }))
+      projects.pushToast('info', translate('未找到「{symbol}」的调用', { symbol: symbolName }))
       return
     }
-    const candidates: DefinitionCandidate[] = response.references.map(reference => ({
+    const nativeCandidates: DefinitionCandidate[] = response.references.map(reference => ({
       ...reference,
       score: 0,
       callerName: reference.callerName ?? undefined,
       callerKind: reference.callerKind ?? undefined,
       usageKind: reference.kind === 'call' ? 'call' : 'read',
     }))
-    useDefinitionPickerStore.getState().openPicker(identifier.name, candidates, 'reference', {
+    useDefinitionPickerStore.getState().openPicker(symbolName, nativeCandidates, 'reference', {
       kind: 'function',
-      totalCount: candidates.length,
+      totalCount: nativeCandidates.length,
       truncated: response.truncated,
       complete: !response.truncated,
       filesIndexed: response.filesScanned,
@@ -209,7 +234,7 @@ export async function findUsagesAtEditor(
     if (request !== referenceRequest) return
     projects.pushToast(
       'error',
-      translate('查找「{symbol}」调用失败', { symbol: identifier.name }),
+      translate('查找「{symbol}」调用失败', { symbol: symbolName }),
       String(error)
     )
   }
@@ -263,4 +288,73 @@ export async function findUsagesAtActiveEditor(): Promise<void> {
       }
     : undefined
   await findUsagesAtEditor(activeTab.path, view.state, position, anchor)
+}
+
+export interface DefinitionUsageSource {
+  path: string
+  state: EditorState
+  position: number
+}
+
+function waitForDefinitionEditor(
+  candidate: DefinitionCandidate,
+  attempts = 40
+): Promise<ReturnType<typeof getEditorView>> {
+  return new Promise(resolve => {
+    const inspect = (remaining: number) => {
+      const editor = useEditorStore.getState()
+      const activeTab = editor.tabs.find(tab => tab.id === editor.activeTabId)
+      const view = activeTab?.path === candidate.path ? getEditorView(activeTab.id) : undefined
+      if (view && !editor.pendingReveal) {
+        resolve(view)
+        return
+      }
+      if (remaining <= 0) {
+        resolve(view)
+        return
+      }
+      window.setTimeout(() => inspect(remaining - 1), 16)
+    }
+    inspect(attempts)
+  })
+}
+
+/** Ctrl+click continuation: once the definition reveal lands, run Shift+F12 there. */
+export async function findUsagesAfterDefinitionJump(
+  candidate: DefinitionCandidate,
+  source?: DefinitionUsageSource
+): Promise<void> {
+  const view = await waitForDefinitionEditor(candidate)
+  if (!view) {
+    useProjectStore.getState().pushToast('info', translate('请先将光标放在要查找的符号上'))
+    return
+  }
+  const lineNumber = Math.min(Math.max(1, candidate.line), view.state.doc.lines)
+  const line = view.state.doc.line(lineNumber)
+  const position = Math.min(
+    line.to,
+    line.from + Math.max(0, (candidate.column || 1) - 1)
+  )
+  const coords = view.coordsAtPos(position)
+  const anchor = coords
+    ? {
+        left: coords.left,
+        top: coords.top,
+        right: coords.right,
+        bottom: coords.bottom,
+      }
+    : undefined
+  if (candidate.symbolId) {
+    await findUsagesAtEditor(candidate.path, view.state, position, anchor, {
+      symbolId: candidate.symbolId,
+      name: candidate.name,
+      kind: candidate.kind,
+    })
+    return
+  }
+  if (source) {
+    await findUsagesAtEditor(source.path, source.state, source.position, anchor)
+    return
+  }
+  await findUsagesAtEditor(candidate.path, view.state, position, anchor)
 }

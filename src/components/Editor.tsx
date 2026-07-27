@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { syncScrollTop } from '../utils/scrollSync'
 import { minimalSetup } from 'codemirror'
-import { search } from '@codemirror/search'
+import { search, searchKeymap } from '@codemirror/search'
 import { qingBasicSetup } from '../lib/editorBasicSetup'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { Compartment, EditorState, type Extension } from '@codemirror/state'
@@ -74,20 +74,14 @@ import { buildEditorPreferenceExtensions } from '../lib/editorSettingsExtensions
 import { reliableClickMouseSelection } from '../lib/editorMouseSelection'
 import { editorDefinitionLink } from '../lib/editorDefinitionLink'
 import {
-  cachedCodeNavigationAvailability,
-  canShowDefinitionLink,
-  codeNavigationAvailability,
-  notifyCodeNavigationUnavailable,
-  preloadCodeNavigationAvailability,
-} from '../lib/codeNavigationAvailability'
-import {
   goToDefinition,
   identifierAt,
-  resolveDefinitionCandidates,
 } from '../lib/definitionNavigation'
-import { findUsagesAtActiveEditor, findUsagesAtEditor } from '../lib/symbolNavigation'
+import {
+  findUsagesAfterDefinitionJump,
+  findUsagesAtActiveEditor,
+} from '../lib/symbolNavigation'
 import { scheduleSemanticOverlay } from '../lib/semanticNavigation'
-import { useDefinitionPreviewStore } from '../store/definitionPreviewStore'
 import {
   editorHasOccurrenceHighlight,
   occurrenceHighlightMarker,
@@ -124,9 +118,11 @@ import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { isSupportedEditorLanguage, loadLanguageSupport } from '../lib/editorLanguages'
 import {
   clearFlashEffect,
+  editorRevealPos,
   editorThemeExtension,
   flashField,
-  flashLineEffect,
+  FLASH_REVEAL_MS,
+  revealPosFromLineColumn,
   hasNonEmptySelection,
   isMarkdownTab,
   scheduleIdle,
@@ -164,7 +160,7 @@ function plainEditorBase(showLineNumbers: boolean): Extension[] {
     crosshairCursor(),
     highlightActiveLine(),
     showLineNumbers ? lineNumbers() : [],
-    keymap.of([...historyKeymap, ...defaultKeymap]),
+    keymap.of([...historyKeymap, ...defaultKeymap, ...searchKeymap]),
     search({ top: true, createPanel: createEditorFindReplacePanel }),
   ]
 }
@@ -190,8 +186,6 @@ function createTabEditorState(
   const showLineNumbers = prefs.lineNumbers !== 'off'
   const settingsContent = profile === 'full' ? tab.content : undefined
   const enableBracketDecorations = profile === 'full' && !large && !huge && !deferHighlight
-  let unavailableNavigationNotified = false
-  preloadCodeNavigationAvailability()
 
   // Own occurrence highlighter for every profile (main overlay + other hits).
   const occurrenceHighlight: Extension[] = [
@@ -207,6 +201,7 @@ function createTabEditorState(
         ? [
             minimalSetup,
             showLineNumbers ? lineNumbers() : [],
+            keymap.of(searchKeymap),
             search({ top: true, createPanel: createEditorFindReplacePanel }),
           ]
         : [qingBasicSetup(), search({ top: true, createPanel: createEditorFindReplacePanel })]
@@ -227,48 +222,16 @@ function createTabEditorState(
       // Kept outside compartments so every profile (incl. large/degraded) gets matches.
       occurrenceHighlight,
       editorDefinitionLink({
-        linkEnabled: () =>
-          canShowDefinitionLink(cachedCodeNavigationAvailability(tabPath)),
-        navigate: async (view, identifier) => {
-          const availability = await codeNavigationAvailability(tabPath)
-          if (!canShowDefinitionLink(availability)) {
-            if (!unavailableNavigationNotified) {
-              unavailableNavigationNotified = notifyCodeNavigationUnavailable(availability)
-            }
-            return
-          }
-          await goToDefinition(view.state, tabPath, identifier)
-        },
-        preview: async (view, identifier, anchor, requestId, isCurrent) => {
-          const preview = useDefinitionPreviewStore.getState()
-          preview.beginPreview({
-            requestId,
-            symbol: identifier.name,
-            anchor,
-            onFindUsages: () => findUsagesAtEditor(tabPath, view.state, identifier.from, anchor),
+        navigate: (view, identifier) => {
+          const sourceState = view.state
+          return goToDefinition(sourceState, tabPath, identifier, {
+            afterJump: candidate =>
+              findUsagesAfterDefinitionJump(candidate, {
+                path: tabPath,
+                state: sourceState,
+                position: identifier.from,
+              }),
           })
-          try {
-            const candidates = await resolveDefinitionCandidates(view.state, tabPath, identifier)
-            if (!isCurrent()) return
-            useDefinitionPreviewStore.getState().completePreview(requestId, candidates)
-          } catch {
-            if (isCurrent()) {
-              useDefinitionPreviewStore.getState().failPreview(requestId)
-            }
-          }
-        },
-        setModifierHeld: held => useDefinitionPreviewStore.getState().setModifierHeld(held),
-        dismissPreview: (modifierHeld, force = false) => {
-          const preview = useDefinitionPreviewStore.getState()
-          preview.setModifierHeld(modifierHeld)
-          if (force) {
-            preview.closePreview(true)
-            return
-          }
-          window.setTimeout(() => {
-            const current = useDefinitionPreviewStore.getState()
-            if (!current.modifierHeld) current.closePreview()
-          }, 140)
         },
       }),
       reliableClickMouseSelection(),
@@ -776,24 +739,18 @@ export default function Editor() {
     )
       return
     if (pendingReveal.path !== activeTab.path) return
-    const doc = viewRef.current.state.doc
-    const lineNum = Math.min(Math.max(1, pendingReveal.line), doc.lines)
-    const line = doc.line(lineNum)
-    const pos =
-      typeof pendingReveal.from === 'number'
-        ? Math.min(Math.max(0, pendingReveal.from), doc.length)
-        : typeof pendingReveal.column === 'number'
-          ? Math.min(Math.max(line.from, line.from + pendingReveal.column - 1), line.to)
-          : line.from
-    viewRef.current.dispatch({
-      effects: [EditorView.scrollIntoView(pos, { y: 'center' }), flashLineEffect.of(lineNum)],
-      selection: { anchor: pos },
-    })
+    const { pos, lineNum } = revealPosFromLineColumn(
+      viewRef.current.state,
+      pendingReveal.line,
+      pendingReveal.column,
+      pendingReveal.from
+    )
+    editorRevealPos(viewRef.current, pos, lineNum)
     viewRef.current.focus()
     clearPendingReveal()
     const timer = window.setTimeout(() => {
       if (viewRef.current) viewRef.current.dispatch({ effects: clearFlashEffect.of() })
-    }, 1200)
+    }, FLASH_REVEAL_MS)
     return () => window.clearTimeout(timer)
   }, [pendingReveal, activeTab?.path, activeTabId, clearPendingReveal, activeTab])
 
