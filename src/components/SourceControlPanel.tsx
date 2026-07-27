@@ -15,8 +15,6 @@ import { createPortal } from 'react-dom'
 import {
   AlertCircle,
   Undo2,
-  ArrowDown,
-  ArrowUp,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -33,7 +31,8 @@ import {
   LocateFixed,
   Minus,
   Plus,
-  RefreshCw,
+  ArrowDown,
+  ArrowUp,
 } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { List, useListRef } from 'react-window'
@@ -92,6 +91,7 @@ import EmptyState from './EmptyState'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import ScmResizableColumn from './ScmResizableColumn'
 import ScmCommitHistory, { SCM_COMMIT_PAGE_SIZE } from './ScmCommitHistory'
+import ScmToolbar, { ScmPullMenu, ScmPushMenu } from './ScmToolbar'
 import { translate, useI18n } from '../lib/i18n'
 import { deferToNativeContextMenuInDev, shouldShowAppContextMenu } from '../lib/devBuild'
 import {
@@ -121,8 +121,8 @@ type InlineDiffState = {
 const ROW_HEIGHT = 28
 const COMMIT_PAGE_SIZE = SCM_COMMIT_PAGE_SIZE
 const BRANCH_MENU_WIDTH = 260
+const SCM_ACTION_MENU_WIDTH = 168
 const SCM_TOOLBAR_H = 'h-8'
-const SCM_TOOLBAR_PAD = 'px-3'
 /** Match tab bar `px-3` so section chevrons line up with the「变更」tab button. */
 const SCM_SECTION_PAD_X = 'px-3'
 /** Tighter than toolbar icon slot so labels sit closer to the left like the tab text. */
@@ -131,7 +131,6 @@ const SCM_SECTION_ICON_SIZE = 13
 /** File rows nest under the section label (between tab-align and old pl-6). */
 const SCM_ROW_PAD = 'pl-5 pr-9'
 const SCM_ICON_SIZE = 13
-const SCM_ICON_SLOT = 'inline-flex h-6 w-6 shrink-0 items-center justify-center'
 const SCM_ICON_BUTTON =
   'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent text-fg-dim transition-colors hover:border-border hover:bg-bg-hover hover:text-brand disabled:opacity-35'
 const STATUS_BADGE =
@@ -563,6 +562,22 @@ export default function SourceControlPanel() {
   })
   const branchAnchorRef = useRef<HTMLButtonElement>(null)
   const branchMenuRef = useRef<HTMLDivElement>(null)
+  const pullMenuAnchorRef = useRef<HTMLButtonElement>(null)
+  const pullMenuRef = useRef<HTMLDivElement>(null)
+  const pushMenuAnchorRef = useRef<HTMLButtonElement>(null)
+  const pushMenuRef = useRef<HTMLDivElement>(null)
+  const [pullMenuOpen, setPullMenuOpen] = useState(false)
+  const [pushMenuOpen, setPushMenuOpen] = useState(false)
+  const [pullMenuStyle, setPullMenuStyle] = useState<CSSProperties>({
+    left: 0,
+    top: 0,
+    visibility: 'hidden',
+  })
+  const [pushMenuStyle, setPushMenuStyle] = useState<CSSProperties>({
+    left: 0,
+    top: 0,
+    visibility: 'hidden',
+  })
   const refreshSequenceRef = useRef(0)
   const loadingRefreshSequenceRef = useRef<number | null>(null)
   const commitFilesSequenceRef = useRef(0)
@@ -872,6 +887,25 @@ export default function SourceControlPanel() {
     })
   }, [])
 
+  const positionActionMenu = useCallback(
+    (
+      anchor: HTMLButtonElement | null,
+      width: number,
+      setStyle: (style: CSSProperties) => void,
+    ) => {
+      const rect = anchor?.getBoundingClientRect()
+      if (!rect) return
+      const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
+      setStyle({
+        left,
+        top: rect.bottom + 4,
+        width,
+        visibility: 'visible',
+      })
+    },
+    [],
+  )
+
   const openBranchMenu = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
     if (!project || !isTauri() || operation || loading) return
@@ -1029,6 +1063,68 @@ export default function SourceControlPanel() {
     positionBranchMenu()
   }, [branchMenuOpen, branchList, positionBranchMenu])
 
+  useLayoutEffect(() => {
+    if (!pullMenuOpen) return
+    positionActionMenu(pullMenuAnchorRef.current, SCM_ACTION_MENU_WIDTH, setPullMenuStyle)
+  }, [pullMenuOpen, positionActionMenu])
+
+  useLayoutEffect(() => {
+    if (!pushMenuOpen) return
+    positionActionMenu(pushMenuAnchorRef.current, SCM_ACTION_MENU_WIDTH, setPushMenuStyle)
+  }, [pushMenuOpen, positionActionMenu])
+
+  useEffect(() => {
+    if (!pullMenuOpen) return
+    const close = () => setPullMenuOpen(false)
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (pullMenuRef.current?.contains(target)) return
+      if (pullMenuAnchorRef.current?.contains(target)) return
+      close()
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    const onReposition = () =>
+      positionActionMenu(pullMenuAnchorRef.current, SCM_ACTION_MENU_WIDTH, setPullMenuStyle)
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('resize', onReposition)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('resize', onReposition)
+      window.removeEventListener('blur', close)
+    }
+  }, [pullMenuOpen, positionActionMenu])
+
+  useEffect(() => {
+    if (!pushMenuOpen) return
+    const close = () => setPushMenuOpen(false)
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (pushMenuRef.current?.contains(target)) return
+      if (pushMenuAnchorRef.current?.contains(target)) return
+      close()
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    const onReposition = () =>
+      positionActionMenu(pushMenuAnchorRef.current, SCM_ACTION_MENU_WIDTH, setPushMenuStyle)
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('resize', onReposition)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('resize', onReposition)
+      window.removeEventListener('blur', close)
+    }
+  }, [pushMenuOpen, positionActionMenu])
+
   useEffect(() => {
     if (!branchMenuOpen) return
     const close = () => setBranchMenuOpen(false)
@@ -1176,35 +1272,42 @@ export default function SourceControlPanel() {
     [loading, operation, refresh, t]
   )
 
-  const pullCurrent = useCallback(async () => {
-    const project = useProjectStore.getState().currentProject
-    if (!project || operation || loading) return
-    setOperation({ kind: 'pull', key: 'pull' })
-    setOperationError(null)
-    try {
-      const result: GitPullResult = await pullGit(project.path)
-      if (useProjectStore.getState().currentProject?.path === project.path) {
-        await refresh({ soft: false })
-        if (result.has_conflicts) {
-          const message = t('拉取完成，但存在 {count} 个未解决的合并冲突', {
-            count: result.conflict_paths.length,
-          })
-          useProjectStore.getState().pushToast('error', message)
-        } else {
-          useProjectStore.getState().pushToast('success', t('拉取成功'))
+  const pullCurrent = useCallback(
+    async (rebase = false) => {
+      const project = useProjectStore.getState().currentProject
+      if (!project || operation || loading) return
+      setPullMenuOpen(false)
+      setOperation({ kind: 'pull', key: rebase ? 'pull:rebase' : 'pull' })
+      setOperationError(null)
+      try {
+        const result = await safeInvoke<GitPullResult>('拉取 Git 更改', 'git_pull', {
+          path: project.path,
+          rebase,
+        })
+        if (useProjectStore.getState().currentProject?.path === project.path) {
+          await refresh({ soft: false })
+          if (result.has_conflicts) {
+            const message = t('拉取完成，但存在 {count} 个未解决的合并冲突', {
+              count: result.conflict_paths.length,
+            })
+            useProjectStore.getState().pushToast('error', message)
+          } else {
+            useProjectStore.getState().pushToast('success', t('拉取成功'))
+          }
         }
+      } catch (reason) {
+        if (useProjectStore.getState().currentProject?.path === project.path) {
+          await refresh({ soft: false })
+          const message = String(reason)
+          setOperationError(message)
+          useProjectStore.getState().pushToast('error', t('拉取失败：{error}', { error: message }))
+        }
+      } finally {
+        setOperation(null)
       }
-    } catch (reason) {
-      if (useProjectStore.getState().currentProject?.path === project.path) {
-        await refresh({ soft: false })
-        const message = String(reason)
-        setOperationError(message)
-        useProjectStore.getState().pushToast('error', t('拉取失败：{error}', { error: message }))
-      }
-    } finally {
-      setOperation(null)
-    }
-  }, [loading, operation, refresh, t])
+    },
+    [loading, operation, refresh, t],
+  )
 
   const fetchRemote = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
@@ -1218,14 +1321,14 @@ export default function SourceControlPanel() {
         const branches = await getGitBranches(project.path)
         if (useProjectStore.getState().currentProject?.path === project.path) {
           setBranchList(branches)
-          useProjectStore.getState().pushToast('success', t('已获取远程更新'))
+          useProjectStore.getState().pushToast('success', t('已检查更新'))
         }
       }
     } catch (reason) {
       if (useProjectStore.getState().currentProject?.path === project.path) {
         const message = String(reason)
         setOperationError(message)
-        useProjectStore.getState().pushToast('error', t('获取远程更新失败：{error}', { error: message }))
+        useProjectStore.getState().pushToast('error', t('检查更新失败：{error}', { error: message }))
       }
     } finally {
       setOperation(null)
@@ -2011,104 +2114,40 @@ export default function SourceControlPanel() {
 
   return (
     <div className="ui-font-scaled flex h-full flex-col overflow-hidden bg-bg-sidebar text-fg">
-      <div
-        className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center gap-2 border-b border-border ${SCM_TOOLBAR_PAD}`}
-      >
-        <span className="flex min-w-0 items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
-          <span className={SCM_ICON_SLOT}>
-            <GitBranch size={SCM_ICON_SIZE} className="text-brand" />
-          </span>
-          <span className="truncate">{t('源代码管理')}</span>
-          {status?.is_repository && (
-            <button
-              ref={branchAnchorRef}
-              type="button"
-              aria-expanded={branchMenuOpen}
-              aria-haspopup="menu"
-              aria-label={t('选择分支')}
-              disabled={loading || Boolean(operation)}
-              onClick={() => {
-                if (branchMenuOpen) setBranchMenuOpen(false)
-                else void openBranchMenu()
-              }}
-              className={`flex max-w-[10rem] items-center gap-0.5 truncate rounded bg-bg-deep/80 px-1.5 py-px font-mono text-[10px] font-normal normal-case tracking-normal text-fg transition-colors hover:bg-bg-hover disabled:opacity-50 ${
-                branchMenuOpen ? 'bg-bg-active' : ''
-              }`}
-            >
-              <span className="truncate">{status.branch ?? t('游离 HEAD')}</span>
-              {operation?.kind === 'switch' ? (
-                <LoaderCircle size={10} className="shrink-0 animate-spin text-accent" />
-              ) : (
-                <ChevronDown
-                  size={10}
-                  className={`shrink-0 transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`}
-                />
-              )}
-            </button>
-          )}
-        </span>
-        <div className="flex shrink-0 items-center gap-0.5">
-          <Tooltip label={t('获取远程更新（不合并代码）')} side="bottom">
-            <button
-              type="button"
-              onClick={() => void fetchRemote()}
-              disabled={loading || Boolean(operation) || !currentProject || !status?.is_repository}
-              aria-label={t('获取远程更新（不合并代码）')}
-              className={`${SCM_ICON_BUTTON} hover:text-fg`}
-            >
-              {operation?.kind === 'fetch' ? (
-                <LoaderCircle size={SCM_ICON_SIZE} className="animate-spin text-accent" />
-              ) : (
-                <Download size={SCM_ICON_SIZE} strokeWidth={2.25} />
-              )}
-            </button>
-          </Tooltip>
-          <Tooltip label={t('从远程拉取')} side="bottom">
-            <button
-              type="button"
-              onClick={() => void pullCurrent()}
-              disabled={loading || Boolean(operation) || !currentProject || !status?.is_repository}
-              aria-label={t('从远程拉取')}
-              className={`${SCM_ICON_BUTTON} hover:text-fg`}
-            >
-              {operation?.kind === 'pull' ? (
-                <LoaderCircle size={SCM_ICON_SIZE} className="animate-spin text-accent" />
-              ) : (
-                <ArrowDown size={SCM_ICON_SIZE} strokeWidth={2.25} />
-              )}
-            </button>
-          </Tooltip>
-          <Tooltip label={t('推送到远程')} side="bottom">
-            <button
-              type="button"
-              onClick={() => void retryPush()}
-              disabled={loading || Boolean(operation) || !currentProject || !status?.is_repository}
-              aria-label={t('推送到远程')}
-              className={`${SCM_ICON_BUTTON} hover:text-fg`}
-            >
-              {operation?.kind === 'push' ? (
-                <LoaderCircle size={SCM_ICON_SIZE} className="animate-spin text-accent" />
-              ) : (
-                <ArrowUp size={SCM_ICON_SIZE} strokeWidth={2.25} />
-              )}
-            </button>
-          </Tooltip>
-          <Tooltip label={t('刷新')} side="bottom">
-            <button
-              type="button"
-              onClick={() => void refresh({ soft: false })}
-              disabled={loading || Boolean(operation) || !currentProject}
-              aria-label={t('刷新')}
-              className={`${SCM_ICON_BUTTON} hover:text-fg`}
-            >
-              <RefreshCw
-                size={SCM_ICON_SIZE}
-                className={loading ? 'animate-spin text-accent' : undefined}
-              />
-            </button>
-          </Tooltip>
-        </div>
-      </div>
+      <ScmToolbar
+        status={status}
+        loading={loading}
+        operationKind={
+          operation?.kind === 'fetch' ||
+          operation?.kind === 'pull' ||
+          operation?.kind === 'push' ||
+          operation?.kind === 'switch'
+            ? operation.kind
+            : null
+        }
+        disabled={loading || Boolean(operation) || !currentProject}
+        branchMenuOpen={branchMenuOpen}
+        branchAnchorRef={branchAnchorRef}
+        pullMenuAnchorRef={pullMenuAnchorRef}
+        pushMenuAnchorRef={pushMenuAnchorRef}
+        onOpenBranchMenu={() => {
+          if (branchMenuOpen) setBranchMenuOpen(false)
+          else void openBranchMenu()
+        }}
+        onFetch={() => void fetchRemote()}
+        onPull={() => void pullCurrent(false)}
+        onOpenPullMenu={() => {
+          setPushMenuOpen(false)
+          setBranchMenuOpen(false)
+          setPullMenuOpen(open => !open)
+        }}
+        onPush={() => void retryPush()}
+        onOpenPushMenu={() => {
+          setPullMenuOpen(false)
+          setBranchMenuOpen(false)
+          setPushMenuOpen(open => !open)
+        }}
+      />
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{body}</div>
       {contextMenu && (
         <ContextMenu
@@ -2188,6 +2227,30 @@ export default function SourceControlPanel() {
             )}
           </div>,
           document.body
+        )}
+      {pullMenuOpen &&
+        createPortal(
+          <ScmPullMenu
+            open={pullMenuOpen}
+            style={pullMenuStyle}
+            menuRef={pullMenuRef}
+            onPull={() => void pullCurrent(false)}
+            onPullRebase={() => void pullCurrent(true)}
+          />,
+          document.body,
+        )}
+      {pushMenuOpen &&
+        createPortal(
+          <ScmPushMenu
+            open={pushMenuOpen}
+            style={pushMenuStyle}
+            menuRef={pushMenuRef}
+            onPush={() => {
+              setPushMenuOpen(false)
+              void retryPush()
+            }}
+          />,
+          document.body,
         )}
     </div>
   )

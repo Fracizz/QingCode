@@ -7,6 +7,12 @@ export type GitChange = {
 export type GitStatus = {
   is_repository: boolean
   branch: string | null
+  /** Upstream short ref when the current branch tracks a remote. */
+  upstream?: string | null
+  /** Remote commits not yet merged locally. */
+  behind?: number
+  /** Local commits not yet on the remote. */
+  ahead?: number
   changes: GitChange[]
 }
 

@@ -29,6 +29,12 @@ pub struct GitChange {
 pub struct GitStatus {
     pub is_repository: bool,
     pub branch: Option<String>,
+    /// Configured upstream short name (`origin/main`), when tracking is set.
+    pub upstream: Option<String>,
+    /// Commits on the remote not yet merged locally (`git status --branch`).
+    pub behind: u32,
+    /// Local commits not yet on the remote.
+    pub ahead: u32,
     pub changes: Vec<GitChange>,
 }
 
@@ -41,31 +47,78 @@ fn is_not_repository_error(output: &Output) -> bool {
     message.contains("not a git repository") || message.contains("不是 git 仓库")
 }
 
-fn parse_branch(header: &str) -> Option<String> {
-    let branch = header
+/// Parse `## branch...upstream [ahead N, behind M]` from porcelain `--branch`.
+fn parse_branch_header(header: &str) -> (Option<String>, Option<String>, u32, u32) {
+    let body = header
         .trim_start_matches("## ")
         .strip_prefix("No commits yet on ")
         .unwrap_or_else(|| header.trim_start_matches("## "))
-        .split("...")
-        .next()
-        .unwrap_or_default()
         .trim();
-    if branch.is_empty() || branch.starts_with("HEAD (no branch)") {
-        None
-    } else {
-        Some(branch.to_string())
+    if body.is_empty() || body.starts_with("HEAD (no branch)") {
+        return (None, None, 0, 0);
     }
+
+    let tracking_start = body.find(" [").unwrap_or(body.len());
+    let branch_part = body[..tracking_start].trim();
+    let tracking = if tracking_start < body.len() {
+        Some(&body[tracking_start..])
+    } else {
+        None
+    };
+
+    let mut branch_name: Option<String> = None;
+    let mut upstream: Option<String> = None;
+    if let Some((local, remote)) = branch_part.split_once("...") {
+        let local = local.trim();
+        let remote = remote.trim();
+        if !local.is_empty() {
+            branch_name = Some(local.to_string());
+        }
+        if !remote.is_empty() {
+            upstream = Some(remote.to_string());
+        }
+    } else if !branch_part.is_empty() {
+        branch_name = Some(branch_part.to_string());
+    }
+
+    let mut ahead = 0u32;
+    let mut behind = 0u32;
+    if let Some(tr) = tracking {
+        let inner = tr
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .trim();
+        for token in inner.split(',') {
+            let token = token.trim();
+            if let Some(rest) = token.strip_prefix("ahead ") {
+                ahead = rest.trim().parse().unwrap_or(0);
+            } else if let Some(rest) = token.strip_prefix("behind ") {
+                behind = rest.trim().parse().unwrap_or(0);
+            }
+        }
+    }
+
+    (branch_name, upstream, ahead, behind)
 }
 
 /// Parse porcelain v1 `-z` records. NUL framing preserves Chinese, spaces and
 /// rename paths exactly instead of relying on Git's display-oriented quoting.
 fn parse_status(output: &[u8]) -> GitStatus {
     let mut branch = None;
+    let mut upstream = None;
+    let mut ahead = 0u32;
+    let mut behind = 0u32;
     let mut changes = vec![];
     let mut records = output.split(|byte| *byte == 0);
     while let Some(record) = records.next() {
         if record.starts_with(b"## ") {
-            branch = parse_branch(&String::from_utf8_lossy(record));
+            let header = String::from_utf8_lossy(record);
+            let parsed = parse_branch_header(&header);
+            branch = parsed.0;
+            upstream = parsed.1;
+            ahead = parsed.2;
+            behind = parsed.3;
             continue;
         }
         if record.len() < 4 {
@@ -86,6 +139,9 @@ fn parse_status(output: &[u8]) -> GitStatus {
     GitStatus {
         is_repository: true,
         branch,
+        upstream,
+        ahead,
+        behind,
         changes,
     }
 }
@@ -418,8 +474,13 @@ pub struct GitPullResult {
     pub conflict_paths: Vec<String>,
 }
 
-fn pull_current(root: &Path) -> Result<GitPullResult, String> {
-    let pull_output = run_git(root, &["pull"])?;
+fn pull_current(root: &Path, rebase: bool) -> Result<GitPullResult, String> {
+    let args: Vec<&str> = if rebase {
+        vec!["pull", "--rebase"]
+    } else {
+        vec!["pull"]
+    };
+    let pull_output = run_git(root, &args)?;
     let conflict_paths = list_unmerged_paths(root)?;
     let has_conflicts = !conflict_paths.is_empty();
 
@@ -600,6 +661,9 @@ fn collect_git_status(root: &Path) -> Result<GitStatus, String> {
             return Ok(GitStatus {
                 is_repository: false,
                 branch: None,
+                upstream: None,
+                ahead: 0,
+                behind: 0,
                 changes: vec![],
             });
         }
@@ -711,6 +775,28 @@ pub async fn git_push(path: String, allowlist: State<'_, PathAllowlist>) -> Resu
         .map_err(|error| format!("Git 推送失败：{error}"))?
 }
 
+fn fetch_current(root: &Path) -> Result<String, String> {
+    let output = run_git(root, &["fetch"])?;
+    let output = ensure_git_success("Git 获取", output)?;
+    let summary = git_output_text(&output);
+    Ok(if summary.starts_with("Git 退出码") {
+        "已检查更新".to_string()
+    } else if summary.is_empty() {
+        "已检查更新".to_string()
+    } else {
+        summary
+    })
+}
+
+#[tauri::command]
+pub async fn git_fetch(path: String, allowlist: State<'_, PathAllowlist>) -> Result<String, String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || fetch_current(&root))
+        .await
+        .map_err(|error| format!("Git 获取失败：{error}"))?
+}
+
 #[tauri::command]
 pub async fn git_fetch(
     path: String,
@@ -726,11 +812,13 @@ pub async fn git_fetch(
 #[tauri::command]
 pub async fn git_pull(
     path: String,
+    rebase: Option<bool>,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<GitPullResult, String> {
     ensure_git_root(&path, &allowlist)?;
     let root = PathBuf::from(path);
-    tauri::async_runtime::spawn_blocking(move || pull_current(&root))
+    let rebase = rebase.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || pull_current(&root, rebase))
         .await
         .map_err(|error| format!("Git 拉取失败：{error}"))?
 }
@@ -1152,9 +1240,23 @@ mod tests {
         let status =
             parse_status(b"## feature/test...origin/feature/test\0 M src/main.ts\0?? notes.txt\0");
         assert_eq!(status.branch.as_deref(), Some("feature/test"));
+        assert_eq!(status.upstream.as_deref(), Some("origin/feature/test"));
+        assert_eq!(status.ahead, 0);
+        assert_eq!(status.behind, 0);
         assert_eq!(status.changes.len(), 2);
         assert_eq!(status.changes[0].status, " M");
         assert_eq!(status.changes[1].path, "notes.txt");
+    }
+
+    #[test]
+    fn parses_ahead_behind_on_branch_header() {
+        let status = parse_status(
+            b"## main...origin/main [ahead 9, behind 3]\0 M src/a.ts\0",
+        );
+        assert_eq!(status.branch.as_deref(), Some("main"));
+        assert_eq!(status.upstream.as_deref(), Some("origin/main"));
+        assert_eq!(status.ahead, 9);
+        assert_eq!(status.behind, 3);
     }
 
     #[test]
