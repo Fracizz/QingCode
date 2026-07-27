@@ -6,7 +6,7 @@ import {
   LoaderCircle,
   RefreshCw,
 } from 'lucide-react'
-import type { RefObject, ReactNode, CSSProperties } from 'react'
+import type { RefObject, CSSProperties, ReactNode } from 'react'
 import type { GitStatus } from '@/lib/git/git'
 import { formatRelativeTime } from '@/lib/formatRelativeTime'
 import { resolveGitSyncTimestamp } from '@/lib/git/syncTimes'
@@ -33,38 +33,35 @@ export type ScmToolbarProps = {
   onOpenPushMenu: () => void
 }
 
-function ScmChip({
-  caption,
-  children,
-  className = '',
-}: {
-  caption: string
-  children: ReactNode
-  className?: string
-}) {
-  return (
-    <div
-      className={`flex shrink-0 flex-col gap-1 rounded-md border border-border bg-bg-deep/70 px-2 pb-1.5 pt-1.5 ${className}`}
-    >
-      <span className="truncate text-[10px] leading-[1.25] text-fg-dim">{caption}</span>
-      {children}
-    </div>
-  )
-}
-
 function CountBadge({ count }: { count: number }) {
   if (count <= 0) return null
   return (
-    <span className="flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold tabular-nums text-white">
+    <span className="shrink-0 rounded-full bg-accent px-1 text-[9px] font-semibold leading-4 tabular-nums text-white">
       {count > 99 ? '99+' : count}
     </span>
   )
 }
 
-function actionBtn(active = false) {
-  return `flex items-center gap-1 rounded text-[11px] text-fg transition-colors hover:bg-bg-hover disabled:opacity-40 ${
-    active ? 'bg-bg-active' : ''
+function TimeTag({ label }: { label: string }) {
+  return <span className="shrink-0 text-[10px] text-fg-dim">{label}</span>
+}
+
+function segmentGroup(active = false) {
+  return `flex h-8 shrink-0 items-stretch overflow-hidden rounded-md border bg-bg-deep/55 ${
+    active ? 'border-border-strong/70 bg-bg-active/90' : 'border-border/45'
   }`
+}
+
+function SegmentGroup({
+  active = false,
+  className = '',
+  children,
+}: {
+  active?: boolean
+  className?: string
+  children: ReactNode
+}) {
+  return <div className={`${segmentGroup(active)} ${className}`}>{children}</div>
 }
 
 export default function ScmToolbar({
@@ -89,24 +86,41 @@ export default function ScmToolbar({
   const writeDisabled = disabled || !repoReady
   const behind = status?.behind ?? 0
   const ahead = status?.ahead ?? 0
+  const neverLabel = t('从未')
 
-  const fetchCaption = formatRelativeTime(
+  const fetchTime = formatRelativeTime(
     resolveGitSyncTimestamp(projectPath, 'fetch', status?.last_fetch_at),
     t,
+    neverLabel,
   )
-  const pullCaption = formatRelativeTime(
+  const pullTime = formatRelativeTime(
     resolveGitSyncTimestamp(projectPath, 'pull', status?.last_pull_at),
     t,
+    neverLabel,
   )
-  const pushCaption = formatRelativeTime(
+  const pushTime = formatRelativeTime(
     resolveGitSyncTimestamp(projectPath, 'push', status?.last_push_at),
     t,
+    neverLabel,
   )
 
+  const segmentBtn = (active = false) =>
+    `flex h-full shrink-0 items-center gap-1 px-1.5 text-[11px] text-fg transition-colors hover:bg-bg-hover/80 disabled:opacity-40 ${
+      active ? 'bg-bg-hover/60' : ''
+    }`
+
+  const menuBtn =
+    'flex h-full w-5 shrink-0 items-center justify-center border-l border-border/45 text-fg-dim transition-colors hover:bg-bg-hover/80 disabled:opacity-40'
+
   return (
-    <div className="shrink-0 overflow-x-auto overflow-y-visible border-b border-border px-2 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <div className="flex min-w-max items-center gap-1.5">
-        <ScmChip caption={t('分支')} className="max-w-[9rem]">
+    <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-3 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <Tooltip
+        label={status?.branch ?? t('游离 HEAD')}
+        side="bottom"
+        onlyWhenOverflow
+        wrapperClassName="flex min-w-0 max-w-[11rem] shrink"
+      >
+        <SegmentGroup active={branchMenuOpen} className="w-full min-w-0">
           <button
             ref={branchAnchorRef}
             type="button"
@@ -115,118 +129,107 @@ export default function ScmToolbar({
             aria-label={t('选择分支')}
             disabled={writeDisabled}
             onClick={onOpenBranchMenu}
-            className={`${actionBtn(branchMenuOpen)} h-7 max-w-full px-1`}
+            className="flex h-full w-full min-w-0 items-center gap-1 px-2 text-left transition-colors hover:bg-bg-hover/80 disabled:opacity-40"
           >
-            <GitBranch size={12} className="shrink-0 text-brand" />
-            <span className="min-w-0 truncate font-mono">
-              {status?.branch ?? t('游离 HEAD')}
-            </span>
-            {operationKind === 'switch' ? (
-              <LoaderCircle size={11} className="shrink-0 animate-spin text-accent" />
-            ) : (
-              <ChevronDown
-                size={11}
-                className={`shrink-0 text-fg-dim transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`}
-              />
-            )}
+          <GitBranch size={12} className="shrink-0 text-brand" />
+          <span className="min-w-0 truncate font-mono text-[11px]">
+            {status?.branch ?? t('游离 HEAD')}
+          </span>
+          {operationKind === 'switch' ? (
+            <LoaderCircle size={11} className="shrink-0 animate-spin text-accent" />
+          ) : (
+            <ChevronDown
+              size={11}
+              className={`shrink-0 text-fg-dim transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`}
+            />
+          )}
           </button>
-        </ScmChip>
+        </SegmentGroup>
+      </Tooltip>
 
-        <ScmChip caption={fetchCaption}>
-          <Tooltip label={t('从远程获取最新引用（git fetch）')} side="bottom">
-            <button
-              type="button"
-              aria-label={t('检查更新')}
-              disabled={writeDisabled}
-              onClick={onFetch}
-              className={`${actionBtn()} h-7 px-1.5`}
-            >
-              {operationKind === 'fetch' || loading ? (
-                <LoaderCircle size={12} className="animate-spin text-accent" />
-              ) : (
-                <RefreshCw size={12} className="text-fg-muted" />
-              )}
-              <span className="whitespace-nowrap">{t('检查更新')}</span>
-            </button>
-          </Tooltip>
-        </ScmChip>
-
-        <ScmChip caption={pullCaption}>
-          <div className="flex h-7 items-center gap-0.5">
-            <Tooltip label={t('从远程拉取')} side="bottom">
-              <button
-                type="button"
-                aria-label={t('更新')}
-                disabled={writeDisabled}
-                onClick={onPull}
-                className={`${actionBtn()} h-7 rounded-l px-1.5`}
-              >
-                {operationKind === 'pull' ? (
-                  <LoaderCircle size={12} className="animate-spin text-accent" />
-                ) : (
-                  <ArrowDown size={12} className="text-fg-muted" />
-                )}
-                <span className="whitespace-nowrap">{t('更新')}</span>
-              </button>
-            </Tooltip>
-            <button
-              ref={pullMenuAnchorRef}
-              type="button"
-              aria-label={t('更多拉取选项')}
-              aria-haspopup="menu"
-              disabled={writeDisabled}
-              onClick={onOpenPullMenu}
-              className="flex h-7 w-5 shrink-0 items-center justify-center rounded-r text-fg-dim transition-colors hover:bg-bg-hover disabled:opacity-40"
-            >
-              <ChevronDown size={11} />
-            </button>
-            {behind > 0 && (
-              <>
-                <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden />
-                <CountBadge count={behind} />
-              </>
+      <SegmentGroup>
+        <Tooltip label={t('从远程获取最新引用（git fetch）')} side="bottom" wrapperClassName="h-full">
+          <button
+            type="button"
+            aria-label={t('检查更新')}
+            disabled={writeDisabled}
+            onClick={onFetch}
+            className={segmentBtn(operationKind === 'fetch')}
+          >
+            {operationKind === 'fetch' || loading ? (
+              <LoaderCircle size={12} className="animate-spin text-accent" />
+            ) : (
+              <RefreshCw size={12} className="text-fg-muted" />
             )}
-          </div>
-        </ScmChip>
+            <span className="whitespace-nowrap">{t('检查更新')}</span>
+            <TimeTag label={fetchTime} />
+          </button>
+        </Tooltip>
+      </SegmentGroup>
 
-        <ScmChip caption={pushCaption}>
-          <div className="flex h-7 items-center gap-0.5">
-            <Tooltip label={t('推送到远程')} side="bottom">
-              <button
-                type="button"
-                aria-label={t('推送')}
-                disabled={writeDisabled}
-                onClick={onPush}
-                className={`${actionBtn()} h-7 rounded-l px-1.5`}
-              >
-                {operationKind === 'push' ? (
-                  <LoaderCircle size={12} className="animate-spin text-accent" />
-                ) : (
-                  <ArrowUp size={12} className="text-fg-muted" />
-                )}
-                <span className="whitespace-nowrap">{t('推送')}</span>
-              </button>
-            </Tooltip>
-            <button
-              ref={pushMenuAnchorRef}
-              type="button"
-              aria-label={t('更多推送选项')}
-              aria-haspopup="menu"
-              disabled={writeDisabled}
-              onClick={onOpenPushMenu}
-              className="flex h-7 w-5 shrink-0 items-center justify-center rounded-r text-fg-dim transition-colors hover:bg-bg-hover disabled:opacity-40"
-            >
-              <ChevronDown size={11} />
-            </button>
-            {ahead > 0 && (
-              <>
-                <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden />
-                <CountBadge count={ahead} />
-              </>
+      <SegmentGroup active={operationKind === 'pull'}>
+        <Tooltip label={t('从远程拉取')} side="bottom" wrapperClassName="h-full">
+          <button
+            type="button"
+            aria-label={t('更新')}
+            disabled={writeDisabled}
+            onClick={onPull}
+            className={segmentBtn(operationKind === 'pull')}
+          >
+            {operationKind === 'pull' ? (
+              <LoaderCircle size={12} className="animate-spin text-accent" />
+            ) : (
+              <ArrowDown size={12} className="text-fg-muted" />
             )}
-          </div>
-        </ScmChip>
-      </div>
+            <span className="whitespace-nowrap">{t('更新')}</span>
+            <TimeTag label={pullTime} />
+            <CountBadge count={behind} />
+          </button>
+        </Tooltip>
+        <button
+          ref={pullMenuAnchorRef}
+          type="button"
+          aria-label={t('更多拉取选项')}
+          aria-haspopup="menu"
+          disabled={writeDisabled}
+          onClick={onOpenPullMenu}
+          className={menuBtn}
+        >
+          <ChevronDown size={11} />
+        </button>
+      </SegmentGroup>
+
+      <SegmentGroup active={operationKind === 'push'}>
+        <Tooltip label={t('推送到远程')} side="bottom" wrapperClassName="h-full">
+          <button
+            type="button"
+            aria-label={t('推送')}
+            disabled={writeDisabled}
+            onClick={onPush}
+            className={segmentBtn(operationKind === 'push')}
+          >
+            {operationKind === 'push' ? (
+              <LoaderCircle size={12} className="animate-spin text-accent" />
+            ) : (
+              <ArrowUp size={12} className="text-fg-muted" />
+            )}
+            <span className="whitespace-nowrap">{t('推送')}</span>
+            <TimeTag label={pushTime} />
+            <CountBadge count={ahead} />
+          </button>
+        </Tooltip>
+        <button
+          ref={pushMenuAnchorRef}
+          type="button"
+          aria-label={t('更多推送选项')}
+          aria-haspopup="menu"
+          disabled={writeDisabled}
+          onClick={onOpenPushMenu}
+          className={menuBtn}
+        >
+          <ChevronDown size={11} />
+        </button>
+      </SegmentGroup>
     </div>
   )
 }

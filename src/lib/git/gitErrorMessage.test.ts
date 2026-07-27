@@ -3,7 +3,9 @@ import {
   extractGitOverwrittenFiles,
   formatGitChangedFileList,
   gitPullErrorI18n,
+  gitSwitchErrorI18n,
   normalizeGitPullErrorRaw,
+  parseScmErrorDisplay,
 } from './gitErrorMessage'
 
 describe('gitPullErrorI18n', () => {
@@ -39,5 +41,23 @@ abcd123..ef01234 main -> origin/main
 error: failed to connect`)
     expect(normalized).not.toMatch(/https:\/\//)
     expect(normalized).toContain('failed to connect')
+  })
+
+  it('parses checkout overwrite errors for branch switch', () => {
+    const raw = `切换 Git 分支失败：error: Your local changes to the following files would be overwritten by checkout:
+\tsrc/components/ScmToolbar.tsx
+\tsrc/components/SourceControlPanel.tsx
+Please commit your changes or stash them before you switch branches.
+Aborting`
+
+    const i18n = gitSwitchErrorI18n(raw)
+    expect(i18n.key).toBe('切换分支失败：本地有未提交修改（{files}），请先提交或暂存后再切换')
+    expect(i18n.params?.files).toBe('src/components/ScmToolbar.tsx、src/components/SourceControlPanel.tsx')
+
+    const display = parseScmErrorDisplay(raw)
+    expect(display.files).toEqual([
+      'src/components/ScmToolbar.tsx',
+      'src/components/SourceControlPanel.tsx',
+    ])
   })
 })

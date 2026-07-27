@@ -740,12 +740,12 @@ export default function TerminalTabs({
                   : translate('新建终端（无项目时将创建临时项目）')
             }
             side="top"
-            wrapperClassName="flex-shrink-0"
+            wrapperClassName="inline-flex h-full shrink-0 items-center"
           >
             <button
               type="button"
               aria-label={translate('新建终端')}
-              className={`flex h-full w-8 flex-shrink-0 items-center justify-center transition-colors ${
+              className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded transition-colors ${
                 !(currentProject && atLimit) && !creatingTerminal
                   ? 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                   : 'text-fg-dim cursor-not-allowed'
@@ -758,7 +758,7 @@ export default function TerminalTabs({
                 setProfileMenu({ x: event.clientX, y: event.clientY })
               }}
             >
-              <Plus size={15} />
+              <Plus size={14} />
             </button>
           </Tooltip>
         </div>
@@ -770,14 +770,14 @@ export default function TerminalTabs({
                 : translate('显示所有终端')
             }
             side="top"
-            wrapperClassName="flex-shrink-0"
+            wrapperClassName="inline-flex h-full shrink-0 items-center"
           >
             <button
               type="button"
               aria-label={translate('显示所有终端')}
               aria-haspopup="menu"
               aria-expanded={overflowMenu !== null}
-              className="relative flex h-full w-8 flex-shrink-0 items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg"
+              className="relative flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
               onPointerDown={() => {
                 if (pane) setTerminalFocusPane(pane)
               }}

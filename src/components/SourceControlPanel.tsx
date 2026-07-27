@@ -32,6 +32,7 @@ import {
   Plus,
   ArrowDown,
   ArrowUp,
+  X,
 } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { List, useListRef } from 'react-window'
@@ -63,7 +64,7 @@ import {
   scmStatusBadgeTone,
   splitGitChanges,
 } from '@/lib/git/gitStatus'
-import { gitPullErrorI18n } from '@/lib/git/gitErrorMessage'
+import { gitPullErrorI18n, gitSwitchErrorI18n, parseScmErrorDisplay } from '@/lib/git/gitErrorMessage'
 import { markLocalGitSyncTime } from '@/lib/git/syncTimes'
 import { confirmDialog } from '../store/confirmStore'
 import { isTauri, safeInvoke } from '../lib/tauri'
@@ -120,7 +121,8 @@ type InlineDiffState = {
 
 const ROW_HEIGHT = 28
 const COMMIT_PAGE_SIZE = SCM_COMMIT_PAGE_SIZE
-const BRANCH_MENU_WIDTH = 260
+const BRANCH_MENU_MIN_WIDTH = 240
+const BRANCH_MENU_MAX_WIDTH = 480
 const SCM_ACTION_MENU_WIDTH = 168
 const SCM_TOOLBAR_H = 'h-8'
 /** Match tab bar `px-3` so section chevrons line up with the「变更」tab button. */
@@ -151,6 +153,63 @@ function GitScmStatusBadge({ status, group }: { status: string; group: GitChange
             : `${STATUS_BADGE} bg-accent/80 text-bg`
   const label = tone === 'conflict' ? '!' : tone === 'added' ? '+' : glyph.charAt(0) || '?'
   return <span className={className}>{label}</span>
+}
+
+function BranchMenuLabel({ name, className = 'block truncate font-mono text-[12px] leading-tight' }: {
+  name: string
+  className?: string
+}) {
+  return (
+    <Tooltip label={name} side="right" onlyWhenOverflow wrapperClassName="min-w-0 max-w-full">
+      <span className={className}>{name}</span>
+    </Tooltip>
+  )
+}
+
+function ScmOperationAlert({
+  message,
+  onDismiss,
+  children,
+}: {
+  message: string
+  onDismiss: () => void
+  children?: ReactNode
+}) {
+  const { t } = useI18n()
+  const display = useMemo(() => parseScmErrorDisplay(message), [message])
+  return (
+    <div
+      role="alert"
+      className="flex shrink-0 flex-col gap-1.5 border-y border-danger/20 bg-danger/5 px-3 py-2"
+    >
+      <div className="flex items-start gap-2 text-danger">
+        <AlertCircle size={14} className="mt-0.5 shrink-0" strokeWidth={2} />
+        <p className="text-ui-sm min-w-0 flex-1 leading-5">
+          {display.literal
+            ? display.summaryKey
+            : t(display.summaryKey, display.summaryParams)}
+        </p>
+        <button
+          type="button"
+          aria-label={t('关闭')}
+          onClick={onDismiss}
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-fg-dim transition-colors hover:bg-danger/10 hover:text-danger"
+        >
+          <X size={14} />
+        </button>
+      </div>
+      {display.files.length > 0 && (
+        <ul className="ml-6 max-h-28 list-none space-y-0.5 overflow-y-auto border-l border-danger/20 pl-2 font-mono text-[11px] leading-5 text-danger/90">
+          {display.files.map(file => (
+            <li key={file} className="truncate">
+              {file}
+            </li>
+          ))}
+        </ul>
+      )}
+      {children ? <div className="ml-6 flex flex-wrap gap-2">{children}</div> : null}
+    </div>
+  )
 }
 
 type GitOperation = {
@@ -557,7 +616,7 @@ export default function SourceControlPanel() {
   const [branchMenuStyle, setBranchMenuStyle] = useState<CSSProperties>({
     left: 0,
     top: 0,
-    width: BRANCH_MENU_WIDTH,
+    width: BRANCH_MENU_MIN_WIDTH,
     visibility: 'hidden',
   })
   const branchAnchorRef = useRef<HTMLButtonElement>(null)
@@ -878,11 +937,16 @@ export default function SourceControlPanel() {
   const positionBranchMenu = useCallback(() => {
     const rect = branchAnchorRef.current?.getBoundingClientRect()
     if (!rect) return
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - BRANCH_MENU_WIDTH - 8))
+    const width = Math.min(
+      Math.max(BRANCH_MENU_MIN_WIDTH, Math.ceil(rect.width) + 48),
+      BRANCH_MENU_MAX_WIDTH,
+      window.innerWidth - 16,
+    )
+    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
     setBranchMenuStyle({
       left,
       top: rect.bottom + 4,
-      width: BRANCH_MENU_WIDTH,
+      width,
       visibility: 'visible',
     })
   }, [])
@@ -944,9 +1008,8 @@ export default function SourceControlPanel() {
         if (useProjectStore.getState().currentProject?.path === project.path) {
           const message = String(reason)
           setOperationError(message)
-          useProjectStore
-            .getState()
-            .pushToast('error', t('切换分支失败：{error}', { error: message }))
+          const { key, params } = gitSwitchErrorI18n(message)
+          useProjectStore.getState().pushToast('error', t(key, params))
         }
       } finally {
         setOperation(null)
@@ -2064,22 +2127,24 @@ export default function SourceControlPanel() {
           </div>
         )}
         {(error || operationError) && (
-          <div
-            role="alert"
-            className="text-ui-sm flex flex-shrink-0 flex-wrap items-center gap-x-3 gap-y-1 break-words border-y border-border bg-danger/5 px-3 py-2 text-danger"
+          <ScmOperationAlert
+            message={operationError ?? error ?? ''}
+            onDismiss={() => {
+              setOperationError(null)
+              setError(null)
+            }}
           >
-            <span>{operationError ?? error}</span>
             {pushRetryAvailable && (
               <button
                 type="button"
                 onClick={() => void retryPush()}
                 disabled={Boolean(operation) || loading}
-                className="rounded border border-danger/50 px-2 py-1 text-[11px] font-medium hover:bg-danger/10 disabled:opacity-50"
+                className="rounded border border-danger/50 px-2 py-1 text-[11px] font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
               >
                 {t('重试推送')}
               </button>
             )}
-          </div>
+          </ScmOperationAlert>
         )}
         <div className="flex h-9 flex-shrink-0 items-center gap-1 border-b border-border px-3">
           <button
@@ -2194,21 +2259,24 @@ export default function SourceControlPanel() {
                     role="menuitem"
                     disabled={branch.current || Boolean(operation)}
                     onClick={() => void switchToBranch(branch.name)}
-                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] ${
+                    className={`flex w-full items-start gap-2 px-3 py-2 text-left ${
                       branch.current
                         ? 'bg-bg-active text-fg'
                         : 'text-fg hover:bg-bg-hover disabled:opacity-40'
                     }`}
                   >
-                    <span className="inline-flex w-3.5 shrink-0 justify-center">
+                    <span className="mt-0.5 inline-flex w-3.5 shrink-0 justify-center">
                       {branch.current ? <Check size={12} className="text-brand" /> : null}
                     </span>
-                    <span className="min-w-0 flex-1 truncate font-mono">{branch.name}</span>
-                    {branch.upstream && (
-                      <span className="max-w-[40%] truncate text-[10px] text-fg-dim">
-                        {branch.upstream}
-                      </span>
-                    )}
+                    <div className="min-w-0 flex-1">
+                      <BranchMenuLabel name={branch.name} />
+                      {branch.upstream && (
+                        <BranchMenuLabel
+                          name={branch.upstream}
+                          className="mt-0.5 block truncate font-mono text-[10px] leading-tight text-fg-dim"
+                        />
+                      )}
+                    </div>
                   </button>
                 ))
               )}
@@ -2222,10 +2290,10 @@ export default function SourceControlPanel() {
                   {branchList.remote.map(name => (
                     <div
                       key={name}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-[12px] text-fg-dim"
+                      className="flex w-full items-start gap-2 px-3 py-1.5 text-fg-dim"
                     >
                       <span className="inline-flex w-3.5 shrink-0" />
-                      <span className="min-w-0 flex-1 truncate font-mono">{name}</span>
+                      <BranchMenuLabel name={name} className="block truncate font-mono text-[12px] leading-tight" />
                     </div>
                   ))}
                 </div>
