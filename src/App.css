@@ -187,6 +187,26 @@ body {
     'activity sidebar terminal';
 }
 
+/*
+ * Side terminal collapsed: reclaim the fr/auto track. Equal dual/田 leave a
+ * blank column if we only set the dock width to 0 while the grid cell stays 1fr/2fr.
+ * Specificity must beat the dual equal `2fr` rule (incl. its :not()).
+ */
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-editor-slot='visible'][data-terminal-slot='collapsed'],
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-dual='true'][data-editor-slot='visible'][data-terminal-slot='collapsed'],
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-quad='true'][data-editor-slot='visible'][data-terminal-slot='collapsed'],
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-split='custom'][data-editor-slot='visible'][data-terminal-slot='collapsed'] {
+  grid-template-columns: auto auto 0px minmax(0, 1fr);
+  grid-template-areas:
+    'activity sidebar terminal editor';
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-editor-slot='collapsed'][data-terminal-slot='collapsed'] {
+  grid-template-columns: auto auto 0px;
+  grid-template-areas:
+    'activity sidebar terminal';
+}
+
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'] {
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -204,6 +224,21 @@ body {
 
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-editor-slot='collapsed'] {
   grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    'activity terminal';
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-editor-slot='visible'][data-terminal-slot='collapsed'],
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-dual='true'][data-editor-slot='visible'][data-terminal-slot='collapsed'],
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-quad='true'][data-editor-slot='visible'][data-terminal-slot='collapsed'],
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-split='custom'][data-editor-slot='visible'][data-terminal-slot='collapsed'] {
+  grid-template-columns: auto 0px minmax(0, 1fr);
+  grid-template-areas:
+    'activity terminal editor';
+}
+
+.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-editor-slot='collapsed'][data-terminal-slot='collapsed'] {
+  grid-template-columns: auto 0px;
   grid-template-areas:
     'activity terminal';
 }

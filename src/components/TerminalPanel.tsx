@@ -180,6 +180,11 @@ export default function TerminalPanel({
   }, [quadMode, terminalFocusPane, setTerminalFocusPane])
 
   useEffect(() => {
+    if (multiPane) return
+    if (terminalFocusPane !== 'primary') setTerminalFocusPane('primary')
+  }, [multiPane, terminalFocusPane, setTerminalFocusPane])
+
+  useEffect(() => {
     try {
       localStorage.setItem(DUAL_RATIO_KEY, String(dualRatio))
     } catch {
@@ -330,10 +335,12 @@ export default function TerminalPanel({
   const emptyTitleForPane = (pane: TerminalFocusPane) => {
     if (pane === 'primary') return primaryEmpty
     if (pane === 'secondary') {
-      return quadMode ? t('选择或新建终端显示在右上') : t('选择或新建终端显示在右侧')
+      return quadMode
+        ? t('右上窗格暂无终端，点击标签栏 + 新建')
+        : t('右侧窗格暂无终端，点击标签栏 + 新建')
     }
-    if (pane === 'bl') return t('选择或新建终端显示在左下')
-    return t('选择或新建终端显示在右下')
+    if (pane === 'bl') return t('左下窗格暂无终端，点击标签栏 + 新建')
+    return t('右下窗格暂无终端，点击标签栏 + 新建')
   }
 
   const resolvePane = (termId: string): TerminalFocusPane | null => {

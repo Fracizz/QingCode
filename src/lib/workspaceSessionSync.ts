@@ -264,6 +264,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
         shellKind: t.shellKind,
         env: t.env,
         profileId: t.profileId,
+        pane: t.pane,
         allowTitleRename: t.allowTitleRename,
         runConfigId: t.runConfigId,
         runTaskId: t.runTaskId,

@@ -51,6 +51,7 @@ export function terminalFromPersisted(
     env: meta.env,
     shell: isTerminalShellId(meta.shell) ? normalizeTerminalShell(meta.shell) : undefined,
     profileId: meta.profileId,
+    pane: meta.pane,
     allowTitleRename: meta.allowTitleRename,
     runConfigId: meta.runConfigId,
     runTaskId: meta.runTaskId,

@@ -37,6 +37,8 @@ export type PersistedTerminalMeta = {
   /** Preferred host shell id; `auto` is resolved when the PTY starts. */
   shell?: string
   profileId?: string
+  /** Dual/田 pane ownership (`primary` when omitted). */
+  pane?: 'primary' | 'secondary' | 'bl' | 'br'
   allowTitleRename?: boolean
   /** Run-config task linkage (rehydrated into runningByTask after restart). */
   runConfigId?: string
@@ -84,6 +86,7 @@ export type TerminalSnapshotInput = {
   env?: Record<string, string>
   shell?: string
   profileId?: string
+  pane?: 'primary' | 'secondary' | 'bl' | 'br'
   allowTitleRename?: boolean
   runConfigId?: string
   runTaskId?: string
@@ -159,6 +162,14 @@ function parseTerminal(value: unknown): PersistedTerminalMeta | null {
     terminal.shell = value.shell.trim()
   }
   if (typeof value.profileId === 'string') terminal.profileId = value.profileId
+  if (
+    value.pane === 'primary' ||
+    value.pane === 'secondary' ||
+    value.pane === 'bl' ||
+    value.pane === 'br'
+  ) {
+    terminal.pane = value.pane
+  }
   if (typeof value.allowTitleRename === 'boolean') {
     terminal.allowTitleRename = value.allowTitleRename
   }
@@ -300,6 +311,7 @@ export function serializeTerminalMeta(terminal: TerminalSnapshotInput): Persiste
   if (terminal.env && Object.keys(terminal.env).length > 0) out.env = { ...terminal.env }
   if (terminal.shell) out.shell = terminal.shell
   if (terminal.profileId) out.profileId = terminal.profileId
+  if (terminal.pane && terminal.pane !== 'primary') out.pane = terminal.pane
   if (typeof terminal.allowTitleRename === 'boolean') {
     out.allowTitleRename = terminal.allowTitleRename
   }
@@ -336,14 +348,20 @@ export function buildWorkspaceSessionSnapshot(input: {
     ...terminalsByProject.keys(),
   ])
 
+  const paneOf = (terminal: PersistedTerminalMeta) => terminal.pane ?? 'primary'
   const pickRememberedPane = (
     byProject: Record<string, string> | undefined,
     projectId: string,
     terminals: PersistedTerminalMeta[],
+    pane: 'primary' | 'secondary' | 'bl' | 'br',
   ): string | undefined => {
     const remembered = byProject?.[projectId]
-    if (remembered && terminals.some(t => t.id === remembered)) return remembered
-    return undefined
+    if (remembered) {
+      const term = terminals.find(t => t.id === remembered)
+      // Accept legacy metas without `pane`; reject cross-pane ownership mismatches.
+      if (term && (!term.pane || paneOf(term) === pane)) return remembered
+    }
+    return terminals.find(t => paneOf(t) === pane)?.id
   }
 
   const projects: Record<string, PersistedProjectSession> = {}
@@ -357,18 +375,26 @@ export function buildWorkspaceSessionSnapshot(input: {
       editor?.activeTabId && tabs.some(t => t.id === editor.activeTabId)
         ? editor.activeTabId
         : tabs[0]?.id ?? null
-    const remembered = input.activeTerminalByProject[projectId]
     const activeTerminalId =
-      remembered && terminals.some(t => t.id === remembered)
-        ? remembered
-        : terminals[0]?.id ?? null
+      pickRememberedPane(input.activeTerminalByProject, projectId, terminals, 'primary') ?? null
     const secondaryTerminalId = pickRememberedPane(
       input.secondaryTerminalByProject,
       projectId,
       terminals,
+      'secondary',
     )
-    const blTerminalId = pickRememberedPane(input.blTerminalByProject, projectId, terminals)
-    const brTerminalId = pickRememberedPane(input.brTerminalByProject, projectId, terminals)
+    const blTerminalId = pickRememberedPane(
+      input.blTerminalByProject,
+      projectId,
+      terminals,
+      'bl',
+    )
+    const brTerminalId = pickRememberedPane(
+      input.brTerminalByProject,
+      projectId,
+      terminals,
+      'br',
+    )
     projects[projectId] = {
       tabs,
       activeTabId,

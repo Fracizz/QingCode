@@ -300,7 +300,7 @@ function App() {
 
   return (
     <div className="h-screen flex flex-col bg-bg text-fg">
-      <TitleBar />
+      <TitleBar terminalOpen={terminalOpen} />
       {!inTauri && (
         <div className="flex-shrink-0 px-4 py-2 text-[12px] leading-relaxed bg-amber-500/10 border-b border-amber-500/30 text-amber-200">
           {t('当前为浏览器预览模式，项目、文件、终端等功能不可用。请使用')}{' '}
@@ -316,6 +316,7 @@ function App() {
           data-editor-slot={sideEditorSlotVisible ? 'visible' : 'collapsed'}
           data-terminal-dual={sideDualActive ? 'true' : undefined}
           data-terminal-quad={sideQuadActive ? 'true' : undefined}
+          data-terminal-slot={terminalOpen ? 'visible' : 'collapsed'}
           data-terminal-split={
             panelLayout === 'sideTerminal' && sideEditorSlotVisible ? sideSplit : undefined
           }

@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import {
   MAX_TERMINALS_PER_PROJECT,
+  terminalPaneOf,
   useTerminalStore,
   type TerminalFocusPane,
 } from '../store/terminalStore'
@@ -122,8 +123,12 @@ export default function TerminalTabs({
   const stripRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
 
-  const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
-  const atLimit = projectTerminals.length >= MAX_TERMINALS_PER_PROJECT
+  const allProjectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
+  // Dual/田: each pane strip only manages sessions it owns. Classic: show all.
+  const projectTerminals = pane
+    ? allProjectTerminals.filter(t => terminalPaneOf(t) === pane)
+    : allProjectTerminals
+  const atLimit = allProjectTerminals.length >= MAX_TERMINALS_PER_PROJECT
   // Stable deps for overflow measure (avoid new-array identity loops).
   const projectTerminalMeasureKey = projectTerminals
     .map(term => `${term.id}:${term.name}:${term.status}`)
@@ -261,6 +266,7 @@ export default function TerminalTabs({
         void handleCloseTab(id)
         return
       }
+      if (pane) setTerminalFocusPane(pane)
       setActiveTerminal(id)
       setCloseArmId(id)
     })()
@@ -286,8 +292,14 @@ export default function TerminalTabs({
   const handleCloseOthers = async (id: string) => {
     const terminal = terminals.find(tab => tab.id === id)
     if (!terminal) return
+    const homePane = terminalPaneOf(terminal)
     const runningOthers = await listBusyTerminals(
-      terminals.filter(t => t.projectId === terminal.projectId && t.id !== id),
+      terminals.filter(
+        t =>
+          t.projectId === terminal.projectId &&
+          t.id !== id &&
+          terminalPaneOf(t) === homePane,
+      ),
     )
     if (runningOthers.length > 0) {
       const confirmed = await confirmDialog({
@@ -303,13 +315,43 @@ export default function TerminalTabs({
     await closeOtherTerminals(id)
   }
 
-  const handleCloseAll = async () => {
+  /** Context menu: close sessions owned by this pane (or all in classic mode). */
+  const handleCloseAllInStrip = async () => {
     if (!currentProject) return
-    const running = await listBusyTerminals(projectTerminals)
+    const targets = pane ? projectTerminals : allProjectTerminals
+    const running = await listBusyTerminals(targets)
     if (running.length > 0) {
       const confirmed = await confirmDialog({
         title: translate('关闭全部终端'),
-        message: translate('将终止当前项目的 {count} 个运行中终端', { count: running.length }),
+        message: pane
+          ? translate('将终止本窗格的 {count} 个运行中终端', { count: running.length })
+          : translate('将终止当前项目的 {count} 个运行中终端', { count: running.length }),
+        detail: translate('关闭后将终止对应 shell 进程，会话中的未保存输出会丢失。'),
+        kind: 'warning',
+        confirmLabel: translate('终止并关闭'),
+        cancelLabel: translate('取消'),
+      })
+      if (!confirmed) return
+    }
+    if (pane) {
+      for (const term of [...targets]) {
+        await closeTerminal(term.id)
+      }
+      return
+    }
+    await closeAllProjectTerminals(currentProject.id)
+  }
+
+  /** Panel chrome: always close every terminal in the project. */
+  const handleCloseAllProject = async () => {
+    if (!currentProject) return
+    const running = await listBusyTerminals(allProjectTerminals)
+    if (running.length > 0) {
+      const confirmed = await confirmDialog({
+        title: translate('关闭全部终端'),
+        message: translate('将终止当前项目的 {count} 个运行中终端', {
+          count: running.length,
+        }),
         detail: translate('关闭后将终止对应 shell 进程，会话中的未保存输出会丢失。'),
         kind: 'warning',
         confirmLabel: translate('终止并关闭'),
@@ -322,6 +364,7 @@ export default function TerminalTabs({
 
   const startRename = (id: string, currentName: string) => {
     setCloseArmId(null)
+    if (pane) setTerminalFocusPane(pane)
     setActiveTerminal(id)
     setRenamingId(id)
     setRenameDraft(currentName)
@@ -396,6 +439,8 @@ export default function TerminalTabs({
           )
           return
         }
+        // Re-assert pane ownership right before create (async gap may have moved focus).
+        if (pane) setTerminalFocusPane(pane)
         await addTerminal(project.path, project.id, profileId)
       } finally {
         setCreatingTerminal(false)
@@ -465,7 +510,7 @@ export default function TerminalTabs({
     {
       label: translate('关闭全部'),
       icon: <Files size={14} />,
-      action: handleCloseAll,
+      action: handleCloseAllInStrip,
     },
   ]
 
@@ -500,7 +545,13 @@ export default function TerminalTabs({
             ref={stripRef}
             role="tablist"
             aria-label={
-              pane === 'secondary' ? translate('终端 - 右侧') : translate('终端')
+              pane === 'bl'
+                ? translate('终端 - 左下')
+                : pane === 'br'
+                  ? translate('终端 - 右下')
+                  : pane === 'secondary'
+                    ? translate('终端 - 次窗格')
+                    : translate('终端')
             }
             className="flex h-full min-w-0 shrink items-center gap-1 overflow-hidden px-1"
             onKeyDown={event => {
@@ -764,9 +815,9 @@ export default function TerminalTabs({
               <button
                 type="button"
                 aria-label={translate('关闭全部终端')}
-                disabled={projectTerminals.length === 0}
+                disabled={allProjectTerminals.length === 0}
                 className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-                onClick={() => void handleCloseAll()}
+                onClick={() => void handleCloseAllProject()}
               >
                 <X size={15} />
               </button>

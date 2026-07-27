@@ -69,6 +69,11 @@ export interface TerminalTab {
   resolvedShell?: TerminalShellId
   /** Profile used to spawn this terminal (settings → 终端). */
   profileId?: string
+  /**
+   * Dual/田 pane that owns this session (`primary` when unset).
+   * Each pane’s tab strip only lists terminals for its own pane.
+   */
+  pane?: 'primary' | 'secondary' | 'bl' | 'br'
   /** Legacy flag; OSC follow is decided by shellKind + generic-title filter. */
   allowTitleRename?: boolean
   status: 'starting' | 'running' | 'exited'

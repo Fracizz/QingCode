@@ -388,6 +388,49 @@ export const TERMINAL_FOCUS_PANES: readonly TerminalFocusPane[] = [
   'br',
 ] as const
 
+export function isTerminalFocusPane(value: unknown): value is TerminalFocusPane {
+  return (
+    value === 'primary' || value === 'secondary' || value === 'bl' || value === 'br'
+  )
+}
+
+/** Pane that owns a session; legacy tabs without `pane` belong to primary. */
+export function terminalPaneOf(tab: Pick<TerminalTab, 'pane'>): TerminalFocusPane {
+  return tab.pane ?? 'primary'
+}
+
+/** Infer missing `pane` ownership from dual/田 active bindings (legacy shared pool). */
+export function inferTerminalPaneOwnership(
+  terminals: TerminalTab[],
+  bindings: {
+    activeTerminalByProject: Record<string, string>
+    secondaryTerminalByProject?: Record<string, string>
+    blTerminalByProject?: Record<string, string>
+    brTerminalByProject?: Record<string, string>
+  },
+): TerminalTab[] {
+  const owner = new Map<string, TerminalFocusPane>()
+  for (const id of Object.values(bindings.activeTerminalByProject)) {
+    owner.set(id, 'primary')
+  }
+  for (const id of Object.values(bindings.secondaryTerminalByProject ?? {})) {
+    owner.set(id, 'secondary')
+  }
+  for (const id of Object.values(bindings.blTerminalByProject ?? {})) {
+    owner.set(id, 'bl')
+  }
+  for (const id of Object.values(bindings.brTerminalByProject ?? {})) {
+    owner.set(id, 'br')
+  }
+  let changed = false
+  const next = terminals.map(tab => {
+    if (tab.pane) return tab
+    changed = true
+    return { ...tab, pane: owner.get(tab.id) ?? 'primary' }
+  })
+  return changed ? next : terminals
+}
+
 interface TerminalState {
   terminals: TerminalTab[]
   activeTerminalId: string | null
@@ -454,12 +497,12 @@ interface TerminalState {
   setTerminalFocusPane: (pane: TerminalFocusPane) => void
   setSecondaryTerminal: (id: string | null) => void
   /**
-   * Ensure the dual-terminal right pane has a distinct terminal when possible.
-   * Picks another project tab, or leaves null for an empty pane.
+   * Ensure the dual-terminal right pane shows a terminal owned by `secondary`.
+   * Does not steal primary sessions; empty when the pane has no tabs.
    */
   ensureSecondaryTerminal: (projectId: string) => void
   /**
-   * Ensure 田 panes have distinct terminals when possible (no auto-create).
+   * Ensure 田 panes bind to sessions they own (no auto-create, no cross-pane steal).
    * Empty panes stay null for EmptyState.
    */
   ensureQuadTerminals: (projectId: string) => void
@@ -509,28 +552,13 @@ function readPaneTerminalId(s: PaneBindingSlice, pane: TerminalFocusPane): strin
   }
 }
 
-/** Assign `id` to `pane` for `projectId`, swapping if it already occupies another pane. */
+/** Assign `id` as the active session for `pane` (no cross-pane steal/swap). */
 function bindTerminalToPane(
   s: PaneBindingSlice,
   projectId: string,
   pane: TerminalFocusPane,
   id: string
 ): Partial<PaneBindingSlice> {
-  const occupiedBy: Partial<Record<TerminalFocusPane, string | null>> = {
-    primary: s.activeTerminalId,
-    secondary: s.secondaryTerminalId,
-    bl: s.blTerminalId,
-    br: s.brTerminalId,
-  }
-  const previous = occupiedBy[pane] ?? null
-  let donorPane: TerminalFocusPane | null = null
-  for (const p of TERMINAL_FOCUS_PANES) {
-    if (p !== pane && occupiedBy[p] === id) {
-      donorPane = p
-      break
-    }
-  }
-
   const next: PaneBindingSlice = {
     activeTerminalId: s.activeTerminalId,
     secondaryTerminalId: s.secondaryTerminalId,
@@ -567,8 +595,12 @@ function bindTerminalToPane(
     }
   }
 
+  // Clear stale bindings if this id was incorrectly pointed at from another pane.
+  for (const p of TERMINAL_FOCUS_PANES) {
+    if (p === pane) continue
+    if (readPaneTerminalId(s, p) === id) writePane(p, null)
+  }
   writePane(pane, id)
-  if (donorPane) writePane(donorPane, previous && previous !== id ? previous : null)
   return next
 }
 
@@ -576,14 +608,14 @@ function clearClosedFromPanes(
   s: PaneBindingSlice,
   projectId: string,
   closedId: string,
-  projectTerminalIds: string[]
+  remaining: TerminalTab[],
 ): Partial<PaneBindingSlice> {
-  const used = new Set<string>()
-  const pickReplacement = (exclude: string | null) => {
-    for (const tid of projectTerminalIds) {
-      if (tid === exclude || tid === closedId || used.has(tid)) continue
-      used.add(tid)
-      return tid
+  const pickForPane = (pane: TerminalFocusPane) => {
+    for (const tab of remaining) {
+      if (tab.projectId !== projectId) continue
+      if (terminalPaneOf(tab) !== pane) continue
+      if (tab.id === closedId) continue
+      return tab.id
     }
     return null
   }
@@ -598,31 +630,25 @@ function clearClosedFromPanes(
   const brTerminalByProject = { ...s.brTerminalByProject }
 
   if (activeTerminalId === closedId) {
-    activeTerminalId = pickReplacement(null)
+    activeTerminalId = pickForPane('primary')
     if (activeTerminalId) activeTerminalByProject[projectId] = activeTerminalId
     else delete activeTerminalByProject[projectId]
-  } else if (activeTerminalId) {
-    used.add(activeTerminalId)
   }
 
   if (secondaryTerminalId === closedId) {
-    secondaryTerminalId = pickReplacement(activeTerminalId)
+    secondaryTerminalId = pickForPane('secondary')
     if (secondaryTerminalId) secondaryTerminalByProject[projectId] = secondaryTerminalId
     else delete secondaryTerminalByProject[projectId]
-  } else if (secondaryTerminalId) {
-    used.add(secondaryTerminalId)
   }
 
   if (blTerminalId === closedId) {
-    blTerminalId = pickReplacement(null)
+    blTerminalId = pickForPane('bl')
     if (blTerminalId) blTerminalByProject[projectId] = blTerminalId
     else delete blTerminalByProject[projectId]
-  } else if (blTerminalId) {
-    used.add(blTerminalId)
   }
 
   if (brTerminalId === closedId) {
-    brTerminalId = pickReplacement(null)
+    brTerminalId = pickForPane('br')
     if (brTerminalId) brTerminalByProject[projectId] = brTerminalId
     else delete brTerminalByProject[projectId]
   }
@@ -708,6 +734,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       DEFAULT_TERMINAL_PROFILE.name,
       shellLabel
     )
+    const focusPane = get().terminalFocusPane
     const tab: TerminalTab = {
       id,
       name: disambiguateTerminalName(
@@ -720,6 +747,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       shell,
       // `;` joins multi-line profile commands for PowerShell-family shells.
       launchCommand: profile.command.trim().replace(/\s*\n+\s*/g, '; '),
+      pane: focusPane,
       // OSC titles rename the tab (cwd / apps); generic shell noise is filtered in UI.
       allowTitleRename: true,
       status: 'starting',
@@ -727,20 +755,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       startedAt: Date.now(),
       ptySpawnPending: true,
     }
-    set(s => {
-      const pane = s.terminalFocusPane
-      if (pane === 'primary') {
-        return {
-          terminals: [...s.terminals, tab],
-          activeTerminalId: id,
-          activeTerminalByProject: { ...s.activeTerminalByProject, [projectId]: id },
-        }
-      }
-      return {
-        terminals: [...s.terminals, tab],
-        ...bindTerminalToPane(s, projectId, pane, id),
-      }
-    })
+    set(s => ({
+      terminals: [...s.terminals, tab],
+      ...bindTerminalToPane(s, projectId, focusPane, id),
+    }))
     // Ensure the panel has a non-zero height before xterm fit → PTY spawn.
     useUIStore.getState().openTerminalPanel()
     schedulePtySpawnFallback(id, () => {
@@ -775,6 +793,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return null
     }
     const id = crypto.randomUUID()
+    const focusPane = get().terminalFocusPane
     const tab: TerminalTab = {
       id,
       name,
@@ -783,6 +802,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       launchCommand: target,
       shellKind,
       env,
+      pane: focusPane,
       allowTitleRename: false,
       status: 'starting',
       exitCode: null,
@@ -794,8 +814,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     set(s => ({
       terminals: [...s.terminals, tab],
-      activeTerminalId: id,
-      activeTerminalByProject: { ...s.activeTerminalByProject, [projectId]: id },
+      ...bindTerminalToPane(s, projectId, focusPane, id),
     }))
     useUIStore.getState().openTerminalPanel()
     schedulePtySpawnFallback(id, () => {
@@ -820,12 +839,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const closed = s.terminals.find(t => t.id === id)
       const terminals = s.terminals.filter(t => t.id !== id)
       if (!closed) return { terminals }
-      const projectTerminalIds = terminals
-        .filter(t => t.projectId === closed.projectId)
-        .map(t => t.id)
       return {
         terminals,
-        ...clearClosedFromPanes(s, closed.projectId, id, projectTerminalIds),
+        ...clearClosedFromPanes(s, closed.projectId, id, terminals),
       }
     })
     clearTerminalOutput(id)
@@ -834,8 +850,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   closeOtherTerminals: async (id: string) => {
     const keep = get().terminals.find(t => t.id === id)
     if (!keep) return
+    const keepPane = terminalPaneOf(keep)
     const others = get()
-      .terminals.filter(t => t.projectId === keep.projectId && t.id !== id)
+      .terminals.filter(
+        t =>
+          t.projectId === keep.projectId &&
+          t.id !== id &&
+          terminalPaneOf(t) === keepPane,
+      )
       .map(t => t.id)
     for (const tid of others) {
       clearPtySpawnFallback(tid)
@@ -845,31 +867,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     await Promise.all(others.map(tid => killTerminal(tid).catch(() => undefined)))
     set(s => {
-      const terminals = s.terminals.filter(t => !(t.projectId === keep.projectId && t.id !== id))
-      const activeTerminalByProject = { ...s.activeTerminalByProject }
-      activeTerminalByProject[keep.projectId] = id
-      const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
-      const blTerminalByProject = { ...s.blTerminalByProject }
-      const brTerminalByProject = { ...s.brTerminalByProject }
-      delete secondaryTerminalByProject[keep.projectId]
-      delete blTerminalByProject[keep.projectId]
-      delete brTerminalByProject[keep.projectId]
+      const otherSet = new Set(others)
+      const terminals = s.terminals.filter(t => !otherSet.has(t.id))
       return {
         terminals,
-        activeTerminalId: id,
-        activeTerminalByProject,
-        secondaryTerminalId: others.includes(s.secondaryTerminalId ?? '')
-          ? null
-          : s.secondaryTerminalId,
-        secondaryTerminalByProject,
-        blTerminalId: others.includes(s.blTerminalId ?? '') ? null : s.blTerminalId,
-        blTerminalByProject,
-        brTerminalId: others.includes(s.brTerminalId ?? '') ? null : s.brTerminalId,
-        brTerminalByProject,
-        terminalFocusPane: 'primary' as const,
+        ...bindTerminalToPane(s, keep.projectId, keepPane, id),
+        terminalFocusPane: keepPane,
       }
     })
-    others.forEach(id => clearTerminalOutput(id))
+    others.forEach(closedId => clearTerminalOutput(closedId))
   },
 
   closeAllProjectTerminals: async (projectId: string) => {
@@ -973,8 +979,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   hydrateTerminalSessions: (terminals, bindings) => {
+    const owned = inferTerminalPaneOwnership(terminals, bindings)
     set({
-      terminals,
+      terminals: owned,
       activeTerminalId: null,
       secondaryTerminalId: null,
       blTerminalId: null,
@@ -984,7 +991,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       blTerminalByProject: { ...(bindings.blTerminalByProject ?? {}) },
       brTerminalByProject: { ...(bindings.brTerminalByProject ?? {}) },
     })
-    hydrateTerminalOutputForTabs(terminals.map(t => t.id))
+    hydrateTerminalOutputForTabs(owned.map(t => t.id))
   },
 
   replaceTerminalSessionsForProjects: async (projectIds, terminals, bindings) => {
@@ -1022,7 +1029,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       for (const [projectId, terminalId] of Object.entries(bindings.brTerminalByProject ?? {})) {
         if (replace.has(projectId)) nextBrByProject[projectId] = terminalId
       }
-      const nextTerminals = [...kept, ...terminals]
+      const nextTerminals = inferTerminalPaneOwnership([...kept, ...terminals], {
+        activeTerminalByProject: nextActiveByProject,
+        secondaryTerminalByProject: nextSecondaryByProject,
+        blTerminalByProject: nextBlByProject,
+        brTerminalByProject: nextBrByProject,
+      })
       const activeTerminalId =
         s.activeTerminalId && nextTerminals.some(t => t.id === s.activeTerminalId)
           ? s.activeTerminalId
@@ -1069,46 +1081,25 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   activateProject: (projectId: string) =>
     set(s => {
       const projectTerminals = s.terminals.filter(terminal => terminal.projectId === projectId)
-      const ids = new Set(projectTerminals.map(t => t.id))
-      const remembered = s.activeTerminalByProject[projectId]
-      const activeTerminalId =
-        remembered && ids.has(remembered) ? remembered : (projectTerminals[0]?.id ?? null)
+      const owned = (pane: TerminalFocusPane) =>
+        projectTerminals.filter(t => terminalPaneOf(t) === pane)
 
-      const pickRemembered = (
+      const pickOwned = (
+        pane: TerminalFocusPane,
         rememberedId: string | undefined,
-        byProject: Record<string, string>,
-        taken: Set<string>
-      ) => {
-        if (rememberedId && ids.has(rememberedId) && !taken.has(rememberedId)) {
-          return rememberedId
-        }
-        const mapped = byProject[projectId]
-        if (mapped && ids.has(mapped) && !taken.has(mapped)) return mapped
-        return null
+      ): string | null => {
+        const list = owned(pane)
+        if (rememberedId && list.some(t => t.id === rememberedId)) return rememberedId
+        return list[0]?.id ?? null
       }
 
-      const taken = new Set<string>()
-      if (activeTerminalId) taken.add(activeTerminalId)
-
-      const secondaryTerminalId = pickRemembered(
+      const activeTerminalId = pickOwned('primary', s.activeTerminalByProject[projectId])
+      const secondaryTerminalId = pickOwned(
+        'secondary',
         s.secondaryTerminalByProject[projectId],
-        s.secondaryTerminalByProject,
-        taken
       )
-      if (secondaryTerminalId) taken.add(secondaryTerminalId)
-
-      const blTerminalId = pickRemembered(
-        s.blTerminalByProject[projectId],
-        s.blTerminalByProject,
-        taken
-      )
-      if (blTerminalId) taken.add(blTerminalId)
-
-      const brTerminalId = pickRemembered(
-        s.brTerminalByProject[projectId],
-        s.brTerminalByProject,
-        taken
-      )
+      const blTerminalId = pickOwned('bl', s.blTerminalByProject[projectId])
+      const brTerminalId = pickOwned('br', s.brTerminalByProject[projectId])
 
       const activeTerminalByProject = { ...s.activeTerminalByProject }
       const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
@@ -1147,7 +1138,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set(s => {
       const terminal = s.terminals.find(tab => tab.id === id)
       if (!terminal) return s
-      return bindTerminalToPane(s, terminal.projectId, s.terminalFocusPane, id)
+      // Activate inside the session's home pane — never steal into the focus pane.
+      const pane = terminalPaneOf(terminal)
+      return {
+        terminalFocusPane: pane,
+        ...bindTerminalToPane(s, terminal.projectId, pane, id),
+      }
     }),
 
   setTerminalFocusPane: pane => set({ terminalFocusPane: pane }),
@@ -1161,8 +1157,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         return { secondaryTerminalId: null, secondaryTerminalByProject }
       }
       const terminal = s.terminals.find(tab => tab.id === id)
-      if (!terminal) return s
-      if (s.activeTerminalId === id) return s
+      if (!terminal || terminalPaneOf(terminal) !== 'secondary') return s
       return {
         secondaryTerminalId: id,
         secondaryTerminalByProject: {
@@ -1174,57 +1169,56 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   ensureSecondaryTerminal: projectId =>
     set(s => {
-      const projectTerminals = s.terminals.filter(t => t.projectId === projectId)
-      if (projectTerminals.length === 0) {
-        return {
-          secondaryTerminalId: null,
-        }
-      }
-      const primary = s.activeTerminalId
+      const terminals = inferTerminalPaneOwnership(s.terminals, {
+        activeTerminalByProject: s.activeTerminalByProject,
+        secondaryTerminalByProject: s.secondaryTerminalByProject,
+        blTerminalByProject: s.blTerminalByProject,
+        brTerminalByProject: s.brTerminalByProject,
+      })
+      const owned = terminals.filter(
+        t => t.projectId === projectId && terminalPaneOf(t) === 'secondary',
+      )
       const current = s.secondaryTerminalId
-      if (current && current !== primary && projectTerminals.some(t => t.id === current)) {
-        return s
-      }
-      const next = projectTerminals.find(t => t.id !== primary)?.id ?? null
+      const next =
+        current && owned.some(t => t.id === current) ? current : owned[0]?.id ?? null
       const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
       if (next) secondaryTerminalByProject[projectId] = next
       else delete secondaryTerminalByProject[projectId]
-      return { secondaryTerminalId: next, secondaryTerminalByProject }
+      if (
+        next === s.secondaryTerminalId &&
+        terminals === s.terminals &&
+        secondaryTerminalByProject[projectId] === s.secondaryTerminalByProject[projectId]
+      ) {
+        return s
+      }
+      return {
+        terminals,
+        secondaryTerminalId: next,
+        secondaryTerminalByProject,
+      }
     }),
 
   ensureQuadTerminals: projectId =>
     set(s => {
-      const projectTerminals = s.terminals.filter(t => t.projectId === projectId)
-      if (projectTerminals.length === 0) {
-        return {
-          secondaryTerminalId: null,
-          blTerminalId: null,
-          brTerminalId: null,
-        }
+      const terminals = inferTerminalPaneOwnership(s.terminals, {
+        activeTerminalByProject: s.activeTerminalByProject,
+        secondaryTerminalByProject: s.secondaryTerminalByProject,
+        blTerminalByProject: s.blTerminalByProject,
+        brTerminalByProject: s.brTerminalByProject,
+      })
+      const owned = (pane: TerminalFocusPane) =>
+        terminals.filter(t => t.projectId === projectId && terminalPaneOf(t) === pane)
+
+      const resolve = (pane: TerminalFocusPane, current: string | null) => {
+        const list = owned(pane)
+        if (current && list.some(t => t.id === current)) return current
+        return list[0]?.id ?? null
       }
 
-      const used = new Set<string>()
-      const resolve = (current: string | null) => {
-        if (current && projectTerminals.some(t => t.id === current) && !used.has(current)) {
-          used.add(current)
-          return current
-        }
-        const next = projectTerminals.find(t => !used.has(t.id))?.id ?? null
-        if (next) used.add(next)
-        return next
-      }
-
-      // Keep primary as-is when valid; fill other panes with distinct tabs.
-      let activeTerminalId = s.activeTerminalId
-      if (activeTerminalId && projectTerminals.some(t => t.id === activeTerminalId)) {
-        used.add(activeTerminalId)
-      } else {
-        activeTerminalId = resolve(null)
-      }
-
-      const secondaryTerminalId = resolve(s.secondaryTerminalId)
-      const blTerminalId = resolve(s.blTerminalId)
-      const brTerminalId = resolve(s.brTerminalId)
+      const activeTerminalId = resolve('primary', s.activeTerminalId)
+      const secondaryTerminalId = resolve('secondary', s.secondaryTerminalId)
+      const blTerminalId = resolve('bl', s.blTerminalId)
+      const brTerminalId = resolve('br', s.brTerminalId)
 
       const activeTerminalByProject = { ...s.activeTerminalByProject }
       const secondaryTerminalByProject = { ...s.secondaryTerminalByProject }
@@ -1240,6 +1234,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       else delete brTerminalByProject[projectId]
 
       return {
+        terminals,
         activeTerminalId,
         activeTerminalByProject,
         secondaryTerminalId,

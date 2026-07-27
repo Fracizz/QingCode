@@ -41,7 +41,12 @@ function layoutModeIcon(mode: PanelLayoutMode) {
   }
 }
 
-export default function TitleBar() {
+export default function TitleBar({
+  terminalOpen = true,
+}: {
+  /** Side/bottom dock visibility — used so dual/田 toggles reopen instead of turning off when collapsed. */
+  terminalOpen?: boolean
+} = {}) {
   const { t } = useI18n()
   const [maximized, setMaximized] = useState(false)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
@@ -51,6 +56,7 @@ export default function TitleBar() {
   const sideQuadTerminal = useUIStore(s => s.sideQuadTerminal)
   const sideEditorVisible = useUIStore(s => s.sideEditorVisible)
   const setPanelLayoutMode = useUIStore(s => s.setPanelLayoutMode)
+  const openTerminalPanel = useUIStore(s => s.openTerminalPanel)
   const toggleSideDualTerminal = useUIStore(s => s.toggleSideDualTerminal)
   const toggleSideQuadTerminal = useUIStore(s => s.toggleSideQuadTerminal)
   const toggleSideEditorVisible = useUIStore(s => s.toggleSideEditorVisible)
@@ -192,39 +198,75 @@ export default function TitleBar() {
         {sideLayoutActive && (
           <>
             <Tooltip
-              label={sideDualTerminal ? t('关闭双终端') : t('开启双终端')}
+              label={
+                sideDualTerminal && terminalOpen
+                  ? t('关闭双终端')
+                  : sideDualTerminal
+                    ? t('展开双终端')
+                    : t('开启双终端')
+              }
               side="bottom"
             >
               <button
                 type="button"
-                aria-label={sideDualTerminal ? t('关闭双终端') : t('开启双终端')}
-                aria-pressed={sideDualTerminal}
+                aria-label={
+                  sideDualTerminal && terminalOpen
+                    ? t('关闭双终端')
+                    : sideDualTerminal
+                      ? t('展开双终端')
+                      : t('开启双终端')
+                }
+                aria-pressed={sideDualTerminal && terminalOpen}
                 className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
-                  sideDualTerminal
+                  sideDualTerminal && terminalOpen
                     ? 'bg-bg-active text-brand'
                     : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                 }`}
                 onPointerDown={event => event.stopPropagation()}
-                onClick={() => toggleSideDualTerminal()}
+                onClick={() => {
+                  if (sideDualTerminal && !terminalOpen) {
+                    openTerminalPanel()
+                    return
+                  }
+                  toggleSideDualTerminal()
+                }}
               >
                 <SquareSplitHorizontal size={14} strokeWidth={1.5} />
               </button>
             </Tooltip>
             <Tooltip
-              label={sideQuadTerminal ? t('关闭四终端') : t('开启四终端')}
+              label={
+                sideQuadTerminal && terminalOpen
+                  ? t('关闭四终端')
+                  : sideQuadTerminal
+                    ? t('展开四终端')
+                    : t('开启四终端')
+              }
               side="bottom"
             >
               <button
                 type="button"
-                aria-label={sideQuadTerminal ? t('关闭四终端') : t('开启四终端')}
-                aria-pressed={sideQuadTerminal}
+                aria-label={
+                  sideQuadTerminal && terminalOpen
+                    ? t('关闭四终端')
+                    : sideQuadTerminal
+                      ? t('展开四终端')
+                      : t('开启四终端')
+                }
+                aria-pressed={sideQuadTerminal && terminalOpen}
                 className={`flex h-6 w-8 items-center justify-center rounded transition-colors ${
-                  sideQuadTerminal
+                  sideQuadTerminal && terminalOpen
                     ? 'bg-bg-active text-brand'
                     : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                 }`}
                 onPointerDown={event => event.stopPropagation()}
-                onClick={() => toggleSideQuadTerminal()}
+                onClick={() => {
+                  if (sideQuadTerminal && !terminalOpen) {
+                    openTerminalPanel()
+                    return
+                  }
+                  toggleSideQuadTerminal()
+                }}
               >
                 <LayoutGrid size={14} strokeWidth={1.5} />
               </button>
