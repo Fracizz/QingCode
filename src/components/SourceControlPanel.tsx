@@ -20,7 +20,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  Download,
   ExternalLink,
   FileIcon,
   Folder,
@@ -79,7 +78,6 @@ import {
   getGitHead,
   getGitLog,
   getGitStatus,
-  pullGit,
   pushGit,
   switchGitBranch,
 } from '../lib/ipc/git'

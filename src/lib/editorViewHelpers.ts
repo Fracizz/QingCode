@@ -108,14 +108,12 @@ export function editorRevealPos(
   lineNum: number,
   scroll: EditorRevealScroll = 'if-needed'
 ): void {
-  const effects = [flashLineEffect.of(lineNum)]
   const shouldScroll =
     scroll === 'center' || (scroll === 'if-needed' && !isEditorPositionVisible(view, pos))
-  if (shouldScroll) {
-    effects.unshift(EditorView.scrollIntoView(pos, { y: 'center' }))
-  }
   view.dispatch({
-    effects,
+    effects: shouldScroll
+      ? [EditorView.scrollIntoView(pos, { y: 'center' }), flashLineEffect.of(lineNum)]
+      : [flashLineEffect.of(lineNum)],
     selection: { anchor: pos },
   })
 }
