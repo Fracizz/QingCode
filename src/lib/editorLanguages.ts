@@ -56,6 +56,10 @@ const LAZY_LANG_LOADERS: Record<string, () => Promise<Extension>> = {
     const { rust } = await import('@codemirror/lang-rust')
     return rust()
   },
+  vue: async () => {
+    const { vue } = await import('@codemirror/lang-vue')
+    return vue()
+  },
   go: async () => {
     const { go } = await import('@codemirror/lang-go')
     return go()

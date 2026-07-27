@@ -37,6 +37,8 @@ export const UPDATE_CHECK_ON_STARTUP_KEY = 'qingcode.update.checkOnStartup'
 export const UPDATE_SKIPPED_VERSION_KEY = 'qingcode.update.skippedVersion'
 /** Persist/restore editor tabs + terminal sessions across app restarts. */
 export const SESSION_PERSIST_KEY = 'qingcode.session.persist'
+/** Max detached CodeMirror EditorState entries retained across project sessions. */
+export const SESSION_EDITOR_STATE_CACHE_SIZE_KEY = 'qingcode.session.editorStateCacheSize'
 
 function buildSharedDefaults(): SettingsFile {
   return {
@@ -108,6 +110,7 @@ export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   [PROJECTS_KEY]: [] as SettingsProjectEntry[],
   [UPDATE_CHECK_ON_STARTUP_KEY]: true,
   [SESSION_PERSIST_KEY]: true,
+  [SESSION_EDITOR_STATE_CACHE_SIZE_KEY]: 'auto',
 }
 
 /** Workspace `.qingcode/project-settings.json` defaults (no project list — global-only). */
@@ -278,6 +281,11 @@ ${SHARED_SETTINGS_BODY}
   //   true  = 重启后恢复编辑器标签、终端元数据与滚动缓冲（默认）
   //   false = 不保存/不恢复会话状态；关闭后会清除已缓存的会话快照
   "qingcode.session.persist": true,
+  //
+  // qingcode.session.editorStateCacheSize
+  //   "auto" = 自动保留 12 个最近使用的编辑器状态（默认）
+  //   数字   = 自定义 LRU 个数（1–100）；调小后会立即淘汰最久未使用的状态
+  "qingcode.session.editorStateCacheSize": "auto",
 
   // ============================== 自定义扩展 ==============================
   // custom：自由键值，供后续功能读取；请勿删除整个 custom 对象
@@ -355,6 +363,7 @@ export function stripGlobalOnlyKeys(settings: SettingsFile): SettingsFile {
   const next = { ...settings }
   delete next[PROJECTS_KEY]
   delete next[PROJECTS_SYNC_ON_STARTUP_KEY]
+  delete next[SESSION_EDITOR_STATE_CACHE_SIZE_KEY]
   return next
 }
 

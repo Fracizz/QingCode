@@ -15,6 +15,7 @@ describe('editorLanguages', () => {
     expect(isSupportedEditorLanguage('toml')).toBe(true)
     expect(isSupportedEditorLanguage('shell')).toBe(true)
     expect(isSupportedEditorLanguage('rust')).toBe(true)
+    expect(isSupportedEditorLanguage('vue')).toBe(true)
     expect(isSupportedEditorLanguage('go')).toBe(true)
     expect(isSupportedEditorLanguage('plain')).toBe(false)
     expect(isSupportedEditorLanguage('xml')).toBe(false)
@@ -38,6 +39,7 @@ describe('editorLanguages', () => {
       'toml',
       'shell',
       'rust',
+      'vue',
       'go',
     ] as const) {
       const ext = await loadLanguageSupport(id)

@@ -94,6 +94,14 @@ import {
   loadSessionPersistEnabled,
   saveSessionPersistEnabled,
 } from '../lib/sessionPersistSettings'
+import {
+  DEFAULT_EDITOR_STATE_CACHE_SIZE,
+  MAX_EDITOR_STATE_CACHE_SIZE,
+  MIN_EDITOR_STATE_CACHE_SIZE,
+  loadEditorStateCacheSize,
+  saveEditorStateCacheSize,
+  type EditorStateCacheSizeSetting,
+} from '../lib/editorStateCacheSettings'
 import { checkForAppUpdate, promptAppUpdate } from '../lib/appUpdate'
 import {
   SettingsSection as Section,
@@ -148,6 +156,12 @@ export default function SettingsEditor() {
   const [cliSkillBusy, setCliSkillBusy] = useState(false)
   const [checkOnStartup, setCheckOnStartup] = useState(DEFAULT_UPDATE_SETTINGS.checkOnStartup)
   const [sessionPersist, setSessionPersist] = useState(DEFAULT_SESSION_PERSIST)
+  const [editorStateCacheSize, setEditorStateCacheSize] =
+    useState<EditorStateCacheSizeSetting>('auto')
+  const [editorStateCacheSizeDraft, setEditorStateCacheSizeDraft] = useState(
+    String(DEFAULT_EDITOR_STATE_CACHE_SIZE),
+  )
+  const [editorStateCacheSizeLoaded, setEditorStateCacheSizeLoaded] = useState(false)
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const sectionRefs = useRef<Partial<Record<CategoryId, HTMLElement | null>>>({})
@@ -167,6 +181,14 @@ export default function SettingsEditor() {
   useEffect(() => {
     void loadUpdateSettings().then(settings => setCheckOnStartup(settings.checkOnStartup))
     void loadSessionPersistEnabled().then(setSessionPersist)
+    void loadEditorStateCacheSize()
+      .then(value => {
+        setEditorStateCacheSize(value)
+        setEditorStateCacheSizeDraft(
+          String(value === 'auto' ? DEFAULT_EDITOR_STATE_CACHE_SIZE : value),
+        )
+      })
+      .finally(() => setEditorStateCacheSizeLoaded(true))
   }, [])
 
   useEffect(() => {
@@ -232,6 +254,27 @@ export default function SettingsEditor() {
   const updateTerminal = (next: TerminalProfileSettings) => {
     setTerminal(next)
     saveTerminalProfileSettings(next)
+  }
+
+  const persistEditorStateCacheSize = async (raw: string) => {
+    const parsed = Number(raw)
+    const normalized = Math.min(
+      MAX_EDITOR_STATE_CACHE_SIZE,
+      Math.max(
+        MIN_EDITOR_STATE_CACHE_SIZE,
+        Number.isFinite(parsed) ? Math.round(parsed) : DEFAULT_EDITOR_STATE_CACHE_SIZE,
+      ),
+    )
+    setEditorStateCacheSizeDraft(String(normalized))
+    setEditorStateCacheSize(normalized)
+    try {
+      await saveEditorStateCacheSize(normalized)
+    } catch (error) {
+      pushToast(
+        'error',
+        t('保存项目会话 LRU 设置失败: {error}', { error: String(error) }),
+      )
+    }
   }
 
   const updateAutoSave = async (mode: AutoSaveMode, delay = autoSaveDelay) => {
@@ -351,6 +394,8 @@ export default function SettingsEditor() {
           'Windows',
           '检查更新',
           '自动检查更新',
+          '项目会话 LRU',
+          '编辑器状态缓存',
           'Alt+C',
           'Ctrl+Shift+C',
           'Ctrl+Shift+G',
@@ -844,6 +889,8 @@ export default function SettingsEditor() {
               '自动检查更新',
               '会话状态',
               '会话状态保存',
+              '项目会话 LRU',
+              '编辑器状态缓存',
             ) &&
               !workspaceLocked && (
               <Section
@@ -881,6 +928,93 @@ export default function SettingsEditor() {
                       <option value="off">{t('关闭')}</option>
                     </select>
                   </SettingItem>
+                )}
+                {match('项目会话 LRU', '编辑器状态缓存', '会话', 'LRU') && (
+                  <>
+                    <SettingItem
+                      title={t('项目会话 LRU 个数')}
+                      description={t(
+                        '控制跨标签和项目会话保留的编辑器状态数量（撤销栈、选区与折叠状态）。超过数量后优先淘汰最久未使用的状态，不会丢失文件内容。',
+                      )}
+                      modified={editorStateCacheSize !== 'auto'}
+                      locked={workspaceLocked}
+                      lockHint={t('此设置仅在用户作用域中可用')}
+                    >
+                      <select
+                        aria-label={t('项目会话 LRU 个数')}
+                        value={editorStateCacheSize === 'auto' ? 'auto' : 'custom'}
+                        disabled={workspaceLocked || !editorStateCacheSizeLoaded}
+                        onChange={e => {
+                          if (e.target.value === 'auto') {
+                            setEditorStateCacheSize('auto')
+                            setEditorStateCacheSizeDraft(String(DEFAULT_EDITOR_STATE_CACHE_SIZE))
+                            void saveEditorStateCacheSize('auto').catch(error =>
+                              pushToast(
+                                'error',
+                                t('保存项目会话 LRU 设置失败: {error}', {
+                                  error: String(error),
+                                }),
+                              ),
+                            )
+                            return
+                          }
+                          setEditorStateCacheSize(DEFAULT_EDITOR_STATE_CACHE_SIZE)
+                          setEditorStateCacheSizeDraft(String(DEFAULT_EDITOR_STATE_CACHE_SIZE))
+                          void saveEditorStateCacheSize(DEFAULT_EDITOR_STATE_CACHE_SIZE).catch(
+                            error =>
+                              pushToast(
+                                'error',
+                                t('保存项目会话 LRU 设置失败: {error}', {
+                                  error: String(error),
+                                }),
+                              ),
+                          )
+                        }}
+                        className="setting-control setting-select"
+                      >
+                        <option value="auto">
+                          {t('自动（默认 {count} 个）', {
+                            count: DEFAULT_EDITOR_STATE_CACHE_SIZE,
+                          })}
+                        </option>
+                        <option value="custom">{t('自定义')}</option>
+                      </select>
+                    </SettingItem>
+                    {editorStateCacheSize !== 'auto' && (
+                      <SettingItem
+                        title={t('项目会话 LRU 自定义个数')}
+                        description={t(
+                          '可设为 {min}–{max} 个；失去焦点或按 Enter 后保存。',
+                          {
+                            min: MIN_EDITOR_STATE_CACHE_SIZE,
+                            max: MAX_EDITOR_STATE_CACHE_SIZE,
+                          },
+                        )}
+                        modified
+                        locked={workspaceLocked}
+                        lockHint={t('此设置仅在用户作用域中可用')}
+                      >
+                        <input
+                          aria-label={t('项目会话 LRU 自定义个数')}
+                          type="number"
+                          min={MIN_EDITOR_STATE_CACHE_SIZE}
+                          max={MAX_EDITOR_STATE_CACHE_SIZE}
+                          step={1}
+                          value={editorStateCacheSizeDraft}
+                          disabled={workspaceLocked}
+                          onChange={e => setEditorStateCacheSizeDraft(e.target.value)}
+                          onBlur={() =>
+                            void persistEditorStateCacheSize(editorStateCacheSizeDraft)
+                          }
+                          onKeyDown={e => {
+                            if (e.key !== 'Enter') return
+                            e.currentTarget.blur()
+                          }}
+                          className="setting-control w-28 px-2 py-1 text-right"
+                        />
+                      </SettingItem>
+                    )}
+                  </>
                 )}
                 {match('检查更新', '自动检查更新', '更新') && (
                   <>

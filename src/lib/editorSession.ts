@@ -17,8 +17,9 @@ export const LARGE_DOC_CHARS = 512 * 1024
  */
 export const HUGE_DOC_CHARS = EDIT_WARN_BYTES
 
-/** Max cached EditorState entries for non-plain tabs (LRU). */
-export const EDITOR_STATE_CACHE_MAX = 12
+/** Automatic max cached EditorState entries for non-plain tabs (LRU). */
+export const DEFAULT_EDITOR_STATE_CACHE_MAX = 12
+let editorStateCacheMax = DEFAULT_EDITOR_STATE_CACHE_MAX
 
 export interface EditorScrollPos {
   top: number
@@ -152,7 +153,7 @@ function touchStateLru(tabId: string) {
 }
 
 function evictStateCacheIfNeeded() {
-  while (states.size > EDITOR_STATE_CACHE_MAX && stateLru.length > 0) {
+  while (states.size > editorStateCacheMax && stateLru.length > 0) {
     const oldest = stateLru.shift()
     if (!oldest || !states.has(oldest)) continue
     const state = states.get(oldest)
@@ -161,6 +162,17 @@ function evictStateCacheIfNeeded() {
     }
     states.delete(oldest)
   }
+}
+
+export function getEditorStateCacheMax(): number {
+  return editorStateCacheMax
+}
+
+/** Apply a new cache budget and immediately evict least-recent detached states. */
+export function setEditorStateCacheMax(value: number) {
+  if (!Number.isFinite(value)) return
+  editorStateCacheMax = Math.max(1, Math.floor(value))
+  evictStateCacheIfNeeded()
 }
 
 /**

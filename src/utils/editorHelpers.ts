@@ -31,6 +31,7 @@ export function guessLanguage(path: string): string {
     md: 'markdown',
     css: 'css',
     html: 'html',
+    vue: 'vue',
     py: 'python',
     rs: 'rust',
     toml: 'toml',

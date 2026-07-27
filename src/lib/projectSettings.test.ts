@@ -7,6 +7,7 @@ import {
   DEFAULT_PROJECT_SETTINGS_TEXT,
   PROJECTS_KEY,
   PROJECTS_SYNC_ON_STARTUP_KEY,
+  SESSION_EDITOR_STATE_CACHE_SIZE_KEY,
   UPDATE_CHECK_ON_STARTUP_KEY,
   defaultSettingsFor,
   formatSettings,
@@ -68,7 +69,6 @@ describe('parseSettings', () => {
     expect(parsed[PROJECTS_SYNC_ON_STARTUP_KEY]).toBe(true)
   })
 })
-
 describe('parseSettingsText', () => {
   it('parses JSON5 with comments', () => {
     const text = `{
@@ -103,9 +103,11 @@ describe('validateSettings / strip / format', () => {
       ...DEFAULT_GLOBAL_SETTINGS,
       [PROJECTS_KEY]: [{ path: 'D:/a' }],
       [PROJECTS_SYNC_ON_STARTUP_KEY]: false,
+      [SESSION_EDITOR_STATE_CACHE_SIZE_KEY]: 24,
     })
     expect(stripped[PROJECTS_KEY]).toBeUndefined()
     expect(stripped[PROJECTS_SYNC_ON_STARTUP_KEY]).toBeUndefined()
+    expect(stripped[SESSION_EDITOR_STATE_CACHE_SIZE_KEY]).toBeUndefined()
   })
 
   it('formatSettings returns commented template for default shape', () => {

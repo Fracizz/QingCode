@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   saveTheme: vi.fn(),
   saveFontSettings: vi.fn(),
   saveTerminalProfileSettings: vi.fn(),
+  saveEditorStateCacheSize: vi.fn(),
 }))
 
 vi.mock('../lib/tauri', () => ({
@@ -67,6 +68,14 @@ vi.mock('../lib/sessionPersistSettings', () => ({
   DEFAULT_SESSION_PERSIST: false,
   loadSessionPersistEnabled: async () => false,
   saveSessionPersistEnabled: vi.fn(),
+}))
+
+vi.mock('../lib/editorStateCacheSettings', () => ({
+  DEFAULT_EDITOR_STATE_CACHE_SIZE: 12,
+  MIN_EDITOR_STATE_CACHE_SIZE: 1,
+  MAX_EDITOR_STATE_CACHE_SIZE: 100,
+  loadEditorStateCacheSize: async () => 'auto',
+  saveEditorStateCacheSize: mocks.saveEditorStateCacheSize,
 }))
 
 vi.mock('../lib/autoSaveSettings', () => ({
@@ -151,6 +160,7 @@ describe('SettingsEditor', () => {
     mocks.saveTheme.mockReset()
     mocks.saveFontSettings.mockReset()
     mocks.saveTerminalProfileSettings.mockReset()
+    mocks.saveEditorStateCacheSize.mockReset().mockResolvedValue('auto')
     useProjectStore.setState({ currentProject: null, pushToast: vi.fn() })
     useEditorStore.setState({ openFile: vi.fn() })
     useUIStore.setState({ setView: vi.fn(), settingsFocusQuery: '', settingsFocusSignal: 0 })
@@ -182,5 +192,19 @@ describe('SettingsEditor', () => {
     await waitFor(() =>
       expect(mocks.saveScopedMinimapEnabled).toHaveBeenCalledWith('global', false, null)
     )
+  })
+  it('offers automatic and custom project-session LRU settings', async () => {
+    render(<SettingsEditor />)
+    const mode = screen.getByLabelText('项目会话 LRU 个数') as HTMLSelectElement
+    await waitFor(() => expect(mode).toBeEnabled())
+    expect(mode.value).toBe('auto')
+
+    fireEvent.change(mode, { target: { value: 'custom' } })
+    await waitFor(() => expect(mocks.saveEditorStateCacheSize).toHaveBeenCalledWith(12))
+
+    const count = screen.getByLabelText('项目会话 LRU 自定义个数')
+    fireEvent.change(count, { target: { value: '24' } })
+    fireEvent.blur(count)
+    await waitFor(() => expect(mocks.saveEditorStateCacheSize).toHaveBeenCalledWith(24))
   })
 })

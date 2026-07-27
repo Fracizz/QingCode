@@ -4,6 +4,7 @@ import { loadEffectiveEditorPreferences } from './editorSettings'
 import { loadEffectiveExcludeSettings } from './excludeSettings'
 import { loadEffectiveFileSizePreferences } from './fileSizeSettings'
 import { loadEffectiveTerminalScrollback } from './terminal/terminalScrollbackSettings'
+import { loadEditorStateCacheSize } from './editorStateCacheSettings'
 
 /**
  * Apply the complete global + project settings overlay to runtime modules.
@@ -24,6 +25,7 @@ export async function applyEffectiveSettings(project?: Project | null): Promise<
     formatOnSave.loadEffectiveFormatOnSave(project),
     minimap.loadEffectiveMinimapEnabled(project),
     loadEffectiveTerminalScrollback(project),
+    loadEditorStateCacheSize(),
     terminalCursor.loadEffectiveTerminalCursorBlinking(project),
     loadEffectiveExcludeSettings(project),
   ])

@@ -20,6 +20,7 @@ describe('guessLanguage', () => {
     expect(guessLanguage('a.ts')).toBe('typescript')
     expect(guessLanguage('a.java')).toBe('java')
     expect(guessLanguage('a.rs')).toBe('rust')
+    expect(guessLanguage('App.vue')).toBe('vue')
     expect(guessLanguage('a.yaml')).toBe('yaml')
     expect(guessLanguage('a.yml')).toBe('yaml')
     expect(guessLanguage('Cargo.toml')).toBe('toml')
