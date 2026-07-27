@@ -8,7 +8,7 @@ import { useDefinitionPickerStore } from '../store/definitionPickerStore'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { registerEditorView, unregisterEditorView } from './editorSession'
-import { findUsagesAfterDefinitionJump } from './symbolNavigation'
+import { findUsagesAfterDefinitionJump, findUsagesAtEditor } from './symbolNavigation'
 
 const mocks = vi.hoisted(() => ({
   findSemanticUsages: vi.fn(),
@@ -121,17 +121,18 @@ describe('findUsagesAfterDefinitionJump', () => {
     vi.spyOn(view, 'coordsAtPos').mockReturnValue(null)
     registerEditorView(tab.id, view)
 
-    await findUsagesAfterDefinitionJump(definition, {
+    const navigation = findUsagesAfterDefinitionJump(definition, {
       path: 'D:/alpha/caller.ts',
       state: sourceState,
       position: 0,
     })
 
-    expect(mocks.findSemanticUsagesById).toHaveBeenCalledWith(
-      project.path,
-      'function:target',
-      undefined
-    )
+    await navigation
+
+    expect(mocks.findSemanticUsagesById).toHaveBeenCalledWith(project.path, 'function:target', {
+      offset: 0,
+      maxResults: 80,
+    })
     expect(mocks.findSemanticUsages).not.toHaveBeenCalled()
     expect(useDefinitionPickerStore.getState()).toMatchObject({
       open: true,
@@ -139,5 +140,59 @@ describe('findUsagesAfterDefinitionJump', () => {
       symbol: 'target',
       candidates: [expect.objectContaining({ relative: 'caller.ts' })],
     })
+  })
+
+  it('does not reopen a pending usage popup after the user closes it', async () => {
+    let resolveUsages!: (value: {
+      symbolId: string
+      name: string
+      kind: string
+      definition: null
+      usages: []
+      totalCount: number
+      filesIndexed: number
+      complete: boolean
+      truncated: boolean
+    }) => void
+    mocks.findSemanticUsagesById.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          resolveUsages = resolve
+        })
+    )
+    useProjectStore.setState({
+      projects: [project],
+      currentProject: project,
+      unavailableProjectIds: [],
+    })
+
+    const pending = findUsagesAtEditor(
+      'D:/alpha/definition.ts',
+      EditorState.create({ doc: 'target' }),
+      0,
+      { left: 10, top: 20, right: 30, bottom: 40 },
+      {
+        symbolId: 'function:target',
+        name: 'target',
+        kind: 'function',
+      }
+    )
+
+    expect(useDefinitionPickerStore.getState().details).toMatchObject({ loading: true })
+    useDefinitionPickerStore.getState().closePicker()
+    resolveUsages({
+      symbolId: 'function:target',
+      name: 'target',
+      kind: 'function',
+      definition: null,
+      usages: [],
+      totalCount: 0,
+      filesIndexed: 1,
+      complete: true,
+      truncated: false,
+    })
+    await pending
+
+    expect(useDefinitionPickerStore.getState().open).toBe(false)
   })
 })

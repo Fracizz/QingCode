@@ -1,11 +1,4 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   BookOpen,
@@ -27,6 +20,12 @@ import { useI18n } from '../lib/i18n'
 import type { SemanticUsageFilter } from '../lib/semanticNavigation'
 import { getContextMenuStylePosition } from './contextMenuPosition'
 import { groupUsageCandidates } from '../lib/usageGrouping'
+
+const USAGE_RENDER_BATCH_SIZE = 60
+
+function candidateKey(candidate: DefinitionCandidate) {
+  return `${candidate.path}:${candidate.line}:${candidate.column}:${candidate.usageKind ?? candidate.kind}`
+}
 
 function kindLabel(kind: string): string {
   switch (kind.toLowerCase()) {
@@ -139,6 +138,7 @@ export default function DefinitionPicker() {
   const [pagedCandidates, setPagedCandidates] = useState(candidates)
   const [pagedDetails, setPagedDetails] = useState(details)
   const [loadingUsages, setLoadingUsages] = useState(false)
+  const [renderedUsageLimit, setRenderedUsageLimit] = useState(USAGE_RENDER_BATCH_SIZE)
   const [collapsedUsageGroups, setCollapsedUsageGroups] = useState<Set<string>>(new Set())
   const listRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -173,9 +173,14 @@ export default function DefinitionPicker() {
         : candidates,
     [candidates, mode, pagedCandidates, usageFilter, usageLoader]
   )
+  const displayedCandidates = useMemo(
+    () =>
+      mode === 'reference' ? filteredCandidates.slice(0, renderedUsageLimit) : filteredCandidates,
+    [filteredCandidates, mode, renderedUsageLimit]
+  )
   const usageGroups = useMemo(
-    () => (mode === 'reference' ? groupUsageCandidates(filteredCandidates) : []),
-    [filteredCandidates, mode]
+    () => (mode === 'reference' ? groupUsageCandidates(displayedCandidates) : []),
+    [displayedCandidates, mode]
   )
   const visibleCandidates = useMemo(
     () =>
@@ -185,6 +190,10 @@ export default function DefinitionPicker() {
           )
         : filteredCandidates,
     [collapsedUsageGroups, filteredCandidates, mode, usageGroups]
+  )
+  const visibleCandidateIndices = useMemo(
+    () => new Map(visibleCandidates.map((candidate, index) => [candidateKey(candidate), index])),
+    [visibleCandidates]
   )
 
   useEffect(() => {
@@ -196,12 +205,16 @@ export default function DefinitionPicker() {
       setPagedCandidates(candidates)
       setPagedDetails(details)
       setLoadingUsages(false)
+      setRenderedUsageLimit(USAGE_RENDER_BATCH_SIZE)
       setCollapsedUsageGroups(new Set())
     })
   }, [open, candidates, details])
 
   useEffect(() => {
-    queueMicrotask(() => setActiveIndex(0))
+    queueMicrotask(() => {
+      setActiveIndex(0)
+      setRenderedUsageLimit(USAGE_RENDER_BATCH_SIZE)
+    })
   }, [usageFilter])
 
   useEffect(() => {
@@ -229,14 +242,7 @@ export default function DefinitionPicker() {
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [
-    activeIndex,
-    afterDefinitionJump,
-    closePicker,
-    mode,
-    open,
-    visibleCandidates,
-  ])
+  }, [activeIndex, afterDefinitionJump, closePicker, mode, open, visibleCandidates])
 
   useEffect(() => {
     listRef.current
@@ -316,17 +322,11 @@ export default function DefinitionPicker() {
       if (!drag || moveEvent.pointerId !== drag.pointerId) return
       drag.nextLeft = Math.max(
         8,
-        Math.min(
-          drag.maxLeft,
-          drag.startLeft + (moveEvent.clientX - drag.startX) / drag.zoom
-        )
+        Math.min(drag.maxLeft, drag.startLeft + (moveEvent.clientX - drag.startX) / drag.zoom)
       )
       drag.nextTop = Math.max(
         8,
-        Math.min(
-          drag.maxTop,
-          drag.startTop + (moveEvent.clientY - drag.startY) / drag.zoom
-        )
+        Math.min(drag.maxTop, drag.startTop + (moveEvent.clientY - drag.startY) / drag.zoom)
       )
       scheduleDragFrame()
     }
@@ -376,13 +376,7 @@ export default function DefinitionPicker() {
 
   useLayoutEffect(() => {
     const dialog = dialogRef.current
-    if (
-      !open ||
-      !anchoredReference ||
-      !usageAnchor ||
-      !dialog ||
-      manuallyPositionedRef.current
-    ) {
+    if (!open || !anchoredReference || !usageAnchor || !dialog || manuallyPositionedRef.current) {
       return
     }
     const zoom = Number.parseFloat(getComputedStyle(dialog).zoom) || 1
@@ -398,7 +392,7 @@ export default function DefinitionPicker() {
       { arrowGap: preferAbove ? 6 : 0 }
     )
     setPickerPosition({ x: placed.x, y: placed.y })
-  }, [anchoredReference, filteredCandidates.length, loadingUsages, open, usageAnchor])
+  }, [anchoredReference, displayedCandidates.length, open, usageAnchor])
 
   useEffect(() => {
     if (!open || !anchoredReference) return
@@ -436,6 +430,7 @@ export default function DefinitionPicker() {
     }
     const request = ++usageRequestRef.current
     setLoadingUsages(true)
+    setPagedCandidates([])
     try {
       const page = await usageLoader(filter, 0, 200)
       if (request !== usageRequestRef.current) return
@@ -478,6 +473,10 @@ export default function DefinitionPicker() {
     }
   }
 
+  const revealMoreBufferedUsages = () => {
+    setRenderedUsageLimit(limit => limit + USAGE_RENDER_BATCH_SIZE)
+  }
+
   const choose = (candidate: DefinitionCandidate) => {
     closePicker()
     void jumpToDefinitionCandidate(candidate).then(() =>
@@ -494,6 +493,7 @@ export default function DefinitionPicker() {
     setActiveIndex(0)
   }
   const activeDetails = mode === 'reference' && usageLoader ? pagedDetails : details
+  const initialUsageLoading = Boolean(activeDetails?.loading)
   const totalCount = activeDetails?.totalCount ?? candidates.length
   const displayCount = activeDetails?.complete === false ? `${totalCount}+` : String(totalCount)
   const selectedKindLabel = kindLabel(activeDetails?.kind ?? 'symbol')
@@ -509,10 +509,8 @@ export default function DefinitionPicker() {
     { value: 'import', label: t('导入'), icon: <Package size={14} /> },
     { value: 'approximate', label: t('近似'), icon: <CircleHelp size={14} /> },
   ]
-  const candidateKey = (candidate: DefinitionCandidate) =>
-    `${candidate.path}:${candidate.line}:${candidate.column}:${candidate.usageKind ?? candidate.kind}`
   const renderReferenceCandidate = (candidate: DefinitionCandidate) => {
-    const index = visibleCandidates.indexOf(candidate)
+    const index = visibleCandidateIndices.get(candidateKey(candidate)) ?? -1
     const active = index === activeIndex
     return (
       <button
@@ -522,9 +520,7 @@ export default function DefinitionPicker() {
         aria-selected={active}
         data-def-index={index}
         className={`w-full py-1.5 pl-10 pr-3 text-left ${
-          active
-            ? 'bg-accent/28 text-fg'
-            : 'text-fg-muted hover:bg-bg-hover/80 hover:text-fg'
+          active ? 'bg-accent/28 text-fg' : 'text-fg-muted hover:bg-bg-hover/80 hover:text-fg'
         }`}
         onClick={() => choose(candidate)}
       >
@@ -554,7 +550,7 @@ export default function DefinitionPicker() {
       style={anchoredReference ? { left: pickerPosition.x, top: pickerPosition.y } : undefined}
       className={`ui-font-scaled modal-content-enter flex flex-col overflow-hidden rounded-lg border border-border-strong shadow-2xl ${
         anchoredReference
-          ? 'fixed z-[125] max-h-[min(720px,82vh)] w-[min(980px,calc(100vw-16px))] bg-bg-elevated/60 shadow-black/65 backdrop-blur-md backdrop-saturate-150 data-[dragging=true]:bg-bg-elevated/88 data-[dragging=true]:backdrop-blur-none data-[dragging=true]:saturate-100'
+          ? 'fixed z-[125] max-h-[min(720px,82vh)] w-[min(980px,calc(100vw-16px))] bg-bg-elevated/95 shadow-black/60'
           : `relative w-full bg-bg-elevated shadow-black/50 ${
               mode === 'reference' ? 'max-h-[min(720px,82vh)] max-w-[980px]' : 'max-w-[680px]'
             }`
@@ -583,7 +579,9 @@ export default function DefinitionPicker() {
         </h2>
         {mode === 'reference' && (
           <span className="text-[13px] text-fg-muted">
-            {t('{count} 个用法', { count: displayCount })}
+            {initialUsageLoading
+              ? t('正在加载用法…')
+              : t('{count} 个用法', { count: displayCount })}
           </span>
         )}
         {mode !== 'reference' && (
@@ -627,7 +625,7 @@ export default function DefinitionPicker() {
           </span>
           <span className="ml-auto text-[11px] text-fg-dim">
             {t('显示 {shown} / {total}', {
-              shown: filteredCandidates.length,
+              shown: displayedCandidates.length,
               total: displayCount,
             })}
           </span>
@@ -639,14 +637,14 @@ export default function DefinitionPicker() {
         role="listbox"
         aria-label={mode === 'reference' ? t('用法位置') : t('定义候选')}
         className={`overflow-auto py-1 ${
-          mode === 'reference'
-            ? 'min-h-[260px] flex-1 bg-bg/30'
-            : 'max-h-[min(420px,60vh)]'
+          mode === 'reference' ? 'min-h-[260px] flex-1 bg-bg/30' : 'max-h-[min(420px,60vh)]'
         }`}
       >
         {filteredCandidates.length === 0 && (
           <div className="flex min-h-[180px] items-center justify-center text-[13px] text-fg-dim">
-            {loadingUsages ? t('正在加载用法…') : t('当前筛选没有匹配的用法')}
+            {loadingUsages || initialUsageLoading
+              ? t('正在加载用法…')
+              : t('当前筛选没有匹配的用法')}
           </div>
         )}
         {mode === 'reference'
@@ -672,10 +670,9 @@ export default function DefinitionPicker() {
                   <button
                     type="button"
                     aria-expanded={!collapsed}
-                    aria-label={t(
-                      collapsed ? '展开用法分组 {name}' : '折叠用法分组 {name}',
-                      { name: group.callerName ?? path.file }
-                    )}
+                    aria-label={t(collapsed ? '展开用法分组 {name}' : '折叠用法分组 {name}', {
+                      name: group.callerName ?? path.file,
+                    })}
                     className="flex w-full items-center gap-2 border-b border-border/70 bg-bg-active/70 px-3 py-2 text-left text-[12px] text-fg hover:bg-bg-hover"
                     onClick={() => toggleUsageGroup(group.key)}
                   >
@@ -748,18 +745,30 @@ export default function DefinitionPicker() {
                 </button>
               )
             })}
-        {mode === 'reference' && usageLoader && pagedCandidates.length < totalCount && (
-          <div className="flex justify-center border-t border-border px-3 py-2">
-            <button
-              type="button"
-              disabled={loadingUsages}
-              className="rounded px-3 py-1.5 text-[11px] text-accent hover:bg-bg-hover disabled:cursor-wait disabled:opacity-60"
-              onClick={() => void loadMoreUsages()}
-            >
-              {loadingUsages ? t('正在加载用法…') : t('加载更多用法')}
-            </button>
-          </div>
-        )}
+        {mode === 'reference' &&
+          (displayedCandidates.length < filteredCandidates.length ||
+            (usageLoader && pagedCandidates.length < totalCount)) && (
+            <div className="flex justify-center border-t border-border px-3 py-2">
+              <button
+                type="button"
+                disabled={loadingUsages}
+                className="rounded px-3 py-1.5 text-[11px] text-accent hover:bg-bg-hover disabled:cursor-wait disabled:opacity-60"
+                onClick={() => {
+                  if (displayedCandidates.length < filteredCandidates.length) {
+                    revealMoreBufferedUsages()
+                  } else {
+                    void loadMoreUsages()
+                  }
+                }}
+              >
+                {loadingUsages
+                  ? t('正在加载用法…')
+                  : displayedCandidates.length < filteredCandidates.length
+                    ? t('显示更多用法')
+                    : t('加载更多用法')}
+              </button>
+            </div>
+          )}
       </div>
     </div>
   )

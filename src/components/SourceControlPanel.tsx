@@ -64,6 +64,7 @@ import {
   splitGitChanges,
 } from '@/lib/git/gitStatus'
 import { gitPullErrorI18n } from '@/lib/git/gitErrorMessage'
+import { markLocalGitSyncTime } from '@/lib/git/syncTimes'
 import { confirmDialog } from '../store/confirmStore'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import {
@@ -1291,6 +1292,7 @@ export default function SourceControlPanel() {
             })
             useProjectStore.getState().pushToast('error', message)
           } else {
+            markLocalGitSyncTime(project.path, 'pull')
             useProjectStore.getState().pushToast('success', t('拉取成功'))
           }
         }
@@ -1320,6 +1322,7 @@ export default function SourceControlPanel() {
         await refresh({ soft: false })
         const branches = await getGitBranches(project.path)
         if (useProjectStore.getState().currentProject?.path === project.path) {
+          markLocalGitSyncTime(project.path, 'fetch')
           setBranchList(branches)
           useProjectStore.getState().pushToast('success', t('已检查更新'))
         }
@@ -1370,6 +1373,7 @@ export default function SourceControlPanel() {
             return
           }
           if (useProjectStore.getState().currentProject?.path !== project.path) return
+          markLocalGitSyncTime(project.path, 'push')
           await refresh({ soft: false })
           setCommitMessage('')
           useProjectStore.getState().pushToast('success', t('提交并推送成功'))
@@ -1401,6 +1405,7 @@ export default function SourceControlPanel() {
     try {
       await pushGit(project.path)
       if (useProjectStore.getState().currentProject?.path === project.path) {
+        markLocalGitSyncTime(project.path, 'push')
         await refresh({ soft: false })
         setCommitMessage('')
         setPushRetryAvailable(false)
@@ -2116,6 +2121,7 @@ export default function SourceControlPanel() {
     <div className="ui-font-scaled flex h-full flex-col overflow-hidden bg-bg-sidebar text-fg">
       <ScmToolbar
         status={status}
+        projectPath={currentProject?.path ?? null}
         loading={loading}
         operationKind={
           operation?.kind === 'fetch' ||

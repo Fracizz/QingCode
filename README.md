@@ -149,7 +149,7 @@ QingCode **不内置**聊天模型或 Agent，刻意把智能留给你已有的 
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` 或 `.zip` |
 
-- Windows：便携 exe 或 NSIS 安装包（`*-setup.exe`）；需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）。安装包会先尝试自动下载安装；失败时可点「是」跳转引导程序下载，或「否」打开产品页。轻量代码导航语言组件当前由安装包按需安装：TypeScript/JavaScript、Python、Java 默认选中，Rust、Go 默认不选，五项均可自由取消或选择；便携单文件不内置这些组件
+- Windows：便携 exe 或 NSIS 安装包（`*-setup.exe`）；需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）。安装包会先尝试自动下载安装；失败时可点「是」跳转引导程序下载，或「否」打开产品页。轻量代码导航语言组件当前由安装包按需安装：五项默认全选，可按需取消；便携单文件不内置这些组件
 - macOS：未签名时首次请右键 → 打开；需要 Apple Developer 签名/公证后再分发可跳过该步骤  
 
 本地打包（Windows x64 本机）：

@@ -214,7 +214,7 @@ try {
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "Install notes: language components are selectable (TypeScript/Python/Java on by default; Rust/Go opt-in)." -ForegroundColor DarkGray
+  Write-Host "Install notes: language components are selectable (all five on by default)." -ForegroundColor DarkGray
   Write-Host "               Start Menu shortcut always; desktop shortcut checked by default on finish page." -ForegroundColor DarkGray
   Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {

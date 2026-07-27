@@ -35,6 +35,12 @@ pub struct GitStatus {
     pub behind: u32,
     /// Local commits not yet on the remote.
     pub ahead: u32,
+    /// Last `git fetch` time (ms since epoch), from FETCH_HEAD mtime.
+    pub last_fetch_at: Option<i64>,
+    /// Last pull/merge from remote (ms since epoch), from HEAD reflog.
+    pub last_pull_at: Option<i64>,
+    /// Last push time (ms since epoch), from HEAD reflog when available.
+    pub last_push_at: Option<i64>,
     pub changes: Vec<GitChange>,
 }
 
@@ -102,6 +108,78 @@ fn parse_branch_header(header: &str) -> (Option<String>, Option<String>, u32, u3
     (branch_name, upstream, ahead, behind)
 }
 
+fn resolve_git_path(root: &Path, relative: &str) -> Option<PathBuf> {
+    let output = run_git(root, &["rev-parse", "--git-path", relative]).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(raw);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        Some(root.join(path))
+    }
+}
+
+fn file_mtime_ms(path: &Path) -> Option<i64> {
+    std::fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_millis() as i64)
+}
+
+fn read_last_fetch_at(root: &Path) -> Option<i64> {
+    resolve_git_path(root, "FETCH_HEAD").and_then(|path| file_mtime_ms(&path))
+}
+
+fn read_last_reflog_at(root: &Path, needles: &[&str]) -> Option<i64> {
+    let output = run_git(root, &["reflog", "--date=unix", "-n", "100"]).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let marker = "HEAD@{";
+        let Some(marker_at) = line.find(marker) else {
+            continue;
+        };
+        let rest = &line[marker_at + marker.len()..];
+        let Some(end) = rest.find('}') else {
+            continue;
+        };
+        let Some(ts_secs) = rest[..end].parse::<i64>().ok() else {
+            continue;
+        };
+        let message = line
+            .split(": ")
+            .skip(2)
+            .collect::<Vec<_>>()
+            .join(": ");
+        let lower = message.to_ascii_lowercase();
+        if needles.iter().any(|needle| lower.contains(needle)) {
+            return Some(ts_secs.saturating_mul(1000));
+        }
+    }
+    None
+}
+
+fn read_sync_times(root: &Path) -> (Option<i64>, Option<i64>, Option<i64>) {
+    let last_fetch_at = read_last_fetch_at(root);
+    let last_pull_at = read_last_reflog_at(
+        root,
+        &["pull ", "pull:", "merge branch", "fast-forward"],
+    );
+    let last_push_at = read_last_reflog_at(root, &["push "]);
+    (last_fetch_at, last_pull_at, last_push_at)
+}
+
 /// Parse porcelain v1 `-z` records. NUL framing preserves Chinese, spaces and
 /// rename paths exactly instead of relying on Git's display-oriented quoting.
 fn parse_status(output: &[u8]) -> GitStatus {
@@ -142,6 +220,9 @@ fn parse_status(output: &[u8]) -> GitStatus {
         upstream,
         ahead,
         behind,
+        last_fetch_at: None,
+        last_pull_at: None,
+        last_push_at: None,
         changes,
     }
 }
@@ -664,6 +745,9 @@ fn collect_git_status(root: &Path) -> Result<GitStatus, String> {
                 upstream: None,
                 ahead: 0,
                 behind: 0,
+                last_fetch_at: None,
+                last_pull_at: None,
+                last_push_at: None,
                 changes: vec![],
             });
         }
@@ -675,6 +759,17 @@ fn collect_git_status(root: &Path) -> Result<GitStatus, String> {
     Ok(parse_status(&output.stdout))
 }
 
+fn collect_git_status_with_sync(root: &Path) -> Result<GitStatus, String> {
+    let mut status = collect_git_status(root)?;
+    if status.is_repository {
+        let (last_fetch_at, last_pull_at, last_push_at) = read_sync_times(root);
+        status.last_fetch_at = last_fetch_at;
+        status.last_pull_at = last_pull_at;
+        status.last_push_at = last_push_at;
+    }
+    Ok(status)
+}
+
 #[tauri::command]
 pub async fn git_status(
     path: String,
@@ -682,7 +777,7 @@ pub async fn git_status(
 ) -> Result<GitStatus, String> {
     ensure_git_root(&path, &allowlist)?;
     let root = PathBuf::from(path);
-    tauri::async_runtime::spawn_blocking(move || collect_git_status(&root))
+    tauri::async_runtime::spawn_blocking(move || collect_git_status_with_sync(&root))
         .await
         .map_err(|error| format!("读取 Git 状态失败：{error}"))?
 }
@@ -773,28 +868,6 @@ pub async fn git_push(path: String, allowlist: State<'_, PathAllowlist>) -> Resu
     tauri::async_runtime::spawn_blocking(move || push_current(&root))
         .await
         .map_err(|error| format!("Git 推送失败：{error}"))?
-}
-
-fn fetch_current(root: &Path) -> Result<String, String> {
-    let output = run_git(root, &["fetch"])?;
-    let output = ensure_git_success("Git 获取", output)?;
-    let summary = git_output_text(&output);
-    Ok(if summary.starts_with("Git 退出码") {
-        "已检查更新".to_string()
-    } else if summary.is_empty() {
-        "已检查更新".to_string()
-    } else {
-        summary
-    })
-}
-
-#[tauri::command]
-pub async fn git_fetch(path: String, allowlist: State<'_, PathAllowlist>) -> Result<String, String> {
-    ensure_git_root(&path, &allowlist)?;
-    let root = PathBuf::from(path);
-    tauri::async_runtime::spawn_blocking(move || fetch_current(&root))
-        .await
-        .map_err(|error| format!("Git 获取失败：{error}"))?
 }
 
 #[tauri::command]

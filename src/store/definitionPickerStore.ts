@@ -10,6 +10,8 @@ export interface DefinitionPickerDetails {
   complete?: boolean
   truncated?: boolean
   anchor?: DefinitionAnchor
+  loading?: boolean
+  requestId?: number
 }
 
 export interface DefinitionUsagePage {
@@ -23,9 +25,7 @@ export type DefinitionUsageLoader = (
   maxResults: number
 ) => Promise<DefinitionUsagePage>
 
-export type DefinitionSelectionHandler = (
-  candidate: DefinitionCandidate
-) => void | Promise<void>
+export type DefinitionSelectionHandler = (candidate: DefinitionCandidate) => void | Promise<void>
 
 interface DefinitionPickerState {
   open: boolean

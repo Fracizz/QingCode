@@ -11,8 +11,8 @@ const componentDefinitions = [
   ['TypeScript / JavaScript', 'typescript', true],
   ['Python', 'python', true],
   ['Java', 'java', true],
-  ['Rust', 'rust', false],
-  ['Go', 'go', false],
+  ['Rust', 'rust', true],
+  ['Go', 'go', true],
 ]
 
 const libraryName = (id) => {
@@ -88,7 +88,7 @@ if (!source.includes(initMarker)) {
 }
 source = source.replace(
   initMarker,
-  `${initMarker}  ; Default component selection: common languages on, Rust/Go opt-in.\n${defaults}\n\n`,
+  `${initMarker}  ; Default component selection: all languages on; user can deselect any.\n${defaults}\n\n`,
 )
 
 const installMarker = '  ; Copy resources\n'

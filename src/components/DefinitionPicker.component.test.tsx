@@ -45,9 +45,7 @@ describe('DefinitionPicker', () => {
     render(<DefinitionPicker />)
     fireEvent.click(screen.getByRole('option'))
 
-    await waitFor(() =>
-      expect(openFile).toHaveBeenCalledWith('D:/work/definition.ts', 12, 3)
-    )
+    await waitFor(() => expect(openFile).toHaveBeenCalledWith('D:/work/definition.ts', 12, 3))
     await waitFor(() =>
       expect(afterDefinitionJump).toHaveBeenCalledWith(
         expect.objectContaining({ path: 'D:/work/definition.ts', line: 12 })
@@ -84,8 +82,8 @@ describe('DefinitionPicker', () => {
 
     const dialog = screen.getByRole('dialog')
     expect(dialog.className).toContain('fixed')
-    expect(dialog.className).toContain('bg-bg-elevated/60')
-    expect(dialog.className).toContain('backdrop-blur-md')
+    expect(dialog.className).toContain('bg-bg-elevated/95')
+    expect(dialog.className).not.toContain('backdrop-blur')
     const dragHandle = screen.getByLabelText('拖动用法浮层')
     expect(dragHandle).toHaveClass('cursor-move')
     expect(dialog).not.toHaveAttribute('aria-modal')
@@ -184,9 +182,55 @@ describe('DefinitionPicker', () => {
 
     fireEvent.click(group)
 
-    expect(
-      screen.getByRole('button', { name: '展开用法分组 submitOrder' })
-    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '展开用法分组 submitOrder' })).toBeInTheDocument()
     expect(screen.getByRole('dialog')).not.toHaveTextContent('await processOrder(retry)')
+  })
+
+  it('renders large usage results in lightweight batches', () => {
+    const candidates = Array.from({ length: 75 }, (_, index) => ({
+      name: 'renderBatch',
+      kind: 'function',
+      path: `D:/work/file-${index}.ts`,
+      relative: `file-${index}.ts`,
+      line: index + 1,
+      column: 1,
+      text: `renderBatch(${index})`,
+      score: 1000,
+      usageKind: 'call' as const,
+    }))
+    useDefinitionPickerStore.getState().openPicker('renderBatch', candidates, 'reference', {
+      kind: 'function',
+      totalCount: candidates.length,
+      complete: true,
+      anchor: { left: 100, top: 60, right: 160, bottom: 78 },
+    })
+
+    render(<DefinitionPicker />)
+
+    expect(screen.getAllByRole('option')).toHaveLength(60)
+    expect(screen.getByText('显示 60 / 75')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '显示更多用法' }))
+
+    expect(screen.getAllByRole('option')).toHaveLength(75)
+    expect(screen.getByText('显示 75 / 75')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '显示更多用法' })).not.toBeInTheDocument()
+  })
+
+  it('shows an anchored loading shell before usage results arrive', () => {
+    useDefinitionPickerStore.getState().openPicker('pendingUsage', [], 'reference', {
+      kind: 'function',
+      totalCount: 0,
+      complete: false,
+      loading: true,
+      requestId: 7,
+      anchor: { left: 100, top: 60, right: 160, bottom: 78 },
+    })
+
+    render(<DefinitionPicker />)
+
+    expect(screen.getByRole('dialog')).toHaveClass('fixed')
+    expect(screen.getAllByText('正在加载用法…')).toHaveLength(2)
+    expect(screen.queryByRole('option')).not.toBeInTheDocument()
   })
 })

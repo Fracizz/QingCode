@@ -57,6 +57,7 @@ export interface WorkspaceSymbolSearchResult {
 }
 
 let referenceRequest = 0
+const INITIAL_USAGE_PAGE_SIZE = 80
 
 interface SemanticUsageTarget {
   symbolId: string
@@ -137,13 +138,31 @@ export async function findUsagesAtEditor(
 
   const request = ++referenceRequest
   const symbolName = target?.name ?? identifier?.name ?? ''
+  const pickerStore = useDefinitionPickerStore.getState()
+  pickerStore.openPicker(symbolName, [], 'reference', {
+    kind: target?.kind,
+    totalCount: 0,
+    complete: false,
+    anchor,
+    loading: true,
+    requestId: request,
+  })
+  const isCurrentRequest = () => {
+    const picker = useDefinitionPickerStore.getState()
+    return request === referenceRequest && picker.open && picker.details?.requestId === request
+  }
   const findSemanticPage = (query?: Parameters<typeof findSemanticUsages>[4]) =>
     target
       ? findSemanticUsagesById(project.path, target.symbolId, query)
       : findSemanticUsages(project.path, sourcePath, state, position, query)
   try {
-    const semantic = await findSemanticPage().catch(() => null)
-    if (request !== referenceRequest) return
+    // Keep Ctrl+click responsive: render a useful first page immediately and
+    // let the picker request the remaining usages on demand.
+    const semantic = await findSemanticPage({
+      offset: 0,
+      maxResults: INITIAL_USAGE_PAGE_SIZE,
+    }).catch(() => null)
+    if (!isCurrentRequest()) return
     const candidates = semantic ? semanticUsageCandidates(semantic) : []
     if (semantic && candidates.length > 0) {
       const loadUsagePage = async (
@@ -191,6 +210,7 @@ export async function findUsagesAtEditor(
       return
     }
     if (semantic?.symbolId) {
+      useDefinitionPickerStore.getState().closePicker()
       projects.pushToast(
         'info',
         translate('未找到「{symbol}」的用法', {
@@ -210,8 +230,9 @@ export async function findUsagesAtEditor(
         maxFiles: 8000,
       }
     )
-    if (request !== referenceRequest) return
+    if (!isCurrentRequest()) return
     if (response.references.length === 0) {
+      useDefinitionPickerStore.getState().closePicker()
       projects.pushToast('info', translate('未找到「{symbol}」的调用', { symbol: symbolName }))
       return
     }
@@ -231,7 +252,8 @@ export async function findUsagesAtEditor(
       anchor,
     })
   } catch (error) {
-    if (request !== referenceRequest) return
+    if (!isCurrentRequest()) return
+    useDefinitionPickerStore.getState().closePicker()
     projects.pushToast(
       'error',
       translate('查找「{symbol}」调用失败', { symbol: symbolName }),
@@ -331,10 +353,7 @@ export async function findUsagesAfterDefinitionJump(
   }
   const lineNumber = Math.min(Math.max(1, candidate.line), view.state.doc.lines)
   const line = view.state.doc.line(lineNumber)
-  const position = Math.min(
-    line.to,
-    line.from + Math.max(0, (candidate.column || 1) - 1)
-  )
+  const position = Math.min(line.to, line.from + Math.max(0, (candidate.column || 1) - 1))
   const coords = view.coordsAtPos(position)
   const anchor = coords
     ? {

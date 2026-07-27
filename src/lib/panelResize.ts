@@ -6,6 +6,14 @@ export const PANEL_RESIZE_RENDER_TIMEOUT_MS = 400
 
 export type PanelResizeOrientation = 'horizontal' | 'vertical'
 
+export interface PanelResizeBeginOptions {
+  /**
+   * Internal splitters that do not change terminal geometry can skip the
+   * comparatively expensive xterm canvas capture.
+   */
+  freezeTerminals?: boolean
+}
+
 export interface PanelResizeSettleDetail {
   readonly orientation: PanelResizeOrientation
   /** Must be called synchronously by settle listeners. */
@@ -128,13 +136,17 @@ function cancelPendingSettle() {
   }
 }
 
-export function beginPanelResize(orientation: PanelResizeOrientation = 'horizontal') {
+export function beginPanelResize(
+  orientation: PanelResizeOrientation = 'horizontal',
+  options: PanelResizeBeginOptions = {}
+) {
   resizeSession += 1
   cancelPendingSettle()
   document.body.classList.add(RESIZING_CLASS)
   document.body.dataset.panelResize = orientation
   document.body.style.userSelect = 'none'
-  captureTerminalSurfaces()
+  if (options.freezeTerminals === false) releaseTerminalSurfaces()
+  else captureTerminalSurfaces()
   window.dispatchEvent(new CustomEvent(PANEL_RESIZE_BEGIN_EVENT))
 }
 

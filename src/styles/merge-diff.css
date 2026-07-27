@@ -1,12 +1,7 @@
 /* Git side-by-side diff (CodeMirror MergeView) fills the editor pane.
  *
- * MergeView intentionally sets `.cm-editor` / `.cm-scroller` to
- * `height: auto !important` and `overflow-y: visible !important` so both sides
- * grow with content and stay vertically aligned. Scrolling must happen on
- * `.cm-mergeView` (upstream docs + its own `overflow-y: auto` style).
- *
- * Do NOT force `height: 100%` on editors / editor wrappers — that clips
- * content inside an overflow:hidden shell and leaves no scrollbar.
+ * MergeView sets `.cm-editor` / `.cm-scroller` to height:auto + overflow visible
+ * so both panes stay aligned; scrolling is on `.cm-mergeView`.
  */
 .cm-merge-host {
   position: relative;
@@ -14,30 +9,95 @@
   height: 100%;
   overflow: hidden;
 }
+
 .cm-merge-host .cm-mergeView {
   box-sizing: border-box;
   height: 100%;
   overflow: auto;
 }
+
 .cm-merge-host .cm-mergeViewEditors {
   display: flex;
   align-items: stretch;
 }
+
 .cm-merge-host .cm-mergeViewEditors > * {
   flex: 1 1 0;
   min-width: 0;
 }
 
-/* Keep gutters even between panes; avoid bright ticks stretching wide. */
-.cm-merge-host .cm-changedLineGutter,
-.cm-merge-host .cm-deletedLineGutter,
-.cm-merge-host .cm-inlineChangedLineGutter {
-  width: 3px !important;
-  min-width: 3px !important;
-  max-width: 3px !important;
+/* Match main editor metrics so line numbers, signs, and text share one grid. */
+.cm-merge-host .cm-editor .cm-scroller {
+  line-height: 1.6;
+  font-family: var(--font-mono) !important;
+  font-size: var(--editor-font-size) !important;
 }
 
-/* Collapsed unchanged bands: quieter divider, clearer affordance. */
+.cm-merge-host .cm-gutters {
+  font-family: var(--font-mono) !important;
+  font-size: var(--editor-font-size) !important;
+  line-height: 1.6;
+}
+
+/* No hover glyph strip in read-only diff panes. */
+.cm-merge-host .cm-lineNumbers .cm-gutterElement::before {
+  display: none;
+}
+
+/* Custom − / + sign gutter (mergeDiffSignGutter.ts). */
+.cm-merge-host .cm-lineNumbers {
+  min-width: 3.5ch;
+}
+
+.cm-merge-host .cm-lineNumbers .cm-gutterElement {
+  box-sizing: border-box;
+  padding: 0 10px 0 8px !important;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  line-height: 1.6;
+}
+
+.cm-merge-host .cm-diffSignGutter {
+  width: 22px !important;
+  min-width: 22px !important;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--color-bg) 92%, transparent);
+  border-right: 1px solid var(--color-border);
+}
+
+.cm-merge-host .cm-diffSignGutter .cm-gutterElement {
+  box-sizing: border-box;
+  display: block;
+  padding: 0 !important;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.cm-merge-host .qc-diff-sign {
+  display: inline-block;
+  width: 100%;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: inherit;
+  font-weight: 700;
+  line-height: 1.6;
+  text-align: center;
+  vertical-align: top;
+  user-select: none;
+}
+
+/* Breathing room between gutter block and code (both panes). */
+.cm-merge-host .cm-content {
+  padding-left: 8px;
+}
+
+.cm-merge-host .qc-diff-sign-minus {
+  color: var(--color-danger);
+}
+
+.cm-merge-host .qc-diff-sign-plus {
+  color: var(--color-ok);
+}
+
 .cm-merge-host .cm-collapsedLines {
   padding: 2px 8px !important;
   margin: 2px 0 !important;
@@ -51,6 +111,7 @@
   box-shadow: none !important;
   cursor: pointer;
 }
+
 .cm-merge-host .cm-collapsedLines:hover {
   color: var(--color-fg) !important;
   background: var(--color-bg-hover) !important;

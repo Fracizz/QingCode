@@ -13,6 +13,12 @@ export type GitStatus = {
   behind?: number
   /** Local commits not yet on the remote. */
   ahead?: number
+  /** Last `git fetch` time (ms since epoch), from FETCH_HEAD mtime. */
+  last_fetch_at?: number | null
+  /** Last pull/merge from remote (ms since epoch), from HEAD reflog. */
+  last_pull_at?: number | null
+  /** Last push time (ms since epoch), from HEAD reflog when available. */
+  last_push_at?: number | null
   changes: GitChange[]
 }
 

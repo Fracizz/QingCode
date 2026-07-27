@@ -213,6 +213,7 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 - 活动栏进入「源代码管理」后，**主编辑区整页**显示 SCM 工作台（参考 UGit 的变更/历史分区）；不再占用左侧窄侧栏。再点一次 SCM 图标回到资源管理器。
 - 顶栏：分支下拉、拉取、推送、刷新。页签：**变更** | **历史**。
 - **变更**：左栏为变更/待提交列表与提交区；右栏内嵌 Diff（`git_file_contents` + DiffEditor）。单击查看差异；双击或右键「打开更改」可在编辑器标签中打开并切回资源管理器。左栏宽度可拖拽（`PanelResizer`，持久化 `qingcode:scm-layout`）。
+- SCM 内部分栏拖动时由 `requestAnimationFrame` 合并指针事件并直接更新分栏 DOM 宽度；松手后才提交 React 状态与 `localStorage`。禁止在每次 `pointermove` 中同步读布局、重渲染整个 SCM 或持久化。
 - **历史**：默认左侧提交列表约占 3/5、右侧提交详情（摘要 + 更改文件列表，可拖宽、可筛选/正则、虚拟列表）；点击文件后左侧用 Diff **覆盖**提交列表（可「返回提交列表」）。`git_log` 分页 + 虚拟列表；`git_commit_files` / `git_commit_file_contents`。不做回退 / cherry-pick。
 - 面板 chrome（顶栏、列表、提交区）用 `.ui-font-scaled` 跟随界面字体/字号；Diff 区用 `.editor-font-independent` 取消 UI zoom，继续走代码字体与 `editor.fontSize`。
 - Git 状态保留 porcelain `XY` 双列语义；支持单个/全部暂存与取消暂存、丢弃更改（二次确认）、只提交已暂存内容、`git push` / `git pull`（已配置 upstream）。
@@ -279,6 +280,12 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 ## 交互组件
 
 ---
+
+### 代码导航浮层
+
+- `Ctrl+单击` 跳到定义后自动查找用法；用法浮层首屏只渲染有限批次，已有候选通过「显示更多用法」渐进展开，后端分页通过「加载更多用法」继续查询。
+- 浮层使用近乎不透明背景，不使用大面积实时 `backdrop-filter`；拖动继续使用 `translate3d` + `requestAnimationFrame`，松手后提交最终位置。
+- 分批渲染不得改变 `SymbolId`、作用域绑定、近似结果标记或筛选语义，只减少首屏 DOM、绘制和 IPC 返回量。
 
 ### 键盘快捷键
 

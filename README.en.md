@@ -149,7 +149,7 @@ Download from [GitHub Releases](https://github.com/Fracizz/QingCode/releases) or
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` or `.zip` |
 
-- Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/). The installer tries an automatic download first; on failure, Yes opens the bootstrapper download and No opens the product page. Lightweight-navigation components are currently installed through the setup package: TypeScript/JavaScript, Python, and Java are selected by default; Rust and Go are opt-in; all five can be toggled. The portable single-file build does not embed them
+- Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/). The installer tries an automatic download first; on failure, Yes opens the bootstrapper download and No opens the product page. Lightweight-navigation components are currently installed through the setup package: all five are selected by default and can be deselected. The portable single-file build does not embed them
 - macOS: unsigned builds may need right-click → Open the first time  
 
 Local packaging (Windows x64 host):

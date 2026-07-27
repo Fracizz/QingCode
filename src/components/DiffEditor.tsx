@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { MergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge'
 import { EditorState, type Extension } from '@codemirror/state'
-import { EditorView, keymap } from '@codemirror/view'
+import { EditorView, keymap, lineNumbers } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
 import type { EditorTab } from '../types'
@@ -10,66 +10,44 @@ import { FONT_SETTINGS_EVENT } from '../lib/fontSettings'
 import { getResolvedTheme, THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
 import { translateFor, useI18n } from '../lib/i18n'
+import { mergeDiffSignGutter } from '../lib/mergeDiffSignGutter'
 import Tooltip from './Tooltip'
 
 /** 差异对比文件大小上限：超过此值的文件不显示差异对比（5MB） */
 const DIFF_MAX_BYTES = 5 * 1024 * 1024
 
-/* ------------------------------------------------------------------ */
-/*  高对比度差异主题（覆盖 CodeMirror merge 的默认低对比度颜色）          */
-/*  &light / &dark 只能用在 baseTheme，不能用在 EditorView.theme。       */
-/* ------------------------------------------------------------------ */
 const diffTheme = EditorView.baseTheme({
-  /* 左侧（HEAD）删除行背景 — soft wash, no neon borders */
   '&.cm-merge-a .cm-changedLine, & .cm-deletedChunk': {
-    backgroundColor: 'rgba(244, 135, 113, 0.14)',
+    backgroundColor: 'rgba(244, 135, 113, 0.22)',
   },
-  /* 右侧（工作区）新增行背景 */
-  '&.cm-merge-b .cm-changedLine, & .cm-inlineChangedLine': {
-    backgroundColor: 'rgba(137, 209, 133, 0.14)',
+  '&.cm-merge-b .cm-changedLine, &.cm-merge-b .cm-inlineChangedLine': {
+    backgroundColor: 'rgba(137, 209, 133, 0.22)',
   },
-  /*
-   * Inline change marks: solid translucent fill instead of CM's default
-   * bottom-gradient "underline", which wraps into thin bright vertical boxes
-   * when line wrapping / font scaling is on.
-   */
   '&light.cm-merge-a .cm-changedText, &light .cm-deletedChunk .cm-deletedText': {
-    background: 'rgba(196, 30, 58, 0.22)',
+    background: 'rgba(196, 30, 58, 0.24)',
     padding: '0 1px',
     borderRadius: '2px',
   },
   '&dark.cm-merge-a .cm-changedText, &dark .cm-deletedChunk .cm-deletedText': {
-    background: 'rgba(244, 135, 113, 0.28)',
+    background: 'rgba(244, 135, 113, 0.32)',
     padding: '0 1px',
     borderRadius: '2px',
   },
   '&light.cm-merge-b .cm-changedText': {
-    background: 'rgba(16, 124, 16, 0.20)',
+    background: 'rgba(16, 124, 16, 0.24)',
     padding: '0 1px',
     borderRadius: '2px',
   },
   '&dark.cm-merge-b .cm-changedText': {
-    background: 'rgba(137, 209, 133, 0.28)',
+    background: 'rgba(137, 209, 133, 0.32)',
     padding: '0 1px',
     borderRadius: '2px',
   },
-  /* Narrow gutter ticks aligned with --color-danger / --color-ok */
-  '&light.cm-merge-a .cm-changedLineGutter, &light .cm-deletedLineGutter': {
-    background: 'color-mix(in srgb, var(--color-danger) 85%, transparent)',
-  },
-  '&dark.cm-merge-a .cm-changedLineGutter, &dark .cm-deletedLineGutter': {
-    background: 'color-mix(in srgb, var(--color-danger) 75%, transparent)',
-  },
-  '&light.cm-merge-b .cm-changedLineGutter': {
-    background: 'color-mix(in srgb, var(--color-ok) 85%, transparent)',
-  },
-  '&dark.cm-merge-b .cm-changedLineGutter': {
-    background: 'color-mix(in srgb, var(--color-ok) 75%, transparent)',
+  '& .cm-changedLineGutter, & .cm-deletedLineGutter, & .cm-inlineChangedLineGutter': {
+    backgroundColor: 'transparent',
   },
 })
 
-/* Colors only — MergeView forces editor/scroller height:auto + overflow visible
-   so both panes grow together; scrolling is on `.cm-mergeView` (merge-diff.css). */
 const lightTheme = EditorView.theme(
   {
     '&': { backgroundColor: '#f0f0f0', color: '#1f1f1f' },
@@ -83,7 +61,6 @@ const lightTheme = EditorView.theme(
 )
 
 const darkTheme = [oneDark]
-
 const forestTheme = [FOREST_THEME, forestSyntax]
 
 function editorThemeExtension() {
@@ -93,22 +70,22 @@ function editorThemeExtension() {
   return lightTheme
 }
 
-/** CodeMirror merge collapse marker; `$` is replaced by the line count via `EditorState.phrase`. */
 const COLLAPSE_UNCHANGED_PHRASE = '$ unchanged lines'
 
-function sideExtensions(lang: Extension, collapseUnchangedLabel: string) {
+function sideExtensions(lang: Extension, collapseUnchangedLabel: string, side: 'a' | 'b') {
   return [
     EditorView.editable.of(false),
     EditorState.readOnly.of(true),
     EditorView.lineWrapping,
+    lineNumbers(),
     editorThemeExtension(),
     diffTheme,
+    mergeDiffSignGutter(side),
     EditorState.phrases.of({ [COLLAPSE_UNCHANGED_PHRASE]: collapseUnchangedLabel }),
     lang,
   ]
 }
 
-/** 统计文本中的新增/删除行数（基于换行符） */
 function countDiffLines(original: string, current: string): { added: number; removed: number } {
   const origLines = original.split('\n')
   const currLines = current.split('\n')
@@ -122,7 +99,6 @@ function countDiffLines(original: string, current: string): { added: number; rem
       if (o && !c) removed++
       else if (!o && c) added++
       else {
-        /* 修改行：两边都计 */
         added++
         removed++
       }
@@ -142,12 +118,10 @@ export default function DiffEditor({ tab }: Props) {
   const mergeRef = useRef<MergeView | null>(null)
   const [stats, setStats] = useState({ added: 0, removed: 0 })
 
-  // 计算内容大小，超过阈值时禁用差异对比
   const contentSize = (tab.originalContent?.length ?? 0) + (tab.content?.length ?? 0)
   const isTooLarge = contentSize > DIFF_MAX_BYTES
 
   const buildMergeView = useCallback(async (parent: HTMLElement) => {
-    // `@codemirror/merge` renders collapses via phrase("$ unchanged lines", n).
     const collapseUnchangedLabel = translateFor(language, '$ 行未更改')
     const lang = await loadLanguageSupport(tab.language)
     if (!hostRef.current || hostRef.current !== parent) return
@@ -155,12 +129,12 @@ export default function DiffEditor({ tab }: Props) {
     mergeRef.current = new MergeView({
       a: {
         doc: tab.originalContent ?? '',
-        extensions: sideExtensions(lang, collapseUnchangedLabel),
+        extensions: sideExtensions(lang, collapseUnchangedLabel, 'a'),
       },
       b: {
         doc: tab.content ?? '',
         extensions: [
-          ...sideExtensions(lang, collapseUnchangedLabel),
+          ...sideExtensions(lang, collapseUnchangedLabel, 'b'),
           keymap.of([
             { key: 'Mod-ArrowDown', run: goToNextChunk },
             { key: 'Mod-ArrowUp', run: goToPreviousChunk },
@@ -169,7 +143,7 @@ export default function DiffEditor({ tab }: Props) {
       },
       parent,
       collapseUnchanged: { margin: 3, minSize: 4 },
-      gutter: true,
+      gutter: false,
       highlightChanges: true,
     })
   }, [tab.originalContent, tab.content, tab.language, language])
@@ -205,18 +179,17 @@ export default function DiffEditor({ tab }: Props) {
   }, [tab.id, tab.originalContent, tab.content, tab.language, language, buildMergeView, isTooLarge])
 
   const handlePrevDiff = useCallback(() => {
-    const b = mergeRef.current?.b
-    if (!b) return
-    goToPreviousChunk({ state: b.state, dispatch: b.dispatch.bind(b) })
+    const view = mergeRef.current?.b
+    if (!view) return
+    goToPreviousChunk({ state: view.state, dispatch: view.dispatch.bind(view) })
   }, [])
 
   const handleNextDiff = useCallback(() => {
-    const b = mergeRef.current?.b
-    if (!b) return
-    goToNextChunk({ state: b.state, dispatch: b.dispatch.bind(b) })
+    const view = mergeRef.current?.b
+    if (!view) return
+    goToNextChunk({ state: view.state, dispatch: view.dispatch.bind(view) })
   }, [])
 
-  // 文件过大时显示提示，不渲染差异对比
   if (isTooLarge) {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
@@ -243,13 +216,12 @@ export default function DiffEditor({ tab }: Props) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
-      {/* Header: 文件信息 + 差异统计 + 导航 */}
       <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-[11px]">
         <div className="flex flex-1 items-center border-r border-border px-3 py-1.5 text-fg-muted">
           <span className="truncate">{t('HEAD（原文件）')}</span>
           {stats.removed > 0 && (
             <span className="ml-2 inline-flex items-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
-              -{stats.removed}
+              −{stats.removed}
             </span>
           )}
         </div>
@@ -284,7 +256,6 @@ export default function DiffEditor({ tab }: Props) {
           </div>
         </div>
       </div>
-      {/* Scroll lives on `.cm-mergeView` (see merge-diff.css), not per-pane `.cm-scroller`. */}
       <div ref={hostRef} className="cm-merge-host min-h-0 flex-1" />
     </div>
   )
