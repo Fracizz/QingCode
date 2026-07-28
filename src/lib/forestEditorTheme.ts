@@ -14,8 +14,7 @@ export const FOREST_THEME = EditorView.theme(
     },
     '.cm-activeLine': { backgroundColor: M.highlight },
     '.cm-activeLineGutter': { backgroundColor: M.highlight, color: M.foreground },
-    // Only tint CM's drawn selection layer. Do not style ::selection color/background —
-    // WebView2 turns selected token text white when ::selection sets `color`.
+    // CM drawn selection only; native ::selection bg is cleared in preserveSelectionTokenColors.
     '.cm-selectionBackground': { backgroundColor: M.selectionBg },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
       backgroundColor: M.selectionBg,

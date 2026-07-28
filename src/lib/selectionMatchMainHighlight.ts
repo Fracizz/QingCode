@@ -21,7 +21,7 @@ export const DEFAULT_MAX_SELECTION_MATCHES = 500
  * Bump when occurrence-highlight wiring changes so stale cached/live EditorStates
  * are rebuilt (HMR / tab cache otherwise keep the old extension set).
  */
-export const OCCURRENCE_HIGHLIGHT_REV = 3
+export const OCCURRENCE_HIGHLIGHT_REV = 4
 
 const occurrenceHighlightRevFacet = Facet.define<number, number>({
   combine: values => values[0] ?? 0,
@@ -69,14 +69,15 @@ export function mainSelectionMatchRange(
 }
 
 /**
- * Keep syntax token colors while text is selected. WebView2/Chromium otherwise
- * forces selected text to white even when native ::selection background is
- * transparent (CodeMirror draws its own selection layer).
+ * Hide native ::selection chrome so only CodeMirror's `.cm-selectionBackground`
+ * shows (one color). Also keep syntax token colors — WebView2/Chromium otherwise
+ * forces selected text to white even when ::selection background is transparent.
  */
 export function preserveSelectionTokenColors(): Extension {
   return Prec.highest(
     EditorView.theme({
       '.cm-line ::selection, .cm-line::selection, .cm-content ::selection': {
+        backgroundColor: 'transparent !important',
         color: 'inherit !important',
         '-webkit-text-fill-color': 'inherit !important',
       },
