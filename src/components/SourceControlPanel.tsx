@@ -44,7 +44,6 @@ import type {
   GitChange,
   GitCommitFileChange,
   GitCommitInfo,
-  GitPullResult,
   GitStatus,
 } from '@/lib/git/git'
 import {
