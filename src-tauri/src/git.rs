@@ -1621,6 +1621,10 @@ mod tests {
         let other = temp_base("fetch-remote-other");
         let other_path = other.to_string_lossy().to_string();
         git_success(Path::new("."), &["clone", &remote_path, &other_path]);
+        // Clones do not inherit the source repo's local user.* config; CI runners
+        // often have no global identity, so configure before committing.
+        git_success(&other, &["config", "user.email", "test@qingcode.local"]);
+        git_success(&other, &["config", "user.name", "QingCode Test"]);
         git_success(&other, &["checkout", "-b", "feature/remote-only"]);
         fs::write(other.join("remote.txt"), "remote\n").unwrap();
         git_success(&other, &["add", "remote.txt"]);
