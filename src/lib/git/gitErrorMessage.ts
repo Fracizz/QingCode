@@ -218,9 +218,6 @@ export const GIT_PUSH_ERROR_MESSAGE_KEYS: Record<GitPushErrorKind, string> = {
   unknown: '推送被拒绝，请检查远程分支状态后重试',
 }
 
-const PUSH_ERROR_PREFIX_RE =
-  /^(?:Error:\s*)?(?:推送失败：\s*)?(?:Git 推送失败：\s*)+/i
-
 export function classifyGitPushError(raw: string): GitPushErrorKind {
   const text = raw.toLowerCase()
   if (
@@ -272,7 +269,7 @@ export function classifyGitPushError(raw: string): GitPushErrorKind {
 
 export function resolveGitPushErrorMessage(
   raw: string,
-  translate: (key: string) => string,
+  translate: (key: string, values?: Record<string, string | number>) => string,
 ): string {
   const kind = classifyGitPushError(raw)
   if (kind !== 'unknown') return translate(GIT_PUSH_ERROR_MESSAGE_KEYS[kind])
