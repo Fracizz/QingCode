@@ -6,6 +6,27 @@
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-07-28
+
+### Added
+
+- 本地启发式 / 语义定义跳转、定义预览与用法分组；导航前进回退与 Ctrl+P 文件引用
+- 编辑器 Vue 支持与会话缓存配置
+- 田字四终端布局；顶栏双终端 / 编辑器快捷开关
+- 源代码管理：远程检查更新（fetch）、ahead/behind 计数、同步相对时间
+
+### Changed
+
+- SCM 工具栏单行分段布局；Git 错误提示改为摘要 + 受影响文件列表
+- 启动开屏最短显示约 500ms，避免品牌 Logo 一闪而过
+- 统一编辑器与终端标签样式；顶栏窗口按钮与项目关闭菜单
+
+### Fixed
+
+- soft refresh 丢失 ahead/behind 与同步时间；SCM 下拉菜单错位（zoom / 分段对齐）
+- 双击关闭终端误触发重命名；四终端按窗格独立会话与收起布局同步
+- 关闭项目后会话状态未完整恢复；构建 TypeScript 编译错误
+
 ## [0.1.6] - 2026-07-23
 
 ### Added
@@ -161,7 +182,10 @@
 - Windows 单文件 exe 打包（`pnpm package:exe`）
 - GitHub / Gitee Release 工作流与版本脚本
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.7
+[0.1.6]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.6
+[0.1.5]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.5
 [0.1.4]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.2

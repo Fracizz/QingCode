@@ -6,6 +6,27 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-07-28
+
+### Added
+
+- Local heuristic / semantic Go-to-Definition, definition preview, usage grouping; navigate back/forward and Ctrl+P file references
+- Vue editor support and session cache settings
+- Quad terminal layout; title-bar toggles for dual terminal / editor
+- Source Control: fetch (“check for updates”), ahead/behind counts, relative sync times
+
+### Changed
+
+- SCM toolbar single-row segments; Git errors show a short summary plus affected files
+- Startup splash stays visible at least ~500ms so the brand logo is readable
+- Unified editor/terminal tab chrome; title-bar window buttons and project close menu
+
+### Fixed
+
+- Soft refresh dropping ahead/behind and sync timestamps; SCM dropdown misalignment (zoom / segment align)
+- Double-clicking terminal close accidentally starting rename; per-pane terminal sessions and collapse layout sync
+- Session state not fully restored after closing a project; TypeScript build errors
+
 ## [0.1.6] - 2026-07-23
 
 ### Added
@@ -161,7 +182,10 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 - Windows single-file exe packaging (`pnpm package:exe`)
 - GitHub / Gitee Release workflow and version scripts
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.7
+[0.1.6]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.6
+[0.1.5]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.5
 [0.1.4]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.2
