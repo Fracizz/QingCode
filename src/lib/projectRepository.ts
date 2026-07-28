@@ -291,25 +291,19 @@ export async function setProjectSortOrder(id: string, sortOrder: number): Promis
   )
 }
 
-/** Persist many `sort_order` values in one transaction (title-bar drag reorder). */
+/**
+ * Persist many `sort_order` values (title-bar drag reorder).
+ * Do not wrap in BEGIN/COMMIT: `@tauri-apps/plugin-sql` already runs each
+ * `execute` inside its own transaction, so a nested BEGIN fails with
+ * "cannot start a transaction within a transaction".
+ */
 export async function setProjectsSortOrders(
   orders: Array<{ id: string; sortOrder: number }>,
 ): Promise<void> {
   if (orders.length === 0) return
   await withDb('批量排序项目', async d => {
-    await d.execute('BEGIN IMMEDIATE')
-    try {
-      for (const { id, sortOrder } of orders) {
-        await d.execute('UPDATE projects SET sort_order = $1 WHERE id = $2', [sortOrder, id])
-      }
-      await d.execute('COMMIT')
-    } catch (error) {
-      try {
-        await d.execute('ROLLBACK')
-      } catch (rollbackError) {
-        console.error('sort_order batch rollback failed:', rollbackError)
-      }
-      throw error
+    for (const { id, sortOrder } of orders) {
+      await d.execute('UPDATE projects SET sort_order = $1 WHERE id = $2', [sortOrder, id])
     }
   })
 }

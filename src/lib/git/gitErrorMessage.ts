@@ -272,7 +272,7 @@ export function classifyGitPushError(raw: string): GitPushErrorKind {
 
 export function resolveGitPushErrorMessage(
   raw: string,
-  translate: (key: string) => string,
+  translate: (key: string, values?: Record<string, string | number>) => string,
 ): string {
   const kind = classifyGitPushError(raw)
   if (kind !== 'unknown') return translate(GIT_PUSH_ERROR_MESSAGE_KEYS[kind])

@@ -34,7 +34,7 @@ vi.mock('./projectSettings', () => ({
   shouldSyncProjectsOnStartup: () => true,
 }))
 
-import { persistProjectsToUserSettings } from './projectRepository'
+import { persistProjectsToUserSettings, setProjectsSortOrders } from './projectRepository'
 
 function project(over: Partial<Project> = {}): Project {
   return {
@@ -129,5 +129,39 @@ describe('persistProjectsToUserSettings', () => {
     await persistProjectsToUserSettings()
 
     expect(savedSettingsRef.settings[0]['qingcode.projects']).toEqual([])
+  })
+})
+
+describe('setProjectsSortOrders', () => {
+  beforeEach(() => {
+    mockDb.select.mockReset()
+    mockDb.execute.mockReset()
+    mockDb.execute.mockResolvedValue({ rowsAffected: 1 })
+  })
+
+  it('updates each id without wrapping BEGIN/COMMIT (plugin-sql nested txn)', async () => {
+    await setProjectsSortOrders([
+      { id: 'a', sortOrder: 0 },
+      { id: 'b', sortOrder: 1 },
+    ])
+
+    expect(mockDb.execute).toHaveBeenCalledTimes(2)
+    expect(mockDb.execute).toHaveBeenNthCalledWith(
+      1,
+      'UPDATE projects SET sort_order = $1 WHERE id = $2',
+      [0, 'a'],
+    )
+    expect(mockDb.execute).toHaveBeenNthCalledWith(
+      2,
+      'UPDATE projects SET sort_order = $1 WHERE id = $2',
+      [1, 'b'],
+    )
+    const sqls = mockDb.execute.mock.calls.map(call => String(call[0]))
+    expect(sqls.some(sql => /BEGIN|COMMIT|ROLLBACK/i.test(sql))).toBe(false)
+  })
+
+  it('no-ops for an empty order list', async () => {
+    await setProjectsSortOrders([])
+    expect(mockDb.execute).not.toHaveBeenCalled()
   })
 })

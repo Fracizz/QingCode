@@ -5,8 +5,8 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -45,11 +45,13 @@ import WorkspaceMenu from './WorkspaceMenu'
 import ProjectAddDialog from './ProjectAddDialog'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
-import { sortVisibleProjects } from '../lib/projectChipOrder'
+import { insertLineXForDraggedChip, previewReorderIds, sameIdOrder, sortVisibleProjects } from '../lib/projectChipOrder'
 
 const CHIP_GAP = 4
 const ADD_BTN_W = 28
 const OVERFLOW_BTN_W = 28
+/** Pointer DnD threshold — HTML5 DnD is flaky in WebView2 title bar (see Sidebar). */
+const DRAG_THRESHOLD_PX = 5
 
 export default function ProjectPicker() {
   const { t } = useI18n()
@@ -71,13 +73,27 @@ export default function ProjectPicker() {
   const measureRef = useRef<HTMLDivElement>(null)
   const overflowBtnRef = useRef<HTMLButtonElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const chipDragRef = useRef<{
+    dragId: string
+    originIds: string[]
+    previewIds: string[]
+    widthsById: Map<string, number>
+    pointerId: number
+    startX: number
+    startY: number
+    active: boolean
+    raf: number | null
+    pendingClientX: number | null
+  } | null>(null)
+  const suppressChipClickRef = useRef(false)
 
   const [visibleCount, setVisibleCount] = useState(projects.length)
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({})
-  const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const [dropIndex, setDropIndex] = useState<number | null>(null)
+  const [dragId, setDragId] = useState<string | null>(null)
+  const [previewIds, setPreviewIds] = useState<string[] | null>(null)
+  const [insertLineX, setInsertLineX] = useState<number | null>(null)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -152,9 +168,148 @@ export default function ProjectPicker() {
   }
 
   const handleSwitch = async (project: Project) => {
+    if (suppressChipClickRef.current) return
     closeDropdown()
     setView('explorer')
     await switchProject(project)
+  }
+
+  const handleChipPointerDown = (event: ReactPointerEvent, projectId: string) => {
+    if (event.button !== 0) return
+    if ((event.target as HTMLElement).closest('button')) return
+    event.stopPropagation()
+
+    const visibleIds = projects.slice(0, visibleCount).map(p => p.id)
+    if (!visibleIds.includes(projectId)) return
+
+    const widthsById = new Map<string, number>()
+    measureRef.current
+      ?.querySelectorAll<HTMLDivElement>('[data-chip-id]')
+      .forEach(el => {
+        const id = el.dataset.chipId
+        if (id) widthsById.set(id, el.offsetWidth)
+      })
+
+    chipDragRef.current = {
+      dragId: projectId,
+      originIds: visibleIds,
+      previewIds: visibleIds,
+      widthsById,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      active: false,
+      raf: null,
+      pendingClientX: null,
+    }
+
+    const endDragSession = () => {
+      const session = chipDragRef.current
+      if (session?.raf != null) cancelAnimationFrame(session.raf)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+      window.removeEventListener('keydown', onKeyDown)
+      document.body.classList.remove('select-none')
+      chipDragRef.current = null
+    }
+
+    const applyPreviewAt = (clientX: number) => {
+      const session = chipDragRef.current
+      const container = containerRef.current
+      if (!session?.active || !container) return
+      const x = clientX - container.getBoundingClientRect().left
+      const next = previewReorderIds(
+        session.previewIds,
+        session.dragId,
+        session.widthsById,
+        CHIP_GAP,
+        x,
+      )
+      if (!sameIdOrder(next, session.previewIds)) {
+        session.previewIds = next
+        setPreviewIds(next)
+      }
+      if (sameIdOrder(next, session.originIds)) {
+        setInsertLineX(null)
+        return
+      }
+      setInsertLineX(
+        insertLineXForDraggedChip(next, session.dragId, session.widthsById, CHIP_GAP),
+      )
+    }
+
+    const onMove = (moveEvent: PointerEvent) => {
+      const session = chipDragRef.current
+      if (!session || moveEvent.pointerId !== session.pointerId) return
+      const dx = moveEvent.clientX - session.startX
+      const dy = moveEvent.clientY - session.startY
+      if (!session.active) {
+        if (dx * dx + dy * dy < DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX) return
+        session.active = true
+        suppressChipClickRef.current = true
+        document.body.classList.add('select-none')
+        setDragId(session.dragId)
+        setPreviewIds(session.originIds)
+      }
+      session.pendingClientX = moveEvent.clientX
+      if (session.raf != null) return
+      session.raf = requestAnimationFrame(() => {
+        const current = chipDragRef.current
+        if (!current) return
+        current.raf = null
+        const x = current.pendingClientX
+        current.pendingClientX = null
+        if (x != null) applyPreviewAt(x)
+      })
+    }
+
+    const onKeyDown = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.key !== 'Escape') return
+      keyEvent.preventDefault()
+      endDragSession()
+      setDragId(null)
+      setPreviewIds(null)
+      setInsertLineX(null)
+      window.setTimeout(() => {
+        suppressChipClickRef.current = false
+      }, 0)
+    }
+
+    const onUp = (upEvent: PointerEvent) => {
+      const session = chipDragRef.current
+      if (!session || upEvent.pointerId !== session.pointerId) {
+        endDragSession()
+        return
+      }
+      if (!session.active) {
+        endDragSession()
+        window.setTimeout(() => {
+          suppressChipClickRef.current = false
+        }, 0)
+        return
+      }
+
+      if (session.pendingClientX != null) applyPreviewAt(session.pendingClientX)
+      const finalIds = session.previewIds
+      const fromIndex = session.originIds.indexOf(session.dragId)
+      const toIndex = finalIds.indexOf(session.dragId)
+      endDragSession()
+      setDragId(null)
+      setPreviewIds(null)
+      setInsertLineX(null)
+      if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
+        void reorderVisibleProjects(fromIndex, toIndex)
+      }
+      window.setTimeout(() => {
+        suppressChipClickRef.current = false
+      }, 0)
+    }
+
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    window.addEventListener('keydown', onKeyDown)
   }
 
   const handleRename = (project: Project) => {
@@ -294,7 +449,13 @@ export default function ProjectPicker() {
     setAddDialogOpen(true)
   }
 
-  const visibleProjects = projects.slice(0, visibleCount)
+  const displayVisibleProjects = useMemo(() => {
+    if (!previewIds) return projects.slice(0, visibleCount)
+    const byId = new Map(projects.map(p => [p.id, p]))
+    return previewIds
+      .map(id => byId.get(id))
+      .filter((project): project is Project => project != null)
+  }, [projects, previewIds, visibleCount])
   const overflowProjects = projects.slice(visibleCount)
   const hasOverflow = overflowProjects.length > 0
 
@@ -304,50 +465,35 @@ export default function ProjectPicker() {
       <WorkspaceMenu />
 
       {/* Visible chips — empty leftover width bubbles dblclick maximize to TitleBar */}
-      <div ref={containerRef} className="flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden">
-        {visibleProjects.map((project, index) => (
+      <div ref={containerRef} className="relative flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden">
+        {insertLineX !== null && dragId !== null && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute top-0.5 bottom-0.5 w-0.5 rounded-full bg-accent z-10"
+            style={{ left: insertLineX }}
+          />
+        )}
+        {displayVisibleProjects.map((project, index) => {
+          const unavailable = unavailableProjectIds.includes(project.id)
+          return (
           <Chip
             key={project.id}
+            chipIndex={index}
             project={project}
             isCurrent={currentProject?.id === project.id}
-            unavailable={unavailableProjectIds.includes(project.id)}
-            dropTarget={dropIndex === index && dragIndex !== index}
+            unavailable={unavailable}
+            dragging={dragId === project.id}
             onSwitch={() => void handleSwitch(project)}
             onRemove={() => handleRemove(project)}
             onRelocate={() => handleRelocate(project.id)}
             onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
             onContextMenu={event => openProjectContextMenu(event, project)}
-            onDragStart={event => {
-              if ((event.target as HTMLElement).closest('button')) {
-                event.preventDefault()
-                return
-              }
-              setDragIndex(index)
-              event.dataTransfer.effectAllowed = 'move'
-              event.dataTransfer.setData('text/plain', project.id)
-            }}
-            onDragOver={event => {
-              event.preventDefault()
-              event.dataTransfer.dropEffect = 'move'
-              if (dragIndex !== null && dragIndex !== index) setDropIndex(index)
-            }}
-            onDragLeave={() => {
-              if (dropIndex === index) setDropIndex(null)
-            }}
-            onDrop={event => {
-              event.preventDefault()
-              if (dragIndex !== null && dragIndex !== index) {
-                void reorderVisibleProjects(dragIndex, index)
-              }
-              setDragIndex(null)
-              setDropIndex(null)
-            }}
-            onDragEnd={() => {
-              setDragIndex(null)
-              setDropIndex(null)
-            }}
+            onPointerDown={
+              unavailable ? undefined : event => handleChipPointerDown(event, project.id)
+            }
           />
-        ))}
+          )
+        })}
 
         {hasOverflow && (
           <Tooltip label={t('更多项目')} side="bottom" wrapperClassName="flex-shrink-0">
@@ -585,36 +731,30 @@ export default function ProjectPicker() {
 
 function Chip({
   project,
+  chipIndex,
   isCurrent,
   unavailable,
   measure = false,
-  dropTarget = false,
+  dragging = false,
   onSwitch,
   onRemove,
   onRelocate,
   onOpenInExplorer,
   onContextMenu,
-  onDragStart,
-  onDragOver,
-  onDragLeave,
-  onDrop,
-  onDragEnd,
+  onPointerDown,
 }: {
   project: Project
+  chipIndex?: number
   isCurrent: boolean
   unavailable: boolean
   measure?: boolean
-  dropTarget?: boolean
+  dragging?: boolean
   onSwitch: () => void
   onRemove: () => void
   onRelocate: () => void
   onOpenInExplorer: () => void
   onContextMenu: (event: ReactMouseEvent) => void
-  onDragStart?: (event: ReactDragEvent) => void
-  onDragOver?: (event: ReactDragEvent) => void
-  onDragLeave?: () => void
-  onDrop?: (event: ReactDragEvent) => void
-  onDragEnd?: () => void
+  onPointerDown?: (event: ReactPointerEvent) => void
 }) {
   const { t } = useI18n()
   const activate = () => {
@@ -623,12 +763,12 @@ function Chip({
   return (
     <div
       data-chip-id={measure ? project.id : undefined}
+      data-chip-index={measure ? undefined : chipIndex}
       role={measure ? undefined : 'button'}
       tabIndex={measure || unavailable ? -1 : 0}
       aria-current={isCurrent ? 'true' : undefined}
       aria-disabled={unavailable || undefined}
       aria-label={project.name}
-      draggable={!measure}
       onClick={activate}
       onKeyDown={event => {
         if (measure || unavailable) return
@@ -639,20 +779,17 @@ function Chip({
       }}
       onDoubleClick={event => event.stopPropagation()}
       onContextMenu={measure ? undefined : onContextMenu}
-      onDragStart={measure ? undefined : onDragStart}
-      onDragOver={measure ? undefined : onDragOver}
-      onDragLeave={measure ? undefined : onDragLeave}
-      onDrop={measure ? undefined : onDrop}
-      onDragEnd={measure ? undefined : onDragEnd}
-      className={`group relative flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-colors
+      onPointerDown={measure ? undefined : onPointerDown}
+      className={`group relative flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-[colors,opacity,box-shadow,transform] duration-150 cursor-default [&_button]:cursor-default
         ${
-          isCurrent
+          dragging
+            ? 'z-[1] bg-bg-hover text-fg opacity-55 shadow-sm ring-1 ring-inset ring-accent/50 scale-[0.98]'
+            : isCurrent
             ? 'bg-bg-active text-fg'
             : unavailable
-            ? 'text-fg-dim cursor-default'
-            : 'text-fg-muted hover:text-fg hover:bg-bg-hover cursor-pointer'
-        }
-        ${dropTarget ? 'ring-1 ring-inset ring-accent/60' : ''}`}
+            ? 'text-fg-dim'
+            : 'text-fg-muted hover:text-fg hover:bg-bg-hover'
+        }`}
     >
       {isCurrent && (
         <span className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand" aria-hidden />
