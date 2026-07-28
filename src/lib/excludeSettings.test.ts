@@ -59,7 +59,7 @@ describe('isPathExcluded / maps', () => {
       'files.exclude': { '**/my-secret': true },
     }
     const map = readExcludeMap(settings, 'files.exclude')
-    expect(map['**/node_modules']).toBe(true)
+    expect(map['**/node_modules']).toBe(false)
     expect(map['**/my-secret']).toBe(true)
   })
 
@@ -78,6 +78,8 @@ describe('isPathExcluded / maps', () => {
 
   it('reads ignore / symlink flags from settings', () => {
     const defaults = readEffectiveExcludeSettings(DEFAULT_GLOBAL_SETTINGS)
+    // 资源管理器默认展示全部磁盘条目，搜索仍使用独立排除规则。
+    expect(defaults.filesExclude).toEqual([])
     expect(defaults.excludeGitIgnore).toBe(false)
     expect(defaults.useIgnoreFiles).toBe(true)
     expect(defaults.followSymlinks).toBe(false)
