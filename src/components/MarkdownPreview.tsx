@@ -1,5 +1,6 @@
 import { forwardRef, useMemo } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useI18n } from '../lib/i18n'
 
 type Props = {
@@ -25,6 +26,7 @@ const MarkdownPreview = forwardRef<HTMLDivElement, Props>(function MarkdownPrevi
         <div className="flex h-full items-center justify-center text-fg-dim text-sm">{t('预览为空')}</div>
       ) : (
         <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
           components={{
             a: ({ href, children }) => (
               <a href={href} target="_blank" rel="noreferrer noopener">
