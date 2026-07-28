@@ -67,8 +67,8 @@ export function discardGitChanges(path: string, files: string[], staged: boolean
   return safeInvoke('丢弃 Git 更改', 'git_discard', { path, files, staged })
 }
 
-export function pullGit(path: string): Promise<GitPullResult> {
-  return safeInvoke('拉取 Git 更改', 'git_pull', { path })
+export function pullGit(path: string, rebase = false): Promise<GitPullResult> {
+  return safeInvoke('拉取 Git 更改', 'git_pull', { path, rebase })
 }
 
 export function commitGit(path: string, message: string): Promise<string> {

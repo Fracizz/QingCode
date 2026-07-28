@@ -81,6 +81,7 @@ import {
   getGitHead,
   getGitLog,
   getGitStatus,
+  pullGit,
   pushGit,
   switchGitBranch,
 } from '../lib/ipc/git'
@@ -1401,10 +1402,7 @@ export default function SourceControlPanel() {
       setOperation({ kind: 'pull', key: rebase ? 'pull:rebase' : 'pull' })
       setOperationError(null)
       try {
-        const result = await safeInvoke<GitPullResult>('拉取 Git 更改', 'git_pull', {
-          path: project.path,
-          rebase,
-        })
+        const result = await pullGit(project.path, rebase)
         if (useProjectStore.getState().currentProject?.path === project.path) {
           await refresh({ soft: false })
           if (result.has_conflicts) {
