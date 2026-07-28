@@ -200,3 +200,82 @@ export function gitPullErrorI18n(raw: string): GitPullErrorI18n {
 export function gitSwitchErrorI18n(raw: string): GitPullErrorI18n {
   return gitScmErrorI18n(raw, 'switch')
 }
+
+export type GitPushErrorKind =
+  | 'behind-remote'
+  | 'auth-failed'
+  | 'no-upstream'
+  | 'no-remote'
+  | 'network'
+  | 'unknown'
+
+export const GIT_PUSH_ERROR_MESSAGE_KEYS: Record<GitPushErrorKind, string> = {
+  'behind-remote': '远程分支有新的提交，请先点击「从远程拉取」同步后再推送',
+  'auth-failed': '远程认证失败，请检查账号、密码或访问令牌',
+  'no-upstream': '当前分支未配置上游远程分支，请先设置 upstream',
+  'no-remote': '未配置远程仓库，请先添加 remote',
+  network: '无法连接远程仓库，请检查网络或远程地址',
+  unknown: '推送被拒绝，请检查远程分支状态后重试',
+}
+
+const PUSH_ERROR_PREFIX_RE =
+  /^(?:Error:\s*)?(?:推送失败：\s*)?(?:Git 推送失败：\s*)+/i
+
+export function classifyGitPushError(raw: string): GitPushErrorKind {
+  const text = raw.toLowerCase()
+  if (
+    text.includes('fetch first') ||
+    text.includes('non-fast-forward') ||
+    text.includes('remote contains work that you do not have locally') ||
+    /!\s*\[rejected\]/.test(raw)
+  ) {
+    return 'behind-remote'
+  }
+  if (
+    text.includes('authentication failed') ||
+    text.includes('could not read username') ||
+    text.includes('permission denied') ||
+    text.includes('access rights') ||
+    text.includes('认证失败') ||
+    /\b401\b/.test(text) ||
+    /\b403\b/.test(text)
+  ) {
+    return 'auth-failed'
+  }
+  if (
+    text.includes('no upstream branch') ||
+    text.includes('set-upstream') ||
+    text.includes('has no upstream branch')
+  ) {
+    return 'no-upstream'
+  }
+  if (
+    text.includes('no configured push destination') ||
+    text.includes("'origin' does not appear to be a git repository") ||
+    text.includes('could not read from remote repository')
+  ) {
+    return text.includes('authentication') || text.includes('permission')
+      ? 'auth-failed'
+      : 'no-remote'
+  }
+  if (
+    text.includes('could not resolve host') ||
+    text.includes('connection refused') ||
+    text.includes('connection timed out') ||
+    text.includes('failed to connect') ||
+    text.includes('network is unreachable')
+  ) {
+    return 'network'
+  }
+  return 'unknown'
+}
+
+export function resolveGitPushErrorMessage(
+  raw: string,
+  translate: (key: string) => string,
+): string {
+  const kind = classifyGitPushError(raw)
+  if (kind !== 'unknown') return translate(GIT_PUSH_ERROR_MESSAGE_KEYS[kind])
+  const i18n = gitScmErrorI18n(raw, 'push')
+  return translate(i18n.key, i18n.params)
+}

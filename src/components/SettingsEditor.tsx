@@ -378,7 +378,7 @@ export default function SettingsEditor() {
         )
       if (cat.id === 'terminal') return match('终端', '默认启动配置', '终端字号', '默认 Shell', 'pwsh', 'WSL', 'Zsh')
       if (cat.id === 'ai') {
-        return match('AI', 'CLI', 'Skill', 'Agent', 'qingcode-cli', 'AI CLI Skill')
+        return match('AI', 'CLI', 'skills', 'Agent', 'qingcode-cli', 'AI CLI skills')
       }
       if (cat.id === 'features') {
         return match(
@@ -830,7 +830,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('AI', 'CLI', 'Skill', 'Agent', 'qingcode-cli', 'AI CLI Skill') &&
+            {match('AI', 'CLI', 'skills', 'Agent', 'qingcode-cli', 'AI CLI skills') &&
               !workspaceLocked && (
               <Section
                 id="ai"
@@ -839,9 +839,9 @@ export default function SettingsEditor() {
                 onVisible={setCategory}
               >
                 <SettingItem
-                  title={t('AI CLI Skill')}
+                  title={t('AI CLI skills')}
                   description={t(
-                    '复制 QingCode CLI 的 Skill 文本到剪贴板。请按你使用的 AI Agent 文档自行安装（例如保存为 SKILL.md），QingCode 不会自动适配或注册任何 Agent。',
+                    '复制 QingCode CLI 的 skills 文本到剪贴板。请按你使用的 AI Agent 文档自行安装（例如保存为 skills.md），QingCode 不会自动适配或注册任何 Agent。',
                   )}
                   modified={false}
                   locked={workspaceLocked}
@@ -862,7 +862,7 @@ export default function SettingsEditor() {
                               : '')
                           if (!exe.trim()) exe = 'QingCode.exe'
                           await copyToClipboard(buildQingcodeCliSkillMarkdown(exe))
-                          pushToast('success', t('已复制 CLI Skill，请粘贴到你的 AI Agent 中安装。'))
+                          pushToast('success', t('已复制 CLI skills，请粘贴到你的 AI Agent 中安装。'))
                         } catch (error) {
                           pushToast(
                             'error',
@@ -874,7 +874,7 @@ export default function SettingsEditor() {
                       })()
                     }}
                   >
-                    {cliSkillBusy ? t('正在复制…') : t('复制 Skill 文本')}
+                    {cliSkillBusy ? t('正在复制…') : t('复制 skills 文本')}
                   </button>
                 </SettingItem>
               </Section>

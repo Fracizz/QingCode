@@ -1,6 +1,8 @@
 type GitSyncKind = 'fetch' | 'pull' | 'push'
 
-type GitSyncTimes = Partial<Record<`${GitSyncKind}At`, number>>
+type GitSyncTimes = Partial<Record<`${GitSyncKind}At`, number>> & {
+  fetchAuthFailed?: boolean
+}
 
 const KEY_PREFIX = 'qingcode:git-sync:'
 
@@ -39,4 +41,32 @@ export function resolveGitSyncTimestamp(
   const localAt = projectPath ? readLocalGitSyncTimes(projectPath)[`${kind}At`] : undefined
   const best = Math.max(backendAt ?? 0, localAt ?? 0)
   return best > 0 ? best : null
+}
+
+export function readFetchAuthFailed(projectPath: string): boolean {
+  return Boolean(readLocalGitSyncTimes(projectPath).fetchAuthFailed)
+}
+
+export function markFetchAuthFailed(projectPath: string): void {
+  try {
+    const current = readLocalGitSyncTimes(projectPath)
+    sessionStorage.setItem(
+      storageKey(projectPath),
+      JSON.stringify({ ...current, fetchAuthFailed: true }),
+    )
+  } catch {
+    // sessionStorage may be unavailable in tests or restricted contexts.
+  }
+}
+
+export function clearFetchAuthFailed(projectPath: string): void {
+  try {
+    const current = readLocalGitSyncTimes(projectPath)
+    sessionStorage.setItem(
+      storageKey(projectPath),
+      JSON.stringify({ ...current, fetchAuthFailed: false }),
+    )
+  } catch {
+    // sessionStorage may be unavailable in tests or restricted contexts.
+  }
 }

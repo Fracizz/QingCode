@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   extractGitOverwrittenFiles,
   formatGitChangedFileList,
+  classifyGitPushError,
   gitPullErrorI18n,
   gitSwitchErrorI18n,
   normalizeGitPullErrorRaw,
   parseScmErrorDisplay,
+  resolveGitPushErrorMessage,
 } from './gitErrorMessage'
 
 describe('gitPullErrorI18n', () => {
@@ -59,5 +61,23 @@ Aborting`
       'src/components/ScmToolbar.tsx',
       'src/components/SourceControlPanel.tsx',
     ])
+  })
+})
+
+describe('git push error helpers', () => {
+  it('detects remote-ahead push rejection', () => {
+    const raw = `Git 推送失败：! [rejected] test -> test (fetch first)
+error: failed to push some refs to 'http://example.com/repo.git'
+hint: Updates were rejected because the remote contains work that you do not have locally.`
+
+    expect(classifyGitPushError(raw)).toBe('behind-remote')
+    expect(resolveGitPushErrorMessage(raw, key => key)).toBe(
+      '远程分支有新的提交，请先点击「从远程拉取」同步后再推送',
+    )
+  })
+
+  it('detects authentication failures', () => {
+    expect(classifyGitPushError('Error: 认证失败')).toBe('auth-failed')
+    expect(classifyGitPushError('fatal: Authentication failed for')).toBe('auth-failed')
   })
 })

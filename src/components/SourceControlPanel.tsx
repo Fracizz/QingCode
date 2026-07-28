@@ -64,8 +64,15 @@ import {
   scmStatusBadgeTone,
   splitGitChanges,
 } from '@/lib/git/gitStatus'
-import { gitPullErrorI18n, gitSwitchErrorI18n, parseScmErrorDisplay } from '@/lib/git/gitErrorMessage'
-import { markLocalGitSyncTime } from '@/lib/git/syncTimes'
+import { gitPullErrorI18n, gitSwitchErrorI18n, parseScmErrorDisplay, classifyGitPushError, resolveGitPushErrorMessage } from '@/lib/git/gitErrorMessage'
+import {
+  clearFetchAuthFailed,
+  markFetchAuthFailed,
+  markLocalGitSyncTime,
+  readFetchAuthFailed,
+  resolveGitSyncTimestamp,
+} from '@/lib/git/syncTimes'
+import { isScmFetchAuthError, shouldAutoFetch, type ScmAutoFetchReason } from '@/lib/git/scmSyncMeta'
 import { confirmDialog } from '../store/confirmStore'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import {
@@ -1429,32 +1436,90 @@ export default function SourceControlPanel() {
     [loading, operation, refresh, t],
   )
 
-  const fetchRemote = useCallback(async () => {
-    const project = useProjectStore.getState().currentProject
-    if (!project || operation || loading) return
-    setOperation({ kind: 'fetch', key: 'fetch' })
-    setOperationError(null)
-    try {
-      await fetchGit(project.path)
-      if (useProjectStore.getState().currentProject?.path === project.path) {
-        await refresh({ soft: false })
-        const branches = await getGitBranches(project.path)
+  const fetchRemote = useCallback(
+    async (opts?: { silent?: boolean; reason?: ScmAutoFetchReason }) => {
+      const project = useProjectStore.getState().currentProject
+      if (!project || operation || loading) return false
+      const silent = opts?.silent ?? false
+      const reason = opts?.reason ?? 'manual'
+      const repoReady = status?.is_repository ?? false
+      const lastFetchAt = resolveGitSyncTimestamp(project.path, 'fetch', status?.last_fetch_at)
+      if (
+        silent &&
+        !shouldAutoFetch(lastFetchAt, readFetchAuthFailed(project.path), reason, repoReady)
+      ) {
+        return false
+      }
+      setOperation({ kind: 'fetch', key: silent ? 'auto-fetch' : 'fetch' })
+      if (!silent) setOperationError(null)
+      try {
+        await fetchGit(project.path)
         if (useProjectStore.getState().currentProject?.path === project.path) {
-          markLocalGitSyncTime(project.path, 'fetch')
-          setBranchList(branches)
-          useProjectStore.getState().pushToast('success', t('已检查更新'))
+          await refresh({ soft: false })
+          const branches = await getGitBranches(project.path)
+          if (useProjectStore.getState().currentProject?.path === project.path) {
+            markLocalGitSyncTime(project.path, 'fetch')
+            clearFetchAuthFailed(project.path)
+            setBranchList(branches)
+            if (!silent) {
+              useProjectStore.getState().pushToast('success', t('已检查更新'))
+            }
+          }
         }
+        return true
+      } catch (reason) {
+        if (useProjectStore.getState().currentProject?.path === project.path) {
+          const message = String(reason)
+          if (isScmFetchAuthError(message)) markFetchAuthFailed(project.path)
+          if (!silent) {
+            setOperationError(message)
+            useProjectStore.getState().pushToast('error', t('检查更新失败：{error}', { error: message }))
+          }
+        }
+        return false
+      } finally {
+        setOperation(null)
       }
-    } catch (reason) {
-      if (useProjectStore.getState().currentProject?.path === project.path) {
-        const message = String(reason)
-        setOperationError(message)
-        useProjectStore.getState().pushToast('error', t('检查更新失败：{error}', { error: message }))
+    },
+    [loading, operation, refresh, status?.is_repository, status?.last_fetch_at, t],
+  )
+
+  const tryAutoFetch = useCallback(
+    (reason: ScmAutoFetchReason) => {
+      void fetchRemote({ silent: true, reason })
+    },
+    [fetchRemote],
+  )
+
+  const maybeFetchAfterPushFailure = useCallback(
+    (raw: string) => {
+      if (classifyGitPushError(raw) === 'behind-remote') {
+        tryAutoFetch('push-failed-behind')
       }
-    } finally {
-      setOperation(null)
+    },
+    [tryAutoFetch],
+  )
+
+  const autoFetchKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!projectPath || !status?.is_repository) return
+    const reason: ScmAutoFetchReason = autoFetchKeyRef.current?.startsWith(`${projectPath}:`)
+      ? 'enter-scm'
+      : 'switch-project'
+    const attemptKey = `${projectPath}:${reason}`
+    if (autoFetchKeyRef.current === attemptKey) return
+    autoFetchKeyRef.current = attemptKey
+    tryAutoFetch(reason)
+  }, [projectPath, status?.is_repository, tryAutoFetch])
+
+  useEffect(() => {
+    const onFocus = () => {
+      if (!projectPath || !status?.is_repository) return
+      tryAutoFetch('window-focus')
     }
-  }, [loading, operation, refresh, t])
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [projectPath, status?.is_repository, tryAutoFetch])
 
   const commitStaged = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
@@ -1480,9 +1545,10 @@ export default function SourceControlPanel() {
             await pushGit(project.path)
           } catch (reason) {
             if (useProjectStore.getState().currentProject?.path !== project.path) return
-            const pushError = String(reason)
+            maybeFetchAfterPushFailure(String(reason))
+            const pushError = resolveGitPushErrorMessage(String(reason), t)
             const failureMessage = t(
-              '提交成功，但推送失败：{error}。提交信息已保留；请检查远程认证、网络或分支后重试。',
+              '提交成功，但推送失败：{error}。提交信息已保留。',
               { error: pushError }
             )
             setOperationError(failureMessage)
@@ -1513,7 +1579,7 @@ export default function SourceControlPanel() {
     } finally {
       setOperation(null)
     }
-  }, [commitMessage, groups.staged.length, loading, operation, pushAfterCommit, refresh, t])
+  }, [commitMessage, groups.staged.length, loading, maybeFetchAfterPushFailure, operation, pushAfterCommit, refresh, t])
 
   const retryPush = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
@@ -1531,10 +1597,9 @@ export default function SourceControlPanel() {
       }
     } catch (reason) {
       if (useProjectStore.getState().currentProject?.path === project.path) {
-        const failureMessage = t(
-          '推送失败：{error}。提交信息已保留；请检查远程认证、网络或分支后重试。',
-          { error: String(reason) }
-        )
+        maybeFetchAfterPushFailure(String(reason))
+        const pushError = resolveGitPushErrorMessage(String(reason), t)
+        const failureMessage = t('推送失败：{error}。提交信息已保留。', { error: pushError })
         setOperationError(failureMessage)
         setPushRetryAvailable(true)
         useProjectStore.getState().pushToast('error', failureMessage)
@@ -1542,7 +1607,7 @@ export default function SourceControlPanel() {
     } finally {
       setOperation(null)
     }
-  }, [loading, operation, refresh, t])
+  }, [loading, maybeFetchAfterPushFailure, operation, refresh, t])
 
   const revealInSidebar = useCallback(
     (absolutePath: string) => {
@@ -2260,7 +2325,7 @@ export default function SourceControlPanel() {
           if (branchMenuOpen) setBranchMenuOpen(false)
           else void openBranchMenu()
         }}
-        onFetch={() => void fetchRemote()}
+        onFetch={() => void fetchRemote({ reason: 'manual' })}
         onPull={() => void pullCurrent(false)}
         onOpenPullMenu={() => {
           setPushMenuOpen(false)

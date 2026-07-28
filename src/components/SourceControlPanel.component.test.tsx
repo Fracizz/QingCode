@@ -155,7 +155,7 @@ describe('SourceControlPanel', () => {
     fireEvent.change(message, { target: { value: 'feat: 保留提交信息' } })
     fireEvent.click(screen.getByRole('button', { name: /提交并推送到/ }))
 
-    await screen.findByText(/提交成功，但推送失败：Error: 认证失败。提交信息已保留/)
+    await screen.findByText(/提交成功，但推送失败：远程认证失败，请检查账号、密码或访问令牌。提交信息已保留/)
     expect(message).toHaveValue('feat: 保留提交信息')
     const retry = screen.getByRole('button', { name: '重试推送' })
     fireEvent.click(retry)
