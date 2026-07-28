@@ -17,6 +17,8 @@ import {
   gitIndexStatus,
   gitStatusColorClass,
   gitStatusFromWorkdirEntries,
+  gitStatusNeedsTrackingMetadata,
+  preserveGitStatusMetadata,
   gitStatusGlyph,
   gitStatusGlyphForGroup,
   gitStatusKey,
@@ -122,6 +124,55 @@ describe('gitStatus helpers', () => {
       is_repository: true,
       branch: 'main',
       changes: [{ path: 'src/a.ts', status: ' M' }],
+    })
+  })
+
+  it('detects when ahead/behind still need a full git status', () => {
+    expect(gitStatusNeedsTrackingMetadata(null)).toBe(false)
+    expect(gitStatusNeedsTrackingMetadata({ is_repository: false, branch: null, changes: [] })).toBe(
+      false,
+    )
+    expect(
+      gitStatusNeedsTrackingMetadata({ is_repository: true, branch: 'main', changes: [] }),
+    ).toBe(true)
+    expect(
+      gitStatusNeedsTrackingMetadata({
+        is_repository: true,
+        branch: 'main',
+        ahead: 0,
+        behind: 0,
+        changes: [],
+      }),
+    ).toBe(false)
+  })
+
+  it('preserves sync metadata when rebuilding from workdir entries', () => {
+    const previous = {
+      is_repository: true,
+      branch: 'main',
+      upstream: 'origin/main',
+      ahead: 2,
+      behind: 1,
+      last_fetch_at: 1_700_000_000_000,
+      last_pull_at: 1_699_000_000_000,
+      last_push_at: 1_698_000_000_000,
+      changes: [],
+    }
+    expect(
+      preserveGitStatusMetadata(
+        gitStatusFromWorkdirEntries('D:\\repo', [{ path: 'D:\\repo\\a.ts', status: ' M' }], 'main'),
+        previous,
+      ),
+    ).toEqual({
+      is_repository: true,
+      branch: 'main',
+      upstream: 'origin/main',
+      ahead: 2,
+      behind: 1,
+      last_fetch_at: 1_700_000_000_000,
+      last_pull_at: 1_699_000_000_000,
+      last_push_at: 1_698_000_000_000,
+      changes: [{ path: 'a.ts', status: ' M' }],
     })
   })
 

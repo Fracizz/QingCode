@@ -7,6 +7,7 @@ import {
   buildStatusMap,
   dirGitStatus,
   gitStatusFromWorkdirEntries,
+  preserveGitStatusMetadata,
   gitStatusKey,
   type GitStatusEntry,
   type GitWorkdirStatus,
@@ -86,10 +87,13 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
     const state = get()
     if (state.panelPath === projectPath && state.panelStatus) return state.panelStatus
     if (state.projectPath !== projectPath) return null
-    return gitStatusFromWorkdirEntries(
-      projectPath,
-      state.entries,
-      state.panelPath === projectPath ? (state.panelStatus?.branch ?? null) : null
+    return preserveGitStatusMetadata(
+      gitStatusFromWorkdirEntries(
+        projectPath,
+        state.entries,
+        state.panelPath === projectPath ? (state.panelStatus?.branch ?? null) : null,
+      ),
+      state.panelPath === projectPath ? state.panelStatus : null,
     )
   },
 
@@ -149,10 +153,13 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
           return
         }
         const previous = get().panelPath === projectPath ? get().panelStatus : null
-        const panelStatus = gitStatusFromWorkdirEntries(
-          projectPath,
-          result.entries,
-          previous?.branch ?? null
+        const panelStatus = preserveGitStatusMetadata(
+          gitStatusFromWorkdirEntries(
+            projectPath,
+            result.entries,
+            previous?.branch ?? null,
+          ),
+          previous,
         )
         set({
           statusByPath: buildStatusMap(result.entries),

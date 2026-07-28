@@ -6,7 +6,7 @@ import {
   LoaderCircle,
   RefreshCw,
 } from 'lucide-react'
-import type { RefObject, CSSProperties, ReactNode } from 'react'
+import type { CSSProperties, HTMLAttributes, ReactNode, RefObject } from 'react'
 import type { GitStatus } from '@/lib/git/git'
 import { formatRelativeTime } from '@/lib/formatRelativeTime'
 import { resolveGitSyncTimestamp } from '@/lib/git/syncTimes'
@@ -34,9 +34,12 @@ export type ScmToolbarProps = {
 }
 
 function CountBadge({ count }: { count: number }) {
-  if (count <= 0) return null
   return (
-    <span className="shrink-0 rounded-full bg-accent px-1 text-[9px] font-semibold leading-4 tabular-nums text-white">
+    <span
+      className={`flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1 text-[9px] font-semibold leading-none tabular-nums ${
+        count > 0 ? 'bg-accent text-white' : 'border border-border bg-bg-elevated text-fg-dim'
+      }`}
+    >
       {count > 99 ? '99+' : count}
     </span>
   )
@@ -56,12 +59,17 @@ function SegmentGroup({
   active = false,
   className = '',
   children,
+  ...rest
 }: {
   active?: boolean
   className?: string
   children: ReactNode
-}) {
-  return <div className={`${segmentGroup(active)} ${className}`}>{children}</div>
+} & HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div className={`${segmentGroup(active)} ${className}`} {...rest}>
+      {children}
+    </div>
+  )
 }
 
 export default function ScmToolbar({
@@ -167,7 +175,7 @@ export default function ScmToolbar({
         </Tooltip>
       </SegmentGroup>
 
-      <SegmentGroup active={operationKind === 'pull'}>
+      <SegmentGroup active={operationKind === 'pull'} data-scm-action-segment="pull">
         <Tooltip label={t('从远程拉取')} side="bottom" wrapperClassName="h-full">
           <button
             type="button"
@@ -199,7 +207,7 @@ export default function ScmToolbar({
         </button>
       </SegmentGroup>
 
-      <SegmentGroup active={operationKind === 'push'}>
+      <SegmentGroup active={operationKind === 'push'} data-scm-action-segment="push">
         <Tooltip label={t('推送到远程')} side="bottom" wrapperClassName="h-full">
           <button
             type="button"

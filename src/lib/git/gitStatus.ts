@@ -42,6 +42,29 @@ export function gitStatusFromWorkdirEntries(
   }
 }
 
+/** True when only a lightweight workdir snapshot exists (no upstream/ahead/behind yet). */
+export function gitStatusNeedsTrackingMetadata(status: GitStatus | null | undefined): boolean {
+  if (!status?.is_repository) return false
+  return status.ahead === undefined && status.behind === undefined
+}
+
+/** Keep branch/sync metadata from a full `git_status` when applying workdir-only refreshes. */
+export function preserveGitStatusMetadata(
+  next: GitStatus,
+  previous: GitStatus | null | undefined,
+): GitStatus {
+  if (!previous) return next
+  return {
+    ...next,
+    upstream: previous.upstream,
+    ahead: previous.ahead,
+    behind: previous.behind,
+    last_fetch_at: previous.last_fetch_at,
+    last_pull_at: previous.last_pull_at,
+    last_push_at: previous.last_push_at,
+  }
+}
+
 /** Absolute path for a porcelain relative change (stable `/` keys). */
 export function absoluteGitPath(projectPath: string, relativePath: string): string {
   const root = normalizePath(projectPath)

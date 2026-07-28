@@ -58,6 +58,7 @@ import {
   gitStatusGlyphForGroup,
   gitStatusMayBeDirectory,
   formatScmDisplayPath,
+  gitStatusNeedsTrackingMetadata,
   normalizeGitChangePath,
   predictBulkGitStatusAfterAction,
   scmRowKey,
@@ -107,6 +108,7 @@ import {
   SCM_LEFT_MIN,
   SCM_LEFT_REMAINING_MIN,
 } from '../lib/scmLayout'
+import { getContextMenuStylePosition } from './contextMenuPosition'
 
 const ScmInlineDiff = lazy(() => import('./ScmInlineDiff'))
 
@@ -874,7 +876,7 @@ export default function SourceControlPanel() {
       if (seeded) {
         setStatus(seeded)
         setError(null)
-        void refresh({ soft: true })
+        void refresh({ soft: !gitStatusNeedsTrackingMetadata(seeded) })
         if (seeded.is_repository) void loadCommits(projectPath)
         else {
           setCommits([])
@@ -934,40 +936,76 @@ export default function SourceControlPanel() {
     setCollapsedGroups(current => ({ ...current, [group]: !current[group] }))
   }, [])
 
+  const readUiZoom = useCallback((el?: HTMLElement | null) => {
+    if (el) {
+      const fromEl = Number.parseFloat(getComputedStyle(el).zoom)
+      if (Number.isFinite(fromEl) && fromEl > 0) return fromEl
+    }
+    const fromRoot = Number.parseFloat(
+      getComputedStyle(document.documentElement).getPropertyValue('--ui-font-scale'),
+    )
+    return Number.isFinite(fromRoot) && fromRoot > 0 ? fromRoot : 1
+  }, [])
+
   const positionBranchMenu = useCallback(() => {
     const rect = branchAnchorRef.current?.getBoundingClientRect()
     if (!rect) return
-    const width = Math.min(
-      Math.max(BRANCH_MENU_MIN_WIDTH, Math.ceil(rect.width) + 48),
-      BRANCH_MENU_MAX_WIDTH,
+    const zoom = readUiZoom(branchMenuRef.current)
+    const visualWidth = Math.min(
+      Math.max(BRANCH_MENU_MIN_WIDTH * zoom, Math.ceil(rect.width) + 48),
+      BRANCH_MENU_MAX_WIDTH * zoom,
       window.innerWidth - 16,
     )
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+    const height = branchMenuRef.current?.offsetHeight ?? 240
+    const placed = getContextMenuStylePosition(
+      rect.left,
+      rect.bottom + 2,
+      { width: visualWidth / zoom, height },
+      { width: window.innerWidth, height: window.innerHeight },
+      false,
+      zoom,
+    )
     setBranchMenuStyle({
-      left,
-      top: rect.bottom + 4,
-      width,
+      left: placed.x,
+      top: placed.y,
+      width: visualWidth / zoom,
+      maxHeight: placed.maxHeight,
       visibility: 'visible',
     })
-  }, [])
+  }, [readUiZoom])
 
   const positionActionMenu = useCallback(
     (
       anchor: HTMLButtonElement | null,
-      width: number,
+      menu: HTMLElement | null,
+      minWidth: number,
       setStyle: (style: CSSProperties) => void,
     ) => {
-      const rect = anchor?.getBoundingClientRect()
-      if (!rect) return
-      const left = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8))
+      if (!anchor) return
+      // Align to the whole pull/push segment, not just the chevron.
+      const segment =
+        (anchor.closest('[data-scm-action-segment]') as HTMLElement | null) ?? anchor
+      const rect = segment.getBoundingClientRect()
+      const zoom = readUiZoom(menu)
+      const width = Math.max(minWidth, Math.ceil(rect.width / zoom))
+      const height = menu?.offsetHeight ?? 72
+      const placed = getContextMenuStylePosition(
+        rect.left,
+        rect.bottom + 2,
+        { width, height },
+        { width: window.innerWidth, height: window.innerHeight },
+        false,
+        zoom,
+      )
       setStyle({
-        left,
-        top: rect.bottom + 4,
+        left: placed.x,
+        top: placed.y,
         width,
+        maxHeight: placed.maxHeight,
         visibility: 'visible',
       })
     },
-    [],
+    [readUiZoom],
   )
 
   const openBranchMenu = useCallback(async () => {
@@ -1128,12 +1166,22 @@ export default function SourceControlPanel() {
 
   useLayoutEffect(() => {
     if (!pullMenuOpen) return
-    positionActionMenu(pullMenuAnchorRef.current, SCM_ACTION_MENU_WIDTH, setPullMenuStyle)
+    positionActionMenu(
+      pullMenuAnchorRef.current,
+      pullMenuRef.current,
+      SCM_ACTION_MENU_WIDTH,
+      setPullMenuStyle,
+    )
   }, [pullMenuOpen, positionActionMenu])
 
   useLayoutEffect(() => {
     if (!pushMenuOpen) return
-    positionActionMenu(pushMenuAnchorRef.current, SCM_ACTION_MENU_WIDTH, setPushMenuStyle)
+    positionActionMenu(
+      pushMenuAnchorRef.current,
+      pushMenuRef.current,
+      SCM_ACTION_MENU_WIDTH,
+      setPushMenuStyle,
+    )
   }, [pushMenuOpen, positionActionMenu])
 
   useEffect(() => {
@@ -1149,7 +1197,12 @@ export default function SourceControlPanel() {
       if (event.key === 'Escape') close()
     }
     const onReposition = () =>
-      positionActionMenu(pullMenuAnchorRef.current, SCM_ACTION_MENU_WIDTH, setPullMenuStyle)
+      positionActionMenu(
+        pullMenuAnchorRef.current,
+        pullMenuRef.current,
+        SCM_ACTION_MENU_WIDTH,
+        setPullMenuStyle,
+      )
     window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('resize', onReposition)
@@ -1175,7 +1228,12 @@ export default function SourceControlPanel() {
       if (event.key === 'Escape') close()
     }
     const onReposition = () =>
-      positionActionMenu(pushMenuAnchorRef.current, SCM_ACTION_MENU_WIDTH, setPushMenuStyle)
+      positionActionMenu(
+        pushMenuAnchorRef.current,
+        pushMenuRef.current,
+        SCM_ACTION_MENU_WIDTH,
+        setPushMenuStyle,
+      )
     window.addEventListener('pointerdown', onPointerDown)
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('resize', onReposition)
