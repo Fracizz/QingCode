@@ -259,7 +259,8 @@ mod tests {
 
     #[test]
     fn detect_help_document_sample_is_utf8() {
-        // Reproduce the 帮助文档.md failure: first 8KB cuts inside a multi-byte char.
+        // Reproduce the 帮助文档.md failure: an 8KB-style sample may cut inside a
+        // multi-byte UTF-8 character; detection must still prefer UTF-8.
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../帮助文档.md");
         let Ok(bytes) = std::fs::read(path) else {
             return; // skip when the doc is absent from the checkout
@@ -268,12 +269,23 @@ mod tests {
             bytes.len() > 8192,
             "fixture should exceed the detect sample size"
         );
-        let sample = &bytes[..8192];
+        assert_eq!(detect(&bytes).unwrap(), FileEncoding::Utf8);
+
+        let mut cut = 8192usize.min(bytes.len());
+        while cut > 0 && std::str::from_utf8(&bytes[..cut]).is_ok() {
+            cut -= 1;
+        }
+        if cut == 0 {
+            // File happens to align on a character boundary through the sample
+            // window — still require the leading sample to detect as UTF-8.
+            assert_eq!(detect(&bytes[..8192]).unwrap(), FileEncoding::Utf8);
+            return;
+        }
+        let sample = &bytes[..cut];
         assert!(
             std::str::from_utf8(sample).is_err(),
-            "fixture must actually truncate mid-character at 8192"
+            "expected a mid-character cut near the sample window"
         );
         assert_eq!(detect(sample).unwrap(), FileEncoding::Utf8);
-        assert_eq!(detect(&bytes).unwrap(), FileEncoding::Utf8);
     }
 }
