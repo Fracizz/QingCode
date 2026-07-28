@@ -157,11 +157,7 @@ fn read_last_reflog_at(root: &Path, needles: &[&str]) -> Option<i64> {
         let Some(ts_secs) = rest[..end].parse::<i64>().ok() else {
             continue;
         };
-        let message = line
-            .split(": ")
-            .skip(2)
-            .collect::<Vec<_>>()
-            .join(": ");
+        let message = line.split(": ").skip(2).collect::<Vec<_>>().join(": ");
         let lower = message.to_ascii_lowercase();
         if needles.iter().any(|needle| lower.contains(needle)) {
             return Some(ts_secs.saturating_mul(1000));
@@ -172,10 +168,8 @@ fn read_last_reflog_at(root: &Path, needles: &[&str]) -> Option<i64> {
 
 fn read_sync_times(root: &Path) -> (Option<i64>, Option<i64>, Option<i64>) {
     let last_fetch_at = read_last_fetch_at(root);
-    let last_pull_at = read_last_reflog_at(
-        root,
-        &["pull ", "pull:", "merge branch", "fast-forward"],
-    );
+    let last_pull_at =
+        read_last_reflog_at(root, &["pull ", "pull:", "merge branch", "fast-forward"]);
     let last_push_at = read_last_reflog_at(root, &["push "]);
     (last_fetch_at, last_pull_at, last_push_at)
 }
@@ -1323,9 +1317,7 @@ mod tests {
 
     #[test]
     fn parses_ahead_behind_on_branch_header() {
-        let status = parse_status(
-            b"## main...origin/main [ahead 9, behind 3]\0 M src/a.ts\0",
-        );
+        let status = parse_status(b"## main...origin/main [ahead 9, behind 3]\0 M src/a.ts\0");
         assert_eq!(status.branch.as_deref(), Some("main"));
         assert_eq!(status.upstream.as_deref(), Some("origin/main"));
         assert_eq!(status.ahead, 9);
