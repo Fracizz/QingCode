@@ -170,6 +170,7 @@ describe('DefinitionPicker', () => {
     render(<DefinitionPicker />)
 
     const group = screen.getByRole('button', { name: '折叠用法分组 submitOrder' })
+    expect(screen.getByText('当前文件')).toBeInTheDocument()
     expect(screen.getByText('按调用者 / 文件分组')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: '用法分组 submitOrder' })).toBeInTheDocument()
     expect(group).toHaveTextContent('2 处')
@@ -208,6 +209,7 @@ describe('DefinitionPicker', () => {
     render(<DefinitionPicker />)
 
     expect(screen.getAllByRole('option')).toHaveLength(60)
+    expect(screen.getByText('项目文件')).toBeInTheDocument()
     expect(screen.getByText('显示 60 / 75')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: '显示更多用法' }))

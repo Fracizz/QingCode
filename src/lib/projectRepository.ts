@@ -109,7 +109,9 @@ export async function migrateLegacyProjects(db: Database): Promise<boolean> {
 }
 
 export async function listProjects(db: Database): Promise<Project[]> {
-  return db.select<Project[]>('SELECT * FROM projects ORDER BY last_opened_at DESC')
+  return db.select<Project[]>(
+    'SELECT * FROM projects ORDER BY sort_order ASC, last_opened_at DESC',
+  )
 }
 
 export async function syncProjectsFromUserSettings(
@@ -258,12 +260,16 @@ export async function insertProject(
   path: string,
   now: number,
 ): Promise<void> {
-  await withDb('添加项目', d =>
-    d.execute(
-      'INSERT INTO projects (id, name, path, created_at, last_opened_at) VALUES ($1, $2, $3, $4, $5)',
-      [id, name, path, now, now],
-    ),
-  )
+  await withDb('添加项目', async d => {
+    const [{ max_order }] = await d.select<{ max_order: number | null }[]>(
+      'SELECT MAX(sort_order) AS max_order FROM projects',
+    )
+    const sortOrder = (Number(max_order) || 0) + 1
+    await d.execute(
+      'INSERT INTO projects (id, name, path, created_at, last_opened_at, sort_order) VALUES ($1, $2, $3, $4, $5, $6)',
+      [id, name, path, now, now, sortOrder],
+    )
+  })
 }
 
 export async function deleteProjectRows(id: string): Promise<void> {
@@ -283,6 +289,29 @@ export async function setProjectSortOrder(id: string, sortOrder: number): Promis
   await withDb('排序项目', d =>
     d.execute('UPDATE projects SET sort_order = $1 WHERE id = $2', [sortOrder, id]),
   )
+}
+
+/** Persist many `sort_order` values in one transaction (title-bar drag reorder). */
+export async function setProjectsSortOrders(
+  orders: Array<{ id: string; sortOrder: number }>,
+): Promise<void> {
+  if (orders.length === 0) return
+  await withDb('批量排序项目', async d => {
+    await d.execute('BEGIN IMMEDIATE')
+    try {
+      for (const { id, sortOrder } of orders) {
+        await d.execute('UPDATE projects SET sort_order = $1 WHERE id = $2', [sortOrder, id])
+      }
+      await d.execute('COMMIT')
+    } catch (error) {
+      try {
+        await d.execute('ROLLBACK')
+      } catch (rollbackError) {
+        console.error('sort_order batch rollback failed:', rollbackError)
+      }
+      throw error
+    }
+  })
 }
 
 export async function relocateProjectRows(id: string, path: string, name: string): Promise<void> {

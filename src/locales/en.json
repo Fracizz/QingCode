@@ -657,6 +657,7 @@
     "参数": "Parameter",
     "字段": "Field",
     "项目文件": "Project files",
+    "当前文件": "Current file",
     "{count} 个用法": "{count} usages",
     "显示 {shown} / {total}": "Showing {shown} / {total}",
     "当前筛选没有匹配的用法": "No usages match the current filter",

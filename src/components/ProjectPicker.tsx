@@ -1,9 +1,11 @@
 import {
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
@@ -43,6 +45,7 @@ import WorkspaceMenu from './WorkspaceMenu'
 import ProjectAddDialog from './ProjectAddDialog'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
+import { sortVisibleProjects } from '../lib/projectChipOrder'
 
 const CHIP_GAP = 4
 const ADD_BTN_W = 28
@@ -51,13 +54,14 @@ const OVERFLOW_BTN_W = 28
 export default function ProjectPicker() {
   const { t } = useI18n()
   const allProjects = useProjectStore(s => s.projects)
-  const projects = allProjects.filter(p => !p.hidden)
+  const projects = useMemo(() => sortVisibleProjects(allProjects), [allProjects])
   const currentProject = useProjectStore(s => s.currentProject)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const hideProject = useProjectStore(s => s.hideProject)
   const hideProjectsByIds = useProjectStore(s => s.hideProjectsByIds)
   const refreshProjectTree = useProjectStore(s => s.refreshProjectTree)
+  const reorderVisibleProjects = useProjectStore(s => s.reorderVisibleProjects)
   const setView = useUIStore(s => s.setView)
   const requestSearch = useUIStore(s => s.requestSearch)
   const openProjectManager = useUIStore(s => s.openProjectManager)
@@ -72,6 +76,8 @@ export default function ProjectPicker() {
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({})
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [dropIndex, setDropIndex] = useState<number | null>(null)
   const [contextMenu, setContextMenu] = useState<{
     x: number
     y: number
@@ -299,17 +305,47 @@ export default function ProjectPicker() {
 
       {/* Visible chips — empty leftover width bubbles dblclick maximize to TitleBar */}
       <div ref={containerRef} className="flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden">
-        {visibleProjects.map(project => (
+        {visibleProjects.map((project, index) => (
           <Chip
             key={project.id}
             project={project}
             isCurrent={currentProject?.id === project.id}
             unavailable={unavailableProjectIds.includes(project.id)}
+            dropTarget={dropIndex === index && dragIndex !== index}
             onSwitch={() => void handleSwitch(project)}
             onRemove={() => handleRemove(project)}
             onRelocate={() => handleRelocate(project.id)}
             onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
             onContextMenu={event => openProjectContextMenu(event, project)}
+            onDragStart={event => {
+              if ((event.target as HTMLElement).closest('button')) {
+                event.preventDefault()
+                return
+              }
+              setDragIndex(index)
+              event.dataTransfer.effectAllowed = 'move'
+              event.dataTransfer.setData('text/plain', project.id)
+            }}
+            onDragOver={event => {
+              event.preventDefault()
+              event.dataTransfer.dropEffect = 'move'
+              if (dragIndex !== null && dragIndex !== index) setDropIndex(index)
+            }}
+            onDragLeave={() => {
+              if (dropIndex === index) setDropIndex(null)
+            }}
+            onDrop={event => {
+              event.preventDefault()
+              if (dragIndex !== null && dragIndex !== index) {
+                void reorderVisibleProjects(dragIndex, index)
+              }
+              setDragIndex(null)
+              setDropIndex(null)
+            }}
+            onDragEnd={() => {
+              setDragIndex(null)
+              setDropIndex(null)
+            }}
           />
         ))}
 
@@ -552,21 +588,33 @@ function Chip({
   isCurrent,
   unavailable,
   measure = false,
+  dropTarget = false,
   onSwitch,
   onRemove,
   onRelocate,
   onOpenInExplorer,
   onContextMenu,
+  onDragStart,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  onDragEnd,
 }: {
   project: Project
   isCurrent: boolean
   unavailable: boolean
   measure?: boolean
+  dropTarget?: boolean
   onSwitch: () => void
   onRemove: () => void
   onRelocate: () => void
   onOpenInExplorer: () => void
   onContextMenu: (event: ReactMouseEvent) => void
+  onDragStart?: (event: ReactDragEvent) => void
+  onDragOver?: (event: ReactDragEvent) => void
+  onDragLeave?: () => void
+  onDrop?: (event: ReactDragEvent) => void
+  onDragEnd?: () => void
 }) {
   const { t } = useI18n()
   const activate = () => {
@@ -580,6 +628,7 @@ function Chip({
       aria-current={isCurrent ? 'true' : undefined}
       aria-disabled={unavailable || undefined}
       aria-label={project.name}
+      draggable={!measure}
       onClick={activate}
       onKeyDown={event => {
         if (measure || unavailable) return
@@ -590,6 +639,11 @@ function Chip({
       }}
       onDoubleClick={event => event.stopPropagation()}
       onContextMenu={measure ? undefined : onContextMenu}
+      onDragStart={measure ? undefined : onDragStart}
+      onDragOver={measure ? undefined : onDragOver}
+      onDragLeave={measure ? undefined : onDragLeave}
+      onDrop={measure ? undefined : onDrop}
+      onDragEnd={measure ? undefined : onDragEnd}
       className={`group relative flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-colors
         ${
           isCurrent
@@ -597,7 +651,8 @@ function Chip({
             : unavailable
             ? 'text-fg-dim cursor-default'
             : 'text-fg-muted hover:text-fg hover:bg-bg-hover cursor-pointer'
-        }`}
+        }
+        ${dropTarget ? 'ring-1 ring-inset ring-accent/60' : ''}`}
     >
       {isCurrent && (
         <span className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand" aria-hidden />

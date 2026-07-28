@@ -26,9 +26,11 @@ import {
   renameProjectRow,
   setProjectHidden,
   setProjectSortOrder as persistSortOrder,
+  setProjectsSortOrders,
   touchAndLoadRecentFiles,
   upsertRecentFile,
 } from '../lib/projectRepository'
+import { durableSortOrders, reorderVisibleProjects as reorderVisibleProjectsList } from '../lib/projectChipOrder'
 import {
   buildExpandedProjectsMap,
   createEphemeralProject,
@@ -96,6 +98,8 @@ interface ProjectState {
   unhideProject: (id: string) => Promise<void>
   /** Persist a manual sort order for a project (used by the project manager). */
   setProjectSortOrder: (id: string, sortOrder: number) => Promise<void>
+  /** Reorder title-bar (non-hidden) projects by visible-list indices and persist. */
+  reorderVisibleProjects: (fromIndex: number, toIndex: number) => Promise<void>
   relocateProject: (id: string, path: string) => Promise<boolean>
   renameProject: (id: string, name: string) => Promise<void>
   /** @returns false if the user cancelled dirty-tab confirmation or activation failed */
@@ -569,6 +573,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     } catch (e) {
       console.error('setProjectSortOrder failed:', e)
       get().pushToast('error', `排序项目失败: ${String(e)}`)
+    }
+  },
+
+  reorderVisibleProjects: async (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return
+    const next = reorderVisibleProjectsList(get().projects, fromIndex, toIndex)
+    if (next === get().projects) return
+    set({ projects: next })
+    const orders = durableSortOrders(next)
+    if (orders.length === 0) return
+    try {
+      await setProjectsSortOrders(orders)
+      void persistProjectsToUserSettings()
+    } catch (e) {
+      console.error('reorderVisibleProjects failed:', e)
+      get().pushToast('error', `排序项目失败: ${String(e)}`)
+      // Best-effort reload so UI matches SQLite if the batch write failed mid-way.
+      await get().loadProjects()
     }
   },
 

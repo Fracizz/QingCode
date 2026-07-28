@@ -20,6 +20,7 @@ import { useI18n } from '../lib/i18n'
 import type { SemanticUsageFilter } from '../lib/semanticNavigation'
 import { getContextMenuStylePosition } from './contextMenuPosition'
 import { groupUsageCandidates } from '../lib/usageGrouping'
+import { pathsEqual } from '../utils/fileReferences'
 
 const USAGE_RENDER_BATCH_SIZE = 60
 
@@ -109,6 +110,19 @@ function splitRelativePath(relative: string): { file: string; directory: string 
     file: normalized.slice(separator + 1),
     directory: normalized.slice(0, separator),
   }
+}
+
+/** True when every loaded usage shares one path and the result set is fully known. */
+function usagesAreSingleFile(
+  candidates: DefinitionCandidate[],
+  totalCount: number,
+  complete: boolean | undefined
+): boolean {
+  if (candidates.length === 0) return false
+  if (complete === false) return false
+  if (totalCount > candidates.length) return false
+  const firstPath = candidates[0].path
+  return candidates.every(candidate => pathsEqual(candidate.path, firstPath))
 }
 
 function highlightedCode(text: string, symbol: string) {
@@ -497,6 +511,15 @@ export default function DefinitionPicker() {
   const totalCount = activeDetails?.totalCount ?? candidates.length
   const displayCount = activeDetails?.complete === false ? `${totalCount}+` : String(totalCount)
   const selectedKindLabel = kindLabel(activeDetails?.kind ?? 'symbol')
+  // Scope badge reflects the full loaded result set (not the usage-kind filter).
+  const scopeCandidates = usageLoader ? pagedCandidates : candidates
+  const scopeLabel = usagesAreSingleFile(
+    scopeCandidates,
+    totalCount,
+    activeDetails?.complete
+  )
+    ? t('当前文件')
+    : t('项目文件')
   const filters: Array<{
     value: SemanticUsageFilter
     label: string
@@ -618,7 +641,7 @@ export default function DefinitionPicker() {
           <span className="mx-1 h-4 w-px bg-border" aria-hidden />
           <span className="flex items-center gap-1 text-[11px] text-fg-muted">
             <Files size={13} aria-hidden />
-            {t('项目文件')}
+            {scopeLabel}
           </span>
           <span className="rounded border border-border-strong bg-bg-elevated/50 px-1.5 py-0.5 text-[10px] text-fg-muted">
             {t('按调用者 / 文件分组')}
