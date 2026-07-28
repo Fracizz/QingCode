@@ -595,6 +595,15 @@ export default function TerminalTabs({
                     }
                   }}
                   onDoubleClick={event => {
+                    // Close / restart buttons sit inside the tab; their dblclick
+                    // must not start rename (common when double-clicking ×).
+                    if (
+                      (event.target as Element | null)?.closest?.(
+                        'button, input, [data-terminal-close]',
+                      )
+                    ) {
+                      return
+                    }
                     event.preventDefault()
                     startRename(t.id, t.name)
                   }}
@@ -699,6 +708,10 @@ export default function TerminalTabs({
                           e.stopPropagation()
                           restartTerminal(t.id)
                         }}
+                        onDoubleClick={e => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                        }}
                       >
                         <RotateCcw size={12} />
                       </button>
@@ -719,6 +732,10 @@ export default function TerminalTabs({
                           : 'hover:bg-bg-active'
                       }`}
                       onClick={e => handleCloseClick(e, t.id)}
+                      onDoubleClick={e => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                      }}
                     >
                       {isCloseArmed ? (
                         <Circle size={9} fill="currentColor" />
