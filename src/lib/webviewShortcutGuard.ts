@@ -22,6 +22,21 @@ function isWebviewDevtoolsShortcut(event: KeyboardEvent): boolean {
   return DEVTOOLS_KEYS.has(key) && (windowsDevtools || macDevtools)
 }
 
+/** Native Ctrl/⌘+A in text fields is wanted; elsewhere it selects the whole page. */
+function allowsNativeSelectAll(target: EventTarget | null): boolean {
+  if (typeof HTMLElement === 'undefined') return false
+  if (!(target instanceof HTMLElement)) return false
+  return Boolean(target.closest('input, textarea, select'))
+}
+
+function isWebviewSelectAllShortcut(event: KeyboardEvent): boolean {
+  const key = event.key.toLowerCase()
+  if (key !== 'a') return false
+  const primaryModifier = event.ctrlKey || event.metaKey
+  if (!primaryModifier || event.altKey || event.shiftKey) return false
+  return !allowsNativeSelectAll(event.target)
+}
+
 /** WebView accelerators that must not take over QingCode keyboard input. */
 export function isWebviewNativeShortcut(
   event: KeyboardEvent,
@@ -32,6 +47,8 @@ export function isWebviewNativeShortcut(
 
   const primaryModifier = event.ctrlKey || event.metaKey
   if (primaryModifier && !event.altKey && key === 'r') return true
+
+  if (isWebviewSelectAllShortcut(event)) return true
 
   if (isWebviewDevtoolsShortcut(event)) {
     return !resolveAllowDevtools(options)

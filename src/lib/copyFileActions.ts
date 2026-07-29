@@ -1,7 +1,7 @@
 import type { EditorView } from '@codemirror/view'
 import { translate } from './i18n'
 import { getEditorView } from './editorSession'
-import { explorerPathForCopyShortcut } from './explorerSelection'
+import { explorerPathsForCopyShortcut } from './explorerSelection'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import {
@@ -17,11 +17,16 @@ function activeEditableTab() {
   return tabs.find(t => t.id === activeTabId) ?? null
 }
 
+function asPathList(pathOrPaths: string | readonly string[]): string[] {
+  return typeof pathOrPaths === 'string' ? [pathOrPaths] : [...pathOrPaths]
+}
+
 /** Prefer focused explorer selection; fall back to the active editor tab. */
-function pathForCopyShortcut(): string | null {
-  const fromExplorer = explorerPathForCopyShortcut()
-  if (fromExplorer) return fromExplorer
-  return activeEditableTab()?.path ?? null
+function pathsForCopyShortcut(): string[] {
+  const fromExplorer = explorerPathsForCopyShortcut()
+  if (fromExplorer.length > 0) return fromExplorer
+  const tab = activeEditableTab()
+  return tab?.path ? [tab.path] : []
 }
 
 function selectionLineRange(view: EditorView) {
@@ -34,72 +39,105 @@ function selectionLineRange(view: EditorView) {
   return { startLine, endLine }
 }
 
-/** Copy a filesystem path to the clipboard (Ctrl+Shift+C). */
-export async function copyPathAction(path: string): Promise<void> {
+/** Copy filesystem path(s) to the clipboard (Ctrl+Shift+C). Multiple → newline-joined. */
+export async function copyPathAction(pathOrPaths: string | readonly string[]): Promise<void> {
+  const paths = asPathList(pathOrPaths)
+  if (paths.length === 0) return
   const pushToast = useProjectStore.getState().pushToast
   try {
-    await copyToClipboard(path)
-    pushToast('success', translate('路径已复制'))
+    await copyToClipboard(paths.join('\n'))
+    pushToast(
+      'success',
+      paths.length === 1
+        ? translate('路径已复制')
+        : translate('已复制 {count} 个路径', { count: paths.length }),
+    )
   } catch (error) {
     pushToast('error', translate('复制路径失败: {error}', { error: String(error) }))
   }
 }
 
-/** Copy project-relative path with POSIX slashes (Ctrl+Shift+Alt+C). */
-export async function copyRelativePathAction(path: string): Promise<void> {
+/** Copy project-relative path(s) with POSIX slashes (Ctrl+Shift+Alt+C). */
+export async function copyRelativePathAction(
+  pathOrPaths: string | readonly string[],
+): Promise<void> {
+  const paths = asPathList(pathOrPaths)
+  if (paths.length === 0) return
   const pushToast = useProjectStore.getState().pushToast
   const projectState = useProjectStore.getState()
-  const project =
-    findProjectForPath(projectState.projects, path) ?? projectState.currentProject
-  if (!project) {
-    pushToast('error', translate('无法确定该路径所属项目'))
-    return
+  const lines: string[] = []
+  for (const path of paths) {
+    const project =
+      findProjectForPath(projectState.projects, path) ?? projectState.currentProject
+    if (!project) {
+      pushToast('error', translate('无法确定该路径所属项目'))
+      return
+    }
+    lines.push(projectRelativePath(project.path, path))
   }
   try {
-    await copyToClipboard(projectRelativePath(project.path, path))
-    pushToast('success', translate('相对路径已复制'))
+    await copyToClipboard(lines.join('\n'))
+    pushToast(
+      'success',
+      lines.length === 1
+        ? translate('相对路径已复制')
+        : translate('已复制 {count} 个相对路径', { count: lines.length }),
+    )
   } catch (error) {
     pushToast('error', translate('复制路径失败: {error}', { error: String(error) }))
   }
 }
 
 /**
- * Copy an `@project/relative#L…` file reference.
- * When `startLine` / `endLine` are omitted, uses L1 (explorer) or the
- * active editor selection when `path` matches the focused tab.
+ * Copy `@project/relative#L…` file reference(s).
+ * When `startLine` / `endLine` are omitted for a single path, uses L1 (explorer)
+ * or the active editor selection when `path` matches the focused tab.
+ * Multiple paths always use L1 each (newline-joined).
  */
 export async function copyFileReferenceAction(
-  path: string,
+  pathOrPaths: string | readonly string[],
   lineRange?: { startLine: number; endLine?: number },
 ): Promise<void> {
+  const paths = asPathList(pathOrPaths)
+  if (paths.length === 0) return
   const pushToast = useProjectStore.getState().pushToast
   const projectState = useProjectStore.getState()
-  const project =
-    findProjectForPath(projectState.projects, path) ?? projectState.currentProject
-  if (!project) {
-    pushToast('error', translate('无法确定该路径所属项目'))
-    return
-  }
+  const references: string[] = []
 
-  let startLine = lineRange?.startLine ?? 1
-  let endLine = lineRange?.endLine ?? startLine
+  for (const path of paths) {
+    const project =
+      findProjectForPath(projectState.projects, path) ?? projectState.currentProject
+    if (!project) {
+      pushToast('error', translate('无法确定该路径所属项目'))
+      return
+    }
 
-  if (!lineRange) {
-    const tab = activeEditableTab()
-    if (tab && pathsEqual(tab.path, path)) {
-      const view = getEditorView(tab.id)
-      if (view) {
-        const range = selectionLineRange(view)
-        startLine = range.startLine
-        endLine = range.endLine
+    let startLine = lineRange?.startLine ?? 1
+    let endLine = lineRange?.endLine ?? startLine
+
+    if (!lineRange && paths.length === 1) {
+      const tab = activeEditableTab()
+      if (tab && pathsEqual(tab.path, path)) {
+        const view = getEditorView(tab.id)
+        if (view) {
+          const range = selectionLineRange(view)
+          startLine = range.startLine
+          endLine = range.endLine
+        }
       }
     }
+
+    references.push(formatFileReference(project, path, startLine, endLine))
   }
 
-  const reference = formatFileReference(project, path, startLine, endLine)
   try {
-    await copyToClipboard(reference)
-    pushToast('success', translate('文件引用已复制'))
+    await copyToClipboard(references.join('\n'))
+    pushToast(
+      'success',
+      references.length === 1
+        ? translate('文件引用已复制')
+        : translate('已复制 {count} 个文件引用', { count: references.length }),
+    )
   } catch (error) {
     pushToast('error', translate('复制引用失败: {error}', { error: String(error) }))
   }
@@ -107,19 +145,19 @@ export async function copyFileReferenceAction(
 
 /** Ctrl+Shift+C / Ctrl+Shift+Alt+C / Alt+C — explorer selection when focused, else active tab. */
 export async function copyActivePathAction(): Promise<void> {
-  const path = pathForCopyShortcut()
-  if (!path) return
-  await copyPathAction(path)
+  const paths = pathsForCopyShortcut()
+  if (paths.length === 0) return
+  await copyPathAction(paths)
 }
 
 export async function copyActiveRelativePathAction(): Promise<void> {
-  const path = pathForCopyShortcut()
-  if (!path) return
-  await copyRelativePathAction(path)
+  const paths = pathsForCopyShortcut()
+  if (paths.length === 0) return
+  await copyRelativePathAction(paths)
 }
 
 export async function copyActiveFileReferenceAction(): Promise<void> {
-  const path = pathForCopyShortcut()
-  if (!path) return
-  await copyFileReferenceAction(path)
+  const paths = pathsForCopyShortcut()
+  if (paths.length === 0) return
+  await copyFileReferenceAction(paths)
 }

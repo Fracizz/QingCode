@@ -57,8 +57,6 @@ import type { Project } from '../types'
 import {
   addPathToSet,
   collectAncestorDirs,
-  copyToClipboard,
-  formatFileReference,
   isDescendantOf,
   pathSetHas,
   pathsEqual,
@@ -89,8 +87,12 @@ import {
   isShortcutBound,
   shortcutMatchesEvent,
 } from '../lib/shortcuts'
-import { copyRelativePathAction } from '../lib/copyFileActions'
-import { setExplorerSelectedPath } from '../lib/explorerSelection'
+import {
+  copyFileReferenceAction,
+  copyPathAction,
+  copyRelativePathAction,
+} from '../lib/copyFileActions'
+import { setExplorerSelectedPaths } from '../lib/explorerSelection'
 import { useShortcutStore } from '../store/shortcutStore'
 import ExplorerTreeRow from './ExplorerTreeRow'
 
@@ -222,9 +224,15 @@ export default function Sidebar() {
   }, [currentProject?.id, replaceSelection])
 
   useEffect(() => {
-    setExplorerSelectedPath(selectedPath)
-    return () => setExplorerSelectedPath(null)
-  }, [selectedPath])
+    const paths =
+      selectedPaths.size > 0
+        ? [...selectedPaths]
+        : selectedPath
+          ? [selectedPath]
+          : []
+    setExplorerSelectedPaths(paths)
+    return () => setExplorerSelectedPaths([])
+  }, [selectedPath, selectedPaths])
 
   useEffect(() => {
     if (treeRevealPath) queueMicrotask(() => replaceSelection(treeRevealPath))
@@ -502,35 +510,11 @@ export default function Sidebar() {
     })
   }
 
-  const copyPath = async (path: string) => {
-    try {
-      await copyToClipboard(path)
-      useProjectStore.getState().pushToast('success', t('路径已复制'))
-    } catch (e) {
-      useProjectStore.getState().pushToast('error', t('复制路径失败: {error}', { error: String(e) }))
-    }
-  }
-
   const projectOfPath = (path: string): Project | undefined => {
     const norm = path.replace(/\\/g, '/')
     return useProjectStore
       .getState()
       .projects.find(p => norm === p.path.replace(/\\/g, '/') || norm.startsWith(p.path.replace(/\\/g, '/') + '/'))
-  }
-
-  const copyAsReference = async (path: string) => {
-    const project = projectOfPath(path)
-    if (!project) {
-      useProjectStore.getState().pushToast('error', t('无法确定该路径所属项目'))
-      return
-    }
-    try {
-      const ref = formatFileReference(project, path, 1)
-      await copyToClipboard(ref)
-      useProjectStore.getState().pushToast('success', t('文件引用已复制'))
-    } catch (e) {
-      useProjectStore.getState().pushToast('error', t('复制引用失败: {error}', { error: String(e) }))
-    }
   }
 
   const openTerminalHere = async (cwd: string) => {
@@ -1059,7 +1043,7 @@ export default function Sidebar() {
           label: t('复制路径'),
           icon: <Copy size={14} />,
           shortcut: 'Ctrl+Shift+C',
-          action: () => copyPath(project.path),
+          action: () => void copyPathAction(project.path),
         },
         {
           label: t('复制相对路径'),
@@ -1071,7 +1055,7 @@ export default function Sidebar() {
           label: t('复制为文件引用'),
           icon: <AtSign size={14} />,
           shortcut: 'Alt+C',
-          action: () => copyAsReference(project.path),
+          action: () => void copyFileReferenceAction(project.path),
         },
         {
           label: t('显示属性'),
@@ -1194,19 +1178,19 @@ export default function Sidebar() {
         label: t('复制路径'),
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+Shift+C',
-        action: () => copyPath(node.path),
+        action: () => void copyPathAction(pathsForClipboardAction(node.path)),
       },
       {
         label: t('复制相对路径'),
         icon: <Copy size={14} />,
         shortcut: COPY_RELATIVE_PATH_SHORTCUT,
-        action: () => void copyRelativePathAction(node.path),
+        action: () => void copyRelativePathAction(pathsForClipboardAction(node.path)),
       },
       {
         label: t('复制为文件引用'),
         icon: <AtSign size={14} />,
         shortcut: 'Alt+C',
-        action: () => copyAsReference(node.path),
+        action: () => void copyFileReferenceAction(pathsForClipboardAction(node.path)),
       },
       {
         label: t('显示属性'),
@@ -1249,19 +1233,25 @@ export default function Sidebar() {
           return
         }
       }
-      if (selectedPath && shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)) {
+      if (shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)) {
+        const paths = pathsForClipboardAction()
+        if (paths.length === 0) return
         event.preventDefault()
-        void copyPath(selectedPath)
+        void copyPathAction(paths)
         return
       }
-      if (selectedPath && shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event.nativeEvent)) {
+      if (shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event.nativeEvent)) {
+        const paths = pathsForClipboardAction()
+        if (paths.length === 0) return
         event.preventDefault()
-        void copyRelativePathAction(selectedPath)
+        void copyRelativePathAction(paths)
         return
       }
-      if (selectedPath && shortcutMatchesEvent('Alt+C', event.nativeEvent)) {
+      if (shortcutMatchesEvent('Alt+C', event.nativeEvent)) {
+        const paths = pathsForClipboardAction()
+        if (paths.length === 0) return
         event.preventDefault()
-        void copyAsReference(selectedPath)
+        void copyFileReferenceAction(paths)
         return
       }
       if (selectedPath && shortcutMatchesEvent(renameShortcut, event.nativeEvent)) {
@@ -1518,9 +1508,12 @@ export default function Sidebar() {
                               draggingPaths,
                               gitStatusFor,
                               onOpenContextMenu: showContextMenu,
-                              onCopyPath: copyPath,
-                              onCopyRelativePath: path => void copyRelativePathAction(path),
-                              onCopyAsReference: path => void copyAsReference(path),
+                              onCopyPath: path =>
+                                void copyPathAction(pathsForClipboardAction(path)),
+                              onCopyRelativePath: path =>
+                                void copyRelativePathAction(pathsForClipboardAction(path)),
+                              onCopyAsReference: path =>
+                                void copyFileReferenceAction(pathsForClipboardAction(path)),
                               onSelectNode: selectTreeNode,
                               onOpenNode: openTreeNode,
                               onToggleFolder: node => void toggleFolderExpand(node),

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
 import {
   isWebviewNativeShortcut,
@@ -26,6 +27,8 @@ describe('isWebviewNativeShortcut', () => {
     { key: 'r', ctrlKey: true },
     { key: 'R', ctrlKey: true, shiftKey: true },
     { key: 'r', metaKey: true },
+    { key: 'a', ctrlKey: true },
+    { key: 'A', metaKey: true },
     { key: 'F12' },
     { key: 'i', ctrlKey: true, shiftKey: true },
     { key: 'j', ctrlKey: true, shiftKey: true },
@@ -64,6 +67,21 @@ describe('isWebviewNativeShortcut', () => {
     { key: 'c', ctrlKey: true, shiftKey: true, altKey: true },
   ])('keeps QingCode shortcut $key available', shortcut => {
     expect(isWebviewNativeShortcut(keyEvent(shortcut), prodGuard)).toBe(false)
+  })
+
+  it('allows native Ctrl+A inside input fields', () => {
+    const input = document.createElement('input')
+    expect(
+      isWebviewNativeShortcut(keyEvent({ key: 'a', ctrlKey: true, target: input }), prodGuard),
+    ).toBe(false)
+  })
+
+  it('blocks page-wide Ctrl+A but still propagates for app handlers (e.g. Git)', () => {
+    const event = keyEvent({ key: 'a', ctrlKey: true })
+
+    expect(preventWebviewNativeShortcut(event, prodGuard)).toBe(true)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(event.stopPropagation).not.toHaveBeenCalled()
   })
 
   it('cancels the WebView default without stopping QingCode event propagation', () => {

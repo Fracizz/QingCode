@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { flattenRemoteRows, upstreamRemoteName } from './ScmRemotesBar'
+import {
+  flattenRemoteRows,
+  primaryRemoteRow,
+  upstreamRemoteName,
+} from '@/lib/git/scmRemotes'
 import type { GitRemote } from '@/lib/git/git'
 
-describe('ScmRemotesBar helpers', () => {
+describe('scmRemotes helpers', () => {
   it('extracts remote name from upstream ref', () => {
     expect(upstreamRemoteName('origin/main')).toBe('origin')
     expect(upstreamRemoteName('github/feature/x')).toBe('github')
@@ -41,5 +45,21 @@ describe('ScmRemotesBar helpers', () => {
     expect(rows).toHaveLength(2)
     expect(rows[0]).toMatchObject({ kind: 'both', url: 'https://gitee.com/a.git', isCurrent: false })
     expect(rows[1]).toMatchObject({ kind: 'push', url: 'https://github.com/a.git' })
+  })
+
+  it('picks current upstream remote as primary', () => {
+    const remotes: GitRemote[] = [
+      {
+        name: 'origin',
+        fetch_url: 'https://gitee.com/a.git',
+        push_urls: ['https://gitee.com/a.git'],
+      },
+      {
+        name: 'github',
+        fetch_url: 'https://github.com/a.git',
+        push_urls: ['https://github.com/a.git'],
+      },
+    ]
+    expect(primaryRemoteRow(remotes, 'github/main')?.name).toBe('github')
   })
 })

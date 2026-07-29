@@ -212,7 +212,7 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 文件：`src/components/SourceControlPanel.tsx`、`src/components/ScmInlineDiff.tsx`
 
 - 活动栏进入「源代码管理」后，**主编辑区整页**显示 SCM 工作台（参考 UGit 的变更/历史分区）；不再占用左侧窄侧栏。再点一次 SCM 图标回到资源管理器。
-- 顶栏：分支下拉、检查更新、拉取、推送。顶栏下方展示 **GIT 地址**（`git remote -v`，支持多远程 / 多 push URL，可一键复制）；页签：**变更** | **历史**。
+- 顶栏：分支下拉、检查更新、拉取、推送、**GIT 地址**分段（点击复制；多远程时下拉可选）。页签：**变更** | **历史**。
 - **变更**：左栏为变更/待提交列表与提交区；右栏内嵌 Diff（`git_file_contents` + DiffEditor）。单击查看差异；双击或右键「打开更改」可在编辑器标签中打开并切回资源管理器。左栏宽度可拖拽（`PanelResizer`，持久化 `qingcode:scm-layout`）。
 - SCM 内部分栏拖动时由 `requestAnimationFrame` 合并指针事件并直接更新分栏 DOM 宽度；松手后才提交 React 状态与 `localStorage`。禁止在每次 `pointermove` 中同步读布局、重渲染整个 SCM 或持久化。
 - **历史**：默认左侧提交列表约占 3/5、右侧提交详情（摘要 + 更改文件列表，可拖宽、可筛选/正则、虚拟列表）；点击文件后左侧用 Diff **覆盖**提交列表（可「返回提交列表」）。`git_log` 分页 + 虚拟列表；`git_commit_files` / `git_commit_file_contents`。不做回退 / cherry-pick。
@@ -292,6 +292,7 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 
 - QingCode 自有快捷键优先于 WebView 原生加速键，且在编辑器、文件树等对应焦点区域保持可用。
 - 禁止 WebView 原生刷新快捷键：`F5`、`Ctrl`/`⌘` + `R`（含 `Shift` 组合）；dev / prod 均拦截。
+- 禁止 WebView 原生整页全选：`Ctrl`/`⌘` + `A`（不含 `Alt`/`Shift`）；`input` / `textarea` / `select` 内保留原生全选。守卫只 `preventDefault()`，因此编辑器、Git 变更列表等应用内 Ctrl+A 仍可执行。
 - **生产构建**禁止 WebView 原生开发者工具快捷键：`F12`、`Ctrl+Shift+I/J/C`，以及 macOS 的 `⌘+⌥+I/J/C`。
 - **开发构建**（`pnpm tauri:dev` / Vite `import.meta.env.DEV`，与 Rust `is_dev_build` / `.devtools(true)` 对齐）放行上述开发者工具快捷键，以便 F12 打开 WebView 开发者工具。
 - **生产构建**由 `contextMenuGuard` 拦截 WebView 原生右键菜单，仅在输入框等控件保留浏览器复制/粘贴菜单；编辑器、文件树等使用应用内 `ContextMenu`。

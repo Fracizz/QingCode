@@ -5,6 +5,7 @@ const copyToClipboard = vi.fn()
 const findProjectForPath = vi.fn()
 const formatFileReference = vi.fn()
 const getEditorView = vi.fn()
+const explorerPathsForCopyShortcut = vi.fn()
 
 vi.mock('./i18n', () => ({
   translate: (key: string) => key,
@@ -33,6 +34,10 @@ vi.mock('./editorSession', () => ({
   getEditorView: (...args: unknown[]) => getEditorView(...args),
 }))
 
+vi.mock('./explorerSelection', () => ({
+  explorerPathsForCopyShortcut: (...args: unknown[]) => explorerPathsForCopyShortcut(...args),
+}))
+
 vi.mock('../utils/fileReferences', async () => {
   const actual = await vi.importActual<typeof import('../utils/fileReferences')>(
     '../utils/fileReferences',
@@ -45,7 +50,12 @@ vi.mock('../utils/fileReferences', async () => {
   }
 })
 
-import { copyFileReferenceAction, copyPathAction } from './copyFileActions'
+import {
+  copyActivePathAction,
+  copyFileReferenceAction,
+  copyPathAction,
+  copyRelativePathAction,
+} from './copyFileActions'
 
 describe('copyFileActions', () => {
   beforeEach(() => {
@@ -54,6 +64,8 @@ describe('copyFileActions', () => {
     findProjectForPath.mockReset()
     formatFileReference.mockReset()
     getEditorView.mockReset()
+    explorerPathsForCopyShortcut.mockReset()
+    explorerPathsForCopyShortcut.mockReturnValue([])
     copyToClipboard.mockResolvedValue(undefined)
     findProjectForPath.mockReturnValue({ id: 'p1', name: 'App', path: 'D:/work/app' })
     formatFileReference.mockReturnValue('@App/src/a.ts#L1')
@@ -63,6 +75,20 @@ describe('copyFileActions', () => {
     await copyPathAction('D:/work/app/src/a.ts')
     expect(copyToClipboard).toHaveBeenCalledWith('D:/work/app/src/a.ts')
     expect(pushToast).toHaveBeenCalledWith('success', '路径已复制')
+  })
+
+  it('copyPathAction joins multiple paths with newlines', async () => {
+    await copyPathAction(['D:/work/app/a.svg', 'D:/work/app/b.svg', 'D:/work/app/c.html'])
+    expect(copyToClipboard).toHaveBeenCalledWith(
+      'D:/work/app/a.svg\nD:/work/app/b.svg\nD:/work/app/c.html',
+    )
+    expect(pushToast).toHaveBeenCalledWith('success', '已复制 {count} 个路径')
+  })
+
+  it('copyRelativePathAction joins multiple relative paths', async () => {
+    await copyRelativePathAction(['D:/work/app/a.svg', 'D:/work/app/b.svg'])
+    expect(copyToClipboard).toHaveBeenCalledWith('a.svg\nb.svg')
+    expect(pushToast).toHaveBeenCalledWith('success', '已复制 {count} 个相对路径')
   })
 
   it('copyFileReferenceAction formats with explicit line range (explorer)', async () => {
@@ -75,5 +101,15 @@ describe('copyFileActions', () => {
     )
     expect(copyToClipboard).toHaveBeenCalledWith('@App/src/a.ts#L1')
     expect(pushToast).toHaveBeenCalledWith('success', '文件引用已复制')
+  })
+
+  it('copyActivePathAction copies all focused explorer selections', async () => {
+    explorerPathsForCopyShortcut.mockReturnValue([
+      'D:/work/app/a.svg',
+      'D:/work/app/b.svg',
+    ])
+    await copyActivePathAction()
+    expect(copyToClipboard).toHaveBeenCalledWith('D:/work/app/a.svg\nD:/work/app/b.svg')
+    expect(pushToast).toHaveBeenCalledWith('success', '已复制 {count} 个路径')
   })
 })

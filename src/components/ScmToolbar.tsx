@@ -2,12 +2,15 @@ import {
   ArrowDown,
   ArrowUp,
   ChevronDown,
+  Copy,
   GitBranch,
+  Link,
   LoaderCircle,
   RefreshCw,
 } from 'lucide-react'
 import type { CSSProperties, HTMLAttributes, ReactNode, RefObject } from 'react'
-import type { GitStatus } from '@/lib/git/git'
+import type { GitRemote, GitStatus } from '@/lib/git/git'
+import { flattenRemoteRows, primaryRemoteRow, type ScmRemoteRow } from '@/lib/git/scmRemotes'
 import { formatRelativeTime } from '@/lib/formatRelativeTime'
 import { resolveGitSyncTimestamp } from '@/lib/git/syncTimes'
 import Tooltip from './Tooltip'
@@ -18,11 +21,15 @@ type ScmOperationKind = 'fetch' | 'pull' | 'push' | 'switch'
 export type ScmToolbarProps = {
   status: GitStatus | null
   projectPath: string | null
+  remotes: GitRemote[] | null
+  remotesLoading?: boolean
   loading: boolean
   operationKind: ScmOperationKind | null
   disabled: boolean
   branchMenuOpen: boolean
+  remotesMenuOpen: boolean
   branchAnchorRef: RefObject<HTMLButtonElement | null>
+  remotesMenuAnchorRef: RefObject<HTMLButtonElement | null>
   pullMenuAnchorRef: RefObject<HTMLButtonElement | null>
   pushMenuAnchorRef: RefObject<HTMLButtonElement | null>
   onOpenBranchMenu: () => void
@@ -31,6 +38,8 @@ export type ScmToolbarProps = {
   onOpenPullMenu: () => void
   onPush: () => void
   onOpenPushMenu: () => void
+  onCopyRemoteUrl: (url: string) => void
+  onOpenRemotesMenu: () => void
 }
 
 function CountBadge({ count }: { count: number }) {
@@ -75,11 +84,15 @@ function SegmentGroup({
 export default function ScmToolbar({
   status,
   projectPath,
+  remotes,
+  remotesLoading = false,
   loading,
   operationKind,
   disabled,
   branchMenuOpen,
+  remotesMenuOpen,
   branchAnchorRef,
+  remotesMenuAnchorRef,
   pullMenuAnchorRef,
   pushMenuAnchorRef,
   onOpenBranchMenu,
@@ -88,6 +101,8 @@ export default function ScmToolbar({
   onOpenPullMenu,
   onPush,
   onOpenPushMenu,
+  onCopyRemoteUrl,
+  onOpenRemotesMenu,
 }: ScmToolbarProps) {
   const { t } = useI18n()
   const repoReady = Boolean(status?.is_repository)
@@ -95,6 +110,9 @@ export default function ScmToolbar({
   const behind = status?.behind ?? 0
   const ahead = status?.ahead ?? 0
   const neverLabel = t('从未')
+  const primary = primaryRemoteRow(remotes, status?.upstream)
+  const remoteRows = remotes ? flattenRemoteRows(remotes, primary?.name ?? null) : []
+  const hasMultipleRemotes = remoteRows.length > 1
 
   const fetchTime = formatRelativeTime(
     resolveGitSyncTimestamp(projectPath, 'fetch', status?.last_fetch_at),
@@ -238,6 +256,58 @@ export default function ScmToolbar({
           <ChevronDown size={11} />
         </button>
       </SegmentGroup>
+
+      {repoReady && (
+        <Tooltip
+          label={primary?.url ?? t('GIT 地址')}
+          side="bottom"
+          onlyWhenOverflow={!primary}
+          wrapperClassName="flex min-w-0 max-w-[16rem] shrink"
+        >
+          <SegmentGroup
+            active={remotesMenuOpen}
+            className="w-full min-w-0"
+            data-scm-action-segment="remotes"
+          >
+            <button
+              type="button"
+              aria-label={t('复制 GIT 地址')}
+              disabled={!primary || writeDisabled}
+              onClick={() => {
+                if (primary) onCopyRemoteUrl(primary.url)
+              }}
+              className="flex h-full min-w-0 flex-1 items-center gap-1 px-1.5 text-left text-[11px] text-fg transition-colors hover:bg-bg-hover/80 disabled:opacity-40"
+            >
+              {remotesLoading && remotes === null ? (
+                <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
+              ) : (
+                <Link size={12} className="shrink-0 text-fg-muted" />
+              )}
+              <span className="min-w-0 truncate font-mono text-[11px]">
+                {primary?.url ?? t('暂无远程地址')}
+              </span>
+              {primary && <Copy size={11} className="shrink-0 text-fg-dim" />}
+            </button>
+            {hasMultipleRemotes && (
+              <button
+                ref={remotesMenuAnchorRef}
+                type="button"
+                aria-label={t('更多远程地址')}
+                aria-haspopup="menu"
+                aria-expanded={remotesMenuOpen}
+                disabled={writeDisabled}
+                onClick={onOpenRemotesMenu}
+                className={menuBtn}
+              >
+                <ChevronDown
+                  size={11}
+                  className={`transition-transform ${remotesMenuOpen ? 'rotate-180' : ''}`}
+                />
+              </button>
+            )}
+          </SegmentGroup>
+        </Tooltip>
+      )}
     </div>
   )
 }
@@ -308,6 +378,56 @@ export function ScmPushMenu({ open, style, menuRef, onPush }: ScmPushMenuProps) 
         <ArrowUp size={12} />
         {t('推送到远程')}
       </button>
+    </div>
+  )
+}
+
+export type ScmRemotesMenuProps = {
+  open: boolean
+  style: CSSProperties
+  menuRef: RefObject<HTMLDivElement | null>
+  rows: ScmRemoteRow[]
+  onCopy: (url: string) => void
+}
+
+export function ScmRemotesMenu({ open, style, menuRef, rows, onCopy }: ScmRemotesMenuProps) {
+  const { t } = useI18n()
+  if (!open) return null
+  return (
+    <div
+      ref={menuRef}
+      role="menu"
+      className="ui-font-scaled fixed z-[100] max-w-[28rem] min-w-[14rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+      style={style}
+      onPointerDown={event => event.stopPropagation()}
+    >
+      <div className="px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted">
+        {t('GIT 地址')}
+      </div>
+      {rows.map(row => (
+        <button
+          key={row.key}
+          type="button"
+          role="menuitem"
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-fg hover:bg-bg-hover"
+          onClick={() => onCopy(row.url)}
+        >
+          <Copy size={12} className="shrink-0 text-fg-dim" />
+          <span className="shrink-0 font-medium">{row.name}</span>
+          {row.isCurrent && (
+            <span className="shrink-0 rounded px-1 py-px text-[10px] text-accent bg-accent/10">
+              {t('当前')}
+            </span>
+          )}
+          {row.kind === 'fetch' && (
+            <span className="shrink-0 text-[10px] text-fg-dim">{t('拉取')}</span>
+          )}
+          {row.kind === 'push' && (
+            <span className="shrink-0 text-[10px] text-fg-dim">{t('推送')}</span>
+          )}
+          <span className="min-w-0 truncate font-mono text-[11px] text-fg-muted">{row.url}</span>
+        </button>
+      ))}
     </div>
   )
 }

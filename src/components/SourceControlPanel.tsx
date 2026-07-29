@@ -103,8 +103,8 @@ import EmptyState from './EmptyState'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import ScmResizableColumn from './ScmResizableColumn'
 import ScmCommitHistory, { SCM_COMMIT_PAGE_SIZE } from './ScmCommitHistory'
-import ScmToolbar, { ScmPullMenu, ScmPushMenu } from './ScmToolbar'
-import ScmRemotesBar from './ScmRemotesBar'
+import ScmToolbar, { ScmPullMenu, ScmPushMenu, ScmRemotesMenu } from './ScmToolbar'
+import { flattenRemoteRows, upstreamRemoteName } from '@/lib/git/scmRemotes'
 import { translate, useI18n } from '../lib/i18n'
 import { deferToNativeContextMenuInDev, shouldShowAppContextMenu } from '../lib/devBuild'
 import {
@@ -656,14 +656,22 @@ export default function SourceControlPanel() {
   const pullMenuRef = useRef<HTMLDivElement>(null)
   const pushMenuAnchorRef = useRef<HTMLButtonElement>(null)
   const pushMenuRef = useRef<HTMLDivElement>(null)
+  const remotesMenuAnchorRef = useRef<HTMLButtonElement>(null)
+  const remotesMenuRef = useRef<HTMLDivElement>(null)
   const [pullMenuOpen, setPullMenuOpen] = useState(false)
   const [pushMenuOpen, setPushMenuOpen] = useState(false)
+  const [remotesMenuOpen, setRemotesMenuOpen] = useState(false)
   const [pullMenuStyle, setPullMenuStyle] = useState<CSSProperties>({
     left: 0,
     top: 0,
     visibility: 'hidden',
   })
   const [pushMenuStyle, setPushMenuStyle] = useState<CSSProperties>({
+    left: 0,
+    top: 0,
+    visibility: 'hidden',
+  })
+  const [remotesMenuStyle, setRemotesMenuStyle] = useState<CSSProperties>({
     left: 0,
     top: 0,
     visibility: 'hidden',
@@ -913,6 +921,7 @@ export default function SourceControlPanel() {
       setContextMenu(null)
       setBranchMenuOpen(false)
       setBranchList(null)
+      setRemotesMenuOpen(false)
       remotesSequenceRef.current += 1
       setRemotes(null)
       setRemotesLoading(false)
@@ -1138,6 +1147,29 @@ export default function SourceControlPanel() {
     [t]
   )
 
+  const copyRemoteUrl = useCallback(
+    async (url: string) => {
+      setRemotesMenuOpen(false)
+      try {
+        await copyToClipboard(url)
+        useProjectStore.getState().pushToast('success', t('已复制远程地址'))
+      } catch (error) {
+        useProjectStore
+          .getState()
+          .pushToast('error', t('复制失败: {error}', { error: String(error) }))
+      }
+    },
+    [t],
+  )
+
+  const remoteRows = useMemo(
+    () =>
+      remotes
+        ? flattenRemoteRows(remotes, upstreamRemoteName(status?.upstream))
+        : [],
+    [remotes, status?.upstream],
+  )
+
   const loadCommitFiles = useCallback(async (rev: string) => {
     const sequence = ++commitFilesSequenceRef.current
     const project = useProjectStore.getState().currentProject
@@ -1252,6 +1284,16 @@ export default function SourceControlPanel() {
     )
   }, [pushMenuOpen, positionActionMenu])
 
+  useLayoutEffect(() => {
+    if (!remotesMenuOpen) return
+    positionActionMenu(
+      remotesMenuAnchorRef.current,
+      remotesMenuRef.current,
+      280,
+      setRemotesMenuStyle,
+    )
+  }, [remotesMenuOpen, remotes, positionActionMenu])
+
   useEffect(() => {
     if (!pullMenuOpen) return
     const close = () => setPullMenuOpen(false)
@@ -1313,6 +1355,37 @@ export default function SourceControlPanel() {
       window.removeEventListener('blur', close)
     }
   }, [pushMenuOpen, positionActionMenu])
+
+  useEffect(() => {
+    if (!remotesMenuOpen) return
+    const close = () => setRemotesMenuOpen(false)
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node
+      if (remotesMenuRef.current?.contains(target)) return
+      if (remotesMenuAnchorRef.current?.contains(target)) return
+      close()
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    const onReposition = () =>
+      positionActionMenu(
+        remotesMenuAnchorRef.current,
+        remotesMenuRef.current,
+        280,
+        setRemotesMenuStyle,
+      )
+    window.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('resize', onReposition)
+    window.addEventListener('blur', close)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('resize', onReposition)
+      window.removeEventListener('blur', close)
+    }
+  }, [remotesMenuOpen, positionActionMenu])
 
   useEffect(() => {
     if (!branchMenuOpen) return
@@ -2381,6 +2454,8 @@ export default function SourceControlPanel() {
       <ScmToolbar
         status={status}
         projectPath={currentProject?.path ?? null}
+        remotes={remotes}
+        remotesLoading={remotesLoading}
         loading={loading}
         operationKind={
           operation?.kind === 'fetch' ||
@@ -2392,7 +2467,9 @@ export default function SourceControlPanel() {
         }
         disabled={loading || Boolean(operation) || !currentProject}
         branchMenuOpen={branchMenuOpen}
+        remotesMenuOpen={remotesMenuOpen}
         branchAnchorRef={branchAnchorRef}
+        remotesMenuAnchorRef={remotesMenuAnchorRef}
         pullMenuAnchorRef={pullMenuAnchorRef}
         pushMenuAnchorRef={pushMenuAnchorRef}
         onOpenBranchMenu={() => {
@@ -2403,23 +2480,25 @@ export default function SourceControlPanel() {
         onPull={() => void pullCurrent(false)}
         onOpenPullMenu={() => {
           setPushMenuOpen(false)
+          setRemotesMenuOpen(false)
           setBranchMenuOpen(false)
           setPullMenuOpen(open => !open)
         }}
         onPush={() => void retryPush()}
         onOpenPushMenu={() => {
           setPullMenuOpen(false)
+          setRemotesMenuOpen(false)
           setBranchMenuOpen(false)
           setPushMenuOpen(open => !open)
         }}
+        onCopyRemoteUrl={url => void copyRemoteUrl(url)}
+        onOpenRemotesMenu={() => {
+          setPullMenuOpen(false)
+          setPushMenuOpen(false)
+          setBranchMenuOpen(false)
+          setRemotesMenuOpen(open => !open)
+        }}
       />
-      {status?.is_repository ? (
-        <ScmRemotesBar
-          remotes={remotes}
-          upstream={status.upstream}
-          loading={remotesLoading}
-        />
-      ) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{body}</div>
       {contextMenu && (
         <ContextMenu
@@ -2524,6 +2603,17 @@ export default function SourceControlPanel() {
               setPushMenuOpen(false)
               void retryPush()
             }}
+          />,
+          document.body,
+        )}
+      {remotesMenuOpen &&
+        createPortal(
+          <ScmRemotesMenu
+            open={remotesMenuOpen}
+            style={remotesMenuStyle}
+            menuRef={remotesMenuRef}
+            rows={remoteRows}
+            onCopy={url => void copyRemoteUrl(url)}
           />,
           document.body,
         )}

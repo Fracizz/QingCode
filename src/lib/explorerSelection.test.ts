@@ -2,23 +2,34 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   explorerPathForCopyShortcut,
+  explorerPathsForCopyShortcut,
   getExplorerSelectedPath,
+  getExplorerSelectedPaths,
   setExplorerSelectedPath,
+  setExplorerSelectedPaths,
 } from './explorerSelection'
 
 describe('explorerSelection', () => {
   afterEach(() => {
-    setExplorerSelectedPath(null)
+    setExplorerSelectedPaths([])
     document.body.innerHTML = ''
   })
 
   it('stores the explorer selection path', () => {
     setExplorerSelectedPath('D:/proj/a.ts')
     expect(getExplorerSelectedPath()).toBe('D:/proj/a.ts')
+    expect(getExplorerSelectedPaths()).toEqual(['D:/proj/a.ts'])
   })
 
-  it('returns explorer path for copy only when explorer is focused', () => {
-    setExplorerSelectedPath('D:/proj/src')
+  it('stores multiple explorer selection paths', () => {
+    setExplorerSelectedPaths(['D:/proj/a.ts', 'D:/proj/b.ts'])
+    expect(getExplorerSelectedPaths()).toEqual(['D:/proj/a.ts', 'D:/proj/b.ts'])
+    expect(getExplorerSelectedPath()).toBe('D:/proj/a.ts')
+  })
+
+  it('returns explorer paths for copy only when explorer is focused', () => {
+    setExplorerSelectedPaths(['D:/proj/src', 'D:/proj/assets'])
+    expect(explorerPathsForCopyShortcut()).toEqual([])
     expect(explorerPathForCopyShortcut()).toBeNull()
 
     const shell = document.createElement('div')
@@ -28,6 +39,7 @@ describe('explorerSelection', () => {
     document.body.appendChild(shell)
     inner.focus()
 
+    expect(explorerPathsForCopyShortcut()).toEqual(['D:/proj/src', 'D:/proj/assets'])
     expect(explorerPathForCopyShortcut()).toBe('D:/proj/src')
   })
 })
