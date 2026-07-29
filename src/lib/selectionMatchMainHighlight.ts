@@ -131,14 +131,17 @@ function buildOtherMatchDecorations(
 }
 
 /**
- * Occurrence highlighting for double-click / selection:
- * - Other hits: Decoration.mark (background only, keeps syntax colors)
- * - Main hit: theme `.cm-selectionBackground` only (no extra overlay color)
+ * Occurrence highlighting for double-click / selection.
+ *
+ * Only other hits get a match decoration. The primary selection is already
+ * painted by CodeMirror's selection layer; drawing another translucent layer
+ * above it changes both its background and syntax-token colors, and used to
+ * make short selections look different from selections over the length cap.
  *
  * Unlike CodeMirror's highlightSelectionMatches, overflowing maxMatches stops
  * adding marks instead of clearing every highlight (common in Java/TS files).
  */
-export function selectionMatchMainHighlight(options: MainSelectionMatchOptions = {}): Extension {
+export function selectionMatchesHighlight(options: MainSelectionMatchOptions = {}): Extension {
   const otherMatches = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet

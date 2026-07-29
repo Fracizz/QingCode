@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { MergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge'
 import { EditorState, type Extension } from '@codemirror/state'
-import { EditorView, keymap, lineNumbers } from '@codemirror/view'
+import { drawSelection, EditorView, keymap, lineNumbers } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
 import type { EditorTab } from '../types'
@@ -11,6 +11,7 @@ import { getResolvedTheme, THEME_SETTINGS_EVENT } from '../lib/themeSettings'
 import { FOREST_THEME, forestSyntax } from '../lib/forestEditorTheme'
 import { translateFor, useI18n } from '../lib/i18n'
 import { mergeDiffSignGutter } from '../lib/mergeDiffSignGutter'
+import { preserveSelectionTokenColors } from '../lib/selectionMatchMainHighlight'
 import Tooltip from './Tooltip'
 
 /** 差异对比文件大小上限：超过此值的文件不显示差异对比（5MB） */
@@ -78,6 +79,8 @@ function sideExtensions(lang: Extension, collapseUnchangedLabel: string, side: '
     EditorState.readOnly.of(true),
     EditorView.lineWrapping,
     lineNumbers(),
+    drawSelection(),
+    preserveSelectionTokenColors(),
     editorThemeExtension(),
     diffTheme,
     mergeDiffSignGutter(side),

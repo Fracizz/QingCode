@@ -1,14 +1,26 @@
-import { describe, expect, it } from 'vitest'
+// @vitest-environment jsdom
+
+import { afterEach, describe, expect, it } from 'vitest'
 import { EditorSelection, EditorState } from '@codemirror/state'
+import { drawSelection, EditorView } from '@codemirror/view'
 import {
   collectOtherSelectionMatchRanges,
   editorHasOccurrenceHighlight,
   mainSelectionMatchRange,
   occurrenceHighlightMarker,
+  selectionMatchesHighlight,
   shouldDecorateMainSelectionMatch,
 } from './selectionMatchMainHighlight'
 
-describe('selectionMatchMainHighlight', () => {
+let view: EditorView | null = null
+
+afterEach(() => {
+  view?.destroy()
+  view = null
+  document.body.replaceChildren()
+})
+
+describe('selectionMatchesHighlight', () => {
   it('marks editor states that include occurrence highlighting', () => {
     const plain = EditorState.create({ doc: 'x' })
     expect(editorHasOccurrenceHighlight(plain)).toBe(false)
@@ -60,5 +72,22 @@ describe('selectionMatchMainHighlight', () => {
     })
     expect(matches.length).toBe(40)
     expect(matches[0]?.from).toBeGreaterThan(0)
+  })
+
+  it('leaves the primary range to CodeMirror selection and decorates only other hits', () => {
+    const parent = document.createElement('div')
+    document.body.appendChild(parent)
+    view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: 'item + item',
+        selection: EditorSelection.single(0, 4),
+        extensions: [drawSelection(), selectionMatchesHighlight()],
+      }),
+    })
+
+    expect(view.dom.querySelector('.cm-selectionLayer')).not.toBeNull()
+    expect(view.dom.querySelector('.cm-selectionMatchMainLayer')).toBeNull()
+    expect(view.contentDOM.querySelectorAll('.cm-selectionMatch')).toHaveLength(1)
   })
 })

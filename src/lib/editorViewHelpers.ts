@@ -47,7 +47,7 @@ const darkDefaultFgTheme = EditorView.theme(
   { dark: true },
 )
 
-/** Selection-match colors for oneDark (other occurrence hits). */
+/** Selection-match colors for oneDark (other hits only). */
 const darkSelectionMatchTheme = EditorView.theme(
   {
     '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },

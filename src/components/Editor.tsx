@@ -86,7 +86,7 @@ import {
   editorHasOccurrenceHighlight,
   occurrenceHighlightMarker,
   preserveSelectionTokenColors,
-  selectionMatchMainHighlight,
+  selectionMatchesHighlight,
   OCCURRENCE_HIGHLIGHT_REV,
 } from '../lib/selectionMatchMainHighlight'
 import {
@@ -191,7 +191,7 @@ function createTabEditorState(
   const occurrenceHighlight: Extension[] = [
     occurrenceHighlightMarker(),
     cursorBracketHighlightMarker(),
-    selectionMatchMainHighlight(),
+    selectionMatchesHighlight(),
   ]
 
   const setup: Extension[] =
