@@ -6,6 +6,20 @@
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-07-29
+
+### Added
+
+- 运行配置：可选项目会话恢复开关
+
+### Changed
+
+- 侧栏搜索：加长输入防抖；Enter / 全局预填立即搜索；短词跳过内容扫描；优化后台扫描响应
+
+### Fixed
+
+- 编辑器选区高亮统一，并保留语法着色
+
 ## [0.1.7] - 2026-07-28
 
 ### Added
@@ -182,7 +196,8 @@
 - Windows 单文件 exe 打包（`pnpm package:exe`）
 - GitHub / Gitee Release 工作流与版本脚本
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.8
 [0.1.7]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.7
 [0.1.6]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.6
 [0.1.5]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.5

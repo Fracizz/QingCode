@@ -6,6 +6,20 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-07-29
+
+### Added
+
+- Run configs: optional project session restore switch
+
+### Changed
+
+- Sidebar search: longer typing debounce; Enter / global prefill searches immediately; short queries skip content scan; snappier background scanning
+
+### Fixed
+
+- Unified editor selection highlight while keeping syntax colors
+
 ## [0.1.7] - 2026-07-28
 
 ### Added
@@ -182,7 +196,8 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 - Windows single-file exe packaging (`pnpm package:exe`)
 - GitHub / Gitee Release workflow and version scripts
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.8
 [0.1.7]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.7
 [0.1.6]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.6
 [0.1.5]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.5
