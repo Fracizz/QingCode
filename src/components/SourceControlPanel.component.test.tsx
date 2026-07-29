@@ -79,6 +79,7 @@ function mockGit(status: GitStatus, options?: { rejectFirstPush?: boolean }) {
     if (command === 'git_log') return Promise.resolve([])
     if (command === 'git_commit') return Promise.resolve('abc123')
     if (command === 'git_stage') return Promise.resolve(undefined)
+    if (command === 'git_unstage') return Promise.resolve(undefined)
     if (command === 'git_push') {
       pushes += 1
       if (options?.rejectFirstPush && pushes === 1) return Promise.reject(new Error('认证失败'))
@@ -193,6 +194,63 @@ describe('SourceControlPanel', () => {
     resolveFirstStatus?.({ is_repository: true, branch: 'old-project', changes: [] })
     await waitFor(() => expect(screen.queryByText('old-project')).not.toBeInTheDocument())
     expect(screen.getByText('new-project')).toBeInTheDocument()
+  })
+
+  it('selects all files in a group with Ctrl+A for both change lists', async () => {
+    mockGit({
+      is_repository: true,
+      branch: 'main',
+      changes: [
+        { path: 'a.ts', status: ' M' },
+        { path: 'b.ts', status: ' M' },
+        { path: 'c.ts', status: 'M ' },
+        { path: 'd.ts', status: 'M ' },
+      ],
+    })
+    render(<SourceControlPanel />)
+
+    const unstagedA = await screen.findByText('a.ts')
+    fireEvent.click(unstagedA)
+    fireEvent.keyDown(unstagedA.closest('section') ?? unstagedA, {
+      key: 'a',
+      ctrlKey: true,
+    })
+
+    const stageSelected = screen.getAllByRole('button', { name: /^暂存更改:/ })
+    // After Ctrl+A both unstaged rows are selected; clicking + on one stages both.
+    fireEvent.click(stageSelected[0]!)
+
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith(
+        '暂存 Git 更改',
+        'git_stage',
+        expect.objectContaining({
+          path: project.path,
+          files: expect.arrayContaining(['a.ts', 'b.ts']),
+        })
+      )
+    )
+
+    // Staged list also supports Ctrl+A.
+    const stagedC = await screen.findByText('c.ts')
+    fireEvent.click(stagedC)
+    fireEvent.keyDown(stagedC.closest('section') ?? stagedC, {
+      key: 'a',
+      ctrlKey: true,
+    })
+    const unstageSelected = screen.getAllByRole('button', { name: /^取消暂存更改:/ })
+    fireEvent.click(unstageSelected[0]!)
+
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith(
+        '取消暂存 Git 更改',
+        'git_unstage',
+        expect.objectContaining({
+          path: project.path,
+          files: expect.arrayContaining(['c.ts', 'd.ts']),
+        })
+      )
+    )
   })
 
   it('clears the inline diff pane after discarding the selected change', async () => {

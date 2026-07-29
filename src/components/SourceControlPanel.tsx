@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from 'react'
@@ -376,6 +377,7 @@ type ChangeGroupSectionProps = Omit<ChangeRowProps, 'changes' | 'group'> & {
   allStageLabel: string
   allUnstageLabel: string
   onToggle: (group: GitChangeGroup) => void
+  onSelectAll: (group: GitChangeGroup) => void
 }
 
 function ChangeGroupSection({
@@ -395,6 +397,7 @@ function ChangeGroupSection({
   onChangeAction,
   onOpenContextMenu,
   onToggle,
+  onSelectAll,
 }: ChangeGroupSectionProps) {
   const listRef = useListRef(null)
   const bulkLabel = group === 'staged' ? allUnstageLabel : allStageLabel
@@ -428,12 +431,25 @@ function ChangeGroupSection({
     ]
   )
 
+  const handleSectionKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return
+    if (event.key.toLowerCase() !== 'a') return
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest('input, textarea, select')) return
+    if (changes.length === 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    onSelectAll(group)
+  }
+
   return (
     <section
+      tabIndex={-1}
+      onKeyDown={handleSectionKeyDown}
       className={
         collapsed
-          ? 'flex-none border-b border-border'
-          : 'flex min-h-0 flex-1 flex-col border-b border-border'
+          ? 'flex-none border-b border-border outline-none'
+          : 'flex min-h-0 flex-1 flex-col border-b border-border outline-none'
       }
     >
       <div
@@ -1709,6 +1725,16 @@ export default function SourceControlPanel() {
     [groups.staged, groups.unstaged, loadInlineDiff]
   )
 
+  const selectAllInGroup = useCallback(
+    (group: GitChangeGroup) => {
+      const list = group === 'staged' ? groups.staged : groups.unstaged
+      if (list.length === 0) return
+      setSelectedKeys(new Set(list.map(item => scmRowKey(group, item.path))))
+      selectionAnchorRef.current = { group, index: 0 }
+    },
+    [groups.staged, groups.unstaged]
+  )
+
   const copyAbsolutePath = async (path: string) => {
     try {
       await copyToClipboard(path)
@@ -1901,6 +1927,7 @@ export default function SourceControlPanel() {
             onChangeAction={runChangeAction}
             onOpenContextMenu={showChangeContextMenu}
             onToggle={toggleGroup}
+            onSelectAll={selectAllInGroup}
           />
           <ChangeGroupSection
             group="staged"
@@ -1919,6 +1946,7 @@ export default function SourceControlPanel() {
             onChangeAction={runChangeAction}
             onOpenContextMenu={showChangeContextMenu}
             onToggle={toggleGroup}
+            onSelectAll={selectAllInGroup}
           />
           <div className="flex-shrink-0 border-t border-border bg-bg-sidebar px-3 py-2.5">
             <label className="mb-2 flex items-center gap-2 text-[12px] text-fg-muted">
