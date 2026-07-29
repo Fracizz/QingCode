@@ -27,7 +27,6 @@ const palette: MinimapPalette = {
   caret: '#48f',
   emptyLine: 'rgba(255,255,255,0.1)',
   selectionMatch: 'rgba(153, 255, 119, 0.2)',
-  selectionMatchMain: 'rgba(153, 255, 119, 0.5)',
 }
 
 describe('minimapPaint', () => {

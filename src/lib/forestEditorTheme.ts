@@ -22,11 +22,8 @@ export const FOREST_THEME = EditorView.theme(
     '.cm-cursor, .cm-dropCursor': { borderLeftColor: M.accent },
     '.cm-searchMatch': { backgroundColor: M.buttons },
     '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: M.highlight },
-    // Match highlights: background only — never set `color` (keeps syntax tokens).
+    // Match highlights (other occurrences only): background only — keeps syntax tokens.
     '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },
-    '.cm-selectionMatchMainLayer .cm-selectionMatchMain': {
-      backgroundColor: 'rgba(153, 255, 119, 0.5)',
-    },
     '.cm-searchMatch .cm-selectionMatch': { backgroundColor: 'transparent' },
   },
   { dark: true },

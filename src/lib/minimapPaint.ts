@@ -30,10 +30,8 @@ export type MinimapPalette = {
   density: string
   caret: string
   emptyLine: string
-  /** Other selection-match occurrences (dimmer). */
+  /** Other selection-match occurrences (main selection uses theme selection only). */
   selectionMatch: string
-  /** Main selected range match tint. */
-  selectionMatchMain: string
 }
 
 /** Selection text used for occurrence highlights on the minimap, or null. */
@@ -251,7 +249,6 @@ export function readMinimapPalette(
       'color-mix(in srgb, var(--color-fg) 8%, transparent)',
     ),
     selectionMatch: 'rgba(153, 255, 119, 0.2)',
-    selectionMatchMain: 'rgba(153, 255, 119, 0.5)',
   }
 
   if (editor) {
@@ -279,7 +276,6 @@ export function readMinimapPalette(
     caret: soft(raw.caret, 0.22),
     emptyLine: raw.emptyLine,
     selectionMatch: raw.selectionMatch,
-    selectionMatchMain: raw.selectionMatchMain,
   }
 }
 
@@ -406,8 +402,9 @@ function paintSelectionMatches(
     for (const idx of findMinimapSelectionMatchIndexes(lineText, query, maxChars)) {
       const from = lineFrom + idx
       const to = from + query.length
-      const isMain = from < main.to && to > main.from
-      ctx.fillStyle = isMain ? palette.selectionMatchMain : palette.selectionMatch
+      // Skip main selection — editor uses theme selection color only; paint other hits.
+      if (from < main.to && to > main.from) continue
+      ctx.fillStyle = palette.selectionMatch
       ctx.fillRect(idx * charWidth, y, Math.min(matchW, safeWidth - idx * charWidth), charHeight)
     }
   }

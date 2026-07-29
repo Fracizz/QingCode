@@ -24,9 +24,6 @@ const lightTheme = EditorView.theme(
     '.cm-searchMatch': { backgroundColor: '#ffe9a8' },
     '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: '#ffd56b' },
     '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },
-    '.cm-selectionMatchMainLayer .cm-selectionMatchMain': {
-      backgroundColor: 'rgba(153, 255, 119, 0.5)',
-    },
     '.cm-searchMatch .cm-selectionMatch': { backgroundColor: 'transparent' },
   },
   { dark: false },
@@ -50,13 +47,10 @@ const darkDefaultFgTheme = EditorView.theme(
   { dark: true },
 )
 
-/** Selection-match colors for oneDark (main overlay + other hits). */
+/** Selection-match colors for oneDark (other occurrence hits). */
 const darkSelectionMatchTheme = EditorView.theme(
   {
     '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },
-    '.cm-selectionMatchMainLayer .cm-selectionMatchMain': {
-      backgroundColor: 'rgba(153, 255, 119, 0.5)',
-    },
     '.cm-searchMatch .cm-selectionMatch': { backgroundColor: 'transparent' },
   },
   { dark: true },

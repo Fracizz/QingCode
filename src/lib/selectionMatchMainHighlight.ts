@@ -4,9 +4,7 @@ import { EditorSelection, Facet, Prec } from '@codemirror/state'
 import {
   Decoration,
   EditorView,
-  RectangleMarker,
   ViewPlugin,
-  layer,
   type DecorationSet,
   type ViewUpdate,
 } from '@codemirror/view'
@@ -21,7 +19,7 @@ export const DEFAULT_MAX_SELECTION_MATCHES = 500
  * Bump when occurrence-highlight wiring changes so stale cached/live EditorStates
  * are rebuilt (HMR / tab cache otherwise keep the old extension set).
  */
-export const OCCURRENCE_HIGHLIGHT_REV = 4
+export const OCCURRENCE_HIGHLIGHT_REV = 5
 
 const occurrenceHighlightRevFacet = Facet.define<number, number>({
   combine: values => values[0] ?? 0,
@@ -135,7 +133,7 @@ function buildOtherMatchDecorations(
 /**
  * Occurrence highlighting for double-click / selection:
  * - Other hits: Decoration.mark (background only, keeps syntax colors)
- * - Main hit: rectangle layer *above* the selection (forest selection bg is opaque)
+ * - Main hit: theme `.cm-selectionBackground` only (no extra overlay color)
  *
  * Unlike CodeMirror's highlightSelectionMatches, overflowing maxMatches stops
  * adding marks instead of clearing every highlight (common in Java/TS files).
@@ -156,26 +154,10 @@ export function selectionMatchMainHighlight(options: MainSelectionMatchOptions =
     { decorations: value => value.decorations },
   )
 
-  const mainLayer = layer({
-    above: true,
-    class: 'cm-selectionMatchMainLayer',
-    markers(view) {
-      const range = mainSelectionMatchRange(view.state, options)
-      if (!range) return []
-      return RectangleMarker.forRange(view, 'cm-selectionMatchMain', range)
-    },
-    update(update) {
-      return update.selectionSet || update.docChanged || update.viewportChanged
-    },
-  })
-
   const theme = EditorView.baseTheme({
     '.cm-selectionMatch': { backgroundColor: 'rgba(153, 255, 119, 0.28)' },
-    '.cm-selectionMatchMainLayer .cm-selectionMatchMain': {
-      backgroundColor: 'rgba(153, 255, 119, 0.5)',
-    },
     '.cm-searchMatch .cm-selectionMatch': { backgroundColor: 'transparent' },
   })
 
-  return [theme, otherMatches, mainLayer]
+  return [theme, otherMatches]
 }
