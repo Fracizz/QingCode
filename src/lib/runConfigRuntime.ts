@@ -9,6 +9,7 @@ import {
 import { useProjectStore } from '../store/projectStore'
 import {
   RUN_CONFIG_RELATIVE_PATH,
+  runConfigFollowsProjectSession,
   useRunConfigStore,
   type RunConfig,
   type RunTask,
@@ -77,6 +78,33 @@ export function rehydrateRunTerminals(configs?: RunConfig[]): number {
   })
   if (stamped > 0) useTerminalStore.setState({ terminals: next })
   return stamped
+}
+
+/**
+ * Apply the latest run.json policy before restored PTYs are spawned.
+ * Only pending restored tabs are removed; changing a config never stops its
+ * currently running tasks.
+ */
+export async function applyRunConfigSessionRestorePolicy(
+  projectId: string,
+  configs: RunConfig[],
+): Promise<number> {
+  rehydrateRunTerminals(configs)
+  const configById = new Map(configs.map(config => [config.id, config]))
+  const terminalIds = useTerminalStore
+    .getState()
+    .terminals.filter(terminal => {
+      if (terminal.projectId !== projectId || !terminal.awaitingRestoreSpawn) return false
+      if (!terminal.runConfigId) return false
+      const config = configById.get(terminal.runConfigId)
+      return config ? !runConfigFollowsProjectSession(config) : false
+    })
+    .map(terminal => terminal.id)
+  if (terminalIds.length === 0) return 0
+
+  const closeTerminal = useTerminalStore.getState().closeTerminal
+  await Promise.all(terminalIds.map(id => closeTerminal(id).catch(() => undefined)))
+  return terminalIds.length
 }
 
 /** Active terminal ids are derived from terminal tabs; no second runtime map is maintained. */
@@ -163,7 +191,7 @@ export async function runConfig(project: Project, config: RunConfig): Promise<vo
       task.target,
       task.env ?? {},
       runTaskTerminalName(config, task),
-      { runConfigId: config.id, runTaskId: task.id }
+      { runConfigId: config.id, runTaskId: task.id },
     )
   }
   useUIStore.getState().openTerminalPanel()

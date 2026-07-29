@@ -54,6 +54,7 @@ This is a core QingCode workflow. Define run configurations per project (stored 
 - One configuration can hold multiple tasks (command / script / ps1 / bat / sh)  
 - On launch, **each task opens its own terminal** — ideal for API + web + worker side by side  
 - Per-task working directory and environment variables; stop a whole configuration at once  
+- Each configuration can opt in to project-session restore; it is off by default, while opting in restores and restarts linked terminals after an app restart
 - Unknown projects start restricted; trust is required before editing, running scripts, or using the terminal  
 
 Typical loop: open a project → start a run configuration → services land in separate terminals → edit code or hand a terminal to an AI CLI.

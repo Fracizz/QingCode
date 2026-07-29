@@ -828,12 +828,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     ptySpawnInFlight.delete(id)
     lastPtySize.delete(id)
     markIntentionalPtyKill(id)
-    try {
-      await killTerminal(id)
-    } catch (error) {
-      useProjectStore
-        .getState()
-        .pushToast('error', translate('关闭终端失败: {error}', { error: String(error) }))
+    const terminal = get().terminals.find(candidate => candidate.id === id)
+    // Restored metadata has no PTY until its first spawn. Removing an opted-out
+    // run-config tab must not call kill_terminal or show a false close error.
+    if (!terminal?.awaitingRestoreSpawn) {
+      try {
+        await killTerminal(id)
+      } catch (error) {
+        useProjectStore
+          .getState()
+          .pushToast('error', translate('关闭终端失败: {error}', { error: String(error) }))
+      }
     }
     set(s => {
       const closed = s.terminals.find(t => t.id === id)

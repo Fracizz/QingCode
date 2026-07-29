@@ -25,6 +25,8 @@ pub struct RunTask {
 pub struct RunConfig {
     pub id: String,
     pub name: String,
+    #[serde(default, rename = "restoreWithProjectSession")]
+    pub restore_with_project_session: bool,
     #[serde(default)]
     pub tasks: Vec<RunTask>,
 }
@@ -251,4 +253,34 @@ pub fn remove(query: &str, project: Option<&str>) -> Result<serde_json::Value, S
         "project": { "id": project.id, "name": project.name, "path": project.path },
         "removed": target,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RunConfig;
+
+    #[test]
+    fn legacy_config_defaults_to_no_project_session_restore() {
+        let config: RunConfig = serde_json::from_value(serde_json::json!({
+            "id": "dev",
+            "name": "dev",
+            "tasks": []
+        }))
+        .unwrap();
+
+        assert!(!config.restore_with_project_session);
+    }
+
+    #[test]
+    fn config_can_enable_project_session_restore() {
+        let config: RunConfig = serde_json::from_value(serde_json::json!({
+            "id": "dev",
+            "name": "dev",
+            "restoreWithProjectSession": true,
+            "tasks": []
+        }))
+        .unwrap();
+
+        assert!(config.restore_with_project_session);
+    }
 }

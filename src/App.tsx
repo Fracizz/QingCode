@@ -21,6 +21,7 @@ import EmptyEditor from './components/EmptyEditor'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useEditorStore } from './store/editorStore'
+import { useRunConfigStore } from './store/runConfigStore'
 import { useUIStore } from './store/uiStore'
 import { useCompareStore } from './store/compareStore'
 import { useCommandPaletteStore } from './store/commandPaletteStore'
@@ -44,6 +45,7 @@ import { useDraftRecovery } from './hooks/useDraftRecovery'
 import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
 import { useTerminalPanel } from './hooks/useTerminalPanel'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
+import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
 import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
 import { beginPanelResize, settlePanelResize } from './lib/panelResize'
 import {
@@ -99,6 +101,7 @@ function App() {
   const activateProject = useTerminalStore(s => s.activateProject)
   const spawnRestoredTerminals = useTerminalStore(s => s.spawnRestoredTerminals)
   const initializeTerminalEvents = useTerminalStore(s => s.initializeTerminalEvents)
+  const loadRunConfigs = useRunConfigStore(s => s.loadConfigs)
   const loadMissingTabContents = useEditorStore(s => s.loadMissingTabContents)
   const currentProject = useProjectStore(s => s.currentProject)
   const projects = useProjectStore(s => s.projects)
@@ -274,9 +277,9 @@ function App() {
     void loadMissingTabContents()
   }, [currentProject, tabsNeedContentLoad, loadMissingTabContents])
 
-  // When the current project already has terminal tabs, activate them and spawn
-  // restored PTYs once the panel is open. Do not auto-create a terminal just
-  // because the project has none.
+  // When the current project already has terminal tabs, apply each run config's
+  // restore policy before spawning restored PTYs. Do not auto-create a terminal
+  // just because the project has none.
   useEffect(() => {
     if (!currentProject || !projectTrusted) return
     const projectId = currentProject.id
@@ -284,11 +287,28 @@ function App() {
       return
     }
     activateProject(projectId)
-    if (!terminalOpen) return
-    return scheduleDeferredWork(() => {
-      void spawnRestoredTerminals(projectId)
+    let cancelled = false
+    const cancelDeferred = scheduleDeferredWork(() => {
+      void (async () => {
+        const configs = await loadRunConfigs(currentProject)
+        if (cancelled) return
+        await applyRunConfigSessionRestorePolicy(projectId, configs)
+        if (cancelled || !terminalOpen) return
+        await spawnRestoredTerminals(projectId)
+      })()
     })
-  }, [activateProject, currentProject, projectTrusted, spawnRestoredTerminals, terminalOpen])
+    return () => {
+      cancelled = true
+      cancelDeferred()
+    }
+  }, [
+    activateProject,
+    currentProject,
+    loadRunConfigs,
+    projectTrusted,
+    spawnRestoredTerminals,
+    terminalOpen,
+  ])
 
   const handleAddProject = () => {
     setView('explorer')

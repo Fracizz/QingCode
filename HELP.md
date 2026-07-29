@@ -206,18 +206,20 @@ Configure a set of 「run configurations」 for a project to start multiple serv
 
 1. Open **「Settings」** → **「Run Configurations」**.
 2. Click **「Add Configuration」** and enter a configuration name.
-3. Add tasks (command / script / ps1 / bat / sh) under the configuration.
+3. Set **「Session restore」** as needed. It is **Off** by default. Turn it on only when linked terminals should be restored and restarted after an app restart. Leaving it off does not affect the current run.
+4. Add tasks (command / script / ps1 / bat / sh) under the configuration.
 
 ### Launch a Run Configuration
 
 - Click the **「Launch」** button on the configuration card.
 - Each task automatically opens a terminal, ideal for starting API, frontend, worker, etc. simultaneously.
 - Click **「Stop」** to stop all tasks in the configuration group.
-- With **Save Session State** enabled, after an app restart those terminals are restored and re-linked to the matching run configuration (status no longer stuck on Idle).
+- When both global **Save Session State** and the configuration's **Session restore** are on, an app restart restores those terminals, restarts their processes, and re-links them to the matching run configuration.
+- When a configuration disables **Session restore**, its linked terminals are omitted from later project-session snapshots; an older snapshot is also blocked before its process can restart.
 
 ### Configuration Storage Location
 
-Run configurations are saved in `.qingcode/run.json` in the project root, making them easy to manage alongside the project.
+Run configurations are saved in `.qingcode/run.json` in the project root. The `restoreWithProjectSession` field controls project-session restore; when omitted, it defaults to `false`, and restore occurs only when it is explicitly `true`.
 
 ---
 

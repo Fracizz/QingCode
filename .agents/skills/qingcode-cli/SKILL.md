@@ -47,6 +47,7 @@ Prefer these subcommands over hand-editing SQLite, directly rewriting
 ```json
 {
   "name": "前后端",
+  "restoreWithProjectSession": false,
   "tasks": [
     { "name": "后端", "type": "command", "target": "cargo run", "cwd": "src-tauri" },
     { "name": "前端", "type": "command", "target": "pnpm dev" }
@@ -56,6 +57,8 @@ Prefer these subcommands over hand-editing SQLite, directly rewriting
 
 Config and task `id` values are optional when creating and are auto-generated. Task `type`:
 `ps1` | `bat` | `sh` | `command` | `script`.
+The optional `restoreWithProjectSession` field defaults to `false`; set it to `true`
+to restore and restart linked task terminals with the project session after an app restart.
 
 ### Updating a run config
 

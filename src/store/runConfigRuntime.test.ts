@@ -10,6 +10,7 @@ vi.mock('../lib/tauri', async importOriginal => {
 })
 import {
   activeTerminalsForConfig,
+  applyRunConfigSessionRestorePolicy,
   findRunLinkageForTerminal,
   isConfigRunning,
   isActiveRunTerminal,
@@ -177,6 +178,54 @@ describe('run config runtime helpers', () => {
     rehydrateRunTerminals(sampleConfigs)
     expect(useTerminalStore.getState().terminals[0].runConfigId).toBe('cfg')
     expect(taskTerminalId('cfg', 'backend')).toBe('t1')
+  })
+
+  it('drops only pending restored terminals for configs that disabled session restore', async () => {
+    const closeTerminal = vi.fn(async (id: string) => {
+      useTerminalStore.setState(state => ({
+        terminals: state.terminals.filter(terminal => terminal.id !== id),
+      }))
+    })
+    useTerminalStore.setState({
+      terminals: [
+        baseTab({
+          id: 'disabled-restored',
+          name: 'disabled',
+          runConfigId: 'disabled',
+          runTaskId: 'task',
+          status: 'exited',
+          awaitingRestoreSpawn: true,
+        }),
+        baseTab({
+          id: 'enabled-restored',
+          name: 'enabled',
+          runConfigId: 'enabled',
+          runTaskId: 'task',
+          status: 'exited',
+          awaitingRestoreSpawn: true,
+        }),
+        baseTab({
+          id: 'disabled-running',
+          name: 'still running',
+          runConfigId: 'disabled',
+          runTaskId: 'task',
+          status: 'running',
+        }),
+      ],
+      closeTerminal,
+    })
+
+    const removed = await applyRunConfigSessionRestorePolicy('p1', [
+      { id: 'disabled', name: 'disabled', restoreWithProjectSession: false, tasks: [] },
+      { id: 'enabled', name: 'enabled', restoreWithProjectSession: true, tasks: [] },
+    ])
+
+    expect(removed).toBe(1)
+    expect(closeTerminal).toHaveBeenCalledExactlyOnceWith('disabled-restored')
+    expect(useTerminalStore.getState().terminals.map(terminal => terminal.id)).toEqual([
+      'enabled-restored',
+      'disabled-running',
+    ])
   })
 
   it('runs, stops, and starts a multi-task configuration again', async () => {

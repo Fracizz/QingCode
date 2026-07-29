@@ -126,9 +126,34 @@ describe('RunPanel', () => {
         project,
         expect.objectContaining({
           name: '本地开发',
+          restoreWithProjectSession: false,
           tasks: [expect.objectContaining({ type: 'command', target: 'pnpm dev' })],
         })
       )
+    )
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('can enable restoring linked terminals with the project session', async () => {
+    const upsertConfig = vi.fn().mockResolvedValue(undefined)
+    const onClose = vi.fn()
+    useRunConfigStore.setState({ upsertConfig })
+
+    render(<RunConfigEditor project={project} initial={config} onClose={onClose} />)
+
+    const restore = screen.getByLabelText('跟随项目会话恢复')
+    expect(restore).toHaveValue('off')
+    fireEvent.change(restore, { target: { value: 'on' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() =>
+      expect(upsertConfig).toHaveBeenCalledWith(
+        project,
+        expect.objectContaining({
+          id: config.id,
+          restoreWithProjectSession: true,
+        }),
+      ),
     )
     expect(onClose).toHaveBeenCalledOnce()
   })

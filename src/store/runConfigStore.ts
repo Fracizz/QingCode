@@ -18,6 +18,8 @@ export interface RunTask {
 export interface RunConfig {
   id: string
   name: string
+  /** Restore and restart linked task terminals with the durable project session. */
+  restoreWithProjectSession?: boolean
   tasks: RunTask[]
 }
 
@@ -62,6 +64,7 @@ function normalizeConfigs(input: unknown): RunConfig[] {
     .map(c => ({
       id: c.id,
       name: c.name,
+      restoreWithProjectSession: c.restoreWithProjectSession === true,
       tasks: Array.isArray(c.tasks)
         ? (c.tasks.map(normalizeTask).filter(Boolean) as RunTask[])
         : [],
@@ -97,6 +100,7 @@ function defaultConfigs(): RunConfig[] {
     {
       id: crypto.randomUUID(),
       name: '前后端',
+      restoreWithProjectSession: false,
       tasks: [
         {
           id: crypto.randomUUID(),
@@ -227,3 +231,8 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
 }))
 
 export { runConfigPath, defaultConfigs, stripRedundantCdPrefix }
+
+/** Session restore is opt-in; older run.json files without the field stay disabled. */
+export function runConfigFollowsProjectSession(config: Pick<RunConfig, 'restoreWithProjectSession'>) {
+  return config.restoreWithProjectSession === true
+}

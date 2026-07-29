@@ -21,6 +21,11 @@ import { shouldRestoreWorkspace } from './windowSession'
 import { isSessionPersistEnabled } from './sessionPersistSettings'
 import { isPinnedSettingsTab } from '../utils/editorHelpers'
 import { useEditorStore, type ProjectEditorSession } from '../store/editorStore'
+import {
+  runConfigFollowsProjectSession,
+  useRunConfigStore,
+  type RunConfig,
+} from '../store/runConfigStore'
 import { persistTerminalOutputNow, useTerminalStore } from '../store/terminalStore'
 import { useProjectStore } from '../store/projectStore'
 import type { EditorTab, TerminalTab } from '../types'
@@ -161,6 +166,17 @@ function scrollForTab(tabId: string): EditorScrollPos | null {
   return getEditorScroll(tabId) ?? null
 }
 
+export function shouldPersistTerminalWithProjectSession(
+  terminal: Pick<TerminalTab, 'projectId' | 'runConfigId'>,
+  configsByProject: Record<string, RunConfig[]>,
+): boolean {
+  if (!terminal.runConfigId) return true
+  const config = configsByProject[terminal.projectId]?.find(
+    candidate => candidate.id === terminal.runConfigId,
+  )
+  return config ? runConfigFollowsProjectSession(config) : true
+}
+
 /** Drop in-memory sessions for project ids that no longer exist. */
 export function pruneWorkspaceSessions(knownProjectIds: Iterable<string>) {
   const known = new Set(knownProjectIds)
@@ -221,6 +237,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
   )
   const editorSessions = collectEditorSessionsForPersist()
   const terminalState = useTerminalStore.getState()
+  const configsByProject = useRunConfigStore.getState().configsByProject
   const { pinned: pinnedTabs } = splitPinned(useEditorStore.getState().tabs)
 
   return buildWorkspaceSessionSnapshot({
@@ -253,7 +270,11 @@ export function captureWorkspaceSessionSnapshot(options?: {
       viewMode: tab.viewMode,
     })),
     terminals: terminalState.terminals
-      .filter(t => includeIds.has(t.projectId))
+      .filter(
+        terminal =>
+          includeIds.has(terminal.projectId) &&
+          shouldPersistTerminalWithProjectSession(terminal, configsByProject),
+      )
       .map(t => ({
         id: t.id,
         name: t.name,

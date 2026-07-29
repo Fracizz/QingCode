@@ -5,6 +5,7 @@ import {
   tabFromPersisted,
   terminalFromPersisted,
 } from './workspaceSessionRestore'
+import { shouldPersistTerminalWithProjectSession } from './workspaceSessionSync'
 
 function installMemoryLocalStorage() {
   const map = new Map<string, string>()
@@ -87,5 +88,37 @@ describe('workspace session restore journey', () => {
       awaitingRestoreSpawn: true,
       status: 'exited',
     })
+  })
+
+  it('persists normal and opted-in run terminals but excludes default-off configs', () => {
+    const configsByProject = {
+      p1: [
+        { id: 'default', name: 'default', tasks: [] },
+        { id: 'enabled', name: 'enabled', restoreWithProjectSession: true, tasks: [] },
+        { id: 'disabled', name: 'disabled', restoreWithProjectSession: false, tasks: [] },
+      ],
+    }
+
+    expect(
+      shouldPersistTerminalWithProjectSession({ projectId: 'p1' }, configsByProject),
+    ).toBe(true)
+    expect(
+      shouldPersistTerminalWithProjectSession(
+        { projectId: 'p1', runConfigId: 'enabled' },
+        configsByProject,
+      ),
+    ).toBe(true)
+    expect(
+      shouldPersistTerminalWithProjectSession(
+        { projectId: 'p1', runConfigId: 'default' },
+        configsByProject,
+      ),
+    ).toBe(false)
+    expect(
+      shouldPersistTerminalWithProjectSession(
+        { projectId: 'p1', runConfigId: 'disabled' },
+        configsByProject,
+      ),
+    ).toBe(false)
   })
 })

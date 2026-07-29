@@ -2,7 +2,17 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { X, Plus, Trash2, Wand2, CircleHelp } from 'lucide-react'
 import Tooltip from './Tooltip'
 import ModalOverlay from './ModalOverlay'
-import { useRunConfigStore, defaultConfigs, RUN_CONFIG_RELATIVE_PATH, runConfigPath, stripRedundantCdPrefix, type RunConfig, type RunTask, type RunTaskType } from '../store/runConfigStore'
+import {
+  useRunConfigStore,
+  defaultConfigs,
+  runConfigFollowsProjectSession,
+  RUN_CONFIG_RELATIVE_PATH,
+  runConfigPath,
+  stripRedundantCdPrefix,
+  type RunConfig,
+  type RunTask,
+  type RunTaskType,
+} from '../store/runConfigStore'
 import { useEditorStore } from '../store/editorStore'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
@@ -29,12 +39,16 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
   const titleId = useId()
   const descriptionId = useId()
   const [name, setName] = useState(initial?.name ?? '')
+  const [restoreWithProjectSession, setRestoreWithProjectSession] = useState(
+    initial ? runConfigFollowsProjectSession(initial) : false,
+  )
   const [tasks, setTasks] = useState<RunTask[]>(initial?.tasks ?? [])
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     queueMicrotask(() => {
       setName(initial?.name ?? '')
+      setRestoreWithProjectSession(initial ? runConfigFollowsProjectSession(initial) : false)
       setTasks(initial?.tasks ?? [])
     })
   }, [initial])
@@ -57,6 +71,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
   const loadTemplate = () => {
     const tpl = defaultConfigs()[0]
     setName(tpl.name)
+    setRestoreWithProjectSession(runConfigFollowsProjectSession(tpl))
     setTasks(tpl.tasks)
   }
 
@@ -84,6 +99,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
     const config: RunConfig = {
       id: initial?.id ?? crypto.randomUUID(),
       name: trimmedName,
+      restoreWithProjectSession,
       tasks: cleanTasks,
     }
     setSaving(true)
@@ -141,6 +157,28 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
                 <Wand2 size={13} /> {t('模板')}
               </button>
             </Tooltip>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="run-config-session-restore"
+              className="w-16 flex-shrink-0 text-[12px] text-fg-muted"
+            >
+              {t('会话恢复')}
+            </label>
+            <select
+              id="run-config-session-restore"
+              aria-label={t('跟随项目会话恢复')}
+              value={restoreWithProjectSession ? 'on' : 'off'}
+              onChange={event => setRestoreWithProjectSession(event.target.value === 'on')}
+              className="rounded border border-border bg-bg-deep px-2 py-1 text-[12px] outline-none focus:border-accent"
+            >
+              <option value="on">{t('开启')}</option>
+              <option value="off">{t('关闭')}</option>
+            </select>
+            <span className="min-w-0 text-ui-sm text-fg-dim">
+              {t('应用重启时恢复并重新启动关联终端；默认关闭')}
+            </span>
           </div>
 
           <div className="flex items-center justify-between">
