@@ -16,6 +16,7 @@ import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import { jumpToDefinitionCandidate, type DefinitionCandidate } from '../lib/definitionNavigation'
 import { useDefinitionPickerStore } from '../store/definitionPickerStore'
+import { useEditorStore } from '../store/editorStore'
 import { useI18n } from '../lib/i18n'
 import type { SemanticUsageFilter } from '../lib/semanticNavigation'
 import { getContextMenuStylePosition } from './contextMenuPosition'
@@ -147,6 +148,10 @@ export default function DefinitionPicker() {
   const usageLoader = useDefinitionPickerStore(state => state.usageLoader)
   const afterDefinitionJump = useDefinitionPickerStore(state => state.afterDefinitionJump)
   const closePicker = useDefinitionPickerStore(state => state.closePicker)
+  const activeFilePath = useEditorStore(state => {
+    const tab = state.tabs.find(item => item.id === state.activeTabId)
+    return tab?.path ?? null
+  })
   const [activeIndex, setActiveIndex] = useState(0)
   const [usageFilter, setUsageFilter] = useState<SemanticUsageFilter>('all')
   const [pagedCandidates, setPagedCandidates] = useState(candidates)
@@ -193,8 +198,9 @@ export default function DefinitionPicker() {
     [filteredCandidates, mode, renderedUsageLimit]
   )
   const usageGroups = useMemo(
-    () => (mode === 'reference' ? groupUsageCandidates(displayedCandidates) : []),
-    [displayedCandidates, mode]
+    () =>
+      mode === 'reference' ? groupUsageCandidates(displayedCandidates, activeFilePath) : [],
+    [activeFilePath, displayedCandidates, mode]
   )
   const visibleCandidates = useMemo(
     () =>
@@ -674,6 +680,9 @@ export default function DefinitionPicker() {
           ? usageGroups.map((group, groupIndex) => {
               const collapsed = collapsedUsageGroups.has(group.key)
               const path = splitRelativePath(group.relative)
+              const isCurrentFile = Boolean(
+                activeFilePath && pathsEqual(group.path, activeFilePath)
+              )
               return (
                 <section
                   key={group.key}
@@ -712,6 +721,11 @@ export default function DefinitionPicker() {
                     <span className="min-w-0 flex-1 truncate font-mono font-semibold">
                       {group.callerName ?? path.file}
                     </span>
+                    {isCurrentFile && (
+                      <span className="flex-shrink-0 rounded border border-accent/40 bg-accent/15 px-1.5 py-0.5 text-[10px] text-accent">
+                        {t('当前文件')}
+                      </span>
+                    )}
                     {group.callerKind && (
                       <span className="flex-shrink-0 text-[10px] text-fg-dim">
                         {t(kindLabel(group.callerKind))}

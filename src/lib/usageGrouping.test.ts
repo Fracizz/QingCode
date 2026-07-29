@@ -60,7 +60,36 @@ describe('groupUsageCandidates', () => {
     expect(groups[0]).toMatchObject({
       callerName: undefined,
       relative: 'order.ts',
+      path: 'D:/work/order.ts',
     })
     expect(groups[0].candidates).toHaveLength(2)
+  })
+
+  it('prefers groups from the active file while keeping relative order', () => {
+    const groups = groupUsageCandidates(
+      [
+        usage({
+          path: 'D:/work/other.ts',
+          relative: 'other.ts',
+          line: 1,
+          callerName: 'otherCaller',
+        }),
+        usage({
+          path: 'D:/work/order.ts',
+          relative: 'order.ts',
+          line: 2,
+          callerName: 'localCaller',
+        }),
+        usage({
+          path: 'D:/work/zzz.ts',
+          relative: 'zzz.ts',
+          line: 3,
+          callerName: 'laterCaller',
+        }),
+      ],
+      'D:/work/order.ts',
+    )
+
+    expect(groups.map(group => group.relative)).toEqual(['order.ts', 'other.ts', 'zzz.ts'])
   })
 })

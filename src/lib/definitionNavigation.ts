@@ -405,7 +405,11 @@ export async function goToDefinition(
     if (candidates.length === 0) {
       useProjectStore
         .getState()
-        .pushToast('info', translate('未找到「{symbol}」的定义', { symbol: identifier.name }))
+        .pushToast(
+          'info',
+          translate('项目内未找到「{symbol}」的定义', { symbol: identifier.name }),
+          translate('暂不支持跳转到依赖包或标准库'),
+        )
       return
     }
     showCandidates(identifier.name, candidates, options)

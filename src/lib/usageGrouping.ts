@@ -1,15 +1,20 @@
 import type { DefinitionCandidate } from './definitionNavigation'
+import { pathsEqual } from '../utils/fileReferences'
 
 export interface UsageGroup {
   key: string
   callerName?: string
   callerKind?: string
+  path: string
   relative: string
   approximate: boolean
   candidates: DefinitionCandidate[]
 }
 
-export function groupUsageCandidates(candidates: DefinitionCandidate[]): UsageGroup[] {
+export function groupUsageCandidates(
+  candidates: DefinitionCandidate[],
+  preferPath?: string | null,
+): UsageGroup[] {
   const groups = new Map<string, UsageGroup>()
 
   for (const candidate of candidates) {
@@ -31,11 +36,22 @@ export function groupUsageCandidates(candidates: DefinitionCandidate[]): UsageGr
       key,
       callerName,
       callerKind,
+      path: candidate.path,
       relative: candidate.relative,
       approximate,
       candidates: [candidate],
     })
   }
 
-  return [...groups.values()]
+  const ordered = [...groups.values()]
+  if (!preferPath) return ordered
+
+  // Keep relative order within preferred / other buckets (stable partition).
+  const preferred: UsageGroup[] = []
+  const other: UsageGroup[] = []
+  for (const group of ordered) {
+    if (pathsEqual(group.path, preferPath)) preferred.push(group)
+    else other.push(group)
+  }
+  return preferred.length === 0 ? ordered : [...preferred, ...other]
 }

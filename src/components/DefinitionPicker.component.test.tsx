@@ -187,6 +187,70 @@ describe('DefinitionPicker', () => {
     expect(screen.getByRole('dialog')).not.toHaveTextContent('await processOrder(retry)')
   })
 
+  it('marks and prefers the active editor file in usage groups', () => {
+    useEditorStore.setState({
+      tabs: [
+        {
+          id: 'tab-1',
+          path: 'D:/work/order.py',
+          name: 'order.py',
+          dirty: false,
+        },
+      ],
+      activeTabId: 'tab-1',
+    })
+    useDefinitionPickerStore.getState().openPicker(
+      'processOrder',
+      [
+        {
+          name: 'processOrder',
+          kind: 'function',
+          path: 'D:/work/other.py',
+          relative: 'other.py',
+          line: 4,
+          column: 1,
+          text: 'processOrder()',
+          score: 1000,
+          usageKind: 'call',
+          callerName: 'remoteCaller',
+          callerKind: 'function',
+        },
+        {
+          name: 'processOrder',
+          kind: 'function',
+          path: 'D:/work/order.py',
+          relative: 'order.py',
+          line: 8,
+          column: 3,
+          text: 'processOrder(order)',
+          score: 1000,
+          usageKind: 'call',
+          callerName: 'localCaller',
+          callerKind: 'function',
+        },
+      ],
+      'reference',
+      {
+        kind: 'function',
+        totalCount: 2,
+        complete: true,
+        anchor: { left: 100, top: 60, right: 160, bottom: 78 },
+      }
+    )
+
+    render(<DefinitionPicker />)
+
+    const regions = screen.getAllByRole('region')
+    expect(regions[0]).toHaveAccessibleName('用法分组 localCaller')
+    expect(screen.getByRole('button', { name: '折叠用法分组 localCaller' })).toHaveTextContent(
+      '当前文件',
+    )
+    expect(screen.getByRole('button', { name: '折叠用法分组 remoteCaller' })).not.toHaveTextContent(
+      '当前文件',
+    )
+    expect(screen.getByText('项目文件')).toBeInTheDocument()
+  })
+
   it('renders large usage results in lightweight batches', () => {
     const candidates = Array.from({ length: 75 }, (_, index) => ({
       name: 'renderBatch',
