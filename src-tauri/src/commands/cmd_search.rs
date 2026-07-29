@@ -379,7 +379,7 @@ fn is_binary_extension(name: &str) -> bool {
 /// Collect unique file extensions under the given project roots (ignores
 /// common build/vendor dirs and binary media). Sorted by frequency, then name.
 #[tauri::command]
-pub fn list_file_extensions(
+pub async fn list_file_extensions(
     roots: Vec<String>,
     max_files: Option<usize>,
     allowlist: State<'_, PathAllowlist>,
@@ -388,26 +388,30 @@ pub fn list_file_extensions(
         allowlist.ensure_allowed(root)?;
     }
     let max = max_files.unwrap_or(8_000).clamp(100, 50_000);
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    let mut scanned = 0usize;
-    for root in roots {
-        let path = Path::new(&root);
-        if !path.is_dir() {
-            continue;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut scanned = 0usize;
+        for root in roots {
+            let path = Path::new(&root);
+            if !path.is_dir() {
+                continue;
+            }
+            walk_file_extensions(path, &mut counts, &mut scanned, max);
+            if scanned >= max {
+                break;
+            }
         }
-        walk_file_extensions(path, &mut counts, &mut scanned, max);
-        if scanned >= max {
-            break;
-        }
-    }
-    let mut items: Vec<(String, usize)> = counts.into_iter().collect();
-    items.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-    Ok(items.into_iter().map(|(ext, _)| ext).take(80).collect())
+        let mut items: Vec<(String, usize)> = counts.into_iter().collect();
+        items.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        items.into_iter().map(|(ext, _)| ext).take(80).collect()
+    })
+    .await
+    .map_err(|error| format!("扫描项目扩展名失败：{error}"))
 }
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn search_files(
+pub async fn search_files(
     root: String,
     query: String,
     ignore_case: bool,
@@ -422,44 +426,48 @@ pub fn search_files(
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<Vec<SearchHit>, String> {
     allowlist.ensure_allowed(&root)?;
-    let base = Path::new(&root);
-    if !base.is_dir() {
-        return Ok(vec![]);
-    }
-    let max = limit.unwrap_or(500);
-    let q = query.trim();
-    if q.is_empty() && extensions.is_none() && extension.is_none() {
-        return Ok(vec![]);
-    }
-    let ext_list = normalize_extensions(extensions.or_else(|| extension.map(|ext| vec![ext])));
-    let q = if ignore_case {
-        q.to_lowercase()
-    } else {
-        q.to_string()
-    };
-    let use_glob = is_glob_pattern(&q);
-    let use_suffix = !use_glob && match_suffix && ext_list.is_none();
-    let q = if use_suffix && !q.is_empty() && !q.starts_with('.') {
-        format!(".{q}")
-    } else {
-        q
-    };
-    let mut hits: Vec<SearchHit> = Vec::new();
-    walk_matching(
-        base,
-        base,
-        &mut hits,
-        max,
-        &q,
-        ignore_case,
-        fuzzy && !use_glob && !use_suffix,
-        use_suffix,
-        ext_list.as_deref(),
-        exclude_patterns.as_deref(),
-        use_ignore_files.unwrap_or(true),
-        follow_symlinks.unwrap_or(false),
-    );
-    Ok(hits)
+    tauri::async_runtime::spawn_blocking(move || {
+        let base = Path::new(&root);
+        if !base.is_dir() {
+            return vec![];
+        }
+        let max = limit.unwrap_or(500);
+        let q = query.trim();
+        if q.is_empty() && extensions.is_none() && extension.is_none() {
+            return vec![];
+        }
+        let ext_list = normalize_extensions(extensions.or_else(|| extension.map(|ext| vec![ext])));
+        let q = if ignore_case {
+            q.to_lowercase()
+        } else {
+            q.to_string()
+        };
+        let use_glob = is_glob_pattern(&q);
+        let use_suffix = !use_glob && match_suffix && ext_list.is_none();
+        let q = if use_suffix && !q.is_empty() && !q.starts_with('.') {
+            format!(".{q}")
+        } else {
+            q
+        };
+        let mut hits: Vec<SearchHit> = Vec::new();
+        walk_matching(
+            base,
+            base,
+            &mut hits,
+            max,
+            &q,
+            ignore_case,
+            fuzzy && !use_glob && !use_suffix,
+            use_suffix,
+            ext_list.as_deref(),
+            exclude_patterns.as_deref(),
+            use_ignore_files.unwrap_or(true),
+            follow_symlinks.unwrap_or(false),
+        );
+        hits
+    })
+    .await
+    .map_err(|error| format!("文件搜索失败：{error}"))
 }
 
 /// Begin a content-search session. Returns an id shared across multi-root invokes.
@@ -476,7 +484,7 @@ pub fn cancel_content_search() {
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-pub fn search_file_contents(
+pub async fn search_file_contents(
     root: String,
     query: String,
     ignore_case: bool,
@@ -492,31 +500,35 @@ pub fn search_file_contents(
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<ContentSearchResponse, String> {
     allowlist.ensure_allowed(&root)?;
-    let ext = extension
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let ext_list =
-        normalize_extensions(extensions.or_else(|| ext.map(|single| vec![single.to_string()])));
+    tauri::async_runtime::spawn_blocking(move || {
+        let ext = extension
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let ext_list =
+            normalize_extensions(extensions.or_else(|| ext.map(|single| vec![single.to_string()])));
 
-    let options = ContentSearchOptions {
-        query,
-        ignore_case,
-        extensions: ext_list,
-        max_matches: max_matches.unwrap_or(DEFAULT_MAX_MATCHES),
-        max_files_scanned: max_files_scanned.unwrap_or(DEFAULT_MAX_FILES_SCANNED),
-        max_matches_per_file: max_matches_per_file.unwrap_or(DEFAULT_MAX_MATCHES_PER_FILE),
-        exclude_patterns,
-        use_ignore_files: use_ignore_files.unwrap_or(true),
-        follow_symlinks: follow_symlinks.unwrap_or(false),
-    };
+        let options = ContentSearchOptions {
+            query,
+            ignore_case,
+            extensions: ext_list,
+            max_matches: max_matches.unwrap_or(DEFAULT_MAX_MATCHES),
+            max_files_scanned: max_files_scanned.unwrap_or(DEFAULT_MAX_FILES_SCANNED),
+            max_matches_per_file: max_matches_per_file.unwrap_or(DEFAULT_MAX_MATCHES_PER_FILE),
+            exclude_patterns,
+            use_ignore_files: use_ignore_files.unwrap_or(true),
+            follow_symlinks: follow_symlinks.unwrap_or(false),
+        };
 
-    Ok(content_search::search_file_contents(
-        Path::new(&root),
-        options,
-        search_id.unwrap_or(0),
-        None,
-    ))
+        content_search::search_file_contents(
+            Path::new(&root),
+            options,
+            search_id.unwrap_or(0),
+            None,
+        )
+    })
+    .await
+    .map_err(|error| format!("内容搜索失败：{error}"))
 }
 
 #[cfg(test)]

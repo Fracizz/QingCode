@@ -315,6 +315,7 @@
     "配置": "Configuration",
     "文档": "Documentation",
     "输入关键词搜索文件内容": "Enter keywords to search file contents",
+    "继续输入以搜索内容（至少 {n} 个字符）": "Keep typing to search contents (at least {n} characters)",
     "输入关键词、通配符（*）或选择常见类型开始搜索": "Enter keywords, a wildcard (*), or choose a common type to start searching",
     "搜索中…": "Searching…",
     "无匹配结果": "No matches found",

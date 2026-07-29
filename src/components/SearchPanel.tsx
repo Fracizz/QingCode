@@ -147,6 +147,8 @@ export default function SearchPanel() {
   const extScanId = useRef(0)
   /** When true, the next search effect skips debounce (Enter / flush). */
   const searchNowRef = useRef(false)
+  /** Do not search intermediate pinyin/phonetic text while an IME composition is active. */
+  const composingRef = useRef(false)
   const listRef = useListRef(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const scopeBtnRef = useRef<HTMLButtonElement>(null)
@@ -339,6 +341,7 @@ export default function SearchPanel() {
   }, [wantsFilename, wantsContent])
 
   useEffect(() => {
+    const id = ++reqId.current
     if (searchRoots.length === 0) {
       searchNowRef.current = false
       queueMicrotask(() => {
@@ -347,6 +350,11 @@ export default function SearchPanel() {
         setError(null)
         setLoading(false)
       })
+      return
+    }
+
+    if (composingRef.current) {
+      queueMicrotask(() => setLoading(false))
       return
     }
 
@@ -379,11 +387,11 @@ export default function SearchPanel() {
       return
     }
 
-    const id = ++reqId.current
     queueMicrotask(() => setLoading(true))
     const perRootLimit = Math.max(50, Math.ceil(500 / searchRoots.length))
     let filenameTimer: ReturnType<typeof setTimeout> | undefined
     let contentTimer: ReturnType<typeof setTimeout> | undefined
+    let contentStarted = false
     let pending = (runFilename ? 1 : 0) + (runContent ? 1 : 0)
     let sawError: string | null = null
 
@@ -442,6 +450,7 @@ export default function SearchPanel() {
 
     if (runContent) {
       contentTimer = setTimeout(async () => {
+        contentStarted = true
         try {
           const searchId = await safeInvoke<number>('开始内容搜索', 'start_content_search')
           if (id !== reqId.current) return
@@ -506,7 +515,7 @@ export default function SearchPanel() {
     return () => {
       if (filenameTimer) clearTimeout(filenameTimer)
       if (contentTimer) clearTimeout(contentTimer)
-      if (runContent && isTauri()) {
+      if (contentStarted && isTauri()) {
         void safeInvoke('取消内容搜索', 'cancel_content_search').catch(() => {})
       }
     }
@@ -863,6 +872,14 @@ export default function SearchPanel() {
                 ref={searchInputRef}
                 value={query}
                 onChange={e => setQuery(e.target.value)}
+                onCompositionStart={() => {
+                  composingRef.current = true
+                }}
+                onCompositionEnd={e => {
+                  composingRef.current = false
+                  setQuery(e.currentTarget.value)
+                  setSearchFlush(n => n + 1)
+                }}
                 onKeyDown={e => {
                   if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
                   e.preventDefault()

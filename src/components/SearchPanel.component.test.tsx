@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '../types'
 import SearchPanel from './SearchPanel'
@@ -200,6 +200,41 @@ describe('SearchPanel', () => {
           '文件搜索',
           'search_files',
           expect.objectContaining({ query: 'app' }),
+        ),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('waits for IME composition to finish before searching', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      render(<SearchPanel />)
+      const input = screen.getByPlaceholderText('搜索文件或内容…')
+
+      fireEvent.compositionStart(input)
+      fireEvent.change(input, { target: { value: 'fuzhi' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+
+      expect(mocks.safeInvoke).not.toHaveBeenCalledWith(
+        '文件搜索',
+        'search_files',
+        expect.objectContaining({ query: 'fuzhi' }),
+      )
+
+      fireEvent.compositionEnd(input)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600)
+      })
+
+      await waitFor(() =>
+        expect(mocks.safeInvoke).toHaveBeenCalledWith(
+          '文件搜索',
+          'search_files',
+          expect.objectContaining({ query: 'fuzhi' }),
         ),
       )
     } finally {
