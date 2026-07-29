@@ -39,6 +39,12 @@ export type GitBranchList = {
   remote: string[]
 }
 
+export type GitRemote = {
+  name: string
+  fetch_url: string | null
+  push_urls: string[]
+}
+
 export type GitCommitInfo = {
   hash: string
   short_hash: string

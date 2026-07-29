@@ -45,6 +45,7 @@ import type {
   GitChange,
   GitCommitFileChange,
   GitCommitInfo,
+  GitRemote,
   GitStatus,
 } from '@/lib/git/git'
 import {
@@ -87,6 +88,7 @@ import {
   getGitFileContents,
   getGitHead,
   getGitLog,
+  getGitRemotes,
   getGitStatus,
   pullGit,
   pushGit,
@@ -102,6 +104,7 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import ScmResizableColumn from './ScmResizableColumn'
 import ScmCommitHistory, { SCM_COMMIT_PAGE_SIZE } from './ScmCommitHistory'
 import ScmToolbar, { ScmPullMenu, ScmPushMenu } from './ScmToolbar'
+import ScmRemotesBar from './ScmRemotesBar'
 import { translate, useI18n } from '../lib/i18n'
 import { deferToNativeContextMenuInDev, shouldShowAppContextMenu } from '../lib/devBuild'
 import {
@@ -638,6 +641,9 @@ export default function SourceControlPanel() {
   const [inlineDiffError, setInlineDiffError] = useState<string | null>(null)
   const [branchMenuOpen, setBranchMenuOpen] = useState(false)
   const [branchList, setBranchList] = useState<GitBranchList | null>(null)
+  const [remotes, setRemotes] = useState<GitRemote[] | null>(null)
+  const [remotesLoading, setRemotesLoading] = useState(false)
+  const remotesSequenceRef = useRef(0)
   const [branchMenuStyle, setBranchMenuStyle] = useState<CSSProperties>({
     left: 0,
     top: 0,
@@ -693,6 +699,36 @@ export default function SourceControlPanel() {
     },
     [scmLeftWidth]
   )
+
+  const loadRemotes = useCallback(async (path: string) => {
+    if (!isTauri()) {
+      setRemotes([])
+      setRemotesLoading(false)
+      return
+    }
+    const sequence = ++remotesSequenceRef.current
+    setRemotesLoading(true)
+    try {
+      const next = await getGitRemotes(path)
+      if (
+        remotesSequenceRef.current === sequence &&
+        useProjectStore.getState().currentProject?.path === path
+      ) {
+        setRemotes(next)
+      }
+    } catch {
+      if (
+        remotesSequenceRef.current === sequence &&
+        useProjectStore.getState().currentProject?.path === path
+      ) {
+        setRemotes([])
+      }
+    } finally {
+      if (remotesSequenceRef.current === sequence) {
+        setRemotesLoading(false)
+      }
+    }
+  }, [])
 
   const loadCommits = useCallback(async (path: string, refreshSequence?: number) => {
     const isCurrentRequest = () =>
@@ -842,11 +878,14 @@ export default function SourceControlPanel() {
         setInlineDiffError(null)
         if (next.is_repository) {
           await loadCommits(path, sequence)
+          void loadRemotes(path)
         } else {
           setCommits([])
           commitsRef.current = []
           setCommitsHasMore(false)
           commitsHasMoreRef.current = false
+          setRemotes([])
+          setRemotesLoading(false)
         }
       } catch (reason) {
         if (!isCurrentRequest()) return
@@ -861,7 +900,7 @@ export default function SourceControlPanel() {
         }
       }
     },
-    [loadCommits, setStatus]
+    [loadCommits, loadRemotes, setStatus]
   )
 
   useEffect(() => {
@@ -874,6 +913,9 @@ export default function SourceControlPanel() {
       setContextMenu(null)
       setBranchMenuOpen(false)
       setBranchList(null)
+      remotesSequenceRef.current += 1
+      setRemotes(null)
+      setRemotesLoading(false)
       selectedCommitHashRef.current = null
       selectedCommitFileRef.current = null
       commitFilesSequenceRef.current += 1
@@ -900,12 +942,15 @@ export default function SourceControlPanel() {
         setStatus(seeded)
         setError(null)
         void refresh({ soft: !gitStatusNeedsTrackingMetadata(seeded) })
-        if (seeded.is_repository) void loadCommits(projectPath)
-        else {
+        if (seeded.is_repository) {
+          void loadCommits(projectPath)
+          void loadRemotes(projectPath)
+        } else {
           setCommits([])
           commitsRef.current = []
           setCommitsHasMore(false)
           commitsHasMoreRef.current = false
+          setRemotes([])
         }
       } else {
         setStatus(null)
@@ -913,7 +958,7 @@ export default function SourceControlPanel() {
       }
     }, 0)
     return () => window.clearTimeout(resetTimer)
-  }, [projectPath, refresh, loadCommits, setStatus])
+  }, [projectPath, refresh, loadCommits, loadRemotes, setStatus])
 
   const groups = useMemo(() => splitGitChanges(status?.changes ?? []), [status])
   const unmergedChanges = useMemo(() => collectUnmergedChanges(status?.changes ?? []), [status])
@@ -1477,6 +1522,7 @@ export default function SourceControlPanel() {
             markLocalGitSyncTime(project.path, 'fetch')
             clearFetchAuthFailed(project.path)
             setBranchList(branches)
+            void loadRemotes(project.path)
             if (!silent) {
               useProjectStore.getState().pushToast('success', t('已检查更新'))
             }
@@ -1497,7 +1543,7 @@ export default function SourceControlPanel() {
         setOperation(null)
       }
     },
-    [loading, operation, refresh, status?.is_repository, status?.last_fetch_at, t],
+    [loading, operation, refresh, loadRemotes, status?.is_repository, status?.last_fetch_at, t],
   )
 
   const tryAutoFetch = useCallback(
@@ -2367,6 +2413,13 @@ export default function SourceControlPanel() {
           setPushMenuOpen(open => !open)
         }}
       />
+      {status?.is_repository ? (
+        <ScmRemotesBar
+          remotes={remotes}
+          upstream={status.upstream}
+          loading={remotesLoading}
+        />
+      ) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">{body}</div>
       {contextMenu && (
         <ContextMenu

@@ -4,6 +4,7 @@ import type {
   GitCommitInfo,
   GitFileContents,
   GitPullResult,
+  GitRemote,
   GitStatus,
 } from '../git/git'
 import type { GitWorkdirStatus } from '../git/gitStatus'
@@ -32,6 +33,10 @@ export function getGitLog(path: string, limit: number, skip: number): Promise<Gi
 
 export function getGitBranches(path: string): Promise<GitBranchList> {
   return safeInvoke('读取分支列表', 'git_branch_list', { path })
+}
+
+export function getGitRemotes(path: string): Promise<GitRemote[]> {
+  return safeInvoke('读取远程地址', 'git_remotes', { path })
 }
 
 export function switchGitBranch(path: string, branch: string): Promise<void> {

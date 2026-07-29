@@ -903,6 +903,78 @@ pub struct GitBranchList {
     pub remote: Vec<String>,
 }
 
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+pub struct GitRemote {
+    pub name: String,
+    pub fetch_url: Option<String>,
+    pub push_urls: Vec<String>,
+}
+
+/// Parse `git remote -v` output into remotes (supports multiple push URLs per name).
+fn parse_remote_v(text: &str) -> Vec<GitRemote> {
+    let mut order: Vec<String> = Vec::new();
+    let mut by_name: std::collections::BTreeMap<String, GitRemote> = std::collections::BTreeMap::new();
+
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some((name, rest)) = line.split_once(|c: char| c == '\t' || c == ' ') else {
+            continue;
+        };
+        let name = name.trim();
+        let rest = rest.trim();
+        if name.is_empty() || rest.is_empty() {
+            continue;
+        }
+        let (url, kind) = if let Some(idx) = rest.rfind(" (") {
+            let url = rest[..idx].trim();
+            let kind = rest[idx..].trim();
+            (url, kind)
+        } else {
+            (rest, "")
+        };
+        if url.is_empty() {
+            continue;
+        }
+        if !by_name.contains_key(name) {
+            order.push(name.to_string());
+            by_name.insert(
+                name.to_string(),
+                GitRemote {
+                    name: name.to_string(),
+                    fetch_url: None,
+                    push_urls: Vec::new(),
+                },
+            );
+        }
+        let remote = by_name.get_mut(name).expect("remote just inserted");
+        if kind.contains("fetch") {
+            remote.fetch_url = Some(url.to_string());
+        } else if kind.contains("push") {
+            if !remote.push_urls.iter().any(|existing| existing == url) {
+                remote.push_urls.push(url.to_string());
+            }
+        } else if remote.fetch_url.is_none() {
+            remote.fetch_url = Some(url.to_string());
+        }
+    }
+
+    order
+        .into_iter()
+        .filter_map(|name| by_name.remove(&name))
+        .collect()
+}
+
+fn list_remotes(root: &Path) -> Result<Vec<GitRemote>, String> {
+    let output = run_git(root, &["remote", "-v"])?;
+    if !output.status.success() {
+        return Err(format!("读取远程地址失败：{}", git_output_text(&output)));
+    }
+    Ok(parse_remote_v(&decode_git_text(&output.stdout)))
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct GitCommitInfo {
     pub hash: String,
@@ -1072,6 +1144,18 @@ pub async fn git_branch_list(
     tauri::async_runtime::spawn_blocking(move || list_branches(&root))
         .await
         .map_err(|error| format!("读取分支列表失败：{error}"))?
+}
+
+#[tauri::command]
+pub async fn git_remotes(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<Vec<GitRemote>, String> {
+    ensure_git_root(&path, &allowlist)?;
+    let root = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || list_remotes(&root))
+        .await
+        .map_err(|error| format!("读取远程地址失败：{error}"))?
 }
 
 #[tauri::command]
@@ -1300,6 +1384,83 @@ mod tests {
         assert!(ensure_git_root(&project.to_string_lossy(), &allowlist).is_ok());
 
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn parse_remote_v_returns_empty_for_blank_input() {
+        assert!(parse_remote_v("").is_empty());
+        assert!(parse_remote_v("\n\n").is_empty());
+    }
+
+    #[test]
+    fn parse_remote_v_keeps_multiple_remotes_and_push_urls() {
+        let remotes = parse_remote_v(
+            "origin\thttps://gitee.com/acme/app.git (fetch)\n\
+             origin\thttps://gitee.com/acme/app.git (push)\n\
+             origin\thttps://github.com/acme/app.git (push)\n\
+             github\tgit@github.com:acme/app.git (fetch)\n\
+             github\tgit@github.com:acme/app.git (push)\n",
+        );
+        assert_eq!(remotes.len(), 2);
+        assert_eq!(remotes[0].name, "origin");
+        assert_eq!(
+            remotes[0].fetch_url.as_deref(),
+            Some("https://gitee.com/acme/app.git")
+        );
+        assert_eq!(
+            remotes[0].push_urls,
+            vec![
+                "https://gitee.com/acme/app.git".to_string(),
+                "https://github.com/acme/app.git".to_string(),
+            ]
+        );
+        assert_eq!(remotes[1].name, "github");
+        assert_eq!(
+            remotes[1].fetch_url.as_deref(),
+            Some("git@github.com:acme/app.git")
+        );
+        assert_eq!(
+            remotes[1].push_urls,
+            vec!["git@github.com:acme/app.git".to_string()]
+        );
+    }
+
+    #[test]
+    fn list_remotes_reads_configured_urls() {
+        let root = init_test_repo("remotes");
+        git_success(
+            &root,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://example.com/origin.git",
+            ],
+        );
+        git_success(
+            &root,
+            &[
+                "remote",
+                "set-url",
+                "--add",
+                "--push",
+                "origin",
+                "https://example.com/mirror.git",
+            ],
+        );
+        let remotes = list_remotes(&root).expect("list remotes");
+        assert_eq!(remotes.len(), 1);
+        assert_eq!(remotes[0].name, "origin");
+        assert_eq!(
+            remotes[0].fetch_url.as_deref(),
+            Some("https://example.com/origin.git")
+        );
+        // Adding a push URL replaces the implicit same-as-fetch push URL.
+        assert_eq!(
+            remotes[0].push_urls,
+            vec!["https://example.com/mirror.git".to_string()]
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

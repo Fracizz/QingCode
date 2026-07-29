@@ -212,7 +212,7 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 文件：`src/components/SourceControlPanel.tsx`、`src/components/ScmInlineDiff.tsx`
 
 - 活动栏进入「源代码管理」后，**主编辑区整页**显示 SCM 工作台（参考 UGit 的变更/历史分区）；不再占用左侧窄侧栏。再点一次 SCM 图标回到资源管理器。
-- 顶栏：分支下拉、拉取、推送、刷新。页签：**变更** | **历史**。
+- 顶栏：分支下拉、检查更新、拉取、推送。顶栏下方展示 **GIT 地址**（`git remote -v`，支持多远程 / 多 push URL，可一键复制）；页签：**变更** | **历史**。
 - **变更**：左栏为变更/待提交列表与提交区；右栏内嵌 Diff（`git_file_contents` + DiffEditor）。单击查看差异；双击或右键「打开更改」可在编辑器标签中打开并切回资源管理器。左栏宽度可拖拽（`PanelResizer`，持久化 `qingcode:scm-layout`）。
 - SCM 内部分栏拖动时由 `requestAnimationFrame` 合并指针事件并直接更新分栏 DOM 宽度；松手后才提交 React 状态与 `localStorage`。禁止在每次 `pointermove` 中同步读布局、重渲染整个 SCM 或持久化。
 - **历史**：默认左侧提交列表约占 3/5、右侧提交详情（摘要 + 更改文件列表，可拖宽、可筛选/正则、虚拟列表）；点击文件后左侧用 Diff **覆盖**提交列表（可「返回提交列表」）。`git_log` 分页 + 虚拟列表；`git_commit_files` / `git_commit_file_contents`。不做回退 / cherry-pick。

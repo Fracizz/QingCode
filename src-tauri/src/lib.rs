@@ -419,6 +419,7 @@ pub fn run() {
             git::git_fetch,
             git::git_pull,
             git::git_branch_list,
+            git::git_remotes,
             git::git_switch,
             git::git_log,
             git::git_commit_files,
