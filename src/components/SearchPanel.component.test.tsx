@@ -156,6 +156,57 @@ describe('SearchPanel', () => {
     await waitFor(() => expect(screen.getByText('app.tsx')).toBeInTheDocument())
   })
 
+  it('skips content search for a single-character query', async () => {
+    dispatch({
+      list_file_extensions: () => ['ts'],
+      search_files: () => [],
+      start_content_search: () => 1,
+      search_file_contents: () => ({
+        files: [],
+        match_count: 0,
+        files_scanned: 0,
+        truncated: false,
+      }),
+      cancel_content_search: () => undefined,
+    })
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText('搜索文件或内容…')
+    fireEvent.change(input, { target: { value: 'a' } })
+
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith(
+        '文件搜索',
+        'search_files',
+        expect.objectContaining({ query: 'a' }),
+      ),
+    )
+    expect(mocks.safeInvoke).not.toHaveBeenCalledWith(
+      '内容搜索',
+      'search_file_contents',
+      expect.anything(),
+    )
+  })
+
+  it('searches immediately when Enter is pressed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      render(<SearchPanel />)
+      const input = screen.getByPlaceholderText('搜索文件或内容…')
+      fireEvent.change(input, { target: { value: 'app' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+
+      await waitFor(() =>
+        expect(mocks.safeInvoke).toHaveBeenCalledWith(
+          '文件搜索',
+          'search_files',
+          expect.objectContaining({ query: 'app' }),
+        ),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('prefills the global search input from a shortcut selection', async () => {
     render(<SearchPanel />)
 

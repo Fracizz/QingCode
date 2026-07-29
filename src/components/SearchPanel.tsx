@@ -73,8 +73,11 @@ type SearchMode = 'all' | 'filename' | 'content'
 type SearchScope = 'current' | 'all'
 
 const TOP_EXT_COUNT = 5
-const CONTENT_DEBOUNCE_MS = 400
-const FILENAME_DEBOUNCE_MS = 200
+/** Content search waits longer so typing stays smooth (IDEA-style pause-then-search). */
+const CONTENT_DEBOUNCE_MS = 550
+const FILENAME_DEBOUNCE_MS = 280
+/** Skip content scan for 1-char queries; filename search still runs. */
+const MIN_CONTENT_QUERY_LEN = 2
 const MAX_MATCHES_PER_FILE = 20
 const EXT_PICKER_WIDTH = 168
 const SCOPE_MENU_WIDTH = 140
@@ -142,14 +145,17 @@ export default function SearchPanel() {
   const reqId = useRef(0)
   const pushToast = useProjectStore(s => s.pushToast)
   const extScanId = useRef(0)
+  /** When true, the next search effect skips debounce (Enter / flush). */
+  const searchNowRef = useRef(false)
   const listRef = useListRef(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const scopeBtnRef = useRef<HTMLButtonElement>(null)
   const scopeMenuRef = useRef<HTMLDivElement>(null)
   const extPickerBtnRef = useRef<HTMLButtonElement>(null)
   const extPickerRef = useRef<HTMLDivElement>(null)
+  const [searchFlush, setSearchFlush] = useState(0)
   const showReplace = mode === 'content'
-  const extList = typeFilterExtensions(typeFilter)
+  const extList = useMemo(() => typeFilterExtensions(typeFilter), [typeFilter])
   const useGlob = isGlobPattern(query)
   const topExts = useMemo(() => projectExts.slice(0, TOP_EXT_COUNT), [projectExts])
   const otherExts = useMemo(() => projectExts.slice(TOP_EXT_COUNT), [projectExts])
@@ -159,7 +165,11 @@ export default function SearchPanel() {
     if (globalSearchSignal === 0) return
     setSearchRoot(null)
     setSearchScope('current')
-    if (globalSearchQuery) setQuery(globalSearchQuery)
+    if (globalSearchQuery) {
+      setQuery(globalSearchQuery)
+      searchNowRef.current = true
+      setSearchFlush(n => n + 1)
+    }
     const frame = window.requestAnimationFrame(() => {
       const input = searchInputRef.current
       if (!input) return
@@ -330,6 +340,7 @@ export default function SearchPanel() {
 
   useEffect(() => {
     if (searchRoots.length === 0) {
+      searchNowRef.current = false
       queueMicrotask(() => {
         setFilenameResults([])
         setContentResults(null)
@@ -339,9 +350,14 @@ export default function SearchPanel() {
       return
     }
 
+    const immediate = searchNowRef.current
+    searchNowRef.current = false
+    const filenameDelay = immediate ? 0 : FILENAME_DEBOUNCE_MS
+    const contentDelay = immediate ? 0 : CONTENT_DEBOUNCE_MS
+
     const q = query.trim()
     const runFilename = wantsFilename && (q.length > 0 || typeFilter !== null)
-    const runContent = wantsContent && q.length > 0
+    const runContent = wantsContent && q.length >= MIN_CONTENT_QUERY_LEN
 
     if (!runFilename && !runContent) {
       queueMicrotask(() => {
@@ -419,7 +435,7 @@ export default function SearchPanel() {
         } finally {
           if (id === reqId.current) finishOne()
         }
-      }, FILENAME_DEBOUNCE_MS)
+      }, filenameDelay)
     } else if (wantsFilename) {
       queueMicrotask(() => setFilenameResults([]))
     }
@@ -482,7 +498,7 @@ export default function SearchPanel() {
         } finally {
           if (id === reqId.current) finishOne()
         }
-      }, CONTENT_DEBOUNCE_MS)
+      }, contentDelay)
     } else if (wantsContent) {
       queueMicrotask(() => setContentResults(null))
     }
@@ -497,6 +513,7 @@ export default function SearchPanel() {
   }, [
     searchRoots,
     query,
+    searchFlush,
     ignoreCase,
     fuzzy,
     matchSuffix,
@@ -507,6 +524,11 @@ export default function SearchPanel() {
     wantsContent,
     projects,
   ])
+
+  const flushSearch = useCallback(() => {
+    searchNowRef.current = true
+    setSearchFlush(n => n + 1)
+  }, [])
 
   const toggleSuffix = () => {
     if (!wantsFilename || useGlob) return
@@ -651,13 +673,17 @@ export default function SearchPanel() {
     [rows, activeIndex, toggleFileCollapse, onOpenMatch, onOpenFilename]
   )
 
+  const queryTrimmed = query.trim()
+  const contentQueryShort =
+    wantsContent && !wantsFilename && queryTrimmed.length > 0 && queryTrimmed.length < MIN_CONTENT_QUERY_LEN
   const hasQuery =
     wantsContent && !wantsFilename
-      ? query.trim().length > 0
-      : query.trim().length > 0 || typeFilter !== null
+      ? queryTrimmed.length >= MIN_CONTENT_QUERY_LEN
+      : queryTrimmed.length > 0 || typeFilter !== null
 
-  const emptyHint =
-    mode === 'all'
+  const emptyHint = contentQueryShort
+    ? t('继续输入以搜索内容（至少 {n} 个字符）', { n: MIN_CONTENT_QUERY_LEN })
+    : mode === 'all'
       ? t('输入关键词搜索文件名或内容')
       : mode === 'content'
         ? t('输入关键词搜索文件内容')
@@ -837,11 +863,18 @@ export default function SearchPanel() {
                 ref={searchInputRef}
                 value={query}
                 onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+                  e.preventDefault()
+                  flushSearch()
+                }}
                 placeholder={inputPlaceholder}
+                aria-keyshortcuts="Enter"
                 className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
               />
               {query && (
                 <button
+                  type="button"
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
                   onClick={() => setQuery('')}
                 >
