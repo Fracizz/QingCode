@@ -73,6 +73,14 @@ libloading = "0.8"
 [target.'cfg(windows)'.dependencies]
 # Fonts registry + Explorer “Open with” (Windows only).
 winreg = "0.55"
+# Native title-bar drag regions (WM_NCHITTEST → HTCAPTION). Version and features
+# match what tao already builds, so this adds no extra compilation.
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [dev-dependencies]
 # Tests use in-process grammars; release binaries load the same grammars from

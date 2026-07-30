@@ -452,3 +452,59 @@ fn utf8_char_len(lead: u8) -> usize {
         1
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(label: &str) -> std::path::PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("qingcode-stat-{label}-{nonce}"));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Scripts touched by DLP / transparent-encryption agents carry a marker
+    /// block; other viewers display them, so the editor open path must too.
+    #[test]
+    fn read_file_opens_script_with_a_marker_block_past_the_head() {
+        let dir = temp_dir("marker");
+        let path = dir.join("install.sh");
+        let mut bytes = b"#!/bin/bash\nset -euo pipefail\necho install\n".repeat(20);
+        bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        bytes.extend_from_slice(b"\n# tail\n");
+        fs::write(&path, &bytes).unwrap();
+
+        let text = read_file_inner(path.to_string_lossy().to_string(), Some("auto")).unwrap();
+        assert!(text.starts_with("#!/bin/bash"));
+        assert!(text.contains('\0'));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// Bytes the editor cannot decode are still previewable through the slice
+    /// viewer, which backs the error pane's read-only "open anyway" action.
+    #[test]
+    fn slice_viewer_previews_bytes_the_editor_rejects() {
+        let dir = temp_dir("lossy");
+        let path = dir.join("tagged.sh");
+        let mut bytes = b"#!/bin/sh\necho hello\n".to_vec();
+        bytes.extend_from_slice(&[0xFF, 0x00, 0xFE]);
+        fs::write(&path, &bytes).unwrap();
+        let path = path.to_string_lossy().to_string();
+
+        assert!(read_file_inner(path.clone(), Some("auto")).is_err());
+
+        let slice = read_file_slice_inner(path, 0, 64 * 1024).unwrap();
+        assert!(slice.text.starts_with("#!/bin/sh"));
+        assert!(
+            slice.text.contains('\u{FFFD}'),
+            "undecodable bytes become U+FFFD"
+        );
+        assert!(slice.eof);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}

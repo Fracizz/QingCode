@@ -47,9 +47,15 @@ function detectBOM(bytes: Uint8Array): string | null {
   return null
 }
 
-/** 检测是否为二进制内容 */
+/**
+ * NUL 扫描窗口，与 VS Code `ZERO_BYTE_DETECTION_BUFFER_MAX_LEN` 及 Rust
+ * `file_encoding::ZERO_BYTE_SCAN_LIMIT` 保持一致。
+ */
+const ZERO_BYTE_SCAN_LIMIT = 512
+
+/** 检测是否为二进制内容：仅文件头部的 NUL 才判定为二进制 */
 function isBinary(bytes: Uint8Array): boolean {
-  for (let i = 0; i < Math.min(bytes.length, 8192); i++) {
+  for (let i = 0; i < Math.min(bytes.length, ZERO_BYTE_SCAN_LIMIT); i++) {
     if (bytes[i] === 0) return true
   }
   return false
@@ -178,7 +184,15 @@ self.onmessage = (event: MessageEvent<EncodingWorkerRequest>) => {
       return
     }
 
-    // 5. 检测 GB18030
+    // 5. 检测 GB18030（含 NUL 的非 UTF-8 字节不猜测传统编码，避免乱码）
+    if (bytes.subarray(ZERO_BYTE_SCAN_LIMIT).includes(0)) {
+      self.postMessage({
+        id,
+        success: false,
+        error: 'binary content',
+      } as EncodingWorkerResponse)
+      return
+    }
     if (isLikelyGB18030(bytes)) {
       self.postMessage({
         id,

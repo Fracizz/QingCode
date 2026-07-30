@@ -1,5 +1,38 @@
 import { describe, expect, it } from 'vitest'
-import { isLoadingTab, tabNeedsDiskContent } from './openFileError'
+import {
+  canPreviewAnyway,
+  isLoadingTab,
+  parseOpenFileError,
+  tabNeedsDiskContent,
+} from './openFileError'
+
+describe('parseOpenFileError', () => {
+  it('classifies detection failures as encoding errors without a double prefix', () => {
+    const detectFailed = parseOpenFileError('无法识别文件编码（binary content）：install.sh')
+    expect(detectFailed.kind).toBe('encoding')
+    expect(detectFailed.message).toBe('无法识别文件编码（binary content）：install.sh')
+
+    expect(parseOpenFileError('无法识别文件编码（unsupported text encoding）：a.txt').kind).toBe(
+      'encoding',
+    )
+    expect(parseOpenFileError('暂不支持打开非文本或无法按 utf8 解码的文件：a.sh').kind).toBe(
+      'encoding',
+    )
+  })
+
+  it('keeps extension-blocked formats as binary and unknown failures as generic', () => {
+    expect(parseOpenFileError('暂不支持打开 .png 格式（非文本文件），请用对应应用打开：a.png').kind)
+      .toBe('binary')
+    expect(parseOpenFileError('something odd').message).toBe('打开文件失败：something odd')
+  })
+
+  it('offers the read-only preview escape hatch only for decode failures', () => {
+    expect(canPreviewAnyway('encoding')).toBe(true)
+    expect(canPreviewAnyway('binary')).toBe(false)
+    expect(canPreviewAnyway('too-large')).toBe(false)
+    expect(canPreviewAnyway('generic')).toBe(false)
+  })
+})
 
 describe('isLoadingTab', () => {
   it('treats progressive open (no content yet) as loading', () => {

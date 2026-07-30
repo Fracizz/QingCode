@@ -219,6 +219,13 @@ interface EditorState {
   navigationHistory: NavigationHistoryState
   openFile: (path: string, line?: number, column?: number) => Promise<void>
   retryOpenFile: (id: string) => Promise<void>
+  /**
+   * VS Code “Open Anyway” for decode failures: reopen the errored tab as a
+   * read-only slice preview (undecodable bytes become U+FFFD) so text that
+   * carries a stray NUL / marker block stays readable without risking a
+   * lossy save.
+   */
+  previewAnywayFromError: (id: string) => Promise<void>
   /** Open a read-only HEAD ↔ working-tree compare tab for a project-relative file. */
   openDiff: (projectPath: string, relativePath: string, absolutePath: string) => Promise<void>
   clearPendingReveal: () => void
@@ -524,6 +531,66 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         const next = mapTabEverywhere(s, id, t => ({
           ...t,
           loading: false,
+          openError: message,
+          openErrorKind: kind,
+        }))
+        return next ?? s
+      })
+    }
+  },
+
+  previewAnywayFromError: async (id: string) => {
+    const tab = get().findTab(id)
+    if (!tab?.openError || tab.kind === 'diff') return
+    set(s => {
+      const next = mapTabEverywhere(s, id, t => ({
+        ...t,
+        loading: true,
+        openError: undefined,
+        openErrorKind: undefined,
+      }))
+      return next ?? s
+    })
+    try {
+      const stat = await safeInvoke<FileStat>('读取文件信息', 'file_stat', { path: tab.path })
+      if (!get().findTab(id)) return
+      if (stat.is_dir) throw new Error(`无法打开文件夹：${tabNameFromPath(tab.path)}`)
+      if (fileOpenTier(stat.size) === 'reject') {
+        throw new Error(`暂不支持打开超过 500MB 的大文件：${tabNameFromPath(tab.path)}`)
+      }
+      let mtime: number | null = null
+      try {
+        mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', { path: tab.path })
+      } catch {
+        mtime = null
+      }
+      if (!get().findTab(id)) return
+      set(s => {
+        const next = mapTabEverywhere(s, id, t => ({
+          ...t,
+          content: undefined,
+          viewMode: 'view' as const,
+          fileSize: stat.size,
+          loading: false,
+          dirty: false,
+          diskMtime: mtime,
+          language: guessLanguage(tab.path),
+        }))
+        if (!next) return s
+        return { ...next, pendingReveal: null }
+      })
+      useProjectStore
+        .getState()
+        .pushToast('info', translate('已以只读预览打开（无法解码的字节显示为乱码，不可编辑）'))
+    } catch (e) {
+      console.error('previewAnywayFromError failed:', e)
+      if (!get().findTab(id)) return
+      const { message, kind } = parseOpenFileError(e)
+      set(s => {
+        const next = mapTabEverywhere(s, id, t => ({
+          ...t,
+          loading: false,
+          viewMode: 'edit' as const,
           openError: message,
           openErrorKind: kind,
         }))

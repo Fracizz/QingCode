@@ -1,11 +1,19 @@
 import type { ReactNode } from 'react'
-import { AlertTriangle, AppWindow, Copy, ExternalLink, LocateFixed, RotateCw } from 'lucide-react'
+import {
+  AlertTriangle,
+  AppWindow,
+  Copy,
+  ExternalLink,
+  Eye,
+  LocateFixed,
+  RotateCw,
+} from 'lucide-react'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { copyToClipboard } from '../utils/fileReferences'
-import { openFileErrorTitle } from '../lib/openFileError'
+import { canPreviewAnyway, openFileErrorTitle } from '../lib/openFileError'
 import type { EditorTab } from '../types'
 import { useI18n } from '../lib/i18n'
 import Tooltip from './Tooltip'
@@ -17,6 +25,7 @@ interface Props {
 export default function EditorOpenError({ tab }: Props) {
   const { t } = useI18n()
   const retryOpenFile = useEditorStore(s => s.retryOpenFile)
+  const previewAnywayFromError = useEditorStore(s => s.previewAnywayFromError)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
   const setView = useUIStore(s => s.setView)
   const kind = tab.openErrorKind ?? 'generic'
@@ -71,6 +80,13 @@ export default function EditorOpenError({ tab }: Props) {
         </Tooltip>
       </div>
       <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[13px]">
+        {canPreviewAnyway(kind) ? (
+          <ActionButton
+            icon={<Eye size={14} />}
+            label={t('仍然打开（只读预览）')}
+            onClick={() => void previewAnywayFromError(tab.id)}
+          />
+        ) : null}
         <ActionButton
           icon={<AppWindow size={14} />}
           label={t('在关联的应用程序中打开')}

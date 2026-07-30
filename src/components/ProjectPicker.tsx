@@ -550,6 +550,16 @@ export default function ProjectPicker() {
             {t('添加项目')}
           </button>
         )}
+
+        {/* Absorbs the width left over after the chips. Reporting this filler
+            instead of the container keeps chips interactive while still giving the
+            OS hit test a real rectangle to drag the window by. `-ml-1` cancels the
+            container gap so chip overflow measurement is unaffected. */}
+        <div
+          className="flex-1 self-stretch min-w-0 -ml-1"
+          data-caption-region
+          data-tauri-drag-region
+        />
       </div>
 
       {/* Hidden measuring layer: renders every chip at natural width so we can compute overflow. */}

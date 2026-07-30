@@ -15,6 +15,7 @@ mod git_command;
 mod git_status;
 mod ipc;
 mod language_components;
+mod native_caption;
 mod path_guard;
 mod symbol_search;
 mod terminal;
@@ -454,6 +455,7 @@ pub fn run() {
             file_watcher::is_fs_watch_suppressed,
             file_watcher::file_mtime,
             file_watcher::file_ctime,
+            native_caption::set_caption_regions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

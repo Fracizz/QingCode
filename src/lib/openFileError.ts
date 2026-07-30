@@ -19,7 +19,11 @@ export function parseOpenFileError(error: unknown): { message: string; kind: Ope
   if (message.includes('暂不支持打开') && message.includes('格式')) {
     return { message, kind: 'binary' }
   }
-  if (message.includes('非 UTF-8') || message.includes('非文本')) {
+  if (
+    message.includes('非 UTF-8')
+    || message.includes('非文本')
+    || message.includes('无法识别文件编码')
+  ) {
     return { message, kind: 'encoding' }
   }
   if (message.startsWith('无法访问')) {
@@ -54,6 +58,17 @@ export function openFileErrorTitle(kind: OpenFileErrorKind): string {
 
 export function isOpenErrorTab(tab: { openError?: string }): boolean {
   return Boolean(tab.openError)
+}
+
+/**
+ * Whether the error pane may offer a lossy read-only preview (VS Code "Open Anyway").
+ *
+ * Only for decode failures: those files are usually text that carries a stray
+ * NUL / marker block (DLP agents, generators). Extension-blacklisted formats
+ * stay blocked because the slice viewer rejects them as well.
+ */
+export function canPreviewAnyway(kind: OpenFileErrorKind): boolean {
+  return kind === 'encoding'
 }
 
 export function isLoadingTab(tab: {

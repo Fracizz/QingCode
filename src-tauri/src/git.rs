@@ -913,14 +913,15 @@ pub struct GitRemote {
 /// Parse `git remote -v` output into remotes (supports multiple push URLs per name).
 fn parse_remote_v(text: &str) -> Vec<GitRemote> {
     let mut order: Vec<String> = Vec::new();
-    let mut by_name: std::collections::BTreeMap<String, GitRemote> = std::collections::BTreeMap::new();
+    let mut by_name: std::collections::BTreeMap<String, GitRemote> =
+        std::collections::BTreeMap::new();
 
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
-        let Some((name, rest)) = line.split_once(|c: char| c == '\t' || c == ' ') else {
+        let Some((name, rest)) = line.split_once(['\t', ' ']) else {
             continue;
         };
         let name = name.trim();
@@ -1430,12 +1431,7 @@ mod tests {
         let root = init_test_repo("remotes");
         git_success(
             &root,
-            &[
-                "remote",
-                "add",
-                "origin",
-                "https://example.com/origin.git",
-            ],
+            &["remote", "add", "origin", "https://example.com/origin.git"],
         );
         git_success(
             &root,

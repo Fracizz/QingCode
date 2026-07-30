@@ -57,6 +57,15 @@ fn charset(enc: FileEncoding) -> &'static Encoding {
     }
 }
 
+/// Bytes inspected for NULs when deciding "binary", matching VS Code's
+/// `ZERO_BYTE_DETECTION_BUFFER_MAX_LEN`.
+///
+/// A NUL right at the head means binary; a NUL further in does not. Files that
+/// pass through Windows DLP / transparent-encryption agents, and some
+/// generators, carry a marker block inside an otherwise textual file — VS Code
+/// still shows those as text, so QingCode must not reject them outright.
+const ZERO_BYTE_SCAN_LIMIT: usize = 512;
+
 /// True when `bytes` is valid UTF-8, or a valid UTF-8 prefix truncated mid-character.
 ///
 /// Detection samples are often capped (e.g. first 8KB). Cutting inside a multi-byte
@@ -127,6 +136,10 @@ fn detect_utf16_without_bom(bytes: &[u8]) -> Option<FileEncoding> {
 /// BOM-less UTF-16 is detected by NUL-byte distribution (ASCII code units
 /// leave a NUL on one side); pure-Chinese UTF-16 without BOM has no NUL
 /// pattern and still needs an explicit encoding to reopen.
+///
+/// NUL bytes only mean "binary" inside the first [`ZERO_BYTE_SCAN_LIMIT`]
+/// bytes; past that the UTF-8 / GB18030 validation below decides, because NUL
+/// is itself a valid UTF-8 code point.
 pub fn detect(bytes: &[u8]) -> Result<FileEncoding, String> {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return Ok(FileEncoding::Utf8Bom);
@@ -138,7 +151,8 @@ pub fn detect(bytes: &[u8]) -> Result<FileEncoding, String> {
     if bytes.starts_with(&[0xFE, 0xFF]) {
         return Ok(FileEncoding::Utf16Be);
     }
-    if bytes.contains(&0) {
+    let head_len = bytes.len().min(ZERO_BYTE_SCAN_LIMIT);
+    if bytes[..head_len].contains(&0) {
         // Could be BOM-less UTF-16 (ASCII code units leave a NUL on one side).
         if let Some(enc) = detect_utf16_without_bom(bytes) {
             return Ok(enc);
@@ -147,6 +161,11 @@ pub fn detect(bytes: &[u8]) -> Result<FileEncoding, String> {
     }
     if is_utf8_or_truncated_prefix(bytes) {
         return Ok(FileEncoding::Utf8);
+    }
+    // Not UTF-8 and carries a NUL further in: legacy codepages never do, so
+    // guessing GB18030 here would only produce mojibake for binary data.
+    if bytes[head_len..].contains(&0) {
+        return Err("binary content".to_string());
     }
     let (_text, _used, had_errors) = GB18030.decode(bytes);
     if had_errors {
@@ -362,6 +381,38 @@ mod tests {
             "lone surrogate must fail decode validation"
         );
         assert!(detect(&bad).is_err());
+    }
+
+    #[test]
+    fn detect_keeps_text_with_a_nul_past_the_head_window() {
+        // DLP / transparent-encryption agents leave a marker block inside an
+        // otherwise textual script; VS Code shows it, so detection must too.
+        let mut bytes = b"#!/bin/bash\nset -euo pipefail\necho install\n".repeat(20);
+        assert!(bytes.len() > ZERO_BYTE_SCAN_LIMIT);
+        bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        bytes.extend_from_slice(b"\n# tail marker\n");
+        assert_eq!(detect(&bytes).unwrap(), FileEncoding::Utf8);
+        // NUL is a valid UTF-8 code point, so the full read still succeeds.
+        assert!(decode(&bytes, FileEncoding::Auto).is_ok());
+    }
+
+    #[test]
+    fn detect_rejects_nul_inside_the_head_window() {
+        let mut bytes = b"#!/bin/sh\n".to_vec();
+        bytes.extend_from_slice(&[0x00, 0xFF, 0x00, 0xFE]);
+        bytes.extend_from_slice(&b"payload".repeat(80));
+        assert!(bytes.len() > ZERO_BYTE_SCAN_LIMIT);
+        assert_eq!(detect(&bytes).unwrap_err(), "binary content");
+    }
+
+    #[test]
+    fn detect_rejects_late_nul_when_bytes_are_not_utf8() {
+        // Text-looking head, then non-UTF-8 garbage with NULs: still binary,
+        // never a GB18030 guess.
+        let mut bytes = b"plain ascii header line\n".repeat(30);
+        assert!(bytes.len() > ZERO_BYTE_SCAN_LIMIT);
+        bytes.extend_from_slice(&[0xB0, 0x00, 0xFF, 0xFE, 0x00, 0x81]);
+        assert_eq!(detect(&bytes).unwrap_err(), "binary content");
     }
 
     #[test]

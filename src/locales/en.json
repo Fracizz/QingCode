@@ -180,6 +180,8 @@
     "文件过大（超过 256MB），无法打开。": "The file is too large (over 256MB) to open.",
     "文件过大（超过 500MB），无法打开。": "The file is too large (over 500MB) to open.",
     "只读预览": "Read-only preview",
+    "仍然打开（只读预览）": "Open Anyway (read-only preview)",
+    "已以只读预览打开（无法解码的字节显示为乱码，不可编辑）": "Opened in read-only preview (undecodable bytes shown as garbled text; not editable)",
     "超过 16MB 的文件以分块方式打开，不可编辑": "Files over 16MB open in chunks and cannot be edited",
     "超过 100MB 的文件仅只读分块预览，不可编辑": "Files over 100MB are read-only chunk preview only",
     "上一块": "Previous chunk",
