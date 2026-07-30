@@ -467,8 +467,8 @@ export default function ProjectPicker() {
       {/* Keep workspace control next to the file menu — not pushed to the far right. */}
       <WorkspaceMenu />
 
-      {/* Empty leftover width is native title-bar chrome: drag the window and
-          bubble double-click to TitleBar. Interactive chip descendants remain clickable. */}
+      {/* Empty leftover width is title-bar chrome: drag the window and bubble
+          double-click to TitleBar. Chips stay clickable via app-region: no-drag. */}
       <div
         ref={containerRef}
         className="relative flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden"
@@ -551,13 +551,12 @@ export default function ProjectPicker() {
           </button>
         )}
 
-        {/* Absorbs the width left over after the chips. Reporting this filler
-            instead of the container keeps chips interactive while still giving the
-            OS hit test a real rectangle to drag the window by. `-ml-1` cancels the
-            container gap so chip overflow measurement is unaffected. */}
+        {/* Absorbs leftover width after chips. Marked as a drag region so
+            WebView2 `app-region` / Tauri IPC can move the window without
+            stealing chip clicks (`no-drag` on interactive descendants).
+            `-ml-1` cancels the container gap so overflow measurement is unaffected. */}
         <div
           className="flex-1 self-stretch min-w-0 -ml-1"
-          data-caption-region
           data-tauri-drag-region
         />
       </div>

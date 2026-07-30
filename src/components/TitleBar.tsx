@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
-} from 'react'
+import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import {
   Minus,
   Square,
@@ -19,7 +13,6 @@ import {
 } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { requestAppClose } from '../lib/appClose'
-import { useCaptionRegions } from '../hooks/useCaptionRegions'
 import { isTauri } from '../lib/tauri'
 import { useProjectStore } from '../store/projectStore'
 import AppIcon from './AppIcon'
@@ -55,7 +48,6 @@ export default function TitleBar({
   terminalOpen?: boolean
 } = {}) {
   const { t } = useI18n()
-  const rootRef = useRef<HTMLDivElement>(null)
   const [maximized, setMaximized] = useState(false)
   const [windowFocused, setWindowFocused] = useState(() => document.hasFocus())
   const [layoutMenu, setLayoutMenu] = useState<{ x: number; y: number } | null>(null)
@@ -76,8 +68,6 @@ export default function TitleBar({
   const layoutIconMode = layoutMode ?? panelLayoutModeFallback({ dualTerminal: sideDualTerminal })
   const inTauri = isTauri()
   const sideLayoutActive = panelLayout === 'sideTerminal'
-
-  useCaptionRegions(rootRef)
 
   useEffect(() => {
     const onFocus = () => setWindowFocused(true)
@@ -174,7 +164,6 @@ export default function TitleBar({
 
   return (
     <div
-      ref={rootRef}
       className={`ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none transition-opacity duration-150 ${
         windowFocused ? '' : 'opacity-60'
       }`}
@@ -189,11 +178,10 @@ export default function TitleBar({
           <FileMenu onExit={handleClose} />
         </div>
         <ProjectPicker />
-        {/* Inert chrome: `data-caption-region` hands these to the OS hit test so
-            dragging never waits on the webview thread (see captionRegions.ts). */}
+        {/* Inert chrome: `app-region: drag` (via data-tauri-drag-region CSS) lets
+            WebView2 treat these as caption without start_dragging IPC. */}
         <div
           className="flex-shrink-0 h-full w-[140px]"
-          data-caption-region={inTauri ? true : undefined}
           data-tauri-drag-region={inTauri ? true : undefined}
           onDoubleClick={inTauri ? event => {
             event.stopPropagation()
@@ -202,7 +190,6 @@ export default function TitleBar({
         />
         <span
           className="flex h-full flex-shrink-0 items-center truncate px-3 text-[13px] font-semibold tracking-[0.01em] text-brand"
-          data-caption-region={inTauri ? true : undefined}
           data-tauri-drag-region={inTauri ? true : undefined}
           onDoubleClick={inTauri ? event => {
             event.stopPropagation()

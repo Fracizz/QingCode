@@ -19,6 +19,35 @@ body,
   overflow: hidden;
 }
 
+/*
+ * Native window drag on Windows (WebView2 123+): wry enables
+ * IsNonClientRegionSupportEnabled, so `app-region: drag` becomes HTCAPTION
+ * without waiting on the webview main thread / start_dragging IPC.
+ * `data-tauri-drag-region` keeps the JS IPC fallback for older runtimes.
+ * Interactive descendants must stay client-area (`no-drag`).
+ */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+[data-tauri-drag-region]
+  :is(
+    button,
+    a,
+    input,
+    select,
+    textarea,
+    label,
+    [role='button'],
+    [role='menuitem'],
+    [role='tab'],
+    [contenteditable='true']
+  ) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 body {
   font-family: var(--font-sans);
   font-size: var(--ui-font-size);
