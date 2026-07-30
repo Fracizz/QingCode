@@ -69,14 +69,64 @@ fn is_utf8_or_truncated_prefix(bytes: &[u8]) -> bool {
     }
 }
 
+/// Heuristic for BOM-less UTF-16.
+///
+/// ASCII code units in UTF-16 leave a NUL byte on one side (`A` → `41 00` in
+/// LE, `00 41` in BE). If NULs strongly concentrate on even or odd byte
+/// indices and the sample actually decodes as that UTF-16 variant, treat it
+/// as text instead of binary. Real binary files scatter NULs roughly evenly,
+/// so a 10:1 imbalance plus a clean decode is a safe signal.
+fn detect_utf16_without_bom(bytes: &[u8]) -> Option<FileEncoding> {
+    // Need enough signal; tiny buffers can't carry a reliable NUL pattern.
+    if bytes.len() < 32 {
+        return None;
+    }
+    let mut even_zeros: u32 = 0;
+    let mut odd_zeros: u32 = 0;
+    let mut chunks = bytes.chunks_exact(2);
+    for pair in chunks.by_ref() {
+        if pair[0] == 0 {
+            even_zeros += 1;
+        }
+        if pair[1] == 0 {
+            odd_zeros += 1;
+        }
+    }
+    // Account for a trailing odd byte (cannot form a NUL pair on the odd side).
+    let _ = chunks.remainder();
+
+    let candidate = if odd_zeros >= 4 && odd_zeros > even_zeros.saturating_mul(10) {
+        FileEncoding::Utf16Le
+    } else if even_zeros >= 4 && even_zeros > odd_zeros.saturating_mul(10) {
+        FileEncoding::Utf16Be
+    } else {
+        return None;
+    };
+
+    // Validate: the sample must decode cleanly as the candidate variant.
+    // Random binary bytes with a skewed NUL pattern would fail here (unpaired
+    // surrogates / invalid code units).
+    let encoding = match candidate {
+        FileEncoding::Utf16Le => UTF_16LE,
+        FileEncoding::Utf16Be => UTF_16BE,
+        _ => return None,
+    };
+    let (_, _, had_errors) = encoding.decode(bytes);
+    if had_errors {
+        return None;
+    }
+    Some(candidate)
+}
+
 /// Detect a supported text encoding without silently replacing bytes.
 ///
 /// GBK is a subset of GB18030, so non-UTF-8 legacy text is intentionally
 /// reported as GB18030: it can decode both safely, while claiming GBK would
 /// be incorrect for GB18030-only characters.
 ///
-/// UTF-16 without a BOM is not auto-detected (NUL bytes look binary); reopen
-/// with an explicit encoding when needed.
+/// BOM-less UTF-16 is detected by NUL-byte distribution (ASCII code units
+/// leave a NUL on one side); pure-Chinese UTF-16 without BOM has no NUL
+/// pattern and still needs an explicit encoding to reopen.
 pub fn detect(bytes: &[u8]) -> Result<FileEncoding, String> {
     if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
         return Ok(FileEncoding::Utf8Bom);
@@ -89,6 +139,10 @@ pub fn detect(bytes: &[u8]) -> Result<FileEncoding, String> {
         return Ok(FileEncoding::Utf16Be);
     }
     if bytes.contains(&0) {
+        // Could be BOM-less UTF-16 (ASCII code units leave a NUL on one side).
+        if let Some(enc) = detect_utf16_without_bom(bytes) {
+            return Ok(enc);
+        }
         return Err("binary content".to_string());
     }
     if is_utf8_or_truncated_prefix(bytes) {
@@ -255,6 +309,66 @@ mod tests {
         // Invalid byte in the middle is not a truncated UTF-8 prefix.
         let invalid = [b'a', 0xFF, b'b'];
         assert_ne!(detect(&invalid).ok(), Some(FileEncoding::Utf8));
+    }
+
+    #[test]
+    fn detect_utf16_le_without_bom_mixed_ascii_chinese() {
+        // Mirrors a typical BOM-less UTF-16 LE markdown file: lots of ASCII
+        // (markdown syntax) plus some Chinese. Built without a BOM on purpose.
+        let text = "# Home 替换 data 挂载方案\n\n这是一份中文文档，含 ASCII 与汉字。\n";
+        let mut bytes = Vec::new();
+        for unit in text.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert!(
+            !bytes.starts_with(&[0xFF, 0xFE]),
+            "fixture must be BOM-less"
+        );
+        assert!(bytes.contains(&0), "fixture must contain NULs");
+        assert_eq!(detect(&bytes).unwrap(), FileEncoding::Utf16Le);
+        assert_eq!(decode(&bytes, FileEncoding::Auto).unwrap(), text);
+    }
+
+    #[test]
+    fn detect_utf16_be_without_bom_mixed_ascii_chinese() {
+        let text = "English mixed with 中文 content.\n";
+        let mut bytes = Vec::new();
+        for unit in text.encode_utf16() {
+            bytes.extend_from_slice(&unit.to_be_bytes());
+        }
+        assert!(!bytes.starts_with(&[0xFE, 0xFF]));
+        assert!(bytes.contains(&0));
+        assert_eq!(detect(&bytes).unwrap(), FileEncoding::Utf16Be);
+        assert_eq!(decode(&bytes, FileEncoding::Auto).unwrap(), text);
+    }
+
+    #[test]
+    fn detect_rejects_binary_with_unpaired_surrogate() {
+        // NUL pattern screams UTF-16 LE (odd bytes all zero), but one code unit
+        // is a lone high surrogate (U+D800 → bytes `00 D8` in LE) → decode fails
+        // → must NOT be detected as text. This is the guard against misclassifying
+        // binary that happens to have a skewed NUL pattern.
+        let mut bad = Vec::new();
+        for _ in 0..16 {
+            bad.extend_from_slice(&[0x41u8, 0x00]); // 'A' in UTF-16 LE
+        }
+        bad.extend_from_slice(&[0x00u8, 0xD8]); // lone high surrogate U+D800 (LE)
+        for _ in 0..4 {
+            bad.extend_from_slice(&[0x42u8, 0x00]); // 'B' in UTF-16 LE
+        }
+        assert!(bad.contains(&0));
+        assert!(
+            detect_utf16_without_bom(&bad).is_none(),
+            "lone surrogate must fail decode validation"
+        );
+        assert!(detect(&bad).is_err());
+    }
+
+    #[test]
+    fn detect_utf16_without_bom_requires_minimum_signal() {
+        // Too short / too few NULs → not detected, falls through to binary.
+        let short = [0x41u8, 0x00, 0x42, 0x00, 0x43, 0x00];
+        assert!(detect_utf16_without_bom(&short).is_none());
     }
 
     #[test]

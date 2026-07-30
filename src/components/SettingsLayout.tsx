@@ -8,6 +8,7 @@ export type SettingsCategoryId =
   | 'features'
   | 'language'
   | 'json'
+  | 'about'
 
 export function SettingsSection({
   id,

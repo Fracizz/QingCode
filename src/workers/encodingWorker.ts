@@ -55,6 +55,36 @@ function isBinary(bytes: Uint8Array): boolean {
   return false
 }
 
+/**
+ * Heuristic for BOM-less UTF-16 (mirrors Rust `detect_utf16_without_bom`).
+ * ASCII code units in UTF-16 leave a NUL on one side (`A` → `41 00` in LE,
+ * `00 41` in BE). A 10:1 NUL imbalance plus a clean decode = UTF-16 text.
+ */
+function detectUtf16WithoutBom(bytes: Uint8Array): 'utf16le' | 'utf16be' | null {
+  if (bytes.length < 32) return null
+  let evenZeros = 0
+  let oddZeros = 0
+  for (let i = 0; i + 1 < bytes.length; i += 2) {
+    if (bytes[i] === 0) evenZeros++
+    if (bytes[i + 1] === 0) oddZeros++
+  }
+  const candidate: 'utf16le' | 'utf16be' | null =
+    oddZeros >= 4 && oddZeros > evenZeros * 10
+      ? 'utf16le'
+      : evenZeros >= 4 && evenZeros > oddZeros * 10
+        ? 'utf16be'
+        : null
+  if (!candidate) return null
+  // Validate: the sample must decode cleanly (rejects binary with skewed NULs).
+  try {
+    const decoder = new TextDecoder(candidate, { fatal: true })
+    decoder.decode(bytes)
+    return candidate
+  } catch {
+    return null
+  }
+}
+
 /** 检测是否为有效的 UTF-8 */
 function isValidUTF8(bytes: Uint8Array): boolean {
   try {
@@ -116,7 +146,19 @@ self.onmessage = (event: MessageEvent<EncodingWorkerRequest>) => {
       return
     }
 
-    // 2. 检测二进制内容
+    // 2. 检测无 BOM 的 UTF-16（NUL 字节高度倾斜 + 解码成功）
+    //    必须先于二进制判定，否则 UTF-16 会被误判为 binary content。
+    const utf16 = detectUtf16WithoutBom(bytes)
+    if (utf16) {
+      self.postMessage({
+        id,
+        success: true,
+        encoding: utf16,
+      } as EncodingWorkerResponse)
+      return
+    }
+
+    // 3. 检测二进制内容
     if (isBinary(bytes)) {
       self.postMessage({
         id,
@@ -126,7 +168,7 @@ self.onmessage = (event: MessageEvent<EncodingWorkerRequest>) => {
       return
     }
 
-    // 3. 检测 UTF-8
+    // 4. 检测 UTF-8
     if (isValidUTF8(bytes)) {
       self.postMessage({
         id,
@@ -136,7 +178,7 @@ self.onmessage = (event: MessageEvent<EncodingWorkerRequest>) => {
       return
     }
 
-    // 4. 检测 GB18030
+    // 5. 检测 GB18030
     if (isLikelyGB18030(bytes)) {
       self.postMessage({
         id,
@@ -146,7 +188,7 @@ self.onmessage = (event: MessageEvent<EncodingWorkerRequest>) => {
       return
     }
 
-    // 5. 未知编码
+    // 6. 未知编码
     self.postMessage({
       id,
       success: false,

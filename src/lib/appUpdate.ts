@@ -1,4 +1,4 @@
-import { openPath } from '@tauri-apps/plugin-opener'
+import { openPath, openUrl } from '@tauri-apps/plugin-opener'
 import { choiceDialog } from '../store/choiceStore'
 import { useProjectStore } from '../store/projectStore'
 import { isTauri, safeInvoke } from './tauri'
@@ -51,7 +51,7 @@ export async function runAppUpdateDownload(info: AppUpdateInfo): Promise<void> {
 
 /**
  * Show the update dialog. Returns the chosen action id, or null if dismissed.
- * Actions: `download` | `skip` | `later`
+ * Actions: `download` | `open_page` | `skip` | `later`
  */
 export async function promptAppUpdate(info: AppUpdateInfo): Promise<string | null> {
   const detailParts = [
@@ -63,15 +63,23 @@ export async function promptAppUpdate(info: AppUpdateInfo): Promise<string | nul
     info.notes?.trim() || null,
   ].filter(Boolean)
 
+  const hasDirectDownload = !!info.download_url?.trim()
+  const messageKey = hasDirectDownload
+    ? 'QingCode {version} 可用。是否下载安装包？'
+    : 'QingCode {version} 可用。未找到直链安装包，可前往发布页下载。'
+  const primaryAction = hasDirectDownload
+    ? { id: 'download', label: translate('下载安装包'), primary: true }
+    : { id: 'open_page', label: translate('打开发布页'), primary: true }
+
   const choice = await choiceDialog({
     title: translate('发现新版本'),
-    message: translate('QingCode {version} 可用。是否下载安装包？', {
+    message: translate(messageKey, {
       version: info.latest,
     }),
     detail: detailParts.join('\n\n'),
     detailMarkdown: true,
     options: [
-      { id: 'download', label: translate('下载安装包'), primary: true },
+      primaryAction,
       { id: 'skip', label: translate('跳过此版本') },
       { id: 'later', label: translate('稍后') },
     ],
@@ -79,6 +87,17 @@ export async function promptAppUpdate(info: AppUpdateInfo): Promise<string | nul
 
   if (choice === 'download') {
     await runAppUpdateDownload(info)
+  } else if (choice === 'open_page') {
+    if (info.page_url) {
+      try {
+        await openUrl(info.page_url)
+      } catch (error) {
+        useProjectStore.getState().pushToast(
+          'error',
+          translate('打开链接失败: {error}', { error: String(error) }),
+        )
+      }
+    }
   } else if (choice === 'skip') {
     await saveSkippedVersion(info.latest)
   }

@@ -82,11 +82,64 @@ fn prefer_asset_names() -> &'static [&'static str] {
     }
 }
 
+/// Detect auto-generated source code archives that hosts attach to every
+/// release (GitHub: `Source code.zip` / `Source code.tar.gz`; Gitee:
+/// `<tag>.zip` / `<tag>.tar.gz`, e.g. `v0.1.8.zip`). These are never valid
+/// update payloads and must never be picked as a download URL.
+fn is_source_archive(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    if lower.is_empty() {
+        return false;
+    }
+    // GitHub-style auto-generated source archives.
+    if lower == "source code.zip" || lower == "source code.tar.gz" {
+        return true;
+    }
+    // Gitee-style: `<tag>.zip` / `<tag>.tar.gz` where tag is `vX.Y.Z` (+ optional
+    // pre-release suffix). Strip the archive suffix and check the tag shape
+    // without pulling in a regex dependency.
+    let Some(stem) = lower
+        .strip_suffix(".tar.gz")
+        .or_else(|| lower.strip_suffix(".zip"))
+    else {
+        return false; // no recognized archive suffix
+    };
+    is_version_tag(stem)
+}
+
+/// Cheap `vX.Y.Z` (optionally `-pre`) tag matcher — no regex dependency.
+fn is_version_tag(s: &str) -> bool {
+    let s = s.trim();
+    let core = s
+        .strip_prefix('v')
+        .or_else(|| s.strip_prefix('V'))
+        .unwrap_or(s);
+    if core.is_empty() {
+        return false;
+    }
+    // Drop a pre-release suffix (`-rc.1`, `-beta`, …) before checking the core.
+    let core = core.split('-').next().unwrap_or(core);
+    let mut parts = core.split('.');
+    let major = parts.next().unwrap_or("");
+    let minor = parts.next().unwrap_or("");
+    let patch = parts.next().unwrap_or("");
+    !major.is_empty()
+        && !minor.is_empty()
+        && !patch.is_empty()
+        && major.bytes().all(|b| b.is_ascii_digit())
+        && minor.bytes().all(|b| b.is_ascii_digit())
+        && patch.bytes().all(|b| b.is_ascii_digit())
+        && parts.next().is_none()
+}
+
 fn pick_download_url(assets: &[ReleaseAsset]) -> Option<String> {
     let preferred = prefer_asset_names();
     for needle in preferred {
         for asset in assets {
             let name = asset.name.as_deref().unwrap_or("").to_ascii_lowercase();
+            if is_source_archive(&name) {
+                continue;
+            }
             let Some(url) = asset.browser_download_url.clone() else {
                 continue;
             };
@@ -99,6 +152,9 @@ fn pick_download_url(assets: &[ReleaseAsset]) -> Option<String> {
     let mut portable_fallback: Option<String> = None;
     for asset in assets {
         let name = asset.name.as_deref().unwrap_or("").to_ascii_lowercase();
+        if is_source_archive(&name) {
+            continue;
+        }
         let Some(url) = asset.browser_download_url.clone() else {
             continue;
         };
@@ -108,7 +164,18 @@ fn pick_download_url(assets: &[ReleaseAsset]) -> Option<String> {
         {
             return Some(url);
         }
-        if (name.ends_with(".exe") || name.ends_with(".zip")) && portable_fallback.is_none() {
+        // Portable fallback must be a real platform binary — never a source
+        // archive. On Windows only `.exe` is valid; on macOS both `.dmg` and
+        // the app-bundle `.zip` are valid; elsewhere accept `.exe`/`.zip`.
+        let is_valid_portable = match () {
+            #[cfg(windows)]
+            () => name.ends_with(".exe"),
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            () => name.ends_with(".dmg") || name.ends_with(".zip"),
+            #[cfg(not(any(windows, all(target_os = "macos", target_arch = "aarch64"))))]
+            () => name.ends_with(".exe") || name.ends_with(".zip"),
+        };
+        if is_valid_portable && portable_fallback.is_none() {
             portable_fallback = Some(url);
         }
     }
@@ -336,5 +403,64 @@ mod tests {
             filename_from_url("https://example.com/QingCode_0.1.5-setup.exe?token=abc"),
             Some("QingCode_0.1.5-setup.exe".into())
         );
+    }
+
+    #[test]
+    fn is_source_archive_detects_host_generated_archives() {
+        // Gitee-style: <tag>.zip / <tag>.tar.gz
+        assert!(is_source_archive("v0.1.8.zip"));
+        assert!(is_source_archive("v0.1.8.tar.gz"));
+        assert!(is_source_archive("V1.2.3.zip"));
+        assert!(is_source_archive("v10.20.30-rc.1.zip"));
+        // GitHub-style auto-generated source archives
+        assert!(is_source_archive("Source code.zip"));
+        assert!(is_source_archive("Source code.tar.gz"));
+        // Real release assets must NOT be flagged
+        assert!(!is_source_archive("QingCode_0.1.8-windows-x64-setup.exe"));
+        assert!(!is_source_archive("QingCode_0.1.8-macos-arm64.zip"));
+        assert!(!is_source_archive("QingCode_0.1.8-windows-x64.exe"));
+        assert!(!is_source_archive("QingCode_0.1.8-macos-arm64.dmg"));
+    }
+
+    #[test]
+    fn pick_download_url_rejects_source_only_release() {
+        // Mirrors the actual Gitee v0.1.8 release: only source archives present.
+        let assets = vec![
+            ReleaseAsset {
+                name: Some("v0.1.8.zip".into()),
+                browser_download_url: Some(
+                    "https://gitee.com/FrancizTest_admin/qing-code/archive/refs/tags/v0.1.8.zip"
+                        .into(),
+                ),
+            },
+            ReleaseAsset {
+                name: Some("v0.1.8.tar.gz".into()),
+                browser_download_url: Some(
+                    "https://gitee.com/FrancizTest_admin/qing-code/archive/refs/tags/v0.1.8.tar.gz"
+                        .into(),
+                ),
+            },
+        ];
+        assert!(pick_download_url(&assets).is_none());
+    }
+
+    #[test]
+    fn pick_download_url_prefers_installer_over_source_archive() {
+        // Source archive listed first must not shadow the real installer.
+        let assets = vec![
+            ReleaseAsset {
+                name: Some("v0.1.8.zip".into()),
+                browser_download_url: Some("https://example.com/v0.1.8.zip".into()),
+            },
+            ReleaseAsset {
+                name: Some("QingCode_0.1.8-windows-x64-setup.exe".into()),
+                browser_download_url: Some(
+                    "https://example.com/QingCode_0.1.8-windows-x64-setup.exe".into(),
+                ),
+            },
+        ];
+        let picked = pick_download_url(&assets).unwrap();
+        assert!(picked.contains("windows-x64-setup"));
+        assert!(!picked.contains("v0.1.8.zip"));
     }
 }

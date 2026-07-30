@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "path";
+import { readFileSync } from "fs";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -9,9 +10,24 @@ const DEFAULT_DEV_PORT = 38417;
 const devPort = Number(process.env.VITE_DEV_PORT) || DEFAULT_DEV_PORT;
 const devPortLocked = Boolean(process.env.VITE_DEV_PORT);
 
+// Expose the app version (package.json) to the browser bundle so non-Tauri
+// surfaces (e.g. `pnpm dev` Settings → 关于) can show it without the Tauri API.
+const appVersion = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf-8"));
+    return typeof pkg.version === "string" ? pkg.version : "";
+  } catch {
+    return "";
+  }
+})();
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
+
+  define: {
+    "import.meta.env.QINGCODE_VERSION": JSON.stringify(appVersion),
+  },
 
   // `@` -> src/ alias (used by the lib/ terminal & git pilot subdirectories).
   resolve: {

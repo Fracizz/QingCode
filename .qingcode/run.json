@@ -3,6 +3,7 @@
     {
       "id": "beb19fa5-cfb3-401f-89c7-d3057e36967b",
       "name": "dev",
+      "restoreWithProjectSession": false,
       "tasks": [
         {
           "id": "f81e0175-2d96-4216-bd39-639c956ec513",
@@ -15,6 +16,7 @@
     {
       "id": "d03a0285-10aa-44b0-884c-1f35a645bdd7",
       "name": "打安装包",
+      "restoreWithProjectSession": false,
       "tasks": [
         {
           "id": "3e644a1c-bed5-4c33-9777-08dbe8dc260a",

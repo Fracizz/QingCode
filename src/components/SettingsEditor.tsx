@@ -12,7 +12,7 @@ import {
   X,
 } from 'lucide-react'
 import { useI18n } from '../lib/i18n'
-import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { revealItemInDir, openUrl } from '@tauri-apps/plugin-opener'
 import {
   DEFAULT_FONT_SETTINGS,
   FONT_SETTINGS_EVENT,
@@ -128,6 +128,23 @@ const CATEGORIES: { id: CategoryId; label: string }[] = [
   { id: 'features', label: '功能' },
   { id: 'language', label: '语言' },
   { id: 'json', label: '打开设置 JSON' },
+  { id: 'about', label: '关于' },
+]
+
+/** Dual-remote git sources shown in 设置 → 关于. Mirrors AGENTS.md. */
+const ABOUT_REMOTES: { id: string; label: string; cloneUrl: string; pageUrl: string }[] = [
+  {
+    id: 'gitee',
+    label: 'Gitee',
+    cloneUrl: 'https://gitee.com/FrancizTest_admin/qing-code.git',
+    pageUrl: 'https://gitee.com/FrancizTest_admin/qing-code',
+  },
+  {
+    id: 'github',
+    label: 'GitHub',
+    cloneUrl: 'https://github.com/Fracizz/QingCode.git',
+    pageUrl: 'https://github.com/Fracizz/QingCode',
+  },
 ]
 
 export default function SettingsEditor() {
@@ -171,6 +188,8 @@ export default function SettingsEditor() {
     DEFAULT_PROJECT_INDICATORS_ENABLED,
   )
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false)
+  const [appVersion, setAppVersion] = useState<string | null>(null)
+  const [aboutCopyBusy, setAboutCopyBusy] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const sectionRefs = useRef<Partial<Record<CategoryId, HTMLElement | null>>>({})
   const onSectionRef = useCallback((id: CategoryId, node: HTMLElement | null) => {
@@ -198,6 +217,18 @@ export default function SettingsEditor() {
         )
       })
       .finally(() => setEditorStateCacheSizeLoaded(true))
+    void (async () => {
+      try {
+        if (isTauri()) {
+          const { getVersion } = await import('@tauri-apps/api/app')
+          setAppVersion(await getVersion())
+        } else if (import.meta.env.QINGCODE_VERSION) {
+          setAppVersion(import.meta.env.QINGCODE_VERSION)
+        }
+      } catch {
+        // best-effort
+      }
+    })()
   }, [])
 
   useEffect(() => {
@@ -417,6 +448,9 @@ export default function SettingsEditor() {
       }
       if (cat.id === 'language') {
         return match('语言', '简体中文', 'English', '语言包', '自定义语言')
+      }
+      if (cat.id === 'about') {
+        return match('关于', '版本', 'git', 'Git', '仓库', 'Gitee', 'GitHub', '开源', 'License', 'MIT')
       }
       return true
     })
@@ -1323,6 +1357,119 @@ export default function SettingsEditor() {
                       {t('打开语言包目录')}
                     </button>
                   </div>
+                </SettingItem>
+              </Section>
+            )}
+
+            {match('关于', '版本', 'git', 'Git', '仓库', 'Gitee', 'GitHub', '开源', 'License', 'MIT') &&
+              !workspaceLocked && (
+              <Section
+                id="about"
+                title={t('关于')}
+                onSectionRef={onSectionRef}
+                onVisible={setCategory}
+              >
+                <SettingItem
+                  title={t('QingCode')}
+                  description={t(
+                    '轻量级多项目代码编辑器，Tauri 2 + React 19 + Rust。采用 MIT 开源协议。',
+                  )}
+                  modified={false}
+                >
+                  <div className="text-right">
+                    <span className="text-ui-sm text-fg-muted">
+                      {appVersion ? `v${appVersion}` : t('版本未知')}
+                    </span>
+                  </div>
+                </SettingItem>
+                <SettingItem
+                  title={t('源代码仓库')}
+                  description={t(
+                    'QingCode 在 Gitee 与 GitHub 双端镜像维护。点击打开远端页面，或复制克隆地址。',
+                  )}
+                  modified={false}
+                >
+                  <div className="flex flex-col items-stretch gap-2 w-full">
+                    {ABOUT_REMOTES.map(remote => (
+                      <div
+                        key={remote.id}
+                        className="flex items-center gap-2 rounded border border-border px-2.5 py-1.5"
+                      >
+                        <span className="text-[12px] font-medium text-fg flex-shrink-0 w-14">
+                          {remote.label}
+                        </span>
+                        <code className="flex-1 min-w-0 truncate font-mono text-[12px] text-fg-muted">
+                          {remote.cloneUrl}
+                        </code>
+                        <div className="flex items-center gap-1 flex-shrink-0">
+                          <Tooltip label={t('复制克隆地址')} side="top">
+                            <button
+                              type="button"
+                              disabled={aboutCopyBusy === remote.id}
+                              onClick={() => {
+                                setAboutCopyBusy(remote.id)
+                                void copyToClipboard(remote.cloneUrl)
+                                  .then(() =>
+                                    pushToast(
+                                      'success',
+                                      t('已复制 {label} 克隆地址', { label: remote.label }),
+                                    ),
+                                  )
+                                  .catch(error =>
+                                    pushToast(
+                                      'error',
+                                      t('复制失败: {error}', { error: String(error) }),
+                                    ),
+                                  )
+                                  .finally(() => setAboutCopyBusy(null))
+                              }}
+                              className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+                              aria-label={t('复制克隆地址')}
+                            >
+                              {aboutCopyBusy === remote.id ? '…' : t('复制')}
+                            </button>
+                          </Tooltip>
+                          <Tooltip label={t('打开 {label} 页面', { label: remote.label })} side="top">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void openUrl(remote.pageUrl).catch(error =>
+                                  pushToast(
+                                    'error',
+                                    t('打开链接失败: {error}', { error: String(error) }),
+                                  ),
+                                )
+                              }}
+                              className="inline-flex h-6 items-center justify-center rounded px-2 text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg"
+                            >
+                              {t('打开')}
+                            </button>
+                          </Tooltip>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </SettingItem>
+                <SettingItem
+                  title={t('协议')}
+                  description={t('MIT License — 自由使用、修改与分发，需保留版权声明。')}
+                  modified={false}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void openUrl('https://github.com/Fracizz/QingCode/blob/master/LICENSE').catch(
+                        error =>
+                          pushToast(
+                            'error',
+                            t('打开链接失败: {error}', { error: String(error) }),
+                          ),
+                      )
+                    }}
+                    className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60"
+                  >
+                    {t('查看 LICENSE')}
+                  </button>
                 </SettingItem>
               </Section>
             )}
