@@ -108,7 +108,6 @@ function buildSharedDefaults(): SettingsFile {
 /** Global default-settings defaults (includes machine-wide project list). */
 export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   ...buildSharedDefaults(),
-  'files.windowsReadMode': 'auto',
   [PROJECTS_SYNC_ON_STARTUP_KEY]: true,
   [PROJECTS_KEY]: [] as SettingsProjectEntry[],
   [UPDATE_CHECK_ON_STARTUP_KEY]: true,
@@ -246,14 +245,6 @@ export const DEFAULT_GLOBAL_SETTINGS_TEXT = `{
   // version：设置文件 schema 版本（当前固定为 1）
   version: 1,
 ${SHARED_SETTINGS_BODY}
-  // ============================== Windows 文件读取 ==============================
-  // files.windowsReadMode：Windows 下编辑器读文件的方式（macOS/Linux 忽略）
-  //   "auto"       = 自动（默认）：先默认读取，打不开/解码失败再改兼容方式
-  //   "compatible" = 兼容：始终用与记事本等相同路径；透明加密/DLP 打不开或乱码时用
-  //   "native"     = 原生：只用默认读取，不自动改兼容
-  // 切换后对下一次打开、重试或大文件分片读取生效
-  "files.windowsReadMode": "auto",
-
   // ============================== 全局项目列表 ==============================
   // 仅 default-settings.json 有效；不要写进工作区 project-settings.json
   //

@@ -1227,12 +1227,6 @@
     "打开": "Open",
     "协议": "License",
     "MIT License — 自由使用、修改与分发，需保留版权声明。": "MIT License — free to use, modify, and distribute; copyright notice must be retained.",
-    "查看 LICENSE": "View LICENSE",
-    "Windows 文件读取模式": "Windows file read mode",
-    "仅影响 Windows。部分透明加密 / DLP 环境用默认方式打开会乱码或失败。自动：先默认读取，失败再改兼容方式；兼容：始终用与记事本等常见软件相同的方式（打不开或乱码时选这项）；原生：只用默认方式、不自动改。切换后请重新打开文件或点重试。": "Windows only. Some transparent-encryption / DLP environments garbled or fail with the default reader. Automatic: try default first, then fall back to compatibility; Compatibility: always use the same path as Notepad and similar apps (choose this if files won't open or look wrong); Native: default path only, no fallback. Reopen the file or retry after switching.",
-    "保存 Windows 文件读取模式失败: {error}": "Failed to save Windows file read mode: {error}",
-    "自动（推荐，失败时改兼容）": "Automatic (recommended; falls back)",
-    "兼容（透明加密 / 打不开时）": "Compatibility (encryption / won't open)",
-    "原生（仅默认方式）": "Native (default only)"
+    "查看 LICENSE": "View LICENSE"
   }
 }

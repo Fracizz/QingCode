@@ -107,12 +107,6 @@ import {
   loadProjectIndicatorsEnabled,
   saveProjectIndicatorsEnabled,
 } from '../lib/projectIndicatorSettings'
-import {
-  DEFAULT_WINDOWS_FILE_READ_MODE,
-  loadWindowsFileReadMode,
-  saveWindowsFileReadMode,
-  type WindowsFileReadMode,
-} from '../lib/windowsFileReadModeSettings'
 import { checkForAppUpdate, promptAppUpdate } from '../lib/appUpdate'
 import {
   SettingsSection as Section,
@@ -193,8 +187,6 @@ export default function SettingsEditor() {
   const [projectIndicatorsEnabled, setProjectIndicatorsEnabled] = useState(
     DEFAULT_PROJECT_INDICATORS_ENABLED,
   )
-  const [windowsFileReadMode, setWindowsFileReadMode] =
-    useState<WindowsFileReadMode>(DEFAULT_WINDOWS_FILE_READ_MODE)
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [aboutCopyBusy, setAboutCopyBusy] = useState<string | null>(null)
@@ -217,7 +209,6 @@ export default function SettingsEditor() {
     void loadUpdateSettings().then(settings => setCheckOnStartup(settings.checkOnStartup))
     void loadSessionPersistEnabled().then(setSessionPersist)
     void loadProjectIndicatorsEnabled().then(setProjectIndicatorsEnabled)
-    void loadWindowsFileReadMode().then(setWindowsFileReadMode).catch(() => undefined)
     void loadEditorStateCacheSize()
       .then(value => {
         setEditorStateCacheSize(value)
@@ -445,11 +436,6 @@ export default function SettingsEditor() {
           '自动检查更新',
           '项目会话 LRU',
           '编辑器状态缓存',
-          'Windows 文件读取',
-          '自动模式',
-          '兼容模式',
-          '原生模式',
-          '透明加密',
           'Alt+C',
           'Ctrl+Shift+C',
           'Ctrl+Shift+G',
@@ -950,11 +936,6 @@ export default function SettingsEditor() {
               '编辑器状态缓存',
               '项目角标',
               '顶栏项目角标',
-              'Windows 文件读取',
-              '自动模式',
-              '兼容模式',
-              '原生模式',
-              '透明加密',
             ) &&
               !workspaceLocked && (
               <Section
@@ -963,60 +944,6 @@ export default function SettingsEditor() {
                 onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
-                {match(
-                  'Windows 文件读取',
-                  '自动',
-                  '兼容',
-                  '原生',
-                  '透明加密',
-                  'DLP',
-                  '打不开',
-                  '乱码',
-                ) && (
-                  <SettingItem
-                    title={t('Windows 文件读取模式')}
-                    description={t(
-                      '仅影响 Windows。部分透明加密 / DLP 环境用默认方式打开会乱码或失败。自动：先默认读取，失败再改兼容方式；兼容：始终用与记事本等常见软件相同的方式（打不开或乱码时选这项）；原生：只用默认方式、不自动改。切换后请重新打开文件或点重试。',
-                    )}
-                    modified={windowsFileReadMode !== DEFAULT_WINDOWS_FILE_READ_MODE}
-                    locked={workspaceLocked}
-                    lockHint={t('此设置仅在用户作用域中可用')}
-                  >
-                    <SettingSelect
-                      value={windowsFileReadMode}
-                      disabled={workspaceLocked}
-                      className="setting-control-wide"
-                      aria-label={t('Windows 文件读取模式')}
-                      onChange={value => {
-                        const mode = value as WindowsFileReadMode
-                        setWindowsFileReadMode(mode)
-                        void saveWindowsFileReadMode(mode).catch(error => {
-                          setWindowsFileReadMode(windowsFileReadMode)
-                          pushToast(
-                            'error',
-                            t('保存 Windows 文件读取模式失败: {error}', {
-                              error: String(error),
-                            }),
-                          )
-                        })
-                      }}
-                      options={[
-                        {
-                          value: 'auto',
-                          label: t('自动（推荐，失败时改兼容）'),
-                        },
-                        {
-                          value: 'compatible',
-                          label: t('兼容（透明加密 / 打不开时）'),
-                        },
-                        {
-                          value: 'native',
-                          label: t('原生（仅默认方式）'),
-                        },
-                      ]}
-                    />
-                  </SettingItem>
-                )}
                 {match('会话状态', '会话状态保存', '会话') && (
                   <SettingItem
                     title={t('会话状态保存')}

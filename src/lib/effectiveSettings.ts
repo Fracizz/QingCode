@@ -5,7 +5,6 @@ import { loadEffectiveExcludeSettings } from './excludeSettings'
 import { loadEffectiveFileSizePreferences } from './fileSizeSettings'
 import { loadEffectiveTerminalScrollback } from './terminal/terminalScrollbackSettings'
 import { loadEditorStateCacheSize } from './editorStateCacheSettings'
-import { loadWindowsFileReadMode } from './windowsFileReadModeSettings'
 
 /**
  * Apply the complete global + project settings overlay to runtime modules.
@@ -29,7 +28,6 @@ export async function applyEffectiveSettings(project?: Project | null): Promise<
     loadEditorStateCacheSize(),
     terminalCursor.loadEffectiveTerminalCursorBlinking(project),
     loadEffectiveExcludeSettings(project),
-    loadWindowsFileReadMode(),
   ])
   notifyAutoSaveSettingsChanged(autoSave)
 }

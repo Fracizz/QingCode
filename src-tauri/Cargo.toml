@@ -73,9 +73,6 @@ libloading = "0.8"
 [target.'cfg(windows)'.dependencies]
 # Fonts registry + Explorer “Open with” (Windows only).
 winreg = "0.55"
-# Match Qt's CreateFileW + ReadFile path for compatibility-mode editor reads.
-# Rust std uses different create flags and NtReadFile.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 # Tests use in-process grammars; release binaries load the same grammars from

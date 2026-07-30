@@ -375,7 +375,6 @@ pub fn run() {
             commands::detect_file_encoding,
             commands::read_file_slice,
             commands::find_line_offset,
-            commands::set_text_read_mode,
             commands::replace_file_range,
             commands::write_file,
             commands::search_files,

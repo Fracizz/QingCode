@@ -33,7 +33,6 @@ const mocks = vi.hoisted(() => ({
   saveFontSettings: vi.fn(),
   saveTerminalProfileSettings: vi.fn(),
   saveEditorStateCacheSize: vi.fn(),
-  saveWindowsFileReadMode: vi.fn(),
 }))
 
 vi.mock('../lib/tauri', () => ({
@@ -77,12 +76,6 @@ vi.mock('../lib/editorStateCacheSettings', () => ({
   MAX_EDITOR_STATE_CACHE_SIZE: 100,
   loadEditorStateCacheSize: async () => 'auto',
   saveEditorStateCacheSize: mocks.saveEditorStateCacheSize,
-}))
-
-vi.mock('../lib/windowsFileReadModeSettings', () => ({
-  DEFAULT_WINDOWS_FILE_READ_MODE: 'auto',
-  loadWindowsFileReadMode: async () => 'auto',
-  saveWindowsFileReadMode: mocks.saveWindowsFileReadMode,
 }))
 
 vi.mock('../lib/autoSaveSettings', () => ({
@@ -168,7 +161,6 @@ describe('SettingsEditor', () => {
     mocks.saveFontSettings.mockReset()
     mocks.saveTerminalProfileSettings.mockReset()
     mocks.saveEditorStateCacheSize.mockReset().mockResolvedValue('auto')
-    mocks.saveWindowsFileReadMode.mockReset().mockResolvedValue('native')
     useProjectStore.setState({ currentProject: null, pushToast: vi.fn() })
     useEditorStore.setState({ openFile: vi.fn() })
     useUIStore.setState({ setView: vi.fn(), settingsFocusQuery: '', settingsFocusSignal: 0 })
@@ -214,16 +206,5 @@ describe('SettingsEditor', () => {
     fireEvent.change(count, { target: { value: '24' } })
     fireEvent.blur(count)
     await waitFor(() => expect(mocks.saveEditorStateCacheSize).toHaveBeenCalledWith(24))
-  })
-
-  it('switches the Windows file read mode', async () => {
-    render(<SettingsEditor />)
-    const mode = screen.getByLabelText('Windows 文件读取模式')
-    fireEvent.click(mode)
-    fireEvent.click(screen.getByRole('option', { name: '原生（仅默认方式）' }))
-
-    await waitFor(() =>
-      expect(mocks.saveWindowsFileReadMode).toHaveBeenCalledWith('native')
-    )
   })
 })

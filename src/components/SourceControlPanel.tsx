@@ -644,6 +644,8 @@ export default function SourceControlPanel() {
   const [remotes, setRemotes] = useState<GitRemote[] | null>(null)
   const [remotesLoading, setRemotesLoading] = useState(false)
   const remotesSequenceRef = useRef(0)
+  /** Independent of refreshSequenceRef so soft status refresh cannot discard history loads. */
+  const commitsSequenceRef = useRef(0)
   const [branchMenuStyle, setBranchMenuStyle] = useState<CSSProperties>({
     left: 0,
     top: 0,
@@ -738,20 +740,32 @@ export default function SourceControlPanel() {
     }
   }, [])
 
-  const loadCommits = useCallback(async (path: string, refreshSequence?: number) => {
+  const loadCommits = useCallback(async (path: string) => {
+    const sequence = ++commitsSequenceRef.current
     const isCurrentRequest = () =>
-      useProjectStore.getState().currentProject?.path === path &&
-      (refreshSequence === undefined || refreshSequenceRef.current === refreshSequence)
+      commitsSequenceRef.current === sequence &&
+      useProjectStore.getState().currentProject?.path === path
     if (!isTauri()) {
+      if (!isCurrentRequest()) return
       setCommits([])
       commitsRef.current = []
       setCommitsHasMore(false)
       commitsHasMoreRef.current = false
       return
     }
-    try {
-      const next = await getGitLog(path, COMMIT_PAGE_SIZE, 0)
-      if (isCurrentRequest()) {
+    // Trust / allowlist can lag briefly after first open; retry like StatusBar HEAD.
+    const retryDelaysMs = [0, 120, 400]
+    for (let attempt = 0; attempt < retryDelaysMs.length; attempt++) {
+      const delay = retryDelaysMs[attempt]
+      if (delay > 0) {
+        await new Promise<void>(resolve => {
+          window.setTimeout(resolve, delay)
+        })
+      }
+      if (!isCurrentRequest()) return
+      try {
+        const next = await getGitLog(path, COMMIT_PAGE_SIZE, 0)
+        if (!isCurrentRequest()) return
         commitsRef.current = next
         setCommits(next)
         const more = next.length >= COMMIT_PAGE_SIZE
@@ -759,13 +773,14 @@ export default function SourceControlPanel() {
         setCommitsHasMore(more)
         selectedCommitHashRef.current = null
         setSelectedCommitHash(null)
-      }
-    } catch {
-      if (isCurrentRequest()) {
-        commitsRef.current = []
-        setCommits([])
-        commitsHasMoreRef.current = false
-        setCommitsHasMore(false)
+        return
+      } catch {
+        if (attempt === retryDelaysMs.length - 1 && isCurrentRequest()) {
+          commitsRef.current = []
+          setCommits([])
+          commitsHasMoreRef.current = false
+          setCommitsHasMore(false)
+        }
       }
     }
   }, [])
@@ -876,18 +891,23 @@ export default function SourceControlPanel() {
         }
 
         const next = await getGitStatus(path)
-        if (!isCurrentRequest()) return
-        setStatus(next)
-        setError(null)
-        useGitStatusStore.getState().applyFromGitStatus(path, next)
-        setSelectedKeys(new Set())
-        setInlineDiff(null)
-        setInlineDiffLoading(false)
-        setInlineDiffError(null)
+        if (useProjectStore.getState().currentProject?.path !== path) return
+        if (isCurrentRequest()) {
+          setStatus(next)
+          setError(null)
+          useGitStatusStore.getState().applyFromGitStatus(path, next)
+          setSelectedKeys(new Set())
+          setInlineDiff(null)
+          setInlineDiffLoading(false)
+          setInlineDiffError(null)
+        }
+        // History uses commitsSequenceRef — still load even if a soft refresh
+        // advanced refreshSequenceRef while git_status was in flight.
         if (next.is_repository) {
-          await loadCommits(path, sequence)
-          void loadRemotes(path)
-        } else {
+          await loadCommits(path)
+          if (isCurrentRequest()) void loadRemotes(path)
+        } else if (isCurrentRequest()) {
+          commitsSequenceRef.current += 1
           setCommits([])
           commitsRef.current = []
           setCommitsHasMore(false)
@@ -925,6 +945,13 @@ export default function SourceControlPanel() {
       remotesSequenceRef.current += 1
       setRemotes(null)
       setRemotesLoading(false)
+      // Drop previous project's history immediately so soft status refresh cannot leave
+      // a stale 0–1 commit list while a hard load is still in flight.
+      commitsSequenceRef.current += 1
+      setCommits([])
+      commitsRef.current = []
+      setCommitsHasMore(false)
+      commitsHasMoreRef.current = false
       selectedCommitHashRef.current = null
       selectedCommitFileRef.current = null
       commitFilesSequenceRef.current += 1
@@ -939,10 +966,6 @@ export default function SourceControlPanel() {
       if (!projectPath) {
         setStatus(null)
         setError(null)
-        setCommits([])
-        commitsRef.current = []
-        setCommitsHasMore(false)
-        commitsHasMoreRef.current = false
         setSelectedKeys(new Set())
         return
       }
@@ -955,10 +978,6 @@ export default function SourceControlPanel() {
           void loadCommits(projectPath)
           void loadRemotes(projectPath)
         } else {
-          setCommits([])
-          commitsRef.current = []
-          setCommitsHasMore(false)
-          commitsHasMoreRef.current = false
           setRemotes([])
         }
       } else {
