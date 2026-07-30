@@ -1,5 +1,6 @@
 import { useEffect, useState, type MouseEvent } from 'react'
 import Tooltip from './Tooltip'
+import { CountBadge } from './CountBadge'
 import { useI18n } from '../lib/i18n'
 import {
   isProjectIndicatorsEnabled,
@@ -19,15 +20,20 @@ export function useProjectIndicatorsVisible() {
   return visible
 }
 
+const STATUS_DOT =
+  'h-[5px] w-[5px] rounded-full ring-1 ring-white/10'
+
 const GIT_MARK_BUTTON =
-  'inline-flex !cursor-pointer items-center justify-center rounded-sm transition-opacity hover:opacity-80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60'
+  'inline-flex !cursor-pointer items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/60'
 
 export function ProjectIndicatorMarks({
   project,
   indicators,
+  isCurrent = false,
 }: {
   project: Project
   indicators: ProjectIndicators
+  isCurrent?: boolean
 }) {
   const { t } = useI18n()
   const visible = useProjectIndicatorsVisible()
@@ -43,30 +49,35 @@ export function ProjectIndicatorMarks({
     void navigateToProjectGitChanges(project)
   }
   return (
-    <span className="ml-1 inline-flex flex-shrink-0 items-center gap-1" aria-hidden>
+    <span
+      className={`ml-1 inline-flex flex-shrink-0 items-center gap-0.5 leading-none transition-opacity ${
+        isCurrent ? 'opacity-100' : 'opacity-75 group-hover:opacity-100'
+      }`}
+      aria-hidden
+    >
       {indicators.running > 0 && (
         <Tooltip
           label={t('运行中的终端 {count}', { count: indicators.running })}
           side="bottom"
-          wrapperClassName="inline-flex"
+          wrapperClassName="inline-flex items-center"
         >
-          <span className="h-1 w-1 rounded-full bg-accent" />
+          <span className={`${STATUS_DOT} bg-accent`} />
         </Tooltip>
       )}
       {indicators.dirtyEditors > 0 && (
         <Tooltip
           label={t('未保存文件 {count}', { count: indicators.dirtyEditors })}
           side="bottom"
-          wrapperClassName="inline-flex"
+          wrapperClassName="inline-flex items-center"
         >
-          <span className="h-1 w-1 rounded-full bg-warn" />
+          <span className={`${STATUS_DOT} bg-warn`} />
         </Tooltip>
       )}
       {indicators.gitChanges > 0 && (
         <Tooltip
           label={t('Git 更改 {count} · 点击查看', { count: indicators.gitChanges })}
           side="bottom"
-          wrapperClassName="inline-flex"
+          wrapperClassName="inline-flex items-center"
         >
           <button
             type="button"
@@ -75,9 +86,7 @@ export function ProjectIndicatorMarks({
             onClick={handleGitClick}
             onPointerDown={event => event.stopPropagation()}
           >
-            <span className="inline-flex h-3 min-w-[13px] items-center justify-center rounded-full bg-bg-deep px-0.5 text-[9px] font-medium tabular-nums leading-none text-fg-muted">
-              {indicators.gitChanges > 99 ? '99+' : indicators.gitChanges}
-            </span>
+            <CountBadge count={indicators.gitChanges} size="chip" />
           </button>
         </Tooltip>
       )}

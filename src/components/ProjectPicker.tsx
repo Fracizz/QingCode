@@ -624,6 +624,7 @@ export default function ProjectPicker() {
                     <ProjectIndicatorMarks
                       project={project}
                       indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
+                      isCurrent={isCurrent}
                     />
                     <Tooltip label={t('重命名项目')} side="right" wrapperClassName="flex-shrink-0">
                       <button
@@ -828,7 +829,7 @@ function Chip({
         </span>
       )}
       <span className="truncate max-w-[140px]">{project.name}</span>
-      <ProjectIndicatorMarks project={project} indicators={indicators} />
+      <ProjectIndicatorMarks project={project} indicators={indicators} isCurrent={isCurrent} />
       {project.ephemeral && !unavailable && (
         <Tooltip label={t('在文件管理器中打开')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
           <button

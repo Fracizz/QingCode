@@ -14,6 +14,7 @@ import { flattenRemoteRows, primaryRemoteRow, type ScmRemoteRow } from '@/lib/gi
 import { formatRelativeTime } from '@/lib/formatRelativeTime'
 import { resolveGitSyncTimestamp } from '@/lib/git/syncTimes'
 import Tooltip from './Tooltip'
+import { CountBadge } from './CountBadge'
 import { useI18n } from '../lib/i18n'
 
 type ScmOperationKind = 'fetch' | 'pull' | 'push' | 'switch'
@@ -40,18 +41,6 @@ export type ScmToolbarProps = {
   onOpenPushMenu: () => void
   onCopyRemoteUrl: (url: string) => void
   onOpenRemotesMenu: () => void
-}
-
-function CountBadge({ count }: { count: number }) {
-  return (
-    <span
-      className={`flex h-4 min-w-4 shrink-0 items-center justify-center rounded-full px-1 text-[9px] font-semibold leading-none tabular-nums ${
-        count > 0 ? 'bg-accent text-white' : 'border border-border bg-bg-elevated text-fg-dim'
-      }`}
-    >
-      {count > 99 ? '99+' : count}
-    </span>
-  )
 }
 
 function TimeTag({ label }: { label: string }) {
