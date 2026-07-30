@@ -220,7 +220,7 @@ describe('SettingsEditor', () => {
     render(<SettingsEditor />)
     const mode = screen.getByLabelText('Windows 文件读取模式')
     fireEvent.click(mode)
-    fireEvent.click(screen.getByRole('option', { name: '原生模式（Rust / NtReadFile）' }))
+    fireEvent.click(screen.getByRole('option', { name: '原生（仅默认方式）' }))
 
     await waitFor(() =>
       expect(mocks.saveWindowsFileReadMode).toHaveBeenCalledWith('native')

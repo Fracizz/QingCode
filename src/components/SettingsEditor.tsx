@@ -965,17 +965,18 @@ export default function SettingsEditor() {
               >
                 {match(
                   'Windows 文件读取',
-                  '自动模式',
-                  '兼容模式',
-                  '原生模式',
-                  'ReadFile',
-                  'NtReadFile',
+                  '自动',
+                  '兼容',
+                  '原生',
                   '透明加密',
+                  'DLP',
+                  '打不开',
+                  '乱码',
                 ) && (
                   <SettingItem
                     title={t('Windows 文件读取模式')}
                     description={t(
-                      '自动模式先使用原生读取，编码检测或解码失败时自动改用 ReadFile；兼容模式固定使用 ReadFile；原生模式保留 Rust 默认读取方式。切换后请重新打开文件或点击重试。',
+                      '仅影响 Windows。部分透明加密 / DLP 环境用默认方式打开会乱码或失败。自动：先默认读取，失败再改兼容方式；兼容：始终用与记事本等常见软件相同的方式（打不开或乱码时选这项）；原生：只用默认方式、不自动改。切换后请重新打开文件或点重试。',
                     )}
                     modified={windowsFileReadMode !== DEFAULT_WINDOWS_FILE_READ_MODE}
                     locked={workspaceLocked}
@@ -1002,15 +1003,15 @@ export default function SettingsEditor() {
                       options={[
                         {
                           value: 'auto',
-                          label: t('自动模式（推荐）'),
+                          label: t('自动（推荐，失败时改兼容）'),
                         },
                         {
                           value: 'compatible',
-                          label: t('兼容模式（ReadFile）'),
+                          label: t('兼容（透明加密 / 打不开时）'),
                         },
                         {
                           value: 'native',
-                          label: t('原生模式（Rust / NtReadFile）'),
+                          label: t('原生（仅默认方式）'),
                         },
                       ]}
                     />
@@ -1495,7 +1496,7 @@ export default function SettingsEditor() {
                                   )
                                   .finally(() => setAboutCopyBusy(null))
                               }}
-                              className="inline-flex h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+                              className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-[12px] whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
                               aria-label={t('复制克隆地址')}
                             >
                               {aboutCopyBusy === remote.id ? '…' : t('复制')}
@@ -1512,7 +1513,7 @@ export default function SettingsEditor() {
                                   ),
                                 )
                               }}
-                              className="inline-flex h-6 items-center justify-center rounded px-2 text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg"
+                              className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-[12px] whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg"
                             >
                               {t('打开')}
                             </button>

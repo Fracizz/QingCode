@@ -247,11 +247,11 @@ export const DEFAULT_GLOBAL_SETTINGS_TEXT = `{
   version: 1,
 ${SHARED_SETTINGS_BODY}
   // ============================== Windows 文件读取 ==============================
-  // files.windowsReadMode：Windows 下编辑器读取文件时使用的底层方式
-  //   "auto"       = 自动模式（默认），原生读取或编码检测失败时用兼容模式重试
-  //   "compatible" = 兼容模式，固定使用 ReadFile 与 Qt/常规编辑器路径
-  //   "native"     = 原生模式，使用 Rust File::read / NtReadFile，并保留删除共享
-  // 切换后对下一次打开、重试或大文件分片读取生效；macOS/Linux 忽略此项
+  // files.windowsReadMode：Windows 下编辑器读文件的方式（macOS/Linux 忽略）
+  //   "auto"       = 自动（默认）：先默认读取，打不开/解码失败再改兼容方式
+  //   "compatible" = 兼容：始终用与记事本等相同路径；透明加密/DLP 打不开或乱码时用
+  //   "native"     = 原生：只用默认读取，不自动改兼容
+  // 切换后对下一次打开、重试或大文件分片读取生效
   "files.windowsReadMode": "auto",
 
   // ============================== 全局项目列表 ==============================
