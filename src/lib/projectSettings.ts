@@ -39,6 +39,8 @@ export const UPDATE_SKIPPED_VERSION_KEY = 'qingcode.update.skippedVersion'
 export const SESSION_PERSIST_KEY = 'qingcode.session.persist'
 /** Max detached CodeMirror EditorState entries retained across project sessions. */
 export const SESSION_EDITOR_STATE_CACHE_SIZE_KEY = 'qingcode.session.editorStateCacheSize'
+/** Show running/dirty/git badges on title-bar project chips. */
+export const PROJECT_INDICATORS_ENABLED_KEY = 'qingcode.projectIndicators.enabled'
 
 function buildSharedDefaults(): SettingsFile {
   return {
@@ -111,6 +113,7 @@ export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   [UPDATE_CHECK_ON_STARTUP_KEY]: true,
   [SESSION_PERSIST_KEY]: true,
   [SESSION_EDITOR_STATE_CACHE_SIZE_KEY]: 'auto',
+  [PROJECT_INDICATORS_ENABLED_KEY]: true,
 }
 
 /** Workspace `.qingcode/project-settings.json` defaults (no project list — global-only). */
@@ -286,6 +289,12 @@ ${SHARED_SETTINGS_BODY}
   //   "auto" = 自动保留 12 个最近使用的编辑器状态（默认）
   //   数字   = 自定义 LRU 个数（1–100）；调小后会立即淘汰最久未使用的状态
   "qingcode.session.editorStateCacheSize": "auto",
+  //
+  // qingcode.projectIndicators.enabled
+  //   true  = 顶栏项目名称旁显示运行中终端、未保存文件与 Git 更改角标（默认）
+  //           Git 数量后台每 60–90 秒轮询，窗口聚焦或 Git 变更时也会刷新
+  //   false = 隐藏上述角标，并停止 Git 轮询
+  "qingcode.projectIndicators.enabled": true,
 
   // ============================== 自定义扩展 ==============================
   // custom：自由键值，供后续功能读取；请勿删除整个 custom 对象

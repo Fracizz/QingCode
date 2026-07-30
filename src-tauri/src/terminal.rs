@@ -242,6 +242,14 @@ impl TerminalManager {
             .collect()
     }
 
+    /// Shell PIDs for the requested frontend terminal ids.
+    pub fn shell_pids_for_ids(&self, ids: &[String]) -> Vec<u32> {
+        let sessions = self.sessions.lock().unwrap();
+        ids.iter()
+            .filter_map(|id| sessions.get(id).and_then(|session| session.shell_pid))
+            .collect()
+    }
+
     pub fn kill_all(&self) {
         let mut sessions = self.sessions.lock().unwrap();
         for (_, mut session) in sessions.drain() {

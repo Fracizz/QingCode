@@ -46,6 +46,8 @@ import ProjectAddDialog from './ProjectAddDialog'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
 import { insertLineXForDraggedChip, previewReorderIds, sameIdOrder, sortVisibleProjects } from '../lib/projectChipOrder'
+import { EMPTY_PROJECT_INDICATORS, useProjectIndicators, type ProjectIndicators } from '../hooks/useProjectIndicators'
+import { ProjectIndicatorMarks, useProjectIndicatorsVisible } from './ProjectIndicatorMarks'
 
 const CHIP_GAP = 4
 const ADD_BTN_W = 28
@@ -68,6 +70,7 @@ export default function ProjectPicker() {
   const requestSearch = useUIStore(s => s.requestSearch)
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const openWorkspaceManager = useUIStore(s => s.openWorkspaceManager)
+  const projectIndicators = useProjectIndicators(projects, unavailableProjectIds)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
@@ -480,6 +483,7 @@ export default function ProjectPicker() {
             key={project.id}
             chipIndex={index}
             project={project}
+            indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
             isCurrent={currentProject?.id === project.id}
             unavailable={unavailable}
             dragging={dragId === project.id}
@@ -553,6 +557,7 @@ export default function ProjectPicker() {
           <Chip
             key={project.id}
             project={project}
+            indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
             isCurrent={currentProject?.id === project.id}
             unavailable={unavailableProjectIds.includes(project.id)}
             measure
@@ -616,6 +621,10 @@ export default function ProjectPicker() {
                     >
                       <span className="truncate">{project.name}</span>
                     </Tooltip>
+                    <ProjectIndicatorMarks
+                      project={project}
+                      indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
+                    />
                     <Tooltip label={t('重命名项目')} side="right" wrapperClassName="flex-shrink-0">
                       <button
                         type="button"
@@ -731,6 +740,7 @@ export default function ProjectPicker() {
 
 function Chip({
   project,
+  indicators,
   chipIndex,
   isCurrent,
   unavailable,
@@ -744,6 +754,7 @@ function Chip({
   onPointerDown,
 }: {
   project: Project
+  indicators: ProjectIndicators
   chipIndex?: number
   isCurrent: boolean
   unavailable: boolean
@@ -757,6 +768,19 @@ function Chip({
   onPointerDown?: (event: ReactPointerEvent) => void
 }) {
   const { t } = useI18n()
+  const showIndicators = useProjectIndicatorsVisible()
+  const statusLabel = [
+    project.name,
+    showIndicators && indicators.running > 0
+      ? t('运行中的终端 {count}', { count: indicators.running })
+      : '',
+    showIndicators && indicators.dirtyEditors > 0
+      ? t('未保存文件 {count}', { count: indicators.dirtyEditors })
+      : '',
+    showIndicators && indicators.gitChanges > 0
+      ? t('Git 更改 {count}', { count: indicators.gitChanges })
+      : '',
+  ].filter(Boolean).join(' · ')
   const activate = () => {
     if (!unavailable) onSwitch()
   }
@@ -768,7 +792,7 @@ function Chip({
       tabIndex={measure || unavailable ? -1 : 0}
       aria-current={isCurrent ? 'true' : undefined}
       aria-disabled={unavailable || undefined}
-      aria-label={project.name}
+      aria-label={statusLabel}
       onClick={activate}
       onKeyDown={event => {
         if (measure || unavailable) return
@@ -780,7 +804,7 @@ function Chip({
       onDoubleClick={event => event.stopPropagation()}
       onContextMenu={measure ? undefined : onContextMenu}
       onPointerDown={measure ? undefined : onPointerDown}
-      className={`group relative flex items-center gap-1 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-[colors,opacity,box-shadow,transform] duration-150 cursor-default [&_button]:cursor-default
+      className={`group relative flex items-center gap-0.5 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-[colors,opacity,box-shadow,transform] duration-150 cursor-default [&_button]:cursor-default
         ${
           dragging
             ? 'z-[1] bg-bg-hover text-fg opacity-55 shadow-sm ring-1 ring-inset ring-accent/50 scale-[0.98]'
@@ -804,6 +828,7 @@ function Chip({
         </span>
       )}
       <span className="truncate max-w-[140px]">{project.name}</span>
+      <ProjectIndicatorMarks project={project} indicators={indicators} />
       {project.ephemeral && !unavailable && (
         <Tooltip label={t('在文件管理器中打开')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
           <button

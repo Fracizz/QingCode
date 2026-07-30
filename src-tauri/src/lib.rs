@@ -225,9 +225,11 @@ fn terminal_has_child_processes(
 #[tauri::command]
 fn get_app_memory(
     force: Option<bool>,
+    terminal_ids: Option<Vec<String>>,
     state: tauri::State<'_, TerminalManager>,
 ) -> app_memory::AppMemoryInfo {
-    app_memory::sample_app_memory(&state.shell_pids(), force.unwrap_or(false))
+    let project_pids = state.shell_pids_for_ids(terminal_ids.as_deref().unwrap_or(&[]));
+    app_memory::sample_app_memory(&state.shell_pids(), &project_pids, force.unwrap_or(false))
 }
 
 #[tauri::command]

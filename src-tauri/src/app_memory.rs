@@ -18,10 +18,12 @@ pub struct AppMemoryInfo {
     pub main_bytes: u64,
     pub webview_bytes: u64,
     pub terminal_bytes: u64,
+    pub project_terminal_bytes: u64,
 }
 
 struct Cache {
     at: Instant,
+    project_roots: Vec<u32>,
     info: AppMemoryInfo,
 }
 
@@ -35,29 +37,33 @@ fn is_webview2_name(name: &str) -> bool {
 /// Sample memory for this process tree (+ associated WebView2).
 /// `extra_roots` are known terminal shell PIDs (still counted if briefly reparented).
 /// When `force` is true, bypass the short TTL cache (e.g. status-bar tip open).
-pub fn sample_app_memory(extra_roots: &[u32], force: bool) -> AppMemoryInfo {
+pub fn sample_app_memory(extra_roots: &[u32], project_roots: &[u32], force: bool) -> AppMemoryInfo {
+    let mut project_roots_key = project_roots.to_vec();
+    project_roots_key.sort_unstable();
+    project_roots_key.dedup();
     if !force {
         if let Ok(guard) = CACHE.lock() {
             if let Some(cache) = guard.as_ref() {
-                if cache.at.elapsed() < CACHE_TTL {
+                if cache.at.elapsed() < CACHE_TTL && cache.project_roots == project_roots_key {
                     return cache.info.clone();
                 }
             }
         }
     }
 
-    let info = sample_app_memory_uncached(extra_roots);
+    let info = sample_app_memory_uncached(extra_roots, project_roots);
 
     if let Ok(mut guard) = CACHE.lock() {
         *guard = Some(Cache {
             at: Instant::now(),
+            project_roots: project_roots_key,
             info: info.clone(),
         });
     }
     info
 }
 
-fn sample_app_memory_uncached(extra_roots: &[u32]) -> AppMemoryInfo {
+fn sample_app_memory_uncached(extra_roots: &[u32], project_roots: &[u32]) -> AppMemoryInfo {
     let self_pid = Pid::from_u32(std::process::id());
     let mut system = System::new();
     // Memory-only refresh — avoid CPU/disk/exe metadata cost on every poll.
@@ -86,6 +92,15 @@ fn sample_app_memory_uncached(extra_roots: &[u32]) -> AppMemoryInfo {
         }
     }
 
+    let mut project_tree: HashSet<Pid> = HashSet::new();
+    for &root in project_roots {
+        let pid = Pid::from_u32(root);
+        if system.process(pid).is_some() {
+            collect_descendants(&children_of, pid, &mut project_tree);
+            project_tree.insert(pid);
+        }
+    }
+
     // WebView2 may sit outside our parent chain (broker). Include those whose
     // parent is us or already in the tree; if none, keep tree-only webviews.
     let mut webview_extra: HashSet<Pid> = HashSet::new();
@@ -105,6 +120,7 @@ fn sample_app_memory_uncached(extra_roots: &[u32]) -> AppMemoryInfo {
     let mut main_bytes = 0_u64;
     let mut webview_bytes = 0_u64;
     let mut terminal_bytes = 0_u64;
+    let mut project_terminal_bytes = 0_u64;
 
     for pid in tree.iter().chain(webview_extra.iter()) {
         if !counted.insert(*pid) {
@@ -123,6 +139,9 @@ fn sample_app_memory_uncached(extra_roots: &[u32]) -> AppMemoryInfo {
             webview_bytes = webview_bytes.saturating_add(bytes);
         } else {
             terminal_bytes = terminal_bytes.saturating_add(bytes);
+            if project_tree.contains(pid) {
+                project_terminal_bytes = project_terminal_bytes.saturating_add(bytes);
+            }
         }
     }
 
@@ -133,6 +152,7 @@ fn sample_app_memory_uncached(extra_roots: &[u32]) -> AppMemoryInfo {
         main_bytes,
         webview_bytes,
         terminal_bytes,
+        project_terminal_bytes,
     }
 }
 
@@ -162,8 +182,9 @@ mod tests {
 
     #[test]
     fn sample_returns_at_least_main_process() {
-        let info = sample_app_memory_uncached(&[]);
+        let info = sample_app_memory_uncached(&[], &[]);
         assert!(info.main_bytes > 0, "main should report RSS");
+        assert_eq!(info.project_terminal_bytes, 0);
         assert_eq!(
             info.total_bytes,
             info.main_bytes

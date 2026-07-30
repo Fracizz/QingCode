@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { GitBranch, Folder, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
@@ -30,6 +30,7 @@ type AppMemoryInfo = {
   mainBytes: number
   webviewBytes: number
   terminalBytes: number
+  projectTerminalBytes: number
 }
 
 const GIT_HEAD_REFRESH_MS = 15_000
@@ -110,6 +111,14 @@ export default function StatusBar() {
 
   const activeTab = tabs.find(t => t.id === activeTabId)
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
+  const projectTerminalIds = useMemo(
+    () =>
+      terminals
+        .filter(t => t.projectId === currentProject?.id && t.status !== 'exited')
+        .map(t => t.id)
+        .sort(),
+    [currentProject?.id, terminals]
+  )
   const activeTerm = projectTerminals.find(t => t.id === focusedTerminalId)
   const runningTerminals = projectTerminals.filter(t => t.status !== 'exited').length
 
@@ -154,6 +163,7 @@ export default function StatusBar() {
       try {
         const info = await safeInvoke<AppMemoryInfo>('读取应用内存', 'get_app_memory', {
           force,
+          terminalIds: projectTerminalIds,
         })
         if (!cancelled) setAppMemory(info)
       } catch {
@@ -182,7 +192,7 @@ export default function StatusBar() {
       document.removeEventListener('visibilitychange', onVisibility)
       window.clearInterval(intervalId)
     }
-  }, [memoryTipOpen, runningTerminals])
+  }, [memoryTipOpen, projectTerminalIds])
 
   useEffect(() => {
     const projectPath = currentProject?.path
@@ -424,24 +434,39 @@ export default function StatusBar() {
                 ) : null}
                 {showEncoding && (appMemory || appVersion) ? <StatusDivider /> : null}
                 {appMemory && (
-                  <StatusTip
-                    label={t(
-                      '主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒',
-                      {
-                        main: formatAppMemoryMb(appMemory.mainBytes),
-                        webview: formatAppMemoryMb(appMemory.webviewBytes),
-                        terminal: formatAppMemoryMb(appMemory.terminalBytes),
-                        tipSec: APP_MEMORY_TIP_REFRESH_MS / 1000,
-                        idleSec: APP_MEMORY_REFRESH_MS / 1000,
-                      }
+                  <>
+                    {currentProject && (
+                      <>
+                        <StatusTip label={t('当前项目终端进程树内存，不含共享的主进程和 WebView2')}>
+                          <span className="rounded px-1 -mx-1 tabular-nums">
+                            {t('项目 {size}', {
+                              size: formatAppMemoryMb(appMemory.projectTerminalBytes),
+                            })}
+                          </span>
+                        </StatusTip>
+                        <StatusDivider />
+                      </>
                     )}
-                    onShow={() => setMemoryTipOpen(true)}
-                    onHide={() => setMemoryTipOpen(false)}
-                  >
-                    <span className="rounded px-1 -mx-1 tabular-nums">
-                      {t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) })}
-                    </span>
-                  </StatusTip>
+                    <StatusTip
+                      label={t(
+                        '主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n当前项目终端 {project}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒',
+                        {
+                          main: formatAppMemoryMb(appMemory.mainBytes),
+                          webview: formatAppMemoryMb(appMemory.webviewBytes),
+                          terminal: formatAppMemoryMb(appMemory.terminalBytes),
+                          project: formatAppMemoryMb(appMemory.projectTerminalBytes),
+                          tipSec: APP_MEMORY_TIP_REFRESH_MS / 1000,
+                          idleSec: APP_MEMORY_REFRESH_MS / 1000,
+                        }
+                      )}
+                      onShow={() => setMemoryTipOpen(true)}
+                      onHide={() => setMemoryTipOpen(false)}
+                    >
+                      <span className="rounded px-1 -mx-1 tabular-nums">
+                        {t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) })}
+                      </span>
+                    </StatusTip>
+                  </>
                 )}
                 {appMemory && appVersion ? <StatusDivider /> : null}
                 {appVersion && (

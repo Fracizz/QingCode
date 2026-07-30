@@ -102,6 +102,11 @@ import {
   saveEditorStateCacheSize,
   type EditorStateCacheSizeSetting,
 } from '../lib/editorStateCacheSettings'
+import {
+  DEFAULT_PROJECT_INDICATORS_ENABLED,
+  loadProjectIndicatorsEnabled,
+  saveProjectIndicatorsEnabled,
+} from '../lib/projectIndicatorSettings'
 import { checkForAppUpdate, promptAppUpdate } from '../lib/appUpdate'
 import {
   SettingsSection as Section,
@@ -162,6 +167,9 @@ export default function SettingsEditor() {
     String(DEFAULT_EDITOR_STATE_CACHE_SIZE),
   )
   const [editorStateCacheSizeLoaded, setEditorStateCacheSizeLoaded] = useState(false)
+  const [projectIndicatorsEnabled, setProjectIndicatorsEnabled] = useState(
+    DEFAULT_PROJECT_INDICATORS_ENABLED,
+  )
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const sectionRefs = useRef<Partial<Record<CategoryId, HTMLElement | null>>>({})
@@ -181,6 +189,7 @@ export default function SettingsEditor() {
   useEffect(() => {
     void loadUpdateSettings().then(settings => setCheckOnStartup(settings.checkOnStartup))
     void loadSessionPersistEnabled().then(setSessionPersist)
+    void loadProjectIndicatorsEnabled().then(setProjectIndicatorsEnabled)
     void loadEditorStateCacheSize()
       .then(value => {
         setEditorStateCacheSize(value)
@@ -891,6 +900,8 @@ export default function SettingsEditor() {
               '会话状态保存',
               '项目会话 LRU',
               '编辑器状态缓存',
+              '项目角标',
+              '顶栏项目角标',
             ) &&
               !workspaceLocked && (
               <Section
@@ -1015,6 +1026,36 @@ export default function SettingsEditor() {
                       </SettingItem>
                     )}
                   </>
+                )}
+                {match('项目角标', '顶栏项目角标', '项目指示') && (
+                  <SettingItem
+                    title={t('顶栏项目角标')}
+                    description={t(
+                      '在顶栏项目名称旁显示运行中终端、未保存文件与 Git 更改角标。终端与未保存状态随编辑实时更新；Git 数量由后台每 60–90 秒轮询，窗口重新聚焦或 Git 状态变更时也会刷新。关闭后不再显示角标，并停止 Git 轮询。',
+                    )}
+                    modified={projectIndicatorsEnabled !== DEFAULT_PROJECT_INDICATORS_ENABLED}
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
+                  >
+                    <select
+                      value={projectIndicatorsEnabled ? 'on' : 'off'}
+                      disabled={workspaceLocked}
+                      onChange={e => {
+                        const enabled = e.target.value === 'on'
+                        setProjectIndicatorsEnabled(enabled)
+                        void saveProjectIndicatorsEnabled(enabled).catch(error =>
+                          pushToast(
+                            'error',
+                            t('保存项目角标设置失败: {error}', { error: String(error) }),
+                          ),
+                        )
+                      }}
+                      className="setting-control setting-select"
+                    >
+                      <option value="on">{t('开启')}</option>
+                      <option value="off">{t('关闭')}</option>
+                    </select>
+                  </SettingItem>
                 )}
                 {match('检查更新', '自动检查更新', '更新') && (
                   <>
