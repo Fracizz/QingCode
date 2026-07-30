@@ -467,8 +467,13 @@ export default function ProjectPicker() {
       {/* Keep workspace control next to the file menu — not pushed to the far right. */}
       <WorkspaceMenu />
 
-      {/* Visible chips — empty leftover width bubbles dblclick maximize to TitleBar */}
-      <div ref={containerRef} className="relative flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden">
+      {/* Empty leftover width is native title-bar chrome: drag the window and
+          bubble double-click to TitleBar. Interactive chip descendants remain clickable. */}
+      <div
+        ref={containerRef}
+        className="relative flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden"
+        data-tauri-drag-region
+      >
         {insertLineX !== null && dragId !== null && (
           <div
             aria-hidden

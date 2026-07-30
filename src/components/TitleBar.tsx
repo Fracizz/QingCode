@@ -85,12 +85,18 @@ export default function TitleBar({
     const win = getCurrentWindow()
     let unlistenResize: (() => void) | undefined
     let unlistenClose: (() => void) | undefined
+    let resizeTimer: number | undefined
 
     win.isMaximized().then(setMaximized).catch(() => {})
-    win.onResized(async () => {
-      try {
-        setMaximized(await win.isMaximized())
-      } catch {}
+    win.onResized(() => {
+      // Windows emits a burst of resize events while restoring/maximizing and
+      // while the user resizes the window. Query once after the burst instead
+      // of stacking an IPC request for every frame.
+      if (resizeTimer !== undefined) window.clearTimeout(resizeTimer)
+      resizeTimer = window.setTimeout(() => {
+        resizeTimer = undefined
+        win.isMaximized().then(setMaximized).catch(() => {})
+      }, 80)
     }).then(fn => {
       unlistenResize = fn
     }).catch(() => {})
@@ -107,6 +113,7 @@ export default function TitleBar({
     }).catch(() => {})
 
     return () => {
+      if (resizeTimer !== undefined) window.clearTimeout(resizeTimer)
       unlistenResize?.()
       unlistenClose?.()
     }
