@@ -1115,6 +1115,12 @@
     "打开": "打开",
     "协议": "协议",
     "MIT License — 自由使用、修改与分发，需保留版权声明。": "MIT License — 自由使用、修改与分发，需保留版权声明。",
-    "查看 LICENSE": "查看 LICENSE"
+    "查看 LICENSE": "查看 LICENSE",
+    "Windows 文件读取模式": "Windows 文件读取模式",
+    "自动模式先使用原生读取，编码检测或解码失败时自动改用 ReadFile；兼容模式固定使用 ReadFile；原生模式保留 Rust 默认读取方式。切换后请重新打开文件或点击重试。": "自动模式先使用原生读取，编码检测或解码失败时自动改用 ReadFile；兼容模式固定使用 ReadFile；原生模式保留 Rust 默认读取方式。切换后请重新打开文件或点击重试。",
+    "保存 Windows 文件读取模式失败: {error}": "保存 Windows 文件读取模式失败: {error}",
+    "自动模式（推荐）": "自动模式（推荐）",
+    "兼容模式（ReadFile）": "兼容模式（ReadFile）",
+    "原生模式（Rust / NtReadFile）": "原生模式（Rust / NtReadFile）"
   }
 }

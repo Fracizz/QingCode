@@ -23,11 +23,10 @@ body,
  * Native window drag on Windows (WebView2 123+): wry enables
  * IsNonClientRegionSupportEnabled, so `app-region: drag` becomes HTCAPTION
  * without waiting on the webview main thread / start_dragging IPC.
- * `data-tauri-drag-region` keeps the JS IPC fallback for older runtimes.
  * Only mark inert leaf nodes: broad dynamic containers make WebView2 rebuild
  * a native region with exclusions for every interactive descendant.
  */
-[data-tauri-drag-region] {
+.window-drag-region {
   -webkit-app-region: drag;
   app-region: drag;
 }

@@ -1227,6 +1227,12 @@
     "打开": "Open",
     "协议": "License",
     "MIT License — 自由使用、修改与分发，需保留版权声明。": "MIT License — free to use, modify, and distribute; copyright notice must be retained.",
-    "查看 LICENSE": "View LICENSE"
+    "查看 LICENSE": "View LICENSE",
+    "Windows 文件读取模式": "Windows file read mode",
+    "自动模式先使用原生读取，编码检测或解码失败时自动改用 ReadFile；兼容模式固定使用 ReadFile；原生模式保留 Rust 默认读取方式。切换后请重新打开文件或点击重试。": "Automatic mode tries the native path first and switches to ReadFile when encoding detection or decoding fails; compatibility mode always uses ReadFile; native mode retains Rust's default path. Reopen the file or retry after switching.",
+    "保存 Windows 文件读取模式失败: {error}": "Failed to save Windows file read mode: {error}",
+    "自动模式（推荐）": "Automatic (recommended)",
+    "兼容模式（ReadFile）": "Compatibility (ReadFile)",
+    "原生模式（Rust / NtReadFile）": "Native (Rust / NtReadFile)"
   }
 }

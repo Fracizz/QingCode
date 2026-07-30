@@ -48,6 +48,8 @@ import { useI18n } from '../lib/i18n'
 import { insertLineXForDraggedChip, previewReorderIds, sameIdOrder, sortVisibleProjects } from '../lib/projectChipOrder'
 import { EMPTY_PROJECT_INDICATORS, useProjectIndicators, type ProjectIndicators } from '../hooks/useProjectIndicators'
 import { ProjectIndicatorMarks, useProjectIndicatorsVisible } from './ProjectIndicatorMarks'
+import { isTauri } from '../lib/tauri'
+import { resolveWindowDragRegionMode } from '../lib/windowDragRegion'
 
 const CHIP_GAP = 4
 const ADD_BTN_W = 28
@@ -71,6 +73,7 @@ export default function ProjectPicker() {
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const openWorkspaceManager = useUIStore(s => s.openWorkspaceManager)
   const projectIndicators = useProjectIndicators(projects, unavailableProjectIds)
+  const windowDragMode = resolveWindowDragRegionMode(isTauri())
 
   const containerRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLDivElement>(null)
@@ -555,8 +558,10 @@ export default function ProjectPicker() {
             this inert leaf avoids hit-testing the dynamic chip subtree.
             `-ml-1` cancels the container gap so overflow measurement is unaffected. */}
         <div
-          className="flex-1 self-stretch min-w-0 -ml-1"
-          data-tauri-drag-region
+          className={`flex-1 self-stretch min-w-0 -ml-1 ${
+            windowDragMode === 'native' ? 'window-drag-region' : ''
+          }`}
+          data-tauri-drag-region={windowDragMode === 'tauri-fallback' ? true : undefined}
         />
       </div>
 

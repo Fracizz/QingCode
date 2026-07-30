@@ -162,7 +162,7 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 | 添加 | chips 末尾常驻 `+` 打开居中 **modal**（`ProjectAddDialog`）：筛选框 + 项目列表（路径副行、已隐藏标记）+ 底部 `打开文件夹` / `新建临时项目` / `项目管理`；无项目时文字按钮「添加项目」打开同一对话框。溢出 chip 仍用下拉 |
 | 测量 | 隐藏的 `measureRef` 层渲染全部 chip 取 `offsetWidth`，结合 `ResizeObserver` 在容器宽度变化时重算可见数量 |
 | 关闭 | 点击外部、`Escape`、窗口失焦/缩放关闭溢出面板 |
-| 窗口拖拽 | chips 区与溢出按钮独立于 `data-tauri-drag-region`，窗口拖动由右侧 spacer 承担，避免误触发 |
+| 窗口拖拽 | chips 区与溢出按钮不参与拖动；Windows WebView2 123+ 仅用原生 `app-region`，旧运行时由右侧 spacer 使用 Tauri IPC 回退 |
 | Chip 排序 | **pointer DnD**（5px 阈值；WebView2 标题栏禁用 HTML5 DnD）：拖动时按冻结宽度**实时让位**预览顺序，源 chip 半透明 + `accent` 描边，落点旁 `accent` **插入竖线**；松手 `reorderVisibleProjects` 持久化，`Escape` 取消；`pointermove` 经 `requestAnimationFrame` 合并；**禁止** `cursor: grab` / `grabbing`（见下节「指针拖拽光标」） |
 
 侧边栏（`src/components/Sidebar.tsx`）顶部为当前项目头（项目名 + hover 操作：新建文件/文件夹、新建终端、在文件管理器打开、移除/重新定位），右键仍提供完整项目菜单；其下为当前项目文件树。项目移除、重新定位的共享逻辑在 `src/utils/projectActions.ts`。

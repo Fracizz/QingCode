@@ -14,6 +14,7 @@ import {
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { requestAppClose } from '../lib/appClose'
 import { isTauri } from '../lib/tauri'
+import { resolveWindowDragRegionMode } from '../lib/windowDragRegion'
 import { useProjectStore } from '../store/projectStore'
 import AppIcon from './AppIcon'
 import FileMenu from './FileMenu'
@@ -67,6 +68,9 @@ export default function TitleBar({
   })
   const layoutIconMode = layoutMode ?? panelLayoutModeFallback({ dualTerminal: sideDualTerminal })
   const inTauri = isTauri()
+  const windowDragMode = resolveWindowDragRegionMode(inTauri)
+  const nativeWindowDrag = windowDragMode === 'native'
+  const tauriWindowDragFallback = windowDragMode === 'tauri-fallback'
   const sideLayoutActive = panelLayout === 'sideTerminal'
 
   useEffect(() => {
@@ -178,19 +182,23 @@ export default function TitleBar({
           <FileMenu onExit={handleClose} />
         </div>
         <ProjectPicker />
-        {/* Inert chrome: `app-region: drag` (via data-tauri-drag-region CSS) lets
-            WebView2 treat these as caption without start_dragging IPC. */}
+        {/* Modern WebView2 uses native non-client regions only; older runtimes
+            receive the Tauri JS/IPC fallback attribute instead. */}
         <div
-          className="flex-shrink-0 h-full w-[140px]"
-          data-tauri-drag-region={inTauri ? true : undefined}
+          className={`flex-shrink-0 h-full w-[140px] ${
+            nativeWindowDrag ? 'window-drag-region' : ''
+          }`}
+          data-tauri-drag-region={tauriWindowDragFallback ? true : undefined}
           onDoubleClick={inTauri ? event => {
             event.stopPropagation()
             void toggleMaximize()
           } : undefined}
         />
         <span
-          className="flex h-full flex-shrink-0 items-center truncate px-3 text-[13px] font-semibold tracking-[0.01em] text-brand"
-          data-tauri-drag-region={inTauri ? true : undefined}
+          className={`flex h-full flex-shrink-0 items-center truncate px-3 text-[13px] font-semibold tracking-[0.01em] text-brand ${
+            nativeWindowDrag ? 'window-drag-region' : ''
+          }`}
+          data-tauri-drag-region={tauriWindowDragFallback ? true : undefined}
           onDoubleClick={inTauri ? event => {
             event.stopPropagation()
             void toggleMaximize()

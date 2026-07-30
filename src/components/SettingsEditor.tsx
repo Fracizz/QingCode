@@ -107,6 +107,12 @@ import {
   loadProjectIndicatorsEnabled,
   saveProjectIndicatorsEnabled,
 } from '../lib/projectIndicatorSettings'
+import {
+  DEFAULT_WINDOWS_FILE_READ_MODE,
+  loadWindowsFileReadMode,
+  saveWindowsFileReadMode,
+  type WindowsFileReadMode,
+} from '../lib/windowsFileReadModeSettings'
 import { checkForAppUpdate, promptAppUpdate } from '../lib/appUpdate'
 import {
   SettingsSection as Section,
@@ -187,6 +193,8 @@ export default function SettingsEditor() {
   const [projectIndicatorsEnabled, setProjectIndicatorsEnabled] = useState(
     DEFAULT_PROJECT_INDICATORS_ENABLED,
   )
+  const [windowsFileReadMode, setWindowsFileReadMode] =
+    useState<WindowsFileReadMode>(DEFAULT_WINDOWS_FILE_READ_MODE)
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [aboutCopyBusy, setAboutCopyBusy] = useState<string | null>(null)
@@ -209,6 +217,7 @@ export default function SettingsEditor() {
     void loadUpdateSettings().then(settings => setCheckOnStartup(settings.checkOnStartup))
     void loadSessionPersistEnabled().then(setSessionPersist)
     void loadProjectIndicatorsEnabled().then(setProjectIndicatorsEnabled)
+    void loadWindowsFileReadMode().then(setWindowsFileReadMode).catch(() => undefined)
     void loadEditorStateCacheSize()
       .then(value => {
         setEditorStateCacheSize(value)
@@ -436,6 +445,11 @@ export default function SettingsEditor() {
           '自动检查更新',
           '项目会话 LRU',
           '编辑器状态缓存',
+          'Windows 文件读取',
+          '自动模式',
+          '兼容模式',
+          '原生模式',
+          '透明加密',
           'Alt+C',
           'Ctrl+Shift+C',
           'Ctrl+Shift+G',
@@ -936,6 +950,11 @@ export default function SettingsEditor() {
               '编辑器状态缓存',
               '项目角标',
               '顶栏项目角标',
+              'Windows 文件读取',
+              '自动模式',
+              '兼容模式',
+              '原生模式',
+              '透明加密',
             ) &&
               !workspaceLocked && (
               <Section
@@ -944,6 +963,59 @@ export default function SettingsEditor() {
                 onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
+                {match(
+                  'Windows 文件读取',
+                  '自动模式',
+                  '兼容模式',
+                  '原生模式',
+                  'ReadFile',
+                  'NtReadFile',
+                  '透明加密',
+                ) && (
+                  <SettingItem
+                    title={t('Windows 文件读取模式')}
+                    description={t(
+                      '自动模式先使用原生读取，编码检测或解码失败时自动改用 ReadFile；兼容模式固定使用 ReadFile；原生模式保留 Rust 默认读取方式。切换后请重新打开文件或点击重试。',
+                    )}
+                    modified={windowsFileReadMode !== DEFAULT_WINDOWS_FILE_READ_MODE}
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
+                  >
+                    <SettingSelect
+                      value={windowsFileReadMode}
+                      disabled={workspaceLocked}
+                      className="setting-control-wide"
+                      aria-label={t('Windows 文件读取模式')}
+                      onChange={value => {
+                        const mode = value as WindowsFileReadMode
+                        setWindowsFileReadMode(mode)
+                        void saveWindowsFileReadMode(mode).catch(error => {
+                          setWindowsFileReadMode(windowsFileReadMode)
+                          pushToast(
+                            'error',
+                            t('保存 Windows 文件读取模式失败: {error}', {
+                              error: String(error),
+                            }),
+                          )
+                        })
+                      }}
+                      options={[
+                        {
+                          value: 'auto',
+                          label: t('自动模式（推荐）'),
+                        },
+                        {
+                          value: 'compatible',
+                          label: t('兼容模式（ReadFile）'),
+                        },
+                        {
+                          value: 'native',
+                          label: t('原生模式（Rust / NtReadFile）'),
+                        },
+                      ]}
+                    />
+                  </SettingItem>
+                )}
                 {match('会话状态', '会话状态保存', '会话') && (
                   <SettingItem
                     title={t('会话状态保存')}

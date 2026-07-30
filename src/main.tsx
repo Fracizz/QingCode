@@ -16,6 +16,7 @@ import {
 import { loadEffectiveTerminalScrollback } from '@/lib/terminal/terminalScrollbackSettings'
 import { loadSessionPersistEnabled } from './lib/sessionPersistSettings'
 import { installDevNativeContextMenuToggle } from './lib/devBuild'
+import { loadWindowsFileReadMode } from './lib/windowsFileReadModeSettings'
 
 // Critical path before first paint: theme, fonts, splash logo, i18n.
 initWindowSession()
@@ -37,6 +38,7 @@ void import('./lib/minimapSettings').then(m => m.loadEffectiveMinimapEnabled(nul
 // Sync session-persist cache from default-settings.json for the next boot.
 void loadSessionPersistEnabled()
 void import('./lib/projectIndicatorSettings').then(m => m.loadProjectIndicatorsEnabled())
+void loadWindowsFileReadMode().catch(() => undefined)
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

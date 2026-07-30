@@ -108,6 +108,7 @@ function buildSharedDefaults(): SettingsFile {
 /** Global default-settings defaults (includes machine-wide project list). */
 export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   ...buildSharedDefaults(),
+  'files.windowsReadMode': 'auto',
   [PROJECTS_SYNC_ON_STARTUP_KEY]: true,
   [PROJECTS_KEY]: [] as SettingsProjectEntry[],
   [UPDATE_CHECK_ON_STARTUP_KEY]: true,
@@ -245,6 +246,14 @@ export const DEFAULT_GLOBAL_SETTINGS_TEXT = `{
   // version：设置文件 schema 版本（当前固定为 1）
   version: 1,
 ${SHARED_SETTINGS_BODY}
+  // ============================== Windows 文件读取 ==============================
+  // files.windowsReadMode：Windows 下编辑器读取文件时使用的底层方式
+  //   "auto"       = 自动模式（默认），原生读取或编码检测失败时用兼容模式重试
+  //   "compatible" = 兼容模式，固定使用 ReadFile 与 Qt/常规编辑器路径
+  //   "native"     = 原生模式，使用 Rust File::read / NtReadFile，并保留删除共享
+  // 切换后对下一次打开、重试或大文件分片读取生效；macOS/Linux 忽略此项
+  "files.windowsReadMode": "auto",
+
   // ============================== 全局项目列表 ==============================
   // 仅 default-settings.json 有效；不要写进工作区 project-settings.json
   //

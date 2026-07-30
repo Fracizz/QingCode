@@ -5,19 +5,92 @@ use std::fs;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use std::sync::atomic::{AtomicU8, Ordering};
 use tauri::State;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TextReadMode {
+    Auto,
+    Compatibility,
+    Native,
+}
+
+impl TextReadMode {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(Self::Auto),
+            "compatible" => Some(Self::Compatibility),
+            "native" => Some(Self::Native),
+            _ => None,
+        }
+    }
+
+    fn as_u8(self) -> u8 {
+        match self {
+            Self::Auto => 0,
+            Self::Compatibility => 1,
+            Self::Native => 2,
+        }
+    }
+
+    fn from_u8(value: u8) -> Self {
+        match value {
+            value if value == Self::Compatibility.as_u8() => Self::Compatibility,
+            value if value == Self::Native.as_u8() => Self::Native,
+            _ => Self::Auto,
+        }
+    }
+}
+
+static TEXT_READ_MODE: AtomicU8 = AtomicU8::new(0);
+
+const AUTO_READ_ATTEMPTS: [TextReadMode; 2] = [TextReadMode::Native, TextReadMode::Compatibility];
+const COMPATIBILITY_READ_ATTEMPT: [TextReadMode; 1] = [TextReadMode::Compatibility];
+const NATIVE_READ_ATTEMPT: [TextReadMode; 1] = [TextReadMode::Native];
+
+fn text_read_attempts(mode: TextReadMode) -> &'static [TextReadMode] {
+    match mode {
+        TextReadMode::Auto => &AUTO_READ_ATTEMPTS,
+        TextReadMode::Compatibility => &COMPATIBILITY_READ_ATTEMPT,
+        TextReadMode::Native => &NATIVE_READ_ATTEMPT,
+    }
+}
+
+fn streaming_text_read_mode(mode: TextReadMode) -> TextReadMode {
+    match mode {
+        // A slice after offset 0 cannot be reliably classified as text/ciphertext.
+        // Prefer the transparent-encryption-compatible path for streaming views.
+        TextReadMode::Auto => TextReadMode::Compatibility,
+        explicit => explicit,
+    }
+}
+
+fn current_text_read_mode() -> TextReadMode {
+    TextReadMode::from_u8(TEXT_READ_MODE.load(Ordering::Relaxed))
+}
+
+#[tauri::command]
+pub fn set_text_read_mode(mode: String) -> Result<(), String> {
+    let mode = TextReadMode::parse(&mode)
+        .ok_or_else(|| format!("不支持的 Windows 文件读取模式：{mode}"))?;
+    TEXT_READ_MODE.store(mode.as_u8(), Ordering::Relaxed);
+    Ok(())
+}
+
 /**
- * Open text files with the same Windows share mode as Qt's QFile / Notepad--.
+ * Compatibility mode matches Qt's QFile / Notepad-- Windows share mode.
  *
- * Rust defaults to READ | WRITE | DELETE sharing. Some transparent-encryption
- * filter drivers treat that broader request as a raw/ciphertext access path,
- * while conventional editors use READ | WRITE and receive the decrypted view.
+ * Native mode deliberately retains Rust's original File::open behaviour,
+ * including its READ | WRITE | DELETE sharing on Windows.
  */
-fn open_text_file_for_read(path: &Path) -> std::io::Result<File> {
+fn open_text_file_for_read(path: &Path, mode: TextReadMode) -> std::io::Result<File> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
+
+        if mode == TextReadMode::Native {
+            return File::open(path);
+        }
 
         const FILE_SHARE_READ: u32 = 0x0000_0001;
         const FILE_SHARE_WRITE: u32 = 0x0000_0002;
@@ -29,8 +102,93 @@ fn open_text_file_for_read(path: &Path) -> std::io::Result<File> {
 
     #[cfg(not(windows))]
     {
+        let _ = mode;
         File::open(path)
     }
+}
+
+/**
+ * Compatibility mode reads through kernel32 `ReadFile`, matching Qt's QFile.
+ *
+ * Native mode deliberately uses Rust's standard `File::read`; Rust 1.97 calls
+ * `NtReadFile` directly on Windows. Keeping both paths allows users to select
+ * the one compatible with their filesystem / transparent-encryption software.
+ */
+fn read_text_file_chunk(
+    file: &mut File,
+    buf: &mut [u8],
+    mode: TextReadMode,
+) -> std::io::Result<usize> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::ReadFile;
+
+        if mode == TextReadMode::Native {
+            return file.read(buf);
+        }
+
+        let len = buf.len().min(u32::MAX as usize) as u32;
+        let mut read = 0u32;
+        let result = unsafe {
+            ReadFile(
+                file.as_raw_handle(),
+                buf.as_mut_ptr().cast(),
+                len,
+                &mut read,
+                std::ptr::null_mut(),
+            )
+        };
+        if result == 0 {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(read as usize)
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = mode;
+        file.read(buf)
+    }
+}
+
+fn read_text_file_to_end(
+    file: &mut File,
+    capacity: usize,
+    mode: TextReadMode,
+) -> std::io::Result<Vec<u8>> {
+    const BUFFER_BYTES: usize = 64 * 1024;
+    let mut bytes = Vec::with_capacity(capacity);
+    let mut buf = [0u8; BUFFER_BYTES];
+    loop {
+        let read = read_text_file_chunk(file, &mut buf, mode)?;
+        if read == 0 {
+            return Ok(bytes);
+        }
+        bytes.extend_from_slice(&buf[..read]);
+    }
+}
+
+fn read_text_file_bytes(
+    path: &Path,
+    capacity: usize,
+    mode: TextReadMode,
+) -> std::io::Result<Vec<u8>> {
+    let mut file = open_text_file_for_read(path, mode)?;
+    read_text_file_to_end(&mut file, capacity, mode)
+}
+
+fn read_text_file_prefix(
+    path: &Path,
+    max_bytes: usize,
+    mode: TextReadMode,
+) -> std::io::Result<Vec<u8>> {
+    let mut file = open_text_file_for_read(path, mode)?;
+    let mut buf = vec![0u8; max_bytes];
+    let read = read_text_file_chunk(&mut file, &mut buf, mode)?;
+    buf.truncate(read);
+    Ok(buf)
 }
 
 /// Max bytes returned by a single `read_file_slice` call.
@@ -221,21 +379,32 @@ pub fn detect_file_encoding(
     }
     // 只读取前 8KB 进行编码检测，避免大文件全量读取
     const DETECT_BYTES: usize = 8192;
-    let mut file = open_text_file_for_read(file_path)
-        .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
-    let mut buf = vec![0u8; DETECT_BYTES];
-    let n = std::io::Read::read(&mut file, &mut buf)
-        .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
-    buf.truncate(n);
-    file_encoding::detect(&buf)
-        .map(|encoding| encoding.as_str().to_string())
-        .map_err(|reason| {
-            format!(
-                "无法识别文件编码（{}）：{}",
-                reason,
-                display_file_name(&path)
-            )
-        })
+    let read_mode = current_text_read_mode();
+    let mut last_error = None;
+    for &attempt in text_read_attempts(read_mode) {
+        let buf = match read_text_file_prefix(file_path, DETECT_BYTES, attempt) {
+            Ok(buf) => buf,
+            Err(error) => {
+                last_error = Some(format!(
+                    "读取文件失败：{}（{}）",
+                    display_file_name(&path),
+                    error
+                ));
+                continue;
+            }
+        };
+        match file_encoding::detect(&buf) {
+            Ok(encoding) => return Ok(encoding.as_str().to_string()),
+            Err(reason) => {
+                last_error = Some(format!(
+                    "无法识别文件编码（{}）：{}",
+                    reason,
+                    display_file_name(&path)
+                ));
+            }
+        }
+    }
+    Err(last_error.unwrap_or_else(|| format!("无法读取文件：{}", display_file_name(&path))))
 }
 
 fn read_file_inner(path: String, encoding: Option<&str>) -> Result<String, String> {
@@ -255,12 +424,26 @@ fn read_file_inner(path: String, encoding: Option<&str>) -> Result<String, Strin
     if is_binary_extension(&path) {
         return Err(unsupported_text_file_message(&path));
     }
-    let mut file = open_text_file_for_read(file_path)
-        .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
-    let mut bytes = Vec::with_capacity(metadata.len() as usize);
-    file.read_to_end(&mut bytes)
-        .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
-    file_encoding::decode(&bytes, enc).map_err(|_| decode_error_message(&path, enc))
+    let read_mode = current_text_read_mode();
+    let mut last_error = None;
+    for &attempt in text_read_attempts(read_mode) {
+        let bytes = match read_text_file_bytes(file_path, metadata.len() as usize, attempt) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                last_error = Some(format!(
+                    "读取文件失败：{}（{}）",
+                    display_file_name(&path),
+                    error
+                ));
+                continue;
+            }
+        };
+        match file_encoding::decode(&bytes, enc) {
+            Ok(content) => return Ok(content),
+            Err(_) => last_error = Some(decode_error_message(&path, enc)),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| decode_error_message(&path, enc)))
 }
 
 #[tauri::command]
@@ -302,7 +485,8 @@ fn read_file_slice_inner(path: String, offset: u64, max_bytes: u64) -> Result<Fi
     let available = file_size - offset;
     let to_read = want.min(available) as usize;
 
-    let mut file = open_text_file_for_read(file_path)
+    let read_mode = streaming_text_read_mode(current_text_read_mode());
+    let mut file = open_text_file_for_read(file_path, read_mode)
         .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
     file.seek(SeekFrom::Start(offset))
         .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
@@ -310,7 +494,7 @@ fn read_file_slice_inner(path: String, offset: u64, max_bytes: u64) -> Result<Fi
     let mut buf = vec![0u8; to_read];
     let mut read_total = 0usize;
     while read_total < to_read {
-        match file.read(&mut buf[read_total..]) {
+        match read_text_file_chunk(&mut file, &mut buf[read_total..], read_mode) {
             Ok(0) => break,
             Ok(n) => read_total += n,
             Err(e) => {
@@ -396,7 +580,8 @@ fn find_line_offset_inner(path: String, line: u64) -> Result<LineOffsetResult, S
         });
     }
 
-    let mut file = open_text_file_for_read(file_path)
+    let read_mode = streaming_text_read_mode(current_text_read_mode());
+    let mut file = open_text_file_for_read(file_path, read_mode)
         .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
 
     const BUF_SIZE: usize = 64 * 1024;
@@ -406,8 +591,7 @@ fn find_line_offset_inner(path: String, line: u64) -> Result<LineOffsetResult, S
     let mut last_line_offset: u64 = 0;
 
     loop {
-        let n = file
-            .read(&mut buf)
+        let n = read_text_file_chunk(&mut file, &mut buf, read_mode)
             .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
         if n == 0 {
             break;
@@ -504,10 +688,10 @@ mod tests {
         let path = dir.join("plain.txt");
         fs::write(&path, b"plain text").unwrap();
 
-        let mut reader = open_text_file_for_read(&path).unwrap();
-        let mut text = String::new();
-        reader.read_to_string(&mut text).unwrap();
-        assert_eq!(text, "plain text");
+        let mode = TextReadMode::Compatibility;
+        let mut reader = open_text_file_for_read(&path, mode).unwrap();
+        let bytes = read_text_file_to_end(&mut reader, 10, mode).unwrap();
+        assert_eq!(bytes, b"plain text");
 
         // QFile permits concurrent readers/writers but omits FILE_SHARE_DELETE.
         let writer = fs::OpenOptions::new().write(true).open(&path).unwrap();
@@ -520,6 +704,46 @@ mod tests {
         drop(reader);
         fs::remove_file(path).unwrap();
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_text_reader_retains_rust_default_delete_sharing() {
+        let dir = temp_dir("native-share-mode");
+        let path = dir.join("plain.txt");
+        fs::write(&path, b"plain text").unwrap();
+
+        let mode = TextReadMode::Native;
+        let mut reader = open_text_file_for_read(&path, mode).unwrap();
+        let bytes = read_text_file_to_end(&mut reader, 10, mode).unwrap();
+        assert_eq!(bytes, b"plain text");
+
+        fs::remove_file(&path).expect("Rust's native reader shares delete access");
+        drop(reader);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn parses_supported_text_read_modes() {
+        assert_eq!(TextReadMode::parse("auto"), Some(TextReadMode::Auto));
+        assert_eq!(
+            TextReadMode::parse("compatible"),
+            Some(TextReadMode::Compatibility)
+        );
+        assert_eq!(TextReadMode::parse("native"), Some(TextReadMode::Native));
+        assert_eq!(TextReadMode::parse("other"), None);
+    }
+
+    #[test]
+    fn auto_mode_tries_native_then_compatibility() {
+        assert_eq!(
+            text_read_attempts(TextReadMode::Auto),
+            &[TextReadMode::Native, TextReadMode::Compatibility]
+        );
+        assert_eq!(
+            streaming_text_read_mode(TextReadMode::Auto),
+            TextReadMode::Compatibility
+        );
     }
 
     /// Scripts touched by DLP / transparent-encryption agents carry a marker

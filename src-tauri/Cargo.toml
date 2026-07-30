@@ -73,6 +73,9 @@ libloading = "0.8"
 [target.'cfg(windows)'.dependencies]
 # Fonts registry + Explorer “Open with” (Windows only).
 winreg = "0.55"
+# Use kernel32 ReadFile for editor reads. Rust std uses NtReadFile, which can
+# bypass transparent-encryption products that hook the conventional Win32 API.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 # Tests use in-process grammars; release binaries load the same grammars from
