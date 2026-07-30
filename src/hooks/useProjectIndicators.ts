@@ -2,12 +2,17 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Project } from '../types'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
+import { useGitStatusStore } from '../store/gitStatusStore'
+import { useProjectStore } from '../store/projectStore'
 import { getGitWorkdirStatus } from '../lib/ipc/git'
 import { isTauri } from '../lib/tauri'
 import {
   countDirtyTabsByProject,
   countRunningTerminalsByProject,
+  GIT_DIRTY_COUNT_EVENT,
+  type GitDirtyCountDetail,
   projectGitRefreshDelay,
+  projectPathsMatch,
 } from '../lib/projectIndicators'
 import { isProjectIndicatorsEnabled, PROJECT_INDICATORS_EVENT } from '../lib/projectIndicatorSettings'
 
@@ -33,6 +38,9 @@ export function useProjectIndicators(
   const tabs = useEditorStore(state => state.tabs)
   const projectSessions = useEditorStore(state => state.projectSessions)
   const terminals = useTerminalStore(state => state.terminals)
+  const currentProject = useProjectStore(state => state.currentProject)
+  const storeProjectPath = useGitStatusStore(state => state.projectPath)
+  const storeDirtyCount = useGitStatusStore(state => state.dirtyCount)
   const [gitChangesByProject, setGitChangesByProject] = useState<Record<string, number>>({})
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(isProjectIndicatorsEnabled)
 
@@ -47,6 +55,24 @@ export function useProjectIndicators(
     () => countDirtyTabsByProject(projects, tabs, projectSessions),
     [projectSessions, projects, tabs]
   )
+
+  useEffect(() => {
+    if (!indicatorsEnabled) return
+
+    const onDirtyCount = (event: Event) => {
+      const detail = (event as CustomEvent<GitDirtyCountDetail>).detail
+      if (!detail?.projectPath) return
+      const project = projects.find(p => projectPathsMatch(p.path, detail.projectPath))
+      if (!project || unavailableProjectIds.includes(project.id)) return
+      setGitChangesByProject(previous => {
+        if (previous[project.id] === detail.dirtyCount) return previous
+        return { ...previous, [project.id]: detail.dirtyCount }
+      })
+    }
+
+    window.addEventListener(GIT_DIRTY_COUNT_EVENT, onDirtyCount)
+    return () => window.removeEventListener(GIT_DIRTY_COUNT_EVENT, onDirtyCount)
+  }, [indicatorsEnabled, projects, unavailableProjectIds])
 
   useEffect(() => {
     if (!isTauri() || !indicatorsEnabled) {
@@ -95,6 +121,15 @@ export function useProjectIndicators(
         }
         return merged
       })
+
+      // If the background poll disagrees with the activity-bar store, refresh the store.
+      const store = useGitStatusStore.getState()
+      if (!store.projectPath || store.refreshing) return
+      const tracked = targets.find(project => projectPathsMatch(project.path, store.projectPath!))
+      if (!tracked || !Object.prototype.hasOwnProperty.call(next, tracked.id)) return
+      if (next[tracked.id] !== store.dirtyCount) {
+        store.scheduleRefresh(store.projectPath, 200)
+      }
     }
 
     const refreshAllIfStale = async (force = false) => {
@@ -117,7 +152,9 @@ export function useProjectIndicators(
     }
     const onWorktree = (event: Event) => {
       const path = (event as CustomEvent<{ projectPath?: string }>).detail?.projectPath
-      const target = path ? projects.find(project => project.path === path) : undefined
+      const target = path
+        ? projects.find(project => projectPathsMatch(project.path, path))
+        : undefined
       void refresh(target ? [target] : projects)
     }
     window.addEventListener('focus', onFocus)
@@ -132,18 +169,34 @@ export function useProjectIndicators(
     }
   }, [indicatorsEnabled, projects, unavailableProjectIds])
 
-  return useMemo(
-    () =>
-      Object.fromEntries(
-        projects.map(project => [
+  return useMemo(() => {
+    const useStoreForCurrent =
+      !!currentProject &&
+      !!storeProjectPath &&
+      projectPathsMatch(currentProject.path, storeProjectPath)
+
+    return Object.fromEntries(
+      projects.map(project => {
+        const fromCache = gitChangesByProject[project.id] ?? 0
+        const gitChanges =
+          useStoreForCurrent && project.id === currentProject.id ? storeDirtyCount : fromCache
+        return [
           project.id,
           {
             running: runningByProject[project.id] ?? 0,
             dirtyEditors: dirtyEditorsByProject[project.id] ?? 0,
-            gitChanges: gitChangesByProject[project.id] ?? 0,
+            gitChanges,
           },
-        ])
-      ),
-    [dirtyEditorsByProject, gitChangesByProject, projects, runningByProject]
-  )
+        ]
+      })
+    )
+  }, [
+    currentProject,
+    dirtyEditorsByProject,
+    gitChangesByProject,
+    projects,
+    runningByProject,
+    storeDirtyCount,
+    storeProjectPath,
+  ])
 }

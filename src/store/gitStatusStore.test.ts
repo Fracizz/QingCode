@@ -1,3 +1,4 @@
+/** @vitest-environment jsdom */
 import { describe, expect, it, beforeEach } from 'vitest'
 import { useGitStatusStore } from './gitStatusStore'
 import type { GitStatus } from '@/lib/git/git'
@@ -39,5 +40,20 @@ describe('gitStatusStore panel snapshot', () => {
       { path: 'a.ts', status: ' M' },
       { path: 'b.ts', status: '??' },
     ])
+  })
+
+  it('applyFromGitStatus notifies project-tab badges of the dirty count', () => {
+    const seen: number[] = []
+    const onCount = (event: Event) => {
+      seen.push((event as CustomEvent<{ dirtyCount: number }>).detail.dirtyCount)
+    }
+    window.addEventListener('qingcode:git-dirty-count', onCount)
+    useGitStatusStore.getState().applyFromGitStatus('D:\\repo', sample)
+    useGitStatusStore.getState().applyFromGitStatus('D:\\repo', {
+      ...sample,
+      changes: [],
+    })
+    window.removeEventListener('qingcode:git-dirty-count', onCount)
+    expect(seen).toEqual([2, 0])
   })
 })

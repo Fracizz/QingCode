@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { GitStatus } from '@/lib/git/git'
 import { isTauri } from '../lib/tauri'
 import { getGitHead, getGitWorkdirStatus } from '../lib/ipc/git'
+import { notifyGitDirtyCount } from '../lib/projectIndicators'
 import {
   absoluteGitPath,
   buildStatusMap,
@@ -112,6 +113,7 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
         panelPath: projectPath,
         panelStatus: status,
       })
+      notifyGitDirtyCount(projectPath, 0)
       lastRefreshAt = Date.now()
       return
     }
@@ -119,15 +121,17 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
       path: absoluteGitPath(projectPath, change.path),
       status: change.status,
     }))
+    const dirtyCount = status.changes.length
     set({
       projectPath,
       statusByPath: buildStatusMap(entries),
       entries,
-      dirtyCount: status.changes.length,
+      dirtyCount,
       refreshing: false,
       panelPath: projectPath,
       panelStatus: status,
     })
+    notifyGitDirtyCount(projectPath, dirtyCount)
     lastRefreshAt = Date.now()
   },
 
@@ -150,6 +154,7 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
             panelPath: projectPath,
             panelStatus: { is_repository: false, branch: null, changes: [] },
           })
+          notifyGitDirtyCount(projectPath, 0)
           return
         }
         const previous = get().panelPath === projectPath ? get().panelStatus : null
@@ -168,6 +173,7 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
           panelPath: projectPath,
           panelStatus,
         })
+        notifyGitDirtyCount(projectPath, result.dirty_count)
         // Workdir status confirms a repo but does not include the branch name.
         // Fill HEAD so the status bar / SCM soft-open can show it without a
         // second full `git_status` round-trip.
@@ -189,9 +195,7 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
         }
         lastRefreshAt = Date.now()
       } catch {
-        if (get().projectPath === projectPath) {
-          set({ statusByPath: new Map(), entries: [], dirtyCount: 0 })
-        }
+        // Keep the previous badge on transient CLI failures (same as project-tab indicators).
       } finally {
         if (get().projectPath === projectPath) set({ refreshing: false })
       }

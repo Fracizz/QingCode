@@ -3,6 +3,14 @@ import type { EditorTab, Project, TerminalTab } from '../types'
 export const PROJECT_GIT_REFRESH_MIN_MS = 60_000
 export const PROJECT_GIT_REFRESH_MAX_MS = 90_000
 
+/** Fired when the active-project Git dirty count is known (SCM store / workdir refresh). */
+export const GIT_DIRTY_COUNT_EVENT = 'qingcode:git-dirty-count'
+
+export type GitDirtyCountDetail = {
+  projectPath: string
+  dirtyCount: number
+}
+
 type ProjectEditorSessionLike = {
   tabs: EditorTab[]
 }
@@ -15,9 +23,27 @@ export function projectGitRefreshDelay(randomValue = Math.random()): number {
   )
 }
 
-function normalizedPath(path: string): string {
+export function normalizedProjectPath(path: string): string {
   const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
   return /^[A-Za-z]:/u.test(normalized) ? normalized.toLowerCase() : normalized
+}
+
+function normalizedPath(path: string): string {
+  return normalizedProjectPath(path)
+}
+
+export function projectPathsMatch(a: string, b: string): boolean {
+  return normalizedProjectPath(a) === normalizedProjectPath(b)
+}
+
+/** Keep project-tab Git badges in lockstep with the activity-bar SCM badge. */
+export function notifyGitDirtyCount(projectPath: string, dirtyCount: number) {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(
+    new CustomEvent<GitDirtyCountDetail>(GIT_DIRTY_COUNT_EVENT, {
+      detail: { projectPath, dirtyCount },
+    })
+  )
 }
 
 function owningProjectId(projects: Project[], path: string): string | null {
