@@ -78,26 +78,54 @@ pub fn set_text_read_mode(mode: String) -> Result<(), String> {
 }
 
 /**
- * Compatibility mode matches Qt's QFile / Notepad-- Windows share mode.
+ * Compatibility mode mirrors Qt's QFile / Notepad-- `CreateFileW` call.
  *
- * Native mode deliberately retains Rust's original File::open behaviour,
- * including its READ | WRITE | DELETE sharing on Windows.
+ * Do not route this branch through Rust's `OpenOptions`: besides Rust's
+ * READ | WRITE | DELETE default sharing, it passes zero for
+ * `dwFlagsAndAttributes`, while Qt explicitly passes `FILE_ATTRIBUTE_NORMAL`.
+ * Transparent-encryption filters can inspect the complete create request.
+ *
+ * Native mode deliberately retains Rust's original `File::open` behaviour.
  */
 fn open_text_file_for_read(path: &Path, mode: TextReadMode) -> std::io::Result<File> {
     #[cfg(windows)]
     {
-        use std::os::windows::fs::OpenOptionsExt;
-
         if mode == TextReadMode::Native {
             return File::open(path);
         }
 
-        const FILE_SHARE_READ: u32 = 0x0000_0001;
-        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
-        fs::OpenOptions::new()
-            .read(true)
-            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-            .open(path)
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::Foundation::{GENERIC_READ, INVALID_HANDLE_VALUE};
+        use windows_sys::Win32::Storage::FileSystem::{
+            CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        };
+
+        let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
+        if wide_path.contains(&0) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Windows 文件路径不能包含 NUL 字符",
+            ));
+        }
+        wide_path.push(0);
+
+        let handle = unsafe {
+            CreateFileW(
+                wide_path.as_ptr(),
+                GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                std::ptr::null_mut(),
+            )
+        };
+        if handle == INVALID_HANDLE_VALUE {
+            Err(std::io::Error::last_os_error())
+        } else {
+            Ok(unsafe { File::from_raw_handle(handle) })
+        }
     }
 
     #[cfg(not(windows))]
@@ -685,7 +713,7 @@ mod tests {
     #[test]
     fn text_reader_matches_qt_share_mode_without_delete_sharing() {
         let dir = temp_dir("share-mode");
-        let path = dir.join("plain.txt");
+        let path = dir.join("兼容读取.md");
         fs::write(&path, b"plain text").unwrap();
 
         let mode = TextReadMode::Compatibility;
