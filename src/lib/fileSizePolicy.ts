@@ -183,6 +183,15 @@ export function fileOpenTier(
   return 'reject'
 }
 
+/**
+ * Slice-viewer tabs normally represent files above the 100MB edit cap.
+ * Smaller files can also enter the viewer through the lossy "Open Anyway"
+ * path after text decoding fails, and must not be labelled as oversized.
+ */
+export function isOversizeSlicePreview(sizeBytes: number): boolean {
+  return Number.isFinite(sizeBytes) && sizeBytes > PLAIN_EDIT_MAX_BYTES
+}
+
 export function editorPerfProfile(
   sizeBytes: number,
   editMaxBytes: number = EDIT_MAX_BYTES,

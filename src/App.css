@@ -24,28 +24,12 @@ body,
  * IsNonClientRegionSupportEnabled, so `app-region: drag` becomes HTCAPTION
  * without waiting on the webview main thread / start_dragging IPC.
  * `data-tauri-drag-region` keeps the JS IPC fallback for older runtimes.
- * Interactive descendants must stay client-area (`no-drag`).
+ * Only mark inert leaf nodes: broad dynamic containers make WebView2 rebuild
+ * a native region with exclusions for every interactive descendant.
  */
 [data-tauri-drag-region] {
   -webkit-app-region: drag;
   app-region: drag;
-}
-
-[data-tauri-drag-region]
-  :is(
-    button,
-    a,
-    input,
-    select,
-    textarea,
-    label,
-    [role='button'],
-    [role='menuitem'],
-    [role='tab'],
-    [contenteditable='true']
-  ) {
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
 }
 
 body {
@@ -189,25 +173,25 @@ body {
     'terminal terminal';
 }
 
-/* Equal: single terminal | editor = 1:1. */
+/* Equal: single editor | terminal = 1:1. */
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'] {
   grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   grid-template-areas:
-    'activity sidebar terminal editor';
+    'activity sidebar editor terminal';
 }
 
 /*
- * Equal dual+editor: terminal band | editor = 2:1 → A|B|E ≈ 1:1:1.
+ * Equal editor+dual: editor | terminal band = 1:2 → E|A|B ≈ 1:1:1.
  * Must not apply when split is custom — that rule has lower specificity, so
  * without :not() the 2fr band would win and the outer width drag would stick.
  */
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-dual='true'][data-editor-slot='visible']:not([data-terminal-split='custom']) {
-  grid-template-columns: auto auto minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 2fr);
 }
 
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-split='custom'] {
-  grid-template-columns: auto auto auto minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
 }
 
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-editor-slot='collapsed'] {
@@ -225,9 +209,9 @@ body {
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-dual='true'][data-editor-slot='visible'][data-terminal-slot='collapsed'],
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-quad='true'][data-editor-slot='visible'][data-terminal-slot='collapsed'],
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-terminal-split='custom'][data-editor-slot='visible'][data-terminal-slot='collapsed'] {
-  grid-template-columns: auto auto 0px minmax(0, 1fr);
+  grid-template-columns: auto auto minmax(0, 1fr) 0px;
   grid-template-areas:
-    'activity sidebar terminal editor';
+    'activity sidebar editor terminal';
 }
 
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-editor-slot='collapsed'][data-terminal-slot='collapsed'] {
@@ -240,15 +224,15 @@ body {
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   grid-template-areas:
-    'activity terminal editor';
+    'activity editor terminal';
 }
 
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-dual='true'][data-editor-slot='visible']:not([data-terminal-split='custom']) {
-  grid-template-columns: auto minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 2fr);
 }
 
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-split='custom'] {
-  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-editor-slot='collapsed'] {
@@ -261,9 +245,9 @@ body {
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-dual='true'][data-editor-slot='visible'][data-terminal-slot='collapsed'],
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-quad='true'][data-editor-slot='visible'][data-terminal-slot='collapsed'],
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-terminal-split='custom'][data-editor-slot='visible'][data-terminal-slot='collapsed'] {
-  grid-template-columns: auto 0px minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) 0px;
   grid-template-areas:
-    'activity terminal editor';
+    'activity editor terminal';
 }
 
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-editor-slot='collapsed'][data-terminal-slot='collapsed'] {

@@ -43,8 +43,9 @@ export function parseOpenFileError(error: unknown): { message: string; kind: Ope
 export function openFileErrorTitle(kind: OpenFileErrorKind): string {
   switch (kind) {
     case 'binary':
-    case 'encoding':
       return '无法在文本编辑器中显示此文件，因为它可能是二进制文件或使用了不支持的文本编码。'
+    case 'encoding':
+      return '文件内容无法解码；若文件受加密软件保护，当前进程可能读取到了密文字节，请重试。'
     case 'too-large':
       return '文件过大（超过 500MB），无法打开。'
     case 'folder':

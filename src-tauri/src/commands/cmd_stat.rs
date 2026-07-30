@@ -7,6 +7,32 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use tauri::State;
 
+/**
+ * Open text files with the same Windows share mode as Qt's QFile / Notepad--.
+ *
+ * Rust defaults to READ | WRITE | DELETE sharing. Some transparent-encryption
+ * filter drivers treat that broader request as a raw/ciphertext access path,
+ * while conventional editors use READ | WRITE and receive the decrypted view.
+ */
+fn open_text_file_for_read(path: &Path) -> std::io::Result<File> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+        fs::OpenOptions::new()
+            .read(true)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .open(path)
+    }
+
+    #[cfg(not(windows))]
+    {
+        File::open(path)
+    }
+}
+
 /// Max bytes returned by a single `read_file_slice` call.
 const MAX_SLICE_BYTES: u64 = 256 * 1024;
 /// Pure read-only slice viewer hard cap.
@@ -195,7 +221,7 @@ pub fn detect_file_encoding(
     }
     // 只读取前 8KB 进行编码检测，避免大文件全量读取
     const DETECT_BYTES: usize = 8192;
-    let mut file = std::fs::File::open(file_path)
+    let mut file = open_text_file_for_read(file_path)
         .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
     let mut buf = vec![0u8; DETECT_BYTES];
     let n = std::io::Read::read(&mut file, &mut buf)
@@ -229,7 +255,10 @@ fn read_file_inner(path: String, encoding: Option<&str>) -> Result<String, Strin
     if is_binary_extension(&path) {
         return Err(unsupported_text_file_message(&path));
     }
-    let bytes = fs::read(file_path)
+    let mut file = open_text_file_for_read(file_path)
+        .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    file.read_to_end(&mut bytes)
         .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
     file_encoding::decode(&bytes, enc).map_err(|_| decode_error_message(&path, enc))
 }
@@ -273,7 +302,7 @@ fn read_file_slice_inner(path: String, offset: u64, max_bytes: u64) -> Result<Fi
     let available = file_size - offset;
     let to_read = want.min(available) as usize;
 
-    let mut file = File::open(file_path)
+    let mut file = open_text_file_for_read(file_path)
         .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
     file.seek(SeekFrom::Start(offset))
         .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
@@ -367,7 +396,7 @@ fn find_line_offset_inner(path: String, line: u64) -> Result<LineOffsetResult, S
         });
     }
 
-    let mut file = File::open(file_path)
+    let mut file = open_text_file_for_read(file_path)
         .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
 
     const BUF_SIZE: usize = 64 * 1024;
@@ -466,6 +495,31 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("qingcode-stat-{label}-{nonce}"));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn text_reader_matches_qt_share_mode_without_delete_sharing() {
+        let dir = temp_dir("share-mode");
+        let path = dir.join("plain.txt");
+        fs::write(&path, b"plain text").unwrap();
+
+        let mut reader = open_text_file_for_read(&path).unwrap();
+        let mut text = String::new();
+        reader.read_to_string(&mut text).unwrap();
+        assert_eq!(text, "plain text");
+
+        // QFile permits concurrent readers/writers but omits FILE_SHARE_DELETE.
+        let writer = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        drop(writer);
+        assert!(
+            fs::remove_file(&path).is_err(),
+            "an open Qt-compatible reader must not share delete access"
+        );
+
+        drop(reader);
+        fs::remove_file(path).unwrap();
+        fs::remove_dir_all(dir).unwrap();
     }
 
     /// Scripts touched by DLP / transparent-encryption agents carry a marker

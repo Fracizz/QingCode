@@ -57,7 +57,7 @@ describe('getDefaultSideTerminalWidth', () => {
     )
   })
 
-  it('defaults dual+editor terminal band to 2/3 for A|B|E ≈ 1:1:1', () => {
+  it('defaults dual+editor terminal band to 2/3 for E|A|B ≈ 1:1:1', () => {
     expect(SIDE_DUAL_EDITOR_TERMINAL_BAND_RATIO).toBe(2 / 3)
     const band = getSideTerminalEditorBandWidth({ sidebarVisible: true })
     expect(getDefaultSideTerminalWidth({ sidebarVisible: true, dualTerminal: true })).toBe(

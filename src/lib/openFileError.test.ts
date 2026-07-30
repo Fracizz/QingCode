@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canPreviewAnyway,
   isLoadingTab,
+  openFileErrorTitle,
   parseOpenFileError,
   tabNeedsDiskContent,
 } from './openFileError'
@@ -31,6 +32,12 @@ describe('parseOpenFileError', () => {
     expect(canPreviewAnyway('binary')).toBe(false)
     expect(canPreviewAnyway('too-large')).toBe(false)
     expect(canPreviewAnyway('generic')).toBe(false)
+  })
+
+  it('guides decode failures caused by transparent-encryption software', () => {
+    expect(openFileErrorTitle('encoding')).toContain('加密软件')
+    expect(openFileErrorTitle('encoding')).toContain('密文字节')
+    expect(openFileErrorTitle('binary')).not.toContain('密文字节')
   })
 })
 

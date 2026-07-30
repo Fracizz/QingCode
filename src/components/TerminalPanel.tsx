@@ -568,21 +568,21 @@ export default function TerminalPanel({
           width: terminalOpen ? (sideWidthEqual ? '100%' : terminalWidth) : 0,
         }}
       >
-        <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-r border-border">
-          {body}
-        </div>
         {terminalOpen && editorVisible && (
           <PanelResizer
             orientation="vertical"
             active={isTerminalResizing}
             tooltip={terminalWidthResizerHint(terminalWidth, t)}
-            tooltipSide="right"
+            tooltipSide="left"
             onPointerDown={onWidthResizerPointerDown}
             ariaValueNow={terminalWidth}
             ariaValueMin={getTerminalMinWidth()}
             ariaValueMax={getTerminalMaxWidth()}
           />
         )}
+        <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-l border-border">
+          {body}
+        </div>
       </div>
     )
   }

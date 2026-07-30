@@ -267,7 +267,7 @@ export function useTerminalPanel(): UseTerminalPanelReturn {
         if (ev.pointerId !== pointerId) return
         const st = widthDragStateRef.current
         if (!st) return
-        targetSizeRef.current = clampTerminalWidth(st.startW + (ev.clientX - st.startX))
+        targetSizeRef.current = clampTerminalWidth(st.startW - (ev.clientX - st.startX))
         scheduleSizeFrame('vertical')
       }
       const cleanup = () => {

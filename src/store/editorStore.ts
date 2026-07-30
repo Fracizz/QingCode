@@ -581,7 +581,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       })
       useProjectStore
         .getState()
-        .pushToast('info', translate('已以只读预览打开（无法解码的字节显示为乱码，不可编辑）'))
+        .pushToast(
+          'info',
+          translate('已打开原始字节预览；加密文件可能显示为密文'),
+        )
     } catch (e) {
       console.error('previewAnywayFromError failed:', e)
       if (!get().findTab(id)) return

@@ -93,8 +93,8 @@ describe('nextPanelLayoutMode', () => {
 describe('panelLayoutModeLabel', () => {
   it('returns Chinese source labels for i18n', () => {
     expect(panelLayoutModeLabel('classic')).toBe('经典布局（终端在底部）')
-    expect(panelLayoutModeLabel('sideTerminal')).toBe('终端+编辑器')
-    expect(panelLayoutModeLabel('sideDualEditor')).toBe('双终端+编辑器')
+    expect(panelLayoutModeLabel('sideTerminal')).toBe('编辑器+终端')
+    expect(panelLayoutModeLabel('sideDualEditor')).toBe('编辑器+双终端')
   })
 })
 

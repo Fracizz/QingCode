@@ -64,19 +64,19 @@ export function getSideTerminalEditorBandWidth(options: {
   return window.innerWidth - ACTIVITY_BAR_WIDTH - sidebar
 }
 
-/** Single terminal | editor equal split (1:1). */
+/** Single editor | terminal equal split (1:1). */
 export const SIDE_TERMINAL_DEFAULT_BAND_RATIO = 0.5
 
 /**
- * Dual + editor equal split: terminal band : editor = 2:1
- * so TermA : TermB : Editor ≈ 1:1:1 (with dual panes at 50%).
+ * Dual + editor equal split: editor : terminal band = 1:2
+ * so Editor : TermA : TermB ≈ 1:1:1 (with dual panes at 50%).
  */
 export const SIDE_DUAL_EDITOR_TERMINAL_BAND_RATIO = 2 / 3
 
 export function getDefaultSideTerminalWidth(options: {
   sidebarVisible: boolean
   sidebarWidth?: number
-  /** When true, default to 2/3 of the band for a 1:1:1 dual+editor layout. */
+  /** When true, default to 2/3 of the band for a 1:1:1 editor+dual layout. */
   dualTerminal?: boolean
   /** 田 layout uses the same wider terminal band as dual. */
   quadTerminal?: boolean

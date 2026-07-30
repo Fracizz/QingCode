@@ -9,6 +9,7 @@ import {
   editorPerfProfile,
   fileOpenTier,
   formatFileSize,
+  isOversizeSlicePreview,
   matchFileSizePattern,
   parseMaxSizeForEditMap,
   parseSizeToBytes,
@@ -63,6 +64,12 @@ describe('fileSizePolicy', () => {
     expect(formatFileSize(800)).toBe('800 B')
     expect(formatFileSize(EDIT_MAX_BYTES)).toBe('20.0 MB')
     expect(formatFileSize(PLAIN_EDIT_MAX_BYTES)).toBe('100.0 MB')
+  })
+
+  it('distinguishes oversized slice previews from decode-fallback previews', () => {
+    expect(isOversizeSlicePreview(5.1 * 1024)).toBe(false)
+    expect(isOversizeSlicePreview(PLAIN_EDIT_MAX_BYTES)).toBe(false)
+    expect(isOversizeSlicePreview(PLAIN_EDIT_MAX_BYTES + 1)).toBe(true)
   })
 
   it('parses size strings and numbers', () => {

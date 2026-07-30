@@ -1,7 +1,7 @@
 export const PANEL_LAYOUT_KEY = 'qingcode:panel-layout'
 export const PANEL_LAYOUT_CHANGED_EVENT = 'qingcode:panel-layout-changed'
 
-/** classic = terminal bottom; sideTerminal = sidebar | terminal | editor */
+/** classic = terminal bottom; sideTerminal = sidebar | editor | terminal */
 export type PanelLayoutTemplate = 'classic' | 'sideTerminal'
 
 export const DEFAULT_PANEL_LAYOUT: PanelLayoutTemplate = 'classic'

@@ -9,7 +9,7 @@ import {
 import { Copy, ExternalLink, Eye, LocateFixed, Search } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { safeInvoke } from '../lib/tauri'
-import { formatFileSize } from '../lib/fileSizePolicy'
+import { formatFileSize, isOversizeSlicePreview } from '../lib/fileSizePolicy'
 import { copyToClipboard } from '../utils/fileReferences'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -111,6 +111,10 @@ export default function LargeFileViewer({ tab }: Props) {
   const [searchQuery, setSearchQuery] = useState('')
   const [activeMatch, setActiveMatch] = useState(0)
   const [statusLine, setStatusLine] = useState<number | null>(null)
+  const displayedFileSize = fileSize || tab.fileSize || 0
+  const previewDescription = isOversizeSlicePreview(displayedFileSize)
+    ? t('超过 100MB 的文件仅只读分块预览，不可编辑')
+    : t('文件可能受加密软件保护或使用不支持的编码，仅原始字节预览，不可编辑')
   const requestId = useRef(0)
   const preRef = useRef<HTMLPreElement>(null)
   // 行偏移索引缓存，避免重复计算
@@ -363,8 +367,7 @@ export default function LargeFileViewer({ tab }: Props) {
       <div className="flex h-8 flex-shrink-0 items-center gap-2 border-b border-border px-3 text-[11px] text-fg-muted">
         <Eye size={12} className="text-accent flex-shrink-0" aria-hidden />
         <span className="truncate">
-          {t('只读预览')} · {formatFileSize(fileSize || tab.fileSize || 0)} ·{' '}
-          {t('超过 100MB 的文件仅只读分块预览，不可编辑')}
+          {t('只读预览')} · {formatFileSize(displayedFileSize)} · {previewDescription}
           {statusLine != null ? ` · ${t('第 {line} 行', { line: statusLine })}` : ''}
         </span>
         <span className="ml-auto flex-shrink-0 font-mono text-fg-dim">
