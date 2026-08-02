@@ -143,11 +143,14 @@ const SCM_SECTION_PAD_X = 'px-3'
 /** Tighter than toolbar icon slot so labels sit closer to the left like the tab text. */
 const SCM_SECTION_ICON_SLOT = 'inline-flex h-4 w-4 shrink-0 items-center justify-center'
 const SCM_SECTION_ICON_SIZE = 13
-/** File rows nest under the section label (between tab-align and old pl-6). */
-const SCM_ROW_PAD = 'pl-5 pr-9'
+/** File rows nest under the section label; right padding comes from the shared action column. */
+const SCM_ROW_PAD = 'pl-5 pr-1'
 const SCM_ICON_SIZE = 13
 const SCM_ICON_BUTTON =
   'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent text-fg-dim transition-colors hover:border-border hover:bg-bg-hover hover:text-brand disabled:opacity-35'
+/** Right-side stage/unstage column: full-height so header + row icons share one vertical center. */
+const SCM_ACTION_COLUMN = `flex h-full shrink-0 items-center ${SCM_SECTION_PAD_X} pl-0`
+const SCM_ACTION_TOOLTIP = 'flex h-full items-center'
 const STATUS_BADGE =
   'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] text-[9px] font-bold leading-none'
 
@@ -323,7 +326,7 @@ function ChangeRowComponent(
   }
 
   return (
-    <div style={style} className="group/scm-row relative flex">
+    <div style={style} className="group/scm-row flex">
       <button
         type="button"
         onClick={event => onSelectChange(group, change, index, event)}
@@ -343,31 +346,29 @@ function ChangeRowComponent(
           <span>{formatScmDisplayPath(change.path)}</span>
         </Tooltip>
       </button>
-      <Tooltip
-        label={actionLabel}
-        side="bottom"
-        wrapperClassName="absolute right-2 top-1/2 -translate-y-1/2"
-      >
-        <button
-          type="button"
-          disabled={disabled}
-          aria-label={`${actionLabel}: ${change.path}`}
-          onClick={runRowAction}
-          className={`rounded border border-transparent p-0.5 text-fg-dim hover:border-border hover:bg-bg-active hover:text-fg disabled:opacity-40 ${
-            actionBusy
-              ? 'opacity-100'
-              : 'opacity-0 group-hover/scm-row:opacity-100 focus:opacity-100'
-          }`}
-        >
-          {actionBusy ? (
-            <LoaderCircle size={12} className="animate-spin text-accent" />
-          ) : group === 'staged' ? (
-            <Minus size={12} />
-          ) : (
-            <Plus size={12} />
-          )}
-        </button>
-      </Tooltip>
+      <div className={SCM_ACTION_COLUMN}>
+        <Tooltip label={actionLabel} side="bottom" wrapperClassName={SCM_ACTION_TOOLTIP}>
+          <button
+            type="button"
+            disabled={disabled}
+            aria-label={`${actionLabel}: ${change.path}`}
+            onClick={runRowAction}
+            className={`${SCM_ICON_BUTTON} ${
+              actionBusy
+                ? 'opacity-100'
+                : 'opacity-0 group-hover/scm-row:opacity-100 focus-visible:opacity-100'
+            }`}
+          >
+            {actionBusy ? (
+              <LoaderCircle size={SCM_ICON_SIZE} className="animate-spin text-accent" />
+            ) : group === 'staged' ? (
+              <Minus size={SCM_ICON_SIZE} />
+            ) : (
+              <Plus size={SCM_ICON_SIZE} />
+            )}
+          </button>
+        </Tooltip>
+      </div>
     </div>
   )
 }
@@ -456,7 +457,7 @@ function ChangeGroupSection({
       }
     >
       <div
-        className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
+        className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-stretch border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
       >
         <button
           type="button"
@@ -473,8 +474,8 @@ function ChangeGroupSection({
           </span>
           <span className="truncate font-medium tabular-nums text-fg">{label}</span>
         </button>
-        <div className={`flex shrink-0 items-center ${SCM_SECTION_PAD_X} pl-0`}>
-          <Tooltip label={bulkLabel} side="bottom">
+        <div className={SCM_ACTION_COLUMN}>
+          <Tooltip label={bulkLabel} side="bottom" wrapperClassName={SCM_ACTION_TOOLTIP}>
             <button
               type="button"
               disabled={disabled || changes.length === 0}
