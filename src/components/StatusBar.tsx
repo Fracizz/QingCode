@@ -434,39 +434,25 @@ export default function StatusBar() {
                 ) : null}
                 {showEncoding && (appMemory || appVersion) ? <StatusDivider /> : null}
                 {appMemory && (
-                  <>
-                    {currentProject && (
-                      <>
-                        <StatusTip label={t('当前项目终端进程树内存，不含共享的主进程和 WebView2')}>
-                          <span className="rounded px-1 -mx-1 tabular-nums">
-                            {t('项目 {size}', {
-                              size: formatAppMemoryMb(appMemory.projectTerminalBytes),
-                            })}
-                          </span>
-                        </StatusTip>
-                        <StatusDivider />
-                      </>
+                  <StatusTip
+                    label={t(
+                      '主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n当前项目终端 {project}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒',
+                      {
+                        main: formatAppMemoryMb(appMemory.mainBytes),
+                        webview: formatAppMemoryMb(appMemory.webviewBytes),
+                        terminal: formatAppMemoryMb(appMemory.terminalBytes),
+                        project: formatAppMemoryMb(appMemory.projectTerminalBytes),
+                        tipSec: APP_MEMORY_TIP_REFRESH_MS / 1000,
+                        idleSec: APP_MEMORY_REFRESH_MS / 1000,
+                      }
                     )}
-                    <StatusTip
-                      label={t(
-                        '主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n当前项目终端 {project}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒',
-                        {
-                          main: formatAppMemoryMb(appMemory.mainBytes),
-                          webview: formatAppMemoryMb(appMemory.webviewBytes),
-                          terminal: formatAppMemoryMb(appMemory.terminalBytes),
-                          project: formatAppMemoryMb(appMemory.projectTerminalBytes),
-                          tipSec: APP_MEMORY_TIP_REFRESH_MS / 1000,
-                          idleSec: APP_MEMORY_REFRESH_MS / 1000,
-                        }
-                      )}
-                      onShow={() => setMemoryTipOpen(true)}
-                      onHide={() => setMemoryTipOpen(false)}
-                    >
-                      <span className="rounded px-1 -mx-1 tabular-nums">
-                        {t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) })}
-                      </span>
-                    </StatusTip>
-                  </>
+                    onShow={() => setMemoryTipOpen(true)}
+                    onHide={() => setMemoryTipOpen(false)}
+                  >
+                    <span className="rounded px-1 -mx-1 tabular-nums">
+                      {t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) })}
+                    </span>
+                  </StatusTip>
                 )}
                 {appMemory && appVersion ? <StatusDivider /> : null}
                 {appVersion && (

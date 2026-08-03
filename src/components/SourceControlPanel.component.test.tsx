@@ -45,6 +45,7 @@ vi.mock('react-window', () => ({
     </div>
   ),
   useListRef: () => ({ current: null }),
+  getScrollbarSize: () => 0,
 }))
 
 vi.mock('./ScmInlineDiff', () => ({

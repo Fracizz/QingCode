@@ -36,7 +36,7 @@ import {
   X,
 } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
-import { List, useListRef } from 'react-window'
+import { List, getScrollbarSize, useListRef } from 'react-window'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
@@ -143,14 +143,20 @@ const SCM_SECTION_PAD_X = 'px-3'
 /** Tighter than toolbar icon slot so labels sit closer to the left like the tab text. */
 const SCM_SECTION_ICON_SLOT = 'inline-flex h-4 w-4 shrink-0 items-center justify-center'
 const SCM_SECTION_ICON_SIZE = 13
-/** File rows nest under the section label; right padding comes from the shared action column. */
-const SCM_ROW_PAD = 'pl-5 pr-1'
+/** File rows nest under the section label; reserve space for the absolute action rail. */
+const SCM_ROW_PAD = 'pl-5 pr-9'
 const SCM_ICON_SIZE = 13
 const SCM_ICON_BUTTON =
   'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded border border-transparent text-fg-dim transition-colors hover:border-border hover:bg-bg-hover hover:text-brand disabled:opacity-35'
-/** Right-side stage/unstage column: full-height so header + row icons share one vertical center. */
-const SCM_ACTION_COLUMN = `flex h-full shrink-0 items-center ${SCM_SECTION_PAD_X} pl-0`
-const SCM_ACTION_TOOLTIP = 'flex h-full items-center'
+/**
+ * Fixed-width right rail for bulk arrows and per-row +/-.
+ * Positioned with `right: var(--scm-scrollbar-width)` on headers and `right: 0` on rows
+ * so icons share one vertical centerline regardless of scrollbar width.
+ */
+const SCM_ACTION_COLUMN =
+  'absolute inset-y-0 right-[var(--scm-scrollbar-width,0px)] flex w-9 items-center justify-center'
+const SCM_ROW_ACTION_COLUMN = 'absolute inset-y-0 right-0 flex w-9 items-center justify-center'
+const SCM_ACTION_TOOLTIP = 'flex h-full w-full items-center justify-center'
 const STATUS_BADGE =
   'inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-[3px] text-[9px] font-bold leading-none'
 
@@ -326,13 +332,13 @@ function ChangeRowComponent(
   }
 
   return (
-    <div style={style} className="group/scm-row flex">
+    <div style={style} className="group/scm-row relative">
       <button
         type="button"
         onClick={event => onSelectChange(group, change, index, event)}
         onDoubleClick={() => onOpenChange(group, change)}
         onContextMenu={event => onOpenContextMenu(event, group, change)}
-        className={`flex h-full min-w-0 flex-1 items-center gap-2 ${SCM_ROW_PAD} text-left text-[12px] leading-5 hover:bg-bg-hover ${
+        className={`flex h-full w-full items-center gap-2 ${SCM_ROW_PAD} text-left text-[12px] leading-5 hover:bg-bg-hover ${
           active ? 'bg-bg-active' : ''
         }`}
       >
@@ -346,7 +352,7 @@ function ChangeRowComponent(
           <span>{formatScmDisplayPath(change.path)}</span>
         </Tooltip>
       </button>
-      <div className={SCM_ACTION_COLUMN}>
+      <div className={SCM_ROW_ACTION_COLUMN}>
         <Tooltip label={actionLabel} side="bottom" wrapperClassName={SCM_ACTION_TOOLTIP}>
           <button
             type="button"
@@ -404,6 +410,20 @@ function ChangeGroupSection({
   onSelectAll,
 }: ChangeGroupSectionProps) {
   const listRef = useListRef(null)
+  const [scrollbarWidth, setScrollbarWidth] = useState(getScrollbarSize)
+  const measureScrollbarWidth = useCallback(() => {
+    const element = listRef.current?.element
+    if (!element) return
+    const measured = element.offsetWidth - element.clientWidth
+    setScrollbarWidth(prev => (measured > 0 ? measured : getScrollbarSize(true)) || prev)
+  }, [listRef])
+  useLayoutEffect(() => {
+    if (collapsed || changes.length === 0) return
+    measureScrollbarWidth()
+  }, [changes.length, collapsed, measureScrollbarWidth])
+  const sectionScrollbarStyle = {
+    ['--scm-scrollbar-width' as string]: `${scrollbarWidth}px`,
+  } as CSSProperties
   const bulkLabel = group === 'staged' ? allUnstageLabel : allStageLabel
   const bulkBusy = operation?.key === `all:${group}`
   const rowProps = useMemo(
@@ -450,6 +470,7 @@ function ChangeGroupSection({
     <section
       tabIndex={-1}
       onKeyDown={handleSectionKeyDown}
+      style={sectionScrollbarStyle}
       className={
         collapsed
           ? 'flex-none border-b border-border outline-none'
@@ -457,13 +478,13 @@ function ChangeGroupSection({
       }
     >
       <div
-        className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-stretch border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
+        className={`relative flex ${SCM_TOOLBAR_H} flex-shrink-0 items-stretch border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
       >
         <button
           type="button"
           aria-expanded={!collapsed}
           onClick={() => onToggle(group)}
-          className={`flex h-full min-w-0 flex-1 items-center gap-1.5 ${SCM_SECTION_PAD_X} text-left hover:bg-bg-hover hover:text-fg`}
+          className={`flex h-full min-w-0 flex-1 items-center gap-1.5 ${SCM_SECTION_PAD_X} pr-9 text-left hover:bg-bg-hover hover:text-fg`}
         >
           <span className={SCM_SECTION_ICON_SLOT}>
             {collapsed ? (
@@ -486,9 +507,9 @@ function ChangeGroupSection({
               {bulkBusy ? (
                 <LoaderCircle size={SCM_ICON_SIZE} className="animate-spin text-accent" />
               ) : group === 'staged' ? (
-                <ArrowUp size={SCM_ICON_SIZE} strokeWidth={2.25} />
+                <ArrowUp size={SCM_ICON_SIZE} strokeWidth={2} />
               ) : (
-                <ArrowDown size={SCM_ICON_SIZE} strokeWidth={2.25} />
+                <ArrowDown size={SCM_ICON_SIZE} strokeWidth={2} />
               )}
             </button>
           </Tooltip>
@@ -505,7 +526,14 @@ function ChangeGroupSection({
             overscanCount={8}
             className="h-full"
             style={{ height: '100%' }}
+            onResize={measureScrollbarWidth}
           />
+        </div>
+      )}
+      {!collapsed && changes.length === 0 && (
+        <div className={`relative flex ${SCM_TOOLBAR_H} items-stretch`}>
+          <div className="min-w-0 flex-1" />
+          <div className={SCM_ACTION_COLUMN} aria-hidden />
         </div>
       )}
     </section>

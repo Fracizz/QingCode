@@ -6,6 +6,27 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.9] - 2026-08-03
+
+### Added
+
+- Source Control: multi-remote GIT URL panel; Ctrl+A select all in change/staged lists
+- Settings: Windows text read modes (auto / compatible / native); About panel with copyable version info
+- Title-bar Git change count badges (CountBadge); status-bar memory tooltip for main / WebView2 / terminals / current project terminals
+- Title bar: read-only preview for undecodable files; large-file preview and sidebar layout improvements
+- Navigation: usage-first go-to-definition grouping; intercept native Ctrl+A; copy paths from multi-select
+
+### Changed
+
+- Sidebar layout: terminal docked to the right of the editor; title-bar drag via WebView2 `app-region`
+- SCM remote display and toolbar layout polish
+
+### Fixed
+
+- SCM commit history empty or single row on first open; aligned ↓ / + / ↑ action column (measured scrollbar width)
+- Update download and UTF-16 encoding detection; About page Copy button wrapping
+- Title-bar vs sidebar Git badge alignment; title-bar blank-area drag stutter
+
 ## [0.1.8] - 2026-07-29
 
 ### Added
