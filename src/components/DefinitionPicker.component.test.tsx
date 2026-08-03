@@ -18,7 +18,7 @@ describe('DefinitionPicker', () => {
     useEditorStore.setState(initialEditorState, true)
   })
 
-  it('runs the Ctrl+click continuation after a chosen definition is opened', async () => {
+  it('runs afterDefinitionJump after a chosen definition is opened', async () => {
     const openFile = vi.fn().mockResolvedValue(undefined)
     const afterDefinitionJump = vi.fn()
     useEditorStore.setState({ openFile })

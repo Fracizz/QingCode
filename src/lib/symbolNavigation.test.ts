@@ -1,14 +1,12 @@
 // @vitest-environment jsdom
 
 import { EditorState } from '@codemirror/state'
-import { EditorView } from '@codemirror/view'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { EditorTab, Project } from '../types'
+import type { Project } from '../types'
 import { useDefinitionPickerStore } from '../store/definitionPickerStore'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
-import { registerEditorView, unregisterEditorView } from './editorSession'
-import { findUsagesAfterDefinitionJump, findUsagesAtEditor } from './symbolNavigation'
+import { findUsagesAtEditor } from './symbolNavigation'
 
 const mocks = vi.hoisted(() => ({
   findSemanticUsages: vi.fn(),
@@ -39,7 +37,6 @@ const project: Project = {
 
 const initialEditorState = useEditorStore.getState()
 const initialProjectState = useProjectStore.getState()
-let view: EditorView | null = null
 
 beforeEach(() => {
   mocks.findSemanticUsages.mockReset()
@@ -50,98 +47,12 @@ beforeEach(() => {
 })
 
 afterEach(() => {
-  if (view) {
-    unregisterEditorView('definition-tab', view)
-    view.destroy()
-    view = null
-  }
   document.body.replaceChildren()
   useEditorStore.setState(initialEditorState, true)
   useProjectStore.setState(initialProjectState, true)
 })
 
-describe('findUsagesAfterDefinitionJump', () => {
-  it('uses the final definition binding after Ctrl+click reaches the source', async () => {
-    const sourceState = EditorState.create({ doc: 'target()' })
-    const definition = {
-      symbolId: 'function:target',
-      name: 'target',
-      kind: 'function',
-      path: 'D:/alpha/definition.ts',
-      relative: 'definition.ts',
-      line: 1,
-      column: 10,
-      text: 'function target() {}',
-      score: 2400,
-    }
-    const usage = {
-      ...definition,
-      path: 'D:/alpha/caller.ts',
-      relative: 'caller.ts',
-      line: 4,
-      column: 3,
-      text: 'target()',
-      usageKind: 'call',
-    }
-    mocks.findSemanticUsagesById.mockResolvedValue({
-      symbolId: 'function:target',
-      name: 'target',
-      kind: 'function',
-      definition,
-      usages: [usage],
-      totalCount: 1,
-      filesIndexed: 2,
-      complete: true,
-      truncated: false,
-    })
-    useProjectStore.setState({
-      projects: [project],
-      currentProject: project,
-      unavailableProjectIds: [],
-    })
-    const tab = {
-      id: 'definition-tab',
-      path: definition.path,
-      name: 'definition.ts',
-      language: 'typescript',
-      dirty: false,
-      content: definition.text,
-    } as EditorTab
-    useEditorStore.setState({
-      tabs: [tab],
-      activeTabId: tab.id,
-      pendingReveal: null,
-    })
-    const parent = document.createElement('div')
-    document.body.appendChild(parent)
-    view = new EditorView({
-      parent,
-      state: EditorState.create({ doc: definition.text }),
-    })
-    vi.spyOn(view, 'coordsAtPos').mockReturnValue(null)
-    registerEditorView(tab.id, view)
-
-    const navigation = findUsagesAfterDefinitionJump(definition, {
-      path: 'D:/alpha/caller.ts',
-      state: sourceState,
-      position: 0,
-    })
-
-    await navigation
-
-    expect(mocks.findSemanticUsagesById).toHaveBeenCalledWith(project.path, 'function:target', {
-      offset: 0,
-      maxResults: 80,
-    })
-    expect(mocks.findSemanticUsages).not.toHaveBeenCalled()
-    expect(useDefinitionPickerStore.getState()).toMatchObject({
-      open: true,
-      mode: 'reference',
-      symbol: 'target',
-      candidates: [expect.objectContaining({ relative: 'caller.ts' })],
-    })
-  })
-
+describe('findUsagesAtEditor', () => {
   it('does not reopen a pending usage popup after the user closes it', async () => {
     let resolveUsages!: (value: {
       symbolId: string

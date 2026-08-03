@@ -77,10 +77,7 @@ import {
   goToDefinition,
   identifierAt,
 } from '../lib/definitionNavigation'
-import {
-  findUsagesAfterDefinitionJump,
-  findUsagesAtActiveEditor,
-} from '../lib/symbolNavigation'
+import { findUsagesAtActiveEditor } from '../lib/symbolNavigation'
 import { scheduleSemanticOverlay } from '../lib/semanticNavigation'
 import {
   editorHasOccurrenceHighlight,
@@ -222,17 +219,7 @@ function createTabEditorState(
       // Kept outside compartments so every profile (incl. large/degraded) gets matches.
       occurrenceHighlight,
       editorDefinitionLink({
-        navigate: (view, identifier) => {
-          const sourceState = view.state
-          return goToDefinition(sourceState, tabPath, identifier, {
-            afterJump: candidate =>
-              findUsagesAfterDefinitionJump(candidate, {
-                path: tabPath,
-                state: sourceState,
-                position: identifier.from,
-              }),
-          })
-        },
+        navigate: (view, identifier) => goToDefinition(view.state, tabPath, identifier),
       }),
       reliableClickMouseSelection(),
       EditorView.updateListener.of(update => {

@@ -156,7 +156,7 @@ export async function findUsagesAtEditor(
       ? findSemanticUsagesById(project.path, target.symbolId, query)
       : findSemanticUsages(project.path, sourcePath, state, position, query)
   try {
-    // Keep Ctrl+click responsive: render a useful first page immediately and
+    // Keep Shift+F12 responsive: render a useful first page immediately and
     // let the picker request the remaining usages on demand.
     const semantic = await findSemanticPage({
       offset: 0,
@@ -310,70 +310,4 @@ export async function findUsagesAtActiveEditor(): Promise<void> {
       }
     : undefined
   await findUsagesAtEditor(activeTab.path, view.state, position, anchor)
-}
-
-export interface DefinitionUsageSource {
-  path: string
-  state: EditorState
-  position: number
-}
-
-function waitForDefinitionEditor(
-  candidate: DefinitionCandidate,
-  attempts = 40
-): Promise<ReturnType<typeof getEditorView>> {
-  return new Promise(resolve => {
-    const inspect = (remaining: number) => {
-      const editor = useEditorStore.getState()
-      const activeTab = editor.tabs.find(tab => tab.id === editor.activeTabId)
-      const view = activeTab?.path === candidate.path ? getEditorView(activeTab.id) : undefined
-      if (view && !editor.pendingReveal) {
-        resolve(view)
-        return
-      }
-      if (remaining <= 0) {
-        resolve(view)
-        return
-      }
-      window.setTimeout(() => inspect(remaining - 1), 16)
-    }
-    inspect(attempts)
-  })
-}
-
-/** Ctrl+click continuation: once the definition reveal lands, run Shift+F12 there. */
-export async function findUsagesAfterDefinitionJump(
-  candidate: DefinitionCandidate,
-  source?: DefinitionUsageSource
-): Promise<void> {
-  const view = await waitForDefinitionEditor(candidate)
-  if (!view) {
-    useProjectStore.getState().pushToast('info', translate('请先将光标放在要查找的符号上'))
-    return
-  }
-  const lineNumber = Math.min(Math.max(1, candidate.line), view.state.doc.lines)
-  const line = view.state.doc.line(lineNumber)
-  const position = Math.min(line.to, line.from + Math.max(0, (candidate.column || 1) - 1))
-  const coords = view.coordsAtPos(position)
-  const anchor = coords
-    ? {
-        left: coords.left,
-        top: coords.top,
-        right: coords.right,
-        bottom: coords.bottom,
-      }
-    : undefined
-  if (candidate.symbolId) {
-    await findUsagesAtEditor(candidate.path, view.state, position, anchor, {
-      symbolId: candidate.symbolId,
-      name: candidate.name,
-      kind: candidate.kind,
-    })
-    return
-  }
-  if (source) {
-    await findUsagesAtEditor(source.path, source.state, source.position, anchor)
-    return
-  }
-  await findUsagesAtEditor(candidate.path, view.state, position, anchor)
 }
