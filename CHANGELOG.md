@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-08-03
+
+### Changed
+
+- 检查更新：优先查询 GitHub Release，Gitee 作为回退
+
+### Fixed
+
+- 源代码管理：Windows 下分页加载 Git 提交历史返回空列表
+
 ## [0.1.9] - 2026-08-03
 
 ### Added

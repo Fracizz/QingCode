@@ -3407,8 +3407,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "qingcode"
-version = "0.1.9"
+name = "qingcode"`nversion = "0.1.10"
 dependencies = [
  "arboard",
  "dirs",

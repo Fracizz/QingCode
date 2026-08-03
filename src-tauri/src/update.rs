@@ -1,4 +1,4 @@
-//! Check for a newer QingCode release on Gitee (preferred) then GitHub.
+//! Check for a newer QingCode release on GitHub (preferred) then Gitee.
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -10,6 +10,7 @@ const GITEE_LATEST: &str =
     "https://gitee.com/api/v5/repos/FrancizTest_admin/qing-code/releases/latest";
 const GITHUB_LATEST: &str = "https://api.github.com/repos/Fracizz/QingCode/releases/latest";
 const USER_AGENT: &str = "QingCode-UpdateCheck/1.0";
+const RELEASE_SOURCES: &[(&str, &str)] = &[("github", GITHUB_LATEST), ("gitee", GITEE_LATEST)];
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AppUpdateInfo {
@@ -314,7 +315,7 @@ fn release_to_info(
     })
 }
 
-/// Query Gitee first, then GitHub. `current` is the running app version.
+/// Query GitHub first, then Gitee. `current` is the running app version.
 pub fn check_latest(current: &str) -> Result<AppUpdateInfo, String> {
     let current = current.trim().trim_start_matches(['v', 'V']);
     if current.is_empty() {
@@ -322,13 +323,11 @@ pub fn check_latest(current: &str) -> Result<AppUpdateInfo, String> {
     }
 
     let mut errors = Vec::new();
-    match fetch_release(GITEE_LATEST) {
-        Ok(release) => return release_to_info(release, current, "gitee"),
-        Err(e) => errors.push(format!("Gitee: {}", e)),
-    }
-    match fetch_release(GITHUB_LATEST) {
-        Ok(release) => return release_to_info(release, current, "github"),
-        Err(e) => errors.push(format!("GitHub: {}", e)),
+    for (source, url) in RELEASE_SOURCES {
+        match fetch_release(url) {
+            Ok(release) => return release_to_info(release, current, source),
+            Err(e) => errors.push(format!("{}: {}", source, e)),
+        }
     }
     Err(format!("检查更新失败（{}）", errors.join("；")))
 }
@@ -360,6 +359,12 @@ mod tests {
         assert!(is_newer("v0.2.0", "0.1.9"));
         assert!(!is_newer("0.1.3", "0.1.3"));
         assert!(!is_newer("0.1.2", "0.1.3"));
+    }
+
+    #[test]
+    fn release_sources_prefer_github_and_keep_gitee_fallback() {
+        assert_eq!(RELEASE_SOURCES[0], ("github", GITHUB_LATEST));
+        assert_eq!(RELEASE_SOURCES[1], ("gitee", GITEE_LATEST));
     }
 
     #[test]

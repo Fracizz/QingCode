@@ -1096,7 +1096,7 @@ export default function SettingsEditor() {
                     <SettingItem
                       title={t('启动时自动检查更新')}
                       description={t(
-                        '正式构建启动后约 3 秒静默查询 Gitee / GitHub Release。关闭后仍可手动检查。',
+                        '正式构建启动后约 3 秒静默查询 GitHub / Gitee Release。关闭后仍可手动检查。',
                       )}
                       modified={checkOnStartup !== DEFAULT_UPDATE_SETTINGS.checkOnStartup}
                       locked={workspaceLocked}
