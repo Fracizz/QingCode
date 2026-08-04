@@ -24,23 +24,34 @@ import {
   LoaderCircle,
   ChevronDown as Caret,
   Replace,
+  Copy,
+  File as FileIcon,
+  LocateFixed,
+  ExternalLink,
 } from 'lucide-react'
+import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { List, useListRef } from 'react-window'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
-import { findProjectForPath } from '../utils/fileReferences'
+import { copyToClipboard, findProjectForPath } from '../utils/fileReferences'
 import {
   buildContentResultRows,
   buildFilenameResultRows,
+  countFilenameKinds,
+  filterFilenameHits,
   isGlobPattern,
   isNavigable,
+  nextSearchBudget,
   rowHeightOf,
+  SEARCH_PREFETCH_ROWS,
+  SEARCH_RESULT_BUDGETS,
   trimContentFiles,
   typeFilterExtensions,
   typeFilterLabel,
   type ContentSearchFileResult,
+  type EntryKindFilter,
   type SearchResultRow as Row,
   type TypeFilter,
 } from '../utils/searchHelpers'
@@ -48,11 +59,24 @@ import Tooltip from './Tooltip'
 import EmptyState from './EmptyState'
 import SegmentedControl from './SegmentedControl'
 import ReplacePreviewDialog from './ReplacePreviewDialog'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import { getContextMenuStylePosition } from './contextMenuPosition'
 import { buildReplacePreview, type ReplacePreview } from '../lib/workspaceReplace'
 import { loadExcludeSettingsForProject } from '../lib/excludeSettings'
+import {
+  copyFileReferenceAction,
+  copyPathAction,
+  copyRelativePathAction,
+} from '../lib/copyFileActions'
+import { shouldShowAppContextMenu } from '../lib/devBuild'
+import { fileNameFromPath } from '../store/editorStoreHelpers'
 import { useI18n } from '../lib/i18n'
-import { SearchResultRow, SearchToggle, type SearchRowProps } from './SearchPanelParts'
+import {
+  SearchResultRow,
+  SearchToggle,
+  type SearchContextTarget,
+  type SearchRowProps,
+} from './SearchPanelParts'
 
 interface SearchHit {
   name: string
@@ -79,6 +103,7 @@ const FILENAME_DEBOUNCE_MS = 280
 /** Skip content scan for 1-char queries; filename search still runs. */
 const MIN_CONTENT_QUERY_LEN = 2
 const MAX_MATCHES_PER_FILE = 20
+const INITIAL_SEARCH_BUDGET = SEARCH_RESULT_BUDGETS[0]
 const EXT_PICKER_WIDTH = 168
 const SCOPE_MENU_WIDTH = 140
 
@@ -88,6 +113,8 @@ export default function SearchPanel() {
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const currentProject = useProjectStore(s => s.currentProject)
   const openFile = useEditorStore(s => s.openFile)
+  const setView = useUIStore(s => s.setView)
+  const revealFileInTree = useProjectStore(s => s.revealFileInTree)
   const searchRoot = useUIStore(s => s.searchRoot)
   const setSearchRoot = useUIStore(s => s.setSearchRoot)
   const globalSearchSignal = useUIStore(s => s.globalSearchSignal)
@@ -110,8 +137,10 @@ export default function SearchPanel() {
   const multiProjectSearch = searchRoots.length > 1
 
   const [mode, setMode] = useState<SearchMode>('all')
+  const [entryKind, setEntryKind] = useState<EntryKindFilter>('all')
   const wantsFilename = mode === 'all' || mode === 'filename'
-  const wantsContent = mode === 'all' || mode === 'content'
+  const wantsContent = (mode === 'all' || mode === 'content') && entryKind !== 'dir'
+  const showEntryKindFilter = mode === 'all' || mode === 'filename'
   const [query, setQuery] = useState('')
   const [ignoreCase, setIgnoreCase] = useState(true)
   const [fuzzy, setFuzzy] = useState(false)
@@ -128,7 +157,11 @@ export default function SearchPanel() {
   const [projectExtsLoading, setProjectExtsLoading] = useState(false)
   const [filenameResults, setFilenameResults] = useState<SearchHit[]>([])
   const [contentResults, setContentResults] = useState<ContentSearchResponse | null>(null)
+  const [filenameBudget, setFilenameBudget] = useState<number>(INITIAL_SEARCH_BUDGET)
+  const [contentBudget, setContentBudget] = useState<number>(INITIAL_SEARCH_BUDGET)
+  const [filenameTruncated, setFilenameTruncated] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set())
   const [activeIndex, setActiveIndex] = useState(0)
@@ -142,7 +175,13 @@ export default function SearchPanel() {
     top: 0,
     width: SCOPE_MENU_WIDTH,
   })
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    target: SearchContextTarget
+  } | null>(null)
   const reqId = useRef(0)
+  const loadingMoreRef = useRef(false)
   const pushToast = useProjectStore(s => s.pushToast)
   const extScanId = useRef(0)
   /** When true, the next search effect skips debounce (Enter / flush). */
@@ -183,12 +222,29 @@ export default function SearchPanel() {
 
   useEffect(() => {
     queueMicrotask(() => setCollapsedFiles(new Set()))
-  }, [query, mode, typeFilter])
+  }, [query, mode, typeFilter, entryKind])
 
   useEffect(() => {
     if (mode === 'content') return
     queueMicrotask(() => setReplaceOpen(false))
   }, [mode])
+
+  useEffect(() => {
+    if (mode === 'content' && entryKind !== 'all') {
+      queueMicrotask(() => setEntryKind('all'))
+    }
+  }, [mode, entryKind])
+
+  useEffect(() => {
+    // Fresh query/filters start at the first page budget (not load-more bumps).
+    queueMicrotask(() => {
+      setFilenameBudget(INITIAL_SEARCH_BUDGET)
+      setContentBudget(INITIAL_SEARCH_BUDGET)
+      setFilenameTruncated(false)
+      setLoadingMore(false)
+      loadingMoreRef.current = false
+    })
+  }, [query, mode, ignoreCase, fuzzy, matchSuffix, typeFilter, entryKind, searchRoots])
 
   useEffect(() => {
     if (typeFilter?.kind !== 'star') return
@@ -369,10 +425,15 @@ export default function SearchPanel() {
 
     if (!runFilename && !runContent) {
       queueMicrotask(() => {
-        if (wantsFilename) setFilenameResults([])
+        if (wantsFilename) {
+          setFilenameResults([])
+          setFilenameTruncated(false)
+        }
         if (wantsContent) setContentResults(null)
         setError(null)
         setLoading(false)
+        setLoadingMore(false)
+        loadingMoreRef.current = false
       })
       return
     }
@@ -381,14 +442,20 @@ export default function SearchPanel() {
       queueMicrotask(() => {
         setError(new NotInTauriError('文件搜索').message)
         setFilenameResults([])
+        setFilenameTruncated(false)
         setContentResults(null)
         setLoading(false)
+        setLoadingMore(false)
+        loadingMoreRef.current = false
       })
       return
     }
 
-    queueMicrotask(() => setLoading(true))
-    const perRootLimit = Math.max(50, Math.ceil(500 / searchRoots.length))
+    queueMicrotask(() => {
+      if (!loadingMoreRef.current) setLoading(true)
+    })
+    const perRootFilenameLimit = Math.max(50, Math.ceil(filenameBudget / searchRoots.length))
+    const perRootContentLimit = Math.max(50, Math.ceil(contentBudget / searchRoots.length))
     let filenameTimer: ReturnType<typeof setTimeout> | undefined
     let contentTimer: ReturnType<typeof setTimeout> | undefined
     let contentStarted = false
@@ -400,6 +467,8 @@ export default function SearchPanel() {
       if (pending <= 0 && id === reqId.current) {
         setError(sawError)
         setLoading(false)
+        setLoadingMore(false)
+        loadingMoreRef.current = false
       }
     }
 
@@ -423,7 +492,7 @@ export default function SearchPanel() {
                 matchSuffix: !useGlob && matchSuffix && !extList,
                 extension: null,
                 extensions: extList,
-                limit: perRootLimit,
+                limit: perRootFilenameLimit,
                 excludePatterns: excludes.searchExclude,
                 useIgnoreFiles: excludes.useIgnoreFiles,
                 followSymlinks: excludes.followSymlinks,
@@ -432,8 +501,11 @@ export default function SearchPanel() {
           )
           if (id !== reqId.current) return
           let hits = parts.flat()
-          if (hits.length > 500) hits = hits.slice(0, 500)
+          const hitCap = filenameBudget
+          const truncated = hits.length >= hitCap || parts.some(part => part.length >= perRootFilenameLimit)
+          if (hits.length > hitCap) hits = hits.slice(0, hitCap)
           setFilenameResults(hits)
+          setFilenameTruncated(truncated)
           if (!sawError) setError(null)
         } catch (e) {
           if (id === reqId.current) {
@@ -466,7 +538,7 @@ export default function SearchPanel() {
                 ignoreCase,
                 extension: null,
                 extensions: extList,
-                maxMatches: perRootLimit,
+                maxMatches: perRootContentLimit,
                 maxFilesScanned,
                 maxMatchesPerFile: MAX_MATCHES_PER_FILE,
                 searchId,
@@ -477,7 +549,8 @@ export default function SearchPanel() {
             }),
           )
           if (id !== reqId.current) return
-          if (parts.every(p => p.cancelled)) return
+          const validParts = parts.filter((resp): resp is ContentSearchResponse => Boolean(resp))
+          if (validParts.length === 0 || validParts.every(p => p.cancelled)) return
 
           const merged: ContentSearchResponse = {
             files: [],
@@ -485,15 +558,15 @@ export default function SearchPanel() {
             files_scanned: 0,
             truncated: false,
           }
-          for (const resp of parts) {
+          for (const resp of validParts) {
             if (resp.cancelled) continue
             merged.files.push(...resp.files)
             merged.match_count += resp.match_count
             merged.files_scanned += resp.files_scanned
             merged.truncated = merged.truncated || resp.truncated
           }
-          if (merged.match_count > 500) {
-            merged.files = trimContentFiles(merged.files, 500)
+          if (merged.match_count > contentBudget) {
+            merged.files = trimContentFiles(merged.files, contentBudget)
             merged.match_count = merged.files.reduce((n, f) => n + f.matches.length, 0)
             merged.truncated = true
           }
@@ -531,6 +604,8 @@ export default function SearchPanel() {
     useGlob,
     wantsFilename,
     wantsContent,
+    filenameBudget,
+    contentBudget,
     projects,
   ])
 
@@ -538,6 +613,36 @@ export default function SearchPanel() {
     searchNowRef.current = true
     setSearchFlush(n => n + 1)
   }, [])
+
+  const filteredFilenameResults = useMemo(
+    () => filterFilenameHits(filenameResults, entryKind),
+    [filenameResults, entryKind],
+  )
+
+  const contentTruncated = Boolean(contentResults?.truncated)
+  const canLoadMoreFilename =
+    wantsFilename && filenameTruncated && nextSearchBudget(filenameBudget) !== null
+  const canLoadMoreContent =
+    wantsContent && contentTruncated && nextSearchBudget(contentBudget) !== null
+  const canLoadMore = canLoadMoreFilename || canLoadMoreContent
+
+  const loadMoreResults = useCallback(() => {
+    if (loadingMoreRef.current || loading) return
+    const nextFn = canLoadMoreFilename ? nextSearchBudget(filenameBudget) : null
+    const nextContent = canLoadMoreContent ? nextSearchBudget(contentBudget) : null
+    if (nextFn === null && nextContent === null) return
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    searchNowRef.current = true
+    if (nextFn !== null) setFilenameBudget(nextFn)
+    if (nextContent !== null) setContentBudget(nextContent)
+  }, [
+    canLoadMoreContent,
+    canLoadMoreFilename,
+    contentBudget,
+    filenameBudget,
+    loading,
+  ])
 
   const toggleSuffix = () => {
     if (!wantsFilename || useGlob) return
@@ -555,8 +660,8 @@ export default function SearchPanel() {
 
   const rows = useMemo<Row[]>(() => {
     const filenameRows =
-      wantsFilename && filenameResults.length > 0
-        ? buildFilenameResultRows(filenameResults, projectNameOf)
+      wantsFilename && filteredFilenameResults.length > 0
+        ? buildFilenameResultRows(filteredFilenameResults, projectNameOf)
         : []
     const contentRows =
       wantsContent && contentResults && contentResults.match_count > 0
@@ -568,8 +673,9 @@ export default function SearchPanel() {
           )
         : []
 
+    let out: Row[]
     if (mode === 'all') {
-      const out: Row[] = []
+      out = []
       if (filenameRows.length > 0) {
         out.push({ kind: 'section', id: 'filename', label: t('文件名匹配') })
         out.push(...filenameRows)
@@ -578,18 +684,29 @@ export default function SearchPanel() {
         out.push({ kind: 'section', id: 'content', label: t('内容匹配') })
         out.push(...contentRows)
       }
-      return out
+    } else if (mode === 'content') {
+      out = contentRows
+    } else {
+      out = filenameRows
     }
-    if (mode === 'content') return contentRows
-    return filenameRows
+
+    if (out.length > 0 && (canLoadMore || loadingMore)) {
+      out = [
+        ...out,
+        { kind: 'footer', loading: loadingMore, hasMore: canLoadMore },
+      ]
+    }
+    return out
   }, [
     mode,
     wantsFilename,
     wantsContent,
     contentResults,
-    filenameResults,
+    filteredFilenameResults,
     collapsedFiles,
     projectNameOf,
+    canLoadMore,
+    loadingMore,
     t,
   ])
 
@@ -630,10 +747,135 @@ export default function SearchPanel() {
 
   const onOpenFilename = useCallback(
     (path: string, isDir: boolean) => {
-      if (!isDir) void openFile(path)
+      if (isDir) {
+        setView('explorer')
+        void revealFileInTree(path, { force: true })
+        return
+      }
+      void openFile(path)
     },
-    [openFile]
+    [openFile, revealFileInTree, setView]
   )
+
+  const onOpenContextMenu = useCallback(
+    (event: { preventDefault: () => void; stopPropagation: () => void; clientX: number; clientY: number }, target: SearchContextTarget) => {
+      if (!shouldShowAppContextMenu(event)) return
+      setContextMenu({ x: event.clientX, y: event.clientY, target })
+    },
+    [],
+  )
+
+  const copyFileName = useCallback(
+    async (path: string) => {
+      try {
+        await copyToClipboard(fileNameFromPath(path))
+        pushToast('success', t('文件名已复制'))
+      } catch (error) {
+        pushToast('error', t('复制文件名失败: {error}', { error: String(error) }))
+      }
+    },
+    [pushToast, t],
+  )
+
+  const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
+    if (!contextMenu) return []
+    const { target } = contextMenu
+    const openLabel =
+      target.kind === 'fn' && target.isDir ? t('在资源管理器中定位') : t('打开')
+    const items: ContextMenuItem[] = [
+      {
+        label: openLabel,
+        icon:
+          target.kind === 'fn' && target.isDir ? (
+            <LocateFixed size={14} />
+          ) : (
+            <FileIcon size={14} />
+          ),
+        action: () => {
+          if (target.kind === 'match') void openFile(target.path, target.line)
+          else if (target.kind === 'fn') onOpenFilename(target.path, target.isDir)
+          else void openFile(target.path)
+        },
+      },
+      {
+        label: t('在资源管理器中定位'),
+        icon: <LocateFixed size={14} />,
+        separatorBefore: true,
+        action: () => {
+          setView('explorer')
+          void revealFileInTree(target.path, { force: true })
+        },
+      },
+      {
+        label: t('在文件管理器中显示'),
+        icon: <ExternalLink size={14} />,
+        action: () => {
+          void revealItemInDir(target.path).catch(error => {
+            pushToast('error', t('在文件管理器中显示失败: {error}', { error: String(error) }))
+          })
+        },
+      },
+      {
+        label: t('复制路径'),
+        icon: <Copy size={14} />,
+        shortcut: 'Ctrl+Shift+C',
+        separatorBefore: true,
+        action: () => void copyPathAction(target.path),
+      },
+      {
+        label: t('复制相对路径'),
+        icon: <Copy size={14} />,
+        action: () => void copyRelativePathAction(target.path),
+      },
+      {
+        label: t('复制文件名'),
+        icon: <Copy size={14} />,
+        action: () => void copyFileName(target.path),
+      },
+    ]
+    if (target.kind === 'match') {
+      items.push({
+        label: t('复制为文件引用'),
+        icon: <Copy size={14} />,
+        action: () =>
+          void copyFileReferenceAction(target.path, {
+            startLine: target.line,
+            endLine: target.line,
+          }),
+      })
+    }
+    return items
+  }, [
+    contextMenu,
+    copyFileName,
+    onOpenFilename,
+    openFile,
+    pushToast,
+    revealFileInTree,
+    setView,
+    t,
+  ])
+
+  const onRowsRendered = useCallback(
+    (
+      _visible: { startIndex: number; stopIndex: number },
+      all: { startIndex: number; stopIndex: number },
+    ) => {
+      if (!canLoadMore || rows.length === 0) return
+      if (all.stopIndex >= rows.length - 1 - SEARCH_PREFETCH_ROWS) {
+        loadMoreResults()
+      }
+    },
+    [canLoadMore, loadMoreResults, rows.length],
+  )
+
+  useEffect(() => {
+    if (!canLoadMore || loadingMore || loading || rows.length === 0) return
+    const element = listRef.current?.element
+    if (element && element.scrollHeight <= element.clientHeight + 8) {
+      loadMoreResults()
+    }
+  }, [canLoadMore, loadMoreResults, loading, loadingMore, rows.length, listRef])
 
   const onResultsKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -678,8 +920,9 @@ export default function SearchPanel() {
       onToggleFile: toggleFileCollapse,
       onOpenMatch,
       onOpenFilename,
+      onOpenContextMenu,
     }),
-    [rows, activeIndex, toggleFileCollapse, onOpenMatch, onOpenFilename]
+    [rows, activeIndex, toggleFileCollapse, onOpenMatch, onOpenFilename, onOpenContextMenu]
   )
 
   const queryTrimmed = query.trim()
@@ -717,11 +960,18 @@ export default function SearchPanel() {
   })()
 
   const resultSummary = (() => {
+    const { dirs, files } = countFilenameKinds(filteredFilenameResults)
+    const truncated =
+      filenameTruncated || contentTruncated ? t(' · 已截断') : ''
     if (mode === 'all') {
-      return t('{files} 个文件 · {matches} 个内容匹配{truncated}', {
-        files: filenameResults.length,
+      if (entryKind === 'dir') {
+        return t('{dirs} 个目录{truncated}', { dirs, truncated })
+      }
+      return t('{dirs} 个目录 · {files} 个文件 · {matches} 个内容匹配{truncated}', {
+        dirs,
+        files,
         matches: contentResults?.match_count ?? 0,
-        truncated: contentResults?.truncated ? t(' · 已截断') : '',
+        truncated,
       })
     }
     if (mode === 'content') {
@@ -729,10 +979,16 @@ export default function SearchPanel() {
       return t('{matches} 个匹配 · {files} 个文件{truncated}', {
         matches: contentResults.match_count,
         files: contentResults.files.length,
-        truncated: contentResults.truncated ? t(' · 已截断') : '',
+        truncated: contentTruncated ? t(' · 已截断') : '',
       })
     }
-    return t('{count} 个结果', { count: filenameResults.length })
+    if (entryKind === 'dir') {
+      return t('{dirs} 个目录{truncated}', { dirs, truncated })
+    }
+    if (entryKind === 'file') {
+      return t('{files} 个文件{truncated}', { files, truncated })
+    }
+    return t('{dirs} 个目录 · {files} 个文件{truncated}', { dirs, files, truncated })
   })()
 
   const scopeLabel = searchScope === 'all' ? t('全部项目') : t('当前项目')
@@ -842,6 +1098,18 @@ export default function SearchPanel() {
           value={mode}
           onChange={setMode}
         />
+        {showEntryKindFilter && (
+          <SegmentedControl
+            ariaLabel={t('按目录或文件筛选')}
+            options={[
+              { value: 'all', label: t('全部') },
+              { value: 'dir', label: t('目录') },
+              { value: 'file', label: t('文件') },
+            ]}
+            value={entryKind}
+            onChange={setEntryKind}
+          />
+        )}
 
         <div className="flex items-start gap-0.5">
           {showReplace && (
@@ -1137,15 +1405,24 @@ export default function SearchPanel() {
                 rowHeight={(index: number) => rowHeightOf(rows[index])}
                 rowComponent={SearchResultRow}
                 rowProps={rowProps}
+                onRowsRendered={onRowsRendered}
                 overscanCount={8}
-                className="h-full"
-                style={{ height: '100%' }}
+                className="h-full overscroll-y-contain"
+                style={{ height: '100%', overscrollBehavior: 'contain' }}
               />
             </div>
           </>
         )}
       </div>
     </div>
+    {contextMenu && (
+      <ContextMenu
+        x={contextMenu.x}
+        y={contextMenu.y}
+        items={contextMenuItems}
+        onClose={() => setContextMenu(null)}
+      />
+    )}
     {replacePreview && (
       <ReplacePreviewDialog
         preview={replacePreview}

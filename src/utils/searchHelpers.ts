@@ -1,5 +1,8 @@
 export type TypeFilter = { kind: 'ext'; ext: string } | { kind: 'star'; exts: string[] }
 
+/** Filename-result filter under 全部 / 文件名 modes. */
+export type EntryKindFilter = 'all' | 'dir' | 'file'
+
 export interface ContentSearchMatch {
   line: number
   text: string
@@ -28,6 +31,26 @@ export type SearchResultRow =
   | { kind: 'more'; path: string }
   | { kind: 'dir'; dir: string }
   | { kind: 'fn'; hit: FilenameSearchHit }
+  | { kind: 'footer'; loading: boolean; hasMore: boolean }
+
+/** Progressive search budgets for truncated result load-more. */
+export const SEARCH_RESULT_BUDGETS = [200, 500, 1000, 2000] as const
+export const SEARCH_PREFETCH_ROWS = 12
+export const SEARCH_FOOTER_HEIGHT = 22
+
+export function nextSearchBudget(current: number): number | null {
+  const next = SEARCH_RESULT_BUDGETS.find(budget => budget > current)
+  return next ?? null
+}
+
+export function filterFilenameHits<T extends { is_dir: boolean }>(
+  hits: T[],
+  entryKind: EntryKindFilter,
+): T[] {
+  if (entryKind === 'dir') return hits.filter(hit => hit.is_dir)
+  if (entryKind === 'file') return hits.filter(hit => !hit.is_dir)
+  return hits
+}
 
 export function typeFilterLabel(filter: TypeFilter | null): string {
   if (!filter) return '全部类型'
@@ -58,6 +81,8 @@ export function rowHeightOf(row: SearchResultRow): number {
       return 20
     case 'fn':
       return 22
+    case 'footer':
+      return SEARCH_FOOTER_HEIGHT
   }
 }
 
@@ -133,6 +158,19 @@ export function dirOf(relative: string): string {
 
 export function isNavigable(row: SearchResultRow): boolean {
   return row.kind === 'file' || row.kind === 'match' || row.kind === 'fn'
+}
+
+export function countFilenameKinds(hits: FilenameSearchHit[]): {
+  dirs: number
+  files: number
+} {
+  let dirs = 0
+  let files = 0
+  for (const hit of hits) {
+    if (hit.is_dir) dirs += 1
+    else files += 1
+  }
+  return { dirs, files }
 }
 
 /** Keep at most `maxMatches` matches across files (prefix of the list). */

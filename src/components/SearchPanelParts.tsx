@@ -1,13 +1,19 @@
-import { memo, type CSSProperties, type ReactNode } from 'react'
+import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import {
   ChevronDown,
   ChevronRight,
   File as FileIcon,
   Folder,
+  LoaderCircle,
 } from 'lucide-react'
 import type { SearchResultRow as Row } from '../utils/searchHelpers'
 import { useI18n } from '../lib/i18n'
 import Tooltip from './Tooltip'
+
+export type SearchContextTarget =
+  | { kind: 'fn'; path: string; name: string; isDir: boolean }
+  | { kind: 'file'; path: string; name: string }
+  | { kind: 'match'; path: string; name: string; line: number }
 
 export interface SearchRowProps {
   rows: Row[]
@@ -15,6 +21,7 @@ export interface SearchRowProps {
   onToggleFile: (path: string) => void
   onOpenMatch: (path: string, line: number) => void
   onOpenFilename: (path: string, isDir: boolean) => void
+  onOpenContextMenu?: (event: ReactMouseEvent, target: SearchContextTarget) => void
 }
 
 export function SearchResultRow(props: {
@@ -23,7 +30,17 @@ export function SearchResultRow(props: {
   style: CSSProperties
 } & SearchRowProps) {
   const { t } = useI18n()
-  const { index, style, rows, activeIndex, onToggleFile, onOpenMatch, onOpenFilename } = props
+  const {
+    ariaAttributes,
+    index,
+    style,
+    rows,
+    activeIndex,
+    onToggleFile,
+    onOpenMatch,
+    onOpenFilename,
+    onOpenContextMenu,
+  } = props
   const row = rows[index]
   if (!row) return null
   const active = index === activeIndex
@@ -41,12 +58,37 @@ export function SearchResultRow(props: {
     )
   }
 
+  if (row.kind === 'footer') {
+    return (
+      <div
+        style={style}
+        className={`${baseCls} px-4 text-[11px] text-fg-dim gap-1.5`}
+        aria-hidden={!row.loading && row.hasMore}
+      >
+        {row.loading ? (
+          <>
+            <LoaderCircle size={12} className="animate-spin text-accent flex-shrink-0" />
+            <span>{t('正在加载更多结果…')}</span>
+          </>
+        ) : row.hasMore ? (
+          <span className="opacity-0">·</span>
+        ) : (
+          <span>{t('已加载全部结果')}</span>
+        )}
+      </div>
+    )
+  }
+
   if (row.kind === 'file') {
     return (
       <div style={style} className={`${baseCls} ${activeCls} px-3 text-[12px]`}>
         <button
+          {...ariaAttributes}
           className="w-full flex items-center gap-1 h-full text-left hover:bg-bg-hover"
           onClick={() => onToggleFile(row.path)}
+          onContextMenu={event =>
+            onOpenContextMenu?.(event, { kind: 'file', path: row.path, name: row.name })
+          }
         >
           {row.collapsed ? (
             <ChevronRight size={13} className="text-fg-dim flex-shrink-0" />
@@ -69,10 +111,20 @@ export function SearchResultRow(props: {
   }
 
   if (row.kind === 'match') {
+    const name = row.path.replace(/\\/g, '/').split('/').pop() || row.path
     return (
       <button
+        {...ariaAttributes}
         style={style}
         onClick={() => onOpenMatch(row.path, row.line)}
+        onContextMenu={event =>
+          onOpenContextMenu?.(event, {
+            kind: 'match',
+            path: row.path,
+            name,
+            line: row.line,
+          })
+        }
         className={`${baseCls} ${activeCls} pl-9 pr-3 gap-2 text-[12px] text-left hover:bg-bg-hover`}
       >
         <span className="w-8 flex-shrink-0 text-right text-fg-dim tabular-nums">
@@ -105,8 +157,17 @@ export function SearchResultRow(props: {
 
   return (
     <button
+      {...ariaAttributes}
       style={style}
       onClick={() => onOpenFilename(row.hit.path, row.hit.is_dir)}
+      onContextMenu={event =>
+        onOpenContextMenu?.(event, {
+          kind: 'fn',
+          path: row.hit.path,
+          name: row.hit.name,
+          isDir: row.hit.is_dir,
+        })
+      }
       className={`${baseCls} ${activeCls} pl-6 pr-3 gap-1.5 text-[13px] text-left hover:bg-bg-hover`}
     >
       {row.hit.is_dir ? (

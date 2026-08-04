@@ -127,13 +127,15 @@ fn file_matches_query(
     name: &str,
     relative: &str,
     full: &str,
-    is_dir: bool,
+    _is_dir: bool,
     query: &str,
     ignore_case: bool,
     fuzzy: bool,
     match_suffix: bool,
 ) -> bool {
-    if is_dir || query.is_empty() {
+    // Directories match by name/path too; callers that pass an extension filter
+    // already exclude dirs before invoking this helper.
+    if query.is_empty() {
         return false;
     }
     if match_suffix {
@@ -609,6 +611,44 @@ mod tests {
             "/repo/src/components/Button.tsx",
             false,
             "src/*.tsx",
+            true,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn matches_directory_name() {
+        assert!(file_matches_query(
+            "components",
+            "src/components",
+            "/repo/src/components",
+            true,
+            "comp",
+            true,
+            false,
+            false,
+        ));
+        assert!(file_matches_query(
+            "utils",
+            "src/utils",
+            "/repo/src/utils",
+            true,
+            "src/util",
+            true,
+            false,
+            false,
+        ));
+    }
+
+    #[test]
+    fn empty_query_does_not_match_directory() {
+        assert!(!file_matches_query(
+            "components",
+            "src/components",
+            "/repo/src/components",
+            true,
+            "",
             true,
             false,
             false,

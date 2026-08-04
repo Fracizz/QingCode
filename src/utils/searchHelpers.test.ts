@@ -2,10 +2,14 @@ import { describe, expect, it } from 'vitest'
 import {
   buildContentResultRows,
   buildFilenameResultRows,
+  countFilenameKinds,
   dirOf,
+  filterFilenameHits,
   isGlobPattern,
   isNavigable,
+  nextSearchBudget,
   rowHeightOf,
+  SEARCH_RESULT_BUDGETS,
   trimContentFiles,
   typeFilterExtensions,
   typeFilterLabel,
@@ -55,6 +59,26 @@ describe('buildFilenameResultRows', () => {
       'two / (root)',
     ])
     expect(rows.filter(r => r.kind === 'fn')).toHaveLength(3)
+  })
+})
+
+describe('filterFilenameHits', () => {
+  const hits = [
+    { name: 'src', path: '/src', relative: 'src', is_dir: true },
+    { name: 'a.ts', path: '/src/a.ts', relative: 'src/a.ts', is_dir: false },
+  ]
+
+  it('filters by entry kind and counts dirs/files', () => {
+    expect(filterFilenameHits(hits, 'all')).toHaveLength(2)
+    expect(filterFilenameHits(hits, 'dir')).toEqual([hits[0]])
+    expect(filterFilenameHits(hits, 'file')).toEqual([hits[1]])
+    expect(countFilenameKinds(hits)).toEqual({ dirs: 1, files: 1 })
+  })
+
+  it('steps search budgets for load-more', () => {
+    expect(nextSearchBudget(SEARCH_RESULT_BUDGETS[0])).toBe(500)
+    expect(nextSearchBudget(2000)).toBeNull()
+    expect(rowHeightOf({ kind: 'footer', loading: false, hasMore: false })).toBe(22)
   })
 })
 

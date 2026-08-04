@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '../types'
 import SearchPanel from './SearchPanel'
@@ -12,33 +12,55 @@ import type { ReactElement } from 'react'
 // Self-contained react-window stub (vi.mock factories are hoisted above imports,
 // so they cannot reference the shared `reactWindowMockFactory` import). This
 // mirrors `src/test/mockReactWindow.ts` — keep them in sync.
-vi.mock('react-window', () => ({
-  List: ({
-    rowCount,
-    rowComponent: Row,
-    rowProps,
-  }: {
-    rowCount: number
-    rowComponent: (props: Record<string, unknown>) => ReactElement | null
-    rowProps: Record<string, unknown>
-  }) => (
-    <div>
-      {Array.from({ length: rowCount }, (_, index) => (
-        <Row
-          key={index}
-          index={index}
-          style={{}}
-          ariaAttributes={{
-            'aria-posinset': index + 1,
-            'aria-setsize': rowCount,
-            role: 'listitem',
-          }}
-          {...rowProps}
-        />
-      ))}
-    </div>
-  ),
-  useListRef: () => ({ current: null }),
+vi.mock('react-window', async () => {
+  const React = await import('react')
+  const listApi = {
+    element: { scrollHeight: 1, clientHeight: 100 },
+  }
+  return {
+    List: ({
+      rowCount,
+      rowComponent: Row,
+      rowProps,
+      onRowsRendered,
+    }: {
+      rowCount: number
+      rowComponent: (props: Record<string, unknown>) => ReactElement | null
+      rowProps: Record<string, unknown>
+      onRowsRendered?: (
+        visible: { startIndex: number; stopIndex: number },
+        all: { startIndex: number; stopIndex: number },
+      ) => void
+    }) => {
+      React.useEffect(() => {
+        if (rowCount <= 0) return
+        const range = { startIndex: 0, stopIndex: rowCount - 1 }
+        onRowsRendered?.(range, range)
+      }, [rowCount, onRowsRendered])
+      return (
+        <div>
+          {Array.from({ length: rowCount }, (_, index) => (
+            <Row
+              key={index}
+              index={index}
+              style={{}}
+              ariaAttributes={{
+                'aria-posinset': index + 1,
+                'aria-setsize': rowCount,
+                role: 'listitem',
+              }}
+              {...rowProps}
+            />
+          ))}
+        </div>
+      )
+    },
+    useListRef: () => ({ current: listApi }),
+  }
+})
+
+vi.mock('@tauri-apps/plugin-opener', () => ({
+  revealItemInDir: vi.fn().mockResolvedValue(undefined),
 }))
 
 const mocks = vi.hoisted(() => ({
@@ -154,6 +176,93 @@ describe('SearchPanel', () => {
     // The filename section header and the hit's base name both render.
     await waitFor(() => expect(screen.getByText('文件名匹配')).toBeInTheDocument())
     await waitFor(() => expect(screen.getByText('app.tsx')).toBeInTheDocument())
+  })
+
+  it('filters filename hits to directories only', async () => {
+    dispatch({
+      list_file_extensions: () => ['ts'],
+      search_files: () => [
+        { name: 'services', path: 'D:/alpha/services', relative: 'services', is_dir: true },
+        { name: 'app.tsx', path: 'D:/alpha/src/app.tsx', relative: 'src/app.tsx', is_dir: false },
+      ],
+      start_content_search: () => 1,
+      search_file_contents: () => ({
+        files: [],
+        match_count: 0,
+        files_scanned: 0,
+        truncated: false,
+      }),
+      cancel_content_search: () => undefined,
+    })
+    render(<SearchPanel />)
+    fireEvent.click(screen.getByRole('tab', { name: '文件名' }))
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名，支持 * 通配符…'), {
+      target: { value: 'app' },
+    })
+    await waitFor(() => expect(screen.getByText('app.tsx')).toBeInTheDocument())
+
+    const entryKindTabs = screen.getByLabelText('按目录或文件筛选')
+    fireEvent.click(within(entryKindTabs).getByRole('tab', { name: '目录' }))
+
+    await waitFor(() => expect(screen.getAllByText('services').length).toBeGreaterThan(0))
+    expect(screen.queryByText('app.tsx')).not.toBeInTheDocument()
+  })
+
+  it('shows copy actions on a filename hit context menu', async () => {
+    render(<SearchPanel />)
+    fireEvent.change(screen.getByPlaceholderText('搜索文件或内容…'), { target: { value: 'app' } })
+    await waitFor(() => expect(screen.getByText('app.tsx')).toBeInTheDocument())
+
+    fireEvent.contextMenu(screen.getByText('app.tsx'))
+
+    expect(await screen.findByText('复制路径')).toBeInTheDocument()
+    expect(screen.getByText('复制相对路径')).toBeInTheDocument()
+    expect(screen.getByText('复制文件名')).toBeInTheDocument()
+  })
+
+  it('raises the filename search budget when results are truncated', async () => {
+    dispatch({
+      list_file_extensions: () => ['ts'],
+      search_files: (args) => {
+        const limit = Number(args?.limit ?? 200)
+        return Array.from({ length: limit }, (_, index) => ({
+          name: `file-${index}.ts`,
+          path: `D:/alpha/file-${index}.ts`,
+          relative: `src/file-${index}.ts`,
+          is_dir: false,
+        }))
+      },
+      start_content_search: () => 1,
+      search_file_contents: () => ({
+        files: [],
+        match_count: 0,
+        files_scanned: 0,
+        truncated: false,
+      }),
+      cancel_content_search: () => undefined,
+    })
+    render(<SearchPanel />)
+    fireEvent.click(screen.getByRole('tab', { name: '文件名' }))
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名，支持 * 通配符…'), {
+      target: { value: 'file' },
+    })
+
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith(
+        '文件搜索',
+        'search_files',
+        expect.objectContaining({ limit: 200 }),
+      ),
+    )
+    await waitFor(
+      () =>
+        expect(mocks.safeInvoke).toHaveBeenCalledWith(
+          '文件搜索',
+          'search_files',
+          expect.objectContaining({ limit: 500 }),
+        ),
+      { timeout: 3000 },
+    )
   })
 
   it('skips content search for a single-character query', async () => {
