@@ -4,8 +4,10 @@ import {
   DEFAULT_GLOBAL_SETTINGS,
   loadGlobalSettings,
   loadProjectSettings,
+  resolveProjectSettingsPath,
   saveGlobalSettings,
   saveProjectSettings,
+  settingsFileExists,
   type SettingsFile,
 } from './projectSettings'
 
@@ -66,11 +68,50 @@ export function readAutoSaveSettings(settings: SettingsFile): AutoSaveSettings {
   }
 }
 
+const PROJECT_AUTOSAVE_INHERIT_MIGRATE_PREFIX = 'qingcode:autosave-project-inherit-v1:'
+
+/**
+ * Older project-settings templates always wrote `files.autoSave: "off"`, which
+ * silently overrode the user's global afterDelay preference. Strip those default
+ * keys once so workspace files only keep intentional overrides.
+ */
+export async function migrateLegacyProjectAutoSaveDefaults(
+  project?: Project | null,
+): Promise<boolean> {
+  if (!project || typeof localStorage === 'undefined') return false
+  const flag = `${PROJECT_AUTOSAVE_INHERIT_MIGRATE_PREFIX}${project.path}`
+  if (localStorage.getItem(flag)) return false
+  localStorage.setItem(flag, '1')
+
+  try {
+    const path = await resolveProjectSettingsPath(project)
+    if (!(await settingsFileExists(path))) return false
+    const settings = await loadProjectSettings(project)
+    if (settings['files.autoSave'] !== 'off') return false
+
+    delete settings['files.autoSave']
+    if (
+      settings['files.autoSaveDelay'] === undefined ||
+      settings['files.autoSaveDelay'] === DEFAULT_GLOBAL_SETTINGS['files.autoSaveDelay']
+    ) {
+      delete settings['files.autoSaveDelay']
+    }
+    await saveProjectSettings(project, settings)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function loadEffectiveAutoSaveSettings(
   project?: Project | null,
 ): Promise<AutoSaveSettings> {
   const global = await loadGlobalSettings()
   if (!project) return readAutoSaveSettings(global)
+  const path = await resolveProjectSettingsPath(project)
+  if (!(await settingsFileExists(path))) {
+    return readAutoSaveSettings(global)
+  }
   const workspace = await loadProjectSettings(project)
   return readAutoSaveSettings(mergeSettings(global, workspace))
 }

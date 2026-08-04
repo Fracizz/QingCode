@@ -117,7 +117,13 @@ export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
 }
 
 /** Workspace `.qingcode/project-settings.json` defaults (no project list — global-only). */
-export const DEFAULT_PROJECT_SETTINGS: SettingsFile = buildSharedDefaults()
+export const DEFAULT_PROJECT_SETTINGS: SettingsFile = (() => {
+  const next = buildSharedDefaults()
+  // Inherit user auto-save unless the workspace file explicitly sets these keys.
+  delete next['files.autoSave']
+  delete next['files.autoSaveDelay']
+  return next
+})()
 
 /** @deprecated Prefer DEFAULT_GLOBAL_SETTINGS */
 export const DEFAULT_SETTINGS = DEFAULT_GLOBAL_SETTINGS
@@ -158,10 +164,7 @@ const SHARED_SETTINGS_BODY = `
   "editor.guides.highlightActiveIndentation": true,
 
   // ============================== 文件 ==============================
-  // files.autoSave：自动保存 off | afterDelay | onFocusChange | onWindowChange
-  "files.autoSave": "off",
-  // files.autoSaveDelay：afterDelay 模式下的延迟（毫秒）
-  "files.autoSaveDelay": 1000,
+__AUTOSAVE_SETTINGS__
   // files.eol：换行符 auto | LF | CRLF（保存时生效）
   "files.eol": "auto",
   // files.encoding：默认文件编码 auto | utf8 | utf8bom | utf16le | utf16be | gbk | gb18030
@@ -229,6 +232,22 @@ const SHARED_SETTINGS_BODY = `
   "terminal.integrated.cursorBlinking": true,
 `
 
+/** Auto-save keys live only in the global template; workspace inherits unless overridden. */
+const GLOBAL_AUTOSAVE_SETTINGS_BODY = `  // files.autoSave：自动保存 off | afterDelay | onFocusChange | onWindowChange
+  "files.autoSave": "off",
+  // files.autoSaveDelay：afterDelay 模式下的延迟（毫秒）
+  "files.autoSaveDelay": 1000,
+`
+
+const PROJECT_AUTOSAVE_SETTINGS_BODY = `  // files.autoSave / files.autoSaveDelay：默认继承用户设置；本工作区需要覆盖时再取消注释
+  // "files.autoSave": "off",
+  // "files.autoSaveDelay": 1000,
+`
+
+function settingsBodyWithAutoSave(autoSaveBody: string): string {
+  return SHARED_SETTINGS_BODY.replace('__AUTOSAVE_SETTINGS__\n', autoSaveBody)
+}
+
 /**
  * Global default-settings.json template (JSON5 with detailed comments).
  * Includes the machine-wide project list — not for workspace settings.
@@ -244,7 +263,7 @@ export const DEFAULT_GLOBAL_SETTINGS_TEXT = `{
   // =============================================================================
   // version：设置文件 schema 版本（当前固定为 1）
   version: 1,
-${SHARED_SETTINGS_BODY}
+${settingsBodyWithAutoSave(GLOBAL_AUTOSAVE_SETTINGS_BODY)}
   // ============================== 全局项目列表 ==============================
   // 仅 default-settings.json 有效；不要写进工作区 project-settings.json
   //
@@ -314,7 +333,7 @@ export const DEFAULT_PROJECT_SETTINGS_TEXT = `{
   // =============================================================================
   // version：设置文件 schema 版本（当前固定为 1）
   version: 1,
-${SHARED_SETTINGS_BODY}
+${settingsBodyWithAutoSave(PROJECT_AUTOSAVE_SETTINGS_BODY)}
   // ============================== 自定义扩展 ==============================
   // custom：自由键值，供后续功能读取；请勿删除整个 custom 对象
   custom: {
@@ -486,6 +505,12 @@ export function formatSettings(
     text = replaceTopLevelJson5Value(text, key, formatted, true)
   }
 
+  // Workspace templates inherit auto-save from the user by default (commented-out
+  // keys). When a project explicitly sets them, uncomment / write the values.
+  if (scope === 'project') {
+    text = writeOptionalProjectAutoSaveKeys(text, normalized)
+  }
+
   if (!jsonValueEqual(merged.custom, defaults.custom ?? {})) {
     text = replaceTopLevelJson5Value(
       text,
@@ -535,6 +560,39 @@ function jsonValueEqual(a: unknown, b: unknown): boolean {
 
 function settingsAreDefaultShape(settings: SettingsFile, defaults: SettingsFile): boolean {
   return jsonValueEqual(settings, defaults)
+}
+
+function writeOptionalProjectAutoSaveKeys(text: string, settings: SettingsFile): string {
+  let next = text
+  const mode = settings['files.autoSave']
+  if (typeof mode === 'string' && mode.trim()) {
+    const line = `  "files.autoSave": ${JSON.stringify(mode)},`
+    if (next.includes('// "files.autoSave"')) {
+      next = next.replace(/\s*\/\/\s*"files\.autoSave"\s*:\s*"[^"]*"\s*,?/, `\n${line}`)
+    } else if (next.includes('"files.autoSave"')) {
+      next = replaceTopLevelJson5Value(next, 'files.autoSave', JSON.stringify(mode), true)
+    } else {
+      next = next.replace(
+        /(\n {2}\/\/ files\.eol：)/,
+        `\n${line}$1`,
+      )
+    }
+  }
+  const delay = settings['files.autoSaveDelay']
+  if (typeof delay === 'number' && Number.isFinite(delay)) {
+    const line = `  "files.autoSaveDelay": ${Math.round(delay)},`
+    if (next.includes('// "files.autoSaveDelay"')) {
+      next = next.replace(/\s*\/\/\s*"files\.autoSaveDelay"\s*:\s*\d+\s*,?/, `\n${line}`)
+    } else if (next.includes('"files.autoSaveDelay"')) {
+      next = replaceTopLevelJson5Value(next, 'files.autoSaveDelay', String(Math.round(delay)), true)
+    } else {
+      next = next.replace(
+        /(\n {2}\/\/ files\.eol：)/,
+        `\n${line}$1`,
+      )
+    }
+  }
+  return next
 }
 
 export function parseSettings(input: unknown, scope: SettingsScope = 'global'): SettingsFile {
@@ -608,6 +666,11 @@ export async function resolveProjectSettingsPath(project: Project): Promise<stri
   return projectSettingsPath(project)
 }
 
+/** Empty workspace overlay — missing project-settings must not invent full defaults. */
+export function emptyProjectSettings(): SettingsFile {
+  return { version: 1, custom: {} }
+}
+
 export async function loadSettingsFromPath(
   path: string,
   scope?: SettingsScope,
@@ -617,6 +680,9 @@ export async function loadSettingsFromPath(
     const raw = await safeInvoke<string>('读取设置', 'read_file', { path })
     return parseSettingsText(raw, resolvedScope)
   } catch {
+    // A missing workspace file means "no overrides". Returning the full project
+    // template here used to force files.autoSave=off over the user's global choice.
+    if (resolvedScope === 'project') return emptyProjectSettings()
     return defaultSettingsFor(resolvedScope)
   }
 }

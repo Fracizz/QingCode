@@ -36,7 +36,7 @@ import {
   X,
 } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
-import { List, getScrollbarSize, useListRef } from 'react-window'
+import { List, useListRef } from 'react-window'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
@@ -410,12 +410,15 @@ function ChangeGroupSection({
   onSelectAll,
 }: ChangeGroupSectionProps) {
   const listRef = useListRef(null)
-  const [scrollbarWidth, setScrollbarWidth] = useState(getScrollbarSize)
+  // Only shift the header action rail when the list actually shows a scrollbar.
+  // Falling back to the system scrollbar width left-shifts ↑/↓ while row +/- stay at
+  // right:0, which is the misalignment seen with short lists (e.g. one staged file).
+  const [scrollbarWidth, setScrollbarWidth] = useState(0)
   const measureScrollbarWidth = useCallback(() => {
     const element = listRef.current?.element
     if (!element) return
-    const measured = element.offsetWidth - element.clientWidth
-    setScrollbarWidth(prev => (measured > 0 ? measured : getScrollbarSize(true)) || prev)
+    const measured = Math.max(0, element.offsetWidth - element.clientWidth)
+    setScrollbarWidth(prev => (prev === measured ? prev : measured))
   }, [listRef])
   useLayoutEffect(() => {
     if (collapsed || changes.length === 0) return

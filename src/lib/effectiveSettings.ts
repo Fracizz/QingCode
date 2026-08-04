@@ -1,5 +1,9 @@
 import type { Project } from '../types'
-import { loadEffectiveAutoSaveSettings, notifyAutoSaveSettingsChanged } from './autoSaveSettings'
+import {
+  loadEffectiveAutoSaveSettings,
+  migrateLegacyProjectAutoSaveDefaults,
+  notifyAutoSaveSettingsChanged,
+} from './autoSaveSettings'
 import { loadEffectiveEditorPreferences } from './editorSettings'
 import { loadEffectiveExcludeSettings } from './excludeSettings'
 import { loadEffectiveFileSizePreferences } from './fileSizeSettings'
@@ -17,7 +21,10 @@ export async function applyEffectiveSettings(project?: Project | null): Promise<
     import('./terminal/terminalCursorSettings'),
   ])
 
-  await minimap.migrateLegacyMinimapProjectSetting(project)
+  await Promise.all([
+    minimap.migrateLegacyMinimapProjectSetting(project),
+    migrateLegacyProjectAutoSaveDefaults(project),
+  ])
   const [, , autoSave] = await Promise.all([
     loadEffectiveEditorPreferences(project),
     loadEffectiveFileSizePreferences(project),
