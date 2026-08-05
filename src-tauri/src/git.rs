@@ -1075,6 +1075,29 @@ fn list_branches(root: &Path) -> Result<GitBranchList, String> {
 }
 
 fn switch_branch(root: &Path, branch: &str) -> Result<(), String> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Err("分支名不能为空".to_string());
+    }
+    if branch.starts_with("refs/") || branch.starts_with("remotes/") {
+        return Err("无效的分支名".to_string());
+    }
+
+    let remote_ref = format!("refs/remotes/{branch}");
+    let local_ref = format!("refs/heads/{branch}");
+    let has_remote = run_git(root, &["rev-parse", "--verify", &remote_ref])?
+        .status
+        .success();
+    let has_local = run_git(root, &["rev-parse", "--verify", &local_ref])?
+        .status
+        .success();
+
+    if has_remote && !has_local {
+        let output = run_git(root, &["switch", "--track", branch])?;
+        ensure_git_success("切换 Git 分支", output)?;
+        return Ok(());
+    }
+
     let branch = validate_local_branch_name(branch)?;
     let output = run_git(root, &["switch", branch])?;
     ensure_git_success("切换 Git 分支", output)?;
@@ -1795,6 +1818,12 @@ mod tests {
             .iter()
             .any(|name| name == "origin/feature/remote-only"));
         assert_eq!(fs::read_to_string(root.join("README.md")).unwrap(), "v1\n");
+
+        switch_branch(&root, "origin/feature/remote-only").unwrap();
+        let after = list_branches(&root).unwrap();
+        let current = after.local.iter().find(|b| b.current).unwrap();
+        assert_eq!(current.name, "feature/remote-only");
+        assert_eq!(fs::read_to_string(root.join("remote.txt")).unwrap(), "remote\n");
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(remote).unwrap();

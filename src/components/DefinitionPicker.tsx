@@ -146,7 +146,6 @@ export default function DefinitionPicker() {
   const candidates = useDefinitionPickerStore(state => state.candidates)
   const details = useDefinitionPickerStore(state => state.details)
   const usageLoader = useDefinitionPickerStore(state => state.usageLoader)
-  const afterDefinitionJump = useDefinitionPickerStore(state => state.afterDefinitionJump)
   const closePicker = useDefinitionPickerStore(state => state.closePicker)
   const activeFilePath = useEditorStore(state => {
     const tab = state.tabs.find(item => item.id === state.activeTabId)
@@ -255,14 +254,12 @@ export default function DefinitionPicker() {
         if (!candidate) return
         event.preventDefault()
         closePicker()
-        void jumpToDefinitionCandidate(candidate).then(() =>
-          mode === 'definition' ? afterDefinitionJump?.(candidate) : undefined
-        )
+        void jumpToDefinitionCandidate(candidate)
       }
     }
     window.addEventListener('keydown', onKeyDown, true)
     return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [activeIndex, afterDefinitionJump, closePicker, mode, open, visibleCandidates])
+  }, [activeIndex, closePicker, open, visibleCandidates])
 
   useEffect(() => {
     listRef.current
@@ -499,9 +496,7 @@ export default function DefinitionPicker() {
 
   const choose = (candidate: DefinitionCandidate) => {
     closePicker()
-    void jumpToDefinitionCandidate(candidate).then(() =>
-      mode === 'definition' ? afterDefinitionJump?.(candidate) : undefined
-    )
+    void jumpToDefinitionCandidate(candidate)
   }
   const toggleUsageGroup = (key: string) => {
     setCollapsedUsageGroups(current => {

@@ -25,8 +25,6 @@ export type DefinitionUsageLoader = (
   maxResults: number
 ) => Promise<DefinitionUsagePage>
 
-export type DefinitionSelectionHandler = (candidate: DefinitionCandidate) => void | Promise<void>
-
 interface DefinitionPickerState {
   open: boolean
   mode: 'definition' | 'reference'
@@ -34,14 +32,12 @@ interface DefinitionPickerState {
   candidates: DefinitionCandidate[]
   details: DefinitionPickerDetails | null
   usageLoader: DefinitionUsageLoader | null
-  afterDefinitionJump: DefinitionSelectionHandler | null
   openPicker: (
     symbol: string,
     candidates: DefinitionCandidate[],
     mode?: 'definition' | 'reference',
     details?: DefinitionPickerDetails,
-    usageLoader?: DefinitionUsageLoader,
-    afterDefinitionJump?: DefinitionSelectionHandler
+    usageLoader?: DefinitionUsageLoader
   ) => void
   closePicker: () => void
 }
@@ -53,14 +49,12 @@ export const useDefinitionPickerStore = create<DefinitionPickerState>(set => ({
   candidates: [],
   details: null,
   usageLoader: null,
-  afterDefinitionJump: null,
   openPicker: (
     symbol,
     candidates,
     mode = 'definition',
     details = {},
-    usageLoader,
-    afterDefinitionJump
+    usageLoader
   ) =>
     set({
       open: true,
@@ -69,7 +63,6 @@ export const useDefinitionPickerStore = create<DefinitionPickerState>(set => ({
       candidates,
       details,
       usageLoader: usageLoader ?? null,
-      afterDefinitionJump: afterDefinitionJump ?? null,
     }),
   closePicker: () =>
     set({
@@ -79,6 +72,5 @@ export const useDefinitionPickerStore = create<DefinitionPickerState>(set => ({
       candidates: [],
       details: null,
       usageLoader: null,
-      afterDefinitionJump: null,
     }),
 }))

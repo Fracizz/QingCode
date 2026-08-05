@@ -18,9 +18,8 @@ describe('DefinitionPicker', () => {
     useEditorStore.setState(initialEditorState, true)
   })
 
-  it('runs afterDefinitionJump after a chosen definition is opened', async () => {
+  it('opens a chosen definition without starting a follow-up action', async () => {
     const openFile = vi.fn().mockResolvedValue(undefined)
-    const afterDefinitionJump = vi.fn()
     useEditorStore.setState({ openFile })
     useDefinitionPickerStore.getState().openPicker(
       'selectedName',
@@ -37,20 +36,14 @@ describe('DefinitionPicker', () => {
         },
       ],
       'definition',
-      {},
-      undefined,
-      afterDefinitionJump
+      {}
     )
 
     render(<DefinitionPicker />)
     fireEvent.click(screen.getByRole('option'))
 
     await waitFor(() => expect(openFile).toHaveBeenCalledWith('D:/work/definition.ts', 12, 3))
-    await waitFor(() =>
-      expect(afterDefinitionJump).toHaveBeenCalledWith(
-        expect.objectContaining({ path: 'D:/work/definition.ts', line: 12 })
-      )
-    )
+    expect(useDefinitionPickerStore.getState().open).toBe(false)
   })
 
   it('shows reference results as an anchored non-modal popup', () => {

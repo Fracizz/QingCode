@@ -259,30 +259,17 @@ export async function jumpToDefinitionCandidate(candidate: DefinitionCandidate):
   await store.openFile(candidate.path, candidate.line, candidate.column)
 }
 
-export interface DefinitionNavigationOptions {
-  afterJump?: (candidate: DefinitionCandidate) => void | Promise<void>
-}
-
-async function jumpToCandidate(
-  candidate: DefinitionCandidate,
-  options: DefinitionNavigationOptions
-): Promise<void> {
-  await jumpToDefinitionCandidate(candidate)
-  await options.afterJump?.(candidate)
-}
-
 function showCandidates(
   symbol: string,
-  candidates: DefinitionCandidate[],
-  options: DefinitionNavigationOptions
+  candidates: DefinitionCandidate[]
 ) {
   if (candidates.length === 1) {
-    void jumpToCandidate(candidates[0], options)
+    void jumpToDefinitionCandidate(candidates[0])
     return
   }
   useDefinitionPickerStore
     .getState()
-    .openPicker(symbol, candidates, 'definition', {}, undefined, options.afterJump)
+    .openPicker(symbol, candidates, 'definition')
 }
 
 function currentFileCandidates(
@@ -395,10 +382,13 @@ export async function resolveDefinitionCandidates(
 export async function goToDefinition(
   state: EditorState,
   sourcePath: string,
-  identifier: IdentifierRange,
-  options: DefinitionNavigationOptions = {}
+  identifier: IdentifierRange
 ): Promise<void> {
   const request = ++navigationRequest
+  // Definition navigation and usage search are separate actions. Closing the
+  // picker also invalidates an in-flight Shift+F12 result so it cannot reappear
+  // after a Ctrl+click jump.
+  useDefinitionPickerStore.getState().closePicker()
   try {
     const candidates = await resolveDefinitionCandidates(state, sourcePath, identifier)
     if (request !== navigationRequest) return
@@ -412,7 +402,7 @@ export async function goToDefinition(
         )
       return
     }
-    showCandidates(identifier.name, candidates, options)
+    showCandidates(identifier.name, candidates)
   } catch (error) {
     if (request !== navigationRequest) return
     useProjectStore

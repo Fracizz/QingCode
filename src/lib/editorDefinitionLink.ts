@@ -36,6 +36,7 @@ interface DefinitionLinkActions {
 export function editorDefinitionLink(actions: DefinitionLinkActions): Extension {
   let lastPoint: { x: number; y: number } | null = null
   let lastRange = ''
+  let modifierHeld = false
   let lastNavigation:
     | { x: number; y: number; at: number }
     | null = null
@@ -61,7 +62,10 @@ export function editorDefinitionLink(actions: DefinitionLinkActions): Extension 
   }
 
   const navigateFromMouse = (event: MouseEvent, view: EditorView): boolean => {
-    if (event.button !== 0 || !modified(event)) return false
+    // WebView2 can omit ctrlKey/metaKey from the synthesized mouse event even
+    // though the editor received the corresponding keydown. Keep that keyboard
+    // state so Ctrl+click remains reliable in the desktop app.
+    if (event.button !== 0 || (!modified(event) && !modifierHeld)) return false
     const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
     if (position === null) return false
     const identifier = identifierAt(view.state, position)
@@ -90,16 +94,21 @@ export function editorDefinitionLink(actions: DefinitionLinkActions): Extension 
       return false
     },
     keydown(event, view) {
-      if ((event.key === 'Control' || event.key === 'Meta') && lastPoint) {
-        updateLink(view, lastPoint)
+      if (event.key === 'Control' || event.key === 'Meta') {
+        modifierHeld = true
+        if (lastPoint) updateLink(view, lastPoint)
       }
       return false
     },
     keyup(event, view) {
-      if (event.key === 'Control' || event.key === 'Meta') updateLink(view, null)
+      if (event.key === 'Control' || event.key === 'Meta') {
+        modifierHeld = false
+        updateLink(view, null)
+      }
       return false
     },
     blur(_event, view) {
+      modifierHeld = false
       updateLink(view, null)
       return false
     },

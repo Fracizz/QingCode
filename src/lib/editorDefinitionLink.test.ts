@@ -114,6 +114,39 @@ describe('editorDefinitionLink', () => {
     expect(navigate).toHaveBeenCalledOnce()
   })
 
+  it('uses the held Control key when WebView2 omits ctrlKey from mousedown', () => {
+    const navigate = vi.fn()
+    const parent = document.createElement('div')
+    document.body.appendChild(parent)
+    view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: 'target()',
+        extensions: [editorDefinitionLink({ navigate })],
+      }),
+    })
+    vi.spyOn(view, 'posAtCoords').mockReturnValue(2)
+
+    view.contentDOM.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        key: 'Control',
+        ctrlKey: true,
+      })
+    )
+    view.contentDOM.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: 10,
+        clientY: 10,
+      })
+    )
+
+    expect(navigate).toHaveBeenCalledOnce()
+  })
+
   it('hides the Ctrl-hover link but still reports an explicit Ctrl+mousedown when disabled', () => {
     const navigate = vi.fn()
     const parent = document.createElement('div')

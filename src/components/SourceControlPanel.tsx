@@ -16,7 +16,6 @@ import { createPortal } from 'react-dom'
 import {
   AlertCircle,
   Undo2,
-  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -104,9 +103,10 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import ScmResizableColumn from './ScmResizableColumn'
 import ScmCommitHistory, { SCM_COMMIT_PAGE_SIZE } from './ScmCommitHistory'
 import ScmToolbar, { ScmPullMenu, ScmPushMenu, ScmRemotesMenu } from './ScmToolbar'
+import ScmBranchMenu from './ScmBranchMenu'
 import { flattenRemoteRows, upstreamRemoteName } from '@/lib/git/scmRemotes'
 import { translate, useI18n } from '../lib/i18n'
-import { deferToNativeContextMenuInDev, shouldShowAppContextMenu } from '../lib/devBuild'
+import { shouldShowAppContextMenu } from '../lib/devBuild'
 import {
   clampScmFilesWidth,
   clampScmLeftWidth,
@@ -175,17 +175,6 @@ function GitScmStatusBadge({ status, group }: { status: string; group: GitChange
             : `${STATUS_BADGE} bg-accent/80 text-bg`
   const label = tone === 'conflict' ? '!' : tone === 'added' ? '+' : glyph.charAt(0) || '?'
   return <span className={className}>{label}</span>
-}
-
-function BranchMenuLabel({ name, className = 'block truncate font-mono text-[12px] leading-tight' }: {
-  name: string
-  className?: string
-}) {
-  return (
-    <Tooltip label={name} side="right" onlyWhenOverflow wrapperClassName="min-w-0 max-w-full">
-      <span className={className}>{name}</span>
-    </Tooltip>
-  )
 }
 
 function ScmOperationAlert({
@@ -2561,76 +2550,14 @@ export default function SourceControlPanel() {
       )}
       {branchMenuOpen &&
         createPortal(
-          <div
-            ref={branchMenuRef}
-            role="menu"
-            className="ui-font-scaled fixed z-[100] flex max-h-[70vh] flex-col rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+          <ScmBranchMenu
+            menuRef={branchMenuRef}
             style={branchMenuStyle}
-            onPointerDown={event => event.stopPropagation()}
-            onContextMenu={event => {
-              if (!deferToNativeContextMenuInDev()) event.preventDefault()
-            }}
-          >
-            <div className="px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted">
-              {t('本地分支')}
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto">
-              {!branchList ? (
-                <div className="flex items-center gap-2 px-3 py-2 text-[12px] text-fg-dim">
-                  <LoaderCircle size={12} className="animate-spin" />
-                  {t('正在读取分支…')}
-                </div>
-              ) : branchList.local.length === 0 ? (
-                <div className="px-3 py-2 text-[12px] text-fg-dim">{t('暂无本地分支')}</div>
-              ) : (
-                branchList.local.map(branch => (
-                  <button
-                    key={branch.name}
-                    type="button"
-                    role="menuitem"
-                    disabled={branch.current || Boolean(operation)}
-                    onClick={() => void switchToBranch(branch.name)}
-                    className={`flex w-full items-start gap-2 px-3 py-2 text-left ${
-                      branch.current
-                        ? 'bg-bg-active text-fg'
-                        : 'text-fg hover:bg-bg-hover disabled:opacity-40'
-                    }`}
-                  >
-                    <span className="mt-0.5 inline-flex w-3.5 shrink-0 justify-center">
-                      {branch.current ? <Check size={12} className="text-brand" /> : null}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <BranchMenuLabel name={branch.name} />
-                      {branch.upstream && (
-                        <BranchMenuLabel
-                          name={branch.upstream}
-                          className="mt-0.5 block truncate font-mono text-[10px] leading-tight text-fg-dim"
-                        />
-                      )}
-                    </div>
-                  </button>
-                ))
-              )}
-            </div>
-            {branchList && branchList.remote.length > 0 && (
-              <>
-                <div className="mt-1 border-t border-border px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted">
-                  {t('远程分支')}
-                </div>
-                <div className="max-h-40 overflow-auto">
-                  {branchList.remote.map(name => (
-                    <div
-                      key={name}
-                      className="flex w-full items-start gap-2 px-3 py-1.5 text-fg-dim"
-                    >
-                      <span className="inline-flex w-3.5 shrink-0" />
-                      <BranchMenuLabel name={name} className="block truncate font-mono text-[12px] leading-tight" />
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>,
+            branchList={branchList}
+            loading={!branchList}
+            disabled={Boolean(operation)}
+            onSwitch={branch => void switchToBranch(branch)}
+          />,
           document.body
         )}
       {pullMenuOpen &&
