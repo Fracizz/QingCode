@@ -30,6 +30,28 @@ function Resolve-CargoBundleDir {
   Join-Path (Resolve-CargoReleaseDir -ProjectRoot $ProjectRoot -Target $Target) 'bundle'
 }
 
+function Write-FrontendBuildPlan {
+  param(
+    [Parameter(Mandatory = $true)][string]$ProjectRoot,
+    [switch]$SkipFrontend,
+    [switch]$Force
+  )
+
+  if ($SkipFrontend) {
+    Write-Host '  frontend: skipped (-SkipFrontend)' -ForegroundColor Yellow
+    return
+  }
+  if ($Force) {
+    Write-Host '  frontend: will rebuild (-Force)' -ForegroundColor DarkGray
+    return
+  }
+  if (Test-FrontendStale -ProjectRoot $ProjectRoot) {
+    Write-Host '  frontend: stale — will run pnpm build' -ForegroundColor DarkGray
+    return
+  }
+  Write-Host '  frontend: up to date — skipping pnpm build (use -Force to rebuild)' -ForegroundColor DarkGray
+}
+
 function Test-FrontendStale {
   param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot

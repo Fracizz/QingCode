@@ -1,5 +1,5 @@
 import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state'
-import { Decoration, EditorView, type DecorationSet } from '@codemirror/view'
+import { Decoration, EditorView, ViewPlugin, type DecorationSet } from '@codemirror/view'
 import { identifierAt, type IdentifierRange } from './definitionNavigation'
 
 const setDefinitionLink = StateEffect.define<{ from: number; to: number } | null>()
@@ -20,26 +20,43 @@ const definitionLinkField = StateField.define<DecorationSet>({
   provide: field => EditorView.decorations.from(field),
 })
 
-function modified(event: MouseEvent | KeyboardEvent): boolean {
-  return (event.ctrlKey || event.metaKey) && !event.altKey
+function eventHasPrimaryModifier(event: MouseEvent | KeyboardEvent): boolean {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey) return true
+  // Packaged WebView2 sometimes clears ctrlKey/metaKey on mouse events while still
+  // reporting the pressed modifier via getModifierState.
+  if ('getModifierState' in event && typeof event.getModifierState === 'function') {
+    try {
+      if ((event.getModifierState('Control') || event.getModifierState('Meta')) && !event.altKey) {
+        return true
+      }
+    } catch {
+      // Older / incomplete MouseEvent mocks may throw; ignore.
+    }
+  }
+  return false
 }
 
 interface DefinitionLinkActions {
   navigate: (view: EditorView, identifier: IdentifierRange) => void | Promise<void>
   linkEnabled?: () => boolean
+  nativeModifierPressed?: () => Promise<boolean>
 }
 
 /**
  * IDEA/VS-style definition link. Ctrl/Meta only marks the identifier as clickable;
  * project lookup and navigation start on Ctrl/Meta + left click.
+ *
+ * Packaged WebView2 often drops ctrlKey from mousedown and may deliver Control
+ * keydown outside the editor contentDOM. Track modifiers on window + mouse move.
  */
 export function editorDefinitionLink(actions: DefinitionLinkActions): Extension {
   let lastPoint: { x: number; y: number } | null = null
   let lastRange = ''
   let modifierHeld = false
-  let lastNavigation:
-    | { x: number; y: number; at: number }
-    | null = null
+  let lastNavigation: { x: number; y: number; at: number } | null = null
+  let lastNativeProbe: { x: number; y: number; at: number } | null = null
+  let nativeProbePending = false
+  let activeView: EditorView | null = null
 
   const updateLink = (
     view: EditorView,
@@ -61,31 +78,110 @@ export function editorDefinitionLink(actions: DefinitionLinkActions): Extension 
     return identifier
   }
 
+  const setModifierHeld = (held: boolean) => {
+    if (modifierHeld === held) return
+    modifierHeld = held
+    if (!activeView) return
+    if (held && lastPoint) updateLink(activeView, lastPoint)
+    else if (!held) updateLink(activeView, null)
+  }
+
+  const navigateToIdentifier = (
+    view: EditorView,
+    identifier: IdentifierRange,
+    point: { x: number; y: number }
+  ) => {
+    updateLink(view, null)
+    lastNavigation = { ...point, at: Date.now() }
+    void actions.navigate(view, identifier)
+  }
+
   const navigateFromMouse = (event: MouseEvent, view: EditorView): boolean => {
-    // WebView2 can omit ctrlKey/metaKey from the synthesized mouse event even
-    // though the editor received the corresponding keydown. Keep that keyboard
-    // state so Ctrl+click remains reliable in the desktop app.
-    if (event.button !== 0 || (!modified(event) && !modifierHeld)) return false
+    if (event.button !== 0) return false
     const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
     if (position === null) return false
     const identifier = identifierAt(view.state, position)
     if (!identifier) return false
-    event.preventDefault()
-    event.stopPropagation()
-    updateLink(view, null)
-    lastNavigation = {
-      x: event.clientX,
-      y: event.clientY,
-      at: Date.now(),
+
+    const point = { x: event.clientX, y: event.clientY }
+    if (eventHasPrimaryModifier(event) || modifierHeld) {
+      event.preventDefault()
+      event.stopPropagation()
+      navigateToIdentifier(view, identifier, point)
+      return true
     }
-    void actions.navigate(view, identifier)
-    return true
+
+    if (!actions.nativeModifierPressed || nativeProbePending) return false
+    const duplicateProbe =
+      lastNativeProbe &&
+      Date.now() - lastNativeProbe.at < 500 &&
+      Math.abs(lastNativeProbe.x - point.x) <= 2 &&
+      Math.abs(lastNativeProbe.y - point.y) <= 2
+    if (duplicateProbe) return false
+
+    // This runs for otherwise-plain clicks in packaged builds. The native
+    // GetAsyncKeyState result is authoritative when WebView2 drops ctrlKey.
+    lastNativeProbe = { ...point, at: Date.now() }
+    nativeProbePending = true
+    void actions
+      .nativeModifierPressed()
+      .then(pressed => {
+        if (!pressed || !view.dom.isConnected) return
+        navigateToIdentifier(view, identifier, point)
+      })
+      .finally(() => {
+        nativeProbePending = false
+      })
+    return false
   }
+
+  const onWindowKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Control' || event.key === 'Meta' || eventHasPrimaryModifier(event)) {
+      setModifierHeld(true)
+    }
+  }
+  const onWindowKeyUp = (event: KeyboardEvent) => {
+    if (event.key === 'Control' || event.key === 'Meta') {
+      setModifierHeld(false)
+      return
+    }
+    // Another key may report the current modifier state after Control was released.
+    if (!eventHasPrimaryModifier(event)) setModifierHeld(false)
+  }
+  const onWindowBlur = () => setModifierHeld(false)
+
+  const modifierPlugin = ViewPlugin.fromClass(
+    class {
+      constructor(view: EditorView) {
+        activeView = view
+        window.addEventListener('keydown', onWindowKeyDown, true)
+        window.addEventListener('keyup', onWindowKeyUp, true)
+        window.addEventListener('blur', onWindowBlur)
+      }
+      destroy() {
+        window.removeEventListener('keydown', onWindowKeyDown, true)
+        window.removeEventListener('keyup', onWindowKeyUp, true)
+        window.removeEventListener('blur', onWindowBlur)
+        if (activeView) {
+          // Only clear when this plugin instance owned the view.
+          activeView = null
+        }
+        modifierHeld = false
+        lastPoint = null
+        lastRange = ''
+      }
+    }
+  )
 
   const handlers = EditorView.domEventHandlers({
     mousemove(event, view) {
       lastPoint = { x: event.clientX, y: event.clientY }
-      updateLink(view, modified(event) ? lastPoint : null)
+      // Mouse move carries reliable modifier flags even when keydown missed the editor.
+      if (eventHasPrimaryModifier(event)) modifierHeld = true
+      else if (!modifierHeld) {
+        // Leave window-tracked Control alone when the mouse event simply omits flags.
+      }
+      updateLink(view, modifierHeld || eventHasPrimaryModifier(event) ? lastPoint : null)
       return false
     },
     mouseleave(_event, view) {
@@ -94,7 +190,7 @@ export function editorDefinitionLink(actions: DefinitionLinkActions): Extension 
       return false
     },
     keydown(event, view) {
-      if (event.key === 'Control' || event.key === 'Meta') {
+      if (event.key === 'Control' || event.key === 'Meta' || eventHasPrimaryModifier(event)) {
         modifierHeld = true
         if (lastPoint) updateLink(view, lastPoint)
       }
@@ -108,7 +204,7 @@ export function editorDefinitionLink(actions: DefinitionLinkActions): Extension 
       return false
     },
     blur(_event, view) {
-      modifierHeld = false
+      // Keep window-level modifierHeld; editor blur alone is common during navigation.
       updateLink(view, null)
       return false
     },
@@ -133,6 +229,7 @@ export function editorDefinitionLink(actions: DefinitionLinkActions): Extension 
 
   return [
     definitionLinkField,
+    modifierPlugin,
     Prec.highest(handlers),
     EditorView.theme({
       '.cm-definition-link': {

@@ -40,3 +40,13 @@ export async function safeInvoke<T = unknown>(
 export async function requireTauri(action: string): Promise<void> {
   if (!isTauri()) throw new NotInTauriError(action)
 }
+
+/** Native fallback for WebView2 mouse events that omit the physical Ctrl state. */
+export async function isPrimaryModifierPressed(): Promise<boolean> {
+  if (!isTauri()) return false
+  try {
+    return await rawInvoke<boolean>('primary_modifier_pressed')
+  } catch {
+    return false
+  }
+}

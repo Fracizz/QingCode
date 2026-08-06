@@ -73,6 +73,7 @@ import { FONT_SETTINGS_EVENT, loadFontSettings } from '../lib/fontSettings'
 import { buildEditorPreferenceExtensions } from '../lib/editorSettingsExtensions'
 import { reliableClickMouseSelection } from '../lib/editorMouseSelection'
 import { editorDefinitionLink } from '../lib/editorDefinitionLink'
+import { isPrimaryModifierPressed } from '../lib/tauri'
 import {
   goToDefinition,
   identifierAt,
@@ -220,6 +221,7 @@ function createTabEditorState(
       occurrenceHighlight,
       editorDefinitionLink({
         navigate: (view, identifier) => goToDefinition(view.state, tabPath, identifier),
+        nativeModifierPressed: isPrimaryModifierPressed,
       }),
       reliableClickMouseSelection(),
       EditorView.updateListener.of(update => {

@@ -76,6 +76,7 @@ try {
   }
 
   Write-Step 'Prepare (Windows x64 NSIS installer)'
+  Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
   $frontendRebuilt = $false

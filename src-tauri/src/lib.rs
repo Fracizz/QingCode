@@ -15,6 +15,7 @@ mod git_command;
 mod git_status;
 mod ipc;
 mod language_components;
+mod native_input;
 mod path_guard;
 mod symbol_search;
 mod terminal;
@@ -393,6 +394,7 @@ pub fn run() {
             code_navigation::search_indexed_workspace_symbols,
             code_navigation::semantic_index_status,
             language_components::language_component_statuses,
+            native_input::primary_modifier_pressed,
             commands::list_file_extensions,
             commands::create_file,
             commands::create_directory,

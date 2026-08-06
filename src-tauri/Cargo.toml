@@ -71,6 +71,7 @@ libloading = "0.8"
 # 避免 tokio "full" 把 net/signal/process/fs 等全部模块强行编入。
 
 [target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_UI_Input_KeyboardAndMouse"] }
 # Fonts registry + Explorer “Open with” (Windows only).
 winreg = "0.55"
 

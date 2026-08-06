@@ -147,6 +147,103 @@ describe('editorDefinitionLink', () => {
     expect(navigate).toHaveBeenCalledOnce()
   })
 
+  it('tracks Control on window when packaged WebView2 never delivers keydown to the editor', () => {
+    const navigate = vi.fn()
+    const parent = document.createElement('div')
+    document.body.appendChild(parent)
+    view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: 'target()',
+        extensions: [editorDefinitionLink({ navigate })],
+      }),
+    })
+    vi.spyOn(view, 'posAtCoords').mockReturnValue(2)
+
+    window.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        bubbles: true,
+        key: 'Control',
+        ctrlKey: true,
+      })
+    )
+    view.contentDOM.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: 10,
+        clientY: 10,
+      })
+    )
+
+    expect(navigate).toHaveBeenCalledOnce()
+  })
+
+  it('keeps Ctrl-hover state for a mousedown that drops ctrlKey', () => {
+    const navigate = vi.fn()
+    const parent = document.createElement('div')
+    document.body.appendChild(parent)
+    view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: 'target()',
+        extensions: [editorDefinitionLink({ navigate })],
+      }),
+    })
+    vi.spyOn(view, 'posAtCoords').mockReturnValue(2)
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent('mousemove', {
+        bubbles: true,
+        clientX: 10,
+        clientY: 10,
+        ctrlKey: true,
+      })
+    )
+    expect(view.dom.querySelector('.cm-definition-link')).not.toBeNull()
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: 10,
+        clientY: 10,
+      })
+    )
+
+    expect(navigate).toHaveBeenCalledOnce()
+  })
+
+  it('uses the native modifier state when packaged WebView2 drops all Ctrl events', async () => {
+    const navigate = vi.fn()
+    const nativeModifierPressed = vi.fn().mockResolvedValue(true)
+    const parent = document.createElement('div')
+    document.body.appendChild(parent)
+    view = new EditorView({
+      parent,
+      state: EditorState.create({
+        doc: 'target()',
+        extensions: [editorDefinitionLink({ navigate, nativeModifierPressed })],
+      }),
+    })
+    vi.spyOn(view, 'posAtCoords').mockReturnValue(2)
+
+    view.contentDOM.dispatchEvent(
+      new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX: 10,
+        clientY: 10,
+      })
+    )
+
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledOnce())
+    expect(nativeModifierPressed).toHaveBeenCalledOnce()
+  })
+
   it('hides the Ctrl-hover link but still reports an explicit Ctrl+mousedown when disabled', () => {
     const navigate = vi.fn()
     const parent = document.createElement('div')

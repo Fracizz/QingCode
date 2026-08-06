@@ -115,6 +115,7 @@ try {
   }
 
   Write-Step 'Prepare'
+  Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
   $frontendRebuilt = $false
