@@ -100,6 +100,8 @@ export interface SemanticIndexStatus {
 // every new edit look stale after a frontend reload.
 let overlayRevision = Date.now() * 1000
 const overlayTimers = new Map<string, number>()
+const oversizedOverlayPaths = new Set<string>()
+export const MAX_SEMANTIC_OVERLAY_BYTES = 1024 * 1024
 
 export function nextSemanticRevision(): number {
   overlayRevision += 1
@@ -113,6 +115,27 @@ function normalizedPath(path: string): string {
 export function utf8ByteOffsetAt(state: EditorState, position: number): number {
   const safePosition = Math.max(0, Math.min(position, state.doc.length))
   return new TextEncoder().encode(state.sliceDoc(0, safePosition)).length
+}
+
+export function semanticContentWithinLimit(content: string): boolean {
+  if (content.length > MAX_SEMANTIC_OVERLAY_BYTES) return false
+  return new TextEncoder().encode(content).length <= MAX_SEMANTIC_OVERLAY_BYTES
+}
+
+function semanticDocumentContent(state: EditorState): string | null {
+  if (state.doc.length > MAX_SEMANTIC_OVERLAY_BYTES) return null
+  const content = state.doc.toString()
+  return semanticContentWithinLimit(content) ? content : null
+}
+
+function markOversizedOverlay(path: string): void {
+  const key = normalizedPath(path)
+  if (oversizedOverlayPaths.has(key)) return
+  oversizedOverlayPaths.add(key)
+  if (!isTauri()) return
+  void safeInvoke('清除超大文件代码导航缓冲区', 'clear_semantic_overlay', { path }).catch(error => {
+    console.error('clear oversized semantic overlay failed:', error)
+  })
 }
 
 function projectRootForPath(path: string): string | null {
@@ -134,6 +157,11 @@ export async function updateSemanticOverlay(
   content: string
 ): Promise<boolean> {
   if (!isTauri()) return false
+  if (!semanticContentWithinLimit(content)) {
+    markOversizedOverlay(path)
+    return false
+  }
+  oversizedOverlayPaths.delete(normalizedPath(path))
   const revision = nextSemanticRevision()
   return safeInvoke<boolean>('更新代码导航缓冲区', 'update_semantic_overlay', {
     root,
@@ -150,11 +178,21 @@ export function scheduleSemanticOverlay(path: string, state: EditorState): void 
   const key = normalizedPath(path)
   const existing = overlayTimers.get(key)
   if (existing) window.clearTimeout(existing)
+  if (state.doc.length > MAX_SEMANTIC_OVERLAY_BYTES) {
+    overlayTimers.delete(key)
+    markOversizedOverlay(path)
+    return
+  }
   overlayTimers.set(
     key,
     window.setTimeout(() => {
       overlayTimers.delete(key)
-      void updateSemanticOverlay(root, path, state.doc.toString()).catch(error => {
+      const content = semanticDocumentContent(state)
+      if (content == null) {
+        markOversizedOverlay(path)
+        return
+      }
+      void updateSemanticOverlay(root, path, content).catch(error => {
         console.error('semantic overlay update failed:', error)
       })
     }, 300)
@@ -172,6 +210,10 @@ export async function syncDirtySemanticOverlay(path: string): Promise<void> {
   const content = getLiveEditorContent(tab.id) ?? tab.content
   const root = projectRootForPath(path)
   if (!root || content == null) return
+  if (!semanticContentWithinLimit(content)) {
+    markOversizedOverlay(path)
+    return
+  }
   await updateSemanticOverlay(root, path, content)
 }
 
@@ -180,16 +222,22 @@ export async function clearSemanticOverlay(path: string): Promise<void> {
   const timer = overlayTimers.get(key)
   if (timer) window.clearTimeout(timer)
   overlayTimers.delete(key)
+  oversizedOverlayPaths.delete(key)
   if (!isTauri()) return
   await safeInvoke('清除代码导航缓冲区', 'clear_semantic_overlay', { path })
 }
 
 function semanticRequestInput(root: string, path: string, state: EditorState, position: number) {
+  const content = semanticDocumentContent(state)
+  if (content == null) {
+    markOversizedOverlay(path)
+    throw new Error('文件超过 1MB，已跳过代码导航以保持编辑器流畅')
+  }
   return {
     root,
     path,
     position: utf8ByteOffsetAt(state, position),
-    content: state.doc.toString(),
+    content,
     revision: nextSemanticRevision(),
   }
 }

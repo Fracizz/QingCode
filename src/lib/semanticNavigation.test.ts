@@ -2,6 +2,7 @@ import { EditorState } from '@codemirror/state'
 import { describe, expect, it } from 'vitest'
 import {
   nextSemanticRevision,
+  semanticContentWithinLimit,
   semanticUsageQueryInput,
   utf8ByteOffsetAt,
 } from './semanticNavigation'
@@ -49,5 +50,13 @@ describe('semanticUsageQueryInput', () => {
       usageKinds: undefined,
       approximateOnly: true,
     })
+  })
+})
+
+describe('semanticContentWithinLimit', () => {
+  it('uses UTF-8 bytes and rejects content above the backend overlay limit', () => {
+    expect(semanticContentWithinLimit('a'.repeat(1024 * 1024))).toBe(true)
+    expect(semanticContentWithinLimit('a'.repeat(1024 * 1024 + 1))).toBe(false)
+    expect(semanticContentWithinLimit('中'.repeat(400_000))).toBe(false)
   })
 })

@@ -8,12 +8,24 @@ use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEventKi
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 const DEBOUNCE_MS: u64 = 350;
 const SUPPRESS_MS: u64 = 900;
+const HIGH_CHURN_DIRS: &[&str] = &[
+    ".git",
+    ".next",
+    ".turbo",
+    ".cache",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "out",
+    "coverage",
+];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,19 +44,20 @@ struct WatcherInner {
     suppress_until: HashMap<PathBuf, Instant>,
 }
 
+#[derive(Clone)]
 pub struct FileWatcherManager {
-    inner: Mutex<WatcherInner>,
+    inner: Arc<Mutex<WatcherInner>>,
 }
 
 impl FileWatcherManager {
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(WatcherInner {
+            inner: Arc::new(Mutex::new(WatcherInner {
                 debouncer: None,
                 roots: HashSet::new(),
                 files: HashSet::new(),
                 suppress_until: HashMap::new(),
-            }),
+            })),
         }
     }
 
@@ -113,6 +126,32 @@ fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     path
 }
 
+fn is_high_churn_path(path: &Path, roots: &[PathBuf]) -> bool {
+    roots.iter().any(|root| {
+        let path_components = path
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>();
+        let root_components = root
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>();
+        if path_components.len() < root_components.len()
+            || !path_components
+                .iter()
+                .zip(&root_components)
+                .all(|(path_part, root_part)| path_part.eq_ignore_ascii_case(root_part))
+        {
+            return false;
+        }
+        path_components[root_components.len()..].iter().any(|name| {
+            HIGH_CHURN_DIRS
+                .iter()
+                .any(|ignored| name.eq_ignore_ascii_case(ignored))
+        })
+    })
+}
+
 fn emit_change(app: &AppHandle, path: PathBuf, kind: DebouncedEventKind) {
     let is_dir = path.is_dir();
     let kind_str = match kind {
@@ -151,13 +190,19 @@ fn rebuild_watches(app: AppHandle, guard: &mut WatcherInner) -> Result<(), Strin
     }
 
     let app_for_cb = app.clone();
+    let watched_roots = guard.roots.iter().cloned().collect::<Vec<_>>();
     let mut debouncer = new_debouncer(
         Duration::from_millis(DEBOUNCE_MS),
         move |res: DebounceEventResult| {
             let Ok(events) = res else {
                 return;
             };
+            let mut seen = HashSet::new();
+            let mut semantic_paths = Vec::new();
             for event in events {
+                if is_high_churn_path(&event.path, &watched_roots) {
+                    continue;
+                }
                 let path = normalize_path(&event.path);
                 // Skip noisy temp / backup files from our atomic writer.
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
@@ -174,14 +219,23 @@ fn rebuild_watches(app: AppHandle, guard: &mut WatcherInner) -> Result<(), Strin
                         continue;
                     }
                 }
-                if let Some(index) = app_for_cb.try_state::<SemanticNavigationState>() {
-                    let index = index.inner().clone();
-                    let index_path = path.clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        let _ = index.refresh_path_from_disk(&index_path);
-                    });
+                let key = path.to_string_lossy().to_lowercase();
+                if !seen.insert(key) {
+                    continue;
                 }
+                semantic_paths.push(path.clone());
                 emit_change(&app_for_cb, path, event.kind);
+            }
+            if semantic_paths.is_empty() {
+                return;
+            }
+            if let Some(index) = app_for_cb.try_state::<SemanticNavigationState>() {
+                let index = index.inner().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    for path in semantic_paths {
+                        let _ = index.refresh_path_from_disk(&path);
+                    }
+                });
             }
         },
     )
@@ -203,7 +257,7 @@ fn rebuild_watches(app: AppHandle, guard: &mut WatcherInner) -> Result<(), Strin
 
 /// Replace watched project roots and open-file paths.
 #[tauri::command]
-pub fn sync_file_watches(
+pub async fn sync_file_watches(
     roots: Vec<String>,
     files: Vec<String>,
     app: AppHandle,
@@ -221,24 +275,29 @@ pub fn sync_file_watches(
         }
     }
 
-    let mut guard = state
-        .inner
-        .lock()
-        .map_err(|_| "文件监视器锁失败".to_string())?;
+    let manager = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = manager
+            .inner
+            .lock()
+            .map_err(|_| "文件监视器锁失败".to_string())?;
 
-    guard.roots = roots
-        .into_iter()
-        .filter(|p| !p.is_empty())
-        .map(|p| normalize_path(Path::new(&p)))
-        .collect();
-    guard.files = files
-        .into_iter()
-        .filter(|p| !p.is_empty())
-        .map(|p| normalize_path(Path::new(&p)))
-        .filter(|p| !guard.roots.iter().any(|root| p.starts_with(root)))
-        .collect();
+        guard.roots = roots
+            .into_iter()
+            .filter(|p| !p.is_empty())
+            .map(|p| normalize_path(Path::new(&p)))
+            .collect();
+        guard.files = files
+            .into_iter()
+            .filter(|p| !p.is_empty())
+            .map(|p| normalize_path(Path::new(&p)))
+            .filter(|p| !guard.roots.iter().any(|root| p.starts_with(root)))
+            .collect();
 
-    rebuild_watches(app, &mut guard)
+        rebuild_watches(app, &mut guard)
+    })
+    .await
+    .map_err(|error| format!("同步文件监视任务失败: {error}"))?
 }
 
 /// Mark a path as a local save so the next watcher events are ignored.
@@ -266,12 +325,14 @@ pub fn is_fs_watch_suppressed(
 
 /// Last modified time in Unix milliseconds, or null if missing.
 #[tauri::command]
-pub fn file_mtime(
+pub async fn file_mtime(
     path: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<Option<u64>, String> {
     allowlist.ensure_allowed(&path)?;
-    file_mtime_inner(path)
+    tauri::async_runtime::spawn_blocking(move || file_mtime_inner(path))
+        .await
+        .map_err(|error| format!("读取文件时间任务失败: {error}"))?
 }
 
 fn file_mtime_inner(path: String) -> Result<Option<u64>, String> {
@@ -288,12 +349,14 @@ fn file_mtime_inner(path: String) -> Result<Option<u64>, String> {
 
 /// Creation time in Unix milliseconds, or null if unavailable (e.g. unsupported platform).
 #[tauri::command]
-pub fn file_ctime(
+pub async fn file_ctime(
     path: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<Option<u64>, String> {
     allowlist.ensure_allowed(&path)?;
-    file_ctime_inner(path)
+    tauri::async_runtime::spawn_blocking(move || file_ctime_inner(path))
+        .await
+        .map_err(|error| format!("读取文件创建时间任务失败: {error}"))?
 }
 
 fn file_ctime_inner(path: String) -> Result<Option<u64>, String> {
@@ -345,6 +408,27 @@ mod tests {
         assert!(FileWatcherManager::is_suppressed(
             &mut guard,
             Path::new(r"D:\tmp\a.txt")
+        ));
+    }
+
+    #[test]
+    fn high_churn_filter_only_applies_below_watched_root() {
+        let roots = vec![PathBuf::from(r"D:\Work\demo")];
+        assert!(is_high_churn_path(
+            Path::new(r"D:\Work\demo\target\debug\app.exe"),
+            &roots
+        ));
+        assert!(is_high_churn_path(
+            Path::new(r"D:\Work\demo\node_modules\pkg\index.js"),
+            &roots
+        ));
+        assert!(!is_high_churn_path(
+            Path::new(r"D:\Work\demo\src\main.rs"),
+            &roots
+        ));
+        assert!(!is_high_churn_path(
+            Path::new(r"D:\Work\target\demo\src\main.rs"),
+            &roots
         ));
     }
 }

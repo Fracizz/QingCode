@@ -20,6 +20,11 @@ export function useAppUpdateCheck() {
             () => true,
           )
           if (cancelled || isDev) return
+          const claimed = await safeInvoke<boolean>(
+            '确认首次启动更新检查',
+            'claim_startup_update_check',
+          ).catch(() => false)
+          if (cancelled || !claimed) return
           const { checkOnStartup } = await loadUpdateSettings()
           if (cancelled || !checkOnStartup) return
           await checkForAppUpdate({ prompt: true })

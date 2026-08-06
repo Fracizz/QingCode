@@ -442,6 +442,7 @@ pub fn run() {
             user_locales::user_locales_dir,
             user_locales::list_user_locales,
             is_dev_build,
+            update::claim_startup_update_check,
             update::check_app_update,
             update::download_app_update,
             take_launch_files,

@@ -386,13 +386,18 @@ fn format_with_gofmt(content: &str) -> Result<String, String> {
 
 /// Format `content` as if it belonged to `path`. Does not write the file.
 #[tauri::command]
-pub fn format_document(
+pub async fn format_document(
     path: String,
     content: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<String, String> {
     allowlist.ensure_allowed(&path)?;
+    tauri::async_runtime::spawn_blocking(move || format_document_inner(path, content))
+        .await
+        .map_err(|error| format!("格式化任务失败: {error}"))?
+}
 
+fn format_document_inner(path: String, content: String) -> Result<String, String> {
     if content.len() > MAX_FORMAT_BYTES {
         return Err(format!(
             "文件过大（>{:.0} MB），无法在编辑器内格式化",

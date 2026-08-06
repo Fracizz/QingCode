@@ -14,6 +14,7 @@ import {
 import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
 import { shouldSkipWatcherTreeRefresh } from '../lib/watcherTreeRefresh'
 import type { EditorTab, Project } from '../types'
+import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
 
 export type FsChangePayload = {
   path: string
@@ -59,20 +60,12 @@ async function refreshTreeForPath(path: string) {
 }
 
 function collectWatchRoots(
-  currentProject: Project | null,
-  projects: Project[],
-  projectSessions: Record<string, { tabs: EditorTab[] }>
+  currentProject: Project | null
 ): string[] {
-  const roots = new Set<string>()
   if (currentProject && !currentProject.ephemeral) {
-    roots.add(currentProject.path)
+    return [currentProject.path]
   }
-  for (const [projectId, session] of Object.entries(projectSessions)) {
-    if (session.tabs.length === 0) continue
-    const project = projects.find(p => p.id === projectId)
-    if (project && !project.ephemeral) roots.add(project.path)
-  }
-  return [...roots]
+  return []
 }
 
 function collectWatchFiles(
@@ -115,23 +108,24 @@ function scheduleContentSync(
 
 export function useFileWatcher() {
   const treeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingTreePaths = useRef<string[]>([])
+  const pendingTreePaths = useRef(new Map<string, string>())
+  const gitEventTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const contentTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const depsRef = useRef(createDefaultSyncOpenFileDeps())
 
   const currentProject = useProjectStore(s => s.currentProject)
-  const projects = useProjectStore(s => s.projects)
   const tabs = useEditorStore(s => s.tabs)
   const projectSessions = useEditorStore(s => s.projectSessions)
   const activeTabId = useEditorStore(s => s.activeTabId)
 
-  // Watch current root + inactive projects that still have open tabs/files.
+  // Recursively watch only the active project. Inactive-project tabs are watched as files.
   useEffect(() => {
     if (!isTauri()) return
-    const roots = collectWatchRoots(currentProject, projects, projectSessions)
+    const roots = collectWatchRoots(currentProject)
     const files = collectWatchFiles(tabs, projectSessions)
-    void syncWatches(roots, files)
-  }, [currentProject, projects, tabs, projectSessions])
+    const timer = window.setTimeout(() => void syncWatches(roots, files), 100)
+    return () => window.clearTimeout(timer)
+  }, [currentProject, tabs, projectSessions])
 
   // Lightweight git dirty snapshot for the current project.
   useEffect(() => {
@@ -204,6 +198,7 @@ export function useFileWatcher() {
     let unlisten: UnlistenFn | undefined
     let cancelled = false
     const deps = depsRef.current
+    const contentSyncTimers = contentTimers.current
 
     const runPathContentSync = (changedPath: string) => {
       const editor = useEditorStore.getState()
@@ -224,6 +219,7 @@ export function useFileWatcher() {
     void listen<FsChangePayload>('fs-change', event => {
       const payload = event.payload
       if (!payload?.path) return
+      recordPerformanceThroughput('fsEvents')
       const changedPath = payload.path
       const current = useProjectStore.getState().currentProject
       if (
@@ -231,19 +227,23 @@ export function useFileWatcher() {
         !current.ephemeral &&
         (pathsEqual(changedPath, current.path) || isDescendantOf(changedPath, current.path))
       ) {
-        window.dispatchEvent(
-          new CustomEvent('qingcode:git-worktree-changed', {
-            detail: { projectPath: current.path },
-          })
-        )
+        if (gitEventTimer.current) clearTimeout(gitEventTimer.current)
+        gitEventTimer.current = setTimeout(() => {
+          gitEventTimer.current = null
+          window.dispatchEvent(
+            new CustomEvent('qingcode:git-worktree-changed', {
+              detail: { projectPath: current.path },
+            })
+          )
+        }, 350)
       }
 
       // Debounced explorer refresh for project-tree churn.
-      pendingTreePaths.current.push(changedPath)
+      pendingTreePaths.current.set(normalize(changedPath), changedPath)
       if (treeTimer.current) clearTimeout(treeTimer.current)
       treeTimer.current = setTimeout(() => {
-        const paths = pendingTreePaths.current
-        pendingTreePaths.current = []
+        const paths = [...pendingTreePaths.current.values()]
+        pendingTreePaths.current.clear()
         treeTimer.current = null
         // Refresh once for the first few unique parents.
         const seen = new Set<string>()
@@ -260,7 +260,7 @@ export function useFileWatcher() {
       const editor = useEditorStore.getState()
       const tab = findOpenTabByPath(editor.tabs, editor.projectSessions, changedPath)
       if (!tab) return
-      scheduleContentSync(tab.path, contentTimers.current, runPathContentSync)
+      scheduleContentSync(tab.path, contentSyncTimers, runPathContentSync)
     }).then(fn => {
       if (cancelled) fn()
       else unlisten = fn
@@ -270,8 +270,9 @@ export function useFileWatcher() {
       cancelled = true
       unlisten?.()
       if (treeTimer.current) clearTimeout(treeTimer.current)
-      for (const timer of contentTimers.current.values()) clearTimeout(timer)
-      contentTimers.current.clear()
+      if (gitEventTimer.current) clearTimeout(gitEventTimer.current)
+      for (const timer of contentSyncTimers.values()) clearTimeout(timer)
+      contentSyncTimers.clear()
     }
   }, [])
 }

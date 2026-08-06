@@ -16,6 +16,7 @@ import {
 import { loadEffectiveTerminalScrollback } from '@/lib/terminal/terminalScrollbackSettings'
 import { loadSessionPersistEnabled } from './lib/sessionPersistSettings'
 import { installDevNativeContextMenuToggle } from './lib/devBuild'
+import { installPerformanceDiagnostics } from './lib/performanceDiagnostics'
 
 // Critical path before first paint: theme, fonts, splash logo, i18n.
 initWindowSession()
@@ -50,6 +51,7 @@ installStartupSplashGuard()
 queueMicrotask(() => {
   installDevNativeContextMenuToggle()
   void import('./lib/contextMenuGuard').then(m => m.installContextMenuGuard())
+  installPerformanceDiagnostics()
 })
 
 // Fallback only — HTML splash script should already have shown the window.

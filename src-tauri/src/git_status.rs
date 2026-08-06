@@ -259,7 +259,7 @@ pub fn read_git_show_head(path: &Path) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn git_show_head_file(
+pub async fn git_show_head_file(
     path: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<Option<String>, String> {
@@ -267,7 +267,10 @@ pub fn git_show_head_file(
         return Ok(None);
     }
     allowlist.ensure_allowed(&path)?;
-    Ok(read_git_show_head(Path::new(&path)))
+    let path = PathBuf::from(path);
+    tauri::async_runtime::spawn_blocking(move || Ok(read_git_show_head(&path)))
+        .await
+        .map_err(|error| format!("读取 Git HEAD 文件任务失败：{error}"))?
 }
 
 #[cfg(test)]

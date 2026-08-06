@@ -147,9 +147,14 @@ fn decode_error_message(path: &str, encoding: file_encoding::FileEncoding) -> St
 }
 
 #[tauri::command]
-pub fn file_stat(path: String, allowlist: State<'_, PathAllowlist>) -> Result<FileStat, String> {
+pub async fn file_stat(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<FileStat, String> {
     allowlist.ensure_allowed(&path)?;
-    file_stat_inner(path)
+    tauri::async_runtime::spawn_blocking(move || file_stat_inner(path))
+        .await
+        .map_err(|error| format!("读取文件属性任务失败: {error}"))?
 }
 
 fn file_stat_inner(path: String) -> Result<FileStat, String> {
@@ -163,21 +168,29 @@ fn file_stat_inner(path: String) -> Result<FileStat, String> {
 }
 
 #[tauri::command]
-pub fn read_file(
+pub async fn read_file(
     path: String,
     encoding: Option<String>,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<String, String> {
     allowlist.ensure_allowed(&path)?;
-    read_file_inner(path, encoding.as_deref())
+    tauri::async_runtime::spawn_blocking(move || read_file_inner(path, encoding.as_deref()))
+        .await
+        .map_err(|error| format!("读取文件任务失败: {error}"))?
 }
 
 #[tauri::command]
-pub fn detect_file_encoding(
+pub async fn detect_file_encoding(
     path: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<String, String> {
     allowlist.ensure_allowed(&path)?;
+    tauri::async_runtime::spawn_blocking(move || detect_file_encoding_inner(path))
+        .await
+        .map_err(|error| format!("检测文件编码任务失败: {error}"))?
+}
+
+fn detect_file_encoding_inner(path: String) -> Result<String, String> {
     let file_path = Path::new(&path);
     let metadata = fs::metadata(file_path)
         .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
@@ -235,14 +248,16 @@ fn read_file_inner(path: String, encoding: Option<&str>) -> Result<String, Strin
 }
 
 #[tauri::command]
-pub fn read_file_slice(
+pub async fn read_file_slice(
     path: String,
     offset: u64,
     max_bytes: u64,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<FileSlice, String> {
     allowlist.ensure_allowed(&path)?;
-    read_file_slice_inner(path, offset, max_bytes)
+    tauri::async_runtime::spawn_blocking(move || read_file_slice_inner(path, offset, max_bytes))
+        .await
+        .map_err(|error| format!("分段读取文件任务失败: {error}"))?
 }
 
 fn read_file_slice_inner(path: String, offset: u64, max_bytes: u64) -> Result<FileSlice, String> {
@@ -314,13 +329,15 @@ fn read_file_slice_inner(path: String, offset: u64, max_bytes: u64) -> Result<Fi
 
 /// Streaming newline scan: return the byte offset of a 1-based line without loading the file.
 #[tauri::command]
-pub fn find_line_offset(
+pub async fn find_line_offset(
     path: String,
     line: u64,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<LineOffsetResult, String> {
     allowlist.ensure_allowed(&path)?;
-    find_line_offset_inner(path, line)
+    tauri::async_runtime::spawn_blocking(move || find_line_offset_inner(path, line))
+        .await
+        .map_err(|error| format!("查找文件行任务失败: {error}"))?
 }
 
 fn find_line_offset_inner(path: String, line: u64) -> Result<LineOffsetResult, String> {

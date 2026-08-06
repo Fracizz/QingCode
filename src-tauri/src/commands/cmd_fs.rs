@@ -119,7 +119,7 @@ fn validate_entry_name(name: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn write_file(
+pub async fn write_file(
     path: String,
     content: String,
     encoding: Option<String>,
@@ -129,20 +129,24 @@ pub fn write_file(
     // Symlink escape is rejected unless the resolved target was explicitly authorized
     // (e.g. after the frontend confirm dialog grants the path).
     allowlist.ensure_writable(&path)?;
-    let enc = file_encoding::parse(encoding.as_deref());
-    let bytes = file_encoding::encode(&content, enc).map_err(|e| {
-        format!(
-            "无法按 {} 编码保存文件：{}（{}）",
-            enc.as_str(),
-            display_file_name(&path),
-            e
-        )
-    })?;
-    if exceeds_editor_file_size_limit(bytes.len() as u64) {
-        return Err(format!("暂不支持保存超过 100MB 的大文件: {}", path));
-    }
-    let file_path = Path::new(&path);
-    write_file_safely(file_path, &bytes).map_err(|e| format!("Failed to write {}: {}", path, e))
+    tauri::async_runtime::spawn_blocking(move || {
+        let enc = file_encoding::parse(encoding.as_deref());
+        let bytes = file_encoding::encode(&content, enc).map_err(|e| {
+            format!(
+                "无法按 {} 编码保存文件：{}（{}）",
+                enc.as_str(),
+                display_file_name(&path),
+                e
+            )
+        })?;
+        if exceeds_editor_file_size_limit(bytes.len() as u64) {
+            return Err(format!("暂不支持保存超过 100MB 的大文件: {}", path));
+        }
+        write_file_safely(Path::new(&path), &bytes)
+            .map_err(|e| format!("Failed to write {}: {}", path, e))
+    })
+    .await
+    .map_err(|error| format!("保存文件任务失败: {error}"))?
 }
 
 fn write_file_safely(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
@@ -230,7 +234,7 @@ fn write_file_safely(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
 }
 
 #[tauri::command]
-pub fn replace_file_range(
+pub async fn replace_file_range(
     path: String,
     start: u64,
     end: u64,
@@ -238,7 +242,9 @@ pub fn replace_file_range(
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<super::cmd_stat::FileStat, String> {
     allowlist.ensure_writable(&path)?;
-    replace_file_range_inner(path, start, end, text)
+    tauri::async_runtime::spawn_blocking(move || replace_file_range_inner(path, start, end, text))
+        .await
+        .map_err(|error| format!("替换文件内容任务失败: {error}"))?
 }
 
 /// Stream a range replacement into a temp file, then atomically replace.
@@ -376,7 +382,7 @@ fn replace_file_range_inner(
 }
 
 #[tauri::command]
-pub fn create_file(
+pub async fn create_file(
     parent: String,
     name: String,
     allowlist: State<'_, PathAllowlist>,
@@ -388,16 +394,20 @@ pub fn create_file(
     }
     let path = parent_path.join(&name);
     allowlist.ensure_writable(&path.to_string_lossy())?;
-    fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|e| format!("新建文件失败: {}", e))?;
-    Ok(path.to_string_lossy().to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|e| format!("新建文件失败: {}", e))?;
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|error| format!("新建文件任务失败: {error}"))?
 }
 
 #[tauri::command]
-pub fn create_directory(
+pub async fn create_directory(
     parent: String,
     name: String,
     allowlist: State<'_, PathAllowlist>,
@@ -409,12 +419,16 @@ pub fn create_directory(
     }
     let path = parent_path.join(&name);
     allowlist.ensure_writable(&path.to_string_lossy())?;
-    fs::create_dir(&path).map_err(|e| format!("新建文件夹失败: {}", e))?;
-    Ok(path.to_string_lossy().to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        fs::create_dir(&path).map_err(|e| format!("新建文件夹失败: {}", e))?;
+        Ok(path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|error| format!("新建文件夹任务失败: {error}"))?
 }
 
 #[tauri::command]
-pub fn rename_path(
+pub async fn rename_path(
     path: String,
     new_name: String,
     allowlist: State<'_, PathAllowlist>,
@@ -430,8 +444,13 @@ pub fn rename_path(
     if target.exists() {
         return Err("目标名称已存在".to_string());
     }
-    fs::rename(source, &target).map_err(|e| format!("重命名失败: {}", e))?;
-    Ok(target.to_string_lossy().to_string())
+    let source = source.to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        fs::rename(source, &target).map_err(|e| format!("重命名失败: {}", e))?;
+        Ok(target.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|error| format!("重命名任务失败: {error}"))?
 }
 
 fn unique_child_path(
@@ -526,7 +545,7 @@ fn resolve_transfer_file_name(
 /// Move a file or folder into `dest_dir`.
 /// `dest_name`: optional new basename (IDEA-style rename-on-conflict).
 #[tauri::command]
-pub fn move_path(
+pub async fn move_path(
     path: String,
     dest_dir: String,
     conflict_policy: Option<String>,
@@ -554,17 +573,22 @@ pub fn move_path(
     }
     let (target, overwrite) = resolve_dest_child(dest, &file_name, conflict_policy.as_deref())?;
     allowlist.ensure_writable(&target.to_string_lossy())?;
-    if overwrite {
-        remove_path_entry(&target)?;
-    }
-    fs::rename(source, &target).map_err(|e| format!("移动失败: {}", e))?;
-    Ok(target.to_string_lossy().to_string())
+    let source = source.to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        if overwrite {
+            remove_path_entry(&target)?;
+        }
+        fs::rename(source, &target).map_err(|e| format!("移动失败: {}", e))?;
+        Ok(target.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|error| format!("移动任务失败: {error}"))?
 }
 
 /// Copy a file or folder into `dest_dir` (recursive for directories).
 /// `dest_name`: optional new basename (IDEA-style rename-on-conflict).
 #[tauri::command]
-pub fn copy_path_into(
+pub async fn copy_path_into(
     path: String,
     dest_dir: String,
     conflict_policy: Option<String>,
@@ -591,23 +615,32 @@ pub fn copy_path_into(
     }
     let (target, overwrite) = resolve_dest_child(dest, &file_name, conflict_policy.as_deref())?;
     allowlist.ensure_writable(&target.to_string_lossy())?;
-    if overwrite {
-        remove_path_entry(&target)?;
-    }
-    copy_entry_recursive(source, &target)?;
-    Ok(target.to_string_lossy().to_string())
+    let source = source.to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || {
+        if overwrite {
+            remove_path_entry(&target)?;
+        }
+        copy_entry_recursive(&source, &target)?;
+        Ok(target.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|error| format!("复制任务失败: {error}"))?
 }
 
 #[tauri::command]
-pub fn delete_path(path: String, allowlist: State<'_, PathAllowlist>) -> Result<(), String> {
+pub async fn delete_path(path: String, allowlist: State<'_, PathAllowlist>) -> Result<(), String> {
     allowlist.ensure_writable(&path)?;
-    let target = Path::new(&path);
-    let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
-    if metadata.is_dir() {
-        fs::remove_dir_all(target).map_err(|e| format!("删除文件夹失败: {}", e))
-    } else {
-        fs::remove_file(target).map_err(|e| format!("删除文件失败: {}", e))
-    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let target = Path::new(&path);
+        let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
+        if metadata.is_dir() {
+            fs::remove_dir_all(target).map_err(|e| format!("删除文件夹失败: {}", e))
+        } else {
+            fs::remove_file(target).map_err(|e| format!("删除文件失败: {}", e))
+        }
+    })
+    .await
+    .map_err(|error| format!("删除任务失败: {error}"))?
 }
 
 #[derive(Debug, Serialize)]
@@ -620,11 +653,17 @@ pub struct DirectoryDeleteStats {
 
 /// Walk a directory (without following dir symlinks) to gather cheap delete-confirm stats.
 #[tauri::command]
-pub fn directory_delete_stats(
+pub async fn directory_delete_stats(
     path: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<DirectoryDeleteStats, String> {
     allowlist.ensure_writable(&path)?;
+    tauri::async_runtime::spawn_blocking(move || directory_delete_stats_inner(path))
+        .await
+        .map_err(|error| format!("统计待删除目录任务失败: {error}"))?
+}
+
+fn directory_delete_stats_inner(path: String) -> Result<DirectoryDeleteStats, String> {
     let target = Path::new(&path);
     let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
     if !metadata.is_dir() {
@@ -653,11 +692,17 @@ pub struct DirectoryEntryCounts {
 
 /// Recursively count files/folders and sum file sizes (does not follow dir symlinks).
 #[tauri::command]
-pub fn directory_entry_counts(
+pub async fn directory_entry_counts(
     path: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<DirectoryEntryCounts, String> {
     allowlist.ensure_allowed(&path)?;
+    tauri::async_runtime::spawn_blocking(move || directory_entry_counts_inner(path))
+        .await
+        .map_err(|error| format!("统计目录任务失败: {error}"))?
+}
+
+fn directory_entry_counts_inner(path: String) -> Result<DirectoryEntryCounts, String> {
     let target = Path::new(&path);
     let metadata = fs::symlink_metadata(target).map_err(|e| format!("读取路径失败: {}", e))?;
     if !metadata.is_dir() {

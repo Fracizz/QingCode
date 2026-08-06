@@ -1274,15 +1274,17 @@ pub async fn git_commit_file_contents(
 }
 
 #[tauri::command]
-pub fn git_diff(
+pub async fn git_diff(
     path: String,
     file: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<String, String> {
     ensure_git_root(&path, &allowlist)?;
-    let root = Path::new(&path);
-    let relative = resolve_relative(root, &file)?;
-    collect_file_diff(root, &relative)
+    let root = PathBuf::from(path);
+    let relative = resolve_relative(&root, &file)?;
+    tauri::async_runtime::spawn_blocking(move || collect_file_diff(&root, &relative))
+        .await
+        .map_err(|error| format!("读取 Git Diff 任务失败：{error}"))?
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1315,18 +1317,22 @@ fn read_working_tree_text(root: &Path, relative: &str) -> String {
 
 /// Pair of HEAD vs working-tree contents for the side-by-side editor diff.
 #[tauri::command]
-pub fn git_file_contents(
+pub async fn git_file_contents(
     path: String,
     file: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<GitFileContents, String> {
     ensure_git_root(&path, &allowlist)?;
-    let root = Path::new(&path);
-    let relative = resolve_relative(root, &file)?;
-    Ok(GitFileContents {
-        original: git_show_revision(root, "HEAD", &relative),
-        modified: read_working_tree_text(root, &relative),
+    let root = PathBuf::from(path);
+    let relative = resolve_relative(&root, &file)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(GitFileContents {
+            original: git_show_revision(&root, "HEAD", &relative),
+            modified: read_working_tree_text(&root, &relative),
+        })
     })
+    .await
+    .map_err(|error| format!("读取 Git 文件内容任务失败：{error}"))?
 }
 
 #[cfg(test)]

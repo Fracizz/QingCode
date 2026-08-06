@@ -1,4 +1,5 @@
 import { invoke as rawInvoke, isTauri as coreIsTauri } from '@tauri-apps/api/core'
+import { recordTauriCommandDuration } from './performanceDiagnostics'
 
 /** Whether the app is running inside the Tauri desktop runtime. */
 export function isTauri(): boolean {
@@ -24,7 +25,15 @@ export async function safeInvoke<T = unknown>(
   args?: Record<string, unknown>
 ): Promise<T> {
   if (!isTauri()) throw new NotInTauriError(action)
-  return rawInvoke<T>(cmd, args)
+  const started = performance.now()
+  let succeeded = false
+  try {
+    const result = await rawInvoke<T>(cmd, args)
+    succeeded = true
+    return result
+  } finally {
+    recordTauriCommandDuration(cmd, performance.now() - started, succeeded)
+  }
 }
 
 /** Throws a friendly error if called outside the Tauri runtime. */
