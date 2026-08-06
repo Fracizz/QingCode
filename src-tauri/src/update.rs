@@ -1,7 +1,9 @@
-//! Check for a newer QingCode release on Gitee (preferred) then GitHub.
+//! Check for a newer QingCode release on GitHub (preferred) then Gitee.
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde::Serialize;
@@ -10,6 +12,13 @@ const GITEE_LATEST: &str =
     "https://gitee.com/api/v5/repos/FrancizTest_admin/qing-code/releases/latest";
 const GITHUB_LATEST: &str = "https://api.github.com/repos/Fracizz/QingCode/releases/latest";
 const USER_AGENT: &str = "QingCode-UpdateCheck/1.0";
+const RELEASE_SOURCES: &[(&str, &str)] = &[("github", GITHUB_LATEST), ("gitee", GITEE_LATEST)];
+const UPDATE_CHECK_TIMEOUT: Duration = Duration::from_secs(6);
+const UPDATE_DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
+const UPDATE_DOWNLOAD_IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Process-wide gate: only the first app window performs the automatic startup check.
+static STARTUP_UPDATE_CHECK_CLAIMED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AppUpdateInfo {
@@ -240,7 +249,13 @@ pub fn download_release_asset(url: &str) -> Result<String, String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建下载目录失败：{e}"))?;
     }
 
-    let response = ureq::get(trimmed)
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(UPDATE_DOWNLOAD_CONNECT_TIMEOUT)
+        .timeout_read(UPDATE_DOWNLOAD_IO_TIMEOUT)
+        .timeout_write(UPDATE_DOWNLOAD_IO_TIMEOUT)
+        .build();
+    let response = agent
+        .get(trimmed)
         .set("User-Agent", USER_AGENT)
         .call()
         .map_err(|e| format!("下载失败：{e}"))?;
@@ -257,7 +272,14 @@ pub fn download_release_asset(url: &str) -> Result<String, String> {
 }
 
 fn fetch_release(url: &str) -> Result<ReleaseJson, String> {
-    let response = ureq::get(url)
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(UPDATE_CHECK_TIMEOUT)
+        .timeout_read(UPDATE_CHECK_TIMEOUT)
+        .timeout_write(UPDATE_CHECK_TIMEOUT)
+        .build();
+    let response = agent
+        .get(url)
+        .timeout(UPDATE_CHECK_TIMEOUT)
         .set("User-Agent", USER_AGENT)
         .set("Accept", "application/json")
         .call()
@@ -314,7 +336,7 @@ fn release_to_info(
     })
 }
 
-/// Query Gitee first, then GitHub. `current` is the running app version.
+/// Query GitHub first, then Gitee. `current` is the running app version.
 pub fn check_latest(current: &str) -> Result<AppUpdateInfo, String> {
     let current = current.trim().trim_start_matches(['v', 'V']);
     if current.is_empty() {
@@ -322,25 +344,38 @@ pub fn check_latest(current: &str) -> Result<AppUpdateInfo, String> {
     }
 
     let mut errors = Vec::new();
-    match fetch_release(GITEE_LATEST) {
-        Ok(release) => return release_to_info(release, current, "gitee"),
-        Err(e) => errors.push(format!("Gitee: {}", e)),
-    }
-    match fetch_release(GITHUB_LATEST) {
-        Ok(release) => return release_to_info(release, current, "github"),
-        Err(e) => errors.push(format!("GitHub: {}", e)),
+    for (source, url) in RELEASE_SOURCES {
+        match fetch_release(url) {
+            Ok(release) => return release_to_info(release, current, source),
+            Err(e) => errors.push(format!("{}: {}", source, e)),
+        }
     }
     Err(format!("检查更新失败（{}）", errors.join("；")))
 }
 
 #[tauri::command]
-pub fn check_app_update(current_version: String) -> Result<AppUpdateInfo, String> {
-    check_latest(&current_version)
+pub fn claim_startup_update_check() -> bool {
+    claim_once(&STARTUP_UPDATE_CHECK_CLAIMED)
+}
+
+fn claim_once(claimed: &AtomicBool) -> bool {
+    claimed
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
 }
 
 #[tauri::command]
-pub fn download_app_update(url: String) -> Result<String, String> {
-    download_release_asset(&url)
+pub async fn check_app_update(current_version: String) -> Result<AppUpdateInfo, String> {
+    tauri::async_runtime::spawn_blocking(move || check_latest(&current_version))
+        .await
+        .map_err(|error| format!("检查更新任务失败：{error}"))?
+}
+
+#[tauri::command]
+pub async fn download_app_update(url: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || download_release_asset(&url))
+        .await
+        .map_err(|error| format!("下载更新任务失败：{error}"))?
 }
 
 #[cfg(test)]
@@ -360,6 +395,19 @@ mod tests {
         assert!(is_newer("v0.2.0", "0.1.9"));
         assert!(!is_newer("0.1.3", "0.1.3"));
         assert!(!is_newer("0.1.2", "0.1.3"));
+    }
+
+    #[test]
+    fn startup_update_check_can_only_be_claimed_once() {
+        let claimed = AtomicBool::new(false);
+        assert!(claim_once(&claimed));
+        assert!(!claim_once(&claimed));
+    }
+
+    #[test]
+    fn release_sources_prefer_github_and_keep_gitee_fallback() {
+        assert_eq!(RELEASE_SOURCES[0], ("github", GITHUB_LATEST));
+        assert_eq!(RELEASE_SOURCES[1], ("gitee", GITEE_LATEST));
     }
 
     #[test]

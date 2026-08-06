@@ -35,6 +35,87 @@ export type TerminalOutputSnapshot = {
 const textDecoder = new TextDecoder()
 const textEncoder = new TextEncoder()
 
+/**
+ * Chunked byte ring for live terminal output.
+ * Appends are O(1) amortized; flattening only happens for replay/persistence.
+ */
+export type TerminalByteRing = {
+  chunks: Uint8Array[]
+  headOffset: number
+  byteLength: number
+  maxBytes: number
+}
+
+export function createTerminalByteRing(
+  maxBytes: number,
+  initial?: Uint8Array,
+): TerminalByteRing {
+  const ring: TerminalByteRing = {
+    chunks: [],
+    headOffset: 0,
+    byteLength: 0,
+    maxBytes: Math.max(0, Math.floor(maxBytes)),
+  }
+  if (initial?.length) appendTerminalByteRing(ring, initial, maxBytes)
+  return ring
+}
+
+export function appendTerminalByteRing(
+  ring: TerminalByteRing,
+  chunk: Uint8Array,
+  maxBytes: number = ring.maxBytes,
+): TerminalByteRing {
+  const limit = Math.max(0, Math.floor(maxBytes))
+  ring.maxBytes = limit
+  if (limit === 0) {
+    ring.chunks = []
+    ring.headOffset = 0
+    ring.byteLength = 0
+    return ring
+  }
+  if (chunk.length >= limit) {
+    ring.chunks = [chunk.slice(chunk.length - limit)]
+    ring.headOffset = 0
+    ring.byteLength = limit
+    return ring
+  }
+
+  if (chunk.length > 0) {
+    ring.chunks.push(chunk)
+    ring.byteLength += chunk.length
+  }
+  let excess = ring.byteLength - limit
+  while (excess > 0 && ring.chunks.length > 0) {
+    const first = ring.chunks[0]
+    const available = first.length - ring.headOffset
+    if (excess >= available) {
+      excess -= available
+      ring.byteLength -= available
+      ring.chunks.shift()
+      ring.headOffset = 0
+    } else {
+      ring.headOffset += excess
+      ring.byteLength -= excess
+      excess = 0
+    }
+  }
+  return ring
+}
+
+export function terminalByteRingToBytes(ring: TerminalByteRing | undefined): Uint8Array {
+  if (!ring || ring.byteLength === 0) return new Uint8Array()
+  const out = new Uint8Array(ring.byteLength)
+  let offset = 0
+  for (let index = 0; index < ring.chunks.length; index++) {
+    const chunk = ring.chunks[index]
+    const start = index === 0 ? ring.headOffset : 0
+    const part = chunk.subarray(start)
+    out.set(part, offset)
+    offset += part.length
+  }
+  return out
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

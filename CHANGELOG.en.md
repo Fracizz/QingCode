@@ -6,6 +6,16 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.10] - 2026-08-03
+
+### Changed
+
+- Update check: query GitHub Release first, Gitee as fallback
+
+### Fixed
+
+- Source Control: paginated Git commit history returned empty on Windows
+
 ## [0.1.9] - 2026-08-03
 
 ### Added

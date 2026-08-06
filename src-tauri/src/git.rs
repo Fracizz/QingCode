@@ -1107,14 +1107,10 @@ fn switch_branch(root: &Path, branch: &str) -> Result<(), String> {
 fn list_commits(root: &Path, limit: usize, skip: usize) -> Result<Vec<GitCommitInfo>, String> {
     let limit = limit.clamp(1, 100);
     let skip = skip.min(100_000);
-    let limit_arg = format!("-n{limit}");
+    let fetch = limit.saturating_add(skip).min(100_000);
+    let limit_arg = format!("-n{fetch}");
     let format_arg = "--format=%H%x00%h%x00%s%x00%an%x00%cI%x00%D";
-    let output = if skip == 0 {
-        run_git(root, &["log", &limit_arg, format_arg])?
-    } else {
-        let skip_arg = format!("--skip={skip}");
-        run_git(root, &["log", &skip_arg, &limit_arg, format_arg])?
-    };
+    let output = run_git(root, &["log", &limit_arg, format_arg])?;
     if !output.status.success() {
         let message = git_output_text(&output).to_ascii_lowercase();
         if message.contains("bad revision")
@@ -1155,7 +1151,10 @@ fn list_commits(root: &Path, limit: usize, skip: usize) -> Result<Vec<GitCommitI
                 .unwrap_or_default(),
         });
     }
-    Ok(commits)
+    if skip >= commits.len() {
+        return Ok(vec![]);
+    }
+    Ok(commits.into_iter().skip(skip).take(limit).collect())
 }
 
 #[tauri::command]
@@ -1298,15 +1297,17 @@ pub async fn git_commit_file_contents(
 }
 
 #[tauri::command]
-pub fn git_diff(
+pub async fn git_diff(
     path: String,
     file: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<String, String> {
     ensure_git_root(&path, &allowlist)?;
-    let root = Path::new(&path);
-    let relative = resolve_relative(root, &file)?;
-    collect_file_diff(root, &relative)
+    let root = PathBuf::from(path);
+    let relative = resolve_relative(&root, &file)?;
+    tauri::async_runtime::spawn_blocking(move || collect_file_diff(&root, &relative))
+        .await
+        .map_err(|error| format!("读取 Git Diff 任务失败：{error}"))?
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -1339,18 +1340,22 @@ fn read_working_tree_text(root: &Path, relative: &str) -> String {
 
 /// Pair of HEAD vs working-tree contents for the side-by-side editor diff.
 #[tauri::command]
-pub fn git_file_contents(
+pub async fn git_file_contents(
     path: String,
     file: String,
     allowlist: State<'_, PathAllowlist>,
 ) -> Result<GitFileContents, String> {
     ensure_git_root(&path, &allowlist)?;
-    let root = Path::new(&path);
-    let relative = resolve_relative(root, &file)?;
-    Ok(GitFileContents {
-        original: git_show_revision(root, "HEAD", &relative),
-        modified: read_working_tree_text(root, &relative),
+    let root = PathBuf::from(path);
+    let relative = resolve_relative(&root, &file)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(GitFileContents {
+            original: git_show_revision(&root, "HEAD", &relative),
+            modified: read_working_tree_text(&root, &relative),
+        })
     })
+    .await
+    .map_err(|error| format!("读取 Git 文件内容任务失败：{error}"))?
 }
 
 #[cfg(test)]

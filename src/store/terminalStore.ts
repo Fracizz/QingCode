@@ -30,13 +30,16 @@ import {
 } from '@/lib/terminal/terminalScrollbackSettings'
 import {
   absorbInputForHistory,
-  appendScrollbackBytes,
+  appendTerminalByteRing,
   buildTerminalOutputSnapshot,
+  createTerminalByteRing,
   decodeScrollbackBytes,
   encodeScrollbackText,
   loadTerminalOutputSnapshot,
   pushCommandHistory,
   saveTerminalOutputSnapshot,
+  terminalByteRingToBytes,
+  type TerminalByteRing,
   truncateScrollbackBytes,
 } from '@/lib/terminal/terminalSessionPersist'
 import {
@@ -55,11 +58,13 @@ import {
 } from '@/lib/terminal/terminalShell'
 import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
 import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
+import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 /** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
 const LEGACY_SESSION_STORAGE_KEY = 'qingcode:terminal-layout'
-const OUTPUT_PERSIST_DEBOUNCE_MS = 800
+const OUTPUT_PERSIST_DEBOUNCE_MS = 1_200
+const OUTPUT_PERSIST_IDLE_TIMEOUT_MS = 4_000
 
 /** 够"快"才算启动失败：进程在此时长（毫秒）内非零退出，视为秒退并提示。 */
 const QUICK_FAIL_THRESHOLD_MS = 2000
@@ -206,56 +211,83 @@ async function respawnShellAfterExit(id: string): Promise<void> {
   }
 }
 
-/** Late-subscriber catch-up (cleared once a live listener attaches). */
-const terminalOutputBuffers = new Map<string, Uint8Array>()
 /** Always-on ring used for persistence + restore replay. */
-const terminalScrollbackRings = new Map<string, Uint8Array>()
+const terminalScrollbackRings = new Map<string, TerminalByteRing>()
 const terminalCommandHistory = new Map<string, string[]>()
 const terminalInputPending = new Map<string, string>()
 const terminalOutputListeners = new Map<string, Set<TerminalOutputListener>>()
 const terminalRingUpdatedAt = new Map<string, number>()
+const terminalPendingOutput = new Map<string, Uint8Array[]>()
+const terminalOutputFlushTimers = new Map<string, number>()
 
 let outputPersistTimer: ReturnType<typeof setTimeout> | null = null
+let outputPersistIdle: number | null = null
 
 function maxBufferedBytes(): number {
   return scrollbackMaxChars(getTerminalScrollback())
 }
 
 function touchRing(id: string, bytes: Uint8Array) {
-  terminalScrollbackRings.set(id, bytes)
+  const maxBytes = maxBufferedBytes()
+  const ring =
+    terminalScrollbackRings.get(id) ?? createTerminalByteRing(maxBytes)
+  appendTerminalByteRing(ring, bytes, maxBytes)
+  terminalScrollbackRings.set(id, ring)
   terminalRingUpdatedAt.set(id, Date.now())
   scheduleTerminalOutputPersist()
 }
 
+function combineOutputChunks(chunks: Uint8Array[]): Uint8Array {
+  if (chunks.length === 1) return chunks[0]
+  const size = chunks.reduce((total, chunk) => total + chunk.length, 0)
+  const combined = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    combined.set(chunk, offset)
+    offset += chunk.length
+  }
+  return combined
+}
+
+function flushTerminalOutput(id: string) {
+  terminalOutputFlushTimers.delete(id)
+  const chunks = terminalPendingOutput.get(id)
+  terminalPendingOutput.delete(id)
+  if (!chunks?.length) return
+  const listeners = terminalOutputListeners.get(id)
+  if (!listeners?.size) return
+  const combined = combineOutputChunks(chunks)
+  listeners.forEach(listener => listener(combined))
+}
+
+function queueTerminalOutput(id: string, bytes: Uint8Array) {
+  const chunks = terminalPendingOutput.get(id) ?? []
+  chunks.push(bytes)
+  terminalPendingOutput.set(id, chunks)
+  if (terminalOutputFlushTimers.has(id)) return
+  terminalOutputFlushTimers.set(
+    id,
+    window.setTimeout(() => flushTerminalOutput(id), 16),
+  )
+}
+
 function publishTerminalOutput(id: string, data: number[]) {
   const bytes = new Uint8Array(data)
-  const ring = appendScrollbackBytes(
-    terminalScrollbackRings.get(id),
-    bytes,
-    getTerminalScrollback(),
-    maxBufferedBytes()
-  )
-  touchRing(id, ring)
+  recordPerformanceThroughput('terminalBytes', bytes.length)
+  touchRing(id, bytes)
 
   const listeners = terminalOutputListeners.get(id)
   if (listeners?.size) {
-    listeners.forEach(listener => listener(bytes))
-    return
+    queueTerminalOutput(id, bytes)
   }
-
-  const previous = terminalOutputBuffers.get(id)
-  const buffered = appendScrollbackBytes(
-    previous,
-    bytes,
-    getTerminalScrollback(),
-    maxBufferedBytes()
-  )
-  terminalOutputBuffers.set(id, buffered)
 }
 
 function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
-  terminalOutputBuffers.delete(id)
   terminalScrollbackRings.delete(id)
+  terminalPendingOutput.delete(id)
+  const flushTimer = terminalOutputFlushTimers.get(id)
+  if (flushTimer !== undefined) window.clearTimeout(flushTimer)
+  terminalOutputFlushTimers.delete(id)
   terminalCommandHistory.delete(id)
   terminalInputPending.delete(id)
   terminalRingUpdatedAt.delete(id)
@@ -275,8 +307,7 @@ export function seedTerminalOutputFromPersist(
       getTerminalScrollback(),
       maxBufferedBytes()
     )
-    terminalScrollbackRings.set(id, bytes)
-    terminalOutputBuffers.set(id, bytes)
+    terminalScrollbackRings.set(id, createTerminalByteRing(maxBufferedBytes(), bytes))
     terminalRingUpdatedAt.set(id, Date.now())
   }
   if (history.length > 0) {
@@ -301,25 +332,26 @@ export function getTerminalCommandHistory(id: string): string[] {
 }
 
 export function subscribeTerminalOutput(id: string, listener: TerminalOutputListener) {
+  // Deliver already-batched live bytes to existing views before a new view replays the ring.
+  // This avoids both missing history and duplicating the pending tail in the new xterm.
+  if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
   const listeners = terminalOutputListeners.get(id) ?? new Set<TerminalOutputListener>()
   listeners.add(listener)
   terminalOutputListeners.set(id, listeners)
 
-  const buffered = terminalOutputBuffers.get(id)
-  if (buffered) {
-    terminalOutputBuffers.delete(id)
-    listener(buffered)
-  } else {
-    // Remount after project switch: replay the durable ring once.
-    const ring = terminalScrollbackRings.get(id)
-    if (ring?.length && listeners.size === 1) {
-      listener(ring)
-    }
-  }
+  // A newly mounted xterm needs one complete replay. Live output is batched below.
+  const ring = terminalByteRingToBytes(terminalScrollbackRings.get(id))
+  if (ring.length) listener(ring)
 
   return () => {
     listeners.delete(listener)
-    if (listeners.size === 0) terminalOutputListeners.delete(id)
+    if (listeners.size === 0) {
+      terminalOutputListeners.delete(id)
+      terminalPendingOutput.delete(id)
+      const flushTimer = terminalOutputFlushTimers.get(id)
+      if (flushTimer !== undefined) window.clearTimeout(flushTimer)
+      terminalOutputFlushTimers.delete(id)
+    }
   }
 }
 
@@ -330,7 +362,9 @@ function collectOutputPersistPayload(): Record<
   const terminals: Record<string, { scrollback: string; history: string[]; updatedAt?: number }> =
     {}
   for (const tab of useTerminalStore.getState().terminals) {
-    const scrollback = decodeScrollbackBytes(terminalScrollbackRings.get(tab.id))
+    const scrollback = decodeScrollbackBytes(
+      terminalByteRingToBytes(terminalScrollbackRings.get(tab.id)),
+    )
     const history = terminalCommandHistory.get(tab.id) ?? []
     if (!scrollback && history.length === 0) continue
     terminals[tab.id] = {
@@ -347,6 +381,12 @@ export function persistTerminalOutputNow() {
     clearTimeout(outputPersistTimer)
     outputPersistTimer = null
   }
+  if (outputPersistIdle !== null) {
+    if (typeof window.cancelIdleCallback === 'function') {
+      window.cancelIdleCallback(outputPersistIdle)
+    }
+    outputPersistIdle = null
+  }
   if (!isSessionPersistEnabled()) return
   const terminals = collectOutputPersistPayload()
   const snapshot = buildTerminalOutputSnapshot({
@@ -357,10 +397,20 @@ export function persistTerminalOutputNow() {
 }
 
 export function scheduleTerminalOutputPersist() {
-  if (outputPersistTimer) clearTimeout(outputPersistTimer)
+  if (outputPersistTimer || outputPersistIdle !== null) return
   outputPersistTimer = setTimeout(() => {
     outputPersistTimer = null
-    persistTerminalOutputNow()
+    if (typeof window.requestIdleCallback === 'function') {
+      outputPersistIdle = window.requestIdleCallback(
+        () => {
+          outputPersistIdle = null
+          persistTerminalOutputNow()
+        },
+        { timeout: OUTPUT_PERSIST_IDLE_TIMEOUT_MS },
+      )
+    } else {
+      persistTerminalOutputNow()
+    }
   }, OUTPUT_PERSIST_DEBOUNCE_MS)
 }
 
@@ -939,8 +989,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (!options?.preserveOutput) {
       clearTerminalOutput(id)
     } else {
-      // Keep scrollback/history; drop late-subscriber catch-up so xterm is not double-fed.
-      terminalOutputBuffers.delete(id)
+      // Keep scrollback/history while resetting the partial input accumulator.
       terminalInputPending.delete(id)
     }
     clearPtySpawnFallback(id)
@@ -1440,5 +1489,5 @@ if (typeof window !== 'undefined') {
 /** True when the ring still has bytes (used by Terminal UI for restore banners). */
 export function hasTerminalScrollback(id: string): boolean {
   const ring = terminalScrollbackRings.get(id)
-  return !!ring && ring.length > 0
+  return !!ring && ring.byteLength > 0
 }

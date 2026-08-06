@@ -106,7 +106,7 @@ fn list_dir_one_level(
 }
 
 #[tauri::command]
-pub fn scan_directory(
+pub async fn scan_directory(
     path: String,
     workspace_root: Option<String>,
     exclude_patterns: Option<Vec<String>>,
@@ -115,20 +115,28 @@ pub fn scan_directory(
 ) -> Result<Vec<FileNode>, String> {
     allowlist.ensure_allowed(&path)?;
     let root = workspace_root.unwrap_or_else(|| path.clone());
-    list_dir_one_level(
-        &path,
-        &root,
-        exclude_patterns.as_deref(),
-        exclude_git_ignore.unwrap_or(true),
-    )
-    .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        list_dir_one_level(
+            &path,
+            &root,
+            exclude_patterns.as_deref(),
+            exclude_git_ignore.unwrap_or(true),
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| format!("扫描目录任务失败: {error}"))?
 }
 
 #[tauri::command]
-pub fn validate_directory(path: String) -> Result<(), String> {
-    if Path::new(&path).is_dir() {
-        Ok(())
-    } else {
-        Err(format!("目录不可用: {}", path))
-    }
+pub async fn validate_directory(path: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if Path::new(&path).is_dir() {
+            Ok(())
+        } else {
+            Err(format!("目录不可用: {}", path))
+        }
+    })
+    .await
+    .map_err(|error| format!("验证目录任务失败: {error}"))?
 }

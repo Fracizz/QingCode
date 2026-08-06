@@ -1170,7 +1170,7 @@
     "可设为 {min}–{max} 个；失去焦点或按 Enter 后保存。": "Set between {min} and {max}; saves on blur or Enter.",
     "保存项目会话 LRU 设置失败: {error}": "Failed to save project session LRU setting: {error}",
     "启动时自动检查更新": "Check for Updates on Startup",
-    "正式构建启动后约 3 秒静默查询 Gitee / GitHub Release。关闭后仍可手动检查。": "About 3 seconds after a release build starts, silently query Gitee / GitHub Releases. You can still check manually when this is off.",
+    "正式构建启动后约 3 秒静默查询 GitHub / Gitee Release。关闭后仍可手动检查。": "About 3 seconds after a release build starts, silently query GitHub / Gitee Releases. You can still check manually when this is off.",
     "检查更新": "Check for Updates",
     "查询远端最新安装包；发现新版本时可下载安装包，不会自动安装。": "Query the latest installer release. When a newer version is found, you can download the installer; nothing is installed automatically.",
     "检查更新需要 Tauri 桌面环境": "Checking for updates requires the Tauri desktop app",

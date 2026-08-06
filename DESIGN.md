@@ -482,7 +482,7 @@ HTML5 `draggable` 的标签栏排序仍走浏览器 DnD，**同样不得**为 re
 
 - 多选时所有选中行显示 `bg-bg-active`；剪切项半透明。`revealFileInTree` 仅滚动定位并替换为单选，不再高亮祖先路径。
 - 切换标签或「在侧边栏定位当前文件」时，选中项随 `treeRevealPath` 同步。
-- **刷新 / 文件监视**：工具栏刷新与外部变更自动刷新会对**已展开目录重新扫描磁盘**（`reloadLoadedChildren`），不只更新根目录一层。监视默认开启（Tauri）；资源管理器默认显示全部磁盘条目，`files.exclude` 各内置项与 `explorer.excludeGitIgnore` 均默认为 false，需要时可显式开启隐藏。
+- **刷新 / 文件监视**：工具栏刷新与外部变更自动刷新会对**已展开目录重新扫描磁盘**（`reloadLoadedChildren`），不只更新根目录一层。监视默认开启（Tauri）；为避免编译或依赖安装产生事件风暴，递归监视在后端固定忽略 `.git`、`node_modules`、`target`、`dist`、`build`、`out`、`coverage`、`.next`、`.turbo`、`.cache`，但这不改变资源管理器的显示规则。资源管理器默认显示全部磁盘条目，`files.exclude` 各内置项与 `explorer.excludeGitIgnore` 均默认为 false，需要时可显式开启隐藏。
 - **打开文件内容同步**（与树刷新分离）：`fs-change`、窗口 focus/visibility、切换标签都会走 `syncOpenFileFromDisk`。干净标签静默重载；有未保存修改且与磁盘不一致时弹窗（重新加载 / 比较 / 保留本地）；只读大文件预览只 toast + 更新 mtime，不全量读入。
 
 ### Prompt（文本输入）

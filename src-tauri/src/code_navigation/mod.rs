@@ -2978,12 +2978,17 @@ impl SemanticNavigationState {
     }
 
     pub(crate) fn refresh_path_from_disk(&self, path: &Path) -> Result<(), String> {
+        // Watcher batches contain many assets and build outputs. Unsupported files must not
+        // cancel an in-flight workspace index before we know they can affect semantics.
+        if language_for_path(path).is_none() {
+            return Ok(());
+        }
         let roots = self.workspace_roots_for_path(path);
         for root in &roots {
             self.cancel_root_index(root);
         }
         self.invalidate_path(path);
-        if !path.is_file() || language_for_path(path).is_none() {
+        if !path.is_file() {
             return Ok(());
         }
         for root in roots {

@@ -4,8 +4,10 @@ import {
   TERMINAL_SESSION_OUTPUT_KEY,
   absorbInputForHistory,
   appendScrollbackBytes,
+  appendTerminalByteRing,
   buildTerminalOutputSnapshot,
   clearTerminalOutputSnapshot,
+  createTerminalByteRing,
   enforceTerminalOutputStorageBudget,
   loadTerminalOutputSnapshot,
   normalizeCommandHistory,
@@ -13,6 +15,7 @@ import {
   pruneTerminalOutputSnapshot,
   pushCommandHistory,
   saveTerminalOutputSnapshot,
+  terminalByteRingToBytes,
   truncateScrollbackBytes,
   truncateScrollbackText,
 } from '@/lib/terminal/terminalSessionPersist'
@@ -40,6 +43,18 @@ beforeEach(() => {
 afterEach(() => {
   clearTerminalOutputSnapshot()
   vi.unstubAllGlobals()
+})
+
+describe('TerminalByteRing', () => {
+  it('keeps the newest bytes without rebuilding prior chunks on append', () => {
+    const ring = createTerminalByteRing(5)
+    appendTerminalByteRing(ring, new Uint8Array([1, 2, 3]))
+    appendTerminalByteRing(ring, new Uint8Array([4, 5, 6]))
+    expect([...terminalByteRingToBytes(ring)]).toEqual([2, 3, 4, 5, 6])
+
+    appendTerminalByteRing(ring, new Uint8Array([7, 8, 9, 10, 11, 12]))
+    expect([...terminalByteRingToBytes(ring)]).toEqual([8, 9, 10, 11, 12])
+  })
 })
 
 describe('truncateScrollbackText', () => {
