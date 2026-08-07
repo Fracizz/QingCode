@@ -1822,14 +1822,21 @@ mod tests {
             .remote
             .iter()
             .any(|name| name == "origin/feature/remote-only"));
-        assert_eq!(fs::read_to_string(root.join("README.md")).unwrap(), "v1\n");
+        assert_eq!(
+            fs::read_to_string(root.join("README.md"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "v1\n"
+        );
 
         switch_branch(&root, "origin/feature/remote-only").unwrap();
         let after = list_branches(&root).unwrap();
         let current = after.local.iter().find(|b| b.current).unwrap();
         assert_eq!(current.name, "feature/remote-only");
         assert_eq!(
-            fs::read_to_string(root.join("remote.txt")).unwrap(),
+            fs::read_to_string(root.join("remote.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
             "remote\n"
         );
 
