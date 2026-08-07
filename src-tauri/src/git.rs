@@ -1828,7 +1828,10 @@ mod tests {
         let after = list_branches(&root).unwrap();
         let current = after.local.iter().find(|b| b.current).unwrap();
         assert_eq!(current.name, "feature/remote-only");
-        assert_eq!(fs::read_to_string(root.join("remote.txt")).unwrap(), "remote\n");
+        assert_eq!(
+            fs::read_to_string(root.join("remote.txt")).unwrap(),
+            "remote\n"
+        );
 
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(remote).unwrap();
