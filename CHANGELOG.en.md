@@ -6,6 +6,16 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.11] - 2026-08-07
+
+### Added
+
+- File watching and persisted terminal sessions; performance diagnostics in Settings
+
+### Fixed
+
+- Ctrl+click definition navigation when packaged WebView2 drops modifier-key events
+
 ## [0.1.10] - 2026-08-03
 
 ### Changed
