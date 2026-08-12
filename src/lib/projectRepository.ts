@@ -276,6 +276,7 @@ export async function deleteProjectRows(id: string): Promise<void> {
   await withDb('移除项目', async d => {
     await d.execute('DELETE FROM projects WHERE id = $1', [id])
     await d.execute('DELETE FROM recent_files WHERE project_id = $1', [id])
+    await d.execute('DELETE FROM favorite_items WHERE project_id = $1', [id])
   })
 }
 

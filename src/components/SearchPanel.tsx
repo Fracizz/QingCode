@@ -28,12 +28,16 @@ import {
   File as FileIcon,
   LocateFixed,
   ExternalLink,
+  BookmarkPlus,
+  BookmarkMinus,
 } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { List, useListRef } from 'react-window'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
+import { useFavoriteStore } from '../store/favoriteStore'
+import { favoriteRelativePath, favoriteRelativePathKey } from '../lib/favoriteItems'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import { copyToClipboard, findProjectForPath } from '../utils/fileReferences'
 import {
@@ -183,6 +187,9 @@ export default function SearchPanel() {
   const reqId = useRef(0)
   const loadingMoreRef = useRef(false)
   const pushToast = useProjectStore(s => s.pushToast)
+  const favoriteItemsByProject = useFavoriteStore(s => s.itemsByProject)
+  const addFavorite = useFavoriteStore(s => s.addFavorite)
+  const removeFavorite = useFavoriteStore(s => s.removeFavorite)
   const extScanId = useRef(0)
   /** When true, the next search effect skips debounce (Enter / flush). */
   const searchNowRef = useRef(false)
@@ -780,6 +787,18 @@ export default function SearchPanel() {
   const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
     if (!contextMenu) return []
     const { target } = contextMenu
+    const path = target.path
+    const isDir = target.kind === 'fn' && target.isDir
+    const project = findProjectForPath(projects, path)
+    const relativeFavoritePath = project ? favoriteRelativePath(project.path, path) : null
+    const favorite =
+      project && relativeFavoritePath
+        ? (favoriteItemsByProject[project.id] ?? []).find(
+            item =>
+              favoriteRelativePathKey(project.path, item.relativePath) ===
+              favoriteRelativePathKey(project.path, relativeFavoritePath),
+          )
+        : undefined
     const openLabel =
       target.kind === 'fn' && target.isDir ? t('在资源管理器中定位') : t('打开')
     const items: ContextMenuItem[] = [
@@ -815,6 +834,29 @@ export default function SearchPanel() {
           })
         },
       },
+      ...(project && relativeFavoritePath
+        ? [
+            favorite
+              ? {
+                  label: t('取消收藏'),
+                  icon: <BookmarkMinus size={14} />,
+                  separatorBefore: true,
+                  action: () =>
+                    void removeFavorite(project, favorite.relativePath).catch(error => {
+                      pushToast('error', t('更新收藏夹失败: {error}', { error: String(error) }))
+                    }),
+                }
+              : {
+                  label: isDir ? t('收藏文件夹') : t('收藏文件'),
+                  icon: <BookmarkPlus size={14} />,
+                  separatorBefore: true,
+                  action: () =>
+                    void addFavorite(project, path, isDir ? 'directory' : 'file').catch(error => {
+                      pushToast('error', t('更新收藏夹失败: {error}', { error: String(error) }))
+                    }),
+                },
+          ]
+        : []),
       {
         label: t('复制路径'),
         icon: <Copy size={14} />,
@@ -846,11 +888,15 @@ export default function SearchPanel() {
     }
     return items
   }, [
+    addFavorite,
     contextMenu,
     copyFileName,
+    favoriteItemsByProject,
     onOpenFilename,
     openFile,
+    projects,
     pushToast,
+    removeFavorite,
     revealFileInTree,
     setView,
     t,

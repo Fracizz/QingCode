@@ -35,6 +35,8 @@ import {
   Scissors,
   ClipboardPaste,
   ClipboardCopy,
+  BookmarkPlus,
+  BookmarkMinus,
 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useProjectStore, type FileNode } from '../store/projectStore'
@@ -95,6 +97,14 @@ import {
 import { setExplorerSelectedPaths } from '../lib/explorerSelection'
 import { useShortcutStore } from '../store/shortcutStore'
 import ExplorerTreeRow from './ExplorerTreeRow'
+import FavoriteItemsSection from './FavoriteItemsSection'
+import { useFavoriteStore } from '../store/favoriteStore'
+import { favoriteRelativePath, favoriteRelativePathKey } from '../lib/favoriteItems'
+import {
+  EXPLORER_HEADING_GRID,
+  EXPLORER_HEADING_ICON,
+  EXPLORER_HEADING_INSET,
+} from './explorerLayout'
 
 type DirectoryDeleteStats = {
   path: string
@@ -159,6 +169,11 @@ export default function Sidebar() {
   const clearPendingNewFile = useUIStore(s => s.clearPendingNewFile)
   const renameEditorPath = useEditorStore(s => s.renamePath)
   const closeTabsForPath = useEditorStore(s => s.closeTabsForPath)
+  const favoriteItemsByProject = useFavoriteStore(s => s.itemsByProject)
+  const addFavorite = useFavoriteStore(s => s.addFavorite)
+  const removeFavorite = useFavoriteStore(s => s.removeFavorite)
+  const moveFavoritePath = useFavoriteStore(s => s.moveFavoritePath)
+  const removeFavoritePath = useFavoriteStore(s => s.removeFavoritePath)
   const renameShortcut = useShortcutStore(s => s.shortcuts.renameInExplorer)
   const [refreshing, setRefreshing] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
@@ -468,7 +483,10 @@ export default function Sidebar() {
     if (refreshing || !currentProject) return
     setRefreshing(true)
     try {
-      await refreshProjectTree(currentProject)
+      await Promise.all([
+        refreshProjectTree(currentProject),
+        useFavoriteStore.getState().loadProjectFavorites(currentProject, { force: true }),
+      ])
     } finally {
       setRefreshing(false)
     }
@@ -533,6 +551,28 @@ export default function Sidebar() {
     // deleted/moved entries visible after mutations.
     if (pathsEqual(path, project.path)) await refreshProjectTree(project)
     else await expandProjectDir(project.id, path, { force: true })
+  }
+
+  const syncFavoriteMove = async (project: Project, oldPath: string, newPath: string) => {
+    try {
+      await moveFavoritePath(project, oldPath, newPath)
+    } catch (error) {
+      useProjectStore.getState().pushToast(
+        'error',
+        t('更新收藏夹失败: {error}', { error: String(error) }),
+      )
+    }
+  }
+
+  const syncFavoriteRemove = async (project: Project, path: string) => {
+    try {
+      await removeFavoritePath(project, path)
+    } catch (error) {
+      useProjectStore.getState().pushToast(
+        'error',
+        t('更新收藏夹失败: {error}', { error: String(error) }),
+      )
+    }
   }
 
   const pruneTreePaths = (removedPaths: string[]) => {
@@ -631,6 +671,8 @@ export default function Sidebar() {
         newName: name,
       })
       renameEditorPath(path, newPath)
+      const project = projectOfPath(path)
+      if (project) await syncFavoriteMove(project, path, newPath)
       await refreshDirectory(parentPath(path))
       replaceSelection(newPath)
       useProjectStore.getState().pushToast('success', t('已重命名为: {name}', { name }))
@@ -709,6 +751,7 @@ export default function Sidebar() {
       const conflict = await findExplorerNameConflict(source, destDir)
       let conflictPolicy: 'overwrite' | 'fail' = 'fail'
       let destName: string | undefined
+      let overwrittenPath: string | null = null
       if (conflict) {
         const decision = await resolveExplorerNameConflict({
           conflict,
@@ -720,6 +763,7 @@ export default function Sidebar() {
         if (decision.action === 'skip') continue
         if (decision.action === 'overwrite') {
           conflictPolicy = 'overwrite'
+          overwrittenPath = conflict.destPath
           closeTabsForPath(conflict.destPath)
         } else {
           destName = decision.newName
@@ -737,6 +781,11 @@ export default function Sidebar() {
       })
       if (mode === 'cut') {
         renameEditorPath(source, newPath)
+        const project = projectOfPath(source)
+        if (project) {
+          if (overwrittenPath) await syncFavoriteRemove(project, overwrittenPath)
+          await syncFavoriteMove(project, source, newPath)
+        }
         parentsToRefresh.add(parentPath(source))
         movedSources.push(source)
       }
@@ -931,6 +980,8 @@ export default function Sidebar() {
     try {
       await safeInvoke('删除', 'delete_path', { path: node.path })
       closeTabsForPath(node.path)
+      const project = projectOfPath(node.path)
+      if (project) await syncFavoriteRemove(project, node.path)
       pruneTreePaths([node.path])
       await refreshDirectory(parentPath(node.path))
       useProjectStore.getState().pushToast('success', t('已删除: {name}', { name: node.name }))
@@ -1091,6 +1142,17 @@ export default function Sidebar() {
     const node = target.node
     const parent = node.is_dir ? node.path : parentPath(node.path)
     const project = projectOfPath(parent)
+    const relativeFavoritePath = project
+      ? favoriteRelativePath(project.path, node.path)
+      : null
+    const favorite = relativeFavoritePath
+      ? (favoriteItemsByProject[project?.id ?? ''] ?? []).find(
+          item =>
+            project &&
+            favoriteRelativePathKey(project.path, item.relativePath) ===
+              favoriteRelativePathKey(project.path, relativeFavoritePath),
+        )
+      : undefined
     return [
       ...(!node.is_dir
         ? [
@@ -1142,6 +1204,39 @@ export default function Sidebar() {
               action: () => requestSearch(node.path),
             },
           ]),
+      ...(project && relativeFavoritePath
+        ? [
+            favorite
+              ? {
+                  label: t('取消收藏'),
+                  icon: <BookmarkMinus size={14} />,
+                  separatorBefore: true,
+                  action: () =>
+                    void removeFavorite(project, favorite.relativePath).catch(error => {
+                      useProjectStore.getState().pushToast(
+                        'error',
+                        t('更新收藏夹失败: {error}', { error: String(error) }),
+                      )
+                    }),
+                }
+              : {
+                  label: node.is_dir ? t('收藏文件夹') : t('收藏文件'),
+                  icon: <BookmarkPlus size={14} />,
+                  separatorBefore: true,
+                  action: () =>
+                    void addFavorite(
+                      project,
+                      node.path,
+                      node.is_dir ? 'directory' : 'file',
+                    ).catch(error => {
+                      useProjectStore.getState().pushToast(
+                        'error',
+                        t('更新收藏夹失败: {error}', { error: String(error) }),
+                      )
+                    }),
+                },
+          ]
+        : []),
       {
         label: t('剪切'),
         icon: <Scissors size={14} />,
@@ -1280,10 +1375,12 @@ export default function Sidebar() {
       }
     >
       {/* Section header */}
-      <div className="px-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted">
-        <span className="flex items-center gap-2">
-          <FolderOpen size={13} className="text-brand" />
-          {t('资源管理器')}
+      <div
+        className={`${EXPLORER_HEADING_INSET} pr-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted`}
+      >
+        <span className={`${EXPLORER_HEADING_GRID} min-w-0`}>
+          <FolderOpen size={15} className={EXPLORER_HEADING_ICON} />
+          <span className="truncate leading-none">{t('资源管理器')}</span>
         </span>
         <div className="flex items-center gap-0.5">
           <Tooltip label={t('在侧边栏定位当前文件')} side="bottom">
@@ -1341,7 +1438,7 @@ export default function Sidebar() {
                 <div
                   data-explorer-drop={currentProject.path}
                   data-explorer-isdir="1"
-                  className={`group flex items-center gap-1 pl-3 pr-2 py-[5px] text-[13px] select-none cursor-default [&_button]:cursor-default ${
+                  className={`group flex h-9 items-center gap-2 ${EXPLORER_HEADING_INSET} pr-2 text-[13px] select-none cursor-default [&_button]:cursor-default ${
                     dragOverPath != null && pathsEqual(dragOverPath, currentProject.path)
                       ? 'text-accent font-medium'
                       : isProjectRootSelected
@@ -1367,18 +1464,20 @@ export default function Sidebar() {
                     showContextMenu(event, { kind: 'project', project: currentProject })
                   }}
                 >
-                  {unavailable ? (
-                    <AlertTriangle size={15} className="text-warn flex-shrink-0" />
-                  ) : (
-                    <FolderOpen size={15} className="text-brand flex-shrink-0" />
-                  )}
-                  <Tooltip
-                    label={currentProject.path}
-                    side="bottom"
-                    wrapperClassName="truncate min-w-0 flex-1"
-                  >
-                    <span className="truncate font-medium">{currentProject.name}</span>
-                  </Tooltip>
+                  <span className={`${EXPLORER_HEADING_GRID} min-w-0 flex-1`}>
+                    {unavailable ? (
+                      <AlertTriangle size={15} className="size-[15px] shrink-0 text-warn" />
+                    ) : (
+                      <FolderOpen size={15} className={EXPLORER_HEADING_ICON} />
+                    )}
+                    <Tooltip
+                      label={currentProject.path}
+                      side="bottom"
+                      wrapperClassName="flex min-w-0 items-center"
+                    >
+                      <span className="truncate font-medium leading-none">{currentProject.name}</span>
+                    </Tooltip>
+                  </span>
                   <Tooltip label={t('新建文件')} side="bottom">
                     <button
                       type="button"
@@ -1456,6 +1555,8 @@ export default function Sidebar() {
                     </>
                   )}
                 </div>
+
+                <FavoriteItemsSection project={currentProject} />
 
                 <div
                   className="flex-1 min-h-0 flex flex-col"

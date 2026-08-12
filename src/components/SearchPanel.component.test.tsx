@@ -7,6 +7,7 @@ import SearchPanel from './SearchPanel'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
+import { useFavoriteStore } from '../store/favoriteStore'
 import type { ReactElement } from 'react'
 
 // Self-contained react-window stub (vi.mock factories are hoisted above imports,
@@ -105,6 +106,7 @@ const project: Project = {
 const initialProjectState = useProjectStore.getState()
 const initialEditorState = useEditorStore.getState()
 const initialUiState = useUIStore.getState()
+const initialFavoriteState = useFavoriteStore.getState()
 
 function dispatch(commands: Record<string, (args: Record<string, unknown> | undefined) => unknown>) {
   mocks.safeInvoke.mockImplementation(async (_action: string, command: string, args?: Record<string, unknown>) => {
@@ -147,12 +149,14 @@ describe('SearchPanel', () => {
       globalSearchSignal: 0,
       globalSearchQuery: null,
     })
+    useFavoriteStore.setState(initialFavoriteState, true)
   })
 
   afterEach(() => {
     useProjectStore.setState(initialProjectState, true)
     useEditorStore.setState(initialEditorState, true)
     useUIStore.setState(initialUiState, true)
+    useFavoriteStore.setState(initialFavoriteState, true)
   })
 
   it('scans project extensions on mount', async () => {
@@ -218,6 +222,16 @@ describe('SearchPanel', () => {
     expect(await screen.findByText('复制路径')).toBeInTheDocument()
     expect(screen.getByText('复制相对路径')).toBeInTheDocument()
     expect(screen.getByText('复制文件名')).toBeInTheDocument()
+  })
+
+  it('shows favorite actions on a search hit context menu', async () => {
+    render(<SearchPanel />)
+    fireEvent.change(screen.getByPlaceholderText('搜索文件或内容…'), { target: { value: 'app' } })
+    await waitFor(() => expect(screen.getByText('app.tsx')).toBeInTheDocument())
+
+    fireEvent.contextMenu(screen.getByText('app.tsx'))
+
+    expect(await screen.findByText('收藏文件')).toBeInTheDocument()
   })
 
   it('raises the filename search budget when results are truncated', async () => {

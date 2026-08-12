@@ -34,7 +34,11 @@ vi.mock('./projectSettings', () => ({
   shouldSyncProjectsOnStartup: () => true,
 }))
 
-import { persistProjectsToUserSettings, setProjectsSortOrders } from './projectRepository'
+import {
+  deleteProjectRows,
+  persistProjectsToUserSettings,
+  setProjectsSortOrders,
+} from './projectRepository'
 
 function project(over: Partial<Project> = {}): Project {
   return {
@@ -163,5 +167,26 @@ describe('setProjectsSortOrders', () => {
   it('no-ops for an empty order list', async () => {
     await setProjectsSortOrders([])
     expect(mockDb.execute).not.toHaveBeenCalled()
+  })
+})
+
+describe('deleteProjectRows', () => {
+  beforeEach(() => {
+    mockDb.execute.mockReset()
+    mockDb.execute.mockResolvedValue({ rowsAffected: 1 })
+  })
+
+  it('cleans recent files and favorites with the project', async () => {
+    await deleteProjectRows('p1')
+
+    expect(mockDb.execute).toHaveBeenCalledWith('DELETE FROM projects WHERE id = $1', ['p1'])
+    expect(mockDb.execute).toHaveBeenCalledWith(
+      'DELETE FROM recent_files WHERE project_id = $1',
+      ['p1'],
+    )
+    expect(mockDb.execute).toHaveBeenCalledWith(
+      'DELETE FROM favorite_items WHERE project_id = $1',
+      ['p1'],
+    )
   })
 })

@@ -481,6 +481,27 @@ export function inferTerminalPaneOwnership(
   return changed ? next : terminals
 }
 
+export type TerminalDropPosition = 'before' | 'after'
+
+/** Move one terminal beside another while preserving every unrelated tab's order. */
+export function reorderTerminalTabs(
+  terminals: TerminalTab[],
+  sourceId: string,
+  targetId: string,
+  position: TerminalDropPosition,
+): TerminalTab[] {
+  if (sourceId === targetId) return terminals
+  const source = terminals.find(tab => tab.id === sourceId)
+  const target = terminals.find(tab => tab.id === targetId)
+  if (!source || !target || source.projectId !== target.projectId) return terminals
+
+  const next = terminals.filter(tab => tab.id !== sourceId)
+  const targetIndex = next.findIndex(tab => tab.id === targetId)
+  if (targetIndex < 0) return terminals
+  next.splice(targetIndex + (position === 'after' ? 1 : 0), 0, source)
+  return next.every((tab, index) => tab === terminals[index]) ? terminals : next
+}
+
 interface TerminalState {
   terminals: TerminalTab[]
   activeTerminalId: string | null
@@ -544,6 +565,11 @@ interface TerminalState {
   activateProject: (projectId: string) => void
   updateProjectPath: (projectId: string, path: string) => void
   setActiveTerminal: (id: string) => void
+  reorderTerminal: (
+    sourceId: string,
+    targetId: string,
+    position: TerminalDropPosition,
+  ) => void
   setTerminalFocusPane: (pane: TerminalFocusPane) => void
   setSecondaryTerminal: (id: string | null) => void
   /**
@@ -753,6 +779,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   brTerminalId: null,
   brTerminalByProject: {},
   terminalFocusPane: 'primary',
+
+  reorderTerminal: (sourceId, targetId, position) => {
+    set(state => ({
+      terminals: reorderTerminalTabs(state.terminals, sourceId, targetId, position),
+    }))
+  },
 
   addTerminal: async (projectPath: string, projectId: string, profileId?: string) => {
     const project =

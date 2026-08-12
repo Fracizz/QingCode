@@ -114,6 +114,21 @@ fn get_column_migrations() -> Vec<Migration> {
             sql: "ALTER TABLE projects ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 4,
+            description: "create favorite items table",
+            sql: "CREATE TABLE IF NOT EXISTS favorite_items (
+                    project_id TEXT NOT NULL,
+                    relative_path TEXT NOT NULL,
+                    item_type TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY(project_id, relative_path)
+                  );
+                  CREATE INDEX IF NOT EXISTS idx_favorite_items_project_order
+                    ON favorite_items(project_id, sort_order);",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 

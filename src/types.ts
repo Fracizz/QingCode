@@ -22,6 +22,17 @@ export interface RecentFile {
   opened_at: number
 }
 
+export interface FavoriteItem {
+  projectId: string
+  /** Project-relative path using `/` separators. */
+  relativePath: string
+  kind: 'file' | 'directory'
+  sortOrder: number
+  createdAt: number
+  /** Transient filesystem probe result; unavailable items remain bookmarked. */
+  available: boolean
+}
+
 export interface EditorTab {
   id: string
   path: string

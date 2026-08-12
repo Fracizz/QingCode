@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
 import {
@@ -81,6 +82,7 @@ export default function TerminalTabs({
   const brTerminalId = useTerminalStore(s => s.brTerminalId)
   const setTerminalFocusPane = useTerminalStore(s => s.setTerminalFocusPane)
   const setActiveTerminal = useTerminalStore(s => s.setActiveTerminal)
+  const reorderTerminal = useTerminalStore(s => s.reorderTerminal)
   const paneActiveId =
     pane === 'secondary'
       ? secondaryTerminalId
@@ -116,6 +118,11 @@ export default function TerminalTabs({
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [visibleIndices, setVisibleIndices] = useState<number[]>([])
+  const [draggedTerminalId, setDraggedTerminalId] = useState<string | null>(null)
+  const [dropTarget, setDropTarget] = useState<{
+    id: string
+    position: 'before' | 'after'
+  } | null>(null)
   const renameInputRef = useRef<HTMLInputElement>(null)
   const renameCommittingRef = useRef(false)
   /** Flex area that holds visible tabs + the trailing `+` (like project chips). */
@@ -474,6 +481,50 @@ export default function TerminalTabs({
       : projectTerminals.map((_, i) => i)
   const hiddenCount = Math.max(0, projectTerminals.length - visibleTabIndices.length)
 
+  const clearTerminalDrag = () => {
+    setDraggedTerminalId(null)
+    setDropTarget(null)
+  }
+
+  const handleTabDragStart = (event: ReactDragEvent<HTMLDivElement>, id: string) => {
+    if ((event.target as Element).closest('button, input')) {
+      event.preventDefault()
+      return
+    }
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', id)
+    setDraggedTerminalId(id)
+    setDropTarget(null)
+  }
+
+  const handleTabDragOver = (event: ReactDragEvent<HTMLDivElement>, targetId: string) => {
+    const sourceId = draggedTerminalId || event.dataTransfer.getData('text/plain')
+    if (!sourceId || sourceId === targetId) {
+      setDropTarget(null)
+      return
+    }
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+    const rect = event.currentTarget.getBoundingClientRect()
+    const position = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
+    setDropTarget(current =>
+      current?.id === targetId && current.position === position
+        ? current
+        : { id: targetId, position },
+    )
+  }
+
+  const handleTabDrop = (event: ReactDragEvent<HTMLDivElement>, targetId: string) => {
+    event.preventDefault()
+    const sourceId = draggedTerminalId || event.dataTransfer.getData('text/plain')
+    if (sourceId && sourceId !== targetId) {
+      const rect = event.currentTarget.getBoundingClientRect()
+      const position = event.clientX < rect.left + rect.width / 2 ? 'before' : 'after'
+      reorderTerminal(sourceId, targetId, position)
+    }
+    clearTerminalDrag()
+  }
+
   const menuItems = (terminal: TerminalTab): ContextMenuItem[] => [
     {
       label: translate('重命名'),
@@ -582,8 +633,14 @@ export default function TerminalTabs({
                   role="tab"
                   tabIndex={isActive ? 0 : -1}
                   aria-selected={isActive}
+                  draggable={renamingId !== t.id}
                   className={`group relative flex h-6 flex-shrink-0 cursor-pointer select-none items-center gap-1 whitespace-nowrap rounded pl-2 pr-1 text-[13px] transition-colors
-                    ${isActive ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}`}
+                    ${isActive ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}
+                    ${draggedTerminalId === t.id ? 'opacity-45' : ''}`}
+                  onDragStart={event => handleTabDragStart(event, t.id)}
+                  onDragOver={event => handleTabDragOver(event, t.id)}
+                  onDrop={event => handleTabDrop(event, t.id)}
+                  onDragEnd={clearTerminalDrag}
                   onClick={() => {
                     activateForPane(t.id)
                     if (closeArmId && closeArmId !== t.id) setCloseArmId(null)
@@ -613,6 +670,14 @@ export default function TerminalTabs({
                     setContextMenu({ x: event.clientX, y: event.clientY, terminal: t })
                   }}
                 >
+                  {dropTarget?.id === t.id && draggedTerminalId !== t.id && (
+                    <span
+                      aria-hidden="true"
+                      className={`pointer-events-none absolute bottom-0.5 top-0.5 z-10 w-0.5 rounded bg-brand ${
+                        dropTarget.position === 'before' ? '-left-0.5' : '-right-0.5'
+                      }`}
+                    />
+                  )}
                   {isActive && (
                     <span
                       className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand"
