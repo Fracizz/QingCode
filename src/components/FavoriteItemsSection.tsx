@@ -25,10 +25,13 @@ import { useI18n } from '../lib/i18n'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import {
+  EXPLORER_FAVORITES_ACTION_COL,
+  EXPLORER_FAVORITES_INSET,
+  EXPLORER_FAVORITES_ITEM_PL,
+  EXPLORER_FAVORITES_ITEM_ROW,
+  EXPLORER_FAVORITES_SECTION,
+  EXPLORER_SUBSECTION_HEADER,
   EXPLORER_TREE_CHEVRON_COL,
-  EXPLORER_TREE_DEPTH1_PL,
-  EXPLORER_TREE_DEPTH2_PL,
-  EXPLORER_TREE_NODE_ROW,
 } from './explorerLayout'
 
 const FAVORITES_EXPANDED_KEY = 'qingcode:explorer-favorites-expanded'
@@ -42,14 +45,8 @@ function initialExpanded(): boolean {
   }
 }
 
-function itemName(item: FavoriteItem): string {
-  const parts = item.relativePath.split('/')
-  return parts[parts.length - 1] || item.relativePath
-}
-
-function parentLabel(item: FavoriteItem): string {
-  const index = item.relativePath.lastIndexOf('/')
-  return index > 0 ? item.relativePath.slice(0, index) : ''
+function favoriteDisplayPath(item: FavoriteItem): string {
+  return item.relativePath
 }
 
 export default function FavoriteItemsSection({ project }: { project: Project }) {
@@ -228,30 +225,28 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
   }
 
   return (
-    <section aria-label={t('收藏夹')} className="border-b border-border/50">
+    <section aria-label={t('收藏夹')} className={EXPLORER_FAVORITES_SECTION}>
       <button
         type="button"
-        className={`${EXPLORER_TREE_NODE_ROW} ${EXPLORER_TREE_DEPTH1_PL} pr-3 text-tree-fg transition-colors hover:bg-bg-hover/60`}
+        className={`${EXPLORER_FAVORITES_INSET} ${EXPLORER_SUBSECTION_HEADER}${
+          expanded ? ' border-b border-border/35' : ''
+        }`}
         aria-expanded={expanded}
         onClick={toggleExpanded}
       >
         <span className={EXPLORER_TREE_CHEVRON_COL} aria-hidden="true">
-          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
-        <Bookmark size={15} className="shrink-0 text-warn" />
+        <Bookmark size={13} className="shrink-0 text-warn" />
         <span className="min-w-0 flex-1 truncate text-left leading-none">{t('收藏夹')}</span>
-        <span className="shrink-0 tabular-nums text-[11px] font-normal text-fg-dim">{items.length}</span>
+        <span className="shrink-0 tabular-nums text-[10px] font-normal text-fg-dim">{items.length}</span>
       </button>
       {expanded && (
-        <div className="max-h-[35vh] overflow-y-auto overscroll-y-contain pb-0.5">
+        <div className={`${EXPLORER_FAVORITES_INSET} max-h-[35vh] overflow-y-auto overscroll-y-contain pb-1.5 pt-0.5`}>
           {items.map(item => {
             const path = favoriteAbsolutePath(project.path, item.relativePath)
-            const secondary = parentLabel(item)
-            const tooltip = item.available
-              ? secondary
-                ? `${path}\n${secondary}`
-                : path
-              : `${path}\n${t('收藏项暂不可用')}`
+            const displayPath = favoriteDisplayPath(item)
+            const tooltip = item.available ? path : `${path}\n${t('收藏项暂不可用')}`
             return (
               <div
                 key={item.relativePath}
@@ -259,9 +254,9 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
                 tabIndex={0}
                 aria-disabled={!item.available}
                 draggable={item.available}
-                className={`group relative ${EXPLORER_TREE_NODE_ROW} ${EXPLORER_TREE_DEPTH2_PL} ${
+                className={`group relative ${EXPLORER_FAVORITES_ITEM_ROW} ${EXPLORER_FAVORITES_ITEM_PL} ${
                   item.available
-                    ? 'cursor-grab text-tree-fg active:cursor-grabbing hover:bg-bg-hover/60'
+                    ? 'cursor-grab text-tree-fg active:cursor-grabbing hover:bg-bg-hover/45'
                     : 'cursor-default text-fg-dim opacity-60'
                 } ${draggedPath === item.relativePath ? 'opacity-40' : ''}`}
                 onClick={() => activate(item)}
@@ -312,29 +307,33 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
                     }`}
                   />
                 )}
-                <span className={EXPLORER_TREE_CHEVRON_COL} aria-hidden="true" />
+                <span className={`${EXPLORER_TREE_CHEVRON_COL} pt-0.5`} aria-hidden="true" />
                 {item.kind === 'directory' ? (
-                  <Folder size={15} className="shrink-0 text-accent" />
+                  <Folder size={15} className="mt-0.5 shrink-0 text-accent" />
                 ) : (
-                  <FileIcon size={14} className="shrink-0 text-fg-muted" />
+                  <FileIcon size={14} className="mt-0.5 shrink-0 text-fg-muted" />
                 )}
                 <Tooltip
                   label={tooltip}
                   side="right"
-                  wrapperClassName="min-w-0 flex-1"
+                  wrapperClassName="min-w-0 flex-1 overflow-hidden pt-0.5"
                 >
-                  <span className="block min-w-0 truncate leading-none">{itemName(item)}</span>
+                  <span className="block min-w-0 break-all leading-snug line-clamp-2">
+                    {displayPath}
+                  </span>
                 </Tooltip>
-                <Tooltip label={t('取消收藏')} side="bottom">
-                  <button
-                    type="button"
-                    aria-label={t('取消收藏')}
-                    className="shrink-0 rounded p-0.5 text-fg-dim opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 group-focus-within:opacity-100"
-                    onClick={event => handleRemove(item, event)}
-                  >
-                    <X size={13} />
-                  </button>
-                </Tooltip>
+                <span className={`${EXPLORER_FAVORITES_ACTION_COL} pt-0.5`}>
+                  <Tooltip label={t('取消收藏')} side="bottom">
+                    <button
+                      type="button"
+                      aria-label={t('取消收藏')}
+                      className="rounded p-0.5 text-fg-dim opacity-0 transition-opacity hover:text-danger group-hover:opacity-100 group-focus-within:opacity-100"
+                      onClick={event => handleRemove(item, event)}
+                    >
+                      <X size={13} />
+                    </button>
+                  </Tooltip>
+                </span>
               </div>
             )
           })}

@@ -64,6 +64,6 @@ describe('FavoriteItemsSection', () => {
     render(<FavoriteItemsSection project={project} />)
 
     expect(screen.getByRole('region', { name: '收藏夹' })).toBeInTheDocument()
-    expect(screen.getByText('app.tsx')).toBeInTheDocument()
+    expect(screen.getByText('src/app.tsx')).toBeInTheDocument()
   })
 })
