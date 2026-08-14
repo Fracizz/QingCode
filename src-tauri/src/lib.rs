@@ -331,6 +331,9 @@ pub fn run() {
     }
 
     let launch_files = file_associations::collect_cli_file_paths(std::env::args());
+    // Explorer/NSIS shortcuts can provide an arbitrary $OUTDIR. Keep relative
+    // launch-file resolution above, then stabilize native runtime loading.
+    app_paths::stabilize_runtime_working_directory();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())

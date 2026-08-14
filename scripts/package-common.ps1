@@ -94,6 +94,31 @@ function Test-FrontendStale {
   return [bool]$newer
 }
 
+function Stop-LockingQingcodeProcesses {
+  param(
+    [Parameter(Mandatory = $true)][string]$ProjectRoot
+  )
+
+  $targetRoot = Join-Path $ProjectRoot 'src-tauri\target'
+  $releaseRoot = Join-Path $ProjectRoot 'release'
+  $locking = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.Name -in @('qingcode.exe', 'QingCode.exe') -and
+      $_.ExecutablePath -and (
+        $_.ExecutablePath -like (Join-Path $targetRoot '*') -or
+        $_.ExecutablePath -like (Join-Path $releaseRoot '*')
+      )
+    }
+
+  foreach ($proc in $locking) {
+    Write-Host "  stopping locking process: $($proc.ExecutablePath) (PID $($proc.ProcessId))" -ForegroundColor DarkGray
+    Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+  if ($locking) {
+    Start-Sleep -Milliseconds 400
+  }
+}
+
 function Invoke-ForceQingcodeEmbedRebuild {
   param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
@@ -101,15 +126,23 @@ function Invoke-ForceQingcodeEmbedRebuild {
   )
 
   # Frontend Dist changes are easy for Cargo to miss (dir mtime). Clean the
-  # package so the next --release build re-runs build.rs / re-embeds assets.
+  # release package so the next --release build re-runs build.rs / re-embeds assets.
+  # Use --release only: a full clean also deletes target/debug and fails while
+  # `tauri dev` still holds qingcode.exe (Windows error 5).
   Write-Host '  frontend updated - forcing qingcode rebuild to re-embed dist/' -ForegroundColor DarkGray
   $manifest = Join-Path $ProjectRoot 'src-tauri\Cargo.toml'
-  $cleanArgs = @('clean', '-p', 'qingcode', '--manifest-path', $manifest, '--quiet')
+  $cleanArgs = @('clean', '-p', 'qingcode', '--release', '--manifest-path', $manifest, '--quiet')
   if ($Target) {
     $cleanArgs += @('--target', $Target)
   }
+
+  Stop-LockingQingcodeProcesses -ProjectRoot $ProjectRoot
   & cargo @cleanArgs
   if ($LASTEXITCODE -ne 0) {
-    throw "cargo clean -p qingcode failed with exit code $LASTEXITCODE."
+    Stop-LockingQingcodeProcesses -ProjectRoot $ProjectRoot
+    & cargo @cleanArgs
+  }
+  if ($LASTEXITCODE -ne 0) {
+    throw "cargo clean -p qingcode --release failed with exit code $LASTEXITCODE. Close QingCode or tauri dev and retry."
   }
 }

@@ -55,7 +55,6 @@ function parentLabel(item: FavoriteItem): string {
 export default function FavoriteItemsSection({ project }: { project: Project }) {
   const { t } = useI18n()
   const items = useFavoriteStore(state => state.itemsByProject[project.id] ?? EMPTY_FAVORITES)
-  const loading = useFavoriteStore(state => state.loadingProjectIds.includes(project.id))
   const loadProjectFavorites = useFavoriteStore(state => state.loadProjectFavorites)
   const removeFavorite = useFavoriteStore(state => state.removeFavorite)
   const reorderFavorite = useFavoriteStore(state => state.reorderFavorite)
@@ -75,7 +74,7 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
   } | null>(null)
 
   useEffect(() => {
-    void loadProjectFavorites(project, { force: true }).catch(error => {
+    void loadProjectFavorites(project).catch(error => {
       useProjectStore.getState().pushToast(
         'error',
         t('加载收藏夹失败: {error}', { error: String(error) }),
@@ -83,7 +82,9 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
     })
   }, [loadProjectFavorites, project, t])
 
-  if (!loading && items.length === 0) return null
+  // Do not mount a loading-only section for projects without cached favorites.
+  // Its brief appearance shifted the whole file tree down and back up on startup.
+  if (items.length === 0) return null
 
   const toggleExpanded = () => {
     const next = !expanded
@@ -243,14 +244,6 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
       </button>
       {expanded && (
         <div className="max-h-[35vh] overflow-y-auto overscroll-y-contain pb-0.5">
-          {loading && items.length === 0 && (
-            <div
-              className={`${EXPLORER_TREE_NODE_ROW} ${EXPLORER_TREE_DEPTH2_PL} text-[12px] text-fg-dim`}
-            >
-              <span className={EXPLORER_TREE_CHEVRON_COL} aria-hidden="true" />
-              <span className="min-w-0 flex-1 truncate leading-none">{t('正在加载收藏夹…')}</span>
-            </div>
-          )}
           {items.map(item => {
             const path = favoriteAbsolutePath(project.path, item.relativePath)
             const secondary = parentLabel(item)

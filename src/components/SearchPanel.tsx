@@ -146,6 +146,9 @@ export default function SearchPanel() {
   const wantsContent = (mode === 'all' || mode === 'content') && entryKind !== 'dir'
   const showEntryKindFilter = mode === 'all' || mode === 'filename'
   const [query, setQuery] = useState('')
+  /** Last explicit query used by All / Content modes; filename mode stays live. */
+  const [submittedQuery, setSubmittedQuery] = useState('')
+  const [explicitSearchCommitted, setExplicitSearchCommitted] = useState(false)
   const [ignoreCase, setIgnoreCase] = useState(true)
   const [fuzzy, setFuzzy] = useState(false)
   const [matchSuffix, setMatchSuffix] = useState(false)
@@ -204,7 +207,9 @@ export default function SearchPanel() {
   const [searchFlush, setSearchFlush] = useState(0)
   const showReplace = mode === 'content'
   const extList = useMemo(() => typeFilterExtensions(typeFilter), [typeFilter])
+  const activeQuery = mode === 'filename' ? query : submittedQuery
   const useGlob = isGlobPattern(query)
+  const activeUseGlob = isGlobPattern(activeQuery)
   const topExts = useMemo(() => projectExts.slice(0, TOP_EXT_COUNT), [projectExts])
   const otherExts = useMemo(() => projectExts.slice(TOP_EXT_COUNT), [projectExts])
   const hasStarOption = otherExts.length > 0
@@ -215,6 +220,8 @@ export default function SearchPanel() {
     setSearchScope('current')
     if (globalSearchQuery) {
       setQuery(globalSearchQuery)
+      setSubmittedQuery(globalSearchQuery)
+      setExplicitSearchCommitted(true)
       searchNowRef.current = true
       setSearchFlush(n => n + 1)
     }
@@ -229,7 +236,7 @@ export default function SearchPanel() {
 
   useEffect(() => {
     queueMicrotask(() => setCollapsedFiles(new Set()))
-  }, [query, mode, typeFilter, entryKind])
+  }, [activeQuery, mode, typeFilter, entryKind])
 
   useEffect(() => {
     if (mode === 'content') return
@@ -251,7 +258,7 @@ export default function SearchPanel() {
       setLoadingMore(false)
       loadingMoreRef.current = false
     })
-  }, [query, mode, ignoreCase, fuzzy, matchSuffix, typeFilter, entryKind, searchRoots])
+  }, [activeQuery, mode, ignoreCase, fuzzy, matchSuffix, typeFilter, entryKind, searchRoots])
 
   useEffect(() => {
     if (typeFilter?.kind !== 'star') return
@@ -426,11 +433,12 @@ export default function SearchPanel() {
     const filenameDelay = immediate ? 0 : FILENAME_DEBOUNCE_MS
     const contentDelay = immediate ? 0 : CONTENT_DEBOUNCE_MS
 
-    const q = query.trim()
+    const q = activeQuery.trim()
+    const explicitModeWaiting = mode !== 'filename' && !explicitSearchCommitted
     const runFilename = wantsFilename && (q.length > 0 || typeFilter !== null)
     const runContent = wantsContent && q.length >= MIN_CONTENT_QUERY_LEN
 
-    if (!runFilename && !runContent) {
+    if (explicitModeWaiting || (!runFilename && !runContent)) {
       queueMicrotask(() => {
         if (wantsFilename) {
           setFilenameResults([])
@@ -495,8 +503,8 @@ export default function SearchPanel() {
                 root: root.path,
                 query: q,
                 ignoreCase,
-                fuzzy: fuzzy && !useGlob && !matchSuffix && !extList,
-                matchSuffix: !useGlob && matchSuffix && !extList,
+                fuzzy: fuzzy && !activeUseGlob && !matchSuffix && !extList,
+                matchSuffix: !activeUseGlob && matchSuffix && !extList,
                 extension: null,
                 extensions: extList,
                 limit: perRootFilenameLimit,
@@ -601,25 +609,41 @@ export default function SearchPanel() {
     }
   }, [
     searchRoots,
-    query,
+    activeQuery,
     searchFlush,
     ignoreCase,
     fuzzy,
     matchSuffix,
     typeFilter,
     extList,
-    useGlob,
+    activeUseGlob,
     wantsFilename,
     wantsContent,
     filenameBudget,
     contentBudget,
     projects,
+    explicitSearchCommitted,
+    mode,
   ])
 
-  const flushSearch = useCallback(() => {
+  const submitSearch = useCallback(() => {
+    setSubmittedQuery(query)
+    setExplicitSearchCommitted(true)
     searchNowRef.current = true
     setSearchFlush(n => n + 1)
-  }, [])
+  }, [query])
+
+  const handleModeChange = useCallback(
+    (nextMode: SearchMode) => {
+      // A live filename query is already active, so carry it into an explicit mode.
+      if (mode === 'filename' && nextMode !== 'filename') {
+        setSubmittedQuery(query)
+        setExplicitSearchCommitted(Boolean(query.trim() || typeFilter))
+      }
+      setMode(nextMode)
+    },
+    [mode, query, typeFilter],
+  )
 
   const filteredFilenameResults = useMemo(
     () => filterFilenameHits(filenameResults, entryKind),
@@ -971,13 +995,17 @@ export default function SearchPanel() {
     [rows, activeIndex, toggleFileCollapse, onOpenMatch, onOpenFilename, onOpenContextMenu]
   )
 
-  const queryTrimmed = query.trim()
+  const queryTrimmed = activeQuery.trim()
+  const draftQueryTrimmed = query.trim()
+  const searchDirty = mode !== 'filename' && draftQueryTrimmed !== submittedQuery.trim()
   const contentQueryShort =
     wantsContent && !wantsFilename && queryTrimmed.length > 0 && queryTrimmed.length < MIN_CONTENT_QUERY_LEN
   const hasQuery =
-    wantsContent && !wantsFilename
-      ? queryTrimmed.length >= MIN_CONTENT_QUERY_LEN
-      : queryTrimmed.length > 0 || typeFilter !== null
+    mode !== 'filename' && !explicitSearchCommitted
+      ? false
+      : wantsContent && !wantsFilename
+        ? queryTrimmed.length >= MIN_CONTENT_QUERY_LEN
+        : queryTrimmed.length > 0 || typeFilter !== null
 
   const emptyHint = contentQueryShort
     ? t('继续输入以搜索内容（至少 {n} 个字符）', { n: MIN_CONTENT_QUERY_LEN })
@@ -986,6 +1014,11 @@ export default function SearchPanel() {
       : mode === 'content'
         ? t('输入关键词搜索文件内容')
         : t('输入关键词、通配符（*）或选择文件类型开始搜索')
+
+  const canSubmitSearch =
+    mode === 'content'
+      ? draftQueryTrimmed.length >= MIN_CONTENT_QUERY_LEN
+      : draftQueryTrimmed.length > 0 || typeFilter !== null
 
   const inputPlaceholder = (() => {
     if (mode === 'all') {
@@ -1142,7 +1175,7 @@ export default function SearchPanel() {
             { value: 'filename', label: t('文件名') },
           ]}
           value={mode}
-          onChange={setMode}
+          onChange={handleModeChange}
         />
         {showEntryKindFilter && (
           <SegmentedControl
@@ -1172,47 +1205,76 @@ export default function SearchPanel() {
             </Tooltip>
           )}
           <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-            <div className="relative">
-              {loading ? (
-                <LoaderCircle
-                  size={13}
-                  className="absolute left-2.5 top-1/2 -translate-y-1/2 animate-spin text-accent"
-                  aria-label={t('搜索中')}
+            <div className="flex items-center gap-1.5">
+              <div className="relative min-w-0 flex-1">
+                {loading ? (
+                  <LoaderCircle
+                    size={13}
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 animate-spin text-accent"
+                    aria-label={t('搜索中')}
+                  />
+                ) : (
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
+                )}
+                <input
+                  ref={searchInputRef}
+                  value={query}
+                  onChange={e => {
+                    const nextQuery = e.target.value
+                    setQuery(nextQuery)
+                    if (!nextQuery.trim()) {
+                      setSubmittedQuery('')
+                      setExplicitSearchCommitted(false)
+                    }
+                  }}
+                  onCompositionStart={() => {
+                    composingRef.current = true
+                  }}
+                  onCompositionEnd={e => {
+                    composingRef.current = false
+                    setQuery(e.currentTarget.value)
+                    if (mode === 'filename') setSearchFlush(n => n + 1)
+                  }}
+                  onKeyDown={e => {
+                    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+                    e.preventDefault()
+                    submitSearch()
+                  }}
+                  placeholder={inputPlaceholder}
+                  aria-keyshortcuts="Enter"
+                  className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
                 />
-              ) : (
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
-              )}
-              <input
-                ref={searchInputRef}
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                onCompositionStart={() => {
-                  composingRef.current = true
-                }}
-                onCompositionEnd={e => {
-                  composingRef.current = false
-                  setQuery(e.currentTarget.value)
-                  setSearchFlush(n => n + 1)
-                }}
-                onKeyDown={e => {
-                  if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
-                  e.preventDefault()
-                  flushSearch()
-                }}
-                placeholder={inputPlaceholder}
-                aria-keyshortcuts="Enter"
-                className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
-              />
-              {query && (
-                <button
-                  type="button"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
-                  onClick={() => setQuery('')}
-                >
-                  <X size={13} />
-                </button>
-              )}
+                {query && (
+                  <button
+                    type="button"
+                    aria-label={t('清空搜索')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
+                    onClick={() => {
+                      setQuery('')
+                      setSubmittedQuery('')
+                      setExplicitSearchCommitted(false)
+                    }}
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                aria-label={t('查询')}
+                disabled={!canSubmitSearch || (loading && !searchDirty)}
+                className="flex h-[30px] shrink-0 items-center gap-1 rounded border border-border-strong bg-bg-deep px-2 text-[12px] text-fg-muted transition-colors hover:border-accent hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+                onClick={submitSearch}
+              >
+                <Search size={12} />
+                <span>{t('查询')}</span>
+              </button>
             </div>
+            {searchDirty && (
+              <div className="px-0.5 text-[11px] text-accent" aria-live="polite">
+                {t('查询条件已修改，按 Enter 或点击查询')}
+              </div>
+            )}
             {showReplace && replaceOpen && (
               <div className="flex items-center gap-1.5">
                 <div className="relative flex-1 min-w-0">
@@ -1233,15 +1295,16 @@ export default function SearchPanel() {
                     disabled={
                       !contentResults ||
                       contentResults.files.length === 0 ||
-                      !query.trim() ||
+                      !queryTrimmed ||
+                      searchDirty ||
                       loading
                     }
                     className="flex-shrink-0 px-2 py-1.5 text-[11px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-40 disabled:pointer-events-none transition-colors"
                     onClick={() => {
-                      if (!contentResults || !query.trim()) return
+                      if (!contentResults || !queryTrimmed || searchDirty) return
                       setReplacePreview(
                         buildReplacePreview(
-                          query,
+                          activeQuery,
                           replaceText,
                           ignoreCase,
                           contentResults.files,

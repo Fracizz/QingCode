@@ -212,6 +212,9 @@ export default function Sidebar() {
   const preserveScrollTopRef = useRef<number | null>(null)
   const treeRevealPath = useProjectStore(s => s.treeRevealPath)
   const treeRevealSeq = useProjectStore(s => s.treeRevealSeq)
+  const treeLoaded = currentProject
+    ? Object.prototype.hasOwnProperty.call(projectTrees, currentProject.id)
+    : false
   const tree = currentProject ? projectTrees[currentProject.id] ?? EMPTY_TREE : EMPTY_TREE
   const visibleTreeRows = useMemo(
     () => flattenVisibleNodes(tree, expandedPaths, pendingCreate, pendingRename),
@@ -1578,7 +1581,15 @@ export default function Sidebar() {
                           onCancel={cancelCreate}
                         />
                       )}
-                      {tree.length === 0 &&
+                      {!treeLoaded && pendingCreate?.parentPath !== currentProject.path && (
+                        <div
+                          className="px-4 py-2 text-[12px] text-fg-muted"
+                          aria-live="polite"
+                        >
+                          {t('正在加载文件树…')}
+                        </div>
+                      )}
+                      {treeLoaded && tree.length === 0 &&
                         pendingCreate?.parentPath !== currentProject.path && (
                           <div className="px-4 py-2 text-[12px] text-fg-muted">{t('空文件夹')}</div>
                         )}

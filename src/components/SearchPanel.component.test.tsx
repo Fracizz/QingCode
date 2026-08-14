@@ -169,16 +169,15 @@ describe('SearchPanel', () => {
     )
   })
 
-  it('runs a filename search after typing a query and renders the hit', async () => {
+  it('keeps filename mode live after typing a query and renders the hit', async () => {
     render(<SearchPanel />)
-    const input = screen.getByPlaceholderText('搜索文件或内容…')
+    fireEvent.click(screen.getByRole('tab', { name: '文件名' }))
+    const input = screen.getByPlaceholderText('搜索文件名，支持 * 通配符…')
     fireEvent.change(input, { target: { value: 'app' } })
 
     await waitFor(() =>
       expect(mocks.safeInvoke).toHaveBeenCalledWith('文件搜索', 'search_files', expect.objectContaining({ root: 'D:/alpha', query: 'app' }))
     )
-    // The filename section header and the hit's base name both render.
-    await waitFor(() => expect(screen.getByText('文件名匹配')).toBeInTheDocument())
     await waitFor(() => expect(screen.getByText('app.tsx')).toBeInTheDocument())
   })
 
@@ -214,7 +213,8 @@ describe('SearchPanel', () => {
 
   it('shows copy actions on a filename hit context menu', async () => {
     render(<SearchPanel />)
-    fireEvent.change(screen.getByPlaceholderText('搜索文件或内容…'), { target: { value: 'app' } })
+    fireEvent.click(screen.getByRole('tab', { name: '文件名' }))
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名，支持 * 通配符…'), { target: { value: 'app' } })
     await waitFor(() => expect(screen.getByText('app.tsx')).toBeInTheDocument())
 
     fireEvent.contextMenu(screen.getByText('app.tsx'))
@@ -226,7 +226,8 @@ describe('SearchPanel', () => {
 
   it('shows favorite actions on a search hit context menu', async () => {
     render(<SearchPanel />)
-    fireEvent.change(screen.getByPlaceholderText('搜索文件或内容…'), { target: { value: 'app' } })
+    fireEvent.click(screen.getByRole('tab', { name: '文件名' }))
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名，支持 * 通配符…'), { target: { value: 'app' } })
     await waitFor(() => expect(screen.getByText('app.tsx')).toBeInTheDocument())
 
     fireEvent.contextMenu(screen.getByText('app.tsx'))
@@ -295,6 +296,7 @@ describe('SearchPanel', () => {
     render(<SearchPanel />)
     const input = screen.getByPlaceholderText('搜索文件或内容…')
     fireEvent.change(input, { target: { value: 'a' } })
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
 
     await waitFor(() =>
       expect(mocks.safeInvoke).toHaveBeenCalledWith(
@@ -330,11 +332,110 @@ describe('SearchPanel', () => {
     }
   })
 
-  it('waits for IME composition to finish before searching', async () => {
+  it('waits for Enter or the Search button in All mode', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       render(<SearchPanel />)
       const input = screen.getByPlaceholderText('搜索文件或内容…')
+      fireEvent.change(input, { target: { value: 'app' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000)
+      })
+
+      expect(mocks.safeInvoke).not.toHaveBeenCalledWith(
+        '文件搜索',
+        'search_files',
+        expect.objectContaining({ query: 'app' }),
+      )
+      expect(screen.getByText('查询条件已修改，按 Enter 或点击查询')).toBeInTheDocument()
+
+      fireEvent.click(screen.getByRole('button', { name: '查询' }))
+      await waitFor(() =>
+        expect(mocks.safeInvoke).toHaveBeenCalledWith(
+          '文件搜索',
+          'search_files',
+          expect.objectContaining({ query: 'app' }),
+        ),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the previous results while an explicit query has unsubmitted edits', async () => {
+    dispatch({
+      list_file_extensions: () => ['tsx'],
+      search_files: args => {
+        const query = String(args?.query ?? '')
+        return [
+          {
+            name: `${query}.tsx`,
+            path: `D:/alpha/${query}.tsx`,
+            relative: `${query}.tsx`,
+            is_dir: false,
+          },
+        ]
+      },
+      start_content_search: () => 1,
+      search_file_contents: () => ({
+        files: [],
+        match_count: 0,
+        files_scanned: 1,
+        truncated: false,
+      }),
+      cancel_content_search: () => undefined,
+    })
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText('搜索文件或内容…')
+    fireEvent.change(input, { target: { value: 'first' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(screen.getAllByText('first.tsx').length).toBeGreaterThan(0))
+
+    fireEvent.change(input, { target: { value: 'second' } })
+    expect(screen.getAllByText('first.tsx').length).toBeGreaterThan(0)
+    expect(screen.getByText('查询条件已修改，按 Enter 或点击查询')).toBeInTheDocument()
+    expect(mocks.safeInvoke).not.toHaveBeenCalledWith(
+      '文件搜索',
+      'search_files',
+      expect.objectContaining({ query: 'second' }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
+    await waitFor(() => expect(screen.getAllByText('second.tsx').length).toBeGreaterThan(0))
+
+    fireEvent.click(screen.getByRole('button', { name: '清空搜索' }))
+    await waitFor(() => expect(screen.queryByText('second.tsx')).not.toBeInTheDocument())
+  })
+
+  it('reruns the submitted query when a filter changes', async () => {
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText('搜索文件或内容…')
+    fireEvent.change(input, { target: { value: 'app' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith(
+        '文件搜索',
+        'search_files',
+        expect.objectContaining({ query: 'app', ignoreCase: true }),
+      ),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Aa' }))
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith(
+        '文件搜索',
+        'search_files',
+        expect.objectContaining({ query: 'app', ignoreCase: false }),
+      ),
+    )
+  })
+
+  it('waits for IME composition to finish before searching', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      render(<SearchPanel />)
+      fireEvent.click(screen.getByRole('tab', { name: '文件名' }))
+      const input = screen.getByPlaceholderText('搜索文件名，支持 * 通配符…')
 
       fireEvent.compositionStart(input)
       fireEvent.change(input, { target: { value: 'fuzhi' } })
