@@ -18,6 +18,7 @@ import type { ShortcutMap } from '../lib/shortcuts'
 import { openFindInActiveEditor } from '../lib/editorFind'
 import { findUsagesAtActiveEditor } from '../lib/symbolNavigation'
 import { activeEditorSelectionSeed } from '../lib/editorSelectionSeed'
+import { openFileFromDialog } from '../lib/openFileDialog'
 
 function isTerminalKeyTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('.xterm'))
@@ -89,6 +90,11 @@ export function useAppKeyboardShortcuts({
       if (shortcutMatchesEvent(shortcuts.quickOpen, event)) {
         event.preventDefault()
         openPalette('')
+        return
+      }
+      if (shortcutMatchesEvent(shortcuts.openFile, event)) {
+        event.preventDefault()
+        void openFileFromDialog()
         return
       }
       if (shortcutMatchesEvent(shortcuts.goToSymbolInWorkspace, event)) {

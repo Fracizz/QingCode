@@ -25,6 +25,11 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
     description: '按文件名模糊搜索并打开项目中的文件。',
   },
   {
+    id: 'openFile',
+    label: '打开文件',
+    description: '从系统文件选择器中选择并打开单个文件。',
+  },
+  {
     id: 'goToSymbolInEditor',
     label: '转到编辑器中的符号',
     description: '打开当前文件的符号列表，快速跳转到函数、类或标题。',

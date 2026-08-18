@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   findUsagesAtActiveEditor: vi.fn(),
   requestGlobalSearch: vi.fn(),
   activeEditorSelectionSeed: vi.fn(() => 'selectedName'),
+  openFileFromDialog: vi.fn(),
 }))
 
 vi.mock('../lib/symbolNavigation', () => ({
@@ -17,6 +18,10 @@ vi.mock('../lib/symbolNavigation', () => ({
 
 vi.mock('../lib/editorSelectionSeed', () => ({
   activeEditorSelectionSeed: mocks.activeEditorSelectionSeed,
+}))
+
+vi.mock('../lib/openFileDialog', () => ({
+  openFileFromDialog: mocks.openFileFromDialog,
 }))
 
 vi.mock('../store/uiStore', () => ({
@@ -48,6 +53,7 @@ afterEach(() => {
   mocks.requestGlobalSearch.mockReset()
   mocks.activeEditorSelectionSeed.mockReset()
   mocks.activeEditorSelectionSeed.mockReturnValue('selectedName')
+  mocks.openFileFromDialog.mockReset()
 })
 
 describe('useAppKeyboardShortcuts', () => {
@@ -104,5 +110,34 @@ describe('useAppKeyboardShortcuts', () => {
 
     expect(mocks.requestGlobalSearch).toHaveBeenCalledWith('selectedName')
     input.remove()
+  })
+
+  it('opens the system file picker once on Ctrl+O', () => {
+    render(<ShortcutHarness />)
+    const event = new KeyboardEvent('keydown', {
+      key: 'o',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+
+    window.dispatchEvent(event)
+
+    expect(mocks.openFileFromDialog).toHaveBeenCalledOnce()
+  })
+
+  it('does not treat Ctrl+Shift+O as the open-file shortcut', () => {
+    render(<ShortcutHarness />)
+    const event = new KeyboardEvent('keydown', {
+      key: 'o',
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+
+    window.dispatchEvent(event)
+
+    expect(mocks.openFileFromDialog).not.toHaveBeenCalled()
   })
 })

@@ -3,6 +3,7 @@ export type ShortcutCommand =
   | 'toggleTerminal'
   | 'openSettings'
   | 'openCommandPalette'
+  | 'openFile'
   | 'quickOpen'
   | 'goToSymbolInEditor'
   | 'goToSymbolInWorkspace'
@@ -24,6 +25,7 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   toggleTerminal: 'Ctrl+`',
   openSettings: 'Ctrl+,',
   openCommandPalette: 'Ctrl+Shift+P',
+  openFile: 'Ctrl+O',
   quickOpen: 'Ctrl+P',
   goToSymbolInEditor: 'Ctrl+Shift+O',
   goToSymbolInWorkspace: 'Ctrl+T',

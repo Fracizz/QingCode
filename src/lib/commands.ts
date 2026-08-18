@@ -24,6 +24,7 @@ import { requestTerminalClear, requestTerminalSearch } from '@/lib/terminal/term
 import { useTerminalStore } from '../store/terminalStore'
 import { findUsagesAtActiveEditor } from './symbolNavigation'
 import { activeEditorSelectionSeed } from './editorSelectionSeed'
+import { openFileFromDialog } from './openFileDialog'
 
 export type AppCommand = {
   id: string
@@ -211,6 +212,13 @@ export function buildCommands(): AppCommand[] {
           pushToast('error', translate('新建窗口失败: {error}', { error: String(e) }))
         })
       },
+    },
+    {
+      id: 'file.openFile',
+      title: '打开文件',
+      keywords: 'open file local standalone',
+      shortcutCommand: 'openFile',
+      run: () => void openFileFromDialog(),
     },
     {
       id: 'file.openFolder',

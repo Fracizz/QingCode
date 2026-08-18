@@ -3,6 +3,7 @@ import {
   AppWindow,
   FileDown,
   FilePlus,
+  FileText,
   FolderOpen,
   LogOut,
   Save,
@@ -22,7 +23,9 @@ import { useI18n } from '../lib/i18n'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
+import { useShortcutStore } from '../store/shortcutStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
+import { openFileFromDialog } from '../lib/openFileDialog'
 
 export default function FileMenu({ onExit }: { onExit: () => void | Promise<void> }) {
   const { t } = useI18n()
@@ -38,6 +41,7 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
   const saveFile = useEditorStore(s => s.saveFile)
   const saveAs = useEditorStore(s => s.saveAs)
   const closeTab = useEditorStore(s => s.closeTab)
+  const openFileShortcut = useShortcutStore(s => s.shortcuts.openFile)
 
   useEffect(() => {
     void loadEffectiveAutoSaveSettings(currentProject).then(settings => {
@@ -123,9 +127,15 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
       },
     },
     {
+      label: t('打开文件'),
+      icon: <FileText size={14} />,
+      shortcut: openFileShortcut || undefined,
+      separatorBefore: true,
+      action: () => void openFileFromDialog(),
+    },
+    {
       label: t('打开文件夹'),
       icon: <FolderOpen size={14} />,
-      separatorBefore: true,
       action: () => void addProjectFromDialog(),
     },
     {
