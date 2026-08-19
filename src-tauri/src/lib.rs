@@ -24,13 +24,243 @@ mod user_locales;
 
 use file_watcher::FileWatcherManager;
 use path_guard::PathAllowlist;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use tauri::{Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
 use terminal::{TerminalManager, TerminalSpawnResult};
 
-/// File paths passed on the command line (Explorer "Open with").
-struct LaunchFiles(Mutex<Vec<String>>);
+const MAIN_WINDOW_LABEL: &str = "main";
+
+/// File targets waiting for a specific window. Keeping this native-side avoids
+/// losing a second-instance request while the new WebView is still loading.
+struct LaunchFiles {
+    queues: Mutex<HashMap<String, Vec<String>>>,
+    open_paths_by_window: Mutex<HashMap<String, Vec<String>>>,
+    external_window_label: Mutex<Option<String>>,
+    creating_external_window: AtomicBool,
+}
+
+impl LaunchFiles {
+    fn new(initial: Vec<String>) -> Self {
+        let launch_as_external = !initial.is_empty();
+        let mut queues = HashMap::new();
+        if launch_as_external {
+            queues.insert(MAIN_WINDOW_LABEL.to_string(), initial);
+        }
+        Self {
+            queues: Mutex::new(queues),
+            open_paths_by_window: Mutex::new(HashMap::new()),
+            external_window_label: Mutex::new(
+                launch_as_external.then(|| MAIN_WINDOW_LABEL.to_string()),
+            ),
+            creating_external_window: AtomicBool::new(false),
+        }
+    }
+
+    fn enqueue(&self, label: &str, targets: Vec<String>) {
+        if targets.is_empty() {
+            return;
+        }
+        if let Ok(mut queues) = self.queues.lock() {
+            queues.entry(label.to_string()).or_default().extend(targets);
+        }
+    }
+
+    fn take(&self, label: &str) -> Vec<String> {
+        self.queues
+            .lock()
+            .ok()
+            .and_then(|mut queues| queues.remove(label))
+            .unwrap_or_default()
+    }
+
+    fn sync_open_paths(&self, label: &str, paths: Vec<String>) {
+        if let Ok(mut by_window) = self.open_paths_by_window.lock() {
+            by_window.insert(
+                label.to_string(),
+                paths
+                    .into_iter()
+                    .map(|path| normalized_file_key(&path))
+                    .collect(),
+            );
+        }
+    }
+
+    fn window_with_target(&self, app: &tauri::AppHandle, target: &str) -> Option<String> {
+        let key = normalized_file_key(open_target_path(target));
+        self.open_paths_by_window.lock().ok().and_then(|by_window| {
+            by_window.iter().find_map(|(label, paths)| {
+                (paths.iter().any(|path| path == &key) && app.get_webview_window(label).is_some())
+                    .then(|| label.clone())
+            })
+        })
+    }
+}
+
+fn open_target_path(target: &str) -> &str {
+    let mut candidate = target;
+    for _ in 0..2 {
+        let Some((path, suffix)) = candidate.rsplit_once(':') else {
+            break;
+        };
+        if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+            break;
+        }
+        candidate = path;
+    }
+    candidate
+}
+
+fn normalized_file_key(path: &str) -> String {
+    let normalized = std::fs::canonicalize(path)
+        .unwrap_or_else(|_| PathBuf::from(path))
+        .to_string_lossy()
+        .replace('\\', "/");
+    if cfg!(windows) {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    }
+}
+
+#[cfg(test)]
+mod launch_target_tests {
+    use super::open_target_path;
+
+    #[test]
+    fn strips_optional_line_and_column_from_open_target() {
+        assert_eq!(
+            open_target_path(r"D:\docs\README.md:12:3"),
+            r"D:\docs\README.md"
+        );
+        assert_eq!(
+            open_target_path(r"D:\docs\README.md:12"),
+            r"D:\docs\README.md"
+        );
+        assert_eq!(open_target_path(r"D:\docs\README.md"), r"D:\docs\README.md");
+    }
+}
+
+fn focus_window(window: &tauri::WebviewWindow) {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+fn focus_preferred_window(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        focus_window(&window);
+        return;
+    }
+    if let Some(window) = app.webview_windows().into_values().next() {
+        focus_window(&window);
+    }
+}
+
+fn build_external_file_window(
+    app: &tauri::AppHandle,
+    label: &str,
+) -> Result<tauri::WebviewWindow, String> {
+    let builder = tauri::WebviewWindowBuilder::new(
+        app,
+        label,
+        tauri::WebviewUrl::App("index.html?fresh=1&external=1".into()),
+    )
+    .title("QingCode · 独立文件")
+    .inner_size(1280.0, 800.0)
+    .min_inner_size(720.0, 480.0)
+    .decorations(false)
+    .center()
+    .visible(false)
+    .background_color(tauri::window::Color(30, 30, 30, 255));
+
+    #[cfg(target_os = "windows")]
+    let builder = builder.enable_clipboard_access();
+
+    builder.build().map_err(|error| error.to_string())
+}
+
+/// Queue files for the dedicated project-less window. The same window is
+/// reused until the user turns it into a project window.
+pub(crate) fn route_external_file_targets(
+    app: &tauri::AppHandle,
+    targets: Vec<String>,
+) -> Result<(), String> {
+    if targets.is_empty() {
+        focus_preferred_window(app);
+        return Ok(());
+    }
+
+    let state = app.state::<LaunchFiles>();
+    let mut remaining = Vec::new();
+    let mut already_open: HashMap<String, Vec<String>> = HashMap::new();
+    for target in targets {
+        if let Some(label) = state.window_with_target(app, &target) {
+            already_open.entry(label).or_default().push(target);
+        } else {
+            remaining.push(target);
+        }
+    }
+    for (label, targets) in already_open {
+        state.enqueue(&label, targets);
+        let _ = app.emit_to(&label, "open-files", ());
+        if let Some(window) = app.get_webview_window(&label) {
+            focus_window(&window);
+        }
+    }
+    if remaining.is_empty() {
+        return Ok(());
+    }
+
+    let targets = remaining;
+    let existing_label = state
+        .external_window_label
+        .lock()
+        .map_err(|error| error.to_string())?
+        .clone();
+
+    if let Some(label) = existing_label {
+        if let Some(window) = app.get_webview_window(&label) {
+            state.enqueue(&label, targets);
+            let _ = app.emit_to(&label, "open-files", ());
+            focus_window(&window);
+            return Ok(());
+        }
+        if state.creating_external_window.load(Ordering::Acquire) {
+            state.enqueue(&label, targets);
+            return Ok(());
+        }
+    }
+
+    // `qing-*` matches capabilities/secondary.json for editor/file/dialog access.
+    let label = format!("qing-external-files-{}", uuid::Uuid::new_v4().simple());
+    state.enqueue(&label, targets);
+    if let Ok(mut current) = state.external_window_label.lock() {
+        *current = Some(label.clone());
+    }
+
+    if state.creating_external_window.swap(true, Ordering::AcqRel) {
+        return Ok(());
+    }
+
+    let result = build_external_file_window(app, &label);
+    state
+        .creating_external_window
+        .store(false, Ordering::Release);
+    if let Err(error) = result {
+        let _ = state.take(&label);
+        if let Ok(mut current) = state.external_window_label.lock() {
+            if current.as_deref() == Some(label.as_str()) {
+                *current = None;
+            }
+        }
+        return Err(error);
+    }
+    Ok(())
+}
 
 fn legacy_database_paths(data_dir: &Path) -> [PathBuf; 2] {
     [
@@ -218,14 +448,36 @@ fn app_exe_path() -> Result<String, String> {
         .map_err(|e| format!("locate exe: {e}"))
 }
 
-/// Consume CLI file paths once (Explorer → Open with / `QingCode.exe path`).
+/// Consume launch targets queued specifically for the calling window.
 #[tauri::command]
-fn take_launch_files(state: tauri::State<'_, LaunchFiles>) -> Vec<String> {
-    state
-        .0
-        .lock()
-        .map(|mut paths| std::mem::take(&mut *paths))
-        .unwrap_or_default()
+fn take_launch_files(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, LaunchFiles>,
+) -> Vec<String> {
+    state.take(window.label())
+}
+
+/// Once the dedicated window opens a project, future Explorer requests should
+/// create a new project-less file window instead of entering that project.
+#[tauri::command]
+fn release_external_file_window(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, LaunchFiles>,
+) {
+    if let Ok(mut current) = state.external_window_label.lock() {
+        if current.as_deref() == Some(window.label()) {
+            *current = None;
+        }
+    }
+}
+
+#[tauri::command]
+fn sync_open_file_paths(
+    paths: Vec<String>,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, LaunchFiles>,
+) {
+    state.sync_open_paths(window.label(), paths);
 }
 
 #[tauri::command]
@@ -331,11 +583,27 @@ pub fn run() {
     }
 
     let launch_files = file_associations::collect_cli_file_paths(std::env::args());
+    let launch_as_external = !launch_files.is_empty();
     // Explorer/NSIS shortcuts can provide an arbitrary $OUTDIR. Keep relative
     // launch-file resolution above, then stabilize native runtime loading.
     app_paths::stabilize_runtime_working_directory();
 
     tauri::Builder::default()
+        // Must be registered first: it owns process arbitration before any
+        // other desktop plugin can initialize a competing app instance.
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            let paths = file_associations::collect_cli_file_paths_from(args, Some(Path::new(&cwd)));
+            let app = app.clone();
+            // On Windows the callback runs inside WM_COPYDATA. Creating a WebView
+            // synchronously from that handler can deadlock WebView2, so route on
+            // a worker thread (the documented Tauri multi-window pattern).
+            std::thread::spawn(move || {
+                if let Err(error) = route_external_file_targets(&app, paths) {
+                    eprintln!("route second-instance files failed: {error}");
+                    focus_preferred_window(&app);
+                }
+            });
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -352,26 +620,34 @@ pub fn run() {
         .manage(PathAllowlist::new())
         .manage(code_navigation::SemanticNavigationState::new())
         .manage(symbol_search::SymbolSearchState::new())
-        .manage(LaunchFiles(Mutex::new(launch_files)))
-        .setup(|app| {
+        .manage(LaunchFiles::new(launch_files))
+        .setup(move |app| {
             migrate_legacy_database();
             ipc::start_server(app.handle().clone());
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
+                let mut window_config = window_config.clone();
+                if launch_as_external && window_config.label == MAIN_WINDOW_LABEL {
+                    window_config.url =
+                        tauri::WebviewUrl::App("index.html?fresh=1&external=1".into());
+                    window_config.title = "QingCode · 独立文件".to_string();
+                }
                 // Keep visible:false from config so the HTML splash owns the first show().
                 // Pin an explicit inner size on Windows so borderless+hidden does not boot
                 // at ~14x14; only fall back to a decorations toggle if size is still wrong.
                 #[cfg(target_os = "windows")]
-                let window = tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
-                    .devtools(cfg!(debug_assertions))
-                    .enable_clipboard_access()
-                    .inner_size(1280.0, 800.0)
-                    .min_inner_size(720.0, 480.0)
-                    .build()?;
+                let window =
+                    tauri::WebviewWindowBuilder::from_config(app.handle(), &window_config)?
+                        .devtools(cfg!(debug_assertions))
+                        .enable_clipboard_access()
+                        .inner_size(1280.0, 800.0)
+                        .min_inner_size(720.0, 480.0)
+                        .build()?;
                 #[cfg(not(target_os = "windows"))]
-                let window = tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
-                    .devtools(cfg!(debug_assertions))
-                    .enable_clipboard_access()
-                    .build()?;
+                let window =
+                    tauri::WebviewWindowBuilder::from_config(app.handle(), &window_config)?
+                        .devtools(cfg!(debug_assertions))
+                        .enable_clipboard_access()
+                        .build()?;
 
                 #[cfg(target_os = "windows")]
                 {
@@ -466,6 +742,8 @@ pub fn run() {
             update::check_app_update,
             update::download_app_update,
             take_launch_files,
+            release_external_file_window,
+            sync_open_file_paths,
             resolve_cli_request,
             file_associations::get_open_with_status,
             file_associations::register_file_open_with,

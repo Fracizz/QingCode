@@ -18,6 +18,14 @@ describe('parseOpenTarget', () => {
     })
   })
 
+  it('parses windows path with line and column', () => {
+    expect(parseOpenTarget('D:\\Work\\a.ts:12:3')).toEqual({
+      path: 'D:\\Work\\a.ts',
+      line: 12,
+      column: 3,
+    })
+  })
+
   it('keeps plain path', () => {
     expect(parseOpenTarget('D:\\Work\\a.ts')).toEqual({ path: 'D:\\Work\\a.ts' })
   })

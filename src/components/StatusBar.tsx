@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { GitBranch, Folder, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
+import { GitBranch, Folder, FileText, Terminal as TerminalIcon, ShieldAlert } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
@@ -24,6 +24,9 @@ import {
   STATUS_BAR_ROW_ATTR,
   StatusBarRowContext,
 } from './statusBarRowContext'
+import { isExternalFileWindow } from '../lib/windowSession'
+import { parentPath, pathsEqual } from '../utils/fileReferences'
+import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 
 type AppMemoryInfo = {
   totalBytes: number
@@ -52,6 +55,9 @@ const STATUS_SECONDARY = 'text-fg/85'
 export default function StatusBar() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
+  const projects = useProjectStore(s => s.projects)
+  const addProject = useProjectStore(s => s.addProject)
+  const switchProject = useProjectStore(s => s.switchProject)
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
   const cursor = useEditorStore(s => s.cursor)
@@ -73,6 +79,7 @@ export default function StatusBar() {
     y: number
     anchorCenterX: number
   } | null>(null)
+  const [standaloneMenu, setStandaloneMenu] = useState<{ x: number; y: number } | null>(null)
   const pushToast = useProjectStore(s => s.pushToast)
   const rowRef = useRef<HTMLDivElement>(null)
 
@@ -110,6 +117,7 @@ export default function StatusBar() {
     isProjectRestricted(currentProject)
 
   const activeTab = tabs.find(t => t.id === activeTabId)
+  const standaloneFiles = isExternalFileWindow() && !currentProject
   const projectTerminals = terminals.filter(t => t.projectId === currentProject?.id)
   const projectTerminalIds = useMemo(
     () =>
@@ -303,6 +311,31 @@ export default function StatusBar() {
     Boolean(activeTab && !activeTab.openError && activeTab.viewMode !== 'view')
   const showMetaGroup = showEncoding || Boolean(appVersion) || Boolean(appMemory)
 
+  const standaloneMenuItems = activeTab ? [
+    {
+      label: t('在文件管理器中显示'),
+      action: () => void revealItemInDir(activeTab.path).catch(error => {
+        pushToast('error', t('在文件管理器中显示失败: {error}', { error: String(error) }))
+      }),
+    },
+    {
+      label: t('打开所在文件夹'),
+      action: () => void openPath(parentPath(activeTab.path)).catch(error => {
+        pushToast('error', t('打开文件夹失败: {error}', { error: String(error) }))
+      }),
+    },
+    {
+      label: t('将所在文件夹作为项目打开'),
+      separatorBefore: true,
+      action: () => void (async () => {
+        const folder = parentPath(activeTab.path)
+        const existing = projects.find(project => pathsEqual(project.path, folder))
+        const opened = existing ? await switchProject(existing) : await addProject(folder)
+        if (opened) setView('explorer')
+      })(),
+    },
+  ] : []
+
   return (
     <StatusBarRowContext.Provider value={rowRef}>
       <div
@@ -312,10 +345,33 @@ export default function StatusBar() {
       >
         {/* Left: folder · project · git — adjacent; project truncates, branch keeps full width. */}
         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
-          <Folder size={13} className="flex-shrink-0 text-brand" />
-          <span className="min-w-0 max-w-[28%] truncate">
-            {currentProject ? currentProject.name : t('未选择项目')}
-          </span>
+          {standaloneFiles ? (
+            <StatusTip label={activeTab?.path ?? t('独立文件窗口')}>
+              <button
+                type="button"
+                disabled={!activeTab}
+                aria-label={t('独立文件')}
+                aria-haspopup="menu"
+                aria-expanded={standaloneMenu !== null}
+                className={`inline-flex min-w-0 max-w-[28%] items-center gap-1.5 ${STATUS_ACTION} disabled:cursor-default`}
+                onClick={event => {
+                  if (!activeTab) return
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  setStandaloneMenu({ x: rect.left, y: rect.top })
+                }}
+              >
+                <FileText size={13} className="flex-shrink-0 text-brand" />
+                <span className="truncate">{t('独立文件')}</span>
+              </button>
+            </StatusTip>
+          ) : (
+            <>
+              <Folder size={13} className="flex-shrink-0 text-brand" />
+              <span className="min-w-0 max-w-[28%] truncate">
+                {currentProject ? currentProject.name : t('未选择项目')}
+              </span>
+            </>
+          )}
           {gitHead && (
             <>
               <StatusDivider />
@@ -508,6 +564,15 @@ export default function StatusBar() {
             onClose={() => setEncodingMenu(null)}
             preferAbove
             arrow="bottom-end"
+          />
+        )}
+        {standaloneMenu && (
+          <ContextMenu
+            x={standaloneMenu.x}
+            y={standaloneMenu.y}
+            items={standaloneMenuItems}
+            onClose={() => setStandaloneMenu(null)}
+            preferAbove
           />
         )}
       </div>

@@ -8,7 +8,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcRequest {
@@ -105,13 +105,55 @@ fn handle_client(app: AppHandle, stream: TcpStream) -> Result<(), String> {
     let req: IpcRequest =
         serde_json::from_str(line.trim()).map_err(|e| format!("bad request json: {e}"))?;
 
+    // `qingcode open ...` follows Explorer's independent-file-window model.
+    // Acknowledging the native queue keeps this reliable even before its WebView
+    // has subscribed; open/read errors are then rendered in the target tab.
+    if req.op == "open" {
+        let targets = req.paths.clone().unwrap_or_default();
+        let response = if targets.is_empty() {
+            IpcResponse {
+                id: req.id,
+                ok: false,
+                data: None,
+                error: Some("paths required".into()),
+            }
+        } else {
+            match crate::route_external_file_targets(&app, targets.clone()) {
+                Ok(()) => IpcResponse {
+                    id: req.id,
+                    ok: true,
+                    data: Some(serde_json::json!({ "queued": targets })),
+                    error: None,
+                },
+                Err(error) => IpcResponse {
+                    id: req.id,
+                    ok: false,
+                    data: None,
+                    error: Some(error),
+                },
+            }
+        };
+        let out = serde_json::to_string(&response).map_err(|e| e.to_string())?;
+        writeln!(writer, "{out}").map_err(|e| format!("write response: {e}"))?;
+        return Ok(());
+    }
+
     let (tx, rx) = channel::<IpcResponse>();
     pending()
         .lock()
         .map_err(|e| e.to_string())?
         .insert(req.id.clone(), tx);
 
-    if let Err(e) = app.emit("cli-request", &req) {
+    let target = if app.get_webview_window("main").is_some() {
+        Some("main".to_string())
+    } else {
+        app.webview_windows().keys().next().cloned()
+    };
+    let Some(target) = target else {
+        pending().lock().ok().map(|mut g| g.remove(&req.id));
+        return Err("no QingCode window is available".into());
+    };
+    if let Err(e) = app.emit_to(&target, "cli-request", &req) {
         pending().lock().ok().map(|mut g| g.remove(&req.id));
         return Err(format!("emit cli-request: {e}"));
     }

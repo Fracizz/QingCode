@@ -2,7 +2,7 @@
 //! Uses HKCU only (no admin). Registers text/code extensions the editor supports.
 
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const PROGID: &str = "QingCode.Document";
 const APP_KEY: &str = "QingCode.exe";
@@ -104,10 +104,32 @@ pub fn supported_open_with_extensions() -> Vec<String> {
 
 /// Collect file paths from process argv (skip exe and flag-like args).
 pub fn collect_cli_file_paths(args: impl IntoIterator<Item = String>) -> Vec<String> {
+    let cwd = std::env::current_dir().ok();
+    collect_cli_file_paths_from(args, cwd.as_deref())
+}
+
+/// Collect file paths from another process invocation. Relative paths are
+/// resolved against that process' cwd before the primary instance receives them.
+pub fn collect_cli_file_paths_from(
+    args: impl IntoIterator<Item = String>,
+    cwd: Option<&Path>,
+) -> Vec<String> {
     args.into_iter()
         .skip(1)
         .filter(|arg| !arg.starts_with('-'))
-        .filter(|arg| Path::new(arg).is_file())
+        .filter_map(|arg| {
+            let path = PathBuf::from(&arg);
+            let resolved = if path.is_absolute() {
+                path
+            } else if let Some(cwd) = cwd {
+                cwd.join(path)
+            } else {
+                path
+            };
+            resolved
+                .is_file()
+                .then(|| resolved.to_string_lossy().into_owned())
+        })
         .collect()
 }
 
@@ -317,5 +339,21 @@ mod tests {
             r"C:\this\path\should\not\exist-qingcode-test.txt".into(),
         ];
         assert!(collect_cli_file_paths(args).is_empty());
+    }
+
+    #[test]
+    fn collect_cli_resolves_relative_files_against_second_instance_cwd() {
+        let dir = std::env::temp_dir().join(format!("qingcode-open-with-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("README.md");
+        std::fs::write(&file, "# test\n").unwrap();
+
+        let paths = collect_cli_file_paths_from(
+            vec!["QingCode.exe".into(), "README.md".into()],
+            Some(&dir),
+        );
+
+        assert_eq!(paths, vec![file.to_string_lossy().into_owned()]);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

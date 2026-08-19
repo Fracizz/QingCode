@@ -34,8 +34,6 @@ import { startSystemThemeListener } from './lib/themeSettings'
 import { clampSidebarWidth, loadSidebarWidth, saveSidebarWidth } from './lib/sidebarLayout'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
-import { listenForOpenFileRequests, openLaunchFiles } from './lib/launchFiles'
-import { listenForCliRequests } from './lib/cliBridge'
 import { useI18n } from './lib/i18n'
 import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
@@ -45,6 +43,7 @@ import { useDraftRecovery } from './hooks/useDraftRecovery'
 import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
 import { useTerminalPanel } from './hooks/useTerminalPanel'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
+import { useLaunchFileRequests } from './hooks/useLaunchFileRequests'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
 import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
 import { beginPanelResize, settlePanelResize } from './lib/panelResize'
@@ -123,6 +122,12 @@ function App() {
     !!currentProject &&
     (currentProject.ephemeral || isProjectTrusted(currentProject))
   const activeTabId = useEditorStore(s => s.activeTabId)
+  const openPathsKey = useEditorStore(s =>
+    s.tabs
+      .filter(tab => tab.kind !== 'diff')
+      .map(tab => tab.path)
+      .join('\0')
+  )
   const view = useUIStore(s => s.view)
   const sidebarOpen = useUIStore(s => s.sidebarOpen)
   const setView = useUIStore(s => s.setView)
@@ -191,6 +196,7 @@ function App() {
     openSymbolPicker,
     openWorkspaceSymbolPicker,
   })
+  useLaunchFileRequests(projectsReady, currentProject !== null, openPathsKey)
 
   useEffect(() => {
     let cancelled = false
@@ -212,28 +218,6 @@ function App() {
   useEffect(() => {
     startSystemThemeListener()
     dismissStartupSplash()
-  }, [])
-
-  // Explorer "Open with" / CLI file paths — open after first paint.
-  useEffect(() => {
-    if (!isTauri()) return
-    let cancelled = false
-    let unlistenOpen: (() => void) | undefined
-    let unlistenCli: (() => void) | undefined
-    void listenForOpenFileRequests().then(fn => {
-      if (cancelled) fn()
-      else unlistenOpen = fn
-    })
-    void listenForCliRequests().then(fn => {
-      if (cancelled) fn()
-      else unlistenCli = fn
-    })
-    void openLaunchFiles()
-    return () => {
-      cancelled = true
-      unlistenOpen?.()
-      unlistenCli?.()
-    }
   }, [])
 
   useEffect(() => {

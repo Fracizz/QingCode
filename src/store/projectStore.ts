@@ -249,7 +249,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const restoreWorkspace = shouldRestoreWorkspace()
       if (restoreWorkspace && !get().currentProject) {
         const candidate = pickRestoreCandidate(projects, ephemeralProjects)
-        if (candidate) void get().switchProject(candidate)
+        // Startup files must be opened only after the initial editor session is active;
+        // otherwise activateProjectSession replaces the just-opened standalone tab.
+        if (candidate) await get().switchProject(candidate)
       }
 
       void (async () => {

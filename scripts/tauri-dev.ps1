@@ -128,6 +128,8 @@ $overridePath = Join-Path $devDir 'tauri-dev-override.json'
 # exits with -1 shortly after the app window opens, tearing down `tauri dev`
 # even though Vite was healthy. Own Vite in this script and clear the hook.
 $overrideJson = @{
+  # Keep the dev single-instance mutex separate from an installed release.
+  identifier = 'com.qingcode.app.dev'
   build = @{
     devUrl = "http://127.0.0.1:$devPort"
     beforeDevCommand = ''

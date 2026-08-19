@@ -65,7 +65,7 @@ export function parseOpenTarget(target: string): {
   line?: number
   column?: number
 } {
-  const win = target.match(/^([A-Za-z]:[/\\].+):(\d+)(?::(\d+))?$/)
+  const win = target.match(/^([A-Za-z]:[/\\].+?):(\d+)(?::(\d+))?$/)
   if (win) {
     return {
       path: win[1],

@@ -10,6 +10,7 @@ import {
   SquareSplitHorizontal,
   LayoutGrid,
   SquareCode,
+  FileText,
 } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { requestAppClose } from '../lib/appClose'
@@ -30,6 +31,7 @@ import {
   type PanelLayoutMode,
 } from '../lib/panelLayoutMode'
 import { useUIStore } from '../store/uiStore'
+import { isExternalFileWindow } from '../lib/windowSession'
 
 function layoutModeIcon(mode: PanelLayoutMode) {
   switch (mode) {
@@ -72,6 +74,8 @@ export default function TitleBar({
   const nativeWindowDrag = windowDragMode === 'native'
   const tauriWindowDragFallback = windowDragMode === 'tauri-fallback'
   const sideLayoutActive = panelLayout === 'sideTerminal'
+  const currentProject = useProjectStore(s => s.currentProject)
+  const standaloneFiles = isExternalFileWindow() && !currentProject
 
   useEffect(() => {
     const onFocus = () => setWindowFocused(true)
@@ -181,7 +185,16 @@ export default function TitleBar({
           <AppIcon size={14} className="flex-shrink-0" />
           <FileMenu onExit={handleClose} />
         </div>
-        <ProjectPicker />
+        {standaloneFiles ? (
+          <div className="relative flex h-full min-w-0 flex-1 items-center overflow-hidden px-1">
+            <span className="inline-flex max-w-[180px] items-center gap-1.5 truncate rounded bg-bg-active px-2 py-1 text-[12px] text-fg">
+              <FileText size={13} className="flex-shrink-0 text-brand" />
+              {t('独立文件')}
+            </span>
+          </div>
+        ) : (
+          <ProjectPicker />
+        )}
         {/* Modern WebView2 uses native non-client regions only; older runtimes
             receive the Tauri JS/IPC fallback attribute instead. */}
         <div

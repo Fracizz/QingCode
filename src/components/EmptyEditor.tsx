@@ -7,12 +7,15 @@ import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
+import { isExternalFileWindow } from '../lib/windowSession'
+import { openFileFromDialog } from '../lib/openFileDialog'
 
 /** Lightweight empty editor so CodeMirror is not downloaded until a file is opened. */
 export default function EmptyEditor() {
   const { t } = useI18n()
   const recentFiles = useProjectStore(s => s.recentFiles)
   const projects = useProjectStore(s => s.projects)
+  const currentProject = useProjectStore(s => s.currentProject)
   const switchProject = useProjectStore(s => s.switchProject)
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const openFile = useEditorStore(s => s.openFile)
@@ -20,13 +23,26 @@ export default function EmptyEditor() {
   const openTerminalPanel = useUIStore(s => s.openTerminalPanel)
   const recent = recentFiles.slice(0, 8)
   const recentProjects = projects.filter(p => !p.hidden).slice(0, 5)
+  const standaloneFiles = isExternalFileWindow() && !currentProject
 
   const actions: Array<{
     icon: ReactNode
     label: string
     onClick: () => void
     primary?: boolean
-  }> = [
+  }> = standaloneFiles ? [
+    {
+      icon: <FileText size={14} />,
+      label: t('打开文件'),
+      onClick: () => void openFileFromDialog(),
+      primary: true,
+    },
+    {
+      icon: <FolderOpen size={14} />,
+      label: t('打开文件夹'),
+      onClick: () => void addProjectFromDialog().then(() => setView('explorer')),
+    },
+  ] : [
     {
       icon: <FolderOpen size={14} />,
       label: t('打开项目'),
@@ -60,7 +76,9 @@ export default function EmptyEditor() {
         <div className="flex flex-col items-center gap-1 text-center">
           <p className="text-[15px] font-semibold tracking-[0.02em] text-fg">QingCode</p>
           <span className="h-[2px] w-10 rounded bg-brand/80" aria-hidden />
-          <p className="text-sm text-fg-muted">{t('从侧边栏打开文件开始编辑')}</p>
+          <p className="text-sm text-fg-muted">
+            {standaloneFiles ? t('打开文件开始编辑') : t('从侧边栏打开文件开始编辑')}
+          </p>
         </div>
       </div>
 
@@ -82,7 +100,7 @@ export default function EmptyEditor() {
         ))}
       </div>
 
-      {recentProjects.length > 0 && (
+      {!standaloneFiles && recentProjects.length > 0 && (
         <div className="flex flex-col items-center gap-2 relative">
           <p className="text-[11px] font-semibold tracking-wide text-fg-dim uppercase">{t('最近项目')}</p>
           <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-[420px]">
@@ -106,10 +124,12 @@ export default function EmptyEditor() {
         </div>
       )}
 
-      <p className="text-xs text-fg-dim/70 flex items-center gap-1.5 relative">
-        <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span className="text-fg-dim/40">·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}
-      </p>
-      {recent.length > 0 && (
+      {!standaloneFiles && (
+        <p className="text-xs text-fg-dim/70 flex items-center gap-1.5 relative">
+          <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span className="text-fg-dim/40">·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}
+        </p>
+      )}
+      {!standaloneFiles && recent.length > 0 && (
         <div className="mt-2 w-full max-w-md">
           <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
             <Clock size={12} />

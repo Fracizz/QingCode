@@ -18,6 +18,7 @@ import {
   saveSideWorkspaceColumns,
   type SideWorkspaceColumns,
 } from '../lib/sideWorkspaceLayout'
+import { isExternalFileWindow } from '../lib/windowSession'
 
 export type View = 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
 
@@ -121,7 +122,7 @@ const initialColumns = loadSideWorkspaceColumns()
 
 export const useUIStore = create<UIState>((set) => ({
   view: 'explorer',
-  sidebarOpen: true,
+  sidebarOpen: !isExternalFileWindow(),
   activityBarHidden: loadActivityBarHidden(),
   searchRoot: null,
   globalSearchSignal: 0,

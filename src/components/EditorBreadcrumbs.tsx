@@ -5,6 +5,8 @@ import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
 import { isDescendantOf, normalizePath, parentPath, pathsEqual } from '../utils/fileReferences'
 import Tooltip from './Tooltip'
+import { isExternalFileWindow } from '../lib/windowSession'
+import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 
 function projectRelativePath(projectPath: string, filePath: string) {
   const root = normalizePath(projectPath)
@@ -33,15 +35,20 @@ export default function EditorBreadcrumbs() {
   const setView = useUIStore(s => s.setView)
 
   const activeTab = tabs.find(tab => tab.id === activeTabId)
-  if (!activeTab || !currentProject || activeTab.kind === 'diff') return null
+  const standaloneFiles = isExternalFileWindow() && !currentProject
+  if (!activeTab || activeTab.kind === 'diff' || (!currentProject && !standaloneFiles)) return null
 
   const fileInProject =
+    !!currentProject &&
     isDescendantOf(activeTab.path, currentProject.path) &&
     !pathsEqual(activeTab.path, currentProject.path)
 
-  const relative = fileInProject
+  const normalizedPath = normalizePath(activeTab.path)
+  const relative = fileInProject && currentProject
     ? projectRelativePath(currentProject.path, activeTab.path)
-    : normalizePath(activeTab.path).split('/').pop() || activeTab.path
+    : standaloneFiles
+      ? normalizedPath
+      : normalizedPath.split('/').pop() || activeTab.path
   const segments = relative.split('/').filter(Boolean)
   if (segments.length === 0) return null
 
@@ -54,24 +61,39 @@ export default function EditorBreadcrumbs() {
     })
   }
 
+  const openStandaloneSegment = (path: string, isLast: boolean) => {
+    const target = /^[A-Za-z]:$/.test(path) ? `${path}\\` : path
+    const action = isLast ? revealItemInDir(activeTab.path) : openPath(target)
+    void action.catch(error => {
+      useProjectStore.getState().pushToast(
+        'error',
+        t('在文件管理器中显示失败: {error}', { error: String(error) }),
+      )
+    })
+  }
+
   return (
     <div className="ui-font-scaled flex h-[22px] flex-shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-bg-deep pl-0 pr-3 text-[11px] text-fg-muted select-none">
-      <Tooltip label={currentProject.path} side="bottom" wrapperClassName="max-w-[140px] shrink-0">
-        <button
-          type="button"
-          className="max-w-[140px] cursor-pointer truncate rounded px-1.5 bg-bg-hover/80 text-fg hover:bg-bg-active"
-          aria-label={t('在资源管理器中定位')}
-          onClick={() => revealInExplorer(currentProject.path)}
-        >
-          {currentProject.name}
-        </button>
-      </Tooltip>
+      {currentProject && (
+        <Tooltip label={currentProject.path} side="bottom" wrapperClassName="max-w-[140px] shrink-0">
+          <button
+            type="button"
+            className="max-w-[140px] cursor-pointer truncate rounded px-1.5 bg-bg-hover/80 text-fg hover:bg-bg-active"
+            aria-label={t('在资源管理器中定位')}
+            onClick={() => revealInExplorer(currentProject.path)}
+          >
+            {currentProject.name}
+          </button>
+        </Tooltip>
+      )}
       {segments.map((segment, index) => {
         const isLast = index === segments.length - 1
         const targetPath = fileInProject
           ? pathAtRelativeDepth(activeTab.path, index + 1, segments.length)
-          : activeTab.path
-        const clickable = fileInProject || isLast
+          : standaloneFiles
+            ? pathAtRelativeDepth(activeTab.path, index + 1, segments.length)
+            : activeTab.path
+        const clickable = fileInProject || standaloneFiles || isLast
 
         return (
           <span key={`${segment}-${index}`} className="flex min-w-0 items-center gap-0.5">
@@ -88,7 +110,8 @@ export default function EditorBreadcrumbs() {
                 aria-label={t('在资源管理器中定位')}
                 onClick={() => {
                   if (!clickable) return
-                  revealInExplorer(targetPath)
+                  if (standaloneFiles) openStandaloneSegment(targetPath, isLast)
+                  else revealInExplorer(targetPath)
                 }}
               >
                 {segment}
