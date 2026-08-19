@@ -310,6 +310,7 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 - **生产构建**由 `contextMenuGuard` 拦截 WebView 原生右键菜单，仅在输入框等控件保留浏览器复制/粘贴菜单；编辑器、文件树等使用应用内 `ContextMenu`。
 - **开发构建**默认与生产一致：安装 `contextMenuGuard`、显示 QingCode `ContextMenu`。按 **F12**（或 `Ctrl+Shift+I/J/C`）打开/关闭 WebView 开发者工具时，同步切换右键为 **原生菜单**（含「检查」）；再次按相同快捷键恢复应用菜单。
 - 原生快捷键守卫只调用 `preventDefault()` 取消 WebView 默认行为，**不得**调用 `stopPropagation()`；与应用命令重合的按键（如 `Ctrl+Shift+C` 复制路径）必须继续传播给 QingCode 处理。
+- 应用内 `ContextMenu` 显示的快捷键必须在菜单打开且焦点位于菜单时执行对应菜单项；此时全局快捷键分发让位，避免误操作活动编辑器或重复执行。
 - 新增或修改快捷键时，需同时验证“不会触发 WebView 原生行为”和“应用命令仍能执行”。
 
 ### 对话框（Modal）

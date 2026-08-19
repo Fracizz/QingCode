@@ -1,3 +1,5 @@
+// @vitest-environment jsdom
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const pushToast = vi.fn()
@@ -51,6 +53,7 @@ vi.mock('../utils/fileReferences', async () => {
 })
 
 import {
+  COPY_PATH_FOCUS_ATTR,
   copyActivePathAction,
   copyFileReferenceAction,
   copyPathAction,
@@ -66,6 +69,7 @@ describe('copyFileActions', () => {
     getEditorView.mockReset()
     explorerPathsForCopyShortcut.mockReset()
     explorerPathsForCopyShortcut.mockReturnValue([])
+    document.body.innerHTML = ''
     copyToClipboard.mockResolvedValue(undefined)
     findProjectForPath.mockReturnValue({ id: 'p1', name: 'App', path: 'D:/work/app' })
     formatFileReference.mockReturnValue('@App/src/a.ts#L1')
@@ -111,5 +115,18 @@ describe('copyFileActions', () => {
     await copyActivePathAction()
     expect(copyToClipboard).toHaveBeenCalledWith('D:/work/app/a.svg\nD:/work/app/b.svg')
     expect(pushToast).toHaveBeenCalledWith('success', '已复制 {count} 个路径')
+  })
+
+  it('copyActivePathAction prefers a focused project chip path', async () => {
+    const chip = document.createElement('div')
+    chip.tabIndex = 0
+    chip.setAttribute(COPY_PATH_FOCUS_ATTR, 'D:/work/project-selected')
+    document.body.appendChild(chip)
+    chip.focus()
+
+    await copyActivePathAction()
+
+    expect(copyToClipboard).toHaveBeenCalledWith('D:/work/project-selected')
+    expect(explorerPathsForCopyShortcut).not.toHaveBeenCalled()
   })
 })

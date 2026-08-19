@@ -54,6 +54,14 @@ export function useAppKeyboardShortcuts({
     }
 
     const onKeyDown = (event: KeyboardEvent) => {
+      // ContextMenu owns the shortcuts it displays. Its focused menu button
+      // bubbles the event to the menu listener after this capture listener.
+      if (
+        event.target instanceof HTMLElement &&
+        event.target.closest('[data-qingcode-context-menu]')
+      ) {
+        return
+      }
       // WebView2 may reserve F12-family accelerators before editor handlers run.
       // Find Usages is an app command, so honor its configured binding even when
       // an earlier native guard already marked the event as prevented.

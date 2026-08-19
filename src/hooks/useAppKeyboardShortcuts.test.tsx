@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render } from '@testing-library/react'
+import { fireEvent, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SHORTCUTS } from '../lib/shortcuts'
 import { useAppKeyboardShortcuts } from './useAppKeyboardShortcuts'
@@ -10,6 +10,13 @@ const mocks = vi.hoisted(() => ({
   requestGlobalSearch: vi.fn(),
   activeEditorSelectionSeed: vi.fn(() => 'selectedName'),
   openFileFromDialog: vi.fn(),
+  copyActivePathAction: vi.fn(),
+}))
+
+vi.mock('../lib/copyFileActions', () => ({
+  copyActiveFileReferenceAction: vi.fn(),
+  copyActivePathAction: mocks.copyActivePathAction,
+  copyActiveRelativePathAction: vi.fn(),
 }))
 
 vi.mock('../lib/symbolNavigation', () => ({
@@ -54,6 +61,7 @@ afterEach(() => {
   mocks.activeEditorSelectionSeed.mockReset()
   mocks.activeEditorSelectionSeed.mockReturnValue('selectedName')
   mocks.openFileFromDialog.mockReset()
+  mocks.copyActivePathAction.mockReset()
 })
 
 describe('useAppKeyboardShortcuts', () => {
@@ -139,5 +147,24 @@ describe('useAppKeyboardShortcuts', () => {
     window.dispatchEvent(event)
 
     expect(mocks.openFileFromDialog).not.toHaveBeenCalled()
+  })
+
+  it('lets an open context menu own its displayed copy-path shortcut', () => {
+    render(<ShortcutHarness />)
+    const menu = document.createElement('div')
+    menu.setAttribute('data-qingcode-context-menu', '')
+    const item = document.createElement('button')
+    menu.appendChild(item)
+    document.body.appendChild(menu)
+    item.focus()
+
+    fireEvent.keyDown(item, {
+      key: 'c',
+      ctrlKey: true,
+      shiftKey: true,
+    })
+
+    expect(mocks.copyActivePathAction).not.toHaveBeenCalled()
+    menu.remove()
   })
 })

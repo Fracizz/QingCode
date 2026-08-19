@@ -610,6 +610,7 @@ export default function ProjectPicker() {
                 return (
                   <div
                     key={project.id}
+                    data-qingcode-copy-path={project.path}
                     role="menuitem"
                     tabIndex={unavailable ? -1 : 0}
                     onClick={() => !unavailable && handleSwitch(project)}
@@ -807,6 +808,7 @@ function Chip({
     <div
       data-chip-id={measure ? project.id : undefined}
       data-chip-index={measure ? undefined : chipIndex}
+      data-qingcode-copy-path={measure ? undefined : project.path}
       role={measure ? undefined : 'button'}
       tabIndex={measure || unavailable ? -1 : 0}
       aria-current={isCurrent ? 'true' : undefined}

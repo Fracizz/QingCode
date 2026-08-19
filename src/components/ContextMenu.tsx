@@ -9,6 +9,7 @@ import {
   tipArrowBoxGap,
   TIP_ARROW_W,
 } from './tipArrow'
+import { shortcutMatchesEvent } from '../lib/shortcuts'
 
 export interface ContextMenuItem {
   label: string
@@ -120,6 +121,16 @@ export default function ContextMenu({
       onClose()
     }
     const onKeyDown = (event: KeyboardEvent) => {
+      const shortcutItem = items.find(
+        item => !item.disabled && item.shortcut && shortcutMatchesEvent(item.shortcut, event),
+      )
+      if (shortcutItem) {
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+        void shortcutItem.action()
+        return
+      }
       if (event.key === 'Escape') {
         onClose()
         return
@@ -168,6 +179,7 @@ export default function ContextMenu({
   return createPortal(
     <div
       ref={shellRef}
+      data-qingcode-context-menu
       className="menu-enter ui-font-scaled fixed z-[120]"
       style={{
         left: position.x,

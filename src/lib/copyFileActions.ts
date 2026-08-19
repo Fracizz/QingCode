@@ -12,6 +12,9 @@ import {
   projectRelativePath,
 } from '../utils/fileReferences'
 
+/** Focusable UI targets (for example project chips) can expose their copy path. */
+export const COPY_PATH_FOCUS_ATTR = 'data-qingcode-copy-path'
+
 function activeEditableTab() {
   const { tabs, activeTabId } = useEditorStore.getState()
   return tabs.find(t => t.id === activeTabId) ?? null
@@ -21,7 +24,16 @@ function asPathList(pathOrPaths: string | readonly string[]): string[] {
   return typeof pathOrPaths === 'string' ? [pathOrPaths] : [...pathOrPaths]
 }
 
-/** Prefer focused explorer selection; fall back to the active editor tab. */
+function focusedCopyPath(): string | null {
+  if (typeof document === 'undefined' || !(document.activeElement instanceof HTMLElement)) {
+    return null
+  }
+  return document.activeElement.closest(`[${COPY_PATH_FOCUS_ATTR}]`)?.getAttribute(
+    COPY_PATH_FOCUS_ATTR,
+  ) ?? null
+}
+
+/** Prefer focused explorer selection, then the active editor tab. */
 function pathsForCopyShortcut(): string[] {
   const fromExplorer = explorerPathsForCopyShortcut()
   if (fromExplorer.length > 0) return fromExplorer
@@ -145,7 +157,8 @@ export async function copyFileReferenceAction(
 
 /** Ctrl+Shift+C / Ctrl+Shift+Alt+C / Alt+C — explorer selection when focused, else active tab. */
 export async function copyActivePathAction(): Promise<void> {
-  const paths = pathsForCopyShortcut()
+  const focusedPath = focusedCopyPath()
+  const paths = focusedPath ? [focusedPath] : pathsForCopyShortcut()
   if (paths.length === 0) return
   await copyPathAction(paths)
 }
