@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Default)]
 pub(crate) struct AllowlistState {
@@ -58,8 +58,9 @@ impl PathAllowlist {
 
     /// Explicit grants (Save As / Open with / symlink confirm). Rejects relative paths
     /// and filesystem roots; caps growth so a compromised frontend cannot flood memory.
-    pub fn authorize_paths(&self, paths: Vec<String>) {
+    pub fn authorize_paths(&self, paths: Vec<String>) -> Vec<PathBuf> {
         const MAX_AUTHORIZED: usize = 256;
+        let mut granted = Vec::new();
         if let Ok(mut state) = self.inner.lock() {
             for path in paths {
                 if state.authorized.len() >= MAX_AUTHORIZED {
@@ -70,10 +71,12 @@ impl PathAllowlist {
                     continue;
                 }
                 if !state.authorized.iter().any(|existing| existing == &buf) {
-                    state.authorized.push(buf);
+                    state.authorized.push(buf.clone());
                 }
+                granted.push(buf);
             }
         }
+        granted
     }
 
     pub fn ensure_allowed(&self, path: &str) -> Result<(), String> {
@@ -354,8 +357,19 @@ pub fn sync_trusted_roots(roots: Vec<String>, allowlist: State<'_, PathAllowlist
 }
 
 #[tauri::command]
-pub fn authorize_paths(paths: Vec<String>, allowlist: State<'_, PathAllowlist>) {
-    allowlist.authorize_paths(paths);
+pub fn authorize_paths(
+    paths: Vec<String>,
+    allowlist: State<'_, PathAllowlist>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let granted = allowlist.authorize_paths(paths);
+    let asset_scope = app.asset_protocol_scope();
+    for path in granted {
+        asset_scope
+            .allow_file(&path)
+            .map_err(|error| format!("无法授权本地资源 {}: {error}", display_path(&path)))?;
+    }
+    Ok(())
 }
 
 /// Build a test allowlist state (unit tests only).

@@ -147,7 +147,7 @@ try {
     throw "NSIS bundle directory not found: $nsisDir"
   }
 
-  Write-Step 'Build selectable language components'
+  Write-Step 'Build language components'
   $componentStageRelative = if ($Target) {
     ".dev\nsis-language-components\$Target"
   } else {
@@ -162,7 +162,7 @@ try {
     throw "Language component build failed with exit code $LASTEXITCODE."
   }
 
-  Write-Step 'Add language selection page to NSIS installer'
+  Write-Step 'Embed language components into NSIS installer'
   # Tauri writes the rendered NSIS sources beside release/, while the compiled
   # setup executable is written under release/bundle/nsis/.
   $renderedNsisRoot = Join-Path $cargoReleaseDir 'nsis'
@@ -176,7 +176,7 @@ try {
   }
   & node (Join-Path $PSScriptRoot 'patch-language-components-nsis.mjs') $renderedInstaller $componentStage
   if ($LASTEXITCODE -ne 0) {
-    throw "Failed to patch language component selection into NSIS."
+    throw "Failed to patch language components into NSIS."
   }
   $makeNsis = Join-Path $env:LOCALAPPDATA 'tauri\NSIS\makensis.exe'
   if (-not (Test-Path -LiteralPath $makeNsis)) {
@@ -215,7 +215,7 @@ try {
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "Install notes: language components are selectable (all five on by default)." -ForegroundColor DarkGray
+  Write-Host "Install notes: all five language components are installed by default." -ForegroundColor DarkGray
   Write-Host "               Start Menu shortcut always; desktop shortcut checked by default on finish page." -ForegroundColor DarkGray
   Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {

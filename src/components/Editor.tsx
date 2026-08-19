@@ -1085,7 +1085,11 @@ export default function Editor() {
                 showSourcePane ? 'border-l' : ''
               }`}
             >
-              <MarkdownPreview ref={previewScrollRef} content={previewContent} />
+              <MarkdownPreview
+                ref={previewScrollRef}
+                content={previewContent}
+                filePath={activeTab.path}
+              />
             </div>
           )}
         </div>
