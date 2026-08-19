@@ -6,6 +6,22 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-08-19
+
+### Added
+
+- Markdown preview now supports local relative images
+- Independent file windows, single-instance open forwarding, and Ctrl+O system-file-dialog opening
+- Better coordination between Explorer favorites, search, and terminal workflows
+
+### Changed
+
+- Windows installers now install all language components by default
+
+### Fixed
+
+- Improved favorites card sections and path display, plus search and startup stability
+
 ## [0.1.11] - 2026-08-07
 
 ### Added
