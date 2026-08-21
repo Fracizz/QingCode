@@ -76,6 +76,11 @@ windows-sys = { version = "0.61.2", features = ["Win32_UI_Input_KeyboardAndMouse
 # Fonts registry + Explorer “Open with” (Windows only).
 winreg = "0.55"
 
+[patch.crates-io]
+# Windows event-loop callback double-free (HEAP_FAILURE_BLOCK_NOT_BUSY).
+# See vendor/tao/QINGCODE.md.
+tao = { path = "vendor/tao" }
+
 [dev-dependencies]
 # Tests use in-process grammars; release binaries load the same grammars from
 # independently installable language-component dynamic libraries.
