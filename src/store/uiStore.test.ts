@@ -90,6 +90,20 @@ describe('requestGlobalSearch', () => {
       globalSearchSignal: 5,
     })
   })
+
+  it('keeps a requested directory and clears a stale global query', () => {
+    useUIStore.setState({ globalSearchSignal: 4, globalSearchQuery: 'old query' })
+
+    useUIStore.getState().requestSearch('D:/proj/src')
+
+    expect(useUIStore.getState()).toMatchObject({
+      view: 'search',
+      sidebarOpen: true,
+      searchRoot: 'D:/proj/src',
+      globalSearchQuery: null,
+      globalSearchSignal: 5,
+    })
+  })
 })
 
 describe('side workspace columns', () => {

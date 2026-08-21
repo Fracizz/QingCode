@@ -94,7 +94,10 @@ import {
   copyPathAction,
   copyRelativePathAction,
 } from '../lib/copyFileActions'
-import { setExplorerSelectedPaths } from '../lib/explorerSelection'
+import {
+  setExplorerSelectedDirectoryPath,
+  setExplorerSelectedPaths,
+} from '../lib/explorerSelection'
 import { useShortcutStore } from '../store/shortcutStore'
 import ExplorerTreeRow from './ExplorerTreeRow'
 import FavoriteItemsSection from './FavoriteItemsSection'
@@ -249,8 +252,19 @@ export default function Sidebar() {
           ? [selectedPath]
           : []
     setExplorerSelectedPaths(paths)
-    return () => setExplorerSelectedPaths([])
-  }, [selectedPath, selectedPaths])
+    const selectedNode = selectedPath ? findNodeByPath(tree, selectedPath) : null
+    const selectedDirectory =
+      selectedPath && currentProject && pathsEqual(selectedPath, currentProject.path)
+        ? currentProject.path
+        : selectedNode?.is_dir
+          ? selectedNode.path
+          : null
+    setExplorerSelectedDirectoryPath(selectedDirectory)
+    return () => {
+      setExplorerSelectedPaths([])
+      setExplorerSelectedDirectoryPath(null)
+    }
+  }, [currentProject, selectedPath, selectedPaths, tree])
 
   useEffect(() => {
     if (treeRevealPath) queueMicrotask(() => replaceSelection(treeRevealPath))

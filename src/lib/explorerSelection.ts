@@ -5,6 +5,7 @@
  */
 
 let selectedPaths: string[] = []
+let selectedDirectoryPath: string | null = null
 
 /** Mark the explorer shell (project header + tree). */
 export const EXPLORER_FOCUS_ATTR = 'data-qingcode-explorer'
@@ -16,6 +17,11 @@ export function setExplorerSelectedPaths(paths: readonly string[]): void {
 /** Keep a single primary path in sync (first entry / clear). */
 export function setExplorerSelectedPath(path: string | null): void {
   selectedPaths = path ? [path] : []
+}
+
+/** Keep the primary selected directory available to app-level search shortcuts. */
+export function setExplorerSelectedDirectoryPath(path: string | null): void {
+  selectedDirectoryPath = path
 }
 
 export function getExplorerSelectedPath(): string | null {
@@ -47,4 +53,9 @@ export function explorerPathsForCopyShortcut(): string[] {
 /** First explorer path when focused; otherwise null. */
 export function explorerPathForCopyShortcut(): string | null {
   return explorerPathsForCopyShortcut()[0] ?? null
+}
+
+/** Selected directory for Ctrl+Shift+F, only while focus remains in Explorer. */
+export function explorerDirectoryForSearchShortcut(): string | null {
+  return isExplorerFocusActive() ? selectedDirectoryPath : null
 }

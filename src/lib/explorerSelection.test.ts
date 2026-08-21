@@ -1,17 +1,20 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  explorerDirectoryForSearchShortcut,
   explorerPathForCopyShortcut,
   explorerPathsForCopyShortcut,
   getExplorerSelectedPath,
   getExplorerSelectedPaths,
   setExplorerSelectedPath,
+  setExplorerSelectedDirectoryPath,
   setExplorerSelectedPaths,
 } from './explorerSelection'
 
 describe('explorerSelection', () => {
   afterEach(() => {
     setExplorerSelectedPaths([])
+    setExplorerSelectedDirectoryPath(null)
     document.body.innerHTML = ''
   })
 
@@ -41,5 +44,19 @@ describe('explorerSelection', () => {
 
     expect(explorerPathsForCopyShortcut()).toEqual(['D:/proj/src', 'D:/proj/assets'])
     expect(explorerPathForCopyShortcut()).toBe('D:/proj/src')
+  })
+
+  it('returns a selected directory for search only when explorer is focused', () => {
+    setExplorerSelectedDirectoryPath('D:/proj/src')
+    expect(explorerDirectoryForSearchShortcut()).toBeNull()
+
+    const shell = document.createElement('div')
+    shell.setAttribute('data-qingcode-explorer', '')
+    const inner = document.createElement('button')
+    shell.appendChild(inner)
+    document.body.appendChild(shell)
+    inner.focus()
+
+    expect(explorerDirectoryForSearchShortcut()).toBe('D:/proj/src')
   })
 })

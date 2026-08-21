@@ -8,6 +8,8 @@ import { useAppKeyboardShortcuts } from './useAppKeyboardShortcuts'
 const mocks = vi.hoisted(() => ({
   findUsagesAtActiveEditor: vi.fn(),
   requestGlobalSearch: vi.fn(),
+  requestSearch: vi.fn(),
+  explorerDirectoryForSearchShortcut: vi.fn<() => string | null>(() => null),
   activeEditorSelectionSeed: vi.fn(() => 'selectedName'),
   openFileFromDialog: vi.fn(),
   copyActivePathAction: vi.fn(),
@@ -31,12 +33,17 @@ vi.mock('../lib/openFileDialog', () => ({
   openFileFromDialog: mocks.openFileFromDialog,
 }))
 
+vi.mock('../lib/explorerSelection', () => ({
+  explorerDirectoryForSearchShortcut: mocks.explorerDirectoryForSearchShortcut,
+}))
+
 vi.mock('../store/uiStore', () => ({
   useUIStore: Object.assign(
     vi.fn(),
     {
       getState: () => ({
         requestGlobalSearch: mocks.requestGlobalSearch,
+        requestSearch: mocks.requestSearch,
         openTerminalPanel: vi.fn(),
         requestToggleTerminal: vi.fn(),
       }),
@@ -58,6 +65,9 @@ function ShortcutHarness() {
 afterEach(() => {
   mocks.findUsagesAtActiveEditor.mockReset()
   mocks.requestGlobalSearch.mockReset()
+  mocks.requestSearch.mockReset()
+  mocks.explorerDirectoryForSearchShortcut.mockReset()
+  mocks.explorerDirectoryForSearchShortcut.mockReturnValue(null)
   mocks.activeEditorSelectionSeed.mockReset()
   mocks.activeEditorSelectionSeed.mockReturnValue('selectedName')
   mocks.openFileFromDialog.mockReset()
@@ -118,6 +128,23 @@ describe('useAppKeyboardShortcuts', () => {
 
     expect(mocks.requestGlobalSearch).toHaveBeenCalledWith('selectedName')
     input.remove()
+  })
+
+  it('scopes Ctrl+Shift+F to the selected explorer directory', () => {
+    mocks.explorerDirectoryForSearchShortcut.mockReturnValue('D:/proj/src')
+    render(<ShortcutHarness />)
+    const event = new KeyboardEvent('keydown', {
+      key: 'f',
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+
+    window.dispatchEvent(event)
+
+    expect(mocks.requestSearch).toHaveBeenCalledWith('D:/proj/src', 'selectedName')
+    expect(mocks.requestGlobalSearch).not.toHaveBeenCalled()
   })
 
   it('opens the system file picker once on Ctrl+O', () => {

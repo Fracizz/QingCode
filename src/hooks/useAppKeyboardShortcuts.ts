@@ -19,6 +19,7 @@ import { openFindInActiveEditor } from '../lib/editorFind'
 import { findUsagesAtActiveEditor } from '../lib/symbolNavigation'
 import { activeEditorSelectionSeed } from '../lib/editorSelectionSeed'
 import { openFileFromDialog } from '../lib/openFileDialog'
+import { explorerDirectoryForSearchShortcut } from '../lib/explorerSelection'
 
 function isTerminalKeyTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && Boolean(target.closest('.xterm'))
@@ -82,9 +83,10 @@ export function useAppKeyboardShortcuts({
       ) {
         event.preventDefault()
         event.stopPropagation()
-        useUIStore.getState().requestGlobalSearch(
-          activeEditorSelectionSeed({ maxLength: 500, singleLine: true })
-        )
+        const seed = activeEditorSelectionSeed({ maxLength: 500, singleLine: true })
+        const directory = explorerDirectoryForSearchShortcut()
+        if (directory) useUIStore.getState().requestSearch(directory, seed)
+        else useUIStore.getState().requestGlobalSearch(seed)
         return
       }
       if (event.defaultPrevented) return

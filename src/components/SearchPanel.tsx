@@ -32,6 +32,7 @@ import {
   BookmarkMinus,
 } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { open } from '@tauri-apps/plugin-dialog'
 import { List, useListRef } from 'react-window'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
@@ -48,6 +49,7 @@ import {
   isGlobPattern,
   isNavigable,
   nextSearchBudget,
+  normalizeTypeFilterExtension,
   rowHeightOf,
   SEARCH_PREFETCH_ROWS,
   SEARCH_RESULT_BUDGETS,
@@ -108,7 +110,7 @@ const FILENAME_DEBOUNCE_MS = 280
 const MIN_CONTENT_QUERY_LEN = 2
 const MAX_MATCHES_PER_FILE = 20
 const INITIAL_SEARCH_BUDGET = SEARCH_RESULT_BUDGETS[0]
-const EXT_PICKER_WIDTH = 168
+const EXT_PICKER_WIDTH = 200
 const SCOPE_MENU_WIDTH = 140
 
 export default function SearchPanel() {
@@ -153,6 +155,7 @@ export default function SearchPanel() {
   const [fuzzy, setFuzzy] = useState(false)
   const [matchSuffix, setMatchSuffix] = useState(false)
   const [typeFilter, setTypeFilter] = useState<TypeFilter | null>(null)
+  const [customExtension, setCustomExtension] = useState('')
   const [extPickerOpen, setExtPickerOpen] = useState(false)
   const [extPickerStyle, setExtPickerStyle] = useState<CSSProperties>({
     visibility: 'hidden',
@@ -213,10 +216,13 @@ export default function SearchPanel() {
   const topExts = useMemo(() => projectExts.slice(0, TOP_EXT_COUNT), [projectExts])
   const otherExts = useMemo(() => projectExts.slice(TOP_EXT_COUNT), [projectExts])
   const hasStarOption = otherExts.length > 0
+  const normalizedCustomExtension = useMemo(
+    () => normalizeTypeFilterExtension(customExtension),
+    [customExtension],
+  )
 
   useEffect(() => {
     if (globalSearchSignal === 0) return
-    setSearchRoot(null)
     setSearchScope('current')
     if (globalSearchQuery) {
       setQuery(globalSearchQuery)
@@ -271,6 +277,32 @@ export default function SearchPanel() {
 
   const closeExtPicker = useCallback(() => setExtPickerOpen(false), [])
   const closeScopeMenu = useCallback(() => setScopeMenuOpen(false), [])
+  const chooseSearchDirectory = useCallback(async () => {
+    closeScopeMenu()
+    try {
+      const defaultPath = searchRoot ?? currentProject?.path
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        ...(defaultPath ? { defaultPath } : {}),
+      })
+      if (typeof selected !== 'string') return
+      if (!findProjectForPath(projects, selected)) {
+        pushToast('error', t('请选择已打开项目中的目录'))
+        return
+      }
+      setSearchScope('current')
+      setSearchRoot(selected)
+    } catch (error) {
+      pushToast('error', t('选择搜索目录失败: {error}', { error: String(error) }))
+    }
+  }, [closeScopeMenu, currentProject, projects, pushToast, searchRoot, setSearchRoot, t])
+  const applyCustomExtension = useCallback(() => {
+    if (!normalizedCustomExtension) return
+    setTypeFilter({ kind: 'ext', ext: normalizedCustomExtension })
+    setCustomExtension('')
+    closeExtPicker()
+  }, [closeExtPicker, normalizedCustomExtension])
 
   const placeMenu = useCallback(
     (
@@ -1070,7 +1102,14 @@ export default function SearchPanel() {
     return t('{dirs} 个目录 · {files} 个文件{truncated}', { dirs, files, truncated })
   })()
 
-  const scopeLabel = searchScope === 'all' ? t('全部项目') : t('当前项目')
+  const searchRootName = searchRoot
+    ? searchRoot.replace(/\\/g, '/').split('/').pop() || searchRoot
+    : ''
+  const scopeLabel = searchRoot
+    ? t('目录：{name}', { name: searchRootName })
+    : searchScope === 'all'
+      ? t('全部项目')
+      : t('当前项目')
 
   return (
     <>
@@ -1078,33 +1117,31 @@ export default function SearchPanel() {
       <div className="px-3 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
         <Search size={13} className="text-brand flex-shrink-0" />
         <span className="min-w-0 truncate">{t('搜索')}</span>
-        {!searchRoot && (
-          <Tooltip label={t('搜索范围')} side="bottom" wrapperClassName="ml-auto inline-flex shrink-0">
-            <button
-              ref={scopeBtnRef}
-              type="button"
-              aria-label={t('搜索范围')}
-              aria-expanded={scopeMenuOpen}
-              aria-haspopup="listbox"
-              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded font-medium tracking-normal text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors whitespace-nowrap"
-              onClick={event => {
-                event.stopPropagation()
-                if (scopeMenuOpen) {
-                  closeScopeMenu()
-                  return
-                }
-                setScopeMenuStyle(prev => ({ ...prev, visibility: 'hidden' }))
-                setScopeMenuOpen(true)
-              }}
-            >
-              <span>{scopeLabel}</span>
-              <Caret
-                size={11}
-                className={`flex-shrink-0 transition-transform ${scopeMenuOpen ? 'rotate-180' : ''}`}
-              />
-            </button>
-          </Tooltip>
-        )}
+        <Tooltip label={t('搜索范围')} side="bottom" wrapperClassName="ml-auto inline-flex shrink-0">
+          <button
+            ref={scopeBtnRef}
+            type="button"
+            aria-label={t('搜索范围')}
+            aria-expanded={scopeMenuOpen}
+            aria-haspopup="listbox"
+            className="flex max-w-[170px] items-center gap-0.5 rounded px-1.5 py-0.5 font-medium tracking-normal text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+            onClick={event => {
+              event.stopPropagation()
+              if (scopeMenuOpen) {
+                closeScopeMenu()
+                return
+              }
+              setScopeMenuStyle(prev => ({ ...prev, visibility: 'hidden' }))
+              setScopeMenuOpen(true)
+            }}
+          >
+            <span className="truncate">{scopeLabel}</span>
+            <Caret
+              size={11}
+              className={`flex-shrink-0 transition-transform ${scopeMenuOpen ? 'rotate-180' : ''}`}
+            />
+          </button>
+        </Tooltip>
       </div>
 
       {scopeMenuOpen &&
@@ -1123,7 +1160,7 @@ export default function SearchPanel() {
                 { value: 'all' as const, label: t('全部项目') },
               ] as const
             ).map(option => {
-              const selected = searchScope === option.value
+              const selected = !searchRoot && searchScope === option.value
               return (
                 <button
                   key={option.value}
@@ -1135,6 +1172,7 @@ export default function SearchPanel() {
                       ? 'bg-bg-active text-fg'
                       : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}`}
                   onClick={() => {
+                    setSearchRoot(null)
                     setSearchScope(option.value)
                     closeScopeMenu()
                   }}
@@ -1143,6 +1181,20 @@ export default function SearchPanel() {
                 </button>
               )
             })}
+            <div className="my-1 border-t border-border" />
+            <button
+              type="button"
+              role="option"
+              aria-selected={Boolean(searchRoot)}
+              className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[12px] transition-colors
+                ${searchRoot
+                  ? 'bg-bg-active text-fg'
+                  : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}`}
+              onClick={() => void chooseSearchDirectory()}
+            >
+              <Folder size={13} className="shrink-0" />
+              <span>{t('选择目录…')}</span>
+            </button>
           </div>,
           document.body,
         )}
@@ -1465,6 +1517,32 @@ export default function SearchPanel() {
                   {!projectExtsLoading && topExts.length === 0 && (
                     <span className="px-1 py-0.5 text-[11px] text-fg-dim">{t('暂无扩展名')}</span>
                   )}
+                </div>
+                <div className="mt-1.5 border-t border-border pt-1.5">
+                  <div className="mb-1 px-1 text-[10px] text-fg-dim">{t('自定义类型')}</div>
+                  <div className="flex items-center gap-1">
+                    <input
+                      value={customExtension}
+                      onChange={event => setCustomExtension(event.target.value)}
+                      onKeyDown={event => {
+                        if (event.key !== 'Enter') return
+                        event.preventDefault()
+                        event.stopPropagation()
+                        applyCustomExtension()
+                      }}
+                      placeholder={t('输入类型，如 .vue')}
+                      aria-label={t('自定义文件类型')}
+                      className="setting-input min-w-0 flex-1 px-2 py-1 font-mono text-[11px]"
+                    />
+                    <button
+                      type="button"
+                      disabled={!normalizedCustomExtension}
+                      onClick={applyCustomExtension}
+                      className="shrink-0 rounded border border-border-strong bg-bg-deep px-2 py-1 text-[11px] text-fg-muted transition-colors hover:bg-bg-active hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      {t('确定')}
+                    </button>
+                  </div>
                 </div>
               </div>,
               document.body,

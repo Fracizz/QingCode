@@ -63,6 +63,11 @@ export function typeFilterExtensions(filter: TypeFilter | null): string[] | null
   return filter.kind === 'ext' ? [filter.ext] : filter.exts
 }
 
+export function normalizeTypeFilterExtension(value: string): string | null {
+  const extension = value.trim().replace(/^\.+/, '').toLowerCase()
+  return extension || null
+}
+
 export function isGlobPattern(query: string): boolean {
   return query.includes('*') || query.includes('?')
 }

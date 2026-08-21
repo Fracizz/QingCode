@@ -8,6 +8,7 @@ import {
   isGlobPattern,
   isNavigable,
   nextSearchBudget,
+  normalizeTypeFilterExtension,
   rowHeightOf,
   SEARCH_RESULT_BUDGETS,
   trimContentFiles,
@@ -22,6 +23,12 @@ describe('type filters', () => {
     expect(typeFilterLabel({ kind: 'star', exts: ['md', 'txt'] })).toBe('*')
     expect(typeFilterExtensions({ kind: 'ext', ext: 'rs' })).toEqual(['rs'])
     expect(typeFilterExtensions({ kind: 'star', exts: ['a', 'b'] })).toEqual(['a', 'b'])
+  })
+
+  it('normalizes a custom extension', () => {
+    expect(normalizeTypeFilterExtension(' .Vue ')).toBe('vue')
+    expect(normalizeTypeFilterExtension('...PY')).toBe('py')
+    expect(normalizeTypeFilterExtension('  ')).toBeNull()
   })
 })
 

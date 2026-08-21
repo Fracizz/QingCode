@@ -66,9 +66,14 @@ vi.mock('@tauri-apps/plugin-opener', () => ({
 
 const mocks = vi.hoisted(() => ({
   safeInvoke: vi.fn(),
+  openDirectory: vi.fn(),
   findProjectForPath: vi.fn(),
   loadExcludeSettingsForProject: vi.fn(),
   buildReplacePreview: vi.fn(),
+}))
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: mocks.openDirectory,
 }))
 
 vi.mock('../lib/tauri', () => ({
@@ -118,6 +123,8 @@ function dispatch(commands: Record<string, (args: Record<string, unknown> | unde
 describe('SearchPanel', () => {
   beforeEach(() => {
     mocks.safeInvoke.mockReset()
+    mocks.openDirectory.mockReset()
+    mocks.openDirectory.mockResolvedValue(null)
     mocks.findProjectForPath.mockReset()
     mocks.loadExcludeSettingsForProject.mockReset()
     mocks.buildReplacePreview.mockReset()
@@ -167,6 +174,63 @@ describe('SearchPanel', () => {
         maxFiles: 8000,
       })
     )
+  })
+
+  it('selects an opened-project directory as the search root', async () => {
+    mocks.openDirectory.mockResolvedValue('D:/alpha/src')
+    render(<SearchPanel />)
+
+    fireEvent.click(screen.getByRole('button', { name: '搜索范围' }))
+    fireEvent.click(screen.getByRole('option', { name: '选择目录…' }))
+
+    await waitFor(() =>
+      expect(mocks.openDirectory).toHaveBeenCalledWith({
+        directory: true,
+        multiple: false,
+        defaultPath: 'D:/alpha',
+      }),
+    )
+    expect(useUIStore.getState().setSearchRoot).toHaveBeenCalledWith('D:/alpha/src')
+  })
+
+  it('does not clear a directory search root when handling the focus signal', async () => {
+    const setSearchRoot = vi.fn()
+    useUIStore.setState({
+      searchRoot: 'D:/alpha/src',
+      setSearchRoot,
+      globalSearchSignal: 3,
+      globalSearchQuery: null,
+    })
+
+    render(<SearchPanel />)
+
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith('扫描项目扩展名', 'list_file_extensions', {
+        roots: ['D:/alpha/src'],
+        maxFiles: 8000,
+      }),
+    )
+    expect(setSearchRoot).not.toHaveBeenCalledWith(null)
+    expect(screen.getByText('目录：src')).toBeInTheDocument()
+  })
+
+  it('accepts a custom file type from the type picker', async () => {
+    render(<SearchPanel />)
+    fireEvent.click(screen.getByRole('tab', { name: '文件名' }))
+    fireEvent.click(screen.getByRole('button', { name: '全部类型' }))
+
+    const customTypeInput = screen.getByRole('textbox', { name: '自定义文件类型' })
+    fireEvent.change(customTypeInput, { target: { value: ' .Vue ' } })
+    fireEvent.keyDown(customTypeInput, { key: 'Enter' })
+
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith(
+        '文件搜索',
+        'search_files',
+        expect.objectContaining({ query: '', extensions: ['vue'] }),
+      ),
+    )
+    expect(screen.getByRole('button', { name: '.vue' })).toBeInTheDocument()
   })
 
   it('keeps filename mode live after typing a query and renders the hit', async () => {

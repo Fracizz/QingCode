@@ -64,8 +64,8 @@ interface UIState {
   setActivityBarHidden: (hidden: boolean) => void
   toggleActivityBar: () => void
   setSearchRoot: (path: string | null) => void
-  /** Switch to the search view, optionally scoped to a directory. */
-  requestSearch: (root?: string | null) => void
+  /** Switch to the search view, optionally scoped to a directory and seeded with a query. */
+  requestSearch: (root?: string | null, query?: string) => void
   /** Switch to the search view and focus the query input (defaults to current project). */
   requestGlobalSearch: (query?: string) => void
   /** Open explorer and request creating a new file at the current project root. */
@@ -181,7 +181,13 @@ export const useUIStore = create<UIState>((set) => ({
       return { activityBarHidden }
     }),
   setSearchRoot: path => set({ searchRoot: path }),
-  requestSearch: root => set({ view: 'search', searchRoot: root ?? null, sidebarOpen: true }),
+  requestSearch: (root, query) => set(state => ({
+    view: 'search',
+    searchRoot: root ?? null,
+    sidebarOpen: true,
+    globalSearchQuery: query?.trim() || null,
+    globalSearchSignal: state.globalSearchSignal + 1,
+  })),
   requestGlobalSearch: query => set(state => ({
     view: 'search',
     searchRoot: null,
