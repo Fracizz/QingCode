@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
@@ -15,6 +15,11 @@ import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../u
 import { shouldSkipWatcherTreeRefresh } from '../lib/watcherTreeRefresh'
 import type { EditorTab, Project } from '../types'
 import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
+import {
+  getGitRefreshIntervalStartMinutes,
+  GIT_REFRESH_INTERVAL_START_EVENT,
+} from '../lib/gitRefreshSettings'
+import { projectGitRefreshDelay } from '../lib/projectIndicators'
 
 export type FsChangePayload = {
   path: string
@@ -117,6 +122,17 @@ export function useFileWatcher() {
   const tabs = useEditorStore(s => s.tabs)
   const projectSessions = useEditorStore(s => s.projectSessions)
   const activeTabId = useEditorStore(s => s.activeTabId)
+  const [gitRefreshIntervalStartMinutes, setGitRefreshIntervalStartMinutes] = useState(
+    getGitRefreshIntervalStartMinutes,
+  )
+
+  useEffect(() => {
+    const sync = () =>
+      setGitRefreshIntervalStartMinutes(getGitRefreshIntervalStartMinutes())
+    window.addEventListener(GIT_REFRESH_INTERVAL_START_EVENT, sync)
+    queueMicrotask(sync)
+    return () => window.removeEventListener(GIT_REFRESH_INTERVAL_START_EVENT, sync)
+  }, [])
 
   // Recursively watch only the active project. Inactive-project tabs are watched as files.
   useEffect(() => {
@@ -136,14 +152,19 @@ export function useFileWatcher() {
     void useGitStatusStore.getState().refresh(currentProject.path)
     const onFocus = () => useGitStatusStore.getState().scheduleRefresh(currentProject.path, 200)
     window.addEventListener('focus', onFocus)
-    const intervalId = window.setInterval(() => {
-      useGitStatusStore.getState().scheduleRefresh(currentProject.path, 0)
-    }, 30_000)
+    let refreshTimer: number | null = null
+    const scheduleRefresh = () => {
+      refreshTimer = window.setTimeout(() => {
+        useGitStatusStore.getState().scheduleRefresh(currentProject.path, 0)
+        scheduleRefresh()
+      }, projectGitRefreshDelay(gitRefreshIntervalStartMinutes))
+    }
+    scheduleRefresh()
     return () => {
       window.removeEventListener('focus', onFocus)
-      window.clearInterval(intervalId)
+      if (refreshTimer !== null) window.clearTimeout(refreshTimer)
     }
-  }, [currentProject])
+  }, [currentProject, gitRefreshIntervalStartMinutes])
 
   // Catch missed OS events: window focus / becoming visible again.
   useEffect(() => {

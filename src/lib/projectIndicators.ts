@@ -1,7 +1,8 @@
 import type { EditorTab, Project, TerminalTab } from '../types'
-
-export const PROJECT_GIT_REFRESH_MIN_MS = 60_000
-export const PROJECT_GIT_REFRESH_MAX_MS = 90_000
+import {
+  DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES,
+  parseGitRefreshIntervalStartMinutes,
+} from './gitRefreshSettings'
 
 /** Fired when the active-project Git dirty count is known (SCM store / workdir refresh). */
 export const GIT_DIRTY_COUNT_EVENT = 'qingcode:git-dirty-count'
@@ -15,12 +16,18 @@ type ProjectEditorSessionLike = {
   tabs: EditorTab[]
 }
 
-export function projectGitRefreshDelay(randomValue = Math.random()): number {
-  const normalized = Math.max(0, Math.min(1, randomValue))
-  return Math.round(
-    PROJECT_GIT_REFRESH_MIN_MS +
-      normalized * (PROJECT_GIT_REFRESH_MAX_MS - PROJECT_GIT_REFRESH_MIN_MS)
+export function projectGitRefreshDelay(
+  intervalStartMinutes = DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES,
+  randomValue = Math.random()
+): number {
+  const startMinutes = parseGitRefreshIntervalStartMinutes(intervalStartMinutes)
+  const spreadMinutes = Math.max(1, Math.ceil(startMinutes / 2))
+  const normalizedRandom = Math.max(0, Math.min(1, randomValue))
+  const randomOffsetMinutes = Math.min(
+    spreadMinutes,
+    Math.floor(normalizedRandom * (spreadMinutes + 1))
   )
+  return (startMinutes + randomOffsetMinutes) * 60_000
 }
 
 export function normalizedProjectPath(path: string): string {

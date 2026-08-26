@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canShowDefinitionLink,
   codeNavigationAvailabilityForPath,
+  isDefinitionLinkEnabledForPath,
   type LanguageComponentStatus,
 } from './codeNavigationAvailability'
 
@@ -21,6 +22,12 @@ const statuses: LanguageComponentStatus[] = [
 ]
 
 describe('codeNavigationAvailabilityForPath', () => {
+  it('explicitly disables the definition-link affordance for Vue SFC files', () => {
+    expect(isDefinitionLinkEnabledForPath('D:\\work\\Widget.vue')).toBe(false)
+    expect(isDefinitionLinkEnabledForPath('D:\\work\\Widget.VUE')).toBe(false)
+    expect(isDefinitionLinkEnabledForPath('D:\\work\\Widget.ts')).toBe(true)
+  })
+
   it('enables definition links for an installed language component', () => {
     const availability = codeNavigationAvailabilityForPath('D:\\work\\Widget.TSX', statuses)
 

@@ -26,6 +26,11 @@ function fileExtension(path: string): string | null {
   return fileName.slice(dot + 1).toLowerCase()
 }
 
+/** Vue SFC semantic navigation is not implemented; suppress its Ctrl+click affordance. */
+export function isDefinitionLinkEnabledForPath(path: string): boolean {
+  return fileExtension(path) !== 'vue'
+}
+
 export function codeNavigationAvailabilityForPath(
   path: string,
   statuses: LanguageComponentStatus[]

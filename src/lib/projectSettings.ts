@@ -41,6 +41,9 @@ export const SESSION_PERSIST_KEY = 'qingcode.session.persist'
 export const SESSION_EDITOR_STATE_CACHE_SIZE_KEY = 'qingcode.session.editorStateCacheSize'
 /** Show running/dirty/git badges on title-bar project chips. */
 export const PROJECT_INDICATORS_ENABLED_KEY = 'qingcode.projectIndicators.enabled'
+/** Background Git status polling interval start in whole minutes. */
+export const GIT_REFRESH_INTERVAL_START_MINUTES_KEY =
+  'qingcode.git.refreshIntervalStartMinutes'
 
 function buildSharedDefaults(): SettingsFile {
   return {
@@ -114,6 +117,7 @@ export const DEFAULT_GLOBAL_SETTINGS: SettingsFile = {
   [SESSION_PERSIST_KEY]: true,
   [SESSION_EDITOR_STATE_CACHE_SIZE_KEY]: 'auto',
   [PROJECT_INDICATORS_ENABLED_KEY]: true,
+  [GIT_REFRESH_INTERVAL_START_MINUTES_KEY]: 5,
 }
 
 /** Workspace `.qingcode/project-settings.json` defaults (no project list — global-only). */
@@ -311,9 +315,16 @@ ${settingsBodyWithAutoSave(GLOBAL_AUTOSAVE_SETTINGS_BODY)}
   //
   // qingcode.projectIndicators.enabled
   //   true  = 顶栏项目名称旁显示运行中终端、未保存文件与 Git 更改角标（默认）
-  //           Git 数量后台每 60–90 秒轮询，窗口聚焦或 Git 变更时也会刷新
-  //   false = 隐藏上述角标，并停止 Git 轮询
+  //           Git 数量按 qingcode.git.refreshIntervalStartMinutes 设定的随机周期轮询
+  //   false = 隐藏上述角标，并停止角标使用的多项目 Git 轮询
   "qingcode.projectIndicators.enabled": true,
+  //
+  // qingcode.git.refreshIntervalStartMinutes
+  //   后台 Git 状态随机轮询周期的起始值，单位为分钟；最小值和默认值均为 5
+  //   实际周期为起始值至其 1.5 倍（向上取整）之间的随机整分钟
+  //   顶栏多项目 Git 刷新逐个执行，不会同时并发刷新全部项目
+  //   仅影响定时轮询；窗口聚焦、文件保存或 Git 状态变化仍会即时刷新
+  "qingcode.git.refreshIntervalStartMinutes": 5,
 
   // ============================== 自定义扩展 ==============================
   // custom：自由键值，供后续功能读取；请勿删除整个 custom 对象
@@ -392,6 +403,8 @@ export function stripGlobalOnlyKeys(settings: SettingsFile): SettingsFile {
   delete next[PROJECTS_KEY]
   delete next[PROJECTS_SYNC_ON_STARTUP_KEY]
   delete next[SESSION_EDITOR_STATE_CACHE_SIZE_KEY]
+  delete next[PROJECT_INDICATORS_ENABLED_KEY]
+  delete next[GIT_REFRESH_INTERVAL_START_MINUTES_KEY]
   return next
 }
 

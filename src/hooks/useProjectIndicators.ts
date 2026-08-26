@@ -14,7 +14,14 @@ import {
   projectGitRefreshDelay,
   projectPathsMatch,
 } from '../lib/projectIndicators'
-import { isProjectIndicatorsEnabled, PROJECT_INDICATORS_EVENT } from '../lib/projectIndicatorSettings'
+import {
+  isProjectIndicatorsEnabled,
+  PROJECT_INDICATORS_EVENT,
+} from '../lib/projectIndicatorSettings'
+import {
+  getGitRefreshIntervalStartMinutes,
+  GIT_REFRESH_INTERVAL_START_EVENT,
+} from '../lib/gitRefreshSettings'
 
 export type ProjectIndicators = {
   running: number
@@ -28,7 +35,6 @@ export const EMPTY_PROJECT_INDICATORS: ProjectIndicators = {
   gitChanges: 0,
 }
 
-const PROJECT_GIT_CONCURRENCY = 2
 const PROJECT_GIT_FOCUS_COOLDOWN_MS = 15_000
 
 export function useProjectIndicators(
@@ -43,11 +49,21 @@ export function useProjectIndicators(
   const storeDirtyCount = useGitStatusStore(state => state.dirtyCount)
   const [gitChangesByProject, setGitChangesByProject] = useState<Record<string, number>>({})
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(isProjectIndicatorsEnabled)
+  const [gitRefreshIntervalStartMinutes, setGitRefreshIntervalStartMinutes] = useState(
+    getGitRefreshIntervalStartMinutes
+  )
 
   useEffect(() => {
     const sync = () => setIndicatorsEnabled(isProjectIndicatorsEnabled())
     window.addEventListener(PROJECT_INDICATORS_EVENT, sync)
     return () => window.removeEventListener(PROJECT_INDICATORS_EVENT, sync)
+  }, [])
+
+  useEffect(() => {
+    const sync = () => setGitRefreshIntervalStartMinutes(getGitRefreshIntervalStartMinutes())
+    window.addEventListener(GIT_REFRESH_INTERVAL_START_EVENT, sync)
+    queueMicrotask(sync)
+    return () => window.removeEventListener(GIT_REFRESH_INTERVAL_START_EVENT, sync)
   }, [])
 
   const runningByProject = useMemo(() => countRunningTerminalsByProject(terminals), [terminals])
@@ -80,82 +96,88 @@ export function useProjectIndicators(
       return
     }
 
+    const eligibleProjects = projects.filter(
+      project =>
+        !project.ephemeral &&
+        !unavailableProjectIds.includes(project.id) &&
+        (!currentProject || !projectPathsMatch(project.path, currentProject.path))
+    )
     let cancelled = false
-    let generation = 0
-    let lastFullRefreshAt = 0
-    let refreshTimer: number | null = null
+    let processing = false
+    let lastFocusRefreshAt = 0
+    const refreshTimers = new Map<string, number>()
+    // All inactive-project Git commands share one queue to prevent concurrent polling bursts.
+    const refreshQueue: Array<{ project: Project; scheduleNext: boolean }> = []
+    const queuedByProject = new Map<string, { project: Project; scheduleNext: boolean }>()
 
-    const refresh = async (targets: Project[] = projects) => {
-      const refreshGeneration = ++generation
-      let cursor = 0
-      const next: Record<string, number> = {}
-      const workers = Array.from(
-        { length: Math.min(PROJECT_GIT_CONCURRENCY, targets.length) },
-        async () => {
-          while (cursor < targets.length) {
-            const project = targets[cursor++]
-            if (!project || project.ephemeral || unavailableProjectIds.includes(project.id)) {
-              continue
-            }
-            try {
-              const status = await getGitWorkdirStatus(project.path)
-              next[project.id] = status?.dirty_count ?? 0
-            } catch {
-              // Keep the previous badge when a best-effort refresh fails.
-            }
-          }
-        }
-      )
-      await Promise.all(workers)
-      if (cancelled || refreshGeneration !== generation) return
-      setGitChangesByProject(previous => {
-        const merged = { ...previous }
-        const currentIds = new Set(projects.map(project => project.id))
-        for (const id of Object.keys(merged)) {
-          if (!currentIds.has(id)) delete merged[id]
-        }
-        for (const project of targets) {
-          if (Object.prototype.hasOwnProperty.call(next, project.id)) {
-            merged[project.id] = next[project.id]
-          }
-        }
-        return merged
-      })
-
-      // If the background poll disagrees with the activity-bar store, refresh the store.
-      const store = useGitStatusStore.getState()
-      if (!store.projectPath || store.refreshing) return
-      const tracked = targets.find(project => projectPathsMatch(project.path, store.projectPath!))
-      if (!tracked || !Object.prototype.hasOwnProperty.call(next, tracked.id)) return
-      if (next[tracked.id] !== store.dirtyCount) {
-        store.scheduleRefresh(store.projectPath, 200)
+    const refreshProject = async (project: Project) => {
+      try {
+        const status = await getGitWorkdirStatus(project.path)
+        if (cancelled) return
+        const dirtyCount = status?.dirty_count ?? 0
+        setGitChangesByProject(previous => {
+          if (previous[project.id] === dirtyCount) return previous
+          return { ...previous, [project.id]: dirtyCount }
+        })
+      } catch {
+        // Keep the previous badge when a best-effort refresh fails.
       }
     }
 
-    const refreshAllIfStale = async (force = false) => {
-      if (!force && Date.now() - lastFullRefreshAt < PROJECT_GIT_FOCUS_COOLDOWN_MS) return
-      lastFullRefreshAt = Date.now()
-      await refresh()
-    }
-    const scheduleRefresh = () => {
-      refreshTimer = window.setTimeout(async () => {
-        await refreshAllIfStale()
-        if (!cancelled) scheduleRefresh()
-      }, projectGitRefreshDelay())
+    const scheduleProject = (project: Project) => {
+      if (cancelled || refreshTimers.has(project.id)) return
+      const timer = window.setTimeout(() => {
+        refreshTimers.delete(project.id)
+        enqueueProject(project, true)
+      }, projectGitRefreshDelay(gitRefreshIntervalStartMinutes))
+      refreshTimers.set(project.id, timer)
     }
 
-    void refreshAllIfStale(true)
-    scheduleRefresh()
-    const onFocus = () => void refreshAllIfStale()
+    const drainQueue = async () => {
+      if (processing || cancelled) return
+      processing = true
+      while (!cancelled && refreshQueue.length > 0) {
+        const item = refreshQueue.shift()!
+        await refreshProject(item.project)
+        queuedByProject.delete(item.project.id)
+        if (item.scheduleNext && !cancelled) scheduleProject(item.project)
+      }
+      processing = false
+    }
+
+    function enqueueProject(project: Project, scheduleNext = false) {
+      const existing = queuedByProject.get(project.id)
+      if (existing) {
+        existing.scheduleNext ||= scheduleNext
+        return
+      }
+      const item = { project, scheduleNext }
+      queuedByProject.set(project.id, item)
+      refreshQueue.push(item)
+      void drainQueue()
+    }
+
+    const enqueueAllIfStale = (force = false) => {
+      if (!force && Date.now() - lastFocusRefreshAt < PROJECT_GIT_FOCUS_COOLDOWN_MS) return
+      lastFocusRefreshAt = Date.now()
+      const randomized = eligibleProjects
+        .map(project => ({ project, rank: Math.random() }))
+        .sort((a, b) => a.rank - b.rank)
+      for (const { project } of randomized) enqueueProject(project)
+    }
+
+    for (const project of eligibleProjects) scheduleProject(project)
+    const onFocus = () => enqueueAllIfStale()
     const onVisibility = () => {
-      if (!document.hidden) void refreshAllIfStale()
+      if (!document.hidden) enqueueAllIfStale()
     }
     const onWorktree = (event: Event) => {
       const path = (event as CustomEvent<{ projectPath?: string }>).detail?.projectPath
       const target = path
-        ? projects.find(project => projectPathsMatch(project.path, path))
+        ? eligibleProjects.find(project => projectPathsMatch(project.path, path))
         : undefined
-      void refresh(target ? [target] : projects)
+      if (target) enqueueProject(target)
+      else if (!path) enqueueAllIfStale(true)
     }
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisibility)
@@ -165,9 +187,16 @@ export function useProjectIndicators(
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('qingcode:git-worktree-changed', onWorktree)
-      if (refreshTimer !== null) window.clearTimeout(refreshTimer)
+      for (const timer of refreshTimers.values()) window.clearTimeout(timer)
+      refreshTimers.clear()
     }
-  }, [indicatorsEnabled, projects, unavailableProjectIds])
+  }, [
+    currentProject,
+    gitRefreshIntervalStartMinutes,
+    indicatorsEnabled,
+    projects,
+    unavailableProjectIds,
+  ])
 
   return useMemo(() => {
     const useStoreForCurrent =

@@ -8,8 +8,6 @@ import {
   notifyGitDirtyCount,
   projectGitRefreshDelay,
   projectPathsMatch,
-  PROJECT_GIT_REFRESH_MAX_MS,
-  PROJECT_GIT_REFRESH_MIN_MS,
 } from './projectIndicators'
 
 const projects: Project[] = [
@@ -22,10 +20,11 @@ function tab(id: string, path: string, dirty = true): EditorTab {
 }
 
 describe('project indicators', () => {
-  it('jitters background Git refreshes between 60 and 90 seconds', () => {
-    expect(projectGitRefreshDelay(0)).toBe(PROJECT_GIT_REFRESH_MIN_MS)
-    expect(projectGitRefreshDelay(0.5)).toBe(75_000)
-    expect(projectGitRefreshDelay(1)).toBe(PROJECT_GIT_REFRESH_MAX_MS)
+  it('randomizes background Git refreshes in whole minutes from a 5-minute floor', () => {
+    expect(projectGitRefreshDelay(5, 0)).toBe(300_000)
+    expect(projectGitRefreshDelay(5, 0.5)).toBe(420_000)
+    expect(projectGitRefreshDelay(5, 1)).toBe(480_000)
+    expect(projectGitRefreshDelay(4, 0)).toBe(300_000)
   })
 
   it('groups dirty active and inactive tabs by owning project without duplicates', () => {

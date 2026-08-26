@@ -244,7 +244,7 @@ describe('editorDefinitionLink', () => {
     expect(nativeModifierPressed).toHaveBeenCalledOnce()
   })
 
-  it('hides the Ctrl-hover link but still reports an explicit Ctrl+mousedown when disabled', () => {
+  it('hides the Ctrl-hover link and ignores Ctrl+mousedown when disabled', () => {
     const navigate = vi.fn()
     const parent = document.createElement('div')
     document.body.appendChild(parent)
@@ -282,6 +282,6 @@ describe('editorDefinitionLink', () => {
         ctrlKey: true,
       })
     )
-    expect(navigate).toHaveBeenCalledOnce()
+    expect(navigate).not.toHaveBeenCalled()
   })
 })

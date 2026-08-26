@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   saveFontSettings: vi.fn(),
   saveTerminalProfileSettings: vi.fn(),
   saveEditorStateCacheSize: vi.fn(),
+  saveGitRefreshIntervalStartMinutes: vi.fn(),
 }))
 
 vi.mock('../lib/tauri', () => ({
@@ -76,6 +77,18 @@ vi.mock('../lib/editorStateCacheSettings', () => ({
   MAX_EDITOR_STATE_CACHE_SIZE: 100,
   loadEditorStateCacheSize: async () => 'auto',
   saveEditorStateCacheSize: mocks.saveEditorStateCacheSize,
+}))
+
+vi.mock('../lib/gitRefreshSettings', () => ({
+  DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES: 5,
+  MIN_GIT_REFRESH_INTERVAL_START_MINUTES: 5,
+  MAX_GIT_REFRESH_INTERVAL_START_MINUTES: 1440,
+  loadGitRefreshIntervalStartMinutes: async () => 5,
+  parseGitRefreshIntervalStartMinutes: (value: unknown) => {
+    const parsed = Number(value)
+    return Math.min(1440, Math.max(5, Number.isFinite(parsed) ? Math.round(parsed) : 5))
+  },
+  saveGitRefreshIntervalStartMinutes: mocks.saveGitRefreshIntervalStartMinutes,
 }))
 
 vi.mock('../lib/autoSaveSettings', () => ({
@@ -161,6 +174,7 @@ describe('SettingsEditor', () => {
     mocks.saveFontSettings.mockReset()
     mocks.saveTerminalProfileSettings.mockReset()
     mocks.saveEditorStateCacheSize.mockReset().mockResolvedValue('auto')
+    mocks.saveGitRefreshIntervalStartMinutes.mockReset().mockResolvedValue(5)
     useProjectStore.setState({ currentProject: null, pushToast: vi.fn() })
     useEditorStore.setState({ openFile: vi.fn() })
     useUIStore.setState({ setView: vi.fn(), settingsFocusQuery: '', settingsFocusSignal: 0 })
@@ -206,5 +220,21 @@ describe('SettingsEditor', () => {
     fireEvent.change(count, { target: { value: '24' } })
     fireEvent.blur(count)
     await waitFor(() => expect(mocks.saveEditorStateCacheSize).toHaveBeenCalledWith(24))
+  })
+
+  it('defaults randomized Git polling to a 5-minute start and saves whole minutes', async () => {
+    render(<SettingsEditor />)
+    const interval = screen.getByLabelText(
+      'Git 随机刷新周期起始值（分钟）',
+    ) as HTMLInputElement
+    await waitFor(() => expect(interval.value).toBe('5'))
+    expect(interval.min).toBe('5')
+    expect(interval.step).toBe('1')
+
+    fireEvent.change(interval, { target: { value: '9' } })
+    fireEvent.blur(interval)
+    await waitFor(() =>
+      expect(mocks.saveGitRefreshIntervalStartMinutes).toHaveBeenCalledWith(9),
+    )
   })
 })

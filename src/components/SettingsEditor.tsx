@@ -107,6 +107,14 @@ import {
   loadProjectIndicatorsEnabled,
   saveProjectIndicatorsEnabled,
 } from '../lib/projectIndicatorSettings'
+import {
+  DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES,
+  MAX_GIT_REFRESH_INTERVAL_START_MINUTES,
+  MIN_GIT_REFRESH_INTERVAL_START_MINUTES,
+  loadGitRefreshIntervalStartMinutes,
+  parseGitRefreshIntervalStartMinutes,
+  saveGitRefreshIntervalStartMinutes,
+} from '../lib/gitRefreshSettings'
 import { checkForAppUpdate, promptAppUpdate } from '../lib/appUpdate'
 import {
   SettingsSection as Section,
@@ -187,6 +195,12 @@ export default function SettingsEditor() {
   const [projectIndicatorsEnabled, setProjectIndicatorsEnabled] = useState(
     DEFAULT_PROJECT_INDICATORS_ENABLED,
   )
+  const [gitRefreshIntervalStartMinutes, setGitRefreshIntervalStartMinutes] = useState(
+    DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES,
+  )
+  const [gitRefreshIntervalStartDraft, setGitRefreshIntervalStartDraft] = useState(
+    String(DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES),
+  )
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false)
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [aboutCopyBusy, setAboutCopyBusy] = useState<string | null>(null)
@@ -209,6 +223,10 @@ export default function SettingsEditor() {
     void loadUpdateSettings().then(settings => setCheckOnStartup(settings.checkOnStartup))
     void loadSessionPersistEnabled().then(setSessionPersist)
     void loadProjectIndicatorsEnabled().then(setProjectIndicatorsEnabled)
+    void loadGitRefreshIntervalStartMinutes().then(value => {
+      setGitRefreshIntervalStartMinutes(value)
+      setGitRefreshIntervalStartDraft(String(value))
+    })
     void loadEditorStateCacheSize()
       .then(value => {
         setEditorStateCacheSize(value)
@@ -313,6 +331,20 @@ export default function SettingsEditor() {
       pushToast(
         'error',
         t('保存项目会话 LRU 设置失败: {error}', { error: String(error) }),
+      )
+    }
+  }
+
+  const persistGitRefreshIntervalStartMinutes = async (raw: string) => {
+    const intervalStartMinutes = parseGitRefreshIntervalStartMinutes(raw)
+    setGitRefreshIntervalStartMinutes(intervalStartMinutes)
+    setGitRefreshIntervalStartDraft(String(intervalStartMinutes))
+    try {
+      await saveGitRefreshIntervalStartMinutes(intervalStartMinutes)
+    } catch (error) {
+      pushToast(
+        'error',
+        t('保存 Git 随机刷新周期起始值失败: {error}', { error: String(error) }),
       )
     }
   }
@@ -436,6 +468,11 @@ export default function SettingsEditor() {
           '自动检查更新',
           '项目会话 LRU',
           '编辑器状态缓存',
+          '项目角标',
+          '顶栏项目角标',
+          'Git 随机刷新周期起始值',
+          'Git 刷新周期起始值',
+          '分钟',
           'Alt+C',
           'Ctrl+Shift+C',
           'Ctrl+Shift+G',
@@ -936,6 +973,9 @@ export default function SettingsEditor() {
               '编辑器状态缓存',
               '项目角标',
               '顶栏项目角标',
+              'Git 随机刷新周期起始值',
+              'Git 刷新周期起始值',
+              '分钟',
             ) &&
               !workspaceLocked && (
               <Section
@@ -1065,7 +1105,7 @@ export default function SettingsEditor() {
                   <SettingItem
                     title={t('顶栏项目角标')}
                     description={t(
-                      '在顶栏项目名称旁显示运行中终端、未保存文件与 Git 更改角标。终端与未保存状态随编辑实时更新；Git 数量由后台每 60–90 秒轮询，窗口重新聚焦或 Git 状态变更时也会刷新。关闭后不再显示角标，并停止 Git 轮询。',
+                      '在顶栏项目名称旁显示运行中终端、未保存文件与 Git 更改角标。终端与未保存状态随编辑实时更新；Git 数量按已配置的随机刷新周期轮询，窗口重新聚焦或 Git 状态变更时也会刷新。关闭后隐藏角标，并停止角标使用的多项目 Git 轮询。',
                     )}
                     modified={projectIndicatorsEnabled !== DEFAULT_PROJECT_INDICATORS_ENABLED}
                     locked={workspaceLocked}
@@ -1089,6 +1129,52 @@ export default function SettingsEditor() {
                       <option value="on">{t('开启')}</option>
                       <option value="off">{t('关闭')}</option>
                     </select>
+                  </SettingItem>
+                )}
+                {match(
+                  'Git 随机刷新周期起始值',
+                  'Git 刷新周期起始值',
+                  'Git',
+                  '刷新',
+                  '分钟',
+                ) && (
+                  <SettingItem
+                    title={t('Git 随机刷新周期起始值（分钟）')}
+                    description={t(
+                      '设置每个项目随机 Git 轮询周期的起始值。最小值和默认值均为 5 分钟；实际周期在起始值至其 1.5 倍（向上取整）之间随机选择整分钟。顶栏多项目刷新按随机顺序逐个执行，不会同时并发刷新全部项目；即时刷新不受影响。',
+                    )}
+                    modified={
+                      gitRefreshIntervalStartMinutes !==
+                      DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES
+                    }
+                    locked={workspaceLocked}
+                    lockHint={t('此设置仅在用户作用域中可用')}
+                  >
+                    <div className="relative w-[120px]">
+                      <input
+                        aria-label={t('Git 随机刷新周期起始值（分钟）')}
+                        type="number"
+                        min={MIN_GIT_REFRESH_INTERVAL_START_MINUTES}
+                        max={MAX_GIT_REFRESH_INTERVAL_START_MINUTES}
+                        step={1}
+                        value={gitRefreshIntervalStartDraft}
+                        disabled={workspaceLocked}
+                        onChange={e => setGitRefreshIntervalStartDraft(e.target.value)}
+                        onBlur={() =>
+                          void persistGitRefreshIntervalStartMinutes(
+                            gitRefreshIntervalStartDraft,
+                          )
+                        }
+                        onKeyDown={e => {
+                          if (e.key !== 'Enter') return
+                          e.currentTarget.blur()
+                        }}
+                        className="setting-control w-full py-1 pl-2 pr-11 text-right"
+                      />
+                      <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-ui-sm text-fg-muted">
+                        {t('分钟')}
+                      </span>
+                    </div>
                   </SettingItem>
                 )}
                 {match('检查更新', '自动检查更新', '更新') && (

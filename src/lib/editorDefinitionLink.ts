@@ -97,6 +97,12 @@ export function editorDefinitionLink(actions: DefinitionLinkActions): Extension 
   }
 
   const navigateFromMouse = (event: MouseEvent, view: EditorView): boolean => {
+    if (actions.linkEnabled?.() === false) {
+      if (!eventHasPrimaryModifier(event)) return false
+      event.preventDefault()
+      event.stopPropagation()
+      return true
+    }
     if (event.button !== 0) return false
     const position = view.posAtCoords({ x: event.clientX, y: event.clientY })
     if (position === null) return false
