@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { useExplorerConflictStore } from '../store/explorerConflictStore'
 import { validateEntryName } from '../store/promptStore'
-import ModalOverlay from './ModalOverlay'
+import ModalOverlay, { INTERRUPT_MODAL_Z } from './ModalOverlay'
 import { useI18n } from '../lib/i18n'
 
 /** IDEA-style name-conflict dialog with an inline rename field. */
@@ -57,7 +57,7 @@ export default function ExplorerConflictDialog() {
   }
 
   return (
-    <ModalOverlay onDismiss={() => answer({ action: 'cancel' })} zIndex="z-[110]">
+    <ModalOverlay onDismiss={() => answer({ action: 'cancel' })} zIndex={INTERRUPT_MODAL_Z}>
       <div
         role="alertdialog"
         aria-modal="true"

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { KeyRound, Server, X } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
 import ModalOverlay from './ModalOverlay'
@@ -29,6 +29,16 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
   const [passphrase, setPassphrase] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const closedRef = useRef(false)
+
+  useEffect(() => {
+    if (visible) closedRef.current = false
+  }, [visible])
+
+  const handleClose = () => {
+    closedRef.current = true
+    onClose()
+  }
 
   if (!visible) return null
 
@@ -79,6 +89,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
     }
     try {
       const fingerprint = await probeSshHost(runtimeConfig)
+      if (closedRef.current) return
       const accepted = await confirmDialog({
         title: '确认 SSH 主机指纹',
         message: `首次连接 ${normalizedUser}@${normalizedHost}，请确认主机指纹。`,
@@ -87,7 +98,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
         confirmLabel: '信任此主机',
         cancelLabel: '取消',
       })
-      if (!accepted) return
+      if (closedRef.current || !accepted) return
 
       const now = Date.now()
       const connection: SshConnection = {
@@ -106,6 +117,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
         password: password || undefined,
         passphrase: passphrase || undefined,
       })
+      if (closedRef.current) return
       if (added) onAdded()
     } catch (reason) {
       setError(String(reason))
@@ -118,12 +130,12 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
     'w-full rounded border border-border-strong bg-bg px-2.5 py-1.5 text-[13px] text-fg outline-none focus:border-accent'
 
   return (
-    <ModalOverlay onDismiss={submitting ? undefined : onClose} zIndex="z-[120]">
+    <ModalOverlay onDismiss={handleClose} zIndex="z-[120]">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="ssh-project-title"
-        className="ui-font-scaled modal-content-enter w-full max-w-[520px] rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter flex max-h-[85vh] w-full max-w-[520px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={event => event.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
@@ -134,9 +146,8 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
           <Tooltip label="关闭" side="left">
             <button
               type="button"
-              disabled={submitting}
-              onClick={onClose}
-              className="rounded p-1 text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
+              onClick={handleClose}
+              className="rounded p-1 text-fg-muted hover:bg-bg-hover hover:text-fg"
               aria-label="关闭"
             >
               <X size={15} />
@@ -144,7 +155,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
           </Tooltip>
         </div>
 
-        <div className="grid grid-cols-2 gap-x-3 gap-y-3 px-4 py-4">
+        <div className="grid min-h-0 flex-1 grid-cols-2 gap-x-3 gap-y-3 overflow-y-auto px-4 py-4">
           <label className="col-span-2 text-[12px] text-fg-muted">
             连接/项目名称
             <input
@@ -255,9 +266,8 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
         <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
           <button
             type="button"
-            disabled={submitting}
-            onClick={onClose}
-            className="rounded border border-border-strong px-3 py-1.5 text-[13px] text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
+            onClick={handleClose}
+            className="rounded border border-border-strong px-3 py-1.5 text-[13px] text-fg-muted hover:bg-bg-hover hover:text-fg"
           >
             取消
           </button>

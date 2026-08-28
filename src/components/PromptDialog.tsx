@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Pencil } from 'lucide-react'
 import { usePromptStore } from '../store/promptStore'
-import ModalOverlay from './ModalOverlay'
+import ModalOverlay, { INTERRUPT_MODAL_Z } from './ModalOverlay'
 import { useI18n } from '../lib/i18n'
 
 export default function PromptDialog() {
@@ -50,7 +50,7 @@ export default function PromptDialog() {
   }
 
   return (
-    <ModalOverlay onDismiss={() => answer(null)} zIndex="z-[110]">
+    <ModalOverlay onDismiss={() => answer(null)} zIndex={INTERRUPT_MODAL_Z}>
       <div
         role="dialog"
         aria-modal="true"
@@ -66,7 +66,9 @@ export default function PromptDialog() {
               {t(request.title)}
             </h2>
             {request.message && (
-              <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">{t(request.message)}</p>
+              <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">
+                {t(request.message)}
+              </p>
             )}
             <input
               ref={inputRef}

@@ -1,6 +1,6 @@
 import { AlertTriangle, Info, Trash2 } from 'lucide-react'
 import { useConfirmStore, type ConfirmKind } from '../store/confirmStore'
-import ModalOverlay from './ModalOverlay'
+import ModalOverlay, { INTERRUPT_MODAL_Z } from './ModalOverlay'
 import { useI18n } from '../lib/i18n'
 
 const KIND_META: Record<
@@ -37,13 +37,11 @@ export default function ConfirmDialog() {
   const detailText = request.detail ? t(request.detail) : ''
   // Paths / multi-line dumps keep mono; short prose tips (e.g. busy terminals) use a callout.
   const detailIsTechnical =
-    detailText.includes('\n') ||
-    /[\\/]/.test(detailText) ||
-    detailText.length > 120
+    detailText.includes('\n') || /[\\/]/.test(detailText) || detailText.length > 120
   const wide = hasAlt || detailIsTechnical
 
   return (
-    <ModalOverlay onDismiss={() => answer(false)} zIndex="z-[110]">
+    <ModalOverlay onDismiss={() => answer(false)} zIndex={INTERRUPT_MODAL_Z}>
       <div
         role="alertdialog"
         aria-modal="true"

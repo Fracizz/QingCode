@@ -1,5 +1,8 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
 
+/** Interrupt dialogs (confirm / prompt / choice) must sit above feature dialogs such as SSH. */
+export const INTERRUPT_MODAL_Z = 'z-[140]'
+
 interface Props {
   children: ReactNode
   onDismiss?: () => void

@@ -56,4 +56,13 @@ describe('ProjectAddDialog', () => {
     expect(onClose).toHaveBeenCalledOnce()
     expect(useUIStore.getState().view).toBe('explorer')
   })
+
+  it('replaces the project picker with the SSH dialog instead of stacking overlays', () => {
+    render(<ProjectAddDialog open onClose={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'SSH' }))
+
+    expect(screen.getByRole('dialog', { name: '打开 SSH 项目' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '选择项目' })).not.toBeInTheDocument()
+  })
 })

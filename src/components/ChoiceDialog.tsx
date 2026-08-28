@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import { useChoiceStore } from '../store/choiceStore'
-import ModalOverlay from './ModalOverlay'
+import ModalOverlay, { INTERRUPT_MODAL_Z } from './ModalOverlay'
 import { useI18n } from '../lib/i18n'
 
 const MarkdownRichText = lazy(() => import('./MarkdownRichText'))
@@ -15,7 +15,7 @@ export default function ChoiceDialog() {
   const markdownDetail = Boolean(request.detailMarkdown && request.detail)
 
   return (
-    <ModalOverlay onDismiss={() => answer(null)} zIndex="z-[110]">
+    <ModalOverlay onDismiss={() => answer(null)} zIndex={INTERRUPT_MODAL_Z}>
       <div
         role="alertdialog"
         aria-modal="true"
@@ -58,7 +58,8 @@ export default function ChoiceDialog() {
           }`}
         >
           {request.options.map((option, index) => {
-            const isPrimary = option.primary || (!request.options.some(o => o.primary) && index === 0)
+            const isPrimary =
+              option.primary || (!request.options.some(o => o.primary) && index === 0)
             return (
               <button
                 key={option.id}
