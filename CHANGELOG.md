@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- CLI Skill 补充 SSH/WSL 开发服务须绑定 `127.0.0.1`，否则本机 Windows 无法访问前端
+
 ## [0.1.12] - 2026-08-19
 
 ### Added

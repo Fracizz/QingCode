@@ -17,6 +17,8 @@ describe('buildQingcodeCliSkillMarkdown', () => {
     expect(md).toContain('auto-register')
     expect(md).toContain('It is not a partial patch')
     expect(md).toContain('Never grant trust implicitly')
+    expect(md).toContain('Windows access to SSH/WSL services')
+    expect(md).toContain('127.0.0.1')
   })
 
   it('quotes paths with spaces', () => {
@@ -32,6 +34,9 @@ describe('buildQingcodeCliSkillMarkdown', () => {
 
     expect(buildQingcodeCliSkillMarkdown('QingCode.exe', 'zh-CN')).toContain(
       '# QingCode CLI\n\n将此文件作为 Skill'
+    )
+    expect(buildQingcodeCliSkillMarkdown('QingCode.exe', 'zh-CN')).toContain(
+      'Windows 访问 SSH/WSL 服务'
     )
     expect(buildQingcodeCliSkillMarkdown('QingCode.exe', 'en')).toContain(
       'Install this file into your AI agent'

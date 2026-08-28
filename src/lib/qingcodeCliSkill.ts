@@ -13,8 +13,8 @@ description: >-
   Drive QingCode via QingCode.exe subcommands for multi-project management and
   local/SSH run-config CRUD and start/stop. Use when the user asks to add
   projects, list projects, edit .qingcode/run.json run configs, start or stop a
-  run configuration, grant workspace trust, or open files in a running QingCode
-  instance.
+  run configuration, grant workspace trust, open files in a running QingCode
+  instance, or Windows cannot reach a frontend after starting an SSH/WSL run.
 ---
 
 # QingCode CLI
@@ -104,6 +104,18 @@ SSH task rules:
   run directly when executable and otherwise fall back to \`/bin/sh\`.
 - \`env\` values must be strings and names must be valid POSIX environment identifiers.
 
+### Windows access to SSH/WSL services
+
+When QingCode runs on Windows and the project is WSL/SSH, the local browser can only
+reach services through WSL localhost forwarding.
+
+- Bind dev servers to \`127.0.0.1\`. Binding \`0.0.0.0\` / \`vite --host\` / \`host: true\`
+  makes \`http://127.0.0.1:<port>\` fail from Windows.
+- Use \`vite --host 127.0.0.1\` (or equivalent); do not bind all interfaces for LAN access.
+- After start, verify from **Windows** at \`http://127.0.0.1:<actual-port>\`. The WSL eth0
+  IP often does not work on the same machine.
+- Confirm the listener belongs to the current project; do not use another project's port.
+
 ### Updating a run config
 
 \`run upsert\` replaces the complete matching config by \`id\`, or by exact \`name\` when no
@@ -136,7 +148,8 @@ ${quoted} open <file>[:line[:col]] ...
    \`run list --project <id>\`.
 2. Create a config, or use the full-object update flow above for an existing config.
 3. Ensure the GUI is running before execution and before any SSH run-config CRUD command.
-4. Start the config, then inspect \`run status\` and report the result.
+4. Start the config, then inspect \`run status\`. For SSH/WSL projects, also verify
+   \`http://127.0.0.1:<port>\` from Windows (the server must bind \`127.0.0.1\`).
 5. If restricted mode blocks execution, explain it and ask for explicit approval before \`trust grant\`.
 
 ## Safety
@@ -158,7 +171,7 @@ name: qingcode-cli
 description: >-
   使用 QingCode.exe 子命令管理多个项目，以及本地/SSH 运行配置的增删改查、启动和停止。
   当用户要求添加或列出项目、编辑 .qingcode/run.json、启动或停止运行配置、授予工作区
-  信任，或在运行中的 QingCode 中打开文件时使用。
+  信任、在运行中的 QingCode 中打开文件，或 SSH/WSL 启动后 Windows 无法访问前端时使用。
 ---
 
 # QingCode CLI
@@ -244,6 +257,15 @@ SSH 任务规则：
   \`.zsh\`、\`.sh\` 对应的解释器。其他文件在可执行时直接运行，否则回退到 \`/bin/sh\`。
 - \`env\` 的值必须是字符串，名称必须是有效的 POSIX 环境变量标识符。
 
+### Windows 访问 SSH/WSL 服务
+
+QingCode 在 Windows、项目在 WSL/SSH 时：本机浏览器只能走 WSL localhost 转发。
+
+- 开发服务必须听 \`127.0.0.1\`。绑 \`0.0.0.0\` / \`vite --host\` / \`host: true\` 时，Windows 的 \`http://127.0.0.1:端口\` 会连不上。
+- 前端用 \`vite --host 127.0.0.1\`（或等价）；不要为“局域网访问”改绑全接口。
+- 启动后在 **Windows** 验证 \`http://127.0.0.1:<实际端口>\`。WSL eth0 IP 对本机常不通。
+- 先核对监听地址和端口属于当前项目，不要拿其它项目的端口当入口。
+
 ### 更新运行配置
 
 \`run upsert\` 会按 \`id\` 替换完整配置；未提供匹配 ID 时按精确 \`name\` 替换。
@@ -276,7 +298,7 @@ ${quoted} open <file>[:line[:col]] ...
    \`run list --project <id>\`。
 2. 创建配置；更新现有配置时遵循上面的完整对象更新流程。
 3. 执行任务以及操作 SSH 运行配置前，确保 GUI 正在运行。
-4. 启动配置后检查 \`run status\` 并报告结果。
+4. 启动配置后检查 \`run status\`；SSH/WSL 项目再在 Windows 用 \`http://127.0.0.1:<端口>\` 验证（须听 \`127.0.0.1\`）。
 5. 如果受限模式阻止执行，说明原因，并在执行 \`trust grant\` 前取得用户明确授权。
 
 ## 安全

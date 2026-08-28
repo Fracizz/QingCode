@@ -4,8 +4,8 @@ description: >-
   Drive QingCode via QingCode.exe subcommands for multi-project management and
   local/SSH run-config CRUD and start/stop. Use when the user asks to add
   projects, list projects, edit .qingcode/run.json run configs, start or stop a
-  run configuration, grant workspace trust, or open files in a running QingCode
-  instance.
+  run configuration, grant workspace trust, open files in a running QingCode
+  instance, or Windows cannot reach a frontend after starting an SSH/WSL run.
 ---
 
 # QingCode CLI
@@ -95,6 +95,18 @@ SSH task rules:
   run directly when executable and otherwise fall back to `/bin/sh`.
 - `env` values must be strings and names must be valid POSIX environment identifiers.
 
+### Windows access to SSH/WSL services
+
+When QingCode runs on Windows and the project is WSL/SSH, the local browser can only
+reach services through WSL localhost forwarding.
+
+- Bind dev servers to `127.0.0.1`. Binding `0.0.0.0` / `vite --host` / `host: true`
+  makes `http://127.0.0.1:<port>` fail from Windows.
+- Use `vite --host 127.0.0.1` (or equivalent); do not bind all interfaces for LAN access.
+- After start, verify from **Windows** at `http://127.0.0.1:<actual-port>`. The WSL eth0
+  IP often does not work on the same machine.
+- Confirm the listener belongs to the current project; do not use another project's port.
+
 ### Updating a run config
 
 `run upsert` replaces the complete matching config by `id`, or by exact `name` when no
@@ -127,7 +139,8 @@ matching ID is supplied. It is not a partial patch.
    `run list --project <id>`.
 2. Create a config, or use the full-object update flow above for an existing config.
 3. Ensure the GUI is running before execution and before any SSH run-config CRUD command.
-4. Start the config, then inspect `run status` and report the result.
+4. Start the config, then inspect `run status`. For SSH/WSL projects, also verify
+   `http://127.0.0.1:<port>` from Windows (the server must bind `127.0.0.1`).
 5. If restricted mode blocks execution, explain it and ask for explicit approval before `trust grant`.
 
 ## Safety

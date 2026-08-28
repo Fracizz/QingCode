@@ -6,6 +6,10 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- CLI Skill: SSH/WSL dev servers must bind `127.0.0.1`, or Windows cannot reach the frontend
+
 ## [0.1.12] - 2026-08-19
 
 ### Added
