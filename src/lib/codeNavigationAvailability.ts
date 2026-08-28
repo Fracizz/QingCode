@@ -12,6 +12,7 @@ export interface LanguageComponentStatus {
 export type CodeNavigationAvailability =
   | { kind: 'available'; component?: LanguageComponentStatus }
   | { kind: 'checking' }
+  | { kind: 'remote-disabled' }
   | { kind: 'missing-component'; component: LanguageComponentStatus }
   | { kind: 'unsupported'; extension: string | null }
 
@@ -28,13 +29,14 @@ function fileExtension(path: string): string | null {
 
 /** Vue SFC semantic navigation is not implemented; suppress its Ctrl+click affordance. */
 export function isDefinitionLinkEnabledForPath(path: string): boolean {
-  return fileExtension(path) !== 'vue'
+  return !path.startsWith('ssh://') && fileExtension(path) !== 'vue'
 }
 
 export function codeNavigationAvailabilityForPath(
   path: string,
   statuses: LanguageComponentStatus[]
 ): CodeNavigationAvailability {
+  if (path.startsWith('ssh://')) return { kind: 'remote-disabled' }
   const extension = fileExtension(path)
   const component = extension
     ? statuses.find(status =>
@@ -55,9 +57,8 @@ export function codeNavigationAvailabilityForPath(
  * established navigation fallback instead of disabling a potentially usable
  * feature.
  */
-export function cachedCodeNavigationAvailability(
-  path: string
-): CodeNavigationAvailability {
+export function cachedCodeNavigationAvailability(path: string): CodeNavigationAvailability {
+  if (path.startsWith('ssh://')) return { kind: 'remote-disabled' }
   if (!isTauri() || statusCheckFailed) return { kind: 'available' }
   if (!cachedStatuses) return { kind: 'checking' }
   return codeNavigationAvailabilityForPath(path, cachedStatuses)
@@ -92,6 +93,7 @@ export function preloadCodeNavigationAvailability(): void {
 export async function codeNavigationAvailability(
   path: string
 ): Promise<CodeNavigationAvailability> {
+  if (path.startsWith('ssh://')) return { kind: 'remote-disabled' }
   if (!isTauri() || statusCheckFailed) return { kind: 'available' }
   try {
     const statuses = await loadLanguageComponentStatuses()
@@ -105,10 +107,16 @@ export function canShowDefinitionLink(availability: CodeNavigationAvailability):
   return availability.kind === 'available'
 }
 
-export function notifyCodeNavigationUnavailable(
-  availability: CodeNavigationAvailability
-): boolean {
+export function notifyCodeNavigationUnavailable(availability: CodeNavigationAvailability): boolean {
   const projects = useProjectStore.getState()
+  if (availability.kind === 'remote-disabled') {
+    projects.pushToast(
+      'info',
+      translate('SSH 项目暂不支持代码导航'),
+      translate('语法高亮和文本搜索仍可使用。')
+    )
+    return true
+  }
   if (availability.kind === 'missing-component') {
     projects.pushToast(
       'info',

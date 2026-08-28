@@ -36,6 +36,11 @@ describe('normalizePath / parentPath / pathsEqual', () => {
     expect(pathsEqual('D:/Work/A', 'd:\\work\\a\\')).toBe(true)
   })
 
+  it('keeps SSH POSIX paths case-sensitive', () => {
+    expect(pathsEqual('ssh://host/Home/User/Foo.ts', 'ssh://host/Home/User/foo.ts')).toBe(false)
+    expect(isDescendantOf('ssh://host/Home/User/Foo.ts', 'ssh://host/Home/User')).toBe(true)
+  })
+
   it('pathSetHas / addPathToSet tolerate separator differences', () => {
     const set = new Set(['D:\\proj\\test'])
     expect(pathSetHas(set, 'D:/proj/test')).toBe(true)
@@ -47,7 +52,9 @@ describe('normalizePath / parentPath / pathsEqual', () => {
     const expanded = addPathToSet(new Set(), 'D:/repo/eman-nem/src/main/java/com/eman')
     expect(pathSetHas(expanded, 'D:/repo/eman-commonmng')).toBe(false)
     expect(pathSetHas(expanded, 'D:/repo/eman-nem/src/main/java/com/eman-commonmng')).toBe(false)
-    expect(pathSetHas(addPathToSet(new Set(), 'D:/repo/eman'), 'D:/repo/eman-commonmng')).toBe(false)
+    expect(pathSetHas(addPathToSet(new Set(), 'D:/repo/eman'), 'D:/repo/eman-commonmng')).toBe(
+      false
+    )
   })
 })
 
@@ -67,7 +74,7 @@ describe('isDescendantOf / collectAncestorDirs / findProjectForPath', () => {
 
   it('does not treat string-prefix sibling folders as ancestors', () => {
     expect(
-      collectAncestorDirs('D:/repo/eman-nem/src/main/java/com/eman/Foo.java', 'D:/repo'),
+      collectAncestorDirs('D:/repo/eman-nem/src/main/java/com/eman/Foo.java', 'D:/repo')
     ).toEqual([
       'D:/repo/eman-nem',
       'D:/repo/eman-nem/src',
@@ -77,7 +84,7 @@ describe('isDescendantOf / collectAncestorDirs / findProjectForPath', () => {
       'D:/repo/eman-nem/src/main/java/com/eman',
     ])
     expect(collectAncestorDirs('D:/repo/eman-commonmng/src/Foo.java', 'D:/repo/eman-nem')).toEqual(
-      [],
+      []
     )
   })
 

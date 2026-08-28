@@ -1553,6 +1553,26 @@ export default function SourceControlPanel() {
               editor.closeDiffTabsForPath(abs)
             }
           }
+          setInlineDiff(current => {
+            if (!current) return current
+            return targets.some(change =>
+              pathsEqual(absoluteFilePath(project.path, change.path), current.path)
+            )
+              ? null
+              : current
+          })
+          setInlineDiffLoading(false)
+          setInlineDiffError(null)
+          const latestStatus = seedSourceControlStatus(project.path)
+          if (latestStatus) {
+            const discarded = new Set(files)
+            const nextStatus = {
+              ...latestStatus,
+              changes: latestStatus.changes.filter(change => !discarded.has(change.path)),
+            }
+            setStatus(nextStatus)
+            useGitStatusStore.getState().applyFromGitStatus(project.path, nextStatus)
+          }
           void refresh({ soft: true })
           useProjectStore
             .getState()
@@ -1571,7 +1591,7 @@ export default function SourceControlPanel() {
         setOperation(null)
       }
     },
-    [loading, operation, refresh, t]
+    [loading, operation, refresh, setStatus, t]
   )
 
   const pullCurrent = useCallback(

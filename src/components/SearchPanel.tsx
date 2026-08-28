@@ -218,7 +218,7 @@ export default function SearchPanel() {
   const hasStarOption = otherExts.length > 0
   const normalizedCustomExtension = useMemo(
     () => normalizeTypeFilterExtension(customExtension),
-    [customExtension],
+    [customExtension]
   )
 
   useEffect(() => {
@@ -310,7 +310,7 @@ export default function SearchPanel() {
       menu: HTMLElement,
       width: number,
       setStyle: (style: CSSProperties) => void,
-      align: 'left' | 'right' = 'left',
+      align: 'left' | 'right' = 'left'
     ) => {
       const rect = btn.getBoundingClientRect()
       const zoom = Number.parseFloat(getComputedStyle(menu).zoom) || 1
@@ -324,7 +324,7 @@ export default function SearchPanel() {
         { width, height },
         { width: window.innerWidth, height: window.innerHeight },
         preferAbove,
-        zoom,
+        zoom
       )
       setStyle({
         left: placed.x,
@@ -333,7 +333,7 @@ export default function SearchPanel() {
         visibility: 'visible',
       })
     },
-    [],
+    []
   )
 
   useLayoutEffect(() => {
@@ -416,10 +416,15 @@ export default function SearchPanel() {
     const id = ++extScanId.current
     queueMicrotask(() => setProjectExtsLoading(true))
     const roots = searchRoots.map(root => root.path)
-    void safeInvoke<string[]>('扫描项目扩展名', 'list_file_extensions', {
-      roots,
-      maxFiles: 8000,
-    })
+    void Promise.all(
+      roots.map(root =>
+        safeInvoke<string[]>('扫描项目扩展名', 'list_file_extensions', {
+          roots: [root],
+          maxFiles: Math.max(500, Math.ceil(8000 / roots.length)),
+        })
+      )
+    )
+      .then(parts => [...new Set(parts.flat())])
       .then(exts => {
         if (id !== extScanId.current) return
         setProjectExts(exts)
@@ -520,9 +525,7 @@ export default function SearchPanel() {
     }
 
     const resolveProject = (rootPath: string) =>
-      findProjectForPath(projects, rootPath) ??
-      projects.find(p => p.path === rootPath) ??
-      null
+      findProjectForPath(projects, rootPath) ?? projects.find(p => p.path === rootPath) ?? null
 
     if (runFilename) {
       filenameTimer = setTimeout(async () => {
@@ -544,12 +547,13 @@ export default function SearchPanel() {
                 useIgnoreFiles: excludes.useIgnoreFiles,
                 followSymlinks: excludes.followSymlinks,
               })
-            }),
+            })
           )
           if (id !== reqId.current) return
           let hits = parts.flat()
           const hitCap = filenameBudget
-          const truncated = hits.length >= hitCap || parts.some(part => part.length >= perRootFilenameLimit)
+          const truncated =
+            hits.length >= hitCap || parts.some(part => part.length >= perRootFilenameLimit)
           if (hits.length > hitCap) hits = hits.slice(0, hitCap)
           setFilenameResults(hits)
           setFilenameTruncated(truncated)
@@ -593,7 +597,7 @@ export default function SearchPanel() {
                 useIgnoreFiles: excludes.useIgnoreFiles,
                 followSymlinks: excludes.followSymlinks,
               })
-            }),
+            })
           )
           if (id !== reqId.current) return
           const validParts = parts.filter((resp): resp is ContentSearchResponse => Boolean(resp))
@@ -674,12 +678,12 @@ export default function SearchPanel() {
       }
       setMode(nextMode)
     },
-    [mode, query, typeFilter],
+    [mode, query, typeFilter]
   )
 
   const filteredFilenameResults = useMemo(
     () => filterFilenameHits(filenameResults, entryKind),
-    [filenameResults, entryKind],
+    [filenameResults, entryKind]
   )
 
   const contentTruncated = Boolean(contentResults?.truncated)
@@ -699,13 +703,7 @@ export default function SearchPanel() {
     searchNowRef.current = true
     if (nextFn !== null) setFilenameBudget(nextFn)
     if (nextContent !== null) setContentBudget(nextContent)
-  }, [
-    canLoadMoreContent,
-    canLoadMoreFilename,
-    contentBudget,
-    filenameBudget,
-    loading,
-  ])
+  }, [canLoadMoreContent, canLoadMoreFilename, contentBudget, filenameBudget, loading])
 
   const toggleSuffix = () => {
     if (!wantsFilename || useGlob) return
@@ -718,7 +716,7 @@ export default function SearchPanel() {
       if (!multiProjectSearch) return null
       return findProjectForPath(projects, path)?.name ?? null
     },
-    [multiProjectSearch, projects],
+    [multiProjectSearch, projects]
   )
 
   const rows = useMemo<Row[]>(() => {
@@ -732,7 +730,7 @@ export default function SearchPanel() {
             contentResults.files,
             collapsedFiles,
             projectNameOf,
-            MAX_MATCHES_PER_FILE,
+            MAX_MATCHES_PER_FILE
           )
         : []
 
@@ -754,10 +752,7 @@ export default function SearchPanel() {
     }
 
     if (out.length > 0 && (canLoadMore || loadingMore)) {
-      out = [
-        ...out,
-        { kind: 'footer', loading: loadingMore, hasMore: canLoadMore },
-      ]
+      out = [...out, { kind: 'footer', loading: loadingMore, hasMore: canLoadMore }]
     }
     return out
   }, [
@@ -821,11 +816,19 @@ export default function SearchPanel() {
   )
 
   const onOpenContextMenu = useCallback(
-    (event: { preventDefault: () => void; stopPropagation: () => void; clientX: number; clientY: number }, target: SearchContextTarget) => {
+    (
+      event: {
+        preventDefault: () => void
+        stopPropagation: () => void
+        clientX: number
+        clientY: number
+      },
+      target: SearchContextTarget
+    ) => {
       if (!shouldShowAppContextMenu(event)) return
       setContextMenu({ x: event.clientX, y: event.clientY, target })
     },
-    [],
+    []
   )
 
   const copyFileName = useCallback(
@@ -837,7 +840,7 @@ export default function SearchPanel() {
         pushToast('error', t('复制文件名失败: {error}', { error: String(error) }))
       }
     },
-    [pushToast, t],
+    [pushToast, t]
   )
 
   const contextMenuItems = useMemo<ContextMenuItem[]>(() => {
@@ -852,20 +855,15 @@ export default function SearchPanel() {
         ? (favoriteItemsByProject[project.id] ?? []).find(
             item =>
               favoriteRelativePathKey(project.path, item.relativePath) ===
-              favoriteRelativePathKey(project.path, relativeFavoritePath),
+              favoriteRelativePathKey(project.path, relativeFavoritePath)
           )
         : undefined
-    const openLabel =
-      target.kind === 'fn' && target.isDir ? t('在资源管理器中定位') : t('打开')
+    const openLabel = target.kind === 'fn' && target.isDir ? t('在资源管理器中定位') : t('打开')
     const items: ContextMenuItem[] = [
       {
         label: openLabel,
         icon:
-          target.kind === 'fn' && target.isDir ? (
-            <LocateFixed size={14} />
-          ) : (
-            <FileIcon size={14} />
-          ),
+          target.kind === 'fn' && target.isDir ? <LocateFixed size={14} /> : <FileIcon size={14} />,
         action: () => {
           if (target.kind === 'match') void openFile(target.path, target.line)
           else if (target.kind === 'fn') onOpenFilename(target.path, target.isDir)
@@ -961,14 +959,14 @@ export default function SearchPanel() {
   const onRowsRendered = useCallback(
     (
       _visible: { startIndex: number; stopIndex: number },
-      all: { startIndex: number; stopIndex: number },
+      all: { startIndex: number; stopIndex: number }
     ) => {
       if (!canLoadMore || rows.length === 0) return
       if (all.stopIndex >= rows.length - 1 - SEARCH_PREFETCH_ROWS) {
         loadMoreResults()
       }
     },
-    [canLoadMore, loadMoreResults, rows.length],
+    [canLoadMore, loadMoreResults, rows.length]
   )
 
   useEffect(() => {
@@ -1012,7 +1010,16 @@ export default function SearchPanel() {
         }
       }
     },
-    [navigableIndexes, activeIndex, rows, onOpenMatch, onOpenFilename, toggleFileCollapse, collapsedFiles, listRef]
+    [
+      navigableIndexes,
+      activeIndex,
+      rows,
+      onOpenMatch,
+      onOpenFilename,
+      toggleFileCollapse,
+      collapsedFiles,
+      listRef,
+    ]
   )
 
   const rowProps = useMemo<SearchRowProps>(
@@ -1031,7 +1038,10 @@ export default function SearchPanel() {
   const draftQueryTrimmed = query.trim()
   const searchDirty = mode !== 'filename' && draftQueryTrimmed !== submittedQuery.trim()
   const contentQueryShort =
-    wantsContent && !wantsFilename && queryTrimmed.length > 0 && queryTrimmed.length < MIN_CONTENT_QUERY_LEN
+    wantsContent &&
+    !wantsFilename &&
+    queryTrimmed.length > 0 &&
+    queryTrimmed.length < MIN_CONTENT_QUERY_LEN
   const hasQuery =
     mode !== 'filename' && !explicitSearchCommitted
       ? false
@@ -1072,8 +1082,7 @@ export default function SearchPanel() {
 
   const resultSummary = (() => {
     const { dirs, files } = countFilenameKinds(filteredFilenameResults)
-    const truncated =
-      filenameTruncated || contentTruncated ? t(' · 已截断') : ''
+    const truncated = filenameTruncated || contentTruncated ? t(' · 已截断') : ''
     if (mode === 'all') {
       if (entryKind === 'dir') {
         return t('{dirs} 个目录{truncated}', { dirs, truncated })
@@ -1113,518 +1122,553 @@ export default function SearchPanel() {
 
   return (
     <>
-    <div className="h-full flex flex-col bg-bg-sidebar text-fg">
-      <div className="px-3 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
-        <Search size={13} className="text-brand flex-shrink-0" />
-        <span className="min-w-0 truncate">{t('搜索')}</span>
-        <Tooltip label={t('搜索范围')} side="bottom" wrapperClassName="ml-auto inline-flex shrink-0">
-          <button
-            ref={scopeBtnRef}
-            type="button"
-            aria-label={t('搜索范围')}
-            aria-expanded={scopeMenuOpen}
-            aria-haspopup="listbox"
-            className="flex max-w-[170px] items-center gap-0.5 rounded px-1.5 py-0.5 font-medium tracking-normal text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
-            onClick={event => {
-              event.stopPropagation()
-              if (scopeMenuOpen) {
-                closeScopeMenu()
-                return
-              }
-              setScopeMenuStyle(prev => ({ ...prev, visibility: 'hidden' }))
-              setScopeMenuOpen(true)
-            }}
+      <div className="h-full flex flex-col bg-bg-sidebar text-fg">
+        <div className="px-3 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
+          <Search size={13} className="text-brand flex-shrink-0" />
+          <span className="min-w-0 truncate">{t('搜索')}</span>
+          <Tooltip
+            label={t('搜索范围')}
+            side="bottom"
+            wrapperClassName="ml-auto inline-flex shrink-0"
           >
-            <span className="truncate">{scopeLabel}</span>
-            <Caret
-              size={11}
-              className={`flex-shrink-0 transition-transform ${scopeMenuOpen ? 'rotate-180' : ''}`}
-            />
-          </button>
-        </Tooltip>
-      </div>
-
-      {scopeMenuOpen &&
-        createPortal(
-          <div
-            ref={scopeMenuRef}
-            role="listbox"
-            aria-label={t('搜索范围')}
-            className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
-            style={scopeMenuStyle}
-            onPointerDown={event => event.stopPropagation()}
-          >
-            {(
-              [
-                { value: 'current' as const, label: t('当前项目') },
-                { value: 'all' as const, label: t('全部项目') },
-              ] as const
-            ).map(option => {
-              const selected = !searchRoot && searchScope === option.value
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  role="option"
-                  aria-selected={selected}
-                  className={`w-full px-2 py-1 text-left text-[12px] rounded transition-colors
-                    ${selected
-                      ? 'bg-bg-active text-fg'
-                      : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}`}
-                  onClick={() => {
-                    setSearchRoot(null)
-                    setSearchScope(option.value)
-                    closeScopeMenu()
-                  }}
-                >
-                  {option.label}
-                </button>
-              )
-            })}
-            <div className="my-1 border-t border-border" />
             <button
+              ref={scopeBtnRef}
               type="button"
-              role="option"
-              aria-selected={Boolean(searchRoot)}
-              className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[12px] transition-colors
-                ${searchRoot
-                  ? 'bg-bg-active text-fg'
-                  : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}`}
-              onClick={() => void chooseSearchDirectory()}
-            >
-              <Folder size={13} className="shrink-0" />
-              <span>{t('选择目录…')}</span>
-            </button>
-          </div>,
-          document.body,
-        )}
-
-      {searchRoot && (
-        <div className="mx-3 mb-2 flex items-center gap-1.5 px-2 py-1 rounded border border-accent/40 bg-accent/10 text-[11px] text-fg">
-          <Filter size={12} className="text-accent flex-shrink-0" />
-          <Tooltip label={searchRoot} side="bottom" wrapperClassName="truncate flex-1 min-w-0">
-            <span className="truncate block">
-              {t('限定于：')}{searchRoot.replace(/\\/g, '/').split('/').pop() || searchRoot}
-            </span>
-          </Tooltip>
-          <Tooltip label={t('清除目录限定，回到当前项目根')} side="bottom">
-            <button
-              className="text-fg-dim hover:text-fg flex-shrink-0"
-              onClick={() => setSearchRoot(null)}
-            >
-              <X size={12} />
-            </button>
-          </Tooltip>
-        </div>
-      )}
-
-      <div className="px-3 pb-2 flex flex-col gap-2">
-        <SegmentedControl
-          ariaLabel={t('搜索模式')}
-          options={[
-            { value: 'all', label: t('全部') },
-            { value: 'content', label: t('内容') },
-            { value: 'filename', label: t('文件名') },
-          ]}
-          value={mode}
-          onChange={handleModeChange}
-        />
-        {showEntryKindFilter && (
-          <SegmentedControl
-            ariaLabel={t('按目录或文件筛选')}
-            options={[
-              { value: 'all', label: t('全部') },
-              { value: 'dir', label: t('目录') },
-              { value: 'file', label: t('文件') },
-            ]}
-            value={entryKind}
-            onChange={setEntryKind}
-          />
-        )}
-
-        <div className="flex items-start gap-0.5">
-          {showReplace && (
-            <Tooltip label={replaceOpen ? t('隐藏替换') : t('显示替换')} side="bottom">
-              <button
-                type="button"
-                aria-label={replaceOpen ? t('隐藏替换') : t('显示替换')}
-                aria-expanded={replaceOpen}
-                className="flex-shrink-0 mt-1 p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
-                onClick={() => setReplaceOpen(v => !v)}
-              >
-                {replaceOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              </button>
-            </Tooltip>
-          )}
-          <div className="flex-1 min-w-0 flex flex-col gap-1.5">
-            <div className="flex items-center gap-1.5">
-              <div className="relative min-w-0 flex-1">
-                {loading ? (
-                  <LoaderCircle
-                    size={13}
-                    className="absolute left-2.5 top-1/2 -translate-y-1/2 animate-spin text-accent"
-                    aria-label={t('搜索中')}
-                  />
-                ) : (
-                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
-                )}
-                <input
-                  ref={searchInputRef}
-                  value={query}
-                  onChange={e => {
-                    const nextQuery = e.target.value
-                    setQuery(nextQuery)
-                    if (!nextQuery.trim()) {
-                      setSubmittedQuery('')
-                      setExplicitSearchCommitted(false)
-                    }
-                  }}
-                  onCompositionStart={() => {
-                    composingRef.current = true
-                  }}
-                  onCompositionEnd={e => {
-                    composingRef.current = false
-                    setQuery(e.currentTarget.value)
-                    if (mode === 'filename') setSearchFlush(n => n + 1)
-                  }}
-                  onKeyDown={e => {
-                    if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
-                    e.preventDefault()
-                    submitSearch()
-                  }}
-                  placeholder={inputPlaceholder}
-                  aria-keyshortcuts="Enter"
-                  className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
-                />
-                {query && (
-                  <button
-                    type="button"
-                    aria-label={t('清空搜索')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
-                    onClick={() => {
-                      setQuery('')
-                      setSubmittedQuery('')
-                      setExplicitSearchCommitted(false)
-                    }}
-                  >
-                    <X size={13} />
-                  </button>
-                )}
-              </div>
-              <button
-                type="button"
-                aria-label={t('查询')}
-                disabled={!canSubmitSearch || (loading && !searchDirty)}
-                className="flex h-[30px] shrink-0 items-center gap-1 rounded border border-border-strong bg-bg-deep px-2 text-[12px] text-fg-muted transition-colors hover:border-accent hover:text-fg disabled:pointer-events-none disabled:opacity-40"
-                onClick={submitSearch}
-              >
-                <Search size={12} />
-                <span>{t('查询')}</span>
-              </button>
-            </div>
-            {searchDirty && (
-              <div className="px-0.5 text-[11px] text-accent" aria-live="polite">
-                {t('查询条件已修改，按 Enter 或点击查询')}
-              </div>
-            )}
-            {showReplace && replaceOpen && (
-              <div className="flex items-center gap-1.5">
-                <div className="relative flex-1 min-w-0">
-                  <Replace
-                    size={13}
-                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim"
-                  />
-                  <input
-                    value={replaceText}
-                    onChange={e => setReplaceText(e.target.value)}
-                    placeholder={t('替换为…')}
-                    className="setting-input w-full pl-7 pr-2 py-1.5 text-[13px]"
-                  />
-                </div>
-                <Tooltip label={t('预览并确认后写入全部匹配')} side="bottom">
-                  <button
-                    type="button"
-                    disabled={
-                      !contentResults ||
-                      contentResults.files.length === 0 ||
-                      !queryTrimmed ||
-                      searchDirty ||
-                      loading
-                    }
-                    className="flex-shrink-0 px-2 py-1.5 text-[11px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-40 disabled:pointer-events-none transition-colors"
-                    onClick={() => {
-                      if (!contentResults || !queryTrimmed || searchDirty) return
-                      setReplacePreview(
-                        buildReplacePreview(
-                          activeQuery,
-                          replaceText,
-                          ignoreCase,
-                          contentResults.files,
-                          contentResults.match_count,
-                          contentResults.truncated,
-                        ),
-                      )
-                    }}
-                  >
-                    {t('全部替换')}
-                  </button>
-                </Tooltip>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5 flex-wrap">
-          <SearchToggle
-            active={ignoreCase}
-            onClick={() => setIgnoreCase(v => !v)}
-            tooltip={t('忽略大小写')}
-            icon={<CaseSensitive size={13} />}
-            label="Aa"
-          />
-          {wantsFilename && (
-            <>
-              <SearchToggle
-                active={fuzzy}
-                onClick={() => setFuzzy(v => !v)}
-                tooltip={t('模糊匹配（子序列）')}
-                icon={<Type size={13} />}
-                label={t('模糊')}
-                locked={useGlob}
-              />
-              <SearchToggle
-                active={matchSuffix}
-                onClick={toggleSuffix}
-                tooltip={t('按后缀/扩展名匹配')}
-                icon={<Regex size={13} />}
-                label={t('后缀')}
-                locked={typeFilter !== null || useGlob}
-              />
-            </>
-          )}
-          <Tooltip label={t('按文件类型筛选')} side="bottom">
-            <button
-              ref={extPickerBtnRef}
-              type="button"
-              aria-expanded={extPickerOpen}
+              aria-label={t('搜索范围')}
+              aria-expanded={scopeMenuOpen}
+              aria-haspopup="listbox"
+              className="flex max-w-[170px] items-center gap-0.5 rounded px-1.5 py-0.5 font-medium tracking-normal text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
               onClick={event => {
                 event.stopPropagation()
-                if (extPickerOpen) {
-                  closeExtPicker()
+                if (scopeMenuOpen) {
+                  closeScopeMenu()
                   return
                 }
-                setExtPickerStyle(prev => ({ ...prev, visibility: 'hidden' }))
-                setExtPickerOpen(true)
+                setScopeMenuStyle(prev => ({ ...prev, visibility: 'hidden' }))
+                setScopeMenuOpen(true)
               }}
-              className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
-                ${typeFilter
-                  ? 'bg-accent text-white border-accent'
-                  : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'}`}
             >
-              <Caret size={11} className={`transition-transform ${extPickerOpen ? 'rotate-180' : ''}`} />
-              <span>{t(typeFilterLabel(typeFilter))}</span>
+              <span className="truncate">{scopeLabel}</span>
+              <Caret
+                size={11}
+                className={`flex-shrink-0 transition-transform ${scopeMenuOpen ? 'rotate-180' : ''}`}
+              />
             </button>
           </Tooltip>
-          {typeFilter && (
-            <Tooltip label={t('清除类型筛选')} side="bottom">
+        </div>
+
+        {scopeMenuOpen &&
+          createPortal(
+            <div
+              ref={scopeMenuRef}
+              role="listbox"
+              aria-label={t('搜索范围')}
+              className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
+              style={scopeMenuStyle}
+              onPointerDown={event => event.stopPropagation()}
+            >
+              {(
+                [
+                  { value: 'current' as const, label: t('当前项目') },
+                  { value: 'all' as const, label: t('全部项目') },
+                ] as const
+              ).map(option => {
+                const selected = !searchRoot && searchScope === option.value
+                return (
+                  <button
+                    key={option.value}
+                    type="button"
+                    role="option"
+                    aria-selected={selected}
+                    className={`w-full px-2 py-1 text-left text-[12px] rounded transition-colors
+                    ${
+                      selected
+                        ? 'bg-bg-active text-fg'
+                        : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                    }`}
+                    onClick={() => {
+                      setSearchRoot(null)
+                      setSearchScope(option.value)
+                      closeScopeMenu()
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                )
+              })}
+              <div className="my-1 border-t border-border" />
               <button
                 type="button"
-                className="px-1 py-0.5 text-[11px] rounded text-fg-dim hover:text-fg"
-                onClick={() => setTypeFilter(null)}
+                role="option"
+                aria-selected={Boolean(searchRoot)}
+                className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[12px] transition-colors
+                ${
+                  searchRoot
+                    ? 'bg-bg-active text-fg'
+                    : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                }`}
+                onClick={() => void chooseSearchDirectory()}
+              >
+                <Folder size={13} className="shrink-0" />
+                <span>{t('选择目录…')}</span>
+              </button>
+            </div>,
+            document.body
+          )}
+
+        {searchRoot && (
+          <div className="mx-3 mb-2 flex items-center gap-1.5 px-2 py-1 rounded border border-accent/40 bg-accent/10 text-[11px] text-fg">
+            <Filter size={12} className="text-accent flex-shrink-0" />
+            <Tooltip label={searchRoot} side="bottom" wrapperClassName="truncate flex-1 min-w-0">
+              <span className="truncate block">
+                {t('限定于：')}
+                {searchRoot.replace(/\\/g, '/').split('/').pop() || searchRoot}
+              </span>
+            </Tooltip>
+            <Tooltip label={t('清除目录限定，回到当前项目根')} side="bottom">
+              <button
+                className="text-fg-dim hover:text-fg flex-shrink-0"
+                onClick={() => setSearchRoot(null)}
               >
                 <X size={12} />
               </button>
             </Tooltip>
+          </div>
+        )}
+
+        <div className="px-3 pb-2 flex flex-col gap-2">
+          <SegmentedControl
+            ariaLabel={t('搜索模式')}
+            options={[
+              { value: 'all', label: t('全部') },
+              { value: 'content', label: t('内容') },
+              { value: 'filename', label: t('文件名') },
+            ]}
+            value={mode}
+            onChange={handleModeChange}
+          />
+          {showEntryKindFilter && (
+            <SegmentedControl
+              ariaLabel={t('按目录或文件筛选')}
+              options={[
+                { value: 'all', label: t('全部') },
+                { value: 'dir', label: t('目录') },
+                { value: 'file', label: t('文件') },
+              ]}
+              value={entryKind}
+              onChange={setEntryKind}
+            />
           )}
-          {extPickerOpen &&
-            createPortal(
-              <div
-                ref={extPickerRef}
-                role="listbox"
-                className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated p-1.5 shadow-2xl shadow-black/50"
-                style={extPickerStyle}
-                onPointerDown={event => event.stopPropagation()}
-              >
-                <div className="mb-1 flex items-center justify-between gap-2 px-1">
-                  <span className="text-[10px] text-fg-dim">{t('当前项目')}</span>
-                  {projectExtsLoading && (
-                    <LoaderCircle size={10} className="animate-spin text-accent" />
-                  )}
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={!typeFilter}
-                    onClick={() => {
-                      setTypeFilter(null)
-                      closeExtPicker()
-                    }}
-                    className={`rounded border px-2 py-0.5 text-[11px] transition-colors
-                      ${!typeFilter
-                        ? 'border-accent bg-accent text-white'
-                        : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'}`}
-                  >
-                    {t('全部')}
-                  </button>
-                  {topExts.map(ext => {
-                    const selected = typeFilter?.kind === 'ext' && typeFilter.ext === ext
-                    return (
-                      <button
-                        key={ext}
-                        type="button"
-                        role="option"
-                        aria-selected={selected}
-                        onClick={() => {
-                          setTypeFilter(cur =>
-                            cur?.kind === 'ext' && cur.ext === ext ? null : { kind: 'ext', ext }
-                          )
-                          closeExtPicker()
-                        }}
-                        className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
-                          ${selected
-                            ? 'border-accent bg-accent text-white'
-                            : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'}`}
-                      >
-                        .{ext}
-                      </button>
-                    )
-                  })}
-                  {hasStarOption && (
-                    <Tooltip
-                      label={`${t('其余扩展名')}（${otherExts.length}）`}
-                      side="bottom"
-                    >
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={typeFilter?.kind === 'star'}
-                        onClick={() => {
-                          setTypeFilter(cur =>
-                            cur?.kind === 'star' ? null : { kind: 'star', exts: otherExts }
-                          )
-                          closeExtPicker()
-                        }}
-                        className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
-                          ${typeFilter?.kind === 'star'
-                            ? 'border-accent bg-accent text-white'
-                            : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'}`}
-                      >
-                        *
-                      </button>
-                    </Tooltip>
-                  )}
-                  {!projectExtsLoading && topExts.length === 0 && (
-                    <span className="px-1 py-0.5 text-[11px] text-fg-dim">{t('暂无扩展名')}</span>
-                  )}
-                </div>
-                <div className="mt-1.5 border-t border-border pt-1.5">
-                  <div className="mb-1 px-1 text-[10px] text-fg-dim">{t('自定义类型')}</div>
-                  <div className="flex items-center gap-1">
-                    <input
-                      value={customExtension}
-                      onChange={event => setCustomExtension(event.target.value)}
-                      onKeyDown={event => {
-                        if (event.key !== 'Enter') return
-                        event.preventDefault()
-                        event.stopPropagation()
-                        applyCustomExtension()
-                      }}
-                      placeholder={t('输入类型，如 .vue')}
-                      aria-label={t('自定义文件类型')}
-                      className="setting-input min-w-0 flex-1 px-2 py-1 font-mono text-[11px]"
+
+          <div className="flex items-start gap-0.5">
+            {showReplace && (
+              <Tooltip label={replaceOpen ? t('隐藏替换') : t('显示替换')} side="bottom">
+                <button
+                  type="button"
+                  aria-label={replaceOpen ? t('隐藏替换') : t('显示替换')}
+                  aria-expanded={replaceOpen}
+                  className="flex-shrink-0 mt-1 p-1 rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
+                  onClick={() => setReplaceOpen(v => !v)}
+                >
+                  {replaceOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </button>
+              </Tooltip>
+            )}
+            <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <div className="relative min-w-0 flex-1">
+                  {loading ? (
+                    <LoaderCircle
+                      size={13}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 animate-spin text-accent"
+                      aria-label={t('搜索中')}
                     />
+                  ) : (
+                    <Search
+                      size={13}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim"
+                    />
+                  )}
+                  <input
+                    ref={searchInputRef}
+                    value={query}
+                    onChange={e => {
+                      const nextQuery = e.target.value
+                      setQuery(nextQuery)
+                      if (!nextQuery.trim()) {
+                        setSubmittedQuery('')
+                        setExplicitSearchCommitted(false)
+                      }
+                    }}
+                    onCompositionStart={() => {
+                      composingRef.current = true
+                    }}
+                    onCompositionEnd={e => {
+                      composingRef.current = false
+                      setQuery(e.currentTarget.value)
+                      if (mode === 'filename') setSearchFlush(n => n + 1)
+                    }}
+                    onKeyDown={e => {
+                      if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+                      e.preventDefault()
+                      submitSearch()
+                    }}
+                    placeholder={inputPlaceholder}
+                    aria-keyshortcuts="Enter"
+                    className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
+                  />
+                  {query && (
                     <button
                       type="button"
-                      disabled={!normalizedCustomExtension}
-                      onClick={applyCustomExtension}
-                      className="shrink-0 rounded border border-border-strong bg-bg-deep px-2 py-1 text-[11px] text-fg-muted transition-colors hover:bg-bg-active hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+                      aria-label={t('清空搜索')}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
+                      onClick={() => {
+                        setQuery('')
+                        setSubmittedQuery('')
+                        setExplicitSearchCommitted(false)
+                      }}
                     >
-                      {t('确定')}
+                      <X size={13} />
                     </button>
-                  </div>
+                  )}
                 </div>
-              </div>,
-              document.body,
-            )}
-        </div>
-      </div>
-
-      <div
-        className="flex-1 overflow-hidden flex flex-col"
-        tabIndex={0}
-        onKeyDown={onResultsKeyDown}
-      >
-        {!searchRoots.length ? (
-          <EmptyState icon={<Folder size={28} strokeWidth={1.2} />} title={t('请先选择或添加项目')} />
-        ) : error ? (
-          <EmptyState icon={<AlertCircle size={28} strokeWidth={1.2} className="text-danger" />} title={error} />
-        ) : !hasQuery ? (
-          <EmptyState icon={<Search size={28} strokeWidth={1.2} />} title={emptyHint} />
-        ) : rows.length === 0 && loading ? (
-          <EmptyState icon={<LoaderCircle size={24} className="animate-spin text-accent" />} title={t('搜索中…')} />
-        ) : rows.length === 0 ? (
-          <EmptyState icon={<SearchX size={28} strokeWidth={1.2} />} title={t('无匹配结果')} />
-        ) : (
-          <>
-            <div className="px-4 py-1 flex items-center gap-2 text-[11px] text-fg-dim">
-              <span className="truncate">{resultSummary}</span>
-              {loading && <LoaderCircle size={12} className="animate-spin text-accent flex-shrink-0" aria-label={t('搜索中')} />}
-              {wantsContent && contentResults && contentResults.match_count > 0 && (
-                <span className="ml-auto flex items-center gap-2 flex-shrink-0">
-                  <Tooltip label={t('展开全部')} side="bottom">
-                    <button className="hover:text-fg" onClick={expandAll}>
-                      <ChevronDown size={12} />
+                <button
+                  type="button"
+                  aria-label={t('查询')}
+                  disabled={!canSubmitSearch || (loading && !searchDirty)}
+                  className="flex h-[30px] shrink-0 items-center gap-1 rounded border border-border-strong bg-bg-deep px-2 text-[12px] text-fg-muted transition-colors hover:border-accent hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+                  onClick={submitSearch}
+                >
+                  <Search size={12} />
+                  <span>{t('查询')}</span>
+                </button>
+              </div>
+              {searchDirty && (
+                <div className="px-0.5 text-[11px] text-accent" aria-live="polite">
+                  {t('查询条件已修改，按 Enter 或点击查询')}
+                </div>
+              )}
+              {showReplace && replaceOpen && (
+                <div className="flex items-center gap-1.5">
+                  <div className="relative flex-1 min-w-0">
+                    <Replace
+                      size={13}
+                      className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim"
+                    />
+                    <input
+                      value={replaceText}
+                      onChange={e => setReplaceText(e.target.value)}
+                      placeholder={t('替换为…')}
+                      className="setting-input w-full pl-7 pr-2 py-1.5 text-[13px]"
+                    />
+                  </div>
+                  <Tooltip label={t('预览并确认后写入全部匹配')} side="bottom">
+                    <button
+                      type="button"
+                      disabled={
+                        !contentResults ||
+                        contentResults.files.length === 0 ||
+                        !queryTrimmed ||
+                        searchDirty ||
+                        loading
+                      }
+                      className="flex-shrink-0 px-2 py-1.5 text-[11px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                      onClick={() => {
+                        if (!contentResults || !queryTrimmed || searchDirty) return
+                        setReplacePreview(
+                          buildReplacePreview(
+                            activeQuery,
+                            replaceText,
+                            ignoreCase,
+                            contentResults.files,
+                            contentResults.match_count,
+                            contentResults.truncated
+                          )
+                        )
+                      }}
+                    >
+                      {t('全部替换')}
                     </button>
                   </Tooltip>
-                  <Tooltip label={t('折叠全部')} side="bottom">
-                    <button className="hover:text-fg" onClick={collapseAll}>
-                      <ChevronRight size={12} />
-                    </button>
-                  </Tooltip>
-                </span>
+                </div>
               )}
             </div>
-            <div className="flex-1">
-              <List
-                listRef={listRef}
-                rowCount={rows.length}
-                rowHeight={(index: number) => rowHeightOf(rows[index])}
-                rowComponent={SearchResultRow}
-                rowProps={rowProps}
-                onRowsRendered={onRowsRendered}
-                overscanCount={8}
-                className="h-full overscroll-y-contain"
-                style={{ height: '100%', overscrollBehavior: 'contain' }}
-              />
-            </div>
-          </>
-        )}
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <SearchToggle
+              active={ignoreCase}
+              onClick={() => setIgnoreCase(v => !v)}
+              tooltip={t('忽略大小写')}
+              icon={<CaseSensitive size={13} />}
+              label="Aa"
+            />
+            {wantsFilename && (
+              <>
+                <SearchToggle
+                  active={fuzzy}
+                  onClick={() => setFuzzy(v => !v)}
+                  tooltip={t('模糊匹配（子序列）')}
+                  icon={<Type size={13} />}
+                  label={t('模糊')}
+                  locked={useGlob}
+                />
+                <SearchToggle
+                  active={matchSuffix}
+                  onClick={toggleSuffix}
+                  tooltip={t('按后缀/扩展名匹配')}
+                  icon={<Regex size={13} />}
+                  label={t('后缀')}
+                  locked={typeFilter !== null || useGlob}
+                />
+              </>
+            )}
+            <Tooltip label={t('按文件类型筛选')} side="bottom">
+              <button
+                ref={extPickerBtnRef}
+                type="button"
+                aria-expanded={extPickerOpen}
+                onClick={event => {
+                  event.stopPropagation()
+                  if (extPickerOpen) {
+                    closeExtPicker()
+                    return
+                  }
+                  setExtPickerStyle(prev => ({ ...prev, visibility: 'hidden' }))
+                  setExtPickerOpen(true)
+                }}
+                className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
+                ${
+                  typeFilter
+                    ? 'bg-accent text-white border-accent'
+                    : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'
+                }`}
+              >
+                <Caret
+                  size={11}
+                  className={`transition-transform ${extPickerOpen ? 'rotate-180' : ''}`}
+                />
+                <span>{t(typeFilterLabel(typeFilter))}</span>
+              </button>
+            </Tooltip>
+            {typeFilter && (
+              <Tooltip label={t('清除类型筛选')} side="bottom">
+                <button
+                  type="button"
+                  className="px-1 py-0.5 text-[11px] rounded text-fg-dim hover:text-fg"
+                  onClick={() => setTypeFilter(null)}
+                >
+                  <X size={12} />
+                </button>
+              </Tooltip>
+            )}
+            {extPickerOpen &&
+              createPortal(
+                <div
+                  ref={extPickerRef}
+                  role="listbox"
+                  className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated p-1.5 shadow-2xl shadow-black/50"
+                  style={extPickerStyle}
+                  onPointerDown={event => event.stopPropagation()}
+                >
+                  <div className="mb-1 flex items-center justify-between gap-2 px-1">
+                    <span className="text-[10px] text-fg-dim">{t('当前项目')}</span>
+                    {projectExtsLoading && (
+                      <LoaderCircle size={10} className="animate-spin text-accent" />
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={!typeFilter}
+                      onClick={() => {
+                        setTypeFilter(null)
+                        closeExtPicker()
+                      }}
+                      className={`rounded border px-2 py-0.5 text-[11px] transition-colors
+                      ${
+                        !typeFilter
+                          ? 'border-accent bg-accent text-white'
+                          : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'
+                      }`}
+                    >
+                      {t('全部')}
+                    </button>
+                    {topExts.map(ext => {
+                      const selected = typeFilter?.kind === 'ext' && typeFilter.ext === ext
+                      return (
+                        <button
+                          key={ext}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          onClick={() => {
+                            setTypeFilter(cur =>
+                              cur?.kind === 'ext' && cur.ext === ext ? null : { kind: 'ext', ext }
+                            )
+                            closeExtPicker()
+                          }}
+                          className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
+                          ${
+                            selected
+                              ? 'border-accent bg-accent text-white'
+                              : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'
+                          }`}
+                        >
+                          .{ext}
+                        </button>
+                      )
+                    })}
+                    {hasStarOption && (
+                      <Tooltip label={`${t('其余扩展名')}（${otherExts.length}）`} side="bottom">
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={typeFilter?.kind === 'star'}
+                          onClick={() => {
+                            setTypeFilter(cur =>
+                              cur?.kind === 'star' ? null : { kind: 'star', exts: otherExts }
+                            )
+                            closeExtPicker()
+                          }}
+                          className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
+                          ${
+                            typeFilter?.kind === 'star'
+                              ? 'border-accent bg-accent text-white'
+                              : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'
+                          }`}
+                        >
+                          *
+                        </button>
+                      </Tooltip>
+                    )}
+                    {!projectExtsLoading && topExts.length === 0 && (
+                      <span className="px-1 py-0.5 text-[11px] text-fg-dim">{t('暂无扩展名')}</span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 border-t border-border pt-1.5">
+                    <div className="mb-1 px-1 text-[10px] text-fg-dim">{t('自定义类型')}</div>
+                    <div className="flex items-center gap-1">
+                      <input
+                        value={customExtension}
+                        onChange={event => setCustomExtension(event.target.value)}
+                        onKeyDown={event => {
+                          if (event.key !== 'Enter') return
+                          event.preventDefault()
+                          event.stopPropagation()
+                          applyCustomExtension()
+                        }}
+                        placeholder={t('输入类型，如 .vue')}
+                        aria-label={t('自定义文件类型')}
+                        className="setting-input min-w-0 flex-1 px-2 py-1 font-mono text-[11px]"
+                      />
+                      <button
+                        type="button"
+                        disabled={!normalizedCustomExtension}
+                        onClick={applyCustomExtension}
+                        className="shrink-0 rounded border border-border-strong bg-bg-deep px-2 py-1 text-[11px] text-fg-muted transition-colors hover:bg-bg-active hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+                      >
+                        {t('确定')}
+                      </button>
+                    </div>
+                  </div>
+                </div>,
+                document.body
+              )}
+          </div>
+        </div>
+
+        <div
+          className="flex-1 overflow-hidden flex flex-col"
+          tabIndex={0}
+          onKeyDown={onResultsKeyDown}
+        >
+          {!searchRoots.length ? (
+            <EmptyState
+              icon={<Folder size={28} strokeWidth={1.2} />}
+              title={t('请先选择或添加项目')}
+            />
+          ) : error ? (
+            <EmptyState
+              icon={<AlertCircle size={28} strokeWidth={1.2} className="text-danger" />}
+              title={error}
+            />
+          ) : !hasQuery ? (
+            <EmptyState icon={<Search size={28} strokeWidth={1.2} />} title={emptyHint} />
+          ) : rows.length === 0 && loading ? (
+            <EmptyState
+              icon={<LoaderCircle size={24} className="animate-spin text-accent" />}
+              title={t('搜索中…')}
+            />
+          ) : rows.length === 0 ? (
+            <EmptyState icon={<SearchX size={28} strokeWidth={1.2} />} title={t('无匹配结果')} />
+          ) : (
+            <>
+              <div className="px-4 py-1 flex items-center gap-2 text-[11px] text-fg-dim">
+                <span className="truncate">{resultSummary}</span>
+                {loading && (
+                  <LoaderCircle
+                    size={12}
+                    className="animate-spin text-accent flex-shrink-0"
+                    aria-label={t('搜索中')}
+                  />
+                )}
+                {wantsContent && contentResults && contentResults.match_count > 0 && (
+                  <span className="ml-auto flex items-center gap-2 flex-shrink-0">
+                    <Tooltip label={t('展开全部')} side="bottom">
+                      <button className="hover:text-fg" onClick={expandAll}>
+                        <ChevronDown size={12} />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={t('折叠全部')} side="bottom">
+                      <button className="hover:text-fg" onClick={collapseAll}>
+                        <ChevronRight size={12} />
+                      </button>
+                    </Tooltip>
+                  </span>
+                )}
+              </div>
+              <div className="flex-1">
+                <List
+                  listRef={listRef}
+                  rowCount={rows.length}
+                  rowHeight={(index: number) => rowHeightOf(rows[index])}
+                  rowComponent={SearchResultRow}
+                  rowProps={rowProps}
+                  onRowsRendered={onRowsRendered}
+                  overscanCount={8}
+                  className="h-full overscroll-y-contain"
+                  style={{ height: '100%', overscrollBehavior: 'contain' }}
+                />
+              </div>
+            </>
+          )}
+        </div>
       </div>
-    </div>
-    {contextMenu && (
-      <ContextMenu
-        x={contextMenu.x}
-        y={contextMenu.y}
-        items={contextMenuItems}
-        onClose={() => setContextMenu(null)}
-      />
-    )}
-    {replacePreview && (
-      <ReplacePreviewDialog
-        preview={replacePreview}
-        onClose={() => setReplacePreview(null)}
-        onApplied={result => {
-          pushToast(
-            'success',
-            t('已替换 {replacements} 处（{files} 个文件）', {
-              replacements: result.replacements,
-              files: result.filesChanged,
-            }),
-          )
-        }}
-      />
-    )}
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenuItems}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
+      {replacePreview && (
+        <ReplacePreviewDialog
+          preview={replacePreview}
+          onClose={() => setReplacePreview(null)}
+          onApplied={result => {
+            pushToast(
+              'success',
+              t('已替换 {replacements} 处（{files} 个文件）', {
+                replacements: result.replacements,
+                files: result.filesChanged,
+              })
+            )
+          }}
+        />
+      )}
     </>
   )
 }

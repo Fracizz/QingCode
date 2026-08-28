@@ -1273,6 +1273,8 @@
     "打开": "Open",
     "协议": "License",
     "MIT License — 自由使用、修改与分发，需保留版权声明。": "MIT License — free to use, modify, and distribute; copyright notice must be retained.",
-    "查看 LICENSE": "View LICENSE"
+    "查看 LICENSE": "View LICENSE",
+    "SSH 项目暂不支持代码导航": "Code navigation is not yet available for SSH projects",
+    "语法高亮和文本搜索仍可使用。": "Syntax highlighting and text search remain available."
   }
 }

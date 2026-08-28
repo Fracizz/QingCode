@@ -1,6 +1,6 @@
 import Database from '@tauri-apps/plugin-sql'
 import { safeInvoke, isTauri, NotInTauriError } from './tauri'
-import type { Project, RecentFile } from '../types'
+import type { Project, RecentFile, SshConnection } from '../types'
 import { baseName, normalizeProjectPath } from '../utils/fileTreeHelpers'
 import {
   loadGlobalSettings,
@@ -42,9 +42,10 @@ export async function withDb<T>(action: string, fn: (d: Database) => Promise<T>)
  * Rust whole-DB copy did not run (e.g. dev path mismatch or pre-existing empty DB).
  */
 export async function migrateLegacyProjects(db: Database): Promise<boolean> {
-  const completed = await db.select<{ value: string }[]>('SELECT value FROM settings WHERE key = $1', [
-    LEGACY_MIGRATION_KEY,
-  ])
+  const completed = await db.select<{ value: string }[]>(
+    'SELECT value FROM settings WHERE key = $1',
+    [LEGACY_MIGRATION_KEY]
+  )
   if (completed.length > 0) return false
 
   const [{ count }] = await db.select<{ count: number }[]>('SELECT COUNT(*) AS count FROM projects')
@@ -55,10 +56,10 @@ export async function migrateLegacyProjects(db: Database): Promise<boolean> {
   try {
     legacyDb = await Database.load(LEGACY_DATABASE_PATH)
     const projects = await legacyDb.select<Project[]>(
-      'SELECT id, name, path, default_shell, created_at, last_opened_at FROM projects',
+      'SELECT id, name, path, default_shell, created_at, last_opened_at FROM projects'
     )
     const recentFiles = await legacyDb.select<RecentFile[]>(
-      'SELECT project_id, path, opened_at FROM recent_files',
+      'SELECT project_id, path, opened_at FROM recent_files'
     )
 
     await db.execute('BEGIN IMMEDIATE')
@@ -73,20 +74,22 @@ export async function migrateLegacyProjects(db: Database): Promise<boolean> {
           project.default_shell,
           project.created_at,
           project.last_opened_at,
-        ],
+        ]
       )
     }
     for (const file of recentFiles) {
-      await db.execute('INSERT OR IGNORE INTO recent_files (project_id, path, opened_at) VALUES ($1, $2, $3)', [
-        file.project_id,
-        file.path,
-        file.opened_at,
-      ])
+      await db.execute(
+        'INSERT OR IGNORE INTO recent_files (project_id, path, opened_at) VALUES ($1, $2, $3)',
+        [file.project_id, file.path, file.opened_at]
+      )
     }
     await db.execute('COMMIT')
     transactionStarted = false
     await legacyDb.close()
-    await db.execute('INSERT INTO settings (key, value) VALUES ($1, $2)', [LEGACY_MIGRATION_KEY, 'done'])
+    await db.execute('INSERT INTO settings (key, value) VALUES ($1, $2)', [
+      LEGACY_MIGRATION_KEY,
+      'done',
+    ])
     return projects.length > 0
   } catch (error) {
     if (transactionStarted) {
@@ -109,14 +112,12 @@ export async function migrateLegacyProjects(db: Database): Promise<boolean> {
 }
 
 export async function listProjects(db: Database): Promise<Project[]> {
-  return db.select<Project[]>(
-    'SELECT * FROM projects ORDER BY sort_order ASC, last_opened_at DESC',
-  )
+  return db.select<Project[]>('SELECT * FROM projects ORDER BY sort_order ASC, last_opened_at DESC')
 }
 
 export async function syncProjectsFromUserSettings(
   db: Database,
-  projects: Project[],
+  projects: Project[]
 ): Promise<{ projects: Project[]; imported: number }> {
   const settings = await loadGlobalSettings()
   if (!shouldSyncProjectsOnStartup(settings)) {
@@ -130,7 +131,7 @@ export async function syncProjectsFromUserSettings(
 
   for (const entry of entries) {
     const existing = next.find(
-      project => normalizeProjectPath(project.path) === normalizeProjectPath(entry.path),
+      project => normalizeProjectPath(project.path) === normalizeProjectPath(entry.path)
     )
     if (existing) {
       const hidden = entry.hidden ? 1 : 0
@@ -143,12 +144,12 @@ export async function syncProjectsFromUserSettings(
       if (!needsUpdate) continue
       await db.execute(
         'UPDATE projects SET name = $1, hidden = $2, default_shell = $3 WHERE id = $4',
-        [name, hidden, defaultShell, existing.id],
+        [name, hidden, defaultShell, existing.id]
       )
       next = next.map(project =>
         project.id === existing.id
           ? { ...project, name, hidden, default_shell: defaultShell ?? undefined }
-          : project,
+          : project
       )
       continue
     }
@@ -161,7 +162,7 @@ export async function syncProjectsFromUserSettings(
       const hidden = entry.hidden ? 1 : 0
       await db.execute(
         'INSERT INTO projects (id, name, path, default_shell, created_at, last_opened_at, hidden) VALUES ($1, $2, $3, $4, $5, $6, $7)',
-        [id, name, entry.path, entry.defaultShell ?? null, now, now, hidden],
+        [id, name, entry.path, entry.defaultShell ?? null, now, now, hidden]
       )
       next = [
         {
@@ -216,9 +217,11 @@ export async function persistProjectsToUserSettings(): Promise<void> {
   try {
     await withDb('回写项目列表到设置', async d => {
       const projects = await d.select<Project[]>(
-        'SELECT * FROM projects ORDER BY sort_order ASC, last_opened_at DESC',
+        'SELECT * FROM projects ORDER BY sort_order ASC, last_opened_at DESC'
       )
-      const entries = projects.map(toSettingsProjectEntry)
+      // SSH connection metadata is machine-local and may reference a private key path.
+      // Keep remote projects in SQLite; the portable JSON5 seed remains local-only.
+      const entries = projects.filter(project => project.kind !== 'ssh').map(toSettingsProjectEntry)
       const settings = await loadGlobalSettings()
       settings[PROJECTS_KEY] = entries
       await saveGlobalSettings(settings)
@@ -258,18 +261,93 @@ export async function insertProject(
   id: string,
   name: string,
   path: string,
-  now: number,
+  now: number
 ): Promise<void> {
   await withDb('添加项目', async d => {
     const [{ max_order }] = await d.select<{ max_order: number | null }[]>(
-      'SELECT MAX(sort_order) AS max_order FROM projects',
+      'SELECT MAX(sort_order) AS max_order FROM projects'
     )
     const sortOrder = (Number(max_order) || 0) + 1
     await d.execute(
       'INSERT INTO projects (id, name, path, created_at, last_opened_at, sort_order) VALUES ($1, $2, $3, $4, $5, $6)',
-      [id, name, path, now, now, sortOrder],
+      [id, name, path, now, now, sortOrder]
     )
   })
+}
+
+export async function insertSshProject(
+  project: Pick<Project, 'id' | 'name' | 'path' | 'connection_id' | 'root_path'>,
+  now: number
+): Promise<void> {
+  await withDb('添加 SSH 项目', async d => {
+    const [{ max_order }] = await d.select<{ max_order: number | null }[]>(
+      'SELECT MAX(sort_order) AS max_order FROM projects'
+    )
+    const sortOrder = (Number(max_order) || 0) + 1
+    await d.execute(
+      `INSERT INTO projects
+        (id, name, path, created_at, last_opened_at, sort_order, kind, connection_id, root_path)
+       VALUES ($1, $2, $3, $4, $5, $6, 'ssh', $7, $8)`,
+      [
+        project.id,
+        project.name,
+        project.path,
+        now,
+        now,
+        sortOrder,
+        project.connection_id ?? null,
+        project.root_path ?? null,
+      ]
+    )
+  })
+}
+
+export async function listSshConnections(): Promise<SshConnection[]> {
+  return withDb('加载 SSH 连接', d =>
+    d.select<SshConnection[]>('SELECT * FROM ssh_connections ORDER BY name ASC')
+  )
+}
+
+export async function getSshConnection(id: string): Promise<SshConnection | null> {
+  return withDb('读取 SSH 连接', async d => {
+    const rows = await d.select<SshConnection[]>(
+      'SELECT * FROM ssh_connections WHERE id = $1 LIMIT 1',
+      [id]
+    )
+    return rows[0] ?? null
+  })
+}
+
+export async function upsertSshConnection(connection: SshConnection): Promise<void> {
+  await withDb('保存 SSH 连接', d =>
+    d.execute(
+      `INSERT INTO ssh_connections
+        (id, name, host, port, username, auth_kind, private_key_path,
+         host_key_fingerprint, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT(id) DO UPDATE SET
+         name = excluded.name,
+         host = excluded.host,
+         port = excluded.port,
+         username = excluded.username,
+         auth_kind = excluded.auth_kind,
+         private_key_path = excluded.private_key_path,
+         host_key_fingerprint = excluded.host_key_fingerprint,
+         updated_at = excluded.updated_at`,
+      [
+        connection.id,
+        connection.name,
+        connection.host,
+        connection.port,
+        connection.username,
+        connection.auth_kind,
+        connection.private_key_path ?? null,
+        connection.host_key_fingerprint,
+        connection.created_at,
+        connection.updated_at,
+      ]
+    )
+  )
 }
 
 export async function deleteProjectRows(id: string): Promise<void> {
@@ -282,13 +360,13 @@ export async function deleteProjectRows(id: string): Promise<void> {
 
 export async function setProjectHidden(id: string, hidden: 0 | 1): Promise<void> {
   await withDb(hidden ? '隐藏项目' : '显示项目', d =>
-    d.execute('UPDATE projects SET hidden = $1 WHERE id = $2', [hidden, id]),
+    d.execute('UPDATE projects SET hidden = $1 WHERE id = $2', [hidden, id])
   )
 }
 
 export async function setProjectSortOrder(id: string, sortOrder: number): Promise<void> {
   await withDb('排序项目', d =>
-    d.execute('UPDATE projects SET sort_order = $1 WHERE id = $2', [sortOrder, id]),
+    d.execute('UPDATE projects SET sort_order = $1 WHERE id = $2', [sortOrder, id])
   )
 }
 
@@ -299,7 +377,7 @@ export async function setProjectSortOrder(id: string, sortOrder: number): Promis
  * "cannot start a transaction within a transaction".
  */
 export async function setProjectsSortOrders(
-  orders: Array<{ id: string; sortOrder: number }>,
+  orders: Array<{ id: string; sortOrder: number }>
 ): Promise<void> {
   if (orders.length === 0) return
   await withDb('批量排序项目', async d => {
@@ -314,13 +392,13 @@ export async function relocateProjectRows(id: string, path: string, name: string
     Promise.all([
       d.execute('UPDATE projects SET name = $1, path = $2 WHERE id = $3', [name, path, id]),
       d.execute('DELETE FROM recent_files WHERE project_id = $1', [id]),
-    ]),
+    ])
   )
 }
 
 export async function renameProjectRow(id: string, name: string): Promise<void> {
   await withDb('重命名项目', d =>
-    d.execute('UPDATE projects SET name = $1 WHERE id = $2', [name, id]),
+    d.execute('UPDATE projects SET name = $1 WHERE id = $2', [name, id])
   )
 }
 
@@ -332,7 +410,7 @@ export async function touchAndLoadRecentFiles(projectId: string): Promise<Recent
     ])
     return d.select<RecentFile[]>(
       'SELECT * FROM recent_files WHERE project_id = $1 ORDER BY opened_at DESC LIMIT 50',
-      [projectId],
+      [projectId]
     )
   })
 }
@@ -340,12 +418,12 @@ export async function touchAndLoadRecentFiles(projectId: string): Promise<Recent
 export async function upsertRecentFile(
   projectId: string,
   path: string,
-  openedAt: number,
+  openedAt: number
 ): Promise<void> {
   await withDb('记录最近文件', d =>
     d.execute(
       'INSERT OR REPLACE INTO recent_files (project_id, path, opened_at) VALUES ($1, $2, $3)',
-      [projectId, path, openedAt],
-    ),
+      [projectId, path, openedAt]
+    )
   )
 }

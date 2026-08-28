@@ -14,6 +14,25 @@ export interface Project {
   sort_order?: number
   /** In-memory only; not persisted to the projects table and lost on restart. */
   ephemeral?: boolean
+  /** Local filesystem or an SSH-backed workspace. Missing means local for legacy rows. */
+  kind?: 'local' | 'ssh'
+  /** SSH connection row used by remote projects. */
+  connection_id?: string
+  /** Provider-native root path (`/home/user/project` for SSH). */
+  root_path?: string
+}
+
+export interface SshConnection {
+  id: string
+  name: string
+  host: string
+  port: number
+  username: string
+  auth_kind: 'privateKey' | 'password'
+  private_key_path?: string
+  host_key_fingerprint: string
+  created_at: number
+  updated_at: number
 }
 
 export interface RecentFile {

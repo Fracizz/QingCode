@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { isTauri, safeInvoke } from '../lib/tauri'
+import { isSshResource, isTauri, safeInvoke } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
@@ -64,11 +64,9 @@ async function refreshTreeForPath(path: string) {
   }
 }
 
-function collectWatchRoots(
-  currentProject: Project | null
-): string[] {
+function collectWatchRoots(currentProject: Project | null): string[] {
   if (currentProject && !currentProject.ephemeral) {
-    return [currentProject.path]
+    return isSshResource(currentProject.path) ? [] : [currentProject.path]
   }
   return []
 }
@@ -79,11 +77,11 @@ function collectWatchFiles(
 ): string[] {
   const files = new Set<string>()
   for (const tab of tabs) {
-    if (!tab.loading && !tab.openError) files.add(tab.path)
+    if (!tab.loading && !tab.openError && !isSshResource(tab.path)) files.add(tab.path)
   }
   for (const session of Object.values(projectSessions)) {
     for (const tab of session.tabs) {
-      if (!tab.loading && !tab.openError) files.add(tab.path)
+      if (!tab.loading && !tab.openError && !isSshResource(tab.path)) files.add(tab.path)
     }
   }
   return [...files]
@@ -123,12 +121,11 @@ export function useFileWatcher() {
   const projectSessions = useEditorStore(s => s.projectSessions)
   const activeTabId = useEditorStore(s => s.activeTabId)
   const [gitRefreshIntervalStartMinutes, setGitRefreshIntervalStartMinutes] = useState(
-    getGitRefreshIntervalStartMinutes,
+    getGitRefreshIntervalStartMinutes
   )
 
   useEffect(() => {
-    const sync = () =>
-      setGitRefreshIntervalStartMinutes(getGitRefreshIntervalStartMinutes())
+    const sync = () => setGitRefreshIntervalStartMinutes(getGitRefreshIntervalStartMinutes())
     window.addEventListener(GIT_REFRESH_INTERVAL_START_EVENT, sync)
     queueMicrotask(sync)
     return () => window.removeEventListener(GIT_REFRESH_INTERVAL_START_EVENT, sync)

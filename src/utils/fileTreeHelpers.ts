@@ -8,7 +8,8 @@ export interface FileNode {
 }
 
 export function normalizeProjectPath(path: string): string {
-  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const normalized = path.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized.startsWith('ssh://') ? normalized : normalized.toLowerCase()
 }
 
 function pathsMatch(a: string, b: string) {
@@ -31,7 +32,7 @@ export function findNodeByPath(nodes: FileNode[], targetPath: string): FileNode 
 export function patchTree(
   nodes: FileNode[],
   targetPath: string,
-  updater: (existing: FileNode[] | undefined) => FileNode[],
+  updater: (existing: FileNode[] | undefined) => FileNode[]
 ): FileNode[] {
   return nodes.map(n => {
     if (pathsMatch(n.path, targetPath)) {
@@ -49,11 +50,7 @@ export function patchTree(
 export function removeNodeFromTree(nodes: FileNode[], targetPath: string): FileNode[] {
   return nodes
     .filter(n => !pathsMatch(n.path, targetPath))
-    .map(n =>
-      n.children
-        ? { ...n, children: removeNodeFromTree(n.children, targetPath) }
-        : n,
-    )
+    .map(n => (n.children ? { ...n, children: removeNodeFromTree(n.children, targetPath) } : n))
 }
 
 export function baseName(path: string): string {

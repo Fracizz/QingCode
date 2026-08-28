@@ -17,6 +17,7 @@ mod ipc;
 mod language_components;
 mod native_input;
 mod path_guard;
+mod remote_ssh;
 mod symbol_search;
 mod terminal;
 mod update;
@@ -359,6 +360,31 @@ fn get_column_migrations() -> Vec<Migration> {
                     ON favorite_items(project_id, sort_order);",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 5,
+            description: "add remote project metadata",
+            sql: "ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'local';
+                  ALTER TABLE projects ADD COLUMN connection_id TEXT;
+                  ALTER TABLE projects ADD COLUMN root_path TEXT;",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 6,
+            description: "create ssh connections table",
+            sql: "CREATE TABLE IF NOT EXISTS ssh_connections (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    host TEXT NOT NULL,
+                    port INTEGER NOT NULL DEFAULT 22,
+                    username TEXT NOT NULL,
+                    auth_kind TEXT NOT NULL,
+                    private_key_path TEXT,
+                    host_key_fingerprint TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                  );",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -618,6 +644,7 @@ pub fn run() {
         .manage(TerminalManager::new())
         .manage(FileWatcherManager::new())
         .manage(PathAllowlist::new())
+        .manage(remote_ssh::SshManager::new())
         .manage(code_navigation::SemanticNavigationState::new())
         .manage(symbol_search::SymbolSearchState::new())
         .manage(LaunchFiles::new(launch_files))
@@ -753,6 +780,39 @@ pub fn run() {
             file_watcher::is_fs_watch_suppressed,
             file_watcher::file_mtime,
             file_watcher::file_ctime,
+            remote_ssh::ssh_probe_host,
+            remote_ssh::ssh_connect,
+            remote_ssh::ssh_disconnect,
+            remote_ssh::ssh_connection_status,
+            remote_ssh::ssh_validate_directory,
+            remote_ssh::ssh_scan_directory,
+            remote_ssh::ssh_file_stat,
+            remote_ssh::ssh_file_mtime,
+            remote_ssh::ssh_read_file,
+            remote_ssh::ssh_detect_file_encoding,
+            remote_ssh::ssh_read_file_slice,
+            remote_ssh::ssh_write_file,
+            remote_ssh::ssh_check_symlink_write,
+            remote_ssh::ssh_create_file,
+            remote_ssh::ssh_create_directory,
+            remote_ssh::ssh_rename_path,
+            remote_ssh::ssh_delete_path,
+            remote_ssh::ssh_exec,
+            remote_ssh::ssh_search_files,
+            remote_ssh::ssh_list_file_extensions,
+            remote_ssh::ssh_search_file_contents,
+            remote_ssh::ssh_git_status,
+            remote_ssh::ssh_git_stage,
+            remote_ssh::ssh_git_unstage,
+            remote_ssh::ssh_git_commit,
+            remote_ssh::ssh_git_push,
+            remote_ssh::ssh_git_fetch,
+            remote_ssh::ssh_git_pull,
+            remote_ssh::ssh_create_terminal,
+            remote_ssh::ssh_spawn_script,
+            remote_ssh::ssh_write_terminal,
+            remote_ssh::ssh_resize_terminal,
+            remote_ssh::ssh_kill_terminal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -31,7 +31,11 @@ function emptyStore(): TrustStore {
 
 /** Normalize project path for stable trust lookups across slash styles / trailing separators. */
 export function normalizeProjectPath(path: string): string {
-  return path.trim().replace(/[/\\]+$/, '').replace(/\\/g, '/').toLowerCase()
+  const normalized = path
+    .trim()
+    .replace(/[/\\]+$/, '')
+    .replace(/\\/g, '/')
+  return normalized.startsWith('ssh://') ? normalized : normalized.toLowerCase()
 }
 
 /**
@@ -113,10 +117,7 @@ function writeStore(store: TrustStore) {
   window.dispatchEvent(new Event(WORKSPACE_TRUST_CHANGED_EVENT))
 }
 
-function removeFromLists(
-  store: TrustStore,
-  project: Pick<Project, 'id' | 'path'>,
-): TrustStore {
+function removeFromLists(store: TrustStore, project: Pick<Project, 'id' | 'path'>): TrustStore {
   const path = normalizeProjectPath(project.path)
   return {
     trustedIds: store.trustedIds.filter(id => id !== project.id),
@@ -128,7 +129,7 @@ function removeFromLists(
 
 /** `trusted` | `restricted` | `undecided` (never asked). */
 export function getWorkspaceTrust(
-  project: Pick<Project, 'id' | 'path'>,
+  project: Pick<Project, 'id' | 'path'>
 ): WorkspaceTrustLevel | 'undecided' {
   const store = readStore()
   const path = normalizeProjectPath(project.path)
@@ -176,7 +177,7 @@ export function untrustProject(project: Pick<Project, 'id' | 'path'>): void {
  * paths that are already registered as project roots.
  */
 export async function pushTrustedRootsToNative(
-  projects: Array<Pick<Project, 'id' | 'path' | 'ephemeral'>>,
+  projects: Array<Pick<Project, 'id' | 'path' | 'ephemeral'>>
 ): Promise<void> {
   await syncRootsFromProjects(projects)
   const roots = projects
@@ -191,7 +192,7 @@ export async function pushTrustedRootsToNative(
  * @returns trust level, or `false` if the user cancelled.
  */
 export async function ensureWorkspaceTrust(
-  project: Pick<Project, 'id' | 'path' | 'name' | 'ephemeral'>,
+  project: Pick<Project, 'id' | 'path' | 'name' | 'ephemeral'>
 ): Promise<WorkspaceTrustLevel | false> {
   if (project.ephemeral) {
     trustProject(project)
@@ -205,7 +206,7 @@ export async function ensureWorkspaceTrust(
     title: translate('是否信任此项目？'),
     message: translate(
       '信任「{name}」中的文件作者后，可编辑文件、使用终端并运行项目脚本。受限模式下只能浏览，不会执行项目内命令。',
-      { name: project.name },
+      { name: project.name }
     ),
     detail: project.path,
     kind: 'warning',

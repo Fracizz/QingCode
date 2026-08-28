@@ -5,6 +5,7 @@ import {
   syncDirtySemanticOverlay,
 } from '../lib/semanticNavigation'
 import { isTauri } from '../lib/tauri'
+import { isSshResource } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import type { EditorTab } from '../types'
@@ -17,7 +18,7 @@ function key(path: string): string {
 }
 function allTabs(
   tabs: EditorTab[],
-  projectSessions: Record<string, { tabs: EditorTab[] }>,
+  projectSessions: Record<string, { tabs: EditorTab[] }>
 ): EditorTab[] {
   return [...tabs, ...Object.values(projectSessions).flatMap(session => session.tabs)]
 }
@@ -32,11 +33,13 @@ export function useSemanticIndex() {
   useEffect(() => {
     if (!isTauri()) return
     const roots = new Set<string>()
-    if (currentProject && !currentProject.ephemeral) roots.add(currentProject.path)
+    if (currentProject && !currentProject.ephemeral && !isSshResource(currentProject.path)) {
+      roots.add(currentProject.path)
+    }
     for (const [projectId, session] of Object.entries(projectSessions)) {
       if (session.tabs.length === 0) continue
       const project = projects.find(candidate => candidate.id === projectId)
-      if (project && !project.ephemeral) roots.add(project.path)
+      if (project && !project.ephemeral && !isSshResource(project.path)) roots.add(project.path)
     }
     for (const root of roots) {
       const rootKey = key(root)
@@ -59,7 +62,14 @@ export function useSemanticIndex() {
     if (!isTauri()) return
     const dirtyPaths = new Map<string, string>()
     for (const tab of allTabs(tabs, projectSessions)) {
-      if (tab.kind === 'diff' || !tab.dirty || tab.loading || tab.openError) continue
+      if (
+        tab.kind === 'diff' ||
+        !tab.dirty ||
+        tab.loading ||
+        tab.openError ||
+        isSshResource(tab.path)
+      )
+        continue
       dirtyPaths.set(key(tab.path), tab.path)
       if (!previousDirtyPaths.current.has(key(tab.path))) {
         void syncDirtySemanticOverlay(tab.path).catch(error => {

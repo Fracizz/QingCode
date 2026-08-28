@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { open } from '@tauri-apps/plugin-dialog'
 import { tempDir } from '@tauri-apps/api/path'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
-import type { Project, RecentFile } from '../types'
+import type { Project, RecentFile, SshConnection } from '../types'
 import { baseName, findNodeByPath } from '../utils/fileTreeHelpers'
 import {
   activateProjectSession,
@@ -20,6 +20,7 @@ import { shouldRestoreWorkspace } from '../lib/windowSession'
 import {
   deleteProjectRows,
   insertProject,
+  insertSshProject,
   loadProjectsFromDb,
   persistProjectsToUserSettings,
   relocateProjectRows,
@@ -29,8 +30,12 @@ import {
   setProjectsSortOrders,
   touchAndLoadRecentFiles,
   upsertRecentFile,
+  upsertSshConnection,
 } from '../lib/projectRepository'
-import { durableSortOrders, reorderVisibleProjects as reorderVisibleProjectsList } from '../lib/projectChipOrder'
+import {
+  durableSortOrders,
+  reorderVisibleProjects as reorderVisibleProjectsList,
+} from '../lib/projectChipOrder'
 import {
   buildExpandedProjectsMap,
   createEphemeralProject,
@@ -53,6 +58,12 @@ import {
 } from '../lib/fileTreeCache'
 import { authorizePaths, syncRootsFromProjects } from '../lib/pathAllowlist'
 import { ensureWorkspaceTrust, pushTrustedRootsToNative } from '../lib/workspaceTrust'
+import {
+  connectSshWorkspace,
+  ensureSshWorkspaceConnected,
+  sshRootUri,
+  type SshSessionSecrets,
+} from '../lib/sshWorkspace'
 
 export type { FileNode }
 
@@ -87,6 +98,12 @@ interface ProjectState {
 
   loadProjects: () => Promise<void>
   addProject: (path: string) => Promise<boolean>
+  addSshProject: (
+    connection: SshConnection,
+    rootPath: string,
+    name: string,
+    secrets?: SshSessionSecrets
+  ) => Promise<boolean>
   addProjectFromDialog: () => Promise<void>
   addEmptyProject: () => Promise<boolean>
   removeProject: (id: string) => Promise<void>
@@ -161,6 +178,15 @@ async function validateDirectoryWithRetry(path: string): Promise<boolean> {
   return false
 }
 
+async function validateProjectWithRetry(project: Project): Promise<boolean> {
+  try {
+    await ensureSshWorkspaceConnected(project)
+  } catch {
+    return false
+  }
+  return validateDirectoryWithRetry(project.path)
+}
+
 function withUnavailableProject(ids: string[], projectId: string, unavailable: boolean): string[] {
   if (unavailable) {
     return ids.includes(projectId) ? ids : [...ids, projectId]
@@ -175,12 +201,8 @@ function withUnavailableProject(ids: string[], projectId: string, unavailable: b
  */
 function clearCurrentProjectSession(
   get: () => { currentProject: Project | null },
-  set: (partial: {
-    currentProject: null
-    recentFiles: []
-    fileTree?: []
-  }) => void,
-  options?: { clearFileTree?: boolean },
+  set: (partial: { currentProject: null; recentFiles: []; fileTree?: [] }) => void,
+  options?: { clearFileTree?: boolean }
 ) {
   const currentId = get().currentProject?.id ?? null
   if (currentId) deactivateProjectSession(currentId)
@@ -258,7 +280,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         const results = await Promise.all(
           projects.map(async project => ({
             id: project.id,
-            ok: await validateDirectoryWithRetry(project.path),
+            ok: await validateProjectWithRetry(project),
           }))
         )
 
@@ -321,6 +343,40 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       } else {
         get().pushToast('error', `添加项目失败: ${msg}`)
       }
+      return false
+    }
+  },
+
+  addSshProject: async (connection, rootPath, requestedName, secrets = {}) => {
+    const id = crypto.randomUUID()
+    const path = sshRootUri(connection.id, rootPath)
+    const name = requestedName.trim() || baseName(rootPath)
+    const now = Date.now()
+    const project: Project = {
+      id,
+      name,
+      path,
+      kind: 'ssh',
+      connection_id: connection.id,
+      root_path: rootPath,
+      created_at: now,
+      last_opened_at: now,
+    }
+    try {
+      const trust = await ensureWorkspaceTrust(project)
+      if (trust === false) return false
+      await connectSshWorkspace(project, connection, secrets)
+      await safeInvoke('检查 SSH 项目目录', 'validate_directory', { path })
+      await upsertSshConnection(connection)
+      await insertSshProject(project, now)
+      await get().loadProjects()
+      const created = get().projects.find(candidate => candidate.id === id)
+      if (created) await get().switchProject(created)
+      get().pushToast('success', `已添加 SSH 项目: ${name}`)
+      return true
+    } catch (error) {
+      console.error('addSshProject failed:', error)
+      get().pushToast('error', `添加 SSH 项目失败: ${String(error)}`)
       return false
     }
   },
@@ -521,7 +577,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         'info',
         ephemeralIds.size === targets.length
           ? translate('已关闭其他项目')
-          : translate('已关闭其他项目，可在项目管理中恢复'),
+          : translate('已关闭其他项目，可在项目管理中恢复')
       )
     } catch (e) {
       console.error('hideProjectsByIds failed:', e)
@@ -530,8 +586,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   hideOtherProjects: async (keepId: string) => {
-    const others = get().projects
-      .filter(p => !p.hidden && p.id !== keepId)
+    const others = get()
+      .projects.filter(p => !p.hidden && p.id !== keepId)
       .map(p => p.id)
     await get().hideProjectsByIds(others, keepId)
   },
@@ -682,6 +738,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const known = get().projects
       const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
       await pushTrustedRootsToNative(forTrustSync)
+
+      await ensureSshWorkspaceConnected(project)
 
       // Ephemeral/empty projects use a scratch temp directory; do not block
       // activation on validate so terminals remain usable.
