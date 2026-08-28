@@ -786,6 +786,7 @@ pub fn run() {
             remote_ssh::ssh_connect,
             remote_ssh::ssh_disconnect,
             remote_ssh::ssh_connection_status,
+            remote_ssh::ssh_set_workspace_trust,
             remote_ssh::ssh_validate_directory,
             remote_ssh::ssh_scan_directory,
             remote_ssh::ssh_file_stat,

@@ -87,7 +87,7 @@ export function rehydrateRunTerminals(configs?: RunConfig[]): number {
  */
 export async function applyRunConfigSessionRestorePolicy(
   projectId: string,
-  configs: RunConfig[],
+  configs: RunConfig[]
 ): Promise<number> {
   rehydrateRunTerminals(configs)
   const configById = new Map(configs.map(config => [config.id, config]))
@@ -142,12 +142,24 @@ export function isConfigRunning(configId: string): boolean {
   return activeTerminalsForConfig(configId, useTerminalStore.getState().terminals).length > 0
 }
 
-function joinPath(base: string, rel: string): string {
-  if (!rel) return base
-  const isAbsolute = /^[A-Za-z]:[\\/]/.test(rel) || rel.startsWith('/') || rel.startsWith('\\')
-  if (isAbsolute) return rel
-  const separator = base.includes('\\') && !base.includes('/') ? '\\' : '/'
-  return `${base}${separator}${rel.replace(/[/\\]+$/, '')}`
+export function resolveRunTaskCwd(project: Pick<Project, 'path'>, cwd?: string): string {
+  const value = cwd?.trim()
+  if (!value) return project.path
+  if (project.path.startsWith('ssh://')) {
+    if (value.startsWith('ssh://')) return value
+    const connection = project.path.match(/^ssh:\/\/[^/]+/)?.[0]
+    if (!connection) return project.path
+    const normalized = value.replace(/\\/g, '/')
+    if (normalized.startsWith('/')) return `${connection}${normalized.replace(/\/+$/, '') || '/'}`
+    return `${project.path.replace(/\/+$/, '')}/${normalized
+      .replace(/^\.\//, '')
+      .replace(/\/+$/, '')}`
+  }
+  const isAbsolute =
+    /^[A-Za-z]:[\\/]/.test(value) || value.startsWith('/') || value.startsWith('\\')
+  if (isAbsolute) return value
+  const separator = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
+  return `${project.path}${separator}${value.replace(/[/\\]+$/, '')}`
 }
 
 async function ensureRunTrust(project: Project): Promise<boolean> {
@@ -183,7 +195,7 @@ export async function runConfig(project: Project, config: RunConfig): Promise<vo
 
   const addScriptTerminal = useTerminalStore.getState().addScriptTerminal
   for (const task of config.tasks) {
-    const cwd = task.cwd ? joinPath(project.path, task.cwd) : project.path
+    const cwd = resolveRunTaskCwd(project, task.cwd)
     await addScriptTerminal(
       project.id,
       cwd,
@@ -191,7 +203,7 @@ export async function runConfig(project: Project, config: RunConfig): Promise<vo
       task.target,
       task.env ?? {},
       runTaskTerminalName(config, task),
-      { runConfigId: config.id, runTaskId: task.id },
+      { runConfigId: config.id, runTaskId: task.id }
     )
   }
   useUIStore.getState().openTerminalPanel()

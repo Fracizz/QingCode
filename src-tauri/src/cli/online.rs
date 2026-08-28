@@ -12,6 +12,7 @@ pub fn project_switch(query: &str) -> i32 {
         config: None,
         path: None,
         paths: None,
+        content: None,
     })
 }
 
@@ -23,6 +24,7 @@ pub fn run_start(query: &str, project: Option<&str>) -> i32 {
         config: Some(query.to_string()),
         path: None,
         paths: None,
+        content: None,
     })
 }
 
@@ -34,6 +36,7 @@ pub fn run_stop(query: &str, project: Option<&str>) -> i32 {
         config: Some(query.to_string()),
         path: None,
         paths: None,
+        content: None,
     })
 }
 
@@ -45,6 +48,55 @@ pub fn run_status(project: Option<&str>) -> i32 {
         config: None,
         path: None,
         paths: None,
+        content: None,
+    })
+}
+
+pub fn run_list(project: Option<&str>) -> i32 {
+    dispatch(IpcRequest {
+        id: uuid::Uuid::new_v4().to_string(),
+        op: "run.list".into(),
+        project: project.map(str::to_string),
+        config: None,
+        path: None,
+        paths: None,
+        content: None,
+    })
+}
+
+pub fn run_get(query: &str, project: Option<&str>) -> i32 {
+    dispatch(IpcRequest {
+        id: uuid::Uuid::new_v4().to_string(),
+        op: "run.get".into(),
+        project: project.map(str::to_string),
+        config: Some(query.to_string()),
+        path: None,
+        paths: None,
+        content: None,
+    })
+}
+
+pub fn run_upsert(content: String, project: Option<&str>) -> i32 {
+    dispatch(IpcRequest {
+        id: uuid::Uuid::new_v4().to_string(),
+        op: "run.upsert".into(),
+        project: project.map(str::to_string),
+        config: None,
+        path: None,
+        paths: None,
+        content: Some(content),
+    })
+}
+
+pub fn run_remove(query: &str, project: Option<&str>) -> i32 {
+    dispatch(IpcRequest {
+        id: uuid::Uuid::new_v4().to_string(),
+        op: "run.remove".into(),
+        project: project.map(str::to_string),
+        config: Some(query.to_string()),
+        path: None,
+        paths: None,
+        content: None,
     })
 }
 
@@ -56,6 +108,7 @@ pub fn trust_grant(path: &str) -> i32 {
         config: None,
         path: Some(path.to_string()),
         paths: None,
+        content: None,
     })
 }
 
@@ -67,6 +120,7 @@ pub fn open(targets: &[String]) -> i32 {
         config: None,
         path: None,
         paths: Some(targets.to_vec()),
+        content: None,
     })
 }
 

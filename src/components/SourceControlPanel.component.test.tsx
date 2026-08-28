@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('../lib/tauri', () => ({
+  isSshResource: (value: unknown) => typeof value === 'string' && value.startsWith('ssh://'),
   isTauri: () => true,
   safeInvoke: mocks.safeInvoke,
 }))
@@ -138,6 +139,35 @@ describe('SourceControlPanel', () => {
         path: project.path,
         files: [],
         all: true,
+      })
+    )
+  })
+
+  it('uses POSIX separators when loading an SSH Git file diff', async () => {
+    const sshProject = {
+      ...project,
+      id: 'ssh-repo',
+      name: 'nem-panel',
+      path: 'ssh://connection/home/code/nem-panel',
+    }
+    useProjectStore.setState({
+      currentProject: sshProject,
+      projects: [sshProject],
+      toasts: [],
+    })
+    mockGit({
+      is_repository: true,
+      branch: 'test',
+      changes: [{ path: 'installer/tests/test_k8s_package.py', status: ' M' }],
+    })
+    render(<SourceControlPanel />)
+
+    fireEvent.click(await screen.findByText('installer/tests/test_k8s_package.py'))
+
+    await waitFor(() =>
+      expect(mocks.safeInvoke).toHaveBeenCalledWith('读取 Git 文件内容', 'git_file_contents', {
+        path: sshProject.path,
+        file: 'ssh://connection/home/code/nem-panel/installer/tests/test_k8s_package.py',
       })
     )
   })

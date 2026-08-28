@@ -22,6 +22,8 @@ pub struct IpcRequest {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,7 +161,7 @@ fn handle_client(app: AppHandle, stream: TcpStream) -> Result<(), String> {
     }
 
     let resp = rx
-        .recv_timeout(Duration::from_secs(20))
+        .recv_timeout(Duration::from_secs(60))
         .unwrap_or_else(|_| IpcResponse {
             id: req.id.clone(),
             ok: false,

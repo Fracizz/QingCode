@@ -63,24 +63,45 @@ fn execute(cmd: Command) -> i32 {
             }
         }
         Command::ProjectSwitch { query } => online::project_switch(&query),
-        Command::RunList { project } => match run_config::list(project.as_deref()) {
-            Ok(data) => output::ok(data),
+        Command::RunList { project } => match run_config::remote_project_id(project.as_deref()) {
+            Ok(Some(project_id)) => online::run_list(Some(&project_id)),
+            Ok(None) => match run_config::list(project.as_deref()) {
+                Ok(data) => output::ok(data),
+                Err(e) => output::fail(output::EXIT_ERROR, e),
+            },
             Err(e) => output::fail(output::EXIT_ERROR, e),
         },
-        Command::RunGet { query, project } => match run_config::get(&query, project.as_deref()) {
-            Ok(data) => output::ok(data),
-            Err(e) => output::fail(output::EXIT_ERROR, e),
-        },
+        Command::RunGet { query, project } => {
+            match run_config::remote_project_id(project.as_deref()) {
+                Ok(Some(project_id)) => online::run_get(&query, Some(&project_id)),
+                Ok(None) => match run_config::get(&query, project.as_deref()) {
+                    Ok(data) => output::ok(data),
+                    Err(e) => output::fail(output::EXIT_ERROR, e),
+                },
+                Err(e) => output::fail(output::EXIT_ERROR, e),
+            }
+        }
         Command::RunUpsert {
             json_source,
             project,
-        } => match run_config::upsert(&json_source, project.as_deref()) {
-            Ok(data) => output::ok(data),
+        } => match run_config::remote_project_id(project.as_deref()) {
+            Ok(Some(project_id)) => match run_config::read_json_source(&json_source) {
+                Ok(content) => online::run_upsert(content, Some(&project_id)),
+                Err(e) => output::fail(output::EXIT_ERROR, e),
+            },
+            Ok(None) => match run_config::upsert(&json_source, project.as_deref()) {
+                Ok(data) => output::ok(data),
+                Err(e) => output::fail(output::EXIT_ERROR, e),
+            },
             Err(e) => output::fail(output::EXIT_ERROR, e),
         },
         Command::RunRemove { query, project } => {
-            match run_config::remove(&query, project.as_deref()) {
-                Ok(data) => output::ok(data),
+            match run_config::remote_project_id(project.as_deref()) {
+                Ok(Some(project_id)) => online::run_remove(&query, Some(&project_id)),
+                Ok(None) => match run_config::remove(&query, project.as_deref()) {
+                    Ok(data) => output::ok(data),
+                    Err(e) => output::fail(output::EXIT_ERROR, e),
+                },
                 Err(e) => output::fail(output::EXIT_ERROR, e),
             }
         }

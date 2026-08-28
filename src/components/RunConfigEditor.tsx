@@ -16,8 +16,10 @@ import {
 import { useEditorStore } from '../store/editorStore'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
+import { isSshResource } from '../lib/tauri'
 
 const TYPE_OPTIONS: RunTaskType[] = ['command', 'ps1', 'bat', 'sh', 'script']
+const SSH_TYPE_OPTIONS: RunTaskType[] = ['command', 'sh', 'script']
 
 const TYPE_LABEL: Record<RunTaskType, string> = {
   command: '命令（CMD）',
@@ -40,10 +42,13 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
   const descriptionId = useId()
   const [name, setName] = useState(initial?.name ?? '')
   const [restoreWithProjectSession, setRestoreWithProjectSession] = useState(
-    initial ? runConfigFollowsProjectSession(initial) : false,
+    initial ? runConfigFollowsProjectSession(initial) : false
   )
   const [tasks, setTasks] = useState<RunTask[]>(initial?.tasks ?? [])
   const [saving, setSaving] = useState(false)
+  const remote = isSshResource(project.path)
+  const hasUnsupportedSshTask =
+    remote && tasks.some(task => task.type === 'ps1' || task.type === 'bat')
 
   useEffect(() => {
     queueMicrotask(() => {
@@ -82,10 +87,8 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
       .map(t => {
         const cwd = t.cwd?.trim() || undefined
         const targetRaw = t.target.trim()
-        const normalized =
-          t.type === 'command' ? normalizeCommandTarget(targetRaw) : targetRaw
-        const target =
-          t.type === 'command' && cwd ? stripRedundantCdPrefix(normalized) : normalized
+        const normalized = t.type === 'command' ? normalizeCommandTarget(targetRaw) : targetRaw
+        const target = t.type === 'command' && cwd ? stripRedundantCdPrefix(normalized) : normalized
         return {
           ...t,
           name: t.name?.trim() || undefined,
@@ -139,7 +142,12 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
 
         <div className="flex-1 overflow-auto px-4 py-2 flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            <label htmlFor="run-config-name" className="text-[12px] text-fg-muted w-16 flex-shrink-0">{t('名称')}</label>
+            <label
+              htmlFor="run-config-name"
+              className="text-[12px] text-fg-muted w-16 flex-shrink-0"
+            >
+              {t('名称')}
+            </label>
             <input
               id="run-config-name"
               data-modal-autofocus
@@ -202,6 +210,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
                 key={task.id}
                 index={idx}
                 task={task}
+                remote={remote}
                 onChange={patch => updateTask(task.id, patch)}
                 onRemove={() => removeTask(task.id)}
               />
@@ -222,21 +231,26 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
             </button>
           </p>
           <div className="flex items-center gap-2 flex-shrink-0">
-          <button
-            type="button"
-            onClick={onClose}
-            className="text-[13px] px-3 py-1.5 rounded text-fg-muted hover:text-fg hover:bg-bg-hover"
-          >
-            {t('取消')}
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving || !name.trim() || tasks.filter(t => t.target.trim()).length === 0}
-            className="text-[13px] px-3 py-1.5 rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:cursor-default"
-          >
-            {t('保存')}
-          </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-[13px] px-3 py-1.5 rounded text-fg-muted hover:text-fg hover:bg-bg-hover"
+            >
+              {t('取消')}
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={
+                saving ||
+                hasUnsupportedSshTask ||
+                !name.trim() ||
+                tasks.filter(t => t.target.trim()).length === 0
+              }
+              className="text-[13px] px-3 py-1.5 rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:cursor-default"
+            >
+              {t('保存')}
+            </button>
           </div>
         </div>
       </div>
@@ -247,11 +261,13 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
 function TaskEditor({
   index,
   task,
+  remote,
   onChange,
   onRemove,
 }: {
   index: number
   task: RunTask
+  remote: boolean
   onChange: (patch: Partial<RunTask>) => void
   onRemove: () => void
 }) {
@@ -266,9 +282,11 @@ function TaskEditor({
     onChange({ env: Object.keys(env).length > 0 ? env : undefined })
   }
 
-  const commandHelp = t(
-    'Windows 下使用 CMD，可用 && 连接命令；换行会自动转为 &&。工作目录已填时无需再写 cd。',
-  )
+  const commandHelp = remote
+    ? t('SSH 下使用 POSIX Shell；工作目录已填时无需再写 cd。')
+    : t('Windows 下使用 CMD，可用 && 连接命令；换行会自动转为 &&。工作目录已填时无需再写 cd。')
+  const typeOptions = remote ? SSH_TYPE_OPTIONS : TYPE_OPTIONS
+  const unsupported = remote && (task.type === 'ps1' || task.type === 'bat')
 
   return (
     <div className="rounded-md border border-border bg-bg/40 p-2 flex flex-col gap-1.5">
@@ -287,9 +305,14 @@ function TaskEditor({
           onChange={e => onChange({ type: e.target.value as RunTaskType })}
           className="max-w-[9.5rem] px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
         >
-          {TYPE_OPTIONS.map(taskType => (
+          {unsupported ? (
+            <option value={task.type} disabled>
+              {t('Windows 脚本（SSH Linux 不支持）')}
+            </option>
+          ) : null}
+          {typeOptions.map(taskType => (
             <option key={taskType} value={taskType}>
-              {t(TYPE_LABEL[taskType])}
+              {taskType === 'command' && remote ? t('命令（Shell）') : t(TYPE_LABEL[taskType])}
             </option>
           ))}
         </select>
@@ -329,7 +352,7 @@ function TaskEditor({
             aria-label={t('脚本路径')}
             value={task.target}
             onChange={e => onChange({ target: e.target.value })}
-            placeholder="scripts/run_backend.ps1"
+            placeholder={remote ? 'scripts/run_backend.py' : 'scripts/run_backend.ps1'}
             className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
           />
         </div>
@@ -344,6 +367,11 @@ function TaskEditor({
           className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
         />
       </div>
+      {unsupported ? (
+        <p className="pl-[4.5rem] text-[11px] text-warn">
+          {t('SSH Linux 项目不支持 PowerShell 或 BAT 任务，请改用命令、sh 或脚本。')}
+        </p>
+      ) : null}
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
           <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">{t('环境变量')}</label>
@@ -363,7 +391,9 @@ function TaskEditor({
               aria-label={t('环境变量名称')}
               value={k}
               onChange={e =>
-                setEnv(envEntries.map((entry, idx) => (idx === i ? [e.target.value, entry[1]] : entry)))
+                setEnv(
+                  envEntries.map((entry, idx) => (idx === i ? [e.target.value, entry[1]] : entry))
+                )
               }
               placeholder="KEY"
               className="w-28 px-1.5 py-0.5 text-[11px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
@@ -373,7 +403,9 @@ function TaskEditor({
               aria-label={t('环境变量值')}
               value={v}
               onChange={e =>
-                setEnv(envEntries.map((entry, idx) => (idx === i ? [entry[0], e.target.value] : entry)))
+                setEnv(
+                  envEntries.map((entry, idx) => (idx === i ? [entry[0], e.target.value] : entry))
+                )
               }
               placeholder="value"
               className="flex-1 min-w-0 px-1.5 py-0.5 text-[11px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
@@ -394,7 +426,10 @@ function TaskEditor({
 }
 
 function normalizeCommandTarget(target: string): string {
-  return target.replace(/\r\n/g, '\n').replace(/\s*\n+\s*/g, ' && ').trim()
+  return target
+    .replace(/\r\n/g, '\n')
+    .replace(/\s*\n+\s*/g, ' && ')
+    .trim()
 }
 
 function CommandTextarea({

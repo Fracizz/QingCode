@@ -137,7 +137,7 @@ pub fn get(query: &str, project: Option<&str>) -> Result<serde_json::Value, Stri
     }))
 }
 
-fn read_json_source(source: &str) -> Result<String, String> {
+pub(super) fn read_json_source(source: &str) -> Result<String, String> {
     if source == "-" {
         let mut buf = String::new();
         io::stdin()
@@ -146,6 +146,11 @@ fn read_json_source(source: &str) -> Result<String, String> {
         return Ok(buf);
     }
     fs::read_to_string(source).map_err(|e| format!("read {source}: {e}"))
+}
+
+pub(super) fn remote_project_id(project: Option<&str>) -> Result<Option<String>, String> {
+    let project = project_for(project)?;
+    Ok(project.path.starts_with("ssh://").then_some(project.id))
 }
 
 fn parse_upsert_body(raw: &str) -> Result<RunConfig, String> {

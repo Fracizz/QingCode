@@ -75,7 +75,7 @@ import {
 } from '@/lib/git/syncTimes'
 import { isScmFetchAuthError, shouldAutoFetch, type ScmAutoFetchReason } from '@/lib/git/scmSyncMeta'
 import { confirmDialog } from '../store/confirmStore'
-import { isTauri, safeInvoke } from '../lib/tauri'
+import { isSshResource, isTauri, safeInvoke } from '../lib/tauri'
 import {
   changeGitStage,
   commitGit,
@@ -230,8 +230,9 @@ type GitOperation = {
 
 function absoluteFilePath(projectPath: string, relativePath: string) {
   const root = projectPath.replace(/[\\/]+$/, '')
-  const rel = normalizeGitChangePath(relativePath).replace(/\//g, '\\')
-  return `${root}\\${rel}`
+  const separator = isSshResource(projectPath) ? '/' : '\\'
+  const rel = normalizeGitChangePath(relativePath).replace(/\//g, separator)
+  return `${root}${separator}${rel}`
 }
 
 function selectedChangesInGroup(

@@ -286,6 +286,21 @@ impl SshManager {
         Ok(root)
     }
 
+    fn set_root_trust(&self, uri: &str, trusted: bool) -> Result<(), String> {
+        let normalized = normalize_remote_uri(uri);
+        let mut roots = self
+            .roots
+            .write()
+            .map_err(|_| "SSH 工作区状态不可用".to_string())?;
+        if let Some(root) = roots
+            .values_mut()
+            .find(|root| normalize_remote_uri(&root.uri) == normalized)
+        {
+            root.trusted = trusted;
+        }
+        Ok(())
+    }
+
     async fn open_sftp(&self, connection_id: &str) -> Result<SftpSession, String> {
         let session = self.session(connection_id)?;
         let channel = session
@@ -397,6 +412,16 @@ impl SshManager {
             exit_code: exit_code.unwrap_or(255),
         })
     }
+}
+
+#[tauri::command]
+pub fn ssh_set_workspace_trust(
+    root_uri: String,
+    trusted: bool,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    parse_remote_uri(&root_uri)?;
+    manager.set_root_trust(&root_uri, trusted)
 }
 
 #[derive(Debug)]
@@ -2552,6 +2577,50 @@ pub async fn ssh_create_terminal(
     spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, command).await
 }
 
+fn remote_script_invocation(target: &str, env_prefix: &str) -> Result<String, String> {
+    let quoted = shell_quote(target);
+    let extension = target
+        .rsplit('/')
+        .next()
+        .and_then(|name| name.rsplit_once('.').map(|(_, extension)| extension))
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let command = match extension.as_str() {
+        "ps1" | "bat" | "cmd" => {
+            return Err("SSH Linux 项目不支持 PowerShell、BAT 或 CMD 脚本".to_string())
+        }
+        "py" => format!(
+            "if command -v python3 >/dev/null 2>&1; then {env_prefix}exec python3 {quoted}; elif command -v python >/dev/null 2>&1; then {env_prefix}exec python {quoted}; else echo '远端未安装 python3 或 python' >&2; exit 127; fi"
+        ),
+        "js" | "mjs" | "cjs" => format!(
+            "if command -v node >/dev/null 2>&1; then {env_prefix}exec node {quoted}; elif command -v bun >/dev/null 2>&1; then {env_prefix}exec bun {quoted}; else echo '远端未安装 node 或 bun' >&2; exit 127; fi"
+        ),
+        "ts" | "mts" | "cts" | "tsx" => format!(
+            "if [ -x node_modules/.bin/tsx ]; then {env_prefix}exec node_modules/.bin/tsx {quoted}; elif command -v tsx >/dev/null 2>&1; then {env_prefix}exec tsx {quoted}; elif command -v bun >/dev/null 2>&1; then {env_prefix}exec bun {quoted}; else echo '远端未安装项目内 tsx、全局 tsx 或 bun' >&2; exit 127; fi"
+        ),
+        "rb" => format!(
+            "command -v ruby >/dev/null 2>&1 && {env_prefix}exec ruby {quoted} || {{ echo '远端未安装 ruby' >&2; exit 127; }}"
+        ),
+        "php" => format!(
+            "command -v php >/dev/null 2>&1 && {env_prefix}exec php {quoted} || {{ echo '远端未安装 php' >&2; exit 127; }}"
+        ),
+        "pl" => format!(
+            "command -v perl >/dev/null 2>&1 && {env_prefix}exec perl {quoted} || {{ echo '远端未安装 perl' >&2; exit 127; }}"
+        ),
+        "bash" => format!(
+            "command -v bash >/dev/null 2>&1 && {env_prefix}exec bash {quoted} || {{ echo '远端未安装 bash' >&2; exit 127; }}"
+        ),
+        "zsh" => format!(
+            "command -v zsh >/dev/null 2>&1 && {env_prefix}exec zsh {quoted} || {{ echo '远端未安装 zsh' >&2; exit 127; }}"
+        ),
+        "sh" => format!("{env_prefix}exec /bin/sh {quoted}"),
+        _ => format!(
+            "if [ -x {quoted} ]; then {env_prefix}exec {quoted}; else {env_prefix}exec /bin/sh {quoted}; fi"
+        ),
+    };
+    Ok(command)
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn ssh_spawn_script(
@@ -2589,12 +2658,13 @@ pub async fn ssh_spawn_script(
         env_prefix.push_str(&format!("{key}={} ", shell_quote(&value)));
     }
     let invocation = match shell_kind.as_str() {
-        "sh" | "script" => format!("exec {env_prefix}/bin/sh {}", shell_quote(&target)),
+        "sh" => format!("{env_prefix}exec /bin/sh {}", shell_quote(&target)),
+        "script" => remote_script_invocation(&target, &env_prefix)?,
         "interactive" => format!(
             "{env_prefix}/bin/sh -lc {}; exec \"${{SHELL:-/bin/sh}}\" -l",
             shell_quote(&target)
         ),
-        _ => format!("exec {env_prefix}/bin/sh -lc {}", shell_quote(&target)),
+        _ => format!("{env_prefix}exec /bin/sh -lc {}", shell_quote(&target)),
     };
     let command = format!("cd -- {} && {invocation}", shell_quote(&parsed.path));
     spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, command).await
@@ -2695,6 +2765,26 @@ mod tests {
     }
 
     #[test]
+    fn remote_scripts_use_an_interpreter_matching_the_extension() {
+        let python = remote_script_invocation("scripts/dev.py", "PORT='3000' ").unwrap();
+        assert!(python.contains("PORT='3000' exec python3 'scripts/dev.py'"));
+
+        let typescript = remote_script_invocation("scripts/dev.ts", "").unwrap();
+        assert!(typescript.contains("node_modules/.bin/tsx 'scripts/dev.ts'"));
+
+        assert_eq!(
+            remote_script_invocation("scripts/dev.sh", "MODE='test' ").unwrap(),
+            "MODE='test' exec /bin/sh 'scripts/dev.sh'"
+        );
+    }
+
+    #[test]
+    fn remote_scripts_reject_windows_script_types() {
+        assert!(remote_script_invocation("scripts/dev.ps1", "").is_err());
+        assert!(remote_script_invocation("scripts/dev.bat", "").is_err());
+    }
+
+    #[test]
     fn simple_globs_cover_extensions_and_nested_directories() {
         assert!(simple_glob_matches("*.map", "dist/app.js.map"));
         assert!(simple_glob_matches(
@@ -2754,6 +2844,25 @@ mod tests {
     fn empty_manager_has_no_existing_session() {
         let manager = SshManager::new();
         assert!(existing_session(&manager, "missing").is_none());
+    }
+
+    #[test]
+    fn connected_root_trust_can_be_updated_without_reconnecting() {
+        let manager = SshManager::new();
+        manager.roots.write().unwrap().insert(
+            "test".to_string(),
+            RegisteredRoot {
+                uri: "ssh://test/home/owner/app".to_string(),
+                canonical_path: "/home/owner/app".to_string(),
+                trusted: false,
+            },
+        );
+
+        manager
+            .set_root_trust("ssh://test/home/owner/app/", true)
+            .unwrap();
+
+        assert!(manager.roots.read().unwrap().get("test").unwrap().trusted);
     }
 
     #[test]

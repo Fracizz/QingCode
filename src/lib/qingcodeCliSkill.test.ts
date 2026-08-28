@@ -1,7 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { buildQingcodeCliSkillMarkdown, QINGCODE_CLI_REPO_BINARY } from './qingcodeCliSkill'
+import {
+  buildQingcodeCliSkillMarkdown,
+  isChineseSkillLanguage,
+  QINGCODE_CLI_REPO_BINARY,
+} from './qingcodeCliSkill'
 
 describe('buildQingcodeCliSkillMarkdown', () => {
   it('embeds exe path and core commands', () => {
@@ -20,12 +24,29 @@ describe('buildQingcodeCliSkillMarkdown', () => {
     expect(md).toContain('"C:\\Program Files\\QingCode.exe" project list')
   })
 
+  it('copies Chinese only for Chinese locales and English for every other locale', () => {
+    expect(isChineseSkillLanguage('zh-CN')).toBe(true)
+    expect(isChineseSkillLanguage('zh-TW')).toBe(true)
+    expect(isChineseSkillLanguage('en')).toBe(false)
+    expect(isChineseSkillLanguage('ja-JP')).toBe(false)
+
+    expect(buildQingcodeCliSkillMarkdown('QingCode.exe', 'zh-CN')).toContain(
+      '# QingCode CLI\n\n将此文件作为 Skill'
+    )
+    expect(buildQingcodeCliSkillMarkdown('QingCode.exe', 'en')).toContain(
+      'Install this file into your AI agent'
+    )
+    expect(buildQingcodeCliSkillMarkdown('QingCode.exe', 'fr-FR')).toContain(
+      'Install this file into your AI agent'
+    )
+  })
+
   it('keeps the repository Skill snapshot in sync with the canonical template', () => {
     const skillPath = fileURLToPath(
       new URL('../../.agents/skills/qingcode-cli/SKILL.md', import.meta.url)
     )
     const snapshot = readFileSync(skillPath, 'utf8').replace(/\r\n/g, '\n')
 
-    expect(snapshot).toBe(buildQingcodeCliSkillMarkdown(QINGCODE_CLI_REPO_BINARY))
+    expect(snapshot).toBe(buildQingcodeCliSkillMarkdown(QINGCODE_CLI_REPO_BINARY, 'en'))
   })
 })

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
+import { isSshResource, safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
 import { translate } from '../lib/i18n'
 import { useProjectStore } from './projectStore'
 import type { Project } from '../types'
@@ -50,6 +50,28 @@ function legacyRunConfigPath(project: Project): string {
 function runConfigPath(project: Project): string {
   const sep = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
   return `${projectConfigDir(project)}${sep}run.json`
+}
+
+async function ensureRunConfigDirectory(project: Project): Promise<void> {
+  if (!isSshResource(project.path)) return
+  const path = projectConfigDir(project)
+  try {
+    await safeInvoke('检查运行配置目录', 'validate_directory', { path })
+  } catch {
+    try {
+      await safeInvoke('创建运行配置目录', 'create_directory', {
+        parent: project.path,
+        name: '.qingcode',
+      })
+    } catch (createError) {
+      // Another window may have created it between validation and creation.
+      try {
+        await safeInvoke('检查运行配置目录', 'validate_directory', { path })
+      } catch {
+        throw createError
+      }
+    }
+  }
 }
 
 /** Display path for UI — always forward slashes, relative to project root. */
@@ -153,6 +175,7 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
       try {
         const legacyPath = legacyRunConfigPath(project)
         const configs = await readConfigs(legacyPath)
+        await ensureRunConfigDirectory(project)
         await safeInvoke('保存运行配置', 'write_file', {
           path: runConfigPath(project),
           content: JSON.stringify({ configs } satisfies RunConfigFile, null, 2),
@@ -177,6 +200,7 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
     try {
       const file: RunConfigFile = { configs }
       const content = JSON.stringify(file, null, 2)
+      await ensureRunConfigDirectory(project)
       await safeInvoke('保存运行配置', 'write_file', {
         path: runConfigPath(project),
         content,
@@ -230,9 +254,11 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
   },
 }))
 
-export { runConfigPath, defaultConfigs, stripRedundantCdPrefix }
+export { runConfigPath, defaultConfigs, ensureRunConfigDirectory, stripRedundantCdPrefix }
 
 /** Session restore is opt-in; older run.json files without the field stay disabled. */
-export function runConfigFollowsProjectSession(config: Pick<RunConfig, 'restoreWithProjectSession'>) {
+export function runConfigFollowsProjectSession(
+  config: Pick<RunConfig, 'restoreWithProjectSession'>
+) {
   return config.restoreWithProjectSession === true
 }

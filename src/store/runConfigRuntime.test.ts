@@ -16,6 +16,7 @@ import {
   isActiveRunTerminal,
   rehydrateRunTerminals,
   removeRunConfig,
+  resolveRunTaskCwd,
   runConfig,
   runTaskTerminalName,
   runningTaskKeysForConfig,
@@ -61,6 +62,20 @@ describe('run config runtime helpers', () => {
       addScriptTerminal: originalAddScriptTerminal,
       closeTerminal: originalCloseTerminal,
     })
+  })
+
+  it('resolves SSH task working directories without dropping the connection URI', () => {
+    const project = { path: 'ssh://server/home/owner/app' }
+    expect(resolveRunTaskCwd(project)).toBe('ssh://server/home/owner/app')
+    expect(resolveRunTaskCwd(project, 'backend')).toBe('ssh://server/home/owner/app/backend')
+    expect(resolveRunTaskCwd(project, '.\\scripts\\')).toBe('ssh://server/home/owner/app/scripts')
+    expect(resolveRunTaskCwd(project, '/opt/service/')).toBe('ssh://server/opt/service')
+    expect(resolveRunTaskCwd(project, 'ssh://other/tmp/project')).toBe('ssh://other/tmp/project')
+  })
+
+  it('keeps local task working-directory behavior', () => {
+    expect(resolveRunTaskCwd({ path: 'D:\\project' }, 'frontend')).toBe('D:\\project\\frontend')
+    expect(resolveRunTaskCwd({ path: '/home/owner/app' }, '/tmp/task')).toBe('/tmp/task')
   })
 
   it('treats awaitingRestoreSpawn as active even when status is exited', () => {

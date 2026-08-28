@@ -941,7 +941,7 @@ export default function SettingsEditor() {
                               ? await safeInvoke<string>('获取程序路径', 'app_exe_path')
                               : '')
                           if (!exe.trim()) exe = 'QingCode.exe'
-                          await copyToClipboard(buildQingcodeCliSkillMarkdown(exe))
+                          await copyToClipboard(buildQingcodeCliSkillMarkdown(exe, language))
                           pushToast('success', t('已复制 CLI skills，请粘贴到你的 AI Agent 中安装。'))
                         } catch (error) {
                           pushToast(
