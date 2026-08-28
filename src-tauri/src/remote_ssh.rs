@@ -5,13 +5,14 @@ use russh::client;
 use russh::keys::{load_secret_key, HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{ChannelMsg, ChannelWriteHalf, Disconnect};
 use russh_sftp::client::SftpSession;
+use russh_sftp::protocol::OpenFlags;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
-use tokio::io::{AsyncReadExt, AsyncSeekExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 const SSH_URI_PREFIX: &str = "ssh://";
 const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;
@@ -1101,6 +1102,31 @@ pub async fn ssh_read_file_slice(
     })
 }
 
+fn remote_write_flags(exclusive: bool) -> OpenFlags {
+    let flags = OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE;
+    if exclusive {
+        flags | OpenFlags::EXCLUDE
+    } else {
+        flags
+    }
+}
+
+async fn write_remote_file_contents(
+    sftp: &SftpSession,
+    path: String,
+    bytes: &[u8],
+    exclusive: bool,
+) -> Result<(), String> {
+    let mut file = sftp
+        .open_with_flags(path, remote_write_flags(exclusive))
+        .await
+        .map_err(|error| error.to_string())?;
+    file.write_all(bytes)
+        .await
+        .map_err(|error| error.to_string())?;
+    file.shutdown().await.map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub async fn ssh_write_file(
     path: String,
@@ -1126,8 +1152,7 @@ pub async fn ssh_write_file(
         }
         // Preserve symlink semantics: an atomic rename would replace the link itself.
         if metadata.is_symlink() {
-            return sftp
-                .write(parsed.path, &bytes)
+            return write_remote_file_contents(&sftp, parsed.path, &bytes, false)
                 .await
                 .map_err(|error| format!("保存远程符号链接目标失败：{error}"));
         }
@@ -1135,12 +1160,25 @@ pub async fn ssh_write_file(
     let parent = remote_parent_path(&parsed.path)?;
     let name = parsed.path.rsplit('/').next().unwrap_or("file");
     let temp = format!("{parent}/.{name}.qingcode-{}.tmp", uuid::Uuid::new_v4());
-    sftp.write(temp.clone(), &bytes)
+    write_remote_file_contents(&sftp, temp.clone(), &bytes, true)
         .await
         .map_err(|error| format!("上传远程临时文件失败：{error}"))?;
-    if let Err(error) = sftp.rename(temp.clone(), parsed.path.clone()).await {
-        let _ = sftp.remove_file(temp).await;
-        return Err(format!("替换远程文件失败：{error}"));
+    if let Err(rename_error) = sftp.rename(temp.clone(), parsed.path.clone()).await {
+        // SFTP v3 servers are allowed to reject rename when the destination exists.
+        // Keep atomic rename where supported, and safely fall back to truncating the
+        // existing regular file without deleting it first.
+        if sftp.try_exists(parsed.path.clone()).await.unwrap_or(false) {
+            let fallback = write_remote_file_contents(&sftp, parsed.path.clone(), &bytes, false)
+                .await
+                .map_err(|write_error| {
+                    format!("替换远程文件失败：{rename_error}；直接写入也失败：{write_error}")
+                });
+            let _ = sftp.remove_file(temp).await;
+            fallback?;
+        } else {
+            let _ = sftp.remove_file(temp).await;
+            return Err(format!("替换远程文件失败：{rename_error}"));
+        }
     }
     Ok(())
 }
@@ -1182,7 +1220,7 @@ pub async fn ssh_create_file(
     if sftp.try_exists(parsed.path.clone()).await.unwrap_or(false) {
         return Err("同名文件或文件夹已存在".to_string());
     }
-    sftp.write(parsed.path, &[])
+    write_remote_file_contents(&sftp, parsed.path, &[], true)
         .await
         .map_err(|error| format!("创建远程文件失败：{error}"))?;
     Ok(target_uri)
@@ -1307,7 +1345,7 @@ async fn upload_local_tree(
     }
     let bytes =
         std::fs::read(&local_path).map_err(|error| format!("读取本地上传文件失败：{error}"))?;
-    sftp.write(remote_path, &bytes)
+    write_remote_file_contents(sftp, remote_path, &bytes, false)
         .await
         .map_err(|error| format!("上传远程文件失败：{error}"))
 }
@@ -2762,6 +2800,18 @@ mod tests {
     #[test]
     fn shell_quote_escapes_single_quotes() {
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn remote_writes_create_and_truncate_destination_files() {
+        let replace = remote_write_flags(false);
+        assert!(replace.contains(OpenFlags::CREATE));
+        assert!(replace.contains(OpenFlags::TRUNCATE));
+        assert!(replace.contains(OpenFlags::WRITE));
+        assert!(!replace.contains(OpenFlags::EXCLUDE));
+
+        let create_new = remote_write_flags(true);
+        assert!(create_new.contains(OpenFlags::EXCLUDE));
     }
 
     #[test]
