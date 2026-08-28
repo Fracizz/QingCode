@@ -52,6 +52,20 @@ pub struct SshConnectResult {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshSessionOpenResult {
+    pub fingerprint: String,
+    pub home_path: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshBrowseResult {
+    pub path: String,
+    pub entries: Vec<RemoteFileNode>,
+}
+
+#[derive(Debug, Serialize)]
 pub struct RemoteFileNode {
     pub name: String,
     pub path: String,
@@ -272,14 +286,8 @@ impl SshManager {
         Ok(root)
     }
 
-    async fn sftp_for_uri(
-        &self,
-        uri: &str,
-        require_trust: bool,
-    ) -> Result<(SftpSession, RemoteUri, RegisteredRoot), String> {
-        let parsed = parse_remote_uri(uri)?;
-        let root = self.root_for_uri(uri, require_trust)?;
-        let session = self.session(&parsed.connection_id)?;
+    async fn open_sftp(&self, connection_id: &str) -> Result<SftpSession, String> {
+        let session = self.session(connection_id)?;
         let channel = session
             .handle
             .channel_open_session()
@@ -293,6 +301,17 @@ impl SshManager {
             .await
             .map_err(|error| format!("初始化 SFTP 失败：{error}"))?;
         sftp.set_timeout(30);
+        Ok(sftp)
+    }
+
+    async fn sftp_for_uri(
+        &self,
+        uri: &str,
+        require_trust: bool,
+    ) -> Result<(SftpSession, RemoteUri, RegisteredRoot), String> {
+        let parsed = parse_remote_uri(uri)?;
+        let root = self.root_for_uri(uri, require_trust)?;
+        let sftp = self.open_sftp(&parsed.connection_id).await?;
         Ok((sftp, parsed, root))
     }
 
@@ -446,6 +465,44 @@ fn join_remote_uri(parent: &str, name: &str) -> String {
     format!("{}/{}", parent.trim_end_matches('/'), name)
 }
 
+fn join_remote_path(parent: &str, name: &str) -> String {
+    if parent == "/" {
+        format!("/{name}")
+    } else {
+        format!("{}/{}", parent.trim_end_matches('/'), name)
+    }
+}
+
+fn home_path_candidates(username: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    if username == "root" {
+        paths.push("/root".to_string());
+    } else if !username.is_empty() {
+        paths.push(format!("/home/{username}"));
+    }
+    paths.push("/root".to_string());
+    paths.push("/".to_string());
+    paths.dedup();
+    paths
+}
+
+async fn resolve_remote_home(sftp: &SftpSession, username: &str) -> String {
+    if let Ok(path) = sftp.canonicalize(".".to_string()).await {
+        let normalized = normalize_remote_path(&path);
+        if normalized.starts_with('/') {
+            return normalized;
+        }
+    }
+    for candidate in home_path_candidates(username) {
+        if sftp.try_exists(candidate.clone()).await.unwrap_or(false) {
+            if let Ok(canonical) = sftp.canonicalize(candidate).await {
+                return normalize_remote_path(&canonical);
+            }
+        }
+    }
+    "/".to_string()
+}
+
 fn remote_parent_path(path: &str) -> Result<&str, String> {
     path.rsplit_once('/')
         .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
@@ -497,46 +554,102 @@ async fn open_transport(
     Ok((handle, fingerprint))
 }
 
+fn explicit_private_key_path(config: &SshConnectionConfig) -> Option<PathBuf> {
+    config
+        .private_key_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+}
+
+fn default_private_key_candidates(home: &Path) -> Vec<PathBuf> {
+    let ssh_dir = home.join(".ssh");
+    [
+        "id_ed25519",
+        "id_ecdsa",
+        "id_rsa",
+        "id_ed25519_sk",
+        "id_ecdsa_sk",
+    ]
+    .into_iter()
+    .map(|name| ssh_dir.join(name))
+    .collect()
+}
+
+fn resolve_private_key_paths(config: &SshConnectionConfig) -> Result<Vec<PathBuf>, String> {
+    if let Some(path) = explicit_private_key_path(config) {
+        return Ok(vec![path]);
+    }
+    let home = dirs::home_dir().ok_or_else(|| "无法定位用户目录以查找默认 SSH 私钥".to_string())?;
+    let paths: Vec<PathBuf> = default_private_key_candidates(&home)
+        .into_iter()
+        .filter(|path| path.is_file())
+        .collect();
+    if paths.is_empty() {
+        return Err(
+            "未找到本机默认 SSH 私钥（~/.ssh/id_ed25519 等）。WSL 一般没有登录密码，请选择私钥或先配置公钥登录。".to_string(),
+        );
+    }
+    Ok(paths)
+}
+
+async fn authenticate_public_key(
+    handle: &mut client::Handle<SshClient>,
+    config: &SshConnectionConfig,
+    key_path: &Path,
+) -> Result<bool, String> {
+    let key = load_secret_key(key_path, config.passphrase.as_deref())
+        .map_err(|error| format!("读取 SSH 私钥失败：{}：{error}", key_path.display()))?;
+    let hash = handle
+        .best_supported_rsa_hash()
+        .await
+        .map_err(|error| format!("协商 SSH 密钥算法失败：{error}"))?
+        .flatten();
+    let result = handle
+        .authenticate_publickey(
+            &config.username,
+            PrivateKeyWithHashAlg::new(Arc::new(key), hash),
+        )
+        .await
+        .map_err(|error| format!("SSH 私钥认证失败：{error}"))?;
+    Ok(result.success())
+}
+
 async fn authenticate(
     handle: &mut client::Handle<SshClient>,
     config: &SshConnectionConfig,
 ) -> Result<(), String> {
-    let result = match config.auth_kind.as_str() {
+    match config.auth_kind.as_str() {
         "password" => {
             let password = config
                 .password
                 .as_deref()
                 .ok_or_else(|| "请输入 SSH 密码".to_string())?;
-            handle
+            let result = handle
                 .authenticate_password(&config.username, password)
                 .await
-                .map_err(|error| format!("SSH 密码认证失败：{error}"))?
+                .map_err(|error| format!("SSH 密码认证失败：{error}"))?;
+            if result.success() {
+                Ok(())
+            } else {
+                Err("SSH 认证失败，请检查用户名和凭据".to_string())
+            }
         }
         _ => {
-            let key_path = config
-                .private_key_path
-                .as_deref()
-                .ok_or_else(|| "请选择 SSH 私钥文件".to_string())?;
-            let key = load_secret_key(key_path, config.passphrase.as_deref())
-                .map_err(|error| format!("读取 SSH 私钥失败：{error}"))?;
-            let hash = handle
-                .best_supported_rsa_hash()
-                .await
-                .map_err(|error| format!("协商 SSH 密钥算法失败：{error}"))?
-                .flatten();
-            handle
-                .authenticate_publickey(
-                    &config.username,
-                    PrivateKeyWithHashAlg::new(Arc::new(key), hash),
-                )
-                .await
-                .map_err(|error| format!("SSH 私钥认证失败：{error}"))?
+            let key_paths = resolve_private_key_paths(config)?;
+            let mut last_error = None;
+            for key_path in key_paths {
+                match authenticate_public_key(handle, config, &key_path).await {
+                    Ok(true) => return Ok(()),
+                    Ok(false) => {
+                        last_error = Some(format!("SSH 私钥认证失败：{}", key_path.display()));
+                    }
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            Err(last_error.unwrap_or_else(|| "SSH 认证失败，请检查用户名和凭据".to_string()))
         }
-    };
-    if result.success() {
-        Ok(())
-    } else {
-        Err("SSH 认证失败，请检查用户名和凭据".to_string())
     }
 }
 
@@ -569,6 +682,88 @@ pub async fn ssh_probe_host(config: SshConnectionConfig) -> Result<SshHostProbe,
     Ok(SshHostProbe { fingerprint })
 }
 
+fn existing_session(manager: &SshManager, connection_id: &str) -> Option<Arc<ConnectedSession>> {
+    manager
+        .session(connection_id)
+        .ok()
+        .filter(|session| !session.handle.is_closed())
+}
+
+#[tauri::command]
+pub async fn ssh_open_session(
+    config: SshConnectionConfig,
+    manager: State<'_, SshManager>,
+) -> Result<SshSessionOpenResult, String> {
+    let expected = config
+        .host_key_fingerprint
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "连接前必须确认 SSH 主机指纹".to_string())?;
+    if existing_session(&manager, &config.id).is_some() {
+        let sftp = manager.open_sftp(&config.id).await?;
+        return Ok(SshSessionOpenResult {
+            fingerprint: expected,
+            home_path: resolve_remote_home(&sftp, &config.username).await,
+        });
+    }
+    let (mut handle, fingerprint) = open_transport(&config, Some(expected)).await?;
+    authenticate(&mut handle, &config).await?;
+    let connected = Arc::new(ConnectedSession { handle });
+    manager
+        .sessions
+        .write()
+        .map_err(|_| "SSH 连接状态不可用".to_string())?
+        .insert(config.id.clone(), Arc::clone(&connected));
+    let sftp = manager.open_sftp(&config.id).await?;
+    Ok(SshSessionOpenResult {
+        fingerprint,
+        home_path: resolve_remote_home(&sftp, &config.username).await,
+    })
+}
+
+#[tauri::command]
+pub async fn ssh_browse_directory(
+    connection_id: String,
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<SshBrowseResult, String> {
+    validate_remote_path(&path)?;
+    let normalized = normalize_remote_path(&path);
+    let sftp = manager.open_sftp(&connection_id).await?;
+    let canonical = sftp
+        .canonicalize(normalized)
+        .await
+        .map_err(|error| format!("远程目录不可用：{error}"))?;
+    let metadata = sftp
+        .metadata(canonical.clone())
+        .await
+        .map_err(|error| format!("读取远程目录失败：{error}"))?;
+    if !metadata.is_dir() {
+        return Err("远程路径不是目录".to_string());
+    }
+    let mut dirs = Vec::new();
+    let entries = sftp
+        .read_dir(canonical.clone())
+        .await
+        .map_err(|error| format!("读取远程目录失败：{error}"))?;
+    for entry in entries {
+        let name = entry.file_name();
+        if name == "." || name == ".." || !entry.metadata().is_dir() {
+            continue;
+        }
+        dirs.push(RemoteFileNode {
+            path: join_remote_path(&canonical, &name),
+            name,
+            is_dir: true,
+        });
+    }
+    dirs.sort_by_key(|node| node.name.to_lowercase());
+    Ok(SshBrowseResult {
+        path: normalize_remote_path(&canonical),
+        entries: dirs,
+    })
+}
+
 #[tauri::command]
 pub async fn ssh_connect(
     config: SshConnectionConfig,
@@ -585,9 +780,13 @@ pub async fn ssh_connect(
     if parsed_root.connection_id != config.id {
         return Err("SSH 项目与连接配置不匹配".to_string());
     }
-    let (mut handle, fingerprint) = open_transport(&config, Some(expected)).await?;
-    authenticate(&mut handle, &config).await?;
-    let connected = Arc::new(ConnectedSession { handle });
+    let (connected, fingerprint) = if let Some(session) = existing_session(&manager, &config.id) {
+        (session, expected)
+    } else {
+        let (mut handle, fingerprint) = open_transport(&config, Some(expected)).await?;
+        authenticate(&mut handle, &config).await?;
+        (Arc::new(ConnectedSession { handle }), fingerprint)
+    };
     let channel = connected
         .handle
         .channel_open_session()
@@ -2512,5 +2711,71 @@ mod tests {
         assert!(validate_branch_name("feature/ssh").is_ok());
         assert!(validate_branch_name("--exec=evil").is_err());
         assert!(validate_branch_name("refs/heads/main").is_err());
+    }
+
+    fn sample_config(private_key_path: Option<&str>) -> SshConnectionConfig {
+        SshConnectionConfig {
+            id: "test".to_string(),
+            host: "127.0.0.1".to_string(),
+            port: 22,
+            username: "user".to_string(),
+            auth_kind: "privateKey".to_string(),
+            password: None,
+            private_key_path: private_key_path.map(str::to_string),
+            passphrase: None,
+            host_key_fingerprint: None,
+        }
+    }
+
+    #[test]
+    fn default_key_candidates_prefer_ed25519() {
+        let home = PathBuf::from("home").join("owner");
+        let keys = default_private_key_candidates(&home);
+        assert_eq!(keys[0], home.join(".ssh").join("id_ed25519"));
+        assert!(keys.iter().any(|path| path.ends_with("id_rsa")));
+    }
+
+    #[test]
+    fn explicit_private_key_wins_over_defaults() {
+        let config = sample_config(Some("D:/keys/wsl"));
+        assert_eq!(
+            resolve_private_key_paths(&config).unwrap(),
+            vec![PathBuf::from("D:/keys/wsl")]
+        );
+    }
+
+    #[test]
+    fn blank_private_key_falls_back_to_defaults() {
+        let config = sample_config(Some("   "));
+        assert!(explicit_private_key_path(&config).is_none());
+    }
+
+    #[test]
+    fn empty_manager_has_no_existing_session() {
+        let manager = SshManager::new();
+        assert!(existing_session(&manager, "missing").is_none());
+    }
+
+    #[test]
+    fn join_remote_path_from_root_and_child() {
+        assert_eq!(join_remote_path("/", "root"), "/root");
+        assert_eq!(join_remote_path("/root", "go"), "/root/go");
+        assert_eq!(join_remote_path("/root/", ".claude"), "/root/.claude");
+    }
+
+    #[test]
+    fn home_path_candidates_prefer_user_home() {
+        assert_eq!(
+            home_path_candidates("owner"),
+            vec![
+                "/home/owner".to_string(),
+                "/root".to_string(),
+                "/".to_string()
+            ]
+        );
+        assert_eq!(
+            home_path_candidates("root"),
+            vec!["/root".to_string(), "/".to_string()]
+        );
     }
 }

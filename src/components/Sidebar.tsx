@@ -41,6 +41,8 @@ import {
   Upload,
 } from 'lucide-react'
 import Tooltip from './Tooltip'
+import { ProjectKindIcon } from './ProjectKindMark'
+import { sshProjectDisplayPath } from '../lib/sshWorkspace'
 import { useProjectStore, type FileNode } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
@@ -151,6 +153,7 @@ export default function Sidebar() {
   const {
     projects,
     currentProject,
+    sshConnections,
     projectTrees,
     unavailableProjectIds,
     switchProject,
@@ -1599,10 +1602,15 @@ export default function Sidebar() {
                     {unavailable ? (
                       <AlertTriangle size={15} className="size-[15px] shrink-0 text-warn" />
                     ) : (
-                      <FolderOpen size={15} className={EXPLORER_HEADING_ICON} />
+                      <ProjectKindIcon
+                        project={currentProject}
+                        size={15}
+                        open
+                        className={EXPLORER_HEADING_ICON}
+                      />
                     )}
                     <Tooltip
-                      label={currentProject.path}
+                      label={sshProjectDisplayPath(currentProject, null, sshConnections)}
                       side="bottom"
                       wrapperClassName="flex min-w-0 items-center"
                     >

@@ -11,7 +11,6 @@ import {
 import { createPortal } from 'react-dom'
 import {
   ChevronDown,
-  Folder,
   AlertTriangle,
   Plus,
   X,
@@ -45,9 +44,20 @@ import WorkspaceMenu from './WorkspaceMenu'
 import ProjectAddDialog from './ProjectAddDialog'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
-import { insertLineXForDraggedChip, previewReorderIds, sameIdOrder, sortVisibleProjects } from '../lib/projectChipOrder'
-import { EMPTY_PROJECT_INDICATORS, useProjectIndicators, type ProjectIndicators } from '../hooks/useProjectIndicators'
+import {
+  insertLineXForDraggedChip,
+  previewReorderIds,
+  sameIdOrder,
+  sortVisibleProjects,
+} from '../lib/projectChipOrder'
+import {
+  EMPTY_PROJECT_INDICATORS,
+  useProjectIndicators,
+  type ProjectIndicators,
+} from '../hooks/useProjectIndicators'
 import { ProjectIndicatorMarks, useProjectIndicatorsVisible } from './ProjectIndicatorMarks'
+import { ProjectKindIcon, SshKindBadge } from './ProjectKindMark'
+import { isSshProject, sshProjectDisplayPath } from '../lib/sshWorkspace'
 import { isTauri } from '../lib/tauri'
 import { resolveWindowDragRegionMode } from '../lib/windowDragRegion'
 
@@ -62,6 +72,7 @@ export default function ProjectPicker() {
   const allProjects = useProjectStore(s => s.projects)
   const projects = useMemo(() => sortVisibleProjects(allProjects), [allProjects])
   const currentProject = useProjectStore(s => s.currentProject)
+  const sshConnections = useProjectStore(s => s.sshConnections)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const hideProject = useProjectStore(s => s.hideProject)
@@ -189,12 +200,10 @@ export default function ProjectPicker() {
     if (!visibleIds.includes(projectId)) return
 
     const widthsById = new Map<string, number>()
-    measureRef.current
-      ?.querySelectorAll<HTMLDivElement>('[data-chip-id]')
-      .forEach(el => {
-        const id = el.dataset.chipId
-        if (id) widthsById.set(id, el.offsetWidth)
-      })
+    measureRef.current?.querySelectorAll<HTMLDivElement>('[data-chip-id]').forEach(el => {
+      const id = el.dataset.chipId
+      if (id) widthsById.set(id, el.offsetWidth)
+    })
 
     chipDragRef.current = {
       dragId: projectId,
@@ -230,7 +239,7 @@ export default function ProjectPicker() {
         session.dragId,
         session.widthsById,
         CHIP_GAP,
-        x,
+        x
       )
       if (!sameIdOrder(next, session.previewIds)) {
         session.previewIds = next
@@ -240,9 +249,7 @@ export default function ProjectPicker() {
         setInsertLineX(null)
         return
       }
-      setInsertLineX(
-        insertLineXForDraggedChip(next, session.dragId, session.widthsById, CHIP_GAP),
-      )
+      setInsertLineX(insertLineXForDraggedChip(next, session.dragId, session.widthsById, CHIP_GAP))
     }
 
     const onMove = (moveEvent: PointerEvent) => {
@@ -375,9 +382,10 @@ export default function ProjectPicker() {
         label: t('在此项目内搜索'),
         icon: <Search size={14} />,
         disabled: unavailable,
-        action: () => void activateThen(async () => {
-          requestSearch(project.path)
-        }),
+        action: () =>
+          void activateThen(async () => {
+            requestSearch(project.path)
+          }),
       },
       {
         label: t('刷新项目'),
@@ -487,23 +495,23 @@ export default function ProjectPicker() {
         {displayVisibleProjects.map((project, index) => {
           const unavailable = unavailableProjectIds.includes(project.id)
           return (
-          <Chip
-            key={project.id}
-            chipIndex={index}
-            project={project}
-            indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
-            isCurrent={currentProject?.id === project.id}
-            unavailable={unavailable}
-            dragging={dragId === project.id}
-            onSwitch={() => void handleSwitch(project)}
-            onRemove={() => handleRemove(project)}
-            onRelocate={() => handleRelocate(project.id)}
-            onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
-            onContextMenu={event => openProjectContextMenu(event, project)}
-            onPointerDown={
-              unavailable ? undefined : event => handleChipPointerDown(event, project.id)
-            }
-          />
+            <Chip
+              key={project.id}
+              chipIndex={index}
+              project={project}
+              indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
+              isCurrent={currentProject?.id === project.id}
+              unavailable={unavailable}
+              dragging={dragId === project.id}
+              onSwitch={() => void handleSwitch(project)}
+              onRemove={() => handleRemove(project)}
+              onRelocate={() => handleRelocate(project.id)}
+              onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
+              onContextMenu={event => openProjectContextMenu(event, project)}
+              onPointerDown={
+                unavailable ? undefined : event => handleChipPointerDown(event, project.id)
+              }
+            />
           )
         })}
 
@@ -620,8 +628,8 @@ export default function ProjectPicker() {
                         isCurrent
                           ? 'border-brand bg-bg-active text-fg'
                           : unavailable
-                          ? 'border-transparent text-fg-dim'
-                          : 'cursor-pointer border-transparent text-fg hover:bg-bg-hover focus:bg-bg-active'
+                            ? 'border-transparent text-fg-dim'
+                            : 'cursor-pointer border-transparent text-fg hover:bg-bg-hover focus:bg-bg-active'
                       }`}
                   >
                     <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
@@ -630,16 +638,17 @@ export default function ProjectPicker() {
                       ) : isCurrent ? (
                         <Check size={13} className="text-brand" />
                       ) : (
-                        <Folder size={14} className="text-accent" />
+                        <ProjectKindIcon project={project} size={14} className="text-accent" />
                       )}
                     </span>
                     <Tooltip
-                      label={project.path}
+                      label={sshProjectDisplayPath(project, null, sshConnections)}
                       side="right"
                       wrapperClassName="truncate min-w-0 flex-1"
                     >
                       <span className="truncate">{project.name}</span>
                     </Tooltip>
+                    {isSshProject(project) ? <SshKindBadge /> : null}
                     <ProjectIndicatorMarks
                       project={project}
                       indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
@@ -659,7 +668,11 @@ export default function ProjectPicker() {
                       </button>
                     </Tooltip>
                     {unavailable ? (
-                      <Tooltip label={t('重新定位项目')} side="right" wrapperClassName="flex-shrink-0">
+                      <Tooltip
+                        label={t('重新定位项目')}
+                        side="right"
+                        wrapperClassName="flex-shrink-0"
+                      >
                         <button
                           type="button"
                           aria-label={t('重新定位项目')}
@@ -741,7 +754,7 @@ export default function ProjectPicker() {
               </button>
             </div>
           </div>,
-          document.body,
+          document.body
         )}
 
       <ProjectAddDialog open={addDialogOpen} onClose={() => setAddDialogOpen(false)} />
@@ -800,7 +813,9 @@ function Chip({
     showIndicators && indicators.gitChanges > 0
       ? t('Git 更改 {count}', { count: indicators.gitChanges })
       : '',
-  ].filter(Boolean).join(' · ')
+  ]
+    .filter(Boolean)
+    .join(' · ')
   const activate = () => {
     if (!unavailable) onSwitch()
   }
@@ -830,14 +845,17 @@ function Chip({
           dragging
             ? 'z-[1] bg-bg-hover text-fg opacity-55 shadow-sm ring-1 ring-inset ring-accent/50 scale-[0.98]'
             : isCurrent
-            ? 'bg-bg-active text-fg'
-            : unavailable
-            ? 'text-fg-dim'
-            : 'text-fg-muted hover:text-fg hover:bg-bg-hover'
+              ? 'bg-bg-active text-fg'
+              : unavailable
+                ? 'text-fg-dim'
+                : 'text-fg-muted hover:text-fg hover:bg-bg-hover'
         }`}
     >
       {isCurrent && (
-        <span className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand" aria-hidden />
+        <span
+          className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand"
+          aria-hidden
+        />
       )}
       {unavailable ? (
         <span className="inline-flex items-center justify-center w-4 h-4 flex-shrink-0">
@@ -845,20 +863,28 @@ function Chip({
         </span>
       ) : (
         <span className="inline-flex items-center justify-center w-4 h-4 flex-shrink-0">
-          <Folder size={12} className={isCurrent ? 'text-brand' : 'text-accent'} />
+          <ProjectKindIcon
+            project={project}
+            size={12}
+            className={isCurrent ? 'text-brand' : 'text-accent'}
+          />
         </span>
       )}
       <Tooltip
-        label={project.name}
+        label={isSshProject(project) ? `${project.name} · ${t('SSH 远程项目')}` : project.name}
         side="bottom"
-        onlyWhenOverflow
+        onlyWhenOverflow={!isSshProject(project)}
         wrapperClassName="min-w-0 max-w-[140px]"
       >
         <span className="block truncate">{project.name}</span>
       </Tooltip>
       <ProjectIndicatorMarks project={project} indicators={indicators} isCurrent={isCurrent} />
       {project.ephemeral && !unavailable && (
-        <Tooltip label={t('在文件管理器中打开')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+        <Tooltip
+          label={t('在文件管理器中打开')}
+          side="bottom"
+          wrapperClassName="inline-flex flex-shrink-0 items-center"
+        >
           <button
             type="button"
             aria-label={t('在文件管理器中打开')}
@@ -874,7 +900,11 @@ function Chip({
       )}
       {unavailable ? (
         <>
-          <Tooltip label={t('重新定位项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+          <Tooltip
+            label={t('重新定位项目')}
+            side="bottom"
+            wrapperClassName="inline-flex flex-shrink-0 items-center"
+          >
             <button
               type="button"
               aria-label={t('重新定位项目')}
@@ -887,7 +917,11 @@ function Chip({
               <LocateFixed size={12} />
             </button>
           </Tooltip>
-          <Tooltip label={t('移除项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+          <Tooltip
+            label={t('移除项目')}
+            side="bottom"
+            wrapperClassName="inline-flex flex-shrink-0 items-center"
+          >
             <button
               type="button"
               aria-label={t('移除项目')}
@@ -902,7 +936,11 @@ function Chip({
           </Tooltip>
         </>
       ) : (
-        <Tooltip label={t('从顶栏隐藏')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
+        <Tooltip
+          label={t('从顶栏隐藏')}
+          side="bottom"
+          wrapperClassName="inline-flex flex-shrink-0 items-center"
+        >
           <button
             type="button"
             aria-label={t('从顶栏隐藏')}

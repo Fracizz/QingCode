@@ -21,6 +21,7 @@ import {
   deleteProjectRows,
   insertProject,
   insertSshProject,
+  listSshConnections,
   loadProjectsFromDb,
   persistProjectsToUserSettings,
   relocateProjectRows,
@@ -61,6 +62,7 @@ import { ensureWorkspaceTrust, pushTrustedRootsToNative } from '../lib/workspace
 import {
   connectSshWorkspace,
   ensureSshWorkspaceConnected,
+  findSshProject,
   requestSshReconnect,
   sshRootUri,
   type SshSessionSecrets,
@@ -94,10 +96,13 @@ interface ProjectState {
   /** Increments on every reveal so Sidebar can re-scroll/expand even for the same path. */
   treeRevealSeq: number
   unavailableProjectIds: string[]
+  sshConnections: SshConnection[]
   loading: boolean
   toasts: Toast[]
 
   loadProjects: () => Promise<void>
+  loadSshConnections: () => Promise<void>
+  saveSshConnection: (connection: SshConnection) => Promise<void>
   addProject: (path: string) => Promise<boolean>
   addSshProject: (
     connection: SshConnection,
@@ -224,6 +229,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   treeRevealPath: null,
   treeRevealSeq: 0,
   unavailableProjectIds: [],
+  sshConnections: [],
   loading: false,
   toasts: [],
 
@@ -265,6 +271,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       })
       // Await so draft recovery / tree load do not race an empty allowlist.
       await syncAllowlistRoots(merged)
+      await get().loadSshConnections()
 
       // Main window: open the most recent project immediately so the UI is not
       // gated on validating every path. Fresh windows (File → New Window) stay
@@ -320,6 +327,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
+  loadSshConnections: async () => {
+    try {
+      set({ sshConnections: await listSshConnections() })
+    } catch (error) {
+      if (error instanceof NotInTauriError) {
+        set({ sshConnections: [] })
+        return
+      }
+      console.error('loadSshConnections failed:', error)
+      set({ sshConnections: [] })
+    }
+  },
+
+  saveSshConnection: async connection => {
+    await upsertSshConnection(connection)
+    await get().loadSshConnections()
+  },
+
   addProject: async (path: string) => {
     try {
       await safeInvoke('检查项目目录', 'validate_directory', { path })
@@ -349,6 +374,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   addSshProject: async (connection, rootPath, requestedName, secrets = {}) => {
+    const existing = findSshProject(get().projects, connection.id, rootPath)
+    if (existing) {
+      get().pushToast('info', '该 SSH 项目已存在，已切换过去')
+      return get().switchProject(existing)
+    }
     const id = crypto.randomUUID()
     const path = sshRootUri(connection.id, rootPath)
     const name = requestedName.trim() || baseName(rootPath)
@@ -366,9 +396,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const trust = await ensureWorkspaceTrust(project)
       if (trust === false) return false
+      await upsertSshConnection(connection)
+      await get().loadSshConnections()
       await connectSshWorkspace(project, connection, secrets)
       await safeInvoke('检查 SSH 项目目录', 'validate_directory', { path })
-      await upsertSshConnection(connection)
       await insertSshProject(project, now)
       await get().loadProjects()
       const created = get().projects.find(candidate => candidate.id === id)
@@ -377,6 +408,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return true
     } catch (error) {
       console.error('addSshProject failed:', error)
+      await get().loadSshConnections()
       get().pushToast('error', `添加 SSH 项目失败: ${String(error)}`)
       return false
     }

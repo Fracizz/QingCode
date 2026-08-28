@@ -9,12 +9,14 @@ import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
 import { isExternalFileWindow } from '../lib/windowSession'
 import { openFileFromDialog } from '../lib/openFileDialog'
+import { sshProjectDisplayPath } from '../lib/sshWorkspace'
 
 /** Lightweight empty editor so CodeMirror is not downloaded until a file is opened. */
 export default function EmptyEditor() {
   const { t } = useI18n()
   const recentFiles = useProjectStore(s => s.recentFiles)
   const projects = useProjectStore(s => s.projects)
+  const sshConnections = useProjectStore(s => s.sshConnections)
   const currentProject = useProjectStore(s => s.currentProject)
   const switchProject = useProjectStore(s => s.switchProject)
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
@@ -30,36 +32,38 @@ export default function EmptyEditor() {
     label: string
     onClick: () => void
     primary?: boolean
-  }> = standaloneFiles ? [
-    {
-      icon: <FileText size={14} />,
-      label: t('打开文件'),
-      onClick: () => void openFileFromDialog(),
-      primary: true,
-    },
-    {
-      icon: <FolderOpen size={14} />,
-      label: t('打开文件夹'),
-      onClick: () => void addProjectFromDialog().then(() => setView('explorer')),
-    },
-  ] : [
-    {
-      icon: <FolderOpen size={14} />,
-      label: t('打开项目'),
-      onClick: () => void addProjectFromDialog(),
-      primary: true,
-    },
-    {
-      icon: <TerminalIcon size={14} />,
-      label: t('打开终端面板'),
-      onClick: openTerminalPanel,
-    },
-    {
-      icon: <Settings size={14} />,
-      label: t('打开设置'),
-      onClick: () => setView('settings'),
-    },
-  ]
+  }> = standaloneFiles
+    ? [
+        {
+          icon: <FileText size={14} />,
+          label: t('打开文件'),
+          onClick: () => void openFileFromDialog(),
+          primary: true,
+        },
+        {
+          icon: <FolderOpen size={14} />,
+          label: t('打开文件夹'),
+          onClick: () => void addProjectFromDialog().then(() => setView('explorer')),
+        },
+      ]
+    : [
+        {
+          icon: <FolderOpen size={14} />,
+          label: t('打开项目'),
+          onClick: () => void addProjectFromDialog(),
+          primary: true,
+        },
+        {
+          icon: <TerminalIcon size={14} />,
+          label: t('打开终端面板'),
+          onClick: openTerminalPanel,
+        },
+        {
+          icon: <Settings size={14} />,
+          label: t('打开设置'),
+          onClick: () => setView('settings'),
+        },
+      ]
 
   return (
     <div className="ui-font-scaled flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-6 px-6 select-none">
@@ -70,7 +74,10 @@ export default function EmptyEditor() {
 
       <div className="flex flex-col items-center gap-3 relative">
         <div className="relative">
-          <div className="absolute inset-0 bg-brand/15 blur-xl rounded-full scale-150" aria-hidden="true" />
+          <div
+            className="absolute inset-0 bg-brand/15 blur-xl rounded-full scale-150"
+            aria-hidden="true"
+          />
           <AppIcon size={52} />
         </div>
         <div className="flex flex-col items-center gap-1 text-center">
@@ -102,12 +109,14 @@ export default function EmptyEditor() {
 
       {!standaloneFiles && recentProjects.length > 0 && (
         <div className="flex flex-col items-center gap-2 relative">
-          <p className="text-[11px] font-semibold tracking-wide text-fg-dim uppercase">{t('最近项目')}</p>
+          <p className="text-[11px] font-semibold tracking-wide text-fg-dim uppercase">
+            {t('最近项目')}
+          </p>
           <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-[420px]">
             {recentProjects.map(project => (
               <Tooltip
                 key={project.id}
-                label={project.path}
+                label={sshProjectDisplayPath(project, null, sshConnections)}
                 side="bottom"
                 wrapperClassName="max-w-[180px]"
               >
@@ -126,7 +135,8 @@ export default function EmptyEditor() {
 
       {!standaloneFiles && (
         <p className="text-xs text-fg-dim/70 flex items-center gap-1.5 relative">
-          <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span className="text-fg-dim/40">·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}
+          <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span className="text-fg-dim/40">·</span>{' '}
+          <Kbd>Alt+C</Kbd> {t('文件引用')}
         </p>
       )}
       {!standaloneFiles && recent.length > 0 && (

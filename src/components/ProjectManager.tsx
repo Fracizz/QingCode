@@ -11,7 +11,6 @@ import {
   X,
   ArrowUp,
   ArrowDown,
-  Folder,
   Folders,
   AlertTriangle,
   ShieldOff,
@@ -44,6 +43,8 @@ import SegmentedControl from './SegmentedControl'
 import Tooltip from './Tooltip'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
+import { ProjectKindIcon, SshKindBadge } from './ProjectKindMark'
+import { isSshProject, sshProjectDisplayPath } from '../lib/sshWorkspace'
 
 type SortKey = 'name' | 'path' | 'last_opened_at' | 'created_at'
 type SortDir = 'asc' | 'desc'
@@ -56,7 +57,10 @@ const SORT_LABELS: Record<SortKey, string> = {
   created_at: '创建时间',
 }
 
-function timeAgo(ts: number, t: (source: string, values?: Record<string, string | number>) => string): string {
+function timeAgo(
+  ts: number,
+  t: (source: string, values?: Record<string, string | number>) => string
+): string {
   const diff = Date.now() - ts
   const day = 24 * 60 * 60 * 1000
   if (diff < 60 * 1000) return t('刚刚')
@@ -72,6 +76,7 @@ export default function ProjectManager() {
   const allProjects = useProjectStore(s => s.projects)
   const projects = useMemo(() => allProjects.filter(p => !p.ephemeral), [allProjects])
   const currentProject = useProjectStore(s => s.currentProject)
+  const sshConnections = useProjectStore(s => s.sshConnections)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const hideProject = useProjectStore(s => s.hideProject)
@@ -119,7 +124,7 @@ export default function ProjectManager() {
           else changed = true
         }
         return changed ? next : prev
-      }),
+      })
     )
   }, [sortedProjects])
 
@@ -166,7 +171,9 @@ export default function ProjectManager() {
         useEditorStore.getState().discardProjectSession(p.id)
         await useProjectStore.getState().removeProject(p.id)
       } catch (e) {
-        useProjectStore.getState().pushToast('error', t('删除「{name}」失败: {error}', { name: p.name, error: String(e) }))
+        useProjectStore
+          .getState()
+          .pushToast('error', t('删除「{name}」失败: {error}', { name: p.name, error: String(e) }))
       }
     }
     setSelectedIds(new Set())
@@ -227,7 +234,11 @@ export default function ProjectManager() {
             <Folders size={16} className="text-fg-muted" />
             <h2 id="project-manager-title">{t('项目管理')}</h2>
             <span id="project-manager-description" className="text-ui-sm font-normal text-fg-muted">
-              {t('共 {total} 个 · 显示 {visible} · 隐藏 {hidden}', { total: projects.length, visible: visibleCount, hidden: hiddenCount })}
+              {t('共 {total} 个 · 显示 {visible} · 隐藏 {hidden}', {
+                total: projects.length,
+                visible: visibleCount,
+                hidden: hiddenCount,
+              })}
             </span>
           </div>
           <button
@@ -306,7 +317,9 @@ export default function ProjectManager() {
         {/* Selection action bar — only visible while rows are checked. */}
         {selectedIds.size > 0 && (
           <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border flex-shrink-0 bg-bg-active/40">
-            <span className="text-ui-sm text-fg-muted">{t('已选 {count} 项', { count: selectedIds.size })}</span>
+            <span className="text-ui-sm text-fg-muted">
+              {t('已选 {count} 项', { count: selectedIds.size })}
+            </span>
             <button
               type="button"
               onClick={() => void handleBatchDelete()}
@@ -355,7 +368,11 @@ export default function ProjectManager() {
                   <Th onClick={() => cycleSort('path')} active={sortKey === 'path'} dir={sortDir}>
                     {t('路径')}
                   </Th>
-                  <Th onClick={() => cycleSort('last_opened_at')} active={sortKey === 'last_opened_at'} dir={sortDir}>
+                  <Th
+                    onClick={() => cycleSort('last_opened_at')}
+                    active={sortKey === 'last_opened_at'}
+                    dir={sortDir}
+                  >
                     {t('最近打开')}
                   </Th>
                   <th className="px-3 py-1.5 font-medium text-right">{t('操作')}</th>
@@ -366,6 +383,7 @@ export default function ProjectManager() {
                   const unavailable = unavailableProjectIds.includes(project.id)
                   const isCurrent = currentProject?.id === project.id
                   const checked = selectedIds.has(project.id)
+                  const location = sshProjectDisplayPath(project, null, sshConnections)
                   // trustTick invalidates this read when localStorage trust changes.
                   const trustLevel = trustTick >= 0 ? getWorkspaceTrust(project) : 'undecided'
                   const trusted = trustLevel === 'trusted'
@@ -374,7 +392,11 @@ export default function ProjectManager() {
                     <tr
                       key={project.id}
                       className={`border-b border-border/60 group ${
-                        checked ? 'bg-accent/10' : isCurrent ? 'bg-bg-active/40' : 'hover:bg-bg-hover/60'
+                        checked
+                          ? 'bg-accent/10'
+                          : isCurrent
+                            ? 'bg-bg-active/40'
+                            : 'hover:bg-bg-hover/60'
                       }`}
                     >
                       <td className="px-3 py-2 align-middle">
@@ -391,7 +413,11 @@ export default function ProjectManager() {
                           ) : project.hidden ? (
                             <EyeOff size={13} className="text-fg-dim flex-shrink-0" />
                           ) : (
-                            <Folder size={13} className="text-accent flex-shrink-0" />
+                            <ProjectKindIcon
+                              project={project}
+                              size={13}
+                              className="text-accent flex-shrink-0"
+                            />
                           )}
                           <Tooltip
                             label={unavailable ? t('目录不可用，请重新定位') : project.name}
@@ -407,27 +433,31 @@ export default function ProjectManager() {
                                 unavailable
                                   ? 'text-fg-dim cursor-default'
                                   : isCurrent
-                                  ? 'text-fg font-medium'
-                                  : 'text-fg hover:text-accent'
+                                    ? 'text-fg font-medium'
+                                    : 'text-fg hover:text-accent'
                               }`}
                             >
                               {project.name}
                               {isCurrent && (
-                                <Check size={11} className="inline-block ml-1 text-accent align-middle" />
+                                <Check
+                                  size={11}
+                                  className="inline-block ml-1 text-accent align-middle"
+                                />
                               )}
                             </button>
                           </Tooltip>
+                          {isSshProject(project) ? <SshKindBadge /> : null}
                         </div>
                       </td>
                       <td className="px-3 py-2 align-middle">
                         <Tooltip
-                          label={project.path}
+                          label={location}
                           side="bottom"
                           onlyWhenOverflow
                           wrapperClassName="block truncate max-w-[260px]"
                         >
-                          <span className="block truncate max-w-[260px] text-fg-muted">
-                            {project.path}
+                          <span className="block truncate max-w-[260px] font-mono text-ui-sm text-fg-muted">
+                            {location}
                           </span>
                         </Tooltip>
                       </td>
@@ -437,11 +467,17 @@ export default function ProjectManager() {
                       <td className="px-3 py-2 align-middle">
                         <div className="flex items-center justify-end gap-0.5">
                           {project.hidden ? (
-                            <ActBtn label={t('恢复显示')} onClick={() => void unhideProject(project.id)}>
+                            <ActBtn
+                              label={t('恢复显示')}
+                              onClick={() => void unhideProject(project.id)}
+                            >
                               <Eye size={14} />
                             </ActBtn>
                           ) : (
-                            <ActBtn label={t('从顶栏隐藏')} onClick={() => void hideProject(project.id)}>
+                            <ActBtn
+                              label={t('从顶栏隐藏')}
+                              onClick={() => void hideProject(project.id)}
+                            >
                               <EyeOff size={14} />
                             </ActBtn>
                           )}
@@ -484,7 +520,11 @@ export default function ProjectManager() {
                           <ActBtn label={t('重新定位')} onClick={() => handleRelocate(project)}>
                             <LocateFixed size={14} />
                           </ActBtn>
-                          <ActBtn label={t('永久删除')} danger onClick={() => handleDelete(project)}>
+                          <ActBtn
+                            label={t('永久删除')}
+                            danger
+                            onClick={() => handleDelete(project)}
+                          >
                             <Trash2 size={14} />
                           </ActBtn>
                         </div>
@@ -536,8 +576,7 @@ function Th({
         }`}
       >
         {children}
-        {active &&
-          (dir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
+        {active && (dir === 'asc' ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
       </button>
     </th>
   )
@@ -561,9 +600,11 @@ function ActBtn({
         aria-label={label}
         onClick={onClick}
         className={`p-1 rounded transition-colors
-          ${danger
-            ? 'text-fg-dim hover:text-danger'
-            : 'text-fg-dim hover:text-fg hover:bg-bg-active'}`}
+          ${
+            danger
+              ? 'text-fg-dim hover:text-danger'
+              : 'text-fg-dim hover:text-fg hover:bg-bg-active'
+          }`}
       >
         {children}
       </button>
@@ -593,9 +634,11 @@ function Checkbox({
         onChange()
       }}
       className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border transition-colors
-        ${checked || indeterminate
-          ? 'bg-accent border-accent text-white'
-          : 'border-border-strong text-transparent hover:border-accent'}`}
+        ${
+          checked || indeterminate
+            ? 'bg-accent border-accent text-white'
+            : 'border-border-strong text-transparent hover:border-accent'
+        }`}
     >
       {indeterminate ? (
         <span className="block h-[2px] w-2 bg-current" />

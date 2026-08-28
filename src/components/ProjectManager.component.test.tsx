@@ -86,6 +86,40 @@ describe('ProjectManager', () => {
     expect(useProjectStore.getState().unhideProject).toHaveBeenCalledWith(hiddenProject.id)
   })
 
+  it('renders SSH paths with the same mono auxiliary style as local paths', () => {
+    const sshProject: Project = {
+      id: 'p-ssh',
+      name: 'ai-auto-test-dev',
+      path: 'ssh://c451183d-a3b4-4c53-ab3c-fae6b0000001/root/.claude',
+      kind: 'ssh',
+      connection_id: 'conn-1',
+      root_path: '/root/.claude',
+      created_at: 3,
+      last_opened_at: 3,
+    }
+    useProjectStore.setState({
+      projects: [visibleProject, sshProject],
+      currentProject: sshProject,
+      sshConnections: [
+        {
+          id: 'conn-1',
+          name: 'wsl',
+          host: 'localhost',
+          port: 22,
+          username: 'root',
+          auth_kind: 'privateKey',
+          created_at: 1,
+          updated_at: 1,
+        },
+      ],
+    })
+    render(<ProjectManager />)
+    const path = screen.getByText('root@localhost:/root/.claude')
+    expect(path.className).toMatch(/font-mono/)
+    expect(path.className).toMatch(/text-ui-sm/)
+    expect(screen.queryByText(/ssh:\/\/c451183d/)).not.toBeInTheDocument()
+  })
+
   it('activates a project by clicking its name button', async () => {
     render(<ProjectManager />)
     fireEvent.click(screen.getByRole('button', { name: 'Beta' }))

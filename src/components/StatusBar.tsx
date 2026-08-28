@@ -25,6 +25,8 @@ import {
   StatusBarRowContext,
 } from './statusBarRowContext'
 import { isExternalFileWindow } from '../lib/windowSession'
+import { ProjectKindIcon } from './ProjectKindMark'
+import { isSshProject } from '../lib/sshWorkspace'
 import { parentPath, pathsEqual } from '../utils/fileReferences'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 
@@ -311,30 +313,35 @@ export default function StatusBar() {
     Boolean(activeTab && !activeTab.openError && activeTab.viewMode !== 'view')
   const showMetaGroup = showEncoding || Boolean(appVersion) || Boolean(appMemory)
 
-  const standaloneMenuItems = activeTab ? [
-    {
-      label: t('在文件管理器中显示'),
-      action: () => void revealItemInDir(activeTab.path).catch(error => {
-        pushToast('error', t('在文件管理器中显示失败: {error}', { error: String(error) }))
-      }),
-    },
-    {
-      label: t('打开所在文件夹'),
-      action: () => void openPath(parentPath(activeTab.path)).catch(error => {
-        pushToast('error', t('打开文件夹失败: {error}', { error: String(error) }))
-      }),
-    },
-    {
-      label: t('将所在文件夹作为项目打开'),
-      separatorBefore: true,
-      action: () => void (async () => {
-        const folder = parentPath(activeTab.path)
-        const existing = projects.find(project => pathsEqual(project.path, folder))
-        const opened = existing ? await switchProject(existing) : await addProject(folder)
-        if (opened) setView('explorer')
-      })(),
-    },
-  ] : []
+  const standaloneMenuItems = activeTab
+    ? [
+        {
+          label: t('在文件管理器中显示'),
+          action: () =>
+            void revealItemInDir(activeTab.path).catch(error => {
+              pushToast('error', t('在文件管理器中显示失败: {error}', { error: String(error) }))
+            }),
+        },
+        {
+          label: t('打开所在文件夹'),
+          action: () =>
+            void openPath(parentPath(activeTab.path)).catch(error => {
+              pushToast('error', t('打开文件夹失败: {error}', { error: String(error) }))
+            }),
+        },
+        {
+          label: t('将所在文件夹作为项目打开'),
+          separatorBefore: true,
+          action: () =>
+            void (async () => {
+              const folder = parentPath(activeTab.path)
+              const existing = projects.find(project => pathsEqual(project.path, folder))
+              const opened = existing ? await switchProject(existing) : await addProject(folder)
+              if (opened) setView('explorer')
+            })(),
+        },
+      ]
+    : []
 
   return (
     <StatusBarRowContext.Provider value={rowRef}>
@@ -366,10 +373,21 @@ export default function StatusBar() {
             </StatusTip>
           ) : (
             <>
-              <Folder size={13} className="flex-shrink-0 text-brand" />
+              {currentProject ? (
+                <ProjectKindIcon
+                  project={currentProject}
+                  size={13}
+                  className="flex-shrink-0 text-brand"
+                />
+              ) : (
+                <Folder size={13} className="flex-shrink-0 text-brand" />
+              )}
               <span className="min-w-0 max-w-[28%] truncate">
                 {currentProject ? currentProject.name : t('未选择项目')}
               </span>
+              {isSshProject(currentProject) ? (
+                <span className="flex-shrink-0 text-[10px] text-fg-muted">{t('SSH')}</span>
+              ) : null}
             </>
           )}
           {gitHead && (

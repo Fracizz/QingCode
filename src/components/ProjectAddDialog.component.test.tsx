@@ -57,6 +57,42 @@ describe('ProjectAddDialog', () => {
     expect(useUIStore.getState().view).toBe('explorer')
   })
 
+  it('marks SSH projects in the picker list', () => {
+    useProjectStore.setState({
+      projects: [
+        first,
+        {
+          id: 'ssh-1',
+          name: '远程仓库',
+          path: 'ssh://c1/root/.claude',
+          kind: 'ssh',
+          connection_id: 'c1',
+          root_path: '/root/.claude',
+          created_at: 3,
+          last_opened_at: 3,
+        },
+      ],
+      sshConnections: [
+        {
+          id: 'c1',
+          name: 'wsl',
+          host: 'localhost',
+          port: 22,
+          username: 'root',
+          auth_kind: 'privateKey',
+          host_key_fingerprint: 'fp',
+          created_at: 1,
+          updated_at: 1,
+        },
+      ],
+    })
+    render(<ProjectAddDialog open onClose={vi.fn()} />)
+
+    expect(
+      screen.getByRole('option', { name: '远程仓库 — root@localhost:/root/.claude' })
+    ).toHaveTextContent('SSH')
+  })
+
   it('replaces the project picker with the SSH dialog instead of stacking overlays', () => {
     render(<ProjectAddDialog open onClose={vi.fn()} />)
 

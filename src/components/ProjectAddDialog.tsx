@@ -1,13 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import {
-  AlertTriangle,
-  Check,
-  FilePlus2,
-  Folder,
-  FolderOpen,
-  ListChecks,
-  Server,
-} from 'lucide-react'
+import { AlertTriangle, Check, FilePlus2, FolderOpen, ListChecks, Server } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
@@ -16,6 +8,8 @@ import { useUIStore } from '../store/uiStore'
 import { relocateProjectWithDialog } from '../utils/projectActions'
 import type { Project } from '../types'
 import SshProjectDialog from './SshProjectDialog'
+import { ProjectKindIcon, SshKindBadge } from './ProjectKindMark'
+import { isSshProject, sshProjectDisplayPath } from '../lib/sshWorkspace'
 
 function sortProjects(projects: Project[]): Project[] {
   return [...projects].sort((a, b) => {
@@ -38,6 +32,7 @@ interface Props {
 export default function ProjectAddDialog({ open, onClose }: Props) {
   const { t } = useI18n()
   const allProjects = useProjectStore(s => s.projects)
+  const sshConnections = useProjectStore(s => s.sshConnections)
   const currentProject = useProjectStore(s => s.currentProject)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
@@ -208,17 +203,18 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                   const unavailable = unavailableProjectIds.includes(project.id)
                   const isCurrent = currentProject?.id === project.id
                   const active = index === activeIndex
+                  const location = sshProjectDisplayPath(project, null, sshConnections)
                   return (
                     <Tooltip
                       key={project.id}
-                      label={project.path}
+                      label={location}
                       side="right"
                       wrapperClassName="block w-full"
                     >
                       <button
                         type="button"
                         role="option"
-                        aria-label={`${project.name} — ${project.path}`}
+                        aria-label={`${project.name} — ${location}`}
                         aria-selected={active || isCurrent}
                         data-project-index={index}
                         onMouseEnter={() => setActiveIndex(index)}
@@ -232,10 +228,11 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                           ) : isCurrent ? (
                             <Check size={12} className="text-accent" />
                           ) : (
-                            <Folder size={13} className="text-accent" />
+                            <ProjectKindIcon project={project} size={13} className="text-accent" />
                           )}
                         </span>
                         <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
+                        {isSshProject(project) ? <SshKindBadge /> : null}
                         {project.hidden ? (
                           <span className="flex-shrink-0 text-[10px] text-fg-dim">
                             {t('已隐藏')}
