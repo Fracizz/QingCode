@@ -1,7 +1,9 @@
 /** Panel title + project root (资源管理器 / 项目名). */
 export const EXPLORER_HEADING_INSET = 'pl-4'
+export const EXPLORER_HEADING_ROW = 'flex h-9 shrink-0 items-center'
 export const EXPLORER_HEADING_GRID = 'grid grid-cols-[15px_minmax(0,1fr)] items-center gap-x-2'
 export const EXPLORER_HEADING_ICON = 'size-[15px] shrink-0 text-brand'
+export const EXPLORER_HEADING_LABEL = 'truncate leading-tight'
 
 /**
  * File tree row columns — keep in sync with ExplorerTreeRow (`paddingLeft: depth * 12 + 8`).
@@ -22,7 +24,7 @@ export const EXPLORER_SUBSECTION_HEADER =
   'flex h-7 w-full items-center gap-1.5 pr-1 text-[11px] font-semibold tracking-wide text-fg-muted select-none transition-colors hover:text-fg'
 /** Inset card — clearer block, soft rounded border + shadow. */
 export const EXPLORER_FAVORITES_SECTION =
-  'mx-2.5 mb-2 mt-1 flex-shrink-0 overflow-hidden rounded-md border border-border-strong/45 bg-[color-mix(in_srgb,color-mix(in_srgb,var(--color-bg-elevated)_72%,var(--color-bg-active)),var(--color-bg-sidebar)_28%)] shadow-[0_1px_5px_color-mix(in_srgb,#000_16%,transparent)]'
+  'mx-2.5 mb-2 mt-1.5 flex-shrink-0 overflow-hidden rounded-md border border-border-strong/45 bg-[color-mix(in_srgb,color-mix(in_srgb,var(--color-bg-elevated)_72%,var(--color-bg-active)),var(--color-bg-sidebar)_28%)] shadow-[0_1px_5px_color-mix(in_srgb,#000_16%,transparent)]'
 export const EXPLORER_FAVORITES_INSET = 'px-2.5'
 /** Item indent inside the card (~aligns with tree depth 2). */
 export const EXPLORER_FAVORITES_ITEM_PL = 'pl-5'

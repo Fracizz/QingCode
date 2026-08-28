@@ -238,7 +238,7 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
           {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
         </span>
         <Bookmark size={13} className="shrink-0 text-warn" />
-        <span className="min-w-0 flex-1 truncate text-left leading-none">{t('收藏夹')}</span>
+        <span className="min-w-0 flex-1 truncate text-left leading-tight">{t('收藏夹')}</span>
         <span className="shrink-0 tabular-nums text-[10px] font-normal text-fg-dim">{items.length}</span>
       </button>
       {expanded && (

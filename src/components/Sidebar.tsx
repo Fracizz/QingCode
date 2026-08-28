@@ -107,6 +107,8 @@ import {
   EXPLORER_HEADING_GRID,
   EXPLORER_HEADING_ICON,
   EXPLORER_HEADING_INSET,
+  EXPLORER_HEADING_LABEL,
+  EXPLORER_HEADING_ROW,
 } from './explorerLayout'
 
 type DirectoryDeleteStats = {
@@ -1393,11 +1395,11 @@ export default function Sidebar() {
     >
       {/* Section header */}
       <div
-        className={`${EXPLORER_HEADING_INSET} pr-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted`}
+        className={`${EXPLORER_HEADING_INSET} ${EXPLORER_HEADING_ROW} justify-between pr-4 text-[11px] font-semibold tracking-wide text-fg-muted`}
       >
         <span className={`${EXPLORER_HEADING_GRID} min-w-0`}>
           <FolderOpen size={15} className={EXPLORER_HEADING_ICON} />
-          <span className="truncate leading-none">{t('资源管理器')}</span>
+          <span className={EXPLORER_HEADING_LABEL}>{t('资源管理器')}</span>
         </span>
         <div className="flex items-center gap-0.5">
           <Tooltip label={t('在侧边栏定位当前文件')} side="bottom">
@@ -1455,7 +1457,7 @@ export default function Sidebar() {
                 <div
                   data-explorer-drop={currentProject.path}
                   data-explorer-isdir="1"
-                  className={`group flex h-9 items-center gap-2 ${EXPLORER_HEADING_INSET} pr-2 text-[13px] select-none cursor-default [&_button]:cursor-default ${
+                  className={`group ${EXPLORER_HEADING_ROW} gap-2 ${EXPLORER_HEADING_INSET} pr-2 text-[13px] select-none cursor-default [&_button]:cursor-default ${
                     dragOverPath != null && pathsEqual(dragOverPath, currentProject.path)
                       ? 'text-accent font-medium'
                       : isProjectRootSelected
@@ -1492,85 +1494,87 @@ export default function Sidebar() {
                       side="bottom"
                       wrapperClassName="flex min-w-0 items-center"
                     >
-                      <span className="truncate font-medium leading-none">{currentProject.name}</span>
+                      <span className={`${EXPLORER_HEADING_LABEL} font-medium`}>{currentProject.name}</span>
                     </Tooltip>
                   </span>
-                  <Tooltip label={t('新建文件')} side="bottom">
-                    <button
-                      type="button"
-                      aria-label={t('新建文件')}
-                      disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
-                      onClick={event => {
-                        event.stopPropagation()
-                        void startCreateEntry(currentProject.path, false, currentProject.id)
-                      }}
-                    >
-                      <FilePlus size={13} />
-                    </button>
-                  </Tooltip>
-                  <Tooltip label={t('新建文件夹')} side="bottom">
-                    <button
-                      type="button"
-                      aria-label={t('新建文件夹')}
-                      disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
-                      onClick={event => {
-                        event.stopPropagation()
-                        void startCreateEntry(currentProject.path, true, currentProject.id)
-                      }}
-                    >
-                      <FolderPlus size={13} />
-                    </button>
-                  </Tooltip>
-                  <Tooltip label={t('在文件管理器中打开')} side="bottom">
-                    <button
-                      type="button"
-                      aria-label={t('在文件管理器中打开')}
-                      disabled={unavailable}
-                      className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
-                      onClick={event => {
-                        event.stopPropagation()
-                        void handleOpenProject(currentProject.path)
-                      }}
-                    >
-                      <ExternalLink size={13} />
-                    </button>
-                  </Tooltip>
-                  {unavailable && (
-                    <>
-                      <Tooltip label={t('重新定位项目')} side="bottom">
-                        <button
-                          type="button"
-                          aria-label={t('重新定位项目')}
-                          className="p-0.5 text-warn hover:text-fg"
-                          onClick={event => {
-                            event.stopPropagation()
-                            handleRelocateProject(currentProject.id)
-                          }}
-                        >
-                          <LocateFixed size={13} />
-                        </button>
-                      </Tooltip>
-                      <Tooltip label={t('移除项目')} side="bottom">
-                        <button
-                          type="button"
-                          aria-label={t('移除项目')}
-                          className="p-0.5 text-fg-dim hover:text-danger"
-                          onClick={event => {
-                            event.stopPropagation()
-                            handleRemoveProject(
-                              currentProject.id,
-                              currentProject.name,
-                              currentProject.path,
-                            )
-                          }}
-                        >
-                          <X size={13} />
-                        </button>
-                      </Tooltip>
-                    </>
-                  )}
+                  <span className="flex shrink-0 items-center">
+                    <Tooltip label={t('新建文件')} side="bottom">
+                      <button
+                        type="button"
+                        aria-label={t('新建文件')}
+                        disabled={unavailable}
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                        onClick={event => {
+                          event.stopPropagation()
+                          void startCreateEntry(currentProject.path, false, currentProject.id)
+                        }}
+                      >
+                        <FilePlus size={13} />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={t('新建文件夹')} side="bottom">
+                      <button
+                        type="button"
+                        aria-label={t('新建文件夹')}
+                        disabled={unavailable}
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                        onClick={event => {
+                          event.stopPropagation()
+                          void startCreateEntry(currentProject.path, true, currentProject.id)
+                        }}
+                      >
+                        <FolderPlus size={13} />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={t('在文件管理器中打开')} side="bottom">
+                      <button
+                        type="button"
+                        aria-label={t('在文件管理器中打开')}
+                        disabled={unavailable}
+                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-0.5 text-fg-dim hover:text-fg disabled:opacity-0 disabled:cursor-not-allowed"
+                        onClick={event => {
+                          event.stopPropagation()
+                          void handleOpenProject(currentProject.path)
+                        }}
+                      >
+                        <ExternalLink size={13} />
+                      </button>
+                    </Tooltip>
+                    {unavailable && (
+                      <>
+                        <Tooltip label={t('重新定位项目')} side="bottom">
+                          <button
+                            type="button"
+                            aria-label={t('重新定位项目')}
+                            className="p-0.5 text-warn hover:text-fg"
+                            onClick={event => {
+                              event.stopPropagation()
+                              handleRelocateProject(currentProject.id)
+                            }}
+                          >
+                            <LocateFixed size={13} />
+                          </button>
+                        </Tooltip>
+                        <Tooltip label={t('移除项目')} side="bottom">
+                          <button
+                            type="button"
+                            aria-label={t('移除项目')}
+                            className="p-0.5 text-fg-dim hover:text-danger"
+                            onClick={event => {
+                              event.stopPropagation()
+                              handleRemoveProject(
+                                currentProject.id,
+                                currentProject.name,
+                                currentProject.path,
+                              )
+                            }}
+                          >
+                            <X size={13} />
+                          </button>
+                        </Tooltip>
+                      </>
+                    )}
+                  </span>
                 </div>
 
                 <FavoriteItemsSection project={currentProject} />

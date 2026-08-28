@@ -848,7 +848,14 @@ function Chip({
           <Folder size={12} className={isCurrent ? 'text-brand' : 'text-accent'} />
         </span>
       )}
-      <span className="truncate max-w-[140px]">{project.name}</span>
+      <Tooltip
+        label={project.name}
+        side="bottom"
+        onlyWhenOverflow
+        wrapperClassName="min-w-0 max-w-[140px]"
+      >
+        <span className="block truncate">{project.name}</span>
+      </Tooltip>
       <ProjectIndicatorMarks project={project} indicators={indicators} isCurrent={isCurrent} />
       {project.ephemeral && !unavailable && (
         <Tooltip label={t('在文件管理器中打开')} side="bottom" wrapperClassName="inline-flex flex-shrink-0 items-center">
