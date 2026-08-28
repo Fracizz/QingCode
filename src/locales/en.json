@@ -1275,6 +1275,20 @@
     "MIT License — 自由使用、修改与分发，需保留版权声明。": "MIT License — free to use, modify, and distribute; copyright notice must be retained.",
     "查看 LICENSE": "View LICENSE",
     "SSH 项目暂不支持代码导航": "Code navigation is not yet available for SSH projects",
-    "语法高亮和文本搜索仍可使用。": "Syntax highlighting and text search remain available."
+    "语法高亮和文本搜索仍可使用。": "Syntax highlighting and text search remain available.",
+    "上传失败：{error}": "Upload failed: {error}",
+    "上传文件到此处": "Upload files here",
+    "上传文件夹到此处": "Upload folder here",
+    "下载失败：{error}": "Download failed: {error}",
+    "下载文件": "Download file",
+    "下载文件夹": "Download folder",
+    "下载项目": "Download project",
+    "选择下载目录": "Choose download folder",
+    "选择要上传的文件": "Choose files to upload",
+    "选择要上传的文件夹": "Choose folder to upload",
+    "已上传 {count} 项": "Uploaded {count} item(s)",
+    "已下载 {count} 项": "Downloaded {count} item(s)",
+    "重新连接": "Reconnect",
+    "SSH 资源没有本地文件管理器位置": "SSH resources do not have a local file manager location"
   }
 }

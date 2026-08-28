@@ -61,6 +61,7 @@ import { ensureWorkspaceTrust, pushTrustedRootsToNative } from '../lib/workspace
 import {
   connectSshWorkspace,
   ensureSshWorkspaceConnected,
+  requestSshReconnect,
   sshRootUri,
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
@@ -726,6 +727,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     try {
       const currentProject = get().currentProject
       if (currentProject?.id === project.id) {
+        if (project.kind === 'ssh') await ensureSshWorkspaceConnected(project)
         // Fast re-click: still refresh so inactive-window tree drift is visible.
         if (project.ephemeral) void get().ensureProjectTree(project)
         else void get().refreshProjectTree(project)
@@ -767,6 +769,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return true
     } catch (e) {
       console.error('switchProject failed:', e)
+      if (project.kind === 'ssh') {
+        requestSshReconnect(project)
+        set(s => ({
+          unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
+        }))
+        get().pushToast('info', 'SSH 连接已断开，请重新认证')
+        return false
+      }
       if (isDirectoryUnavailableError(e)) {
         set(s => ({
           unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),

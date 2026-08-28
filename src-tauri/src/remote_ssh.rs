@@ -1,4 +1,5 @@
 use crate::file_encoding;
+use crate::path_guard::PathAllowlist;
 use crate::terminal::{TerminalDataPayload, TerminalExitPayload, TerminalSpawnResult};
 use russh::client;
 use russh::keys::{load_secret_key, HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
@@ -6,6 +7,7 @@ use russh::{ChannelMsg, ChannelWriteHalf, Disconnect};
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -14,6 +16,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 const SSH_URI_PREFIX: &str = "ssh://";
 const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;
 const MAX_SLICE_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_DIFF_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -145,6 +148,49 @@ pub struct RemoteGitPullResult {
     pub conflict_paths: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct RemoteGitBranchInfo {
+    pub name: String,
+    pub current: bool,
+    pub upstream: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemoteGitBranchList {
+    pub local: Vec<RemoteGitBranchInfo>,
+    pub remote: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemoteGitRemote {
+    pub name: String,
+    pub fetch_url: Option<String>,
+    pub push_urls: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemoteGitCommitInfo {
+    pub hash: String,
+    pub short_hash: String,
+    pub subject: String,
+    pub author: String,
+    pub date: String,
+    pub refs: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemoteGitCommitFileChange {
+    pub status: String,
+    pub path: String,
+    pub previous_path: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RemoteGitFileContents {
+    pub original: String,
+    pub modified: String,
+}
+
 #[derive(Clone)]
 struct SshClient {
     expected_fingerprint: Option<String>,
@@ -268,6 +314,52 @@ impl SshManager {
             .exec(true, command.as_bytes())
             .await
             .map_err(|error| format!("执行远程命令失败：{error}"))?;
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut exit_code = None;
+        while let Some(message) = channel.wait().await {
+            match message {
+                ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+                ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
+                ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status),
+                _ => {}
+            }
+        }
+        Ok(RemoteExecResult {
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            exit_code: exit_code.unwrap_or(255),
+        })
+    }
+
+    async fn exec_uri_with_input(
+        &self,
+        uri: &str,
+        command: &str,
+        input: &[u8],
+        require_trust: bool,
+    ) -> Result<RemoteExecResult, String> {
+        let parsed = parse_remote_uri(uri)?;
+        self.root_for_uri(uri, require_trust)?;
+        let session = self.session(&parsed.connection_id)?;
+        let mut channel = session
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(|error| format!("打开 SSH 命令通道失败：{error}"))?;
+        channel
+            .exec(true, command.as_bytes())
+            .await
+            .map_err(|error| format!("执行远程命令失败：{error}"))?;
+        channel
+            .data(input)
+            .await
+            .map_err(|error| format!("发送远程命令输入失败：{error}"))?;
+        channel
+            .eof()
+            .await
+            .map_err(|error| format!("结束远程命令输入失败：{error}"))?;
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -946,16 +1038,167 @@ pub async fn ssh_delete_path(path: String, manager: State<'_, SshManager>) -> Re
     remove_remote_tree(&sftp, parsed.path).await
 }
 
-#[tauri::command]
-pub async fn ssh_exec(
-    path: String,
-    command: String,
-    require_trust: Option<bool>,
-    manager: State<'_, SshManager>,
-) -> Result<RemoteExecResult, String> {
-    manager
-        .exec_uri(&path, &command, require_trust.unwrap_or(false))
+async fn upload_local_tree(
+    sftp: &SftpSession,
+    local_path: PathBuf,
+    remote_path: String,
+    root: &RegisteredRoot,
+) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(&local_path)
+        .map_err(|error| format!("读取本地上传路径失败：{error}"))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!("暂不上传本地符号链接：{}", local_path.display()));
+    }
+    ensure_parent_path_within(sftp, &remote_path, root).await?;
+    if sftp.try_exists(remote_path.clone()).await.unwrap_or(false) {
+        ensure_existing_path_within(sftp, &remote_path, root).await?;
+    }
+    if metadata.is_dir() {
+        if !sftp.try_exists(remote_path.clone()).await.unwrap_or(false) {
+            sftp.create_dir(remote_path.clone())
+                .await
+                .map_err(|error| format!("创建远程上传目录失败：{error}"))?;
+        }
+        for entry in std::fs::read_dir(&local_path)
+            .map_err(|error| format!("读取本地上传目录失败：{error}"))?
+        {
+            let entry = entry.map_err(|error| format!("读取本地上传条目失败：{error}"))?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            validate_entry_name(&name)?;
+            Box::pin(upload_local_tree(
+                sftp,
+                entry.path(),
+                format!("{}/{name}", remote_path.trim_end_matches('/')),
+                root,
+            ))
+            .await?;
+        }
+        return Ok(());
+    }
+    if metadata.len() > MAX_EDITOR_FILE_SIZE {
+        return Err(format!(
+            "单个上传文件暂不能超过 100MB：{}",
+            local_path.display()
+        ));
+    }
+    let bytes =
+        std::fs::read(&local_path).map_err(|error| format!("读取本地上传文件失败：{error}"))?;
+    sftp.write(remote_path, &bytes)
         .await
+        .map_err(|error| format!("上传远程文件失败：{error}"))
+}
+
+#[tauri::command]
+pub async fn ssh_upload_paths(
+    destination: String,
+    local_paths: Vec<String>,
+    manager: State<'_, SshManager>,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<(), String> {
+    if local_paths.is_empty() {
+        return Ok(());
+    }
+    let (sftp, parsed, root) = manager.sftp_for_uri(&destination, true).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    let destination_metadata = sftp
+        .metadata(parsed.path.clone())
+        .await
+        .map_err(|error| format!("读取远程上传目录失败：{error}"))?;
+    if !destination_metadata.is_dir() {
+        return Err("请选择远程目录作为上传目标".to_string());
+    }
+    for local_path in local_paths {
+        allowlist.ensure_allowed(&local_path)?;
+        let path = PathBuf::from(&local_path);
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "本地上传路径缺少有效名称".to_string())?;
+        validate_entry_name(name)?;
+        let remote_path = format!("{}/{name}", parsed.path.trim_end_matches('/'));
+        upload_local_tree(&sftp, path, remote_path, &root).await?;
+    }
+    Ok(())
+}
+
+async fn download_remote_tree(
+    sftp: &SftpSession,
+    remote_path: String,
+    local_path: PathBuf,
+    root: &RegisteredRoot,
+    allowlist: &PathAllowlist,
+) -> Result<(), String> {
+    ensure_existing_path_within(sftp, &remote_path, root).await?;
+    allowlist.ensure_writable(&local_path.to_string_lossy())?;
+    let metadata = sftp
+        .symlink_metadata(remote_path.clone())
+        .await
+        .map_err(|error| format!("读取远程下载路径失败：{error}"))?;
+    if metadata.is_symlink() {
+        return Err(format!("暂不下载远程符号链接：{remote_path}"));
+    }
+    if metadata.is_dir() {
+        std::fs::create_dir_all(&local_path)
+            .map_err(|error| format!("创建本地下载目录失败：{error}"))?;
+        let entries = sftp
+            .read_dir(remote_path.clone())
+            .await
+            .map_err(|error| format!("读取远程下载目录失败：{error}"))?;
+        for entry in entries {
+            let name = entry.file_name();
+            validate_entry_name(&name)?;
+            Box::pin(download_remote_tree(
+                sftp,
+                entry.path(),
+                local_path.join(name),
+                root,
+                allowlist,
+            ))
+            .await?;
+        }
+        return Ok(());
+    }
+    if metadata.len() > MAX_EDITOR_FILE_SIZE {
+        return Err(format!("单个下载文件暂不能超过 100MB：{remote_path}"));
+    }
+    let bytes = sftp
+        .read(remote_path)
+        .await
+        .map_err(|error| format!("读取远程下载文件失败：{error}"))?;
+    if let Some(parent) = local_path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("创建本地下载目录失败：{error}"))?;
+    }
+    std::fs::write(&local_path, bytes).map_err(|error| format!("写入本地下载文件失败：{error}"))
+}
+
+#[tauri::command]
+pub async fn ssh_download_paths(
+    paths: Vec<String>,
+    destination: String,
+    manager: State<'_, SshManager>,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<(), String> {
+    allowlist.ensure_writable(&destination)?;
+    let destination = PathBuf::from(destination);
+    for uri in paths {
+        let (sftp, parsed, root) = manager.sftp_for_uri(&uri, false).await?;
+        let name = Path::new(&parsed.path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| "远程下载路径缺少有效名称".to_string())?
+            .to_string();
+        validate_entry_name(&name)?;
+        download_remote_tree(
+            &sftp,
+            parsed.path,
+            destination.join(name),
+            &root,
+            &allowlist,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 fn fuzzy_contains(value: &str, query: &str) -> bool {
@@ -981,6 +1224,36 @@ fn remote_relative_path(root_path: &str, full_path: &str) -> String {
         .to_string()
 }
 
+fn simple_glob_matches(pattern: &str, value: &str) -> bool {
+    let pattern = pattern.trim_start_matches("./").trim_start_matches('/');
+    if pattern.is_empty() {
+        return false;
+    }
+    let anchored = pattern.contains('/');
+    let candidate = if anchored {
+        value
+    } else {
+        value.rsplit('/').next().unwrap_or(value)
+    };
+    let pattern = pattern.replace("**", "*");
+    let mut remaining = candidate;
+    let mut first = true;
+    for part in pattern.split('*') {
+        if part.is_empty() {
+            continue;
+        }
+        let Some(index) = remaining.find(part) else {
+            return false;
+        };
+        if first && !pattern.starts_with('*') && index != 0 {
+            return false;
+        }
+        remaining = &remaining[index + part.len()..];
+        first = false;
+    }
+    pattern.ends_with('*') || remaining.is_empty()
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn ssh_search_files(
@@ -997,11 +1270,16 @@ pub async fn ssh_search_files(
     follow_symlinks: Option<bool>,
     manager: State<'_, SshManager>,
 ) -> Result<Vec<RemoteSearchHit>, String> {
-    let _ = (exclude_patterns, use_ignore_files, follow_symlinks);
+    // Never follow remote symlinks: command output cannot be canonicalized cheaply,
+    // and a symlink may otherwise expose files outside the registered project.
+    let _ = (use_ignore_files, follow_symlinks);
     let parsed = parse_remote_uri(&root)?;
     let max = limit.unwrap_or(500).clamp(1, 2_000);
+    let marker = "__QINGCODE_REMOTE_FILES__";
     let command = format!(
-        "find {} -mindepth 1 -not -path '*/.git/*' -not -path '*/node_modules/*' -not -path '*/target/*' -printf '%y\\t%p\\n' | head -n {}",
+        "{{ find {} \\( -name .git -o -name node_modules -o -name target \\) -prune -o -type d -print; printf '\\n{}\\n'; find {} \\( -name .git -o -name node_modules -o -name target \\) -prune -o -type f -print; }} | head -n {}",
+        shell_quote(&parsed.path),
+        marker,
         shell_quote(&parsed.path),
         max.saturating_mul(40).min(50_000)
     );
@@ -1020,12 +1298,24 @@ pub async fn ssh_search_files(
     } else {
         query
     };
+    let exclude_patterns = exclude_patterns.unwrap_or_default();
     let mut hits = Vec::new();
+    let mut is_dir = true;
     for raw_line in output.stdout.lines() {
-        let (kind, full_path) = raw_line.split_once('\t').unwrap_or(("f", raw_line));
+        if raw_line == marker {
+            is_dir = false;
+            continue;
+        }
+        let full_path = raw_line;
         let relative = remote_relative_path(&parsed.path, full_path);
         let name = relative.rsplit('/').next().unwrap_or(&relative).to_string();
         if name.is_empty() {
+            continue;
+        }
+        if exclude_patterns
+            .iter()
+            .any(|pattern| simple_glob_matches(pattern, &relative))
+        {
             continue;
         }
         if !extension_list.is_empty() {
@@ -1054,7 +1344,6 @@ pub async fn ssh_search_files(
         if !matched {
             continue;
         }
-        let is_dir = kind == "d";
         hits.push(RemoteSearchHit {
             name,
             path: join_remote_uri(&root, &relative),
@@ -1139,9 +1428,9 @@ pub async fn ssh_search_file_contents(
     if use_ignore_files == Some(false) {
         args.push("--no-ignore".to_string());
     }
-    if follow_symlinks == Some(true) {
-        args.push("--follow".to_string());
-    }
+    // Deliberately ignore this option for SSH roots to preserve the root sandbox.
+    let _ = follow_symlinks;
+    args.push("--fixed-strings".to_string());
     for extension in extensions
         .or_else(|| extension.map(|value| vec![value]))
         .unwrap_or_default()
@@ -1521,6 +1810,462 @@ pub async fn ssh_git_pull(
     })
 }
 
+fn validate_commit_rev(rev: &str) -> Result<&str, String> {
+    let rev = rev.trim();
+    if rev.is_empty() || rev.len() > 64 || !rev.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err("无效的提交哈希".to_string());
+    }
+    Ok(rev)
+}
+
+fn validate_branch_name(branch: &str) -> Result<&str, String> {
+    let branch = branch.trim();
+    if branch.is_empty()
+        || branch.starts_with('-')
+        || branch.starts_with("refs/")
+        || branch.starts_with("remotes/")
+        || branch.contains("..")
+        || branch.contains(['\\', '\0', ' '])
+    {
+        return Err("无效的分支名".to_string());
+    }
+    Ok(branch)
+}
+
+#[tauri::command]
+pub async fn ssh_git_log(
+    path: String,
+    limit: Option<u32>,
+    skip: Option<u32>,
+    manager: State<'_, SshManager>,
+) -> Result<Vec<RemoteGitCommitInfo>, String> {
+    let limit = limit.unwrap_or(40).clamp(1, 100) as usize;
+    let skip = skip.unwrap_or(0).min(100_000) as usize;
+    let fetch = limit.saturating_add(skip).min(100_000);
+    let output = remote_git_command(
+        &manager,
+        &path,
+        vec![
+            "log".to_string(),
+            format!("-n{fetch}"),
+            "--format=%H%x00%h%x00%s%x00%an%x00%cI%x00%D".to_string(),
+        ],
+        false,
+    )
+    .await?;
+    if output.exit_code != 0 {
+        let error = output.stderr.to_ascii_lowercase();
+        if error.contains("does not have any commits")
+            || error.contains("bad revision")
+            || error.contains("unknown revision")
+            || error.contains("尚无任何提交")
+        {
+            return Ok(Vec::new());
+        }
+        return Err(format!("读取远程提交记录失败：{}", output.stderr.trim()));
+    }
+    let commits = output
+        .stdout
+        .lines()
+        .filter_map(|line| {
+            let parts = line.split('\0').collect::<Vec<_>>();
+            (parts.len() >= 5).then(|| RemoteGitCommitInfo {
+                hash: parts[0].to_string(),
+                short_hash: parts[1].to_string(),
+                subject: parts[2].to_string(),
+                author: parts[3].to_string(),
+                date: parts[4].trim().to_string(),
+                refs: parts.get(5).map_or("", |value| value.trim()).to_string(),
+            })
+        })
+        .skip(skip)
+        .take(limit)
+        .collect();
+    Ok(commits)
+}
+
+#[tauri::command]
+pub async fn ssh_git_branch_list(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<RemoteGitBranchList, String> {
+    let local_output = remote_git_command(
+        &manager,
+        &path,
+        vec![
+            "for-each-ref".to_string(),
+            "--format=%(refname:short)%09%(HEAD)%09%(upstream:short)".to_string(),
+            "refs/heads".to_string(),
+        ],
+        false,
+    )
+    .await?;
+    if local_output.exit_code != 0 {
+        return Err(format!("读取远程分支失败：{}", local_output.stderr.trim()));
+    }
+    let local = local_output
+        .stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let name = parts.next()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let current = parts.next().unwrap_or_default() == "*";
+            let upstream = parts.next().unwrap_or_default().trim();
+            Some(RemoteGitBranchInfo {
+                name: name.to_string(),
+                current,
+                upstream: (!upstream.is_empty()).then(|| upstream.to_string()),
+            })
+        })
+        .collect();
+    let remote_output = remote_git_command(
+        &manager,
+        &path,
+        vec![
+            "for-each-ref".to_string(),
+            "--format=%(refname:short)".to_string(),
+            "refs/remotes".to_string(),
+        ],
+        false,
+    )
+    .await?;
+    let remote = remote_output
+        .stdout
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.ends_with("/HEAD"))
+        .map(str::to_string)
+        .collect();
+    Ok(RemoteGitBranchList { local, remote })
+}
+
+#[tauri::command]
+pub async fn ssh_git_remotes(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<Vec<RemoteGitRemote>, String> {
+    let output = remote_git_command(
+        &manager,
+        &path,
+        vec!["remote".to_string(), "-v".to_string()],
+        false,
+    )
+    .await?;
+    if output.exit_code != 0 {
+        return Err(format!("读取远程地址失败：{}", output.stderr.trim()));
+    }
+    let mut order = Vec::new();
+    let mut remotes: HashMap<String, RemoteGitRemote> = HashMap::new();
+    for line in output.stdout.lines() {
+        let Some((name, rest)) = line.trim().split_once(['\t', ' ']) else {
+            continue;
+        };
+        let rest = rest.trim();
+        let (url, kind) = rest.rfind(" (").map_or((rest, ""), |index| {
+            (rest[..index].trim(), rest[index..].trim())
+        });
+        if name.is_empty() || url.is_empty() {
+            continue;
+        }
+        if !remotes.contains_key(name) {
+            order.push(name.to_string());
+            remotes.insert(
+                name.to_string(),
+                RemoteGitRemote {
+                    name: name.to_string(),
+                    fetch_url: None,
+                    push_urls: Vec::new(),
+                },
+            );
+        }
+        let remote = remotes.get_mut(name).expect("remote inserted");
+        if kind.contains("fetch") {
+            remote.fetch_url = Some(url.to_string());
+        } else if kind.contains("push") && !remote.push_urls.iter().any(|item| item == url) {
+            remote.push_urls.push(url.to_string());
+        }
+    }
+    Ok(order
+        .into_iter()
+        .filter_map(|name| remotes.remove(&name))
+        .collect())
+}
+
+#[tauri::command]
+pub async fn ssh_git_switch(
+    path: String,
+    branch: String,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    let branch = validate_branch_name(&branch)?.to_string();
+    let remote_ref = format!("refs/remotes/{branch}");
+    let local_ref = format!("refs/heads/{branch}");
+    let remote = remote_git_command(
+        &manager,
+        &path,
+        vec!["rev-parse".to_string(), "--verify".to_string(), remote_ref],
+        true,
+    )
+    .await?;
+    let local = remote_git_command(
+        &manager,
+        &path,
+        vec!["rev-parse".to_string(), "--verify".to_string(), local_ref],
+        true,
+    )
+    .await?;
+    let args = if remote.exit_code == 0 && local.exit_code != 0 {
+        vec!["switch".to_string(), "--track".to_string(), branch]
+    } else {
+        vec!["switch".to_string(), branch]
+    };
+    let output = remote_git_command(&manager, &path, args, true).await?;
+    if output.exit_code == 0 {
+        Ok(())
+    } else {
+        Err(format!("切换远程 Git 分支失败：{}", output.stderr.trim()))
+    }
+}
+
+#[tauri::command]
+pub async fn ssh_git_commit_files(
+    path: String,
+    rev: String,
+    manager: State<'_, SshManager>,
+) -> Result<Vec<RemoteGitCommitFileChange>, String> {
+    let rev = validate_commit_rev(&rev)?.to_string();
+    let output = remote_git_command(
+        &manager,
+        &path,
+        vec![
+            "show".to_string(),
+            "--name-status".to_string(),
+            "--pretty=format:".to_string(),
+            "--no-renames".to_string(),
+            rev,
+        ],
+        false,
+    )
+    .await?;
+    if output.exit_code != 0 {
+        return Err(format!("读取提交文件失败：{}", output.stderr.trim()));
+    }
+    Ok(output
+        .stdout
+        .lines()
+        .filter_map(|line| {
+            let (status, file) = line.split_once('\t')?;
+            let status = status.chars().next()?.to_string();
+            (!file.trim().is_empty()).then(|| RemoteGitCommitFileChange {
+                status,
+                path: file.trim().to_string(),
+                previous_path: None,
+            })
+        })
+        .collect())
+}
+
+async fn remote_git_show(
+    manager: &SshManager,
+    path: &str,
+    revision: &str,
+    file: &str,
+) -> Result<String, String> {
+    let spec = format!("{revision}:{file}");
+    let output = remote_git_command(
+        manager,
+        path,
+        vec!["show".to_string(), "--textconv".to_string(), spec],
+        false,
+    )
+    .await?;
+    Ok(if output.exit_code == 0 {
+        output.stdout
+    } else {
+        String::new()
+    })
+}
+
+#[tauri::command]
+pub async fn ssh_git_commit_file_contents(
+    path: String,
+    rev: String,
+    file: String,
+    manager: State<'_, SshManager>,
+) -> Result<RemoteGitFileContents, String> {
+    let rev = validate_commit_rev(&rev)?.to_string();
+    let file = remote_git_file(&path, &file)?;
+    Ok(RemoteGitFileContents {
+        original: remote_git_show(&manager, &path, &format!("{rev}^"), &file).await?,
+        modified: remote_git_show(&manager, &path, &rev, &file).await?,
+    })
+}
+
+#[tauri::command]
+pub async fn ssh_git_file_contents(
+    path: String,
+    file: String,
+    manager: State<'_, SshManager>,
+) -> Result<RemoteGitFileContents, String> {
+    let file = remote_git_file(&path, &file)?;
+    let file_uri = join_remote_uri(&path, &file);
+    let modified = match manager.sftp_for_uri(&file_uri, false).await {
+        Ok((sftp, parsed, root)) => {
+            ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+            let metadata = sftp.metadata(parsed.path.clone()).await.ok();
+            if metadata
+                .as_ref()
+                .is_some_and(|value| value.len() > MAX_DIFF_BYTES)
+            {
+                format!("… 文件过大，已跳过内容（最多 {MAX_DIFF_BYTES} bytes）\n")
+            } else {
+                match sftp.read(parsed.path).await {
+                    Ok(bytes) => file_encoding::decode(&bytes, file_encoding::FileEncoding::Auto)
+                        .unwrap_or_default(),
+                    Err(_) => String::new(),
+                }
+            }
+        }
+        Err(_) => String::new(),
+    };
+    Ok(RemoteGitFileContents {
+        original: remote_git_show(&manager, &path, "HEAD", &file).await?,
+        modified,
+    })
+}
+
+#[tauri::command]
+pub async fn ssh_git_show_head_file(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<Option<String>, String> {
+    let root = manager.root_for_uri(&path, false)?;
+    let file = remote_git_file(&root.uri, &path)?;
+    let content = remote_git_show(&manager, &root.uri, "HEAD", &file).await?;
+    Ok((!content.is_empty()).then_some(content))
+}
+
+#[tauri::command]
+pub async fn ssh_git_discard(
+    path: String,
+    files: Vec<String>,
+    staged: bool,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    for file in files {
+        let file = remote_git_file(&path, &file)?;
+        let status_output = remote_git_command(
+            &manager,
+            &path,
+            vec![
+                "status".to_string(),
+                "--porcelain=v1".to_string(),
+                "--".to_string(),
+                file.clone(),
+            ],
+            true,
+        )
+        .await?;
+        let status = status_output.stdout.get(..2).unwrap_or_default();
+        let args = if status == "??" {
+            vec![
+                "clean".to_string(),
+                "-f".to_string(),
+                "--".to_string(),
+                file,
+            ]
+        } else if staged && status.starts_with('A') {
+            let unstage = remote_git_command(
+                &manager,
+                &path,
+                vec![
+                    "rm".to_string(),
+                    "-f".to_string(),
+                    "--cached".to_string(),
+                    "--".to_string(),
+                    file.clone(),
+                ],
+                true,
+            )
+            .await?;
+            if unstage.exit_code != 0 {
+                return Err(format!("丢弃远程 Git 更改失败：{}", unstage.stderr.trim()));
+            }
+            vec![
+                "clean".to_string(),
+                "-f".to_string(),
+                "--".to_string(),
+                file,
+            ]
+        } else if staged {
+            vec![
+                "restore".to_string(),
+                "--source=HEAD".to_string(),
+                "--staged".to_string(),
+                "--worktree".to_string(),
+                "--".to_string(),
+                file,
+            ]
+        } else {
+            vec![
+                "restore".to_string(),
+                "--worktree".to_string(),
+                "--".to_string(),
+                file,
+            ]
+        };
+        let output = remote_git_command(&manager, &path, args, true).await?;
+        if output.exit_code != 0 {
+            return Err(format!("丢弃远程 Git 更改失败：{}", output.stderr.trim()));
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn ssh_format_document(
+    path: String,
+    content: String,
+    manager: State<'_, SshManager>,
+) -> Result<String, String> {
+    let parsed = parse_remote_uri(&path)?;
+    let root = manager.root_for_uri(&path, true)?;
+    let extension = parsed
+        .path
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .unwrap_or_default();
+    let prettier = format!(
+        "cd -- {} && if [ -x node_modules/.bin/prettier ]; then exec node_modules/.bin/prettier --stdin-filepath {}; elif command -v prettier >/dev/null 2>&1; then exec prettier --stdin-filepath {}; else echo '未找到 prettier（项目 node_modules 或远端 PATH）' >&2; exit 127; fi",
+        shell_quote(&root.canonical_path),
+        shell_quote(&parsed.path),
+        shell_quote(&parsed.path)
+    );
+    let command = match extension.as_str() {
+        "js" | "jsx" | "ts" | "tsx" | "json" | "json5" | "css" | "scss" | "less"
+        | "html" | "vue" | "svelte" | "md" | "yaml" | "yml" => prettier,
+        "rs" => "command -v rustfmt >/dev/null 2>&1 && exec rustfmt --emit stdout || { echo '远端未安装 rustfmt' >&2; exit 127; }".to_string(),
+        "go" => "command -v gofmt >/dev/null 2>&1 && exec gofmt || { echo '远端未安装 gofmt' >&2; exit 127; }".to_string(),
+        "sh" | "bash" | "zsh" => "command -v shfmt >/dev/null 2>&1 && exec shfmt || { echo '远端未安装 shfmt' >&2; exit 127; }".to_string(),
+        "py" => format!(
+            "if command -v ruff >/dev/null 2>&1; then exec ruff format --stdin-filename {} -; elif command -v black >/dev/null 2>&1; then exec black --quiet -; else echo '远端未安装 ruff 或 black' >&2; exit 127; fi",
+            shell_quote(&parsed.path)
+        ),
+        _ => return Err(format!("暂不支持格式化 .{extension} 远程文件")),
+    };
+    let output = manager
+        .exec_uri_with_input(&path, &command, content.as_bytes(), true)
+        .await?;
+    if output.exit_code == 0 {
+        Ok(output.stdout)
+    } else {
+        Err(format!("远程格式化失败：{}", output.stderr.trim()))
+    }
+}
+
 async fn spawn_ssh_terminal(
     id: String,
     cwd: String,
@@ -1748,5 +2493,24 @@ mod tests {
     #[test]
     fn shell_quote_escapes_single_quotes() {
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn simple_globs_cover_extensions_and_nested_directories() {
+        assert!(simple_glob_matches("*.map", "dist/app.js.map"));
+        assert!(simple_glob_matches(
+            "**/node_modules/**",
+            "packages/app/node_modules/lib/index.js"
+        ));
+        assert!(!simple_glob_matches("*.map", "src/app.ts"));
+    }
+
+    #[test]
+    fn git_inputs_reject_command_like_values() {
+        assert!(validate_commit_rev("abc123").is_ok());
+        assert!(validate_commit_rev("HEAD; rm -rf /").is_err());
+        assert!(validate_branch_name("feature/ssh").is_ok());
+        assert!(validate_branch_name("--exec=evil").is_err());
+        assert!(validate_branch_name("refs/heads/main").is_err());
     }
 }

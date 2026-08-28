@@ -12,6 +12,7 @@ import ChoiceDialog from './components/ChoiceDialog'
 import PromptDialog from './components/PromptDialog'
 import ExplorerConflictDialog from './components/ExplorerConflictDialog'
 import PropertiesDialog from './components/PropertiesDialog'
+import SshReconnectDialog from './components/SshReconnectDialog'
 import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
 import WorkspaceSymbolPicker from './components/WorkspaceSymbolPicker'
@@ -443,6 +444,7 @@ function App() {
       <PromptDialog />
       <ExplorerConflictDialog />
       <PropertiesDialog />
+      <SshReconnectDialog />
       <CommandPalette />
       <SymbolPicker />
       <WorkspaceSymbolPicker />

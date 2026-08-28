@@ -37,6 +37,8 @@ import {
   ClipboardCopy,
   BookmarkPlus,
   BookmarkMinus,
+  Download,
+  Upload,
 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useProjectStore, type FileNode } from '../store/projectStore'
@@ -44,7 +46,7 @@ import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
-import { safeInvoke } from '../lib/tauri'
+import { isSshResource, safeInvoke } from '../lib/tauri'
 import { openGitCompareWithHead } from '@/lib/git/gitCompare'
 import { confirmDialog } from '../store/confirmStore'
 import {
@@ -53,6 +55,7 @@ import {
 } from '../utils/explorerNameConflict'
 import { showPropertiesDialog } from '../store/propertiesStore'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { open } from '@tauri-apps/plugin-dialog'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import InlineCreateRow from './InlineCreateRow'
 import type { Project } from '../types'
@@ -110,6 +113,8 @@ import {
   EXPLORER_HEADING_LABEL,
   EXPLORER_HEADING_ROW,
 } from './explorerLayout'
+import { authorizePaths } from '../lib/pathAllowlist'
+import { requestSshReconnect } from '../lib/sshWorkspace'
 
 type DirectoryDeleteStats = {
   path: string
@@ -118,9 +123,7 @@ type DirectoryDeleteStats = {
 }
 
 type ContextTarget =
-  | { kind: 'project'; project: Project }
-  | { kind: 'node'; node: FileNode }
-  | { kind: 'empty' }
+  { kind: 'project'; project: Project } | { kind: 'node'; node: FileNode } | { kind: 'empty' }
 
 function parentPath(path: string) {
   const separator = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -134,7 +137,7 @@ const EMPTY_TREE: FileNode[] = []
 /** Hit-test explorer drop targets (pointer DnD; avoids flaky HTML5 DnD in WebView2). */
 function resolveExplorerDropFromPoint(
   clientX: number,
-  clientY: number,
+  clientY: number
 ): { path: string; isDir: boolean } | null {
   const el = document.elementFromPoint(clientX, clientY)
   const row = el?.closest(`[${EXPLORER_DROP_ATTR}]`) as HTMLElement | null
@@ -193,9 +196,7 @@ export default function Sidebar() {
   /** Primary selection (keyboard / range anchor). */
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set())
-  const [clipboard, setClipboard] = useState<{ mode: 'cut' | 'copy'; paths: string[] } | null>(
-    null,
-  )
+  const [clipboard, setClipboard] = useState<{ mode: 'cut' | 'copy'; paths: string[] } | null>(null)
   const [dragOverPath, setDragOverPath] = useState<string | null>(null)
   const [draggingPaths, setDraggingPaths] = useState<Set<string>>(() => new Set())
   const [dragGhost, setDragGhost] = useState<{
@@ -220,14 +221,14 @@ export default function Sidebar() {
   const treeLoaded = currentProject
     ? Object.prototype.hasOwnProperty.call(projectTrees, currentProject.id)
     : false
-  const tree = currentProject ? projectTrees[currentProject.id] ?? EMPTY_TREE : EMPTY_TREE
+  const tree = currentProject ? (projectTrees[currentProject.id] ?? EMPTY_TREE) : EMPTY_TREE
   const visibleTreeRows = useMemo(
     () => flattenVisibleNodes(tree, expandedPaths, pendingCreate, pendingRename),
-    [expandedPaths, pendingCreate, pendingRename, tree],
+    [expandedPaths, pendingCreate, pendingRename, tree]
   )
   const cutPaths = useMemo(
     () => new Set(clipboard?.mode === 'cut' ? clipboard.paths : []),
-    [clipboard],
+    [clipboard]
   )
   const isProjectRootSelected =
     !!currentProject && selectedPath != null && pathsEqual(selectedPath, currentProject.path)
@@ -247,12 +248,7 @@ export default function Sidebar() {
   }, [currentProject?.id, replaceSelection])
 
   useEffect(() => {
-    const paths =
-      selectedPaths.size > 0
-        ? [...selectedPaths]
-        : selectedPath
-          ? [selectedPath]
-          : []
+    const paths = selectedPaths.size > 0 ? [...selectedPaths] : selectedPath ? [selectedPath] : []
     setExplorerSelectedPaths(paths)
     const selectedNode = selectedPath ? findNodeByPath(tree, selectedPath) : null
     const selectedDirectory =
@@ -273,7 +269,8 @@ export default function Sidebar() {
   }, [treeRevealPath, treeRevealSeq, replaceSelection])
 
   useEffect(() => {
-    if (!currentProject || !treeRevealPath || !isDescendantOf(treeRevealPath, currentProject.path)) return
+    if (!currentProject || !treeRevealPath || !isDescendantOf(treeRevealPath, currentProject.path))
+      return
     if (pathsEqual(treeRevealPath, currentProject.path)) return
 
     const ancestors = collectAncestorDirs(treeRevealPath, currentProject.path)
@@ -281,7 +278,9 @@ export default function Sidebar() {
     const toExpand = [
       ...ancestors.map(path => findNodeByPath(tree, path)?.path ?? path),
       ...(target?.is_dir ? [target.path] : []),
-    ].filter(path => isDescendantOf(path, currentProject.path) || pathsEqual(path, currentProject.path))
+    ].filter(
+      path => isDescendantOf(path, currentProject.path) || pathsEqual(path, currentProject.path)
+    )
     if (toExpand.length === 0) return
 
     queueMicrotask(() =>
@@ -289,7 +288,7 @@ export default function Sidebar() {
         let next = existing
         for (const path of toExpand) next = addPathToSet(next, path)
         return next === existing ? existing : new Set(next)
-      }),
+      })
     )
 
     if (target?.is_dir && !target.loaded) {
@@ -306,7 +305,7 @@ export default function Sidebar() {
           next = addPathToSet(next, path)
         }
         return next === existing ? existing : new Set(next)
-      }),
+      })
     )
   }, [currentProject, pendingCreate])
 
@@ -320,7 +319,7 @@ export default function Sidebar() {
       visibleTreeRows,
       treeRevealPath,
       currentProject.path,
-      pendingCreate,
+      pendingCreate
     )
     if (targetIndex == null || visibleTreeRows.length === 0) return
 
@@ -360,7 +359,7 @@ export default function Sidebar() {
         })
       }
     },
-    [currentProject, expandedPaths, expandProjectDir],
+    [currentProject, expandedPaths, expandProjectDir]
   )
 
   const selectTreeNode = useCallback(
@@ -406,7 +405,7 @@ export default function Sidebar() {
 
       replaceSelection(node.path)
     },
-    [replaceSelection, selectedPath, visibleTreeRows],
+    [replaceSelection, selectedPath, visibleTreeRows]
   )
 
   const scrollTreeRowIntoView = useCallback(
@@ -416,7 +415,7 @@ export default function Sidebar() {
         listRef.current?.scrollToRow({ index, align: 'smart', behavior: 'auto' })
       }
     },
-    [visibleTreeRows],
+    [visibleTreeRows]
   )
 
   const openTreeNode = useCallback(
@@ -429,14 +428,19 @@ export default function Sidebar() {
       }
       void useEditorStore.getState().openFile(node.path)
     },
-    [toggleFolderExpand],
+    [toggleFolderExpand]
   )
 
   const handleTreeKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
       if (visibleTreeRows.length === 0) return
 
-      if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Home' || event.key === 'End') {
+      if (
+        event.key === 'ArrowDown' ||
+        event.key === 'ArrowUp' ||
+        event.key === 'Home' ||
+        event.key === 'End'
+      ) {
         event.preventDefault()
         const direction =
           event.key === 'ArrowDown'
@@ -489,7 +493,7 @@ export default function Sidebar() {
       openTreeNode,
       toggleFolderExpand,
       visibleTreeRows,
-    ],
+    ]
   )
 
   const handleLocateActiveFile = () => {
@@ -531,7 +535,9 @@ export default function Sidebar() {
     try {
       await openPath(path)
     } catch (e) {
-      useProjectStore.getState().pushToast('error', t('打开项目目录失败: {error}', { error: String(e) }))
+      useProjectStore
+        .getState()
+        .pushToast('error', t('打开项目目录失败: {error}', { error: String(e) }))
     }
   }
 
@@ -551,7 +557,10 @@ export default function Sidebar() {
     const norm = path.replace(/\\/g, '/')
     return useProjectStore
       .getState()
-      .projects.find(p => norm === p.path.replace(/\\/g, '/') || norm.startsWith(p.path.replace(/\\/g, '/') + '/'))
+      .projects.find(
+        p =>
+          norm === p.path.replace(/\\/g, '/') || norm.startsWith(p.path.replace(/\\/g, '/') + '/')
+      )
   }
 
   const openTerminalHere = async (cwd: string) => {
@@ -576,10 +585,9 @@ export default function Sidebar() {
     try {
       await moveFavoritePath(project, oldPath, newPath)
     } catch (error) {
-      useProjectStore.getState().pushToast(
-        'error',
-        t('更新收藏夹失败: {error}', { error: String(error) }),
-      )
+      useProjectStore
+        .getState()
+        .pushToast('error', t('更新收藏夹失败: {error}', { error: String(error) }))
     }
   }
 
@@ -587,10 +595,9 @@ export default function Sidebar() {
     try {
       await removeFavoritePath(project, path)
     } catch (error) {
-      useProjectStore.getState().pushToast(
-        'error',
-        t('更新收藏夹失败: {error}', { error: String(error) }),
-      )
+      useProjectStore
+        .getState()
+        .pushToast('error', t('更新收藏夹失败: {error}', { error: String(error) }))
     }
   }
 
@@ -640,7 +647,9 @@ export default function Sidebar() {
         { parent: parentPath, name }
       )
       await refreshDirectory(parentPath)
-      useProjectStore.getState().pushToast('success', t('已新建{kind}: {name}', { kind: label, name }))
+      useProjectStore
+        .getState()
+        .pushToast('success', t('已新建{kind}: {name}', { kind: label, name }))
       if (!directory) await useEditorStore.getState().openFile(path)
     } catch (e) {
       useProjectStore.getState().pushToast('error', `${String(e)}`)
@@ -732,10 +741,9 @@ export default function Sidebar() {
         .getState()
         .pushToast('success', t('已复制文件到剪贴板（{count} 项）', { count: paths.length }))
     } catch (error) {
-      useProjectStore.getState().pushToast(
-        'error',
-        t('复制文件到剪贴板失败：{error}', { error: String(error) }),
-      )
+      useProjectStore
+        .getState()
+        .pushToast('error', t('复制文件到剪贴板失败：{error}', { error: String(error) }))
     }
   }
 
@@ -751,7 +759,7 @@ export default function Sidebar() {
   const transferExplorerPaths = async (
     paths: string[],
     destDir: string,
-    mode: 'cut' | 'copy',
+    mode: 'cut' | 'copy'
   ): Promise<number> => {
     let ok = 0
     const parentsToRefresh = new Set<string>([destDir])
@@ -828,9 +836,7 @@ export default function Sidebar() {
       const ok = await transferExplorerPaths(paths, destDir, mode)
       if (mode === 'cut') setClipboard(null)
       if (ok > 0) {
-        useProjectStore
-          .getState()
-          .pushToast('success', t('已粘贴 {count} 项', { count: ok }))
+        useProjectStore.getState().pushToast('success', t('已粘贴 {count} 项', { count: ok }))
       }
     } catch (e) {
       useProjectStore.getState().pushToast('error', t('粘贴失败: {error}', { error: String(e) }))
@@ -892,8 +898,7 @@ export default function Sidebar() {
       }
 
       const target = resolveExplorerDropFromPoint(moveEvent.clientX, moveEvent.clientY)
-      const invalid =
-        !target || session.paths.some(p => pathsEqual(p, target.path))
+      const invalid = !target || session.paths.some(p => pathsEqual(p, target.path))
       if (invalid) {
         setDragOverPath(null)
         setDragGhost({
@@ -959,10 +964,11 @@ export default function Sidebar() {
   const handleDeleteNode = async (node: FileNode) => {
     const confirmed = await confirmDialog({
       title: t('永久删除'),
-      message: t('确定永久删除{kind}「{name}」？', { kind: node.is_dir ? t('文件夹') : t('文件'), name: node.name }),
-      detail: node.is_dir
-        ? t('文件夹内的全部内容都会被删除，且无法撤销。')
-        : t('此操作无法撤销。'),
+      message: t('确定永久删除{kind}「{name}」？', {
+        kind: node.is_dir ? t('文件夹') : t('文件'),
+        name: node.name,
+      }),
+      detail: node.is_dir ? t('文件夹内的全部内容都会被删除，且无法撤销。') : t('此操作无法撤销。'),
       kind: 'danger',
       confirmLabel: t('删除'),
       cancelLabel: t('取消'),
@@ -972,9 +978,13 @@ export default function Sidebar() {
     if (node.is_dir) {
       let detail = t('路径：{path}', { path: node.path })
       try {
-        const stats = await safeInvoke<DirectoryDeleteStats>('统计文件夹', 'directory_delete_stats', {
-          path: node.path,
-        })
+        const stats = await safeInvoke<DirectoryDeleteStats>(
+          '统计文件夹',
+          'directory_delete_stats',
+          {
+            path: node.path,
+          }
+        )
         detail = [
           t('路径：{path}', { path: stats.path || node.path }),
           t('包含 {count} 个文件（约 {size}）', {
@@ -1014,11 +1024,66 @@ export default function Sidebar() {
   }
 
   const revealNode = async (node: FileNode) => {
+    if (isSshResource(node.path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       if (node.is_dir) await openPath(node.path)
       else await revealItemInDir(node.path)
     } catch (e) {
-      useProjectStore.getState().pushToast('error', t('在文件管理器中打开失败: {error}', { error: String(e) }))
+      useProjectStore
+        .getState()
+        .pushToast('error', t('在文件管理器中打开失败: {error}', { error: String(e) }))
+    }
+  }
+
+  const uploadToRemote = async (destination: string, directory = false) => {
+    const selected = await open({
+      directory,
+      multiple: !directory,
+      title: directory ? t('选择要上传的文件夹') : t('选择要上传的文件'),
+    })
+    const paths = Array.isArray(selected)
+      ? selected
+      : typeof selected === 'string'
+        ? [selected]
+        : []
+    if (paths.length === 0) return
+    try {
+      await authorizePaths(paths)
+      await safeInvoke('上传到 SSH 项目', 'ssh_upload_paths', {
+        destination,
+        localPaths: paths,
+      })
+      await refreshDirectory(destination)
+      useProjectStore
+        .getState()
+        .pushToast('success', t('已上传 {count} 项', { count: paths.length }))
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('上传失败：{error}', { error: String(error) }))
+    }
+  }
+
+  const downloadFromRemote = async (paths: string[]) => {
+    const destination = await open({
+      directory: true,
+      multiple: false,
+      title: t('选择下载目录'),
+    })
+    if (typeof destination !== 'string') return
+    try {
+      await authorizePaths([destination])
+      await safeInvoke('下载 SSH 文件', 'ssh_download_paths', { paths, destination })
+      useProjectStore
+        .getState()
+        .pushToast('success', t('已下载 {count} 项', { count: paths.length }))
+    } catch (error) {
+      useProjectStore
+        .getState()
+        .pushToast('error', t('下载失败：{error}', { error: String(error) }))
     }
   }
 
@@ -1089,11 +1154,33 @@ export default function Sidebar() {
           disabled: unavailable,
           action: () => activateThen(() => startCreateEntry(project.path, true, project.id)),
         },
+        ...(project.kind === 'ssh'
+          ? [
+              {
+                label: t('上传文件到此处'),
+                icon: <Upload size={14} />,
+                disabled: unavailable,
+                action: () => void uploadToRemote(project.path),
+              },
+              {
+                label: t('上传文件夹到此处'),
+                icon: <Upload size={14} />,
+                disabled: unavailable,
+                action: () => void uploadToRemote(project.path, true),
+              },
+              {
+                label: t('下载项目'),
+                icon: <Download size={14} />,
+                disabled: unavailable,
+                action: () => void downloadFromRemote([project.path]),
+              },
+            ]
+          : []),
         {
           label: t('粘贴'),
           icon: <ClipboardPaste size={14} />,
           shortcut: 'Ctrl+V',
-          disabled: unavailable || !clipboard,
+          disabled: unavailable || !clipboard || project.kind === 'ssh',
           action: () => void pasteExplorerClipboard(project.path),
         },
         {
@@ -1106,7 +1193,7 @@ export default function Sidebar() {
         {
           label: t('在文件管理器中打开'),
           icon: <ExternalLink size={14} />,
-          disabled: unavailable,
+          disabled: unavailable || project.kind === 'ssh',
           action: () => handleOpenProject(project.path),
         },
         {
@@ -1140,9 +1227,12 @@ export default function Sidebar() {
           action: () => renameProjectWithPrompt(project.id, project.name),
         },
         {
-          label: t('重新定位项目'),
+          label: project.kind === 'ssh' ? t('重新连接') : t('重新定位项目'),
           icon: <LocateFixed size={14} />,
-          action: () => handleRelocateProject(project.id),
+          action: () =>
+            project.kind === 'ssh'
+              ? requestSshReconnect(project)
+              : handleRelocateProject(project.id),
         },
         {
           label: t('从顶栏隐藏'),
@@ -1161,15 +1251,13 @@ export default function Sidebar() {
     const node = target.node
     const parent = node.is_dir ? node.path : parentPath(node.path)
     const project = projectOfPath(parent)
-    const relativeFavoritePath = project
-      ? favoriteRelativePath(project.path, node.path)
-      : null
+    const relativeFavoritePath = project ? favoriteRelativePath(project.path, node.path) : null
     const favorite = relativeFavoritePath
       ? (favoriteItemsByProject[project?.id ?? ''] ?? []).find(
           item =>
             project &&
             favoriteRelativePathKey(project.path, item.relativePath) ===
-              favoriteRelativePathKey(project.path, relativeFavoritePath),
+              favoriteRelativePathKey(project.path, relativeFavoritePath)
         )
       : undefined
     return [
@@ -1232,10 +1320,9 @@ export default function Sidebar() {
                   separatorBefore: true,
                   action: () =>
                     void removeFavorite(project, favorite.relativePath).catch(error => {
-                      useProjectStore.getState().pushToast(
-                        'error',
-                        t('更新收藏夹失败: {error}', { error: String(error) }),
-                      )
+                      useProjectStore
+                        .getState()
+                        .pushToast('error', t('更新收藏夹失败: {error}', { error: String(error) }))
                     }),
                 }
               : {
@@ -1243,17 +1330,42 @@ export default function Sidebar() {
                   icon: <BookmarkPlus size={14} />,
                   separatorBefore: true,
                   action: () =>
-                    void addFavorite(
-                      project,
-                      node.path,
-                      node.is_dir ? 'directory' : 'file',
-                    ).catch(error => {
-                      useProjectStore.getState().pushToast(
-                        'error',
-                        t('更新收藏夹失败: {error}', { error: String(error) }),
-                      )
-                    }),
+                    void addFavorite(project, node.path, node.is_dir ? 'directory' : 'file').catch(
+                      error => {
+                        useProjectStore
+                          .getState()
+                          .pushToast(
+                            'error',
+                            t('更新收藏夹失败: {error}', { error: String(error) })
+                          )
+                      }
+                    ),
                 },
+          ]
+        : []),
+      ...(isSshResource(node.path)
+        ? [
+            ...(node.is_dir
+              ? [
+                  {
+                    label: t('上传文件到此处'),
+                    icon: <Upload size={14} />,
+                    separatorBefore: true,
+                    action: () => void uploadToRemote(node.path),
+                  },
+                  {
+                    label: t('上传文件夹到此处'),
+                    icon: <Upload size={14} />,
+                    action: () => void uploadToRemote(node.path, true),
+                  },
+                ]
+              : []),
+            {
+              label: node.is_dir ? t('下载文件夹') : t('下载文件'),
+              icon: <Download size={14} />,
+              separatorBefore: !node.is_dir,
+              action: () => void downloadFromRemote(pathsForClipboardAction(node.path)),
+            },
           ]
         : []),
       {
@@ -1261,24 +1373,27 @@ export default function Sidebar() {
         icon: <Scissors size={14} />,
         shortcut: 'Ctrl+X',
         separatorBefore: true,
+        disabled: isSshResource(node.path),
         action: () => cutExplorerPaths(node.path),
       },
       {
         label: t('复制'),
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+C',
+        disabled: isSshResource(node.path),
         action: () => copyExplorerPaths(node.path),
       },
       {
         label: t('复制文件到剪贴板'),
         icon: <ClipboardCopy size={14} />,
+        disabled: isSshResource(node.path),
         action: () => void copyFilesToSystemClipboard(node.path),
       },
       {
         label: t('粘贴'),
         icon: <ClipboardPaste size={14} />,
         shortcut: 'Ctrl+V',
-        disabled: !clipboard,
+        disabled: !clipboard || isSshResource(node.path),
         action: () => void pasteExplorerClipboard(node.is_dir ? node.path : parent),
       },
       {
@@ -1310,11 +1425,13 @@ export default function Sidebar() {
         label: t('显示属性'),
         icon: <Info size={14} />,
         separatorBefore: true,
+        disabled: isSshResource(node.path),
         action: () => showEntryProperties(node.path, node.name, node.is_dir),
       },
       {
         label: node.is_dir ? t('在文件管理器中打开') : t('在文件管理器中显示'),
         icon: <ExternalLink size={14} />,
+        disabled: isSshResource(node.path),
         action: () => revealNode(node),
       },
       {
@@ -1328,53 +1445,53 @@ export default function Sidebar() {
   }
 
   const handleExplorerKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (pendingRename || pendingCreate) return
-      if ((event.ctrlKey || event.metaKey) && !event.altKey) {
-        const key = event.key.toLowerCase()
-        if (key === 'x') {
-          event.preventDefault()
-          cutExplorerPaths()
-          return
-        }
-        if (key === 'c' && !event.shiftKey) {
-          event.preventDefault()
-          copyExplorerPaths()
-          return
-        }
-        if (key === 'v') {
-          event.preventDefault()
-          void pasteExplorerClipboard()
-          return
-        }
-      }
-      if (shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)) {
-        const paths = pathsForClipboardAction()
-        if (paths.length === 0) return
+    if (pendingRename || pendingCreate) return
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      const key = event.key.toLowerCase()
+      if (key === 'x') {
         event.preventDefault()
-        void copyPathAction(paths)
+        cutExplorerPaths()
         return
       }
-      if (shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event.nativeEvent)) {
-        const paths = pathsForClipboardAction()
-        if (paths.length === 0) return
+      if (key === 'c' && !event.shiftKey) {
         event.preventDefault()
-        void copyRelativePathAction(paths)
+        copyExplorerPaths()
         return
       }
-      if (shortcutMatchesEvent('Alt+C', event.nativeEvent)) {
-        const paths = pathsForClipboardAction()
-        if (paths.length === 0) return
+      if (key === 'v') {
         event.preventDefault()
-        void copyFileReferenceAction(paths)
+        void pasteExplorerClipboard()
         return
       }
-      if (selectedPath && shortcutMatchesEvent(renameShortcut, event.nativeEvent)) {
-        const node = findNodeByPath(tree, selectedPath)
-        if (!node) return
-        event.preventDefault()
-        startInlineRename(node)
-        return
-      }
+    }
+    if (shortcutMatchesEvent('Ctrl+Shift+C', event.nativeEvent)) {
+      const paths = pathsForClipboardAction()
+      if (paths.length === 0) return
+      event.preventDefault()
+      void copyPathAction(paths)
+      return
+    }
+    if (shortcutMatchesEvent(COPY_RELATIVE_PATH_SHORTCUT, event.nativeEvent)) {
+      const paths = pathsForClipboardAction()
+      if (paths.length === 0) return
+      event.preventDefault()
+      void copyRelativePathAction(paths)
+      return
+    }
+    if (shortcutMatchesEvent('Alt+C', event.nativeEvent)) {
+      const paths = pathsForClipboardAction()
+      if (paths.length === 0) return
+      event.preventDefault()
+      void copyFileReferenceAction(paths)
+      return
+    }
+    if (selectedPath && shortcutMatchesEvent(renameShortcut, event.nativeEvent)) {
+      const node = findNodeByPath(tree, selectedPath)
+      if (!node) return
+      event.preventDefault()
+      startInlineRename(node)
+      return
+    }
     handleTreeKeyDown(event)
   }
 
@@ -1409,9 +1526,7 @@ export default function Sidebar() {
               disabled={!activeTabPath}
               aria-label={t('在侧边栏定位当前文件')}
               className={`p-1 rounded transition-colors flex-shrink-0
-              ${!activeTabPath
-                ? 'opacity-40'
-                : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
+              ${!activeTabPath ? 'opacity-40' : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
             >
               <LocateFixed size={13} />
             </button>
@@ -1424,9 +1539,7 @@ export default function Sidebar() {
               aria-label={t('刷新')}
               aria-busy={refreshing}
               className={`p-1 rounded transition-colors flex-shrink-0
-              ${!currentProject
-                ? 'opacity-40'
-                : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
+              ${!currentProject ? 'opacity-40' : 'text-fg-dim hover:text-fg hover:bg-bg-hover'}`}
             >
               <RefreshCw
                 size={13}
@@ -1468,8 +1581,7 @@ export default function Sidebar() {
                     dragOverPath != null && pathsEqual(dragOverPath, currentProject.path)
                       ? {
                           boxShadow: 'inset 3px 0 0 var(--color-accent)',
-                          background:
-                            'color-mix(in srgb, var(--color-accent) 28%, transparent)',
+                          background: 'color-mix(in srgb, var(--color-accent) 28%, transparent)',
                         }
                       : undefined
                   }
@@ -1494,7 +1606,9 @@ export default function Sidebar() {
                       side="bottom"
                       wrapperClassName="flex min-w-0 items-center"
                     >
-                      <span className={`${EXPLORER_HEADING_LABEL} font-medium`}>{currentProject.name}</span>
+                      <span className={`${EXPLORER_HEADING_LABEL} font-medium`}>
+                        {currentProject.name}
+                      </span>
                     </Tooltip>
                   </span>
                   <span className="flex shrink-0 items-center">
@@ -1565,7 +1679,7 @@ export default function Sidebar() {
                               handleRemoveProject(
                                 currentProject.id,
                                 currentProject.name,
-                                currentProject.path,
+                                currentProject.path
                               )
                             }}
                           >
@@ -1600,14 +1714,12 @@ export default function Sidebar() {
                         />
                       )}
                       {!treeLoaded && pendingCreate?.parentPath !== currentProject.path && (
-                        <div
-                          className="px-4 py-2 text-[12px] text-fg-muted"
-                          aria-live="polite"
-                        >
+                        <div className="px-4 py-2 text-[12px] text-fg-muted" aria-live="polite">
                           {t('正在加载文件树…')}
                         </div>
                       )}
-                      {treeLoaded && tree.length === 0 &&
+                      {treeLoaded &&
+                        tree.length === 0 &&
                         pendingCreate?.parentPath !== currentProject.path && (
                           <div className="px-4 py-2 text-[12px] text-fg-muted">{t('空文件夹')}</div>
                         )}
@@ -1684,7 +1796,7 @@ export default function Sidebar() {
           >
             {dragGhost.label}
           </div>,
-          document.body,
+          document.body
         )}
     </div>
   )

@@ -20,6 +20,12 @@ export interface SshRuntimeConfig {
   hostKeyFingerprint?: string
 }
 
+export const SSH_RECONNECT_REQUEST_EVENT = 'qingcode:ssh-reconnect-request'
+
+export function requestSshReconnect(project: Project): void {
+  window.dispatchEvent(new CustomEvent<Project>(SSH_RECONNECT_REQUEST_EVENT, { detail: project }))
+}
+
 export function sshRootUri(connectionId: string, rootPath: string): string {
   const normalized =
     `/${rootPath.trim().replace(/\\/g, '/').replace(/^\/+/, '')}`.replace(/\/+$/, '') || '/'

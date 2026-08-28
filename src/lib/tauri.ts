@@ -19,12 +19,22 @@ const SSH_COMMANDS: Partial<Record<string, string>> = {
   search_files: 'ssh_search_files',
   search_file_contents: 'ssh_search_file_contents',
   git_status: 'ssh_git_status',
+  git_log: 'ssh_git_log',
+  git_branch_list: 'ssh_git_branch_list',
+  git_remotes: 'ssh_git_remotes',
+  git_switch: 'ssh_git_switch',
+  git_commit_files: 'ssh_git_commit_files',
+  git_commit_file_contents: 'ssh_git_commit_file_contents',
+  git_file_contents: 'ssh_git_file_contents',
+  git_show_head_file: 'ssh_git_show_head_file',
+  git_discard: 'ssh_git_discard',
   git_stage: 'ssh_git_stage',
   git_unstage: 'ssh_git_unstage',
   git_commit: 'ssh_git_commit',
   git_push: 'ssh_git_push',
   git_fetch: 'ssh_git_fetch',
   git_pull: 'ssh_git_pull',
+  format_document: 'ssh_format_document',
 }
 
 export function isSshResource(value: unknown): value is string {
