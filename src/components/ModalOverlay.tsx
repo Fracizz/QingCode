@@ -1,4 +1,5 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ReactNode, type SyntheticEvent } from 'react'
+import { createPortal } from 'react-dom'
 
 /** Interrupt dialogs (confirm / prompt / choice) must sit above feature dialogs such as SSH. */
 export const INTERRUPT_MODAL_Z = 'z-[140]'
@@ -25,6 +26,10 @@ const FOCUSABLE_SELECTOR = [
 
 let nextModalId = 0
 const modalStack: Array<{ id: number; overlay: HTMLDivElement }> = []
+
+function stopWindowChromeBubble(event: SyntheticEvent) {
+  event.stopPropagation()
+}
 
 function focusableElements(container: HTMLElement): HTMLElement[] {
   return [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)].filter(element => {
@@ -113,12 +118,16 @@ export default function ModalOverlay({
     }
   }, [])
 
-  return (
+  const overlay = (
     <div
       ref={overlayRef}
-      className={`fixed inset-0 ${zIndex} flex ${align === 'start' ? 'items-start' : 'items-center'} justify-center p-4 ${className}`}
+      data-modal-overlay=""
+      className={`window-no-drag-region fixed inset-0 ${zIndex} flex ${align === 'start' ? 'items-start' : 'items-center'} justify-center p-4 ${className}`}
       role="presentation"
       tabIndex={-1}
+      onPointerDown={stopWindowChromeBubble}
+      onClick={stopWindowChromeBubble}
+      onDoubleClick={stopWindowChromeBubble}
     >
       <div
         className="modal-overlay-enter absolute inset-0 bg-black/55 backdrop-blur-[3px] transition-all duration-150"
@@ -128,4 +137,5 @@ export default function ModalOverlay({
       {children}
     </div>
   )
+  return typeof document === 'undefined' ? overlay : createPortal(overlay, document.body)
 }

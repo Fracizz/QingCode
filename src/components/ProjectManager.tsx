@@ -456,7 +456,7 @@ export default function ProjectManager() {
                           onlyWhenOverflow
                           wrapperClassName="block truncate max-w-[260px]"
                         >
-                          <span className="block truncate max-w-[260px] font-mono text-ui-sm text-fg-muted">
+                          <span className="block truncate max-w-[260px] font-mono text-[13px] text-fg-muted">
                             {location}
                           </span>
                         </Tooltip>

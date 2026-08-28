@@ -2,7 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useState } from 'react'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import ModalOverlay from './ModalOverlay'
 
 function DialogHarness() {
@@ -86,6 +86,22 @@ describe('ModalOverlay', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: '第一个操作' }), { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await waitFor(() => expect(opener).toHaveFocus())
+  })
+
+  it('stops double-clicks from reaching title-bar maximize handlers', () => {
+    const onChromeDoubleClick = vi.fn()
+    render(
+      <div onDoubleClick={onChromeDoubleClick}>
+        <ModalOverlay>
+          <div role="dialog" aria-label="测试对话框">
+            <button type="button">操作</button>
+          </div>
+        </ModalOverlay>
+      </div>
+    )
+    fireEvent.doubleClick(screen.getByRole('button', { name: '操作' }))
+    expect(onChromeDoubleClick).not.toHaveBeenCalled()
+    expect(document.querySelector('[data-modal-overlay]')).toHaveClass('window-no-drag-region')
   })
 
   it('returns focus to the parent dialog after its nested dialog closes', async () => {

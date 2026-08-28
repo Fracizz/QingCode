@@ -31,6 +31,13 @@ body,
   app-region: drag;
 }
 
+/* Modals are often mounted under the title bar. Mark the overlay as client
+   area so a double-click cannot hit HTCAPTION and restore the window. */
+.window-no-drag-region {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 body {
   font-family: var(--font-sans);
   font-size: var(--ui-font-size);

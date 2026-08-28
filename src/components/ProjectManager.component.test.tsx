@@ -116,7 +116,7 @@ describe('ProjectManager', () => {
     render(<ProjectManager />)
     const path = screen.getByText('root@localhost:/root/.claude')
     expect(path.className).toMatch(/font-mono/)
-    expect(path.className).toMatch(/text-ui-sm/)
+    expect(path.className).toMatch(/text-\[13px\]/)
     expect(screen.queryByText(/ssh:\/\/c451183d/)).not.toBeInTheDocument()
   })
 

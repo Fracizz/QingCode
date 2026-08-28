@@ -175,7 +175,19 @@ export default function TitleBar({
       className={`ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none transition-opacity duration-150 ${
         windowFocused ? '' : 'opacity-60'
       }`}
-      onDoubleClick={inTauri ? toggleMaximize : undefined}
+      onDoubleClick={
+        inTauri
+          ? event => {
+              if (
+                event.target instanceof Element &&
+                event.target.closest('[data-modal-overlay], [aria-modal="true"]')
+              ) {
+                return
+              }
+              void toggleMaximize()
+            }
+          : undefined
+      }
     >
       <div className="flex-1 flex items-center h-full min-w-0">
         <div

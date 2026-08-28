@@ -156,9 +156,26 @@ describe('SshProjectDialog', () => {
     const sourceFolder = screen.getByLabelText('源文件夹')
     expect(sourceFolder).toHaveValue('/root')
     expect(sourceFolder.className).toMatch(/font-mono/)
+    expect(sourceFolder.className).toMatch(/text-\[13px\]/)
     expect(screen.getByText('root@192.168.1.10').parentElement?.className).toMatch(/font-mono/)
+    expect(screen.getByText('root@192.168.1.10').parentElement?.className).toMatch(/text-\[13px\]/)
+    expect(screen.getByRole('option', { name: '.claude' }).className).toMatch(/text-\[13px\]/)
     expect(openSshSession).toHaveBeenCalled()
     expect(browseSshDirectory).toHaveBeenCalledWith(expect.any(String), '/root')
+  })
+
+  it('does not bubble folder double-clicks to a title-bar maximize handler', async () => {
+    const onChromeDoubleClick = vi.fn()
+    render(
+      <div onDoubleClick={onChromeDoubleClick}>
+        <SshProjectDialog open onClose={vi.fn()} onAdded={vi.fn()} />
+        <ConfirmDialog />
+      </div>
+    )
+    await connectAndConfirm()
+    fireEvent.doubleClick(await screen.findByRole('option', { name: '.claude' }))
+    await waitFor(() => expect(browseSshDirectory).toHaveBeenCalledTimes(2))
+    expect(onChromeDoubleClick).not.toHaveBeenCalled()
   })
 
   it('keeps the picker size when navigating into a smaller folder', async () => {
@@ -184,14 +201,13 @@ describe('SshProjectDialog', () => {
     await connectAndConfirm()
     const dialog = await screen.findByRole('dialog', { name: '选择远程项目' })
     const list = screen.getByRole('listbox', { name: '远程文件夹' })
-    expect(dialog.className).toMatch(/w-\[min\(480px/)
-    expect(dialog.className).toMatch(/h-\[min\(80vh,520px\)\]/)
-    expect(list.className).toMatch(/flex-1/)
+    expect(dialog).toHaveStyle({ width: '480px' })
+    expect(list).toHaveStyle({ height: '240px' })
 
     fireEvent.doubleClick(await screen.findByRole('option', { name: 'code' }))
     expect(await screen.findByRole('option', { name: 'ai-auto-test-dev' })).toBeInTheDocument()
-    expect(screen.getByRole('dialog', { name: '选择远程项目' }).className).toMatch(/w-\[min\(480px/)
-    expect(screen.getByRole('listbox', { name: '远程文件夹' }).className).toMatch(/flex-1/)
+    expect(screen.getByRole('dialog', { name: '选择远程项目' })).toHaveStyle({ width: '480px' })
+    expect(screen.getByRole('listbox', { name: '远程文件夹' })).toHaveStyle({ height: '240px' })
   })
 
   it('adds the selected remote folder as the project root', async () => {
