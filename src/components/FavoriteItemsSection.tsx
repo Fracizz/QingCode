@@ -1,7 +1,6 @@
 import { useEffect, useState, type DragEvent as ReactDragEvent, type MouseEvent } from 'react'
 import {
   Bookmark,
-  ChevronDown,
   ChevronRight,
   Copy,
   ExternalLink,
@@ -235,7 +234,7 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
         onClick={toggleExpanded}
       >
         <span className={EXPLORER_TREE_CHEVRON_COL} aria-hidden="true">
-          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          <ChevronRight size={13} className={`chevron-transition ${expanded ? 'rotate-90 text-fg' : ''}`} />
         </span>
         <Bookmark size={13} className="shrink-0 text-warn" />
         <span className="min-w-0 flex-1 truncate text-left leading-tight">{t('收藏夹')}</span>

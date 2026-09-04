@@ -5,7 +5,6 @@ import type {
 } from 'react'
 import type { RowComponentProps } from 'react-window'
 import {
-  ChevronDown,
   ChevronRight,
   File as FileIcon,
   Folder,
@@ -180,7 +179,7 @@ export default function ExplorerTreeRow({
               onToggleFolder(node)
             }}
           >
-            {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            <ChevronRight size={14} className={`chevron-transition ${expanded ? 'rotate-90 text-fg' : ''}`} />
           </button>
           {expanded ? (
             <FolderOpen size={15} className="text-accent flex-shrink-0" />

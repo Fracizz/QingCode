@@ -30,6 +30,7 @@ export default function EmptyEditor() {
   const actions: Array<{
     icon: ReactNode
     label: string
+    shortcut?: string
     onClick: () => void
     primary?: boolean
   }> = standaloneFiles
@@ -37,6 +38,7 @@ export default function EmptyEditor() {
         {
           icon: <FileText size={14} />,
           label: t('打开文件'),
+          shortcut: 'Ctrl+O',
           onClick: () => void openFileFromDialog(),
           primary: true,
         },
@@ -56,17 +58,19 @@ export default function EmptyEditor() {
         {
           icon: <TerminalIcon size={14} />,
           label: t('打开终端面板'),
+          shortcut: 'Ctrl+`',
           onClick: openTerminalPanel,
         },
         {
           icon: <Settings size={14} />,
           label: t('打开设置'),
+          shortcut: 'Ctrl+,',
           onClick: () => setView('settings'),
         },
       ]
 
   return (
-    <div className="ui-font-scaled flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-6 px-6 select-none">
+    <div className="ui-font-scaled flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-6 px-6 select-none modal-overlay-enter">
       {/* Decorative background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full bg-brand/[0.04] blur-3xl" />
@@ -84,25 +88,30 @@ export default function EmptyEditor() {
           <p className="text-[15px] font-semibold tracking-[0.02em] text-fg">QingCode</p>
           <span className="h-[2px] w-10 rounded bg-brand/80" aria-hidden />
           <p className="text-sm text-fg-muted">
-            {standaloneFiles ? t('打开文件开始编辑') : t('从侧边栏打开文件开始编辑')}
+            {standaloneFiles ? t('打开文件开始编辑') : t('从侧边栏打开文件或选择项目开始工作')}
           </p>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 relative">
+      <div className="flex items-center gap-2.5 relative">
         {actions.map(action => (
           <button
             key={action.label}
             type="button"
             onClick={action.onClick}
-            className={`flex items-center gap-1.5 rounded-md border px-3.5 py-2 text-[13px] transition-all duration-150 hover:shadow-sm hover:-translate-y-[1px] active:translate-y-0 ${
+            className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-[13px] transition-all duration-150 hover:shadow-elevation-1 hover:-translate-y-[1px] active:translate-y-0 ${
               action.primary
-                ? 'border-brand/50 bg-brand/10 text-brand hover:border-brand/70 hover:bg-brand/20'
+                ? 'border-brand/50 bg-brand/10 text-brand font-medium hover:border-brand/70 hover:bg-brand/20'
                 : 'border-border-strong bg-bg-elevated/80 text-fg-muted hover:bg-bg-active hover:text-fg'
             }`}
           >
             {action.icon}
-            {action.label}
+            <span>{action.label}</span>
+            {action.shortcut && (
+              <span className="ml-0.5 opacity-80">
+                <Kbd>{action.shortcut}</Kbd>
+              </span>
+            )}
           </button>
         ))}
       </div>

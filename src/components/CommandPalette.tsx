@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { Command, FileText } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
+import Kbd from './Kbd'
 import { useI18n } from '../lib/i18n'
 import {
   buildCommands,
@@ -39,6 +40,52 @@ function isCommandMode(query: string) {
 
 function commandQuery(query: string) {
   return query.startsWith('>') ? query.slice(1).trimStart() : query
+}
+
+/** Renders text with matched query characters highlighted in brand color. */
+function highlightMatch(text: string, rawQuery: string): ReactNode {
+  const query = rawQuery.trim().toLowerCase()
+  if (!query) return text
+
+  const lower = text.toLowerCase()
+  const exactIdx = lower.indexOf(query)
+  if (exactIdx !== -1) {
+    return (
+      <>
+        {text.slice(0, exactIdx)}
+        <span className="font-semibold text-brand underline decoration-brand/40 underline-offset-2">
+          {text.slice(exactIdx, exactIdx + query.length)}
+        </span>
+        {text.slice(exactIdx + query.length)}
+      </>
+    )
+  }
+
+  // Fuzzy match fallback
+  const segments: ReactNode[] = []
+  let queryIdx = 0
+  let lastIdx = 0
+
+  for (let i = 0; i < text.length && queryIdx < query.length; i++) {
+    if (text[i].toLowerCase() === query[queryIdx]) {
+      if (i > lastIdx) {
+        segments.push(text.slice(lastIdx, i))
+      }
+      segments.push(
+        <span key={i} className="font-semibold text-brand">
+          {text[i]}
+        </span>,
+      )
+      lastIdx = i + 1
+      queryIdx++
+    }
+  }
+
+  if (lastIdx < text.length) {
+    segments.push(text.slice(lastIdx))
+  }
+
+  return segments.length > 0 && queryIdx === query.length ? segments : text
 }
 
 export default function CommandPalette() {
@@ -269,6 +316,7 @@ export default function CommandPalette() {
               const active = index === activeIndex
               if (item.kind === 'command') {
                 const shortcut = resolveCommandShortcut(item.command, shortcuts)
+                const titleText = t(item.command.title, item.command.titleValues)
                 return (
                   <button
                     key={item.command.id}
@@ -277,23 +325,28 @@ export default function CommandPalette() {
                     role="option"
                     aria-selected={active}
                     data-cmd-index={index}
-                    className={`flex w-full items-center gap-3 px-3 py-2 text-left text-[13px] transition-colors ${
-                      active ? 'bg-accent/20 text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                    className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-[13px] transition-colors duration-100 ${
+                      active
+                        ? 'border-brand bg-accent/15 text-fg'
+                        : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
                     }`}
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={() => void runItem(item)}
                   >
                     <span className="min-w-0 flex-1 truncate">
-                      {t(item.command.title, item.command.titleValues)}
+                      {highlightMatch(titleText, commandQuery(query))}
                     </span>
                     {shortcut && (
-                      <span className="text-ui-sm flex-shrink-0 font-mono text-fg-dim">{shortcut}</span>
+                      <span className="flex-shrink-0">
+                        <Kbd>{shortcut}</Kbd>
+                      </span>
                     )}
                   </button>
                 )
               }
 
               const Icon = getFileIcon(item.entry.label) ?? FileText
+              const { fileQuery } = parseQuickOpenLocation(query)
               return (
                 <button
                   key={item.entry.id}
@@ -302,15 +355,17 @@ export default function CommandPalette() {
                   role="option"
                   aria-selected={active}
                   data-cmd-index={index}
-                  className={`flex w-full items-center gap-3 px-3 py-2 text-left text-[13px] transition-colors ${
-                    active ? 'bg-accent/20 text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
+                  className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-[13px] transition-colors duration-100 ${
+                    active
+                      ? 'border-brand bg-accent/15 text-fg'
+                      : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
                   }`}
                   onMouseEnter={() => setActiveIndex(index)}
                   onClick={() => void runItem(item)}
                 >
                   <Icon size={15} className="flex-shrink-0 opacity-80" />
                   <span className="min-w-0 flex-1 truncate">
-                    <span>{item.entry.label}</span>
+                    <span>{highlightMatch(item.entry.label, fileQuery)}</span>
                     <span className="text-ui-sm ml-2 text-fg-dim">
                       {item.entry.relativePath}
                       {projects.length > 1 ? ` · ${item.entry.projectName}` : ''}

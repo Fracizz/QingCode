@@ -1,6 +1,5 @@
 import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import {
-  ChevronDown,
   ChevronRight,
   File as FileIcon,
   Folder,
@@ -90,11 +89,10 @@ export function SearchResultRow(props: {
             onOpenContextMenu?.(event, { kind: 'file', path: row.path, name: row.name })
           }
         >
-          {row.collapsed ? (
-            <ChevronRight size={13} className="text-fg-dim flex-shrink-0" />
-          ) : (
-            <ChevronDown size={13} className="text-fg-dim flex-shrink-0" />
-          )}
+          <ChevronRight
+            size={13}
+            className={`text-fg-dim flex-shrink-0 chevron-transition ${!row.collapsed ? 'rotate-90 text-fg' : ''}`}
+          />
           <FileIcon size={13} className="text-fg-muted flex-shrink-0" />
           <span className="truncate font-medium">{row.name}</span>
           {row.dir && (

@@ -1602,7 +1602,11 @@ export default function SearchPanel() {
               title={t('搜索中…')}
             />
           ) : rows.length === 0 ? (
-            <EmptyState icon={<SearchX size={28} strokeWidth={1.2} />} title={t('无匹配结果')} />
+            <EmptyState
+              icon={<SearchX size={28} strokeWidth={1.2} />}
+              title={t('无匹配结果')}
+              hint={t('可尝试放宽筛选条件，或检查包含/排除规则与大小写匹配')}
+            />
           ) : (
             <>
               <div className="px-4 py-1 flex items-center gap-2 text-[11px] text-fg-dim">
