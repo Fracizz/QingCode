@@ -795,7 +795,7 @@
     "切换侧栏布局编辑器": "Toggle side-layout editor",
     "终端 - 右侧": "Terminal - Right",
     "显示所有终端": "Show all terminals",
-    "显示所有终端（{hidden} 个已折叠）": "Show all terminals ({hidden} folded)",
+    "显示所有终端（{hidden} 个已隐藏）": "Show all terminals ({hidden} hidden)",
     "选择或新建终端显示在右侧": "Select or create a terminal for the right pane",
     "选择或新建终端显示在右上": "Select or create a terminal for the top-right pane",
     "选择或新建终端显示在左下": "Select or create a terminal for the bottom-left pane",

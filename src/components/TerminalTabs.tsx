@@ -15,8 +15,9 @@ import {
   Pencil,
   XSquare,
   Files,
+  List,
   ChevronDown,
-  PanelBottomClose,
+  ChevronRight,
 } from 'lucide-react'
 import {
   MAX_TERMINALS_PER_PROJECT,
@@ -105,6 +106,8 @@ export default function TerminalTabs({
   const addEmptyProject = useProjectStore(s => s.addEmptyProject)
   const switchProject = useProjectStore(s => s.switchProject)
   const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
+  const panelLayout = useUIStore(s => s.panelLayout)
+  const collapseToSide = panelLayout === 'sideTerminal'
   const [creatingTerminal, setCreatingTerminal] = useState(false)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -848,7 +851,7 @@ export default function TerminalTabs({
           <Tooltip
             label={
               hiddenCount > 0
-                ? translate('显示所有终端（{hidden} 个已折叠）', { hidden: hiddenCount })
+                ? translate('显示所有终端（{hidden} 个已隐藏）', { hidden: hiddenCount })
                 : translate('显示所有终端')
             }
             side="top"
@@ -859,7 +862,7 @@ export default function TerminalTabs({
               aria-label={translate('显示所有终端')}
               aria-haspopup="menu"
               aria-expanded={overflowMenu !== null}
-              className="relative flex h-6 w-6 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+              className="relative flex h-7 w-7 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
               onPointerDown={() => {
                 if (pane) setTerminalFocusPane(pane)
               }}
@@ -872,7 +875,7 @@ export default function TerminalTabs({
                 aria-hidden="true"
                 className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border-strong"
               />
-              <ChevronDown size={14} />
+              <List size={15} />
               {hiddenCount > 0 && (
                 <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-accent px-0.5 text-center text-[9px] font-semibold leading-[12px] text-white">
                   {hiddenCount > 99 ? '99+' : hiddenCount}
@@ -890,7 +893,7 @@ export default function TerminalTabs({
                 className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
                 onClick={() => requestToggleTerminal()}
               >
-                <PanelBottomClose size={15} />
+                {collapseToSide ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
               </button>
             </Tooltip>
             <Tooltip label={translate('关闭全部终端')} side="top">
