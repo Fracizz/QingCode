@@ -1,5 +1,17 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => ({
+  getSshConnection: vi.fn(),
+  isProjectTrusted: vi.fn(() => true),
+  safeInvoke: vi.fn(),
+}))
+
+vi.mock('./projectRepository', () => ({ getSshConnection: mocks.getSshConnection }))
+vi.mock('./tauri', () => ({ safeInvoke: mocks.safeInvoke }))
+vi.mock('./workspaceTrust', () => ({ isProjectTrusted: mocks.isProjectTrusted }))
+
 import {
+  ensureSshWorkspaceConnected,
   findSshProject,
   isSshProject,
   normalizeRemotePath,
@@ -10,6 +22,11 @@ import {
   sshRemotePathFromUri,
   sshRootUri,
 } from './sshWorkspace'
+import type { Project, SshConnection } from '../types'
+
+beforeEach(() => {
+  vi.clearAllMocks()
+})
 
 describe('sshRootUri', () => {
   it('builds a stable provider URI from a POSIX root', () => {
@@ -110,5 +127,60 @@ describe('parentRemotePath', () => {
   it('normalizes trailing slashes before walking up', () => {
     expect(normalizeRemotePath('/root/')).toBe('/root')
     expect(parentRemotePath('/root/')).toBe('/')
+  })
+})
+
+describe('ensureSshWorkspaceConnected', () => {
+  const connection: SshConnection = {
+    id: 'wsl',
+    name: 'WSL',
+    host: 'localhost',
+    port: 22,
+    username: 'root',
+    auth_kind: 'password',
+    host_key_fingerprint: 'SHA256:test',
+    created_at: 1,
+    updated_at: 1,
+  }
+
+  function project(id: string, path: string): Project {
+    return {
+      id,
+      name: 'app',
+      path: `ssh://wsl${path}`,
+      kind: 'ssh',
+      connection_id: 'wsl',
+      root_path: path,
+      created_at: 1,
+      last_opened_at: 1,
+    }
+  }
+
+  it('registers every full root when same-named projects share one live connection', async () => {
+    const registeredRoots = new Set<string>()
+    mocks.getSshConnection.mockResolvedValue(connection)
+    mocks.safeInvoke.mockImplementation(
+      async (_label: string, command: string, args: Record<string, unknown>) => {
+        if (command === 'ssh_workspace_status') {
+          return registeredRoots.has(args.rootUri as string)
+        }
+        if (command === 'ssh_connection_status') return true
+        if (command === 'ssh_connect') {
+          registeredRoots.add(args.rootUri as string)
+          return { fingerprint: 'SHA256:test', canonicalRoot: args.rootUri }
+        }
+        throw new Error(`Unexpected command: ${command}`)
+      }
+    )
+
+    const first = project('p1', '/home/team/app')
+    const second = project('p2', '/work/other/app')
+    await Promise.all([ensureSshWorkspaceConnected(first), ensureSshWorkspaceConnected(second)])
+
+    expect(registeredRoots).toEqual(new Set([first.path, second.path]))
+    expect(mocks.safeInvoke.mock.calls.filter(call => call[1] === 'ssh_connect')).toHaveLength(2)
+
+    await Promise.all([ensureSshWorkspaceConnected(first), ensureSshWorkspaceConnected(second)])
+    expect(mocks.safeInvoke.mock.calls.filter(call => call[1] === 'ssh_connect')).toHaveLength(2)
   })
 })

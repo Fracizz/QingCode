@@ -17,6 +17,7 @@ export type SearchContextTarget =
 export interface SearchRowProps {
   rows: Row[]
   activeIndex: number
+  onLoadMore: () => void
   onToggleFile: (path: string) => void
   onOpenMatch: (path: string, line: number) => void
   onOpenFilename: (path: string, isDir: boolean) => void
@@ -35,6 +36,7 @@ export function SearchResultRow(props: {
     style,
     rows,
     activeIndex,
+    onLoadMore,
     onToggleFile,
     onOpenMatch,
     onOpenFilename,
@@ -59,20 +61,27 @@ export function SearchResultRow(props: {
 
   if (row.kind === 'footer') {
     return (
-      <div
-        style={style}
-        className={`${baseCls} px-4 text-[11px] text-fg-dim gap-1.5`}
-        aria-hidden={!row.loading && row.hasMore}
-      >
+      <div style={style} className={`${baseCls} px-3 text-[11px] text-fg-dim`}>
         {row.loading ? (
-          <>
+          <div className="flex w-full items-center justify-center gap-1.5">
             <LoaderCircle size={12} className="animate-spin text-accent flex-shrink-0" />
             <span>{t('正在加载更多结果…')}</span>
-          </>
+          </div>
         ) : row.hasMore ? (
-          <span className="opacity-0">·</span>
+          <button
+            type="button"
+            className="flex h-full w-full items-center justify-center gap-1 rounded text-accent transition-colors hover:bg-bg-hover hover:text-fg"
+            onClick={onLoadMore}
+          >
+            <ChevronDown size={12} />
+            <span>{t('显示更多结果')}</span>
+          </button>
+        ) : row.limitReached ? (
+          <span className="w-full truncate text-center">
+            {t('已达到结果展示上限，请缩小搜索范围')}
+          </span>
         ) : (
-          <span>{t('已加载全部结果')}</span>
+          <span className="w-full text-center">{t('已加载全部结果')}</span>
         )}
       </div>
     )

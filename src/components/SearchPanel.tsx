@@ -51,7 +51,6 @@ import {
   nextSearchBudget,
   normalizeTypeFilterExtension,
   rowHeightOf,
-  SEARCH_PREFETCH_ROWS,
   SEARCH_RESULT_BUDGETS,
   trimContentFiles,
   typeFilterExtensions,
@@ -692,6 +691,9 @@ export default function SearchPanel() {
   const canLoadMoreContent =
     wantsContent && contentTruncated && nextSearchBudget(contentBudget) !== null
   const canLoadMore = canLoadMoreFilename || canLoadMoreContent
+  const resultLimitReached =
+    (wantsFilename && filenameTruncated && nextSearchBudget(filenameBudget) === null) ||
+    (wantsContent && contentTruncated && nextSearchBudget(contentBudget) === null)
 
   const loadMoreResults = useCallback(() => {
     if (loadingMoreRef.current || loading) return
@@ -751,8 +753,16 @@ export default function SearchPanel() {
       out = filenameRows
     }
 
-    if (out.length > 0 && (canLoadMore || loadingMore)) {
-      out = [...out, { kind: 'footer', loading: loadingMore, hasMore: canLoadMore }]
+    if (out.length > 0 && (canLoadMore || loadingMore || resultLimitReached)) {
+      out = [
+        ...out,
+        {
+          kind: 'footer',
+          loading: loadingMore,
+          hasMore: canLoadMore,
+          limitReached: resultLimitReached,
+        },
+      ]
     }
     return out
   }, [
@@ -765,6 +775,7 @@ export default function SearchPanel() {
     projectNameOf,
     canLoadMore,
     loadingMore,
+    resultLimitReached,
     t,
   ])
 
@@ -956,27 +967,6 @@ export default function SearchPanel() {
     t,
   ])
 
-  const onRowsRendered = useCallback(
-    (
-      _visible: { startIndex: number; stopIndex: number },
-      all: { startIndex: number; stopIndex: number }
-    ) => {
-      if (!canLoadMore || rows.length === 0) return
-      if (all.stopIndex >= rows.length - 1 - SEARCH_PREFETCH_ROWS) {
-        loadMoreResults()
-      }
-    },
-    [canLoadMore, loadMoreResults, rows.length]
-  )
-
-  useEffect(() => {
-    if (!canLoadMore || loadingMore || loading || rows.length === 0) return
-    const element = listRef.current?.element
-    if (element && element.scrollHeight <= element.clientHeight + 8) {
-      loadMoreResults()
-    }
-  }, [canLoadMore, loadMoreResults, loading, loadingMore, rows.length, listRef])
-
   const onResultsKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLDivElement>) => {
       if (navigableIndexes.length === 0) return
@@ -1026,12 +1016,21 @@ export default function SearchPanel() {
     () => ({
       rows,
       activeIndex,
+      onLoadMore: loadMoreResults,
       onToggleFile: toggleFileCollapse,
       onOpenMatch,
       onOpenFilename,
       onOpenContextMenu,
     }),
-    [rows, activeIndex, toggleFileCollapse, onOpenMatch, onOpenFilename, onOpenContextMenu]
+    [
+      rows,
+      activeIndex,
+      loadMoreResults,
+      toggleFileCollapse,
+      onOpenMatch,
+      onOpenFilename,
+      onOpenContextMenu,
+    ]
   )
 
   const queryTrimmed = activeQuery.trim()
@@ -1640,7 +1639,6 @@ export default function SearchPanel() {
                   rowHeight={(index: number) => rowHeightOf(rows[index])}
                   rowComponent={SearchResultRow}
                   rowProps={rowProps}
-                  onRowsRendered={onRowsRendered}
                   overscanCount={8}
                   className="h-full overscroll-y-contain"
                   style={{ height: '100%', overscrollBehavior: 'contain' }}

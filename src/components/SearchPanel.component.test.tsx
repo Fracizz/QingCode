@@ -299,7 +299,7 @@ describe('SearchPanel', () => {
     expect(await screen.findByText('收藏文件')).toBeInTheDocument()
   })
 
-  it('raises the filename search budget when results are truncated', async () => {
+  it('raises the filename search budget only after requesting more results', async () => {
     dispatch({
       list_file_extensions: () => ['ts'],
       search_files: (args) => {
@@ -333,6 +333,14 @@ describe('SearchPanel', () => {
         expect.objectContaining({ limit: 200 }),
       ),
     )
+    expect(mocks.safeInvoke).not.toHaveBeenCalledWith(
+      '文件搜索',
+      'search_files',
+      expect.objectContaining({ limit: 500 }),
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: '显示更多结果' }))
+
     await waitFor(
       () =>
         expect(mocks.safeInvoke).toHaveBeenCalledWith(

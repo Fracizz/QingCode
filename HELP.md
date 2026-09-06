@@ -25,7 +25,7 @@
 
 ## Quick Start
 
-1. **Add a project**: Click the **「+」** button on the right side of the title bar and select a local folder to add to the project list.
+1. **Add a project**: Click the **「+」** button on the right side of the title bar and select a local folder, or choose **SSH** to connect to a remote host and select a project directory.
 2. **Switch projects**: Click a project chip in the title bar to switch; editor and terminal states are automatically preserved.
 3. **Open a file**: Single-click a file in the left file tree to open it (folders expand/collapse on single-click). Use `Ctrl`/`Shift`+click for multi-select; `Enter` also opens/expands the selection.
 4. **Open a terminal**: Press `` Ctrl+` `` to show the terminal panel; the terminal starts in the project root by default.
@@ -47,8 +47,18 @@
 
 ### Add a Project
 
-- Click the **「+」** button on the right side of the title bar and select a local folder.
+- Click the **「+」** button on the right side of the title bar and select either a local folder or an **SSH** remote project.
 - After adding, the project appears as a chip in the title bar; click to switch.
+
+### SSH Remote Project
+
+1. Click title-bar **「+」** → **SSH**, then enter the host, port, username, and password or private-key authentication details.
+2. On the first connection, verify and accept the server's SHA-256 host fingerprint. After authentication, browse from the remote user's home directory and select the project root.
+3. Choose whether to trust the workspace. An untrusted workspace can be browsed, but editing, upload, terminal, formatting, and command execution remain restricted.
+
+Saved SSH connections can be reused to open other projects on the same host. SSH projects support remote file operations, PTY terminals, Git, run configurations, local/remote file transfer, and search mixed with local projects. QingCode prompts for reconnection after a disconnect. If a known host fingerprint changes, verify that the server was intentionally reinstalled or replaced instead of bypassing the warning.
+
+Remote extensions, port forwarding, SSH agent forwarding, and local Tree-sitter semantic indexing are not currently supported. For WSL, enable an SSH service inside the distribution and connect through the same SSH-project flow. See [SSH workspaces](./docs/ssh-workspaces.md) for details.
 
 ### Temporary Project
 
@@ -176,6 +186,9 @@ You can also configure startup commands for terminals:
 
 - File diffs with Chinese characters, spaces, and renamed paths.
 - Files in untracked, modified, staged, and deleted states.
+- Stage or unstage one or all files, discard with confirmation, and commit staged changes.
+- View and switch branches, inspect remotes, check remote updates (fetch), pull, and push.
+- The same Source Control workspace for local and SSH projects.
 
 ### Status Marks
 
@@ -194,7 +207,7 @@ Letters next to files in the explorer, editor tabs, and Source Control list indi
 
 If both the index and the worktree are dirty for the same file, Source Control shows the letter for that group (for example **A** in Staged and **M** in Changes). Colors are roughly: U / A green-ish, M / T yellow-ish, D red-ish, R / C accent.
 
-> Committing and pushing are recommended to be done in your familiar Git tool or AI assistant.
+> QingCode covers everyday staging, commit, fetch, pull, and push. Use your familiar Git tool or AI assistant for rebase, complex branch surgery, credential management, and a full conflict-resolution UI.
 
 ---
 
@@ -317,6 +330,13 @@ Enabled by default: after restart, QingCode restores editor tabs, terminal metad
 ### Project cannot be edited / Terminal cannot be used
 
 Untrusted projects restrict editing, terminal, and script execution capabilities. Click **「Trust」** in the prompt to resolve.
+
+### SSH project cannot connect or disconnects repeatedly
+
+- Check the host, port, username, authentication details, and whether the remote SSH service is reachable.
+- The first connection requires host-fingerprint confirmation. If a saved host's fingerprint changes, verify the reason with the administrator first.
+- Use the reconnect action after a disconnect. Whether remote terminal processes survive depends on the server-side session.
+- When starting a development server inside WSL, bind it to `127.0.0.1` so Windows can reach it. Change the listen address and firewall only when wider network access is intentionally required.
 
 ### File encoding shows garbled text
 

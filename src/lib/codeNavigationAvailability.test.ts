@@ -22,10 +22,19 @@ const statuses: LanguageComponentStatus[] = [
 ]
 
 describe('codeNavigationAvailabilityForPath', () => {
-  it('explicitly disables the definition-link affordance for Vue SFC files', () => {
+  it('only enables definition-link affordances for local semantic languages', () => {
     expect(isDefinitionLinkEnabledForPath('D:\\work\\Widget.vue')).toBe(false)
     expect(isDefinitionLinkEnabledForPath('D:\\work\\Widget.VUE')).toBe(false)
+    expect(isDefinitionLinkEnabledForPath('D:\\work\\README.md')).toBe(false)
+    expect(isDefinitionLinkEnabledForPath('D:\\work\\Makefile')).toBe(false)
+    expect(
+      isDefinitionLinkEnabledForPath(
+        'ssh://23a6efe9-51bb-4121-9d8c-41538a91d6b2/d:/code/qingcode/AGENTS.md'
+      )
+    ).toBe(false)
+    expect(isDefinitionLinkEnabledForPath('SSH://connection/work/Widget.ts')).toBe(false)
     expect(isDefinitionLinkEnabledForPath('D:\\work\\Widget.ts')).toBe(true)
+    expect(isDefinitionLinkEnabledForPath('/work/script.PY')).toBe(true)
   })
 
   it('enables definition links for an installed language component', () => {

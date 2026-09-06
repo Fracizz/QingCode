@@ -84,8 +84,11 @@ describe('filterFilenameHits', () => {
 
   it('steps search budgets for load-more', () => {
     expect(nextSearchBudget(SEARCH_RESULT_BUDGETS[0])).toBe(500)
-    expect(nextSearchBudget(2000)).toBeNull()
-    expect(rowHeightOf({ kind: 'footer', loading: false, hasMore: false })).toBe(22)
+    expect(nextSearchBudget(2000)).toBe(5000)
+    expect(nextSearchBudget(10_000)).toBeNull()
+    expect(
+      rowHeightOf({ kind: 'footer', loading: false, hasMore: false, limitReached: true }),
+    ).toBe(28)
   })
 })
 

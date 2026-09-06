@@ -147,25 +147,33 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 
 ## 项目选择器
 
-文件：`src/components/ProjectPicker.tsx`
+文件：`src/components/ProjectPicker.tsx`、`src/components/ProjectAddDialog.tsx`、`src/components/SshProjectDialog.tsx`、`src/components/ProjectKindMark.tsx`
 
 多项目管理入口在标题栏左侧：项目以 **chip 标签** 横向排列，放不下的折进 `···` 溢出下拉。侧边栏只显示**当前项目**的文件树。命名多项目工作区的主入口在 chips 旁常驻的 **工作区** 下拉（`WorkspaceMenu.tsx`），不依赖溢出菜单。
 
 | 项 | 约定 |
 |----|------|
 | 布局 | 标题栏左侧：应用图标 + 常驻工作区菜单 + 项目 chips 区（`flex-1`）+ 拖拽 spacer（固定 `w-[140px]`）+ QingCode；右侧：侧栏布局时双终端/四终端/编辑器快捷开关 + 面板布局切换 + 窗口按钮 |
-| Chip | 文件夹图标 + 项目名（`max-w-[140px]` 截断；溢出后悬停 ≥1s 显示完整名）+ hover `×` 从顶栏隐藏；右键关闭组为「从顶栏隐藏 / 关闭其它 / 关闭左侧 / 关闭右侧」（不可用项为「移除项目」）；当前项 `bg-bg-active`；不可用项显示 `⚠` + 常驻「重新定位」「移除项目」，点击 chip 体不切换 |
+| Chip | 项目类型图标 + 项目名（`max-w-[140px]` 截断；溢出后悬停 ≥1s 显示完整名）+ hover `×` 从顶栏隐藏；本地与 SSH 项目由 `ProjectKindMark` 明确区分；右键关闭组为「从顶栏隐藏 / 关闭其它 / 关闭左侧 / 关闭右侧」（不可用项为「移除项目」）；当前项 `bg-bg-active`；不可用项显示 `⚠` + 常驻「重新定位」「移除项目」，点击 chip 体不切换 |
 | 工作区菜单 | 紧挨文件菜单右侧常驻；显示当前工作区名（无则「工作区」）；下拉锚定在按钮下方：工作区列表、`保存当前顶栏项目`、`管理多项目工作区` |
 | 切换 | 点击可用 chip 调用 `switchProject` 并跳到资源管理器视图；编辑器会话（标签/草稿/光标与折叠等）按项目保留，切走不丢弃未保存缓冲 |
 | 溢出 | 默认尽可能多地把项目显示为 chip（宽度测量）；放不下的进 `ChevronDown` 溢出下拉（`createPortal`、`z-[100]`、`max-h-[70vh]`）。窗口缩放时 `ResizeObserver` 实时重算可见数量 |
 | 溢出面板行 | 图标 + 项目名（`Tooltip` 完整路径）+ 当前项 `Check`；行内：`在文件管理器中打开` / `移除`（hover），不可用 → `重新定位` + 常驻 `移除项目`；底部 `项目管理` / `多项目工作区` |
-| 添加 | chips 末尾常驻 `+` 打开居中 **modal**（`ProjectAddDialog`）：筛选框 + 项目列表（路径副行、已隐藏标记）+ 底部 `打开文件夹` / `新建临时项目` / `项目管理`；无项目时文字按钮「添加项目」打开同一对话框。溢出 chip 仍用下拉 |
+| 添加 | chips 末尾常驻 `+` 打开居中 **modal**（`ProjectAddDialog`）：筛选框 + 项目列表（路径副行、项目类型、已隐藏标记）+ 底部 `打开文件夹` / `SSH` / `新建临时项目` / `项目管理`；无项目时文字按钮「添加项目」打开同一对话框。溢出 chip 仍用下拉 |
 | 测量 | 隐藏的 `measureRef` 层渲染全部 chip 取 `offsetWidth`，结合 `ResizeObserver` 在容器宽度变化时重算可见数量 |
 | 关闭 | 点击外部、`Escape`、窗口失焦/缩放关闭溢出面板 |
 | 窗口拖拽 | chips 区与溢出按钮不参与拖动；Windows WebView2 123+ 仅用原生 `app-region`，旧运行时由右侧 spacer 使用 Tauri IPC 回退 |
 | Chip 排序 | **pointer DnD**（5px 阈值；WebView2 标题栏禁用 HTML5 DnD）：拖动时按冻结宽度**实时让位**预览顺序，源 chip 半透明 + `accent` 描边，落点旁 `accent` **插入竖线**；松手 `reorderVisibleProjects` 持久化，`Escape` 取消；`pointermove` 经 `requestAnimationFrame` 合并；**禁止** `cursor: grab` / `grabbing`（见下节「指针拖拽光标」） |
 
 侧边栏（`src/components/Sidebar.tsx`）顶部为当前项目头（项目名 + hover 操作：新建文件/文件夹、新建终端、在文件管理器打开、移除/重新定位），右键仍提供完整项目菜单；其下为当前项目文件树。项目移除、重新定位的共享逻辑在 `src/utils/projectActions.ts`。
+
+### SSH 远程项目
+
+SSH 添加流程使用 `SshProjectDialog`：填写连接信息 → 首次连接确认 SHA-256 主机指纹 → 认证 → 从远程用户主目录选择项目根目录 → 加入项目列表。已保存连接允许复用，但密码、私钥口令和主机指纹必须按各自安全语义处理；指纹变化必须重新确认，不得静默接受。断线后用 `SshReconnectDialog` 明确提示重连状态，不能把远端不可达误报为本地目录丢失。
+
+远程资源使用内部 `ssh://<connection-id>/<absolute-path>` 标识。前端通过统一 Tauri IPC 使用文件树、编辑器、终端、搜索和 Git 工作台；不得把远程 URI 当作 Windows 本地路径传给 `fs`、Explorer 或本地进程。后端 `src-tauri/src/remote_ssh.rs` 负责 SSH/SFTP/PTY 与远程命令边界，只接受已注册项目根目录内的资源；写入、上传、格式化、终端和命令执行继续受工作区信任约束。SFTP 必须解析真实路径并拒绝通过符号链接越出项目根目录，远程搜索不得跟随符号链接。
+
+SSH 项目不启动本地 Tree-sitter 索引，定义跳转、引用查找和工作区符号等语义导航应显示为不可用，而不是回退成不可靠结果。当前不提供远程扩展、端口转发、SSH Agent 转发或连接配置管理页；完整产品边界见 [`docs/ssh-workspaces.md`](docs/ssh-workspaces.md)。
 
 ### 资源管理器收藏夹
 
@@ -214,7 +222,7 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 - **模式**：整行分段 `全部 | 内容 | 文件名`；默认「全部」，结果分区展示。
 - **条目筛选**：在「全部 / 文件名」模式下增加 `全部 | 目录 | 文件`；「目录」只保留文件名命中中的目录并隐藏内容区，「文件」只保留文件命中（全部模式下仍含内容匹配）。
 - **右键**：结果行（文件名命中 / 内容文件头 / 匹配行）支持应用内菜单：打开或定位、资源管理器定位、文件管理器显示、复制路径 / 相对路径 / 文件名；匹配行额外支持复制带行号的文件引用。
-- **虚拟列表与加载更多**：结果区使用 `react-window`；命中预算截断后滚近底部提高 `limit` / `max_matches` 重搜（200→500→1000→2000），底部 footer 显示加载态。
+- **虚拟列表与加载更多**：结果区使用 `react-window`；命中预算截断后在底部显示「显示更多结果」下拉按钮，仅由用户显式提高 `limit` / `max_matches` 重搜（200→500→1000→2000→5000→10000），禁止滚动触底自动重复扫描。达到 10000 条硬上限后提示缩小搜索范围。
 - **替换**：仅在「内容」模式显示左侧展开箭头；展开后为搜索/替换双行输入块（VS Code 式）。切离内容模式时自动收起。
 
 ---
@@ -229,9 +237,9 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 - SCM 内部分栏拖动时由 `requestAnimationFrame` 合并指针事件并直接更新分栏 DOM 宽度；松手后才提交 React 状态与 `localStorage`。禁止在每次 `pointermove` 中同步读布局、重渲染整个 SCM 或持久化。
 - **历史**：默认左侧提交列表约占 3/5、右侧提交详情（摘要 + 更改文件列表，可拖宽、可筛选/正则、虚拟列表）；点击文件后左侧用 Diff **覆盖**提交列表（可「返回提交列表」）。`git_log` 分页 + 虚拟列表；`git_commit_files` / `git_commit_file_contents`。不做回退 / cherry-pick。
 - 面板 chrome（顶栏、列表、提交区）用 `.ui-font-scaled` 跟随界面字体/字号；Diff 区用 `.editor-font-independent` 取消 UI zoom，继续走代码字体与 `editor.fontSize`。
-- Git 状态保留 porcelain `XY` 双列语义；支持单个/全部暂存与取消暂存、丢弃更改（二次确认）、只提交已暂存内容、`git push` / `git pull`（已配置 upstream）。
+- Git 状态保留 porcelain `XY` 双列语义；支持单个/全部暂存与取消暂存、丢弃更改（二次确认）、只提交已暂存内容、分支查看与切换、远程检查更新（fetch），以及 `git push` / `git pull`（已配置 upstream）。本地与 SSH 项目复用同一工作台交互。
 - 拉取后若存在未合并路径，顶部显示冲突横幅；不提供冲突解决器。
-- 不提供隐式暂存、fetch、远程凭据管理、merge/rebase 或内置冲突合并 UI。详见 [`docs/git-basic-commit-workflow.md`](docs/git-basic-commit-workflow.md)。
+- 不提供隐式暂存、远程凭据管理、merge/rebase 或内置冲突合并 UI。详见 [`docs/git-basic-commit-workflow.md`](docs/git-basic-commit-workflow.md)。
 
 ---
 

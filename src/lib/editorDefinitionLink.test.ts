@@ -244,8 +244,9 @@ describe('editorDefinitionLink', () => {
     expect(nativeModifierPressed).toHaveBeenCalledOnce()
   })
 
-  it('hides the Ctrl-hover link and ignores Ctrl+mousedown when disabled', () => {
+  it('hides the Ctrl-hover link and leaves Ctrl+click untouched when disabled', () => {
     const navigate = vi.fn()
+    const nativeModifierPressed = vi.fn().mockResolvedValue(true)
     const parent = document.createElement('div')
     document.body.appendChild(parent)
     view = new EditorView({
@@ -256,6 +257,7 @@ describe('editorDefinitionLink', () => {
           editorDefinitionLink({
             linkEnabled: () => false,
             navigate,
+            nativeModifierPressed,
           }),
         ],
       }),
@@ -272,16 +274,18 @@ describe('editorDefinitionLink', () => {
     )
     expect(view.dom.querySelector('.cm-definition-link')).toBeNull()
 
-    view.contentDOM.dispatchEvent(
-      new MouseEvent('mousedown', {
-        bubbles: true,
-        cancelable: true,
-        button: 0,
-        clientX: 10,
-        clientY: 10,
-        ctrlKey: true,
-      })
-    )
+    const click = new MouseEvent('click', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: 10,
+      clientY: 10,
+      ctrlKey: true,
+    })
+    view.contentDOM.dispatchEvent(click)
+
     expect(navigate).not.toHaveBeenCalled()
+    expect(nativeModifierPressed).not.toHaveBeenCalled()
+    expect(click.defaultPrevented).toBe(false)
   })
 })

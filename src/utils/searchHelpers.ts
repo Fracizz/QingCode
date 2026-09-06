@@ -31,12 +31,11 @@ export type SearchResultRow =
   | { kind: 'more'; path: string }
   | { kind: 'dir'; dir: string }
   | { kind: 'fn'; hit: FilenameSearchHit }
-  | { kind: 'footer'; loading: boolean; hasMore: boolean }
+  | { kind: 'footer'; loading: boolean; hasMore: boolean; limitReached: boolean }
 
 /** Progressive search budgets for truncated result load-more. */
-export const SEARCH_RESULT_BUDGETS = [200, 500, 1000, 2000] as const
-export const SEARCH_PREFETCH_ROWS = 12
-export const SEARCH_FOOTER_HEIGHT = 22
+export const SEARCH_RESULT_BUDGETS = [200, 500, 1000, 2000, 5000, 10_000] as const
+export const SEARCH_FOOTER_HEIGHT = 28
 
 export function nextSearchBudget(current: number): number | null {
   const next = SEARCH_RESULT_BUDGETS.find(budget => budget > current)

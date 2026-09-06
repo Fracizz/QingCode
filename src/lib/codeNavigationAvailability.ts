@@ -27,16 +27,43 @@ function fileExtension(path: string): string | null {
   return fileName.slice(dot + 1).toLowerCase()
 }
 
-/** Vue SFC semantic navigation is not implemented; suppress its Ctrl+click affordance. */
+// Keep this immediate UI gate aligned with `COMPONENTS` in
+// `src-tauri/src/language_components.rs`; Ctrl-hover cannot wait for IPC.
+const SEMANTIC_NAVIGATION_EXTENSIONS = new Set([
+  'js',
+  'jsx',
+  'mjs',
+  'cjs',
+  'ts',
+  'mts',
+  'cts',
+  'tsx',
+  'py',
+  'pyw',
+  'java',
+  'rs',
+  'go',
+])
+
+function isRemoteResourcePath(path: string): boolean {
+  return path.toLowerCase().startsWith('ssh://')
+}
+
+/** Suppress Ctrl+click affordances when the active resource has no semantic provider. */
 export function isDefinitionLinkEnabledForPath(path: string): boolean {
-  return !path.startsWith('ssh://') && fileExtension(path) !== 'vue'
+  const extension = fileExtension(path)
+  return (
+    !isRemoteResourcePath(path) &&
+    extension !== null &&
+    SEMANTIC_NAVIGATION_EXTENSIONS.has(extension)
+  )
 }
 
 export function codeNavigationAvailabilityForPath(
   path: string,
   statuses: LanguageComponentStatus[]
 ): CodeNavigationAvailability {
-  if (path.startsWith('ssh://')) return { kind: 'remote-disabled' }
+  if (isRemoteResourcePath(path)) return { kind: 'remote-disabled' }
   const extension = fileExtension(path)
   const component = extension
     ? statuses.find(status =>
@@ -58,7 +85,7 @@ export function codeNavigationAvailabilityForPath(
  * feature.
  */
 export function cachedCodeNavigationAvailability(path: string): CodeNavigationAvailability {
-  if (path.startsWith('ssh://')) return { kind: 'remote-disabled' }
+  if (isRemoteResourcePath(path)) return { kind: 'remote-disabled' }
   if (!isTauri() || statusCheckFailed) return { kind: 'available' }
   if (!cachedStatuses) return { kind: 'checking' }
   return codeNavigationAvailabilityForPath(path, cachedStatuses)
@@ -93,7 +120,7 @@ export function preloadCodeNavigationAvailability(): void {
 export async function codeNavigationAvailability(
   path: string
 ): Promise<CodeNavigationAvailability> {
-  if (path.startsWith('ssh://')) return { kind: 'remote-disabled' }
+  if (isRemoteResourcePath(path)) return { kind: 'remote-disabled' }
   if (!isTauri() || statusCheckFailed) return { kind: 'available' }
   try {
     const statuses = await loadLanguageComponentStatuses()

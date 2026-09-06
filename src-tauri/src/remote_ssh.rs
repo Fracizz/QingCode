@@ -287,6 +287,16 @@ impl SshManager {
         Ok(root)
     }
 
+    fn root_is_registered(&self, uri: &str) -> Result<bool, String> {
+        let normalized = normalize_remote_uri(uri);
+        Ok(self
+            .roots
+            .read()
+            .map_err(|_| "SSH 工作区状态不可用".to_string())?
+            .values()
+            .any(|root| normalize_remote_uri(&root.uri) == normalized))
+    }
+
     fn set_root_trust(&self, uri: &str, trusted: bool) -> Result<(), String> {
         let normalized = normalize_remote_uri(uri);
         let mut roots = self
@@ -895,6 +905,21 @@ pub fn ssh_connection_status(
         .map_err(|_| "SSH 连接状态不可用".to_string())?
         .get(&connection_id)
         .is_some_and(|session| !session.handle.is_closed()))
+}
+
+#[tauri::command]
+pub fn ssh_workspace_status(
+    root_uri: String,
+    manager: State<'_, SshManager>,
+) -> Result<bool, String> {
+    let parsed = parse_remote_uri(&root_uri)?;
+    let connection_alive = manager
+        .sessions
+        .read()
+        .map_err(|_| "SSH 连接状态不可用".to_string())?
+        .get(&parsed.connection_id)
+        .is_some_and(|session| !session.handle.is_closed());
+    Ok(connection_alive && manager.root_is_registered(&root_uri)?)
 }
 
 #[tauri::command]
@@ -2913,6 +2938,34 @@ mod tests {
             .unwrap();
 
         assert!(manager.roots.read().unwrap().get("test").unwrap().trusted);
+    }
+
+    #[test]
+    fn same_connection_keeps_distinct_same_named_roots_registered() {
+        let manager = SshManager::new();
+        for (key, uri, canonical_path) in [
+            ("team-app", "ssh://wsl/home/team/app", "/home/team/app"),
+            ("work-app", "ssh://wsl/work/other/app", "/work/other/app"),
+        ] {
+            manager.roots.write().unwrap().insert(
+                key.to_string(),
+                RegisteredRoot {
+                    uri: uri.to_string(),
+                    canonical_path: canonical_path.to_string(),
+                    trusted: true,
+                },
+            );
+        }
+
+        assert!(manager
+            .root_is_registered("ssh://wsl/home/team/app/")
+            .unwrap());
+        assert!(manager
+            .root_is_registered("ssh://wsl/work/other/app")
+            .unwrap());
+        assert!(!manager
+            .root_is_registered("ssh://wsl/home/team/other")
+            .unwrap());
     }
 
     #[test]

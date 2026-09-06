@@ -29,6 +29,7 @@ export function requestSshReconnect(project: Project): void {
 export const NEW_SSH_CONNECTION_ID = '__new__'
 
 const sessionSecrets = new Map<string, SshSessionSecrets>()
+const workspaceConnectQueues = new Map<string, Promise<void>>()
 
 export function rememberSshSessionSecrets(id: string, secrets: SshSessionSecrets): void {
   if (secrets.password || secrets.passphrase) {
@@ -180,6 +181,14 @@ export async function isSshConnectionAlive(connectionId: string): Promise<boolea
   }
 }
 
+export async function isSshWorkspaceReady(rootUri: string): Promise<boolean> {
+  try {
+    return await safeInvoke<boolean>('检查 SSH 项目连接', 'ssh_workspace_status', { rootUri })
+  } catch {
+    return false
+  }
+}
+
 export async function connectSshWorkspace(
   project: Project,
   connection: SshConnection,
@@ -195,12 +204,37 @@ export async function connectSshWorkspace(
 }
 
 export async function ensureSshWorkspaceConnected(project: Project): Promise<void> {
-  if (project.kind !== 'ssh' || !project.connection_id) return
-  if (await isSshConnectionAlive(project.connection_id)) return
-  const connection = await getSshConnection(project.connection_id)
-  if (!connection) throw new Error('SSH 连接配置不存在')
-  if (connection.auth_kind === 'password' && !sshSecretsFor(connection.id).password) {
-    throw new Error('SSH 密码未保存在本机，请从“打开 SSH 项目”重新连接')
+  if (!isSshProject(project)) return
+  const connectionId = project.connection_id || sshConnectionIdFromUri(project.path)
+  if (!connectionId) throw new Error('SSH 项目缺少连接配置')
+
+  const previous = workspaceConnectQueues.get(connectionId) ?? Promise.resolve()
+  const current = previous
+    .catch(() => undefined)
+    .then(async () => {
+      // A live transport does not imply that this project's root is registered.
+      // Projects sharing one connection must each register their full remote root.
+      if (await isSshWorkspaceReady(project.path)) return
+
+      const connection = await getSshConnection(connectionId)
+      if (!connection) throw new Error('SSH 连接配置不存在')
+      const connectionAlive = await isSshConnectionAlive(connectionId)
+      if (
+        !connectionAlive &&
+        connection.auth_kind === 'password' &&
+        !sshSecretsFor(connection.id).password
+      ) {
+        throw new Error('SSH 密码未保存在本机，请从“打开 SSH 项目”重新连接')
+      }
+      await connectSshWorkspace(project, connection)
+    })
+  workspaceConnectQueues.set(connectionId, current)
+
+  try {
+    await current
+  } finally {
+    if (workspaceConnectQueues.get(connectionId) === current) {
+      workspaceConnectQueues.delete(connectionId)
+    }
   }
-  await connectSshWorkspace(project, connection)
 }

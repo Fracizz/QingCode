@@ -3,7 +3,7 @@
 [中文](./README.md)
 
 **QingCode** is a **project-management companion for the AI coding era** on Windows: multi-project switching, service startup, terminal sessions, and light editing in one window.  
-It is not another VS Code or Zed — it focuses on keeping several local projects and their processes under control.
+It is not another VS Code or Zed — it focuses on keeping local and remote projects and their processes under control.
 
 ## Screenshots
 
@@ -29,13 +29,13 @@ It is not another VS Code or Zed — it focuses on keeping several local project
 
 ### Manage projects
 
-![Add, hide, and manage local projects](./docs/screenshots/en-06-manage-projects.jpg)
+![Add, hide, and manage projects](./docs/screenshots/en-06-manage-projects.jpg)
 
 ## Why QingCode
 
 Coding increasingly happens alongside AI tools (Cursor, Claude, OpenCode, and others). What often slows you down is not “missing a heavier IDE”, but:
 
-- Several local repos open at once, with context lost every time you switch windows  
+- Several local and remote repos open at once, with context lost every time you switch windows
 - Each project needs a stack of services (API, web, workers, proxies…) that are easy to forget and hard to keep tidy in terminals  
 - AI assistants, scripts, and local processes stay fragmented while project ops stay manual  
 
@@ -45,7 +45,11 @@ QingCode puts weight on **project ops and the running scene**: pin many projects
 
 ### Multi-project switching
 
-Pin folders in the title bar and switch with a click. Each project keeps its own file tree and terminals; leaving a project does not wipe unsaved buffers or terminal sessions. Overflow stays reachable, and you can save named multi-project workspaces.
+Pin local folders or SSH projects in the title bar and switch with a click. Each project keeps its own file tree and terminals; leaving a project does not wipe unsaved buffers or terminal sessions. Overflow stays reachable, and you can save named multi-project workspaces.
+
+### SSH remote workspaces
+
+Use title-bar `+` → **SSH** to connect to a remote host. Confirm its host fingerprint on first use, authenticate, then browse and select the remote project directory. SSH workspaces support SFTP file operations, remote PTY terminals, the Git workspace, local/remote file transfer, and multi-project search mixed with local projects. Workspace trust still gates writes, terminals, and command execution. Remote extensions, port forwarding, SSH agent forwarding, and local Tree-sitter semantic indexing are not currently provided; see [SSH workspaces](./docs/ssh-workspaces.md) for the full capability and boundary list.
 
 ### Run configurations: start project services
 
@@ -67,7 +71,7 @@ Alongside run configurations, manage **terminal profiles** (name + startup comma
 - Save common AI / dev CLIs (for example `opencode`) as profiles and pick them from the terminal “+” menu  
 - Terminals default to the project root; switching projects does not close existing ones  
 
-Run configurations answer “how do this project’s services start?”; terminal profiles answer “what should this shell open with?” — together they keep the local multi-project scene in one place.
+Run configurations answer “how do this project’s services start?”; terminal profiles answer “what should this shell open with?” — together they keep local and remote project sessions in one place.
 
 ### Panel layout: classic bottom dock or side columns
 
@@ -79,7 +83,7 @@ The title bar has a **panel layout** menu (also cycled by shortcut). The default
 | Terminal + Editor | Side single terminal \| editor (~1:1 by default) |
 | Dual Terminals + Editor | Term A \| Term B \| editor (~1:1:1); both splits drag (~10%–90%) |
 
-Each dual pane has its own tab strip, with an overflow menu when tabs don’t fit. In a side layout, title-bar icons left of the layout picker toggle dual panes or the editor; opening a file / Source Control / Settings shows the editor column without turning dual terminals off.
+Each pane has its own tab strip, with an overflow menu when tabs don’t fit. In a side layout, title-bar icons left of the layout picker toggle dual terminals, a draggable 2×2 quad-terminal grid, or the editor. Opening a file / Source Control / Settings shows the editor column without turning dual or quad terminals off.
 
 ### Working with AI: external assistants, no built-in model
 
@@ -99,13 +103,13 @@ Multi-tab editing with on-demand highlighting for common languages; auto-detect 
 
 The editor includes lightweight code navigation without requiring a full LSP: holding `Ctrl` marks navigable symbols, while `Ctrl+click` resolves and opens a definition; `Shift+F12` groups calls, reads, writes, and imports by caller or file in a draggable translucent popup, and `Ctrl+T` searches workspace symbols by name. A Tree-sitter incremental index recognizes common scopes, shadowing, and project-local module relationships, including TS/JS path aliases and re-exports, Python package forwarding, Java imports, Rust `use`, and Go module imports; results that cannot be resolved precisely are clearly marked as approximate.
 
-It is for everyday code reading, following calls across files, and fast lookup. Unlike IntelliJ IDEA, it does not provide compiler-grade type analysis, safe rename / refactoring, or debugging; use a full IDE for complex language semantics. Python, TypeScript/JavaScript, Java, Rust, and Go are five independent language components. The Windows installer lets you select each one, and a missing component disables only semantic navigation for that language—not normal text editing.
+It is for everyday code reading, following calls across files, and fast lookup. Unlike IntelliJ IDEA, it does not provide compiler-grade type analysis, safe rename / refactoring, or debugging; use a full IDE for complex language semantics. Python, TypeScript/JavaScript, Java, Rust, and Go are five independent language components. The Windows installer lets you select each one, and a missing component disables only semantic navigation for that language—not normal text editing. SSH workspaces do not currently start the local Tree-sitter index, so these semantic-navigation features are unavailable there.
 
 ### Source Control workspace
 
 Opening Source Control fills the main editor area (click again to return to the explorer):
 
-- **Changes**: staged / unstaged groups; stage or unstage one or all files, discard with confirmation, commit staged changes, and pull / push using the configured upstream  
+- **Changes**: staged / unstaged groups; stage or unstage one or all files, discard with confirmation, commit staged changes, check remote updates (fetch), and pull / push using the configured upstream
 - **History**: browse commits, changed files, and per-file diffs  
 - Inline diffs on the right; Chinese names, spaces, and renames use original paths; pull conflicts are surfaced as a banner — resolve markers in the editor  
 
@@ -128,9 +132,9 @@ A typical pairing: start API, web, and workers in QingCode and keep the scene wh
 
 ## Typical flow
 
-1. Add several local project folders and pin them in the title bar  
+1. Add several local folders or SSH projects and pin them in the title bar
 2. Create run configurations for common stacks (for example `dev` = API + web)  
-3. Start services in one click; use **Dual Terminals + Editor** when you want two streams side by side
+3. Start services in one click; use dual terminals or the 2×2 quad-terminal grid for several output streams
 4. Enter an AI CLI via a terminal profile, or copy the CLI Skill from Settings for your agent
 5. Switch projects from the title bar — editor and terminal state remain
 

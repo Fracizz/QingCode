@@ -42,7 +42,7 @@ import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import WorkspaceMenu from './WorkspaceMenu'
 import ProjectAddDialog from './ProjectAddDialog'
-import type { Project } from '../types'
+import type { Project, SshConnection } from '../types'
 import { useI18n } from '../lib/i18n'
 import {
   insertLineXForDraggedChip,
@@ -58,6 +58,7 @@ import {
 import { ProjectIndicatorMarks, useProjectIndicatorsVisible } from './ProjectIndicatorMarks'
 import { ProjectKindIcon, SshKindBadge } from './ProjectKindMark'
 import { isSshProject, sshProjectDisplayPath } from '../lib/sshWorkspace'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
 import { isTauri } from '../lib/tauri'
 import { resolveWindowDragRegionMode } from '../lib/windowDragRegion'
 
@@ -499,6 +500,7 @@ export default function ProjectPicker() {
               key={project.id}
               chipIndex={index}
               project={project}
+              sshConnections={sshConnections}
               indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
               isCurrent={currentProject?.id === project.id}
               unavailable={unavailable}
@@ -583,6 +585,7 @@ export default function ProjectPicker() {
           <Chip
             key={project.id}
             project={project}
+            sshConnections={sshConnections}
             indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
             isCurrent={currentProject?.id === project.id}
             unavailable={unavailableProjectIds.includes(project.id)}
@@ -773,6 +776,7 @@ export default function ProjectPicker() {
 
 function Chip({
   project,
+  sshConnections,
   indicators,
   chipIndex,
   isCurrent,
@@ -787,6 +791,7 @@ function Chip({
   onPointerDown,
 }: {
   project: Project
+  sshConnections: ReadonlyArray<SshConnection>
   indicators: ProjectIndicators
   chipIndex?: number
   isCurrent: boolean
@@ -871,7 +876,7 @@ function Chip({
         </span>
       )}
       <Tooltip
-        label={isSshProject(project) ? `${project.name} · ${t('SSH 远程项目')}` : project.name}
+        label={projectChipTooltipLabel(project, sshConnections, t)}
         side="bottom"
         onlyWhenOverflow={!isSshProject(project)}
         wrapperClassName="min-w-0 max-w-[140px]"

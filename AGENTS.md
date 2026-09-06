@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-QingCode is a Tauri 2 desktop code editor with a React 19/Vite frontend and a Rust backend. Keep UI code in `src/`: reusable views live in `src/components/`, Zustand state in `src/store/`, Tauri wrappers in `src/lib/`, and focused helpers in `src/utils/`. Static files belong in `public/`. Native commands and terminal handling are in `src-tauri/src/`; Tauri permissions are defined in `src-tauri/capabilities/default.json`. Use `scripts/` for Windows packaging helpers and consult `DESIGN.md` before changing interaction patterns.
+QingCode is a Tauri 2 desktop code editor with a React 19/Vite frontend and a Rust backend. Keep UI code in `src/`: reusable views live in `src/components/`, Zustand state in `src/store/`, Tauri wrappers in `src/lib/`, and focused helpers in `src/utils/`. Static files belong in `public/`. Native commands and terminal handling are in `src-tauri/src/`; SSH/SFTP/remote PTY handling belongs in `src-tauri/src/remote_ssh.rs`; Tauri permissions are defined in `src-tauri/capabilities/default.json`. Use `scripts/` for Windows packaging helpers and consult `DESIGN.md` before changing interaction patterns.
 
 Global `default-settings.json` and workspace `.qingcode/project-settings.json` are **JSON5** (comments, trailing commas). Default templates in `src/lib/projectSettings.ts` must keep **per-key comments** and state in the file header that comments must not be deleted (`不得删除注释`).
 
@@ -12,20 +12,23 @@ Global `default-settings.json` and workspace `.qingcode/project-settings.json` a
 - `pnpm tauri:dev` starts the complete Windows desktop application; use this for features involving files, terminals, or native dialogs.
 - `pnpm dev` runs only Vite's browser UI for layout-focused work.
 - `pnpm build` runs TypeScript checking and creates the frontend production bundle.
-- `pnpm test` / `pnpm test:watch` run Vitest unit tests under `src/**/*.{test,spec}.{ts,tsx}`.
-- `pnpm check` runs frontend typecheck + Vitest, then Rust `fmt` / `clippy -D warnings` / `test`.
+- `pnpm test` runs Vitest unit tests under `src/**/*.{test,spec}.{ts,tsx}` plus packaging tests; `pnpm test:watch` runs Vitest in watch mode.
+- `pnpm check` runs frontend typecheck, Vitest coverage, packaging tests, and ESLint, then Rust `fmt` / `clippy -D warnings` / `test`.
 - `cargo test` (from `src-tauri/`) runs Rust unit tests; `cargo fmt --all -- --check` verifies Rust formatting; `cargo clippy --all-targets -- -D warnings` enforces lint cleanliness.
 - `pnpm tauri build --no-bundle` validates the production desktop build without producing an installer. Local Windows packaging: `pnpm package` builds the **x64 NSIS installer** (`release/QingCode-setup.exe`); `pnpm package:fast` skips frontend/icons. Portable exe: `pnpm package:exe`; `package:installer` is the same NSIS path; ARM64 (`package:*:arm64`) and `package:macos` are for CI / other hosts. `pnpm smoke:start` smokes `release/QingCode.exe`.
 - Release CI (`.github/workflows/release.yml`) builds **Windows x64**, **Windows ARM64** (`windows-11-arm`), and **macOS arm64** (`macos-14`), then uploads assets to GitHub Release. After a successful **tag** Release, `Sync Gitee Release` mirrors the 6 canonical assets to Gitee when `GITEE_TOKEN` is set (also runnable manually).
 - `pnpm register:open-with` / `pnpm unregister:open-with` register or remove Explorer “Open with” entries for the portable `release/QingCode.exe` (HKCU, no admin). Settings → 功能 also exposes the same action for the running exe.
+- `src/lib/qingcodeCliSkill.ts` is the canonical QingCode CLI Skill template. After changing CLI Skill guidance, run `pnpm skill:sync` and keep `.agents/skills/qingcode-cli/SKILL.md` plus its snapshot test synchronized.
 
 ## Coding Style & Naming Conventions
 
 Match the surrounding code: TypeScript uses two-space indentation, functional React components, PascalCase component filenames (for example, `PromptDialog.tsx`), and camelCase helpers. Name stores by responsibility, such as `editorStore.ts`. Rust follows `rustfmt` and snake_case naming. Route frontend calls through `safeInvoke` in `src/lib/tauri.ts`; new commands must be registered in `src-tauri/src/lib.rs`. Reuse shared overlays, tooltips, and dialogs rather than adding browser-native prompts or duplicate UI patterns. Never put HTML `title` on DOM nodes for hover tips — use `Tooltip` (see `DESIGN.md`; ESLint `react/forbid-dom-props`).
 
+Treat local paths, `ssh://<connection-id>/<absolute-path>` resources, and a remote user's POSIX paths as different domains. Do not pass SSH resource identifiers to Windows filesystem APIs or local processes. Remote file and command operations must stay inside the registered project root, preserve workspace-trust gates, reject symlink escapes, and require explicit host-fingerprint confirmation when identity changes. Keep remote feature limits documented in `docs/ssh-workspaces.md`.
+
 ## Testing Guidelines
 
-Prefer pure helpers / reducers with Vitest coverage under `src/**/*.test.ts` (stores, settings parse, path utils, dirty-tab copy). For TypeScript/UI changes, run `pnpm check` (or at least `pnpm test` + `pnpm build`) and manually verify the affected path in `pnpm tauri:dev`. Add Rust tests near the helper or command they cover, use descriptive names such as `parse_path_rejects_empty_input`, and run `cargo test` / `clippy` before review. Exercise file-changing commands against disposable files or a temporary workspace. Release CI runs `pnpm check`, then packages Windows x64 / Windows ARM64 / macOS arm64 artifacts.
+Prefer pure helpers / reducers with Vitest coverage under `src/**/*.test.ts` (stores, settings parse, path utils, dirty-tab copy). For TypeScript/UI changes, run `pnpm check` (or at least `pnpm test` + `pnpm build`) and manually verify the affected path in `pnpm tauri:dev`. Add Rust tests near the helper or command they cover, use descriptive names such as `parse_path_rejects_empty_input`, and run `cargo test` / `clippy` before review. Exercise local file-changing commands against disposable files or a temporary workspace. Exercise SSH changes against a disposable remote project and cover first-connect fingerprint confirmation, reconnect, trust denial, root-boundary/symlink rejection, SFTP writes, remote PTY, Git, and local/remote transfer as applicable; do not treat local-only tests as remote acceptance. Release CI runs `pnpm check`, then packages Windows x64 / Windows ARM64 / macOS arm64 artifacts.
 
 ## Dual Remotes (Gitee + GitHub)
 
