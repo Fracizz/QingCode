@@ -7,7 +7,7 @@ use std::{
   cell::{Cell, RefCell},
   collections::{HashSet, VecDeque},
   mem, panic,
-  rc::Rc,
+  sync::Arc,
   time::Instant,
 };
 
@@ -24,7 +24,10 @@ use crate::{
   window::WindowId,
 };
 
-pub(crate) type EventLoopRunnerShared<T> = Rc<EventLoopRunner<T>>;
+// Atomic because tauri-runtime-wry clones EventLoopWindowTarget onto tokio
+// workers. A non-atomic Rc races clone/drop and corrupts the Windows heap
+// (0xc0000374). See tauri-apps/tao#1290 and QINGCODE.md.
+pub(crate) type EventLoopRunnerShared<T> = Arc<EventLoopRunner<T>>;
 pub(crate) struct EventLoopRunner<T: 'static> {
   // The event loop's win32 handles
   thread_msg_target: HWND,
