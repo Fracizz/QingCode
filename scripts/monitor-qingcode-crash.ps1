@@ -31,6 +31,55 @@ $ErrorActionPreference = 'Stop'
 $script:CdbExecutable = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
 $script:ReleaseSymbols = Join-Path (Split-Path -Parent $PSScriptRoot) 'src-tauri\target\release'
 $script:PowershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$script:MonitorScriptPath = [IO.Path]::GetFullPath($PSCommandPath)
+
+function ConvertTo-WindowsCommandLineArgument {
+  param(
+    [Parameter(Mandatory = $true)]
+    [AllowEmptyString()]
+    [string]$Value
+  )
+
+  if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') {
+    return $Value
+  }
+
+  # Start-Process joins ArgumentList arrays with spaces before handing the
+  # result to CreateProcess. Quote each value using CommandLineToArgvW's
+  # backslash rules so paths with spaces and trailing slashes survive intact.
+  $builder = New-Object Text.StringBuilder
+  [void]$builder.Append('"')
+  $backslashes = 0
+  foreach ($character in $Value.ToCharArray()) {
+    if ($character -eq [char]92) {
+      $backslashes += 1
+      continue
+    }
+    if ($character -eq [char]34) {
+      [void]$builder.Append([char]92, (($backslashes * 2) + 1))
+      [void]$builder.Append([char]34)
+      $backslashes = 0
+      continue
+    }
+    if ($backslashes -gt 0) {
+      [void]$builder.Append([char]92, $backslashes)
+      $backslashes = 0
+    }
+    [void]$builder.Append($character)
+  }
+  if ($backslashes -gt 0) {
+    [void]$builder.Append([char]92, ($backslashes * 2))
+  }
+  [void]$builder.Append('"')
+  return $builder.ToString()
+}
+
+function Join-WindowsCommandLineArguments {
+  param([Parameter(Mandatory = $true)][object[]]$Arguments)
+  return (($Arguments | ForEach-Object {
+        ConvertTo-WindowsCommandLineArgument -Value ([string]$_)
+      }) -join ' ')
+}
 
 function ConvertTo-CdbPath {
   param([Parameter(Mandatory = $true)][string]$Path)
@@ -100,7 +149,11 @@ function Get-SupervisorProcess {
   if (-not (Test-Path -LiteralPath $Paths.SupervisorPid)) {
     return $null
   }
-  $raw = (Get-Content -LiteralPath $Paths.SupervisorPid -TotalCount 1).Trim()
+  $raw = Get-Content -LiteralPath $Paths.SupervisorPid -TotalCount 1 -ErrorAction SilentlyContinue
+  if ([string]::IsNullOrWhiteSpace([string]$raw)) {
+    return $null
+  }
+  $raw = ([string]$raw).Trim()
   $supervisorId = 0
   if (-not [int]::TryParse($raw, [ref]$supervisorId) -or $supervisorId -le 0) {
     return $null
@@ -109,8 +162,21 @@ function Get-SupervisorProcess {
   if (-not $process) {
     return $null
   }
-  if ($process.CommandLine -and $process.CommandLine -notmatch 'monitor-qingcode-crash\.ps1') {
+  if (-not $process.ExecutablePath -or
+    -not [StringComparer]::OrdinalIgnoreCase.Equals($process.ExecutablePath, $script:PowershellExe) -or
+    [string]::IsNullOrWhiteSpace([string]$process.CommandLine)) {
     return $null
+  }
+
+  $expectedFragments = @(
+    (Join-WindowsCommandLineArguments -Arguments @('-File', $script:MonitorScriptPath)),
+    (Join-WindowsCommandLineArguments -Arguments @('-Action', 'Run')),
+    (Join-WindowsCommandLineArguments -Arguments @('-OutputDirectory', $Paths.Root))
+  )
+  foreach ($fragment in $expectedFragments) {
+    if ($process.CommandLine.IndexOf($fragment, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+      return $null
+    }
   }
   return $process
 }
@@ -148,7 +214,13 @@ function New-CaptureCommand {
     [Parameter(Mandatory = $true)][string]$DumpPath
   )
   $cdbDumpPath = ConvertTo-CdbPath $DumpPath
-  return ".echo ===== QINGCODE CAPTURE $Label =====; .time; .exr -1; .ecxr; r; kv 100; ~* kb 20; .dump /ma /o $cdbDumpPath; .echo ===== DUMP COMMAND RETURNED =====; !heap -triage; !analyze -v; q"
+  if ($cdbDumpPath.Contains('"')) {
+    throw 'CDB dump paths cannot contain double quote characters.'
+  }
+  # The whole exception action is quoted by `sxe -c`, so preserve escaped
+  # inner quotes around the dump filename for CDB's command parser.
+  $quotedDumpPath = '\"{0}\"' -f $cdbDumpPath
+  return ".echo ===== QINGCODE CAPTURE $Label =====; .time; .exr -1; .ecxr; r; kv 100; ~* kb 20; .dump /ma /o $quotedDumpPath; .echo ===== DUMP COMMAND RETURNED =====; !heap -triage; !analyze -v; q"
 }
 
 function Save-Status {
@@ -239,7 +311,8 @@ function Start-MonitorBackground {
   if ($AttachProcessId -gt 0) {
     $argList += @('-AttachProcessId', $AttachProcessId.ToString())
   }
-  $started = Start-Process -FilePath $script:PowershellExe -ArgumentList $argList -WindowStyle Hidden -PassThru
+  $arguments = Join-WindowsCommandLineArguments -Arguments $argList
+  $started = Start-Process -FilePath $script:PowershellExe -ArgumentList $arguments -WindowStyle Hidden -PassThru
   $deadline = (Get-Date).AddSeconds(15)
   do {
     Start-Sleep -Milliseconds 400
@@ -357,7 +430,8 @@ function Invoke-CdbSession {
     expected_dumps = $expectedDumps
   }
 
-  $cdb = Start-Process -FilePath $script:CdbExecutable -ArgumentList $cdbArgs -WindowStyle Hidden -PassThru
+  $arguments = Join-WindowsCommandLineArguments -Arguments $cdbArgs
+  $cdb = Start-Process -FilePath $script:CdbExecutable -ArgumentList $arguments -WindowStyle Hidden -PassThru
   Write-Event -Path $Paths.Events -Data @{
     type = 'cdb_started'
     session_id = $sessionId
