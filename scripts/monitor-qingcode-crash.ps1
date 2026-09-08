@@ -81,9 +81,35 @@ function Join-WindowsCommandLineArguments {
       }) -join ' ')
 }
 
-function ConvertTo-CdbPath {
-  param([Parameter(Mandatory = $true)][string]$Path)
-  return $Path.Replace('\', '/')
+function Split-WindowsCommandLine {
+  param([Parameter(Mandatory = $true)][string]$CommandLine)
+  if (-not ('QingCode.CrashMonitorCommandLine' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace QingCode {
+  public static class CrashMonitorCommandLine {
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr CommandLineToArgvW(string commandLine, out int count);
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr LocalFree(IntPtr memory);
+  }
+}
+'@
+  }
+  $count = 0
+  $memory = [QingCode.CrashMonitorCommandLine]::CommandLineToArgvW($CommandLine, [ref]$count)
+  if ($memory -eq [IntPtr]::Zero) {
+    throw 'Cannot parse process command line.'
+  }
+  try {
+    for ($index = 0; $index -lt $count; $index++) {
+      $pointer = [Runtime.InteropServices.Marshal]::ReadIntPtr($memory, $index * [IntPtr]::Size)
+      [Runtime.InteropServices.Marshal]::PtrToStringUni($pointer)
+    }
+  } finally {
+    [void][QingCode.CrashMonitorCommandLine]::LocalFree($memory)
+  }
 }
 
 function Get-Sha256Hex {
@@ -168,24 +194,50 @@ function Get-SupervisorProcess {
     return $null
   }
 
-  $expectedFragments = @(
-    (Join-WindowsCommandLineArguments -Arguments @('-File', $script:MonitorScriptPath)),
-    (Join-WindowsCommandLineArguments -Arguments @('-Action', 'Run')),
-    (Join-WindowsCommandLineArguments -Arguments @('-OutputDirectory', $Paths.Root))
-  )
-  foreach ($fragment in $expectedFragments) {
-    if ($process.CommandLine.IndexOf($fragment, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+  $arguments = @(Split-WindowsCommandLine -CommandLine $process.CommandLine)
+  $index = 1 # argv[0] is the PowerShell executable.
+  while ($index -lt $arguments.Count -and $arguments[$index] -ine '-File') {
+    switch ($arguments[$index]) {
+      { $_ -in @('-NoLogo', '-NoProfile', '-NonInteractive') } { $index++; break }
+      { $_ -in @('-ExecutionPolicy', '-WindowStyle') } { $index += 2; break }
+      default { return $null } # Reject -Command/-EncodedCommand and embedded decoys.
+    }
+  }
+  if ($index + 1 -ge $arguments.Count -or
+    -not [StringComparer]::OrdinalIgnoreCase.Equals($arguments[$index + 1], $script:MonitorScriptPath)) {
+    return $null
+  }
+  $parameters = @{}
+  for ($index += 2; $index -lt $arguments.Count; $index += 2) {
+    $name = $arguments[$index]
+    if ($name -notin @('-Action', '-Executable', '-OutputDirectory', '-AttachProcessId') -or
+      $parameters.ContainsKey($name) -or $index + 1 -ge $arguments.Count) {
       return $null
     }
+    $parameters[$name] = $arguments[$index + 1]
+  }
+  if ($parameters['-Action'] -ine 'Run' -or
+    -not [StringComparer]::OrdinalIgnoreCase.Equals($parameters['-OutputDirectory'], $Paths.Root)) {
+    return $null
   }
   return $process
 }
 
 function Get-MonitorCdbProcesses {
   param([Parameter(Mandatory = $true)]$Paths)
-  $marker = [regex]::Escape($Paths.Sessions)
   return @(Get-CimInstance Win32_Process -Filter "Name='cdb.exe'" -ErrorAction SilentlyContinue | Where-Object {
-      $_.CommandLine -and $_.CommandLine -match $marker
+      if (-not $_.CommandLine -or
+        -not [StringComparer]::OrdinalIgnoreCase.Equals($_.ExecutablePath, $script:CdbExecutable)) {
+        return $false
+      }
+      $arguments = @(Split-WindowsCommandLine -CommandLine $_.CommandLine)
+      for ($index = 1; $index + 1 -lt $arguments.Count; $index++) {
+        if ($arguments[$index] -ieq '-cf') {
+          return [StringComparer]::OrdinalIgnoreCase.Equals(
+            [IO.Path]::GetDirectoryName($arguments[$index + 1]), $Paths.Sessions)
+        }
+      }
+      return $false
     })
 }
 
@@ -213,14 +265,13 @@ function New-CaptureCommand {
     [Parameter(Mandatory = $true)][string]$Label,
     [Parameter(Mandatory = $true)][string]$DumpPath
   )
-  $cdbDumpPath = ConvertTo-CdbPath $DumpPath
-  if ($cdbDumpPath.Contains('"')) {
-    throw 'CDB dump paths cannot contain double quote characters.'
+  # CDB runs in Captures. Keep its command file ASCII without losing Unicode
+  # directory names; only our generated, ASCII dump basename enters the script.
+  $dumpName = [IO.Path]::GetFileName($DumpPath)
+  if ($dumpName -notmatch '\A[A-Za-z0-9_-]+\.dmp\z') {
+    throw 'Expected a generated ASCII dump filename.'
   }
-  # The whole exception action is quoted by `sxe -c`, so preserve escaped
-  # inner quotes around the dump filename for CDB's command parser.
-  $quotedDumpPath = '\"{0}\"' -f $cdbDumpPath
-  return ".echo ===== QINGCODE CAPTURE $Label =====; .time; .exr -1; .ecxr; r; kv 100; ~* kb 20; .dump /ma /o $quotedDumpPath; .echo ===== DUMP COMMAND RETURNED =====; !heap -triage; !analyze -v; q"
+  return ".echo ===== QINGCODE CAPTURE $Label =====; .time; .exr -1; .ecxr; r; kv 100; ~* kb 20; .dump /ma /o $dumpName; .echo ===== DUMP COMMAND RETURNED =====; !heap -triage; !analyze -v; q"
 }
 
 function Save-Status {
@@ -265,21 +316,34 @@ function Show-Status {
 function Stop-Monitor {
   param([Parameter(Mandatory = $true)]$Paths)
   Set-Content -LiteralPath $Paths.StopFlag -Value ((Get-Date).ToString('o')) -Encoding utf8
-  $cdbs = @(Get-MonitorCdbProcesses -Paths $Paths)
-  foreach ($cdb in $cdbs) {
-    Stop-Process -Id $cdb.ProcessId -Force -ErrorAction SilentlyContinue
-  }
   $supervisor = Get-SupervisorProcess -Paths $Paths
   if ($supervisor -and [int]$supervisor.ProcessId -ne $PID) {
     Stop-Process -Id $supervisor.ProcessId -Force -ErrorAction SilentlyContinue
   }
+  $cdbs = @(Get-MonitorCdbProcesses -Paths $Paths)
+  foreach ($cdb in $cdbs) {
+    Stop-Process -Id $cdb.ProcessId -Force -ErrorAction SilentlyContinue
+  }
   Start-Sleep -Milliseconds 400
-  if (Test-Path -LiteralPath $Paths.SupervisorPid) {
-    Remove-Item -LiteralPath $Paths.SupervisorPid -Force -ErrorAction SilentlyContinue
+  # Check the saved identity independently of the PID file (which the child
+  # may remove itself). A failed query must not be reported as a stopped child.
+  $originalStillRunning = $false
+  if ($supervisor) {
+    $remaining = Get-CimInstance Win32_Process -Filter "ProcessId=$($supervisor.ProcessId)" -ErrorAction Stop
+    $originalStillRunning = $remaining -and $remaining.CreationDate -eq $supervisor.CreationDate
   }
   $stillSupervisor = Get-SupervisorProcess -Paths $Paths
   $stillCdb = @(Get-MonitorCdbProcesses -Paths $Paths)
-  Write-Output ("stopped supervisor={0} leftover_cdb={1}" -f (-not $stillSupervisor), $stillCdb.Count)
+  if ($originalStillRunning -or $stillSupervisor -or $stillCdb.Count -gt 0) {
+    throw "Monitor stop incomplete: supervisor=$([bool]($originalStillRunning -or $stillSupervisor)) leftover_cdb=$($stillCdb.Count). Retry Stop after checking process permissions."
+  }
+  if ($supervisor -and (Test-Path -LiteralPath $Paths.SupervisorPid)) {
+    $recordedId = [string](Get-Content -LiteralPath $Paths.SupervisorPid -TotalCount 1)
+    if ($recordedId.Trim() -eq [string]$supervisor.ProcessId) {
+      Remove-Item -LiteralPath $Paths.SupervisorPid -Force
+    }
+  }
+  Write-Output 'stopped supervisor=True leftover_cdb=0'
 }
 
 function Start-MonitorBackground {
@@ -431,7 +495,7 @@ function Invoke-CdbSession {
   }
 
   $arguments = Join-WindowsCommandLineArguments -Arguments $cdbArgs
-  $cdb = Start-Process -FilePath $script:CdbExecutable -ArgumentList $arguments -WindowStyle Hidden -PassThru
+  $cdb = Start-Process -FilePath $script:CdbExecutable -ArgumentList $arguments -WorkingDirectory $Paths.Captures -WindowStyle Hidden -PassThru
   Write-Event -Path $Paths.Events -Data @{
     type = 'cdb_started'
     session_id = $sessionId
