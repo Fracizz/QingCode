@@ -26,6 +26,7 @@ jobs:
       version: ${{ steps.meta.outputs.version }}
       tag: ${{ steps.meta.outputs.tag }}
       draft: ${{ steps.meta.outputs.draft }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,9 +66,14 @@ jobs:
             echo "Missing release notes: $NOTES (required for non-draft releases)" >&2
             exit 1
           fi
+          PRERELEASE=false
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE=true
+          fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "draft=${DRAFT}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
 
   check:
     runs-on: windows-latest
@@ -383,11 +389,13 @@ jobs:
           tag_name: ${{ needs.meta.outputs.tag }}
           name: QingCode v${{ needs.meta.outputs.version }}
           draft: ${{ needs.meta.outputs.draft == 'true' }}
+          prerelease: ${{ needs.meta.outputs.prerelease == 'true' }}
           generate_release_notes: true
           body_path: ${{ steps.notes.outputs.path }}
           files: release-assets/*
           # Replace same-named assets when re-publishing a tag.
-          make_latest: true
+          # Prereleases must not become GitHub "latest" (in-app update uses that).
+          make_latest: ${{ needs.meta.outputs.prerelease != 'true' }}
 
       # Gitee mirror is handled by workflow Sync Gitee Release (auto after successful tag Release,
       # or manual workflow_dispatch). Keeps one upload path and avoids double/cancelled syncs.

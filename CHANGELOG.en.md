@@ -6,9 +6,25 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.13-beta.1] - 2026-09-08
+
+### Added
+
+- SSH remote projects: connect, host-fingerprint confirmation, remote files, and remote terminals
+- SSH run configurations with QingCode CLI support
+- Search can pick folders and custom types, and Ctrl+Shift+F follows the Explorer folder
+
 ### Changed
 
+- Removed semantic navigation and language components (Go to Definition, Find Usages, workspace symbols, Tree-sitter components)
+- Improved global layout, interaction, motion, and copy; terminal overflow list and collapse icons follow panel layout
 - CLI Skill: SSH/WSL dev servers must bind `127.0.0.1`, or Windows cannot reach the frontend
+
+### Fixed
+
+- Windows heap corruption from a cross-thread `Rc` race and a double-free on event-loop exit
+- SSH remote file creation failures and fingerprint confirmation hidden by overlays
+- Crash-monitor process matching and dump paths
 
 ## [0.1.12] - 2026-08-19
 
