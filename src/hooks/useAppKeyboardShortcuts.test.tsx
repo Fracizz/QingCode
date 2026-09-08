@@ -6,7 +6,7 @@ import { DEFAULT_SHORTCUTS } from '../lib/shortcuts'
 import { useAppKeyboardShortcuts } from './useAppKeyboardShortcuts'
 
 const mocks = vi.hoisted(() => ({
-  findUsagesAtActiveEditor: vi.fn(),
+  openSymbolPicker: vi.fn(),
   requestGlobalSearch: vi.fn(),
   requestSearch: vi.fn(),
   explorerDirectoryForSearchShortcut: vi.fn<() => string | null>(() => null),
@@ -19,10 +19,6 @@ vi.mock('../lib/copyFileActions', () => ({
   copyActiveFileReferenceAction: vi.fn(),
   copyActivePathAction: mocks.copyActivePathAction,
   copyActiveRelativePathAction: vi.fn(),
-}))
-
-vi.mock('../lib/symbolNavigation', () => ({
-  findUsagesAtActiveEditor: mocks.findUsagesAtActiveEditor,
 }))
 
 vi.mock('../lib/editorSelectionSeed', () => ({
@@ -56,14 +52,13 @@ function ShortcutHarness() {
     shortcuts: DEFAULT_SHORTCUTS,
     setView: vi.fn(),
     openPalette: vi.fn(),
-    openSymbolPicker: vi.fn(),
-    openWorkspaceSymbolPicker: vi.fn(),
+    openSymbolPicker: mocks.openSymbolPicker,
   })
   return null
 }
 
 afterEach(() => {
-  mocks.findUsagesAtActiveEditor.mockReset()
+  mocks.openSymbolPicker.mockReset()
   mocks.requestGlobalSearch.mockReset()
   mocks.requestSearch.mockReset()
   mocks.explorerDirectoryForSearchShortcut.mockReset()
@@ -75,21 +70,6 @@ afterEach(() => {
 })
 
 describe('useAppKeyboardShortcuts', () => {
-  it('runs Shift+F12 even when a WebView guard already prevented the event', () => {
-    render(<ShortcutHarness />)
-    const event = new KeyboardEvent('keydown', {
-      key: 'F12',
-      shiftKey: true,
-      bubbles: true,
-      cancelable: true,
-    })
-    event.preventDefault()
-
-    window.dispatchEvent(event)
-
-    expect(mocks.findUsagesAtActiveEditor).toHaveBeenCalledOnce()
-  })
-
   it('opens global search with the editor selection on Ctrl+Shift+F', () => {
     render(<ShortcutHarness />)
     const event = new KeyboardEvent('keydown', {
@@ -161,7 +141,7 @@ describe('useAppKeyboardShortcuts', () => {
     expect(mocks.openFileFromDialog).toHaveBeenCalledOnce()
   })
 
-  it('does not treat Ctrl+Shift+O as the open-file shortcut', () => {
+  it('opens the current file outline on Ctrl+Shift+O without opening the file picker', () => {
     render(<ShortcutHarness />)
     const event = new KeyboardEvent('keydown', {
       key: 'o',
@@ -174,6 +154,7 @@ describe('useAppKeyboardShortcuts', () => {
     window.dispatchEvent(event)
 
     expect(mocks.openFileFromDialog).not.toHaveBeenCalled()
+    expect(mocks.openSymbolPicker).toHaveBeenCalledOnce()
   })
 
   it('lets an open context menu own its displayed copy-path shortcut', () => {

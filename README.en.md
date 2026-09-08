@@ -49,7 +49,7 @@ Pin local folders or SSH projects in the title bar and switch with a click. Each
 
 ### SSH remote workspaces
 
-Use title-bar `+` → **SSH** to connect to a remote host. Confirm its host fingerprint on first use, authenticate, then browse and select the remote project directory. SSH workspaces support SFTP file operations, remote PTY terminals, the Git workspace, local/remote file transfer, and multi-project search mixed with local projects. Workspace trust still gates writes, terminals, and command execution. Remote extensions, port forwarding, SSH agent forwarding, and local Tree-sitter semantic indexing are not currently provided; see [SSH workspaces](./docs/ssh-workspaces.md) for the full capability and boundary list.
+Use title-bar `+` → **SSH** to connect to a remote host. Confirm its host fingerprint on first use, authenticate, then browse and select the remote project directory. SSH workspaces support SFTP file operations, remote PTY terminals, the Git workspace, local/remote file transfer, and multi-project search mixed with local projects. Workspace trust still gates writes, terminals, and command execution. Remote extensions, port forwarding, and SSH agent forwarding are not currently provided; see [SSH workspaces](./docs/ssh-workspaces.md) for the full capability and boundary list.
 
 ### Run configurations: start project services
 
@@ -101,9 +101,9 @@ The explorer shows only the active project. Create, rename, and delete in place;
 
 Multi-tab editing with on-demand highlighting for common languages; auto-detect UTF-8 / BOM / GB18030-compatible text; external changes can be reloaded or compared instead of overwritten silently. Large files degrade or open read-only. Editor and terminal sessions restore after restart (opening a project no longer auto-creates an empty terminal).
 
-The editor includes lightweight code navigation without requiring a full LSP: holding `Ctrl` marks navigable symbols, while `Ctrl+click` resolves and opens a definition; `Shift+F12` groups calls, reads, writes, and imports by caller or file in a draggable translucent popup, and `Ctrl+T` searches workspace symbols by name. A Tree-sitter incremental index recognizes common scopes, shadowing, and project-local module relationships, including TS/JS path aliases and re-exports, Python package forwarding, Java imports, Rust `use`, and Go module imports; results that cannot be resolved precisely are clearly marked as approximate.
+File navigation includes `Ctrl+P` to find files by name, `Ctrl+Shift+F` for text search, `Ctrl+G` to go to a line, and `Alt+Left` / `Alt+Right` to navigate back / forward. `Ctrl+Shift+O` opens the current file's functions, classes, or headings. Search results open at the matching line and column.
 
-It is for everyday code reading, following calls across files, and fast lookup. Unlike IntelliJ IDEA, it does not provide compiler-grade type analysis, safe rename / refactoring, or debugging; use a full IDE for complex language semantics. Python, TypeScript/JavaScript, Java, Rust, and Go are five independent language components. The Windows installer lets you select each one, and a missing component disables only semantic navigation for that language—not normal text editing. SSH workspaces do not currently start the local Tree-sitter index, so these semantic-navigation features are unavailable there.
+QingCode focuses on multiple projects, SSH, file editing, and terminal workflows. Neither local nor SSH workspaces provide semantic definition navigation, find usages, or workspace symbol search, and no background semantic index runs. The editor provides syntax highlighting, folding, and the current file outline without separate navigation language components. Use a full IDE such as IntelliJ IDEA or PyCharm for type analysis, refactoring, and debugging.
 
 ### Source Control workspace
 
@@ -125,7 +125,7 @@ Search file names or contents in a chosen scope; replace stays collapsed until y
 |--|--|--|--|--|
 | Best for | Coordinating multiple projects, services, and terminals | Deep development, refactoring, and debugging | General development assembled through extensions | Fast editing and LSP-based development |
 | When switching projects | Title-bar pins; editor and terminal sessions stay live | Project / window centered | Workspace centered | Workspace centered |
-| Code navigation | Tree-sitter: definitions, usages, symbols; approximate results are labelled | Compiler-grade semantics, refactoring, and debugging | Mostly depends on language servers and extensions | Mostly depends on language servers |
+| Code navigation | File search, text search, current file outline, and back / forward; no semantic navigation or find usages | Compiler-grade semantics, refactoring, and debugging | Mostly depends on language servers and extensions | Mostly depends on language servers |
 | Extensions and AI | No marketplace or built-in model; terminal + CLI connect external assistants | Plugin ecosystem and AI plugins | Broadest extension ecosystem | Built-in-AI leaning, smaller ecosystem |
 
 A typical pairing: start API, web, and workers in QingCode and keep the scene while switching projects; open the same repository in IDEA, VS Code, or Zed when you need type inference, refactoring, or breakpoint debugging. QingCode **deliberately skips** full IntelliSense, a debugger, and an extension marketplace.
@@ -154,7 +154,7 @@ Download from [GitHub Releases](https://github.com/Fracizz/QingCode/releases) or
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` or `.zip` |
 
-- Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/). The installer tries an automatic download first; on failure, Yes opens the bootstrapper download and No opens the product page. Lightweight-navigation components are currently installed through the setup package: all five are selected by default and can be deselected. The portable single-file build does not embed them
+- Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/). The installer tries an automatic download first; on failure, Yes opens the bootstrapper download and No opens the product page. Upgrades remove retired navigation component files while preserving any additional files stored in those directories.
 - macOS: unsigned builds may need right-click → Open the first time  
 
 Local packaging (Windows x64 host):

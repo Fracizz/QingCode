@@ -45,7 +45,6 @@ import {
   FileText,
   LoaderCircle,
   LocateFixed,
-  GitFork,
   Redo2,
   Save,
   Scissors,
@@ -72,15 +71,6 @@ import {
 import { FONT_SETTINGS_EVENT, loadFontSettings } from '../lib/fontSettings'
 import { buildEditorPreferenceExtensions } from '../lib/editorSettingsExtensions'
 import { reliableClickMouseSelection } from '../lib/editorMouseSelection'
-import { editorDefinitionLink } from '../lib/editorDefinitionLink'
-import { isDefinitionLinkEnabledForPath } from '../lib/codeNavigationAvailability'
-import { isPrimaryModifierPressed } from '../lib/tauri'
-import {
-  goToDefinition,
-  identifierAt,
-} from '../lib/definitionNavigation'
-import { findUsagesAtActiveEditor } from '../lib/symbolNavigation'
-import { scheduleSemanticOverlay } from '../lib/semanticNavigation'
 import {
   editorHasOccurrenceHighlight,
   occurrenceHighlightMarker,
@@ -220,11 +210,6 @@ function createTabEditorState(
       preserveSelectionTokenColors(),
       // Kept outside compartments so every profile (incl. large/degraded) gets matches.
       occurrenceHighlight,
-      editorDefinitionLink({
-        linkEnabled: () => isDefinitionLinkEnabledForPath(tabPath),
-        navigate: (view, identifier) => goToDefinition(view.state, tabPath, identifier),
-        nativeModifierPressed: isPrimaryModifierPressed,
-      }),
       reliableClickMouseSelection(),
       EditorView.updateListener.of(update => {
         emitMinimapUpdate(update)
@@ -232,7 +217,6 @@ function createTabEditorState(
           // Avoid full-document copies into Zustand on every keystroke.
           markDirty(tabId)
           notifyEditorContentChanged(tabId)
-          scheduleSemanticOverlay(tabPath, update.state)
           const pasted = update.transactions.some(tr => tr.isUserEvent('input.paste'))
           if (pasted && profile === 'full' && getEditorPreferences().formatOnPaste) {
             void formatDocument(tabId, { quiet: true })
@@ -796,7 +780,6 @@ export default function Editor() {
     const canEditSelection = !!view && hasNonEmptySelection(view)
     const canUndo = !!view && undoDepth(view.state) > 0
     const canRedo = !!view && redoDepth(view.state) > 0
-    const canFindCalls = !!view && !!identifierAt(view.state, view.state.selection.main.head)
 
     return [
       {
@@ -890,13 +873,6 @@ export default function Editor() {
         action: () => {
           if (activeTabId) void formatDocument(activeTabId)
         },
-      },
-      {
-        label: t('查找用法'),
-        icon: <GitFork size={14} />,
-        shortcut: 'Shift+F12',
-        disabled: !canFindCalls,
-        action: () => void findUsagesAtActiveEditor(),
       },
       {
         label: t('复制路径'),

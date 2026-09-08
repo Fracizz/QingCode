@@ -1,7 +1,6 @@
 //! Debounced filesystem watching for open files and project roots.
 //! Emits `fs-change` events to the frontend; self-writes can be suppressed briefly.
 
-use crate::code_navigation::SemanticNavigationState;
 use crate::path_guard::PathAllowlist;
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEventKind, Debouncer};
@@ -198,7 +197,6 @@ fn rebuild_watches(app: AppHandle, guard: &mut WatcherInner) -> Result<(), Strin
                 return;
             };
             let mut seen = HashSet::new();
-            let mut semantic_paths = Vec::new();
             for event in events {
                 if is_high_churn_path(&event.path, &watched_roots) {
                     continue;
@@ -223,19 +221,7 @@ fn rebuild_watches(app: AppHandle, guard: &mut WatcherInner) -> Result<(), Strin
                 if !seen.insert(key) {
                     continue;
                 }
-                semantic_paths.push(path.clone());
                 emit_change(&app_for_cb, path, event.kind);
-            }
-            if semantic_paths.is_empty() {
-                return;
-            }
-            if let Some(index) = app_for_cb.try_state::<SemanticNavigationState>() {
-                let index = index.inner().clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    for path in semantic_paths {
-                        let _ = index.refresh_path_from_disk(&path);
-                    }
-                });
             }
         },
     )

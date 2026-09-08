@@ -64,6 +64,25 @@
     Abort
 !macroend
 
+; Remove only the files shipped by the retired navigation components.
+; Non-recursive RMDir preserves any additional files in these directories.
+!macro QingRemoveLegacyNavigationComponent ID
+  Delete "$INSTDIR\language-components\${ID}\qingcode_language_${ID}.dll"
+  Delete "$INSTDIR\language-components\${ID}\component.json"
+  RMDir "$INSTDIR\language-components\${ID}"
+!macroend
+
+!macro QingRemoveLegacyNavigationComponents
+  !insertmacro QingRemoveLegacyNavigationComponent "typescript"
+  !insertmacro QingRemoveLegacyNavigationComponent "python"
+  !insertmacro QingRemoveLegacyNavigationComponent "java"
+  !insertmacro QingRemoveLegacyNavigationComponent "rust"
+  !insertmacro QingRemoveLegacyNavigationComponent "go"
+  RMDir "$INSTDIR\language-components"
+  ; Missing legacy files are expected on clean installs.
+  ClearErrors
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro QingReadWebView2Version
   ${If} $R9 == ""
@@ -72,4 +91,9 @@
       !insertmacro QingOfferWebView2Download
     ${EndIf}
   ${EndIf}
+  !insertmacro QingRemoveLegacyNavigationComponents
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  !insertmacro QingRemoveLegacyNavigationComponents
 !macroend

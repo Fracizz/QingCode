@@ -1,5 +1,6 @@
 import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import {
+  ChevronDown,
   ChevronRight,
   File as FileIcon,
   Folder,

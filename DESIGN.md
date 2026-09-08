@@ -173,7 +173,7 @@ SSH 添加流程使用 `SshProjectDialog`：填写连接信息 → 首次连接�
 
 远程资源使用内部 `ssh://<connection-id>/<absolute-path>` 标识。前端通过统一 Tauri IPC 使用文件树、编辑器、终端、搜索和 Git 工作台；不得把远程 URI 当作 Windows 本地路径传给 `fs`、Explorer 或本地进程。后端 `src-tauri/src/remote_ssh.rs` 负责 SSH/SFTP/PTY 与远程命令边界，只接受已注册项目根目录内的资源；写入、上传、格式化、终端和命令执行继续受工作区信任约束。SFTP 必须解析真实路径并拒绝通过符号链接越出项目根目录，远程搜索不得跟随符号链接。
 
-SSH 项目不启动本地 Tree-sitter 索引，定义跳转、引用查找和工作区符号等语义导航应显示为不可用，而不是回退成不可靠结果。当前不提供远程扩展、端口转发、SSH Agent 转发或连接配置管理页；完整产品边界见 [`docs/ssh-workspaces.md`](docs/ssh-workspaces.md)。
+本地与 SSH 项目均使用文件搜索、文本搜索和当前文件结构进行导航，不提供语义定义跳转、引用查找或工作区符号搜索。当前不提供远程扩展、端口转发、SSH Agent 转发或连接配置管理页；完整产品边界见 [`docs/ssh-workspaces.md`](docs/ssh-workspaces.md)。
 
 ### 资源管理器收藏夹
 
@@ -302,11 +302,12 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 
 ---
 
-### 代码导航浮层
+### 文件导航
 
-- `Ctrl+单击` 只跳到定义，不自动打开用法浮层；`Shift+F12` 查找用法。用法浮层首屏只渲染有限批次，已有候选通过「显示更多用法」渐进展开，后端分页通过「加载更多用法」继续查询。
-- 浮层使用近乎不透明背景，不使用大面积实时 `backdrop-filter`；拖动继续使用 `translate3d` + `requestAnimationFrame`，松手后提交最终位置。
-- 分批渲染不得改变 `SymbolId`、作用域绑定、近似结果标记或筛选语义，只减少首屏 DOM、绘制和 IPC 返回量。
+- 使用快速打开、全文搜索、转到行、前进后退和文件面包屑定位内容；搜索结果保留精确行列位置。
+- 当前文件结构列表由 CodeMirror / Lezer 解析当前文档，供用户按名称选择函数、类或标题。
+- 不提供 Ctrl+单击定义链接、引用查找浮层或工作区符号搜索；菜单、命令面板和快捷键设置不保留这些入口。
+- 不建立后台语义索引，不同步语义缓冲区，也不分发独立导航语言组件。
 
 ### 键盘快捷键
 
@@ -437,7 +438,7 @@ ESLint 以 `react/forbid-dom-props` 禁止 DOM 节点上的 `title`；新增悬�
 |----|------|
 | **禁止** | `cursor: grab` / `cursor: grabbing`（俗称「小手」拖拽光标）；不得用光标形状暗示「可抓取」 |
 | **默认** | 保持箭头（`cursor: default`）；chip / 树行内按钮同为 `default`，不用 `pointer` 替代拖拽提示 |
-| **允许** | 面板分隔条：`ew-resize` / `ns-resize`（`PanelResizer`）；代码导航浮层等**整窗 reposition** 手柄可用 `cursor-move` |
+| **允许** | 面板分隔条：`ew-resize` / `ns-resize`（`PanelResizer`）；**整窗 reposition** 手柄可用 `cursor-move` |
 | **反馈** | 拖拽态靠透明度、描边、`accent` 插入指示线 / **实时让位**预览或目标高亮表达；文件树移动另用跟随指针的浮层文案（「移动到 xxx」） |
 
 HTML5 `draggable` 的标签栏排序仍走浏览器 DnD，**同样不得**为 reorder 添加 `grab` / `grabbing`。

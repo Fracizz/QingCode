@@ -806,6 +806,16 @@ export default function SearchPanel() {
       setCollapsedFiles(new Set(contentResults.files.map(f => f.path)))
     }
   }, [wantsContent, contentResults])
+  const allContentExpanded = Boolean(
+    wantsContent &&
+      contentResults?.files.length &&
+      contentResults.files.every(file => !collapsedFiles.has(file.path))
+  )
+  const allContentCollapsed = Boolean(
+    wantsContent &&
+      contentResults?.files.length &&
+      contentResults.files.every(file => collapsedFiles.has(file.path))
+  )
 
   const onOpenMatch = useCallback(
     (path: string, line: number) => {
@@ -1121,7 +1131,7 @@ export default function SearchPanel() {
 
   return (
     <>
-      <div className="h-full flex flex-col bg-bg-sidebar text-fg">
+      <div className="h-full min-h-0 flex flex-col bg-bg-sidebar text-fg">
         <div className="px-3 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
           <Search size={13} className="text-brand flex-shrink-0" />
           <span className="min-w-0 truncate">{t('搜索')}</span>
@@ -1579,7 +1589,9 @@ export default function SearchPanel() {
         </div>
 
         <div
-          className="flex-1 overflow-hidden flex flex-col"
+          role="region"
+          aria-label={t('搜索结果')}
+          className="flex-1 min-h-0 overflow-hidden flex flex-col"
           tabIndex={0}
           onKeyDown={onResultsKeyDown}
         >
@@ -1608,7 +1620,7 @@ export default function SearchPanel() {
             />
           ) : (
             <>
-              <div className="px-4 py-1 flex items-center gap-2 text-[11px] text-fg-dim">
+              <div className="shrink-0 px-4 py-1 flex items-center gap-2 text-[11px] text-fg-dim">
                 <span className="truncate">{resultSummary}</span>
                 {loading && (
                   <LoaderCircle
@@ -1620,19 +1632,31 @@ export default function SearchPanel() {
                 {wantsContent && contentResults && contentResults.match_count > 0 && (
                   <span className="ml-auto flex items-center gap-2 flex-shrink-0">
                     <Tooltip label={t('展开全部')} side="bottom">
-                      <button className="hover:text-fg" onClick={expandAll}>
+                      <button
+                        type="button"
+                        aria-label={t('展开全部')}
+                        disabled={allContentExpanded}
+                        className="hover:text-fg disabled:pointer-events-none disabled:opacity-35"
+                        onClick={expandAll}
+                      >
                         <ChevronDown size={12} />
                       </button>
                     </Tooltip>
                     <Tooltip label={t('折叠全部')} side="bottom">
-                      <button className="hover:text-fg" onClick={collapseAll}>
+                      <button
+                        type="button"
+                        aria-label={t('折叠全部')}
+                        disabled={allContentCollapsed}
+                        className="hover:text-fg disabled:pointer-events-none disabled:opacity-35"
+                        onClick={collapseAll}
+                      >
                         <ChevronRight size={12} />
                       </button>
                     </Tooltip>
                   </span>
                 )}
               </div>
-              <div className="flex-1">
+              <div data-search-results-list className="min-h-0 flex-1">
                 <List
                   listRef={listRef}
                   rowCount={rows.length}
@@ -1641,7 +1665,11 @@ export default function SearchPanel() {
                   rowProps={rowProps}
                   overscanCount={8}
                   className="h-full overscroll-y-contain"
-                  style={{ height: '100%', overscrollBehavior: 'contain' }}
+                  style={{
+                    height: '100%',
+                    overscrollBehavior: 'contain',
+                    scrollbarGutter: 'stable',
+                  }}
                 />
               </div>
             </>

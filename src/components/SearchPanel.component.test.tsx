@@ -352,6 +352,59 @@ describe('SearchPanel', () => {
     )
   })
 
+  it('keeps the result list scrollable and expands or collapses every content group', async () => {
+    dispatch({
+      list_file_extensions: () => ['ts'],
+      search_files: () => [],
+      start_content_search: () => 1,
+      search_file_contents: () => ({
+        files: [
+          {
+            name: 'build.ts',
+            path: 'D:/alpha/src/build.ts',
+            relative: 'src/build.ts',
+            matches: [
+              {
+                line: 7,
+                text: 'const build = true',
+                match_start: 6,
+                match_end: 11,
+              },
+            ],
+          },
+        ],
+        match_count: 1,
+        files_scanned: 1,
+        truncated: false,
+      }),
+      cancel_content_search: () => undefined,
+    })
+    render(<SearchPanel />)
+    const input = screen.getByPlaceholderText('搜索文件或内容…')
+    fireEvent.change(input, { target: { value: 'build' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText('build', { selector: 'mark' })).toBeInTheDocument()
+    const results = screen.getByRole('region', { name: '搜索结果' })
+    expect(results).toHaveClass('min-h-0')
+    expect(results.querySelector('[data-search-results-list]')).toHaveClass('min-h-0')
+
+    const expandAll = screen.getByRole('button', { name: '展开全部' })
+    const collapseAll = screen.getByRole('button', { name: '折叠全部' })
+    expect(expandAll).toBeDisabled()
+    expect(collapseAll).toBeEnabled()
+
+    fireEvent.click(collapseAll)
+    await waitFor(() =>
+      expect(screen.queryByText('build', { selector: 'mark' })).not.toBeInTheDocument()
+    )
+    expect(expandAll).toBeEnabled()
+    expect(collapseAll).toBeDisabled()
+
+    fireEvent.click(expandAll)
+    expect(await screen.findByText('build', { selector: 'mark' })).toBeInTheDocument()
+  })
+
   it('skips content search for a single-character query', async () => {
     dispatch({
       list_file_extensions: () => ['ts'],

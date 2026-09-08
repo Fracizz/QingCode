@@ -15,8 +15,6 @@ import PropertiesDialog from './components/PropertiesDialog'
 import SshReconnectDialog from './components/SshReconnectDialog'
 import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
-import WorkspaceSymbolPicker from './components/WorkspaceSymbolPicker'
-import DefinitionPicker from './components/DefinitionPicker'
 import FileCompareDialog from './components/FileCompareDialog'
 import EmptyEditor from './components/EmptyEditor'
 import { useTerminalStore } from './store/terminalStore'
@@ -27,7 +25,6 @@ import { useUIStore } from './store/uiStore'
 import { useCompareStore } from './store/compareStore'
 import { useCommandPaletteStore } from './store/commandPaletteStore'
 import { useSymbolPickerStore } from './store/symbolPickerStore'
-import { useWorkspaceSymbolPickerStore } from './store/workspaceSymbolPickerStore'
 import { isTauri } from './lib/tauri'
 import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
@@ -39,7 +36,6 @@ import { useI18n } from './lib/i18n'
 import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
 import { useFileWatcher } from './hooks/useFileWatcher'
-import { useSemanticIndex } from './hooks/useSemanticIndex'
 import { useDraftRecovery } from './hooks/useDraftRecovery'
 import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
 import { useTerminalPanel } from './hooks/useTerminalPanel'
@@ -146,12 +142,10 @@ function App() {
   const shortcuts = useShortcutStore(s => s.shortcuts)
   const openPalette = useCommandPaletteStore(s => s.openPalette)
   const openSymbolPicker = useSymbolPickerStore(s => s.openPicker)
-  const openWorkspaceSymbolPicker = useWorkspaceSymbolPickerStore(s => s.openPicker)
 
   useAutoSave()
   useDraftRecovery()
   useFileWatcher()
-  useSemanticIndex()
   useAppUpdateCheck()
   const fileCompare = useCompareStore(s => s.request)
 
@@ -195,7 +189,6 @@ function App() {
     setView,
     openPalette,
     openSymbolPicker,
-    openWorkspaceSymbolPicker,
   })
   useLaunchFileRequests(projectsReady, currentProject !== null, openPathsKey)
 
@@ -447,8 +440,6 @@ function App() {
       <SshReconnectDialog />
       <CommandPalette />
       <SymbolPicker />
-      <WorkspaceSymbolPicker />
-      <DefinitionPicker />
       {fileCompare && <FileCompareDialog {...fileCompare} />}
       {projectManagerOpen && (
         <Suspense fallback={null}>

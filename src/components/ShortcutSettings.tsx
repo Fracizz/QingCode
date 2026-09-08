@@ -35,16 +35,6 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
     description: '打开当前文件的符号列表，快速跳转到函数、类或标题。',
   },
   {
-    id: 'goToSymbolInWorkspace',
-    label: '转到工作区中的符号',
-    description: '搜索当前项目中的函数、类、变量及其他符号。',
-  },
-  {
-    id: 'findCalls',
-    label: '查找用法',
-    description: '查找当前光标处符号的调用、读取、写入和导入位置。',
-  },
-  {
     id: 'searchAllProjects',
     label: '打开搜索',
     description: '打开搜索面板；若编辑器有选中文本（如双击单词），会自动填入搜索框。',

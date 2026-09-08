@@ -1,7 +1,6 @@
 mod app_memory;
 mod app_paths;
 mod cli;
-mod code_navigation;
 mod commands;
 mod content_search;
 mod exclude;
@@ -14,11 +13,8 @@ mod git;
 mod git_command;
 mod git_status;
 mod ipc;
-mod language_components;
-mod native_input;
 mod path_guard;
 mod remote_ssh;
-mod symbol_search;
 mod terminal;
 mod update;
 mod user_locales;
@@ -645,8 +641,6 @@ pub fn run() {
         .manage(FileWatcherManager::new())
         .manage(PathAllowlist::new())
         .manage(remote_ssh::SshManager::new())
-        .manage(code_navigation::SemanticNavigationState::new())
-        .manage(symbol_search::SymbolSearchState::new())
         .manage(LaunchFiles::new(launch_files))
         .setup(move |app| {
             migrate_legacy_database();
@@ -703,19 +697,6 @@ pub fn run() {
             commands::search_file_contents,
             commands::start_content_search,
             commands::cancel_content_search,
-            symbol_search::search_symbol_definitions,
-            symbol_search::search_symbol_references,
-            symbol_search::search_workspace_symbols,
-            code_navigation::prepare_semantic_index,
-            code_navigation::update_semantic_overlay,
-            code_navigation::clear_semantic_overlay,
-            code_navigation::resolve_symbol_at,
-            code_navigation::find_symbol_usages_at,
-            code_navigation::find_symbol_usages_by_id,
-            code_navigation::search_indexed_workspace_symbols,
-            code_navigation::semantic_index_status,
-            language_components::language_component_statuses,
-            native_input::primary_modifier_pressed,
             commands::list_file_extensions,
             commands::create_file,
             commands::create_directory,

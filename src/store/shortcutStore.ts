@@ -11,6 +11,12 @@ function loadShortcuts(): ShortcutMap {
       // Empty string is a valid unbound override; only fall back when missing/non-string.
       if (typeof saved[key] === 'string') shortcuts[key] = saved[key]!
     }
+    // Retired commands must not survive in persisted shortcut settings.
+    if (
+      Object.keys(saved).some(key => !Object.prototype.hasOwnProperty.call(DEFAULT_SHORTCUTS, key))
+    ) {
+      persist(shortcuts)
+    }
     return shortcuts
   } catch {
     return { ...DEFAULT_SHORTCUTS }

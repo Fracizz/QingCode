@@ -18,7 +18,6 @@ $iconSvg = Join-Path $projectRoot 'public\app-icon-file.svg'
 $iconIco = Join-Path $projectRoot 'src-tauri\icons\icon.ico'
 $distIndex = Join-Path $projectRoot 'dist\index.html'
 $bundleDir = Resolve-CargoBundleDir -ProjectRoot $projectRoot -Target $Target
-$cargoReleaseDir = Resolve-CargoReleaseDir -ProjectRoot $projectRoot -Target $Target
 
 $archSuffix = switch -Regex ($Target) {
   'aarch64-pc-windows' { '-windows-arm64' }
@@ -147,50 +146,11 @@ try {
     throw "NSIS bundle directory not found: $nsisDir"
   }
 
-  Write-Step 'Build language components'
-  $componentStageRelative = if ($Target) {
-    ".dev\nsis-language-components\$Target"
-  } else {
-    '.dev\nsis-language-components\host'
-  }
-  $componentStage = Join-Path $projectRoot $componentStageRelative
-  & (Join-Path $PSScriptRoot 'build-language-components.ps1') `
-    -Configuration Release `
-    -Target $Target `
-    -Destination $componentStage
-  if ($LASTEXITCODE -ne 0) {
-    throw "Language component build failed with exit code $LASTEXITCODE."
-  }
-
-  Write-Step 'Embed language components into NSIS installer'
-  # Tauri writes the rendered NSIS sources beside release/, while the compiled
-  # setup executable is written under release/bundle/nsis/.
-  $renderedNsisRoot = Join-Path $cargoReleaseDir 'nsis'
-  $renderedInstaller = Join-Path $renderedNsisRoot 'x64\installer.nsi'
-  if (-not (Test-Path -LiteralPath $renderedInstaller)) {
-    $renderedInstaller = Get-ChildItem -Path $renderedNsisRoot -Recurse -Filter 'installer.nsi' -File |
-      Select-Object -First 1 -ExpandProperty FullName
-  }
-  if (-not $renderedInstaller) {
-    throw "Rendered NSIS installer script not found in $renderedNsisRoot."
-  }
-  & node (Join-Path $PSScriptRoot 'patch-language-components-nsis.mjs') $renderedInstaller $componentStage
-  if ($LASTEXITCODE -ne 0) {
-    throw "Failed to patch language components into NSIS."
-  }
-  $makeNsis = Join-Path $env:LOCALAPPDATA 'tauri\NSIS\makensis.exe'
-  if (-not (Test-Path -LiteralPath $makeNsis)) {
-    throw "Tauri NSIS compiler not found: $makeNsis"
-  }
-  & $makeNsis '-INPUTCHARSET' 'UTF8' '-OUTPUTCHARSET' 'UTF8' '-V3' $renderedInstaller
-  if ($LASTEXITCODE -ne 0) {
-    throw "Patched NSIS installer compilation failed with exit code $LASTEXITCODE."
-  }
-  $setup = Get-ChildItem -Path (Split-Path -Parent $renderedInstaller) -Filter '*.exe' -File |
+  $setup = Get-ChildItem -LiteralPath $nsisDir -Filter '*.exe' -File |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1
   if (-not $setup) {
-    throw "Build completed but no patched NSIS installer .exe found beside $renderedInstaller."
+    throw "Build completed but no NSIS installer .exe found in $nsisDir."
   }
 
   Write-Step 'Copy to release/'
@@ -215,8 +175,7 @@ try {
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "Install notes: all five language components are installed by default." -ForegroundColor DarkGray
-  Write-Host "               Start Menu shortcut always; desktop shortcut checked by default on finish page." -ForegroundColor DarkGray
+  Write-Host "Install notes: Start Menu shortcut always; desktop shortcut checked by default on finish page." -ForegroundColor DarkGray
   Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {
   Pop-Location

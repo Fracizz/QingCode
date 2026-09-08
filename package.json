@@ -17,7 +17,7 @@
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --workspace",
     "lint": "eslint .",
     "test": "vitest run && pnpm test:packaging",
-    "test:packaging": "node --test scripts/patch-language-components-nsis.test.mjs",
+    "test:packaging": "node --test scripts/nsis-hooks.test.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "skill:sync": "node --experimental-strip-types scripts/sync-qingcode-cli-skill.mjs",

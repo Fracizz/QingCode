@@ -25,7 +25,7 @@ QingCode 的 SSH 工作区直接在 Tauri 后端建立 SSH/SFTP 连接，不要�
 
 ## 当前边界
 
-- SSH 工作区不启动本地 Tree-sitter 索引，定义跳转、引用查找和工作区符号等语义导航不可用。
+- 本地和 SSH 工作区均提供文件与文本导航，不提供语义定义跳转、引用查找或工作区符号搜索。
 - 内容搜索要求远端安装 `ripgrep`（`rg`），Git 功能要求远端安装 `git`。
 - 当前面向 POSIX/Linux 远端；不支持远端 PowerShell 或 BAT 任务。
 - WSL 直连工作区尚未接入；可先通过 WSL 内的 SSH 服务使用同一 SSH 工作区能力。

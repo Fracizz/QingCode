@@ -58,7 +58,7 @@
 
 Saved SSH connections can be reused to open other projects on the same host. SSH projects support remote file operations, PTY terminals, Git, run configurations, local/remote file transfer, and search mixed with local projects. QingCode prompts for reconnection after a disconnect. If a known host fingerprint changes, verify that the server was intentionally reinstalled or replaced instead of bypassing the warning.
 
-Remote extensions, port forwarding, SSH agent forwarding, and local Tree-sitter semantic indexing are not currently supported. For WSL, enable an SSH service inside the distribution and connect through the same SSH-project flow. See [SSH workspaces](./docs/ssh-workspaces.md) for details.
+Remote extensions, port forwarding, and SSH agent forwarding are not currently supported. Both local and SSH workspaces provide file search, text search, and a current file outline; semantic definition navigation, find usages, and workspace symbol search are unavailable. For WSL, enable an SSH service inside the distribution and connect through the same SSH-project flow. See [SSH workspaces](./docs/ssh-workspaces.md) for details.
 
 ### Temporary Project
 

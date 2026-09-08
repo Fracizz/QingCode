@@ -7,14 +7,7 @@ license = "MIT"
 edition = "2021"
 
 [workspace]
-members = [
-  ".",
-  "language-components/typescript",
-  "language-components/python",
-  "language-components/java",
-  "language-components/rust",
-  "language-components/go",
-]
+members = ["."]
 default-members = ["."]
 resolver = "2"
 
@@ -63,10 +56,6 @@ notify-debouncer-mini = "0.7.0"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 # OS file clipboard (CF_HDROP / NSPasteboard file URLs). No image feature.
 arboard = { version = "3.6", default-features = false }
-tree-sitter-tags = "0.26.11"
-tree-sitter = "0.26.11"
-tree-sitter-language = "0.1.7"
-libloading = "0.8"
 russh = { version = "0.63.1", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "2.4.0"
 tokio = { version = "1", features = ["io-util", "sync", "time"] }
@@ -75,7 +64,6 @@ tokio = { version = "1", features = ["io-util", "sync", "time"] }
 # 避免 tokio "full" 把 net/signal/process/fs 等全部模块强行编入。
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_UI_Input_KeyboardAndMouse"] }
 # Fonts registry + Explorer “Open with” (Windows only).
 winreg = "0.55"
 
@@ -83,16 +71,6 @@ winreg = "0.55"
 # Windows event-loop callback double-free (HEAP_FAILURE_BLOCK_NOT_BUSY).
 # See vendor/tao/QINGCODE.md.
 tao = { path = "vendor/tao" }
-
-[dev-dependencies]
-# Tests use in-process grammars; release binaries load the same grammars from
-# independently installable language-component dynamic libraries.
-tree-sitter-javascript = "0.25.0"
-tree-sitter-typescript = "0.23.2"
-tree-sitter-rust = "0.24.2"
-tree-sitter-python = "0.25.0"
-tree-sitter-go = "0.25.0"
-tree-sitter-java = "0.23.5"
 
 # 面向构建速度优化的 release profile：
 # - opt-level 3 → 2：跳过最昂贵的 LLVM 向量化/内联 pass，编译提速最明显，运行时几乎无感
