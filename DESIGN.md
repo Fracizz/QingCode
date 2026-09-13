@@ -256,17 +256,20 @@ SSH 添加流程使用 `SshProjectDialog`：填写连接信息 → 首次连接�
 ### 约定（原创 · 粗体可读）
 
 - 画布 **512×512**，**透明背景**（无底形色块）
-- **青台** 上下两层**等高**（各 40px）：上层 `#4ECDB5`、下层 `#2FAF9B`，底边直角长方形
-- **厚切括号** `#F3F6F8`，与青台作为整体在画布内几何居中
-- **桌面打包**（`app-icon-file.svg`）使用黑色圆角底 + 轻微径向渐变，与 ZCode / OpenCode 等桌面图标风格对齐
+- **青台 / 青轨** 上下两层**等高**（各 40px）：UI 上层 `#4ECDB5`、下层 `#2FAF9B`；右端以两条斜边收束，呼应括号的前进方向
+- **厚切括号** `#F3F6F8`，微调外角、保留尖锐内凹；浅色主题仍替换为 `#2A3539`
+- **桌面打包**（`app-icon-file.svg`）使用石墨黑圆角底 + 柔和青绿渐变；沿用 Cursor / VS Code 的简洁几何与 Edge 的色彩过渡方向，保留 QingCode 自身的括号与双层青轨
+- **质感** 来自比例、清晰轮廓和克制渐变，不使用金属高光、倒角、浮雕、光晕或纹理；UI 小尺寸使用纯色填充
 
-修改 `src/assets/app-icon.svg`（并同步 `public/app-icon.svg` 与 `public/app-icon-file.svg`）后，UI / Splash 会跟随；打包 exe 前需同步 Tauri 位图图标：
+修改 `src/assets/app-icon.svg` 时，同步 `public/app-icon.svg`、`public/app-icon-file.svg` 和 `index.html` 内联启动图标的轮廓；打包 exe 前需同步 Tauri 位图图标：
 
 ```bash
 pnpm icon:sync
 ```
 
 `pnpm package`（本机 x64 NSIS 安装包）已自动包含 `icon:sync`；便携版用 `pnpm package:exe`。
+
+SVG 为可任意缩放的矢量母版。独立高清 PNG 位于 `docs/branding/2048x2048.png`，源文件变更后使用 `pnpm exec tauri icon public/app-icon-file.svg --png 2048 -o docs/branding` 重新导出。
 
 ---
 
@@ -585,5 +588,5 @@ HTML5 `draggable` 的标签栏排序仍走浏览器 DnD，**同样不得**为 re
 ## 参考
 
 - 布局与配色：Cursor / VS Code Dark+
-- 应用图标：原版青台（底部长方形）+ 厚切括号
+- 应用图标：双层青轨（右端斜切收束）+ 厚切括号
 - 技术栈：Tauri 2 · React · Tailwind CSS v4 · CodeMirror 6

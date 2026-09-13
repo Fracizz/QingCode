@@ -1,24 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
   <defs>
-    <radialGradient id="bg" cx="50%" cy="38%" r="72%" fx="50%" fy="38%">
-      <stop offset="0%" stop-color="#141414"/>
-      <stop offset="100%" stop-color="#000000"/>
+    <radialGradient id="bg" cx="32%" cy="18%" r="90%">
+      <stop offset="0%" stop-color="#181C1D"/>
+      <stop offset="60%" stop-color="#0C0F10"/>
+      <stop offset="100%" stop-color="#050708"/>
     </radialGradient>
-    <clipPath id="squircle">
-      <rect width="512" height="512" rx="112"/>
-    </clipPath>
+    <linearGradient id="rail-upper" x1="96" y1="339" x2="416" y2="379" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#68DCC4"/>
+      <stop offset="0.55" stop-color="#4ECDB5"/>
+      <stop offset="1" stop-color="#39BEAA"/>
+    </linearGradient>
+    <linearGradient id="rail-lower" x1="96" y1="379" x2="400" y2="419" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2FAF9B"/>
+      <stop offset="1" stop-color="#219B90"/>
+    </linearGradient>
   </defs>
 
-  <g clip-path="url(#squircle)">
-    <rect width="512" height="512" fill="url(#bg)"/>
+  <!-- 真透明圆角；平面色彩过渡，无高光、描边、倒角或投影。 -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
 
-    <!-- 青台下层（与 UI 图标同源，整体居中） -->
-    <path fill="#2FAF9B" d="M96 379H416V419H96V379Z"/>
+  <!-- 轮廓与 UI 图标一致，桌面版青轨使用柔和渐变。 -->
+  <path fill="url(#rail-lower)" d="M96 379H416L380 419H96V379Z"/>
+  <path fill="url(#rail-upper)" d="M96 339H380L416 379H96V339Z"/>
 
-    <!-- 青台上层 -->
-    <path fill="#4ECDB5" d="M96 339H416V379H96V339Z"/>
-
-    <!-- 厚切代码括号（内外斜边平行，臂厚均匀 90px：外斜边 dx=124，内凹点 x=124+124=248） -->
-    <path fill="#F3F6F8" d="M124 93H264L388 197L264 301H124L248 197L124 93Z"/>
-  </g>
+  <path fill="#F3F6F8" d="M130 93H262Q264 93 267 95L385 194Q389 197 385 200L267 299Q264 301 262 301H130Q124 301 128 297L247 197L128 97Q124 93 130 93Z"/>
 </svg>
