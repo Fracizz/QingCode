@@ -212,6 +212,13 @@ pnpm install
 pnpm tauri:dev    # 完整桌面应用
 ```
 
+前端类型检查使用固定版本的原生 TypeScript 7；`build` 和 `check:frontend` 会自动调用它。经典 TypeScript 5.8 仍保留供 ESLint 等工具使用，两套检查器使用独立增量缓存。使用以下显式命令，避免两套编译器同名 `tsc` 入口产生歧义：
+
+```bash
+pnpm typecheck         # 原生类型检查（默认）
+pnpm typecheck:legacy  # 经典版对照 / 回退检查
+```
+
 更多约定见 [AGENTS.md](./AGENTS.md)；设置与语言说明见 [帮助文档.md](./帮助文档.md)。
 
 ## 技术栈

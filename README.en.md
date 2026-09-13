@@ -212,6 +212,13 @@ pnpm install
 pnpm tauri:dev    # full desktop app
 ```
 
+Frontend type checking uses a pinned native TypeScript 7 compiler, called automatically by `build` and `check:frontend`. Classic TypeScript 5.8 remains available for tools such as ESLint, with separate incremental caches for each compiler. Use these explicit commands to avoid ambiguity between the two `tsc` binaries:
+
+```bash
+pnpm typecheck         # Native type checking (default)
+pnpm typecheck:legacy  # Classic comparison / fallback check
+```
+
 See [AGENTS.md](./AGENTS.md) for repo conventions and [HELP.md](./HELP.md) for usage documentation.
 
 ## Stack
