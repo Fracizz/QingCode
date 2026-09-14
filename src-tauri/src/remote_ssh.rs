@@ -14,6 +14,11 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
+mod search;
+mod transfer;
+pub use search::*;
+pub use transfer::*;
+
 const SSH_URI_PREFIX: &str = "ssh://";
 const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;
 const MAX_SLICE_BYTES: u64 = 4 * 1024 * 1024;
@@ -1325,138 +1330,25 @@ pub async fn ssh_delete_path(path: String, manager: State<'_, SshManager>) -> Re
     remove_remote_tree(&sftp, parsed.path).await
 }
 
-async fn upload_local_tree(
-    sftp: &SftpSession,
-    local_path: PathBuf,
-    remote_path: String,
-    root: &RegisteredRoot,
-) -> Result<(), String> {
-    let metadata = std::fs::symlink_metadata(&local_path)
-        .map_err(|error| format!("读取本地上传路径失败：{error}"))?;
-    if metadata.file_type().is_symlink() {
-        return Err(format!("暂不上传本地符号链接：{}", local_path.display()));
-    }
-    ensure_parent_path_within(sftp, &remote_path, root).await?;
-    if sftp.try_exists(remote_path.clone()).await.unwrap_or(false) {
-        ensure_existing_path_within(sftp, &remote_path, root).await?;
-    }
-    if metadata.is_dir() {
-        if !sftp.try_exists(remote_path.clone()).await.unwrap_or(false) {
-            sftp.create_dir(remote_path.clone())
-                .await
-                .map_err(|error| format!("创建远程上传目录失败：{error}"))?;
-        }
-        for entry in std::fs::read_dir(&local_path)
-            .map_err(|error| format!("读取本地上传目录失败：{error}"))?
-        {
-            let entry = entry.map_err(|error| format!("读取本地上传条目失败：{error}"))?;
-            let name = entry.file_name().to_string_lossy().to_string();
-            validate_entry_name(&name)?;
-            Box::pin(upload_local_tree(
-                sftp,
-                entry.path(),
-                format!("{}/{name}", remote_path.trim_end_matches('/')),
-                root,
-            ))
-            .await?;
-        }
-        return Ok(());
-    }
-    if metadata.len() > MAX_EDITOR_FILE_SIZE {
-        return Err(format!(
-            "单个上传文件暂不能超过 100MB：{}",
-            local_path.display()
-        ));
-    }
-    let bytes =
-        std::fs::read(&local_path).map_err(|error| format!("读取本地上传文件失败：{error}"))?;
-    write_remote_file_contents(sftp, remote_path, &bytes, false)
-        .await
-        .map_err(|error| format!("上传远程文件失败：{error}"))
-}
-
 #[tauri::command]
 pub async fn ssh_upload_paths(
     destination: String,
     local_paths: Vec<String>,
     manager: State<'_, SshManager>,
     allowlist: State<'_, PathAllowlist>,
+    app: AppHandle,
 ) -> Result<(), String> {
-    if local_paths.is_empty() {
-        return Ok(());
-    }
-    let (sftp, parsed, root) = manager.sftp_for_uri(&destination, true).await?;
-    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
-    let destination_metadata = sftp
-        .metadata(parsed.path.clone())
-        .await
-        .map_err(|error| format!("读取远程上传目录失败：{error}"))?;
-    if !destination_metadata.is_dir() {
-        return Err("请选择远程目录作为上传目标".to_string());
-    }
-    for local_path in local_paths {
-        allowlist.ensure_allowed(&local_path)?;
-        let path = PathBuf::from(&local_path);
-        let name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .ok_or_else(|| "本地上传路径缺少有效名称".to_string())?;
-        validate_entry_name(name)?;
-        let remote_path = format!("{}/{name}", parsed.path.trim_end_matches('/'));
-        upload_local_tree(&sftp, path, remote_path, &root).await?;
-    }
-    Ok(())
-}
-
-async fn download_remote_tree(
-    sftp: &SftpSession,
-    remote_path: String,
-    local_path: PathBuf,
-    root: &RegisteredRoot,
-    allowlist: &PathAllowlist,
-) -> Result<(), String> {
-    ensure_existing_path_within(sftp, &remote_path, root).await?;
-    allowlist.ensure_writable(&local_path.to_string_lossy())?;
-    let metadata = sftp
-        .symlink_metadata(remote_path.clone())
-        .await
-        .map_err(|error| format!("读取远程下载路径失败：{error}"))?;
-    if metadata.is_symlink() {
-        return Err(format!("暂不下载远程符号链接：{remote_path}"));
-    }
-    if metadata.is_dir() {
-        std::fs::create_dir_all(&local_path)
-            .map_err(|error| format!("创建本地下载目录失败：{error}"))?;
-        let entries = sftp
-            .read_dir(remote_path.clone())
-            .await
-            .map_err(|error| format!("读取远程下载目录失败：{error}"))?;
-        for entry in entries {
-            let name = entry.file_name();
-            validate_entry_name(&name)?;
-            Box::pin(download_remote_tree(
-                sftp,
-                entry.path(),
-                local_path.join(name),
-                root,
-                allowlist,
-            ))
-            .await?;
-        }
-        return Ok(());
-    }
-    if metadata.len() > MAX_EDITOR_FILE_SIZE {
-        return Err(format!("单个下载文件暂不能超过 100MB：{remote_path}"));
-    }
-    let bytes = sftp
-        .read(remote_path)
-        .await
-        .map_err(|error| format!("读取远程下载文件失败：{error}"))?;
-    if let Some(parent) = local_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|error| format!("创建本地下载目录失败：{error}"))?;
-    }
-    std::fs::write(&local_path, bytes).map_err(|error| format!("写入本地下载文件失败：{error}"))
+    let result = ssh_transfer_paths(
+        uuid::Uuid::new_v4().to_string(),
+        String::from("upload"),
+        local_paths,
+        destination,
+        manager,
+        allowlist,
+        app,
+    )
+    .await?;
+    result.error.map_or(Ok(()), Err)
 }
 
 #[tauri::command]
@@ -1465,27 +1357,19 @@ pub async fn ssh_download_paths(
     destination: String,
     manager: State<'_, SshManager>,
     allowlist: State<'_, PathAllowlist>,
+    app: AppHandle,
 ) -> Result<(), String> {
-    allowlist.ensure_writable(&destination)?;
-    let destination = PathBuf::from(destination);
-    for uri in paths {
-        let (sftp, parsed, root) = manager.sftp_for_uri(&uri, false).await?;
-        let name = Path::new(&parsed.path)
-            .file_name()
-            .and_then(|value| value.to_str())
-            .ok_or_else(|| "远程下载路径缺少有效名称".to_string())?
-            .to_string();
-        validate_entry_name(&name)?;
-        download_remote_tree(
-            &sftp,
-            parsed.path,
-            destination.join(name),
-            &root,
-            &allowlist,
-        )
-        .await?;
-    }
-    Ok(())
+    let result = ssh_transfer_paths(
+        uuid::Uuid::new_v4().to_string(),
+        String::from("download"),
+        paths,
+        destination,
+        manager,
+        allowlist,
+        app,
+    )
+    .await?;
+    result.error.map_or(Ok(()), Err)
 }
 
 fn fuzzy_contains(value: &str, query: &str) -> bool {
@@ -1542,109 +1426,6 @@ fn simple_glob_matches(pattern: &str, value: &str) -> bool {
 }
 
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn ssh_search_files(
-    root: String,
-    query: String,
-    ignore_case: bool,
-    fuzzy: bool,
-    match_suffix: bool,
-    extension: Option<String>,
-    extensions: Option<Vec<String>>,
-    limit: Option<usize>,
-    exclude_patterns: Option<Vec<String>>,
-    use_ignore_files: Option<bool>,
-    follow_symlinks: Option<bool>,
-    manager: State<'_, SshManager>,
-) -> Result<Vec<RemoteSearchHit>, String> {
-    // Never follow remote symlinks: command output cannot be canonicalized cheaply,
-    // and a symlink may otherwise expose files outside the registered project.
-    let _ = (use_ignore_files, follow_symlinks);
-    let parsed = parse_remote_uri(&root)?;
-    let max = limit.unwrap_or(500).clamp(1, 2_000);
-    let marker = "__QINGCODE_REMOTE_FILES__";
-    let command = format!(
-        "{{ find {} \\( -name .git -o -name node_modules -o -name target \\) -prune -o -type d -print; printf '\\n{}\\n'; find {} \\( -name .git -o -name node_modules -o -name target \\) -prune -o -type f -print; }} | head -n {}",
-        shell_quote(&parsed.path),
-        marker,
-        shell_quote(&parsed.path),
-        max.saturating_mul(40).min(50_000)
-    );
-    let output = manager.exec_uri(&root, &command, false).await?;
-    if output.exit_code != 0 {
-        return Err(format!("远程文件搜索失败：{}", output.stderr.trim()));
-    }
-    let extension_list = extensions
-        .or_else(|| extension.map(|value| vec![value]))
-        .unwrap_or_default()
-        .into_iter()
-        .map(|value| value.trim_start_matches('.').to_ascii_lowercase())
-        .collect::<Vec<_>>();
-    let query = if ignore_case {
-        query.to_lowercase()
-    } else {
-        query
-    };
-    let exclude_patterns = exclude_patterns.unwrap_or_default();
-    let mut hits = Vec::new();
-    let mut is_dir = true;
-    for raw_line in output.stdout.lines() {
-        if raw_line == marker {
-            is_dir = false;
-            continue;
-        }
-        let full_path = raw_line;
-        let relative = remote_relative_path(&parsed.path, full_path);
-        let name = relative.rsplit('/').next().unwrap_or(&relative).to_string();
-        if name.is_empty() {
-            continue;
-        }
-        if exclude_patterns
-            .iter()
-            .any(|pattern| simple_glob_matches(pattern, &relative))
-        {
-            continue;
-        }
-        if !extension_list.is_empty() {
-            let ext = name
-                .rsplit_once('.')
-                .map(|(_, ext)| ext.to_ascii_lowercase());
-            if !ext.is_some_and(|ext| extension_list.contains(&ext)) {
-                continue;
-            }
-        }
-        let candidate = if ignore_case {
-            relative.to_lowercase()
-        } else {
-            relative.clone()
-        };
-        let matched = if query.is_empty() {
-            !extension_list.is_empty()
-        } else if match_suffix {
-            candidate.ends_with(query.trim_start_matches('.'))
-                || candidate.ends_with(&format!(".{}", query.trim_start_matches('.')))
-        } else if fuzzy {
-            fuzzy_contains(&candidate, &query)
-        } else {
-            candidate.contains(&query)
-        };
-        if !matched {
-            continue;
-        }
-        hits.push(RemoteSearchHit {
-            name,
-            path: join_remote_uri(&root, &relative),
-            relative,
-            is_dir,
-        });
-        if hits.len() >= max {
-            break;
-        }
-    }
-    Ok(hits)
-}
-
-#[tauri::command]
 pub async fn ssh_list_file_extensions(
     roots: Vec<String>,
     max_files: Option<usize>,
@@ -1678,152 +1459,6 @@ pub async fn ssh_list_file_extensions(
         .map(|(extension, _)| extension)
         .take(80)
         .collect())
-}
-
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-pub async fn ssh_search_file_contents(
-    root: String,
-    query: String,
-    ignore_case: bool,
-    extension: Option<String>,
-    extensions: Option<Vec<String>>,
-    max_matches: Option<usize>,
-    max_files_scanned: Option<usize>,
-    max_matches_per_file: Option<usize>,
-    search_id: Option<u64>,
-    exclude_patterns: Option<Vec<String>>,
-    use_ignore_files: Option<bool>,
-    follow_symlinks: Option<bool>,
-    manager: State<'_, SshManager>,
-) -> Result<RemoteContentResponse, String> {
-    let _ = (max_files_scanned, search_id);
-    let parsed = parse_remote_uri(&root)?;
-    let max = max_matches.unwrap_or(500).clamp(1, 2_000);
-    let per_file = max_matches_per_file.unwrap_or(20).clamp(1, 200);
-    let mut args = vec![
-        "rg".to_string(),
-        "--json".to_string(),
-        "--line-number".to_string(),
-        "--column".to_string(),
-        "--color=never".to_string(),
-        format!("--max-count={per_file}"),
-    ];
-    if ignore_case {
-        args.push("--ignore-case".to_string());
-    }
-    if use_ignore_files == Some(false) {
-        args.push("--no-ignore".to_string());
-    }
-    // Deliberately ignore this option for SSH roots to preserve the root sandbox.
-    let _ = follow_symlinks;
-    args.push("--fixed-strings".to_string());
-    for extension in extensions
-        .or_else(|| extension.map(|value| vec![value]))
-        .unwrap_or_default()
-    {
-        args.push("-g".to_string());
-        args.push(format!("*.{}", extension.trim_start_matches('.')));
-    }
-    for pattern in exclude_patterns.unwrap_or_default() {
-        args.push("-g".to_string());
-        args.push(format!("!{pattern}"));
-    }
-    args.push(query);
-    args.push(".".to_string());
-    let command = format!(
-        "cd -- {} && {}",
-        shell_quote(&parsed.path),
-        args.iter()
-            .map(|arg| shell_quote(arg))
-            .collect::<Vec<_>>()
-            .join(" ")
-    );
-    let output = manager.exec_uri(&root, &command, false).await?;
-    if !matches!(output.exit_code, 0 | 1) {
-        return Err(
-            if output.stderr.contains("rg: not found")
-                || output.stderr.contains("rg: command not found")
-            {
-                "远端未安装 ripgrep（rg），无法执行内容搜索".to_string()
-            } else {
-                format!("远程内容搜索失败：{}", output.stderr.trim())
-            },
-        );
-    }
-    let mut files: Vec<RemoteContentFile> = Vec::new();
-    let mut match_count = 0usize;
-    for line in output.stdout.lines() {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if value.get("type").and_then(|kind| kind.as_str()) != Some("match") {
-            continue;
-        }
-        let Some(data) = value.get("data") else {
-            continue;
-        };
-        let Some(relative) = data
-            .get("path")
-            .and_then(|path| path.get("text"))
-            .and_then(|text| text.as_str())
-            .map(|path| path.trim_start_matches("./").to_string())
-        else {
-            continue;
-        };
-        let text = data
-            .get("lines")
-            .and_then(|lines| lines.get("text"))
-            .and_then(|text| text.as_str())
-            .unwrap_or_default()
-            .trim_end_matches(['\r', '\n'])
-            .to_string();
-        let line_number = data
-            .get("line_number")
-            .and_then(|line| line.as_u64())
-            .unwrap_or(1) as u32;
-        let submatch = data
-            .get("submatches")
-            .and_then(|items| items.as_array())
-            .and_then(|items| items.first());
-        let match_start = submatch
-            .and_then(|item| item.get("start"))
-            .and_then(|start| start.as_u64())
-            .unwrap_or(0) as u32;
-        let match_end = submatch
-            .and_then(|item| item.get("end"))
-            .and_then(|end| end.as_u64())
-            .unwrap_or(u64::from(match_start)) as u32;
-        let path = join_remote_uri(&root, &relative);
-        let name = relative.rsplit('/').next().unwrap_or(&relative).to_string();
-        let item = RemoteContentMatch {
-            line: line_number,
-            text,
-            match_start,
-            match_end,
-        };
-        if let Some(file) = files.iter_mut().find(|file| file.relative == relative) {
-            file.matches.push(item);
-        } else {
-            files.push(RemoteContentFile {
-                name,
-                path,
-                relative,
-                matches: vec![item],
-            });
-        }
-        match_count += 1;
-        if match_count >= max {
-            break;
-        }
-    }
-    Ok(RemoteContentResponse {
-        files_scanned: files.len(),
-        files,
-        match_count,
-        truncated: match_count >= max,
-        cancelled: false,
-    })
 }
 
 fn parse_git_branch_header(header: &str) -> (Option<String>, Option<String>, u32, u32) {

@@ -39,6 +39,13 @@ describe('theme contrast', () => {
     ['light', 'html[data-theme="light"]'],
     ['forest', 'html[data-theme="forest"]'],
   ] as const) {
+    it(`${name} keeps button labels readable`, () => {
+      const block = themeBlock(selector)
+      for (const role of ['action', 'destructive']) {
+        expect(contrast(themeColor(block, `on-${role}`), themeColor(block, role)))
+          .toBeGreaterThanOrEqual(4.5)
+      }
+    })
     it(`${name} keeps secondary small text readable on application surfaces`, () => {
       const block = themeBlock(selector)
       for (const foreground of ['fg-muted', 'fg-dim', 'tree-fg']) {

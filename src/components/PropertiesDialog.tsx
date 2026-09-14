@@ -231,7 +231,7 @@ export default function PropertiesDialog() {
           <button
             ref={okRef}
             type="button"
-            className="rounded bg-accent px-3 py-1.5 text-[13px] text-white transition-colors hover:bg-accent/90"
+            className="rounded bg-action px-3 py-1.5 text-[13px] text-on-action transition-colors hover:bg-action/90"
             onClick={close}
           >
             {t('确定')}

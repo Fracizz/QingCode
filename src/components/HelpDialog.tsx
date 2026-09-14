@@ -1,3 +1,4 @@
+import { preferredScrollBehavior } from '../lib/motionPreferences'
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { FileText, Search, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
@@ -39,7 +40,7 @@ function HelpMarkdown({ content }: { content: string }) {
     const id = decodeURIComponent(href.slice(1))
     const root = articleRef.current
     const target = root?.querySelector<HTMLElement>(`#${CSS.escape(id)}`)
-    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    target?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
   }
 
   return (
@@ -162,7 +163,7 @@ export default function HelpDialog({ onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded bg-accent px-3 py-1.5 text-[13px] text-white hover:bg-accent/90"
+            className="rounded bg-action px-3 py-1.5 text-[13px] text-on-action hover:bg-action/90"
           >
             {t('关闭')}
           </button>

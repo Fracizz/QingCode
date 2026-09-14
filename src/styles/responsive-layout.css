@@ -1,0 +1,53 @@
+/* Layout follows each editor column, including UI zoom and terminal splits. */
+.settings-shell { container: settings / inline-size; }
+.empty-editor { container: empty-editor / inline-size; }
+
+@container settings (min-width: 760px) {
+  .settings-item-row { flex-direction: row; align-items: flex-start; gap: 24px; }
+  .settings-item-copy { min-width: 12rem; }
+  .settings-item-control { width: auto; max-width: 320px; flex-shrink: 0; }
+}
+
+@container settings (max-width: 680px) {
+  .settings-search-spacer { display: none; }
+  .settings-body { flex-direction: column; }
+  .settings-nav {
+    display: flex;
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .settings-nav > button { width: auto; flex-shrink: 0; }
+  .settings-content-padding { padding-left: 16px; padding-right: 16px; }
+}
+
+@container empty-editor (max-width: 540px) {
+  .empty-editor-actions { flex-direction: column; align-items: stretch; }
+  .empty-editor-actions > button { justify-content: center; flex-wrap: wrap; }
+}
+
+.title-bar-shell { container: title-bar / inline-size; }
+@container title-bar (max-width: 1050px) {
+  .title-drag-spacer { width: 28px; }
+  .title-layout-detail { display: none; }
+}
+@container title-bar (max-width: 760px) {
+  .title-product-name { display: none; }
+  .title-drag-spacer { width: 16px; }
+}
+
+.status-bar-shell { container: status-bar / inline-size; }
+.status-branch { min-width: 0; max-width: 22ch; flex-shrink: 1; }
+.status-low-priority { display: inline-flex; align-items: center; }
+.status-shortcut-hint { display: none; }
+@container status-bar (min-width: 1250px) {
+  .status-shortcut-hint { display: inline; }
+}
+@container status-bar (max-width: 1050px) {
+  .status-low-priority { display: none; }
+}
+@container status-bar (max-width: 760px) {
+  .status-terminal-name { display: none; }
+  .status-cursor { display: none; }
+  .status-editor-hints { display: none; }
+}

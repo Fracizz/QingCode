@@ -1,3 +1,4 @@
+import { createToastTimers, toastDuration } from '../lib/toastTimers'
 import { create } from 'zustand'
 import { open } from '@tauri-apps/plugin-dialog'
 import { tempDir } from '@tauri-apps/api/path'
@@ -140,10 +141,13 @@ interface ProjectState {
   ) => Promise<void>
   revealFileInTree: (filePath: string, options?: { force?: boolean }) => Promise<void>
   pushToast: (kind: ToastKind, text: string, detail?: string, action?: Toast['action']) => void
+  pauseToast: (id: string, reason: string) => void
+  resumeToast: (id: string, reason: string) => void
   dismissToast: (id: string) => void
 }
 
 /** Latest refresh request per project; older scans must not overwrite newer state. */
+const toastTimers = createToastTimers()
 const projectTreeRefreshSequences = new Map<string, number>()
 
 function nextProjectTreeRefreshSequence(projectId: string): number {
@@ -244,9 +248,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set(s => ({
       toasts: [...s.toasts, { id, kind, text, detail: normalizedDetail, action }],
     }))
-    setTimeout(() => get().dismissToast(id), action ? 8000 : normalizedDetail ? 6000 : 4000)
+    toastTimers.start(id, toastDuration({ kind, detail: normalizedDetail, action }), () => get().dismissToast(id))
   },
-  dismissToast: id => set(s => ({ toasts: s.toasts.filter(t => t.id !== id) })),
+  pauseToast: (id, reason) => toastTimers.pause(id, reason),
+  resumeToast: (id, reason) => toastTimers.resume(id, reason),
+  dismissToast: id => {
+    toastTimers.clear(id)
+    set(s => ({ toasts: s.toasts.filter(t => t.id !== id) }))
+  },
 
   loadProjects: async () => {
     try {

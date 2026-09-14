@@ -135,7 +135,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
             <button
               type="button"
               disabled={applying || preview.files.length === 0}
-              className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors disabled:opacity-50"
+              className="px-3 py-1.5 text-[13px] rounded bg-action hover:bg-action/90 text-on-action transition-colors disabled:opacity-50"
               onClick={() => void apply()}
             >
               {applying ? t('正在替换…') : t('确认替换')}

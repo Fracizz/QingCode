@@ -7,6 +7,7 @@ import EditorBreadcrumbs from './components/EditorBreadcrumbs'
 import StatusBar from './components/StatusBar'
 import TitleBar from './components/TitleBar'
 import Toaster from './components/Toaster'
+import TransferTasks from './components/TransferTasks'
 import ConfirmDialog from './components/ConfirmDialog'
 import ChoiceDialog from './components/ChoiceDialog'
 import PromptDialog from './components/PromptDialog'
@@ -39,6 +40,7 @@ import { useFileWatcher } from './hooks/useFileWatcher'
 import { useDraftRecovery } from './hooks/useDraftRecovery'
 import { useAppUpdateCheck } from './hooks/useAppUpdateCheck'
 import { useTerminalPanel } from './hooks/useTerminalPanel'
+import { clampTerminalWidth, getTerminalMaxHeight, TERMINAL_MIN_HEIGHT } from './lib/panelLayout'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
 import { useLaunchFileRequests } from './hooks/useLaunchFileRequests'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
@@ -153,8 +155,11 @@ function App() {
     terminalOpen,
     setTerminalOpen,
     terminalHeight,
+    setTerminalHeight,
     terminalWidth,
+    setTerminalWidth,
     sideSplit,
+    setSideSplit,
     isTerminalResizing,
     onResizerPointerDown,
     onWidthResizerPointerDown,
@@ -299,7 +304,7 @@ function App() {
     <div className="h-screen flex flex-col bg-bg text-fg">
       <TitleBar terminalOpen={terminalOpen} />
       {!inTauri && (
-        <div className="flex-shrink-0 px-4 py-2 text-[12px] leading-relaxed bg-amber-500/10 border-b border-amber-500/30 text-amber-200">
+        <div className="flex-shrink-0 px-4 py-2 text-[12px] leading-relaxed bg-warn/10 border-b border-warn/30 text-warn">
           {t('当前为浏览器预览模式，项目、文件、终端等功能不可用。请使用')}{' '}
           <code className="px-1 py-0.5 rounded bg-black/20">pnpm tauri dev</code>{' '}
           {t('启动，并在弹出的桌面窗口中操作。')}
@@ -380,6 +385,13 @@ function App() {
               layoutSwitching={panelLayoutSwitching}
               onResizerPointerDown={onResizerPointerDown}
               onWidthResizerPointerDown={onWidthResizerPointerDown}
+              onHeightChange={value => setTerminalHeight(Math.min(getTerminalMaxHeight(), Math.max(TERMINAL_MIN_HEIGHT, value)))}
+              onWidthChange={value => {
+                setTerminalWidth(clampTerminalWidth(value))
+                setSideSplit('custom')
+              }}
+              onHeightReset={() => setTerminalHeight(Math.min(getTerminalMaxHeight(), 260))}
+              onWidthReset={() => setSideSplit('equal')}
               terminalPanelRef={terminalPanelRef}
             />
           </Suspense>
@@ -401,13 +413,13 @@ function App() {
                 <EditorTabs />
                 <EditorBreadcrumbs />
                 {projectRestricted && currentProject && (
-                  <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 text-[12px] bg-amber-500/10 border-b border-amber-500/30 text-amber-100">
+                  <div className="flex-shrink-0 flex items-center gap-3 px-3 py-1.5 text-[12px] bg-warn/10 border-b border-warn/30 text-warn">
                     <span className="min-w-0 flex-1">
                       {t('受限模式：只能浏览文件，无法编辑、使用终端或运行脚本。')}
                     </span>
                     <button
                       type="button"
-                      className="flex-shrink-0 px-2 py-0.5 rounded bg-accent/90 hover:bg-accent text-white text-[12px]"
+                      className="flex-shrink-0 px-2 py-0.5 rounded bg-action/90 hover:bg-action text-on-action text-[12px]"
                       onClick={() => {
                         trustProject(currentProject)
                         void pushTrustedRootsToNative(projects)
@@ -430,6 +442,7 @@ function App() {
         </div>
       </div>
 
+      <TransferTasks />
       <StatusBar />
       <Toaster />
       <ConfirmDialog />

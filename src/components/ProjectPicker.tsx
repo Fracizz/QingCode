@@ -49,6 +49,7 @@ import {
   previewReorderIds,
   sameIdOrder,
   sortVisibleProjects,
+  visibleProjectChipRange,
 } from '../lib/projectChipOrder'
 import {
   EMPTY_PROJECT_INDICATORS,
@@ -63,8 +64,6 @@ import { isTauri } from '../lib/tauri'
 import { resolveWindowDragRegionMode } from '../lib/windowDragRegion'
 
 const CHIP_GAP = 4
-const ADD_BTN_W = 28
-const OVERFLOW_BTN_W = 28
 /** Pointer DnD threshold — HTML5 DnD is flaky in WebView2 title bar (see Sidebar). */
 const DRAG_THRESHOLD_PX = 5
 
@@ -105,7 +104,7 @@ export default function ProjectPicker() {
   } | null>(null)
   const suppressChipClickRef = useRef(false)
 
-  const [visibleCount, setVisibleCount] = useState(projects.length)
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: projects.length })
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({})
@@ -129,25 +128,19 @@ export default function ProjectPicker() {
       measure
         .querySelectorAll<HTMLDivElement>('[data-chip-id]')
         .forEach(el => widths.set(el.dataset.chipId ?? '', el.offsetWidth))
-      const available = container.clientWidth
-      let total = ADD_BTN_W
-      let count = 0
-      for (let i = 0; i < projects.length; i++) {
-        const w = (widths.get(projects[i].id) ?? 0) + CHIP_GAP
-        const allShown = count + 1 === projects.length
-        const reserveOverflow = allShown ? 0 : OVERFLOW_BTN_W + CHIP_GAP
-        if (total + w + reserveOverflow > available) break
-        total += w
-        count++
-      }
-      setVisibleCount(count)
+      const next = visibleProjectChipRange(
+        projects.map(project => widths.get(project.id) ?? 0),
+        container.clientWidth,
+        projects.findIndex(project => project.id === currentProject?.id),
+      )
+      setVisibleRange(previous => previous.start === next.start && previous.end === next.end ? previous : next)
     }
 
     compute()
     const ro = new ResizeObserver(compute)
     ro.observe(container)
     return () => ro.disconnect()
-  }, [projects])
+  }, [projects, currentProject?.id])
 
   const closeDropdown = () => setOverflowOpen(false)
 
@@ -197,7 +190,7 @@ export default function ProjectPicker() {
     if ((event.target as HTMLElement).closest('button')) return
     event.stopPropagation()
 
-    const visibleIds = projects.slice(0, visibleCount).map(p => p.id)
+    const visibleIds = projects.slice(visibleRange.start, visibleRange.end).map(p => p.id)
     if (!visibleIds.includes(projectId)) return
 
     const widthsById = new Map<string, number>()
@@ -313,7 +306,7 @@ export default function ProjectPicker() {
       setPreviewIds(null)
       setInsertLineX(null)
       if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
-        void reorderVisibleProjects(fromIndex, toIndex)
+        void reorderVisibleProjects(visibleRange.start + fromIndex, visibleRange.start + toIndex)
       }
       window.setTimeout(() => {
         suppressChipClickRef.current = false
@@ -465,13 +458,13 @@ export default function ProjectPicker() {
   }
 
   const displayVisibleProjects = useMemo(() => {
-    if (!previewIds) return projects.slice(0, visibleCount)
+    if (!previewIds) return projects.slice(visibleRange.start, visibleRange.end)
     const byId = new Map(projects.map(p => [p.id, p]))
     return previewIds
       .map(id => byId.get(id))
       .filter((project): project is Project => project != null)
-  }, [projects, previewIds, visibleCount])
-  const overflowProjects = projects.slice(visibleCount)
+  }, [projects, previewIds, visibleRange])
+  const overflowProjects = projects.filter((_, index) => index < visibleRange.start || index >= visibleRange.end)
   const hasOverflow = overflowProjects.length > 0
 
   return (
@@ -845,7 +838,7 @@ function Chip({
       onDoubleClick={event => event.stopPropagation()}
       onContextMenu={measure ? undefined : onContextMenu}
       onPointerDown={measure ? undefined : onPointerDown}
-      className={`group relative flex items-center gap-0.5 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-[colors,opacity,box-shadow,transform] duration-150 cursor-default [&_button]:cursor-default
+      className={`group relative flex items-center gap-0.5 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-[colors,opacity,box-shadow,transform] duration-150 cursor-default [&_button]:cursor-default ${measure ? '' : 'min-w-0 max-w-[calc(100%-64px)]'}
         ${
           dragging
             ? 'z-[1] bg-bg-hover text-fg opacity-55 shadow-sm ring-1 ring-inset ring-accent/50 scale-[0.98]'

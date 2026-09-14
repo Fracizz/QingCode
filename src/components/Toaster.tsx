@@ -1,7 +1,12 @@
+import { toastDuration } from '../lib/toastTimers'
+import { useI18n } from '../lib/i18n'
 import { X, AlertCircle, Info, CheckCircle2 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 
 export default function Toaster() {
+  const { t: translate } = useI18n()
+  const pause = useProjectStore(s => s.pauseToast)
+  const resume = useProjectStore(s => s.resumeToast)
   const toasts = useProjectStore(s => s.toasts)
   const dismiss = useProjectStore(s => s.dismissToast)
 
@@ -27,20 +32,28 @@ export default function Toaster() {
               ? 'bg-ok'
               : 'bg-accent'
         // Mirrors the auto-dismiss timers in projectStore.pushToast.
-        const durationMs = t.action ? 8000 : t.detail ? 6000 : 4000
+        const durationMs = toastDuration(t)
         return (
           <div
             key={t.id}
+            onMouseEnter={() => pause(t.id, 'hover')}
+            onMouseLeave={() => resume(t.id, 'hover')}
+            onFocusCapture={() => pause(t.id, 'focus')}
+            onBlurCapture={event => {
+              if (!event.currentTarget.contains(event.relatedTarget)) resume(t.id, 'focus')
+            }}
             className="toast-enter toast-item relative overflow-hidden bg-bg-elevated border border-border-strong rounded-lg shadow-elevation-2 px-3.5 py-3 flex items-start gap-2.5 text-sm max-w-sm transition-all duration-150 hover:shadow-elevation-3"
           >
             {/* Left color indicator bar */}
             <span className={`absolute left-0 top-0 bottom-0 w-[3px] ${barColor}`} aria-hidden="true" />
             <Icon size={16} className={`${color} mt-0.5 flex-shrink-0`} />
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-fg leading-snug">{t.text}</p>
-              {t.detail ? (
-                <p className="text-ui-sm mt-1 leading-relaxed text-fg-muted">{t.detail}</p>
-              ) : null}
+              <div role={t.kind === 'error' ? 'alert' : 'status'} aria-atomic="true">
+                <p className="font-medium text-fg leading-snug">{t.text}</p>
+                {t.detail ? (
+                  <p className="text-ui-sm mt-1 leading-relaxed text-fg-muted">{t.detail}</p>
+                ) : null}
+              </div>
               {t.action ? (
                 <button
                   type="button"
@@ -56,7 +69,7 @@ export default function Toaster() {
             </div>
             <button
               type="button"
-              aria-label="关闭通知"
+              aria-label={translate('关闭通知')}
               onClick={() => dismiss(t.id)}
               className="text-fg-dim hover:text-fg p-0.5 rounded transition-colors hover:bg-bg-hover flex-shrink-0"
             >

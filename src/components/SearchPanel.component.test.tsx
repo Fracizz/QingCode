@@ -352,6 +352,79 @@ describe('SearchPanel', () => {
     )
   })
 
+  it('retains successful filename and content hits when another project fails, then retries', async () => {
+    const beta: Project = { ...project, id: 'p2', name: 'Beta', path: 'D:/beta' }
+    useProjectStore.setState({ projects: [project, beta] })
+    mocks.findProjectForPath.mockImplementation((_projects, path) => String(path).startsWith(beta.path) ? beta : project)
+    let betaUnavailable = true
+    const rootName = (args?: Record<string, unknown>) => {
+      const name = args?.root === beta.path ? 'beta' : 'alpha'
+      if (name === 'beta' && betaUnavailable) throw new Error('connection unavailable')
+      return name
+    }
+    dispatch({
+      list_file_extensions: () => ['ts'],
+      search_files: args => {
+        const name = rootName(args)
+        return [{ name: `good-${name}.ts`, path: `D:/${name}/src/good-${name}.ts`, relative: `src/good-${name}.ts`, is_dir: false }]
+      },
+      start_content_search: () => 1,
+      cancel_content_search: () => undefined,
+      search_file_contents: args => {
+        const name = rootName(args)
+        return {
+          files: [{
+            name: `content-${name}.ts`, path: `D:/${name}/src/content-${name}.ts`, relative: `src/content-${name}.ts`,
+            matches: [{ line: 1, text: 'needle retained', match_start: 0, match_end: 6 }],
+          }],
+          match_count: 1, files_scanned: 1, truncated: false,
+        }
+      },
+    })
+    render(<SearchPanel />)
+    fireEvent.click(screen.getByRole('button', { name: '搜索范围' }))
+    fireEvent.click(screen.getByRole('option', { name: '全部项目' }))
+    fireEvent.change(screen.getByPlaceholderText('搜索文件或内容…'), { target: { value: 'needle' } })
+    fireEvent.click(screen.getByRole('button', { name: '查询' }))
+
+    expect(await screen.findByText('部分项目搜索失败，结果可能不完整。')).toBeInTheDocument()
+    expect(screen.getByText('good-alpha.ts')).toBeInTheDocument()
+    expect(screen.getByText('content-alpha.ts')).toBeInTheDocument()
+    expect(screen.getByText(/Beta:.*connection unavailable/)).toBeInTheDocument()
+
+    betaUnavailable = false
+    fireEvent.click(screen.getByRole('button', { name: '重试搜索' }))
+    expect(await screen.findByText('good-beta.ts')).toBeInTheDocument()
+    expect(await screen.findByText('content-beta.ts')).toBeInTheDocument()
+    expect(screen.getByText('good-alpha.ts')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('部分项目搜索失败，结果可能不完整。')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: '重试搜索' })).not.toBeInTheDocument()
+  })
+
+  it('offers more results for a truncated SSH response even when its hit count is below the budget', async () => {
+    const remote: Project = { ...project, kind: 'ssh', path: 'ssh://connection/home/project' }
+    useProjectStore.setState({ projects: [remote], currentProject: remote })
+    mocks.findProjectForPath.mockReturnValue(remote)
+    dispatch({
+      list_file_extensions: () => ['ts'],
+      ssh_search_files_detailed: args => ({
+        hits: [{ name: 'remote.ts', path: `${remote.path}/src/remote.ts`, relative: 'src/remote.ts', is_dir: false }],
+        truncated: Number(args?.limit) === 200,
+        cancelled: false,
+      }),
+    })
+    render(<SearchPanel />)
+    fireEvent.click(screen.getByRole('tab', { name: '文件名' }))
+    fireEvent.change(screen.getByPlaceholderText('搜索文件名，支持 * 通配符…'), { target: { value: 'remote' } })
+
+    const more = await screen.findByRole('button', { name: '显示更多结果' })
+    expect(screen.getByText('remote.ts')).toBeInTheDocument()
+    expect(mocks.safeInvoke).toHaveBeenCalledWith('文件搜索', 'ssh_search_files_detailed', expect.objectContaining({ root: remote.path, limit: 200 }))
+    fireEvent.click(more)
+    await waitFor(() => expect(mocks.safeInvoke).toHaveBeenCalledWith('文件搜索', 'ssh_search_files_detailed', expect.objectContaining({ root: remote.path, limit: 500 })))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '显示更多结果' })).not.toBeInTheDocument())
+  })
+
   it('keeps the result list scrollable and expands or collapses every content group', async () => {
     dispatch({
       list_file_extensions: () => ['ts'],

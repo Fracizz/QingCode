@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
-import { Command, FileText } from 'lucide-react'
+import { Command, FileText, LoaderCircle } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
 import Kbd from './Kbd'
 import { useI18n } from '../lib/i18n'
@@ -16,10 +16,10 @@ import {
   parseQuickOpenLocation,
   quickOpenEntriesFromSearchHits,
   type QuickOpenEntry,
-  type QuickOpenSearchHit,
 } from '../lib/quickOpen'
 import { loadExcludeSettingsForProject } from '../lib/excludeSettings'
-import { isTauri, safeInvoke } from '../lib/tauri'
+import { isTauri } from '../lib/tauri'
+import { searchFiles } from '../lib/searchFiles'
 import { useCommandPaletteStore } from '../store/commandPaletteStore'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
@@ -107,6 +107,10 @@ export default function CommandPalette() {
   const [activeIndex, setActiveIndex] = useState(0)
   const [tick, setTick] = useState(0)
   const [nativeEntries, setNativeEntries] = useState<QuickOpenEntry[]>([])
+  const [searching, setSearching] = useState(false)
+  const [failedProjects, setFailedProjects] = useState<string[]>([])
+  const [truncated, setTruncated] = useState(false)
+  const [searchRetry, setSearchRetry] = useState(0)
 
   useEffect(() => {
     if (!open) return
@@ -138,7 +142,13 @@ export default function CommandPalette() {
   useEffect(() => {
     const requestId = ++searchRequestId.current
     const { fileQuery: needle, projectName } = parseQuickOpenLocation(query)
-    queueMicrotask(() => setNativeEntries([]))
+    queueMicrotask(() => {
+      if (requestId !== searchRequestId.current) return
+      setNativeEntries([])
+      setSearching(false)
+      setFailedProjects([])
+      setTruncated(false)
+    })
     if (!open || isCommandMode(query) || !needle || !isTauri()) return
 
     const roots = projects
@@ -150,6 +160,10 @@ export default function CommandPalette() {
     if (roots.length === 0) return
 
     let disposed = false
+    const searchAbort = new AbortController()
+    queueMicrotask(() => {
+      if (!disposed) setSearching(true)
+    })
     const timer = window.setTimeout(() => {
       const task = queuedNativeSearch.current.then(async () => {
         if (disposed || requestId !== searchRequestId.current) return
@@ -158,7 +172,7 @@ export default function CommandPalette() {
           if (disposed || requestId !== searchRequestId.current) return
           try {
             const excludes = await loadExcludeSettingsForProject(project)
-            const hits = await safeInvoke<QuickOpenSearchHit[]>('快速打开文件', 'search_files', {
+            const response = await searchFiles('快速打开文件', {
               root: project.path,
               query: needle,
               ignoreCase: true,
@@ -170,24 +184,34 @@ export default function CommandPalette() {
               excludePatterns: excludes.searchExclude,
               useIgnoreFiles: excludes.useIgnoreFiles,
               followSymlinks: excludes.followSymlinks,
-            })
+            }, searchAbort.signal)
             if (disposed || requestId !== searchRequestId.current) return
-            found = mergeQuickOpenEntries(found, quickOpenEntriesFromSearchHits(project, hits))
+            if (response.cancelled) {
+              setFailedProjects(names => [...names, project.name])
+              continue
+            }
+            if (response.truncated) setTruncated(true)
+            found = mergeQuickOpenEntries(found, quickOpenEntriesFromSearchHits(project, response.hits))
             setNativeEntries(found)
           } catch (error) {
             // A missing/inaccessible project must not prevent results from others.
             console.warn('quick open native search failed:', error)
+            if (!disposed && requestId === searchRequestId.current) {
+              setFailedProjects(names => [...names, project.name])
+            }
           }
         }
+        if (!disposed && requestId === searchRequestId.current) setSearching(false)
       })
       queuedNativeSearch.current = task.catch(() => {})
     }, BACKGROUND_SEARCH_DEBOUNCE_MS)
 
     return () => {
       disposed = true
+      searchAbort.abort()
       window.clearTimeout(timer)
     }
-  }, [open, query, projects, currentProject?.id, unavailableProjectIds])
+  }, [open, query, projects, currentProject?.id, unavailableProjectIds, searchRetry])
 
   const results = useMemo((): PaletteItem[] => {
     void tick
@@ -241,6 +265,7 @@ export default function CommandPalette() {
   }
 
   const onInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === 'ArrowDown') {
       event.preventDefault()
       setActiveIndex(i => (results.length === 0 ? 0 : (i + 1) % results.length))
@@ -290,6 +315,10 @@ export default function CommandPalette() {
             onChange={event => setQuery(event.target.value)}
             onKeyDown={onInputKeyDown}
             placeholder={placeholder}
+            role="combobox"
+            aria-expanded="true"
+            aria-autocomplete="list"
+            aria-label={commandMode ? t('命令') : t('快速打开')}
             aria-controls="command-palette-list"
             aria-activedescendant={
               results[activeIndex] ? `command-palette-item-${activeIndex}` : undefined
@@ -300,16 +329,27 @@ export default function CommandPalette() {
             Esc
           </kbd>
         </div>
+        {!commandMode && (searching || failedProjects.length > 0 || truncated) && (
+          <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-ui-sm text-fg-muted" role="status">
+            {searching && <LoaderCircle size={13} className="animate-spin shrink-0" aria-hidden />}
+            <span className="min-w-0 flex-1 break-words">
+              {searching ? t('正在查找文件…') : failedProjects.length > 0 ? t('部分项目未能完成搜索') : t('结果已达搜索上限，请细化关键词')}
+              {failedProjects.length > 0 && ` · ${failedProjects.join('、')}`}
+            </span>
+            {!searching && failedProjects.length > 0 && <button type="button" className="shrink-0 text-accent hover:underline" onClick={() => setSearchRetry(n => n + 1)}>{t('重试')}</button>}
+          </div>
+        )}
         <div
           id="command-palette-list"
           ref={listRef}
           role="listbox"
+          aria-busy={!commandMode && searching}
           aria-label={commandMode ? t('命令') : t('文件列表')}
           className="max-h-[min(360px,50vh)] overflow-y-auto py-1"
         >
           {results.length === 0 ? (
             <p className="px-3 py-6 text-center text-[13px] text-fg-dim">
-              {commandMode ? t('没有匹配的命令') : t('没有匹配的文件')}
+              {commandMode ? t('没有匹配的命令') : searching ? t('正在查找文件…') : failedProjects.length > 0 ? t('搜索未完成，请重试') : t('没有匹配的文件')}
             </p>
           ) : (
             results.map((item, index) => {

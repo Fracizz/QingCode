@@ -198,7 +198,7 @@ export default function SshReconnectDialog() {
             type="button"
             disabled={!connection || loading}
             onClick={() => void reconnect()}
-            className="inline-flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-[13px] text-white hover:bg-accent/90 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded bg-action px-3 py-1.5 text-[13px] text-on-action hover:bg-action/90 disabled:opacity-50"
           >
             <RefreshCw size={13} className={loading ? 'animate-spin' : undefined} />
             {loading ? '正在连接…' : '重新连接'}

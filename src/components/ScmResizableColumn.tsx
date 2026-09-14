@@ -8,12 +8,15 @@ type Props = {
   maxWidth: number
   /** Leave at least this many px for content on the opposite side of the resizer. */
   remainingMin?: number
+  /** False when the parent grid track follows this column width instead of bounding it. */
+  constrainToParent?: boolean
   /**
    * `end` (default): column on the left, grip on the right (drag right → wider).
    * `start`: grip on the left, column on the right (drag left → wider).
    */
   edge?: 'start' | 'end'
   onWidthChange: (width: number) => void
+  defaultWidth?: number
   tooltip: string
   children: ReactNode
   className?: string
@@ -25,8 +28,10 @@ export default function ScmResizableColumn({
   minWidth,
   maxWidth,
   remainingMin = 0,
+  constrainToParent = true,
   edge = 'end',
   onWidthChange,
+  defaultWidth,
   tooltip,
   children,
   className,
@@ -46,12 +51,12 @@ export default function ScmResizableColumn({
   const clampWidth = useCallback(
     (next: number, containerWidth?: number) => {
       let safeMax = maxWidth
-      if (containerWidth != null && containerWidth > 0) {
+      if (constrainToParent && containerWidth != null && containerWidth > 0) {
         safeMax = Math.min(safeMax, Math.max(minWidth, containerWidth - remainingMin))
       }
       return Math.min(safeMax, Math.max(minWidth, Math.round(next)))
     },
-    [maxWidth, minWidth, remainingMin]
+    [constrainToParent, maxWidth, minWidth, remainingMin]
   )
 
   useEffect(
@@ -115,6 +120,7 @@ export default function ScmResizableColumn({
         handle.removeEventListener('pointerup', onEnd)
         handle.removeEventListener('pointercancel', onEnd)
         handle.removeEventListener('lostpointercapture', onEnd)
+        window.removeEventListener('blur', onBlur)
         if (dragFrameRef.current !== 0) {
           window.cancelAnimationFrame(dragFrameRef.current)
           dragFrameRef.current = 0
@@ -131,12 +137,14 @@ export default function ScmResizableColumn({
         }
       }
       const onEnd = (endEvent: PointerEvent) => finish(true, endEvent)
+      const onBlur = () => finish(true)
 
       cancelDragRef.current = () => finish(false)
       handle.addEventListener('pointermove', onMove)
       handle.addEventListener('pointerup', onEnd)
       handle.addEventListener('pointercancel', onEnd)
       handle.addEventListener('lostpointercapture', onEnd)
+      window.addEventListener('blur', onBlur)
       beginPanelResize('vertical', { freezeTerminals: false })
     },
     [clampWidth, edge, onWidthChange, width]
@@ -160,6 +168,9 @@ export default function ScmResizableColumn({
       ariaValueNow={width}
       ariaValueMin={minWidth}
       ariaValueMax={maxWidth}
+      keyboardDirection={edge === 'start' ? -1 : 1}
+      onValueChange={value => onWidthChange(clampWidth(value, rootRef.current?.parentElement?.clientWidth))}
+      onReset={() => onWidthChange(clampWidth(defaultWidth ?? (minWidth + maxWidth) / 2, rootRef.current?.parentElement?.clientWidth))}
     />
   )
 

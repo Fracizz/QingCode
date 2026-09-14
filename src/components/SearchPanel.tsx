@@ -40,6 +40,7 @@ import { useUIStore } from '../store/uiStore'
 import { useFavoriteStore } from '../store/favoriteStore'
 import { favoriteRelativePath, favoriteRelativePathKey } from '../lib/favoriteItems'
 import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
+import { searchFiles } from '../lib/searchFiles'
 import { copyToClipboard, findProjectForPath } from '../utils/fileReferences'
 import {
   buildContentResultRows,
@@ -510,8 +511,19 @@ export default function SearchPanel() {
     let filenameTimer: ReturnType<typeof setTimeout> | undefined
     let contentTimer: ReturnType<typeof setTimeout> | undefined
     let contentStarted = false
+    const filenameAbort = new AbortController()
     let pending = (runFilename ? 1 : 0) + (runContent ? 1 : 0)
     let sawError: string | null = null
+    const failedProjects = new Map<string, string>()
+    const recordFailures = (parts: PromiseSettledResult<unknown>[]) => {
+      parts.forEach((part, index) => {
+        if (part.status === 'rejected') {
+          const root = searchRoots[index]
+          failedProjects.set(root.path, `${root.label ?? root.path}: ${String(part.reason)}`)
+        }
+      })
+      if (failedProjects.size > 0) sawError = [...failedProjects.values()].join('\n')
+    }
 
     const finishOne = () => {
       pending -= 1
@@ -529,11 +541,11 @@ export default function SearchPanel() {
     if (runFilename) {
       filenameTimer = setTimeout(async () => {
         try {
-          const parts = await Promise.all(
+          const settled = await Promise.allSettled(
             searchRoots.map(async root => {
               const project = resolveProject(root.path)
               const excludes = await loadExcludeSettingsForProject(project)
-              return safeInvoke<SearchHit[]>('文件搜索', 'search_files', {
+              return searchFiles('文件搜索', {
                 root: root.path,
                 query: q,
                 ignoreCase,
@@ -545,14 +557,16 @@ export default function SearchPanel() {
                 excludePatterns: excludes.searchExclude,
                 useIgnoreFiles: excludes.useIgnoreFiles,
                 followSymlinks: excludes.followSymlinks,
-              })
+              }, filenameAbort.signal)
             })
           )
           if (id !== reqId.current) return
-          let hits = parts.flat()
+          recordFailures(settled)
+          const parts = settled.flatMap(part => part.status === 'fulfilled' && !part.value.cancelled ? [part.value] : [])
+          let hits = parts.flatMap(part => part.hits)
           const hitCap = filenameBudget
           const truncated =
-            hits.length >= hitCap || parts.some(part => part.length >= perRootFilenameLimit)
+            hits.length >= hitCap || parts.some(part => part.truncated)
           if (hits.length > hitCap) hits = hits.slice(0, hitCap)
           setFilenameResults(hits)
           setFilenameTruncated(truncated)
@@ -578,7 +592,7 @@ export default function SearchPanel() {
           if (id !== reqId.current) return
 
           const maxFilesScanned = Math.ceil(8000 / searchRoots.length)
-          const parts = await Promise.all(
+          const settled = await Promise.allSettled(
             searchRoots.map(async root => {
               const project = resolveProject(root.path)
               const excludes = await loadExcludeSettingsForProject(project)
@@ -599,8 +613,10 @@ export default function SearchPanel() {
             })
           )
           if (id !== reqId.current) return
+          recordFailures(settled)
+          const parts = settled.flatMap(part => part.status === 'fulfilled' ? [part.value] : [])
           const validParts = parts.filter((resp): resp is ContentSearchResponse => Boolean(resp))
-          if (validParts.length === 0 || validParts.every(p => p.cancelled)) return
+          if (validParts.length > 0 && validParts.every(p => p.cancelled)) return
 
           const merged: ContentSearchResponse = {
             files: [],
@@ -636,6 +652,7 @@ export default function SearchPanel() {
     }
 
     return () => {
+      filenameAbort.abort()
       if (filenameTimer) clearTimeout(filenameTimer)
       if (contentTimer) clearTimeout(contentTimer)
       if (contentStarted && isTauri()) {
@@ -1449,7 +1466,7 @@ export default function SearchPanel() {
                 className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
                 ${
                   typeFilter
-                    ? 'bg-accent text-white border-accent'
+                    ? 'bg-action text-on-action border-accent'
                     : 'bg-bg-deep text-fg-muted border-border hover:text-fg hover:border-border-strong'
                 }`}
               >
@@ -1498,7 +1515,7 @@ export default function SearchPanel() {
                       className={`rounded border px-2 py-0.5 text-[11px] transition-colors
                       ${
                         !typeFilter
-                          ? 'border-accent bg-accent text-white'
+                          ? 'border-accent bg-action text-on-action'
                           : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'
                       }`}
                     >
@@ -1521,7 +1538,7 @@ export default function SearchPanel() {
                           className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
                           ${
                             selected
-                              ? 'border-accent bg-accent text-white'
+                              ? 'border-accent bg-action text-on-action'
                               : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'
                           }`}
                         >
@@ -1544,7 +1561,7 @@ export default function SearchPanel() {
                           className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
                           ${
                             typeFilter?.kind === 'star'
-                              ? 'border-accent bg-accent text-white'
+                              ? 'border-accent bg-action text-on-action'
                               : 'border-border bg-bg-deep text-fg-muted hover:border-border-strong hover:bg-bg-active hover:text-fg'
                           }`}
                         >
@@ -1563,6 +1580,7 @@ export default function SearchPanel() {
                         value={customExtension}
                         onChange={event => setCustomExtension(event.target.value)}
                         onKeyDown={event => {
+                          if (event.nativeEvent.isComposing) return
                           if (event.key !== 'Enter') return
                           event.preventDefault()
                           event.stopPropagation()
@@ -1595,15 +1613,29 @@ export default function SearchPanel() {
           tabIndex={0}
           onKeyDown={onResultsKeyDown}
         >
+          {error && (
+            <div role="status" className="shrink-0 border-b border-warn/30 bg-warn/10 px-3 py-2 text-ui-sm text-warn">
+              {rows.length > 0 && <p>{t('部分项目搜索失败，结果可能不完整。')}</p>}
+              <p className="whitespace-pre-wrap break-words">{error}</p>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={submitSearch}
+                className="mt-1 rounded border border-border-strong px-2 py-1 text-fg hover:bg-bg-hover disabled:opacity-50"
+              >
+                {t('重试搜索')}
+              </button>
+            </div>
+          )}
           {!searchRoots.length ? (
             <EmptyState
               icon={<Folder size={28} strokeWidth={1.2} />}
               title={t('请先选择或添加项目')}
             />
-          ) : error ? (
+          ) : error && rows.length === 0 ? (
             <EmptyState
               icon={<AlertCircle size={28} strokeWidth={1.2} className="text-danger" />}
-              title={error}
+              title={t('未能完成搜索')}
             />
           ) : !hasQuery ? (
             <EmptyState icon={<Search size={28} strokeWidth={1.2} />} title={emptyHint} />
@@ -1621,7 +1653,17 @@ export default function SearchPanel() {
           ) : (
             <>
               <div className="shrink-0 px-4 py-1 flex items-center gap-2 text-[11px] text-fg-dim">
-                <span className="truncate">{resultSummary}</span>
+                <Tooltip
+                  label={
+                    filenameTruncated || contentTruncated
+                      ? t('若仍被截断，请缩小范围或更换关键词')
+                      : resultSummary
+                  }
+                  side="bottom"
+                  wrapperClassName="inline-flex min-w-0"
+                >
+                  <span className="truncate">{resultSummary}</span>
+                </Tooltip>
                 {loading && (
                   <LoaderCircle
                     size={12}

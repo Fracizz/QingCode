@@ -169,10 +169,33 @@ export default function TitleBar({
     checked: layoutMode === mode,
     action: () => setPanelLayoutMode(mode),
   }))
+  if (sideLayoutActive) {
+    layoutMenuItems.push(
+      {
+        label: t(sideDualTerminal && terminalOpen ? '关闭双终端' : '开启双终端'),
+        icon: <SquareSplitHorizontal size={14} />,
+        separatorBefore: true,
+        checked: sideDualTerminal && terminalOpen,
+        action: () => sideDualTerminal && !terminalOpen ? openTerminalPanel() : toggleSideDualTerminal(),
+      },
+      {
+        label: t(sideQuadTerminal && terminalOpen ? '关闭四终端' : '开启四终端'),
+        icon: <LayoutGrid size={14} />,
+        checked: sideQuadTerminal && terminalOpen,
+        action: () => sideQuadTerminal && !terminalOpen ? openTerminalPanel() : toggleSideQuadTerminal(),
+      },
+      {
+        label: t(sideEditorVisible ? '隐藏编辑器' : '显示编辑器'),
+        icon: <SquareCode size={14} />,
+        checked: sideEditorVisible,
+        action: () => toggleSideEditorVisible(),
+      },
+    )
+  }
 
   return (
     <div
-      className={`ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none transition-opacity duration-150 ${
+      className={`title-bar-shell ui-font-scaled h-[var(--title-bar-height)] flex-shrink-0 flex items-center bg-bg border-b border-border select-none transition-opacity duration-150 ${
         windowFocused ? '' : 'opacity-60'
       }`}
       onDoubleClick={
@@ -210,7 +233,7 @@ export default function TitleBar({
         {/* Modern WebView2 uses native non-client regions only; older runtimes
             receive the Tauri JS/IPC fallback attribute instead. */}
         <div
-          className={`flex-shrink-0 h-full w-[140px] ${
+          className={`title-drag-spacer flex-shrink-0 h-full w-[140px] ${
             nativeWindowDrag ? 'window-drag-region' : ''
           }`}
           data-tauri-drag-region={tauriWindowDragFallback ? true : undefined}
@@ -220,7 +243,7 @@ export default function TitleBar({
           } : undefined}
         />
         <span
-          className={`flex h-full flex-shrink-0 items-center truncate px-3 text-[13px] font-semibold tracking-[0.01em] text-brand ${
+          className={`title-product-name flex h-full flex-shrink-0 items-center truncate px-3 text-[13px] font-semibold tracking-[0.01em] text-brand ${
             nativeWindowDrag ? 'window-drag-region' : ''
           }`}
           data-tauri-drag-region={tauriWindowDragFallback ? true : undefined}
@@ -238,7 +261,7 @@ export default function TitleBar({
         onDoubleClick={event => event.stopPropagation()}
       >
         {sideLayoutActive && (
-          <>
+          <span className="title-layout-detail contents">
             <Tooltip
               label={
                 sideDualTerminal && terminalOpen
@@ -332,7 +355,7 @@ export default function TitleBar({
                 <SquareCode size={14} strokeWidth={1.5} />
               </button>
             </Tooltip>
-          </>
+          </span>
         )}
         <Tooltip label={t('选择面板布局')} side="bottom">
           <button

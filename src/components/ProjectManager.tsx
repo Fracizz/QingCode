@@ -545,7 +545,7 @@ export default function ProjectManager() {
           <button
             type="button"
             onClick={closeProjectManager}
-            className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors"
+            className="px-3 py-1.5 text-[13px] rounded bg-action hover:bg-action/90 text-on-action transition-colors"
           >
             {t('完成')}
           </button>
@@ -636,7 +636,7 @@ function Checkbox({
       className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded border transition-colors
         ${
           checked || indeterminate
-            ? 'bg-accent border-accent text-white'
+            ? 'bg-action border-accent text-on-action'
             : 'border-border-strong text-transparent hover:border-accent'
         }`}
     >

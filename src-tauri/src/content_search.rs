@@ -71,7 +71,7 @@ pub fn cancel_content_search() {
     SEARCH_GENERATION.fetch_add(1, Ordering::SeqCst);
 }
 
-fn is_search_current(search_id: u64) -> bool {
+pub(crate) fn is_search_current(search_id: u64) -> bool {
     SEARCH_GENERATION.load(Ordering::SeqCst) == search_id
 }
 

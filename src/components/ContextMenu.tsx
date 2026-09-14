@@ -46,6 +46,17 @@ export default function ContextMenu({
   arrow?: ContextMenuArrow
   arrowAnchorX?: number
 }) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const returnFocusRef = useRef<HTMLElement | null>(null)
+  useLayoutEffect(() => {
+    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    return () => {
+      const previous = returnFocusRef.current
+      queueMicrotask(() => {
+        if (previous?.isConnected && (!document.activeElement || document.activeElement === document.body)) previous.focus()
+      })
+    }
+  }, [])
   const shellRef = useRef<HTMLDivElement>(null)
   const bubbleRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -109,10 +120,11 @@ export default function ContextMenu({
     }
 
     setPosition({ x: nextX, y: nextY })
+    const firstEnabled = items.findIndex(item => !item.disabled)
+    setActiveIndex(firstEnabled >= 0 ? firstEnabled : null)
     menu.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
   }, [x, y, items, preferAbove, arrow, arrowAnchorX])
 
-  const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   useEffect(() => {
@@ -131,7 +143,9 @@ export default function ContextMenu({
         void shortcutItem.action()
         return
       }
-      if (event.key === 'Escape') {
+      if (event.key === 'Escape' || event.key === 'Tab') {
+        event.preventDefault()
+        event.stopPropagation()
         onClose()
         return
       }

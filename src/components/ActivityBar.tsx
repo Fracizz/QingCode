@@ -149,7 +149,7 @@ function Item({
         {badge !== undefined && (
           <span
             aria-hidden="true"
-            className="absolute bottom-0.5 right-0.5 min-w-[15px] h-[15px] px-[3px] rounded-full bg-accent text-white text-[9px] font-semibold leading-[15px] text-center"
+            className="absolute bottom-0.5 right-0.5 min-w-[15px] h-[15px] px-[3px] rounded-full bg-action text-on-action text-[9px] font-semibold leading-[15px] text-center"
           >
             {badge > 99 ? '99+' : badge}
           </span>

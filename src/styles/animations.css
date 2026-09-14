@@ -27,7 +27,8 @@
 }
 
 /* Pause toast auto-dismiss countdown when user hovers over it */
-.toast-item:hover .toast-progress {
+.toast-item:hover .toast-progress,
+.toast-item:focus-within .toast-progress {
   animation-play-state: paused;
 }
 
@@ -81,7 +82,7 @@
   to { opacity: 1; }
 }
 
-/* Unsaved-changes dot: gentle, GPU-only opacity pulse without layout reflow */
+/* Running terminal status: gentle opacity pulse; unsaved files use a static dot. */
 .dirty-pulse {
   animation: dirty-pulse 2.4s ease-in-out infinite;
   will-change: opacity;
@@ -110,6 +111,7 @@
 
 /* Accessibility: Respect system reduced motion preferences */
 @media (prefers-reduced-motion: reduce) {
+  .toast-progress { display: none; }
   *,
   *::before,
   *::after {

@@ -1,3 +1,4 @@
+import { preferredScrollBehavior } from '../lib/motionPreferences'
 import {
   useCallback,
   useEffect,
@@ -179,7 +180,7 @@ export default function LargeFileViewer({ tab }: Props) {
     const el = preRef.current?.querySelector<HTMLElement>(
       `[data-search-match-index="${activeMatch}"]`,
     )
-    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    if (el) el.scrollIntoView({ block: 'center', behavior: preferredScrollBehavior() })
   }, [activeMatch, text, searchQuery])
 
   const windowEnd = Math.min(offset + sliceLen, fileSize)

@@ -70,13 +70,13 @@ export default function EmptyEditor() {
       ]
 
   return (
-    <div className="ui-font-scaled flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-6 px-6 select-none modal-overlay-enter">
+    <div className="empty-editor ui-font-scaled relative min-h-0 flex-1 flex flex-col items-center overflow-auto text-fg-dim bg-bg gap-6 px-6 py-6 select-none modal-overlay-enter">
       {/* Decorative background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full bg-brand/[0.04] blur-3xl" />
       </div>
 
-      <div className="flex flex-col items-center gap-3 relative">
+      <div className="flex flex-col items-center gap-3 relative mt-auto shrink-0">
         <div className="relative">
           <div
             className="absolute inset-0 bg-brand/15 blur-xl rounded-full scale-150"
@@ -93,7 +93,7 @@ export default function EmptyEditor() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2.5 relative">
+      <div className="empty-editor-actions flex flex-wrap justify-center items-center gap-2.5 relative w-full shrink-0">
         {actions.map(action => (
           <button
             key={action.label}
@@ -143,9 +143,9 @@ export default function EmptyEditor() {
       )}
 
       {!standaloneFiles && (
-        <p className="text-xs text-fg-dim/70 flex items-center gap-1.5 relative">
-          <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span className="text-fg-dim/40">·</span>{' '}
-          <Kbd>Alt+C</Kbd> {t('文件引用')}
+        <p className="text-xs text-fg-dim/70 flex flex-wrap justify-center items-center gap-x-3 gap-y-1.5 relative">
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><Kbd>Ctrl+Shift+C</Kbd> {t('路径')}</span>
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><Kbd>Alt+C</Kbd> {t('文件引用')}</span>
         </p>
       )}
       {!standaloneFiles && recent.length > 0 && (
@@ -177,6 +177,7 @@ export default function EmptyEditor() {
           </ul>
         </div>
       )}
+      <div className="mb-auto" aria-hidden />
     </div>
   )
 }

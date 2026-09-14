@@ -1444,11 +1444,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     })),
 
   initializeTerminalEvents: async () => {
-    const [unlistenData, unlistenExit] = await Promise.all([
+    const [unlistenData, unlistenInputError, unlistenExit] = await Promise.all([
       listen<{ id: string; data: number[] }>('terminal-data', event => {
         if (get().terminals.some(terminal => terminal.id === event.payload.id)) {
           publishTerminalOutput(event.payload.id, event.payload.data)
         }
+      }),
+      listen<{ id: string; message: string }>('terminal-input-error', event => {
+        const tab = get().terminals.find(terminal => terminal.id === event.payload.id)
+        if (!tab || tab.status === 'exited') return
+        useProjectStore.getState().pushToast('error', translate('终端输入失败: {error}', {
+          error: `${terminalDisplayLabel(tab.name)}: ${event.payload.message}`,
+        }))
       }),
       listen<{ id: string; exit_code: number }>('terminal-exit', event => {
         const { id, exit_code } = event.payload
@@ -1506,6 +1513,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return () => {
       unlistenData()
       unlistenExit()
+      unlistenInputError()
     }
   },
 }))

@@ -5,18 +5,23 @@ import { confirmDialog } from '../store/confirmStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
+import { isTransferActive, useTransferStore } from '../store/transferStore'
 
 /** Confirm dirty tabs / busy terminals, then destroy the current window. */
 export async function requestAppClose() {
   // Only warn for busy terminals (child processes / run tasks). Idle shells
   // still get killed on quit, but should not look like "仍在运行".
   const busyTerminals = await listBusyTerminals(useTerminalStore.getState().terminals)
-  const detail =
+  const terminalDetail =
     busyTerminals.length > 0
       ? translate('{count} 个终端仍在运行，退出后将终止。', {
           count: busyTerminals.length,
         })
       : undefined
+  const transferCount = useTransferStore.getState().tasks.filter(task => isTransferActive(task.status)).length
+  const detail = [terminalDetail, transferCount > 0
+    ? translate('{count} 项文件传输尚未完成，退出后将中断。', { count: transferCount })
+    : undefined].filter(Boolean).join('\n') || undefined
 
   if (
     !(await confirmDialog({

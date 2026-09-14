@@ -142,3 +142,16 @@ body.panel-resizing[data-panel-resize='horizontal'] [data-editor-column] {
   background: var(--color-accent);
   transform: scale(1.15);
 }
+
+/* Keyboard focus uses the same clear sash indicator as pointer interaction. */
+.panel-resizer:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: -1px;
+}
+.panel-resizer:focus-visible .panel-resizer-line,
+.panel-resizer:focus-visible .panel-resizer-grip {
+  opacity: 1;
+}
+.panel-resizer:focus-visible .panel-resizer-line {
+  background: var(--color-accent);
+}

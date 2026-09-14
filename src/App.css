@@ -9,6 +9,7 @@
 @import "./styles/animations.css";
 @import "./styles/panel-resizer.css";
 @import "./styles/settings.css";
+@import "./styles/responsive-layout.css";
 @import "./styles/merge-diff.css";
 
 html,

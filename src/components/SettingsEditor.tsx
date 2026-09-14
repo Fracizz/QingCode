@@ -1,3 +1,4 @@
+import { preferredScrollBehavior } from '../lib/motionPreferences'
 import {
   useCallback,
   useEffect,
@@ -266,7 +267,7 @@ export default function SettingsEditor() {
       }
     })
     requestAnimationFrame(() => {
-      sectionRefs.current.editor?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      sectionRefs.current.editor?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
       searchRef.current?.focus()
     })
   }, [settingsFocusSignal, settingsFocusQuery])
@@ -385,7 +386,7 @@ export default function SettingsEditor() {
 
   const scrollTo = (id: CategoryId) => {
     setCategory(id)
-    sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    sectionRefs.current[id]?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
   }
 
   const openSettingsJson = async (writeDefaults = false) => {
@@ -494,7 +495,7 @@ export default function SettingsEditor() {
   }, [match, q])
 
   return (
-    <div className="ui-font-scaled h-full flex flex-col bg-bg text-fg min-w-0">
+    <div className="settings-shell ui-font-scaled h-full flex flex-col bg-bg text-fg min-w-0">
       {/* Tab strip like VS Code */}
       <div className="flex-shrink-0 h-[var(--tab-height)] flex items-stretch border-b border-border bg-bg-sidebar">
         <div className="relative flex items-center gap-2 px-3 border-r border-border bg-bg min-w-0">
@@ -534,8 +535,8 @@ export default function SettingsEditor() {
 
         {/* Search aligns with the content column (TOC is 200px; content uses px-6 + max-w-[800px]). */}
         <div className="flex min-w-0">
-          <div className="w-[200px] flex-shrink-0" aria-hidden />
-          <div className="flex-1 min-w-0 px-6">
+          <div className="settings-search-spacer w-[200px] flex-shrink-0" aria-hidden />
+          <div className="settings-content-padding flex-1 min-w-0 px-6">
             <div className="relative max-w-[800px]">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-dim" />
               <input
@@ -568,9 +569,9 @@ export default function SettingsEditor() {
         </div>
       </div>
 
-      <div className="flex flex-1 min-h-0">
+      <div className="settings-body flex flex-1 min-h-0">
         {/* TOC */}
-        <nav className="w-[200px] flex-shrink-0 border-r border-border overflow-auto py-2 bg-bg">
+        <nav className="settings-nav w-[200px] flex-shrink-0 border-r border-border overflow-auto py-2 bg-bg">
           {visibleCategories.map(cat => (
             <button
               key={cat.id}
@@ -594,7 +595,7 @@ export default function SettingsEditor() {
         </nav>
 
         {/* Content */}
-        <div className="flex-1 min-w-0 overflow-auto px-6 py-4">
+        <div className="settings-content-padding flex-1 min-h-0 min-w-0 overflow-auto px-6 py-4">
           <div className="max-w-[800px] flex flex-col gap-6">
             {match('常用设置', '颜色主题', '界面字号', '外观', '深色', '浅色') && (
               <Section
@@ -1595,7 +1596,7 @@ export default function SettingsEditor() {
                       type="button"
                       disabled={openingJson || (scope === 'workspace' && !currentProject)}
                       onClick={() => void openSettingsJson(false)}
-                      className="rounded bg-accent px-3 py-1.5 text-[12px] text-white hover:bg-accent/90 disabled:opacity-50"
+                      className="rounded bg-action px-3 py-1.5 text-[12px] text-on-action hover:bg-action/90 disabled:opacity-50"
                     >
                       {t('在编辑器中打开')}
                     </button>

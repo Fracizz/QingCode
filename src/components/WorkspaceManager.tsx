@@ -238,7 +238,7 @@ export default function WorkspaceManager() {
           <button
             type="button"
             onClick={closeWorkspaceManager}
-            className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors"
+            className="px-3 py-1.5 text-[13px] rounded bg-action hover:bg-action/90 text-on-action transition-colors"
           >
             {t('完成')}
           </button>

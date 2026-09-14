@@ -134,7 +134,7 @@ export default function ExplorerConflictDialog() {
           )}
           <button
             type="button"
-            className="px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors"
+            className="px-3 py-1.5 text-[13px] rounded bg-action hover:bg-action/90 text-on-action transition-colors"
             onClick={submitRename}
           >
             {t('重命名')}
@@ -142,7 +142,7 @@ export default function ExplorerConflictDialog() {
           {request.showApplyAll && (
             <button
               type="button"
-              className="px-3 py-1.5 text-[13px] rounded bg-danger/90 hover:bg-danger text-white transition-colors"
+              className="px-3 py-1.5 text-[13px] rounded bg-destructive/90 hover:bg-destructive text-on-destructive transition-colors"
               onClick={() => answer({ action: 'overwrite_all' })}
             >
               {t('全部覆盖')}
@@ -150,7 +150,7 @@ export default function ExplorerConflictDialog() {
           )}
           <button
             type="button"
-            className="px-3 py-1.5 text-[13px] rounded bg-danger/90 hover:bg-danger text-white transition-colors"
+            className="px-3 py-1.5 text-[13px] rounded bg-destructive/90 hover:bg-destructive text-on-destructive transition-colors"
             onClick={() => answer({ action: 'overwrite' })}
           >
             {t('覆盖')}

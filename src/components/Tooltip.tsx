@@ -202,7 +202,7 @@ interface Props {
   onlyWhenOverflow?: boolean
   /** Keep the tooltip visible without waiting for hover (for transient guidance). */
   forceOpen?: boolean
-  /** When false, focus does not open the tip (avoids tip-on-click). Default false. */
+  /** When false, focus does not open the tip (avoids tip-on-click). Default true; mouse focus is ignored. */
   showOnFocus?: boolean
   /** Speech-bubble caret pointing at the trigger (status-bar tips). */
   arrow?: boolean
@@ -232,7 +232,7 @@ export default function Tooltip({
   delay,
   onlyWhenOverflow = false,
   forceOpen = false,
-  showOnFocus = false,
+  showOnFocus = true,
   arrow = false,
   anchor = 'child',
   clearanceTop,
@@ -408,7 +408,9 @@ export default function Tooltip({
         className={wrapperClassName}
         onMouseEnter={scheduleShow}
         onMouseLeave={forceOpen ? undefined : hide}
-        onFocus={showOnFocus ? scheduleShow : undefined}
+        onFocus={showOnFocus ? event => {
+          if (event.target instanceof HTMLElement && event.target.matches(':focus-visible')) scheduleShow()
+        } : undefined}
         onBlur={forceOpen ? undefined : hide}
         onPointerDown={forceOpen ? undefined : hide}
       >

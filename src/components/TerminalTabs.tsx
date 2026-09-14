@@ -877,7 +877,7 @@ export default function TerminalTabs({
               />
               <List size={15} />
               {hiddenCount > 0 && (
-                <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-accent px-0.5 text-center text-[9px] font-semibold leading-[12px] text-white">
+                <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-action px-0.5 text-center text-[9px] font-semibold leading-[12px] text-on-action">
                   {hiddenCount > 99 ? '99+' : hiddenCount}
                 </span>
               )}

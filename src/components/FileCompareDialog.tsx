@@ -108,7 +108,7 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
               type="button"
               className={
                 action.primary
-                  ? 'px-3 py-1.5 text-[13px] rounded bg-accent hover:bg-accent/90 text-white transition-colors'
+                  ? 'px-3 py-1.5 text-[13px] rounded bg-action hover:bg-action/90 text-on-action transition-colors'
                   : 'px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors'
               }
               onClick={action.onClick}

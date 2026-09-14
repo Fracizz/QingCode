@@ -63,12 +63,16 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
   const [browsing, setBrowsing] = useState(false)
   const pendingRef = useRef<PendingSession | null>(null)
   const closedRef = useRef(false)
+  const browseRequestRef = useRef(0)
+  const sessionEpochRef = useRef(0)
   const selectedConnection = sshConnections.find(item => item.id === connectionId)
   const creatingConnection = connectionId === NEW_SSH_CONNECTION_ID
 
   useEffect(() => {
     if (!visible) return
     closedRef.current = false
+    sessionEpochRef.current += 1
+    browseRequestRef.current += 1
     setStep('connect')
     setError('')
     setSubmitting(false)
@@ -86,6 +90,9 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
     })
     return () => {
       cancelled = true
+      closedRef.current = true
+      sessionEpochRef.current += 1
+      browseRequestRef.current += 1
     }
   }, [visible, loadSshConnections])
 
@@ -98,6 +105,8 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
 
   const handleClose = () => {
     closedRef.current = true
+    sessionEpochRef.current += 1
+    browseRequestRef.current += 1
     discardSession()
     onClose()
   }
@@ -114,20 +123,21 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
   }
 
   const loadDirectory = async (connectionId: string, path: string) => {
+    const requestId = ++browseRequestRef.current
     setBrowsing(true)
     setError('')
     try {
       const result = await browseSshDirectory(connectionId, normalizeRemotePath(path))
-      if (closedRef.current) return
+      if (closedRef.current || requestId !== browseRequestRef.current) return
       setBrowsePath(result.path)
       setPathDraft(result.path)
       setEntries(result.entries)
       setSelectedPath(null)
     } catch (reason) {
-      if (closedRef.current) return
+      if (closedRef.current || requestId !== browseRequestRef.current) return
       setError(String(reason))
     } finally {
-      if (!closedRef.current) setBrowsing(false)
+      if (!closedRef.current && requestId === browseRequestRef.current) setBrowsing(false)
     }
   }
 
@@ -143,7 +153,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
     await loadDirectory(connection.id, homePath)
   }
 
-  const connectExisting = async (connection: SshConnection) => {
+  const connectExisting = async (connection: SshConnection, epoch: number) => {
     const secrets: SshSessionSecrets = {
       password: password || undefined,
       passphrase: passphrase || undefined,
@@ -151,20 +161,24 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
     if (
       connection.auth_kind === 'password' &&
       !secrets.password &&
-      !hasSshSessionSecrets(connection.id) &&
-      !(await isSshConnectionAlive(connection.id))
+      !hasSshSessionSecrets(connection.id)
     ) {
-      setError('请输入 SSH 密码。')
-      return
+      const alive = await isSshConnectionAlive(connection.id)
+      if (closedRef.current || epoch !== sessionEpochRef.current) return
+      if (!alive) {
+        setError('请输入 SSH 密码。')
+        return
+      }
     }
+    if (closedRef.current || epoch !== sessionEpochRef.current) return
     const opened = await openSshSession({
       ...sshRuntimeConfig(connection, secrets),
     })
-    if (closedRef.current) return
+    if (closedRef.current || epoch !== sessionEpochRef.current) return
     await beginBrowse(connection, secrets, true, opened.homePath)
   }
 
-  const connectNew = async () => {
+  const connectNew = async (epoch: number) => {
     const normalizedHost = host.trim()
     const normalizedUser = username.trim()
     const normalizedPort = Number.parseInt(port, 10)
@@ -196,7 +210,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
       ...secrets,
     }
     const fingerprint = await probeSshHost(runtimeConfig)
-    if (closedRef.current) return
+    if (closedRef.current || epoch !== sessionEpochRef.current) return
     const accepted = await confirmDialog({
       title: '确认 SSH 主机指纹',
       message: `首次连接 ${normalizedUser}@${normalizedHost}，请确认主机指纹。`,
@@ -205,13 +219,13 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
       confirmLabel: '信任此主机',
       cancelLabel: '取消',
     })
-    if (closedRef.current || !accepted) return
+    if (closedRef.current || epoch !== sessionEpochRef.current || !accepted) return
 
     const opened = await openSshSession({
       ...runtimeConfig,
       hostKeyFingerprint: fingerprint,
     })
-    if (closedRef.current) {
+    if (closedRef.current || epoch !== sessionEpochRef.current) {
       void disconnectSshSession(id).catch(() => {})
       return
     }
@@ -230,7 +244,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
       updated_at: now,
     }
     await saveSshConnection(connection)
-    if (closedRef.current) {
+    if (closedRef.current || epoch !== sessionEpochRef.current) {
       void disconnectSshSession(id).catch(() => {})
       return
     }
@@ -239,28 +253,32 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
 
   const connect = async () => {
     if (submitting) return
+    const epoch = sessionEpochRef.current
     setSubmitting(true)
     setError('')
     try {
       if (!creatingConnection && selectedConnection) {
-        await connectExisting(selectedConnection)
+        await connectExisting(selectedConnection, epoch)
         return
       }
-      await connectNew()
+      await connectNew(epoch)
     } catch (reason) {
-      setError(String(reason))
+      if (!closedRef.current && epoch === sessionEpochRef.current) setError(String(reason))
     } finally {
-      setSubmitting(false)
+      if (!closedRef.current && epoch === sessionEpochRef.current) setSubmitting(false)
     }
   }
 
   const backToConnection = () => {
+    browseRequestRef.current += 1
+    setBrowsing(false)
     discardSession()
     setStep('connect')
     setError('')
   }
 
   const addProject = async () => {
+    const epoch = sessionEpochRef.current
     const pending = pendingRef.current
     if (!pending || submitting) return
     const rootPath = selectedPath ?? browsePath
@@ -277,15 +295,15 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
         projectName.trim(),
         pending.secrets
       )
-      if (closedRef.current) return
+      if (closedRef.current || epoch !== sessionEpochRef.current) return
       if (added) {
         pendingRef.current = null
         onAdded()
       }
     } catch (reason) {
-      setError(String(reason))
+      if (!closedRef.current && epoch === sessionEpochRef.current) setError(String(reason))
     } finally {
-      setSubmitting(false)
+      if (!closedRef.current && epoch === sessionEpochRef.current) setSubmitting(false)
     }
   }
 
@@ -508,7 +526,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
                 type="button"
                 disabled={submitting}
                 onClick={() => void connect()}
-                className="rounded bg-accent px-3 py-1.5 text-[13px] text-white hover:bg-accent/90 disabled:opacity-50"
+                className="rounded bg-action px-3 py-1.5 text-[13px] text-on-action hover:bg-action/90 disabled:opacity-50"
               >
                 {submitting ? '正在连接…' : '连接'}
               </button>
@@ -564,7 +582,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
                     value={pathDraft}
                     onChange={event => setPathDraft(event.target.value)}
                     onKeyDown={event => {
-                      if (event.key !== 'Enter') return
+                      if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.keyCode === 229) return
                       const pending = pendingRef.current
                       if (!pending) return
                       void loadDirectory(pending.connection.id, pathDraft)
@@ -641,7 +659,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
                 type="button"
                 disabled={submitting || browsing || !targetPath.startsWith('/')}
                 onClick={() => void addProject()}
-                className="rounded bg-accent px-3 py-1.5 text-[13px] text-white hover:bg-accent/90 disabled:opacity-50"
+                className="rounded bg-action px-3 py-1.5 text-[13px] text-on-action hover:bg-action/90 disabled:opacity-50"
               >
                 {submitting ? '正在添加…' : '添加项目'}
               </button>

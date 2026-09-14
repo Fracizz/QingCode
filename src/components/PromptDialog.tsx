@@ -107,7 +107,7 @@ export default function PromptDialog() {
           </button>
           <button
             type="button"
-            className="px-3.5 py-1.5 text-[13px] font-medium rounded-md bg-accent hover:bg-accent/90 text-white shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0"
+            className="px-3.5 py-1.5 text-[13px] font-medium rounded-md bg-action hover:bg-action/90 text-on-action shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0"
             onClick={submit}
           >
             {request.confirmLabel ? t(request.confirmLabel) : t('确定')}

@@ -1,0 +1,35 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createToastTimers } from './toastTimers'
+
+afterEach(() => vi.useRealTimers())
+describe('toast dismissal clock', () => {
+  it('keeps the remaining lifetime until both hover and focus have left', () => {
+    vi.useFakeTimers()
+    const timers = createToastTimers()
+    const dismiss = vi.fn()
+    timers.start('a', 4000, dismiss)
+    vi.advanceTimersByTime(3000)
+    timers.pause('a', 'hover')
+    timers.pause('a', 'focus')
+    vi.advanceTimersByTime(10000)
+    timers.resume('a', 'hover')
+    vi.advanceTimersByTime(10000)
+    expect(dismiss).not.toHaveBeenCalled()
+    timers.resume('a', 'focus')
+    vi.advanceTimersByTime(999)
+    expect(dismiss).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(dismiss).toHaveBeenCalledOnce()
+  })
+  it('clears a dismissed notification and does not restart it on mouse leave', () => {
+    vi.useFakeTimers()
+    const timers = createToastTimers()
+    const dismiss = vi.fn()
+    timers.start('a', 4000, dismiss)
+    timers.pause('a', 'hover')
+    timers.clear('a')
+    timers.resume('a', 'hover')
+    vi.runAllTimers()
+    expect(dismiss).not.toHaveBeenCalled()
+  })
+})

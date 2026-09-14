@@ -27,6 +27,7 @@ import {
   terminalWidthResizerHint,
 } from '../lib/panelLayout'
 import { beginPanelResize, settlePanelResize } from '../lib/panelResize'
+import { parseTerminalPaneRatio } from '../lib/terminalPaneRatio'
 
 const TerminalView = lazy(() => import('./Terminal'))
 
@@ -55,9 +56,7 @@ function paneFrameClass(focused: boolean): string {
 
 function loadDualRatio(): number {
   try {
-    const raw = Number(localStorage.getItem(DUAL_RATIO_KEY))
-    if (!Number.isFinite(raw)) return 0.5
-    return clampRatio(raw)
+    return parseTerminalPaneRatio(localStorage.getItem(DUAL_RATIO_KEY))
   } catch {
     return 0.5
   }
@@ -96,6 +95,10 @@ export interface TerminalPanelProps {
   layoutSwitching?: boolean
   onResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
   onWidthResizerPointerDown: (e: React.PointerEvent<HTMLDivElement>) => void
+  onHeightChange?: (value: number) => void
+  onWidthChange?: (value: number) => void
+  onHeightReset?: () => void
+  onWidthReset?: () => void
   terminalPanelRef: RefObject<HTMLDivElement | null>
 }
 
@@ -112,6 +115,10 @@ export default function TerminalPanel({
   layoutSwitching = false,
   onResizerPointerDown,
   onWidthResizerPointerDown,
+  onHeightChange,
+  onWidthChange,
+  onHeightReset,
+  onWidthReset,
   terminalPanelRef,
 }: TerminalPanelProps) {
   const skipDockTransition = isTerminalResizing || layoutSwitching
@@ -119,6 +126,17 @@ export default function TerminalPanel({
   const quadMode = position === 'side' && quadTerminal
   const multiPane = dualMode || quadMode
   const sideWidthEqual = sideSplit === 'equal' || !editorVisible
+  const [measuredSideWidth, setMeasuredSideWidth] = useState(terminalWidth)
+  useEffect(() => {
+    const panel = terminalPanelRef.current
+    if (position !== 'side' || !terminalOpen || !sideWidthEqual || !panel) return
+    const measure = () => setMeasuredSideWidth(Math.round(panel.getBoundingClientRect().width))
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(panel)
+    return () => observer.disconnect()
+  }, [position, terminalOpen, sideWidthEqual, terminalPanelRef])
+  const currentSideWidth = sideWidthEqual ? measuredSideWidth : terminalWidth
   const { t } = useI18n()
   const terminals = useTerminalStore(s => s.terminals)
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
@@ -459,6 +477,9 @@ export default function TerminalPanel({
             tooltip={t('拖动调整双终端比例')}
             tooltipSide="right"
             onPointerDown={onDualResizerPointerDown}
+            onValueChange={value => setDualRatio(clampRatio(value / 100))}
+            onReset={() => setDualRatio(0.5)}
+            keyboardStep={2}
             ariaValueNow={Math.round(dualRatio * 100)}
             ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
             ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
@@ -504,6 +525,9 @@ export default function TerminalPanel({
             tooltip={t('拖动调整四终端列比例')}
             tooltipSide="right"
             onPointerDown={onQuadColResizerPointerDown}
+            onValueChange={value => setQuadRatios(previous => ({ ...previous, col: clampRatio(value / 100) }))}
+            onReset={() => setQuadRatios(previous => ({ ...previous, col: 0.5 }))}
+            keyboardStep={2}
             ariaValueNow={Math.round(quadRatios.col * 100)}
             ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
             ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
@@ -517,6 +541,9 @@ export default function TerminalPanel({
             tooltip={t('拖动调整四终端行比例')}
             tooltipSide="top"
             onPointerDown={onQuadRowResizerPointerDown}
+            onValueChange={value => setQuadRatios(previous => ({ ...previous, row: clampRatio(value / 100) }))}
+            onReset={() => setQuadRatios(previous => ({ ...previous, row: 0.5 }))}
+            keyboardStep={2}
             ariaValueNow={Math.round(quadRatios.row * 100)}
             ariaValueMin={Math.round(DUAL_RATIO_MIN * 100)}
             ariaValueMax={Math.round(DUAL_RATIO_MAX * 100)}
@@ -572,10 +599,13 @@ export default function TerminalPanel({
           <PanelResizer
             orientation="vertical"
             active={isTerminalResizing}
-            tooltip={terminalWidthResizerHint(terminalWidth, t)}
+            tooltip={terminalWidthResizerHint(currentSideWidth, t)}
             tooltipSide="left"
             onPointerDown={onWidthResizerPointerDown}
-            ariaValueNow={terminalWidth}
+            onValueChange={onWidthChange}
+            onReset={onWidthReset}
+            keyboardDirection={-1}
+            ariaValueNow={currentSideWidth}
             ariaValueMin={getTerminalMinWidth()}
             ariaValueMax={getTerminalMaxWidth()}
           />
@@ -605,6 +635,9 @@ export default function TerminalPanel({
           tooltip={terminalResizerHint(terminalHeight, t)}
           tooltipSide="top"
           onPointerDown={onResizerPointerDown}
+          onValueChange={onHeightChange}
+          onReset={onHeightReset}
+          keyboardDirection={-1}
           ariaValueNow={terminalHeight}
           ariaValueMin={TERMINAL_MIN_HEIGHT}
           ariaValueMax={getTerminalMaxHeight()}

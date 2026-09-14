@@ -4,10 +4,10 @@
 
 use crate::file_encoding::{self, FileEncoding};
 use crate::path_guard::PathAllowlist;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::State;
 
 /// Keep formatting responsive; larger buffers should use a dedicated tool outside the editor.
@@ -168,31 +168,143 @@ fn truncate_error_detail(detail: &str) -> String {
     format!("{truncated}…")
 }
 
-fn run_with_stdin(mut cmd: Command, input: &str) -> Result<String, String> {
+fn terminate_formatter(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        let mut kill = Command::new("taskkill.exe");
+        apply_no_window(&mut kill);
+        let _ = kill
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{}", child.id())])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn read_formatter_output(reader: impl Read) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    reader
+        .take((MAX_FORMAT_BYTES * 2 + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_FORMAT_BYTES * 2 {
+        return Err(std::io::Error::other("格式化工具输出超过 10MB"));
+    }
+    Ok(bytes)
+}
+
+fn run_with_stdin(cmd: Command, input: &str) -> Result<String, String> {
+    run_with_stdin_timeout(cmd, input, FORMAT_TIMEOUT)
+}
+
+fn run_with_stdin_timeout(
+    mut cmd: Command,
+    input: &str,
+    timeout: Duration,
+) -> Result<String, String> {
     apply_no_window(&mut cmd);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    let started = Instant::now();
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("无法启动格式化工具: {e}"))?;
 
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(input.as_bytes())
-            .map_err(|e| format!("写入格式化输入失败: {e}"))?;
-    }
-
-    let (tx, rx) = std::sync::mpsc::channel();
+    let mut stdin = child.stdin.take().expect("piped stdin");
+    let stdout = child.stdout.take().expect("piped stdout");
+    let stderr = child.stderr.take().expect("piped stderr");
+    let input = input.as_bytes().to_vec();
+    let (input_tx, input_rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(child.wait_with_output());
+        let _ = input_tx.send(stdin.write_all(&input));
     });
-
-    let output = match rx.recv_timeout(FORMAT_TIMEOUT) {
-        Ok(Ok(output)) => output,
-        Ok(Err(e)) => return Err(format!("格式化进程失败: {e}")),
-        Err(_) => return Err(format!("格式化超时（{} 秒）", FORMAT_TIMEOUT.as_secs())),
+    let (stdout_tx, stdout_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = stdout_tx.send(read_formatter_output(stdout));
+    });
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = stderr_tx.send(read_formatter_output(stderr));
+    });
+    let mut input_result = None;
+    let mut stdout_result = None;
+    let mut stderr_result = None;
+    let output = loop {
+        if input_result.is_none() {
+            input_result = input_rx.try_recv().ok();
+        }
+        if stdout_result.is_none() {
+            stdout_result = stdout_rx.try_recv().ok();
+        }
+        if stderr_result.is_none() {
+            stderr_result = stderr_rx.try_recv().ok();
+        }
+        let status = match child.try_wait() {
+            Ok(status) => status,
+            Err(error) => {
+                terminate_formatter(&mut child);
+                return Err(format!("格式化进程失败: {error}"));
+            }
+        };
+        if let Some(status) = status {
+            if input_result.is_some() && stdout_result.is_some() && stderr_result.is_some() {
+                let stdout = stdout_result
+                    .take()
+                    .unwrap()
+                    .map_err(|error| error.to_string())?;
+                let stderr = stderr_result
+                    .take()
+                    .unwrap()
+                    .map_err(|error| error.to_string())?;
+                if status.success() {
+                    input_result
+                        .take()
+                        .unwrap()
+                        .map_err(|error| format!("写入格式化输入失败: {error}"))?;
+                }
+                break std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                };
+            }
+        }
+        if started.elapsed() >= timeout {
+            terminate_formatter(&mut child);
+            // The killed process tree closes all three pipes; reclaim workers.
+            if input_result.is_none() {
+                let _ = input_rx.recv_timeout(Duration::from_secs(2));
+            }
+            if stdout_result.is_none() {
+                let _ = stdout_rx.recv_timeout(Duration::from_secs(2));
+            }
+            if stderr_result.is_none() {
+                let _ = stderr_rx.recv_timeout(Duration::from_secs(2));
+            }
+            return Err(format!(
+                "格式化超时（{} 秒），已停止格式化进程",
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
     };
 
     if !output.status.success() {
@@ -421,6 +533,85 @@ fn format_document_inner(path: String, content: String) -> Result<String, String
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "subprocess fixture for bounded formatter tests"]
+    fn formatter_process_fixture() {
+        if let Ok(path) = std::env::var("QINGCODE_FORMATTER_PID_FILE") {
+            std::fs::write(path, std::process::id().to_string()).unwrap();
+        }
+        let mode = std::env::var("QINGCODE_FORMATTER_FIXTURE").unwrap_or_default();
+        if mode == "hang" {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        } else if mode == "read_then_hang" {
+            use std::io::Read;
+            std::io::stdin().read_to_end(&mut Vec::new()).unwrap();
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        } else {
+            use std::io::{Read, Write};
+            let bytes = vec![b'x'; 256 * 1024];
+            std::io::stdout().write_all(&bytes).unwrap();
+            let mut input = Vec::new();
+            std::io::stdin().read_to_end(&mut input).unwrap();
+        }
+        std::process::exit(0);
+    }
+
+    fn formatter_fixture(mode: &str) -> std::process::Command {
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "format::tests::formatter_process_fixture",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("QINGCODE_FORMATTER_FIXTURE", mode);
+        command
+    }
+
+    #[test]
+    fn timeout_covers_formatter_that_never_reads_stdin() {
+        assert_hanging_formatter_is_stopped("hang", &"x".repeat(1024 * 1024));
+    }
+
+    #[test]
+    fn timeout_kills_formatter_that_reads_input_but_never_exits() {
+        assert_hanging_formatter_is_stopped("read_then_hang", "small input");
+    }
+
+    fn assert_hanging_formatter_is_stopped(mode: &str, input: &str) {
+        let pid_file =
+            std::env::temp_dir().join(format!("qingcode-formatter-{}.pid", uuid::Uuid::new_v4()));
+        let mut command = formatter_fixture(mode);
+        command.env("QINGCODE_FORMATTER_PID_FILE", &pid_file);
+        let started = std::time::Instant::now();
+        let result =
+            super::run_with_stdin_timeout(command, input, std::time::Duration::from_secs(2));
+        assert!(result.unwrap_err().contains("超时"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        let pid = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        std::fs::remove_file(pid_file).unwrap();
+        let mut processes = sysinfo::System::new();
+        let pid = sysinfo::Pid::from_u32(pid);
+        processes.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+        assert!(
+            processes.process(pid).is_none(),
+            "formatter survived timeout"
+        );
+    }
+
+    #[test]
+    fn formatter_stdout_is_drained_while_stdin_is_written() {
+        let result = super::run_with_stdin_timeout(
+            formatter_fixture("echo"),
+            &"y".repeat(1024 * 1024),
+            std::time::Duration::from_secs(10),
+        );
+        assert!(result.unwrap().len() >= 256 * 1024);
+    }
     use super::*;
 
     #[test]

@@ -165,11 +165,11 @@ function GitScmStatusBadge({ status, group }: { status: string; group: GitChange
   const glyph = gitStatusGlyphForGroup(status, group) ?? status.trim()
   const className =
     tone === 'conflict'
-      ? `${STATUS_BADGE} bg-danger text-white`
+      ? `${STATUS_BADGE} bg-destructive text-on-destructive`
       : tone === 'added'
         ? `${STATUS_BADGE} bg-ok text-bg`
         : tone === 'deleted'
-          ? `${STATUS_BADGE} bg-danger text-white`
+          ? `${STATUS_BADGE} bg-destructive text-on-destructive`
           : tone === 'modified'
             ? `${STATUS_BADGE} bg-warn text-bg`
             : `${STATUS_BADGE} bg-accent/80 text-bg`
@@ -2159,7 +2159,7 @@ export default function SourceControlPanel() {
               type="button"
               disabled={!canCommitStagedChanges(commitMessage, groups.staged.length, writeDisabled)}
               onClick={() => void commitStaged()}
-              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-accent px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-action px-3 py-1.5 text-[12px] font-medium text-on-action transition-colors hover:bg-action/90 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {operation?.kind === 'commit' || operation?.kind === 'push' ? (
                 <LoaderCircle size={13} className="animate-spin" />

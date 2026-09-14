@@ -23,6 +23,7 @@ import {
   MINIMAP_SCROLLBAR_WIDTH,
   MINIMAP_STYLE_DEFAULT,
   MINIMAP_WIDTH_MAX,
+  MINIMAP_WIDTH_DEFAULT,
   MINIMAP_WIDTH_MIN,
   clampMinimapWidth,
   loadMinimapHideScrollbar,
@@ -835,7 +836,7 @@ export default function EditorMinimap({
     cancelHoverCollapse()
     hoverCollapseTimerRef.current = window.setTimeout(() => {
       hoverCollapseTimerRef.current = 0
-      if (dragScrollRef.current || dragViewportRef.current || resizingRef.current) return
+      if (dragScrollRef.current || dragViewportRef.current || resizingRef.current || rootRef.current?.contains(document.activeElement)) return
       setPointerInside(false)
     }, MINIMAP_HOVER_COLLAPSE_DELAY_MS)
   }
@@ -864,6 +865,15 @@ export default function EditorMinimap({
     }
   }
 
+  const changeWidth = (value: number) => {
+    const pane = rootRef.current?.parentElement
+    const next = clampMinimapWidth(value, pane ? resolveMinimapMaxWidth(pane.clientWidth) : MINIMAP_WIDTH_MAX)
+    widthRef.current = next
+    setWidth(next)
+    saveMinimapWidth(next)
+    requestRepaint(true)
+  }
+
   if (mode === 'hidden') return null
 
   // Hover-to-show: fold to the right scroll rail; expand on hover / drag / open menu.
@@ -890,7 +900,14 @@ export default function EditorMinimap({
           scrollingThumb ? ' editor-minimap--scrolling' : ''
         }${hoverToShow && !expanded ? ' editor-minimap--hover-collapsed' : ''}`}
         style={{ width: displayWidth }}
-        aria-hidden
+        aria-label={t('小地图')}
+        onFocusCapture={() => {
+          cancelHoverCollapse()
+          setPointerInside(true)
+        }}
+        onBlurCapture={event => {
+          if (!event.currentTarget.contains(event.relatedTarget)) scheduleHoverCollapse()
+        }}
         data-block-native-context-menu
         onContextMenu={onMinimapContextMenu}
         onMouseEnter={() => {
@@ -919,6 +936,9 @@ export default function EditorMinimap({
           tooltip={resizeHint}
           tooltipSide="left"
           onMouseDown={onResizeMouseDown}
+          onValueChange={changeWidth}
+          onReset={() => changeWidth(MINIMAP_WIDTH_DEFAULT)}
+          keyboardDirection={-1}
           ariaValueNow={width}
           ariaValueMin={MINIMAP_WIDTH_MIN}
           ariaValueMax={MINIMAP_WIDTH_MAX}

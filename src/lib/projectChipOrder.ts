@@ -1,5 +1,40 @@
 import type { Project } from '../types'
 
+/** A contiguous window preserves manual order while keeping the current chip visible. */
+export function visibleProjectChipRange(
+  widths: number[],
+  availableWidth: number,
+  currentIndex: number,
+): { start: number; end: number } {
+  if (!widths.length) return { start: 0, end: 0 }
+  const gap = 4
+  const addWidth = 28
+  const overflowWidth = 32
+  const total = widths.reduce((sum, width) => sum + width + gap, addWidth)
+  if (total <= availableWidth) return { start: 0, end: widths.length }
+  const budget = Math.max(0, availableWidth - addWidth - overflowWidth)
+  let end = 0
+  let used = 0
+  while (end < widths.length && used + widths[end] + gap <= budget) {
+    used += widths[end] + gap
+    end++
+  }
+  const active = currentIndex >= 0 && currentIndex < widths.length ? currentIndex : 0
+  if (active < end) return { start: 0, end }
+  let start = active
+  end = active + 1
+  used = widths[active] + gap
+  while (start > 0 && used + widths[start - 1] + gap <= budget) {
+    start--
+    used += widths[start] + gap
+  }
+  while (end < widths.length && used + widths[end] + gap <= budget) {
+    used += widths[end] + gap
+    end++
+  }
+  return { start, end }
+}
+
 /** Title-bar order: explicit sort_order, then most-recently-opened. */
 export function sortVisibleProjects(projects: Project[]): Project[] {
   return projects

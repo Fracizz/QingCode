@@ -247,7 +247,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
                 !name.trim() ||
                 tasks.filter(t => t.target.trim()).length === 0
               }
-              className="text-[13px] px-3 py-1.5 rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40 disabled:cursor-default"
+              className="text-[13px] px-3 py-1.5 rounded bg-action text-on-action hover:bg-action/90 disabled:opacity-40 disabled:cursor-default"
             >
               {t('保存')}
             </button>

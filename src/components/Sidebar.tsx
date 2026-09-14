@@ -117,6 +117,7 @@ import {
 } from './explorerLayout'
 import { authorizePaths } from '../lib/pathAllowlist'
 import { requestSshReconnect } from '../lib/sshWorkspace'
+import { startSshTransfer } from '../lib/sshTransfer'
 
 type DirectoryDeleteStats = {
   path: string
@@ -1055,14 +1056,8 @@ export default function Sidebar() {
     if (paths.length === 0) return
     try {
       await authorizePaths(paths)
-      await safeInvoke('上传到 SSH 项目', 'ssh_upload_paths', {
-        destination,
-        localPaths: paths,
-      })
+      await startSshTransfer({ direction: 'upload', destination, paths })
       await refreshDirectory(destination)
-      useProjectStore
-        .getState()
-        .pushToast('success', t('已上传 {count} 项', { count: paths.length }))
     } catch (error) {
       useProjectStore
         .getState()
@@ -1079,10 +1074,7 @@ export default function Sidebar() {
     if (typeof destination !== 'string') return
     try {
       await authorizePaths([destination])
-      await safeInvoke('下载 SSH 文件', 'ssh_download_paths', { paths, destination })
-      useProjectStore
-        .getState()
-        .pushToast('success', t('已下载 {count} 项', { count: paths.length }))
+      await startSshTransfer({ direction: 'download', paths, destination })
     } catch (error) {
       useProjectStore
         .getState()

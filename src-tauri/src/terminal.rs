@@ -19,6 +19,28 @@ pub struct TerminalExitPayload {
     pub exit_code: u32,
 }
 
+#[derive(serde::Serialize, Clone)]
+struct TerminalInputErrorPayload {
+    id: String,
+    message: String,
+}
+
+fn spawn_terminal_writer(
+    mut writer: Box<dyn std::io::Write + Send>,
+    on_error: impl FnOnce(String) + Send + 'static,
+) -> std::sync::mpsc::SyncSender<Vec<u8>> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<Vec<u8>>(8);
+    std::thread::spawn(move || {
+        while let Ok(bytes) = receiver.recv() {
+            if let Err(error) = writer.write_all(&bytes).and_then(|_| writer.flush()) {
+                on_error(error.to_string());
+                return;
+            }
+        }
+    });
+    sender
+}
+
 #[derive(serde::Serialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSpawnResult {
@@ -27,8 +49,8 @@ pub struct TerminalSpawnResult {
 }
 
 struct TerminalSession {
-    master: Box<dyn portable_pty::MasterPty + Send>,
-    writer: Box<dyn std::io::Write + Send>,
+    master: Arc<Mutex<Box<dyn portable_pty::MasterPty + Send>>>,
+    writer: std::sync::mpsc::SyncSender<Vec<u8>>,
     killer: Option<Box<dyn ChildKiller + Send + Sync>>,
     generation: u64,
     shell_pid: Option<u32>,
@@ -120,23 +142,44 @@ impl TerminalManager {
             .take_writer()
             .map_err(|e| format!("failed to take pty writer: {}", e))?;
 
+        // Each PTY owns its blocking writer. The registry and kill path never wait
+        // for a child process to consume stdin. Bound queued messages and size.
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
+        let writer_app = app.clone();
+        let writer_id = id.clone();
+        let writer_sessions = Arc::clone(&self.sessions);
+        let writer_tx = spawn_terminal_writer(writer, move |message| {
+            let current = writer_sessions
+                .lock()
+                .unwrap()
+                .get(&writer_id)
+                .map(|session| session.generation);
+            if should_emit_terminal_exit(current, generation) {
+                let _ = writer_app.emit(
+                    "terminal-input-error",
+                    TerminalInputErrorPayload {
+                        id: writer_id,
+                        message,
+                    },
+                );
+            }
+        });
         let session = TerminalSession {
-            master,
-            writer,
+            master: Arc::new(Mutex::new(master)),
+            writer: writer_tx,
             killer: Some(killer),
             generation,
             shell_pid,
         };
 
-        {
+        let old = {
             let mut sessions = self.sessions.lock().unwrap();
-            if let Some(mut old) = sessions.remove(&id) {
-                if let Some(mut k) = old.killer.take() {
-                    let _ = k.kill();
-                }
+            sessions.insert(id.clone(), session)
+        };
+        if let Some(mut old) = old {
+            if let Some(mut killer) = old.killer.take() {
+                let _ = killer.kill();
             }
-            sessions.insert(id.clone(), session);
         }
 
         let app_clone = app.clone();
@@ -166,15 +209,19 @@ impl TerminalManager {
         let sessions = Arc::clone(&self.sessions);
         std::thread::spawn(move || {
             let status = child.wait();
-            let current_generation = {
-                let sessions = sessions.lock().unwrap();
-                sessions.get(&id).map(|session| session.generation)
-            };
-            if should_emit_terminal_exit(current_generation, generation) {
-                {
-                    let mut sessions = sessions.lock().unwrap();
+            let is_current = {
+                let mut sessions = sessions.lock().unwrap();
+                if should_emit_terminal_exit(
+                    sessions.get(&id).map(|session| session.generation),
+                    generation,
+                ) {
                     sessions.remove(&id);
+                    true
+                } else {
+                    false
                 }
+            };
+            if is_current {
                 let exit_code = resolve_exit_code(status.map(|status| status.exit_code()).ok());
                 let _ = app.emit("terminal-exit", TerminalExitPayload { id, exit_code });
             }
@@ -184,23 +231,37 @@ impl TerminalManager {
     }
 
     pub fn write(&self, id: &str, data: &str) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(session) = sessions.get_mut(id) {
-            session
-                .writer
-                .write_all(data.as_bytes())
-                .map_err(|e| e.to_string())?;
-            session.writer.flush().map_err(|e| e.to_string())
-        } else {
-            Err("Terminal not found".to_string())
+        if data.len() > 1024 * 1024 {
+            return Err("单次终端输入不能超过 1MB，请分段粘贴".to_string());
         }
+        let writer = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|session| session.writer.clone())
+            .ok_or_else(|| "Terminal not found".to_string())?;
+        writer
+            .try_send(data.as_bytes().to_vec())
+            .map_err(|error| match error {
+                std::sync::mpsc::TrySendError::Full(_) => {
+                    "终端输入缓冲区已满，请等待当前命令处理后重试".to_string()
+                }
+                std::sync::mpsc::TrySendError::Disconnected(_) => "终端输入通道已关闭".to_string(),
+            })
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(session) = sessions.get_mut(id) {
-            session
-                .master
+        let master = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|session| Arc::clone(&session.master));
+        if let Some(master) = master {
+            master
+                .lock()
+                .unwrap()
                 .resize(clamp_pty_size(cols, rows))
                 .map_err(|e| e.to_string())
         } else {
@@ -209,8 +270,8 @@ impl TerminalManager {
     }
 
     pub fn kill(&self, id: &str) {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(mut session) = sessions.remove(id) {
+        let session = self.sessions.lock().unwrap().remove(id);
+        if let Some(mut session) = session {
             if let Some(mut k) = session.killer.take() {
                 let _ = k.kill();
             }
@@ -218,12 +279,13 @@ impl TerminalManager {
     }
 
     pub fn has_child_processes(&self, id: &str) -> Result<bool, String> {
-        let sessions = self.sessions.lock().unwrap();
-        let Some(session) = sessions.get(id) else {
-            // Session already cleaned up (process exited) → not busy.
-            return Ok(false);
-        };
-        let Some(pid) = session.shell_pid else {
+        let pid = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .and_then(|session| session.shell_pid);
+        let Some(pid) = pid else {
             return Ok(false);
         };
         // Parent process may already be gone; treat as not busy.
@@ -251,8 +313,8 @@ impl TerminalManager {
     }
 
     pub fn kill_all(&self) {
-        let mut sessions = self.sessions.lock().unwrap();
-        for (_, mut session) in sessions.drain() {
+        let sessions = std::mem::take(&mut *self.sessions.lock().unwrap());
+        for (_, mut session) in sessions {
             if let Some(mut killer) = session.killer.take() {
                 let _ = killer.kill();
             }
@@ -776,6 +838,82 @@ fn count_meaningful_child_processes(parent_pid: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn blocked_writer_has_a_bounded_queue_and_does_not_block_other_writers() {
+        struct PausedWriter {
+            entered: std::sync::mpsc::Sender<()>,
+            resume: std::sync::mpsc::Receiver<()>,
+            paused: bool,
+        }
+        impl std::io::Write for PausedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if !self.paused {
+                    self.entered.send(()).unwrap();
+                    self.resume.recv().unwrap();
+                    self.paused = true;
+                }
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        #[derive(Debug, Clone)]
+        struct TestKiller(std::sync::mpsc::Sender<()>);
+        impl ChildKiller for TestKiller {
+            fn kill(&mut self) -> std::io::Result<()> {
+                self.0.send(()).unwrap();
+                Ok(())
+            }
+            fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+                Box::new(self.clone())
+            }
+        }
+        let (entered, arrived) = std::sync::mpsc::channel();
+        let (resume, paused) = std::sync::mpsc::channel();
+        let writer = super::spawn_terminal_writer(
+            Box::new(PausedWriter {
+                entered,
+                resume: paused,
+                paused: false,
+            }),
+            |_| {},
+        );
+        let manager = TerminalManager::new();
+        let pair = NativePtySystem::default()
+            .openpty(clamp_pty_size(80, 24))
+            .unwrap();
+        let (kill, killed) = std::sync::mpsc::channel();
+        manager.sessions.lock().unwrap().insert(
+            "blocked".to_string(),
+            TerminalSession {
+                master: Arc::new(Mutex::new(pair.master)),
+                writer,
+                killer: Some(Box::new(TestKiller(kill))),
+                generation: 1,
+                shell_pid: None,
+            },
+        );
+        manager.write("blocked", "first").unwrap();
+        arrived
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        for _ in 0..8 {
+            manager.write("blocked", "queued").unwrap();
+        }
+        assert!(manager
+            .write("blocked", "overflow")
+            .unwrap_err()
+            .contains("缓冲区已满"));
+        let other = super::spawn_terminal_writer(Box::new(std::io::sink()), |_| {});
+        other.try_send(vec![2]).unwrap();
+        manager.kill("blocked");
+        killed
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert!(manager.sessions.lock().unwrap().is_empty());
+        resume.send(()).unwrap();
+    }
     use super::*;
 
     fn all_programs_available(program: &str) -> Option<String> {

@@ -1,3 +1,4 @@
+import { preferredScrollBehavior } from '../lib/motionPreferences'
 import { isValidElement, useRef, type MouseEvent, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -45,7 +46,7 @@ export default function MarkdownRichText({ content, className }: Props) {
     const target = Array.from(containerRef.current?.querySelectorAll<HTMLElement>('[id]') ?? []).find(
       element => element.id === id,
     )
-    target?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    target?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
   }
 
   return (

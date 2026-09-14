@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ConfirmDialog from './ConfirmDialog'
 import SshProjectDialog from './SshProjectDialog'
@@ -11,6 +11,7 @@ import {
   browseSshDirectory,
   disconnectSshSession,
   openSshSession,
+  isSshConnectionAlive,
   probeSshHost,
 } from '../lib/sshWorkspace'
 
@@ -20,6 +21,7 @@ vi.mock('../lib/sshWorkspace', async importOriginal => {
     ...actual,
     probeSshHost: vi.fn(),
     openSshSession: vi.fn(),
+    isSshConnectionAlive: vi.fn(),
     browseSshDirectory: vi.fn(),
     disconnectSshSession: vi.fn(),
   }
@@ -47,6 +49,7 @@ describe('SshProjectDialog', () => {
   beforeEach(() => {
     vi.mocked(probeSshHost).mockReset()
     vi.mocked(openSshSession).mockReset()
+    vi.mocked(isSshConnectionAlive).mockReset().mockResolvedValue(false)
     vi.mocked(browseSshDirectory).mockReset()
     vi.mocked(disconnectSshSession).mockReset()
     vi.mocked(probeSshHost).mockResolvedValue('SHA256:test-fingerprint')
@@ -309,4 +312,46 @@ describe('SshProjectDialog', () => {
     expect(onClose).toHaveBeenCalledOnce()
     await waitFor(() => expect(disconnectSshSession).toHaveBeenCalled())
   })
+  it('ignores composed Enter and late directory responses after a newer request', async () => {
+    render(<><SshProjectDialog open onClose={vi.fn()} onAdded={vi.fn()} /><ConfirmDialog /></>)
+    await connectAndConfirm()
+    await screen.findByRole('option', { name: 'go' })
+    const input = screen.getByLabelText('源文件夹')
+    let resolveOld!: (value: { path: string; entries: [] }) => void
+    vi.mocked(browseSshDirectory).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
+    fireEvent.change(input, { target: { value: '/old' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(browseSshDirectory).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    vi.mocked(browseSshDirectory).mockResolvedValueOnce({ path: '/new', entries: [] })
+    fireEvent.change(input, { target: { value: '/new' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(input).toHaveValue('/new'))
+    await act(async () => resolveOld({ path: '/old', entries: [] }))
+    expect(input).toHaveValue('/new')
+    fireEvent.click(screen.getByRole('button', { name: '添加项目' }))
+    await waitFor(() => expect(useProjectStore.getState().addSshProject).toHaveBeenCalledWith(expect.anything(), '/new', '', expect.anything()))
+  })
+
+  it('ignores a password-session probe that finishes after closing and reopening the dialog', async () => {
+    useProjectStore.setState({ sshConnections: [{
+      id: 'late-password', name: 'SSH', host: 'localhost', port: 22, username: 'owner',
+      auth_kind: 'password', host_key_fingerprint: 'SHA256:saved', created_at: 1, updated_at: 1,
+    }] })
+    let finishProbe!: (alive: boolean) => void
+    vi.mocked(isSshConnectionAlive).mockImplementation(() => new Promise(resolve => { finishProbe = resolve }))
+    const onClose = vi.fn()
+    const view = render(<SshProjectDialog open onClose={onClose} onAdded={vi.fn()} />)
+    await waitFor(() => expect(screen.getByLabelText('SSH 连接')).toHaveValue('late-password'))
+    fireEvent.click(screen.getByRole('button', { name: '连接' }))
+    await waitFor(() => expect(isSshConnectionAlive).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    view.rerender(<SshProjectDialog open={false} onClose={onClose} onAdded={vi.fn()} />)
+    view.rerender(<SshProjectDialog open onClose={onClose} onAdded={vi.fn()} />)
+    await act(async () => finishProbe(false))
+    expect(screen.queryByText('请输入 SSH 密码。')).not.toBeInTheDocument()
+    expect(openSshSession).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '连接' })).toBeEnabled()
+  })
+
 })

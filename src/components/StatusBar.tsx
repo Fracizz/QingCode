@@ -348,7 +348,7 @@ export default function StatusBar() {
       <div
         ref={rowRef}
         {...{ [STATUS_BAR_ROW_ATTR]: '' }}
-        className="ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-bg-deep text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
+        className="status-bar-shell ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-bg-deep text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
       >
         {/* Left: folder · project · git — adjacent; project truncates, branch keeps full width. */}
         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
@@ -382,7 +382,7 @@ export default function StatusBar() {
               ) : (
                 <Folder size={13} className="flex-shrink-0 text-brand" />
               )}
-              <span className="min-w-0 max-w-[28%] truncate">
+              <span className="min-w-0 max-w-[45%] truncate">
                 {currentProject ? currentProject.name : t('未选择项目')}
               </span>
               {isSshProject(currentProject) ? (
@@ -394,21 +394,22 @@ export default function StatusBar() {
             <>
               <StatusDivider />
               <StatusTip
-                label={
+                wrapperClassName="status-branch"
+                label={`${gitHead.name}\n${
                   gitHead.detached
                     ? t('分离的 HEAD（未在分支上）')
                     : gitDirtyCount > 0
                       ? t('当前 Git 分支 · {count} 个更改', { count: gitDirtyCount })
                       : t('当前 Git 分支')
-                }
+                }`}
               >
                 <button
                   type="button"
-                  className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap ${STATUS_ACTION}`}
+                  className={`inline-flex min-w-0 max-w-full items-center gap-1.5 whitespace-nowrap ${STATUS_ACTION}`}
                   onClick={() => setView('sourceControl')}
                 >
                   <GitBranch size={13} className="flex-shrink-0" />
-                  <span>
+                  <span className="truncate">
                     {gitHead.detached
                       ? t('分离 HEAD · {sha}', { sha: gitHead.name })
                       : gitHead.name}
@@ -420,23 +421,23 @@ export default function StatusBar() {
               </StatusTip>
             </>
           )}
-          {restricted && (
-            <StatusTip label={t('受限模式：只能浏览，无法编辑或运行')}>
-              <span className="flex flex-shrink-0 items-center gap-1 text-warn">
-                <ShieldAlert size={13} />
-                {t('受限')}
-              </span>
-            </StatusTip>
-          )}
         </div>
+        {restricted && (
+          <StatusTip label={t('受限模式：只能浏览，无法编辑或运行')}>
+            <span className="flex flex-shrink-0 items-center gap-1 text-warn">
+              <ShieldAlert size={13} />
+              {t('受限')}
+            </span>
+          </StatusTip>
+        )}
 
         {/* Right: hints | session actions | meta */}
         <div className="flex flex-shrink-0 items-center">
           {showEditorHints && (
-            <>
+            <div className="status-editor-hints inline-flex items-center">
               <div className={`flex items-center gap-2.5 ${STATUS_SECONDARY}`}>
                 {cursor && (
-                  <span className="hidden sm:inline">
+                  <span className="status-cursor">
                     {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
                   </span>
                 )}
@@ -445,16 +446,16 @@ export default function StatusBar() {
                     'Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用'
                   )}
                 >
-                  <span className="hidden lg:inline">
+                  <span className="status-shortcut-hint">
                     {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
                   </span>
                 </StatusTip>
               </div>
               <StatusDivider />
-            </>
+            </div>
           )}
 
-          <StatusTip label={t('切换终端面板')}>
+          <StatusTip label={[t('切换终端面板'), appMemory ? t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) }) : '', appVersion ? `v${appVersion}` : ''].filter(Boolean).join('\n')}>
             <button
               type="button"
               aria-label={t('切换终端面板')}
@@ -469,7 +470,7 @@ export default function StatusBar() {
                 })}
                 {activeTerm ? (
                   <span
-                    className={STATUS_SECONDARY}
+                    className={`status-terminal-name ${STATUS_SECONDARY}`}
                   >{` · ${formatTerminalName(activeTerm.name)}`}</span>
                 ) : null}
               </span>
@@ -477,7 +478,7 @@ export default function StatusBar() {
           </StatusTip>
 
           {showMetaGroup && (
-            <>
+            <div className={`inline-flex items-center ${showEncoding ? '' : 'status-low-priority'}`}>
               <StatusDivider />
               <div className={`text-ui-sm flex items-center font-mono ${STATUS_SECONDARY}`}>
                 {activeTab?.kind === 'diff' ? (
@@ -506,9 +507,10 @@ export default function StatusBar() {
                     </button>
                   </StatusTip>
                 ) : null}
-                {showEncoding && (appMemory || appVersion) ? <StatusDivider /> : null}
+                {showEncoding && (appMemory || appVersion) ? <span className="status-low-priority"><StatusDivider /></span> : null}
                 {appMemory && (
                   <StatusTip
+                    wrapperClassName="status-low-priority"
                     label={t(
                       '主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n当前项目终端 {project}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒',
                       {
@@ -528,9 +530,10 @@ export default function StatusBar() {
                     </span>
                   </StatusTip>
                 )}
-                {appMemory && appVersion ? <StatusDivider /> : null}
+                {appMemory && appVersion ? <span className="status-low-priority"><StatusDivider /></span> : null}
                 {appVersion && (
                   <StatusTip
+                    wrapperClassName="status-low-priority"
                     label={
                       updateBusy
                         ? t('正在检查…')
@@ -570,7 +573,7 @@ export default function StatusBar() {
                   </StatusTip>
                 )}
               </div>
-            </>
+            </div>
           )}
         </div>
         {encodingMenu && (

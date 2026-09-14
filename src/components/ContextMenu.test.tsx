@@ -52,4 +52,25 @@ describe('ContextMenu shortcuts', () => {
     fireEvent.keyDown(window, { key: 'c', ctrlKey: true, shiftKey: true })
     expect(action).not.toHaveBeenCalled()
   })
+  it('moves from the initially focused first item and restores the opener on Escape', async () => {
+    const opener = document.createElement('button')
+    document.body.append(opener)
+    opener.focus()
+    const close = vi.fn()
+    const view = render(<ContextMenu x={0} y={0} onClose={close} items={[
+      { label: '第一项', action: vi.fn() },
+      { label: '第二项', action: vi.fn() },
+    ]} />)
+    const first = screen.getByRole('menuitem', { name: '第一项' })
+    const second = screen.getByRole('menuitem', { name: '第二项' })
+    expect(first).toHaveFocus()
+    fireEvent.keyDown(first, { key: 'ArrowDown' })
+    expect(second).toHaveFocus()
+    fireEvent.keyDown(second, { key: 'Escape' })
+    expect(close).toHaveBeenCalledOnce()
+    view.unmount()
+    await waitFor(() => expect(opener).toHaveFocus())
+    opener.remove()
+  })
+
 })

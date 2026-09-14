@@ -1237,6 +1237,27 @@
     "已上传 {count} 项": "Uploaded {count} item(s)",
     "已下载 {count} 项": "Downloaded {count} item(s)",
     "重新连接": "Reconnect",
-    "SSH 资源没有本地文件管理器位置": "SSH resources do not have a local file manager location"
+    "SSH 资源没有本地文件管理器位置": "SSH resources do not have a local file manager location",
+    "{count} 项进行中": "{count} in progress",
+    "部分项目搜索失败，结果可能不完整。": "Some projects could not be searched. Results may be incomplete.",
+    "部分项目未能完成搜索": "Some projects could not be searched",
+    "当前文件进度": "Current file progress",
+    "关闭通知": "Dismiss notification",
+    "结果已达搜索上限，请细化关键词": "Search limit reached. Refine your query.",
+    "搜索未完成，请重试": "Search did not finish. Please retry.",
+    "未能完成搜索": "Search could not be completed",
+    "文件传输": "File transfers",
+    "已完成 {count} 个文件 · {size}": "{count} files completed · {size}",
+    "正在查找文件…": "Searching for files…",
+    "重试搜索": "Retry search",
+    "重试未完成项": "Retry unfinished items",
+    "准备传输": "Preparing transfer",
+    "传输中": "Transferring",
+    "正在取消": "Cancelling",
+    "传输完成": "Transfer completed",
+    "已取消": "Cancelled",
+    "传输失败": "Transfer failed",
+    "{count} 项文件传输尚未完成，退出后将中断。": "{count} file transfer(s) are unfinished and will be interrupted when you quit.",
+    "若仍被截断，请缩小范围或更换关键词": "If results remain truncated, narrow the scope or change the query."
   }
 }
