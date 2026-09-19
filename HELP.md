@@ -188,6 +188,7 @@ You can also configure startup commands for terminals:
 - Files in untracked, modified, staged, and deleted states.
 - Stage or unstage one or all files, discard with confirmation, and commit staged changes.
 - View and switch branches, inspect remotes, check remote updates (fetch), pull, and push.
+- History: click a changed file to view the commit diff; double-click or right-click **Open File** to jump to the working-tree file. The diff toolbar has the same action.
 - The same Source Control workspace for local and SSH projects.
 
 ### Status Marks

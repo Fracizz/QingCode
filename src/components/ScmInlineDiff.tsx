@@ -8,10 +8,19 @@ type Props = {
   name: string
   original: string
   modified: string
+  leftTitle?: string
+  rightTitle?: string
 }
 
 /** Synthetic DiffEditor host for the full-page SCM workspace (no editor tab). */
-export default function ScmInlineDiff({ path, name, original, modified }: Props) {
+export default function ScmInlineDiff({
+  path,
+  name,
+  original,
+  modified,
+  leftTitle,
+  rightTitle,
+}: Props) {
   const tab = useMemo<EditorTab>(
     () => ({
       id: 'scm-inline-diff',
@@ -26,5 +35,5 @@ export default function ScmInlineDiff({ path, name, original, modified }: Props)
     }),
     [path, name, original, modified],
   )
-  return <DiffEditor tab={tab} />
+  return <DiffEditor tab={tab} leftTitle={leftTitle} rightTitle={rightTitle} />
 }

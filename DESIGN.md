@@ -240,7 +240,7 @@ SSH 添加流程使用 `SshProjectDialog`：填写连接信息 → 首次连接�
 - 顶栏：分支下拉、检查更新、拉取、推送、**GIT 地址**分段（点击复制；多远程时下拉可选）。页签：**变更** | **历史**。
 - **变更**：左栏为变更/待提交列表与提交区；右栏内嵌 Diff（`git_file_contents` + DiffEditor）。单击查看差异；双击或右键「打开更改」可在编辑器标签中打开并切回资源管理器。左栏宽度可拖拽（`PanelResizer`，持久化 `qingcode:scm-layout`）。
 - SCM 内部分栏拖动时由 `requestAnimationFrame` 合并指针事件并直接更新分栏 DOM 宽度；松手后才提交 React 状态与 `localStorage`。禁止在每次 `pointermove` 中同步读布局、重渲染整个 SCM 或持久化。
-- **历史**：默认左侧提交列表约占 3/5、右侧提交详情（摘要 + 更改文件列表，可拖宽、可筛选/正则、虚拟列表）；点击文件后左侧用 Diff **覆盖**提交列表（可「返回提交列表」）。`git_log` 分页 + 虚拟列表；`git_commit_files` / `git_commit_file_contents`。不做回退 / cherry-pick。
+- **历史**：默认左侧提交列表约占 3/5、右侧提交详情（摘要 + 更改文件列表，可拖宽、可筛选/正则、虚拟列表）；单击文件后左侧用 Diff **覆盖**提交列表（可「返回提交列表」）。双击或右键「打开文件」跳到**工作区当前文件**（不是提交快照）；右键同时提供资源管理器定位、文件管理器显示（SSH 禁用）和复制路径。Diff 工具栏「打开文件」尽量落到右侧光标行。历史 Diff 标题为「父提交 / 该提交」。`git_log` 分页 + 虚拟列表；`git_commit_files` / `git_commit_file_contents`。不做回退 / cherry-pick。
 - 面板 chrome（顶栏、列表、提交区）用 `.ui-font-scaled` 跟随界面字体/字号；Diff 区用 `.editor-font-independent` 取消 UI zoom，继续走代码字体与 `editor.fontSize`。
 - Git 状态保留 porcelain `XY` 双列语义；支持单个/全部暂存与取消暂存、丢弃更改（二次确认）、只提交已暂存内容、分支查看与切换、远程检查更新（fetch），以及 `git push` / `git pull`（已配置 upstream）。本地与 SSH 项目复用同一工作台交互。
 - 拉取后若存在未合并路径，顶部显示冲突横幅；不提供冲突解决器。

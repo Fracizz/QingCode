@@ -105,6 +105,7 @@ import ScmCommitHistory, { SCM_COMMIT_PAGE_SIZE } from './ScmCommitHistory'
 import ScmToolbar, { ScmPullMenu, ScmPushMenu, ScmRemotesMenu } from './ScmToolbar'
 import ScmBranchMenu from './ScmBranchMenu'
 import { flattenRemoteRows, upstreamRemoteName } from '@/lib/git/scmRemotes'
+import { canOpenGitPathInEditor, openWorkingTreeFile } from '@/lib/git/openWorkingTreeFile'
 import { translate, useI18n } from '../lib/i18n'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import {
@@ -260,9 +261,20 @@ async function changeIsDirectory(projectPath: string, change: GitChange): Promis
   }
 }
 
-function canOpenFileInEditor(status: string): boolean {
-  return !status.includes('D')
-}
+type ScmContextMenu =
+  | {
+      x: number
+      y: number
+      kind: 'change'
+      group: GitChangeGroup
+      change: GitChange
+    }
+  | {
+      x: number
+      y: number
+      kind: 'commit-file'
+      file: GitCommitFileChange
+    }
 
 type ChangeRowProps = {
   changes: GitChange[]
@@ -542,9 +554,11 @@ function CommitFileListRowComponent(
     files: GitCommitFileChange[]
     selectedPath: string | null
     onSelect: (path: string) => void
+    onOpenFile: (file: GitCommitFileChange) => void
+    onOpenContextMenu: (event: ReactMouseEvent, file: GitCommitFileChange) => void
   }
 ) {
-  const { index, style, files, selectedPath, onSelect } = props
+  const { index, style, files, selectedPath, onSelect, onOpenFile, onOpenContextMenu } = props
   const file = files[index]
   if (!file) return null
   const active = selectedPath === file.path
@@ -553,6 +567,8 @@ function CommitFileListRowComponent(
       <button
         type="button"
         onClick={() => onSelect(file.path)}
+        onDoubleClick={() => onOpenFile(file)}
+        onContextMenu={event => onOpenContextMenu(event, file)}
         className={`flex h-full w-full items-center gap-2 px-3 text-left text-[12px] hover:bg-bg-hover ${
           active ? 'bg-bg-active' : ''
         }`}
@@ -575,15 +591,19 @@ function CommitFileList({
   files,
   selectedPath,
   onSelect,
+  onOpenFile,
+  onOpenContextMenu,
 }: {
   files: GitCommitFileChange[]
   selectedPath: string | null
   onSelect: (path: string) => void
+  onOpenFile: (file: GitCommitFileChange) => void
+  onOpenContextMenu: (event: ReactMouseEvent, file: GitCommitFileChange) => void
 }) {
   const listRef = useListRef(null)
   const rowProps = useMemo(
-    () => ({ files, selectedPath, onSelect }),
-    [files, onSelect, selectedPath]
+    () => ({ files, selectedPath, onSelect, onOpenFile, onOpenContextMenu }),
+    [files, onOpenContextMenu, onOpenFile, onSelect, selectedPath]
   )
 
   return (
@@ -705,12 +725,7 @@ export default function SourceControlPanel() {
   const commitFilesSequenceRef = useRef(0)
   const commitFileDiffSequenceRef = useRef(0)
   const [operation, setOperation] = useState<GitOperation | null>(null)
-  const [contextMenu, setContextMenu] = useState<{
-    x: number
-    y: number
-    group: GitChangeGroup
-    change: GitChange
-  } | null>(null)
+  const [contextMenu, setContextMenu] = useState<ScmContextMenu | null>(null)
   const setView = useUIStore(s => s.setView)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
 
@@ -1264,7 +1279,7 @@ export default function SourceControlPanel() {
         if (!isCurrentRequest()) return
         const name = filePath.split(/[/\\]/).pop() ?? filePath
         setCommitFileDiff({
-          path: `${project.path}/${filePath}`,
+          path: absoluteFilePath(project.path, filePath),
           name,
           original: pair.original,
           modified: pair.modified,
@@ -1961,10 +1976,75 @@ export default function SourceControlPanel() {
   const showChangeContextMenu = useCallback(
     (event: ReactMouseEvent, group: GitChangeGroup, change: GitChange) => {
       if (!shouldShowAppContextMenu(event)) return
-      setContextMenu({ x: event.clientX, y: event.clientY, group, change })
+      setContextMenu({ kind: 'change', x: event.clientX, y: event.clientY, group, change })
     },
     []
   )
+
+  const openCommitWorkingTreeFile = useCallback(
+    (file: GitCommitFileChange) => {
+      if (!currentProject) return
+      void openWorkingTreeFile({
+        absolutePath: absoluteFilePath(currentProject.path, file.path),
+        status: file.status,
+        looksLikeDirectory: gitChangePathLooksLikeDirectory(file.path),
+      })
+    },
+    [currentProject]
+  )
+
+  const showCommitFileContextMenu = useCallback(
+    (event: ReactMouseEvent, file: GitCommitFileChange) => {
+      if (!shouldShowAppContextMenu(event)) return
+      setContextMenu({ kind: 'commit-file', x: event.clientX, y: event.clientY, file })
+    },
+    []
+  )
+
+  const commitFileContextMenuItems = (file: GitCommitFileChange): ContextMenuItem[] => {
+    if (!currentProject) return []
+    const abs = absoluteFilePath(currentProject.path, file.path)
+    const looksLikeDir = gitChangePathLooksLikeDirectory(file.path)
+    const remote = isSshResource(currentProject.path)
+    return [
+      {
+        label: t('打开文件'),
+        icon: <FileIcon size={14} />,
+        disabled: !canOpenGitPathInEditor(file.status) || looksLikeDir,
+        action: () => openCommitWorkingTreeFile(file),
+      },
+      {
+        label: t('在资源管理器中定位'),
+        icon: <LocateFixed size={14} />,
+        separatorBefore: true,
+        action: () => revealInSidebar(abs),
+      },
+      {
+        label: t('在文件管理器中显示'),
+        icon: <ExternalLink size={14} />,
+        disabled: remote,
+        action: () => void revealInFileManager(abs),
+      },
+      {
+        label: t('复制路径'),
+        icon: <Copy size={14} />,
+        shortcut: 'Ctrl+Shift+C',
+        separatorBefore: true,
+        action: () => void copyAbsolutePath(abs),
+      },
+      {
+        label: t('复制相对路径'),
+        icon: <Copy size={14} />,
+        shortcut: COPY_RELATIVE_PATH_SHORTCUT,
+        action: () => void copyRelativePath(file.path),
+      },
+      {
+        label: t('复制文件名'),
+        icon: <Copy size={14} />,
+        action: () => void copyFileName(file.path),
+      },
+    ]
+  }
 
   const contextMenuItems = (group: GitChangeGroup, change: GitChange): ContextMenuItem[] => {
     if (!currentProject) return []
@@ -2009,15 +2089,17 @@ export default function SourceControlPanel() {
       {
         label: t('打开文件'),
         icon: <FileIcon size={14} />,
-        disabled: !canOpenFileInEditor(change.status) || looksLikeDir,
+        disabled: !canOpenGitPathInEditor(change.status) || looksLikeDir,
         action: () => {
           void (async () => {
             if (await changeIsDirectory(projectPath, change)) {
               revealInSidebar(abs)
               return
             }
-            setView('explorer')
-            await useEditorStore.getState().openFile(abs)
+            await openWorkingTreeFile({
+              absolutePath: abs,
+              status: change.status,
+            })
           })()
         },
       },
@@ -2322,6 +2404,8 @@ export default function SourceControlPanel() {
               files={filteredCommitFiles.files}
               selectedPath={selectedCommitFile}
               onSelect={path => void loadCommitFileDiff(selectedCommit.hash, path)}
+              onOpenFile={openCommitWorkingTreeFile}
+              onOpenContextMenu={showCommitFileContextMenu}
             />
           )}
         </div>
@@ -2366,12 +2450,14 @@ export default function SourceControlPanel() {
                       />
                     }
                   >
-                    <ScmInlineDiff
-                      path={commitFileDiff.path}
-                      name={commitFileDiff.name}
-                      original={commitFileDiff.original}
-                      modified={commitFileDiff.modified}
-                    />
+                <ScmInlineDiff
+                  path={commitFileDiff.path}
+                  name={commitFileDiff.name}
+                  original={commitFileDiff.original}
+                  modified={commitFileDiff.modified}
+                  leftTitle={t('父提交')}
+                  rightTitle={t('该提交')}
+                />
                   </Suspense>
                 </div>
               ) : null}
@@ -2565,7 +2651,11 @@ export default function SourceControlPanel() {
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          items={contextMenuItems(contextMenu.group, contextMenu.change)}
+          items={
+            contextMenu.kind === 'change'
+              ? contextMenuItems(contextMenu.group, contextMenu.change)
+              : commitFileContextMenuItems(contextMenu.file)
+          }
           onClose={() => setContextMenu(null)}
         />
       )}

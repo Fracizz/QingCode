@@ -4,7 +4,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { X, Circle, ChevronDown, Copy, ExternalLink, Eye, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle, GitCompare } from 'lucide-react'
+import { X, Circle, ChevronDown, Copy, ExternalLink, Eye, FileIcon, Pencil, XSquare, CopyX, Files, LocateFixed, AlertTriangle, RotateCw, LoaderCircle, GitCompare } from 'lucide-react'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -15,6 +15,7 @@ import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { safeInvoke } from '../lib/tauri'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { openGitCompareWithHead } from '@/lib/git/gitCompare'
+import { openWorkingTreeFile } from '@/lib/git/openWorkingTreeFile'
 import { copyToClipboard } from '../utils/fileReferences'
 import { gitStatusColorClass, gitStatusGlyph } from '@/lib/git/gitStatus'
 import {
@@ -245,7 +246,13 @@ export default function EditorTabs() {
       action: () => revealInSidebar(tab.path),
     },
     ...(tab.kind === 'diff'
-      ? []
+      ? [
+          {
+            label: t('打开文件'),
+            icon: <FileIcon size={14} />,
+            action: () => void openWorkingTreeFile({ absolutePath: tab.path }),
+          } satisfies ContextMenuItem,
+        ]
       : [
           {
             label: t('与 Git HEAD 比较'),

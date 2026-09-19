@@ -3,8 +3,9 @@ import { MergeView, goToNextChunk, goToPreviousChunk } from '@codemirror/merge'
 import { EditorState, type Extension } from '@codemirror/state'
 import { drawSelection, EditorView, keymap, lineNumbers } from '@codemirror/view'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
+import { ChevronDown, ChevronUp, AlertTriangle, FileIcon } from 'lucide-react'
 import type { EditorTab } from '../types'
+import { openWorkingTreeFile } from '../lib/git/openWorkingTreeFile'
 import { loadLanguageSupport } from '../lib/editorLanguages'
 import { FONT_SETTINGS_EVENT } from '../lib/fontSettings'
 import { getResolvedTheme, THEME_SETTINGS_EVENT } from '../lib/themeSettings'
@@ -112,14 +113,19 @@ function countDiffLines(original: string, current: string): { added: number; rem
 
 type Props = {
   tab: EditorTab
+  leftTitle?: string
+  rightTitle?: string
 }
 
-/** Read-only side-by-side compare: HEAD (left) ↔ working tree (right). */
-export default function DiffEditor({ tab }: Props) {
+/** Read-only side-by-side compare: original (left) ↔ modified (right). */
+export default function DiffEditor({ tab, leftTitle, rightTitle }: Props) {
   const { t, language } = useI18n()
   const hostRef = useRef<HTMLDivElement>(null)
   const mergeRef = useRef<MergeView | null>(null)
+  const rightLineRef = useRef<number | undefined>(undefined)
   const [stats, setStats] = useState({ added: 0, removed: 0 })
+  const resolvedLeftTitle = leftTitle ?? t('HEAD（原文件）')
+  const resolvedRightTitle = rightTitle ?? t('工作区（当前）')
 
   const contentSize = (tab.originalContent?.length ?? 0) + (tab.content?.length ?? 0)
   const isTooLarge = contentSize > DIFF_MAX_BYTES
@@ -138,6 +144,9 @@ export default function DiffEditor({ tab }: Props) {
         doc: tab.content ?? '',
         extensions: [
           ...sideExtensions(lang, collapseUnchangedLabel, 'b'),
+          EditorView.updateListener.of(update => {
+            rightLineRef.current = update.state.doc.lineAt(update.state.selection.main.head).number
+          }),
           keymap.of([
             { key: 'Mod-ArrowDown', run: goToNextChunk },
             { key: 'Mod-ArrowUp', run: goToPreviousChunk },
@@ -193,15 +202,22 @@ export default function DiffEditor({ tab }: Props) {
     goToNextChunk({ state: view.state, dispatch: view.dispatch.bind(view) })
   }, [])
 
+  const handleOpenFile = useCallback(() => {
+    void openWorkingTreeFile({
+      absolutePath: tab.path,
+      line: rightLineRef.current,
+    })
+  }, [tab.path])
+
   if (isTooLarge) {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
         <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-[11px]">
           <div className="flex flex-1 items-center border-r border-border px-3 py-1.5 text-fg-muted">
-            <span className="truncate">{t('HEAD（原文件）')}</span>
+            <span className="truncate">{resolvedLeftTitle}</span>
           </div>
           <div className="flex flex-1 items-center px-3 py-1.5 text-fg-muted">
-            <span className="truncate">{t('工作区（当前）')}</span>
+            <span className="truncate">{resolvedRightTitle}</span>
           </div>
         </div>
         <div className="flex flex-1 items-center justify-center p-6">
@@ -221,7 +237,7 @@ export default function DiffEditor({ tab }: Props) {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
       <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-[11px]">
         <div className="flex flex-1 items-center border-r border-border px-3 py-1.5 text-fg-muted">
-          <span className="truncate">{t('HEAD（原文件）')}</span>
+          <span className="truncate">{resolvedLeftTitle}</span>
           {stats.removed > 0 && (
             <span className="ml-2 inline-flex items-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
               −{stats.removed}
@@ -229,13 +245,23 @@ export default function DiffEditor({ tab }: Props) {
           )}
         </div>
         <div className="flex flex-1 items-center px-3 py-1.5 text-fg-muted">
-          <span className="truncate">{t('工作区（当前）')}</span>
+          <span className="truncate">{resolvedRightTitle}</span>
           {stats.added > 0 && (
             <span className="ml-2 inline-flex items-center rounded-full bg-green-500/15 px-1.5 py-0.5 text-[10px] font-medium text-green-400">
               +{stats.added}
             </span>
           )}
           <div className="ml-auto flex items-center gap-1">
+            <Tooltip label={t('打开文件')} side="bottom">
+              <button
+                type="button"
+                onClick={handleOpenFile}
+                aria-label={t('打开文件')}
+                className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-deep"
+              >
+                <FileIcon size={12} />
+              </button>
+            </Tooltip>
             <Tooltip label={t('上一个差异')} side="bottom">
               <button
                 type="button"

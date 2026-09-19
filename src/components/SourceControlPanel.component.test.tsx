@@ -59,10 +59,12 @@ vi.mock('./ScmInlineDiff', () => ({
 
 import SourceControlPanel from './SourceControlPanel'
 import ConfirmDialog from './ConfirmDialog'
-import type { GitStatus } from '@/lib/git/git'
+import type { GitCommitInfo, GitStatus } from '@/lib/git/git'
 import { useConfirmStore } from '../store/confirmStore'
+import { useEditorStore } from '../store/editorStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { useProjectStore } from '../store/projectStore'
+import { useUIStore } from '../store/uiStore'
 
 const project = {
   id: 'repo-1',
@@ -73,6 +75,8 @@ const project = {
 }
 
 const initialProjectState = useProjectStore.getState()
+const initialEditorState = useEditorStore.getState()
+const initialUiState = useUIStore.getState()
 
 function mockGit(status: GitStatus, options?: { rejectFirstPush?: boolean }) {
   let pushes = 0
@@ -119,6 +123,8 @@ describe('SourceControlPanel', () => {
 
   afterEach(() => {
     useProjectStore.setState(initialProjectState, true)
+    useEditorStore.setState(initialEditorState, true)
+    useUIStore.setState(initialUiState, true)
     useGitStatusStore.getState().clear()
     useConfirmStore.getState().answer(false)
   })
@@ -341,5 +347,110 @@ describe('SourceControlPanel', () => {
     await waitFor(() => expect(screen.queryByTestId('scm-inline-diff')).not.toBeInTheDocument())
     expect(screen.getByText('选择一个更改查看差异')).toBeInTheDocument()
     expect(screen.getByText('变更（0）')).toBeInTheDocument()
+  })
+
+  it('opens a working-tree file from the history file list context menu', async () => {
+    const commit: GitCommitInfo = {
+      hash: '7a21988000',
+      short_hash: '7a21988',
+      subject: 'feat: validate ConfigMap',
+      author: 'Franciz',
+      date: '2026-09-19 10:11:05',
+      refs: '',
+    }
+    mocks.safeInvoke.mockImplementation((_label: string, command: string) => {
+      if (command === 'git_status') {
+        return Promise.resolve({ is_repository: true, branch: 'main', changes: [] })
+      }
+      if (command === 'git_log') return Promise.resolve([commit])
+      if (command === 'git_commit_files') {
+        return Promise.resolve([
+          { status: 'M', path: 'api/app/routes.py', previous_path: null },
+          { status: 'D', path: 'api/app/gone.py', previous_path: null },
+        ])
+      }
+      if (command === 'get_git_head') return Promise.resolve({ name: 'main' })
+      if (command === 'get_git_workdir_status') {
+        return Promise.resolve({ entries: [], dirty_count: 0 })
+      }
+      if (command === 'file_stat') {
+        return Promise.resolve({ size: 16, is_dir: false })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const openFile = vi.fn().mockResolvedValue(undefined)
+    const previousOpen = useEditorStore.getState().openFile
+    const previousView = useUIStore.getState().view
+    useEditorStore.setState({ openFile })
+
+    render(<SourceControlPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: '历史' }))
+    const row = await screen.findByText('api/app/routes.py')
+    fireEvent.contextMenu(row.closest('button') ?? row)
+
+    expect(await screen.findByRole('menuitem', { name: '打开文件' })).toBeEnabled()
+    expect(screen.getByRole('menuitem', { name: '在资源管理器中定位' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /复制路径/ })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '打开文件' }))
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith('D:/repo\\api\\app\\routes.py', undefined, undefined)
+    })
+    expect(useUIStore.getState().view).toBe('explorer')
+
+    useEditorStore.setState({ openFile: previousOpen })
+    useUIStore.setState({ view: previousView })
+  })
+
+  it('disables Open File for deleted history paths and opens existing files on double-click', async () => {
+    const commit: GitCommitInfo = {
+      hash: 'abc123',
+      short_hash: 'abc123',
+      subject: 'remove helper',
+      author: 'Franciz',
+      date: '2026-09-19 10:11:05',
+      refs: '',
+    }
+    mocks.safeInvoke.mockImplementation((_label: string, command: string) => {
+      if (command === 'git_status') {
+        return Promise.resolve({ is_repository: true, branch: 'main', changes: [] })
+      }
+      if (command === 'git_log') return Promise.resolve([commit])
+      if (command === 'git_commit_files') {
+        return Promise.resolve([
+          { status: 'M', path: 'keep.py', previous_path: null },
+          { status: 'D', path: 'gone.py', previous_path: null },
+        ])
+      }
+      if (command === 'get_git_head') return Promise.resolve({ name: 'main' })
+      if (command === 'get_git_workdir_status') {
+        return Promise.resolve({ entries: [], dirty_count: 0 })
+      }
+      if (command === 'file_stat') {
+        return Promise.resolve({ size: 16, is_dir: false })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    const openFile = vi.fn().mockResolvedValue(undefined)
+    const previousOpen = useEditorStore.getState().openFile
+    useEditorStore.setState({ openFile })
+
+    render(<SourceControlPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: '历史' }))
+
+    const deleted = await screen.findByText('gone.py')
+    fireEvent.contextMenu(deleted.closest('button') ?? deleted)
+    expect(await screen.findByRole('menuitem', { name: '打开文件' })).toBeDisabled()
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    const kept = await screen.findByText('keep.py')
+    fireEvent.doubleClick(kept.closest('button') ?? kept)
+    await waitFor(() => {
+      expect(openFile).toHaveBeenCalledWith('D:/repo\\keep.py', undefined, undefined)
+    })
+
+    useEditorStore.setState({ openFile: previousOpen })
   })
 })
