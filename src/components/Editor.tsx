@@ -459,7 +459,7 @@ export default function Editor() {
     y: number
     items: ContextMenuItem[]
   } | null>(null)
-  const [mdPreviewMode, setMdPreviewMode] = useState<MdPreviewMode>('off')
+  const [mdPreviewMode, setMdPreviewMode] = useState<MdPreviewMode>('preview')
   const [previewContent, setPreviewContent] = useState('')
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const [minimapHideScrollbar, setMinimapHideScrollbar] = useState(loadMinimapHideScrollbar)
@@ -689,7 +689,7 @@ export default function Editor() {
   }, [mdPreviewMode, showSourcePane, showPreviewPane, activeTabId, previewContent])
 
   useEffect(() => {
-    if (!markdownTab) queueMicrotask(() => setMdPreviewMode('off'))
+    queueMicrotask(() => setMdPreviewMode(markdownTab ? 'preview' : 'off'))
   }, [markdownTab, activeTabId])
 
   useEffect(() => {

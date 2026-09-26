@@ -649,6 +649,7 @@ export default function TerminalTabs({
                     if (closeArmId && closeArmId !== t.id) setCloseArmId(null)
                   }}
                   onKeyDown={event => {
+                    if (event.target !== event.currentTarget) return
                     if (event.key === 'Enter' || event.key === ' ') {
                       event.preventDefault()
                       activateForPane(t.id)
@@ -687,13 +688,35 @@ export default function TerminalTabs({
                       aria-hidden="true"
                     />
                   )}
+                  <Tooltip
+                    label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
+                    side="top"
+                    forceOpen={isCloseArmed}
+                  >
+                    <button
+                      type="button"
+                      aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
+                      data-terminal-close={t.id}
+                      className={`mr-1 flex items-center justify-center w-6 h-6 rounded transition-colors ${
+                        isCloseArmed
+                          ? 'bg-danger/15 text-danger'
+                          : 'hover:bg-bg-active'
+                      }`}
+                      onClick={e => handleCloseClick(e, t.id)}
+                      onDoubleClick={e => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                      }}
+                    >
+                      {isCloseArmed ? (
+                        <Circle size={9} fill="currentColor" />
+                      ) : (
+                        <X size={13} className="opacity-60 group-hover:opacity-100" />
+                      )}
+                    </button>
+                  </Tooltip>
                   {renamingId === t.id ? (
                     <>
-                      <Circle
-                        size={7}
-                        fill="currentColor"
-                        className={terminalStatusDotClass(t.status, busyIds.has(t.id))}
-                      />
                       <input
                         ref={renameInputRef}
                         type="text"
@@ -735,11 +758,6 @@ export default function TerminalTabs({
                       side="top"
                       wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]"
                     >
-                      <Circle
-                        size={7}
-                        fill="currentColor"
-                        className={terminalStatusDotClass(t.status, busyIds.has(t.id))}
-                      />
                       <span className={`text-[13px] truncate ${t.status === 'exited' ? 'opacity-60' : ''}`}>
                         {formatTerminalName(t.name)}
                       </span>
@@ -771,7 +789,7 @@ export default function TerminalTabs({
                             ? translate('按原运行配置重启{exitCode}', { exitCode: '' })
                             : translate('重启终端{exitCode}', { exitCode: '' })
                         }
-                        className="ml-1 flex items-center justify-center w-4 h-4 rounded hover:bg-bg-active"
+                        className="ml-1 flex items-center justify-center w-6 h-6 rounded hover:bg-bg-active"
                         onClick={e => {
                           e.stopPropagation()
                           restartTerminal(t.id)
@@ -785,33 +803,11 @@ export default function TerminalTabs({
                       </button>
                     </Tooltip>
                   )}
-                  <Tooltip
-                    label={isCloseArmed ? translate('再次点击关闭终端') : translate('关闭终端')}
-                    side="top"
-                    forceOpen={isCloseArmed}
-                  >
-                    <button
-                      type="button"
-                      aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
-                      data-terminal-close={t.id}
-                      className={`ml-1 flex items-center justify-center w-4 h-4 rounded transition-colors ${
-                        isCloseArmed
-                          ? 'bg-danger/15 text-danger'
-                          : 'hover:bg-bg-active'
-                      }`}
-                      onClick={e => handleCloseClick(e, t.id)}
-                      onDoubleClick={e => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                      }}
-                    >
-                      {isCloseArmed ? (
-                        <Circle size={9} fill="currentColor" />
-                      ) : (
-                        <X size={13} className="opacity-60 group-hover:opacity-100" />
-                      )}
-                    </button>
-                  </Tooltip>
+                  <Circle
+                    size={7}
+                    fill="currentColor"
+                    className={`ml-0.5 flex-shrink-0 ${terminalStatusDotClass(t.status, busyIds.has(t.id))}`}
+                  />
                 </div>
               )
             })}
@@ -921,10 +917,10 @@ export default function TerminalTabs({
               data-tab-measure-id={term.id}
               className="flex h-6 items-center gap-1 whitespace-nowrap rounded pl-2 pr-1"
             >
-              <Circle size={7} fill="currentColor" />
-              <span className="text-[13px]">{formatTerminalName(term.name)}</span>
-              {term.status === 'exited' && <span className="ml-1 h-4 w-4 flex-shrink-0" />}
-              <span className="ml-1 h-4 w-4 flex-shrink-0" />
+              <span className="mr-1 h-6 w-6 flex-shrink-0" />
+              <span className="max-w-[12rem] truncate text-[13px]">{formatTerminalName(term.name)}</span>
+              {term.status === 'exited' && <span className="ml-1 h-6 w-6 flex-shrink-0" />}
+              <Circle size={7} fill="currentColor" className="ml-0.5 flex-shrink-0" />
             </div>
           ))}
         </div>

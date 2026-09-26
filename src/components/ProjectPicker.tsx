@@ -654,7 +654,7 @@ export default function ProjectPicker() {
                       <button
                         type="button"
                         aria-label={t('重命名项目')}
-                        className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg"
+                        className="inline-flex h-6 w-6 items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active"
                         onClick={event => {
                           event.stopPropagation()
                           handleRename(project)
@@ -672,7 +672,7 @@ export default function ProjectPicker() {
                         <button
                           type="button"
                           aria-label={t('重新定位项目')}
-                          className="text-warn hover:text-fg"
+                          className="inline-flex h-6 w-6 items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active"
                           onClick={event => {
                             event.stopPropagation()
                             handleRelocate(project.id)
@@ -690,7 +690,7 @@ export default function ProjectPicker() {
                         <button
                           type="button"
                           aria-label={t('在文件管理器中打开')}
-                          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg"
+                          className="inline-flex h-6 w-6 items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active"
                           onClick={event => {
                             event.stopPropagation()
                             void handleOpenInExplorer(project.path)
@@ -708,17 +708,17 @@ export default function ProjectPicker() {
                       <button
                         type="button"
                         aria-label={unavailable ? t('移除项目') : t('从顶栏隐藏')}
-                        className={`${
+                        className={`inline-flex h-6 w-6 items-center justify-center rounded hover:bg-bg-active ${
                           unavailable
                             ? 'text-fg-dim hover:text-danger'
-                            : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-danger'
+                            : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg'
                         }`}
                         onClick={event => {
                           event.stopPropagation()
                           handleRemove(project)
                         }}
                       >
-                        <X size={13} />
+                        {unavailable ? <X size={13} /> : <EyeOff size={13} />}
                       </button>
                     </Tooltip>
                   </div>
@@ -822,14 +822,13 @@ function Chip({
       data-chip-id={measure ? project.id : undefined}
       data-chip-index={measure ? undefined : chipIndex}
       data-qingcode-copy-path={measure ? undefined : project.path}
-      role={measure ? undefined : 'button'}
+      role={measure ? undefined : unavailable ? 'group' : 'button'}
       tabIndex={measure || unavailable ? -1 : 0}
       aria-current={isCurrent ? 'true' : undefined}
-      aria-disabled={unavailable || undefined}
       aria-label={statusLabel}
       onClick={activate}
       onKeyDown={event => {
-        if (measure || unavailable) return
+        if (event.target !== event.currentTarget || measure || unavailable) return
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
           activate()
@@ -886,7 +885,7 @@ function Chip({
           <button
             type="button"
             aria-label={t('在文件管理器中打开')}
-            className="inline-flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg w-4 h-4"
+            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-6 h-6"
             onClick={event => {
               event.stopPropagation()
               onOpenInExplorer()
@@ -906,7 +905,7 @@ function Chip({
             <button
               type="button"
               aria-label={t('重新定位项目')}
-              className="inline-flex items-center justify-center text-warn hover:text-fg w-4 h-4"
+              className="inline-flex items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active w-6 h-6"
               onClick={event => {
                 event.stopPropagation()
                 onRelocate()
@@ -923,7 +922,7 @@ function Chip({
             <button
               type="button"
               aria-label={t('移除项目')}
-              className="inline-flex items-center justify-center text-fg-dim hover:text-danger w-4 h-4"
+              className="inline-flex items-center justify-center rounded text-fg-dim hover:text-danger hover:bg-bg-active w-6 h-6"
               onClick={event => {
                 event.stopPropagation()
                 onRemove()
@@ -942,13 +941,13 @@ function Chip({
           <button
             type="button"
             aria-label={t('从顶栏隐藏')}
-            className="inline-flex items-center justify-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-danger w-4 h-4"
+            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-6 h-6"
             onClick={event => {
               event.stopPropagation()
               onRemove()
             }}
           >
-            <X size={12} />
+            <EyeOff size={12} />
           </button>
         </Tooltip>
       )}

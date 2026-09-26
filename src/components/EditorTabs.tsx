@@ -43,6 +43,7 @@ function fileName(path: string) {
 }
 
 function TabChrome({ tab }: { tab: EditorTab }) {
+  const { t } = useI18n()
   const loading = isLoadingTab(tab)
   const viewOnly = isViewOnlyTab(tab)
   const gitStatus = useGitStatusStore.getState().statusFor(tab.path)
@@ -75,6 +76,19 @@ function TabChrome({ tab }: { tab: EditorTab }) {
       </span>
       {tab.kind !== 'diff' && gitGlyph && (
         <span className={`text-[11px] font-medium ${gitColor}`}>{gitGlyph}</span>
+      )}
+      {tab.dirty ? (
+        <Tooltip label={t('未保存的更改')} side="bottom">
+          <span
+            role="img"
+            aria-label={t('未保存的更改')}
+            className="flex h-4 w-4 items-center justify-center text-warn"
+          >
+            <Circle size={9} fill="currentColor" aria-hidden="true" />
+          </span>
+        </Tooltip>
+      ) : (
+        <span className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
       )}
     </>
   )
@@ -337,12 +351,13 @@ export default function EditorTabs() {
                 tabIndex={active ? 0 : -1}
                 aria-selected={active}
                 draggable
-                className={`group relative flex h-6 flex-shrink-0 cursor-pointer select-none items-center gap-1.5 whitespace-nowrap rounded pl-2 pr-1 text-[13px] transition-colors
+                className={`group relative flex h-6 flex-shrink-0 cursor-pointer select-none items-center gap-0.5 whitespace-nowrap rounded px-1 text-[13px] transition-colors
                 ${active ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}
                 ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}
                 ${dropIndex === index && dragIndex !== index ? 'ring-1 ring-inset ring-accent/60' : ''}`}
                 onClick={() => setActiveTab(tab.id)}
                 onKeyDown={event => {
+                  if (event.target !== event.currentTarget) return
                   if (event.key === 'Enter' || event.key === ' ') {
                     event.preventDefault()
                     setActiveTab(tab.id)
@@ -391,24 +406,20 @@ export default function EditorTabs() {
                     aria-hidden="true"
                   />
                 )}
+                <Tooltip label={t('关闭文件')} side="bottom">
+                  <button
+                    type="button"
+                    aria-label={t('关闭文件')}
+                    className="flex h-6 w-6 items-center justify-center rounded hover:bg-bg-active"
+                    onClick={e => {
+                      e.stopPropagation()
+                      void closeOne(tab)
+                    }}
+                  >
+                    <X size={14} className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100" />
+                  </button>
+                </Tooltip>
                 <TabChrome tab={tab} />
-                <button
-                  type="button"
-                  aria-label={t('关闭文件')}
-                  className="ml-1 flex h-4 w-4 items-center justify-center rounded hover:bg-bg-active"
-                  onClick={e => {
-                    e.stopPropagation()
-                    void closeOne(tab)
-                  }}
-                >
-                  {tab.dirty ? (
-                    <Circle size={9} className="text-warn group-hover:hidden" fill="currentColor" />
-                  ) : null}
-                  <X
-                    size={14}
-                    className={tab.dirty ? 'hidden group-hover:block' : 'opacity-60 group-hover:opacity-100'}
-                  />
-                </button>
               </div>
             )
           })}
@@ -456,10 +467,10 @@ export default function EditorTabs() {
             <div
               key={`measure-${tab.id}`}
               data-tab-measure-id={tab.id}
-              className="flex h-6 items-center gap-1.5 whitespace-nowrap rounded pl-2 pr-1"
+              className="flex h-6 items-center gap-0.5 whitespace-nowrap rounded px-1"
             >
+              <span className="h-6 w-6 flex-shrink-0" />
               <TabChrome tab={tab} />
-              <span className="ml-1 h-4 w-4 flex-shrink-0" />
             </div>
           ))}
         </div>
