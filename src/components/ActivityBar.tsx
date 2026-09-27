@@ -140,7 +140,7 @@ function Item({
         aria-pressed={active === true}
         onClick={onClick}
         className={`relative ui-activity-button w-10 h-10 flex items-center justify-center rounded-md mb-1 btn-interactive transition-colors ${
-          active ? 'text-brand' : 'text-fg-muted hover:text-fg'
+          active ? 'bg-brand/15 text-brand' : 'text-fg-muted hover:text-fg'
         }`}
       >
         {icon}
