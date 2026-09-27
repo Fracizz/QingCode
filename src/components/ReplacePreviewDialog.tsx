@@ -69,7 +69,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Replace size={16} className="text-accent" />
           <div className="min-w-0 flex-1">
-            <h2 id="replace-preview-title" className="text-[14px] font-semibold text-fg">
+            <h2 id="replace-preview-title" className="text-ui-lg font-semibold text-fg">
               {t('替换预览')}
             </h2>
             <p id="replace-preview-description" className="text-ui-sm text-fg-muted">
@@ -127,7 +127,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
               ref={cancelRef}
               type="button"
               disabled={applying}
-              className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50"
+              className="px-3 py-1.5 text-ui rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50"
               onClick={onClose}
             >
               {t('取消')}
@@ -135,7 +135,7 @@ export default function ReplacePreviewDialog({ preview, onClose, onApplied }: Pr
             <button
               type="button"
               disabled={applying || preview.files.length === 0}
-              className="px-3 py-1.5 text-[13px] rounded bg-action hover:bg-action/90 text-on-action transition-colors disabled:opacity-50"
+              className="px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors disabled:opacity-50"
               onClick={() => void apply()}
             >
               {applying ? t('正在替换…') : t('确认替换')}

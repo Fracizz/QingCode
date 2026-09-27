@@ -81,7 +81,7 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <GitCompare size={16} className="text-accent" />
           <div className="min-w-0 flex-1">
-            <h2 id="compare-title" className="text-[14px] font-semibold text-fg truncate">
+            <h2 id="compare-title" className="text-ui-lg font-semibold text-fg truncate">
               {t('比较：{name}', { name })}
             </h2>
             <Tooltip label={path} side="bottom" onlyWhenOverflow wrapperClassName="block min-w-0">
@@ -97,7 +97,7 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
           <button
             ref={closeRef}
             type="button"
-            className="px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="px-3 py-1.5 text-ui rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             onClick={onClose}
           >
             {t('关闭')}
@@ -108,8 +108,8 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
               type="button"
               className={
                 action.primary
-                  ? 'px-3 py-1.5 text-[13px] rounded bg-action hover:bg-action/90 text-on-action transition-colors'
-                  : 'px-3 py-1.5 text-[13px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors'
+                  ? 'px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors'
+                  : 'px-3 py-1.5 text-ui rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors'
               }
               onClick={action.onClick}
             >
@@ -125,10 +125,10 @@ export default function FileCompareDialog(props: FileCompareRequest | LegacyFile
 function ComparePane({ title, content }: { title: string; content: string }) {
   return (
     <div className="flex min-h-0 flex-col bg-bg">
-      <div className="flex-shrink-0 border-b border-border px-3 py-1.5 text-[11px] font-medium text-fg-muted">
+      <div className="flex-shrink-0 border-b border-border px-3 py-1.5 text-ui-xs font-medium text-fg-muted">
         {title}
       </div>
-      <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-[12px] leading-5 text-fg whitespace-pre-wrap break-all">
+      <pre className="min-h-0 flex-1 overflow-auto p-3 font-mono text-ui-sm leading-[var(--ui-line-height)] text-fg whitespace-pre-wrap break-all">
         {content}
       </pre>
     </div>

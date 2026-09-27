@@ -73,7 +73,7 @@ export default function EditorBreadcrumbs() {
   }
 
   return (
-    <div className="ui-font-scaled flex h-[22px] flex-shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-bg-deep pl-0 pr-3 text-[11px] text-fg-muted select-none">
+    <div className="ui-font-scaled flex h-[calc(var(--ui-line-height)+2px)] flex-shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-bg-deep pl-0 pr-3 text-ui-xs text-fg-muted select-none">
       {currentProject && (
         <Tooltip label={currentProject.path} side="bottom" wrapperClassName="max-w-[140px] shrink-0">
           <button

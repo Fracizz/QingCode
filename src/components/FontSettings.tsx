@@ -89,11 +89,11 @@ function FontGroup({
   return (
     <section className="flex flex-col gap-3">
       <div>
-        <h3 className="text-sm font-medium text-fg">{title}</h3>
-        <p className="mt-1 text-xs text-fg-muted">{description}</p>
+        <h3 className="text-ui-lg font-medium text-fg">{title}</h3>
+        <p className="mt-1 text-ui-sm text-fg-muted">{description}</p>
       </div>
       <label className="block">
-        <span className="block text-xs font-medium text-fg-muted">{fontLabel}</span>
+        <span className="block text-ui-sm font-medium text-fg-muted">{fontLabel}</span>
         <div className="mt-1.5">
           <FontFamilySelect
             value={fontValue}
@@ -138,7 +138,7 @@ function FontSizeField({
 }) {
   return (
     <label className="block">
-      <span className="block text-xs font-medium text-fg-muted">{label}</span>
+      <span className="block text-ui-sm font-medium text-fg-muted">{label}</span>
       <select
         value={value}
         onChange={event => onChange(Number(event.target.value))}

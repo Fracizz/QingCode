@@ -501,7 +501,7 @@ export default function SettingsEditor() {
         <div className="relative flex items-center gap-2 px-3 border-r border-border bg-bg min-w-0">
           <span className="absolute inset-x-0 bottom-0 h-[2px] bg-brand" aria-hidden />
           <Settings2 size={14} className="text-brand flex-shrink-0" />
-          <span className="text-[13px] truncate">{t('设置')}</span>
+          <span className="text-ui truncate">{t('设置')}</span>
         </div>
       </div>
 
@@ -544,7 +544,7 @@ export default function SettingsEditor() {
                 value={query}
                 onChange={e => setQuery(e.target.value)}
                 placeholder={t('搜索设置')}
-                className="setting-input w-full h-8 pl-8 pr-8 text-[13px]"
+                className="setting-input w-full h-8 pl-8 pr-8 text-ui"
               />
               {query && (
                 <button
@@ -583,7 +583,7 @@ export default function SettingsEditor() {
                 }
                 scrollTo(cat.id)
               }}
-              className={`block w-full border-l-2 px-4 py-1.5 text-left text-[13px] truncate transition-colors ${
+              className={`block w-full border-l-2 px-4 py-1.5 text-left text-ui truncate transition-colors ${
                 category === cat.id
                   ? 'border-brand bg-bg-active text-fg'
                   : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -931,7 +931,7 @@ export default function SettingsEditor() {
                   <button
                     type="button"
                     disabled={cliSkillBusy || workspaceLocked}
-                    className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                    className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
                     onClick={() => {
                       setCliSkillBusy(true)
                       void (async () => {
@@ -1220,7 +1220,7 @@ export default function SettingsEditor() {
                       <button
                         type="button"
                         disabled={updateCheckBusy || !isTauri() || workspaceLocked}
-                        className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                        className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
                         onClick={() => {
                           if (!isTauri()) {
                             pushToast('error', t('检查更新需要 Tauri 桌面环境'))
@@ -1286,7 +1286,7 @@ export default function SettingsEditor() {
                             <button
                               type="button"
                               disabled={openWithBusy}
-                              className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                              className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
                               onClick={() => {
                                 setOpenWithBusy(true)
                                 void registerOpenWith()
@@ -1313,7 +1313,7 @@ export default function SettingsEditor() {
                             <button
                               type="button"
                               disabled={openWithBusy || !openWith?.registered}
-                              className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                              className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
                               onClick={() => {
                                 setOpenWithBusy(true)
                                 void unregisterOpenWith()
@@ -1398,7 +1398,7 @@ export default function SettingsEditor() {
                     <button
                       type="button"
                       disabled={workspaceLocked || !isTauri()}
-                      className="setting-control px-2.5 py-1 text-[12px]"
+                      className="setting-control px-2.5 py-1 text-ui-sm"
                       onClick={() => {
                         void (async () => {
                           try {
@@ -1423,7 +1423,7 @@ export default function SettingsEditor() {
                     <button
                       type="button"
                       disabled={workspaceLocked || !isTauri()}
-                      className="setting-control px-2.5 py-1 text-[12px]"
+                      className="setting-control px-2.5 py-1 text-ui-sm"
                       onClick={() => {
                         void (async () => {
                           try {
@@ -1482,10 +1482,10 @@ export default function SettingsEditor() {
                         key={remote.id}
                         className="flex items-center gap-2 rounded border border-border px-2.5 py-1.5"
                       >
-                        <span className="text-[12px] font-medium text-fg flex-shrink-0 w-14">
+                        <span className="text-ui-sm font-medium text-fg flex-shrink-0 w-14">
                           {remote.label}
                         </span>
-                        <code className="flex-1 min-w-0 truncate font-mono text-[12px] text-fg-muted">
+                        <code className="flex-1 min-w-0 truncate font-mono text-ui-sm text-fg-muted">
                           {remote.cloneUrl}
                         </code>
                         <div className="flex items-center gap-1 flex-shrink-0">
@@ -1510,7 +1510,7 @@ export default function SettingsEditor() {
                                   )
                                   .finally(() => setAboutCopyBusy(null))
                               }}
-                              className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-[12px] whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+                              className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-ui-sm whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40"
                               aria-label={t('复制克隆地址')}
                             >
                               {aboutCopyBusy === remote.id ? '…' : t('复制')}
@@ -1527,7 +1527,7 @@ export default function SettingsEditor() {
                                   ),
                                 )
                               }}
-                              className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-[12px] whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg"
+                              className="inline-flex h-6 shrink-0 items-center justify-center rounded px-2 text-ui-sm whitespace-nowrap text-fg-muted hover:bg-bg-hover hover:text-fg"
                             >
                               {t('打开')}
                             </button>
@@ -1553,7 +1553,7 @@ export default function SettingsEditor() {
                           ),
                       )
                     }}
-                    className="setting-control px-2.5 py-1 text-[12px] border border-border-strong rounded hover:border-accent/60"
+                    className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60"
                   >
                     {t('查看 LICENSE')}
                   </button>
@@ -1596,7 +1596,7 @@ export default function SettingsEditor() {
                       type="button"
                       disabled={openingJson || (scope === 'workspace' && !currentProject)}
                       onClick={() => void openSettingsJson(false)}
-                      className="rounded bg-action px-3 py-1.5 text-[12px] text-on-action hover:bg-action/90 disabled:opacity-50"
+                      className="rounded bg-action px-3 py-1.5 text-ui-sm text-on-action hover:bg-action/90 disabled:opacity-50"
                     >
                       {t('在编辑器中打开')}
                     </button>
@@ -1604,7 +1604,7 @@ export default function SettingsEditor() {
                       type="button"
                       disabled={openingJson || (scope === 'workspace' && !currentProject)}
                       onClick={() => void openSettingsJson(true)}
-                      className="rounded border border-border-strong px-3 py-1.5 text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
+                      className="rounded border border-border-strong px-3 py-1.5 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
                     >
                       {t('写入默认模板并打开')}
                     </button>

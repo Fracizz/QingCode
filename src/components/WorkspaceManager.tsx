@@ -125,7 +125,7 @@ export default function WorkspaceManager() {
         onPointerDown={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 h-12 border-b border-border-strong flex-shrink-0">
-          <div className="flex items-center gap-2 text-[14px] font-semibold text-fg">
+          <div className="flex items-center gap-2 text-ui-lg font-semibold text-fg">
             <Layers size={16} className="text-fg-muted" />
             <h2 id="workspace-manager-title">{t('多项目工作区')}</h2>
             <span id="workspace-manager-description" className="text-ui-sm font-normal text-fg-muted">
@@ -147,7 +147,7 @@ export default function WorkspaceManager() {
             type="button"
             disabled={busyId === '__save__'}
             onClick={() => void handleSaveCurrent()}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors disabled:opacity-50"
           >
             <Plus size={13} /> {t('保存当前顶栏项目')}
           </button>
@@ -175,12 +175,12 @@ export default function WorkspaceManager() {
                   >
                     <div className="flex items-start gap-3">
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 text-[13px] text-fg font-medium">
+                        <div className="flex items-center gap-1.5 text-ui text-fg font-medium">
                           {isActive && <Check size={13} className="text-accent flex-shrink-0" />}
                           <span className="truncate">
                             {formatNamedWorkspaceName(workspace.name, t)}
                           </span>
-                          <span className="text-[11px] text-fg-muted font-normal flex-shrink-0">
+                          <span className="text-ui-xs text-fg-muted font-normal flex-shrink-0">
                             {t('{count} 个项目', { count: workspace.members.length })}
                           </span>
                         </div>
@@ -238,7 +238,7 @@ export default function WorkspaceManager() {
           <button
             type="button"
             onClick={closeWorkspaceManager}
-            className="px-3 py-1.5 text-[13px] rounded bg-action hover:bg-action/90 text-on-action transition-colors"
+            className="px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors"
           >
             {t('完成')}
           </button>

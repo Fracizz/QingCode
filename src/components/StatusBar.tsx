@@ -348,7 +348,7 @@ export default function StatusBar() {
       <div
         ref={rowRef}
         {...{ [STATUS_BAR_ROW_ATTR]: '' }}
-        className="status-bar-shell ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-bg-deep text-fg text-xs flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
+        className="status-bar-shell ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-bg-deep text-fg text-ui-sm flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
       >
         {/* Left: folder · project · git — adjacent; project truncates, branch keeps full width. */}
         <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
@@ -386,7 +386,7 @@ export default function StatusBar() {
                 {currentProject ? currentProject.name : t('未选择项目')}
               </span>
               {isSshProject(currentProject) ? (
-                <span className="flex-shrink-0 text-[10px] text-fg-muted">{t('SSH')}</span>
+                <span className="flex-shrink-0 text-ui-2xs text-fg-muted">{t('SSH')}</span>
               ) : null}
             </>
           )}

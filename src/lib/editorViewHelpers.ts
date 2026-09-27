@@ -8,14 +8,14 @@ import type { EditorTab } from '../types'
 // 浅色编辑器主题：与 App.css 的 [data-theme="light"] 调色协调。
 const lightTheme = EditorView.theme(
   {
-    '&': { backgroundColor: '#f0f0f0', color: '#1f1f1f' },
+    '&': { backgroundColor: 'var(--color-bg)', color: 'var(--color-fg)' },
     '.cm-gutters': {
       backgroundColor: 'var(--color-bg)',
       color: 'var(--color-fg-muted)',
       borderRight: 'none',
     },
-    '.cm-activeLine': { backgroundColor: '#e8edf2' },
-    '.cm-activeLineGutter': { backgroundColor: '#e8edf2', color: '#1f1f1f' },
+    '.cm-activeLine': { backgroundColor: '#f3f6fa' },
+    '.cm-activeLineGutter': { backgroundColor: '#f3f6fa', color: 'var(--color-fg)' },
     '.cm-selectionBackground': { backgroundColor: '#cfe3fb' },
     '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
       backgroundColor: '#b9d6f5',

@@ -26,7 +26,7 @@ export function SshKindBadge() {
   const { t } = useI18n()
   return (
     <Tooltip label={t('SSH 远程项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0">
-      <span className="inline-flex items-center rounded border border-border-strong px-1 py-px text-[10px] leading-none text-fg-muted">
+      <span className="inline-flex items-center rounded border border-border-strong px-1 py-px text-ui-2xs leading-none text-fg-muted">
         {t('SSH')}
       </span>
     </Tooltip>

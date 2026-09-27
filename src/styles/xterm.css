@@ -2,7 +2,7 @@
 .xterm {
   height: 100%;
   width: 100%;
-  background: var(--color-bg-deep);
+  background: var(--color-bg-terminal);
 }
 
 /*
@@ -20,7 +20,7 @@
   position: absolute;
   inset: 0;
   z-index: 19;
-  background: var(--color-bg-deep);
+  background: var(--color-bg-terminal);
   pointer-events: none;
 }
 
@@ -37,7 +37,7 @@
 
 /* xterm.css hardcodes viewport/composition to #000 — follow theme surfaces */
 .xterm .xterm-viewport {
-  background-color: var(--color-bg-deep) !important;
+  background-color: var(--color-bg-terminal) !important;
 }
 
 .xterm .composition-view {

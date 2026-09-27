@@ -387,7 +387,7 @@ export default function TerminalPanel({
     .filter(term => !visiblePaneIds.has(term.id))
     .map(term => (
       <div key={term.id} className="hidden" aria-hidden="true">
-        <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
+        <Suspense fallback={<LazyFallback className="h-full bg-bg-terminal" />}>
           <TerminalView terminalId={term.id} isActive={false} layoutKey={layoutKey} />
         </Suspense>
       </div>
@@ -407,7 +407,7 @@ export default function TerminalPanel({
       )
     }
     return (
-      <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
+      <Suspense fallback={<LazyFallback className="h-full bg-bg-terminal" />}>
         <TerminalView terminalId={term.id} isActive={focused} layoutKey={layoutKey} />
       </Suspense>
     )
@@ -433,7 +433,7 @@ export default function TerminalPanel({
           focused={focused}
           showPanelActions={options.showPanelActions}
         />
-        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-bg-deep">
+        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-bg-terminal">
           {renderPaneTerminal(pane)}
         </div>
       </div>
@@ -452,7 +452,7 @@ export default function TerminalPanel({
           pane === 'primary' ? 'z-10 visible' : 'invisible pointer-events-none z-0'
         }`}
       >
-        <Suspense fallback={<LazyFallback className="h-full bg-bg-deep" />}>
+        <Suspense fallback={<LazyFallback className="h-full bg-bg-terminal" />}>
           <TerminalView terminalId={term.id} isActive={isFocused} layoutKey={layoutKey} />
         </Suspense>
       </div>
@@ -463,7 +463,7 @@ export default function TerminalPanel({
     <>
       <div
         ref={dualSplitRef}
-        className="grid min-h-0 flex-1 overflow-hidden bg-bg-deep"
+        className="grid min-h-0 flex-1 overflow-hidden bg-bg-terminal"
         style={{
           gridTemplateColumns: `minmax(0, ${dualRatio}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - dualRatio}fr)`,
           gridTemplateRows: 'minmax(0, 1fr)',
@@ -496,7 +496,7 @@ export default function TerminalPanel({
     <>
       <div
         ref={quadSplitRef}
-        className="grid min-h-0 flex-1 overflow-hidden bg-bg-deep"
+        className="grid min-h-0 flex-1 overflow-hidden bg-bg-terminal"
         style={{
           gridTemplateColumns: `minmax(0, ${quadRatios.col}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - quadRatios.col}fr)`,
           gridTemplateRows: `minmax(0, ${quadRatios.row}fr) ${DUAL_RESIZER_PX}px minmax(0, ${1 - quadRatios.row}fr)`,
@@ -562,7 +562,7 @@ export default function TerminalPanel({
   ) : (
     <>
       <TerminalTabs />
-      <div className="relative flex-1 min-w-0 bg-bg-deep overflow-hidden min-h-0">
+      <div className="relative flex-1 min-w-0 bg-bg-terminal overflow-hidden min-h-0">
         {projectTerminals.length === 0 && (
           <div className="absolute inset-0">
             <EmptyState

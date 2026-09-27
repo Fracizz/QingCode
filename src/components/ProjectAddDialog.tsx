@@ -21,7 +21,7 @@ function sortProjects(projects: Project[]): Project[] {
 }
 
 const footerActionClass =
-  'inline-flex w-full min-w-0 flex-col items-center justify-center gap-0.5 rounded px-0.5 py-1 text-[11px] leading-tight text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50'
+  'inline-flex w-full min-w-0 flex-col items-center justify-center gap-0.5 rounded px-0.5 py-1 text-ui-xs leading-tight text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors disabled:opacity-50'
 
 interface Props {
   open: boolean
@@ -182,7 +182,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                 aria-controls="project-add-list"
                 className="modal-search-input"
               />
-              <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] leading-none text-fg-dim sm:inline">
+              <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-ui-2xs leading-none text-fg-dim sm:inline">
                 Esc
               </kbd>
             </div>
@@ -231,10 +231,10 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                             <ProjectKindIcon project={project} size={13} className="text-accent" />
                           )}
                         </span>
-                        <span className="min-w-0 flex-1 truncate text-[13px]">{project.name}</span>
+                        <span className="min-w-0 flex-1 truncate text-ui">{project.name}</span>
                         {isSshProject(project) ? <SshKindBadge /> : null}
                         {project.hidden ? (
-                          <span className="flex-shrink-0 text-[10px] text-fg-dim">
+                          <span className="flex-shrink-0 text-ui-2xs text-fg-dim">
                             {t('已隐藏')}
                           </span>
                         ) : null}

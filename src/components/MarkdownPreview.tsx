@@ -85,10 +85,10 @@ const MarkdownPreview = forwardRef<HTMLDivElement, Props>(function MarkdownPrevi
   return (
     <div
       ref={ref}
-      className={`qing-md-preview h-full overflow-auto px-5 py-4 text-[14px] leading-relaxed text-fg ${className}`}
+      className={`qing-md-preview h-full overflow-auto px-5 py-4 text-ui-lg leading-relaxed text-fg ${className}`}
     >
       {empty ? (
-        <div className="flex h-full items-center justify-center text-fg-dim text-sm">{t('预览为空')}</div>
+        <div className="flex h-full items-center justify-center text-fg-dim text-ui-lg">{t('预览为空')}</div>
       ) : (
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}

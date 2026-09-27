@@ -85,9 +85,9 @@ export default function EmptyEditor() {
           <AppIcon size={52} />
         </div>
         <div className="flex flex-col items-center gap-1 text-center">
-          <p className="text-[15px] font-semibold tracking-[0.02em] text-fg">QingCode</p>
+          <p className="text-ui-xl font-semibold tracking-[0.02em] text-fg">QingCode</p>
           <span className="h-[2px] w-10 rounded bg-brand/80" aria-hidden />
-          <p className="text-sm text-fg-muted">
+          <p className="text-ui-lg text-fg-muted">
             {standaloneFiles ? t('打开文件开始编辑') : t('从侧边栏打开文件或选择项目开始工作')}
           </p>
         </div>
@@ -99,7 +99,7 @@ export default function EmptyEditor() {
             key={action.label}
             type="button"
             onClick={action.onClick}
-            className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-[13px] transition-all duration-150 hover:shadow-elevation-1 hover:-translate-y-[1px] active:translate-y-0 ${
+            className={`flex items-center gap-2 rounded-lg border px-3.5 py-2 text-ui transition-all duration-150 hover:shadow-elevation-1 hover:-translate-y-[1px] active:translate-y-0 ${
               action.primary
                 ? 'border-brand/50 bg-brand/10 text-brand font-medium hover:border-brand/70 hover:bg-brand/20'
                 : 'border-border-strong bg-bg-elevated/80 text-fg-muted hover:bg-bg-active hover:text-fg'
@@ -118,7 +118,7 @@ export default function EmptyEditor() {
 
       {!standaloneFiles && recentProjects.length > 0 && (
         <div className="flex flex-col items-center gap-2 relative">
-          <p className="text-[11px] font-semibold tracking-wide text-fg-dim uppercase">
+          <p className="text-ui-xs font-semibold tracking-wide text-fg-dim uppercase">
             {t('最近项目')}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-[420px]">
@@ -132,7 +132,7 @@ export default function EmptyEditor() {
                 <button
                   type="button"
                   onClick={() => void switchProject(project)}
-                  className="max-w-[180px] truncate rounded-full border border-border px-3 py-1 text-[12px] text-fg-muted transition-all duration-150 hover:border-brand/60 hover:bg-bg-hover hover:text-fg hover:shadow-sm"
+                  className="max-w-[180px] truncate rounded-full border border-border px-3 py-1 text-ui-sm text-fg-muted transition-all duration-150 hover:border-brand/60 hover:bg-bg-hover hover:text-fg hover:shadow-sm"
                 >
                   {project.name}
                 </button>
@@ -143,14 +143,14 @@ export default function EmptyEditor() {
       )}
 
       {!standaloneFiles && (
-        <p className="text-xs text-fg-dim/70 flex flex-wrap justify-center items-center gap-x-3 gap-y-1.5 relative">
+        <p className="text-ui-sm text-fg-dim/70 flex flex-wrap justify-center items-center gap-x-3 gap-y-1.5 relative">
           <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><Kbd>Ctrl+Shift+C</Kbd> {t('路径')}</span>
           <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><Kbd>Alt+C</Kbd> {t('文件引用')}</span>
         </p>
       )}
       {!standaloneFiles && recent.length > 0 && (
         <div className="mt-2 w-full max-w-md">
-          <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-fg-muted">
+          <div className="mb-2 flex items-center gap-1.5 text-ui-xs font-semibold uppercase tracking-wide text-fg-muted">
             <Clock size={12} />
             {t('最近打开的文件')}
           </div>
@@ -160,7 +160,7 @@ export default function EmptyEditor() {
                 <Tooltip label={file.path} side="bottom" wrapperClassName="block w-full">
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
+                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
                     onClick={() => void openFile(file.path)}
                   >
                     <FileText size={12} className="flex-shrink-0 opacity-70" />

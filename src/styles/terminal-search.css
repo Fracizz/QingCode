@@ -18,7 +18,7 @@
   border: 1px solid var(--color-border-strong);
   border-radius: 6px;
   background: var(--color-bg-elevated);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-find-widget);
   color: var(--color-fg);
 }
 
@@ -27,10 +27,10 @@
   align-items: center;
   flex: 1 1 160px;
   min-width: 120px;
-  height: 26px;
+  height: var(--ui-control-height);
   border: 1px solid var(--color-border-strong);
   border-radius: 4px;
-  background: var(--color-bg-deep);
+  background: var(--color-bg-input);
 }
 
 .terminal-search-bar__input-wrap:focus-within {
@@ -46,7 +46,7 @@
   border: 0;
   background: transparent;
   color: var(--color-fg);
-  font-size: 13px;
+  font-size: var(--ui-font-size);
   outline: none;
 }
 
@@ -67,7 +67,7 @@
   min-width: 3.5rem;
   padding: 0 4px;
   color: var(--color-fg-muted);
-  font-size: 12px;
+  font-size: var(--ui-font-size-sm);
   text-align: center;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -89,8 +89,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--ui-chip-height);
+  height: var(--ui-chip-height);
   padding: 0;
   border: 0;
   border-radius: 4px;

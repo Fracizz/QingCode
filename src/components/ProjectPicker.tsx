@@ -1,3 +1,4 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   useEffect,
   useLayoutEffect,
@@ -68,6 +69,7 @@ const CHIP_GAP = 4
 const DRAG_THRESHOLD_PX = 5
 
 export default function ProjectPicker() {
+  const { fontSize } = useInterfaceMetrics()
   const { t } = useI18n()
   const allProjects = useProjectStore(s => s.projects)
   const projects = useMemo(() => sortVisibleProjects(allProjects), [allProjects])
@@ -139,8 +141,9 @@ export default function ProjectPicker() {
     compute()
     const ro = new ResizeObserver(compute)
     ro.observe(container)
+    measure.querySelectorAll<HTMLElement>('[data-chip-id]').forEach(el => ro.observe(el))
     return () => ro.disconnect()
-  }, [projects, currentProject?.id])
+  }, [projects, currentProject?.id, fontSize])
 
   const closeDropdown = () => setOverflowOpen(false)
 
@@ -520,7 +523,7 @@ export default function ProjectPicker() {
               aria-haspopup="menu"
               onClick={openOverflow}
               onDoubleClick={event => event.stopPropagation()}
-              className={`flex items-center justify-center h-6 w-7 rounded text-[13px] flex-shrink-0 transition-colors
+              className={`flex items-center justify-center ui-chip h-6 w-7 rounded text-ui flex-shrink-0 transition-colors
                 ${overflowOpen ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
             >
               <ChevronDown
@@ -538,7 +541,7 @@ export default function ProjectPicker() {
             aria-haspopup="dialog"
             onClick={openAddDialog}
             onDoubleClick={event => event.stopPropagation()}
-            className="flex items-center justify-center h-6 w-7 rounded text-[13px] flex-shrink-0 transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
+            className="flex items-center justify-center ui-chip h-6 w-7 rounded text-ui flex-shrink-0 transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
           >
             <Plus size={14} />
           </button>
@@ -551,7 +554,7 @@ export default function ProjectPicker() {
             aria-haspopup="dialog"
             onClick={openAddDialog}
             onDoubleClick={event => event.stopPropagation()}
-            className="flex items-center h-6 px-2 rounded text-[13px] transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
+            className="flex items-center ui-chip h-6 px-2 rounded text-ui transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
           >
             {t('添加项目')}
           </button>
@@ -597,14 +600,14 @@ export default function ProjectPicker() {
           <div
             ref={dropdownRef}
             role="menu"
-            className="ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
+            className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
             style={dropdownStyle}
             onPointerDown={event => event.stopPropagation()}
             onContextMenu={event => {
               if (!deferToNativeContextMenuInDev()) event.preventDefault()
             }}
           >
-            <div className="px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted">
+            <div className="px-3 py-1 text-ui-xs font-semibold tracking-wide text-fg-muted">
               {t('更多项目')}
             </div>
             <div className="flex-1 overflow-auto">
@@ -619,7 +622,7 @@ export default function ProjectPicker() {
                     tabIndex={unavailable ? -1 : 0}
                     onClick={() => !unavailable && handleSwitch(project)}
                     onContextMenu={event => openProjectContextMenu(event, project)}
-                    className={`group flex items-center gap-2 border-l-2 px-3 py-1.5 text-[13px] outline-none
+                    className={`group flex items-center gap-2 border-l-2 px-3 py-1.5 text-ui outline-none
                       ${
                         isCurrent
                           ? 'border-brand bg-bg-active text-fg'
@@ -654,7 +657,7 @@ export default function ProjectPicker() {
                       <button
                         type="button"
                         aria-label={t('重命名项目')}
-                        className="inline-flex h-6 w-6 items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active"
+                        className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active"
                         onClick={event => {
                           event.stopPropagation()
                           handleRename(project)
@@ -672,7 +675,7 @@ export default function ProjectPicker() {
                         <button
                           type="button"
                           aria-label={t('重新定位项目')}
-                          className="inline-flex h-6 w-6 items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active"
+                          className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active"
                           onClick={event => {
                             event.stopPropagation()
                             handleRelocate(project.id)
@@ -690,7 +693,7 @@ export default function ProjectPicker() {
                         <button
                           type="button"
                           aria-label={t('在文件管理器中打开')}
-                          className="inline-flex h-6 w-6 items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active"
+                          className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active"
                           onClick={event => {
                             event.stopPropagation()
                             void handleOpenInExplorer(project.path)
@@ -708,7 +711,7 @@ export default function ProjectPicker() {
                       <button
                         type="button"
                         aria-label={unavailable ? t('移除项目') : t('从顶栏隐藏')}
-                        className={`inline-flex h-6 w-6 items-center justify-center rounded hover:bg-bg-active ${
+                        className={`inline-flex ui-chip h-6 w-6 items-center justify-center rounded hover:bg-bg-active ${
                           unavailable
                             ? 'text-fg-dim hover:text-danger'
                             : 'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg'
@@ -730,7 +733,7 @@ export default function ProjectPicker() {
                 type="button"
                 role="menuitem"
                 onClick={handleManageProjects}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <ListChecks size={14} />
@@ -741,7 +744,7 @@ export default function ProjectPicker() {
                 type="button"
                 role="menuitem"
                 onClick={handleManageWorkspaces}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui text-fg hover:bg-bg-active focus:bg-bg-active outline-none"
               >
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <Layers size={14} />
@@ -837,7 +840,7 @@ function Chip({
       onDoubleClick={event => event.stopPropagation()}
       onContextMenu={measure ? undefined : onContextMenu}
       onPointerDown={measure ? undefined : onPointerDown}
-      className={`group relative flex items-center gap-0.5 h-6 pl-2 pr-1 rounded text-[13px] flex-shrink-0 select-none transition-[colors,opacity,box-shadow,transform] duration-150 cursor-default [&_button]:cursor-default ${measure ? '' : 'min-w-0 max-w-[calc(100%-64px)]'}
+      className={`group relative flex items-center gap-0.5 ui-chip h-6 px-0.5 rounded text-ui flex-shrink-0 select-none transition-[colors,opacity,box-shadow,transform] duration-150 cursor-default [&_button]:cursor-default ${measure ? '' : 'min-w-0 max-w-[calc(100%-64px)]'}
         ${
           dragging
             ? 'z-[1] bg-bg-hover text-fg opacity-55 shadow-sm ring-1 ring-inset ring-accent/50 scale-[0.98]'
@@ -885,7 +888,7 @@ function Chip({
           <button
             type="button"
             aria-label={t('在文件管理器中打开')}
-            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-6 h-6"
+            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-5 ui-chip h-6"
             onClick={event => {
               event.stopPropagation()
               onOpenInExplorer()
@@ -905,7 +908,7 @@ function Chip({
             <button
               type="button"
               aria-label={t('重新定位项目')}
-              className="inline-flex items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active w-6 h-6"
+              className="inline-flex items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active w-5 ui-chip h-6"
               onClick={event => {
                 event.stopPropagation()
                 onRelocate()
@@ -922,7 +925,7 @@ function Chip({
             <button
               type="button"
               aria-label={t('移除项目')}
-              className="inline-flex items-center justify-center rounded text-fg-dim hover:text-danger hover:bg-bg-active w-6 h-6"
+              className="inline-flex items-center justify-center rounded text-fg-dim hover:text-danger hover:bg-bg-active w-5 ui-chip h-6"
               onClick={event => {
                 event.stopPropagation()
                 onRemove()
@@ -941,7 +944,7 @@ function Chip({
           <button
             type="button"
             aria-label={t('从顶栏隐藏')}
-            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-6 h-6"
+            className="inline-flex items-center justify-center rounded opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 text-fg-dim hover:text-fg hover:bg-bg-active w-5 ui-chip h-6"
             onClick={event => {
               event.stopPropagation()
               onRemove()

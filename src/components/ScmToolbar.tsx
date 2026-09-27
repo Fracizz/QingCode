@@ -44,7 +44,7 @@ export type ScmToolbarProps = {
 }
 
 function TimeTag({ label }: { label: string }) {
-  return <span className="shrink-0 text-[10px] text-fg-dim">{label}</span>
+  return <span className="shrink-0 text-ui-2xs text-fg-dim">{label}</span>
 }
 
 function segmentGroup(active = false) {
@@ -120,7 +120,7 @@ export default function ScmToolbar({
   )
 
   const segmentBtn = (active = false) =>
-    `flex h-full shrink-0 items-center gap-1 px-1.5 text-[11px] text-fg transition-colors hover:bg-bg-hover/80 disabled:opacity-40 ${
+    `flex h-full shrink-0 items-center gap-1 px-1.5 text-ui-xs text-fg transition-colors hover:bg-bg-hover/80 disabled:opacity-40 ${
       active ? 'bg-bg-hover/60' : ''
     }`
 
@@ -147,7 +147,7 @@ export default function ScmToolbar({
             className="flex h-full w-full min-w-0 items-center gap-1 px-2 text-left transition-colors hover:bg-bg-hover/80 disabled:opacity-40"
           >
           <GitBranch size={12} className="shrink-0 text-brand" />
-          <span className="min-w-0 truncate font-mono text-[11px]">
+          <span className="min-w-0 truncate font-mono text-ui-xs">
             {status?.branch ?? t('游离 HEAD')}
           </span>
           {operationKind === 'switch' ? (
@@ -265,14 +265,14 @@ export default function ScmToolbar({
               onClick={() => {
                 if (primary) onCopyRemoteUrl(primary.url)
               }}
-              className="flex h-full min-w-0 flex-1 items-center gap-1 px-1.5 text-left text-[11px] text-fg transition-colors hover:bg-bg-hover/80 disabled:opacity-40"
+              className="flex h-full min-w-0 flex-1 items-center gap-1 px-1.5 text-left text-ui-xs text-fg transition-colors hover:bg-bg-hover/80 disabled:opacity-40"
             >
               {remotesLoading && remotes === null ? (
                 <LoaderCircle size={12} className="shrink-0 animate-spin text-accent" />
               ) : (
                 <Link size={12} className="shrink-0 text-fg-muted" />
               )}
-              <span className="min-w-0 truncate font-mono text-[11px]">
+              <span className="min-w-0 truncate font-mono text-ui-xs">
                 {primary?.url ?? t('暂无远程地址')}
               </span>
               {primary && <Copy size={11} className="shrink-0 text-fg-dim" />}
@@ -316,13 +316,13 @@ export function ScmPullMenu({ open, style, menuRef, onPull, onPullRebase }: ScmP
     <div
       ref={menuRef}
       role="menu"
-      className="ui-font-scaled fixed z-[100] min-w-[10rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] min-w-[10rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
       style={style}
     >
       <button
         type="button"
         role="menuitem"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-fg hover:bg-bg-hover"
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
         onClick={onPull}
       >
         <ArrowDown size={12} />
@@ -331,7 +331,7 @@ export function ScmPullMenu({ open, style, menuRef, onPull, onPullRebase }: ScmP
       <button
         type="button"
         role="menuitem"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-fg hover:bg-bg-hover"
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
         onClick={onPullRebase}
       >
         <ArrowDown size={12} />
@@ -355,13 +355,13 @@ export function ScmPushMenu({ open, style, menuRef, onPush }: ScmPushMenuProps) 
     <div
       ref={menuRef}
       role="menu"
-      className="ui-font-scaled fixed z-[100] min-w-[10rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] min-w-[10rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
       style={style}
     >
       <button
         type="button"
         role="menuitem"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-fg hover:bg-bg-hover"
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
         onClick={onPush}
       >
         <ArrowUp size={12} />
@@ -386,11 +386,11 @@ export function ScmRemotesMenu({ open, style, menuRef, rows, onCopy }: ScmRemote
     <div
       ref={menuRef}
       role="menu"
-      className="ui-font-scaled fixed z-[100] max-w-[28rem] min-w-[14rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] max-w-[28rem] min-w-[14rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
       style={style}
       onPointerDown={event => event.stopPropagation()}
     >
-      <div className="px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted">
+      <div className="px-3 py-1 text-ui-xs font-semibold tracking-wide text-fg-muted">
         {t('GIT 地址')}
       </div>
       {rows.map(row => (
@@ -398,23 +398,23 @@ export function ScmRemotesMenu({ open, style, menuRef, rows, onCopy }: ScmRemote
           key={row.key}
           type="button"
           role="menuitem"
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[12px] text-fg hover:bg-bg-hover"
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
           onClick={() => onCopy(row.url)}
         >
           <Copy size={12} className="shrink-0 text-fg-dim" />
           <span className="shrink-0 font-medium">{row.name}</span>
           {row.isCurrent && (
-            <span className="shrink-0 rounded px-1 py-px text-[10px] text-accent bg-accent/10">
+            <span className="shrink-0 rounded px-1 py-px text-ui-2xs text-accent bg-accent/10">
               {t('当前')}
             </span>
           )}
           {row.kind === 'fetch' && (
-            <span className="shrink-0 text-[10px] text-fg-dim">{t('拉取')}</span>
+            <span className="shrink-0 text-ui-2xs text-fg-dim">{t('拉取')}</span>
           )}
           {row.kind === 'push' && (
-            <span className="shrink-0 text-[10px] text-fg-dim">{t('推送')}</span>
+            <span className="shrink-0 text-ui-2xs text-fg-dim">{t('推送')}</span>
           )}
-          <span className="min-w-0 truncate font-mono text-[11px] text-fg-muted">{row.url}</span>
+          <span className="min-w-0 truncate font-mono text-ui-xs text-fg-muted">{row.url}</span>
         </button>
       ))}
     </div>

@@ -230,7 +230,7 @@ export default function ProjectManager() {
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 h-12 border-b border-border-strong flex-shrink-0">
-          <div className="flex items-center gap-2 text-[14px] font-semibold text-fg">
+          <div className="flex items-center gap-2 text-ui-lg font-semibold text-fg">
             <Folders size={16} className="text-fg-muted" />
             <h2 id="project-manager-title">{t('项目管理')}</h2>
             <span id="project-manager-description" className="text-ui-sm font-normal text-fg-muted">
@@ -256,14 +256,14 @@ export default function ProjectManager() {
           <button
             type="button"
             onClick={() => void addProjectFromDialog()}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
           >
             <FolderPlus size={13} /> {t('添加文件夹')}
           </button>
           <button
             type="button"
             onClick={() => void addTerminalProjectWithPrompt()}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
           >
             <TerminalIcon size={13} /> {t('新建草稿项目')}
           </button>
@@ -273,7 +273,7 @@ export default function ProjectManager() {
               closeProjectManager()
               openWorkspaceManager()
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
           >
             <Layers size={13} /> {t('多项目工作区')}
           </button>
@@ -295,7 +295,7 @@ export default function ProjectManager() {
             <select
               value={sortKey}
               onChange={e => setSortKey(e.target.value as SortKey)}
-              className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-[12px] text-fg outline-none focus:border-accent"
+              className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
             >
               {(Object.keys(SORT_LABELS) as SortKey[]).map(k => (
                 <option key={k} value={k}>
@@ -323,21 +323,21 @@ export default function ProjectManager() {
             <button
               type="button"
               onClick={() => void handleBatchDelete()}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-danger/40 text-danger hover:bg-danger/10 transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-danger/40 text-danger hover:bg-danger/10 transition-colors"
             >
               <Trash2 size={13} /> {t('批量删除')}
             </button>
             <button
               type="button"
               onClick={() => void saveSelectedProjectsAsWorkspace([...selectedIds])}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[12px] rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
             >
               <Layers size={13} /> {t('保存选中为多项目工作区')}
             </button>
             <button
               type="button"
               onClick={clearSelection}
-              className="ml-auto px-2 py-1 text-[12px] rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+              className="ml-auto px-2 py-1 text-ui-sm rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             >
               {t('取消选择')}
             </button>
@@ -347,11 +347,11 @@ export default function ProjectManager() {
         {/* List */}
         <div className="flex-1 overflow-auto">
           {sortedProjects.length === 0 ? (
-            <div className="px-4 py-10 text-center text-[13px] text-fg-muted">
+            <div className="px-4 py-10 text-center text-ui text-fg-muted">
               {t('暂无项目。点击上方按钮添加。')}
             </div>
           ) : (
-            <table className="w-full text-[13px]">
+            <table className="w-full text-ui">
               <thead className="sticky top-0 bg-bg-elevated border-b border-border-strong text-fg-muted">
                 <tr className="text-left">
                   <th className="px-3 py-1.5 w-8">
@@ -456,12 +456,12 @@ export default function ProjectManager() {
                           onlyWhenOverflow
                           wrapperClassName="block truncate max-w-[260px]"
                         >
-                          <span className="block truncate max-w-[260px] font-mono text-[13px] text-fg-muted">
+                          <span className="block truncate max-w-[260px] font-mono text-ui text-fg-muted">
                             {location}
                           </span>
                         </Tooltip>
                       </td>
-                      <td className="px-3 py-2 align-middle whitespace-nowrap text-fg-muted text-[12px]">
+                      <td className="px-3 py-2 align-middle whitespace-nowrap text-fg-muted text-ui-sm">
                         {timeAgo(project.last_opened_at, t)}
                       </td>
                       <td className="px-3 py-2 align-middle">
@@ -545,7 +545,7 @@ export default function ProjectManager() {
           <button
             type="button"
             onClick={closeProjectManager}
-            className="px-3 py-1.5 text-[13px] rounded bg-action hover:bg-action/90 text-on-action transition-colors"
+            className="px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors"
           >
             {t('完成')}
           </button>

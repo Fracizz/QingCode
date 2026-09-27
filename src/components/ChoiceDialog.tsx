@@ -32,10 +32,10 @@ export default function ChoiceDialog() {
             <AlertTriangle size={18} />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id="choice-title" className="text-[14px] font-semibold text-fg">
+            <h2 id="choice-title" className="text-ui-lg font-semibold text-fg">
               {t(request.title)}
             </h2>
-            <p id="choice-message" className="mt-1.5 text-[13px] leading-relaxed text-fg">
+            <p id="choice-message" className="mt-1.5 text-ui leading-relaxed text-fg">
               {t(request.message)}
             </p>
             {!markdownDetail && request.detail && (
@@ -67,10 +67,10 @@ export default function ChoiceDialog() {
                 data-modal-autofocus={isPrimary || undefined}
                 className={
                   option.danger
-                    ? 'px-3.5 py-1.5 text-[13px] font-medium rounded-md bg-destructive/90 hover:bg-destructive text-on-destructive shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0'
+                    ? 'px-3.5 py-1.5 text-ui font-medium rounded-md bg-destructive/90 hover:bg-destructive text-on-destructive shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0'
                     : isPrimary
-                      ? 'px-3.5 py-1.5 text-[13px] font-medium rounded-md bg-action hover:bg-action/90 text-on-action shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0'
-                      : 'px-3.5 py-1.5 text-[13px] font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors'
+                      ? 'px-3.5 py-1.5 text-ui font-medium rounded-md bg-action hover:bg-action/90 text-on-action shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0'
+                      : 'px-3.5 py-1.5 text-ui font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors'
                 }
                 onClick={() => answer(option.id)}
               >

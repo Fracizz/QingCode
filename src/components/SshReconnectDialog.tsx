@@ -92,7 +92,7 @@ export default function SshReconnectDialog() {
   }
 
   const fieldClass =
-    'w-full rounded border border-border-strong bg-bg px-2.5 py-1.5 text-[13px] text-fg outline-none focus:border-accent'
+    'w-full rounded border border-border-strong bg-bg px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
 
   return (
     <ModalOverlay onDismiss={close} zIndex="z-[125]">
@@ -105,7 +105,7 @@ export default function SshReconnectDialog() {
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Server size={17} className="text-accent" />
-          <h2 id="ssh-reconnect-title" className="flex-1 text-[14px] font-semibold text-fg">
+          <h2 id="ssh-reconnect-title" className="flex-1 text-ui-lg font-semibold text-fg">
             重新连接 SSH 项目
           </h2>
           <Tooltip label="关闭" side="left">
@@ -121,7 +121,7 @@ export default function SshReconnectDialog() {
           </Tooltip>
         </div>
         <div className="space-y-3 px-4 py-4">
-          <div className="rounded border border-border bg-bg px-3 py-2 text-[12px] text-fg-muted">
+          <div className="rounded border border-border bg-bg px-3 py-2 text-ui-sm text-fg-muted">
             <div className="font-medium text-fg">{project.name}</div>
             <div className="mt-1 font-mono">
               {connection
@@ -131,7 +131,7 @@ export default function SshReconnectDialog() {
             <div className="mt-0.5 truncate font-mono">{project.root_path ?? project.path}</div>
           </div>
           {connection?.auth_kind === 'password' ? (
-            <label className="block text-[12px] text-fg-muted">
+            <label className="block text-ui-sm text-fg-muted">
               密码（仅本次会话）
               <input
                 autoFocus
@@ -146,7 +146,7 @@ export default function SshReconnectDialog() {
             </label>
           ) : connection ? (
             <>
-              <label className="block text-[12px] text-fg-muted">
+              <label className="block text-ui-sm text-fg-muted">
                 私钥文件
                 <div className="mt-1 flex gap-2">
                   <input
@@ -157,14 +157,14 @@ export default function SshReconnectDialog() {
                   <button
                     type="button"
                     onClick={() => void choosePrivateKey()}
-                    className="inline-flex items-center gap-1 rounded border border-border-strong px-2.5 text-[12px] text-fg hover:bg-bg-hover"
+                    className="inline-flex items-center gap-1 rounded border border-border-strong px-2.5 text-ui-sm text-fg hover:bg-bg-hover"
                   >
                     <KeyRound size={13} />
                     选择
                   </button>
                 </div>
               </label>
-              <label className="block text-[12px] text-fg-muted">
+              <label className="block text-ui-sm text-fg-muted">
                 私钥口令（如有，仅本次会话）
                 <input
                   autoFocus
@@ -180,7 +180,7 @@ export default function SshReconnectDialog() {
             </>
           ) : null}
           {error ? (
-            <p className="rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-[12px] whitespace-pre-wrap text-danger">
+            <p className="rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui-sm whitespace-pre-wrap text-danger">
               {error}
             </p>
           ) : null}
@@ -190,7 +190,7 @@ export default function SshReconnectDialog() {
             type="button"
             onClick={close}
             disabled={loading}
-            className="rounded border border-border-strong px-3 py-1.5 text-[13px] text-fg-muted hover:bg-bg-hover disabled:opacity-50"
+            className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg-muted hover:bg-bg-hover disabled:opacity-50"
           >
             取消
           </button>
@@ -198,7 +198,7 @@ export default function SshReconnectDialog() {
             type="button"
             disabled={!connection || loading}
             onClick={() => void reconnect()}
-            className="inline-flex items-center gap-1.5 rounded bg-action px-3 py-1.5 text-[13px] text-on-action hover:bg-action/90 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50"
           >
             <RefreshCw size={13} className={loading ? 'animate-spin' : undefined} />
             {loading ? '正在连接…' : '重新连接'}

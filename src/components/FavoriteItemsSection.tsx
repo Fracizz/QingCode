@@ -238,7 +238,7 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
         </span>
         <Bookmark size={13} className="shrink-0 text-warn" />
         <span className="min-w-0 flex-1 truncate text-left leading-tight">{t('收藏夹')}</span>
-        <span className="shrink-0 tabular-nums text-[10px] font-normal text-fg-dim">{items.length}</span>
+        <span className="shrink-0 tabular-nums text-ui-2xs font-normal text-fg-dim">{items.length}</span>
       </button>
       {expanded && (
         <div className={`${EXPLORER_FAVORITES_INSET} max-h-[35vh] overflow-y-auto overscroll-y-contain pb-1.5 pt-0.5`}>

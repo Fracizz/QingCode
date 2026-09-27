@@ -51,7 +51,7 @@ export function SettingsSection({
       ref={setSectionRef}
       className="scroll-mt-4"
     >
-      <h2 className="text-[18px] font-semibold text-fg mb-3 pb-2 border-b border-border">
+      <h2 className="text-ui-heading font-semibold text-fg mb-3 pb-2 border-b border-border">
         {title}
       </h2>
       <div className="flex flex-col gap-5">{children}</div>
@@ -82,7 +82,7 @@ export function SettingItem({
     >
       <div className="settings-item-row flex flex-col gap-2">
         <div className="settings-item-copy min-w-0 flex-1">
-          <div className="text-[13px] font-medium text-fg">{title}</div>
+          <div className="text-ui font-medium text-fg">{title}</div>
           <p className="text-ui-sm mt-1 leading-relaxed text-fg-muted break-words">{description}</p>
           {locked && lockHint && (
             <p className="text-ui-sm mt-1 text-warn break-words">{lockHint}</p>

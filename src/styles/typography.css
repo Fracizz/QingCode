@@ -1,0 +1,61 @@
+/* Typography changes font pixels, never the WebView zoom or editor/terminal grid. */
+:root {
+  --ui-line-height: 20px;
+  --ui-control-height: 26px;
+  --ui-row-height: 26px;
+  --ui-chip-height: 24px;
+  --ui-activity-button-size: 40px;
+  --ui-activity-icon-size: 22px;
+}
+
+@utility text-ui {
+  font-size: var(--ui-font-size);
+  line-height: var(--ui-line-height);
+}
+@utility text-ui-sm {
+  font-size: var(--ui-font-size-sm);
+  line-height: var(--ui-line-height);
+}
+@utility text-ui-xs {
+  font-size: max(10px, calc(var(--ui-font-size) - 2px));
+  line-height: var(--ui-line-height);
+}
+@utility text-ui-2xs {
+  font-size: max(9px, calc(var(--ui-font-size) - 3px));
+  line-height: var(--ui-line-height);
+}
+@utility text-ui-lg {
+  font-size: calc(var(--ui-font-size) + 1px);
+  line-height: calc(var(--ui-line-height) + 2px);
+}
+@utility text-ui-xl {
+  font-size: calc(var(--ui-font-size) + 2px);
+  line-height: calc(var(--ui-line-height) + 3px);
+}
+@utility text-ui-title {
+  font-size: calc(var(--ui-font-size) + 3px);
+  line-height: calc(var(--ui-line-height) + 4px);
+}
+@utility text-ui-heading {
+  font-size: calc(var(--ui-font-size) + 5px);
+  line-height: calc(var(--ui-line-height) + 6px);
+}
+@utility text-ui-display {
+  font-size: calc(var(--ui-font-size) + 7px);
+  line-height: calc(var(--ui-line-height) + 8px);
+}
+@utility text-ui-hero {
+  font-size: calc(var(--ui-font-size) + 11px);
+  line-height: calc(var(--ui-line-height) + 12px);
+}
+
+/* Integer-sized chrome keeps borders/icons at their native CSS pixel size. */
+.ui-chip { height: var(--ui-chip-height); }
+.ui-activity-button {
+  width: var(--ui-activity-button-size);
+  height: var(--ui-activity-button-size);
+}
+.ui-activity-button > .lucide {
+  width: var(--ui-activity-icon-size);
+  height: var(--ui-activity-icon-size);
+}

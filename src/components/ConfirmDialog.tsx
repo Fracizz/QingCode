@@ -58,10 +58,10 @@ export default function ConfirmDialog() {
             <Icon size={18} />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id="confirm-title" className="text-[14px] font-semibold text-fg">
+            <h2 id="confirm-title" className="text-ui-lg font-semibold text-fg">
               {t(request.title)}
             </h2>
-            <p id="confirm-message" className="mt-1.5 text-[13px] leading-relaxed text-fg">
+            <p id="confirm-message" className="mt-1.5 text-ui leading-relaxed text-fg">
               {t(request.message)}
             </p>
             {detailText && (
@@ -69,7 +69,7 @@ export default function ConfirmDialog() {
                 className={
                   detailIsTechnical
                     ? 'text-ui-sm mt-2.5 max-h-[240px] overflow-auto rounded-md border border-border bg-bg-deep/70 px-2.5 py-2 font-mono leading-relaxed text-fg-muted whitespace-pre-wrap break-all'
-                    : 'text-ui-sm mt-2.5 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 leading-5 text-fg'
+                    : 'text-ui-sm mt-2.5 rounded-md border border-warn/30 bg-warn/10 px-3 py-2 leading-[var(--ui-line-height)] text-fg'
                 }
               >
                 {detailText}
@@ -81,7 +81,7 @@ export default function ConfirmDialog() {
           <button
             type="button"
             data-modal-autofocus
-            className="px-3.5 py-1.5 text-[13px] font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="px-3.5 py-1.5 text-ui font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             onClick={() => answer(false)}
           >
             {request.cancelLabel ? t(request.cancelLabel) : t('取消')}
@@ -89,7 +89,7 @@ export default function ConfirmDialog() {
           {hasAlt && (
             <button
               type="button"
-              className="px-3.5 py-1.5 text-[13px] font-medium rounded-md border border-border-strong bg-bg text-fg hover:bg-bg-hover transition-colors"
+              className="px-3.5 py-1.5 text-ui font-medium rounded-md border border-border-strong bg-bg text-fg hover:bg-bg-hover transition-colors"
               onClick={() => answer('alt')}
             >
               {t(request.altLabel!)}
@@ -97,7 +97,7 @@ export default function ConfirmDialog() {
           )}
           <button
             type="button"
-            className={`px-3.5 py-1.5 text-[13px] font-medium rounded-md transition-all duration-150 ${meta.confirmClass}`}
+            className={`px-3.5 py-1.5 text-ui font-medium rounded-md transition-all duration-150 ${meta.confirmClass}`}
             onClick={() => answer(true)}
           >
             {request.confirmLabel ? t(request.confirmLabel) : t('确定')}

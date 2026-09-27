@@ -1,3 +1,4 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   useLayoutEffect,
   useRef,
@@ -70,31 +71,32 @@ function TabChrome({ tab }: { tab: EditorTab }) {
     <>
       {Icon && <Icon size={15} className={iconClass} />}
       <span
-        className={`text-[13px] ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && tab.kind !== 'diff' && gitColor ? gitColor : ''}`}
+        className={`text-ui ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && tab.kind !== 'diff' && gitColor ? gitColor : ''}`}
       >
         {tab.name}
       </span>
       {tab.kind !== 'diff' && gitGlyph && (
-        <span className={`text-[11px] font-medium ${gitColor}`}>{gitGlyph}</span>
+        <span className={`text-ui-xs font-medium ${gitColor}`}>{gitGlyph}</span>
       )}
       {tab.dirty ? (
         <Tooltip label={t('未保存的更改')} side="bottom">
           <span
             role="img"
             aria-label={t('未保存的更改')}
-            className="flex h-4 w-4 items-center justify-center text-warn"
+            className="flex h-4 w-3 items-center justify-center text-warn"
           >
             <Circle size={9} fill="currentColor" aria-hidden="true" />
           </span>
         </Tooltip>
       ) : (
-        <span className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+        <span className="h-4 w-3 flex-shrink-0" aria-hidden="true" />
       )}
     </>
   )
 }
 
 export default function EditorTabs() {
+  const { fontSize } = useInterfaceMetrics()
   const { t } = useI18n()
   const tabs = useEditorStore(s => s.tabs)
   const activeTabId = useEditorStore(s => s.activeTabId)
@@ -150,8 +152,9 @@ export default function EditorTabs() {
     compute()
     const ro = new ResizeObserver(compute)
     ro.observe(strip)
+    measure.querySelectorAll<HTMLElement>('[data-tab-measure-id]').forEach(el => ro.observe(el))
     return () => ro.disconnect()
-  }, [tabs, activeTabId])
+  }, [tabs, activeTabId, fontSize])
 
   if (tabs.length === 0) return null
 
@@ -351,7 +354,7 @@ export default function EditorTabs() {
                 tabIndex={active ? 0 : -1}
                 aria-selected={active}
                 draggable
-                className={`group relative flex h-6 flex-shrink-0 cursor-pointer select-none items-center gap-0.5 whitespace-nowrap rounded px-1 text-[13px] transition-colors
+                className={`group relative flex ui-chip h-6 flex-shrink-0 cursor-pointer select-none items-center gap-0.5 whitespace-nowrap rounded px-0.5 text-ui transition-colors
                 ${active ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}
                 ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}
                 ${dropIndex === index && dragIndex !== index ? 'ring-1 ring-inset ring-accent/60' : ''}`}
@@ -406,11 +409,15 @@ export default function EditorTabs() {
                     aria-hidden="true"
                   />
                 )}
-                <Tooltip label={t('关闭文件')} side="bottom">
+                <Tooltip
+                  label={t('关闭文件')}
+                  side="bottom"
+                  wrapperClassName="inline-flex shrink-0"
+                >
                   <button
                     type="button"
                     aria-label={t('关闭文件')}
-                    className="flex h-6 w-6 items-center justify-center rounded hover:bg-bg-active"
+                    className="flex ui-chip h-6 w-5 items-center justify-center rounded hover:bg-bg-active"
                     onClick={e => {
                       e.stopPropagation()
                       void closeOne(tab)
@@ -446,7 +453,7 @@ export default function EditorTabs() {
           >
             <span
               aria-hidden="true"
-              className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border-strong"
+              className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-px -translate-y-1/2 bg-border-strong"
             />
             <ChevronDown size={14} />
             {hiddenCount > 0 && (
@@ -467,9 +474,9 @@ export default function EditorTabs() {
             <div
               key={`measure-${tab.id}`}
               data-tab-measure-id={tab.id}
-              className="flex h-6 items-center gap-0.5 whitespace-nowrap rounded px-1"
+              className="flex ui-chip h-6 items-center gap-0.5 whitespace-nowrap rounded px-0.5"
             >
-              <span className="h-6 w-6 flex-shrink-0" />
+              <span className="ui-chip h-6 w-5 flex-shrink-0" />
               <TabChrome tab={tab} />
             </div>
           ))}

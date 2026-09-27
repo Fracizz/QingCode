@@ -50,6 +50,20 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 
 通过 `html[data-theme="light"]` 覆盖，见 `src/styles/theme.css`。主题切换逻辑在 `src/lib/themeSettings.ts`。
 
+浅色以白色内容面承载代码和表单，工具栏、侧栏使用轻量中性灰分层，避免大面积深灰底。当前工作上下文使用淡青底 + Qing Rail，悬停使用中性灰；普通分隔线与表单边框分开，输入框保持白底和明确焦点。
+
+| 语义 | 值 | 用途 |
+|------|-----|------|
+| `bg` / `bg-elevated` | `#ffffff` | 编辑器、设置正文、菜单与弹窗 |
+| `bg-sidebar` | `#f7f7f8` | 文件树、搜索面板 |
+| `bg-deep` / `bg-chrome` | `#f0f1f2` | 活动栏、标签栏、标题栏与状态栏 |
+| `bg-input` / `bg-terminal` | `#ffffff` | 输入控件与终端内容；深色/森林沿用各自 `bg-deep` |
+| `bg-hover` / `bg-active` | `#eceef0` / `#e6f2ef` | 悬停 / 当前选中 |
+| `border` / `border-strong` | `#dedfe2` / `#b5bac1` | 分隔线 / 控件与浮层边界 |
+| `fg` / `fg-muted` / `fg-dim` | `#1f1f1f` / `#484d55` / `#626872` | 正文 / 次要 / 辅助文字 |
+
+浅色浮层使用主题阴影；对话框遮罩使用 22% 石墨色、不模糊背景，保留上下文轮廓。编辑器缩进线和括号标记使用适配白底的深色/蓝色，启动背景同步为白色。
+
 ### 森林主题（IDEA Material Forest）
 
 森林主题以 JetBrains IDEA 的 Material Theme UI「Material Forest」官方色板为骨架，并保留 QingCode 的 Qing Rail。背景、激活态、边框、选择色和语法色遵循 Material Forest；仅对官方过暗的次要文字/代码注释以及现有白字按钮做可读性适配。
@@ -76,20 +90,22 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 | 代码/终端 | JetBrains Mono 等 | `--font-mono` |
 | 界面字号 | 13px | `--ui-font-size` |
 | 界面辅助字号 | 基准 12px（正文 − 1） | `--ui-font-size-sm` / `.text-ui-sm` |
-| 等宽字号 | 13px | `--mono-font-size` |
+| 代码 / 终端字号 | 14px / 13px | `--editor-font-size` / `--terminal-font-size` |
 
-用户可在设置中调整字体与字号（`src/lib/fontSettings.ts`）。侧边栏、活动栏等 UI 区域使用 `.ui-font-scaled` 响应界面字号缩放；编辑器和终端保持独立等宽字号。
+用户可在设置中调整字体与字号（`src/lib/fontSettings.ts`）。界面文字直接使用字号 Token，不使用 CSS `zoom` 或 `transform: scale` 放大整块界面。`.ui-font-scaled` 仅保留为兼容的区域标记；编辑器和终端保持独立字体与字号。
+
+控件、标签、顶栏、活动栏和虚拟列表行高由 `interfaceMetrics` 按 13px 基准计算并取整到 CSS 像素；间距、1px 边框和用户面板宽度不随文字缩放。虚拟列表及隐藏标签测量层通过 `useInterfaceMetrics` 同步更新，避免字号改变后行重叠或溢出数量滞后。不要给菜单、对话框入场动画永久添加 `will-change: transform`。
 
 ### 字号层级
 
 | 层级 | 默认 | 用途 | 实现 |
 |------|------|------|------|
-| 对话框标题 | 14px | Modal / 确认框标题 | `text-[14px] font-semibold` |
-| 正文 | 13px | 主说明、列表主行、按钮文案 | `--ui-font-size` / `text-[13px]` |
+| 对话框标题 | 14px | Modal / 确认框标题 | `text-ui-lg font-semibold` |
+| 正文 | 13px | 主说明、列表主行、按钮文案 | `--ui-font-size` / `text-ui` |
 | 辅助信息 | 12px | 路径、补充说明、设置项描述、Toast 详情 | `--ui-font-size-sm` / `.text-ui-sm` |
-| 分区标签 | 11px | 侧栏分区标题、紧凑工具条控件 | `text-[11px] font-semibold tracking-wide` |
+| 分区标签 | 11px | 侧栏分区标题、紧凑工具条控件 | `text-ui-xs font-semibold tracking-wide` |
 
-**辅助信息**比正文小一级，并随用户界面字号设置缩放。`.text-ui-sm` 在 `.ui-font-scaled` 内外均可使用：缩放区内用基准 `12px`（由父级 `zoom` 放大），区外用 `12px × --ui-font-scale`，避免双重缩放。典型场景：确认框 detail（路径块 / 警告补充说明）、命令面板相对路径、Toast 次要说明。路径等技术型辅助块用 `font-mono text-ui-sm`（见 `ConfirmDialog`）。
+**辅助信息**比正文小一级，并随用户界面字号设置变化。`text-ui-sm` 在所有区域直接使用 `--ui-font-size-sm`（正文 − 1px，最低 10px），不存在父级二次缩放。典型场景：确认框 detail（路径块 / 警告补充说明）、命令面板相对路径、Toast 次要说明。路径等技术型辅助块用 `font-mono text-ui-sm`（见 `ConfirmDialog`）。9px 数量徽标保留固定字号，不承担正文阅读。
 
 ---
 
@@ -157,7 +173,7 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 | 项 | 约定 |
 |----|------|
 | 布局 | 标题栏左侧：应用图标 + 常驻工作区菜单 + 项目 chips 区（`flex-1`）+ 拖拽 spacer（固定 `w-[140px]`）+ QingCode；右侧：侧栏布局时双终端/四终端/编辑器快捷开关 + 面板布局切换 + 窗口按钮 |
-| Chip | 项目类型图标 + 项目名（`max-w-[140px]` 截断；溢出后悬停 ≥1s 显示完整名）+ hover / 键盘聚焦时显示 `EyeOff` 从顶栏隐藏（中性悬停色，不表示删除）；本地与 SSH 项目由 `ProjectKindMark` 明确区分；右键关闭组为「从顶栏隐藏 / 关闭其它 / 关闭左侧 / 关闭右侧」（不可用项为「移除项目」）；当前项 `bg-bg-active`；不可用项显示 `⚠` + 常驻「重新定位」「移除项目」，点击 chip 体不切换；标签与溢出列表行内操作使用 24×24 点击区域 |
+| Chip | 项目类型图标 + 项目名（`max-w-[140px]` 截断；溢出后悬停 ≥1s 显示完整名）+ hover / 键盘聚焦时显示 `EyeOff` 从顶栏隐藏（中性悬停色，不表示删除）；本地与 SSH 项目由 `ProjectKindMark` 明确区分；右键关闭组为「从顶栏隐藏 / 关闭其它 / 关闭左侧 / 关闭右侧」（不可用项为「移除项目」）；当前项 `bg-bg-active`；不可用项显示 `⚠` + 常驻「重新定位」「移除项目」，点击 chip 体不切换；标签左右内边距及元素间距均为 2px，行内按钮 20×24、图标居中，状态标记不再叠加额外 margin；溢出列表行内操作保持 24×24 |
 | 工作区菜单 | 紧挨文件菜单右侧常驻；显示当前工作区名（无则「工作区」）；下拉锚定在按钮下方：工作区列表、`保存当前顶栏项目`、`管理多项目工作区` |
 | 切换 | 点击可用 chip 调用 `switchProject` 并跳到资源管理器视图；编辑器会话（标签/草稿/光标与折叠等）按项目保留，切走不丢弃未保存缓冲 |
 | 溢出 | 默认尽可能多地把项目显示为 chip（宽度测量）；放不下的进 `ChevronDown` 溢出下拉（`createPortal`、`z-[100]`、`max-h-[70vh]`）。窗口缩放时 `ResizeObserver` 实时重算可见数量 |
@@ -241,7 +257,7 @@ SSH 添加流程使用 `SshProjectDialog`：填写连接信息 → 首次连接�
 - **变更**：左栏为变更/待提交列表与提交区；右栏内嵌 Diff（`git_file_contents` + DiffEditor）。单击查看差异；双击或右键「打开更改」可在编辑器标签中打开并切回资源管理器。左栏宽度可拖拽（`PanelResizer`，持久化 `qingcode:scm-layout`）。
 - SCM 内部分栏拖动时由 `requestAnimationFrame` 合并指针事件并直接更新分栏 DOM 宽度；松手后才提交 React 状态与 `localStorage`。禁止在每次 `pointermove` 中同步读布局、重渲染整个 SCM 或持久化。
 - **历史**：默认左侧提交列表约占 3/5、右侧提交详情（摘要 + 更改文件列表，可拖宽、可筛选/正则、虚拟列表）；单击文件后左侧用 Diff **覆盖**提交列表（可「返回提交列表」）。双击或右键「打开文件」跳到**工作区当前文件**（不是提交快照）；右键同时提供资源管理器定位、文件管理器显示（SSH 禁用）和复制路径。Diff 工具栏「打开文件」尽量落到右侧光标行。历史 Diff 标题为「父提交 / 该提交」。`git_log` 分页 + 虚拟列表；`git_commit_files` / `git_commit_file_contents`。不做回退 / cherry-pick。
-- 面板 chrome（顶栏、列表、提交区）用 `.ui-font-scaled` 跟随界面字体/字号；Diff 区用 `.editor-font-independent` 取消 UI zoom，继续走代码字体与 `editor.fontSize`。
+- 面板 chrome（顶栏、列表、提交区）使用界面字体与 `text-ui-*`；Diff 区继续走代码字体与 `editor.fontSize`，不受界面字号影响。
 - Git 状态保留 porcelain `XY` 双列语义；支持单个/全部暂存与取消暂存、丢弃更改（二次确认）、只提交已暂存内容、分支查看与切换、远程检查更新（fetch），以及 `git push` / `git pull`（已配置 upstream）。本地与 SSH 项目复用同一工作台交互。
 - 拉取后若存在未合并路径，顶部显示冲突横幅；不提供冲突解决器。
 - 不提供隐式暂存、远程凭据管理、merge/rebase 或内置冲突合并 UI。详见 [`docs/git-basic-commit-workflow.md`](docs/git-basic-commit-workflow.md)。
@@ -294,7 +310,7 @@ SVG 为可任意缩放的矢量母版。独立高清 PNG 位于 `docs/branding/2
 
 - Splash Logo 无底色容器（透明 SVG + 图形轻阴影），优先内联于 `index.html`；主包加载后可由 `paintStartupSplashLogo()` 再对齐主题
 - Loading 使用品牌青色系（`#4ECDB5` / `#2FAF9B`）细进度条 + 短淡入
-- 背景色与 `data-theme` 一致：`#1e1e1e` / `#f0f0f0`
+- 背景色与 `data-theme` 一致：`#1e1e1e` / `#ffffff`
 - 最短展示约 **160ms**，淡出约 **140ms**，避免 splash「粘住」或闪一下
 - Tauri 窗口 `visible: false` + `backgroundColor: #1e1e1e`；尺寸修复在隐藏态完成，由 splash 脚本尽早 `show()`
 - 主界面挂载后调用 `dismissStartupSplash()`，**禁止**在 splash 期间阻塞项目列表等后台加载
@@ -338,7 +354,7 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 |----|------|
 | 外壳 | 统一使用 `ModalOverlay`（`src/components/ModalOverlay.tsx`） |
 | 布局 | `fixed inset-0 flex items-center justify-center p-4` |
-| 遮罩 | `bg-black/55` + `backdrop-blur-[1px]` |
+| 遮罩 | 深色/森林 `bg-black/55` + `backdrop-blur-[3px]`；浅色 22% 石墨色、不模糊背景 |
 | 层级 | `z-[100]` |
 | 面板 | `relative` + `rounded-lg` + `border-border-strong` + `shadow-2xl` + `modal-content-enter`；宽度用 `max-w-*`，内容过高时 `max-h-[85vh]` + 内部滚动 |
 | 关闭 | 点击遮罩关闭（确认框等同取消）；`Escape` 由各对话框自行处理 |
@@ -464,9 +480,9 @@ HTML5 `draggable` 的标签栏排序仍走浏览器 DnD，**同样不得**为 re
 | 项 | 约定 |
 |----|------|
 | 激活标识 | 与顶栏项目 chip 同形：`h-6` + `rounded` + `bg-bg-active` + **底部 2px `brand` Qing Rail**（`inset-x-1`）；未激活无底、`hover:bg-bg-hover` |
-| 关闭 | 左侧独立 `×`，24×24 点击区域、14px 图标，支持悬停提示及键盘 Enter / Space；**中键点击标签直接关闭**（拦截 `auxclick`，禁止中键自动滚动） |
+| 关闭 | 左侧独立 `×`，20×24 点击区域、居中 14px 图标，支持悬停提示及键盘 Enter / Space；**中键点击标签直接关闭**（拦截 `auxclick`，禁止中键自动滚动） |
 | 未保存 | 名称与 Git 标记右侧显示静态 `warn` 色圆点及「未保存的更改」提示；悬停和键盘聚焦时保持显示，与关闭按钮分开；干净标签保留相同宽度的状态位置，避免保存前后标签宽度变化 |
-| 内间距 | 关闭按钮、文件图标、名称与状态位置之间为 2px，标签左右内边距为 4px；保持关闭按钮 24×24 点击区域 |
+| 内间距 | 与终端和项目标签统一：左右内边距及元素间距均为 2px，按钮居中、不外扩点击区域，右侧状态位置宽 12px；避免内边距、按钮留白与 margin 叠加 |
 | 溢出 | 标签区右侧常驻 `ChevronDown` 按钮（`border-l` 分隔），点击弹出全部已打开文件菜单，当前项名称后标 `●` |
 
 #### 独立文件窗口
@@ -492,7 +508,7 @@ HTML5 `draggable` 的标签栏排序仍走浏览器 DnD，**同样不得**为 re
 | 激活标识 | 与顶栏项目 chip 同形：`h-6` + `rounded` + `bg-bg-active` + **底部 2px `brand`（`inset-x-1`）**；标签垂直居中于栏内，青轨不贴栏底边线 |
 | 标签间隔 | `gap-1`，不用竖向 divider |
 | 标签内顺序 | 左侧关闭 `×` → 名称 → 已退出时的重启按钮 → 右侧状态点；重命名时关闭和状态点位置固定，状态变化不移动关闭按钮 |
-| 行内按钮 | 关闭与重启按钮均为 24×24 点击区域，图标保持 12–13px；键盘 Enter / Space 触发按钮操作，标签切换快捷键不拦截按钮激活 |
+| 行内按钮 | 关闭与重启按钮均为 20×24 点击区域，图标居中、保持 12–13px；左右内边距及元素间距均为 2px，不叠加按钮 margin；右侧状态位置宽 12px，与文件标签一致；键盘 Enter / Space 触发按钮操作，标签切换快捷键不拦截按钮激活 |
 | 左侧标题 | 「终端」图标+文案，`border-r` 与标签区分区 |
 | 新建 | `+` 与标签同处左侧内容流，紧挨最后一个可见终端（中间留白，右侧为溢出/面板操作）；左键默认配置、右键选配置 |
 | 溢出 | 有会话时栏右侧常驻 `List`（会话列表，非下箭头）；超出宽度时隐藏并显示数量角标；下拉列出全部终端，当前项名称后标 `●`。文案用「已隐藏」，避免与收起面板混淆 |

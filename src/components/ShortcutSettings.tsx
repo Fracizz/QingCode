@@ -179,7 +179,7 @@ export default function ShortcutSettings() {
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-xs text-fg-muted">
+      <p className="text-ui-sm text-fg-muted">
         {t('点击输入框后按新的组合键。按 Backspace 或 Delete 可清空（未绑定）。')}
       </p>
       {COMMANDS.map(command => {
@@ -190,7 +190,7 @@ export default function ShortcutSettings() {
             className="flex items-center gap-3 rounded border border-border bg-bg/40 px-3 py-2"
           >
             <span className="min-w-0 flex-1">
-              <span className="block text-[13px] text-fg">{t(command.label)}</span>
+              <span className="block text-ui text-fg">{t(command.label)}</span>
               <span className="text-ui-sm mt-0.5 block text-fg-muted">{t(command.description)}</span>
             </span>
             <input
@@ -204,7 +204,7 @@ export default function ShortcutSettings() {
               onBlur={() => setCapturing(current => (current === command.id ? null : current))}
               onKeyDown={event => captureShortcut(event, command.id)}
               aria-label={t(command.label)}
-              className={`w-36 rounded border bg-bg-deep px-2 py-1 text-center font-mono text-[12px] outline-none placeholder:text-fg-dim ${
+              className={`w-36 rounded border bg-bg-deep px-2 py-1 text-center font-mono text-ui-sm outline-none placeholder:text-fg-dim ${
                 capturing === command.id
                   ? 'border-accent text-fg'
                   : bound
@@ -216,25 +216,25 @@ export default function ShortcutSettings() {
         )
       })}
 
-      <p className="pt-1 text-xs text-fg-muted">{t('以下快捷键由编辑器保留，不可在此修改：')}</p>
+      <p className="pt-1 text-ui-sm text-fg-muted">{t('以下快捷键由编辑器保留，不可在此修改：')}</p>
       {FIXED_SHORTCUTS.map(item => (
         <div
           key={item.shortcut}
           className="flex items-center gap-3 rounded border border-border/80 bg-bg/20 px-3 py-2"
         >
           <span className="min-w-0 flex-1">
-            <span className="block text-[13px] text-fg">{t(item.label)}</span>
+            <span className="block text-ui text-fg">{t(item.label)}</span>
             <span className="text-ui-sm mt-0.5 block text-fg-muted">{t(item.description)}</span>
           </span>
           <Tooltip label={t('不可修改')} side="left">
-            <span className="inline-flex h-[30px] w-36 items-center justify-center rounded border border-border bg-bg-deep px-2 font-mono text-[12px] text-fg-dim">
+            <span className="inline-flex h-[30px] w-36 items-center justify-center rounded border border-border bg-bg-deep px-2 font-mono text-ui-sm text-fg-dim">
               {item.shortcut}
             </span>
           </Tooltip>
         </div>
       ))}
 
-      {message && <p className="text-xs text-danger">{message}</p>}
+      {message && <p className="text-ui-sm text-danger">{message}</p>}
       <button
         type="button"
         onClick={() => {
@@ -242,7 +242,7 @@ export default function ShortcutSettings() {
           setCapturing(null)
           setMessage(null)
         }}
-        className="inline-flex w-fit items-center gap-1 rounded px-2 py-1 text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg"
+        className="inline-flex w-fit items-center gap-1 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg"
       >
         <RotateCcw size={13} /> {t('恢复默认快捷键')}
       </button>

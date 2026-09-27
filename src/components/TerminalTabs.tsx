@@ -1,3 +1,4 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   useEffect,
   useLayoutEffect,
@@ -76,6 +77,7 @@ export default function TerminalTabs({
   showPanelActions?: boolean
 } = {}) {
   const { t: translate } = useI18n()
+  const { fontSize: interfaceFontSize } = useInterfaceMetrics()
   const terminals = useTerminalStore(s => s.terminals)
   const activeTerminalId = useTerminalStore(s => s.activeTerminalId)
   const secondaryTerminalId = useTerminalStore(s => s.secondaryTerminalId)
@@ -182,8 +184,9 @@ export default function TerminalTabs({
     compute()
     const ro = new ResizeObserver(compute)
     ro.observe(area)
+    measure.querySelectorAll<HTMLElement>('[data-tab-measure-id]').forEach(el => ro.observe(el))
     return () => ro.disconnect()
-  }, [projectTerminalMeasureKey, paneActiveId, renamingId, renameDraft])
+  }, [projectTerminalMeasureKey, paneActiveId, renamingId, renameDraft, interfaceFontSize])
 
   useEffect(() => {
     if (!renamingId) return
@@ -577,7 +580,7 @@ export default function TerminalTabs({
       data-terminal-pane-focused={focused ? 'true' : undefined}
     >
         <div
-          className={`flex h-full flex-shrink-0 items-center gap-1.5 border-r border-border px-3 text-[11px] font-semibold tracking-wide ${
+          className={`flex h-full flex-shrink-0 items-center gap-1.5 border-r border-border px-3 text-ui-xs font-semibold tracking-wide ${
             focused ? 'text-brand' : 'text-fg-muted'
           }`}
           onPointerDown={() => {
@@ -637,7 +640,7 @@ export default function TerminalTabs({
                   tabIndex={isActive ? 0 : -1}
                   aria-selected={isActive}
                   draggable={renamingId !== t.id}
-                  className={`group relative flex h-6 flex-shrink-0 cursor-pointer select-none items-center gap-1 whitespace-nowrap rounded pl-2 pr-1 text-[13px] transition-colors
+                  className={`group relative flex ui-chip h-6 flex-shrink-0 cursor-pointer select-none items-center gap-0.5 whitespace-nowrap rounded px-0.5 text-ui transition-colors
                     ${isActive ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}
                     ${draggedTerminalId === t.id ? 'opacity-45' : ''}`}
                   onDragStart={event => handleTabDragStart(event, t.id)}
@@ -697,7 +700,7 @@ export default function TerminalTabs({
                       type="button"
                       aria-label={isCloseArmed ? translate('确认关闭终端') : translate('关闭终端')}
                       data-terminal-close={t.id}
-                      className={`mr-1 flex items-center justify-center w-6 h-6 rounded transition-colors ${
+                      className={`flex items-center justify-center w-5 ui-chip h-6 rounded transition-colors ${
                         isCloseArmed
                           ? 'bg-danger/15 text-danger'
                           : 'hover:bg-bg-active'
@@ -741,7 +744,7 @@ export default function TerminalTabs({
                             }
                           }, 80)
                         }}
-                        className="min-w-[5rem] max-w-[14rem] h-5 px-1.5 text-[13px] bg-bg border border-accent rounded-sm outline-none text-fg"
+                        className="min-w-[5rem] max-w-[14rem] h-[var(--ui-chip-height)] px-1.5 text-ui bg-bg border border-accent rounded-sm outline-none text-fg"
                         aria-label={translate('重命名终端')}
                       />
                     </>
@@ -758,7 +761,7 @@ export default function TerminalTabs({
                       side="top"
                       wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]"
                     >
-                      <span className={`text-[13px] truncate ${t.status === 'exited' ? 'opacity-60' : ''}`}>
+                      <span className={`text-ui truncate ${t.status === 'exited' ? 'opacity-60' : ''}`}>
                         {formatTerminalName(t.name)}
                       </span>
                     </Tooltip>
@@ -789,7 +792,7 @@ export default function TerminalTabs({
                             ? translate('按原运行配置重启{exitCode}', { exitCode: '' })
                             : translate('重启终端{exitCode}', { exitCode: '' })
                         }
-                        className="ml-1 flex items-center justify-center w-6 h-6 rounded hover:bg-bg-active"
+                        className="flex items-center justify-center w-5 ui-chip h-6 rounded hover:bg-bg-active"
                         onClick={e => {
                           e.stopPropagation()
                           restartTerminal(t.id)
@@ -803,11 +806,13 @@ export default function TerminalTabs({
                       </button>
                     </Tooltip>
                   )}
-                  <Circle
-                    size={7}
-                    fill="currentColor"
-                    className={`ml-0.5 flex-shrink-0 ${terminalStatusDotClass(t.status, busyIds.has(t.id))}`}
-                  />
+                  <span className="flex h-4 w-3 shrink-0 items-center justify-center">
+                    <Circle
+                      size={7}
+                      fill="currentColor"
+                      className={terminalStatusDotClass(t.status, busyIds.has(t.id))}
+                    />
+                  </span>
                 </div>
               )
             })}
@@ -826,7 +831,7 @@ export default function TerminalTabs({
             <button
               type="button"
               aria-label={translate('新建终端')}
-              className={`flex h-6 w-6 flex-shrink-0 items-center justify-center rounded transition-colors ${
+              className={`flex ui-chip h-6 w-6 flex-shrink-0 items-center justify-center rounded transition-colors ${
                 !(currentProject && atLimit) && !creatingTerminal
                   ? 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                   : 'text-fg-dim cursor-not-allowed'
@@ -869,7 +874,7 @@ export default function TerminalTabs({
             >
               <span
                 aria-hidden="true"
-                className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-[0.8px] -translate-y-1/2 bg-border-strong"
+                className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-px -translate-y-1/2 bg-border-strong"
               />
               <List size={15} />
               {hiddenCount > 0 && (
@@ -915,12 +920,14 @@ export default function TerminalTabs({
             <div
               key={`measure-${term.id}`}
               data-tab-measure-id={term.id}
-              className="flex h-6 items-center gap-1 whitespace-nowrap rounded pl-2 pr-1"
+              className="flex ui-chip h-6 items-center gap-0.5 whitespace-nowrap rounded px-0.5"
             >
-              <span className="mr-1 h-6 w-6 flex-shrink-0" />
-              <span className="max-w-[12rem] truncate text-[13px]">{formatTerminalName(term.name)}</span>
-              {term.status === 'exited' && <span className="ml-1 h-6 w-6 flex-shrink-0" />}
-              <Circle size={7} fill="currentColor" className="ml-0.5 flex-shrink-0" />
+              <span className="ui-chip h-6 w-5 flex-shrink-0" />
+              <span className="max-w-[12rem] truncate text-ui">{formatTerminalName(term.name)}</span>
+              {term.status === 'exited' && <span className="ui-chip h-6 w-5 flex-shrink-0" />}
+              <span className="flex h-4 w-3 shrink-0 items-center justify-center">
+                <Circle size={7} fill="currentColor" />
+              </span>
             </div>
           ))}
         </div>

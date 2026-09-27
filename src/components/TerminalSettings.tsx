@@ -66,7 +66,7 @@ export default function TerminalSettings() {
     <div className="flex flex-col gap-4">
       <label className="block">
         <span className="block font-medium text-fg">{t('默认 Shell')}</span>
-        <span className="mt-1 block text-xs text-fg-muted">
+        <span className="mt-1 block text-ui-sm text-fg-muted">
           {t(
             '新建「普通终端」时使用的主机 Shell（全局）。Windows 默认自动选择 PowerShell 7、Windows PowerShell 或 CMD；macOS/Linux 默认 Zsh。自定义配置可单独指定 Shell。',
           )}
@@ -89,7 +89,7 @@ export default function TerminalSettings() {
 
       <label className="block">
         <span className="block font-medium text-fg">{t('默认启动配置')}</span>
-        <span className="mt-1 block text-xs text-fg-muted">
+        <span className="mt-1 block text-ui-sm text-fg-muted">
           {t('可不选；未指定时使用内置普通终端。')}
         </span>
         <div className="mt-2">
@@ -121,7 +121,7 @@ export default function TerminalSettings() {
         <button
           type="button"
           onClick={addProfile}
-          className="inline-flex items-center gap-1 rounded px-2 py-1 text-[12px] text-accent hover:bg-bg-hover"
+          className="inline-flex items-center gap-1 rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover"
         >
           <Plus size={13} /> {t('新增配置')}
         </button>
@@ -139,7 +139,7 @@ export default function TerminalSettings() {
                   placeholder={t('配置名称')}
                   aria-label={t('配置名称')}
                   disabled={isBuiltin}
-                  className="min-w-0 flex-1 rounded border border-border bg-bg-deep px-2 py-1.5 text-[12px] text-fg outline-none focus:border-accent disabled:opacity-70"
+                  className="min-w-0 flex-1 rounded border border-border bg-bg-deep px-2 py-1.5 text-ui-sm text-fg outline-none focus:border-accent disabled:opacity-70"
                 />
                 {!isBuiltin && (
                   <button
@@ -153,7 +153,7 @@ export default function TerminalSettings() {
                 )}
               </div>
               <label className="mt-2 block">
-                <span className="text-[11px] text-fg-muted">{t('Shell')}</span>
+                <span className="text-ui-xs text-fg-muted">{t('Shell')}</span>
                 {isBuiltin ? (
                   <p className="text-ui-sm mt-1 text-fg-dim">
                     {t('使用全局默认 Shell')}（{t(terminalShellLabelKey(settings.defaultShell))}）
@@ -173,7 +173,7 @@ export default function TerminalSettings() {
                 )}
               </label>
               <label className="mt-2 block">
-                <span className="text-[11px] text-fg-muted">{t('启动命令')}</span>
+                <span className="text-ui-xs text-fg-muted">{t('启动命令')}</span>
                 <textarea
                   value={profile.command}
                   onChange={event => updateProfile(profile.id, { command: event.target.value })}
@@ -185,7 +185,7 @@ export default function TerminalSettings() {
                   aria-label={t('{name}启动命令', { name: profile.name || t('终端配置') })}
                   rows={2}
                   spellCheck={false}
-                  className="mt-1 w-full min-h-[3rem] resize-y rounded border border-border bg-bg-deep px-2 py-1.5 font-mono text-[12px] text-fg outline-none focus:border-accent wrap-break-word"
+                  className="mt-1 w-full min-h-[3rem] resize-y rounded border border-border bg-bg-deep px-2 py-1.5 font-mono text-ui-sm text-fg outline-none focus:border-accent wrap-break-word"
                 />
               </label>
             </div>

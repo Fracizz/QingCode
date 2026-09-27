@@ -63,23 +63,20 @@ export function copyTooltipRect(rect: RectLike, top = rect.top): RectLike {
   }
 }
 
-/** Read CSS `zoom` from a scaled tip, falling back to `--ui-font-scale`. */
+/** Placement follows actual CSS geometry, not the chosen interface font size. */
 export function readTooltipZoom(el?: HTMLElement | null): number {
   if (el) {
     const fromEl = Number.parseFloat(getComputedStyle(el).zoom)
     if (Number.isFinite(fromEl) && fromEl > 0) return fromEl
   }
-  const scale = Number.parseFloat(
-    getComputedStyle(document.documentElement).getPropertyValue('--ui-font-scale'),
-  )
-  return Number.isFinite(scale) && scale > 0 ? scale : 1
+  return 1
 }
 
 /**
  * Pure placement helper — exported for unit tests.
  *
- * `rect` is viewport-space (e.g. getBoundingClientRect). When the tip uses
- * `.ui-font-scaled` (`zoom`), pass layout tip size + zoom so returned `left`/`top`
+ * `rect` is viewport-space (e.g. getBoundingClientRect). With explicit CSS zoom,
+ * pass layout tip size + zoom so returned `left`/`top`
  * are pre-zoom style values (same approach as getContextMenuStylePosition).
  */
 export function getTooltipPosition(
@@ -421,14 +418,15 @@ export default function Tooltip({
           <div
             ref={tipRef}
             role="tooltip"
-            className={`tooltip-enter ui-font-scaled fixed z-[100] pointer-events-none w-max rounded px-2.5 py-1.5 text-[11px] leading-5 text-fg break-words whitespace-pre-line ${
+            data-tooltip-arrow={showArrow ? '' : undefined}
+            className={`tooltip-enter ui-font-scaled fixed z-[100] pointer-events-none w-max rounded px-2.5 py-1.5 text-ui-xs leading-[var(--ui-line-height)] text-fg break-words whitespace-pre-line ${
               showArrow
                 ? 'max-w-[min(320px,calc(100vw-16px))] bg-bg-elevated'
                 : 'max-w-[min(480px,calc(100vw-16px))] border border-border-strong bg-bg-elevated shadow-lg shadow-black/40'
             }`}
             style={{
               ...style,
-              filter: showArrow ? 'drop-shadow(0 4px 14px rgba(0,0,0,0.42))' : undefined,
+              filter: showArrow ? 'var(--tooltip-arrow-shadow)' : undefined,
             }}
           >
             {liveTip ? <span data-panel-resize-live-tip>{label}</span> : label}

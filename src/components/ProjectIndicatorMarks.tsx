@@ -50,7 +50,7 @@ export function ProjectIndicatorMarks({
   }
   return (
     <span
-      className={`ml-1 inline-flex flex-shrink-0 items-center gap-0.5 leading-none transition-opacity ${
+      className={`inline-flex flex-shrink-0 items-center gap-0.5 leading-none transition-opacity ${
         isCurrent ? 'opacity-100' : 'opacity-75 group-hover:opacity-100'
       }`}
       aria-hidden

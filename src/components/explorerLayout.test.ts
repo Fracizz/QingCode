@@ -8,7 +8,7 @@ import {
 describe('explorerLayout', () => {
   it('keeps the project name row from shrinking under the favorites card', () => {
     expect(EXPLORER_HEADING_ROW.split(' ')).toEqual(
-      expect.arrayContaining(['flex', 'h-9', 'shrink-0', 'items-center']),
+      expect.arrayContaining(['flex', 'h-[calc(var(--ui-row-height)+10px)]', 'shrink-0', 'items-center']),
     )
     expect(EXPLORER_FAVORITES_SECTION.split(' ')).toContain('flex-shrink-0')
   })

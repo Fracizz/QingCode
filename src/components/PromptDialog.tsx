@@ -62,11 +62,11 @@ export default function PromptDialog() {
             <Pencil size={18} />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id="prompt-title" className="text-[14px] font-semibold text-fg">
+            <h2 id="prompt-title" className="text-ui-lg font-semibold text-fg">
               {t(request.title)}
             </h2>
             {request.message && (
-              <p className="mt-1.5 text-[13px] leading-relaxed text-fg-muted">
+              <p className="mt-1.5 text-ui leading-relaxed text-fg-muted">
                 {t(request.message)}
               </p>
             )}
@@ -100,14 +100,14 @@ export default function PromptDialog() {
         <div className="flex justify-end gap-2 border-t border-border px-5 py-3.5 bg-bg-deep/20 rounded-b-lg">
           <button
             type="button"
-            className="px-3.5 py-1.5 text-[13px] font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+            className="px-3.5 py-1.5 text-ui font-medium rounded-md border border-border-strong bg-bg text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             onClick={() => answer(null)}
           >
             {request.cancelLabel ? t(request.cancelLabel) : t('取消')}
           </button>
           <button
             type="button"
-            className="px-3.5 py-1.5 text-[13px] font-medium rounded-md bg-action hover:bg-action/90 text-on-action shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0"
+            className="px-3.5 py-1.5 text-ui font-medium rounded-md bg-action hover:bg-action/90 text-on-action shadow-sm transition-all duration-150 hover:-translate-y-[0.5px] active:translate-y-0"
             onClick={submit}
           >
             {request.confirmLabel ? t(request.confirmLabel) : t('确定')}

@@ -1,3 +1,5 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
+import { interfacePixelSize } from '../lib/interfaceMetrics'
 import { useCallback, useEffect, useMemo, type CSSProperties } from 'react'
 import { LoaderCircle } from 'lucide-react'
 import { List, useListRef } from 'react-window'
@@ -11,11 +13,11 @@ export const SCM_COMMIT_PAGE_SIZE = 40
 const ROW_HEIGHT = 36
 const FOOTER_HEIGHT = 28
 const PREFETCH_ROWS = 12
-const HASH_COL = 'w-[8ch] shrink-0 pr-2 font-mono text-[11px] tabular-nums text-accent'
-const AUTHOR_COL = 'w-[6.5rem] shrink-0 truncate text-[11px] text-fg-muted'
-const REFS_COL = 'w-[8rem] shrink-0 truncate text-[10px] text-brand'
+const HASH_COL = 'w-[8ch] shrink-0 pr-2 font-mono text-ui-xs tabular-nums text-accent'
+const AUTHOR_COL = 'w-[6.5rem] shrink-0 truncate text-ui-xs text-fg-muted'
+const REFS_COL = 'w-[8rem] shrink-0 truncate text-ui-2xs text-brand'
 const TIME_COL =
-  'w-[10.5rem] shrink-0 truncate text-right font-mono text-[10px] tabular-nums text-fg-dim'
+  'w-[10.5rem] shrink-0 truncate text-right font-mono text-ui-2xs tabular-nums text-fg-dim'
 
 type RowProps = {
   commits: GitCommitInfo[]
@@ -51,7 +53,7 @@ function CommitRow(
     return (
       <div
         style={style}
-        className="flex items-center gap-2 pl-5 pr-3 text-[11px] text-fg-dim"
+        className="flex items-center gap-2 pl-5 pr-3 text-ui-xs text-fg-dim"
         aria-hidden={!loadingMore && hasMore}
       >
         {loadingMore ? (
@@ -80,7 +82,7 @@ function CommitRow(
         }`}
       >
         <span className={HASH_COL}>{commit.short_hash}</span>
-        <span className="min-w-0 flex-1 truncate text-[12px] text-fg">
+        <span className="min-w-0 flex-1 truncate text-ui-sm text-fg">
           {commit.subject || noSubjectLabel}
         </span>
         <span className={AUTHOR_COL}>
@@ -126,6 +128,7 @@ export default function ScmCommitHistory({
   onSelect: (hash: string) => void
   onNearEnd: () => void
 }) {
+  const metrics = useInterfaceMetrics()
   const { t } = useI18n()
   const listRef = useListRef(null)
   const showFooter =
@@ -145,8 +148,8 @@ export default function ScmCommitHistory({
     [commits, hasMore, loadingMore, onSelect, selectedHash, t]
   )
   const rowHeight = useCallback(
-    (index: number) => (index >= commits.length ? FOOTER_HEIGHT : ROW_HEIGHT),
-    [commits.length]
+    (index: number) => interfacePixelSize(index >= commits.length ? FOOTER_HEIGHT : ROW_HEIGHT, metrics.fontSize),
+    [commits.length, metrics.fontSize]
   )
   const onRowsRendered = useCallback(
     (
@@ -167,14 +170,14 @@ export default function ScmCommitHistory({
   }, [commits.length, hasMore, loadingMore, listRef, onNearEnd])
 
   if (commits.length === 0) {
-    return <p className="px-3 py-2 text-[11px] text-fg-dim">{t('暂无提交记录')}</p>
+    return <p className="px-3 py-2 text-ui-xs text-fg-dim">{t('暂无提交记录')}</p>
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div
-        className="flex flex-shrink-0 items-center gap-2 border-b border-border/50 bg-bg-sidebar/80 pl-5 pr-3 text-[10px] font-medium tracking-wide text-fg-dim"
-        style={{ height: FOOTER_HEIGHT }}
+        className="flex flex-shrink-0 items-center gap-2 border-b border-border/50 bg-bg-sidebar/80 pl-5 pr-3 text-ui-2xs font-medium tracking-wide text-fg-dim"
+        style={{ height: interfacePixelSize(FOOTER_HEIGHT, metrics.fontSize) }}
       >
         <span className={HASH_COL}>{t('哈希')}</span>
         <span className="min-w-0 flex-1 truncate">{t('说明')}</span>

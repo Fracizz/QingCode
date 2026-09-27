@@ -940,8 +940,8 @@ export default function Editor() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-fg-dim bg-bg gap-3">
         <FileText size={40} strokeWidth={1.2} />
-        <p className="text-sm">{t('从侧边栏打开文件开始编辑')}</p>
-        <p className="text-xs text-fg-dim flex items-center gap-1.5">
+        <p className="text-ui-lg">{t('从侧边栏打开文件开始编辑')}</p>
+        <p className="text-ui-sm text-fg-dim flex items-center gap-1.5">
           <Kbd>Ctrl+Shift+C</Kbd> {t('路径')} <span>·</span> <Kbd>Alt+C</Kbd> {t('文件引用')}
         </p>
       </div>
@@ -968,7 +968,7 @@ export default function Editor() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-bg text-fg-muted">
         <LoaderCircle size={28} className="animate-spin text-accent" aria-hidden />
-        <p className="text-sm">{t('正在打开文件…')}</p>
+        <p className="text-ui-lg">{t('正在打开文件…')}</p>
         <Tooltip
           label={activeTab.path}
           side="bottom"
@@ -986,10 +986,10 @@ export default function Editor() {
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
         {markdownTab && (
           <div className="flex h-8 flex-shrink-0 items-center gap-1 border-b border-border px-2">
-            <span className="mr-1 text-[11px] text-fg-dim">{t('Markdown')}</span>
+            <span className="mr-1 text-ui-xs text-fg-dim">{t('Markdown')}</span>
             <button
               type="button"
-              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-ui-xs transition-colors ${
                 mdPreviewMode === 'off'
                   ? 'bg-bg-active text-fg'
                   : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -1001,7 +1001,7 @@ export default function Editor() {
             </button>
             <button
               type="button"
-              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-ui-xs transition-colors ${
                 mdPreviewMode === 'side'
                   ? 'bg-bg-active text-fg'
                   : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -1013,7 +1013,7 @@ export default function Editor() {
             </button>
             <button
               type="button"
-              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-[11px] transition-colors ${
+              className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-ui-xs transition-colors ${
                 mdPreviewMode === 'preview'
                   ? 'bg-bg-active text-fg'
                   : 'text-fg-muted hover:bg-bg-hover hover:text-fg'

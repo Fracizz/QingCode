@@ -131,7 +131,7 @@ export default function RunPanel() {
     return (
       <div className="h-full flex flex-col bg-bg-sidebar text-fg">
         <Header title={t('运行配置')} />
-        <div className="px-4 py-6 text-[13px] text-fg-muted">{t('请先选择或添加项目')}</div>
+        <div className="px-4 py-6 text-ui text-fg-muted">{t('请先选择或添加项目')}</div>
       </div>
     )
   }
@@ -181,11 +181,11 @@ export default function RunPanel() {
       <div className="flex-1 overflow-auto pb-3">
         {configs.length === 0 ? (
           <div className="px-4 py-6 text-center">
-            <p className="text-[13px] text-fg-muted mb-3">{t('尚未配置运行任务')}</p>
+            <p className="text-ui text-fg-muted mb-3">{t('尚未配置运行任务')}</p>
             <button
               type="button"
               onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
+              className="inline-flex items-center gap-1.5 text-ui px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
             >
               <Plus size={14} /> {t('新建配置')}
             </button>
@@ -223,9 +223,9 @@ export default function RunPanel() {
                   </Tooltip>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-medium truncate">{config.name}</span>
+                      <span className="text-ui font-medium truncate">{config.name}</span>
                       <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded-full flex-shrink-0
+                        className={`text-ui-2xs px-1.5 py-0.5 rounded-full flex-shrink-0
                           ${running ? 'bg-ok/15 text-ok' : 'bg-bg-deep text-fg-dim'}`}
                       >
                         {running ? t('运行中 · {count}', { count: runningTids.length }) : t('空闲')}
@@ -273,7 +273,7 @@ export default function RunPanel() {
                         <Tooltip key={tid} label={term.cwd} side="bottom">
                           <button
                             onClick={() => setActiveTerminal(tid)}
-                            className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-bg-deep text-fg-muted hover:text-fg hover:bg-bg-hover border border-border"
+                            className="inline-flex items-center gap-1 text-ui-xs px-1.5 py-0.5 rounded bg-bg-deep text-fg-muted hover:text-fg hover:bg-bg-hover border border-border"
                           >
                             <FileCode2 size={11} className="text-accent" />
                             <span className="truncate max-w-[160px]">{term.name}</span>
@@ -320,7 +320,7 @@ function Header({
 }) {
   const { t } = useI18n()
   return (
-    <div className="px-4 h-9 flex items-center justify-between text-[11px] font-semibold tracking-wide text-fg-muted flex-shrink-0">
+    <div className="px-4 h-9 flex items-center justify-between text-ui-xs font-semibold tracking-wide text-fg-muted flex-shrink-0">
       <span className="flex items-center gap-2 min-w-0">
         <BugPlay size={13} className="flex-shrink-0 text-brand" />
         <span className="truncate">{title}</span>

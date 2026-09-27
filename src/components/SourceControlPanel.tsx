@@ -1,3 +1,4 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   lazy,
   Suspense,
@@ -133,7 +134,6 @@ type InlineDiffState = {
   modified: string
 }
 
-const ROW_HEIGHT = 28
 const COMMIT_PAGE_SIZE = SCM_COMMIT_PAGE_SIZE
 const BRANCH_MENU_MIN_WIDTH = 240
 const BRANCH_MENU_MAX_WIDTH = 480
@@ -196,7 +196,7 @@ function ScmOperationAlert({
     >
       <div className="flex items-start gap-2 text-danger">
         <AlertCircle size={14} className="mt-0.5 shrink-0" strokeWidth={2} />
-        <p className="text-ui-sm min-w-0 flex-1 leading-5">
+        <p className="text-ui-sm min-w-0 flex-1 leading-[var(--ui-line-height)]">
           {display.literal
             ? display.summaryKey
             : t(display.summaryKey, display.summaryParams)}
@@ -211,7 +211,7 @@ function ScmOperationAlert({
         </button>
       </div>
       {display.files.length > 0 && (
-        <ul className="ml-6 max-h-28 list-none space-y-0.5 overflow-y-auto border-l border-danger/20 pl-2 font-mono text-[11px] leading-5 text-danger/90">
+        <ul className="ml-6 max-h-28 list-none space-y-0.5 overflow-y-auto border-l border-danger/20 pl-2 font-mono text-ui-xs leading-[var(--ui-line-height)] text-danger/90">
           {display.files.map(file => (
             <li key={file} className="truncate">
               {file}
@@ -340,7 +340,7 @@ function ChangeRowComponent(
         onClick={event => onSelectChange(group, change, index, event)}
         onDoubleClick={() => onOpenChange(group, change)}
         onContextMenu={event => onOpenContextMenu(event, group, change)}
-        className={`flex h-full w-full items-center gap-2 ${SCM_ROW_PAD} text-left text-[12px] leading-5 hover:bg-bg-hover ${
+        className={`flex h-full w-full items-center gap-2 ${SCM_ROW_PAD} text-left text-ui-sm leading-[var(--ui-line-height)] hover:bg-bg-hover ${
           active ? 'bg-bg-active' : ''
         }`}
       >
@@ -349,7 +349,7 @@ function ChangeRowComponent(
           label={normalizeGitChangePath(change.path).replace(/\\/g, '/')}
           side="bottom"
           onlyWhenOverflow
-          wrapperClassName="min-w-0 flex-1 truncate font-mono text-[11px] text-tree-fg"
+          wrapperClassName="min-w-0 flex-1 truncate font-mono text-ui-xs text-tree-fg"
         >
           <span>{formatScmDisplayPath(change.path)}</span>
         </Tooltip>
@@ -411,6 +411,7 @@ function ChangeGroupSection({
   onToggle,
   onSelectAll,
 }: ChangeGroupSectionProps) {
+  const metrics = useInterfaceMetrics()
   const listRef = useListRef(null)
   // Only shift the header action rail when the list actually shows a scrollbar.
   // Falling back to the system scrollbar width left-shifts ↑/↓ while row +/- stay at
@@ -483,7 +484,7 @@ function ChangeGroupSection({
       }
     >
       <div
-        className={`relative flex ${SCM_TOOLBAR_H} flex-shrink-0 items-stretch border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
+        className={`relative flex ${SCM_TOOLBAR_H} flex-shrink-0 items-stretch border-b border-border/60 bg-bg-sidebar text-ui-sm text-fg-muted`}
       >
         <button
           type="button"
@@ -525,7 +526,7 @@ function ChangeGroupSection({
           <List
             listRef={listRef}
             rowCount={changes.length}
-            rowHeight={ROW_HEIGHT}
+            rowHeight={metrics.scmRowHeight}
             rowComponent={ChangeRowComponent}
             rowProps={rowProps}
             overscanCount={8}
@@ -569,7 +570,7 @@ function CommitFileListRowComponent(
         onClick={() => onSelect(file.path)}
         onDoubleClick={() => onOpenFile(file)}
         onContextMenu={event => onOpenContextMenu(event, file)}
-        className={`flex h-full w-full items-center gap-2 px-3 text-left text-[12px] hover:bg-bg-hover ${
+        className={`flex h-full w-full items-center gap-2 px-3 text-left text-ui-sm hover:bg-bg-hover ${
           active ? 'bg-bg-active' : ''
         }`}
       >
@@ -578,7 +579,7 @@ function CommitFileListRowComponent(
           label={file.path}
           side="bottom"
           onlyWhenOverflow
-          wrapperClassName="min-w-0 flex-1 truncate font-mono text-[11px] text-tree-fg"
+          wrapperClassName="min-w-0 flex-1 truncate font-mono text-ui-xs text-tree-fg"
         >
           <span>{formatScmDisplayPath(file.path)}</span>
         </Tooltip>
@@ -601,6 +602,7 @@ function CommitFileList({
   onOpenContextMenu: (event: ReactMouseEvent, file: GitCommitFileChange) => void
 }) {
   const listRef = useListRef(null)
+  const metrics = useInterfaceMetrics()
   const rowProps = useMemo(
     () => ({ files, selectedPath, onSelect, onOpenFile, onOpenContextMenu }),
     [files, onOpenContextMenu, onOpenFile, onSelect, selectedPath]
@@ -610,7 +612,7 @@ function CommitFileList({
     <List
       listRef={listRef}
       rowCount={files.length}
-      rowHeight={ROW_HEIGHT}
+      rowHeight={metrics.scmRowHeight}
       rowComponent={CommitFileListRowComponent}
       rowProps={rowProps}
       overscanCount={20}
@@ -1074,10 +1076,7 @@ export default function SourceControlPanel() {
       const fromEl = Number.parseFloat(getComputedStyle(el).zoom)
       if (Number.isFinite(fromEl) && fromEl > 0) return fromEl
     }
-    const fromRoot = Number.parseFloat(
-      getComputedStyle(document.documentElement).getPropertyValue('--ui-font-scale'),
-    )
-    return Number.isFinite(fromRoot) && fromRoot > 0 ? fromRoot : 1
+    return 1
   }, [])
 
   const positionBranchMenu = useCallback(() => {
@@ -2211,7 +2210,7 @@ export default function SourceControlPanel() {
             onSelectAll={selectAllInGroup}
           />
           <div className="flex-shrink-0 border-t border-border bg-bg-sidebar px-3 py-2.5">
-            <label className="mb-2 flex items-center gap-2 text-[12px] text-fg-muted">
+            <label className="mb-2 flex items-center gap-2 text-ui-sm text-fg-muted">
               <input
                 type="checkbox"
                 checked={pushAfterCommit}
@@ -2235,13 +2234,13 @@ export default function SourceControlPanel() {
               }
               aria-label={t('提交信息')}
               aria-invalid={commitError ? true : undefined}
-              className="text-ui-sm block max-h-28 min-h-14 w-full resize-y rounded border border-border-strong bg-bg-deep/60 px-2.5 py-2 leading-5 text-fg outline-none placeholder:text-fg-dim focus:border-accent disabled:opacity-60"
+              className="text-ui-sm block max-h-28 min-h-14 w-full resize-y rounded border border-border-strong bg-bg-deep/60 px-2.5 py-2 leading-[var(--ui-line-height)] text-fg outline-none placeholder:text-fg-dim focus:border-accent disabled:opacity-60"
             />
             <button
               type="button"
               disabled={!canCommitStagedChanges(commitMessage, groups.staged.length, writeDisabled)}
               onClick={() => void commitStaged()}
-              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-action px-3 py-1.5 text-[12px] font-medium text-on-action transition-colors hover:bg-action/90 disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-action px-3 py-1.5 text-ui-sm font-medium text-on-action transition-colors hover:bg-action/90 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {operation?.kind === 'commit' || operation?.kind === 'push' ? (
                 <LoaderCircle size={13} className="animate-spin" />
@@ -2325,10 +2324,10 @@ export default function SourceControlPanel() {
         className="bg-bg-sidebar"
       >
         <div className="flex-shrink-0 space-y-2 border-b border-border px-4 py-3">
-          <h2 className="text-[14px] font-semibold leading-snug text-fg">
+          <h2 className="text-ui-lg font-semibold leading-snug text-fg">
             {selectedCommit.subject || t('（无提交说明）')}
           </h2>
-          <div className="flex flex-col gap-1 text-[12px] text-fg-muted">
+          <div className="flex flex-col gap-1 text-ui-sm text-fg-muted">
             <span>
               <span className="text-fg-dim">{t('作者')}</span>
               {' · '}
@@ -2341,18 +2340,18 @@ export default function SourceControlPanel() {
             </span>
             <span className="flex flex-wrap items-center gap-2">
               <span className="text-fg-dim">{t('提交')}</span>
-              <span className="font-mono text-[12px] text-accent">{selectedCommit.short_hash}</span>
+              <span className="font-mono text-ui-sm text-accent">{selectedCommit.short_hash}</span>
               <button
                 type="button"
                 onClick={() => void copyCommitHash(selectedCommit.short_hash)}
-                className="rounded border border-border px-2 py-0.5 text-[11px] text-fg hover:bg-bg-hover"
+                className="rounded border border-border px-2 py-0.5 text-ui-xs text-fg hover:bg-bg-hover"
               >
                 {t('复制哈希')}
               </button>
             </span>
           </div>
         </div>
-        <div className="flex h-8 flex-shrink-0 items-center border-b border-border/60 px-3 text-[12px] font-medium text-fg">
+        <div className="flex h-8 flex-shrink-0 items-center border-b border-border/60 px-3 text-ui-sm font-medium text-fg">
           {commitFileFilter.trim()
             ? t('更改的文件（{shown} / {total}）', {
                 shown: filteredCommitFiles.files.length,
@@ -2375,7 +2374,7 @@ export default function SourceControlPanel() {
               aria-pressed={commitFileFilterRegex}
               aria-label={commitFileFilterRegex ? t('关闭正则') : t('使用正则')}
               onClick={() => setCommitFileFilterRegex(v => !v)}
-              className={`shrink-0 rounded border px-1.5 py-1 font-mono text-[11px] leading-none transition-colors ${
+              className={`shrink-0 rounded border px-1.5 py-1 font-mono text-ui-xs leading-none transition-colors ${
                 commitFileFilterRegex
                   ? 'border-accent bg-accent/15 text-accent'
                   : 'border-border text-fg-dim hover:bg-bg-hover hover:text-fg'
@@ -2387,18 +2386,18 @@ export default function SourceControlPanel() {
         </div>
         <div className="min-h-0 flex-1 overflow-hidden">
           {commitFilesLoading ? (
-            <p className="flex items-center gap-2 px-3 py-2 text-[11px] text-fg-dim">
+            <p className="flex items-center gap-2 px-3 py-2 text-ui-xs text-fg-dim">
               <LoaderCircle size={12} className="animate-spin text-accent" />
               {t('正在读取提交文件…')}
             </p>
           ) : commitFilesError ? (
-            <p className="px-3 py-2 text-[11px] text-danger">{commitFilesError}</p>
+            <p className="px-3 py-2 text-ui-xs text-danger">{commitFilesError}</p>
           ) : commitFiles.length === 0 ? (
-            <p className="px-3 py-2 text-[11px] text-fg-dim">{t('此提交没有文件变更')}</p>
+            <p className="px-3 py-2 text-ui-xs text-fg-dim">{t('此提交没有文件变更')}</p>
           ) : filteredCommitFiles.error === 'invalid-regex' ? (
-            <p className="px-3 py-2 text-[11px] text-danger">{t('正则表达式无效')}</p>
+            <p className="px-3 py-2 text-ui-xs text-danger">{t('正则表达式无效')}</p>
           ) : filteredCommitFiles.files.length === 0 ? (
-            <p className="px-3 py-2 text-[11px] text-fg-dim">{t('没有匹配的文件')}</p>
+            <p className="px-3 py-2 text-ui-xs text-fg-dim">{t('没有匹配的文件')}</p>
           ) : (
             <CommitFileList
               files={filteredCommitFiles.files}
@@ -2419,7 +2418,7 @@ export default function SourceControlPanel() {
           {showingCommitDiff ? (
             <>
               <div
-                className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center gap-2 border-b border-border/60 bg-bg-sidebar px-2 text-[12px] text-fg-muted`}
+                className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center gap-2 border-b border-border/60 bg-bg-sidebar px-2 text-ui-sm text-fg-muted`}
               >
                 <button
                   type="button"
@@ -2430,7 +2429,7 @@ export default function SourceControlPanel() {
                   {t('返回提交列表')}
                 </button>
                 {commitFileDiff && (
-                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-fg-dim">
+                  <span className="min-w-0 flex-1 truncate font-mono text-ui-xs text-fg-dim">
                     {commitFileDiff.name}
                   </span>
                 )}
@@ -2471,7 +2470,7 @@ export default function SourceControlPanel() {
               }
             >
               <div
-                className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center border-b border-border/60 bg-bg-sidebar text-[12px] text-fg-muted`}
+                className={`flex ${SCM_TOOLBAR_H} flex-shrink-0 items-center border-b border-border/60 bg-bg-sidebar text-ui-sm text-fg-muted`}
                 style={{ scrollbarGutter: 'stable' }}
               >
                 <button
@@ -2535,7 +2534,7 @@ export default function SourceControlPanel() {
             <p className="font-medium">
               {t('存在 {count} 个未解决的合并冲突', { count: unmergedChanges.length })}
             </p>
-            <p className="mt-1 text-[11px] leading-5 text-fg-muted">
+            <p className="mt-1 text-ui-xs leading-[var(--ui-line-height)] text-fg-muted">
               {t('请在编辑器中解决冲突标记（<<<<<<<），解决后暂存并提交。')}
             </p>
           </div>
@@ -2553,7 +2552,7 @@ export default function SourceControlPanel() {
                 type="button"
                 onClick={() => void retryPush()}
                 disabled={Boolean(operation) || loading}
-                className="rounded border border-danger/50 px-2 py-1 text-[11px] font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
+                className="rounded border border-danger/50 px-2 py-1 text-ui-xs font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
               >
                 {t('重试推送')}
               </button>
@@ -2564,7 +2563,7 @@ export default function SourceControlPanel() {
           <button
             type="button"
             onClick={() => setScmTab('changes')}
-            className={`rounded px-2.5 py-1 text-[12px] font-medium transition-colors ${
+            className={`rounded px-2.5 py-1 text-ui-sm font-medium transition-colors ${
               scmTab === 'changes'
                 ? 'bg-bg-active text-fg'
                 : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -2575,7 +2574,7 @@ export default function SourceControlPanel() {
           <button
             type="button"
             onClick={() => setScmTab('history')}
-            className={`rounded px-2.5 py-1 text-[12px] font-medium transition-colors ${
+            className={`rounded px-2.5 py-1 text-ui-sm font-medium transition-colors ${
               scmTab === 'history'
                 ? 'bg-bg-active text-fg'
                 : 'text-fg-muted hover:bg-bg-hover hover:text-fg'

@@ -126,7 +126,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
         aria-describedby={descriptionId}
       >
         <div className="flex items-center justify-between px-4 h-11 border-b border-border flex-shrink-0">
-          <h2 id={titleId} className="text-[13px] font-medium">
+          <h2 id={titleId} className="text-ui font-medium">
             {initial ? t('编辑运行配置') : t('新建运行配置')}
             <span className="text-fg-dim"> · {project.name}</span>
           </h2>
@@ -144,7 +144,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           <div className="flex items-center gap-2">
             <label
               htmlFor="run-config-name"
-              className="text-[12px] text-fg-muted w-16 flex-shrink-0"
+              className="text-ui-sm text-fg-muted w-16 flex-shrink-0"
             >
               {t('名称')}
             </label>
@@ -154,13 +154,13 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={t('如：前后端')}
-              className="flex-1 px-2 py-1 text-[13px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+              className="flex-1 px-2 py-1 text-ui rounded bg-bg-deep border border-border focus:border-accent outline-none"
             />
             <Tooltip label={t('从常见模板填充（Python 后端 + 前端）')} side="bottom">
               <button
                 type="button"
                 onClick={loadTemplate}
-                className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded bg-bg-elevated hover:bg-bg-active border border-border text-fg-muted hover:text-fg"
+                className="inline-flex items-center gap-1 text-ui-sm px-2 py-1 rounded bg-bg-elevated hover:bg-bg-active border border-border text-fg-muted hover:text-fg"
               >
                 <Wand2 size={13} /> {t('模板')}
               </button>
@@ -170,7 +170,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           <div className="flex items-center gap-2">
             <label
               htmlFor="run-config-session-restore"
-              className="w-16 flex-shrink-0 text-[12px] text-fg-muted"
+              className="w-16 flex-shrink-0 text-ui-sm text-fg-muted"
             >
               {t('会话恢复')}
             </label>
@@ -179,7 +179,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               aria-label={t('跟随项目会话恢复')}
               value={restoreWithProjectSession ? 'on' : 'off'}
               onChange={event => setRestoreWithProjectSession(event.target.value === 'on')}
-              className="rounded border border-border bg-bg-deep px-2 py-1 text-[12px] outline-none focus:border-accent"
+              className="rounded border border-border bg-bg-deep px-2 py-1 text-ui-sm outline-none focus:border-accent"
             >
               <option value="on">{t('开启')}</option>
               <option value="off">{t('关闭')}</option>
@@ -190,18 +190,18 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-[12px] text-fg-muted">{t('任务（每个任务启动一个终端）')}</span>
+            <span className="text-ui-sm text-fg-muted">{t('任务（每个任务启动一个终端）')}</span>
             <button
               type="button"
               onClick={addTask}
-              className="inline-flex items-center gap-1 text-[12px] px-2 py-1 rounded text-accent hover:bg-bg-hover"
+              className="inline-flex items-center gap-1 text-ui-sm px-2 py-1 rounded text-accent hover:bg-bg-hover"
             >
               <Plus size={13} /> {t('添加任务')}
             </button>
           </div>
 
           {tasks.length === 0 ? (
-            <div className="text-[12px] text-fg-dim py-3 text-center border border-dashed border-border rounded">
+            <div className="text-ui-sm text-fg-dim py-3 text-center border border-dashed border-border rounded">
               {t('点击“添加任务”或“模板”快速开始')}
             </div>
           ) : (
@@ -234,7 +234,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
             <button
               type="button"
               onClick={onClose}
-              className="text-[13px] px-3 py-1.5 rounded text-fg-muted hover:text-fg hover:bg-bg-hover"
+              className="text-ui px-3 py-1.5 rounded text-fg-muted hover:text-fg hover:bg-bg-hover"
             >
               {t('取消')}
             </button>
@@ -247,7 +247,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
                 !name.trim() ||
                 tasks.filter(t => t.target.trim()).length === 0
               }
-              className="text-[13px] px-3 py-1.5 rounded bg-action text-on-action hover:bg-action/90 disabled:opacity-40 disabled:cursor-default"
+              className="text-ui px-3 py-1.5 rounded bg-action text-on-action hover:bg-action/90 disabled:opacity-40 disabled:cursor-default"
             >
               {t('保存')}
             </button>
@@ -291,19 +291,19 @@ function TaskEditor({
   return (
     <div className="rounded-md border border-border bg-bg/40 p-2 flex flex-col gap-1.5">
       <div className="flex items-center gap-2">
-        <span className="text-[11px] text-fg-dim w-6 flex-shrink-0">#{index + 1}</span>
+        <span className="text-ui-xs text-fg-dim w-6 flex-shrink-0">#{index + 1}</span>
         <input
           aria-label={t('任务名')}
           value={task.name ?? ''}
           onChange={e => onChange({ name: e.target.value })}
           placeholder={t('任务名（可选，如：后端）')}
-          className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none"
         />
         <select
           aria-label={t('任务类型')}
           value={task.type}
           onChange={e => onChange({ type: e.target.value as RunTaskType })}
-          className="max-w-[9.5rem] px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none"
+          className="max-w-[9.5rem] px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none"
         >
           {unsupported ? (
             <option value={task.type} disabled>
@@ -330,7 +330,7 @@ function TaskEditor({
       {task.type === 'command' ? (
         <div className="flex items-start gap-2">
           <div className="flex items-center gap-0.5 w-16 flex-shrink-0 pt-1">
-            <label className="text-[11px] text-fg-muted">{t('命令')}</label>
+            <label className="text-ui-xs text-fg-muted">{t('命令')}</label>
             <Tooltip label={commandHelp} side="bottom" wrapperClassName="inline-flex">
               <span className="text-fg-dim hover:text-fg-muted cursor-default" aria-hidden>
                 <CircleHelp size={11} />
@@ -347,40 +347,40 @@ function TaskEditor({
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">{t('脚本路径')}</label>
+          <label className="text-ui-xs text-fg-muted w-16 flex-shrink-0">{t('脚本路径')}</label>
           <input
             aria-label={t('脚本路径')}
             value={task.target}
             onChange={e => onChange({ target: e.target.value })}
             placeholder={remote ? 'scripts/run_backend.py' : 'scripts/run_backend.ps1'}
-            className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+            className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
           />
         </div>
       )}
       <div className="flex items-center gap-2">
-        <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">{t('工作目录')}</label>
+        <label className="text-ui-xs text-fg-muted w-16 flex-shrink-0">{t('工作目录')}</label>
         <input
           aria-label={t('工作目录')}
           value={task.cwd ?? ''}
           onChange={e => onChange({ cwd: e.target.value })}
           placeholder={t('留空=项目根；可相对，如 backend/')}
-          className="flex-1 min-w-0 px-2 py-0.5 text-[12px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+          className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
         />
       </div>
       {unsupported ? (
-        <p className="pl-[4.5rem] text-[11px] text-warn">
+        <p className="pl-[4.5rem] text-ui-xs text-warn">
           {t('SSH Linux 项目不支持 PowerShell 或 BAT 任务，请改用命令、sh 或脚本。')}
         </p>
       ) : null}
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-2">
-          <label className="text-[11px] text-fg-muted w-16 flex-shrink-0">{t('环境变量')}</label>
+          <label className="text-ui-xs text-fg-muted w-16 flex-shrink-0">{t('环境变量')}</label>
           {envEntries.length > 0 && <span className="flex-1 min-w-0" />}
           <button
             type="button"
             aria-label={t('添加环境变量')}
             onClick={() => setEnv([...envEntries, ['', '']])}
-            className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded text-accent hover:bg-bg-hover shrink-0"
+            className="inline-flex items-center gap-1 text-ui-xs px-1.5 py-0.5 rounded text-accent hover:bg-bg-hover shrink-0"
           >
             <Plus size={11} /> {t('添加')}
           </button>
@@ -396,7 +396,7 @@ function TaskEditor({
                 )
               }
               placeholder="KEY"
-              className="w-28 px-1.5 py-0.5 text-[11px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+              className="w-28 px-1.5 py-0.5 text-ui-xs rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
             />
             <span className="text-fg-dim">=</span>
             <input
@@ -408,7 +408,7 @@ function TaskEditor({
                 )
               }
               placeholder="value"
-              className="flex-1 min-w-0 px-1.5 py-0.5 text-[11px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
+              className="flex-1 min-w-0 px-1.5 py-0.5 text-ui-xs rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
             />
             <button
               type="button"
@@ -473,7 +473,7 @@ function CommandTextarea({
       aria-label={ariaLabel}
       onChange={e => onChange(e.target.value)}
       onInput={resize}
-      className={`w-full min-h-[1.75rem] max-h-40 px-2 py-1 text-[12px] leading-[18px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono resize-y overflow-y-auto wrap-break-word ${className ?? ''}`}
+      className={`w-full min-h-[1.75rem] max-h-40 px-2 py-1 text-ui-sm leading-[18px] rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono resize-y overflow-y-auto wrap-break-word ${className ?? ''}`}
     />
   )
 }

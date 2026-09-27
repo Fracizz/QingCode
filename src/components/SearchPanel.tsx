@@ -1,3 +1,5 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
+import { interfacePixelSize } from '../lib/interfaceMetrics'
 import {
   useCallback,
   useEffect,
@@ -114,6 +116,7 @@ const EXT_PICKER_WIDTH = 200
 const SCOPE_MENU_WIDTH = 140
 
 export default function SearchPanel() {
+  const metrics = useInterfaceMetrics()
   const { t } = useI18n()
   const projects = useProjectStore(s => s.projects)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
@@ -1149,7 +1152,7 @@ export default function SearchPanel() {
   return (
     <>
       <div className="h-full min-h-0 flex flex-col bg-bg-sidebar text-fg">
-        <div className="px-3 h-9 flex items-center gap-2 text-[11px] font-semibold tracking-wide text-fg-muted">
+        <div className="px-3 h-9 flex items-center gap-2 text-ui-xs font-semibold tracking-wide text-fg-muted">
           <Search size={13} className="text-brand flex-shrink-0" />
           <span className="min-w-0 truncate">{t('搜索')}</span>
           <Tooltip
@@ -1206,7 +1209,7 @@ export default function SearchPanel() {
                     type="button"
                     role="option"
                     aria-selected={selected}
-                    className={`w-full px-2 py-1 text-left text-[12px] rounded transition-colors
+                    className={`w-full px-2 py-1 text-left text-ui-sm rounded transition-colors
                     ${
                       selected
                         ? 'bg-bg-active text-fg'
@@ -1227,7 +1230,7 @@ export default function SearchPanel() {
                 type="button"
                 role="option"
                 aria-selected={Boolean(searchRoot)}
-                className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[12px] transition-colors
+                className={`flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-ui-sm transition-colors
                 ${
                   searchRoot
                     ? 'bg-bg-active text-fg'
@@ -1243,7 +1246,7 @@ export default function SearchPanel() {
           )}
 
         {searchRoot && (
-          <div className="mx-3 mb-2 flex items-center gap-1.5 px-2 py-1 rounded border border-accent/40 bg-accent/10 text-[11px] text-fg">
+          <div className="mx-3 mb-2 flex items-center gap-1.5 px-2 py-1 rounded border border-accent/40 bg-accent/10 text-ui-xs text-fg">
             <Filter size={12} className="text-accent flex-shrink-0" />
             <Tooltip label={searchRoot} side="bottom" wrapperClassName="truncate flex-1 min-w-0">
               <span className="truncate block">
@@ -1341,7 +1344,7 @@ export default function SearchPanel() {
                     }}
                     placeholder={inputPlaceholder}
                     aria-keyshortcuts="Enter"
-                    className="setting-input w-full pl-7 pr-7 py-1.5 text-[13px]"
+                    className="setting-input w-full pl-7 pr-7 py-1.5 text-ui"
                   />
                   {query && (
                     <button
@@ -1362,7 +1365,7 @@ export default function SearchPanel() {
                   type="button"
                   aria-label={t('查询')}
                   disabled={!canSubmitSearch || (loading && !searchDirty)}
-                  className="flex h-[30px] shrink-0 items-center gap-1 rounded border border-border-strong bg-bg-deep px-2 text-[12px] text-fg-muted transition-colors hover:border-accent hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+                  className="flex h-[30px] shrink-0 items-center gap-1 rounded border border-border-strong bg-bg-deep px-2 text-ui-sm text-fg-muted transition-colors hover:border-accent hover:text-fg disabled:pointer-events-none disabled:opacity-40"
                   onClick={submitSearch}
                 >
                   <Search size={12} />
@@ -1370,7 +1373,7 @@ export default function SearchPanel() {
                 </button>
               </div>
               {searchDirty && (
-                <div className="px-0.5 text-[11px] text-accent" aria-live="polite">
+                <div className="px-0.5 text-ui-xs text-accent" aria-live="polite">
                   {t('查询条件已修改，按 Enter 或点击查询')}
                 </div>
               )}
@@ -1385,7 +1388,7 @@ export default function SearchPanel() {
                       value={replaceText}
                       onChange={e => setReplaceText(e.target.value)}
                       placeholder={t('替换为…')}
-                      className="setting-input w-full pl-7 pr-2 py-1.5 text-[13px]"
+                      className="setting-input w-full pl-7 pr-2 py-1.5 text-ui"
                     />
                   </div>
                   <Tooltip label={t('预览并确认后写入全部匹配')} side="bottom">
@@ -1398,7 +1401,7 @@ export default function SearchPanel() {
                         searchDirty ||
                         loading
                       }
-                      className="flex-shrink-0 px-2 py-1.5 text-[11px] rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                      className="flex-shrink-0 px-2 py-1.5 text-ui-xs rounded border border-border-strong text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-40 disabled:pointer-events-none transition-colors"
                       onClick={() => {
                         if (!contentResults || !queryTrimmed || searchDirty) return
                         setReplacePreview(
@@ -1463,7 +1466,7 @@ export default function SearchPanel() {
                   setExtPickerStyle(prev => ({ ...prev, visibility: 'hidden' }))
                   setExtPickerOpen(true)
                 }}
-                className={`flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded border transition-colors
+                className={`flex items-center gap-1 px-1.5 py-0.5 text-ui-xs rounded border transition-colors
                 ${
                   typeFilter
                     ? 'bg-action text-on-action border-accent'
@@ -1481,7 +1484,7 @@ export default function SearchPanel() {
               <Tooltip label={t('清除类型筛选')} side="bottom">
                 <button
                   type="button"
-                  className="px-1 py-0.5 text-[11px] rounded text-fg-dim hover:text-fg"
+                  className="px-1 py-0.5 text-ui-xs rounded text-fg-dim hover:text-fg"
                   onClick={() => setTypeFilter(null)}
                 >
                   <X size={12} />
@@ -1498,7 +1501,7 @@ export default function SearchPanel() {
                   onPointerDown={event => event.stopPropagation()}
                 >
                   <div className="mb-1 flex items-center justify-between gap-2 px-1">
-                    <span className="text-[10px] text-fg-dim">{t('当前项目')}</span>
+                    <span className="text-ui-2xs text-fg-dim">{t('当前项目')}</span>
                     {projectExtsLoading && (
                       <LoaderCircle size={10} className="animate-spin text-accent" />
                     )}
@@ -1512,7 +1515,7 @@ export default function SearchPanel() {
                         setTypeFilter(null)
                         closeExtPicker()
                       }}
-                      className={`rounded border px-2 py-0.5 text-[11px] transition-colors
+                      className={`rounded border px-2 py-0.5 text-ui-xs transition-colors
                       ${
                         !typeFilter
                           ? 'border-accent bg-action text-on-action'
@@ -1535,7 +1538,7 @@ export default function SearchPanel() {
                             )
                             closeExtPicker()
                           }}
-                          className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
+                          className={`rounded border px-2 py-0.5 font-mono text-ui-xs transition-colors
                           ${
                             selected
                               ? 'border-accent bg-action text-on-action'
@@ -1558,7 +1561,7 @@ export default function SearchPanel() {
                             )
                             closeExtPicker()
                           }}
-                          className={`rounded border px-2 py-0.5 font-mono text-[11px] transition-colors
+                          className={`rounded border px-2 py-0.5 font-mono text-ui-xs transition-colors
                           ${
                             typeFilter?.kind === 'star'
                               ? 'border-accent bg-action text-on-action'
@@ -1570,11 +1573,11 @@ export default function SearchPanel() {
                       </Tooltip>
                     )}
                     {!projectExtsLoading && topExts.length === 0 && (
-                      <span className="px-1 py-0.5 text-[11px] text-fg-dim">{t('暂无扩展名')}</span>
+                      <span className="px-1 py-0.5 text-ui-xs text-fg-dim">{t('暂无扩展名')}</span>
                     )}
                   </div>
                   <div className="mt-1.5 border-t border-border pt-1.5">
-                    <div className="mb-1 px-1 text-[10px] text-fg-dim">{t('自定义类型')}</div>
+                    <div className="mb-1 px-1 text-ui-2xs text-fg-dim">{t('自定义类型')}</div>
                     <div className="flex items-center gap-1">
                       <input
                         value={customExtension}
@@ -1588,13 +1591,13 @@ export default function SearchPanel() {
                         }}
                         placeholder={t('输入类型，如 .vue')}
                         aria-label={t('自定义文件类型')}
-                        className="setting-input min-w-0 flex-1 px-2 py-1 font-mono text-[11px]"
+                        className="setting-input min-w-0 flex-1 px-2 py-1 font-mono text-ui-xs"
                       />
                       <button
                         type="button"
                         disabled={!normalizedCustomExtension}
                         onClick={applyCustomExtension}
-                        className="shrink-0 rounded border border-border-strong bg-bg-deep px-2 py-1 text-[11px] text-fg-muted transition-colors hover:bg-bg-active hover:text-fg disabled:pointer-events-none disabled:opacity-40"
+                        className="shrink-0 rounded border border-border-strong bg-bg-deep px-2 py-1 text-ui-xs text-fg-muted transition-colors hover:bg-bg-active hover:text-fg disabled:pointer-events-none disabled:opacity-40"
                       >
                         {t('确定')}
                       </button>
@@ -1652,7 +1655,7 @@ export default function SearchPanel() {
             />
           ) : (
             <>
-              <div className="shrink-0 px-4 py-1 flex items-center gap-2 text-[11px] text-fg-dim">
+              <div className="shrink-0 px-4 py-1 flex items-center gap-2 text-ui-xs text-fg-dim">
                 <Tooltip
                   label={
                     filenameTruncated || contentTruncated
@@ -1702,7 +1705,7 @@ export default function SearchPanel() {
                 <List
                   listRef={listRef}
                   rowCount={rows.length}
-                  rowHeight={(index: number) => rowHeightOf(rows[index])}
+rowHeight={(index: number) => interfacePixelSize(rowHeightOf(rows[index]), metrics.fontSize)}
                   rowComponent={SearchResultRow}
                   rowProps={rowProps}
                   overscanCount={8}

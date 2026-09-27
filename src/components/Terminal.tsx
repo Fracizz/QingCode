@@ -100,10 +100,10 @@ const DARK_THEME = {
 }
 
 const LIGHT_THEME = {
-  background: '#e6e6e6',
+  background: '#ffffff',
   foreground: '#1f1f1f',
   cursor: '#1a1a1a',
-  cursorAccent: '#e6e6e6',
+  cursorAccent: '#ffffff',
   selectionBackground: '#b9d6f5',
   black: '#000000',
   red: '#c43b32',

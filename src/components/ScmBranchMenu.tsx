@@ -1,3 +1,5 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
+import { interfacePixelSize } from '../lib/interfaceMetrics'
 import {
   useCallback,
   useEffect,
@@ -25,7 +27,7 @@ import Tooltip from './Tooltip'
 
 function BranchMenuLabel({
   name,
-  className = 'block truncate font-mono text-[12px] leading-tight',
+  className = 'block truncate font-mono text-ui-sm leading-tight',
 }: {
   name: string
   className?: string
@@ -61,7 +63,7 @@ function BranchMenuRowView({
     return (
       <div
         style={style}
-        className="flex items-center justify-between px-3 py-1 text-[11px] font-semibold tracking-wide text-fg-muted"
+        className="flex items-center justify-between px-3 py-1 text-ui-xs font-semibold tracking-wide text-fg-muted"
       >
         <span>{row.label}</span>
         <span className="font-normal tabular-nums text-fg-dim">{row.count}</span>
@@ -71,7 +73,7 @@ function BranchMenuRowView({
 
   if (row.type === 'empty') {
     return (
-      <div style={style} className="flex items-center px-3 text-[12px] text-fg-dim">
+      <div style={style} className="flex items-center px-3 text-ui-sm text-fg-dim">
         {row.label}
       </div>
     )
@@ -128,7 +130,7 @@ function BranchMenuRowView({
           {branch.upstream && (
             <BranchMenuLabel
               name={branch.upstream}
-              className="mt-0.5 block truncate font-mono text-[10px] leading-tight text-fg-dim"
+              className="mt-0.5 block truncate font-mono text-ui-2xs leading-tight text-fg-dim"
             />
           )}
         </div>
@@ -144,13 +146,14 @@ function BranchMenuScrollRows({
   onSwitch,
   onHover,
 }: BranchRowProps) {
+  const metrics = useInterfaceMetrics()
   return (
     <div className="min-h-0 flex-1 overflow-auto overscroll-y-contain">
       {rows.map((row, index) => (
         <BranchMenuRowView
           key={row.key}
           index={index}
-          style={{}}
+          style={{ height: interfacePixelSize(branchMenuRowHeight(row), metrics.fontSize) }}
           rows={rows}
           activeBranch={activeBranch}
           disabled={disabled}
@@ -174,9 +177,10 @@ function BranchMenuVirtualRows({
   onSwitch,
   onHover,
 }: BranchRowProps) {
+  const metrics = useInterfaceMetrics()
   const rowHeight = useCallback(
-    (index: number) => branchMenuRowHeight(rows[index]),
-    [rows]
+    (index: number) => interfacePixelSize(branchMenuRowHeight(rows[index]), metrics.fontSize),
+    [rows, metrics.fontSize]
   )
   const rowProps = useMemo(
     () => ({
@@ -298,7 +302,7 @@ export default function ScmBranchMenu({
     <div
       ref={menuRef}
       role="menu"
-      className="ui-font-scaled fixed z-[100] flex max-h-[70vh] flex-col rounded-md border border-border-strong bg-bg-elevated shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] flex max-h-[70vh] flex-col rounded-md border border-border-strong bg-bg-elevated shadow-2xl shadow-black/45"
       style={style}
       onPointerDown={event => event.stopPropagation()}
       onContextMenu={event => {
@@ -316,7 +320,7 @@ export default function ScmBranchMenu({
             onKeyDown={onInputKeyDown}
             placeholder={t('筛选分支…')}
             aria-label={t('筛选分支')}
-            className="min-w-0 flex-1 bg-transparent text-[12px] text-fg outline-none placeholder:text-fg-dim"
+            className="min-w-0 flex-1 bg-transparent text-ui-sm text-fg outline-none placeholder:text-fg-dim"
           />
           {loading && (
             <LoaderCircle size={12} className="shrink-0 animate-spin text-fg-dim" aria-hidden />

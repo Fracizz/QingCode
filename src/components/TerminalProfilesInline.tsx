@@ -53,7 +53,7 @@ export default function TerminalProfilesInline({
                     settings.defaultProfileId === profile.id ? null : settings.defaultProfileId,
                 })
               }}
-              className="h-[26px] px-2 rounded-sm text-[12px] text-danger hover:bg-bg-hover"
+              className="h-[26px] px-2 rounded-sm text-ui-sm text-danger hover:bg-bg-hover"
             >
               {t('删除')}
             </button>
@@ -105,7 +105,7 @@ export default function TerminalProfilesInline({
             ],
           })
         }
-        className="self-start rounded border border-border-strong px-2 py-1 text-[12px] text-fg-muted hover:bg-bg-hover hover:text-fg"
+        className="self-start rounded border border-border-strong px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg"
       >
         {t('添加终端配置')}
       </button>

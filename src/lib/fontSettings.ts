@@ -1,6 +1,7 @@
 import { isTauri, safeInvoke } from './tauri'
 import { loadGlobalSettings, saveGlobalSettings } from './projectSettings'
 import { getEditorPreferences, notifyEditorSettingsChanged } from './editorSettings'
+import { interfaceMetrics } from './interfaceMetrics'
 
 export const FONT_SETTINGS_KEY = 'qingcode:font-settings'
 export const FONT_SETTINGS_EVENT = 'qingcode:font-settings-changed'
@@ -118,12 +119,31 @@ export function loadFontSettings(): FontSettings {
 }
 
 export function applyFontSettings(settings: FontSettings) {
+  const metrics = interfaceMetrics(settings.interfaceFontSize)
   document.documentElement.style.setProperty('--font-sans', settings.interfaceFont)
   document.documentElement.style.setProperty('--font-mono', settings.monoFont)
-  document.documentElement.style.setProperty('--ui-font-size', `${settings.interfaceFontSize}px`)
-  document.documentElement.style.setProperty('--ui-font-scale', String(settings.interfaceFontSize / 13))
+  const sizes: Record<string, number> = {
+    '--ui-font-size': metrics.fontSize,
+    '--ui-font-size-sm': metrics.smallFontSize,
+    '--ui-line-height': metrics.lineHeight,
+    '--ui-control-height': metrics.controlHeight,
+    '--ui-row-height': metrics.rowHeight,
+    '--ui-chip-height': metrics.chipHeight,
+    '--tab-height': metrics.tabHeight,
+    '--title-bar-height': metrics.titleHeight,
+    '--status-bar-height': metrics.statusHeight,
+    '--activity-bar-width': metrics.activityWidth,
+    '--ui-activity-button-size': metrics.activityButtonSize,
+    '--ui-activity-icon-size': metrics.activityIconSize,
+  }
+  for (const [property, value] of Object.entries(sizes)) {
+    document.documentElement.style.setProperty(property, `${value}px`)
+  }
+  // Clear the old zoom preference for already-running / hot-reloaded windows.
+  document.documentElement.style.removeProperty('--ui-font-scale')
   document.documentElement.style.setProperty('--editor-font-size', `${settings.editorFontSize}px`)
   document.documentElement.style.setProperty('--terminal-font-size', `${settings.terminalFontSize}px`)
+  window.dispatchEvent(new Event(FONT_SETTINGS_EVENT))
 }
 
 export function getResolvedMonoFont(): string {
@@ -271,7 +291,6 @@ export type SaveFontSettingsOptions = {
 export function applyStoredFontSettings(settings: FontSettings) {
   localStorage.setItem(FONT_SETTINGS_KEY, JSON.stringify(settings))
   applyFontSettings(settings)
-  window.dispatchEvent(new Event(FONT_SETTINGS_EVENT))
 }
 
 /**

@@ -308,12 +308,12 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
   }
 
   const fieldClass =
-    'w-full rounded border border-border-strong bg-bg px-2.5 py-1.5 text-[13px] text-fg outline-none focus:border-accent'
+    'w-full rounded border border-border-strong bg-bg px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
   const pathFieldClass = `${fieldClass} font-mono`
-  const labelClass = 'text-[13px] text-fg-muted'
-  const helpClass = 'text-ui-sm leading-5 text-fg-muted'
+  const labelClass = 'text-ui text-fg-muted'
+  const helpClass = 'text-ui-sm leading-[var(--ui-line-height)] text-fg-muted'
   const valueBoxClass =
-    'mt-1 flex items-center gap-2 rounded border border-border-strong bg-bg px-2.5 py-1.5 font-mono text-[13px] text-fg-muted'
+    'mt-1 flex items-center gap-2 rounded border border-border-strong bg-bg px-2.5 py-1.5 font-mono text-ui text-fg-muted'
   const hostLabel = pendingRef.current
     ? sshConnectionTarget(pendingRef.current.connection)
     : sshConnectionTarget({
@@ -335,7 +335,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
         onPointerDown={event => event.stopPropagation()}
       >
         <div className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border-strong px-4">
-          <div className="flex min-w-0 flex-1 items-center gap-2 text-[14px] font-semibold text-fg">
+          <div className="flex min-w-0 flex-1 items-center gap-2 text-ui-lg font-semibold text-fg">
             <Server size={16} className="text-fg-muted" />
             <h2 id="ssh-project-title">{title}</h2>
           </div>
@@ -441,7 +441,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
                           <button
                             type="button"
                             onClick={() => void choosePrivateKey()}
-                            className="inline-flex flex-shrink-0 items-center gap-1 rounded border border-border-strong px-2.5 text-[13px] text-fg hover:bg-bg-hover"
+                            className="inline-flex flex-shrink-0 items-center gap-1 rounded border border-border-strong px-2.5 text-ui text-fg hover:bg-bg-hover"
                           >
                             <KeyRound size={13} />
                             选择
@@ -508,7 +508,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
                 </>
               )}
               {error ? (
-                <p className="col-span-2 rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-[13px] text-danger whitespace-pre-wrap">
+                <p className="col-span-2 rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui text-danger whitespace-pre-wrap">
                   {error}
                 </p>
               ) : null}
@@ -518,7 +518,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
               <button
                 type="button"
                 onClick={handleClose}
-                className="rounded border border-border-strong px-3 py-1.5 text-[13px] text-fg-muted hover:bg-bg-hover hover:text-fg"
+                className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg-muted hover:bg-bg-hover hover:text-fg"
               >
                 取消
               </button>
@@ -526,7 +526,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
                 type="button"
                 disabled={submitting}
                 onClick={() => void connect()}
-                className="rounded bg-action px-3 py-1.5 text-[13px] text-on-action hover:bg-action/90 disabled:opacity-50"
+                className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50"
               >
                 {submitting ? '正在连接…' : '连接'}
               </button>
@@ -597,11 +597,11 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
                   style={{ height: 240 }}
                 >
                   {browsing ? (
-                    <p className="px-2.5 py-4 text-center text-[13px] text-fg-muted">
+                    <p className="px-2.5 py-4 text-center text-ui text-fg-muted">
                       正在读取目录…
                     </p>
                   ) : entries.length === 0 ? (
-                    <p className="px-2.5 py-4 text-center text-[13px] text-fg-muted">
+                    <p className="px-2.5 py-4 text-center text-ui text-fg-muted">
                       此目录下没有子文件夹
                     </p>
                   ) : (
@@ -621,7 +621,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
                             if (!pending) return
                             void loadDirectory(pending.connection.id, entry.path)
                           }}
-                          className={`flex w-full items-center gap-1.5 px-3 py-2 text-left text-[13px] ${
+                          className={`flex w-full items-center gap-1.5 px-3 py-2 text-left text-ui ${
                             selected ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover'
                           }`}
                         >
@@ -634,7 +634,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
                 </div>
               </div>
               {error ? (
-                <p className="rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-[13px] text-danger whitespace-pre-wrap">
+                <p className="rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui text-danger whitespace-pre-wrap">
                   {error}
                 </p>
               ) : null}
@@ -644,14 +644,14 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
               <button
                 type="button"
                 onClick={backToConnection}
-                className="mr-auto rounded px-3 py-1.5 text-[13px] text-fg-muted hover:bg-bg-hover hover:text-fg"
+                className="mr-auto rounded px-3 py-1.5 text-ui text-fg-muted hover:bg-bg-hover hover:text-fg"
               >
                 返回连接
               </button>
               <button
                 type="button"
                 onClick={handleClose}
-                className="rounded border border-border-strong px-3 py-1.5 text-[13px] text-fg-muted hover:bg-bg-hover hover:text-fg"
+                className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg-muted hover:bg-bg-hover hover:text-fg"
               >
                 取消
               </button>
@@ -659,7 +659,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
                 type="button"
                 disabled={submitting || browsing || !targetPath.startsWith('/')}
                 onClick={() => void addProject()}
-                className="rounded bg-action px-3 py-1.5 text-[13px] text-on-action hover:bg-action/90 disabled:opacity-50"
+                className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50"
               >
                 {submitting ? '正在添加…' : '添加项目'}
               </button>

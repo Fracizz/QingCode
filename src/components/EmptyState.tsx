@@ -18,7 +18,7 @@ export default function EmptyState({ icon, title, hint, action, className = '' }
           {icon}
         </div>
       )}
-      <p className="text-[13px] font-medium text-fg-muted">{title}</p>
+      <p className="text-ui font-medium text-fg-muted">{title}</p>
       {hint && <p className="text-ui-sm text-fg-dim max-w-xs leading-relaxed">{hint}</p>}
       {action && <div className="mt-2">{action}</div>}
     </div>

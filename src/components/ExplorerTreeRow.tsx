@@ -123,7 +123,7 @@ export default function ExplorerTreeRow({
       data-explorer-drop={node.path}
       data-explorer-isdir={node.is_dir ? '1' : '0'}
       aria-expanded={node.is_dir ? expanded : undefined}
-      className={`flex items-center gap-1 pr-2 py-[3px] cursor-default [&_button]:cursor-default text-[13px] select-none focus:outline-none
+      className={`flex items-center gap-1 pr-2 py-[3px] cursor-default [&_button]:cursor-default text-ui select-none focus:outline-none
         ${isDropTarget ? 'text-accent font-medium' : ''}
         ${!isDropTarget && isSelected ? 'bg-bg-active text-accent' : ''}
         ${!isDropTarget && !isSelected ? 'hover:bg-bg-hover focus-visible:bg-bg-hover' : ''}
@@ -204,7 +204,7 @@ export default function ExplorerTreeRow({
         </span>
       </Tooltip>
       {gitGlyph && (
-        <span className={`ml-auto flex-shrink-0 text-[11px] font-medium ${gitColor}`}>
+        <span className={`ml-auto flex-shrink-0 text-ui-xs font-medium ${gitColor}`}>
           {gitGlyph}
         </span>
       )}

@@ -1,7 +1,6 @@
 /* Toasts */
 .toast-enter {
   animation: toast-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform, opacity;
 }
 @keyframes toast-in {
   from {
@@ -44,7 +43,6 @@
 
 .modal-content-enter {
   animation: modal-content-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform, opacity;
 }
 @keyframes modal-content-in {
   from {
@@ -59,7 +57,6 @@
 
 .menu-enter {
   animation: menu-in 120ms cubic-bezier(0.16, 1, 0.3, 1);
-  will-change: transform, opacity;
 }
 @keyframes menu-in {
   from {

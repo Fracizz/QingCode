@@ -41,7 +41,7 @@ export default function SegmentedControl<T extends string>({
             aria-selected={active}
             disabled={option.disabled}
             onClick={() => onChange(option.value)}
-            className={`flex-1 px-2 py-0.5 text-[12px] rounded transition-colors whitespace-nowrap
+            className={`flex-1 px-2 py-0.5 text-ui-sm rounded transition-colors whitespace-nowrap
               ${active ? 'bg-bg-elevated text-fg shadow-sm' : 'text-fg-muted hover:text-fg'}
               disabled:opacity-40 disabled:cursor-not-allowed`}
           >

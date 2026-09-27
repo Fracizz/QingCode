@@ -42,7 +42,7 @@ export default function Toaster() {
             onBlurCapture={event => {
               if (!event.currentTarget.contains(event.relatedTarget)) resume(t.id, 'focus')
             }}
-            className="toast-enter toast-item relative overflow-hidden bg-bg-elevated border border-border-strong rounded-lg shadow-elevation-2 px-3.5 py-3 flex items-start gap-2.5 text-sm max-w-sm transition-all duration-150 hover:shadow-elevation-3"
+            className="toast-enter toast-item relative overflow-hidden bg-bg-elevated border border-border-strong rounded-lg shadow-elevation-2 px-3.5 py-3 flex items-start gap-2.5 text-ui-lg max-w-sm transition-all duration-150 hover:shadow-elevation-3"
           >
             {/* Left color indicator bar */}
             <span className={`absolute left-0 top-0 bottom-0 w-[3px] ${barColor}`} aria-hidden="true" />
@@ -57,7 +57,7 @@ export default function Toaster() {
               {t.action ? (
                 <button
                   type="button"
-                  className="mt-2.5 inline-flex items-center rounded-md border border-border-strong bg-bg px-2.5 py-1 text-[12px] font-medium text-fg shadow-sm transition-colors hover:bg-bg-hover hover:text-fg active:translate-y-[0.5px]"
+                  className="mt-2.5 inline-flex items-center rounded-md border border-border-strong bg-bg px-2.5 py-1 text-ui-sm font-medium text-fg shadow-sm transition-colors hover:bg-bg-hover hover:text-fg active:translate-y-[0.5px]"
                   onClick={() => {
                     dismiss(t.id)
                     void t.action?.onAction()

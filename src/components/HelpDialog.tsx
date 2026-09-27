@@ -46,7 +46,7 @@ function HelpMarkdown({ content }: { content: string }) {
   return (
     <article
       ref={articleRef}
-      className="qing-md-preview flex-1 overflow-auto px-5 py-4 text-[14px] leading-relaxed text-fg"
+      className="qing-md-preview flex-1 overflow-auto px-5 py-4 text-ui-lg leading-relaxed text-fg"
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
@@ -112,7 +112,7 @@ export default function HelpDialog({ onClose }: Props) {
         onMouseDown={event => event.stopPropagation()}
       >
         <header className="flex h-11 flex-shrink-0 items-center justify-between gap-3 border-b border-border px-4">
-          <h2 id="help-dialog-title" className="flex items-center gap-2 text-[14px] font-medium text-fg">
+          <h2 id="help-dialog-title" className="flex items-center gap-2 text-ui-lg font-medium text-fg">
             <FileText size={16} className="text-accent" /> {t('帮助文档')}
           </h2>
           <Tooltip label={t('关闭帮助文档')} side="bottom">
@@ -136,7 +136,7 @@ export default function HelpDialog({ onClose }: Props) {
               onChange={event => setQuery(event.target.value)}
               placeholder={t('搜索帮助文档')}
               aria-label={t('搜索帮助文档')}
-              className="setting-input w-full py-1.5 pl-8 pr-8 text-[13px] leading-5"
+              className="setting-input w-full py-1.5 pl-8 pr-8 text-ui leading-[var(--ui-line-height)]"
             />
             {query && (
               <button
@@ -154,7 +154,7 @@ export default function HelpDialog({ onClose }: Props) {
         {markdown.trim() ? (
           <HelpMarkdown content={markdown} />
         ) : (
-          <div className="flex flex-1 items-center justify-center px-5 py-10 text-[13px] text-fg-dim">
+          <div className="flex flex-1 items-center justify-center px-5 py-10 text-ui text-fg-dim">
             {t('没有匹配的帮助内容')}
           </div>
         )}
@@ -163,7 +163,7 @@ export default function HelpDialog({ onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded bg-action px-3 py-1.5 text-[13px] text-on-action hover:bg-action/90"
+            className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90"
           >
             {t('关闭')}
           </button>

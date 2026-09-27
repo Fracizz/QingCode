@@ -1,4 +1,4 @@
-/* Layout follows each editor column, including UI zoom and terminal splits. */
+/* Layout follows each editor column, including font changes and terminal splits. */
 .settings-shell { container: settings / inline-size; }
 .empty-editor { container: empty-editor / inline-size; }
 

@@ -50,7 +50,7 @@ export default function MarkdownRichText({ content, className }: Props) {
   }
 
   return (
-    <div ref={containerRef} className={className ?? 'qing-md-preview text-[13px] leading-relaxed text-fg'}>
+    <div ref={containerRef} className={className ?? 'qing-md-preview text-ui leading-relaxed text-fg'}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

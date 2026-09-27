@@ -155,7 +155,7 @@ export default function SymbolPicker() {
             }
             className="modal-search-input"
           />
-          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] text-fg-dim sm:inline">
+          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-ui-2xs text-fg-dim sm:inline">
             Esc
           </kbd>
         </div>
@@ -167,7 +167,7 @@ export default function SymbolPicker() {
           className="max-h-[min(360px,50vh)] overflow-y-auto py-1"
         >
           {results.length === 0 ? (
-            <p className="px-3 py-6 text-center text-[13px] text-fg-dim">{emptyMessage}</p>
+            <p className="px-3 py-6 text-center text-ui text-fg-dim">{emptyMessage}</p>
           ) : (
             results.map((symbol, index) => {
               const active = index === activeIndex
@@ -179,7 +179,7 @@ export default function SymbolPicker() {
                   role="option"
                   aria-selected={active}
                   data-sym-index={index}
-                  className={`flex w-full items-center gap-3 px-3 py-1.5 text-left text-[13px] transition-colors ${
+                  className={`flex w-full items-center gap-3 px-3 py-1.5 text-left text-ui transition-colors ${
                     active ? 'bg-accent/20 text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'
                   }`}
                   onMouseEnter={() => setActiveIndex(index)}

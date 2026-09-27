@@ -204,7 +204,7 @@ export default function SettingSelect({
                   role="option"
                   aria-selected={isSelected}
                   disabled={option.disabled}
-                  className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] outline-none transition-colors
+                  className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-ui outline-none transition-colors
                     ${
                       isActive
                         ? 'bg-bg-active text-fg'

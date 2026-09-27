@@ -52,7 +52,7 @@ const diffTheme = EditorView.baseTheme({
 
 const lightTheme = EditorView.theme(
   {
-    '&': { backgroundColor: '#f0f0f0', color: '#1f1f1f' },
+    '&': { backgroundColor: 'var(--color-bg)', color: 'var(--color-fg)' },
     '.cm-gutters': {
       backgroundColor: 'var(--color-bg)',
       color: 'var(--color-fg-muted)',
@@ -212,7 +212,7 @@ export default function DiffEditor({ tab, leftTitle, rightTitle }: Props) {
   if (isTooLarge) {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
-        <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-[11px]">
+        <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-ui-xs">
           <div className="flex flex-1 items-center border-r border-border px-3 py-1.5 text-fg-muted">
             <span className="truncate">{resolvedLeftTitle}</span>
           </div>
@@ -223,8 +223,8 @@ export default function DiffEditor({ tab, leftTitle, rightTitle }: Props) {
         <div className="flex flex-1 items-center justify-center p-6">
           <div className="flex flex-col items-center gap-3 text-fg-muted">
             <AlertTriangle size={32} className="text-warn" />
-            <p className="text-sm font-medium">{t('文件过大，无法显示差异对比')}</p>
-            <p className="text-xs">
+            <p className="text-ui-lg font-medium">{t('文件过大，无法显示差异对比')}</p>
+            <p className="text-ui-sm">
               {t('差异对比支持的最大文件大小为 {size}', { size: '5MB' })}
             </p>
           </div>
@@ -235,11 +235,11 @@ export default function DiffEditor({ tab, leftTitle, rightTitle }: Props) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-bg">
-      <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-[11px]">
+      <div className="ui-font-scaled flex flex-shrink-0 border-b border-border text-ui-xs">
         <div className="flex flex-1 items-center border-r border-border px-3 py-1.5 text-fg-muted">
           <span className="truncate">{resolvedLeftTitle}</span>
           {stats.removed > 0 && (
-            <span className="ml-2 inline-flex items-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-400">
+            <span className="ml-2 inline-flex items-center rounded-full bg-red-500/15 px-1.5 py-0.5 text-ui-2xs font-medium text-red-400">
               −{stats.removed}
             </span>
           )}
@@ -247,7 +247,7 @@ export default function DiffEditor({ tab, leftTitle, rightTitle }: Props) {
         <div className="flex flex-1 items-center px-3 py-1.5 text-fg-muted">
           <span className="truncate">{resolvedRightTitle}</span>
           {stats.added > 0 && (
-            <span className="ml-2 inline-flex items-center rounded-full bg-green-500/15 px-1.5 py-0.5 text-[10px] font-medium text-green-400">
+            <span className="ml-2 inline-flex items-center rounded-full bg-green-500/15 px-1.5 py-0.5 text-ui-2xs font-medium text-green-400">
               +{stats.added}
             </span>
           )}

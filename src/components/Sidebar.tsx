@@ -1,3 +1,4 @@
+import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   useCallback,
   useEffect,
@@ -150,6 +151,7 @@ function resolveExplorerDropFromPoint(
 }
 
 export default function Sidebar() {
+  const metrics = useInterfaceMetrics()
   const { t } = useI18n()
   const {
     projects,
@@ -1507,7 +1509,7 @@ export default function Sidebar() {
     >
       {/* Section header */}
       <div
-        className={`${EXPLORER_HEADING_INSET} ${EXPLORER_HEADING_ROW} justify-between pr-4 text-[11px] font-semibold tracking-wide text-fg-muted`}
+        className={`${EXPLORER_HEADING_INSET} ${EXPLORER_HEADING_ROW} justify-between pr-4 text-ui-xs font-semibold tracking-wide text-fg-muted`}
       >
         <span className={`${EXPLORER_HEADING_GRID} min-w-0`}>
           <FolderOpen size={15} className={EXPLORER_HEADING_ICON} />
@@ -1549,10 +1551,10 @@ export default function Sidebar() {
       <div className="flex-1 min-h-0 flex flex-col pb-3">
         {!currentProject ? (
           <div className="px-4 py-6 text-center">
-            <p className="text-[13px] text-fg-muted mb-3">{t('未打开项目')}</p>
+            <p className="text-ui text-fg-muted mb-3">{t('未打开项目')}</p>
             <button
               onClick={handleAddProject}
-              className="inline-flex items-center gap-1.5 text-[13px] px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
+              className="inline-flex items-center gap-1.5 text-ui px-3 py-1.5 rounded bg-bg-elevated hover:bg-bg-active border border-border-strong text-fg"
             >
               <Plus size={14} /> {t('添加项目')}
             </button>
@@ -1565,7 +1567,7 @@ export default function Sidebar() {
                 <div
                   data-explorer-drop={currentProject.path}
                   data-explorer-isdir="1"
-                  className={`group ${EXPLORER_HEADING_ROW} gap-2 ${EXPLORER_HEADING_INSET} pr-2 text-[13px] select-none cursor-default [&_button]:cursor-default ${
+                  className={`group ${EXPLORER_HEADING_ROW} gap-2 ${EXPLORER_HEADING_INSET} pr-2 text-ui select-none cursor-default [&_button]:cursor-default ${
                     dragOverPath != null && pathsEqual(dragOverPath, currentProject.path)
                       ? 'text-accent font-medium'
                       : isProjectRootSelected
@@ -1700,7 +1702,7 @@ export default function Sidebar() {
                   }
                 >
                   {unavailable ? (
-                    <div className="px-4 py-2 text-[12px] text-warn flex items-center gap-1.5">
+                    <div className="px-4 py-2 text-ui-sm text-warn flex items-center gap-1.5">
                       <AlertTriangle size={12} /> {t('目录不可用，请重新定位')}
                     </div>
                   ) : (
@@ -1714,14 +1716,14 @@ export default function Sidebar() {
                         />
                       )}
                       {!treeLoaded && pendingCreate?.parentPath !== currentProject.path && (
-                        <div className="px-4 py-2 text-[12px] text-fg-muted" aria-live="polite">
+                        <div className="px-4 py-2 text-ui-sm text-fg-muted" aria-live="polite">
                           {t('正在加载文件树…')}
                         </div>
                       )}
                       {treeLoaded &&
                         tree.length === 0 &&
                         pendingCreate?.parentPath !== currentProject.path && (
-                          <div className="px-4 py-2 text-[12px] text-fg-muted">{t('空文件夹')}</div>
+                          <div className="px-4 py-2 text-ui-sm text-fg-muted">{t('空文件夹')}</div>
                         )}
                       {visibleTreeRows.length > 0 && (
                         <div
@@ -1737,7 +1739,7 @@ export default function Sidebar() {
                             rowCount={visibleTreeRows.length}
                             rowHeight={index => {
                               const kind = visibleTreeRows[index]?.kind
-                              return kind === 'create' || kind === 'rename' ? 30 : 26
+return kind === 'create' || kind === 'rename' ? metrics.createRowHeight : metrics.rowHeight
                             }}
                             /* eslint-disable react-hooks/refs -- react-window invokes these callbacks after render. */
                             rowProps={{
@@ -1791,7 +1793,7 @@ export default function Sidebar() {
       {dragGhost &&
         createPortal(
           <div
-            className="pointer-events-none fixed z-[300] max-w-[240px] truncate rounded border border-accent bg-bg-elevated px-2.5 py-1 text-[12px] font-medium text-accent shadow-lg shadow-black/50"
+            className="pointer-events-none fixed z-[300] max-w-[240px] truncate rounded border border-accent bg-bg-elevated px-2.5 py-1 text-ui-sm font-medium text-accent shadow-lg shadow-black/50"
             style={{ left: dragGhost.x + 14, top: dragGhost.y + 14 }}
           >
             {dragGhost.label}

@@ -199,7 +199,7 @@ export default function ContextMenu({
         left: position.x,
         top: position.y,
         // Soft bubble shadow so the caret is included (tip-style).
-        filter: arrow ? 'drop-shadow(0 4px 14px rgba(0,0,0,0.42))' : undefined,
+        filter: arrow ? 'var(--tooltip-arrow-shadow)' : undefined,
       }}
       onPointerDown={event => event.stopPropagation()}
       onContextMenu={event => event.preventDefault()}
@@ -223,7 +223,7 @@ export default function ContextMenu({
                 aria-checked={item.checked !== undefined ? item.checked : undefined}
                 disabled={item.disabled}
                 tabIndex={activeIndex === index ? 0 : -1}
-                className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[13px] outline-none transition-colors
+                className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-ui outline-none transition-colors
               ${
                 item.danger
                   ? 'text-danger hover:bg-danger/10 focus:bg-danger/10'
@@ -249,7 +249,7 @@ export default function ContextMenu({
                 </span>
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
                 {item.shortcut && (
-                  <span className="ml-5 text-[11px] text-fg-dim">{item.shortcut}</span>
+                  <span className="ml-5 text-ui-xs text-fg-dim">{item.shortcut}</span>
                 )}
               </button>
             </div>

@@ -71,7 +71,7 @@ export default function EditorOpenError({ tab }: Props) {
     <div className="flex h-full flex-col items-center justify-center gap-4 bg-bg px-8 py-10 text-center">
       <AlertTriangle size={48} strokeWidth={1.25} className="text-warn opacity-90" aria-hidden />
       <div className="max-w-xl space-y-2">
-        <p className="text-sm leading-relaxed text-fg">{title}</p>
+        <p className="text-ui-lg leading-relaxed text-fg">{title}</p>
         {tab.openError && tab.openError !== title ? (
           <p className="text-ui-sm leading-relaxed text-fg-muted">{tab.openError}</p>
         ) : null}
@@ -79,7 +79,7 @@ export default function EditorOpenError({ tab }: Props) {
           <p className="text-ui-sm truncate font-mono text-fg-dim">{tab.path}</p>
         </Tooltip>
       </div>
-      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[13px]">
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-ui">
         {canPreviewAnyway(kind) ? (
           <ActionButton
             icon={<Eye size={14} />}

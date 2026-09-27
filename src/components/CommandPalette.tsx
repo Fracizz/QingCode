@@ -325,7 +325,7 @@ export default function CommandPalette() {
             }
             className="modal-search-input"
           />
-          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-[10px] text-fg-dim sm:inline">
+          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-ui-2xs text-fg-dim sm:inline">
             Esc
           </kbd>
         </div>
@@ -348,7 +348,7 @@ export default function CommandPalette() {
           className="max-h-[min(360px,50vh)] overflow-y-auto py-1"
         >
           {results.length === 0 ? (
-            <p className="px-3 py-6 text-center text-[13px] text-fg-dim">
+            <p className="px-3 py-6 text-center text-ui text-fg-dim">
               {commandMode ? t('没有匹配的命令') : searching ? t('正在查找文件…') : failedProjects.length > 0 ? t('搜索未完成，请重试') : t('没有匹配的文件')}
             </p>
           ) : (
@@ -365,7 +365,7 @@ export default function CommandPalette() {
                     role="option"
                     aria-selected={active}
                     data-cmd-index={index}
-                    className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-[13px] transition-colors duration-100 ${
+                    className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-ui transition-colors duration-100 ${
                       active
                         ? 'border-brand bg-accent/15 text-fg'
                         : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
@@ -395,7 +395,7 @@ export default function CommandPalette() {
                   role="option"
                   aria-selected={active}
                   data-cmd-index={index}
-                  className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-[13px] transition-colors duration-100 ${
+                  className={`flex w-full items-center gap-3 border-l-2 px-3 py-2 text-left text-ui transition-colors duration-100 ${
                     active
                       ? 'border-brand bg-accent/15 text-fg'
                       : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
