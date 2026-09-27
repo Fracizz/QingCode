@@ -355,13 +355,13 @@ export function ScmPushMenu({ open, style, menuRef, onPush }: ScmPushMenuProps) 
     <div
       ref={menuRef}
       role="menu"
-      className="menu-enter ui-font-scaled fixed z-[100] min-w-[10rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] min-w-[10rem] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
       style={style}
     >
       <button
         type="button"
         role="menuitem"
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
+        className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
         onClick={onPush}
       >
         <ArrowUp size={12} />
@@ -386,11 +386,11 @@ export function ScmRemotesMenu({ open, style, menuRef, rows, onCopy }: ScmRemote
     <div
       ref={menuRef}
       role="menu"
-      className="menu-enter ui-font-scaled fixed z-[100] max-w-[28rem] min-w-[14rem] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45"
+      className="menu-enter ui-font-scaled fixed z-[100] max-w-[28rem] min-w-[14rem] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45"
       style={style}
       onPointerDown={event => event.stopPropagation()}
     >
-      <div className="px-3 py-1 text-ui-xs font-semibold tracking-wide text-fg-muted">
+      <div className="px-2.5 py-1 text-ui-xs font-semibold tracking-wide text-fg-muted">
         {t('GIT 地址')}
       </div>
       {rows.map(row => (
@@ -398,7 +398,7 @@ export function ScmRemotesMenu({ open, style, menuRef, rows, onCopy }: ScmRemote
           key={row.key}
           type="button"
           role="menuitem"
-          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
+          className="flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui-sm text-fg hover:bg-bg-hover"
           onClick={() => onCopy(row.url)}
         >
           <Copy size={12} className="shrink-0 text-fg-dim" />

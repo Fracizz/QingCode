@@ -185,7 +185,7 @@ export default function SettingSelect({
             role="listbox"
             tabIndex={-1}
             aria-activedescendant={`${listId}-opt-${activeIndex}`}
-            className="menu-enter ui-font-scaled fixed z-[80] overflow-y-auto rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45 outline-none"
+            className="menu-enter ui-font-scaled fixed z-[80] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 outline-none"
             style={menuStyle}
             onKeyDown={onMenuKeyDown}
             onPointerDown={event => event.stopPropagation()}
@@ -204,7 +204,7 @@ export default function SettingSelect({
                   role="option"
                   aria-selected={isSelected}
                   disabled={option.disabled}
-                  className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-ui outline-none transition-colors
+                  className={`flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-ui outline-none transition-colors
                     ${
                       isActive
                         ? 'bg-bg-active text-fg'

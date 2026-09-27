@@ -600,14 +600,14 @@ export default function ProjectPicker() {
           <div
             ref={dropdownRef}
             role="menu"
-            className="menu-enter ui-font-scaled fixed z-[100] rounded-md border border-border-strong bg-bg-elevated py-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
+            className="menu-enter ui-font-scaled fixed z-[100] rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/45 max-h-[70vh] flex flex-col"
             style={dropdownStyle}
             onPointerDown={event => event.stopPropagation()}
             onContextMenu={event => {
               if (!deferToNativeContextMenuInDev()) event.preventDefault()
             }}
           >
-            <div className="px-3 py-1 text-ui-xs font-semibold tracking-wide text-fg-muted">
+            <div className="px-2.5 py-1 text-ui-xs font-semibold tracking-wide text-fg-muted">
               {t('更多项目')}
             </div>
             <div className="flex-1 overflow-auto">
@@ -622,13 +622,13 @@ export default function ProjectPicker() {
                     tabIndex={unavailable ? -1 : 0}
                     onClick={() => !unavailable && handleSwitch(project)}
                     onContextMenu={event => openProjectContextMenu(event, project)}
-                    className={`group flex items-center gap-2 border-l-2 px-3 py-1.5 text-ui outline-none
+                    className={`group flex items-center gap-2 rounded px-2.5 py-1.5 text-ui outline-none
                       ${
                         isCurrent
-                          ? 'border-brand bg-bg-active text-fg'
+                          ? 'bg-bg-active text-fg'
                           : unavailable
-                            ? 'border-transparent text-fg-dim'
-                            : 'cursor-pointer border-transparent text-fg hover:bg-bg-hover focus:bg-bg-active'
+                            ? 'text-fg-dim'
+                            : 'cursor-pointer text-fg hover:bg-bg-hover focus:bg-bg-active'
                       }`}
                   >
                     <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">

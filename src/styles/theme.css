@@ -70,6 +70,11 @@
   --shadow-elevation-3: 0 12px 32px -4px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--color-border-strong);
   --tooltip-arrow-shadow: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.45));
   --shadow-find-widget: var(--shadow-elevation-2);
+
+  /* Standardized corner radius tokens: Controls(4px) / Surfaces(6px) / Modals(8px) */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
 }
 
 html[data-theme="light"] {

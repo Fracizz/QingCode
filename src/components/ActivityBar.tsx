@@ -98,7 +98,7 @@ export default function ActivityBar({
           aria-label={t('向左收起活动栏')}
           aria-expanded={true}
           onClick={() => setActivityBarHidden(true)}
-          className="my-1 flex h-5 w-10 items-center justify-center rounded text-fg-dim hover:text-fg hover:bg-bg-hover transition-colors"
+          className="my-1 flex h-5 w-10 items-center justify-center rounded text-fg-dim hover:text-fg transition-colors"
         >
           <span className="relative flex w-6 items-center justify-center">
             <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border" aria-hidden />
@@ -140,12 +140,9 @@ function Item({
         aria-pressed={active === true}
         onClick={onClick}
         className={`relative ui-activity-button w-10 h-10 flex items-center justify-center rounded-md mb-1 btn-interactive transition-colors ${
-          active ? 'bg-brand/15 text-brand shadow-sm' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'
+          active ? 'text-brand' : 'text-fg-muted hover:text-fg'
         }`}
       >
-        {active && (
-          <span className="absolute left-[-2px] top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-brand shadow-[0_0_8px_var(--color-brand)]" />
-        )}
         {icon}
         {badge !== undefined && (
           <span

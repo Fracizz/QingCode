@@ -2,7 +2,7 @@
    font-size) stays on Tailwind classes at the call site so icon slots still work. */
 .setting-input {
   min-height: var(--ui-control-height);
-  border-radius: 4px;
+  border-radius: var(--radius-sm, 4px);
   border: 1px solid var(--color-border);
   background-color: var(--color-bg-input);
   color: var(--color-fg);
@@ -23,7 +23,7 @@
   min-width: 120px;
   max-width: 100%;
   height: var(--ui-control-height);
-  border-radius: 2px;
+  border-radius: var(--radius-sm, 4px);
   border: 1px solid var(--color-border-strong);
   background-color: var(--color-bg-input);
   color: var(--color-fg);

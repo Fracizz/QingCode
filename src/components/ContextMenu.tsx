@@ -210,10 +210,10 @@ export default function ContextMenu({
           arrow ? '' : 'border border-border-strong [box-shadow:var(--shadow-elevation-2)]'
         }`}
       >
-        <div ref={menuRef} role="menu" className="overflow-y-auto py-1">
+        <div ref={menuRef} role="menu" className="overflow-y-auto p-1">
           {items.map((item, index) => (
             <div key={`${item.label}-${index}`}>
-              {item.separatorBefore && <div className="my-1 border-t border-border-strong" />}
+              {item.separatorBefore && <div className="my-1 border-t border-border-strong/80" />}
               <button
                 ref={el => {
                   itemRefs.current[index] = el
@@ -223,7 +223,7 @@ export default function ContextMenu({
                 aria-checked={item.checked !== undefined ? item.checked : undefined}
                 disabled={item.disabled}
                 tabIndex={activeIndex === index ? 0 : -1}
-                className={`flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-ui outline-none transition-colors
+                className={`flex w-full items-center gap-2.5 rounded px-2.5 py-1.5 text-left text-ui outline-none transition-colors
               ${
                 item.danger
                   ? 'text-danger hover:bg-danger/10 focus:bg-danger/10'
