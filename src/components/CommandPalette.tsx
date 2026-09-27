@@ -294,7 +294,7 @@ export default function CommandPalette() {
         aria-modal="true"
         aria-labelledby="command-palette-title"
         aria-describedby="command-palette-description"
-        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-border-strong bg-bg-elevated/95 backdrop-blur-md [box-shadow:var(--shadow-elevation-3)]"
       >
         <h2 id="command-palette-title" className="sr-only">
           {commandMode ? t('命令面板') : t('快速打开')}

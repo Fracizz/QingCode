@@ -45,14 +45,15 @@ body {
   font-size: var(--ui-font-size);
   background: var(--color-bg);
   color: var(--color-fg);
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: subpixel-antialiased;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "tnum";
 }
 
 /* Historical surface marker; sizing now comes from typography/layout variables. */
 .ui-font-scaled { font-size: var(--ui-font-size); }
 
-/* Keyboard focus visibility — editor (cm-content) and terminal helper manage their own focus. */
+/* Keyboard focus visibility — dual-layer crisp ring with 2px background safety margin */
 #root
   :is(
     button,
@@ -64,8 +65,8 @@ body {
     [role='tab'],
     [tabindex]
   ):focus-visible:not(.cm-content):not(.xterm-helper-textarea):not(.modal-search-input):not(.modal-field-input):not(.setting-input):not(.setting-control) {
-  outline: 2px solid var(--color-accent);
-  outline-offset: -2px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
 }
 
 /* Palette-style modal search fields (CommandPalette, SymbolPicker, ProjectAddDialog). */

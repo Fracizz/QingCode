@@ -48,6 +48,7 @@ html[data-theme='light'] .setting-input:focus-visible {
   border-color: var(--color-accent);
 }
 
+html[data-theme='olive'] .setting-control,
 html[data-theme='forest'] .setting-control {
   color-scheme: dark;
 }

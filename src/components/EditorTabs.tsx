@@ -43,7 +43,15 @@ function fileName(path: string) {
   return separator >= 0 ? path.slice(separator + 1) : path
 }
 
-function TabChrome({ tab }: { tab: EditorTab }) {
+function TabChrome({
+  tab,
+  active,
+  onClose,
+}: {
+  tab: EditorTab
+  active: boolean
+  onClose: () => void
+}) {
   const { t } = useI18n()
   const loading = isLoadingTab(tab)
   const viewOnly = isViewOnlyTab(tab)
@@ -71,26 +79,61 @@ function TabChrome({ tab }: { tab: EditorTab }) {
     <>
       {Icon && <Icon size={15} className={iconClass} />}
       <span
-        className={`text-ui ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && tab.kind !== 'diff' && gitColor ? gitColor : ''}`}
+        className={`text-ui truncate ${isOpenErrorTab(tab) ? 'italic' : ''} ${!isOpenErrorTab(tab) && tab.kind !== 'diff' && gitColor ? gitColor : ''}`}
       >
         {tab.name}
       </span>
       {tab.kind !== 'diff' && gitGlyph && (
         <span className={`text-ui-xs font-medium ${gitColor}`}>{gitGlyph}</span>
       )}
-      {tab.dirty ? (
-        <Tooltip label={t('未保存的更改')} side="bottom">
-          <span
-            role="img"
-            aria-label={t('未保存的更改')}
-            className="flex h-4 w-3 items-center justify-center text-warn"
+      <div className="relative flex h-6 w-5 items-center justify-center ml-0.5 flex-shrink-0">
+        {tab.dirty ? (
+          <>
+            <span
+              role="img"
+              aria-label={t('未保存的更改')}
+              className="group-hover:hidden group-focus-within:hidden flex h-4 w-3 items-center justify-center text-warn"
+            >
+              <Circle size={8} fill="currentColor" aria-hidden="true" />
+            </span>
+            <Tooltip
+              label={t('关闭文件')}
+              side="bottom"
+              wrapperClassName="hidden group-hover:inline-flex group-focus-within:inline-flex shrink-0"
+            >
+              <button
+                type="button"
+                aria-label={t('关闭文件')}
+                className="flex ui-chip h-5 w-5 items-center justify-center rounded hover:bg-bg-hover hover:text-fg text-fg-muted"
+                onClick={e => {
+                  e.stopPropagation()
+                  onClose()
+                }}
+              >
+                <X size={13} />
+              </button>
+            </Tooltip>
+          </>
+        ) : (
+          <Tooltip
+            label={t('关闭文件')}
+            side="bottom"
+            wrapperClassName={`inline-flex shrink-0 ${active ? 'opacity-50 group-hover:opacity-100 group-focus-within:opacity-100' : 'opacity-0 group-hover:opacity-70 group-focus-within:opacity-100'} hover:!opacity-100 transition-opacity`}
           >
-            <Circle size={9} fill="currentColor" aria-hidden="true" />
-          </span>
-        </Tooltip>
-      ) : (
-        <span className="h-4 w-3 flex-shrink-0" aria-hidden="true" />
-      )}
+            <button
+              type="button"
+              aria-label={t('关闭文件')}
+              className="flex ui-chip h-5 w-5 items-center justify-center rounded hover:bg-bg-hover hover:text-fg text-fg-muted"
+              onClick={e => {
+                e.stopPropagation()
+                onClose()
+              }}
+            >
+              <X size={13} />
+            </button>
+          </Tooltip>
+        )}
+      </div>
     </>
   )
 }
@@ -354,7 +397,7 @@ export default function EditorTabs() {
                 tabIndex={active ? 0 : -1}
                 aria-selected={active}
                 draggable
-                className={`group relative flex ui-chip h-6 flex-shrink-0 cursor-pointer select-none items-center gap-0.5 whitespace-nowrap rounded px-0.5 text-ui transition-colors
+                className={`group relative flex ui-chip h-6 flex-shrink-0 cursor-pointer select-none items-center gap-1 whitespace-nowrap rounded px-1.5 text-ui transition-colors
                 ${active ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}
                 ${isOpenErrorTab(tab) && !active ? 'text-warn/90' : ''}
                 ${dropIndex === index && dragIndex !== index ? 'ring-1 ring-inset ring-accent/60' : ''}`}
@@ -405,28 +448,11 @@ export default function EditorTabs() {
               >
                 {active && (
                   <span
-                    className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand"
+                    className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded-full bg-brand shadow-[0_0_6px_var(--color-brand)]"
                     aria-hidden="true"
                   />
                 )}
-                <Tooltip
-                  label={t('关闭文件')}
-                  side="bottom"
-                  wrapperClassName="inline-flex shrink-0"
-                >
-                  <button
-                    type="button"
-                    aria-label={t('关闭文件')}
-                    className="flex ui-chip h-6 w-5 items-center justify-center rounded hover:bg-bg-active"
-                    onClick={e => {
-                      e.stopPropagation()
-                      void closeOne(tab)
-                    }}
-                  >
-                    <X size={14} className="opacity-60 group-hover:opacity-100 group-focus-within:opacity-100" />
-                  </button>
-                </Tooltip>
-                <TabChrome tab={tab} />
+                <TabChrome tab={tab} active={active} onClose={() => void closeOne(tab)} />
               </div>
             )
           })}
@@ -474,10 +500,9 @@ export default function EditorTabs() {
             <div
               key={`measure-${tab.id}`}
               data-tab-measure-id={tab.id}
-              className="flex ui-chip h-6 items-center gap-0.5 whitespace-nowrap rounded px-0.5"
+              className="flex ui-chip h-6 items-center gap-1 whitespace-nowrap rounded px-1.5"
             >
-              <span className="ui-chip h-6 w-5 flex-shrink-0" />
-              <TabChrome tab={tab} />
+              <TabChrome tab={tab} active={false} onClose={() => {}} />
             </div>
           ))}
         </div>

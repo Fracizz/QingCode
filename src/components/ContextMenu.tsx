@@ -206,8 +206,8 @@ export default function ContextMenu({
     >
       <div
         ref={bubbleRef}
-        className={`relative min-w-[220px] max-w-[min(360px,calc(100vw-16px))] rounded-md bg-bg-elevated ${
-          arrow ? '' : 'border border-border-strong shadow-2xl shadow-black/45'
+        className={`relative min-w-[220px] max-w-[min(360px,calc(100vw-16px))] rounded-lg bg-bg-elevated/95 backdrop-blur-md ${
+          arrow ? '' : 'border border-border-strong [box-shadow:var(--shadow-elevation-2)]'
         }`}
       >
         <div ref={menuRef} role="menu" className="overflow-y-auto py-1">

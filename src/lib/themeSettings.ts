@@ -1,15 +1,15 @@
 export const THEME_SETTINGS_KEY = 'qingcode:theme'
 export const THEME_SETTINGS_EVENT = 'qingcode:theme-changed'
 
-export type AppTheme = 'dark' | 'light' | 'forest' | 'auto'
-export type ResolvedTheme = 'dark' | 'light' | 'forest'
+export type AppTheme = 'dark' | 'light' | 'olive' | 'forest' | 'auto'
+export type ResolvedTheme = 'dark' | 'light' | 'olive'
 
 export const DEFAULT_THEME: AppTheme = 'dark'
 
 export const THEMES: { label: string; value: AppTheme; hint: string }[] = [
   { label: '深色', value: 'dark', hint: '常驻深色' },
   { label: '浅色', value: 'light', hint: '常驻浅色' },
-  { label: '森林', value: 'forest', hint: '深绿 Material Forest（IDEA 同款）' },
+  { label: '橄榄绿', value: 'olive', hint: '雅致橄榄绿（自然舒适）' },
   { label: '跟随系统', value: 'auto', hint: '随操作系统明暗自动切换' },
 ]
 
@@ -23,9 +23,13 @@ function systemPrefersDark(): boolean {
 
 export function loadTheme(): AppTheme {
   try {
-    const stored = localStorage.getItem(THEME_SETTINGS_KEY) as AppTheme | null
-    if (stored === 'light' || stored === 'dark' || stored === 'forest' || stored === 'auto') {
-      return stored
+    const stored = localStorage.getItem(THEME_SETTINGS_KEY) as string | null
+    if (stored === 'forest') {
+      try { localStorage.setItem(THEME_SETTINGS_KEY, 'olive') } catch {}
+      return 'olive'
+    }
+    if (stored === 'light' || stored === 'dark' || stored === 'olive' || stored === 'auto') {
+      return stored as AppTheme
     }
   } catch {}
   return DEFAULT_THEME
@@ -33,7 +37,7 @@ export function loadTheme(): AppTheme {
 
 export function getResolvedTheme(theme: AppTheme = loadTheme()): ResolvedTheme {
   if (theme === 'auto') return systemPrefersDark() ? 'dark' : 'light'
-  if (theme === 'forest') return 'forest'
+  if (theme === 'olive' || theme === 'forest') return 'olive'
   return theme
 }
 

@@ -11,7 +11,8 @@
         var theme = 'dark'
         try {
           var stored = localStorage.getItem('qingcode:theme')
-          if (stored === 'light' || stored === 'dark' || stored === 'forest' || stored === 'auto') theme = stored
+          if (stored === 'forest') stored = 'olive'
+          if (stored === 'light' || stored === 'dark' || stored === 'olive' || stored === 'auto') theme = stored
         } catch (e) {}
         var resolved =
           theme === 'auto' && window.matchMedia
@@ -22,7 +23,7 @@
               ? 'dark'
               : theme
         document.documentElement.setAttribute('data-theme', resolved)
-        document.documentElement.style.colorScheme = resolved
+        document.documentElement.style.colorScheme = resolved === 'light' ? 'light' : 'dark'
       })()
     </script>
     <style>
@@ -32,20 +33,23 @@
         height: 100%;
         margin: 0;
         overflow: hidden;
-        background: #1e1e1e;
-        color: #d4d4d4;
+        background: #18191d;
+        color: #f3f3f5;
       }
       html[data-theme='light'],
       html[data-theme='light'] body,
       html[data-theme='light'] #root {
         background: #ffffff;
-        color: #1f1f1f;
+        color: #111827;
       }
+      html[data-theme='olive'],
+      html[data-theme='olive'] body,
+      html[data-theme='olive'] #root,
       html[data-theme='forest'],
       html[data-theme='forest'] body,
       html[data-theme='forest'] #root {
-        background: #002626;
-        color: #b2c2b0;
+        background: #151d18;
+        color: #dce5df;
       }
 
       #startup-splash {
@@ -55,14 +59,15 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #1e1e1e;
+        background: #18191d;
         transition: opacity 140ms ease, visibility 140ms ease;
       }
       html[data-theme='light'] #startup-splash {
         background: #ffffff;
       }
+      html[data-theme='olive'] #startup-splash,
       html[data-theme='forest'] #startup-splash {
-        background: #002626;
+        background: #151d18;
       }
       #startup-splash.startup-splash--hide {
         opacity: 0;

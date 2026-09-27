@@ -5,7 +5,7 @@ const css = readFileSync(new URL('./theme.css', import.meta.url), 'utf8')
 
 function themeBlock(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const match = css.match(new RegExp(`${escaped}\\s*\\{([\\s\\S]*?)\\n\\}`))
+  const match = css.match(new RegExp(`${escaped}[^\\{]*?\\{([\\s\\S]*?)\\n\\}`))
   if (!match) throw new Error(`Theme block not found: ${selector}`)
   return match[1]
 }
@@ -38,6 +38,7 @@ describe('theme contrast', () => {
     ['dark', '@theme'],
     ['light', 'html[data-theme="light"]'],
     ['forest', 'html[data-theme="forest"]'],
+    ['olive', 'html[data-theme="olive"]'],
   ] as const) {
     it(`${name} keeps button labels readable`, () => {
       const block = themeBlock(selector)

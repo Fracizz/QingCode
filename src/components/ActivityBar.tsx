@@ -139,11 +139,12 @@ function Item({
         aria-label={label}
         aria-pressed={active === true}
         onClick={onClick}
-        className={`relative ui-activity-button w-10 h-10 flex items-center justify-center rounded-md mb-1 transition-colors
-        ${active ? 'bg-brand/10 text-brand' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
+        className={`relative ui-activity-button w-10 h-10 flex items-center justify-center rounded-md mb-1 btn-interactive transition-colors ${
+          active ? 'bg-brand/15 text-brand shadow-sm' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'
+        }`}
       >
         {active && (
-          <span className="absolute left-[-8px] top-1 bottom-1 w-[2px] rounded bg-brand" />
+          <span className="absolute left-[-2px] top-1.5 bottom-1.5 w-[3px] rounded-r-full bg-brand shadow-[0_0_8px_var(--color-brand)]" />
         )}
         {icon}
         {badge !== undefined && (

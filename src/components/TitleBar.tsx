@@ -257,7 +257,7 @@ export default function TitleBar({
       </div>
 
       <div
-        className="flex h-full flex-shrink-0 items-center gap-1 px-1"
+        className="flex h-full flex-shrink-0 items-center gap-1 pl-1"
         onDoubleClick={event => event.stopPropagation()}
       >
         {sideLayoutActive && (
@@ -421,8 +421,9 @@ function WindowButton({
       <button
         type="button"
         aria-label={label}
-        className={`flex ui-chip h-6 w-9 items-center justify-center rounded text-fg-muted transition-colors
-        ${danger ? 'hover:bg-[#e81123] hover:text-white' : 'hover:bg-bg-hover hover:text-fg'}`}
+        className={`flex h-full w-[46px] items-center justify-center text-fg-muted transition-colors duration-100 ${
+          danger ? 'hover:bg-[#e81123] hover:text-white active:bg-[#c4101e]' : 'hover:bg-bg-hover hover:text-fg active:bg-bg-active'
+        }`}
         onClick={onClick}
       >
         {children}

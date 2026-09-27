@@ -1,11 +1,11 @@
 /* Toasts */
 .toast-enter {
-  animation: toast-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: toast-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes toast-in {
   from {
     opacity: 0;
-    transform: translateY(8px) scale(0.98);
+    transform: translateY(12px) scale(0.96);
   }
   to {
     opacity: 1;
@@ -42,12 +42,12 @@
 }
 
 .modal-content-enter {
-  animation: modal-content-in 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: modal-content-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes modal-content-in {
   from {
     opacity: 0;
-    transform: translateY(4px) scale(0.985);
+    transform: translateY(-8px) scale(0.97);
   }
   to {
     opacity: 1;
@@ -56,12 +56,13 @@
 }
 
 .menu-enter {
-  animation: menu-in 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  animation: menu-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  transform-origin: top left;
 }
 @keyframes menu-in {
   from {
     opacity: 0;
-    transform: translateY(-2px) scale(0.985);
+    transform: translateY(-4px) scale(0.96);
   }
   to {
     opacity: 1;
@@ -71,12 +72,18 @@
 
 /* Tooltip fade-in */
 .tooltip-enter {
-  animation: tooltip-in 100ms ease-out;
-  will-change: opacity;
+  animation: tooltip-in 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
 }
 @keyframes tooltip-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 /* Running terminal status: gentle opacity pulse; unsaved files use a static dot. */
@@ -95,15 +102,41 @@
   will-change: transform;
 }
 
-/* Interactive item micro-hover */
+/* Interactive item micro-hover & micro-press tactile feedback */
 .interactive-hover {
-  transition: transform 120ms ease-out, background-color 120ms ease-out, border-color 120ms ease-out;
+  transition: transform 100ms ease-out, background-color 100ms ease-out, border-color 100ms ease-out;
 }
 .interactive-hover:hover {
   transform: translateY(-1px);
 }
 .interactive-hover:active {
-  transform: translateY(0);
+  transform: translateY(0) scale(0.985);
+}
+
+.btn-interactive {
+  transition: transform 80ms ease, background-color 100ms ease, border-color 100ms ease;
+}
+.btn-interactive:active {
+  transform: scale(0.975);
+}
+
+/* Loading skeleton shimmer effect */
+@keyframes skeleton-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+  background: var(--color-bg-active);
+}
+.skeleton-shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-fg) 10%, transparent), transparent);
+  animation: skeleton-shimmer 1.6s ease-in-out infinite;
 }
 
 /* Accessibility: Respect system reduced motion preferences */

@@ -149,7 +149,7 @@ const FOREST_THEME = {
 
 function terminalTheme() {
   const resolved = getResolvedTheme()
-  if (resolved === 'forest') return FOREST_THEME
+  if (resolved === 'olive' || (resolved as string) === 'forest') return FOREST_THEME
   if (resolved === 'dark') return DARK_THEME
   return LIGHT_THEME
 }

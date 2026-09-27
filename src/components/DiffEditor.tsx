@@ -67,7 +67,7 @@ const forestTheme = [FOREST_THEME, forestSyntax]
 
 function editorThemeExtension() {
   const resolved = getResolvedTheme()
-  if (resolved === 'forest') return forestTheme
+  if (resolved === 'olive' || (resolved as string) === 'forest') return forestTheme
   if (resolved === 'dark') return darkTheme
   return lightTheme
 }

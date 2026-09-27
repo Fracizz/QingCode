@@ -58,7 +58,7 @@ const darkSelectionMatchTheme = EditorView.theme(
 
 export function editorThemeExtension() {
   const resolved = getResolvedTheme()
-  if (resolved === 'forest') return [FOREST_THEME, forestSyntax]
+  if (resolved === 'olive' || (resolved as string) === 'forest') return [FOREST_THEME, forestSyntax]
   if (resolved === 'dark') return [oneDark, darkDefaultFgTheme, darkSelectionMatchTheme]
   return lightTheme
 }

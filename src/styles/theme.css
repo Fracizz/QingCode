@@ -1,26 +1,26 @@
 @theme {
-  /* Cursor-style dark palette */
-  --color-bg: #1e1e1e;
-  --color-bg-deep: #181818;
-  --color-bg-sidebar: #252526;
-  --color-bg-elevated: #2d2d30;
-  --color-bg-hover: #2a2d2e;
-  --color-bg-active: #37373d;
+  /* Modern Obsidian dark palette */
+  --color-bg: #18191d;
+  --color-bg-deep: #131417;
+  --color-bg-sidebar: #1b1c21;
+  --color-bg-elevated: #22242a;
+  --color-bg-hover: #262830;
+  --color-bg-active: #2c2f38;
   --color-bg-chrome: var(--color-bg);
   --color-bg-input: var(--color-bg-deep);
   --color-bg-terminal: var(--color-bg-deep);
-  --color-border: #2d2d30;
-  --color-border-strong: #3c3c3c;
+  --color-border: #2a2c33;
+  --color-border-strong: #3e424d;
 
-  --color-fg: #d4d4d4;
-  --color-fg-muted: #a8a8a8;
+  --color-fg: #f3f3f5;
+  --color-fg-muted: #a1a1aa;
   --color-fg-dim: #a0a0a0;
   /* Explorer file/folder names (default “white” tier); softer than --color-fg. */
-  --color-tree-fg: #c2c2c2;
+  --color-tree-fg: #d4d4d8;
 
   /* Qing = product identity/current context; accent = interaction/focus/progress. */
   --color-brand: #4ecdb5;
-  --color-accent: #4d9eff;
+  --color-accent: #3b82f6;
   --color-danger: #f48771;
   --color-warn: #e2c08d;
   --color-ok: #89d185;
@@ -29,8 +29,8 @@
   --color-destructive: #b72d43;
   --color-on-destructive: #ffffff;
 
-  --color-tab-active: #1e1e1e;
-  --color-tab-inactive: #2d2d30;
+  --color-tab-active: #18191d;
+  --color-tab-inactive: #22242a;
 
   --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 42%, var(--color-bg));
   --minimap-empty-line: color-mix(in srgb, var(--color-fg) 7%, transparent);
@@ -38,19 +38,19 @@
   --minimap-vp-hover-fill: color-mix(in srgb, #ffffff 8%, transparent);
   --minimap-vp-active-fill: color-mix(in srgb, #ffffff 14%, transparent);
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    "Segoe UI Variable", "Helvetica Neue", Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "PingFang SC", "Microsoft YaHei UI", sans-serif;
   --font-mono: ui-monospace, "Cascadia Mono", "Cascadia Code", Consolas,
     "Courier New", monospace;
 }
 
 :root {
   --sidebar-width: 300px;
-  --activity-bar-width: 48px;
+  --activity-bar-width: 44px;
   --terminal-height: 260px;
   --tab-height: 32px;
   --status-bar-height: 24px;
-  --title-bar-height: 32px;
+  --title-bar-height: 34px;
   --ui-font-size: 13px;
   /* Auxiliary copy follows the UI font directly (正文 13 → 辅助 12). */
   --ui-font-size-sm: 12px;
@@ -64,45 +64,45 @@
   --editor-matching-bracket-bg: #ffffff28;
   --editor-matching-bracket-outline: #ffffff66;
 
-  /* Surface elevations */
-  --shadow-elevation-1: 0 2px 8px -1px rgba(0, 0, 0, 0.35);
-  --shadow-elevation-2: 0 6px 18px -2px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--color-border-strong);
-  --shadow-elevation-3: 0 16px 36px -4px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--color-border-strong);
-  --tooltip-arrow-shadow: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.42));
-  --shadow-find-widget: 0 6px 18px rgba(0, 0, 0, 0.35);
+  /* Surface elevations: crisp layered dual-shadows with inner highlight */
+  --shadow-elevation-1: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 0 0 1px var(--color-border);
+  --shadow-elevation-2: 0 4px 16px -2px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--color-border-strong);
+  --shadow-elevation-3: 0 12px 32px -4px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--color-border-strong);
+  --tooltip-arrow-shadow: drop-shadow(0 4px 14px rgba(0, 0, 0, 0.45));
+  --shadow-find-widget: var(--shadow-elevation-2);
 }
 
 html[data-theme="light"] {
-  /* White content/fields, quiet neutral chrome, Qing-tinted current context. */
+  /* Crisp Paper light palette: pure white content, refined neutral chrome, teal accent */
   --color-bg: #ffffff;
-  --color-bg-deep: #f0f1f2;
-  --color-bg-sidebar: #f7f7f8;
+  --color-bg-deep: #f1f2f4;
+  --color-bg-sidebar: #f8f9fa;
   --color-bg-elevated: #ffffff;
-  --color-bg-hover: #eceef0;
-  --color-bg-active: #e6f2ef;
-  --color-bg-chrome: #f0f1f2;
+  --color-bg-hover: #eceef1;
+  --color-bg-active: #e6f4f1;
+  --color-bg-chrome: #f1f2f4;
   --color-bg-input: #ffffff;
   --color-bg-terminal: #ffffff;
   --color-border: #dedfe2;
   --color-border-strong: #b5bac1;
 
-  --color-fg: #1f1f1f;
-  --color-fg-muted: #484d55;
+  --color-fg: #111827;
+  --color-fg-muted: #4b5563;
   --color-fg-dim: #626872;
-  --color-tree-fg: #1f1f1f;
+  --color-tree-fg: #1f2937;
 
-  --color-brand: #00685c;
-  --color-accent: #005fb8;
+  --color-brand: #0d9488;
+  --color-accent: #2563eb;
   --color-danger: #c41e3a;
   --color-warn: #805500;
   --color-ok: #107c10;
-  --color-action: #005fb8;
+  --color-action: #2563eb;
   --color-on-action: #ffffff;
   --color-destructive: #b91c34;
   --color-on-destructive: #ffffff;
 
   --color-tab-active: #ffffff;
-  --color-tab-inactive: #f0f1f2;
+  --color-tab-inactive: #f1f2f4;
 
   --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 38%, var(--color-bg));
   --minimap-empty-line: color-mix(in srgb, var(--color-fg) 6%, transparent);
@@ -112,13 +112,13 @@ html[data-theme="light"] {
 
   --editor-indent-guide: #1f1f1f26;
   --editor-indent-guide-active: #1f1f1f66;
-  --editor-matching-bracket-bg: #005fb814;
-  --editor-matching-bracket-outline: #005fb866;
+  --editor-matching-bracket-bg: #2563eb14;
+  --editor-matching-bracket-outline: #2563eb66;
 
-  --shadow-elevation-1: 0 2px 6px -1px rgba(0, 0, 0, 0.08);
-  --shadow-elevation-2: 0 6px 18px -4px rgba(0, 0, 0, 0.12);
-  --shadow-elevation-3: 0 16px 40px -8px rgba(0, 0, 0, 0.18);
-  --tooltip-arrow-shadow: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.16));
+  --shadow-elevation-1: 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  --shadow-elevation-2: 0 4px 14px -2px rgba(0, 0, 0, 0.09), 0 0 0 1px rgba(0, 0, 0, 0.07);
+  --shadow-elevation-3: 0 16px 36px -6px rgba(0, 0, 0, 0.13), 0 0 0 1px rgba(0, 0, 0, 0.08);
+  --tooltip-arrow-shadow: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.14));
   --shadow-find-widget: var(--shadow-elevation-2);
 }
 
@@ -143,35 +143,35 @@ html[data-theme="light"] [data-modal-overlay] > .modal-overlay-enter {
   backdrop-filter: none;
 }
 
-/* IDEA Material Theme UI — Material Forest, with readable secondary text. */
-html[data-theme="forest"] {
-  --color-bg: #002626;
-  --color-bg-deep: #002020;
-  --color-bg-sidebar: #002e2e;
-  --color-bg-elevated: #003535;
-  --color-bg-hover: #003f3f;
-  --color-bg-active: #104110;
-  --color-border: #003838;
-  --color-border-strong: #005454;
+/* Olive Green Theme (雅致橄榄绿 · 自然舒适与暖琥珀金) — aliases both 'olive' and legacy 'forest' */
+html[data-theme="olive"], html[data-theme="forest"] {
+  --color-bg: #151d18;
+  --color-bg-deep: #0f1511;
+  --color-bg-sidebar: #18221c;
+  --color-bg-elevated: #1f2c25;
+  --color-bg-hover: #25362d;
+  --color-bg-active: #2b3f34;
+  --color-border: #23332a;
+  --color-border-strong: #334a3d;
 
-  --color-fg: #b2c2b0;
-  --color-fg-muted: #9caf9d;
-  --color-fg-dim: #94a596;
-  --color-tree-fg: #a8b8a6;
+  --color-fg: #dce5df;
+  --color-fg-muted: #a6bba8;
+  --color-fg-dim: #9eb2a4;
+  --color-tree-fg: #cdd9d1;
 
-  /* Shell accent is darkened from the official #ffcc80 for existing white-label CTAs. */
+  /* Shell accent is elegant warm amber gold */
   --color-brand: #4ecdb5;
-  --color-accent: #b8894a;
-  --color-danger: #f07178;
-  --color-warn: #d4b06a;
+  --color-accent: #e5b567;
+  --color-danger: #f87171;
+  --color-warn: #fbbf24;
   --color-ok: #89d185;
-  --color-action: #865f2e;
+  --color-action: #875c1c;
   --color-on-action: #ffffff;
-  --color-destructive: #a63f4a;
+  --color-destructive: #a82e38;
   --color-on-destructive: #ffffff;
 
-  --color-tab-active: #002626;
-  --color-tab-inactive: #002e2e;
+  --color-tab-active: #151d18;
+  --color-tab-inactive: #18221c;
 
   --minimap-bg: color-mix(in srgb, var(--color-bg-sidebar) 48%, var(--color-bg));
   --minimap-empty-line: color-mix(in srgb, var(--color-fg) 8%, transparent);
@@ -182,13 +182,14 @@ html[data-theme="forest"] {
   --editor-matching-bracket-bg: #d0e0d830;
   --editor-matching-bracket-outline: #d0e0d870;
 
-  --shadow-elevation-1: 0 2px 8px -1px rgba(0, 16, 16, 0.5);
-  --shadow-elevation-2: 0 6px 18px -2px rgba(0, 16, 16, 0.65), 0 0 0 1px var(--color-border-strong);
-  --shadow-elevation-3: 0 16px 36px -4px rgba(0, 16, 16, 0.8), 0 0 0 1px var(--color-border-strong);
+  --shadow-elevation-1: 0 1px 4px 0 rgba(0, 10, 5, 0.45), 0 0 0 1px var(--color-border);
+  --shadow-elevation-2: 0 6px 18px -2px rgba(0, 10, 5, 0.6), 0 0 0 1px var(--color-border-strong);
+  --shadow-elevation-3: 0 16px 36px -4px rgba(0, 10, 5, 0.75), 0 0 0 1px var(--color-border-strong);
 }
 
+html[data-theme="olive"] .cm-editor .cm-content,
 html[data-theme="forest"] .cm-editor .cm-content {
-  color: #d1e0e0;
+  color: #dce5df;
 }
 
 /* Kill CM default pair marks (both ends get cm-matchingBracket). */
@@ -217,24 +218,27 @@ html[data-theme="light"] * {
   scrollbar-color: #c4c4c4 transparent;
 }
 
+html[data-theme="olive"] *,
 html[data-theme="forest"] * {
-  scrollbar-color: #003838 transparent;
+  scrollbar-color: #23332a transparent;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb {
   background: #c4c4c4;
 }
 
+html[data-theme="olive"] *::-webkit-scrollbar-thumb,
 html[data-theme="forest"] *::-webkit-scrollbar-thumb {
-  background: #003838;
+  background: #23332a;
 }
 
 html[data-theme="light"] *::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
 }
 
+html[data-theme="olive"] *::-webkit-scrollbar-thumb:hover,
 html[data-theme="forest"] *::-webkit-scrollbar-thumb:hover {
-  background: #005454;
+  background: #334a3d;
 }
 
 /* Smooth color cross-fade while switching themes (class applied briefly by applyTheme). */
