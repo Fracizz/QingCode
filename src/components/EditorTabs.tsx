@@ -104,7 +104,7 @@ function TabChrome({
               <button
                 type="button"
                 aria-label={t('关闭文件')}
-                className="flex ui-chip h-5 w-5 items-center justify-center rounded hover:bg-bg-hover hover:text-fg text-fg-muted"
+                className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-hover hover:text-fg text-fg-muted"
                 onClick={e => {
                   e.stopPropagation()
                   onClose()
@@ -123,7 +123,7 @@ function TabChrome({
             <button
               type="button"
               aria-label={t('关闭文件')}
-              className="flex ui-chip h-5 w-5 items-center justify-center rounded hover:bg-bg-hover hover:text-fg text-fg-muted"
+              className="flex h-5 w-5 items-center justify-center rounded hover:bg-bg-hover hover:text-fg text-fg-muted"
               onClick={e => {
                 e.stopPropagation()
                 onClose()
@@ -467,20 +467,17 @@ export default function EditorTabs() {
               : t('显示所有打开的文件（最多 {max} 个）', { max: MAX_OPEN_EDITOR_TABS })
           }
           side="bottom"
+          wrapperClassName="inline-flex h-full shrink-0 items-center pr-1"
         >
           <button
             type="button"
             aria-label={t('显示所有打开的文件')}
-            className="relative flex h-full w-8 flex-shrink-0 items-center justify-center text-fg-muted hover:bg-bg-hover hover:text-fg"
+            className="relative flex ui-chip h-6 w-7 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
             onClick={event => {
               const rect = event.currentTarget.getBoundingClientRect()
               setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
             }}
           >
-            <span
-              aria-hidden="true"
-              className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-px -translate-y-1/2 bg-border-strong"
-            />
             <ChevronDown size={14} />
             {hiddenCount > 0 && (
               <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-action px-0.5 text-center text-[9px] font-semibold leading-[12px] text-on-action">

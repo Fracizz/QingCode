@@ -525,7 +525,7 @@ export default function SettingsEditor() {
             <button
               type="button"
               onClick={() => setHelpOpen(true)}
-              className="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg"
+              className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg"
               aria-label={t('帮助文档')}
             >
               <CircleHelp size={15} />

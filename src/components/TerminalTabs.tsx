@@ -863,7 +863,7 @@ export default function TerminalTabs({
               aria-label={translate('显示所有终端')}
               aria-haspopup="menu"
               aria-expanded={overflowMenu !== null}
-              className="relative flex h-7 w-7 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+              className="relative flex ui-chip h-6 w-7 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
               onPointerDown={() => {
                 if (pane) setTerminalFocusPane(pane)
               }}
@@ -891,7 +891,7 @@ export default function TerminalTabs({
               <button
                 type="button"
                 aria-label={translate('收起终端')}
-                className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+                className="flex ui-chip h-6 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
                 onClick={() => requestToggleTerminal()}
               >
                 {collapseToSide ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
@@ -902,7 +902,7 @@ export default function TerminalTabs({
                 type="button"
                 aria-label={translate('关闭全部终端')}
                 disabled={allProjectTerminals.length === 0}
-                className="flex h-7 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex ui-chip h-6 w-7 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
                 onClick={() => void handleCloseAllProject()}
               >
                 <X size={15} />
