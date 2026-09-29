@@ -182,9 +182,26 @@
           <!-- Inline logo avoids a startup fetch; paintStartupSplashLogo() may refresh later. -->
           <!-- Keep in sync with src/assets/app-icon.svg (paintStartupSplashLogo refreshes after boot). -->
           <svg id="startup-logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" width="160" height="160">
-            <path fill="#2FAF9B" d="M96 379H416L380 419H96V379Z"/>
-            <path fill="#4ECDB5" d="M96 339H380L416 379H96V339Z"/>
-            <path id="startup-logo-bracket" fill="#F3F6F8" d="M130 93H262Q264 93 267 95L385 194Q389 197 385 200L267 299Q264 301 262 301H130Q124 301 128 297L247 197L128 97Q124 93 130 93Z"/>
+            <defs>
+              <linearGradient id="splash-tide-upper" x1="120" y1="120" x2="380" y2="240" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#55E6CD"/>
+                <stop offset="60%" stop-color="#2AC4A8"/>
+                <stop offset="100%" stop-color="#1B8774"/>
+              </linearGradient>
+              <linearGradient id="splash-tide-lower" x1="120" y1="280" x2="420" y2="420" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#38EF7D"/>
+                <stop offset="50%" stop-color="#11998E"/>
+                <stop offset="100%" stop-color="#085A52"/>
+              </linearGradient>
+              <linearGradient id="splash-tide-tail" x1="270" y1="290" x2="440" y2="420" gradientUnits="userSpaceOnUse">
+                <stop offset="0%" stop-color="#4ECDB5"/>
+                <stop offset="100%" stop-color="#147A6B"/>
+              </linearGradient>
+            </defs>
+            <path fill="url(#splash-tide-upper)" d="M216 136 H324 C382 136 420 178 420 242 C420 274 404 304 378 324 L336 280 C352 268 360 256 360 242 C360 206 338 190 306 190 H262 L216 136 Z"/>
+            <path fill="url(#splash-tide-lower)" d="M216 376 H316 C340 376 362 366 378 350 L414 392 C388 418 354 432 312 432 H210 L252 376 Z"/>
+            <path fill="url(#splash-tide-tail)" d="M272 292 L392 412 H448 L328 292 Z"/>
+            <path id="startup-logo-bracket" fill="#F3F6F8" d="M120 136 H208 L310 244 Q318 256 310 268 L208 376 H120 L234 256 Z"/>
           </svg>
         </div>
         <div class="startup-title">QingCode</div>
