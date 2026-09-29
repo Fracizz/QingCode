@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   loadProjectsFromDb: vi.fn(),
   listSshConnections: vi.fn(),
   touchAndLoadRecentFiles: vi.fn(),
+  loadProjectRootTree: vi.fn(),
 }))
 
 vi.mock('../lib/tauri', () => ({
@@ -26,6 +27,10 @@ vi.mock('../lib/sshWorkspace', async importOriginal => ({
   ...(await importOriginal<typeof import('../lib/sshWorkspace')>()),
   ensureSshWorkspaceConnected: mocks.ensureSshWorkspaceConnected,
   requestSshReconnect: mocks.requestSshReconnect,
+}))
+vi.mock('../lib/fileTreeCache', async importOriginal => ({
+  ...(await importOriginal<typeof import('../lib/fileTreeCache')>()),
+  loadProjectRootTree: mocks.loadProjectRootTree,
 }))
 vi.mock('../lib/workspaceTrust', () => ({
   ensureWorkspaceTrust: () => 'trusted',
@@ -71,11 +76,13 @@ beforeEach(() => {
   mocks.touchAndLoadRecentFiles.mockResolvedValue([])
   mocks.safeInvoke.mockResolvedValue(undefined)
   mocks.ensureSshWorkspaceConnected.mockResolvedValue(undefined)
+  mocks.loadProjectRootTree.mockResolvedValue([])
   useProjectStore.setState({
     projects: [remote],
     currentProject: null,
     unavailableProjectIds: [],
     projectTrees: {},
+    projectTreeErrors: {},
     toasts: [],
     refreshProjectTree: vi.fn().mockResolvedValue(undefined),
   })
@@ -125,6 +132,23 @@ describe('SSH project availability', () => {
     expect(useProjectStore.getState().unavailableProjectIds).toEqual([])
     expect(mocks.requestSshReconnect).not.toHaveBeenCalled()
     expect(useProjectStore.getState().toasts[0]?.text).toContain('远程项目目录不可用')
+  })
+
+  it('keeps a failed SFTP root scan visible and clears it after retry', async () => {
+    useProjectStore.setState({ refreshProjectTree: initialState.refreshProjectTree })
+    mocks.loadProjectRootTree
+      .mockRejectedValueOnce(new Error('打开 SSH SFTP 通道失败：ConnectFailed'))
+      .mockResolvedValueOnce([{ path: `${remote.path}/README.md`, name: 'README.md', is_dir: false, loaded: true }])
+
+    expect(await useProjectStore.getState().switchProject(remote)).toBe(true)
+    expect(useProjectStore.getState().projectTrees[remote.id]).toBeUndefined()
+    expect(useProjectStore.getState().projectTreeErrors[remote.id]).toContain('ConnectFailed')
+    expect(useProjectStore.getState().unavailableProjectIds).toEqual([])
+
+    expect(await useProjectStore.getState().switchProject(remote)).toBe(true)
+    expect(useProjectStore.getState().projectTrees[remote.id]?.[0]?.name).toBe('README.md')
+    expect(useProjectStore.getState().projectTreeErrors[remote.id]).toBe('')
+    expect(mocks.ensureSshWorkspaceConnected).toHaveBeenCalledTimes(2)
   })
 })
 

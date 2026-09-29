@@ -91,6 +91,8 @@ interface ProjectState {
   fileTree: FileNode[]
   /** Root file tree per project, so multiple projects can be shown at once. */
   projectTrees: Record<string, FileNode[]>
+  /** Last failed root scan, kept visible after its toast expires. */
+  projectTreeErrors: Record<string, string>
   /** Which project rows are expanded in the sidebar (defaults to true). */
   expandedProjects: Record<string, boolean>
   /** File path to reveal/highlight in the sidebar tree. */
@@ -228,6 +230,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   recentFiles: [],
   fileTree: [],
   projectTrees: {},
+  projectTreeErrors: {},
   expandedProjects: {},
   treeRevealPath: null,
   treeRevealSeq: 0,
@@ -774,8 +777,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           await ensureSshWorkspaceConnected(project)
         }
         // Fast re-click: still refresh so inactive-window tree drift is visible.
-        if (project.ephemeral) void get().ensureProjectTree(project)
-        else void get().refreshProjectTree(project)
+        if (project.ephemeral) await get().ensureProjectTree(project)
+        else await get().refreshProjectTree(project)
         return true
       }
 
@@ -897,6 +900,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   ensureProjectTree: async (project: Project) => {
     if (get().projectTrees[project.id]) return
+    set(s => ({ projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' } }))
     try {
       const tree = await loadProjectRootTree(project)
       set(s => ({
@@ -904,10 +908,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           ...s.projectTrees,
           [project.id]: preserveLoadedChildren(tree, s.projectTrees[project.id] ?? []),
         },
+        projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' },
         unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, false),
       }))
     } catch (e) {
       console.error('ensureProjectTree failed:', e)
+      set(s => ({ projectTreeErrors: { ...s.projectTreeErrors, [project.id]: String(e) } }))
       if (!isSshProject(project) && isDirectoryUnavailableError(e)) {
         set(s => ({
           unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
@@ -919,6 +925,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   refreshProjectTree: async (project: Project) => {
     const sequence = nextProjectTreeRefreshSequence(project.id)
+    set(s => ({ projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' } }))
     try {
       const tree = await loadProjectRootTree(project)
       if (!isLatestProjectTreeRefresh(project.id, sequence)) return
@@ -935,6 +942,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             ? { [project.id]: preserveLoadedChildren(next, s.projectTrees[project.id] ?? []) }
             : {}),
         },
+        projectTreeErrors: isLatestProjectTreeRefresh(project.id, sequence)
+          ? { ...s.projectTreeErrors, [project.id]: '' }
+          : s.projectTreeErrors,
         unavailableProjectIds: isLatestProjectTreeRefresh(project.id, sequence)
           ? withUnavailableProject(s.unavailableProjectIds, project.id, false)
           : s.unavailableProjectIds,
@@ -942,6 +952,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     } catch (e) {
       console.error('refreshProjectTree failed:', e)
       if (!isLatestProjectTreeRefresh(project.id, sequence)) return
+      set(s => ({ projectTreeErrors: { ...s.projectTreeErrors, [project.id]: String(e) } }))
       if (!isSshProject(project) && isDirectoryUnavailableError(e)) {
         set(s => ({
           unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),

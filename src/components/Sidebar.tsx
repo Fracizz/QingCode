@@ -118,6 +118,7 @@ import {
 } from './explorerLayout'
 import { authorizePaths } from '../lib/pathAllowlist'
 import { requestSshReconnect } from '../lib/sshWorkspace'
+import { formatDirectoryErrorDetail } from '../lib/directoryError'
 import { startSshTransfer } from '../lib/sshTransfer'
 
 type DirectoryDeleteStats = {
@@ -158,6 +159,7 @@ export default function Sidebar() {
     currentProject,
     sshConnections,
     projectTrees,
+    projectTreeErrors,
     unavailableProjectIds,
     switchProject,
     refreshProjectTree,
@@ -228,6 +230,7 @@ export default function Sidebar() {
     ? Object.prototype.hasOwnProperty.call(projectTrees, currentProject.id)
     : false
   const tree = currentProject ? (projectTrees[currentProject.id] ?? EMPTY_TREE) : EMPTY_TREE
+  const treeError = currentProject ? projectTreeErrors[currentProject.id] : undefined
   const visibleTreeRows = useMemo(
     () => flattenVisibleNodes(tree, expandedPaths, pendingCreate, pendingRename),
     [expandedPaths, pendingCreate, pendingRename, tree]
@@ -516,6 +519,17 @@ export default function Sidebar() {
         refreshProjectTree(currentProject),
         useFavoriteStore.getState().loadProjectFavorites(currentProject, { force: true }),
       ])
+    } finally {
+      setRefreshing(false)
+    }
+  }
+
+  const handleRetryTree = async () => {
+    if (refreshing || !currentProject) return
+    setRefreshing(true)
+    try {
+      if (currentProject.kind === 'ssh') await switchProject(currentProject)
+      else await refreshProjectTree(currentProject)
     } finally {
       setRefreshing(false)
     }
@@ -1715,7 +1729,20 @@ export default function Sidebar() {
                           onCancel={cancelCreate}
                         />
                       )}
-                      {!treeLoaded && pendingCreate?.parentPath !== currentProject.path && (
+                      {treeError && (
+                        <div className="px-4 py-2 text-ui-sm text-warn" role="alert">
+                          <div className="break-words">{formatDirectoryErrorDetail(treeError)}</div>
+                          <button
+                            type="button"
+                            className="mt-1 rounded px-2 py-1 text-accent hover:bg-bg-hover disabled:opacity-50"
+                            onClick={() => void handleRetryTree()}
+                            disabled={refreshing}
+                          >
+                            {t('重试')}
+                          </button>
+                        </div>
+                      )}
+                      {!treeLoaded && !treeError && pendingCreate?.parentPath !== currentProject.path && (
                         <div className="px-4 py-2 text-ui-sm text-fg-muted" aria-live="polite">
                           {t('正在加载文件树…')}
                         </div>

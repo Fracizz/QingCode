@@ -242,6 +242,31 @@ struct ConnectedSession {
     handle: client::Handle<SshClient>,
 }
 
+async fn open_sftp_session(session: &ConnectedSession) -> Result<SftpSession, String> {
+    let mut retries = 0;
+    let channel = loop {
+        match session.handle.channel_open_session().await {
+            Ok(channel) => break channel,
+            Err(russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed))
+                if retries < 2 =>
+            {
+                retries += 1;
+                tokio::time::sleep(Duration::from_millis(150 * retries)).await;
+            }
+            Err(error) => return Err(format!("打开 SSH SFTP 通道失败：{error}")),
+        }
+    };
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|error| format!("远端未启用 SFTP：{error}"))?;
+    let sftp = SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|error| format!("初始化 SFTP 失败：{error}"))?;
+    sftp.set_timeout(30);
+    Ok(sftp)
+}
+
 #[derive(Clone, Debug)]
 struct RegisteredRoot {
     uri: String,
@@ -319,20 +344,7 @@ impl SshManager {
 
     async fn open_sftp(&self, connection_id: &str) -> Result<SftpSession, String> {
         let session = self.session(connection_id)?;
-        let channel = session
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|error| format!("打开 SSH SFTP 通道失败：{error}"))?;
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|error| format!("远端未启用 SFTP：{error}"))?;
-        let sftp = SftpSession::new(channel.into_stream())
-            .await
-            .map_err(|error| format!("初始化 SFTP 失败：{error}"))?;
-        sftp.set_timeout(30);
-        Ok(sftp)
+        open_sftp_session(&session).await
     }
 
     async fn sftp_for_uri(
@@ -828,18 +840,7 @@ pub async fn ssh_connect(
         authenticate(&mut handle, &config).await?;
         (Arc::new(ConnectedSession { handle }), fingerprint)
     };
-    let channel = connected
-        .handle
-        .channel_open_session()
-        .await
-        .map_err(|error| format!("打开 SSH SFTP 通道失败：{error}"))?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|error| format!("远端未启用 SFTP：{error}"))?;
-    let sftp = SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|error| format!("初始化 SFTP 失败：{error}"))?;
+    let sftp = open_sftp_session(&connected).await?;
     let canonical_root = sftp
         .canonicalize(parsed_root.path)
         .await
