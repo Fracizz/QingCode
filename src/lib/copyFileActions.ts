@@ -14,6 +14,8 @@ import {
 
 /** Focusable UI targets (for example project chips) can expose their copy path. */
 export const COPY_PATH_FOCUS_ATTR = 'data-qingcode-copy-path'
+export const COPY_REFERENCE_FOCUS_ATTR = 'data-qingcode-copy-reference-path'
+export const COPY_REFERENCE_LINE_ATTR = 'data-qingcode-copy-reference-line'
 
 function activeEditableTab() {
   const { tabs, activeTabId } = useEditorStore.getState()
@@ -31,6 +33,18 @@ function focusedCopyPath(): string | null {
   return document.activeElement.closest(`[${COPY_PATH_FOCUS_ATTR}]`)?.getAttribute(
     COPY_PATH_FOCUS_ATTR,
   ) ?? null
+}
+
+function focusedReference(): { path: string; line?: number } | null {
+  if (typeof document === 'undefined' || !(document.activeElement instanceof HTMLElement)) {
+    return null
+  }
+  const element = document.activeElement.closest(`[${COPY_REFERENCE_FOCUS_ATTR}]`)
+  const path = element?.getAttribute(COPY_REFERENCE_FOCUS_ATTR)
+  if (!path) return null
+  const rawLine = element?.getAttribute(COPY_REFERENCE_LINE_ATTR)
+  const line = rawLine && /^[1-9]\d*$/.test(rawLine) ? Number(rawLine) : undefined
+  return { path, ...(line ? { line } : {}) }
 }
 
 /** Prefer focused explorer selection, then the active editor tab. */
@@ -117,8 +131,7 @@ export async function copyFileReferenceAction(
   const references: string[] = []
 
   for (const path of paths) {
-    const project =
-      findProjectForPath(projectState.projects, path) ?? projectState.currentProject
+    const project = findProjectForPath(projectState.projects, path)
     if (!project) {
       pushToast('error', translate('无法确定该路径所属项目'))
       return
@@ -170,7 +183,8 @@ export async function copyActiveRelativePathAction(): Promise<void> {
 }
 
 export async function copyActiveFileReferenceAction(): Promise<void> {
-  const paths = pathsForCopyShortcut()
+  const focused = focusedReference()
+  const paths = focused ? [focused.path] : pathsForCopyShortcut()
   if (paths.length === 0) return
-  await copyFileReferenceAction(paths)
+  await copyFileReferenceAction(paths, focused ? { startLine: focused.line ?? 1 } : undefined)
 }

@@ -1,4 +1,5 @@
 import { convertFileSrc } from '@tauri-apps/api/core'
+import { openUrl } from '@tauri-apps/plugin-opener'
 import { forwardRef, useEffect, useMemo, useState, type ComponentPropsWithoutRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -6,6 +7,11 @@ import { useI18n } from '../lib/i18n'
 import { authorizePaths } from '../lib/pathAllowlist'
 import { isTauri } from '../lib/tauri'
 import { resolveMarkdownLocalImagePath } from '../lib/markdownLocalImages'
+import { resolveMarkdownLink } from '../lib/markdownLinks'
+import { useEditorStore } from '../store/editorStore'
+import { useProjectStore } from '../store/projectStore'
+import { findProjectForPath } from '../utils/fileReferences'
+import { COPY_REFERENCE_FOCUS_ATTR, COPY_REFERENCE_LINE_ATTR } from '../lib/copyFileActions'
 
 type Props = {
   content: string
@@ -82,6 +88,23 @@ const MarkdownPreview = forwardRef<HTMLDivElement, Props>(function MarkdownPrevi
   const body = useMemo(() => content || '', [content])
   const empty = !body.trim()
 
+  const openLink = async (href: string) => {
+    const projects = useProjectStore.getState().projects
+    const sourceProject = findProjectForPath(projects, filePath)
+    const target = resolveMarkdownLink(filePath, href, sourceProject?.path)
+    if (target.kind === 'external') {
+      if (isTauri()) await openUrl(target.url)
+      else window.open(target.url, '_blank', 'noopener,noreferrer')
+      return
+    }
+    if (target.kind !== 'file') return
+    if (!findProjectForPath(projects, target.path)) {
+      useProjectStore.getState().pushToast('error', t('链接不在已打开项目中'))
+      return
+    }
+    await useEditorStore.getState().openFile(target.path, target.line)
+  }
+
   return (
     <div
       ref={ref}
@@ -93,11 +116,27 @@ const MarkdownPreview = forwardRef<HTMLDivElement, Props>(function MarkdownPrevi
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
-            a: ({ href, children }) => (
-              <a href={href} target="_blank" rel="noreferrer noopener">
-                {children}
-              </a>
-            ),
+            a: ({ href, children }) => {
+              const project = findProjectForPath(useProjectStore.getState().projects, filePath)
+              const target = resolveMarkdownLink(filePath, href ?? '', project?.path)
+              if (target.kind === 'unsupported') return <span>{children}</span>
+              return (
+                <a
+                  href={target.kind === 'file' ? target.path : href}
+                  {...(target.kind === 'file' ? { [COPY_REFERENCE_FOCUS_ATTR]: target.path } : {})}
+                  {...(target.kind === 'file' && target.line ? { [COPY_REFERENCE_LINE_ATTR]: target.line } : {})}
+                  onClick={event => {
+                    if (target.kind === 'anchor') return
+                    event.preventDefault()
+                    void openLink(href ?? '').catch(error =>
+                      useProjectStore.getState().pushToast('error', String(error)),
+                    )
+                  }}
+                >
+                  {children}
+                </a>
+              )
+            },
             img: props => <MarkdownImage {...props} markdownPath={filePath} />,
           }}
         >

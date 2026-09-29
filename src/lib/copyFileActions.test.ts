@@ -54,7 +54,10 @@ vi.mock('../utils/fileReferences', async () => {
 
 import {
   COPY_PATH_FOCUS_ATTR,
+  COPY_REFERENCE_FOCUS_ATTR,
+  COPY_REFERENCE_LINE_ATTR,
   copyActivePathAction,
+  copyActiveFileReferenceAction,
   copyFileReferenceAction,
   copyPathAction,
   copyRelativePathAction,
@@ -128,5 +131,35 @@ describe('copyFileActions', () => {
 
     expect(copyToClipboard).toHaveBeenCalledWith('D:/work/project-selected')
     expect(explorerPathsForCopyShortcut).not.toHaveBeenCalled()
+  })
+
+  it('Alt+C copies the focused Markdown link target instead of the source tab', async () => {
+    const link = document.createElement('a')
+    link.href = 'D:/work/app/src/a.ts'
+    link.setAttribute(COPY_REFERENCE_FOCUS_ATTR, 'D:/work/app/src/a.ts')
+    document.body.appendChild(link)
+    link.focus()
+
+    await copyActiveFileReferenceAction()
+
+    expect(formatFileReference).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'App' }), 'D:/work/app/src/a.ts', 1, 1,
+    )
+    expect(copyToClipboard).toHaveBeenCalledWith('@App/src/a.ts#L1')
+  })
+
+  it('Alt+C preserves the linked target line', async () => {
+    const link = document.createElement('a')
+    link.href = 'D:/work/app/src/a.ts'
+    link.setAttribute(COPY_REFERENCE_FOCUS_ATTR, 'D:/work/app/src/a.ts')
+    link.setAttribute(COPY_REFERENCE_LINE_ATTR, '21')
+    document.body.appendChild(link)
+    link.focus()
+
+    await copyActiveFileReferenceAction()
+
+    expect(formatFileReference).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'App' }), 'D:/work/app/src/a.ts', 21, 21,
+    )
   })
 })

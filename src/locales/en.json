@@ -144,6 +144,7 @@
     "打开项目目录失败: {error}": "Could not open project folder: {error}",
     "复制路径失败: {error}": "Could not copy path: {error}",
     "无法确定该路径所属项目": "Could not determine which project owns this path",
+    "链接不在已打开项目中": "The link is outside open projects",
     "文件引用已复制": "File reference copied",
     "已复制 {count} 个文件引用": "Copied {count} file references",
     "复制引用失败: {error}": "Could not copy reference: {error}",

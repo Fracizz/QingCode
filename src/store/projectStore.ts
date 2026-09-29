@@ -64,6 +64,7 @@ import {
   connectSshWorkspace,
   ensureSshWorkspaceConnected,
   findSshProject,
+  isSshProject,
   requestSshReconnect,
   sshRootUri,
   type SshSessionSecrets,
@@ -160,6 +161,9 @@ function isLatestProjectTreeRefresh(projectId: string, sequence: number): boolea
   return projectTreeRefreshSequences.get(projectId) === sequence
 }
 
+const SSH_DIRECTORY_UNAVAILABLE_RE =
+  /远程项目目录不可用|读取远程项目目录失败|远程项目路径不是目录|远程目录不可用|远程路径不是目录/
+
 async function syncAllowlistRoots(projects: Project[]): Promise<void> {
   try {
     await syncRootsFromProjects(projects)
@@ -189,11 +193,6 @@ async function validateDirectoryWithRetry(path: string): Promise<boolean> {
 }
 
 async function validateProjectWithRetry(project: Project): Promise<boolean> {
-  try {
-    await ensureSshWorkspaceConnected(project)
-  } catch {
-    return false
-  }
   return validateDirectoryWithRetry(project.path)
 }
 
@@ -295,7 +294,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
       void (async () => {
         const results = await Promise.all(
-          projects.map(async project => ({
+          projects.filter(project => !isSshProject(project)).map(async project => ({
             id: project.id,
             ok: await validateProjectWithRetry(project),
           }))
@@ -765,10 +764,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   switchProject: async (project: Project) => {
+    let sshConnectionAttempted = false
+    let sshWorkspaceConnected = false
     try {
       const currentProject = get().currentProject
       if (currentProject?.id === project.id) {
-        if (project.kind === 'ssh') await ensureSshWorkspaceConnected(project)
+        if (isSshProject(project)) {
+          sshConnectionAttempted = true
+          await ensureSshWorkspaceConnected(project)
+        }
         // Fast re-click: still refresh so inactive-window tree drift is visible.
         if (project.ephemeral) void get().ensureProjectTree(project)
         else void get().refreshProjectTree(project)
@@ -782,7 +786,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
       await pushTrustedRootsToNative(forTrustSync)
 
+      sshConnectionAttempted = true
       await ensureSshWorkspaceConnected(project)
+      sshWorkspaceConnected = true
 
       // Ephemeral/empty projects use a scratch temp directory; do not block
       // activation on validate so terminals remain usable.
@@ -810,12 +816,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return true
     } catch (e) {
       console.error('switchProject failed:', e)
-      if (project.kind === 'ssh') {
-        requestSshReconnect(project)
-        set(s => ({
-          unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
-        }))
-        get().pushToast('info', 'SSH 连接已断开，请重新认证')
+      if (isSshProject(project)) {
+        const remoteDirectoryFailed = SSH_DIRECTORY_UNAVAILABLE_RE.test(String(e))
+        if (sshWorkspaceConnected || !sshConnectionAttempted || remoteDirectoryFailed) {
+          get().pushToast('error', `切换 SSH 项目失败: ${String(e)}`)
+        } else {
+          requestSshReconnect(project)
+          get().pushToast('info', 'SSH 连接已断开，请重新认证')
+        }
         return false
       }
       if (isDirectoryUnavailableError(e)) {
@@ -857,7 +865,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }))
     } catch (e) {
       console.error('loadFileTree failed:', e)
-      if (isDirectoryUnavailableError(e)) {
+      if (!isSshProject(proj) && isDirectoryUnavailableError(e)) {
         set(s => ({
           unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, proj.id, true),
         }))
@@ -900,7 +908,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }))
     } catch (e) {
       console.error('ensureProjectTree failed:', e)
-      if (isDirectoryUnavailableError(e)) {
+      if (!isSshProject(project) && isDirectoryUnavailableError(e)) {
         set(s => ({
           unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
         }))
@@ -934,7 +942,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     } catch (e) {
       console.error('refreshProjectTree failed:', e)
       if (!isLatestProjectTreeRefresh(project.id, sequence)) return
-      if (isDirectoryUnavailableError(e)) {
+      if (!isSshProject(project) && isDirectoryUnavailableError(e)) {
         set(s => ({
           unavailableProjectIds: withUnavailableProject(s.unavailableProjectIds, project.id, true),
         }))
