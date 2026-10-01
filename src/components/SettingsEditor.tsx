@@ -1151,7 +1151,10 @@ export default function SettingsEditor() {
                     locked={workspaceLocked}
                     lockHint={t('此设置仅在用户作用域中可用')}
                   >
-                    <div className="relative w-[120px]">
+                    <label
+                      className="setting-control setting-number-with-unit"
+                      aria-disabled={workspaceLocked}
+                    >
                       <input
                         aria-label={t('Git 随机刷新周期起始值（分钟）')}
                         type="number"
@@ -1170,12 +1173,12 @@ export default function SettingsEditor() {
                           if (e.key !== 'Enter') return
                           e.currentTarget.blur()
                         }}
-                        className="setting-control w-full py-1 pl-2 pr-11 text-right"
+                        className="setting-number-with-unit-input"
                       />
-                      <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-ui-sm text-fg-muted">
+                      <span className="shrink-0 text-ui-sm text-fg-muted">
                         {t('分钟')}
                       </span>
-                    </div>
+                    </label>
                   </SettingItem>
                 )}
                 {match('检查更新', '自动检查更新', '更新') && (
@@ -1253,7 +1256,7 @@ export default function SettingsEditor() {
                   <SettingItem
                     title={t('Windows 打开方式')}
                     description={t(
-                      '将 QingCode 添加到资源管理器「打开方式」菜单（常见代码/文本扩展名，不修改默认程序）。写入当前用户注册表，无需管理员权限。',
+                      '将 QingCode 添加到资源管理器「打开方式」菜单，不改变默认程序。排除 .bat/.cmd 执行关联；取消注册后保留已经选择的默认程序。无需管理员权限。',
                     )}
                     modified={Boolean(openWith?.registered)}
                   >

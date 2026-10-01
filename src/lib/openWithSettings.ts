@@ -4,6 +4,7 @@ export interface OpenWithStatus {
   registered: boolean
   exe_path: string
   extensions: string[]
+  file_extensions?: string[]
   supported: boolean
 }
 

@@ -33,29 +33,74 @@ $extensions = @(
   'log', 'gitignore', 'gitattributes', 'editorconfig', 'dockerfile', 'makefile', 'cmake',
   'tex', 'rst', 'adoc', 'csv', 'tsv'
 )
+$editorOnlyExtensions = @('bat', 'cmd')
+$openWithExtensions = @($extensions | Where-Object { $_ -notin $editorOnlyExtensions })
+$classesRoot = 'HKCU:\Software\Classes'
+$versionName = 'QingCodeRegistrationVersion'
+$existingApp = Join-Path $classesRoot "Applications\$appKey"
+$repairLegacyDefaults = $true
+if (Test-Path -LiteralPath $existingApp) {
+  $existingVersion = (Get-Item -LiteralPath $existingApp).GetValue($versionName)
+  $repairLegacyDefaults = -not ($existingVersion -is [int] -and $existingVersion -ge 2)
+}
 
-function Notify-Shell {
-  Add-Type -Namespace QingCodeNative -Name Shell -MemberDefinition @'
-    [System.Runtime.InteropServices.DllImport("shell32.dll")]
-    public static extern void SHChangeNotify(int wEventId, uint uFlags, System.IntPtr dwItem1, System.IntPtr dwItem2);
-'@ -ErrorAction SilentlyContinue
-  if ([type]::GetType('QingCodeNative.Shell')) {
-    [QingCodeNative.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+function Ensure-RegistryKey([string]$Path) {
+  # New-Item -Force clears an existing registry key's values, including its
+  # default handler. Only create keys that are actually missing.
+  if (-not (Test-Path -LiteralPath $Path)) {
+    New-Item -Path $Path | Out-Null
   }
 }
 
-if ($Unregister) {
-  $classes = 'HKCU:\Software\Classes'
-  Remove-Item -LiteralPath (Join-Path $classes $progId) -Recurse -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath (Join-Path $classes "Applications\$appKey") -Recurse -Force -ErrorAction SilentlyContinue
+function Remove-RegistryValue([string]$Path, [string]$Name) {
+  if ((Test-Path -LiteralPath $Path) -and
+      (Get-Item -LiteralPath $Path).GetValueNames() -contains $Name) {
+    Remove-ItemProperty -LiteralPath $Path -Name $Name -Force
+  }
+}
+
+function Clear-LegacyExtensionEntries([bool]$RemoveAll) {
   foreach ($ext in $extensions) {
-    $ow = Join-Path $classes ".$ext\OpenWithProgids"
-    if (Test-Path -LiteralPath $ow) {
-      Remove-ItemProperty -LiteralPath $ow -Name $progId -Force -ErrorAction SilentlyContinue
+    $extKey = Join-Path $classesRoot ".$ext"
+    $ow = Join-Path $extKey 'OpenWithProgids'
+    if (-not (Test-Path -LiteralPath $ow)) { continue }
+    $owned = (Get-Item -LiteralPath $ow).GetValueNames() -contains $progId
+    if ($owned -and $repairLegacyDefaults) {
+      $key = Get-Item -LiteralPath $extKey
+      if ($key.GetValueNames() -contains '' -and $key.GetValue('') -is [string] -and $key.GetValue('') -eq '') {
+        # Drop only our legacy blank override, allowing Windows to inherit the
+        # machine association. Preserve nonempty/custom defaults and UserChoice.
+        Remove-ItemProperty -LiteralPath $extKey -Name '(default)' -Force
+      }
+    }
+    if ($RemoveAll -or $ext -in $editorOnlyExtensions) {
+      Remove-RegistryValue -Path $ow -Name $progId
     }
   }
+}
+
+function Notify-Shell {
+  if (-not ('QingCodeNative.Shell' -as [type])) {
+    Add-Type -Namespace QingCodeNative -Name Shell -MemberDefinition @'
+    [System.Runtime.InteropServices.DllImport("shell32.dll")]
+    public static extern void SHChangeNotify(int wEventId, uint uFlags, System.IntPtr dwItem1, System.IntPtr dwItem2);
+'@
+  }
+  [QingCodeNative.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+}
+
+if ($Unregister) {
+  # Keep launch commands valid for users who explicitly selected QingCode as
+  # their default. Hiding the entry must not leave an orphaned UserChoice.
+  foreach ($ownedKey in @($progId, "Applications\$appKey")) {
+    $ownedPath = Join-Path $classesRoot $ownedKey
+    if (Test-Path -LiteralPath $ownedPath) {
+      Set-ItemProperty -LiteralPath $ownedPath -Name 'NoOpenWith' -Value ''
+    }
+  }
+  Clear-LegacyExtensionEntries -RemoveAll $true
   Notify-Shell
-  Write-Host "OK Unregistered QingCode from Open with ($($extensions.Count) extensions)." -ForegroundColor Green
+  Write-Host "OK Unregistered QingCode from Open with (existing default choices preserved)." -ForegroundColor Green
   return
 }
 
@@ -67,38 +112,44 @@ if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
 
 $command = "`"$ExePath`" `"%1`""
 $icon = "$ExePath,0"
-$classesRoot = 'HKCU:\Software\Classes'
 
-New-Item -Path (Join-Path $classesRoot $progId) -Force | Out-Null
+Ensure-RegistryKey -Path (Join-Path $classesRoot $progId)
 Set-ItemProperty -LiteralPath (Join-Path $classesRoot $progId) -Name '(default)' -Value $friendly
-New-Item -Path (Join-Path $classesRoot "$progId\DefaultIcon") -Force | Out-Null
+Remove-RegistryValue -Path (Join-Path $classesRoot $progId) -Name 'NoOpenWith'
+Ensure-RegistryKey -Path (Join-Path $classesRoot "$progId\DefaultIcon")
 Set-ItemProperty -LiteralPath (Join-Path $classesRoot "$progId\DefaultIcon") -Name '(default)' -Value $icon
-New-Item -Path (Join-Path $classesRoot "$progId\shell\open\command") -Force | Out-Null
+Ensure-RegistryKey -Path (Join-Path $classesRoot "$progId\shell\open\command")
 Set-ItemProperty -LiteralPath (Join-Path $classesRoot "$progId\shell\open\command") -Name '(default)' -Value $command
 
 $appRoot = Join-Path $classesRoot "Applications\$appKey"
-New-Item -Path $appRoot -Force | Out-Null
+Ensure-RegistryKey -Path $appRoot
 Set-ItemProperty -LiteralPath $appRoot -Name 'FriendlyAppName' -Value $friendly
-New-Item -Path (Join-Path $appRoot 'DefaultIcon') -Force | Out-Null
+Remove-RegistryValue -Path $appRoot -Name 'NoOpenWith'
+Ensure-RegistryKey -Path (Join-Path $appRoot 'DefaultIcon')
 Set-ItemProperty -LiteralPath (Join-Path $appRoot 'DefaultIcon') -Name '(default)' -Value $icon
-New-Item -Path (Join-Path $appRoot 'shell\open\command') -Force | Out-Null
+Ensure-RegistryKey -Path (Join-Path $appRoot 'shell\open\command')
 Set-ItemProperty -LiteralPath (Join-Path $appRoot 'shell\open\command') -Name '(default)' -Value $command
-New-Item -Path (Join-Path $appRoot 'SupportedTypes') -Force | Out-Null
+Ensure-RegistryKey -Path (Join-Path $appRoot 'SupportedTypes')
+Clear-LegacyExtensionEntries -RemoveAll $false
+foreach ($ext in $editorOnlyExtensions) {
+  Remove-RegistryValue -Path (Join-Path $appRoot 'SupportedTypes') -Name ".$ext"
+}
 
-foreach ($ext in $extensions) {
+foreach ($ext in $openWithExtensions) {
   $dotted = ".$ext"
   Set-ItemProperty -LiteralPath (Join-Path $appRoot 'SupportedTypes') -Name $dotted -Value ''
   $extKey = Join-Path $classesRoot $dotted
-  New-Item -Path $extKey -Force | Out-Null
+  Ensure-RegistryKey -Path $extKey
   $ow = Join-Path $extKey 'OpenWithProgids'
-  New-Item -Path $ow -Force | Out-Null
+  Ensure-RegistryKey -Path $ow
   New-ItemProperty -LiteralPath $ow -Name $progId -PropertyType String -Value '' -Force | Out-Null
 }
+Set-ItemProperty -LiteralPath $appRoot -Name $versionName -Type DWord -Value 2
 
 Notify-Shell
 Write-Host "OK Registered Open with QingCode" -ForegroundColor Green
 Write-Host "  exe: $ExePath"
-Write-Host "  extensions: $($extensions.Count)"
+Write-Host "  extensions: $($openWithExtensions.Count) (batch execution associations excluded)"
 Write-Host ""
 Write-Host "Verify: right-click a .ts/.md/.json file → Open with → QingCode" -ForegroundColor DarkGray
 Write-Host "Unregister: pwsh -File ./scripts/register-open-with.ps1 -Unregister" -ForegroundColor DarkGray

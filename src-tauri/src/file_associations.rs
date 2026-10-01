@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 const PROGID: &str = "QingCode.Document";
 const APP_KEY: &str = "QingCode.exe";
 const FRIENDLY_NAME: &str = "QingCode";
+const REGISTRATION_VERSION_NAME: &str = "QingCodeRegistrationVersion";
+const REGISTRATION_VERSION: u32 = 2;
 
 /// Text/code extensions QingCode can open (exclude binaries rejected by `read_file`).
 const OPEN_WITH_EXTENSIONS: &[&str] = &[
@@ -41,8 +43,6 @@ const OPEN_WITH_EXTENSIONS: &[&str] = &[
     "sh",
     "bash",
     "zsh",
-    "bat",
-    "cmd",
     "ps1",
     "go",
     "java",
@@ -86,11 +86,16 @@ const OPEN_WITH_EXTENSIONS: &[&str] = &[
     "tsv",
 ];
 
+// These can be edited, but must not be offered as document associations: their
+// default Open verb executes the script rather than opening a text document.
+const EDITOR_ONLY_EXTENSIONS: &[&str] = &["bat", "cmd"];
+
 #[derive(Debug, Serialize, Clone)]
 pub struct OpenWithStatus {
     pub registered: bool,
     pub exe_path: String,
     pub extensions: Vec<String>,
+    pub file_extensions: Vec<String>,
     pub supported: bool,
 }
 
@@ -100,6 +105,18 @@ pub fn supported_open_with_extensions() -> Vec<String> {
         .iter()
         .map(|s| (*s).to_string())
         .collect()
+}
+
+pub fn supported_file_extensions() -> Vec<String> {
+    OPEN_WITH_EXTENSIONS
+        .iter()
+        .chain(EDITOR_ONLY_EXTENSIONS)
+        .map(|ext| (*ext).to_string())
+        .collect()
+}
+
+fn is_empty_legacy_default(owned_open_with: bool, default: Option<&str>) -> bool {
+    owned_open_with && default == Some("")
 }
 
 /// Collect file paths from process argv (skip exe and flag-like args).
@@ -156,16 +173,19 @@ mod windows_impl {
         let exe = exe_path()?;
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let registered = hkcu
-            .open_subkey(format!(r"Software\Classes\{PROGID}\shell\open\command"))
+            .open_subkey(format!(r"Software\Classes\Applications\{APP_KEY}"))
             .ok()
+            .filter(|key| key.get_raw_value("NoOpenWith").is_err())
+            .and_then(|key| key.open_subkey(r"shell\open\command").ok())
             .and_then(|key| key.get_value::<String, _>("").ok())
-            .map(|cmd| cmd.to_ascii_lowercase().contains("qingcode"))
+            .map(|cmd| cmd.eq_ignore_ascii_case(&quote_cmd(&exe)))
             .unwrap_or(false);
 
         Ok(OpenWithStatus {
             registered,
             exe_path: exe.to_string_lossy().into_owned(),
             extensions: supported_open_with_extensions(),
+            file_extensions: supported_file_extensions(),
             supported: true,
         })
     }
@@ -181,6 +201,7 @@ mod windows_impl {
             .create_subkey(r"Software\Classes")
             .map_err(|e| format!("无法写入注册表 Software\\Classes: {e}"))?
             .0;
+        let repair_legacy_defaults = needs_legacy_default_repair(&classes);
 
         let prog = classes
             .create_subkey(PROGID)
@@ -188,6 +209,7 @@ mod windows_impl {
             .0;
         prog.set_value("", &FRIENDLY_NAME)
             .map_err(|e| format!("写入 ProgId 失败: {e}"))?;
+        delete_value_if_present(&prog, "NoOpenWith")?;
         prog.create_subkey("DefaultIcon")
             .map_err(|e| format!("DefaultIcon: {e}"))?
             .0
@@ -205,6 +227,7 @@ mod windows_impl {
             .0;
         app.set_value("FriendlyAppName", &FRIENDLY_NAME)
             .map_err(|e| format!("FriendlyAppName: {e}"))?;
+        delete_value_if_present(&app, "NoOpenWith")?;
         app.create_subkey("DefaultIcon")
             .map_err(|e| format!("App DefaultIcon: {e}"))?
             .0
@@ -220,6 +243,11 @@ mod windows_impl {
             .create_subkey("SupportedTypes")
             .map_err(|e| format!("SupportedTypes: {e}"))?
             .0;
+
+        clean_legacy_extensions(&classes, false, repair_legacy_defaults)?;
+        for ext in EDITOR_ONLY_EXTENSIONS {
+            delete_value_if_present(&supported, &format!(".{ext}"))?;
+        }
 
         for ext in supported_open_with_extensions() {
             let dotted = format!(".{ext}");
@@ -238,6 +266,8 @@ mod windows_impl {
                 .set_value(PROGID, &"")
                 .map_err(|e| format!("OpenWithProgids 值 {dotted}: {e}"))?;
         }
+        app.set_value(REGISTRATION_VERSION_NAME, &REGISTRATION_VERSION)
+            .map_err(|e| format!("写入打开方式注册版本: {e}"))?;
 
         notify_shell_change();
         open_with_status()
@@ -247,25 +277,76 @@ mod windows_impl {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         let classes = match hkcu.open_subkey_with_flags(r"Software\Classes", KEY_READ | KEY_WRITE) {
             Ok(k) => k,
-            Err(_) => return open_with_status(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return open_with_status(),
+            Err(e) => return Err(format!("读取打开方式注册表: {e}")),
         };
+        let repair_legacy_defaults = needs_legacy_default_repair(&classes);
 
-        let _ = classes.delete_subkey_all(PROGID);
-        let _ = classes.delete_subkey_all(format!(r"Applications\{APP_KEY}"));
-
-        for ext in supported_open_with_extensions() {
-            let dotted = format!(".{ext}");
-            if let Ok(ext_key) = classes.open_subkey_with_flags(&dotted, KEY_READ | KEY_WRITE) {
-                if let Ok(open_with) =
-                    ext_key.open_subkey_with_flags("OpenWithProgids", KEY_READ | KEY_WRITE)
-                {
-                    let _ = open_with.delete_value(PROGID);
-                }
+        // UserChoice may still point to either identifier. Keep their commands
+        // valid, and hide them from Open With instead of orphaning user defaults.
+        for path in [PROGID.to_string(), format!(r"Applications\{APP_KEY}")] {
+            match classes.open_subkey_with_flags(&path, KEY_READ | KEY_WRITE) {
+                Ok(key) => key
+                    .set_value("NoOpenWith", &"")
+                    .map_err(|e| format!("隐藏打开方式 {path}: {e}"))?,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("读取打开方式 {path}: {e}")),
             }
         }
 
+        clean_legacy_extensions(&classes, true, repair_legacy_defaults)?;
+
         notify_shell_change();
         open_with_status()
+    }
+
+    fn delete_value_if_present(key: &RegKey, name: &str) -> Result<(), String> {
+        match key.delete_value(name) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("删除注册表值 {name}: {e}")),
+        }
+    }
+
+    fn needs_legacy_default_repair(classes: &RegKey) -> bool {
+        classes
+            .open_subkey(format!(r"Applications\{APP_KEY}"))
+            .ok()
+            .and_then(|key| key.get_value::<u32, _>(REGISTRATION_VERSION_NAME).ok())
+            .unwrap_or(0)
+            < REGISTRATION_VERSION
+    }
+
+    fn clean_legacy_extensions(
+        classes: &RegKey,
+        unregister: bool,
+        repair_legacy_defaults: bool,
+    ) -> Result<(), String> {
+        for ext in supported_file_extensions() {
+            let dotted = format!(".{ext}");
+            let ext_key = match classes.open_subkey_with_flags(&dotted, KEY_READ | KEY_WRITE) {
+                Ok(key) => key,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(format!("读取扩展名 {dotted}: {e}")),
+            };
+            let open_with =
+                match ext_key.open_subkey_with_flags("OpenWithProgids", KEY_READ | KEY_WRITE) {
+                    Ok(key) => key,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(format!("读取 OpenWithProgids {dotted}: {e}")),
+                };
+            let owned = open_with.get_raw_value(PROGID).is_ok();
+            let default = ext_key.get_value::<String, _>("").ok();
+            if repair_legacy_defaults && is_empty_legacy_default(owned, default.as_deref()) {
+                // Remove only a blank override with our legacy marker. Windows
+                // can then inherit its machine default (e.g. Notepad/batfile).
+                delete_value_if_present(&ext_key, "")?;
+            }
+            if unregister || EDITOR_ONLY_EXTENSIONS.contains(&ext.as_str()) {
+                delete_value_if_present(&open_with, PROGID)?;
+            }
+        }
+        Ok(())
     }
 
     fn notify_shell_change() {
@@ -288,6 +369,7 @@ pub fn open_with_status() -> Result<OpenWithStatus, String> {
         registered: false,
         exe_path: String::new(),
         extensions: supported_open_with_extensions(),
+        file_extensions: supported_file_extensions(),
         supported: false,
     })
 }
@@ -329,6 +411,20 @@ mod tests {
         assert!(exts.contains(&"rs".into()));
         assert!(!exts.iter().any(|e| e == "xlsx"));
         assert!(!exts.iter().any(|e| e == "exe"));
+        assert!(!exts.iter().any(|e| e == "bat" || e == "cmd"));
+        let editable = supported_file_extensions();
+        assert!(editable.iter().any(|ext| ext == "bat"));
+        assert!(editable.iter().any(|ext| ext == "cmd"));
+    }
+
+    #[test]
+    fn legacy_cleanup_only_removes_our_blank_default_override() {
+        assert!(is_empty_legacy_default(true, Some("")));
+        assert!(!is_empty_legacy_default(false, Some("")));
+        assert!(!is_empty_legacy_default(true, None));
+        assert!(!is_empty_legacy_default(true, Some("txtfilelegacy")));
+        assert!(!is_empty_legacy_default(true, Some("batfile")));
+        assert!(!is_empty_legacy_default(true, Some(PROGID)));
     }
 
     #[test]

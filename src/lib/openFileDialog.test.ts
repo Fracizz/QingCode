@@ -75,6 +75,24 @@ describe('openFileFromDialog', () => {
     expect(mocks.pushToast).not.toHaveBeenCalled()
   })
 
+  it('keeps batch scripts in the editor filter without registering their default Open verb', async () => {
+    mocks.getOpenWithStatus.mockResolvedValue({
+      extensions: ['txt', 'ts'],
+      file_extensions: ['txt', 'ts', 'bat', 'cmd'],
+    })
+
+    await openFileFromDialog()
+
+    expect(mocks.open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filters: [
+          { name: '代码和文本文件', extensions: ['txt', 'ts', 'bat', 'cmd'] },
+          { name: '所有文件', extensions: ['*'] },
+        ],
+      })
+    )
+  })
+
   it('falls back to the all-files filter when extension lookup fails', async () => {
     mocks.getOpenWithStatus.mockRejectedValue(new Error('status unavailable'))
 

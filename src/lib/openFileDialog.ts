@@ -8,7 +8,8 @@ import { useProjectStore } from '../store/projectStore'
 
 async function supportedExtensions(): Promise<string[]> {
   try {
-    return (await getOpenWithStatus())?.extensions ?? []
+    const status = await getOpenWithStatus()
+    return status?.file_extensions ?? status?.extensions ?? []
   } catch (error) {
     console.warn('load supported file extensions failed:', error)
     return []

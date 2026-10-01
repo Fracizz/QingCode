@@ -64,7 +64,7 @@ body {
     [role='menuitem'],
     [role='tab'],
     [tabindex]
-  ):focus-visible:not(.cm-content):not(.xterm-helper-textarea):not(.modal-search-input):not(.modal-field-input):not(.setting-input):not(.setting-control) {
+  ):focus-visible:not(.cm-content):not(.xterm-helper-textarea):not(.modal-search-input):not(.modal-field-input):not(.setting-input):not(.setting-control):not(.setting-number-with-unit-input) {
   outline: none;
   box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
 }
