@@ -12,7 +12,7 @@
       <stop offset="100%" stop-color="#FFFFFF" stop-opacity="0.04"/>
     </linearGradient>
     <!-- 青轨长方形渐变 -->
-    <linearGradient id="rail" x1="96" y1="352" x2="416" y2="400" gradientUnits="userSpaceOnUse">
+    <linearGradient id="rail" x1="96" y1="344" x2="416" y2="408" gradientUnits="userSpaceOnUse">
       <stop stop-color="#6EE7CE"/>
       <stop offset="0.5" stop-color="#4ECDB5"/>
       <stop offset="1" stop-color="#2FAF9B"/>
@@ -23,8 +23,8 @@
   <rect width="512" height="512" rx="112" fill="url(#bg)"/>
   <rect x="2" y="2" width="508" height="508" rx="110" fill="none" stroke="url(#rim)" stroke-width="3"/>
 
-  <!-- 单层平直圆角长方形底轨 (rx=10) -->
-  <rect x="96" y="352" width="320" height="48" rx="10" fill="url(#rail)"/>
+  <!-- 单层平直圆角长方形底轨 (加厚至 64px 与代码尖括号等粗, rx=12) -->
+  <rect x="96" y="344" width="320" height="64" rx="12" fill="url(#rail)"/>
 
   <!-- 厚切代码尖括号 -->
   <path fill="#F3F6F8" d="M130 93H262Q264 93 267 95L385 194Q389 197 385 200L267 299Q264 301 262 301H130Q124 301 128 297L247 197L128 97Q124 93 130 93Z"/>
