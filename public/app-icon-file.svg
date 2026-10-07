@@ -1,11 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
   <defs>
-    <!-- 青墨黛石底板：提亮约 20%，消除死黑沉没感 -->
-    <radialGradient id="bg" cx="35%" cy="20%" r="90%">
-      <stop offset="0%" stop-color="#22333B"/>
-      <stop offset="55%" stop-color="#142026"/>
-      <stop offset="100%" stop-color="#0D161B"/>
-    </radialGradient>
     <!-- 边缘微光：界定 Squircle 轮廓边界 -->
     <linearGradient id="rim" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.22"/>
@@ -19,8 +13,8 @@
     </linearGradient>
   </defs>
 
-  <!-- Squircle 圆角矩形底板 -->
-  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- Squircle 圆角矩形底板：统一深青灰背景 -->
+  <rect width="512" height="512" rx="112" fill="#15262D"/>
   <rect x="2" y="2" width="508" height="508" rx="110" fill="none" stroke="url(#rim)" stroke-width="3"/>
 
   <!-- 单层平直圆角长方形底轨 (加厚至 64px 与代码尖括号等粗, rx=12) -->
