@@ -13,7 +13,7 @@ export const SCM_COMMIT_PAGE_SIZE = 40
 const ROW_HEIGHT = 36
 const FOOTER_HEIGHT = 28
 const PREFETCH_ROWS = 12
-const HASH_COL = 'w-[8ch] shrink-0 pr-2 font-mono text-ui-xs tabular-nums text-accent'
+const HASH_COL = 'shrink-0 whitespace-nowrap font-mono text-ui-xs tabular-nums text-accent'
 const AUTHOR_COL = 'w-[6.5rem] shrink-0 truncate text-ui-xs text-fg-muted'
 const REFS_COL = 'w-[8rem] shrink-0 truncate text-ui-2xs text-brand'
 const TIME_COL =
@@ -21,6 +21,7 @@ const TIME_COL =
 
 type RowProps = {
   commits: GitCommitInfo[]
+  hashColumnStyle: CSSProperties
   selectedHash: string | null
   loadingMore: boolean
   hasMore: boolean
@@ -41,6 +42,7 @@ function CommitRow(
     index,
     style,
     commits,
+    hashColumnStyle,
     selectedHash,
     loadingMore,
     hasMore,
@@ -81,7 +83,7 @@ function CommitRow(
           selectedHash === commit.hash ? 'bg-bg-active' : ''
         }`}
       >
-        <span className={HASH_COL}>{commit.short_hash}</span>
+        <span className={HASH_COL} style={hashColumnStyle}>{commit.short_hash}</span>
         <span className="min-w-0 flex-1 truncate text-ui-sm text-fg">
           {commit.subject || noSubjectLabel}
         </span>
@@ -131,12 +133,18 @@ export default function ScmCommitHistory({
   const metrics = useInterfaceMetrics()
   const { t } = useI18n()
   const listRef = useListRef(null)
+  // Git may lengthen abbreviated hashes; reserve their full width and use the row gap for spacing.
+  const hashColumnStyle = useMemo<CSSProperties>(
+    () => ({ width: `${commits.reduce((width, commit) => Math.max(width, commit.short_hash.length), 8)}ch` }),
+    [commits]
+  )
   const showFooter =
     commits.length > 0 && (hasMore || loadingMore || commits.length >= SCM_COMMIT_PAGE_SIZE)
   const rowCount = commits.length + (showFooter ? 1 : 0)
   const rowProps = useMemo(
     () => ({
       commits,
+      hashColumnStyle,
       selectedHash,
       loadingMore,
       hasMore,
@@ -145,7 +153,7 @@ export default function ScmCommitHistory({
       noSubjectLabel: t('（无提交说明）'),
       onSelect,
     }),
-    [commits, hasMore, loadingMore, onSelect, selectedHash, t]
+    [commits, hashColumnStyle, hasMore, loadingMore, onSelect, selectedHash, t]
   )
   const rowHeight = useCallback(
     (index: number) => interfacePixelSize(index >= commits.length ? FOOTER_HEIGHT : ROW_HEIGHT, metrics.fontSize),
@@ -179,7 +187,7 @@ export default function ScmCommitHistory({
         className="flex flex-shrink-0 items-center gap-2 border-b border-border/50 bg-bg-sidebar/80 pl-5 pr-3 text-ui-2xs font-medium tracking-wide text-fg-dim"
         style={{ height: interfacePixelSize(FOOTER_HEIGHT, metrics.fontSize) }}
       >
-        <span className={HASH_COL}>{t('哈希')}</span>
+        <span className={HASH_COL} style={hashColumnStyle}>{t('哈希')}</span>
         <span className="min-w-0 flex-1 truncate">{t('说明')}</span>
         <span className={AUTHOR_COL}>{t('作者')}</span>
         <span className={REFS_COL}>{t('引用')}</span>
