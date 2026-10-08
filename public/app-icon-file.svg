@@ -8,8 +8,8 @@
     </linearGradient>
   </defs>
 
-  <!-- Squircle 圆角矩形底板：加深青色，与 Windows 深灰任务栏区分 -->
-  <rect width="512" height="512" rx="112" fill="#12343C"/>
+  <!-- Squircle 圆角矩形底板：统一深青灰背景 -->
+  <rect width="512" height="512" rx="112" fill="#15262D"/>
 
   <!-- 单层平直圆角长方形底轨 (加厚至 64px 与代码尖括号等粗, rx=12) -->
   <rect x="96" y="344" width="320" height="64" rx="12" fill="url(#rail)"/>
