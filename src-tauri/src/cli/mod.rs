@@ -63,6 +63,22 @@ fn execute(cmd: Command) -> i32 {
             }
         }
         Command::ProjectSwitch { query } => online::project_switch(&query),
+        Command::SettingsReset { scope, project } => {
+            online::settings_reset(&scope, project.as_deref())
+        }
+        Command::SettingsExport {
+            scope,
+            project,
+            output,
+        } => online::settings_export(&scope, project.as_deref(), output.as_deref()),
+        Command::SettingsImport {
+            scope,
+            project,
+            json_source,
+        } => match run_config::read_json_source(&json_source) {
+            Ok(content) => online::settings_import(&scope, project.as_deref(), content),
+            Err(e) => output::fail(output::EXIT_ERROR, e),
+        },
         Command::RunList { project } => match run_config::remote_project_id(project.as_deref()) {
             Ok(Some(project_id)) => online::run_list(Some(&project_id)),
             Ok(None) => match run_config::list(project.as_deref()) {

@@ -5,7 +5,8 @@ description: >-
   local/SSH run-config CRUD and start/stop. Use when the user asks to add
   projects, list projects, edit .qingcode/run.json run configs, start or stop a
   run configuration, grant workspace trust, open files in a running QingCode
-  instance, or Windows cannot reach a frontend after starting an SSH/WSL run.
+  instance, import/export user or workspace settings and local project lists, restore defaults,
+  or Windows cannot reach a frontend after starting an SSH/WSL run.
 ---
 
 # QingCode CLI
@@ -116,6 +117,33 @@ matching ID is supplied. It is not a partial patch.
 2. Preserve its `id`, tasks, task IDs, `env`, and every field the user did not ask to change.
 3. Apply the requested changes and upsert the complete config object.
 4. Read it again with `run get` and verify the result.
+
+## Settings import / export (QingCode GUI must be running)
+
+```text
+.\src-tauri\target\debug\qingcode.exe settings export --scope user --output <new-file.json>
+.\src-tauri\target\debug\qingcode.exe settings import --scope user --json <file|->
+.\src-tauri\target\debug\qingcode.exe settings export --scope workspace --project <id|path|name> --output <new-file.json>
+.\src-tauri\target\debug\qingcode.exe settings import --scope workspace --project <id|path|name> --json <file|->
+.\src-tauri\target\debug\qingcode.exe settings reset --scope user --yes
+.\src-tauri\target\debug\qingcode.exe settings reset --scope workspace --project <id|path|name> --yes
+```
+
+- Default scope is `user`; workspace uses the current GUI project when `--project` is omitted.
+- User export includes settings, theme, fonts, shortcuts, language, terminal profiles, and durable
+  local projects. SSH connections, passwords, private keys, trust grants, and sessions are excluded.
+- Workspace export contains only settings overrides; SSH workspaces need an active connection.
+- Import accepts the exported JSON envelope or plain JSON/JSON5 settings. Invalid input, mismatched
+  scope/version, or unsaved settings tabs fail without overwriting the settings file.
+- Import merges keys/custom entries and local projects by path, retaining existing projects;
+  unavailable paths are returned in `skippedProjects`. It never grants trust or runs commands.
+- `--output` writes reusable JSON and refuses to overwrite an existing file. Without it, stdout
+  is `{ ok, data }`; save only `data` for later import. `--json -` reads stdin.
+- Exit `3` means start QingCode first. Use settings commands instead of editing SQLite.
+- `settings reset` requires `--yes`. Reset only when the user explicitly requests restoring
+  defaults; explain the selected scope and export a backup when requested. User reset clears custom
+  settings and restores UI preferences while retaining projects, workspace settings, trust, and sessions.
+  Workspace reset clears overrides/custom settings and resumes inheritance from user settings.
 
 ## Online execution (QingCode GUI must be running)
 

@@ -18,6 +18,7 @@ import {
 } from './runConfigRuntime'
 import type { Project } from '../types'
 import { ensureSshWorkspaceConnected } from './sshWorkspace'
+import { exportSettings, importSettings, resetSettings } from './settingsTransfer'
 
 interface CliRequest {
   id: string
@@ -154,6 +155,23 @@ export function parseOpenTarget(target: string): {
 
 async function handleRequest(req: CliRequest): Promise<unknown> {
   switch (req.op) {
+    case 'settings.export':
+    case 'settings.import': {
+      if (req.config !== 'user' && req.config !== 'workspace') throw new Error('invalid settings scope')
+      const scope = req.config === 'user' ? 'global' : 'project'
+      const project = scope === 'project' ? resolveProject(req.project) : null
+      if (project) await ensureSshWorkspaceConnected(project)
+      if (req.op === 'settings.export') return exportSettings(scope, project)
+      if (!req.content) throw new Error('content is required')
+      return importSettings(req.content, scope, project)
+    }
+    case 'settings.reset': {
+      if (req.config !== 'user' && req.config !== 'workspace') throw new Error('invalid settings scope')
+      const scope = req.config === 'user' ? 'global' : 'project'
+      const project = scope === 'project' ? resolveProject(req.project) : null
+      if (project) await ensureSshWorkspaceConnected(project)
+      return resetSettings(scope, project)
+    }
     case 'project.switch': {
       const project = resolveProject(req.project)
       const ok = await useProjectStore.getState().switchProject(project)

@@ -27,6 +27,14 @@ beforeAll(() => {
 
 // Spies we assert on must live in vi.hoisted so the vi.mock factories can reference them.
 const mocks = vi.hoisted(() => ({
+  tauri: false,
+  invoke: vi.fn(),
+  exportSettings: vi.fn(),
+  importSettings: vi.fn(),
+  resetSettings: vi.fn(),
+  confirm: vi.fn(),
+  openDialog: vi.fn(),
+  saveDialog: vi.fn(),
   saveScopedMinimapEnabled: vi.fn(),
   saveScopedEditorGuidesEnabled: vi.fn(),
   saveTheme: vi.fn(),
@@ -36,9 +44,18 @@ const mocks = vi.hoisted(() => ({
   saveGitRefreshIntervalStartMinutes: vi.fn(),
 }))
 
+vi.mock('../lib/settingsTransfer', () => ({
+  exportSettings: mocks.exportSettings,
+  importSettings: mocks.importSettings,
+  resetSettings: mocks.resetSettings,
+}))
+vi.mock('../store/confirmStore', () => ({ confirmDialog: mocks.confirm }))
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: mocks.openDialog, save: mocks.saveDialog }))
+
 vi.mock('../lib/tauri', () => ({
-  isTauri: () => false,
-  safeInvoke: vi.fn(),
+  isTauri: () => mocks.tauri,
+  safeInvoke: mocks.invoke,
   NotInTauriError: class NotInTauriError extends Error {
     constructor(action: string) {
       super(`Not in Tauri: ${action}`)
@@ -168,6 +185,14 @@ const initialShortcutState = useShortcutStore.getState()
 
 describe('SettingsEditor', () => {
   beforeEach(() => {
+    mocks.tauri = false
+    mocks.invoke.mockReset()
+    mocks.openDialog.mockReset()
+    mocks.saveDialog.mockReset()
+    mocks.exportSettings.mockReset()
+    mocks.importSettings.mockReset()
+    mocks.resetSettings.mockReset().mockResolvedValue({ scope: 'global' })
+    mocks.confirm.mockReset().mockResolvedValue(true)
     mocks.saveScopedMinimapEnabled.mockReset()
     mocks.saveScopedEditorGuidesEnabled.mockReset()
     mocks.saveTheme.mockReset()
@@ -194,6 +219,71 @@ describe('SettingsEditor', () => {
     expect(screen.getByRole('button', { name: '文本编辑器' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '终端' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '打开设置 JSON' })).toBeInTheDocument()
+  })
+
+  it('restores user defaults after confirming the scope and preserves project records', async () => {
+    mocks.tauri = true
+    render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }))
+    await waitFor(() => expect(mocks.resetSettings).toHaveBeenCalledWith('global', null))
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.stringContaining('保留项目列表'), kind: 'warning',
+    }))
+  })
+
+  it('cancelling restoration does not write settings', async () => {
+    mocks.tauri = true
+    mocks.confirm.mockResolvedValue(false)
+    render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }))
+    await waitFor(() => expect(mocks.confirm).toHaveBeenCalled())
+    expect(mocks.resetSettings).not.toHaveBeenCalled()
+  })
+
+  it('restores only the selected workspace', async () => {
+    mocks.tauri = true
+    const project = { id: 'w', name: 'Workspace', path: 'D:/workspace', created_at: 1, last_opened_at: 1 }
+    useProjectStore.setState({ currentProject: project })
+    render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
+    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }))
+    await waitFor(() => expect(mocks.resetSettings).toHaveBeenCalledWith('project', project))
+    expect(mocks.confirm).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('Workspace') }))
+  })
+
+  it('exports user settings through the save dialog', async () => {
+    mocks.tauri = true
+    mocks.exportSettings.mockResolvedValue({ format: 'qingcode-settings', scope: 'global', settings: {} })
+    mocks.saveDialog.mockResolvedValue('D:/backup.json')
+    render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('button', { name: '导出配置 JSON' }))
+    await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('导出配置', 'write_file', {
+      path: 'D:/backup.json', content: expect.stringContaining('qingcode-settings'),
+    }))
+    expect(mocks.exportSettings).toHaveBeenCalledWith('global', null)
+  })
+
+  it('imports into the selected workspace and reports unavailable project paths', async () => {
+    mocks.tauri = true
+    const project = { id: 'w', name: 'Workspace', path: 'D:/workspace', created_at: 1, last_opened_at: 1 }
+    useProjectStore.setState({ currentProject: project })
+    mocks.openDialog.mockResolvedValue('D:/import.json')
+    mocks.invoke.mockResolvedValue('{"editor.tabSize":2}')
+    mocks.importSettings.mockResolvedValue({ skippedProjects: ['D:/missing'] })
+    render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
+    fireEvent.click(screen.getByRole('button', { name: '导入配置 JSON' }))
+    await waitFor(() => expect(mocks.importSettings).toHaveBeenCalledWith('{"editor.tabSize":2}', 'project', project))
+    expect(useProjectStore.getState().pushToast).toHaveBeenCalledWith('info', '配置已导入，1 个项目路径不可用', 'D:/missing')
+  })
+
+  it('cancelling the import dialog leaves settings untouched', async () => {
+    mocks.tauri = true
+    mocks.openDialog.mockResolvedValue(null)
+    render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('button', { name: '导入配置 JSON' }))
+    await waitFor(() => expect(mocks.openDialog).toHaveBeenCalled())
+    expect(mocks.importSettings).not.toHaveBeenCalled()
   })
 
   it('persists the minimap toggle through saveScopedMinimapEnabled', async () => {

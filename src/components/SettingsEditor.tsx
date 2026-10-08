@@ -123,6 +123,11 @@ import {
   type SettingsCategoryId as CategoryId,
 } from './SettingsLayout'
 import TerminalProfilesInline from './TerminalProfilesInline'
+import { open, save } from '@tauri-apps/plugin-dialog'
+import { authorizePaths } from '../lib/pathAllowlist'
+import { exportSettings, importSettings, resetSettings } from '../lib/settingsTransfer'
+import { confirmDialog } from '../store/confirmStore'
+import { normalizeProjectPath } from '../utils/fileTreeHelpers'
 
 type SettingsScope = 'user' | 'workspace'
 
@@ -174,6 +179,8 @@ export default function SettingsEditor() {
   const [fonts, setFonts] = useState<FontSettings>(loadFontSettings)
   const [terminal, setTerminal] = useState<TerminalProfileSettings>(loadTerminalProfileSettings)
   const [openingJson, setOpeningJson] = useState(false)
+  const [transferBusy, setTransferBusy] = useState(false)
+  const [settingsRevision, setSettingsRevision] = useState(0)
   const [autoSaveMode, setAutoSaveMode] = useState<AutoSaveMode>('off')
   const [autoSaveDelay, setAutoSaveDelay] = useState<number>(
     DEFAULT_GLOBAL_SETTINGS['files.autoSaveDelay'] as number,
@@ -216,6 +223,17 @@ export default function SettingsEditor() {
   }, [])
 
   useEffect(() => {
+    const refresh = () => {
+      setThemeState(loadTheme())
+      setFonts(loadFontSettings())
+      setTerminal(loadTerminalProfileSettings())
+      setSettingsRevision(value => value + 1)
+    }
+    window.addEventListener('qingcode:settings-imported', refresh)
+    return () => window.removeEventListener('qingcode:settings-imported', refresh)
+  }, [])
+
+  useEffect(() => {
     if (!isTauri()) return
     void getOpenWithStatus().then(setOpenWith)
   }, [])
@@ -248,7 +266,7 @@ export default function SettingsEditor() {
         // best-effort
       }
     })()
-  }, [])
+  }, [settingsRevision])
 
   useEffect(() => {
     const onFonts = () => setFonts(loadFontSettings())
@@ -286,7 +304,7 @@ export default function SettingsEditor() {
     void loadScopedEditorGuidesEnabled(settingsScope, currentProject).then(
       setEditorGuidesEnabled,
     )
-  }, [scope, currentProject])
+  }, [scope, currentProject, settingsRevision])
 
   const workspaceLocked = scope === 'workspace'
   const q = query.trim().toLowerCase()
@@ -423,6 +441,103 @@ export default function SettingsEditor() {
     }
   }
 
+  const transferSettings = async (action: 'import' | 'export') => {
+    if (!isTauri()) {
+      pushToast('error', t('当前环境无法导入或导出配置'))
+      return
+    }
+    setTransferBusy(true)
+    const settingsScope = scope === 'user' ? 'global' : 'project'
+    try {
+      if (action === 'export') {
+        const config = await exportSettings(settingsScope, currentProject)
+        const path = await save({
+          title: t('导出配置 JSON'),
+          defaultPath: settingsScope === 'global'
+            ? 'qingcode-user-settings.json'
+            : 'qingcode-workspace-settings.json',
+          filters: [{ name: 'JSON', extensions: ['json'] }],
+        })
+        if (!path) return
+        const target = settingsScope === 'global'
+          ? await resolveGlobalSettingsPath()
+          : await resolveProjectSettingsPath(currentProject!)
+        if (normalizeProjectPath(path) === normalizeProjectPath(target)) {
+          throw new Error(t('导出文件不能覆盖当前设置文件'))
+        }
+        if (useEditorStore.getState().getAllTabs().some(
+          tab => tab.dirty && normalizeProjectPath(tab.path) === normalizeProjectPath(path),
+        )) {
+          throw new Error(t('请先保存或撤销设置文件中的未保存修改'))
+        }
+        await authorizePaths([path])
+        await safeInvoke('导出配置', 'write_file', {
+          path,
+          content: `${JSON.stringify(config, null, 2)}\n`,
+        })
+        pushToast('success', t('配置已导出'))
+      } else {
+        const path = await open({
+          title: t('导入配置 JSON'),
+          directory: false,
+          multiple: false,
+          filters: [{ name: 'JSON / JSON5', extensions: ['json', 'json5'] }],
+        })
+        if (!path) return
+        await authorizePaths([path])
+        const result = await importSettings(
+          await safeInvoke<string>('读取配置', 'read_file', { path }),
+          settingsScope,
+          currentProject,
+        )
+        if (result.skippedProjects.length) {
+          pushToast(
+            'info',
+            t('配置已导入，{count} 个项目路径不可用', { count: result.skippedProjects.length }),
+            result.skippedProjects.join('\n'),
+          )
+        } else {
+          pushToast('success', t('配置已导入并生效'))
+        }
+      }
+    } catch (error) {
+      pushToast('error', t('配置操作失败: {error}', {
+        error: t(error instanceof Error ? error.message : String(error)),
+      }))
+    } finally {
+      setTransferBusy(false)
+    }
+  }
+
+  const restoreDefaults = async () => {
+    if (!isTauri()) {
+      pushToast('error', t('当前环境无法恢复默认设置'))
+      return
+    }
+    setTransferBusy(true)
+    const settingsScope = scope === 'user' ? 'global' : 'project'
+    try {
+      const confirmed = await confirmDialog({
+        title: t('恢复默认设置'),
+        message: scope === 'user'
+          ? t('将用户设置、主题、字体、语言、快捷键和终端配置恢复为默认值，清空自定义设置。保留项目列表、工作区设置和信任授权。')
+          : t('将清空项目「{name}」的工作区设置覆盖项和自定义设置，重新继承用户设置。', { name: currentProject?.name ?? '' }),
+        kind: 'warning',
+        confirmLabel: t('恢复默认设置'),
+        cancelLabel: t('取消'),
+      })
+      if (!confirmed) return
+      await resetSettings(settingsScope, currentProject)
+      pushToast('success', t('已恢复默认设置并生效'))
+    } catch (error) {
+      pushToast('error', t('恢复默认设置失败: {error}', {
+        error: t(error instanceof Error ? error.message : String(error)),
+      }))
+    } finally {
+      setTransferBusy(false)
+    }
+  }
+
   const visibleCategories = useMemo(() => {
     if (!q) return CATEGORIES
     return CATEGORIES.filter(cat => {
@@ -507,12 +622,12 @@ export default function SettingsEditor() {
 
       {/* Header: scope + search + actions */}
       <div className="flex-shrink-0 border-b border-border bg-bg pt-3 pb-3">
-        <div className="flex items-center gap-2 mb-3 px-4">
+        <div className="flex flex-wrap items-center gap-2 mb-3 px-4">
           <SegmentedControl
             ariaLabel={t('设置范围')}
             options={[
-              { value: 'user', label: t('用户') },
-              { value: 'workspace', label: t('工作区'), disabled: !currentProject },
+              { value: 'user', label: t('用户'), disabled: transferBusy },
+              { value: 'workspace', label: t('工作区'), disabled: transferBusy || !currentProject },
             ]}
             value={scope}
             onChange={value => {
@@ -521,6 +636,30 @@ export default function SettingsEditor() {
             }}
           />
           <div className="flex-1" />
+          <button
+            type="button"
+            disabled={transferBusy || openingJson}
+            onClick={() => void transferSettings('import')}
+            className="rounded border border-border-strong px-2.5 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
+          >
+            {t('导入配置 JSON')}
+          </button>
+          <button
+            type="button"
+            disabled={transferBusy || openingJson}
+            onClick={() => void transferSettings('export')}
+            className="rounded border border-border-strong px-2.5 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
+          >
+            {t('导出配置 JSON')}
+          </button>
+          <button
+            type="button"
+            disabled={transferBusy || openingJson}
+            onClick={() => void restoreDefaults()}
+            className="rounded border border-border-strong px-2.5 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
+          >
+            {t('恢复默认设置')}
+          </button>
           <Tooltip label={t('帮助文档')} side="bottom">
             <button
               type="button"
@@ -557,6 +696,12 @@ export default function SettingsEditor() {
                 </button>
               )}
             </div>
+
+            <p className="text-ui-sm mt-2 max-w-[800px] text-fg-muted">
+              {scope === 'user'
+                ? t('导出用户设置、界面偏好和本地项目列表；导入按键合并，保留已有项目，不导入信任授权。')
+                : t('导出当前工作区的设置覆盖项；导入按键合并，未设置的选项继续继承用户设置。')}
+            </p>
 
             {scope === 'workspace' && (
               <p className="text-ui-sm mt-2 max-w-[800px] text-fg-muted">
@@ -1597,7 +1742,7 @@ export default function SettingsEditor() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      disabled={openingJson || (scope === 'workspace' && !currentProject)}
+                      disabled={openingJson || transferBusy || (scope === 'workspace' && !currentProject)}
                       onClick={() => void openSettingsJson(false)}
                       className="rounded bg-action px-3 py-1.5 text-ui-sm text-on-action hover:bg-action/90 disabled:opacity-50"
                     >
@@ -1605,7 +1750,7 @@ export default function SettingsEditor() {
                     </button>
                     <button
                       type="button"
-                      disabled={openingJson || (scope === 'workspace' && !currentProject)}
+                      disabled={openingJson || transferBusy || (scope === 'workspace' && !currentProject)}
                       onClick={() => void openSettingsJson(true)}
                       className="rounded border border-border-strong px-3 py-1.5 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
                     >

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   FolderPlus,
   Terminal as TerminalIcon,
@@ -17,6 +17,8 @@ import {
   ShieldCheck,
   ShieldAlert,
   Layers,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -88,6 +90,9 @@ export default function ProjectManager() {
   const [sortKey, setSortKey] = useState<SortKey>('last_opened_at')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [filter, setFilter] = useState<FilterMode>('all')
+  const [pageSize, setPageSize] = useState(10)
+  const [page, setPage] = useState(1)
+  const listRef = useRef<HTMLDivElement>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [trustTick, setTrustTick] = useState(0)
 
@@ -103,13 +108,27 @@ export default function ProjectManager() {
     else if (filter === 'hidden') list = list.filter(p => p.hidden)
     const dir = sortDir === 'asc' ? 1 : -1
     return [...list].sort((a, b) => {
-      let cmp = 0
+      let cmp: number
       if (sortKey === 'name') cmp = a.name.localeCompare(b.name, language)
       else if (sortKey === 'path') cmp = a.path.localeCompare(b.path)
       else cmp = a[sortKey] - b[sortKey]
       return cmp * dir
     })
   }, [projects, sortKey, sortDir, filter, language])
+
+  const pageCount = Math.max(1, Math.ceil(sortedProjects.length / pageSize))
+  const currentPage = Math.min(page, pageCount)
+  const pageStart = (currentPage - 1) * pageSize
+  const pageProjects = sortedProjects.slice(pageStart, pageStart + pageSize)
+
+  useEffect(() => {
+    // Deleting or hiding the last row on a page must leave a valid page selected.
+    queueMicrotask(() => setPage(previous => Math.min(previous, pageCount)))
+  }, [pageCount])
+
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0
+  }, [currentPage, pageSize, filter, sortKey, sortDir])
 
   // Drop selections for projects that no longer exist (deleted/filtered out).
   useEffect(() => {
@@ -128,7 +147,7 @@ export default function ProjectManager() {
     )
   }, [sortedProjects])
 
-  const selectableIds = useMemo(() => sortedProjects.map(p => p.id), [sortedProjects])
+  const selectableIds = pageProjects.map(p => p.id)
   const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.has(id))
   const someSelected = !allSelected && selectableIds.some(id => selectedIds.has(id))
 
@@ -143,10 +162,13 @@ export default function ProjectManager() {
 
   const toggleAll = () => {
     setSelectedIds(prev => {
-      if (selectableIds.length > 0 && selectableIds.every(id => prev.has(id))) {
-        return new Set()
+      const next = new Set(prev)
+      const deselect = selectableIds.every(id => prev.has(id))
+      for (const id of selectableIds) {
+        if (deselect) next.delete(id)
+        else next.add(id)
       }
-      return new Set(selectableIds)
+      return next
     })
   }
 
@@ -188,6 +210,7 @@ export default function ProjectManager() {
   }, [closeProjectManager])
 
   const cycleSort = (key: SortKey) => {
+    setPage(1)
     if (sortKey === key) {
       setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
     } else {
@@ -225,7 +248,7 @@ export default function ProjectManager() {
         aria-modal="true"
         aria-labelledby="project-manager-title"
         aria-describedby="project-manager-description"
-        className="ui-font-scaled modal-content-enter relative w-full max-w-[760px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter relative w-[75vw] max-w-[1200px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -287,14 +310,20 @@ export default function ProjectManager() {
               { value: 'hidden', label: t('已隐藏') },
             ]}
             value={filter}
-            onChange={setFilter}
+            onChange={value => {
+              setFilter(value)
+              setPage(1)
+            }}
           />
 
           <div className="text-ui-sm flex items-center gap-1 text-fg-muted">
             {t('排序')}
             <select
               value={sortKey}
-              onChange={e => setSortKey(e.target.value as SortKey)}
+              onChange={e => {
+                setSortKey(e.target.value as SortKey)
+                setPage(1)
+              }}
               className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
             >
               {(Object.keys(SORT_LABELS) as SortKey[]).map(k => (
@@ -306,7 +335,10 @@ export default function ProjectManager() {
             <button
               type="button"
               aria-label={t('切换排序方向')}
-              onClick={() => setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))}
+              onClick={() => {
+                setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+                setPage(1)
+              }}
               className="p-1 rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
             >
               {sortDir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
@@ -345,13 +377,20 @@ export default function ProjectManager() {
         )}
 
         {/* List */}
-        <div className="flex-1 overflow-auto">
+        <div ref={listRef} className="min-h-0 flex-1 overflow-auto">
           {sortedProjects.length === 0 ? (
             <div className="px-4 py-10 text-center text-ui text-fg-muted">
               {t('暂无项目。点击上方按钮添加。')}
             </div>
           ) : (
-            <table className="w-full text-ui">
+            <table className="w-full min-w-[720px] table-fixed text-ui">
+              <colgroup>
+                <col className="w-10" />
+                <col className="w-[28%]" />
+                <col />
+                <col className="w-[9em]" />
+                <col className="w-44" />
+              </colgroup>
               <thead className="sticky top-0 bg-bg-elevated border-b border-border-strong text-fg-muted">
                 <tr className="text-left">
                   <th className="px-3 py-1.5 w-8">
@@ -359,7 +398,7 @@ export default function ProjectManager() {
                       checked={allSelected}
                       indeterminate={someSelected}
                       onChange={toggleAll}
-                      ariaLabel={t('全选当前列表')}
+                      ariaLabel={t('全选当前页')}
                     />
                   </th>
                   <Th onClick={() => cycleSort('name')} active={sortKey === 'name'} dir={sortDir}>
@@ -379,7 +418,7 @@ export default function ProjectManager() {
                 </tr>
               </thead>
               <tbody>
-                {sortedProjects.map(project => {
+                {pageProjects.map(project => {
                   const unavailable = unavailableProjectIds.includes(project.id)
                   const isCurrent = currentProject?.id === project.id
                   const checked = selectedIds.has(project.id)
@@ -407,7 +446,7 @@ export default function ProjectManager() {
                         />
                       </td>
                       <td className="px-3 py-2 align-middle">
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex min-w-0 items-center gap-1.5">
                           {unavailable ? (
                             <AlertTriangle size={13} className="text-warn flex-shrink-0" />
                           ) : project.hidden ? (
@@ -423,13 +462,13 @@ export default function ProjectManager() {
                             label={unavailable ? t('目录不可用，请重新定位') : project.name}
                             side="bottom"
                             onlyWhenOverflow={!unavailable}
-                            wrapperClassName="max-w-[160px] min-w-0"
+                            wrapperClassName="min-w-0"
                           >
                             <button
                               type="button"
                               onClick={() => void handleActivate(project)}
                               disabled={unavailable}
-                              className={`truncate max-w-[160px] text-left ${
+                              className={`block max-w-full truncate text-left ${
                                 unavailable
                                   ? 'text-fg-dim cursor-default'
                                   : isCurrent
@@ -454,9 +493,9 @@ export default function ProjectManager() {
                           label={location}
                           side="bottom"
                           onlyWhenOverflow
-                          wrapperClassName="block truncate max-w-[260px]"
+                          wrapperClassName="block min-w-0 truncate"
                         >
-                          <span className="block truncate max-w-[260px] font-mono text-ui text-fg-muted">
+                          <span className="block truncate font-mono text-ui text-fg-muted">
                             {location}
                           </span>
                         </Tooltip>
@@ -537,15 +576,67 @@ export default function ProjectManager() {
           )}
         </div>
 
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2 border-t border-border flex-shrink-0 text-ui-sm text-fg-muted">
+          <span role="status">
+            {t('显示 {start}-{end} 项，共 {total} 项', {
+              start: sortedProjects.length === 0 ? 0 : pageStart + 1,
+              end: Math.min(pageStart + pageSize, sortedProjects.length),
+              total: sortedProjects.length,
+            })}
+          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-1.5">
+              {t('每页显示')}
+              <select
+                value={pageSize}
+                onChange={event => {
+                  setPageSize(Number(event.target.value))
+                  setPage(1)
+                }}
+                className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
+              >
+                {[10, 20, 50].map(size => (
+                  <option key={size} value={size}>
+                    {size}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <nav aria-label={t('项目分页')} className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-label={t('上一页')}
+                disabled={currentPage === 1}
+                onClick={() => setPage(currentPage - 1)}
+                className="p-1 rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="whitespace-nowrap">
+                {t('第 {page} / {total} 页', { page: currentPage, total: pageCount })}
+              </span>
+              <button
+                type="button"
+                aria-label={t('下一页')}
+                disabled={currentPage === pageCount}
+                onClick={() => setPage(currentPage + 1)}
+                className="p-1 rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </nav>
+          </div>
+        </div>
+
         {/* Footer */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-t border-border-strong flex-shrink-0">
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-border-strong flex-shrink-0">
           <span className="text-ui-sm text-fg-muted">
             {t('顶栏 ✕ 仅隐藏显示；此处「永久删除」才会清除项目记录')}
           </span>
           <button
             type="button"
             onClick={closeProjectManager}
-            className="px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors"
+            className="flex-shrink-0 px-3 py-1.5 text-ui rounded bg-action hover:bg-action/90 text-on-action transition-colors"
           >
             {t('完成')}
           </button>

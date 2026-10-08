@@ -126,6 +126,16 @@ export async function syncProjectsFromUserSettings(
   const entries = readProjectEntries(settings)
   if (entries.length === 0) return { projects, imported: 0 }
 
+  return syncSettingsProjectEntries(db, projects, entries)
+}
+
+async function syncSettingsProjectEntries(
+  db: Database,
+  projects: Project[],
+  entries: SettingsProjectEntry[],
+): Promise<{ projects: Project[]; imported: number; skipped: string[] }> {
+  const skipped: string[] = []
+
   let imported = 0
   let next = projects
 
@@ -179,10 +189,19 @@ export async function syncProjectsFromUserSettings(
       imported += 1
     } catch {
       // Skip missing / invalid paths from settings; user can fix the JSON.
+      skipped.push(entry.path)
     }
   }
 
-  return { projects: next, imported }
+  return { projects: next, imported, skipped }
+}
+
+/** Explicit import is independent of the startup-sync preference and never grants trust. */
+export async function importSettingsProjects(entries: SettingsProjectEntry[]): Promise<string[]> {
+  return withDb('导入项目列表', async db => {
+    const result = await syncSettingsProjectEntries(db, await listProjects(db), entries)
+    return result.skipped
+  })
 }
 
 /**

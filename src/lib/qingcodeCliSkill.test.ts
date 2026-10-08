@@ -19,6 +19,11 @@ describe('buildQingcodeCliSkillMarkdown', () => {
     expect(md).toContain('Never grant trust implicitly')
     expect(md).toContain('Windows access to SSH/WSL services')
     expect(md).toContain('127.0.0.1')
+    expect(md).toContain('settings export --scope user --output')
+    expect(md).toContain('settings import --scope workspace --project')
+    expect(md).toContain('skippedProjects')
+    expect(md).toContain('settings reset --scope user --yes')
+    expect(md).toContain('Workspace reset clears overrides')
   })
 
   it('quotes paths with spaces', () => {

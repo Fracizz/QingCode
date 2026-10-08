@@ -161,6 +161,11 @@ Usage:
   qingcode.exe run stop <name|id> [--project ...]
   qingcode.exe run status [--project ...]
 
+  qingcode.exe settings export [--scope user|workspace] [--project ...] [--output <file>]
+  qingcode.exe settings import --json <file|-> [--scope user|workspace] [--project ...]
+  qingcode.exe settings reset --yes [--scope user|workspace] [--project ...]
+  Settings commands require the GUI. Default scope: user. Export refuses to overwrite files.
+
   qingcode.exe trust grant <path>
   qingcode.exe open <file>[:line[:col]] ...
 

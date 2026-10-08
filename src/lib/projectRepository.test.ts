@@ -36,9 +36,31 @@ vi.mock('./projectSettings', () => ({
 
 import {
   deleteProjectRows,
+  importSettingsProjects,
   persistProjectsToUserSettings,
   setProjectsSortOrders,
 } from './projectRepository'
+import { safeInvoke } from './tauri'
+
+describe('explicit settings project import', () => {
+  it('updates duplicates without inserting them and reports unavailable new directories', async () => {
+    mockDb.select.mockResolvedValue([{ id: 'existing', path: 'D:/Existing', name: 'Old', hidden: 0 }])
+    mockDb.execute.mockReset().mockResolvedValue(undefined)
+    vi.mocked(safeInvoke).mockImplementation(async (_action, command, args) => {
+      if (command === 'validate_directory' && args?.path === 'D:/missing') throw new Error('missing')
+      return 'sqlite:mock' as never
+    })
+    const skipped = await importSettingsProjects([
+      { path: 'd:\\existing', name: 'Renamed', hidden: true },
+      { path: 'D:/missing' },
+      { path: 'D:/new', name: 'New' },
+      { path: 'd:\\new', name: 'Updated' },
+    ])
+    expect(skipped).toEqual(['D:/missing'])
+    expect(mockDb.execute.mock.calls.filter(([sql]) => String(sql).startsWith('INSERT'))).toHaveLength(1)
+    expect(mockDb.execute).toHaveBeenCalledWith(expect.stringContaining('UPDATE projects'), ['Renamed', 1, null, 'existing'])
+  })
+})
 
 function project(over: Partial<Project> = {}): Project {
   return {

@@ -14,7 +14,7 @@ export type LocaleOption = { locale: string; label: string; builtin: boolean }
 type Values = Record<string, string | number>
 
 const LANGUAGE_KEY = 'qingcode:language'
-const DEFAULT_LANGUAGE: AppLanguage = 'zh-CN'
+export const DEFAULT_LANGUAGE: AppLanguage = 'zh-CN'
 
 /** English is loaded on demand so the default (zh-CN) startup bundle stays smaller. */
 const EN_LOCALE_STUB: LocalePackage = {

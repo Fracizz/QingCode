@@ -104,7 +104,7 @@ interface ProjectState {
   loading: boolean
   toasts: Toast[]
 
-  loadProjects: () => Promise<void>
+  loadProjects: (options?: { restoreCurrent?: boolean }) => Promise<void>
   loadSshConnections: () => Promise<void>
   saveSshConnection: (connection: SshConnection) => Promise<void>
   addProject: (path: string) => Promise<boolean>
@@ -259,7 +259,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     set(s => ({ toasts: s.toasts.filter(t => t.id !== id) }))
   },
 
-  loadProjects: async () => {
+  loadProjects: async options => {
     try {
       const { migrated, projects, importedFromSettings } = await loadProjectsFromDb()
       if (migrated) get().pushToast('success', '已从旧版本恢复项目列表')
@@ -288,7 +288,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       // gated on validating every path. Fresh windows (File → New Window) stay
       // empty — no inherited currentProject / explorer / auto terminal.
       const restoreWorkspace = shouldRestoreWorkspace()
-      if (restoreWorkspace && !get().currentProject) {
+      if (options?.restoreCurrent !== false && restoreWorkspace && !get().currentProject) {
         const candidate = pickRestoreCandidate(projects, ephemeralProjects)
         // Startup files must be opened only after the initial editor session is active;
         // otherwise activateProjectSession replaces the just-opened standalone tab.

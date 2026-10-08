@@ -14,7 +14,8 @@ description: >-
   local/SSH run-config CRUD and start/stop. Use when the user asks to add
   projects, list projects, edit .qingcode/run.json run configs, start or stop a
   run configuration, grant workspace trust, open files in a running QingCode
-  instance, or Windows cannot reach a frontend after starting an SSH/WSL run.
+  instance, import/export user or workspace settings and local project lists, restore defaults,
+  or Windows cannot reach a frontend after starting an SSH/WSL run.
 ---
 
 # QingCode CLI
@@ -126,6 +127,33 @@ matching ID is supplied. It is not a partial patch.
 3. Apply the requested changes and upsert the complete config object.
 4. Read it again with \`run get\` and verify the result.
 
+## Settings import / export (QingCode GUI must be running)
+
+\`\`\`text
+${quoted} settings export --scope user --output <new-file.json>
+${quoted} settings import --scope user --json <file|->
+${quoted} settings export --scope workspace --project <id|path|name> --output <new-file.json>
+${quoted} settings import --scope workspace --project <id|path|name> --json <file|->
+${quoted} settings reset --scope user --yes
+${quoted} settings reset --scope workspace --project <id|path|name> --yes
+\`\`\`
+
+- Default scope is \`user\`; workspace uses the current GUI project when \`--project\` is omitted.
+- User export includes settings, theme, fonts, shortcuts, language, terminal profiles, and durable
+  local projects. SSH connections, passwords, private keys, trust grants, and sessions are excluded.
+- Workspace export contains only settings overrides; SSH workspaces need an active connection.
+- Import accepts the exported JSON envelope or plain JSON/JSON5 settings. Invalid input, mismatched
+  scope/version, or unsaved settings tabs fail without overwriting the settings file.
+- Import merges keys/custom entries and local projects by path, retaining existing projects;
+  unavailable paths are returned in \`skippedProjects\`. It never grants trust or runs commands.
+- \`--output\` writes reusable JSON and refuses to overwrite an existing file. Without it, stdout
+  is \`{ ok, data }\`; save only \`data\` for later import. \`--json -\` reads stdin.
+- Exit \`3\` means start QingCode first. Use settings commands instead of editing SQLite.
+- \`settings reset\` requires \`--yes\`. Reset only when the user explicitly requests restoring
+  defaults; explain the selected scope and export a backup when requested. User reset clears custom
+  settings and restores UI preferences while retaining projects, workspace settings, trust, and sessions.
+  Workspace reset clears overrides/custom settings and resumes inheritance from user settings.
+
 ## Online execution (QingCode GUI must be running)
 
 \`\`\`text
@@ -171,7 +199,8 @@ name: qingcode-cli
 description: >-
   使用 QingCode.exe 子命令管理多个项目，以及本地/SSH 运行配置的增删改查、启动和停止。
   当用户要求添加或列出项目、编辑 .qingcode/run.json、启动或停止运行配置、授予工作区
-  信任、在运行中的 QingCode 中打开文件，或 SSH/WSL 启动后 Windows 无法访问前端时使用。
+  信任、在运行中的 QingCode 中打开文件、导入导出用户/工作区设置与本地项目列表、恢复默认设置，
+  或 SSH/WSL 启动后 Windows 无法访问前端时使用。
 ---
 
 # QingCode CLI
@@ -275,6 +304,32 @@ QingCode 在 Windows、项目在 WSL/SSH 时：本机浏览器只能走 WSL loca
 2. 保留其 \`id\`、任务、任务 ID、\`env\` 以及用户未要求修改的所有字段。
 3. 应用用户要求的变更，并提交完整配置对象。
 4. 再次使用 \`run get\` 验证结果。
+
+## 配置导入 / 导出（必须启动 QingCode GUI）
+
+\`\`\`text
+${quoted} settings export --scope user --output <新文件.json>
+${quoted} settings import --scope user --json <file|->
+${quoted} settings export --scope workspace --project <id|path|name> --output <新文件.json>
+${quoted} settings import --scope workspace --project <id|path|name> --json <file|->
+${quoted} settings reset --scope user --yes
+${quoted} settings reset --scope workspace --project <id|path|name> --yes
+\`\`\`
+
+- 默认范围为 \`user\`；工作区未指定 \`--project\` 时使用 GUI 当前项目。
+- 用户导出包含设置、主题、字体、快捷键、语言、终端配置和持久化本地项目列表。
+  不包含 SSH 连接、密码、私钥、信任授权及会话数据。
+- 工作区仅导出设置覆盖项；SSH 工作区需要有效连接。
+- 导入支持导出的 JSON 包或普通 JSON/JSON5 设置对象；无效输入、范围/版本不匹配、
+  设置标签存在未保存修改时拒绝写入。
+- 按键合并设置和 custom；本地项目按路径合并，不删除原记录；不可用路径返回
+  \`skippedProjects\`。导入不会授予工作区信任或执行命令。
+- \`--output\` 写入可再次导入的 JSON 文件，已存在时拒绝覆盖；省略时 stdout 为
+  \`{ ok, data }\`，仅保存 \`data\` 用于导入。\`--json -\` 从 stdin 读取。
+- 退出码 \`3\` 表示需要先启动 QingCode；使用配置命令，不要直接编辑 SQLite。
+- \`settings reset\` 必须显式提供 \`--yes\`。仅在用户明确要求恢复默认时执行，说明范围，
+  用户需要备份时先导出。用户重置清空自定义设置并恢复界面偏好，保留项目列表、工作区设置、
+  信任和会话；工作区重置清空覆盖项和自定义设置，重新继承用户设置。
 
 ## 在线执行（必须启动 QingCode GUI）
 

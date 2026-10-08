@@ -4,6 +4,8 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '../types'
 
 const mocks = vi.hoisted(() => ({
+  restoreWorkspace: false,
+  ensureWorkspaceTrust: vi.fn(() => 'trusted'),
   ensureSshWorkspaceConnected: vi.fn(),
   requestSshReconnect: vi.fn(),
   safeInvoke: vi.fn(),
@@ -33,7 +35,7 @@ vi.mock('../lib/fileTreeCache', async importOriginal => ({
   loadProjectRootTree: mocks.loadProjectRootTree,
 }))
 vi.mock('../lib/workspaceTrust', () => ({
-  ensureWorkspaceTrust: () => 'trusted',
+  ensureWorkspaceTrust: mocks.ensureWorkspaceTrust,
   pushTrustedRootsToNative: vi.fn(),
 }))
 vi.mock('../lib/pathAllowlist', () => ({
@@ -41,7 +43,7 @@ vi.mock('../lib/pathAllowlist', () => ({
 }))
 vi.mock('../lib/windowSession', async importOriginal => ({
   ...(await importOriginal<typeof import('../lib/windowSession')>()),
-  shouldRestoreWorkspace: () => false,
+  shouldRestoreWorkspace: () => mocks.restoreWorkspace,
 }))
 vi.mock('./editorSessionBridge', async importOriginal => ({
   ...(await importOriginal<typeof import('./editorSessionBridge')>()),
@@ -72,6 +74,7 @@ const initialState = useProjectStore.getState()
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.restoreWorkspace = false
   mocks.listSshConnections.mockResolvedValue([])
   mocks.touchAndLoadRecentFiles.mockResolvedValue([])
   mocks.safeInvoke.mockResolvedValue(undefined)
@@ -89,6 +92,15 @@ beforeEach(() => {
 })
 
 describe('SSH project availability', () => {
+  it('reloads explicitly imported projects without activating a project or opening a trust prompt', async () => {
+    mocks.restoreWorkspace = true
+    mocks.loadProjectsFromDb.mockResolvedValue({ migrated: false, projects: [local], importedFromSettings: 1 })
+    await useProjectStore.getState().loadProjects({ restoreCurrent: false })
+    expect(useProjectStore.getState().projects).toEqual([local])
+    expect(useProjectStore.getState().currentProject).toBeNull()
+    expect(mocks.ensureWorkspaceTrust).not.toHaveBeenCalled()
+    expect(mocks.touchAndLoadRecentFiles).not.toHaveBeenCalled()
+  })
   it('does not call an unattended SSH validation that disables the project', async () => {
     mocks.loadProjectsFromDb.mockResolvedValue({
       migrated: false,
