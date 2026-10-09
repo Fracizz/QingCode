@@ -6,6 +6,8 @@ import type { Project } from '../types'
 import ProjectManager from './ProjectManager'
 import { useProjectStore } from '../store/projectStore'
 import { saveSelectedProjectsAsWorkspace } from '../lib/namedWorkspaceActions'
+import { removeProjectWithConfirm } from '../utils/projectActions'
+import { confirmDialog } from '../store/confirmStore'
 
 // Per-row trust reads come from this module; stub a stable "trusted" level and
 // no-op the trust mutations so the row action buttons render deterministically.
@@ -29,6 +31,10 @@ vi.mock('../utils/projectActions', () => ({
 
 vi.mock('../lib/namedWorkspaceActions', () => ({
   saveSelectedProjectsAsWorkspace: vi.fn(),
+}))
+
+vi.mock('../store/confirmStore', () => ({
+  confirmDialog: vi.fn().mockResolvedValue(false),
 }))
 
 const visibleProject: Project = {
@@ -85,6 +91,30 @@ describe('ProjectManager', () => {
     render(<ProjectManager />)
     expect(screen.getByRole('button', { name: 'Alpha' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Beta' })).toBeInTheDocument()
+  })
+
+  it('describes project removal without suggesting that files will be deleted', async () => {
+    render(<ProjectManager />)
+    expect(screen.queryByRole('button', { name: '永久删除' })).not.toBeInTheDocument()
+    expect(screen.getByText(/「移除」只清除项目记录，不会删除磁盘文件/)).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('button', { name: '移除项目' })[0])
+    expect(removeProjectWithConfirm).toHaveBeenCalledWith(
+      visibleProject.id,
+      visibleProject.name,
+      visibleProject.path
+    )
+    fireEvent.click(screen.getByRole('checkbox', { name: '全选当前页' }))
+    fireEvent.click(screen.getByRole('button', { name: '批量移除' }))
+    await waitFor(() =>
+      expect(confirmDialog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: '批量移除项目',
+          message: '确定从项目列表移除选中的 2 个项目？',
+          confirmLabel: '移除',
+          kind: 'warning',
+        })
+      )
+    )
   })
 
   it('hides a visible project through the row action button', async () => {
@@ -250,5 +280,72 @@ describe('ProjectManager', () => {
     expect(screen.getByText('第 1 / 1 页')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
+  })
+
+  it('searches local and SSH project names without case sensitivity and can clear the search', () => {
+    const remoteProject: Project = {
+      ...hiddenProject,
+      id: 'remote',
+      name: 'Alpha-远程项目',
+      path: 'ssh://connection/home/code/remote',
+      kind: 'ssh',
+      root_path: '/home/code/remote',
+      connection_id: 'connection',
+    }
+    useProjectStore.setState({
+      projects: [visibleProject, hiddenProject, remoteProject],
+    })
+    render(<ProjectManager />)
+    const search = screen.getByRole('textbox', { name: '搜索项目名称' })
+    fireEvent.change(search, { target: { value: '  aLPHa  ' } })
+    expect(screen.getByRole('button', { name: 'Alpha' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Alpha-远程项目' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Beta' })).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-2 项，共 2 项')
+    fireEvent.change(search, { target: { value: '远程' } })
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-1 项，共 1 项')
+    fireEvent.change(search, { target: { value: '/home/code' } })
+    expect(screen.getByText('没有匹配的项目')).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('显示 0-0 项，共 0 项')
+    expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '清除搜索' }))
+    expect(search).toHaveValue('')
+    expect(search).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Beta' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-3 项，共 3 项')
+  })
+
+  it('searches across all pages and combines the results with visibility filtering and sorting', () => {
+    useProjectStore.setState({ projects: makeProjects() })
+    render(<ProjectManager />)
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    const search = screen.getByRole('textbox', { name: '搜索项目名称' })
+    fireEvent.change(search, { target: { value: 'project' } })
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-10 项，共 17 项')
+    expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
+    fireEvent.change(search, { target: { value: 'project 0' } })
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-9 项，共 9 项')
+    fireEvent.click(screen.getByRole('tab', { name: '已显示' }))
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-4 项，共 4 项')
+    fireEvent.click(screen.getByRole('tab', { name: '已隐藏' }))
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-5 项，共 5 项')
+    fireEvent.click(screen.getByRole('button', { name: '名称' }))
+    fireEvent.click(screen.getByRole('button', { name: '名称' }))
+    expect(screen.getAllByRole('row')[1]).toHaveTextContent('Project 09')
+    fireEvent.change(search, { target: { value: 'project 17' } })
+    expect(screen.getByRole('button', { name: 'Project 17' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-1 项，共 1 项')
+  })
+
+  it('drops selections outside the search results before saving the selected workspace', async () => {
+    useProjectStore.setState({ projects: makeProjects() })
+    render(<ProjectManager />)
+    fireEvent.click(screen.getByRole('checkbox', { name: '全选当前页' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索项目名称' }), {
+      target: { value: 'project 01' },
+    })
+    await waitFor(() => expect(screen.getByText('已选 1 项')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '保存选中为多项目工作区' }))
+    expect(saveSelectedProjectsAsWorkspace).toHaveBeenCalledWith(['project-1'])
   })
 })

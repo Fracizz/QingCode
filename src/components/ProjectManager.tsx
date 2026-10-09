@@ -4,7 +4,7 @@ import {
   Terminal as TerminalIcon,
   Pencil,
   LocateFixed,
-  Trash2,
+  FolderMinus,
   EyeOff,
   Eye,
   Check,
@@ -19,6 +19,7 @@ import {
   Layers,
   ChevronLeft,
   ChevronRight,
+  Search,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -90,6 +91,9 @@ export default function ProjectManager() {
   const [sortKey, setSortKey] = useState<SortKey>('last_opened_at')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [filter, setFilter] = useState<FilterMode>('all')
+  const [search, setSearch] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+  const normalizedSearch = search.trim().toLowerCase()
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
   const listRef = useRef<HTMLDivElement>(null)
@@ -106,6 +110,9 @@ export default function ProjectManager() {
     let list = projects
     if (filter === 'visible') list = list.filter(p => !p.hidden)
     else if (filter === 'hidden') list = list.filter(p => p.hidden)
+    if (normalizedSearch) {
+      list = list.filter(p => p.name.toLowerCase().includes(normalizedSearch))
+    }
     const dir = sortDir === 'asc' ? 1 : -1
     return [...list].sort((a, b) => {
       let cmp: number
@@ -114,7 +121,7 @@ export default function ProjectManager() {
       else cmp = a[sortKey] - b[sortKey]
       return cmp * dir
     })
-  }, [projects, sortKey, sortDir, filter, language])
+  }, [projects, sortKey, sortDir, filter, language, normalizedSearch])
 
   const pageCount = Math.max(1, Math.ceil(sortedProjects.length / pageSize))
   const currentPage = Math.min(page, pageCount)
@@ -128,7 +135,7 @@ export default function ProjectManager() {
 
   useEffect(() => {
     if (listRef.current) listRef.current.scrollTop = 0
-  }, [currentPage, pageSize, filter, sortKey, sortDir])
+  }, [currentPage, pageSize, filter, sortKey, sortDir, normalizedSearch])
 
   // Drop selections for projects that no longer exist (deleted/filtered out).
   useEffect(() => {
@@ -174,15 +181,15 @@ export default function ProjectManager() {
 
   const clearSelection = () => setSelectedIds(new Set())
 
-  const handleBatchDelete = async () => {
+  const handleBatchRemove = async () => {
     const targets = sortedProjects.filter(p => selectedIds.has(p.id))
     if (targets.length === 0) return
     const ok = await confirmDialog({
-      title: t('批量删除项目'),
-      message: t('确定永久删除选中的 {count} 个项目？', { count: targets.length }),
+      title: t('批量移除项目'),
+      message: t('确定从项目列表移除选中的 {count} 个项目？', { count: targets.length }),
       detail: t('将移除工作区记录并关闭相关终端与标签页，不会删除磁盘上的项目文件。'),
-      kind: 'danger',
-      confirmLabel: t('永久删除'),
+      kind: 'warning',
+      confirmLabel: t('移除'),
       cancelLabel: t('取消'),
     })
     if (!ok) return
@@ -195,7 +202,7 @@ export default function ProjectManager() {
       } catch (e) {
         useProjectStore
           .getState()
-          .pushToast('error', t('删除「{name}」失败: {error}', { name: p.name, error: String(e) }))
+          .pushToast('error', t('移除「{name}」失败: {error}', { name: p.name, error: String(e) }))
       }
     }
     setSelectedIds(new Set())
@@ -219,7 +226,7 @@ export default function ProjectManager() {
     }
   }
 
-  const handleDelete = (project: Project) => {
+  const handleRemove = (project: Project) => {
     void removeProjectWithConfirm(project.id, project.name, project.path)
   }
 
@@ -301,48 +308,78 @@ export default function ProjectManager() {
             <Layers size={13} /> {t('多项目工作区')}
           </button>
 
-          <SegmentedControl<FilterMode>
-            className="ml-auto"
-            ariaLabel={t('筛选项目')}
-            options={[
-              { value: 'all', label: t('全部') },
-              { value: 'visible', label: t('已显示') },
-              { value: 'hidden', label: t('已隐藏') },
-            ]}
-            value={filter}
-            onChange={value => {
-              setFilter(value)
-              setPage(1)
-            }}
-          />
+          <div className="flex w-full flex-wrap items-center gap-2">
+            <div className="flex min-w-[180px] flex-1 items-center gap-1.5 rounded border border-border-strong bg-bg-active px-2 py-1 focus-within:border-accent">
+              <Search size={13} className="flex-shrink-0 text-fg-muted" />
+              <input
+                ref={searchRef}
+                type="text"
+                aria-label={t('搜索项目名称')}
+                placeholder={t('搜索项目名称…')}
+                value={search}
+                onChange={event => {
+                  setSearch(event.target.value)
+                  setPage(1)
+                }}
+                className="min-w-0 flex-1 bg-transparent text-ui-sm text-fg placeholder:text-fg-dim outline-none"
+              />
+              {search && (
+                <button
+                  type="button"
+                  aria-label={t('清除搜索')}
+                  onClick={() => {
+                    setSearch('')
+                    setPage(1)
+                    searchRef.current?.focus()
+                  }}
+                  className="flex-shrink-0 rounded p-0.5 text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            <SegmentedControl<FilterMode>
+              ariaLabel={t('筛选项目')}
+              options={[
+                { value: 'all', label: t('全部') },
+                { value: 'visible', label: t('已显示') },
+                { value: 'hidden', label: t('已隐藏') },
+              ]}
+              value={filter}
+              onChange={value => {
+                setFilter(value)
+                setPage(1)
+              }}
+            />
 
-          <div className="text-ui-sm flex items-center gap-1 text-fg-muted">
-            {t('排序')}
-            <select
-              value={sortKey}
-              onChange={e => {
-                setSortKey(e.target.value as SortKey)
-                setPage(1)
-              }}
-              className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
-            >
-              {(Object.keys(SORT_LABELS) as SortKey[]).map(k => (
-                <option key={k} value={k}>
-                  {t(SORT_LABELS[k])}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              aria-label={t('切换排序方向')}
-              onClick={() => {
-                setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
-                setPage(1)
-              }}
-              className="p-1 rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
-            >
-              {sortDir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
-            </button>
+            <div className="text-ui-sm flex items-center gap-1 text-fg-muted">
+              {t('排序')}
+              <select
+                value={sortKey}
+                onChange={e => {
+                  setSortKey(e.target.value as SortKey)
+                  setPage(1)
+                }}
+                className="bg-bg-active border border-border-strong rounded px-1.5 py-0.5 text-ui-sm text-fg outline-none focus:border-accent"
+              >
+                {(Object.keys(SORT_LABELS) as SortKey[]).map(k => (
+                  <option key={k} value={k}>
+                    {t(SORT_LABELS[k])}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                aria-label={t('切换排序方向')}
+                onClick={() => {
+                  setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+                  setPage(1)
+                }}
+                className="p-1 rounded text-fg-muted hover:text-fg hover:bg-bg-hover transition-colors"
+              >
+                {sortDir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -354,10 +391,10 @@ export default function ProjectManager() {
             </span>
             <button
               type="button"
-              onClick={() => void handleBatchDelete()}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-danger/40 text-danger hover:bg-danger/10 transition-colors"
+              onClick={() => void handleBatchRemove()}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
             >
-              <Trash2 size={13} /> {t('批量删除')}
+              <FolderMinus size={13} /> {t('批量移除')}
             </button>
             <button
               type="button"
@@ -380,7 +417,7 @@ export default function ProjectManager() {
         <div ref={listRef} className="min-h-0 flex-1 overflow-auto">
           {sortedProjects.length === 0 ? (
             <div className="px-4 py-10 text-center text-ui text-fg-muted">
-              {t('暂无项目。点击上方按钮添加。')}
+              {t(projects.length === 0 ? '暂无项目。点击上方按钮添加。' : '没有匹配的项目')}
             </div>
           ) : (
             <table className="w-full min-w-[720px] table-fixed text-ui">
@@ -559,12 +596,8 @@ export default function ProjectManager() {
                           <ActBtn label={t('重新定位')} onClick={() => handleRelocate(project)}>
                             <LocateFixed size={14} />
                           </ActBtn>
-                          <ActBtn
-                            label={t('永久删除')}
-                            danger
-                            onClick={() => handleDelete(project)}
-                          >
-                            <Trash2 size={14} />
+                          <ActBtn label={t('移除项目')} onClick={() => handleRemove(project)}>
+                            <FolderMinus size={14} />
                           </ActBtn>
                         </div>
                       </td>
@@ -631,7 +664,7 @@ export default function ProjectManager() {
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-border-strong flex-shrink-0">
           <span className="text-ui-sm text-fg-muted">
-            {t('顶栏 ✕ 仅隐藏显示；此处「永久删除」才会清除项目记录')}
+            {t('顶栏 ✕ 仅隐藏显示；此处「移除」只清除项目记录，不会删除磁盘文件')}
           </span>
           <button
             type="button"

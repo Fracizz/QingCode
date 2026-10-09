@@ -225,8 +225,8 @@ function toSettingsProjectEntry(project: Project): SettingsProjectEntry {
  * Write the durable project list back into `default-settings.json`'s
  * `qingcode.projects` so the portable seed stays in sync with the SQLite
  * authority after GUI/CLI mutations (add / remove / hide / unhide / sort /
- * relocate / rename). Best-effort and non-blocking: failures only warn and
- * never break the CRUD flow. Independent of `syncOnStartup` (which controls the
+ * relocate / rename). Best-effort: callers may await completion before a reload;
+ * failures only warn and never break the CRUD flow. Independent of `syncOnStartup` (which controls the
  * startup JSON5→SQLite import direction only). The `saveSettingsToPath` guard
  * skips the write when values are unchanged and the file still carries comments,
  * so a no-op CRUD does not reformat the user's file.
@@ -251,7 +251,7 @@ export async function persistProjectsToUserSettings(): Promise<void> {
 }
 
 /** Load projects, running legacy migration and optional settings sync. */
-export async function loadProjectsFromDb(): Promise<{
+export async function loadProjectsFromDb(options?: { syncFromSettings?: boolean }): Promise<{
   migrated: boolean
   projects: Project[]
   importedFromSettings: number
@@ -260,7 +260,7 @@ export async function loadProjectsFromDb(): Promise<{
     const migrated = await migrateLegacyProjects(d)
     let projects = await listProjects(d)
     let importedFromSettings = 0
-    if (isTauri()) {
+    if (isTauri() && options?.syncFromSettings !== false) {
       try {
         const synced = await syncProjectsFromUserSettings(d, projects)
         projects = synced.projects

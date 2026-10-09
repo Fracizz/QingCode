@@ -104,7 +104,7 @@ interface ProjectState {
   loading: boolean
   toasts: Toast[]
 
-  loadProjects: (options?: { restoreCurrent?: boolean }) => Promise<void>
+  loadProjects: (options?: { restoreCurrent?: boolean; syncFromSettings?: boolean }) => Promise<void>
   loadSshConnections: () => Promise<void>
   saveSshConnection: (connection: SshConnection) => Promise<void>
   addProject: (path: string) => Promise<boolean>
@@ -261,7 +261,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   loadProjects: async options => {
     try {
-      const { migrated, projects, importedFromSettings } = await loadProjectsFromDb()
+      const { migrated, projects, importedFromSettings } = await loadProjectsFromDb({
+        syncFromSettings: options?.syncFromSettings,
+      })
       if (migrated) get().pushToast('success', '已从旧版本恢复项目列表')
       if (importedFromSettings > 0) {
         get().pushToast(
@@ -521,8 +523,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
           expandedProjects,
         }
       })
-      await get().loadProjects()
-      void persistProjectsToUserSettings()
+      // Update the portable seed before reloading, or startup sync would reinsert
+      // the project with a new id. This reload reads only the authoritative DB.
+      await persistProjectsToUserSettings()
+      await get().loadProjects({ syncFromSettings: false })
       get().pushToast('info', '已移除项目')
     } catch (e) {
       console.error('removeProject failed:', e)
