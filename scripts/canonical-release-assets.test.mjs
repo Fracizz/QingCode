@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url'
 
 const source = fileURLToPath(new URL('./canonical-release-assets.ps1', import.meta.url))
 
-test('release selection supplies six separate upload paths in canonical order', () => {
+test('release selection supplies six separate upload paths in canonical order', {
+  skip: process.platform !== 'win32' ? 'Requires Windows PowerShell release tooling.' : false,
+}, () => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'qingcode-release-assets-'))
   const names = [
     'QingCode_1.2.3-beta.2-windows-x64.exe',
