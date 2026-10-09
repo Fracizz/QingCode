@@ -6,6 +6,27 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.13-beta.2] - 2026-10-09
+
+### Added
+
+- JSON import, export, and default reset for user and workspace settings, including local project lists, with matching CLI commands and AI CLI Skill guidance
+- Project search by name or path; open workspace files from Git history diffs
+- Markdown preview copy and link actions
+
+### Changed
+
+- Tighter editor tabs, terminal tabs, and project controls; consistent font sizes, corner radii, window controls, and overlay interactions
+- Improved theme contrast, an olive-green Forest theme, reduced-motion support, and updated application icons
+- Hardened search cancellation, SSH file transfers, and terminal output queues; improved panel resizing and multi-terminal layouts
+
+### Fixed
+
+- Re-importing removed projects and SSH projects incorrectly marked as missing on re-entry; connection errors retain a retry path
+- SSH file-tree errors and Markdown link parsing and copying
+- Windows file associations and truncated Git history hash columns
+- Updated UTF-16 detection for newer Rust Clippy checks while preserving validation of odd-length input
+
 ## [0.1.13-beta.1] - 2026-09-08
 
 ### Added
