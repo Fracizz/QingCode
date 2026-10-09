@@ -51,5 +51,5 @@ function Select-CanonicalReleaseFiles {
   if ($missing.Count -gt 0) {
     throw ("Missing canonical release asset(s): {0}" -f ($missing -join ', '))
   }
-  return , $selected.ToArray()
+  return $selected.ToArray()
 }
