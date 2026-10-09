@@ -1,11 +1,16 @@
 // @vitest-environment jsdom
 
-import { DatabaseSync } from 'node:sqlite'
+import { createRequire } from 'node:module'
+import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '../types'
 
+// Node 22 exposes SQLite experimentally; load it natively so Vite does not
+// try to bundle it into the jsdom client environment.
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite')
+
 const state = vi.hoisted(() => ({
-  db: null as DatabaseSync | null,
+  db: null as DatabaseSyncType | null,
   settings: {} as Record<string, unknown>,
 }))
 
