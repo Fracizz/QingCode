@@ -7,29 +7,49 @@
 
 ## 界面预览
 
-### 资源管理器与编辑器
+以下为中文界面实拍，保留原始 PNG，点击图片可查看原图。截图中的版本号为拍摄时版本。
 
-![资源管理器与代码编辑](./docs/screenshots/zh-01-explorer-editor.jpg)
+### 欢迎页与项目入口
+
+从欢迎页打开项目、进入终端或设置；标题栏集中管理工作区与项目切换。
+
+[![欢迎页与打开项目入口](./docs/screenshots/zh-01-welcome.png)](./docs/screenshots/zh-01-welcome.png)
 
 ### 全局搜索
 
-![文件内容搜索](./docs/screenshots/zh-02-search.jpg)
+按范围搜索目录、文件名和文件内容，分类展示匹配结果，支持大小写、模糊匹配、后缀与文件类型筛选。
+
+[![目录、文件名与内容搜索](./docs/screenshots/zh-02-search.png)](./docs/screenshots/zh-02-search.png)
 
 ### 源代码管理
 
-![变更 / 历史、差异与提交](./docs/screenshots/zh-03-source-control.jpg)
+在整页工作台浏览提交历史、引用与变更文件，通过顶部工具栏检查更新、拉取和推送。
 
-### 运行配置
+[![Git 提交历史与变更文件](./docs/screenshots/zh-03-source-control.png)](./docs/screenshots/zh-03-source-control.png)
 
-![运行配置与 .qingcode/run.json](./docs/screenshots/zh-04-run-config.jpg)
+### 运行配置与 Markdown 预览
+
+左侧管理项目运行配置，底部保留任务终端；编辑区可切换 Markdown 编辑、并排预览或单独预览。
+
+[![运行配置、Markdown 预览与任务终端](./docs/screenshots/zh-04-run-config-markdown.png)](./docs/screenshots/zh-04-run-config-markdown.png)
 
 ### 设置
 
-![主题与字体等设置](./docs/screenshots/zh-05-settings.jpg)
+分别管理用户与工作区设置，调整主题、字号、字体和终端环境，也可导入、导出配置或恢复默认设置。
+
+[![用户与工作区设置及配置导入导出](./docs/screenshots/zh-05-settings.png)](./docs/screenshots/zh-05-settings.png)
+
+### 四终端布局
+
+将终端分成 2×2 窗格，同时保留设置或编辑器列，适合并排观察多组服务与 AI CLI。
+
+[![设置与田字四终端布局](./docs/screenshots/zh-06-four-terminals.png)](./docs/screenshots/zh-06-four-terminals.png)
 
 ### 项目管理
 
-![添加、隐藏与管理项目](./docs/screenshots/zh-06-manage-projects.jpg)
+搜索项目名称或路径，按显示状态筛选与排序，集中添加、隐藏或移除项目记录。
+
+[![项目搜索、筛选与管理](./docs/screenshots/zh-07-manage-projects.png)](./docs/screenshots/zh-07-manage-projects.png)
 
 ## 为什么做 QingCode
 
@@ -46,6 +66,8 @@ QingCode 把重心放在**项目管理与运行现场**：多项目常驻、终�
 ### 多项目随手切换
 
 把常用的本地目录或 SSH 项目钉在标题栏，单击切换。每个项目自带文件树与终端；切走不会清掉未保存缓冲和终端现场。项目多了会自动收纳，也可保存为命名多项目工作区。
+
+项目管理支持按名称或路径搜索、显示 / 隐藏筛选和排序。标题栏的关闭按钮只隐藏项目；项目管理中的「移除」清除项目记录，不删除磁盘文件，之后仍可重新添加。
 
 ### SSH 远程工作区
 
@@ -118,6 +140,12 @@ QingCode 专注于多项目、SSH、文件编辑和终端工作流；本地与 S
 ### 搜索与定制
 
 按范围搜文件名或文件内容；内容搜索默认收起替换区，需要时再展开。深色 / 浅色 / 森林 / 跟随系统；界面与代码字体可调；界面语言支持简体中文与 English。全局 `default-settings.json` 与项目 `.qingcode/project-settings.json` 为 **JSON5**，模板注释标明不得删除注释（详见 [帮助文档 · 设置](./帮助文档.md#设置)）。
+
+### 配置迁移与恢复默认
+
+设置顶部可按当前用户或工作区范围导入、导出配置 JSON，或恢复默认设置。用户导出包含全局设置、界面偏好、快捷键、终端配置和本地项目列表；工作区导出仅包含该项目的覆盖项。导入按键合并并保留 JSON5 注释，本地项目按路径合并；导出不包含 SSH 凭据、信任授权和会话数据。
+
+界面、QingCode CLI 与 AI CLI Skill 使用同一套配置迁移流程，CLI 提供 `settings export`、`settings import` 与 `settings reset --yes`。恢复用户默认设置保留项目记录，恢复工作区默认设置则重新继承用户配置。完整格式与命令见 [配置导入与导出](./docs/settings-transfer.md)。
 
 ## 日常使用：和 IDEA / VS Code / Zed 的差异
 

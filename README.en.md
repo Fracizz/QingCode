@@ -7,29 +7,49 @@ It is not another VS Code or Zed — it focuses on keeping local and remote proj
 
 ## Screenshots
 
-### Explorer & editor
+These original PNG screenshots show the Simplified Chinese UI; English is also available in Settings. Click an image to view it at full resolution. Version numbers reflect the build used when the screenshots were taken.
 
-![Explorer and code editor](./docs/screenshots/en-01-explorer-editor.jpg)
+### Welcome screen and project entry points
+
+Open projects, terminals, or Settings from the welcome screen; the title bar keeps workspaces and project switching together.
+
+[![Welcome screen and project entry points](./docs/screenshots/zh-01-welcome.png)](./docs/screenshots/zh-01-welcome.png)
 
 ### Search
 
-![File content search](./docs/screenshots/en-02-search.jpg)
+Search directories, file names, and contents within a selected scope, with grouped results and case, fuzzy, suffix, and file-type filters.
+
+[![Directory, file-name, and content search](./docs/screenshots/zh-02-search.png)](./docs/screenshots/zh-02-search.png)
 
 ### Source Control
 
-![Changes / History, diffs, and commit](./docs/screenshots/en-03-source-control.jpg)
+Browse commit history, references, and changed files in a full-page workspace; check remote updates, pull, and push from the toolbar.
 
-### Run configurations
+[![Git history and changed files](./docs/screenshots/zh-03-source-control.png)](./docs/screenshots/zh-03-source-control.png)
 
-![Run configs and .qingcode/run.json](./docs/screenshots/en-04-run-config.jpg)
+### Run configurations and Markdown preview
+
+Manage run configurations on the left and keep task terminals below; switch Markdown between editing, split preview, and preview only.
+
+[![Run configurations, Markdown preview, and task terminal](./docs/screenshots/zh-04-run-config-markdown.png)](./docs/screenshots/zh-04-run-config-markdown.png)
 
 ### Settings
 
-![Theme and font settings](./docs/screenshots/en-05-settings.jpg)
+Manage user and workspace preferences separately, including themes, fonts, and terminal environments; import/export configuration or restore defaults.
+
+[![User and workspace settings with configuration transfer](./docs/screenshots/zh-05-settings.png)](./docs/screenshots/zh-05-settings.png)
+
+### Four-terminal layout
+
+Arrange terminals in a 2×2 grid alongside Settings or the editor to monitor several services and AI CLIs at once.
+
+[![Settings alongside four terminal panes](./docs/screenshots/zh-06-four-terminals.png)](./docs/screenshots/zh-06-four-terminals.png)
 
 ### Manage projects
 
-![Add, hide, and manage projects](./docs/screenshots/en-06-manage-projects.jpg)
+Search projects by name or path, filter and sort by visibility, and add, hide, or remove project records in one place.
+
+[![Project search, filters, and management](./docs/screenshots/zh-07-manage-projects.png)](./docs/screenshots/zh-07-manage-projects.png)
 
 ## Why QingCode
 
@@ -46,6 +66,8 @@ QingCode puts weight on **project ops and the running scene**: pin many projects
 ### Multi-project switching
 
 Pin local folders or SSH projects in the title bar and switch with a click. Each project keeps its own file tree and terminals; leaving a project does not wipe unsaved buffers or terminal sessions. Overflow stays reachable, and you can save named multi-project workspaces.
+
+Project management supports name/path search, visible/hidden filters, and sorting. Closing a title-bar project only hides it; Remove clears its project record without deleting files, and the project can be added again later.
 
 ### SSH remote workspaces
 
@@ -118,6 +140,12 @@ Branch surgery, rebase, and a full merge UI stay with your usual Git or AI tools
 ### Search and preferences
 
 Search file names or contents in a chosen scope; replace stays collapsed until you expand it. Dark / light / forest / system theme; adjustable UI and editor fonts; Simplified Chinese or English UI. Global `default-settings.json` and project `.qingcode/project-settings.json` are **JSON5**; the template states that comments must not be deleted (see [HELP.md · Settings](./HELP.md#settings)).
+
+### Configuration transfer and default reset
+
+The Settings toolbar imports/exports configuration JSON or restores defaults for the selected user or workspace scope. User exports include global settings, interface preferences, shortcuts, terminal profiles, and local project lists; workspace exports contain only that project's overrides. Imports merge settings by key, preserve JSON5 comments, and merge local projects by path. SSH credentials, trust grants, and session data are excluded from exports.
+
+The interface, QingCode CLI, and AI CLI Skill share the same transfer flow. CLI commands include `settings export`, `settings import`, and `settings reset --yes`. Resetting user settings preserves project records; resetting workspace settings restores inheritance from user settings. See [configuration transfer](./docs/settings-transfer.md) for formats and commands.
 
 ## Everyday use: compared with IDEA, VS Code, and Zed
 
