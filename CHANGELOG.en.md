@@ -22,6 +22,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ### Fixed
 
+- Explorer refresh overwriting rescanned folders with stale cached children; dropped filesystem-event batches and deferred updates during continuous writes; refresh the local tree and re-register watches on window focus
 - Re-importing removed projects and SSH projects incorrectly marked as missing on re-entry; connection errors retain a retry path
 - SSH file-tree errors and Markdown link parsing and copying
 - Windows file associations and truncated Git history hash columns

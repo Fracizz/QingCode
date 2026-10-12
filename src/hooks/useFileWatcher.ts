@@ -11,8 +11,9 @@ import {
   syncOpenFileFromDisk,
   syncOpenFilesOnFocus,
 } from '../lib/syncOpenFileFromDisk'
-import { findProjectForPath, isDescendantOf, parentPath, pathsEqual } from '../utils/fileReferences'
+import { findProjectForPath, isDescendantOf, pathsEqual } from '../utils/fileReferences'
 import { shouldSkipWatcherTreeRefresh } from '../lib/watcherTreeRefresh'
+import { createWatcherTreeRefreshQueue } from '../lib/watcherTreeRefreshQueue'
 import type { EditorTab, Project } from '../types'
 import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
 import {
@@ -43,25 +44,22 @@ async function syncWatches(roots: string[], files: string[]) {
   }
 }
 
-async function refreshTreeForPath(path: string) {
+async function refreshTreesForPaths(paths: string[]) {
   const store = useProjectStore.getState()
-  const project =
-    findProjectForPath(store.projects, path) ??
-    (store.currentProject && isDescendantOf(path, store.currentProject.path)
-      ? store.currentProject
-      : null)
-  if (!project || project.ephemeral) return
-  if (await shouldSkipWatcherTreeRefresh(path, project)) return
-
-  // Always refresh the *parent* listing. Expanding the changed path itself is wrong when
-  // the event is a short-lived directory that has already been deleted (Cargo deps temps).
-  const changed = path.replace(/[/\\]+$/, '')
-  const dir = pathsEqual(changed, project.path) ? project.path : parentPath(changed)
-  if (pathsEqual(dir, project.path) || pathsEqual(changed, project.path)) {
-    await store.refreshProjectTree(project)
-  } else {
-    await store.expandProjectDir(project.id, dir, { force: true })
+  const projects = new Map<string, Project>()
+  for (const path of paths) {
+    const project =
+      findProjectForPath(store.projects, path) ??
+      (store.currentProject && isDescendantOf(path, store.currentProject.path)
+        ? store.currentProject
+        : null)
+    if (!project || project.ephemeral || projects.has(project.id)) continue
+    if (await shouldSkipWatcherTreeRefresh(path, project)) continue
+    projects.set(project.id, project)
   }
+  // One root reload also scans every loaded descendant. This covers all parents
+  // in a large batch and avoids scanning directories that have already vanished.
+  await Promise.all([...projects.values()].map(project => store.refreshProjectTree(project)))
 }
 
 function collectWatchRoots(currentProject: Project | null): string[] {
@@ -110,8 +108,7 @@ function scheduleContentSync(
 }
 
 export function useFileWatcher() {
-  const treeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingTreePaths = useRef(new Map<string, string>())
+  const treeQueueRef = useRef<ReturnType<typeof createWatcherTreeRefreshQueue> | null>(null)
   const gitEventTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const contentTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const depsRef = useRef(createDefaultSyncOpenFileDeps())
@@ -177,6 +174,13 @@ export function useFileWatcher() {
       void syncOpenFilesOnFocus(listAllOpenTabs(), deps).catch(e => {
         console.error('focus open-file sync failed:', e)
       })
+      const current = useProjectStore.getState().currentProject
+      if (current && !current.ephemeral && !isSshResource(current.path)) {
+        treeQueueRef.current?.enqueue(current.path)
+        // Re-register in case the OS watcher missed registration or lost its root.
+        const editor = useEditorStore.getState()
+        void syncWatches(collectWatchRoots(current), collectWatchFiles(editor.tabs, editor.projectSessions))
+      }
     }
 
     const onFocus = () => {
@@ -217,6 +221,11 @@ export function useFileWatcher() {
     let cancelled = false
     const deps = depsRef.current
     const contentSyncTimers = contentTimers.current
+    const treeQueue = createWatcherTreeRefreshQueue(async paths => {
+      await refreshTreesForPaths(paths)
+      useGitStatusStore.getState().scheduleRefresh(undefined, 700)
+    }, error => console.error('fs-change tree refresh failed:', error))
+    treeQueueRef.current = treeQueue
 
     const runPathContentSync = (changedPath: string) => {
       const editor = useEditorStore.getState()
@@ -257,23 +266,7 @@ export function useFileWatcher() {
       }
 
       // Debounced explorer refresh for project-tree churn.
-      pendingTreePaths.current.set(normalize(changedPath), changedPath)
-      if (treeTimer.current) clearTimeout(treeTimer.current)
-      treeTimer.current = setTimeout(() => {
-        const paths = [...pendingTreePaths.current.values()]
-        pendingTreePaths.current.clear()
-        treeTimer.current = null
-        // Refresh once for the first few unique parents.
-        const seen = new Set<string>()
-        for (const p of paths) {
-          const key = normalize(parentPath(p))
-          if (seen.has(key)) continue
-          seen.add(key)
-          void refreshTreeForPath(p)
-          if (seen.size >= 4) break
-        }
-        useGitStatusStore.getState().scheduleRefresh(undefined, 700)
-      }, 500)
+      treeQueue.enqueue(changedPath)
 
       const editor = useEditorStore.getState()
       const tab = findOpenTabByPath(editor.tabs, editor.projectSessions, changedPath)
@@ -287,7 +280,8 @@ export function useFileWatcher() {
     return () => {
       cancelled = true
       unlisten?.()
-      if (treeTimer.current) clearTimeout(treeTimer.current)
+      treeQueue.dispose()
+      if (treeQueueRef.current === treeQueue) treeQueueRef.current = null
       if (gitEventTimer.current) clearTimeout(gitEventTimer.current)
       for (const timer of contentSyncTimers.values()) clearTimeout(timer)
       contentSyncTimers.clear()

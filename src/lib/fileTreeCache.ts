@@ -77,10 +77,29 @@ export function patchDirChildren(
  * Prefer {@link reloadLoadedChildren} for intentional refresh / watcher reloads
  * so expanded folders re-read disk instead of keeping stale children.
  */
-export function preserveLoadedChildren(fresh: FileNode[], existing: FileNode[]): FileNode[] {
+export function preserveLoadedChildren(
+  fresh: FileNode[],
+  existing: FileNode[],
+  beforeReload?: FileNode[],
+): FileNode[] {
   return fresh.map(node => {
     const previous = findNodeByPath(existing, node.path)
     if (!node.is_dir || !previous?.is_dir || !previous.loaded) return node
+    const before = beforeReload && findNodeByPath(beforeReload, node.path)
+    // A completed rescan owns its listing. Only carry over expansions that
+    // landed while it was pending, including those below another loaded folder.
+    if (node.loaded) {
+      return {
+        ...node,
+        children: preserveLoadedChildren(
+          node.children ?? [],
+          previous.children ?? [],
+          beforeReload ? (before?.children ?? []) : undefined,
+        ),
+      }
+    }
+    // A failed reload must not resurrect the unchanged, stale cached listing.
+    if (before?.loaded && before.children === previous.children) return node
     return {
       ...node,
       children: previous.children,

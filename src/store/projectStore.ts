@@ -943,7 +943,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         projectTrees: {
           ...s.projectTrees,
           ...(isLatestProjectTreeRefresh(project.id, sequence)
-            ? { [project.id]: preserveLoadedChildren(next, s.projectTrees[project.id] ?? []) }
+            ? { [project.id]: preserveLoadedChildren(next, s.projectTrees[project.id] ?? [], existing) }
             : {}),
         },
         projectTreeErrors: isLatestProjectTreeRefresh(project.id, sequence)
