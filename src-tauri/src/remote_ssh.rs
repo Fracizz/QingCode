@@ -823,12 +823,28 @@ fn powershell_literal(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+/// 生成远端启动 PowerShell 的命令：脚本走 `-EncodedCommand`，整条命令再包一层双引号。
+///
+/// Win32-OpenSSH 把命令原样拼到 `DefaultShell` 后面，不加引号。默认 shell 是
+/// Git Bash 时实际执行的是 `bash.exe -c powershell.exe -NoLogo ...`，bash 只把
+/// `powershell.exe` 当脚本，其余参数全丢。包上双引号后 bash、cmd（`/c` 会去掉首尾
+/// 引号）和 PowerShell 都把它当成同一条命令；内容只有 base64 字符，不会被再解释。
+fn windows_encoded_powershell(launcher: &str, script: &str) -> String {
+    let utf16 = script
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    format!(
+        "\"{launcher} -EncodedCommand {}\"",
+        encode_terminal_data(&utf16)
+    )
+}
+
 /// 启动交互式 PowerShell / pwsh，并在提示符出现前进入项目目录。
 ///
 /// 不能等 PTY 出字后再注入 `Set-Location; Clear-Host`。Windows OpenSSH 的
-/// ConPTY 启动时会写出 `\x1b[2J\x1b[m`，注入的回车会把其中的 `m` 粘到最后一条
+/// ConPTY 启动时会写出 `[2J[m`，注入的回车会把其中的 `m` 粘到最后一条
 /// 命令上（`Clear-Hostm`），清屏失败，切目录命令和错误都留在屏幕上。
-/// `-EncodedCommand` 是纯 ASCII，路径里的引号和非 ASCII 也不会被 cmd 再解释一遍。
 fn windows_powershell_terminal(
     executable: &str,
     native: &str,
@@ -836,26 +852,28 @@ fn windows_powershell_terminal(
     fallback_from: Option<String>,
 ) -> ResolvedSshTerminal {
     let script = format!("Set-Location -LiteralPath '{}'", powershell_literal(native));
-    let utf16 = script
-        .encode_utf16()
-        .flat_map(u16::to_le_bytes)
-        .collect::<Vec<_>>();
     ResolvedSshTerminal {
-        command: format!(
-            "{executable} -NoLogo -NoExit -EncodedCommand {}",
-            encode_terminal_data(&utf16)
-        ),
+        command: windows_encoded_powershell(&format!("{executable} -NoLogo -NoExit"), &script),
         enter_directory: None,
         resolved_shell: resolved_shell.to_string(),
         fallback_from,
     }
 }
 
-/// `cmd /K` 在进入交互提示符之前切到项目目录。`%` 即使在引号里也会被展开。
+/// 由 PowerShell 切到项目目录后启动 `cmd /K`。
+///
+/// 直接发 `cmd.exe /K cd /d "D:\..."` 时，默认 shell 若是 Git Bash，路径里的引号和
+/// 反斜杠会被 bash 先解释掉；走编码脚本则与默认 shell 无关。
 fn windows_cmd_terminal(native: &str) -> ResolvedSshTerminal {
-    let escaped = native.replace('%', "%%");
+    let script = format!(
+        "$ProgressPreference = 'SilentlyContinue'; Set-Location -LiteralPath '{}'; & cmd.exe /K rem; exit $LASTEXITCODE",
+        powershell_literal(native)
+    );
     ResolvedSshTerminal {
-        command: format!("cmd.exe /K cd /d \"{escaped}\""),
+        command: windows_encoded_powershell(
+            "powershell.exe -NoLogo -NoProfile -NonInteractive",
+            &script,
+        ),
         enter_directory: None,
         resolved_shell: "cmd".to_string(),
         fallback_from: None,
@@ -887,19 +905,14 @@ fn windows_quote_arg(arg: &str) -> String {
     quoted
 }
 
+const WINDOWS_POWERSHELL_EXEC: &str = "powershell.exe -NoLogo -NoProfile -NonInteractive";
+
 /// 纯 ASCII 的引导命令，cmd.exe 或 PowerShell 作为默认 shell 时都能原样执行；
 /// 真正的脚本以 Base64(UTF-8) 从 stdin 读入，不受命令行长度和转义影响。
 fn windows_powershell_stdin_command() -> String {
     // 先关闭进度输出，否则首次加载模块会往 stderr 写 CLIXML 进度记录。
     let bootstrap = "$ProgressPreference = 'SilentlyContinue'; $s = [Console]::In.ReadToEnd(); Invoke-Expression ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s.Trim())))";
-    let utf16 = bootstrap
-        .encode_utf16()
-        .flat_map(u16::to_le_bytes)
-        .collect::<Vec<_>>();
-    format!(
-        "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
-        encode_terminal_data(&utf16)
-    )
+    windows_encoded_powershell(WINDOWS_POWERSHELL_EXEC, bootstrap)
 }
 
 /// cmd.exe 单条命令行上限是 8191 字符，留出余量。
@@ -911,14 +924,7 @@ const WINDOWS_INLINE_COMMAND_LIMIT: usize = 8000;
 /// `ReadToEnd()` 会一直挂着，连接断开后进程也留在远端。命令行放不下时返回 None，
 /// 由调用方退回 stdin 方式。
 fn windows_powershell_inline_command(script: &str) -> Option<String> {
-    let utf16 = script
-        .encode_utf16()
-        .flat_map(u16::to_le_bytes)
-        .collect::<Vec<_>>();
-    let command = format!(
-        "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
-        encode_terminal_data(&utf16)
-    );
+    let command = windows_encoded_powershell(WINDOWS_POWERSHELL_EXEC, script);
     (command.len() <= WINDOWS_INLINE_COMMAND_LIMIT).then_some(command)
 }
 
@@ -1003,12 +1009,7 @@ fn ssh_interactive_terminal_command(
             .unwrap_or("auto");
 
         match normalized {
-            "cmd" => {
-                if native.contains('"') {
-                    return Err("Windows 远程路径包含无法用于 CMD 的字符".to_string());
-                }
-                Ok(windows_cmd_terminal(&native))
-            }
+            "cmd" => Ok(windows_cmd_terminal(&native)),
             "pwsh" => Ok(windows_powershell_terminal(
                 "pwsh.exe", &native, "pwsh", None,
             )),
@@ -3488,7 +3489,6 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::encode_terminal_data;
 
     #[test]
     fn replaced_ssh_terminal_does_not_emit_exit() {
@@ -3714,69 +3714,88 @@ mod tests {
         assert!(windows_native_path("/home/owner/app").is_none());
     }
 
-    fn expected_powershell_terminal(executable: &str, literal_path: &str) -> String {
-        let script = format!("Set-Location -LiteralPath '{literal_path}'");
-        let utf16 = script
-            .encode_utf16()
-            .flat_map(u16::to_le_bytes)
+    const BASE64_ALPHABET: &[u8] =
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    /// 去掉外层双引号和启动前缀，返回 base64 部分，并确认只含 base64 字符。
+    fn encoded_part<'a>(command: &'a str, launcher: &str) -> &'a str {
+        let encoded = command
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+            .and_then(|inner| inner.strip_prefix(launcher))
+            .and_then(|rest| rest.strip_prefix(" -EncodedCommand "))
+            .unwrap();
+        assert!(encoded
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')));
+        encoded
+    }
+
+    /// 把 base64(UTF-16LE) 还原成脚本文本，便于断言实际执行的内容。
+    fn decoded_script(command: &str, launcher: &str) -> String {
+        let mut bits = 0u32;
+        let mut width = 0;
+        let mut bytes = Vec::new();
+        for ch in encoded_part(command, launcher)
+            .bytes()
+            .filter(|&ch| ch != b'=')
+        {
+            let value = BASE64_ALPHABET.iter().position(|&c| c == ch).unwrap() as u32;
+            bits = (bits << 6) | value;
+            width += 6;
+            if width >= 8 {
+                width -= 8;
+                bytes.push((bits >> width) as u8);
+                bits &= (1 << width) - 1;
+            }
+        }
+        let utf16 = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect::<Vec<_>>();
-        format!(
-            "{executable} -NoLogo -NoExit -EncodedCommand {}",
-            encode_terminal_data(&utf16)
-        )
+        String::from_utf16(&utf16).unwrap()
     }
 
     #[test]
     fn windows_terminal_starts_powershell_in_project() {
         let quoted = ssh_interactive_terminal_command("/D:/code/it's", Some("powershell")).unwrap();
         assert_eq!(
-            quoted.command,
-            expected_powershell_terminal("powershell.exe", r"D:\code\it''s")
+            decoded_script(&quoted.command, "powershell.exe -NoLogo -NoExit"),
+            r"Set-Location -LiteralPath 'D:\code\it''s'"
         );
         assert!(quoted.enter_directory.is_none());
 
         let command = ssh_interactive_terminal_command("/D:/code/nem-panel", None).unwrap();
         assert_eq!(
-            command.command,
-            expected_powershell_terminal("powershell.exe", r"D:\code\nem-panel")
+            decoded_script(&command.command, "powershell.exe -NoLogo -NoExit"),
+            r"Set-Location -LiteralPath 'D:\code
+em-panel'"
         );
         assert!(command.enter_directory.is_none());
         assert_eq!(command.resolved_shell, "powershell");
         assert_eq!(command.fallback_from, None);
-        let encoded = command
-            .command
-            .strip_prefix("powershell.exe -NoLogo -NoExit -EncodedCommand ")
-            .unwrap();
-        assert!(encoded
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')));
 
+        let cmd_launcher = "powershell.exe -NoLogo -NoProfile -NonInteractive";
         let cmd_target =
-            ssh_interactive_terminal_command("/D:/code/nem-panel", Some("cmd")).unwrap();
+            ssh_interactive_terminal_command("/D:/code/my project", Some("cmd")).unwrap();
         assert_eq!(
-            cmd_target.command,
-            r#"cmd.exe /K cd /d "D:\code\nem-panel""#
+            decoded_script(&cmd_target.command, cmd_launcher),
+            r"$ProgressPreference = 'SilentlyContinue'; Set-Location -LiteralPath 'D:\code\my project'; & cmd.exe /K rem; exit $LASTEXITCODE"
         );
         assert!(cmd_target.enter_directory.is_none());
         assert_eq!(cmd_target.resolved_shell, "cmd");
         assert_eq!(cmd_target.fallback_from, None);
-        let cmd_space =
-            ssh_interactive_terminal_command("/D:/code/my project", Some("cmd")).unwrap();
-        assert_eq!(
-            cmd_space.command,
-            r#"cmd.exe /K cd /d "D:\code\my project""#
-        );
         let cmd_percent = ssh_interactive_terminal_command("/D:/100%done", Some("cmd")).unwrap();
-        assert_eq!(cmd_percent.command, r#"cmd.exe /K cd /d "D:\100%%done""#);
+        assert!(decoded_script(&cmd_percent.command, cmd_launcher).contains(r"'D:@%done'"));
         let cmd_root = ssh_interactive_terminal_command("/C:", Some("cmd")).unwrap();
-        assert_eq!(cmd_root.command, r#"cmd.exe /K cd /d "C:\""#);
-        assert!(ssh_interactive_terminal_command("/D:/code/a\"b", Some("cmd")).is_err());
+        assert!(decoded_script(&cmd_root.command, cmd_launcher).contains(r"'C:'"));
 
         let pwsh_target =
             ssh_interactive_terminal_command("/D:/code/nem-panel", Some("pwsh")).unwrap();
         assert_eq!(
-            pwsh_target.command,
-            expected_powershell_terminal("pwsh.exe", r"D:\code\nem-panel")
+            decoded_script(&pwsh_target.command, "pwsh.exe -NoLogo -NoExit"),
+            r"Set-Location -LiteralPath 'D:\code
+em-panel'"
         );
         assert!(pwsh_target.enter_directory.is_none());
         assert_eq!(pwsh_target.resolved_shell, "pwsh");
@@ -3784,8 +3803,9 @@ mod tests {
         let fallback =
             ssh_interactive_terminal_command("/D:/code/nem-panel", Some("bash")).unwrap();
         assert_eq!(
-            fallback.command,
-            expected_powershell_terminal("powershell.exe", r"D:\code\nem-panel")
+            decoded_script(&fallback.command, "powershell.exe -NoLogo -NoExit"),
+            r"Set-Location -LiteralPath 'D:\code
+em-panel'"
         );
         assert!(fallback.enter_directory.is_none());
         assert_eq!(fallback.resolved_shell, "powershell");
@@ -3843,24 +3863,14 @@ mod tests {
     #[test]
     fn windows_powershell_command_is_shell_neutral() {
         let command = windows_powershell_stdin_command();
-        let encoded = command
-            .strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ")
-            .unwrap();
-        assert!(encoded
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')));
+        encoded_part(&command, WINDOWS_POWERSHELL_EXEC);
     }
 
     #[test]
     fn windows_git_runs_inline_without_reading_stdin() {
         let script = windows_git_script(r"D:\code\app", &["status".to_string()]).unwrap();
         let command = windows_powershell_inline_command(&script).unwrap();
-        let encoded = command
-            .strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ")
-            .unwrap();
-        assert!(encoded
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')));
+        assert_eq!(decoded_script(&command, WINDOWS_POWERSHELL_EXEC), script);
         assert!(command.len() <= WINDOWS_INLINE_COMMAND_LIMIT);
 
         let long_message = "x".repeat(WINDOWS_INLINE_COMMAND_LIMIT);
