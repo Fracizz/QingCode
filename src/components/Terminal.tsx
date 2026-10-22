@@ -12,6 +12,8 @@ import {
   subscribeTerminalOutput,
   useTerminalStore,
 } from '../store/terminalStore'
+import { setTerminalOutputPaused } from '@/lib/ipc/terminal'
+import { TerminalWriteFlow } from '@/lib/terminal/terminalWriteFlow'
 import { useProjectStore } from '../store/projectStore'
 import {
   FONT_SETTINGS_EVENT,
@@ -637,6 +639,11 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       if (status !== 'exited') writeToTerminal(terminalId, data)
     })
     // 程序通过 OSC 设置窗口标题时自动更新标签名（如 opencode）；运行任务终端不跟随。
+    // xterm 积压超过高水位时暂停 PTY 读取，保证按键回显不被大段输出淹没。
+    const flowHolder = {}
+    const writeFlow = new TerminalWriteFlow(paused =>
+      setTerminalOutputPaused(terminalId, flowHolder, paused)
+    )
     let unsubscribeOutput: (() => void) | undefined
     const oscParser = new TerminalOscParser()
     const subscribeTimer = window.setTimeout(() => {
@@ -653,7 +660,9 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
           onCommandStart: () => markTerminalCommandStarted(terminalId),
           onCommandEnd: () => markTerminalCommandFinished(terminalId),
         })
-        term.write(cleaned)
+        const size = cleaned.length
+        writeFlow.written(size)
+        term.write(cleaned, () => writeFlow.parsed(size))
       })
       const restored = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
       if (restored?.status === 'exited' && hadRestoredScrollback) {
@@ -731,6 +740,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       clearPtyResizeTimer()
       pendingPtySizeRef.current = null
       unsubscribeOutput?.()
+      writeFlow.dispose()
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
       window.removeEventListener(TERMINAL_CURSOR_SETTINGS_EVENT, updateCursor)

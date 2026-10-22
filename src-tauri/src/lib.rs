@@ -417,6 +417,11 @@ fn write_terminal(
 }
 
 #[tauri::command]
+fn set_terminal_output_paused(id: String, paused: bool, state: tauri::State<'_, TerminalManager>) {
+    state.set_output_paused(&id, paused);
+}
+
+#[tauri::command]
 fn kill_terminal(id: String, state: tauri::State<'_, TerminalManager>) -> Result<(), String> {
     state.kill(&id);
     Ok(())
@@ -736,6 +741,7 @@ pub fn run() {
             fonts::list_system_fonts,
             create_terminal,
             write_terminal,
+            set_terminal_output_paused,
             kill_terminal,
             resize_terminal,
             terminal_has_child_processes,

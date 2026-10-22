@@ -88,6 +88,29 @@ fn spawn_terminal_data_emitter(app: AppHandle, id: String) -> std::sync::mpsc::S
     sender
 }
 
+/// PTY 读线程的暂停闸门：前端 xterm 积压过多时暂停读取，子进程写满 PTY 后自然阻塞。
+/// 进程退出或会话关闭时必须 `set_paused(false)`，否则读线程会一直挂起。
+#[derive(Clone, Default)]
+struct OutputGate(Arc<(Mutex<bool>, std::sync::Condvar)>);
+
+impl OutputGate {
+    fn set_paused(&self, paused: bool) {
+        let (lock, cvar) = &*self.0;
+        *lock.lock().unwrap() = paused;
+        if !paused {
+            cvar.notify_all();
+        }
+    }
+
+    fn wait_until_resumed(&self) {
+        let (lock, cvar) = &*self.0;
+        let mut paused = lock.lock().unwrap();
+        while *paused {
+            paused = cvar.wait(paused).unwrap();
+        }
+    }
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct TerminalExitPayload {
     pub id: String,
@@ -129,6 +152,7 @@ struct TerminalSession {
     killer: Option<Box<dyn ChildKiller + Send + Sync>>,
     generation: u64,
     shell_pid: Option<u32>,
+    output_gate: OutputGate,
 }
 
 pub struct TerminalManager {
@@ -239,12 +263,14 @@ impl TerminalManager {
                 );
             }
         });
+        let output_gate = OutputGate::default();
         let session = TerminalSession {
             master: Arc::new(Mutex::new(master)),
             writer: writer_tx,
             killer: Some(killer),
             generation,
             shell_pid,
+            output_gate: output_gate.clone(),
         };
 
         let old = {
@@ -252,6 +278,7 @@ impl TerminalManager {
             sessions.insert(id.clone(), session)
         };
         if let Some(mut old) = old {
+            old.output_gate.set_paused(false);
             if let Some(mut killer) = old.killer.take() {
                 let _ = killer.kill();
             }
@@ -261,11 +288,13 @@ impl TerminalManager {
         let id_clone = id.clone();
         let emit_tx = spawn_terminal_data_emitter(app_clone, id_clone);
 
+        let reader_gate = output_gate.clone();
         std::thread::spawn(move || {
             use std::io::Read;
             let mut reader = reader;
             let mut buf = [0u8; TERMINAL_READ_BUF];
             loop {
+                reader_gate.wait_until_resumed();
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
@@ -281,6 +310,8 @@ impl TerminalManager {
         let sessions = Arc::clone(&self.sessions);
         std::thread::spawn(move || {
             let status = child.wait();
+            // 进程已退出：放开可能被前端暂停的读线程，让它读到 EOF 后结束。
+            output_gate.set_paused(false);
             let is_current = {
                 let mut sessions = sessions.lock().unwrap();
                 if should_emit_terminal_exit(
@@ -323,6 +354,13 @@ impl TerminalManager {
             })
     }
 
+    /// 前端 xterm 积压超过高水位时暂停读取 PTY，回落后恢复。
+    pub fn set_output_paused(&self, id: &str, paused: bool) {
+        if let Some(session) = self.sessions.lock().unwrap().get(id) {
+            session.output_gate.set_paused(paused);
+        }
+    }
+
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), String> {
         let master = self
             .sessions
@@ -344,6 +382,7 @@ impl TerminalManager {
     pub fn kill(&self, id: &str) {
         let session = self.sessions.lock().unwrap().remove(id);
         if let Some(mut session) = session {
+            session.output_gate.set_paused(false);
             if let Some(mut k) = session.killer.take() {
                 let _ = k.kill();
             }
@@ -387,6 +426,7 @@ impl TerminalManager {
     pub fn kill_all(&self) {
         let sessions = std::mem::take(&mut *self.sessions.lock().unwrap());
         for (_, mut session) in sessions {
+            session.output_gate.set_paused(false);
             if let Some(mut killer) = session.killer.take() {
                 let _ = killer.kill();
             }
@@ -988,6 +1028,7 @@ mod tests {
                 killer: Some(Box::new(TestKiller(kill))),
                 generation: 1,
                 shell_pid: None,
+                output_gate: OutputGate::default(),
             },
         );
         manager.write("blocked", "first").unwrap();
@@ -1251,6 +1292,27 @@ mod tests {
         )
         .unwrap_err();
         assert!(script_err.contains("需要 PowerShell"), "err={script_err}");
+    }
+
+    #[test]
+    fn output_gate_blocks_reader_until_resumed() {
+        let gate = super::OutputGate::default();
+        gate.wait_until_resumed();
+        gate.set_paused(true);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let reader_gate = gate.clone();
+        let handle = std::thread::spawn(move || {
+            reader_gate.wait_until_resumed();
+            done_tx.send(()).unwrap();
+        });
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_millis(50))
+            .is_err());
+        gate.set_paused(false);
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        handle.join().unwrap();
     }
 
     #[test]
