@@ -501,31 +501,7 @@ impl SshManager {
     ) -> Result<RemoteExecResult, String> {
         let parsed = parse_remote_uri(uri)?;
         reject_windows_remote_command(&parsed.path)?;
-        self.root_for_uri(uri, require_trust)?;
-        let mut channel = self
-            .open_session_channel(&parsed.connection_id, "命令")
-            .await?;
-        channel
-            .exec(true, command.as_bytes())
-            .await
-            .map_err(|error| format!("执行远程命令失败：{error}"))?;
-
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        let mut exit_code = None;
-        while let Some(message) = channel.wait().await {
-            match message {
-                ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
-                ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
-                ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status),
-                _ => {}
-            }
-        }
-        Ok(RemoteExecResult {
-            stdout: String::from_utf8_lossy(&stdout).into_owned(),
-            stderr: String::from_utf8_lossy(&stderr).into_owned(),
-            exit_code: exit_code.unwrap_or(255),
-        })
+        self.exec_command(uri, command, None, require_trust).await
     }
 
     async fn exec_uri_with_input(
@@ -537,6 +513,37 @@ impl SshManager {
     ) -> Result<RemoteExecResult, String> {
         let parsed = parse_remote_uri(uri)?;
         reject_windows_remote_command(&parsed.path)?;
+        self.exec_command(uri, command, Some(input), require_trust)
+            .await
+    }
+
+    /// 在 Windows OpenSSH 远端执行 git：脚本经 stdin 传给 PowerShell，避免默认 shell 的转义差异。
+    async fn exec_windows_git(
+        &self,
+        uri: &str,
+        native_root: &str,
+        args: &[String],
+        require_trust: bool,
+    ) -> Result<RemoteExecResult, String> {
+        let script = windows_git_script(native_root, args)?;
+        let input = encode_terminal_data(script.as_bytes());
+        self.exec_command(
+            uri,
+            &windows_powershell_stdin_command(),
+            Some(input.as_bytes()),
+            require_trust,
+        )
+        .await
+    }
+
+    async fn exec_command(
+        &self,
+        uri: &str,
+        command: &str,
+        input: Option<&[u8]>,
+        require_trust: bool,
+    ) -> Result<RemoteExecResult, String> {
+        let parsed = parse_remote_uri(uri)?;
         self.root_for_uri(uri, require_trust)?;
         let mut channel = self
             .open_session_channel(&parsed.connection_id, "命令")
@@ -545,14 +552,16 @@ impl SshManager {
             .exec(true, command.as_bytes())
             .await
             .map_err(|error| format!("执行远程命令失败：{error}"))?;
-        channel
-            .data(input)
-            .await
-            .map_err(|error| format!("发送远程命令输入失败：{error}"))?;
-        channel
-            .eof()
-            .await
-            .map_err(|error| format!("结束远程命令输入失败：{error}"))?;
+        if let Some(input) = input {
+            channel
+                .data(input)
+                .await
+                .map_err(|error| format!("发送远程命令输入失败：{error}"))?;
+            channel
+                .eof()
+                .await
+                .map_err(|error| format!("结束远程命令输入失败：{error}"))?;
+        }
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
@@ -691,7 +700,96 @@ fn powershell_literal(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-const WINDOWS_REMOTE_COMMAND_ERROR: &str = "Windows SSH 项目暂不支持远程命令、Git、搜索和运行任务";
+/// 按 MSVCRT 规则给 Windows 进程命令行参数加引号。
+fn windows_quote_arg(arg: &str) -> String {
+    if !arg.is_empty() && !arg.contains([' ', '\t', '\n', '\x0b', '"']) {
+        return arg.to_string();
+    }
+    let mut quoted = String::from("\"");
+    let mut backslashes = 0usize;
+    for ch in arg.chars() {
+        if ch == '\\' {
+            backslashes += 1;
+            continue;
+        }
+        if ch == '"' {
+            quoted.push_str(&"\\".repeat(backslashes * 2 + 1));
+        } else {
+            quoted.push_str(&"\\".repeat(backslashes));
+        }
+        quoted.push(ch);
+        backslashes = 0;
+    }
+    quoted.push_str(&"\\".repeat(backslashes * 2));
+    quoted.push('"');
+    quoted
+}
+
+/// 纯 ASCII 的引导命令，cmd.exe 或 PowerShell 作为默认 shell 时都能原样执行；
+/// 真正的脚本以 Base64(UTF-8) 从 stdin 读入，不受命令行长度和转义影响。
+fn windows_powershell_stdin_command() -> String {
+    // 先关闭进度输出，否则首次加载模块会往 stderr 写 CLIXML 进度记录。
+    let bootstrap = "$ProgressPreference = 'SilentlyContinue'; $s = [Console]::In.ReadToEnd(); Invoke-Expression ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($s.Trim())))";
+    let utf16 = bootstrap
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    format!(
+        "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
+        encode_terminal_data(&utf16)
+    )
+}
+
+/// 用 Process 直接启动 git 并原样转发 stdout 字节，避免 PowerShell 按行重编码破坏 `-z` 输出。
+fn windows_git_script(native_root: &str, args: &[String]) -> Result<String, String> {
+    if args.iter().any(|arg| arg.contains('\0')) || native_root.contains('\0') {
+        return Err("Git 参数包含无效字符".to_string());
+    }
+    let command_line = std::iter::once("-C".to_string())
+        .chain(std::iter::once(native_root.to_string()))
+        .chain(args.iter().cloned())
+        .map(|arg| windows_quote_arg(&arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    Ok(format!(
+        r#"$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$stderr = [Console]::OpenStandardError()
+function Write-RawError([string]$text) {{
+  $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+  $stderr.Write($bytes, 0, $bytes.Length)
+  $stderr.Flush()
+}}
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = 'git.exe'
+$psi.Arguments = '{}'
+$psi.UseShellExecute = $false
+$psi.CreateNoWindow = $true
+$psi.RedirectStandardInput = $true
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+$psi.StandardErrorEncoding = [Text.Encoding]::UTF8
+try {{
+  $process = [Diagnostics.Process]::Start($psi)
+}} catch {{
+  Write-RawError ('远端未安装 git 或 git 不在 PATH 中：' + $_.Exception.Message)
+  exit 127
+}}
+$process.StandardInput.Close()
+$errorTask = $process.StandardError.ReadToEndAsync()
+$stdout = [Console]::OpenStandardOutput()
+$process.StandardOutput.BaseStream.CopyTo($stdout)
+$stdout.Flush()
+$process.WaitForExit()
+Write-RawError $errorTask.Result
+exit $process.ExitCode
+"#,
+        powershell_literal(&command_line)
+    ))
+}
+
+const WINDOWS_REMOTE_COMMAND_ERROR: &str =
+    "Windows SSH 项目暂不支持远程命令、搜索、格式化和运行任务";
 
 fn reject_windows_remote_command(path: &str) -> Result<(), String> {
     if windows_native_path(path).is_some() {
@@ -2165,12 +2263,22 @@ pub async fn ssh_git_status(
     path: String,
     manager: State<'_, SshManager>,
 ) -> Result<RemoteGitStatus, String> {
-    let parsed = parse_remote_uri(&path)?;
-    let command = format!(
-        "git -C {} status --porcelain=v1 --branch -z --untracked-files=all --ignore-submodules=dirty",
-        shell_quote(&parsed.path)
-    );
-    let output = manager.exec_uri(&path, &command, false).await?;
+    let output = remote_git_command(
+        &manager,
+        &path,
+        [
+            "status",
+            "--porcelain=v1",
+            "--branch",
+            "-z",
+            "--untracked-files=all",
+            "--ignore-submodules=dirty",
+        ]
+        .map(str::to_string)
+        .to_vec(),
+        false,
+    )
+    .await?;
     if output.exit_code != 0 {
         if output
             .stderr
@@ -2260,6 +2368,11 @@ async fn remote_git_command(
     require_trust: bool,
 ) -> Result<RemoteExecResult, String> {
     let parsed = parse_remote_uri(path)?;
+    if let Some(native_root) = windows_native_path(&parsed.path) {
+        return manager
+            .exec_windows_git(path, &native_root, &args, require_trust)
+            .await;
+    }
     let command = format!(
         "git -C {} {}",
         shell_quote(&parsed.path),
@@ -3466,6 +3579,46 @@ mod tests {
             "打开 SSH SFTP 通道失败：Connection closed by the remote side"
         ));
         assert!(!is_stale_channel_error("远端未启用 SFTP"));
+    }
+
+    #[test]
+    fn windows_quote_arg_follows_msvcrt_rules() {
+        assert_eq!(windows_quote_arg("status"), "status");
+        assert_eq!(windows_quote_arg(""), "\"\"");
+        assert_eq!(windows_quote_arg(r"D:\my code"), "\"D:\\my code\"");
+        assert_eq!(windows_quote_arg(r"D:\my code\"), "\"D:\\my code\\\\\"");
+        assert_eq!(windows_quote_arg("say \"hi\""), "\"say \\\"hi\\\"\"");
+        assert_eq!(windows_quote_arg(r#"a\"b"#), "\"a\\\\\\\"b\"");
+        assert_eq!(windows_quote_arg("--format=%H%x00%s"), "--format=%H%x00%s");
+    }
+
+    #[test]
+    fn windows_powershell_command_is_shell_neutral() {
+        let command = windows_powershell_stdin_command();
+        let encoded = command
+            .strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ")
+            .unwrap();
+        assert!(encoded
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')));
+    }
+
+    #[test]
+    fn windows_git_script_quotes_arguments_for_powershell_and_git() {
+        let script = windows_git_script(
+            r"D:\my code\it's",
+            &[
+                "commit".to_string(),
+                "-m".to_string(),
+                "fix: \"a\" b".to_string(),
+            ],
+        )
+        .unwrap();
+        assert!(
+            script.contains(r#"$psi.Arguments = '-C "D:\my code\it''s" commit -m "fix: \"a\" b"'"#)
+        );
+        assert!(script.contains("exit $process.ExitCode"));
+        assert!(windows_git_script(r"D:\code", &["a\0b".to_string()]).is_err());
     }
 
     #[test]

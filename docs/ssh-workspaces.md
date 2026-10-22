@@ -33,7 +33,7 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 
 - 本地和 SSH 工作区均提供文件与文本导航，不提供语义定义跳转、引用查找或工作区符号搜索。
 - 内容搜索要求远端安装 `ripgrep`（`rg`），Git 功能要求远端安装 `git`。
-- Linux / POSIX 远端支持远程命令、Git、搜索、格式化和运行任务。Windows OpenSSH 支持 SFTP 文件操作和交互式 PowerShell / CMD 终端；远程命令、Git、搜索、格式化以及 PowerShell / BAT 运行任务不可用。
+- Linux / POSIX 远端支持远程命令、Git、搜索、格式化和运行任务。Windows OpenSSH 支持 SFTP 文件操作、交互式 PowerShell / CMD 终端和 Git（要求远端 `git.exe` 在 PATH 中，经 `powershell.exe` 直接启动 git，不依赖远端默认 shell 是 cmd 还是 PowerShell）；搜索、格式化以及 PowerShell / BAT 运行任务暂不可用。
 - 连接每 20 秒保活一次，连续约 3 分钟没有任何回包才断开，不再用 30 秒空闲超时拆掉会话。传输已经断开，或打开通道被拒绝（`ConnectFailed`）时，会丢掉旧连接并重连一次。家目录先用登录目录，否则再试 `/home/<用户>`、`/C:/Users/<用户>`、`/root` 和 `/`。
 - WSL 直连工作区尚未接入；可先通过 WSL 内的 SSH 服务使用同一 SSH 工作区能力。
 - 尚未提供远程扩展、端口转发、SSH Agent 转发和连接配置管理页。
@@ -97,7 +97,7 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 
 ### Git / 源代码管理
 
-Linux SSH 要求远端有 `git`。Windows OpenSSH 整组不可用。
+Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PATH 中，能力与 Linux SSH 相同。
 
 | 能力 | 状态 | 差距 |
 |---|---|---|
@@ -167,7 +167,7 @@ SSH 仍可在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_fi
 
 ### Windows OpenSSH
 
-路径形如 `ssh://<id>/D:/code/app`。可用：SFTP 文件操作、交互式 PowerShell / CMD 终端、与本机之间的上传下载。不可用：远程命令、Git、搜索、格式化、运行任务。这是平台限制，不是 Linux SSH 的对照表所能概括的。
+路径形如 `ssh://<id>/D:/code/app`。可用：SFTP 文件操作、交互式 PowerShell / CMD 终端、Git、与本机之间的上传下载。不可用：远程命令、搜索、格式化、运行任务。这是平台限制，不是 Linux SSH 的对照表所能概括的。
 
 ### 补齐进展与后续建议
 
