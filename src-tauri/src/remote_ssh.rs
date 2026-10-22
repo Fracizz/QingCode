@@ -244,7 +244,28 @@ struct ConnectedSession {
 }
 
 fn is_stale_channel_error(error: &str) -> bool {
-    error.contains("ConnectFailed")
+    [
+        "ConnectFailed",
+        "Keepalive timeout",
+        "Inactivity timeout",
+        "Connection closed",
+        "Connection timeout",
+    ]
+    .iter()
+    .any(|marker| error.contains(marker))
+}
+
+fn ssh_client_config() -> client::Config {
+    client::Config {
+        // russh does not reset its inactivity timer when it sends a keepalive.
+        // A 30s limit therefore drops Windows OpenSSH while ConPTY is still
+        // answering the previous probe. Keepalive failure is the disconnect signal.
+        inactivity_timeout: None,
+        keepalive_interval: Some(Duration::from_secs(20)),
+        keepalive_max: 8,
+        nodelay: true,
+        ..Default::default()
+    }
 }
 
 async fn open_session_channel_once(
@@ -362,12 +383,22 @@ impl SshManager {
         Ok(connected)
     }
 
+    async fn live_session(&self, connection_id: &str) -> Result<Arc<ConnectedSession>, String> {
+        let session = self.session(connection_id)?;
+        if session.handle.is_closed() {
+            return self
+                .reconnect_after_channel_failure(connection_id, &session)
+                .await;
+        }
+        Ok(session)
+    }
+
     async fn open_session_channel(
         &self,
         connection_id: &str,
         purpose: &str,
     ) -> Result<russh::Channel<client::Msg>, String> {
-        let session = self.session(connection_id)?;
+        let session = self.live_session(connection_id).await?;
         match open_session_channel_once(&session, purpose).await {
             Ok(channel) => Ok(channel),
             Err(error) if is_stale_channel_error(&error) => {
@@ -432,7 +463,7 @@ impl SshManager {
     }
 
     async fn open_sftp(&self, connection_id: &str) -> Result<SftpSession, String> {
-        let session = self.session(connection_id)?;
+        let session = self.live_session(connection_id).await?;
         match open_sftp_session(&session).await {
             Ok(sftp) => Ok(sftp),
             Err(error) if is_stale_channel_error(&error) => {
@@ -734,12 +765,7 @@ async fn open_transport(
         expected_fingerprint,
         observed_fingerprint: Arc::clone(&observed),
     };
-    let client_config = client::Config {
-        inactivity_timeout: Some(Duration::from_secs(30)),
-        keepalive_interval: Some(Duration::from_secs(15)),
-        keepalive_max: 3,
-        ..Default::default()
-    };
+    let client_config = ssh_client_config();
     let result = client::connect(
         Arc::new(client_config),
         (config.host.as_str(), config.port),
@@ -2835,6 +2861,20 @@ mod tests {
             .unwrap()
             .is_none());
         assert!(reject_windows_remote_command("/D:/code/nem-panel").is_err());
+    }
+
+    #[test]
+    fn ssh_client_waits_through_a_slow_keepalive_reply() {
+        let config = ssh_client_config();
+        assert!(config.inactivity_timeout.is_none());
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(20)));
+        assert_eq!(config.keepalive_max, 8);
+        assert!(config.nodelay);
+        assert!(is_stale_channel_error("Keepalive timeout"));
+        assert!(is_stale_channel_error(
+            "打开 SSH SFTP 通道失败：Connection closed by the remote side"
+        ));
+        assert!(!is_stale_channel_error("远端未启用 SFTP"));
     }
 
     #[test]
