@@ -84,6 +84,11 @@ describe('copyFileActions', () => {
     expect(pushToast).toHaveBeenCalledWith('success', '路径已复制')
   })
 
+  it('copyPathAction writes the remote filesystem path for ssh resources', async () => {
+    await copyPathAction('ssh://23a6efe9-51bb-4121-9d8c-41538a91d6b2/D:/code/qingcode')
+    expect(copyToClipboard).toHaveBeenCalledWith('D:/code/qingcode')
+  })
+
   it('copyPathAction joins multiple paths with newlines', async () => {
     await copyPathAction(['D:/work/app/a.svg', 'D:/work/app/b.svg', 'D:/work/app/c.html'])
     expect(copyToClipboard).toHaveBeenCalledWith(

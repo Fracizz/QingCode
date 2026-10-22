@@ -117,6 +117,18 @@ export function normalizePath(path: string) {
   return path.replace(/\\/g, '/').replace(/\/+$/, '')
 }
 
+/**
+ * Absolute path for「复制路径」.
+ * SSH resources drop the internal `ssh://<connection-id>` prefix.
+ * Windows OpenSSH roots (`/D:/code/app`) become `D:/code/app`.
+ */
+export function clipboardAbsolutePath(path: string): string {
+  if (!path.startsWith('ssh://')) return path
+  const remote = path.replace(/^ssh:\/\/[^/]+/, '') || '/'
+  const drive = /^\/([A-Za-z]:(?:\/.*)?)$/.exec(remote)
+  return drive?.[1] ?? remote
+}
+
 function comparisonPath(path: string): string {
   const normalized = normalizePath(path)
   return normalized.startsWith('ssh://') ? normalized : normalized.toLowerCase()

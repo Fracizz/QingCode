@@ -5,9 +5,8 @@ import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { formatEntryCount, formatFileTime } from '../lib/fileProperties'
-import { copyToClipboard } from '../utils/fileReferences'
+import { copyPathAction } from '../lib/copyFileActions'
 import { formatBytes } from '../utils/formatBytes'
-import { useProjectStore } from '../store/projectStore'
 
 type PropertyRow = {
   key: string
@@ -34,7 +33,6 @@ function RowLoading({ label }: { label: string }) {
 
 function PropertyGrid({ rows, path }: { rows: PropertyRow[]; path: string }) {
   const { t } = useI18n()
-  const pushToast = useProjectStore(s => s.pushToast)
 
   return (
     <dl className="grid grid-cols-[max-content_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-ui leading-snug">
@@ -58,11 +56,7 @@ function PropertyGrid({ rows, path }: { rows: PropertyRow[]; path: string }) {
             onClick={
               row.isLocation
                 ? () => {
-                    void copyToClipboard(path)
-                      .then(() => pushToast('success', t('路径已复制')))
-                      .catch((err: unknown) => {
-                        pushToast('error', t('复制路径失败: {error}', { error: String(err) }))
-                      })
+                    void copyPathAction(path)
                   }
                 : undefined
             }

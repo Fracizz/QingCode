@@ -487,6 +487,10 @@ export default function TerminalTabs({
       : projectTerminals.map((_, i) => i)
   const hiddenCount = Math.max(0, projectTerminals.length - visibleTabIndices.length)
 
+  useEffect(() => {
+    if (hiddenCount === 0) setOverflowMenu(null)
+  }, [hiddenCount])
+
   const clearTerminalDrag = () => {
     setDraggedTerminalId(null)
     setDropTarget(null)
@@ -848,13 +852,9 @@ export default function TerminalTabs({
             </button>
           </Tooltip>
         </div>
-        {projectTerminals.length > 0 && (
+        {hiddenCount > 0 && (
           <Tooltip
-            label={
-              hiddenCount > 0
-                ? translate('显示所有终端（{hidden} 个已隐藏）', { hidden: hiddenCount })
-                : translate('显示所有终端')
-            }
+            label={translate('显示所有终端（{hidden} 个已隐藏）', { hidden: hiddenCount })}
             side="top"
             wrapperClassName="inline-flex h-full shrink-0 items-center"
           >
@@ -877,11 +877,9 @@ export default function TerminalTabs({
                 className="pointer-events-none absolute left-0 top-1/2 h-[80%] w-px -translate-y-1/2 bg-border-strong"
               />
               <List size={15} />
-              {hiddenCount > 0 && (
-                <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-action px-0.5 text-center text-[9px] font-semibold leading-[12px] text-on-action">
-                  {hiddenCount > 99 ? '99+' : hiddenCount}
-                </span>
-              )}
+              <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-action px-0.5 text-center text-[9px] font-semibold leading-[12px] text-on-action">
+                {hiddenCount > 99 ? '99+' : hiddenCount}
+              </span>
             </button>
           </Tooltip>
         )}

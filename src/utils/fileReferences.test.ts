@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   addPathToSet,
+  clipboardAbsolutePath,
   collectAncestorDirs,
   findProjectForPath,
   formatFileReference,
@@ -34,6 +35,17 @@ describe('normalizePath / parentPath / pathsEqual', () => {
 
   it('pathsEqual is case-insensitive', () => {
     expect(pathsEqual('D:/Work/A', 'd:\\work\\a\\')).toBe(true)
+  })
+
+  it('copies the remote filesystem path instead of the ssh connection uri', () => {
+    expect(
+      clipboardAbsolutePath('ssh://23a6efe9-51bb-4121-9d8c-41538a91d6b2/D:/code/qingcode'),
+    ).toBe('D:/code/qingcode')
+    expect(clipboardAbsolutePath('ssh://c1/home/owner/app/src/a.ts')).toBe(
+      '/home/owner/app/src/a.ts',
+    )
+    expect(clipboardAbsolutePath('D:/code/qingcode')).toBe('D:/code/qingcode')
+    expect(clipboardAbsolutePath('ssh://c1/')).toBe('/')
   })
 
   it('keeps SSH POSIX paths case-sensitive', () => {

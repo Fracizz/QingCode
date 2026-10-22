@@ -5,6 +5,7 @@ import { explorerPathsForCopyShortcut } from './explorerSelection'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import {
+  clipboardAbsolutePath,
   copyToClipboard,
   findProjectForPath,
   formatFileReference,
@@ -71,7 +72,7 @@ export async function copyPathAction(pathOrPaths: string | readonly string[]): P
   if (paths.length === 0) return
   const pushToast = useProjectStore.getState().pushToast
   try {
-    await copyToClipboard(paths.join('\n'))
+    await copyToClipboard(paths.map(clipboardAbsolutePath).join('\n'))
     pushToast(
       'success',
       paths.length === 1

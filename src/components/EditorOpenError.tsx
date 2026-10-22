@@ -13,7 +13,7 @@ import { isSshResource } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
-import { copyToClipboard } from '../utils/fileReferences'
+import { copyPathAction } from '../lib/copyFileActions'
 import { canPreviewAnyway, openFileErrorTitle } from '../lib/openFileError'
 import type { EditorTab } from '../types'
 import { useI18n } from '../lib/i18n'
@@ -31,17 +31,6 @@ export default function EditorOpenError({ tab }: Props) {
   const setView = useUIStore(s => s.setView)
   const kind = tab.openErrorKind ?? 'generic'
   const title = t(openFileErrorTitle(kind))
-
-  const copyPath = async () => {
-    try {
-      await copyToClipboard(tab.path)
-      useProjectStore.getState().pushToast('success', t('路径已复制'))
-    } catch (error) {
-      useProjectStore
-        .getState()
-        .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
-    }
-  }
 
   const revealInSidebar = () => {
     setView('explorer')
@@ -121,7 +110,7 @@ export default function EditorOpenError({ tab }: Props) {
         <ActionButton
           icon={<Copy size={14} />}
           label={t('复制路径')}
-          onClick={() => void copyPath()}
+          onClick={() => void copyPathAction(tab.path)}
         />
       </div>
     </div>

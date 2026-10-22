@@ -103,7 +103,7 @@ import {
 import { editorPerfProfileForTab, type EditorPerfProfile } from '../lib/fileSizePolicy'
 import { formatDocument } from '../lib/formatDocument'
 import { applyEffectiveSettings } from '../lib/effectiveSettings'
-import { copyRelativePathAction } from '../lib/copyFileActions'
+import { copyPathAction, copyRelativePathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { isSupportedEditorLanguage, loadLanguageSupport } from '../lib/editorLanguages'
 import {
@@ -240,13 +240,7 @@ function createTabEditorState(
         {
           key: 'Ctrl-Shift-c',
           run: () => {
-            void copyToClipboard(tabPath)
-              .then(() => useProjectStore.getState().pushToast('success', translate('路径已复制')))
-              .catch(error =>
-                useProjectStore
-                  .getState()
-                  .pushToast('error', translate('复制路径失败: {error}', { error: String(error) }))
-              )
+            void copyPathAction(tabPath)
             return true
           },
         },
@@ -730,17 +724,6 @@ export default function Editor() {
     return () => window.clearTimeout(timer)
   }, [pendingReveal, activeTab?.path, activeTabId, clearPendingReveal, activeTab])
 
-  const copyPath = async (path: string) => {
-    try {
-      await copyToClipboard(path)
-      useProjectStore.getState().pushToast('success', t('路径已复制'))
-    } catch (error) {
-      useProjectStore
-        .getState()
-        .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
-    }
-  }
-
   const copyAsReference = async (path: string) => {
     const view = viewRef.current
     const projectState = useProjectStore.getState()
@@ -884,7 +867,7 @@ export default function Editor() {
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+Shift+C',
         separatorBefore: true,
-        action: () => copyPath(path),
+        action: () => void copyPathAction(path),
       },
       {
         label: t('复制相对路径'),

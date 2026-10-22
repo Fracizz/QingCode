@@ -95,6 +95,7 @@ import {
   switchGitBranch,
 } from '../lib/ipc/git'
 import { useUIStore } from '../store/uiStore'
+import { copyPathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { fileNameFromPath } from '../store/editorStoreHelpers'
 import { copyToClipboard, pathsEqual } from '../utils/fileReferences'
@@ -1929,17 +1930,6 @@ export default function SourceControlPanel() {
     [groups.staged, groups.unstaged]
   )
 
-  const copyAbsolutePath = async (path: string) => {
-    try {
-      await copyToClipboard(path)
-      useProjectStore.getState().pushToast('success', t('路径已复制'))
-    } catch (error) {
-      useProjectStore
-        .getState()
-        .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
-    }
-  }
-
   const copyRelativePath = async (relativePath: string) => {
     try {
       await copyToClipboard(normalizeGitChangePath(relativePath).replace(/\\/g, '/'))
@@ -2032,7 +2022,7 @@ export default function SourceControlPanel() {
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+Shift+C',
         separatorBefore: true,
-        action: () => void copyAbsolutePath(abs),
+        action: () => void copyPathAction(abs),
       },
       {
         label: t('复制相对路径'),
@@ -2122,7 +2112,7 @@ export default function SourceControlPanel() {
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+Shift+C',
         separatorBefore: true,
-        action: () => void copyAbsolutePath(abs),
+        action: () => void copyPathAction(abs),
       },
       {
         label: t('复制相对路径'),

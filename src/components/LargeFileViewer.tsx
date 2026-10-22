@@ -11,7 +11,7 @@ import { Copy, ExternalLink, Eye, LocateFixed, Search } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
 import { isSshResource, safeInvoke } from '../lib/tauri'
 import { formatFileSize, isOversizeSlicePreview } from '../lib/fileSizePolicy'
-import { copyToClipboard } from '../utils/fileReferences'
+import { copyPathAction } from '../lib/copyFileActions'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
@@ -352,17 +352,6 @@ export default function LargeFileViewer({ tab }: Props) {
     useProjectStore.getState().pushToast('info', t('未找到匹配项'))
   }
 
-  const copyPath = async () => {
-    try {
-      await copyToClipboard(tab.path)
-      useProjectStore.getState().pushToast('success', t('路径已复制'))
-    } catch (error) {
-      useProjectStore
-        .getState()
-        .pushToast('error', t('复制路径失败: {error}', { error: String(error) }))
-    }
-  }
-
   return (
     <div className="flex h-full min-h-0 flex-col bg-bg">
       <div className="flex h-8 flex-shrink-0 items-center gap-2 border-b border-border px-3 text-ui-xs text-fg-muted">
@@ -507,7 +496,7 @@ export default function LargeFileViewer({ tab }: Props) {
           <button
             type="button"
             className="inline-flex items-center gap-1 text-accent hover:underline"
-            onClick={() => void copyPath()}
+            onClick={() => void copyPathAction(tab.path)}
           >
             <Copy size={12} />
             {t('复制路径')}

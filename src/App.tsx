@@ -27,6 +27,7 @@ import { useCompareStore } from './store/compareStore'
 import { useCommandPaletteStore } from './store/commandPaletteStore'
 import { useSymbolPickerStore } from './store/symbolPickerStore'
 import { isTauri } from './lib/tauri'
+import { editorSurface } from './lib/editorSurface'
 import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
 import { startSystemThemeListener } from './lib/themeSettings'
@@ -174,6 +175,11 @@ function App() {
   const sideQuadActive = panelLayout === 'sideTerminal' && sideQuadTerminal
   const sidebarSlotVisible =
     sidebarOpen && (view === 'explorer' || view === 'search' || view === 'run')
+  const editorBody = editorSurface({
+    activeTabId,
+    hasProject: currentProject !== null,
+    projectsReady,
+  })
 
   useLayoutEffect(() => {
     if (!panelLayoutSwitching) return
@@ -429,12 +435,14 @@ function App() {
                     </button>
                   </div>
                 )}
-                {activeTabId ? (
+                {editorBody === 'editor' ? (
                   <Suspense fallback={<LazyFallback />}>
                     <Editor />
                   </Suspense>
-                ) : (
+                ) : editorBody === 'welcome' ? (
                   <EmptyEditor />
+                ) : (
+                  <div className="min-h-0 flex-1 bg-bg" />
                 )}
               </>
             )}

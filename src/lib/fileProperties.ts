@@ -1,4 +1,4 @@
-import { parentPath } from '../utils/fileReferences'
+import { clipboardAbsolutePath, parentPath } from '../utils/fileReferences'
 import { safeInvoke } from './tauri'
 
 type FileStat = { size: number; is_dir: boolean }
@@ -21,7 +21,7 @@ export type FileProperties = {
 
 /** Containing folder path (IDEA / Windows style), not the item's own full path. */
 export function getPropertiesLocation(path: string): string {
-  return parentPath(path)
+  return clipboardAbsolutePath(parentPath(path))
 }
 
 export async function loadFileProperties(
