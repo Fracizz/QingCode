@@ -11,6 +11,7 @@ use russh_sftp::protocol::OpenFlags;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -703,6 +704,7 @@ fn reject_windows_remote_command(path: &str) -> Result<(), String> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedSshTerminal {
     command: String,
+    enter_directory: Option<String>,
     resolved_shell: String,
     fallback_from: Option<String>,
 }
@@ -725,40 +727,45 @@ fn ssh_interactive_terminal_command(
                 if native.contains('"') {
                     return Err("Windows 远程路径包含无法用于 CMD 的字符".to_string());
                 }
-                // cmd.exe /d /k cd /d "<native>" enters the directory directly
-                // without echo or Set-Location.
                 Ok(ResolvedSshTerminal {
-                    command: format!("cmd.exe /d /k cd /d \"{native}\""),
+                    command: "cmd.exe".to_string(),
+                    enter_directory: Some(format!("cd /d \"{native}\" & cls\r")),
                     resolved_shell: "cmd".to_string(),
                     fallback_from: None,
                 })
             }
             "pwsh" => {
-                let script = windows_terminal_startup_script(path)?
-                    .ok_or_else(|| "非 Windows 路径".to_string())?;
-                let encoded = encode_powershell_command(&script);
+                let script = format!(
+                    "Set-Location -LiteralPath '{}'; Clear-Host\r",
+                    powershell_literal(&native)
+                );
                 Ok(ResolvedSshTerminal {
-                    command: format!("pwsh.exe -NoLogo -NoExit -EncodedCommand {encoded}"),
+                    command: "pwsh.exe".to_string(),
+                    enter_directory: Some(script),
                     resolved_shell: "pwsh".to_string(),
                     fallback_from: None,
                 })
             }
             "powershell" | "auto" => {
-                let script = windows_terminal_startup_script(path)?
-                    .ok_or_else(|| "非 Windows 路径".to_string())?;
-                let encoded = encode_powershell_command(&script);
+                let script = format!(
+                    "Set-Location -LiteralPath '{}'; Clear-Host\r",
+                    powershell_literal(&native)
+                );
                 Ok(ResolvedSshTerminal {
-                    command: format!("powershell.exe -NoLogo -NoExit -EncodedCommand {encoded}"),
+                    command: "powershell.exe".to_string(),
+                    enter_directory: Some(script),
                     resolved_shell: "powershell".to_string(),
                     fallback_from: None,
                 })
             }
             unsupported => {
-                let script = windows_terminal_startup_script(path)?
-                    .ok_or_else(|| "非 Windows 路径".to_string())?;
-                let encoded = encode_powershell_command(&script);
+                let script = format!(
+                    "Set-Location -LiteralPath '{}'; Clear-Host\r",
+                    powershell_literal(&native)
+                );
                 Ok(ResolvedSshTerminal {
-                    command: format!("powershell.exe -NoLogo -NoExit -EncodedCommand {encoded}"),
+                    command: "powershell.exe".to_string(),
+                    enter_directory: Some(script),
                     resolved_shell: "powershell".to_string(),
                     fallback_from: Some(unsupported.to_string()),
                 })
@@ -774,11 +781,13 @@ fn ssh_interactive_terminal_command(
         match normalized {
             "bash" | "zsh" | "sh" => Ok(ResolvedSshTerminal {
                 command: format!("cd -- {quoted} && exec {normalized} -l"),
+                enter_directory: None,
                 resolved_shell: normalized.to_string(),
                 fallback_from: None,
             }),
             _ => Ok(ResolvedSshTerminal {
                 command: format!("cd -- {quoted} && exec \"${{SHELL:-/bin/sh}}\" -l"),
+                enter_directory: None,
                 resolved_shell: "auto".to_string(),
                 fallback_from: None,
             }),
@@ -786,6 +795,7 @@ fn ssh_interactive_terminal_command(
     }
 }
 
+#[cfg(test)]
 fn windows_terminal_startup_script(path: &str) -> Result<Option<String>, String> {
     let Some(native) = windows_native_path(path) else {
         return Ok(None);
@@ -794,41 +804,9 @@ fn windows_terminal_startup_script(path: &str) -> Result<Option<String>, String>
         return Err("Windows 远程路径包含无法用于 PowerShell 的字符".to_string());
     }
     Ok(Some(format!(
-        "Set-Location -LiteralPath '{}'",
+        "Set-Location -LiteralPath '{}'; Clear-Host\r",
         powershell_literal(&native)
     )))
-}
-
-fn encode_powershell_command(script: &str) -> String {
-    let mut utf16 = Vec::with_capacity(script.len() * 2);
-    for unit in script.encode_utf16() {
-        utf16.extend_from_slice(&unit.to_le_bytes());
-    }
-    base64_encode(&utf16)
-}
-
-fn base64_encode(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0];
-        let b1 = chunk.get(1).copied().unwrap_or(0);
-        let b2 = chunk.get(2).copied().unwrap_or(0);
-        let triple = (u32::from(b0) << 16) | (u32::from(b1) << 8) | u32::from(b2);
-        out.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
-        out.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(TABLE[((triple >> 6) & 0x3f) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(TABLE[(triple & 0x3f) as usize] as char);
-        } else {
-            out.push('=');
-        }
-    }
-    out
 }
 
 async fn resolve_remote_home(sftp: &SftpSession, username: &str) -> String {
@@ -2877,6 +2855,7 @@ pub async fn ssh_format_document(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn spawn_ssh_terminal(
     id: String,
     cwd: String,
@@ -2885,6 +2864,7 @@ async fn spawn_ssh_terminal(
     app: AppHandle,
     manager: &SshManager,
     command: String,
+    enter_directory: Option<String>,
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&cwd)?;
     manager.root_for_uri(&cwd, true)?;
@@ -2922,20 +2902,51 @@ async fn spawn_ssh_terminal(
             }),
         );
 
+    let (started_tx, started_rx) = if enter_directory.is_some() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
+    let is_filtering = Arc::new(AtomicBool::new(enter_directory.is_some()));
+    let filtering_clone = Arc::clone(&is_filtering);
     let app_clone = app.clone();
     let terminal_id = id.clone();
     tauri::async_runtime::spawn(async move {
+        let mut started_tx = started_tx;
         let mut exit_code = 0;
+        let clear_sequence = b"\x1b[3J";
         while let Some(message) = reader.wait().await {
             match message {
                 ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
-                    let _ = app_clone.emit(
-                        "terminal-data",
-                        TerminalDataPayload {
-                            id: terminal_id.clone(),
-                            data: encode_terminal_data(&data),
-                        },
-                    );
+                    if let Some(tx) = started_tx.take() {
+                        let _ = tx.send(());
+                    }
+                    if filtering_clone.load(Ordering::Relaxed) {
+                        if let Some(pos) = data
+                            .windows(clear_sequence.len())
+                            .position(|window| window == clear_sequence)
+                        {
+                            filtering_clone.store(false, Ordering::Relaxed);
+                            let clean_data = &data[pos..];
+                            let _ = app_clone.emit(
+                                "terminal-data",
+                                TerminalDataPayload {
+                                    id: terminal_id.clone(),
+                                    data: encode_terminal_data(clean_data),
+                                },
+                            );
+                        }
+                    } else {
+                        let _ = app_clone.emit(
+                            "terminal-data",
+                            TerminalDataPayload {
+                                id: terminal_id.clone(),
+                                data: encode_terminal_data(&data),
+                            },
+                        );
+                    }
                 }
                 ChannelMsg::ExitStatus { exit_status } => exit_code = exit_status,
                 _ => {}
@@ -2949,6 +2960,25 @@ async fn spawn_ssh_terminal(
             },
         );
     });
+
+    if let (Some(input), Some(started_rx)) = (enter_directory, started_rx) {
+        let writer_for_startup = Arc::clone(&writer);
+        let filtering_for_timeout = Arc::clone(&is_filtering);
+        tauri::async_runtime::spawn(async move {
+            let _ = tokio::time::timeout(Duration::from_millis(1500), started_rx).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            if writer_for_startup
+                .data_bytes(input.into_bytes())
+                .await
+                .is_err()
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2000)).await;
+            filtering_for_timeout.store(false, Ordering::Relaxed);
+        });
+    }
+
     let writer_for_input = Arc::clone(&writer);
     tauri::async_runtime::spawn(async move {
         while let Some(bytes) = input_rx.recv().await {
@@ -2972,7 +3002,17 @@ pub async fn ssh_create_terminal(
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&cwd)?;
     let spec = ssh_interactive_terminal_command(&parsed.path, shell.as_deref())?;
-    let mut result = spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, spec.command).await?;
+    let mut result = spawn_ssh_terminal(
+        id,
+        cwd,
+        cols,
+        rows,
+        app,
+        &manager,
+        spec.command,
+        spec.enter_directory,
+    )
+    .await?;
     result.resolved_shell = Some(spec.resolved_shell);
     result.fallback_from = spec.fallback_from;
     Ok(result)
@@ -3069,7 +3109,7 @@ pub async fn ssh_spawn_script(
         _ => format!("{env_prefix}exec /bin/sh -lc {}", shell_quote(&target)),
     };
     let command = format!("cd -- {} && {invocation}", shell_quote(&parsed.path));
-    spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, command).await
+    spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, command, None).await
 }
 
 #[tauri::command]
@@ -3355,24 +3395,24 @@ mod tests {
             windows_terminal_startup_script("/D:/code/it's")
                 .unwrap()
                 .as_deref(),
-            Some("Set-Location -LiteralPath 'D:\\code\\it''s'")
+            Some("Set-Location -LiteralPath 'D:\\code\\it''s'; Clear-Host\r")
         );
-        assert_eq!(encode_powershell_command("A"), "QQA=");
         let command = ssh_interactive_terminal_command("/D:/code/nem-panel", None).unwrap();
-        let encoded = encode_powershell_command("Set-Location -LiteralPath 'D:\\code\\nem-panel'");
+        assert_eq!(command.command, "powershell.exe");
         assert_eq!(
-            command.command,
-            format!("powershell.exe -NoLogo -NoExit -EncodedCommand {encoded}")
+            command.enter_directory.as_deref(),
+            Some("Set-Location -LiteralPath 'D:\\code\\nem-panel'; Clear-Host\r")
         );
         assert_eq!(command.resolved_shell, "powershell");
         assert_eq!(command.fallback_from, None);
 
-        // Test CMD enters project root directly via cd /d without echo
+        // Test CMD enters project root directly via cd /d & cls
         let cmd_target =
             ssh_interactive_terminal_command("/D:/code/nem-panel", Some("cmd")).unwrap();
+        assert_eq!(cmd_target.command, "cmd.exe");
         assert_eq!(
-            cmd_target.command,
-            "cmd.exe /d /k cd /d \"D:\\code\\nem-panel\""
+            cmd_target.enter_directory.as_deref(),
+            Some("cd /d \"D:\\code\\nem-panel\" & cls\r")
         );
         assert_eq!(cmd_target.resolved_shell, "cmd");
         assert_eq!(cmd_target.fallback_from, None);
@@ -3380,15 +3420,21 @@ mod tests {
         // Test pwsh
         let pwsh_target =
             ssh_interactive_terminal_command("/D:/code/nem-panel", Some("pwsh")).unwrap();
+        assert_eq!(pwsh_target.command, "pwsh.exe");
         assert_eq!(
-            pwsh_target.command,
-            format!("pwsh.exe -NoLogo -NoExit -EncodedCommand {encoded}")
+            pwsh_target.enter_directory.as_deref(),
+            Some("Set-Location -LiteralPath 'D:\\code\\nem-panel'; Clear-Host\r")
         );
         assert_eq!(pwsh_target.resolved_shell, "pwsh");
 
         // Test fallback from unsupported shell on Windows OpenSSH
         let fallback =
             ssh_interactive_terminal_command("/D:/code/nem-panel", Some("bash")).unwrap();
+        assert_eq!(fallback.command, "powershell.exe");
+        assert_eq!(
+            fallback.enter_directory.as_deref(),
+            Some("Set-Location -LiteralPath 'D:\\code\\nem-panel'; Clear-Host\r")
+        );
         assert_eq!(fallback.resolved_shell, "powershell");
         assert_eq!(fallback.fallback_from, Some("bash".to_string()));
 
