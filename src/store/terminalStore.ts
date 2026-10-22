@@ -37,6 +37,7 @@ import {
   decodeScrollbackBytes,
   encodeScrollbackText,
   loadTerminalOutputSnapshot,
+  nextOutputPersistDelay,
   pushCommandHistory,
   saveTerminalOutputSnapshot,
   terminalByteRingToBytes,
@@ -65,7 +66,6 @@ import { decodeTerminalEventData } from '../utils/terminalIpc'
 export const MAX_TERMINALS_PER_PROJECT = 10
 /** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
 const LEGACY_SESSION_STORAGE_KEY = 'qingcode:terminal-layout'
-const OUTPUT_PERSIST_DEBOUNCE_MS = 1_200
 const OUTPUT_PERSIST_IDLE_TIMEOUT_MS = 4_000
 
 /** 够"快"才算启动失败：进程在此时长（毫秒）内非零退出，视为秒退并提示。 */
@@ -223,8 +223,26 @@ const terminalPendingOutput = new Map<string, Uint8Array[]>()
 const terminalOutputFlushTimers = new Map<string, number>()
 const terminalOutputFlushRafIds = new Set<string>()
 
+/** ring 每次变化递增；持久化时只重新解码版本变化的终端。 */
+const terminalRingVersions = new Map<string, number>()
+const terminalScrollbackTextCache = new Map<string, { version: number; text: string }>()
+
 let outputPersistTimer: ReturnType<typeof setTimeout> | null = null
 let outputPersistIdle: number | null = null
+let lastOutputPersistAt = 0
+
+function bumpRingVersion(id: string) {
+  terminalRingVersions.set(id, (terminalRingVersions.get(id) ?? 0) + 1)
+}
+
+function cachedScrollbackText(id: string): string {
+  const version = terminalRingVersions.get(id) ?? 0
+  const cached = terminalScrollbackTextCache.get(id)
+  if (cached && cached.version === version) return cached.text
+  const text = decodeScrollbackBytes(terminalByteRingToBytes(terminalScrollbackRings.get(id)))
+  terminalScrollbackTextCache.set(id, { version, text })
+  return text
+}
 
 function maxBufferedBytes(): number {
   return scrollbackMaxChars(getTerminalScrollback())
@@ -237,6 +255,7 @@ function touchRing(id: string, bytes: Uint8Array) {
   appendTerminalByteRing(ring, bytes, maxBytes)
   terminalScrollbackRings.set(id, ring)
   terminalRingUpdatedAt.set(id, Date.now())
+  bumpRingVersion(id)
   scheduleTerminalOutputPersist()
 }
 
@@ -315,6 +334,8 @@ function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   terminalCommandHistory.delete(id)
   terminalInputPending.delete(id)
   terminalRingUpdatedAt.delete(id)
+  terminalRingVersions.delete(id)
+  terminalScrollbackTextCache.delete(id)
   clearTerminalCommandActivity(id)
   if (options?.persist !== false) scheduleTerminalOutputPersist()
 }
@@ -333,6 +354,7 @@ export function seedTerminalOutputFromPersist(
     )
     terminalScrollbackRings.set(id, createTerminalByteRing(maxBufferedBytes(), bytes))
     terminalRingUpdatedAt.set(id, Date.now())
+    bumpRingVersion(id)
   }
   if (history.length > 0) {
     terminalCommandHistory.set(id, [...history])
@@ -384,9 +406,7 @@ function collectOutputPersistPayload(): Record<
   const terminals: Record<string, { scrollback: string; history: string[]; updatedAt?: number }> =
     {}
   for (const tab of useTerminalStore.getState().terminals) {
-    const scrollback = decodeScrollbackBytes(
-      terminalByteRingToBytes(terminalScrollbackRings.get(tab.id)),
-    )
+    const scrollback = cachedScrollbackText(tab.id)
     const history = terminalCommandHistory.get(tab.id) ?? []
     if (!scrollback && history.length === 0) continue
     terminals[tab.id] = {
@@ -410,6 +430,7 @@ export function persistTerminalOutputNow() {
     outputPersistIdle = null
   }
   if (!isSessionPersistEnabled()) return
+  lastOutputPersistAt = Date.now()
   const terminals = collectOutputPersistPayload()
   const snapshot = buildTerminalOutputSnapshot({
     terminals,
@@ -433,7 +454,7 @@ export function scheduleTerminalOutputPersist() {
     } else {
       persistTerminalOutputNow()
     }
-  }, OUTPUT_PERSIST_DEBOUNCE_MS)
+  }, nextOutputPersistDelay(Date.now(), lastOutputPersistAt))
 }
 
 function recordTypedInput(id: string, data: string) {
