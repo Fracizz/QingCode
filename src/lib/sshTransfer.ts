@@ -42,6 +42,7 @@ export async function startSshTransfer(request: TransferRequest): Promise<Transf
   const terminal = useTransferStore.getState().tasks.find(task => task.taskId === taskId)
   if (terminal && !isTransferActive(terminal.status)) result = terminal
   store.update(taskId, result)
+  if (request.ephemeral && result.status === 'completed') store.dismiss(taskId)
   if (request.direction === 'upload') {
     const projects = useProjectStore.getState()
     const project = findProjectForPath(projects.projects, request.destination)

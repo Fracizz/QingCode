@@ -5,6 +5,8 @@ export interface TransferRequest {
   direction: 'upload' | 'download'
   paths: string[]
   destination: string
+  /** Success is already confirmed elsewhere; drop the finished task row. */
+  ephemeral?: boolean
 }
 export interface TransferProgress {
   taskId: string

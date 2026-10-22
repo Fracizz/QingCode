@@ -172,7 +172,7 @@ SSH 仍可在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_fi
 ### 补齐进展与后续建议
 
 已于 2026-10-22 补齐：
-- **SSH 终端本机文件粘贴/拖放**：`terminal.integrated.sshUploadOnPaste` 默认关闭。开启后，资源管理器复制的文件、纯路径文本或拖到终端的本机文件会上传到 `.qingcode/terminal-paste/`，并粘贴远端路径。单个文件，或文件夹内文件合计，超过 100MB 时整次粘贴会被拒绝；设置页和终端右键可清理该目录。
+- **SSH 终端本机文件粘贴/拖放**：`terminal.integrated.sshUploadOnPaste` 默认关闭。开启后，资源管理器复制的文件、纯路径文本或拖到终端的本机文件会上传到 `.qingcode/terminal-paste/`，并粘贴远端路径。成功后不保留传输任务条。单个文件，或文件夹内文件合计，超过 100MB 时整次粘贴会被拒绝；设置页和终端右键可清理该目录。
 - **门控防护**：全面门控在文件管理器打开、项目重新定位、状态栏「作为项目打开」等入口，避免 `ssh://` 交给本地 API 导致报错或写坏项目配置。
 - **资源管理器移动/复制**：新增 `ssh_move_path` 与 `ssh_copy_path_into` 命令，完整支持同连接下的剪切、复制、粘贴与树内移动 DnD。
 - **文件排除**：`ssh_scan_directory` 接入 `files.exclude` 配置并按 glob 规则在远端过滤。

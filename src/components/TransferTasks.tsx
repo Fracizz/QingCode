@@ -4,6 +4,7 @@ import { useTransferStore, isTransferActive, type TransferStatus } from '../stor
 import { cancelSshTransfer, retrySshTransfer } from '../lib/sshTransfer'
 import { useI18n } from '../lib/i18n'
 import { formatBytes } from '../utils/formatBytes'
+import { formatTransferLocation, transferTaskDetail } from '../utils/transferLabel'
 import Tooltip from './Tooltip'
 
 const STATUS_LABELS: Record<TransferStatus, string> = {
@@ -24,7 +25,9 @@ export default function TransferTasks() {
         className="flex w-full items-center gap-2 px-3 py-1.5 text-fg hover:bg-bg-hover">
         {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
         <span>{t('文件传输')}</span>
-        <span className="text-fg-muted" role="status">{t('{count} 项进行中', { count: activeCount })}</span>
+        {activeCount > 0 && (
+          <span className="text-fg-muted" role="status">{t('{count} 项进行中', { count: activeCount })}</span>
+        )}
       </button>
       {!collapsed && <div className="max-h-40 overflow-y-auto">
         {tasks.map(task => {
@@ -32,19 +35,23 @@ export default function TransferTasks() {
           const Icon = task.request.direction === 'upload' ? Upload : Download
           const canRetry = (task.status === 'failed' || task.status === 'cancelled')
             && (task.pendingPaths?.length ?? task.request.paths.length) > 0
+          const detail = transferTaskDetail(task)
+          const fullLocation = formatTransferLocation(task.currentPath || task.request.destination)
           return (
-            <div key={task.taskId} className="flex min-w-0 items-start gap-2 border-t border-border px-3 py-2">
-              <Icon size={14} className="mt-0.5 shrink-0 text-fg-muted" />
+            <div key={task.taskId} className="flex min-w-0 items-center gap-2 border-t border-border px-3 py-1">
+              <Icon size={13} className="shrink-0 text-fg-muted" />
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap gap-x-3 gap-y-1 text-fg">
-                  <span role="status">{t(STATUS_LABELS[task.status])}</span>
-                  <span className="text-fg-muted">{t('已完成 {count} 个文件 · {size}', { count: task.completedFiles, size: formatBytes(task.completedBytes) })}</span>
+                <div className="flex min-w-0 items-center gap-2 text-fg">
+                  <span className="shrink-0" role="status">{t(STATUS_LABELS[task.status])}</span>
+                  <span className="shrink-0 text-fg-muted">{t('已完成 {count} 个文件 · {size}', { count: task.completedFiles, size: formatBytes(task.completedBytes) })}</span>
+                  <Tooltip label={fullLocation} onlyWhenOverflow side="top" wrapperClassName="min-w-0 flex-1">
+                    <span className="block truncate text-fg-muted">{detail}</span>
+                  </Tooltip>
                 </div>
-                <p className="truncate text-fg-muted">{task.currentPath || task.request.destination}</p>
                 {active && (task.currentTotalBytes ?? 0) > 0 && <progress
                   aria-label={t('当前文件进度')}
                   max={task.currentTotalBytes} value={task.currentBytes ?? 0}
-                  className="mt-1 block h-1 w-full max-w-sm accent-accent"
+                  className="mt-1 block h-1 w-full accent-accent"
                 />}
                 {task.error && <p className="mt-1 break-words text-danger">{task.error}</p>}
               </div>

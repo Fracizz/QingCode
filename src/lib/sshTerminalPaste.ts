@@ -203,6 +203,7 @@ export async function uploadLocalFilesForSshTerminal(
     direction: 'upload',
     destination,
     paths: localPaths,
+    ephemeral: true,
   })
   if (result.status !== 'completed') {
     throw new Error(result.error?.trim() || translate('上传未完成'))

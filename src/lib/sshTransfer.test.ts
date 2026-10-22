@@ -85,6 +85,13 @@ describe('SSH transfer lifecycle', () => {
     expect(unlisten).toHaveBeenCalledOnce()
   })
 
+  it('drops a finished terminal-paste upload instead of keeping the task row', async () => {
+    vi.mocked(safeInvoke).mockImplementation(async () => progress('completed', { completedFiles: 1, completedBytes: 61, pendingPaths: [] }))
+    const result = await startSshTransfer({ ...request, ephemeral: true })
+    expect(result.status).toBe('completed')
+    expect(useTransferStore.getState().tasks).toEqual([])
+  })
+
   it('retries only pending paths after partial failure', async () => {
     vi.mocked(safeInvoke).mockImplementationOnce(async () => progress('failed', {
       completedFiles: 1, completedPaths: [request.paths[0]], pendingPaths: [request.paths[1]], error: 'broken connection',
