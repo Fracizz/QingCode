@@ -39,12 +39,14 @@ fn extension_of(path: &str) -> Option<String> {
 
 fn formatter_for_extension(ext: &str) -> Option<FormatterKind> {
     match ext {
-        "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" | "json" | "jsonc" | "css"
-        | "scss" | "less" | "html" | "htm" | "md" | "markdown" | "mdx" | "yml" | "yaml"
-        | "graphql" | "gql" | "vue" | "astro" => Some(FormatterKind::Prettier),
+        "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" | "json" | "jsonc"
+        | "json5" | "css" | "scss" | "less" | "html" | "htm" | "vue" | "svelte" | "md"
+        | "markdown" | "mdx" | "yml" | "yaml" | "graphql" | "gql" | "astro" => {
+            Some(FormatterKind::Prettier)
+        }
         "rs" => Some(FormatterKind::Rustfmt),
         // Matches editor language map (`sh` → shell). bat/ps1 use other formatters; skip.
-        "sh" => Some(FormatterKind::Shfmt),
+        "sh" | "bash" | "zsh" => Some(FormatterKind::Shfmt),
         "py" | "pyi" => Some(FormatterKind::Python),
         "go" => Some(FormatterKind::Gofmt),
         _ => None,
@@ -621,6 +623,14 @@ mod tests {
             formatter_for_extension("json"),
             Some(FormatterKind::Prettier)
         );
+        assert_eq!(
+            formatter_for_extension("json5"),
+            Some(FormatterKind::Prettier)
+        );
+        assert_eq!(
+            formatter_for_extension("svelte"),
+            Some(FormatterKind::Prettier)
+        );
         assert_eq!(formatter_for_extension("md"), Some(FormatterKind::Prettier));
     }
 
@@ -632,6 +642,8 @@ mod tests {
     #[test]
     fn maps_shell_python_go() {
         assert_eq!(formatter_for_extension("sh"), Some(FormatterKind::Shfmt));
+        assert_eq!(formatter_for_extension("bash"), Some(FormatterKind::Shfmt));
+        assert_eq!(formatter_for_extension("zsh"), Some(FormatterKind::Shfmt));
         assert_eq!(formatter_for_extension("py"), Some(FormatterKind::Python));
         assert_eq!(formatter_for_extension("pyi"), Some(FormatterKind::Python));
         assert_eq!(formatter_for_extension("go"), Some(FormatterKind::Gofmt));

@@ -7,6 +7,7 @@ import { promptDialog, validateEntryName } from '../store/promptStore'
 import { isTauri } from '../lib/tauri'
 import { translate } from '../lib/i18n'
 import { listBusyTerminals } from '@/lib/terminal/terminalClose'
+import { requestSshReconnect } from '../lib/sshWorkspace'
 
 /** Confirm then remove a project, tearing down its terminals and editor tabs. */
 export async function removeProjectWithConfirm(id: string, name: string, path: string) {
@@ -40,6 +41,11 @@ export async function removeProjectWithConfirm(id: string, name: string, path: s
 
 /** Open a directory picker and relocate the project, updating terminal cwds on success. */
 export async function relocateProjectWithDialog(id: string) {
+  const project = useProjectStore.getState().projects.find(p => p.id === id)
+  if (project?.kind === 'ssh') {
+    requestSshReconnect(project)
+    return
+  }
   try {
     const selected = await open({ directory: true, multiple: false })
     if (typeof selected === 'string' && (await useProjectStore.getState().relocateProject(id, selected))) {

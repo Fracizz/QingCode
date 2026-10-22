@@ -560,6 +560,10 @@ export default function Sidebar() {
   }
 
   const handleOpenProject = async (path: string) => {
+    if (isSshResource(path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await openPath(path)
     } catch (e) {
@@ -790,6 +794,14 @@ export default function Sidebar() {
     mode: 'cut' | 'copy'
   ): Promise<number> => {
     let ok = 0
+    for (const source of paths) {
+      if (isSshResource(source) !== isSshResource(destDir)) {
+        useProjectStore
+          .getState()
+          .pushToast('error', t('不支持本地与 SSH 资源之间直接剪切或移动，请使用上传或下载功能'))
+        return 0
+      }
+    }
     const parentsToRefresh = new Set<string>([destDir])
     const movedSources: string[] = []
     const applyAll: { current: 'overwrite' | 'skip' | null } = { current: null }
@@ -1480,14 +1492,12 @@ export default function Sidebar() {
         icon: <Scissors size={14} />,
         shortcut: 'Ctrl+X',
         separatorBefore: true,
-        disabled: isSshResource(node.path),
         action: () => cutExplorerPaths(node.path),
       },
       {
         label: t('复制'),
         icon: <Copy size={14} />,
         shortcut: 'Ctrl+C',
-        disabled: isSshResource(node.path),
         action: () => copyExplorerPaths(node.path),
       },
       {
@@ -1500,7 +1510,7 @@ export default function Sidebar() {
         label: t('粘贴'),
         icon: <ClipboardPaste size={14} />,
         shortcut: 'Ctrl+V',
-        disabled: !clipboard || isSshResource(node.path),
+        disabled: !clipboard || isSshResource(node.path) !== clipboard.paths.every(p => isSshResource(p)),
         action: () => void pasteExplorerClipboard(node.is_dir ? node.path : parent),
       },
       {
@@ -1768,14 +1778,21 @@ export default function Sidebar() {
                     </Tooltip>
                     {unavailable && (
                       <>
-                        <Tooltip label={t('重新定位项目')} side="bottom">
+                        <Tooltip
+                          label={currentProject.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
+                          side="bottom"
+                        >
                           <button
                             type="button"
-                            aria-label={t('重新定位项目')}
+                            aria-label={currentProject.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
                             className="p-0.5 text-warn hover:text-fg"
                             onClick={event => {
                               event.stopPropagation()
-                              handleRelocateProject(currentProject.id)
+                              if (currentProject.kind === 'ssh') {
+                                requestSshReconnect(currentProject)
+                              } else {
+                                handleRelocateProject(currentProject.id)
+                              }
                             }}
                           >
                             <LocateFixed size={13} />

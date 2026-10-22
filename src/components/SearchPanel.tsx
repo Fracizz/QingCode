@@ -41,7 +41,7 @@ import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import { useFavoriteStore } from '../store/favoriteStore'
 import { favoriteRelativePath, favoriteRelativePathKey } from '../lib/favoriteItems'
-import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
+import { safeInvoke, isTauri, isSshResource, NotInTauriError } from '../lib/tauri'
 import { searchFiles } from '../lib/searchFiles'
 import { copyToClipboard, findProjectForPath } from '../utils/fileReferences'
 import {
@@ -923,7 +923,12 @@ export default function SearchPanel() {
       {
         label: t('在文件管理器中显示'),
         icon: <ExternalLink size={14} />,
+        disabled: isSshResource(target.path),
         action: () => {
+          if (isSshResource(target.path)) {
+            pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+            return
+          }
           void revealItemInDir(target.path).catch(error => {
             pushToast('error', t('在文件管理器中显示失败: {error}', { error: String(error) }))
           })

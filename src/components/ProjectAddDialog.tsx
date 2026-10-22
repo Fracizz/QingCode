@@ -9,7 +9,7 @@ import { relocateProjectWithDialog } from '../utils/projectActions'
 import type { Project } from '../types'
 import SshProjectDialog from './SshProjectDialog'
 import { ProjectKindIcon, SshKindBadge } from './ProjectKindMark'
-import { isSshProject, sshProjectDisplayPath } from '../lib/sshWorkspace'
+import { isSshProject, sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
 
 function sortProjects(projects: Project[]): Project[] {
   return [...projects].sort((a, b) => {
@@ -100,6 +100,10 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
     setView('explorer')
     if (project.hidden) await unhideProject(project.id)
     if (unavailableProjectIds.includes(project.id)) {
+      if (project.kind === 'ssh') {
+        requestSshReconnect(project)
+        return
+      }
       void relocateProjectWithDialog(project.id)
       return
     }

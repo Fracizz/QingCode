@@ -14,6 +14,7 @@ import {
   ensureSshWorkspaceConnected,
   findSshProject,
   isSshProject,
+  joinSshResource,
   normalizeRemotePath,
   parentRemotePath,
   sshConnectionIdFromUri,
@@ -41,6 +42,18 @@ describe('sshRootUri', () => {
 
   it('keeps the POSIX root slash', () => {
     expect(sshRootUri('connection-id', '/')).toBe('ssh://connection-id/')
+  })
+})
+
+describe('joinSshResource', () => {
+  it('appends POSIX segments without rewriting the connection id', () => {
+    expect(joinSshResource('ssh://c1/home/owner/app', '.qingcode', 'terminal-paste')).toBe(
+      'ssh://c1/home/owner/app/.qingcode/terminal-paste'
+    )
+  })
+
+  it('joins onto a connection root URI', () => {
+    expect(joinSshResource('ssh://c1/', '.qingcode')).toBe('ssh://c1/.qingcode')
   })
 })
 

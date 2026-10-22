@@ -49,10 +49,12 @@ export function isGenericShellOscTitle(title: string): boolean {
 }
 
 /** Windows OpenSSH project roots look like `ssh://<id>/D:/code/app`. */
-export function windowsSshShellLabel(cwd: string): string | null {
+export function windowsSshShellLabel(cwd: string, shell?: string | null): string | null {
   if (!cwd.startsWith('ssh://')) return null
   const remote = cwd.replace(/^ssh:\/\/[^/]+/, '')
-  return /^\/[A-Za-z]:(?:\/|$)/.test(remote) ? 'PowerShell' : null
+  if (!/^\/[A-Za-z]:(?:\/|$)/.test(remote)) return null
+  if (shell === 'cmd' || shell === 'pwsh') return null
+  return 'PowerShell'
 }
 
 /**

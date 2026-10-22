@@ -136,6 +136,8 @@ vi.mock('../utils/fileReferences', () => ({
 
 vi.mock('../lib/projectSettings', () => ({
   ensureSettingsFile: vi.fn().mockResolvedValue(undefined),
+  loadGlobalSettings: vi.fn().mockResolvedValue({}),
+  loadProjectSettings: vi.fn().mockResolvedValue({}),
   resolveGlobalSettingsPath: async () => 'D:/settings.json',
   resolveProjectSettingsPath: async () => 'D:/proj-settings.json',
   DEFAULT_GLOBAL_SETTINGS: {

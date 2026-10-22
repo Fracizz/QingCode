@@ -15,7 +15,7 @@ QingCode 的 SSH 工作区直接在 Tauri 后端建立 SSH/SFTP 连接，不要�
 
 - 通过 SFTP 浏览、读取、编辑、新建、重命名和删除远程文件。
 - 文件名搜索兼容常见 GNU/BusyBox `find`；内容搜索由远端 `rg` 执行，并固定按普通文本匹配。
-- 远程 PTY 终端。Linux 远端进入登录 shell；Windows OpenSSH 的盘符路径（`/D:/code/app`）启动 `powershell.exe -NoLogo`，提示符出现时已经在项目目录，不回显切目录命令。
+- 远程 PTY 终端。Linux 远端进入登录 shell；Windows OpenSSH 的盘符路径（`/D:/code/app`）支持根据用户配置启动 `powershell.exe -NoLogo`、`pwsh` 或 `cmd.exe`，提示符出现时直接进入项目根目录，不回显切目录命令，无版权横幅。设置 `terminal.integrated.sshUploadOnPaste`（默认关闭）开启后，在 SSH 终端里粘贴或拖入本机文件会先上传到项目内 `.qingcode/terminal-paste/`，再粘贴远端路径。超过 100MB 的文件或文件夹会被拒绝。设置页和终端右键可清理该目录。
 - Git 状态、历史、分支与切换、远程地址、Diff、丢弃、暂存、提交、拉取、推送和获取。
 - 使用远端项目工具格式化文件（Prettier、rustfmt、gofmt、shfmt、ruff/black）。
 - 在本地与 SSH 项目之间上传或下载文件和目录。资源管理器可右键上传，也可把本机文件或文件夹拖到 SSH 项目的文件树：文件夹接收到该目录，文件上则传到父目录，空白处和项目标题传到项目根。
@@ -33,7 +33,7 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 
 - 本地和 SSH 工作区均提供文件与文本导航，不提供语义定义跳转、引用查找或工作区符号搜索。
 - 内容搜索要求远端安装 `ripgrep`（`rg`），Git 功能要求远端安装 `git`。
-- Linux / POSIX 远端支持远程命令、Git、搜索、格式化和运行任务。Windows OpenSSH 只支持 SFTP 文件操作和交互式 PowerShell 终端；远程命令、Git、搜索、格式化以及 PowerShell / BAT 运行任务不可用。
+- Linux / POSIX 远端支持远程命令、Git、搜索、格式化和运行任务。Windows OpenSSH 支持 SFTP 文件操作和交互式 PowerShell / CMD 终端；远程命令、Git、搜索、格式化以及 PowerShell / BAT 运行任务不可用。
 - 连接每 20 秒保活一次，连续约 3 分钟没有任何回包才断开，不再用 30 秒空闲超时拆掉会话。传输已经断开，或打开通道被拒绝（`ConnectFailed`）时，会丢掉旧连接并重连一次。家目录先用登录目录，否则再试 `/home/<用户>`、`/C:/Users/<用户>`、`/root` 和 `/`。
 - WSL 直连工作区尚未接入；可先通过 WSL 内的 SSH 服务使用同一 SSH 工作区能力。
 - 尚未提供远程扩展、端口转发、SSH Agent 转发和连接配置管理页。
@@ -50,8 +50,8 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 | 能力面 | Linux SSH vs 本地 | 说明 |
 |---|---|---|
 | 文本读写、新建、重命名、删除 | 已对齐 | 走 SFTP；删除不可作用于项目根 |
-| 资源管理器剪切 / 复制 / 粘贴 / 移动 | 仅本地 | SSH 菜单禁用；后端没有 `move_path` / `copy_path_into` 的远程实现 |
-| `files.exclude` / `explorer.excludeGitIgnore` | 仅本地 | `ssh_scan_directory` 不接收排除参数，目录树会列出全部条目 |
+| 资源管理器剪切 / 复制 / 粘贴 / 移动 | 已对齐 | 走 SFTP `ssh_move_path` / `ssh_copy_path_into`；跨域操作提示使用上传/下载 |
+| `files.exclude` / `explorer.excludeGitIgnore` | 部分对齐 | `ssh_scan_directory` 支持 `files.exclude` glob 排除；gitignore 排除仍仅本地 |
 | 操作系统文件监视与树自动刷新 | 仅本地 | SSH 不注册 watcher；切回窗口也不重扫远程树 |
 | 文件名 glob（如 `*.tsx`） | 仅本地 | 远程按字面子串匹配，`*` 是普通字符 |
 | 内容搜索（字面量）与工作区替换 | 部分对齐 | 需远端 `rg`；远程忽略「跟随符号链接」，文件名搜索还忽略 ignore 文件 |
@@ -69,20 +69,20 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 | 能力 | 状态 | 差距 |
 |---|---|---|
 | 浏览、读、写、新建文件/目录、重命名、删除 | 已对齐 | 写操作要求信任；SSH 拒绝删除项目根 |
-| 剪切、复制、粘贴、树内移动 | 仅本地 | 节点菜单禁用；系统剪贴板「复制文件」同样禁用 |
+| 剪切、复制、粘贴、树内移动 | 已对齐 | 走 SFTP `ssh_move_path` / `ssh_copy_path_into`；跨域操作提示使用上传/下载；系统剪贴板复制文件仍仅本地 |
 | 操作系统文件拖到文件树 | 仅 SSH | 拖入即上传；本地没有对等的导入路径 |
-| 上传 / 下载任务（进度、取消、重试、原子替换） | 仅 SSH | 只支持「本机 ↔ 当前 SSH 根」，不能 SSH↔SSH 或远程树内复制 |
-| `files.exclude`、按 gitignore 隐藏 | 仅本地 | 远程扫描忽略这些设置 |
+| 上传 / 下载任务（进度、取消、重试、原子替换） | 仅 SSH | 只支持「本机 ↔ 当前 SSH 根」，不能 SSH↔SSH |
+| `files.exclude`、按 gitignore 隐藏 | 部分对齐 | `ssh_scan_directory` 支持 `files.exclude` glob 过滤；gitignore 隐藏仍仅本地 |
 | 符号链接 | 部分对齐 | 两侧都拒绝越出项目根。本地写越界可弹出确认；SSH 直接报错。远程搜索不跟随链接 |
 | 编码检测 / 按编码读写 | 部分对齐 | 本地检测读约 8KB；SSH 会先把整个远程文件下载下来再取样 |
-| 大文件切片预览（100–500MB） | 部分对齐 | 两侧都限制编辑 ≤100MB。SSH 单次切片上限 4MB，本地 256KB。跳转到指定行调用未映射的 `find_line_offset`，SSH 上会失败 |
+| 大文件切片预览（100–500MB） | 已对齐 | 两侧都限制编辑 ≤100MB。SSH 单次切片上限 4MB，本地 256KB。跳转指定行走 `ssh_find_line_offset` 流式扫描 |
 | 属性对话框 | 部分对齐 | 文件/文件夹节点菜单已禁用。项目标题仍可打开属性，但创建时间、目录条目统计未映射到 SFTP |
-| 删除文件夹确认（条目统计） | 仅本地 | `directory_delete_stats` 未映射，SSH 退回通用确认文案 |
-| 在操作系统文件管理器中显示 | 仅本地，门控不一致 | 资源管理器**节点**菜单会禁用并提示「SSH 资源没有本地文件管理器位置」。顶栏项目芯片、项目管理、编辑器标签/右键、面包屑、状态栏、搜索结果、收藏夹、大文件预览、打开失败页仍会把 `ssh://` 交给本机 opener |
-| 重新定位项目 | 仅本地 | 侧栏对 SSH 正确显示「重新连接」。顶栏芯片、项目管理、添加对话框仍走本机文件夹选择器，可能把 SSH 项目改写成本地路径 |
+| 删除文件夹确认（条目统计） | 已对齐 | 映射至 `ssh_directory_delete_stats`，递归统计文件数与总大小 |
+| 在操作系统文件管理器中显示 | 仅本地，已全面门控 | SSH 资源无本地文件管理器位置。节点菜单、顶栏芯片、项目管理、编辑器标签/右键、面包屑、状态栏、搜索结果、收藏夹、大文件预览、打开失败页均已禁用或拦截提示 |
+| 重新定位项目 | 已对齐 | 侧栏、顶栏芯片、项目管理、添加项目弹窗对 SSH 统一显示为「重新连接」，调用重连流程，避免误改成本地路径 |
 | 复制路径 | 部分对齐 | 复制的是内部 `ssh://<connection-id>/...`，不是 `user@host:/posix` |
-| 收藏 | 部分对齐 | 相对路径收藏可用；「在文件管理器中显示」未对 SSH 禁用 |
-| 状态栏「将所在文件夹作为项目打开」 | 仅本地，未门控 | 会对 `ssh://` 父路径调用本地 `addProject` |
+| 收藏 | 部分对齐 | 相对路径收藏可用；「在文件管理器中显示」已对 SSH 禁用 |
+| 状态栏「将所在文件夹作为项目打开」 | 仅本地，已门控 | 对 SSH 资源禁用并提示 |
 
 ### 搜索
 
@@ -113,8 +113,8 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 整组不可用。
 
 | 能力 | 状态 | 差距 |
 |---|---|---|
-| 远程 PTY、cwd、缩放、多终端、复制粘贴 | 已对齐 | 写入和开终端要求信任 |
-| 终端配置文件 / `default_shell` / 本机 shell 选择 | 仅本地 | `ssh_create_terminal` 忽略 `shell`。Linux 固定 `cd && exec ${SHELL:-/bin/sh} -l`；Windows OpenSSH 固定 PowerShell |
+| 远程 PTY、cwd、缩放、多终端、复制粘贴 | 部分对齐 | 写入和开终端要求信任。`terminal.integrated.sshUploadOnPaste` 默认关闭；开启后粘贴/拖入本机文件会上传到 `.qingcode/terminal-paste/` 再粘贴远端路径。超过 100MB 的文件或文件夹会被拒绝。设置或终端右键可清理 |
+| 终端配置文件 / `default_shell` / 本机 shell 选择 | 部分对齐 | `ssh_create_terminal` 支持传递 `shell`。Linux 支持 `bash`/`zsh`/`sh` 或默认登录 Shell；Windows OpenSSH 支持 `powershell`、`pwsh` 与 `cmd`，提示符出现时直接位于项目根目录，无命令回显 |
 | 配置启动命令（`interactive`） | 部分对齐 | Linux SSH 可用 `/bin/sh -lc …; exec 登录 shell`；Windows OpenSSH 拒绝 |
 | 关闭前「子进程仍在运行」探测 | 仅本地 | `terminal_has_child_processes` 未映射；失败时按忙碌处理，SSH 终端关闭常会多一次确认 |
 | `.qingcode/run.json` | 已对齐 | SSH 经 SFTP 读写；CLI 改远程配置需要正在运行的 GUI 会话 |
@@ -126,9 +126,9 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 整组不可用。
 | 能力 | 状态 | 差距 |
 |---|---|---|
 | 保存时 / 粘贴时格式化 | 部分对齐 | 均调用 `format_document`；SSH 在远端 stdin 跑工具 |
-| Prettier 扩展名 | 部分对齐 | 本地含 `mjs` / `cjs` / `mts` / `cts` / `jsonc` / `htm` / `markdown` / `mdx` / `graphql` / `astro`。SSH 额外有 `json5` / `svelte`，缺上述若干本地扩展名 |
-| Python | 反向差距 | 本地明确返回「暂不支持 Python 格式化」。SSH 优先 `ruff`，否则 `black`（仅 `.py`） |
-| rustfmt / gofmt / shfmt | 部分对齐 | 工具来自远端 PATH。SSH 的 shfmt 覆盖 `.sh` / `.bash` / `.zsh`，本地只覆盖 `.sh` |
+| Prettier 扩展名 | 已对齐 | 双方均支持 `js`/`jsx`/`mjs`/`cjs`/`ts`/`tsx`/`mts`/`cts`/`json`/`jsonc`/`json5`/`css`/`scss`/`less`/`html`/`htm`/`vue`/`svelte`/`md`/`markdown`/`mdx`/`yaml`/`yml`/`graphql`/`gql`/`astro` |
+| Python | 反向差距 | 本地明确返回「暂不支持 Python 格式化」。SSH 优先 `ruff`，否则 `black`（支持 `.py` / `.pyi`） |
+| rustfmt / gofmt / shfmt | 已对齐 | 工具来自系统/远端 PATH。shfmt 双方均覆盖 `.sh` / `.bash` / `.zsh` |
 
 ### 文件监视与外部更改
 
@@ -167,16 +167,22 @@ SSH 仍可在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_fi
 
 ### Windows OpenSSH
 
-路径形如 `ssh://<id>/D:/code/app`。可用：SFTP 文件操作、交互式 PowerShell 终端、与本机之间的上传下载。不可用：远程命令、Git、搜索、格式化、运行任务。这是平台限制，不是 Linux SSH 的对照表所能概括的。
+路径形如 `ssh://<id>/D:/code/app`。可用：SFTP 文件操作、交互式 PowerShell / CMD 终端、与本机之间的上传下载。不可用：远程命令、Git、搜索、格式化、运行任务。这是平台限制，不是 Linux SSH 的对照表所能概括的。
 
-### 优先补齐建议
+### 补齐进展与后续建议
 
-按用户可感知程度，而不是实现成本：
+已于 2026-10-22 补齐：
+- **SSH 终端本机文件粘贴/拖放**：`terminal.integrated.sshUploadOnPaste` 默认关闭。开启后，资源管理器复制的文件、纯路径文本或拖到终端的本机文件会上传到 `.qingcode/terminal-paste/`，并粘贴远端路径。单个文件，或文件夹内文件合计，超过 100MB 时整次粘贴会被拒绝；设置页和终端右键可清理该目录。
+- **门控防护**：全面门控在文件管理器打开、项目重新定位、状态栏「作为项目打开」等入口，避免 `ssh://` 交给本地 API 导致报错或写坏项目配置。
+- **资源管理器移动/复制**：新增 `ssh_move_path` 与 `ssh_copy_path_into` 命令，完整支持同连接下的剪切、复制、粘贴与树内移动 DnD。
+- **文件排除**：`ssh_scan_directory` 接入 `files.exclude` 配置并按 glob 规则在远端过滤。
+- **大文件跳行**：新增 `ssh_find_line_offset`，支持大文件预览时流式查找行字节偏移并跳转。
+- **删除统计**：新增 `ssh_directory_delete_stats`，递归统计待删除目录的文件数与总大小。
+- **格式化扩展名对齐**：本地与 SSH 远端的 Prettier 与 shfmt 扩展名集合完全对齐。
 
-1. 门控本机文件管理器、重新定位、状态栏「作为项目打开」等仍会把 `ssh://` 交给 Windows/macOS API 的入口，避免报错或写坏项目行。
-2. 资源管理器远程复制/移动，以及 `files.exclude` / gitignore 隐藏，使远程树行为接近本地。
-3. 远程文件监视或至少窗口焦点时重扫树，减少外部更改后的过期目录。
-4. 文件名 glob、ignore 文件，以及 Git 同步时间戳。
-5. 远程终端尊重配置文件/默认 shell，并正确探测忙碌状态。
-6. Markdown 远程图片、大文件跳行、属性对话框。
-7. 连接配置管理页；再往后才是端口转发、Agent 转发、WSL 直连工作区。
+后续建议：
+1. 文件名 glob、ignore 文件，以及 Git 同步时间戳。
+2. 远程终端尊重配置文件/默认 shell，并正确探测忙碌状态。
+3. Markdown 远程图片、属性对话框。
+4. 远程文件监视机制。
+5. 连接配置管理页；再往后才是端口转发、Agent 转发、WSL 直连工作区。

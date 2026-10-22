@@ -1963,6 +1963,10 @@ export default function SourceControlPanel() {
   }
 
   const revealInFileManager = async (absolutePath: string) => {
+    if (isSshResource(absolutePath)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await revealItemInDir(absolutePath)
     } catch (error) {
@@ -2004,7 +2008,6 @@ export default function SourceControlPanel() {
     if (!currentProject) return []
     const abs = absoluteFilePath(currentProject.path, file.path)
     const looksLikeDir = gitChangePathLooksLikeDirectory(file.path)
-    const remote = isSshResource(currentProject.path)
     return [
       {
         label: t('打开文件'),
@@ -2021,7 +2024,7 @@ export default function SourceControlPanel() {
       {
         label: t('在文件管理器中显示'),
         icon: <ExternalLink size={14} />,
-        disabled: remote,
+        disabled: isSshResource(abs),
         action: () => void revealInFileManager(abs),
       },
       {
@@ -2111,6 +2114,7 @@ export default function SourceControlPanel() {
       {
         label: t('在文件管理器中显示'),
         icon: <ExternalLink size={14} />,
+        disabled: isSshResource(abs),
         action: () => void revealInFileManager(abs),
       },
       {

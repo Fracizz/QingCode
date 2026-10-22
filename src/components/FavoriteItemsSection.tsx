@@ -19,6 +19,7 @@ import { useTerminalStore } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
 import { copyPathAction } from '../lib/copyFileActions'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { isSshResource } from '../lib/tauri'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { useI18n } from '../lib/i18n'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
@@ -121,6 +122,10 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
   const revealInFileManager = async (item: FavoriteItem) => {
     if (!item.available) return
     const path = favoriteAbsolutePath(project.path, item.relativePath)
+    if (isSshResource(path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       if (item.kind === 'directory') await openPath(path)
       else await revealItemInDir(path)
@@ -192,7 +197,7 @@ export default function FavoriteItemsSection({ project }: { project: Project }) 
       {
         label: item.kind === 'directory' ? t('在文件管理器中打开') : t('在文件管理器中显示'),
         icon: <ExternalLink size={14} />,
-        disabled: !item.available,
+        disabled: !item.available || isSshResource(path),
         action: () => void revealInFileManager(item),
       },
       {

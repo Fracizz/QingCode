@@ -47,7 +47,7 @@ import Tooltip from './Tooltip'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
 import { ProjectKindIcon, SshKindBadge } from './ProjectKindMark'
-import { isSshProject, sshProjectDisplayPath } from '../lib/sshWorkspace'
+import { isSshProject, sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
 
 type SortKey = 'name' | 'path' | 'last_opened_at' | 'created_at'
 type SortDir = 'asc' | 'desc'
@@ -231,6 +231,11 @@ export default function ProjectManager() {
   }
 
   const handleRelocate = (project: Project) => {
+    if (project.kind === 'ssh') {
+      closeProjectManager()
+      requestSshReconnect(project)
+      return
+    }
     void relocateProjectWithDialog(project.id)
   }
 
@@ -593,7 +598,10 @@ export default function ProjectManager() {
                           <ActBtn label={t('重命名')} onClick={() => handleRename(project)}>
                             <Pencil size={14} />
                           </ActBtn>
-                          <ActBtn label={t('重新定位')} onClick={() => handleRelocate(project)}>
+                          <ActBtn
+                            label={project.kind === 'ssh' ? t('重新连接') : t('重新定位')}
+                            onClick={() => handleRelocate(project)}
+                          >
                             <LocateFixed size={14} />
                           </ActBtn>
                           <ActBtn label={t('移除项目')} onClick={() => handleRemove(project)}>

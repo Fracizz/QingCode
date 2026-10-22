@@ -59,9 +59,9 @@ import {
 } from '../hooks/useProjectIndicators'
 import { ProjectIndicatorMarks, useProjectIndicatorsVisible } from './ProjectIndicatorMarks'
 import { ProjectKindIcon, SshKindBadge } from './ProjectKindMark'
-import { isSshProject, sshProjectDisplayPath } from '../lib/sshWorkspace'
+import { isSshProject, sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
 import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
-import { isTauri } from '../lib/tauri'
+import { isTauri, isSshResource } from '../lib/tauri'
 import { resolveWindowDragRegionMode } from '../lib/windowDragRegion'
 
 const CHIP_GAP = 4
@@ -329,6 +329,10 @@ export default function ProjectPicker() {
 
   const handleOpenInExplorer = async (path: string) => {
     closeDropdown()
+    if (isSshResource(path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await openPath(path)
     } catch (e) {
@@ -394,7 +398,7 @@ export default function ProjectPicker() {
       {
         label: t('在文件管理器中打开'),
         icon: <ExternalLink size={14} />,
-        disabled: unavailable,
+        disabled: unavailable || project.kind === 'ssh',
         action: () => void handleOpenInExplorer(project.path),
       },
       {
@@ -410,9 +414,12 @@ export default function ProjectPicker() {
         action: () => handleRename(project),
       },
       {
-        label: t('重新定位项目'),
+        label: project.kind === 'ssh' ? t('重新连接') : t('重新定位项目'),
         icon: <LocateFixed size={14} />,
-        action: () => handleRelocate(project.id),
+        action: () =>
+          project.kind === 'ssh'
+            ? (closeDropdown(), requestSshReconnect(project))
+            : handleRelocate(project.id),
       },
       {
         label: unavailable ? t('移除项目') : t('从顶栏隐藏'),
@@ -503,7 +510,11 @@ export default function ProjectPicker() {
               dragging={dragId === project.id}
               onSwitch={() => void handleSwitch(project)}
               onRemove={() => handleRemove(project)}
-              onRelocate={() => handleRelocate(project.id)}
+              onRelocate={() =>
+                project.kind === 'ssh'
+                  ? requestSshReconnect(project)
+                  : handleRelocate(project.id)
+              }
               onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
               onContextMenu={event => openProjectContextMenu(event, project)}
               onPointerDown={
@@ -668,23 +679,27 @@ export default function ProjectPicker() {
                     </Tooltip>
                     {unavailable ? (
                       <Tooltip
-                        label={t('重新定位项目')}
+                        label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
                         side="right"
                         wrapperClassName="flex-shrink-0"
                       >
                         <button
                           type="button"
-                          aria-label={t('重新定位项目')}
+                          aria-label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
                           className="inline-flex ui-chip h-6 w-6 items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active"
                           onClick={event => {
                             event.stopPropagation()
-                            handleRelocate(project.id)
+                            if (project.kind === 'ssh') {
+                              requestSshReconnect(project)
+                            } else {
+                              handleRelocate(project.id)
+                            }
                           }}
                         >
                           <LocateFixed size={13} />
                         </button>
                       </Tooltip>
-                    ) : (
+                    ) : project.kind === 'ssh' ? null : (
                       <Tooltip
                         label={t('在文件管理器中打开')}
                         side="right"
@@ -879,7 +894,7 @@ function Chip({
         <span className="block truncate">{project.name}</span>
       </Tooltip>
       <ProjectIndicatorMarks project={project} indicators={indicators} isCurrent={isCurrent} />
-      {project.ephemeral && !unavailable && (
+      {project.ephemeral && !unavailable && project.kind !== 'ssh' && (
         <Tooltip
           label={t('在文件管理器中打开')}
           side="bottom"
@@ -901,13 +916,13 @@ function Chip({
       {unavailable ? (
         <>
           <Tooltip
-            label={t('重新定位项目')}
+            label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
             side="bottom"
             wrapperClassName="inline-flex flex-shrink-0 items-center"
           >
             <button
               type="button"
-              aria-label={t('重新定位项目')}
+              aria-label={project.kind === 'ssh' ? t('重新连接') : t('重新定位项目')}
               className="inline-flex items-center justify-center rounded text-warn hover:text-fg hover:bg-bg-active w-5 ui-chip h-6"
               onClick={event => {
                 event.stopPropagation()

@@ -57,11 +57,18 @@ describe('isGenericShellOscTitle', () => {
 })
 
 describe('windowsSshShellLabel', () => {
-  it('names Windows OpenSSH terminals PowerShell', () => {
+  it('names Windows OpenSSH terminals PowerShell by default or auto', () => {
     expect(windowsSshShellLabel('ssh://connection/D:/code/nem-panel')).toBe('PowerShell')
+    expect(windowsSshShellLabel('ssh://connection/D:/code/nem-panel', 'powershell')).toBe('PowerShell')
+    expect(windowsSshShellLabel('ssh://connection/D:/code/nem-panel', 'auto')).toBe('PowerShell')
     expect(windowsSshShellLabel('ssh://connection/c:/Users/Administrator')).toBe('PowerShell')
     expect(windowsSshShellLabel('ssh://connection/home/owner/app')).toBeNull()
     expect(windowsSshShellLabel('D:/local')).toBeNull()
+  })
+
+  it('allows CMD and pwsh to use their localized label', () => {
+    expect(windowsSshShellLabel('ssh://connection/D:/code/nem-panel', 'cmd')).toBeNull()
+    expect(windowsSshShellLabel('ssh://connection/D:/code/nem-panel', 'pwsh')).toBeNull()
   })
 })
 

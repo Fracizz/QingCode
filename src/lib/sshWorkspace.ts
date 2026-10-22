@@ -115,6 +115,19 @@ export function sshRemotePathFromUri(path: string): string {
   return remote || '/'
 }
 
+/** Join POSIX segments onto an `ssh://` resource without touching the connection id. */
+export function joinSshResource(root: string, ...segments: string[]): string {
+  const connectionId = sshConnectionIdFromUri(root)
+  if (!connectionId) return root
+  let remote = sshRemotePathFromUri(root)
+  for (const segment of segments) {
+    const name = segment.trim().replace(/^\/+|\/+$/g, '')
+    if (!name) continue
+    remote = remote === '/' ? `/${name}` : `${remote.replace(/\/+$/, '')}/${name}`
+  }
+  return sshRootUri(connectionId, remote)
+}
+
 export function sshProjectDisplayPath(
   project: Pick<Project, 'kind' | 'path' | 'root_path' | 'connection_id'>,
   connection?: Pick<SshConnection, 'id' | 'username' | 'host' | 'port'> | null,

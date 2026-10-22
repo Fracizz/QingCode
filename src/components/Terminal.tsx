@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
@@ -55,6 +56,15 @@ import { waitForTerminalRender } from '@/lib/terminal/terminalRenderBarrier'
 import { TerminalOscParser } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
+import { isSshResource, isTauri } from '../lib/tauri'
+import {
+  TERMINAL_DROP_ATTR,
+  collectLocalFilesForSshPaste,
+  confirmClearSshTerminalPasteUploads,
+  pasteLocalFilesIntoSshTerminal,
+} from '../lib/sshTerminalPaste'
+import { getTerminalSshUploadOnPaste } from '../lib/terminal/terminalSshUploadSettings'
+import { logicalDropPoint } from '../utils/sshExplorerDrop'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import TerminalSearchBar from './TerminalSearchBar'
 import '@xterm/xterm/css/xterm.css'
@@ -217,16 +227,26 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     }
   }, [])
 
-  const pasteFromClipboard = useCallback(async () => {
+  const pasteFromClipboard = useCallback(async (event?: ClipboardEvent) => {
     const term = xtermRef.current
     if (!term || !isTerminalWritable()) return
+    const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
     try {
-      const text = await navigator.clipboard.readText()
+      if (tab && isSshResource(tab.cwd) && getTerminalSshUploadOnPaste()) {
+        const files = await collectLocalFilesForSshPaste(event)
+        if (files.length > 0) {
+          const remote = await pasteLocalFilesIntoSshTerminal(tab.cwd, files)
+          if (remote) term.paste(remote)
+          return
+        }
+      }
+      const text =
+        event?.clipboardData?.getData('text/plain') || (await navigator.clipboard.readText())
       if (text) term.paste(text)
     } catch (error) {
       console.error('Terminal paste failed:', error)
     }
-  }, [isTerminalWritable])
+  }, [isTerminalWritable, terminalId])
 
   const selectAll = useCallback(() => {
     xtermRef.current?.selectAll()
@@ -301,6 +321,20 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       shortcut: 'Ctrl+Shift+K',
       action: clearBuffer,
     },
+    ...(isSshResource(
+      useTerminalStore.getState().terminals.find(item => item.id === terminalId)?.cwd ?? '',
+    )
+      ? [
+          {
+            label: translate('清理远程粘贴文件'),
+            separatorBefore: true,
+            action: () => {
+              const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+              if (tab) void confirmClearSshTerminalPasteUploads(tab.cwd)
+            },
+          },
+        ]
+      : []),
   ]
 
   const clearPtyResizeTimer = useCallback(() => {
@@ -527,11 +561,18 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const onPaste = (event: ClipboardEvent) => {
       if (!isTerminalWritable()) return
+      const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+      if (tab && isSshResource(tab.cwd) && getTerminalSshUploadOnPaste()) {
+        event.preventDefault()
+        event.stopPropagation()
+        void pasteFromClipboard(event)
+        return
+      }
       const text = event.clipboardData?.getData('text/plain') ?? ''
       if (text) return
       event.preventDefault()
       event.stopPropagation()
-      void pasteFromClipboard()
+      void pasteFromClipboard(event)
     }
 
     const onMouseDown = () => {
@@ -805,8 +846,39 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     previousStatusRef.current = terminal.status
   }, [terminal])
 
+  useEffect(() => {
+    if (!isTauri() || !isSshResource(terminal?.cwd ?? '')) return
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+    void getCurrentWebview()
+      .onDragDropEvent(event => {
+        if (event.payload.type !== 'drop' || !isTerminalWritable()) return
+        if (!getTerminalSshUploadOnPaste()) return
+        const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+        if (!tab || !isSshResource(tab.cwd)) return
+        const point = logicalDropPoint(event.payload.position, window.devicePixelRatio)
+        const host = document.elementFromPoint(point.x, point.y)?.closest(`[${TERMINAL_DROP_ATTR}]`)
+        if (host?.getAttribute(TERMINAL_DROP_ATTR) !== terminalId) return
+        const paths = event.payload.paths.filter(Boolean)
+        if (paths.length === 0) return
+        void pasteLocalFilesIntoSshTerminal(tab.cwd, paths).then(remote => {
+          if (remote) xtermRef.current?.paste(remote)
+        })
+      })
+      .then(stop => {
+        if (cancelled) stop()
+        else unlisten = stop
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [isTerminalWritable, terminal?.cwd, terminalId])
+
   return (
     <div
+      {...{ [TERMINAL_DROP_ATTR]: terminalId }}
       className="flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden box-border"
       onMouseDown={() => {
         if (isActive) xtermRef.current?.focus()

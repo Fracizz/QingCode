@@ -78,6 +78,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 
 vi.mock('../lib/tauri', () => ({
   isTauri: () => true,
+  isSshResource: (val: unknown) => typeof val === 'string' && val.startsWith('ssh://'),
   safeInvoke: mocks.safeInvoke,
   NotInTauriError: class NotInTauriError extends Error {
     constructor(action: string) {

@@ -260,7 +260,7 @@ Both `default-settings.json` and `.qingcode/project-settings.json` are **JSON5**
 - **Editor**: `editor.fontSize`, `editor.tabSize`, `editor.wordWrap`, `editor.lineNumbers`
 - **Files**: `files.autoSave`, `files.exclude`, `files.encoding`
 - **Search**: `search.exclude`, `search.useIgnoreFiles`
-- **Terminal**: `terminal.integrated.scrollback`, `terminal.integrated.cursorBlinking`
+- **Terminal**: `terminal.integrated.scrollback`, `terminal.integrated.cursorBlinking`, `terminal.integrated.sshUploadOnPaste`
 
 ### Edit Settings
 

@@ -82,6 +82,13 @@ import {
   saveScopedMinimapEnabled,
 } from '../lib/minimapSettings'
 import {
+  getTerminalSshUploadOnPaste,
+  loadScopedTerminalSshUploadOnPaste,
+  saveScopedTerminalSshUploadOnPaste,
+} from '../lib/terminal/terminalSshUploadSettings'
+import { confirmClearSshTerminalPasteUploads } from '../lib/sshTerminalPaste'
+import { isSshProject } from '../lib/sshWorkspace'
+import {
   loadScopedEditorGuidesEnabled,
   saveScopedEditorGuidesEnabled,
 } from '../lib/editorSettings'
@@ -186,6 +193,8 @@ export default function SettingsEditor() {
     DEFAULT_GLOBAL_SETTINGS['files.autoSaveDelay'] as number,
   )
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
+  const [sshUploadOnPaste, setSshUploadOnPaste] = useState(getTerminalSshUploadOnPaste)
+  const [pasteCleanupBusy, setPasteCleanupBusy] = useState(false)
   const [editorGuidesEnabled, setEditorGuidesEnabled] = useState(
     DEFAULT_GLOBAL_SETTINGS['editor.guides.enabled'] !== false,
   )
@@ -304,6 +313,9 @@ export default function SettingsEditor() {
     void loadScopedEditorGuidesEnabled(settingsScope, currentProject).then(
       setEditorGuidesEnabled,
     )
+    void loadScopedTerminalSshUploadOnPaste(settingsScope, currentProject).then(
+      setSshUploadOnPaste,
+    )
   }, [scope, currentProject, settingsRevision])
 
   const workspaceLocked = scope === 'workspace'
@@ -399,6 +411,17 @@ export default function SettingsEditor() {
       await saveScopedEditorGuidesEnabled(settingsScope, enabled, currentProject)
     } catch (error) {
       pushToast('error', t('保存编辑器参考线设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const updateSshUploadOnPaste = async (enabled: boolean) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setSshUploadOnPaste(enabled)
+    try {
+      await saveScopedTerminalSshUploadOnPaste(settingsScope, enabled, currentProject)
+    } catch (error) {
+      pushToast('error', t('保存 SSH 终端粘贴上传设置失败: {error}', { error: String(error) }))
     }
   }
 
@@ -965,7 +988,20 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('终端', '默认启动配置', '终端字号', '默认 Shell', 'pwsh', 'WSL', 'Zsh') && (
+            {match(
+              '终端',
+              '默认启动配置',
+              '终端字号',
+              '默认 Shell',
+              'pwsh',
+              'WSL',
+              'Zsh',
+              'SSH',
+              '粘贴',
+              '上传',
+              'terminal-paste',
+              'sshUploadOnPaste',
+            ) && (
               <Section
                 id="terminal"
                 title={t('终端')}
@@ -1044,6 +1080,47 @@ export default function SettingsEditor() {
                         })),
                     ]}
                   />
+                </SettingItem>
+                <SettingItem
+                  title={t('终端 › 集成: SSH 粘贴上传')}
+                  description={t(
+                    '在 SSH 终端粘贴或拖入本机文件时，先上传到项目 .qingcode/terminal-paste/，再粘贴远端路径。默认关闭。超过 100MB 的文件或文件夹会被拒绝。',
+                  )}
+                  modified={sshUploadOnPaste}
+                >
+                  <select
+                    value={sshUploadOnPaste ? 'on' : 'off'}
+                    onChange={e => void updateSshUploadOnPaste(e.target.value === 'on')}
+                    className="setting-control setting-select"
+                    aria-label={t('终端 › 集成: SSH 粘贴上传')}
+                  >
+                    <option value="off">{t('关闭')}</option>
+                    <option value="on">{t('开启')}</option>
+                  </select>
+                </SettingItem>
+                <SettingItem
+                  title={t('清理远程粘贴文件')}
+                  description={t(
+                    '删除当前 SSH 项目的 .qingcode/terminal-paste 目录。终端里已经粘贴的路径会失效。',
+                  )}
+                >
+                  <button
+                    type="button"
+                    disabled={
+                      pasteCleanupBusy || !currentProject || !isSshProject(currentProject)
+                    }
+                    className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                    aria-label={t('清理远程粘贴文件')}
+                    onClick={() => {
+                      if (!currentProject || !isSshProject(currentProject)) return
+                      setPasteCleanupBusy(true)
+                      void confirmClearSshTerminalPasteUploads(currentProject.path).finally(
+                        () => setPasteCleanupBusy(false),
+                      )
+                    }}
+                  >
+                    {t('清理')}
+                  </button>
                 </SettingItem>
                 {!workspaceLocked && (
                   <div className="pl-3 border-l-2 border-transparent">
@@ -1761,7 +1838,7 @@ export default function SettingsEditor() {
                 <SettingItem
                   title={t('JSON 键生效说明')}
                   description={t(
-                    'files.exclude / search.exclude / useIgnoreFiles / followSymlinks、explorer.excludeGitIgnore、files.encoding、editor.minimap.enabled、editor.formatOnSave / formatOnPaste、括号着色与参考线、terminal.integrated.scrollback / cursorBlinking 已生效。标有「不计划」的键（如 linkedEditing）会保存但不会改变行为。详见帮助文档。',
+                    'files.exclude / search.exclude / useIgnoreFiles / followSymlinks、explorer.excludeGitIgnore、files.encoding、editor.minimap.enabled、editor.formatOnSave / formatOnPaste、括号着色与参考线、terminal.integrated.scrollback / cursorBlinking / sshUploadOnPaste 已生效。标有「不计划」的键（如 linkedEditing）会保存但不会改变行为。详见帮助文档。',
                   )}
                 >
                   <span className="text-ui-sm text-fg-dim">{t('见 JSON 注释 / 帮助文档')}</span>

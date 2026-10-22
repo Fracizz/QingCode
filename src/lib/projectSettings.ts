@@ -104,6 +104,7 @@ function buildSharedDefaults(): SettingsFile {
     'explorer.excludeGitIgnore': false,
     'terminal.integrated.scrollback': 5000,
     'terminal.integrated.cursorBlinking': true,
+    'terminal.integrated.sshUploadOnPaste': false,
     custom: {},
   }
 }
@@ -234,6 +235,8 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.scrollback": 5000,
   // terminal.integrated.cursorBlinking：终端光标是否闪烁
   "terminal.integrated.cursorBlinking": true,
+  // terminal.integrated.sshUploadOnPaste：SSH 终端粘贴/拖入本机文件时是否先上传再粘贴远端路径（默认 false）
+  "terminal.integrated.sshUploadOnPaste": false,
 `
 
 /** Auto-save keys live only in the global template; workspace inherits unless overridden. */

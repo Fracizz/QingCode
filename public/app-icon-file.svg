@@ -8,8 +8,8 @@
     </linearGradient>
   </defs>
 
-  <!-- Squircle 圆角矩形底板：统一深青灰背景 -->
-  <rect width="512" height="512" rx="112" fill="#15262D"/>
+  <!-- Squircle 圆角矩形底板：极深炭黑背景 (#121415，与 ZCode 同款纯黑质感) -->
+  <rect width="512" height="512" rx="112" fill="#121415"/>
 
   <!-- 单层平直圆角长方形底轨 (加厚至 64px 与代码尖括号等粗, rx=12) -->
   <rect x="96" y="344" width="320" height="64" rx="12" fill="url(#rail)"/>

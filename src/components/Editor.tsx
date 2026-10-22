@@ -53,6 +53,7 @@ import {
   AlignLeft,
 } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { isSshResource } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -766,6 +767,10 @@ export default function Editor() {
   }
 
   const revealPath = async (path: string) => {
+    if (isSshResource(path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await revealItemInDir(path)
     } catch (error) {
@@ -902,6 +907,7 @@ export default function Editor() {
       {
         label: t('在文件管理器中显示'),
         icon: <ExternalLink size={14} />,
+        disabled: isSshResource(path),
         action: () => revealPath(path),
       },
       ...(markdownTab

@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { Copy, ExternalLink, Eye, LocateFixed, Search } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
-import { safeInvoke } from '../lib/tauri'
+import { isSshResource, safeInvoke } from '../lib/tauri'
 import { formatFileSize, isOversizeSlicePreview } from '../lib/fileSizePolicy'
 import { copyToClipboard } from '../utils/fileReferences'
 import { useProjectStore } from '../store/projectStore'
@@ -485,23 +485,25 @@ export default function LargeFileViewer({ tab }: Props) {
             <LocateFixed size={12} />
             {t('在资源管理器中定位')}
           </button>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1 text-accent hover:underline"
-            onClick={() =>
-              void revealItemInDir(tab.path).catch(error => {
-                useProjectStore
-                  .getState()
-                  .pushToast(
-                    'error',
-                    t('在文件管理器中显示失败: {error}', { error: String(error) }),
-                  )
-              })
-            }
-          >
-            <ExternalLink size={12} />
-            {t('在文件管理器中显示')}
-          </button>
+          {!isSshResource(tab.path) && (
+            <button
+              type="button"
+              className="inline-flex items-center gap-1 text-accent hover:underline"
+              onClick={() =>
+                void revealItemInDir(tab.path).catch(error => {
+                  useProjectStore
+                    .getState()
+                    .pushToast(
+                      'error',
+                      t('在文件管理器中显示失败: {error}', { error: String(error) }),
+                    )
+                })
+              }
+            >
+              <ExternalLink size={12} />
+              {t('在文件管理器中显示')}
+            </button>
+          )}
           <button
             type="button"
             className="inline-flex items-center gap-1 text-accent hover:underline"

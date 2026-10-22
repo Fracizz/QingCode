@@ -7,6 +7,7 @@ import { isDescendantOf, normalizePath, parentPath, pathsEqual } from '../utils/
 import Tooltip from './Tooltip'
 import { isExternalFileWindow } from '../lib/windowSession'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { isSshResource } from '../lib/tauri'
 
 function projectRelativePath(projectPath: string, filePath: string) {
   const root = normalizePath(projectPath)
@@ -62,6 +63,10 @@ export default function EditorBreadcrumbs() {
   }
 
   const openStandaloneSegment = (path: string, isLast: boolean) => {
+    if (isSshResource(path) || isSshResource(activeTab.path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     const target = /^[A-Za-z]:$/.test(path) ? `${path}\\` : path
     const action = isLast ? revealItemInDir(activeTab.path) : openPath(target)
     void action.catch(error => {

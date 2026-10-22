@@ -27,6 +27,7 @@ import {
 import { isExternalFileWindow } from '../lib/windowSession'
 import { ProjectKindIcon } from './ProjectKindMark'
 import { isSshProject } from '../lib/sshWorkspace'
+import { isSshResource } from '../lib/tauri'
 import { parentPath, pathsEqual } from '../utils/fileReferences'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 
@@ -313,32 +314,51 @@ export default function StatusBar() {
     Boolean(activeTab && !activeTab.openError && activeTab.viewMode !== 'view')
   const showMetaGroup = showEncoding || Boolean(appVersion) || Boolean(appMemory)
 
+  const isSshActiveTab = isSshResource(activeTab?.path)
   const standaloneMenuItems = activeTab
     ? [
         {
           label: t('在文件管理器中显示'),
-          action: () =>
+          disabled: isSshActiveTab,
+          action: () => {
+            if (isSshActiveTab) {
+              pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+              return
+            }
             void revealItemInDir(activeTab.path).catch(error => {
               pushToast('error', t('在文件管理器中显示失败: {error}', { error: String(error) }))
-            }),
+            })
+          },
         },
         {
           label: t('打开所在文件夹'),
-          action: () =>
+          disabled: isSshActiveTab,
+          action: () => {
+            if (isSshActiveTab) {
+              pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+              return
+            }
             void openPath(parentPath(activeTab.path)).catch(error => {
               pushToast('error', t('打开文件夹失败: {error}', { error: String(error) }))
-            }),
+            })
+          },
         },
         {
           label: t('将所在文件夹作为项目打开'),
+          disabled: isSshActiveTab,
           separatorBefore: true,
-          action: () =>
+          action: () => {
+            if (isSshActiveTab) {
+              pushToast('info', t('暂不支持直接将远程文件夹添加为本地项目'))
+              return
+            }
             void (async () => {
               const folder = parentPath(activeTab.path)
               const existing = projects.find(project => pathsEqual(project.path, folder))
               const opened = existing ? await switchProject(existing) : await addProject(folder)
               if (opened) setView('explorer')
-            })(),
+            })()
+          },
         },
       ]
     : []

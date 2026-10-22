@@ -9,6 +9,7 @@ import {
   RotateCw,
 } from 'lucide-react'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
+import { isSshResource } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -48,6 +49,10 @@ export default function EditorOpenError({ tab }: Props) {
   }
 
   const revealPath = async () => {
+    if (isSshResource(tab.path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await revealItemInDir(tab.path)
     } catch (error) {
@@ -58,6 +63,10 @@ export default function EditorOpenError({ tab }: Props) {
   }
 
   const openWithAssociatedApp = async () => {
+    if (isSshResource(tab.path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await openPath(tab.path)
     } catch (error) {
@@ -102,11 +111,13 @@ export default function EditorOpenError({ tab }: Props) {
           label={t('在资源管理器中定位')}
           onClick={revealInSidebar}
         />
-        <ActionButton
-          icon={<ExternalLink size={14} />}
-          label={t('在文件管理器中显示')}
-          onClick={() => void revealPath()}
-        />
+        {!isSshResource(tab.path) && (
+          <ActionButton
+            icon={<ExternalLink size={14} />}
+            label={t('在文件管理器中显示')}
+            onClick={() => void revealPath()}
+          />
+        )}
         <ActionButton
           icon={<Copy size={14} />}
           label={t('复制路径')}

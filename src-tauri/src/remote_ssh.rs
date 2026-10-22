@@ -700,20 +700,90 @@ fn reject_windows_remote_command(path: &str) -> Result<(), String> {
     }
 }
 
-fn ssh_interactive_terminal_command(path: &str) -> Result<String, String> {
-    if let Some(script) = windows_terminal_startup_script(path)? {
-        // OpenSSH prefixes the default shell and -c/ /c. -EncodedCommand keeps
-        // Set-Location inside that process, so the prompt opens in the project
-        // directory instead of echoing the command.
-        let encoded = encode_powershell_command(&script);
-        return Ok(format!(
-            "powershell.exe -NoLogo -NoExit -EncodedCommand {encoded}"
-        ));
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedSshTerminal {
+    command: String,
+    resolved_shell: String,
+    fallback_from: Option<String>,
+}
+
+fn ssh_interactive_terminal_command(
+    path: &str,
+    shell: Option<&str>,
+) -> Result<ResolvedSshTerminal, String> {
+    if let Some(native) = windows_native_path(path) {
+        if native.contains('\n') || native.contains('\r') {
+            return Err("Windows 远程路径包含无法用于终端的字符".to_string());
+        }
+        let normalized = shell
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("auto");
+
+        match normalized {
+            "cmd" => {
+                if native.contains('"') {
+                    return Err("Windows 远程路径包含无法用于 CMD 的字符".to_string());
+                }
+                // cmd.exe /d /k cd /d "<native>" enters the directory directly
+                // without echo or Set-Location.
+                Ok(ResolvedSshTerminal {
+                    command: format!("cmd.exe /d /k cd /d \"{native}\""),
+                    resolved_shell: "cmd".to_string(),
+                    fallback_from: None,
+                })
+            }
+            "pwsh" => {
+                let script = windows_terminal_startup_script(path)?
+                    .ok_or_else(|| "非 Windows 路径".to_string())?;
+                let encoded = encode_powershell_command(&script);
+                Ok(ResolvedSshTerminal {
+                    command: format!("pwsh.exe -NoLogo -NoExit -EncodedCommand {encoded}"),
+                    resolved_shell: "pwsh".to_string(),
+                    fallback_from: None,
+                })
+            }
+            "powershell" | "auto" => {
+                let script = windows_terminal_startup_script(path)?
+                    .ok_or_else(|| "非 Windows 路径".to_string())?;
+                let encoded = encode_powershell_command(&script);
+                Ok(ResolvedSshTerminal {
+                    command: format!("powershell.exe -NoLogo -NoExit -EncodedCommand {encoded}"),
+                    resolved_shell: "powershell".to_string(),
+                    fallback_from: None,
+                })
+            }
+            unsupported => {
+                let script = windows_terminal_startup_script(path)?
+                    .ok_or_else(|| "非 Windows 路径".to_string())?;
+                let encoded = encode_powershell_command(&script);
+                Ok(ResolvedSshTerminal {
+                    command: format!("powershell.exe -NoLogo -NoExit -EncodedCommand {encoded}"),
+                    resolved_shell: "powershell".to_string(),
+                    fallback_from: Some(unsupported.to_string()),
+                })
+            }
+        }
+    } else {
+        let quoted = shell_quote(path);
+        let normalized = shell
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("auto");
+
+        match normalized {
+            "bash" | "zsh" | "sh" => Ok(ResolvedSshTerminal {
+                command: format!("cd -- {quoted} && exec {normalized} -l"),
+                resolved_shell: normalized.to_string(),
+                fallback_from: None,
+            }),
+            _ => Ok(ResolvedSshTerminal {
+                command: format!("cd -- {quoted} && exec \"${{SHELL:-/bin/sh}}\" -l"),
+                resolved_shell: "auto".to_string(),
+                fallback_from: None,
+            }),
+        }
     }
-    Ok(format!(
-        "cd -- {} && exec \"${{SHELL:-/bin/sh}}\" -l",
-        shell_quote(path)
-    ))
 }
 
 fn windows_terminal_startup_script(path: &str) -> Result<Option<String>, String> {
@@ -1212,6 +1282,9 @@ async fn ensure_parent_path_within(
 #[tauri::command]
 pub async fn ssh_scan_directory(
     path: String,
+    workspace_root: Option<String>,
+    exclude_patterns: Option<Vec<String>>,
+    _exclude_git_ignore: Option<bool>,
     manager: State<'_, SshManager>,
 ) -> Result<Vec<RemoteFileNode>, String> {
     let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
@@ -1222,14 +1295,55 @@ pub async fn ssh_scan_directory(
     if !remote_path_is_within(&canonical, &root.canonical_path) {
         return Err("远程目录通过符号链接跳出了项目根目录".to_string());
     }
+
+    let root_posix = if let Some(ref ws_root) = workspace_root {
+        if let Ok(p) = parse_remote_uri(ws_root) {
+            p.path
+        } else {
+            root.canonical_path.clone()
+        }
+    } else {
+        root.canonical_path.clone()
+    };
+    let root_posix = root_posix.trim_end_matches('/').to_string();
+
     let mut dirs = Vec::new();
     let mut files = Vec::new();
     let entries = sftp
-        .read_dir(parsed.path)
+        .read_dir(parsed.path.clone())
         .await
         .map_err(|error| format!("读取远程目录失败：{error}"))?;
     for entry in entries {
         let name = entry.file_name();
+        if name.is_empty() || name == "." || name == ".." {
+            continue;
+        }
+
+        let full_posix = if parsed.path.ends_with('/') {
+            format!("{}{name}", parsed.path)
+        } else {
+            format!("{}/{name}", parsed.path)
+        };
+        let rel = if full_posix.starts_with(&root_posix) {
+            full_posix[root_posix.len()..].trim_start_matches('/')
+        } else {
+            &name
+        };
+
+        let should_skip = match exclude_patterns.as_deref() {
+            Some(patterns) => {
+                if rel.is_empty() {
+                    false
+                } else {
+                    crate::exclude::is_path_excluded(rel, patterns)
+                }
+            }
+            None => crate::exclude::default_hard_ignore_name(&name),
+        };
+        if should_skip {
+            continue;
+        }
+
         let node = RemoteFileNode {
             path: join_remote_uri(&path, &name),
             name,
@@ -1359,6 +1473,88 @@ pub async fn ssh_read_file_slice(
         next_offset,
         file_size,
         eof: next_offset >= file_size,
+    })
+}
+
+#[tauri::command]
+pub async fn ssh_find_line_offset(
+    path: String,
+    line: u64,
+    manager: State<'_, SshManager>,
+) -> Result<crate::commands::cmd_stat::LineOffsetResult, String> {
+    if line == 0 {
+        return Err("行号必须从 1 开始".into());
+    }
+    let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    let mut file = sftp
+        .open(parsed.path)
+        .await
+        .map_err(|error| format!("打开远程文件失败：{error}"))?;
+    let metadata = file
+        .metadata()
+        .await
+        .map_err(|error| format!("读取远程文件属性失败：{error}"))?;
+    if metadata.is_dir() {
+        return Err("无法打开文件夹".into());
+    }
+    let file_size = metadata.len();
+    if file_size == 0 {
+        return Ok(crate::commands::cmd_stat::LineOffsetResult {
+            line,
+            offset: 0,
+            found: line == 1,
+            total_lines: 0,
+            file_size: 0,
+        });
+    }
+    if line == 1 {
+        return Ok(crate::commands::cmd_stat::LineOffsetResult {
+            line: 1,
+            offset: 0,
+            found: true,
+            total_lines: 1,
+            file_size,
+        });
+    }
+
+    const BUF_SIZE: usize = 64 * 1024;
+    let mut buf = [0u8; BUF_SIZE];
+    let mut current_line: u64 = 1;
+    let mut file_pos: u64 = 0;
+
+    loop {
+        let n = file
+            .read(&mut buf)
+            .await
+            .map_err(|error| format!("读取远程文件失败：{error}"))?;
+        if n == 0 {
+            break;
+        }
+        for (i, &b) in buf[..n].iter().enumerate() {
+            if b == b'\n' {
+                let next_offset = file_pos + i as u64 + 1;
+                current_line += 1;
+                if current_line == line {
+                    return Ok(crate::commands::cmd_stat::LineOffsetResult {
+                        line,
+                        offset: next_offset.min(file_size),
+                        found: true,
+                        total_lines: line,
+                        file_size,
+                    });
+                }
+            }
+        }
+        file_pos += n as u64;
+    }
+
+    Ok(crate::commands::cmd_stat::LineOffsetResult {
+        line,
+        offset: file_size,
+        found: false,
+        total_lines: current_line,
+        file_size,
     })
 }
 
@@ -1550,6 +1746,226 @@ async fn remove_remote_tree(sftp: &SftpSession, path: String) -> Result<(), Stri
     }
 }
 
+async fn resolve_remote_dest_child(
+    sftp: &SftpSession,
+    dest_dir: &str,
+    file_name: &str,
+    conflict_policy: Option<&str>,
+) -> Result<(String, String, bool), String> {
+    let preferred_path = if dest_dir.ends_with('/') {
+        format!("{dest_dir}{file_name}")
+    } else {
+        format!("{dest_dir}/{file_name}")
+    };
+    if sftp.metadata(preferred_path.clone()).await.is_err() {
+        return Ok((file_name.to_string(), preferred_path, false));
+    }
+    match conflict_policy.unwrap_or("fail") {
+        "overwrite" => Ok((file_name.to_string(), preferred_path, true)),
+        "rename" => {
+            let (stem, ext) = match file_name.rsplit_once('.') {
+                Some((s, e)) if !s.is_empty() => (s, format!(".{e}")),
+                _ => (file_name, String::new()),
+            };
+            for i in 1..=1000 {
+                let candidate_name = format!("{stem} ({i}){ext}");
+                let candidate_path = if dest_dir.ends_with('/') {
+                    format!("{dest_dir}{candidate_name}")
+                } else {
+                    format!("{dest_dir}/{candidate_name}")
+                };
+                if sftp.metadata(candidate_path.clone()).await.is_err() {
+                    return Ok((candidate_name, candidate_path, false));
+                }
+            }
+            Err("无法生成可用的远程目标文件名".to_string())
+        }
+        "fail" => Err("目标名称已存在".to_string()),
+        other => Err(format!("未知的冲突策略：{other}")),
+    }
+}
+
+async fn copy_remote_file(sftp: &SftpSession, src: String, dest: String) -> Result<(), String> {
+    let mut reader = sftp
+        .open(src)
+        .await
+        .map_err(|e| format!("打开远程源文件失败：{e}"))?;
+    let flags = OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE;
+    let mut writer = sftp
+        .open_with_flags(dest, flags)
+        .await
+        .map_err(|e| format!("创建远程目标文件失败：{e}"))?;
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = reader
+            .read(&mut buf)
+            .await
+            .map_err(|e| format!("读取远程文件失败：{e}"))?;
+        if n == 0 {
+            break;
+        }
+        writer
+            .write_all(&buf[..n])
+            .await
+            .map_err(|e| format!("写入远程文件失败：{e}"))?;
+    }
+    Ok(())
+}
+
+async fn copy_remote_tree(sftp: &SftpSession, src: String, dest: String) -> Result<(), String> {
+    let metadata = sftp
+        .symlink_metadata(src.clone())
+        .await
+        .map_err(|e| format!("读取远程路径失败：{e}"))?;
+    if metadata.is_dir() && !metadata.is_symlink() {
+        sftp.create_dir(dest.clone())
+            .await
+            .map_err(|e| format!("创建远程目录失败：{e}"))?;
+        let entries = sftp
+            .read_dir(src)
+            .await
+            .map_err(|e| format!("读取远程目录失败：{e}"))?;
+        for entry in entries {
+            let name = entry.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            let child_dest = format!("{}/{}", dest.trim_end_matches('/'), name);
+            Box::pin(copy_remote_tree(sftp, entry.path().to_string(), child_dest)).await?;
+        }
+        Ok(())
+    } else {
+        copy_remote_file(sftp, src, dest).await
+    }
+}
+
+#[tauri::command]
+pub async fn ssh_move_path(
+    path: String,
+    dest_dir: String,
+    conflict_policy: Option<String>,
+    dest_name: Option<String>,
+    manager: State<'_, SshManager>,
+) -> Result<String, String> {
+    let (source_sftp, source_parsed, source_root) = manager.sftp_for_uri(&path, true).await?;
+    let (dest_sftp, dest_parsed, dest_root) = manager.sftp_for_uri(&dest_dir, true).await?;
+
+    if source_parsed.connection_id != dest_parsed.connection_id {
+        return Err("不支持跨 SSH 连接移动文件".to_string());
+    }
+    ensure_existing_path_within(&source_sftp, &source_parsed.path, &source_root).await?;
+    ensure_existing_path_within(&dest_sftp, &dest_parsed.path, &dest_root).await?;
+
+    if normalize_remote_uri(&path) == source_root.uri {
+        return Err("不允许移动远程项目根目录".to_string());
+    }
+
+    let source_meta = source_sftp
+        .symlink_metadata(source_parsed.path.clone())
+        .await
+        .map_err(|e| format!("读取源路径失败：{e}"))?;
+
+    let dest_meta = dest_sftp
+        .metadata(dest_parsed.path.clone())
+        .await
+        .map_err(|e| format!("读取目标文件夹失败：{e}"))?;
+    if !dest_meta.is_dir() {
+        return Err("目标不是文件夹".to_string());
+    }
+
+    let initial_name = dest_name.unwrap_or_else(|| {
+        source_parsed
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&source_parsed.path)
+            .to_string()
+    });
+    validate_entry_name(&initial_name)?;
+
+    let (final_name, final_dest_path, overwrite) = resolve_remote_dest_child(
+        &dest_sftp,
+        &dest_parsed.path,
+        &initial_name,
+        conflict_policy.as_deref(),
+    )
+    .await?;
+
+    if source_meta.is_dir() {
+        let src_prefix = if source_parsed.path.ends_with('/') {
+            source_parsed.path.clone()
+        } else {
+            format!("{}/", source_parsed.path)
+        };
+        if final_dest_path == source_parsed.path || dest_parsed.path.starts_with(&src_prefix) {
+            return Err("不能将文件夹移动到其自身或子目录中".to_string());
+        }
+    }
+
+    if overwrite {
+        remove_remote_tree(&dest_sftp, final_dest_path.clone()).await?;
+    }
+
+    dest_sftp
+        .rename(source_parsed.path, final_dest_path)
+        .await
+        .map_err(|e| format!("移动远程路径失败：{e}"))?;
+
+    Ok(join_remote_uri(&dest_dir, &final_name))
+}
+
+#[tauri::command]
+pub async fn ssh_copy_path_into(
+    path: String,
+    dest_dir: String,
+    conflict_policy: Option<String>,
+    dest_name: Option<String>,
+    manager: State<'_, SshManager>,
+) -> Result<String, String> {
+    let (source_sftp, source_parsed, source_root) = manager.sftp_for_uri(&path, false).await?;
+    let (dest_sftp, dest_parsed, dest_root) = manager.sftp_for_uri(&dest_dir, true).await?;
+
+    if source_parsed.connection_id != dest_parsed.connection_id {
+        return Err("不支持跨 SSH 连接复制文件".to_string());
+    }
+    ensure_existing_path_within(&source_sftp, &source_parsed.path, &source_root).await?;
+    ensure_existing_path_within(&dest_sftp, &dest_parsed.path, &dest_root).await?;
+
+    let dest_meta = dest_sftp
+        .metadata(dest_parsed.path.clone())
+        .await
+        .map_err(|e| format!("读取目标文件夹失败：{e}"))?;
+    if !dest_meta.is_dir() {
+        return Err("目标不是文件夹".to_string());
+    }
+
+    let initial_name = dest_name.unwrap_or_else(|| {
+        source_parsed
+            .path
+            .rsplit('/')
+            .next()
+            .unwrap_or(&source_parsed.path)
+            .to_string()
+    });
+    validate_entry_name(&initial_name)?;
+
+    let (final_name, final_dest_path, overwrite) = resolve_remote_dest_child(
+        &dest_sftp,
+        &dest_parsed.path,
+        &initial_name,
+        conflict_policy.as_deref(),
+    )
+    .await?;
+
+    if overwrite {
+        remove_remote_tree(&dest_sftp, final_dest_path.clone()).await?;
+    }
+
+    copy_remote_tree(&dest_sftp, source_parsed.path, final_dest_path).await?;
+
+    Ok(join_remote_uri(&dest_dir, &final_name))
+}
+
 #[tauri::command]
 pub async fn ssh_delete_path(path: String, manager: State<'_, SshManager>) -> Result<(), String> {
     let (sftp, parsed, root) = manager.sftp_for_uri(&path, true).await?;
@@ -1558,6 +1974,48 @@ pub async fn ssh_delete_path(path: String, manager: State<'_, SshManager>) -> Re
     }
     ensure_parent_path_within(&sftp, &parsed.path, &root).await?;
     remove_remote_tree(&sftp, parsed.path).await
+}
+
+#[tauri::command]
+pub async fn ssh_directory_delete_stats(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<crate::commands::cmd_fs::DirectoryDeleteStats, String> {
+    let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    let metadata = sftp
+        .metadata(parsed.path.clone())
+        .await
+        .map_err(|error| format!("读取远程路径失败：{error}"))?;
+    if !metadata.is_dir() {
+        return Err("路径不是文件夹".to_string());
+    }
+
+    let mut file_count = 0u64;
+    let mut total_size = 0u64;
+    let mut queue = vec![parsed.path];
+
+    while let Some(dir) = queue.pop() {
+        let entries = match sftp.read_dir(dir).await {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries {
+            let meta = entry.metadata();
+            if meta.is_dir() && !meta.is_symlink() {
+                queue.push(entry.path().to_string());
+            } else {
+                file_count += 1;
+                total_size = total_size.saturating_add(meta.len());
+            }
+        }
+    }
+
+    Ok(crate::commands::cmd_fs::DirectoryDeleteStats {
+        path,
+        file_count,
+        total_size,
+    })
 }
 
 #[tauri::command]
@@ -2397,12 +2855,13 @@ pub async fn ssh_format_document(
         shell_quote(&parsed.path)
     );
     let command = match extension.as_str() {
-        "js" | "jsx" | "ts" | "tsx" | "json" | "json5" | "css" | "scss" | "less"
-        | "html" | "vue" | "svelte" | "md" | "yaml" | "yml" => prettier,
+        "js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts" | "json" | "jsonc" | "json5"
+        | "css" | "scss" | "less" | "html" | "htm" | "vue" | "svelte" | "md" | "markdown"
+        | "mdx" | "yaml" | "yml" | "graphql" | "gql" | "astro" => prettier,
         "rs" => "command -v rustfmt >/dev/null 2>&1 && exec rustfmt --emit stdout || { echo '远端未安装 rustfmt' >&2; exit 127; }".to_string(),
         "go" => "command -v gofmt >/dev/null 2>&1 && exec gofmt || { echo '远端未安装 gofmt' >&2; exit 127; }".to_string(),
         "sh" | "bash" | "zsh" => "command -v shfmt >/dev/null 2>&1 && exec shfmt || { echo '远端未安装 shfmt' >&2; exit 127; }".to_string(),
-        "py" => format!(
+        "py" | "pyi" => format!(
             "if command -v ruff >/dev/null 2>&1; then exec ruff format --stdin-filename {} -; elif command -v black >/dev/null 2>&1; then exec black --quiet -; else echo '远端未安装 ruff 或 black' >&2; exit 127; fi",
             shell_quote(&parsed.path)
         ),
@@ -2507,12 +2966,16 @@ pub async fn ssh_create_terminal(
     cwd: String,
     cols: Option<u16>,
     rows: Option<u16>,
+    shell: Option<String>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&cwd)?;
-    let command = ssh_interactive_terminal_command(&parsed.path)?;
-    spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, command).await
+    let spec = ssh_interactive_terminal_command(&parsed.path, shell.as_deref())?;
+    let mut result = spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, spec.command).await?;
+    result.resolved_shell = Some(spec.resolved_shell);
+    result.fallback_from = spec.fallback_from;
+    Ok(result)
 }
 
 fn remote_script_invocation(target: &str, env_prefix: &str) -> Result<String, String> {
@@ -2895,12 +3358,40 @@ mod tests {
             Some("Set-Location -LiteralPath 'D:\\code\\it''s'")
         );
         assert_eq!(encode_powershell_command("A"), "QQA=");
-        let command = ssh_interactive_terminal_command("/D:/code/nem-panel").unwrap();
+        let command = ssh_interactive_terminal_command("/D:/code/nem-panel", None).unwrap();
         let encoded = encode_powershell_command("Set-Location -LiteralPath 'D:\\code\\nem-panel'");
         assert_eq!(
-            command,
+            command.command,
             format!("powershell.exe -NoLogo -NoExit -EncodedCommand {encoded}")
         );
+        assert_eq!(command.resolved_shell, "powershell");
+        assert_eq!(command.fallback_from, None);
+
+        // Test CMD enters project root directly via cd /d without echo
+        let cmd_target =
+            ssh_interactive_terminal_command("/D:/code/nem-panel", Some("cmd")).unwrap();
+        assert_eq!(
+            cmd_target.command,
+            "cmd.exe /d /k cd /d \"D:\\code\\nem-panel\""
+        );
+        assert_eq!(cmd_target.resolved_shell, "cmd");
+        assert_eq!(cmd_target.fallback_from, None);
+
+        // Test pwsh
+        let pwsh_target =
+            ssh_interactive_terminal_command("/D:/code/nem-panel", Some("pwsh")).unwrap();
+        assert_eq!(
+            pwsh_target.command,
+            format!("pwsh.exe -NoLogo -NoExit -EncodedCommand {encoded}")
+        );
+        assert_eq!(pwsh_target.resolved_shell, "pwsh");
+
+        // Test fallback from unsupported shell on Windows OpenSSH
+        let fallback =
+            ssh_interactive_terminal_command("/D:/code/nem-panel", Some("bash")).unwrap();
+        assert_eq!(fallback.resolved_shell, "powershell");
+        assert_eq!(fallback.fallback_from, Some("bash".to_string()));
+
         assert!(windows_terminal_startup_script("/home/owner/app")
             .unwrap()
             .is_none());
@@ -2923,10 +3414,21 @@ mod tests {
 
     #[test]
     fn linux_terminal_still_uses_login_shell() {
+        let default_target = ssh_interactive_terminal_command("/home/owner/app", None).unwrap();
         assert_eq!(
-            ssh_interactive_terminal_command("/home/owner/app").unwrap(),
+            default_target.command,
             "cd -- '/home/owner/app' && exec \"${SHELL:-/bin/sh}\" -l"
         );
+        assert_eq!(default_target.resolved_shell, "auto");
+
+        let bash_target =
+            ssh_interactive_terminal_command("/home/owner/app", Some("bash")).unwrap();
+        assert_eq!(
+            bash_target.command,
+            "cd -- '/home/owner/app' && exec bash -l"
+        );
+        assert_eq!(bash_target.resolved_shell, "bash");
+
         assert!(reject_windows_remote_command("/home/owner/app").is_ok());
     }
 }

@@ -27,6 +27,7 @@ import {
 import { promptDialog, validateEntryName } from '../store/promptStore'
 import { confirmDiscardTabs } from '../utils/dirtyTabs'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
+import { isSshResource } from '../lib/tauri'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { EditorTab } from '../types'
@@ -211,6 +212,10 @@ export default function EditorTabs() {
   }
 
   const revealPath = async (path: string) => {
+    if (isSshResource(path)) {
+      useProjectStore.getState().pushToast('info', t('SSH 资源没有本地文件管理器位置'))
+      return
+    }
     try {
       await revealItemInDir(path)
     } catch (e) {
@@ -340,6 +345,7 @@ export default function EditorTabs() {
     {
       label: t('在文件管理器中显示'),
       icon: <ExternalLink size={14} />,
+      disabled: isSshResource(tab.path),
       action: () => void revealPath(tab.path),
     },
     ...(tab.kind === 'diff'

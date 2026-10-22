@@ -34,6 +34,9 @@ export async function applyEffectiveSettings(project?: Project | null): Promise<
     loadEffectiveTerminalScrollback(project),
     loadEditorStateCacheSize(),
     terminalCursor.loadEffectiveTerminalCursorBlinking(project),
+    import('./terminal/terminalSshUploadSettings').then(mod =>
+      mod.loadEffectiveTerminalSshUploadOnPaste(project),
+    ),
     loadEffectiveExcludeSettings(project),
   ])
   notifyAutoSaveSettingsChanged(autoSave)

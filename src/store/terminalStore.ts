@@ -831,7 +831,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const id = crypto.randomUUID()
     const profileSettings = loadTerminalProfileSettings()
     const nameShell = effectiveShellForTerminalName(shell, profileSettings.defaultShell)
-    const shellLabel = windowsSshShellLabel(projectPath) ?? translate(terminalShellLabelKey(nameShell))
+    const shellLabel =
+      windowsSshShellLabel(projectPath, nameShell) ?? translate(terminalShellLabelKey(nameShell))
     const baseName = resolveNewTerminalName(
       profile.name,
       profile.command,
