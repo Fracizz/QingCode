@@ -1,5 +1,24 @@
 import { describe, expect, it, vi } from 'vitest'
-import { parseShellIntegrationOsc, TerminalOscParser } from './terminalOsc'
+import {
+  parseShellIntegrationOsc,
+  registerTerminalOscHandlers,
+  SUPPRESSED_OSC_IDENTS,
+  type TerminalOscRegistry,
+} from './terminalOsc'
+
+function fakeRegistry() {
+  const handlers = new Map<number, ((data: string) => boolean)[]>()
+  const disposed: number[] = []
+  const registry: TerminalOscRegistry = {
+    registerOscHandler(ident, callback) {
+      handlers.set(ident, [...(handlers.get(ident) ?? []), callback])
+      return { dispose: () => disposed.push(ident) }
+    },
+  }
+  const emit = (ident: number, data: string) =>
+    (handlers.get(ident) ?? []).map(callback => callback(data))
+  return { registry, handlers, disposed, emit }
+}
 
 describe('parseShellIntegrationOsc', () => {
   it('detects FinalTerm and VS Code markers', () => {
@@ -12,27 +31,35 @@ describe('parseShellIntegrationOsc', () => {
   })
 })
 
-describe('TerminalOscParser fast path', () => {
-  it('returns the same bytes when there is no OSC sequence', () => {
-    const parser = new TerminalOscParser()
-    const bytes = new Uint8Array([72, 101, 108, 108, 111])
-    expect(parser.feed(bytes)).toBe(bytes)
-  })
-})
+describe('registerTerminalOscHandlers', () => {
+  it('routes titles and shell-integration markers and swallows them', () => {
+    const { registry, emit } = fakeRegistry()
+    const onTitle = vi.fn()
+    const onCommandStart = vi.fn()
+    const onCommandEnd = vi.fn()
+    registerTerminalOscHandlers(registry, { onTitle, onCommandStart, onCommandEnd })
 
-describe('TerminalOscParser shell integration', () => {
-  it('fires command start/end and strips sequences from output', () => {
-    const parser = new TerminalOscParser()
-    const onStart = vi.fn()
-    const onEnd = vi.fn()
-    const bytes = new TextEncoder().encode(
-      'before\x1b]133;C\x07mid\x1b]633;D;0\x07after',
-    )
-    const out = new TextDecoder().decode(
-      parser.feed(bytes, { onCommandStart: onStart, onCommandEnd: onEnd }),
-    )
-    expect(out).toBe('beforemidafter')
-    expect(onStart).toHaveBeenCalledTimes(1)
-    expect(onEnd).toHaveBeenCalledTimes(1)
+    expect(emit(2, '  🚀 build  ')).toEqual([true])
+    expect(emit(0, '   ')).toEqual([true])
+    expect(onTitle.mock.calls).toEqual([['build']])
+
+    expect(emit(133, 'C')).toEqual([true])
+    expect(emit(633, 'D;0')).toEqual([true])
+    expect(emit(133, 'B')).toEqual([true])
+    expect(onCommandStart).toHaveBeenCalledTimes(1)
+    expect(onCommandEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('swallows OSC codes xterm or addons would otherwise act on', () => {
+    const { registry, emit } = fakeRegistry()
+    registerTerminalOscHandlers(registry, {})
+    for (const ident of SUPPRESSED_OSC_IDENTS) expect(emit(ident, 'x')).toEqual([true])
+  })
+
+  it('disposes every registered handler', () => {
+    const { registry, handlers, disposed } = fakeRegistry()
+    const dispose = registerTerminalOscHandlers(registry, {})
+    dispose()
+    expect([...disposed].sort((a, b) => a - b)).toEqual([...handlers.keys()].sort((a, b) => a - b))
   })
 })

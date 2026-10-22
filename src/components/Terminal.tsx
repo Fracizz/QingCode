@@ -55,7 +55,7 @@ import {
   type TerminalGridSize,
 } from '@/lib/terminal/terminalResizePolicy'
 import { waitForTerminalRender } from '@/lib/terminal/terminalRenderBarrier'
-import { TerminalOscParser } from '../utils/terminalOsc'
+import { registerTerminalOscHandlers } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
 import { isSshResource, isTauri } from '../lib/tauri'
@@ -639,30 +639,30 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       if (status !== 'exited') writeToTerminal(terminalId, data)
     })
     // 程序通过 OSC 设置窗口标题时自动更新标签名（如 opencode）；运行任务终端不跟随。
+    // 直接挂在 xterm 解析器上处理，输出字节原样写入；须在 ClipboardAddon 之后注册以拦截 OSC 52。
+    const disposeOscHandlers = registerTerminalOscHandlers(term.parser, {
+      onTitle: title => {
+        const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+        // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.
+        // Generic ConPTY/PowerShell titles are ignored (see shouldApplyOscTabTitle).
+        if (shouldApplyOscTabTitle(current, title)) {
+          useTerminalStore.getState().renameTerminal(terminalId, title)
+        }
+      },
+      onCommandStart: () => markTerminalCommandStarted(terminalId),
+      onCommandEnd: () => markTerminalCommandFinished(terminalId),
+    })
     // xterm 积压超过高水位时暂停 PTY 读取，保证按键回显不被大段输出淹没。
     const flowHolder = {}
     const writeFlow = new TerminalWriteFlow(paused =>
       setTerminalOutputPaused(terminalId, flowHolder, paused)
     )
     let unsubscribeOutput: (() => void) | undefined
-    const oscParser = new TerminalOscParser()
     const subscribeTimer = window.setTimeout(() => {
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
-        const cleaned = oscParser.feed(data, {
-          onTitle: title => {
-            const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
-            // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.
-            // Generic ConPTY/PowerShell titles are ignored (see shouldApplyOscTabTitle).
-            if (shouldApplyOscTabTitle(current, title)) {
-              useTerminalStore.getState().renameTerminal(terminalId, title)
-            }
-          },
-          onCommandStart: () => markTerminalCommandStarted(terminalId),
-          onCommandEnd: () => markTerminalCommandFinished(terminalId),
-        })
-        const size = cleaned.length
+        const size = data.length
         writeFlow.written(size)
-        term.write(cleaned, () => writeFlow.parsed(size))
+        term.write(data, () => writeFlow.parsed(size))
       })
       const restored = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
       if (restored?.status === 'exited' && hadRestoredScrollback) {
@@ -741,6 +741,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       pendingPtySizeRef.current = null
       unsubscribeOutput?.()
       writeFlow.dispose()
+      disposeOscHandlers()
       window.removeEventListener(FONT_SETTINGS_EVENT, updateFont)
       window.removeEventListener(TERMINAL_SCROLLBACK_SETTINGS_EVENT, updateScrollback)
       window.removeEventListener(TERMINAL_CURSOR_SETTINGS_EVENT, updateCursor)
