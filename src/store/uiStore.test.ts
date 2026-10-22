@@ -28,6 +28,15 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+describe('showExplorerViewKeepingSidebar', () => {
+  it('leaves a collapsed sidebar collapsed', () => {
+    useUIStore.setState({ view: 'sourceControl', sidebarOpen: false })
+    useUIStore.getState().showExplorerViewKeepingSidebar()
+    expect(useUIStore.getState().view).toBe('explorer')
+    expect(useUIStore.getState().sidebarOpen).toBe(false)
+  })
+})
+
 describe('setPanelLayoutMode', () => {
   it('applies dual+editor presets', () => {
     useUIStore.getState().setPanelLayoutMode('sideDualEditor')

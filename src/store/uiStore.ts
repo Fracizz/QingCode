@@ -59,6 +59,8 @@ interface UIState {
   /** Whether the named multi-project workspace manager modal is open. */
   workspaceManagerOpen: boolean
   setView: (view: View) => void
+  /** 切换项目时回到资源管理器视图，但保留侧栏的展开/收起状态。 */
+  showExplorerViewKeepingSidebar: () => void
   /** Activity bar click: switch view, or collapse when clicking the active view again. */
   toggleActivityView: (view: View) => void
   setActivityBarHidden: (hidden: boolean) => void
@@ -152,6 +154,7 @@ export const useUIStore = create<UIState>((set) => ({
       persistColumns(columns)
       return { view, sidebarOpen: true, ...applyColumns(columns) }
     }),
+  showExplorerViewKeepingSidebar: () => set({ view: 'explorer' }),
   toggleActivityView: view =>
     set(state => {
       if (view === 'sourceControl' || view === 'settings') {

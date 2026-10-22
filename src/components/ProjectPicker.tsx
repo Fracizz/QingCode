@@ -81,7 +81,7 @@ export default function ProjectPicker() {
   const hideProjectsByIds = useProjectStore(s => s.hideProjectsByIds)
   const refreshProjectTree = useProjectStore(s => s.refreshProjectTree)
   const reorderVisibleProjects = useProjectStore(s => s.reorderVisibleProjects)
-  const setView = useUIStore(s => s.setView)
+  const showExplorerViewKeepingSidebar = useUIStore(s => s.showExplorerViewKeepingSidebar)
   const requestSearch = useUIStore(s => s.requestSearch)
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const openWorkspaceManager = useUIStore(s => s.openWorkspaceManager)
@@ -184,7 +184,8 @@ export default function ProjectPicker() {
   const handleSwitch = async (project: Project) => {
     if (suppressChipClickRef.current) return
     closeDropdown()
-    setView('explorer')
+    // 用户收起的侧栏不因切换项目而重新展开
+    showExplorerViewKeepingSidebar()
     await switchProject(project)
   }
 
