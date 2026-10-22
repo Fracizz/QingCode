@@ -34,7 +34,7 @@ export function isExplorerUploadZone(element: Element | null): boolean {
  * project root. Local projects and drops outside the tree are ignored.
  */
 export function sshUploadDropFromQuery(
-  project: { kind: string; path: string } | null | undefined,
+  project: { kind?: string; path: string } | null | undefined,
   query: { inUploadZone: boolean; hit: ExplorerDropHit | null },
 ): SshUploadDrop | null {
   if (!project || project.kind !== 'ssh' || !project.path) return null
