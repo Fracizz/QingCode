@@ -15,7 +15,7 @@ QingCode 的 SSH 工作区直接在 Tauri 后端建立 SSH/SFTP 连接，不要�
 
 - 通过 SFTP 浏览、读取、编辑、新建、重命名和删除远程文件。
 - 文件名搜索兼容常见 GNU/BusyBox `find`；内容搜索由远端 `rg` 执行，并固定按普通文本匹配。
-- 远程 PTY 终端和 Linux shell 任务。
+- 远程 PTY 终端。Linux 远端进入登录 shell；Windows OpenSSH 的盘符路径（`/D:/code/app`）启动 `powershell.exe` 并进入项目目录。
 - Git 状态、历史、分支与切换、远程地址、Diff、丢弃、暂存、提交、拉取、推送和获取。
 - 使用远端项目工具格式化文件（Prettier、rustfmt、gofmt、shfmt、ruff/black）。
 - 在本地与 SSH 项目之间上传或下载文件和目录。
@@ -33,6 +33,7 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 
 - 本地和 SSH 工作区均提供文件与文本导航，不提供语义定义跳转、引用查找或工作区符号搜索。
 - 内容搜索要求远端安装 `ripgrep`（`rg`），Git 功能要求远端安装 `git`。
-- 当前面向 POSIX/Linux 远端；不支持远端 PowerShell 或 BAT 任务。
+- Linux / POSIX 远端支持远程命令、Git、搜索、格式化和运行任务。Windows OpenSSH 只支持 SFTP 文件操作和交互式 PowerShell 终端；远程命令、Git、搜索、格式化以及 PowerShell / BAT 运行任务不可用。
+- 打开 SFTP 或终端通道若被远端拒绝（`ConnectFailed`），会丢掉当前连接并重连一次。家目录先用登录目录，否则再试 `/home/<用户>`、`/C:/Users/<用户>`、`/root` 和 `/`。
 - WSL 直连工作区尚未接入；可先通过 WSL 内的 SSH 服务使用同一 SSH 工作区能力。
 - 尚未提供远程扩展、端口转发、SSH Agent 转发和连接配置管理页。

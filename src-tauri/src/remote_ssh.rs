@@ -240,22 +240,34 @@ impl client::Handler for SshClient {
 
 struct ConnectedSession {
     handle: client::Handle<SshClient>,
+    config: Mutex<SshConnectionConfig>,
 }
 
-async fn open_sftp_session(session: &ConnectedSession) -> Result<SftpSession, String> {
+fn is_stale_channel_error(error: &str) -> bool {
+    error.contains("ConnectFailed")
+}
+
+async fn open_session_channel_once(
+    session: &ConnectedSession,
+    purpose: &str,
+) -> Result<russh::Channel<client::Msg>, String> {
     let mut retries = 0;
-    let channel = loop {
+    loop {
         match session.handle.channel_open_session().await {
-            Ok(channel) => break channel,
+            Ok(channel) => return Ok(channel),
             Err(russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed))
                 if retries < 2 =>
             {
                 retries += 1;
                 tokio::time::sleep(Duration::from_millis(150 * retries)).await;
             }
-            Err(error) => return Err(format!("打开 SSH SFTP 通道失败：{error}")),
+            Err(error) => return Err(format!("打开 SSH {purpose}通道失败：{error}")),
         }
-    };
+    }
+}
+
+async fn open_sftp_session(session: &ConnectedSession) -> Result<SftpSession, String> {
+    let channel = open_session_channel_once(session, "SFTP ").await?;
     channel
         .request_subsystem(true, "sftp")
         .await
@@ -280,6 +292,7 @@ pub struct SshManager {
     sessions: RwLock<HashMap<String, Arc<ConnectedSession>>>,
     roots: RwLock<HashMap<String, RegisteredRoot>>,
     terminals: RwLock<HashMap<String, Arc<RemoteTerminalWriter>>>,
+    reconnect_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl SshManager {
@@ -288,6 +301,82 @@ impl SshManager {
             sessions: RwLock::new(HashMap::new()),
             roots: RwLock::new(HashMap::new()),
             terminals: RwLock::new(HashMap::new()),
+            reconnect_gates: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn remember_config(
+        &self,
+        connection_id: &str,
+        config: SshConnectionConfig,
+    ) -> Result<(), String> {
+        let session = self.session(connection_id)?;
+        let mut stored = session
+            .config
+            .lock()
+            .map_err(|_| "SSH 连接状态不可用".to_string())?;
+        *stored = config;
+        Ok(())
+    }
+
+    fn reconnect_gate(&self, connection_id: &str) -> Result<Arc<tokio::sync::Mutex<()>>, String> {
+        let mut gates = self
+            .reconnect_gates
+            .lock()
+            .map_err(|_| "SSH 连接状态不可用".to_string())?;
+        Ok(gates
+            .entry(connection_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone())
+    }
+
+    async fn reconnect_after_channel_failure(
+        &self,
+        connection_id: &str,
+        failed: &Arc<ConnectedSession>,
+    ) -> Result<Arc<ConnectedSession>, String> {
+        let gate = self.reconnect_gate(connection_id)?;
+        let _guard = gate.lock().await;
+        if let Ok(current) = self.session(connection_id) {
+            if !Arc::ptr_eq(&current, failed) {
+                return Ok(current);
+            }
+        }
+        let config = failed
+            .config
+            .lock()
+            .map_err(|_| "SSH 连接状态不可用".to_string())?
+            .clone();
+        let old = self
+            .sessions
+            .write()
+            .map_err(|_| "SSH 连接状态不可用".to_string())?
+            .remove(connection_id);
+        if let Some(old) = old {
+            let _ = old
+                .handle
+                .disconnect(Disconnect::ByApplication, "QingCode reconnect", "en")
+                .await;
+        }
+        let (connected, _) = store_authenticated_session(self, config).await?;
+        Ok(connected)
+    }
+
+    async fn open_session_channel(
+        &self,
+        connection_id: &str,
+        purpose: &str,
+    ) -> Result<russh::Channel<client::Msg>, String> {
+        let session = self.session(connection_id)?;
+        match open_session_channel_once(&session, purpose).await {
+            Ok(channel) => Ok(channel),
+            Err(error) if is_stale_channel_error(&error) => {
+                let session = self
+                    .reconnect_after_channel_failure(connection_id, &session)
+                    .await?;
+                open_session_channel_once(&session, purpose).await
+            }
+            Err(error) => Err(error),
         }
     }
 
@@ -344,7 +433,16 @@ impl SshManager {
 
     async fn open_sftp(&self, connection_id: &str) -> Result<SftpSession, String> {
         let session = self.session(connection_id)?;
-        open_sftp_session(&session).await
+        match open_sftp_session(&session).await {
+            Ok(sftp) => Ok(sftp),
+            Err(error) if is_stale_channel_error(&error) => {
+                let session = self
+                    .reconnect_after_channel_failure(connection_id, &session)
+                    .await?;
+                open_sftp_session(&session).await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn sftp_for_uri(
@@ -365,13 +463,11 @@ impl SshManager {
         require_trust: bool,
     ) -> Result<RemoteExecResult, String> {
         let parsed = parse_remote_uri(uri)?;
+        reject_windows_remote_command(&parsed.path)?;
         self.root_for_uri(uri, require_trust)?;
-        let session = self.session(&parsed.connection_id)?;
-        let mut channel = session
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|error| format!("打开 SSH 命令通道失败：{error}"))?;
+        let mut channel = self
+            .open_session_channel(&parsed.connection_id, "命令")
+            .await?;
         channel
             .exec(true, command.as_bytes())
             .await
@@ -403,13 +499,11 @@ impl SshManager {
         require_trust: bool,
     ) -> Result<RemoteExecResult, String> {
         let parsed = parse_remote_uri(uri)?;
+        reject_windows_remote_command(&parsed.path)?;
         self.root_for_uri(uri, require_trust)?;
-        let session = self.session(&parsed.connection_id)?;
-        let mut channel = session
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|error| format!("打开 SSH 命令通道失败：{error}"))?;
+        let mut channel = self
+            .open_session_channel(&parsed.connection_id, "命令")
+            .await?;
         channel
             .exec(true, command.as_bytes())
             .await
@@ -532,11 +626,58 @@ fn home_path_candidates(username: &str) -> Vec<String> {
         paths.push("/root".to_string());
     } else if !username.is_empty() {
         paths.push(format!("/home/{username}"));
+        paths.push(format!("/C:/Users/{username}"));
     }
     paths.push("/root".to_string());
     paths.push("/".to_string());
     paths.dedup();
     paths
+}
+
+/// Windows OpenSSH SFTP paths look like `/D:/code/app`.
+fn windows_native_path(path: &str) -> Option<String> {
+    let rest = path.strip_prefix('/')?;
+    let mut chars = rest.chars();
+    let drive = chars.next()?;
+    if !drive.is_ascii_alphabetic() || chars.next() != Some(':') {
+        return None;
+    }
+    let native = rest.replace('/', "\\");
+    if native.ends_with(':') {
+        Some(format!("{native}\\"))
+    } else {
+        Some(native)
+    }
+}
+
+fn powershell_literal(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+const WINDOWS_REMOTE_COMMAND_ERROR: &str = "Windows SSH 项目暂不支持远程命令、Git、搜索和运行任务";
+
+fn reject_windows_remote_command(path: &str) -> Result<(), String> {
+    if windows_native_path(path).is_some() {
+        Err(WINDOWS_REMOTE_COMMAND_ERROR.to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn ssh_interactive_terminal_command(path: &str) -> Result<String, String> {
+    if let Some(native) = windows_native_path(path) {
+        if native.contains('"') || native.contains('\n') || native.contains('\r') {
+            return Err("Windows 远程路径包含无法用于 PowerShell 的字符".to_string());
+        }
+        return Ok(format!(
+            "powershell.exe -NoLogo -NoExit -Command \"Set-Location -LiteralPath '{}'\"",
+            powershell_literal(&native)
+        ));
+    }
+    Ok(format!(
+        "cd -- {} && exec \"${{SHELL:-/bin/sh}}\" -l",
+        shell_quote(path)
+    ))
 }
 
 async fn resolve_remote_home(sftp: &SftpSession, username: &str) -> String {
@@ -742,6 +883,29 @@ fn existing_session(manager: &SshManager, connection_id: &str) -> Option<Arc<Con
         .filter(|session| !session.handle.is_closed())
 }
 
+async fn store_authenticated_session(
+    manager: &SshManager,
+    config: SshConnectionConfig,
+) -> Result<(Arc<ConnectedSession>, String), String> {
+    let expected = config
+        .host_key_fingerprint
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let id = config.id.clone();
+    let (mut handle, fingerprint) = open_transport(&config, expected).await?;
+    authenticate(&mut handle, &config).await?;
+    let connected = Arc::new(ConnectedSession {
+        handle,
+        config: Mutex::new(config),
+    });
+    manager
+        .sessions
+        .write()
+        .map_err(|_| "SSH 连接状态不可用".to_string())?
+        .insert(id, Arc::clone(&connected));
+    Ok((connected, fingerprint))
+}
+
 #[tauri::command]
 pub async fn ssh_open_session(
     config: SshConnectionConfig,
@@ -752,21 +916,14 @@ pub async fn ssh_open_session(
         .clone()
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "连接前必须确认 SSH 主机指纹".to_string())?;
-    if existing_session(&manager, &config.id).is_some() {
-        let sftp = manager.open_sftp(&config.id).await?;
-        return Ok(SshSessionOpenResult {
-            fingerprint: expected,
-            home_path: resolve_remote_home(&sftp, &config.username).await,
-        });
-    }
-    let (mut handle, fingerprint) = open_transport(&config, Some(expected)).await?;
-    authenticate(&mut handle, &config).await?;
-    let connected = Arc::new(ConnectedSession { handle });
-    manager
-        .sessions
-        .write()
-        .map_err(|_| "SSH 连接状态不可用".to_string())?
-        .insert(config.id.clone(), Arc::clone(&connected));
+    let fingerprint = if existing_session(&manager, &config.id).is_some() {
+        manager.remember_config(&config.id, config.clone())?;
+        expected
+    } else {
+        let (_connected, fingerprint) =
+            store_authenticated_session(&manager, config.clone()).await?;
+        fingerprint
+    };
     let sftp = manager.open_sftp(&config.id).await?;
     Ok(SshSessionOpenResult {
         fingerprint,
@@ -833,14 +990,15 @@ pub async fn ssh_connect(
     if parsed_root.connection_id != config.id {
         return Err("SSH 项目与连接配置不匹配".to_string());
     }
-    let (connected, fingerprint) = if let Some(session) = existing_session(&manager, &config.id) {
-        (session, expected)
+    let fingerprint = if existing_session(&manager, &config.id).is_some() {
+        manager.remember_config(&config.id, config.clone())?;
+        expected
     } else {
-        let (mut handle, fingerprint) = open_transport(&config, Some(expected)).await?;
-        authenticate(&mut handle, &config).await?;
-        (Arc::new(ConnectedSession { handle }), fingerprint)
+        let (_connected, fingerprint) =
+            store_authenticated_session(&manager, config.clone()).await?;
+        fingerprint
     };
-    let sftp = open_sftp_session(&connected).await?;
+    let sftp = manager.open_sftp(&config.id).await?;
     let canonical_root = sftp
         .canonicalize(parsed_root.path)
         .await
@@ -852,11 +1010,6 @@ pub async fn ssh_connect(
     if !metadata.is_dir() {
         return Err("远程项目路径不是目录".to_string());
     }
-    manager
-        .sessions
-        .write()
-        .map_err(|_| "SSH 连接状态不可用".to_string())?
-        .insert(config.id.clone(), Arc::clone(&connected));
     manager
         .roots
         .write()
@@ -2200,12 +2353,9 @@ async fn spawn_ssh_terminal(
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&cwd)?;
     manager.root_for_uri(&cwd, true)?;
-    let session = manager.session(&parsed.connection_id)?;
-    let channel = session
-        .handle
-        .channel_open_session()
-        .await
-        .map_err(|error| format!("打开 SSH 终端通道失败：{error}"))?;
+    let channel = manager
+        .open_session_channel(&parsed.connection_id, "终端")
+        .await?;
     channel
         .request_pty(
             true,
@@ -2269,10 +2419,7 @@ pub async fn ssh_create_terminal(
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&cwd)?;
-    let command = format!(
-        "cd -- {} && exec \"${{SHELL:-/bin/sh}}\" -l",
-        shell_quote(&parsed.path)
-    );
+    let command = ssh_interactive_terminal_command(&parsed.path)?;
     spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, command).await
 }
 
@@ -2339,6 +2486,7 @@ pub async fn ssh_spawn_script(
         return Err("SSH Linux 项目暂不支持 PowerShell 或 BAT 任务".to_string());
     }
     let parsed = parse_remote_uri(&cwd)?;
+    reject_windows_remote_command(&parsed.path)?;
     let target = if target.starts_with(SSH_URI_PREFIX) {
         parse_remote_uri(&target)?.path
     } else {
@@ -2617,6 +2765,7 @@ mod tests {
             home_path_candidates("owner"),
             vec![
                 "/home/owner".to_string(),
+                "/C:/Users/owner".to_string(),
                 "/root".to_string(),
                 "/".to_string()
             ]
@@ -2625,5 +2774,34 @@ mod tests {
             home_path_candidates("root"),
             vec!["/root".to_string(), "/".to_string()]
         );
+    }
+
+    #[test]
+    fn windows_drive_path_becomes_native_directory() {
+        assert_eq!(
+            windows_native_path("/D:/code/nem-panel").as_deref(),
+            Some(r"D:\code\nem-panel")
+        );
+        assert_eq!(windows_native_path("/C:").as_deref(), Some(r"C:\"));
+        assert!(windows_native_path("/home/owner/app").is_none());
+    }
+
+    #[test]
+    fn windows_terminal_starts_powershell_in_project() {
+        let command = ssh_interactive_terminal_command("/D:/code/it's").unwrap();
+        assert_eq!(
+            command,
+            "powershell.exe -NoLogo -NoExit -Command \"Set-Location -LiteralPath 'D:\\code\\it''s'\""
+        );
+        assert!(reject_windows_remote_command("/D:/code/nem-panel").is_err());
+    }
+
+    #[test]
+    fn linux_terminal_still_uses_login_shell() {
+        assert_eq!(
+            ssh_interactive_terminal_command("/home/owner/app").unwrap(),
+            "cd -- '/home/owner/app' && exec \"${SHELL:-/bin/sh}\" -l"
+        );
+        assert!(reject_windows_remote_command("/home/owner/app").is_ok());
     }
 }
