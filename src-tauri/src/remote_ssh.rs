@@ -665,19 +665,29 @@ fn reject_windows_remote_command(path: &str) -> Result<(), String> {
 }
 
 fn ssh_interactive_terminal_command(path: &str) -> Result<String, String> {
-    if let Some(native) = windows_native_path(path) {
-        if native.contains('"') || native.contains('\n') || native.contains('\r') {
-            return Err("Windows 远程路径包含无法用于 PowerShell 的字符".to_string());
-        }
-        return Ok(format!(
-            "powershell.exe -NoLogo -NoExit -Command \"Set-Location -LiteralPath '{}'\"",
-            powershell_literal(&native)
-        ));
+    if windows_native_path(path).is_some() {
+        // Windows OpenSSH starts the PTY in the user profile and wraps exec in
+        // the default shell, so a nested -Command does not change directory.
+        windows_terminal_enter_directory(path)?;
+        return Ok("powershell.exe -NoExit -NoLogo".to_string());
     }
     Ok(format!(
         "cd -- {} && exec \"${{SHELL:-/bin/sh}}\" -l",
         shell_quote(path)
     ))
+}
+
+fn windows_terminal_enter_directory(path: &str) -> Result<Option<String>, String> {
+    let Some(native) = windows_native_path(path) else {
+        return Ok(None);
+    };
+    if native.contains('"') || native.contains('\n') || native.contains('\r') {
+        return Err("Windows 远程路径包含无法用于 PowerShell 的字符".to_string());
+    }
+    Ok(Some(format!(
+        "Set-Location -LiteralPath '{}'\r",
+        powershell_literal(&native)
+    )))
 }
 
 async fn resolve_remote_home(sftp: &SftpSession, username: &str) -> String {
@@ -2353,6 +2363,7 @@ async fn spawn_ssh_terminal(
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&cwd)?;
     manager.root_for_uri(&cwd, true)?;
+    let enter_directory = windows_terminal_enter_directory(&parsed.path)?;
     let channel = manager
         .open_session_channel(&parsed.connection_id, "终端")
         .await?;
@@ -2373,19 +2384,25 @@ async fn spawn_ssh_terminal(
         .await
         .map_err(|error| format!("启动远程 Shell 失败：{error}"))?;
     let (mut reader, writer) = channel.split();
+    let writer = Arc::new(writer);
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
     manager
         .terminals
         .write()
         .map_err(|_| "SSH 终端状态不可用".to_string())?
-        .insert(id.clone(), Arc::new(writer));
+        .insert(id.clone(), Arc::clone(&writer));
 
     let app_clone = app.clone();
     let terminal_id = id.clone();
     tauri::async_runtime::spawn(async move {
+        let mut started_tx = Some(started_tx);
         let mut exit_code = 0;
         while let Some(message) = reader.wait().await {
             match message {
                 ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
+                    if let Some(tx) = started_tx.take() {
+                        let _ = tx.send(());
+                    }
                     let _ = app_clone.emit(
                         "terminal-data",
                         TerminalDataPayload {
@@ -2406,6 +2423,16 @@ async fn spawn_ssh_terminal(
             },
         );
     });
+    if let Some(input) = enter_directory {
+        // Wait until the interactive shell prints, then cd. Typing earlier is
+        // dropped while ssh-shellhost is still attaching the console.
+        let _ = tokio::time::timeout(Duration::from_millis(1500), started_rx).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        writer
+            .data_bytes(input.into_bytes())
+            .await
+            .map_err(|error| format!("进入项目目录失败：{error}"))?;
+    }
     Ok(TerminalSpawnResult::default())
 }
 
@@ -2788,11 +2815,25 @@ mod tests {
 
     #[test]
     fn windows_terminal_starts_powershell_in_project() {
-        let command = ssh_interactive_terminal_command("/D:/code/it's").unwrap();
         assert_eq!(
-            command,
-            "powershell.exe -NoLogo -NoExit -Command \"Set-Location -LiteralPath 'D:\\code\\it''s'\""
+            ssh_interactive_terminal_command("/D:/code/it's").unwrap(),
+            "powershell.exe -NoExit -NoLogo"
         );
+        assert_eq!(
+            windows_terminal_enter_directory("/D:/code/it's")
+                .unwrap()
+                .as_deref(),
+            Some("Set-Location -LiteralPath 'D:\\code\\it''s'\r")
+        );
+        assert_eq!(
+            windows_terminal_enter_directory("/D:/code/nem-panel")
+                .unwrap()
+                .as_deref(),
+            Some("Set-Location -LiteralPath 'D:\\code\\nem-panel'\r")
+        );
+        assert!(windows_terminal_enter_directory("/home/owner/app")
+            .unwrap()
+            .is_none());
         assert!(reject_windows_remote_command("/D:/code/nem-panel").is_err());
     }
 
