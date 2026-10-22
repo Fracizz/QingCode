@@ -71,7 +71,14 @@ Project management supports name/path search, visible/hidden filters, and sortin
 
 ### SSH remote workspaces
 
-Use title-bar `+` → **SSH** to connect to a remote host. Confirm its host fingerprint on first use, authenticate, then browse and select the remote project directory. SSH workspaces support SFTP file operations, remote PTY terminals, the Git workspace, local/remote file transfer, and multi-project search mixed with local projects. Workspace trust still gates writes, terminals, and command execution. Remote extensions, port forwarding, and SSH agent forwarding are not currently provided; see [SSH workspaces](./docs/ssh-workspaces.md) for the full capability and boundary list.
+Use title-bar `+` → **SSH** to connect to a remote host. Confirm its host fingerprint on first use, authenticate, then browse and select the remote project directory. Connection settings are stored separately from projects, and a passphrase-free private key can reconnect after restart. Sessions stay up with keepalive instead of being dropped while idle.
+
+Linux / POSIX remotes support SFTP, a remote PTY, the Git workspace, formatting, run configurations, and multi-project search mixed with local projects. Windows OpenSSH can open a project on a drive-letter path; the terminal starts PowerShell or CMD as configured and is already in the project directory when the prompt appears. On Windows remotes, file operations and transfer to or from the local machine are available; remote Git, search, formatting, and run tasks are not.
+
+- Drag local files or folders onto the SSH file tree to upload them: a folder lands in that directory, a file lands in its parent, and empty space or the project title lands at the project root.
+- With `terminal.integrated.sshUploadOnPaste` enabled (off by default), pasting or dropping local files into an SSH terminal uploads them to the project's `.qingcode/terminal-paste/` and pastes the remote path. Files or folders over 100MB are rejected. Settings and the terminal context menu can clean up that directory. A successful paste upload does not leave a transfer task row.
+
+Workspace trust still gates writes, terminals, and command execution. Remote extensions, port forwarding, and SSH agent forwarding are not currently provided. See [SSH workspaces](./docs/ssh-workspaces.md) for the capability comparison and boundaries.
 
 ### Run configurations: start project services
 
