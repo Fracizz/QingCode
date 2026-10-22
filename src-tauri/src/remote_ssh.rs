@@ -701,11 +701,14 @@ fn reject_windows_remote_command(path: &str) -> Result<(), String> {
 }
 
 fn ssh_interactive_terminal_command(path: &str) -> Result<String, String> {
-    if windows_native_path(path).is_some() {
-        // Windows OpenSSH starts the PTY in the user profile and wraps exec in
-        // the default shell, so a nested -Command does not change directory.
-        windows_terminal_enter_directory(path)?;
-        return Ok("powershell.exe -NoExit -NoLogo".to_string());
+    if let Some(script) = windows_terminal_startup_script(path)? {
+        // OpenSSH prefixes the default shell and -c/ /c. -EncodedCommand keeps
+        // Set-Location inside that process, so the prompt opens in the project
+        // directory instead of echoing the command.
+        let encoded = encode_powershell_command(&script);
+        return Ok(format!(
+            "powershell.exe -NoLogo -NoExit -EncodedCommand {encoded}"
+        ));
     }
     Ok(format!(
         "cd -- {} && exec \"${{SHELL:-/bin/sh}}\" -l",
@@ -713,17 +716,49 @@ fn ssh_interactive_terminal_command(path: &str) -> Result<String, String> {
     ))
 }
 
-fn windows_terminal_enter_directory(path: &str) -> Result<Option<String>, String> {
+fn windows_terminal_startup_script(path: &str) -> Result<Option<String>, String> {
     let Some(native) = windows_native_path(path) else {
         return Ok(None);
     };
-    if native.contains('"') || native.contains('\n') || native.contains('\r') {
+    if native.contains('\n') || native.contains('\r') {
         return Err("Windows 远程路径包含无法用于 PowerShell 的字符".to_string());
     }
     Ok(Some(format!(
-        "Set-Location -LiteralPath '{}'\r",
+        "Set-Location -LiteralPath '{}'",
         powershell_literal(&native)
     )))
+}
+
+fn encode_powershell_command(script: &str) -> String {
+    let mut utf16 = Vec::with_capacity(script.len() * 2);
+    for unit in script.encode_utf16() {
+        utf16.extend_from_slice(&unit.to_le_bytes());
+    }
+    base64_encode(&utf16)
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = chunk.get(1).copied().unwrap_or(0);
+        let b2 = chunk.get(2).copied().unwrap_or(0);
+        let triple = (u32::from(b0) << 16) | (u32::from(b1) << 8) | u32::from(b2);
+        out.push(TABLE[((triple >> 18) & 0x3f) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3f) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((triple >> 6) & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(triple & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 async fn resolve_remote_home(sftp: &SftpSession, username: &str) -> String {
@@ -2394,7 +2429,6 @@ async fn spawn_ssh_terminal(
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&cwd)?;
     manager.root_for_uri(&cwd, true)?;
-    let enter_directory = windows_terminal_enter_directory(&parsed.path)?;
     let channel = manager
         .open_session_channel(&parsed.connection_id, "终端")
         .await?;
@@ -2417,12 +2451,6 @@ async fn spawn_ssh_terminal(
     let (mut reader, writer) = channel.split();
     let writer = Arc::new(writer);
     let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
-    let (started_tx, started_rx) = if enter_directory.is_some() {
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        (Some(tx), Some(rx))
-    } else {
-        (None, None)
-    };
     manager
         .terminals
         .write()
@@ -2438,14 +2466,10 @@ async fn spawn_ssh_terminal(
     let app_clone = app.clone();
     let terminal_id = id.clone();
     tauri::async_runtime::spawn(async move {
-        let mut started_tx = started_tx;
         let mut exit_code = 0;
         while let Some(message) = reader.wait().await {
             match message {
                 ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
-                    if let Some(tx) = started_tx.take() {
-                        let _ = tx.send(());
-                    }
                     let _ = app_clone.emit(
                         "terminal-data",
                         TerminalDataPayload {
@@ -2468,19 +2492,6 @@ async fn spawn_ssh_terminal(
     });
     let writer_for_input = Arc::clone(&writer);
     tauri::async_runtime::spawn(async move {
-        if let (Some(input), Some(started_rx)) = (enter_directory, started_rx) {
-            // Wait until the interactive shell prints, then cd. Typing earlier is
-            // queued and sent after the directory change.
-            let _ = tokio::time::timeout(Duration::from_millis(1500), started_rx).await;
-            tokio::time::sleep(Duration::from_millis(150)).await;
-            if writer_for_input
-                .data_bytes(input.into_bytes())
-                .await
-                .is_err()
-            {
-                return;
-            }
-        }
         while let Some(bytes) = input_rx.recv().await {
             if writer_for_input.data_bytes(bytes).await.is_err() {
                 break;
@@ -2878,22 +2889,19 @@ mod tests {
     #[test]
     fn windows_terminal_starts_powershell_in_project() {
         assert_eq!(
-            ssh_interactive_terminal_command("/D:/code/it's").unwrap(),
-            "powershell.exe -NoExit -NoLogo"
-        );
-        assert_eq!(
-            windows_terminal_enter_directory("/D:/code/it's")
+            windows_terminal_startup_script("/D:/code/it's")
                 .unwrap()
                 .as_deref(),
-            Some("Set-Location -LiteralPath 'D:\\code\\it''s'\r")
+            Some("Set-Location -LiteralPath 'D:\\code\\it''s'")
         );
+        assert_eq!(encode_powershell_command("A"), "QQA=");
+        let command = ssh_interactive_terminal_command("/D:/code/nem-panel").unwrap();
+        let encoded = encode_powershell_command("Set-Location -LiteralPath 'D:\\code\\nem-panel'");
         assert_eq!(
-            windows_terminal_enter_directory("/D:/code/nem-panel")
-                .unwrap()
-                .as_deref(),
-            Some("Set-Location -LiteralPath 'D:\\code\\nem-panel'\r")
+            command,
+            format!("powershell.exe -NoLogo -NoExit -EncodedCommand {encoded}")
         );
-        assert!(windows_terminal_enter_directory("/home/owner/app")
+        assert!(windows_terminal_startup_script("/home/owner/app")
             .unwrap()
             .is_none());
         assert!(reject_windows_remote_command("/D:/code/nem-panel").is_err());
