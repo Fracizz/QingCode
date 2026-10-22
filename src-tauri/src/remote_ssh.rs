@@ -1,6 +1,8 @@
 use crate::file_encoding;
 use crate::path_guard::PathAllowlist;
-use crate::terminal::{TerminalDataPayload, TerminalExitPayload, TerminalSpawnResult};
+use crate::terminal::{
+    encode_terminal_data, TerminalDataPayload, TerminalExitPayload, TerminalSpawnResult,
+};
 use russh::client;
 use russh::keys::{load_secret_key, HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{ChannelMsg, ChannelWriteHalf, Disconnect};
@@ -307,12 +309,15 @@ struct RegisteredRoot {
     trusted: bool,
 }
 
-type RemoteTerminalWriter = ChannelWriteHalf<client::Msg>;
+struct RemoteTerminalSession {
+    input: tokio::sync::mpsc::Sender<Vec<u8>>,
+    writer: Arc<ChannelWriteHalf<client::Msg>>,
+}
 
 pub struct SshManager {
     sessions: RwLock<HashMap<String, Arc<ConnectedSession>>>,
     roots: RwLock<HashMap<String, RegisteredRoot>>,
-    terminals: RwLock<HashMap<String, Arc<RemoteTerminalWriter>>>,
+    terminals: RwLock<HashMap<String, Arc<RemoteTerminalSession>>>,
     reconnect_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
@@ -2411,17 +2416,29 @@ async fn spawn_ssh_terminal(
         .map_err(|error| format!("启动远程 Shell 失败：{error}"))?;
     let (mut reader, writer) = channel.split();
     let writer = Arc::new(writer);
-    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
+    let (started_tx, started_rx) = if enter_directory.is_some() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
     manager
         .terminals
         .write()
         .map_err(|_| "SSH 终端状态不可用".to_string())?
-        .insert(id.clone(), Arc::clone(&writer));
+        .insert(
+            id.clone(),
+            Arc::new(RemoteTerminalSession {
+                input: input_tx,
+                writer: Arc::clone(&writer),
+            }),
+        );
 
     let app_clone = app.clone();
     let terminal_id = id.clone();
     tauri::async_runtime::spawn(async move {
-        let mut started_tx = Some(started_tx);
+        let mut started_tx = started_tx;
         let mut exit_code = 0;
         while let Some(message) = reader.wait().await {
             match message {
@@ -2433,7 +2450,7 @@ async fn spawn_ssh_terminal(
                         "terminal-data",
                         TerminalDataPayload {
                             id: terminal_id.clone(),
-                            data: data.to_vec(),
+                            data: encode_terminal_data(&data),
                         },
                     );
                 }
@@ -2449,16 +2466,27 @@ async fn spawn_ssh_terminal(
             },
         );
     });
-    if let Some(input) = enter_directory {
-        // Wait until the interactive shell prints, then cd. Typing earlier is
-        // dropped while ssh-shellhost is still attaching the console.
-        let _ = tokio::time::timeout(Duration::from_millis(1500), started_rx).await;
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        writer
-            .data_bytes(input.into_bytes())
-            .await
-            .map_err(|error| format!("进入项目目录失败：{error}"))?;
-    }
+    let writer_for_input = Arc::clone(&writer);
+    tauri::async_runtime::spawn(async move {
+        if let (Some(input), Some(started_rx)) = (enter_directory, started_rx) {
+            // Wait until the interactive shell prints, then cd. Typing earlier is
+            // queued and sent after the directory change.
+            let _ = tokio::time::timeout(Duration::from_millis(1500), started_rx).await;
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            if writer_for_input
+                .data_bytes(input.into_bytes())
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+        while let Some(bytes) = input_rx.recv().await {
+            if writer_for_input.data_bytes(bytes).await.is_err() {
+                break;
+            }
+        }
+    });
     Ok(TerminalSpawnResult::default())
 }
 
@@ -2576,17 +2604,24 @@ pub async fn ssh_write_terminal(
     data: String,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
-    let writer = manager
+    if data.len() > 1024 * 1024 {
+        return Err("单次终端输入不能超过 1MB，请分段粘贴".to_string());
+    }
+    let input = manager
         .terminals
         .read()
         .map_err(|_| "SSH 终端状态不可用".to_string())?
         .get(&id)
-        .cloned()
+        .map(|session| session.input.clone())
         .ok_or_else(|| "SSH 终端不存在".to_string())?;
-    writer
-        .data_bytes(data.into_bytes())
-        .await
-        .map_err(|error| format!("写入 SSH 终端失败：{error}"))
+    input
+        .try_send(data.into_bytes())
+        .map_err(|error| match error {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                "终端输入缓冲区已满，请等待当前命令处理后重试".to_string()
+            }
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => "终端输入通道已关闭".to_string(),
+        })
 }
 
 #[tauri::command]
@@ -2601,7 +2636,7 @@ pub async fn ssh_resize_terminal(
         .read()
         .map_err(|_| "SSH 终端状态不可用".to_string())?
         .get(&id)
-        .cloned()
+        .map(|session| Arc::clone(&session.writer))
         .ok_or_else(|| "SSH 终端不存在".to_string())?;
     writer
         .window_change(u32::from(cols), u32::from(rows), 0, 0)
@@ -2611,13 +2646,14 @@ pub async fn ssh_resize_terminal(
 
 #[tauri::command]
 pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Result<(), String> {
-    let writer = manager
+    let session = manager
         .terminals
         .write()
         .map_err(|_| "SSH 终端状态不可用".to_string())?
         .remove(&id);
-    if let Some(writer) = writer {
-        writer
+    if let Some(session) = session {
+        session
+            .writer
             .close()
             .await
             .map_err(|error| format!("关闭 SSH 终端失败：{error}"))?;

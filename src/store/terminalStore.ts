@@ -60,6 +60,7 @@ import {
 import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
 import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
 import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
+import { decodeTerminalEventData } from '../utils/terminalIpc'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 /** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
@@ -220,6 +221,7 @@ const terminalOutputListeners = new Map<string, Set<TerminalOutputListener>>()
 const terminalRingUpdatedAt = new Map<string, number>()
 const terminalPendingOutput = new Map<string, Uint8Array[]>()
 const terminalOutputFlushTimers = new Map<string, number>()
+const terminalOutputFlushRafIds = new Set<string>()
 
 let outputPersistTimer: ReturnType<typeof setTimeout> | null = null
 let outputPersistIdle: number | null = null
@@ -250,8 +252,19 @@ function combineOutputChunks(chunks: Uint8Array[]): Uint8Array {
   return combined
 }
 
-function flushTerminalOutput(id: string) {
+function cancelScheduledOutputFlush(id: string) {
+  const handle = terminalOutputFlushTimers.get(id)
+  if (handle === undefined) return
+  if (terminalOutputFlushRafIds.delete(id)) {
+    cancelAnimationFrame(handle)
+  } else {
+    clearTimeout(handle)
+  }
   terminalOutputFlushTimers.delete(id)
+}
+
+function flushTerminalOutput(id: string) {
+  cancelScheduledOutputFlush(id)
   const chunks = terminalPendingOutput.get(id)
   terminalPendingOutput.delete(id)
   if (!chunks?.length) return
@@ -261,19 +274,31 @@ function flushTerminalOutput(id: string) {
   listeners.forEach(listener => listener(combined))
 }
 
+function scheduleTerminalOutputFlush(id: string) {
+  if (terminalOutputFlushTimers.has(id)) return
+  const run = () => {
+    terminalOutputFlushTimers.delete(id)
+    terminalOutputFlushRafIds.delete(id)
+    flushTerminalOutput(id)
+  }
+  if (typeof requestAnimationFrame === 'function') {
+    terminalOutputFlushRafIds.add(id)
+    terminalOutputFlushTimers.set(id, requestAnimationFrame(run))
+  } else {
+    terminalOutputFlushTimers.set(id, window.setTimeout(run, 0))
+  }
+}
+
 function queueTerminalOutput(id: string, bytes: Uint8Array) {
   const chunks = terminalPendingOutput.get(id) ?? []
   chunks.push(bytes)
   terminalPendingOutput.set(id, chunks)
-  if (terminalOutputFlushTimers.has(id)) return
-  terminalOutputFlushTimers.set(
-    id,
-    window.setTimeout(() => flushTerminalOutput(id), 16),
-  )
+  scheduleTerminalOutputFlush(id)
 }
 
-function publishTerminalOutput(id: string, data: number[]) {
-  const bytes = new Uint8Array(data)
+function publishTerminalOutput(id: string, data: unknown) {
+  const bytes = decodeTerminalEventData(data)
+  if (!bytes) return
   recordPerformanceThroughput('terminalBytes', bytes.length)
   touchRing(id, bytes)
 
@@ -286,9 +311,7 @@ function publishTerminalOutput(id: string, data: number[]) {
 function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   terminalScrollbackRings.delete(id)
   terminalPendingOutput.delete(id)
-  const flushTimer = terminalOutputFlushTimers.get(id)
-  if (flushTimer !== undefined) window.clearTimeout(flushTimer)
-  terminalOutputFlushTimers.delete(id)
+  cancelScheduledOutputFlush(id)
   terminalCommandHistory.delete(id)
   terminalInputPending.delete(id)
   terminalRingUpdatedAt.delete(id)
@@ -349,9 +372,7 @@ export function subscribeTerminalOutput(id: string, listener: TerminalOutputList
     if (listeners.size === 0) {
       terminalOutputListeners.delete(id)
       terminalPendingOutput.delete(id)
-      const flushTimer = terminalOutputFlushTimers.get(id)
-      if (flushTimer !== undefined) window.clearTimeout(flushTimer)
-      terminalOutputFlushTimers.delete(id)
+      cancelScheduledOutputFlush(id)
     }
   }
 }
@@ -1446,7 +1467,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   initializeTerminalEvents: async () => {
     const [unlistenData, unlistenInputError, unlistenExit] = await Promise.all([
-      listen<{ id: string; data: number[] }>('terminal-data', event => {
+      listen<{ id: string; data: unknown }>('terminal-data', event => {
         if (get().terminals.some(terminal => terminal.id === event.payload.id)) {
           publishTerminalOutput(event.payload.id, event.payload.data)
         }

@@ -12,6 +12,14 @@ describe('parseShellIntegrationOsc', () => {
   })
 })
 
+describe('TerminalOscParser fast path', () => {
+  it('returns the same bytes when there is no OSC sequence', () => {
+    const parser = new TerminalOscParser()
+    const bytes = new Uint8Array([72, 101, 108, 108, 111])
+    expect(parser.feed(bytes)).toBe(bytes)
+  })
+})
+
 describe('TerminalOscParser shell integration', () => {
   it('fires command start/end and strips sequences from output', () => {
     const parser = new TerminalOscParser()

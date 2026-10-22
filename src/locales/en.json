@@ -848,6 +848,8 @@
     "已移动 {count} 项": "Moved {count} item(s)",
     "移动 {count} 项": "Move {count} item(s)",
     "移动到 {name}": "Move to {name}",
+    "上传到 {name}": "Upload to {name}",
+    "上传 {count} 项到 {name}": "Upload {count} items to {name}",
     "移动失败: {error}": "Could not move: {error}",
     "目标已存在": "Destination Exists",
     "「{name}」已存在。可直接改名后重命名，或覆盖 / 跳过。": "“{name}” already exists. Rename it below, or overwrite / skip.",

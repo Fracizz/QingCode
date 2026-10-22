@@ -10,7 +10,82 @@ use tauri::{AppHandle, Emitter};
 #[derive(serde::Serialize, Clone)]
 pub struct TerminalDataPayload {
     pub id: String,
-    pub data: Vec<u8>,
+    /// Base64 PTY bytes. JSON number arrays are too expensive for high-rate output.
+    pub data: String,
+}
+
+const TERMINAL_READ_BUF: usize = 32 * 1024;
+const TERMINAL_EMIT_COALESCE_MAX: usize = 32 * 1024;
+const TERMINAL_EMIT_CHANNEL: usize = 64;
+
+const BASE64_TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+pub(crate) fn encode_terminal_data(input: &[u8]) -> String {
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    let mut index = 0;
+    while index + 3 <= input.len() {
+        let n = (u32::from(input[index]) << 16)
+            | (u32::from(input[index + 1]) << 8)
+            | u32::from(input[index + 2]);
+        out.push(BASE64_TABLE[((n >> 18) & 63) as usize] as char);
+        out.push(BASE64_TABLE[((n >> 12) & 63) as usize] as char);
+        out.push(BASE64_TABLE[((n >> 6) & 63) as usize] as char);
+        out.push(BASE64_TABLE[(n & 63) as usize] as char);
+        index += 3;
+    }
+    match input.len() - index {
+        1 => {
+            let n = u32::from(input[index]) << 16;
+            out.push(BASE64_TABLE[((n >> 18) & 63) as usize] as char);
+            out.push(BASE64_TABLE[((n >> 12) & 63) as usize] as char);
+            out.push('=');
+            out.push('=');
+        }
+        2 => {
+            let n = (u32::from(input[index]) << 16) | (u32::from(input[index + 1]) << 8);
+            out.push(BASE64_TABLE[((n >> 18) & 63) as usize] as char);
+            out.push(BASE64_TABLE[((n >> 12) & 63) as usize] as char);
+            out.push(BASE64_TABLE[((n >> 6) & 63) as usize] as char);
+            out.push('=');
+        }
+        _ => {}
+    }
+    out
+}
+
+fn take_coalesced_terminal_output(
+    mut data: Vec<u8>,
+    mut try_recv: impl FnMut() -> Option<Vec<u8>>,
+    max_bytes: usize,
+) -> Vec<u8> {
+    while data.len() < max_bytes {
+        match try_recv() {
+            Some(more) => data.extend_from_slice(&more),
+            None => break,
+        }
+    }
+    data
+}
+
+fn spawn_terminal_data_emitter(app: AppHandle, id: String) -> std::sync::mpsc::SyncSender<Vec<u8>> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel::<Vec<u8>>(TERMINAL_EMIT_CHANNEL);
+    std::thread::spawn(move || {
+        while let Ok(first) = receiver.recv() {
+            let data = take_coalesced_terminal_output(
+                first,
+                || receiver.try_recv().ok(),
+                TERMINAL_EMIT_COALESCE_MAX,
+            );
+            let _ = app.emit(
+                "terminal-data",
+                TerminalDataPayload {
+                    id: id.clone(),
+                    data: encode_terminal_data(&data),
+                },
+            );
+        }
+    });
+    sender
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -184,22 +259,19 @@ impl TerminalManager {
 
         let app_clone = app.clone();
         let id_clone = id.clone();
+        let emit_tx = spawn_terminal_data_emitter(app_clone, id_clone);
 
         std::thread::spawn(move || {
             use std::io::Read;
             let mut reader = reader;
-            let mut buf = [0u8; 4096];
+            let mut buf = [0u8; TERMINAL_READ_BUF];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let _ = app_clone.emit(
-                            "terminal-data",
-                            TerminalDataPayload {
-                                id: id_clone.clone(),
-                                data: buf[..n].to_vec(),
-                            },
-                        );
+                        if emit_tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
                     }
                     Err(_) => break,
                 }
@@ -838,6 +910,30 @@ fn count_meaningful_child_processes(parent_pid: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn encode_terminal_data_uses_standard_base64() {
+        assert_eq!(super::encode_terminal_data(b"hello"), "aGVsbG8=");
+        assert_eq!(super::encode_terminal_data(&[0, 1, 255]), "AAH/");
+        assert_eq!(super::encode_terminal_data(&[]), "");
+    }
+
+    #[test]
+    fn coalesces_queued_pty_chunks_without_waiting() {
+        let mut rest = vec![vec![3_u8, 4], vec![5]];
+        let combined = super::take_coalesced_terminal_output(
+            vec![1, 2],
+            || {
+                if rest.is_empty() {
+                    None
+                } else {
+                    Some(rest.remove(0))
+                }
+            },
+            32,
+        );
+        assert_eq!(combined, vec![1, 2, 3, 4, 5]);
+    }
+
     #[test]
     fn blocked_writer_has_a_bounded_queue_and_does_not_block_other_writers() {
         struct PausedWriter {

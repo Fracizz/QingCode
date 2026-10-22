@@ -49,7 +49,7 @@ import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
-import { isSshResource, safeInvoke } from '../lib/tauri'
+import { isSshResource, isTauri, safeInvoke } from '../lib/tauri'
 import { openGitCompareWithHead } from '@/lib/git/gitCompare'
 import { confirmDialog } from '../store/confirmStore'
 import {
@@ -59,17 +59,25 @@ import {
 import { showPropertiesDialog } from '../store/propertiesStore'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { open } from '@tauri-apps/plugin-dialog'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import InlineCreateRow from './InlineCreateRow'
 import type { Project } from '../types'
 import {
   addPathToSet,
   collectAncestorDirs,
+  findProjectForPath,
   isDescendantOf,
   pathSetHas,
   pathsEqual,
 } from '../utils/fileReferences'
 import { baseName, findNodeByPath } from '../utils/fileTreeHelpers'
+import {
+  isExplorerUploadZone,
+  logicalDropPoint,
+  readExplorerDropHit,
+  sshUploadDropFromQuery,
+} from '../utils/sshExplorerDrop'
 import {
   createTreeDepth,
   dirsToReveal,
@@ -88,7 +96,7 @@ import {
 } from '../utils/projectActions'
 import { confirmOutsideSymlinkWrite } from '../utils/symlinkWriteGuard'
 import { formatBytes } from '../utils/formatBytes'
-import { useI18n } from '../lib/i18n'
+import { translate, useI18n } from '../lib/i18n'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import {
   COPY_RELATIVE_PATH_SHORTCUT,
@@ -135,7 +143,6 @@ function parentPath(path: string) {
   return separator > 0 ? path.slice(0, separator) : path
 }
 
-const EXPLORER_DROP_ATTR = 'data-explorer-drop'
 const DRAG_THRESHOLD_PX = 5
 const EMPTY_TREE: FileNode[] = []
 
@@ -144,11 +151,7 @@ function resolveExplorerDropFromPoint(
   clientX: number,
   clientY: number
 ): { path: string; isDir: boolean } | null {
-  const el = document.elementFromPoint(clientX, clientY)
-  const row = el?.closest(`[${EXPLORER_DROP_ATTR}]`) as HTMLElement | null
-  const path = row?.getAttribute(EXPLORER_DROP_ATTR)
-  if (!path) return null
-  return { path, isDir: row?.getAttribute('data-explorer-isdir') === '1' }
+  return readExplorerDropHit(document.elementFromPoint(clientX, clientY))
 }
 
 export default function Sidebar() {
@@ -222,6 +225,11 @@ export default function Sidebar() {
     active: boolean
     pointerId: number
   } | null>(null)
+  const externalDropActiveRef = useRef(false)
+  const externalDropPathsRef = useRef<string[]>([])
+  const uploadLocalPathsRef = useRef<(destination: string, paths: string[]) => Promise<void>>(
+    async () => {}
+  )
   const scrolledRevealSeqRef = useRef(0)
   const preserveScrollTopRef = useRef<number | null>(null)
   const treeRevealPath = useProjectStore(s => s.treeRevealPath)
@@ -1058,6 +1066,32 @@ export default function Sidebar() {
     }
   }
 
+  const uploadLocalPaths = useCallback(
+    async (destination: string, paths: string[]) => {
+      const selected = paths.map(path => path.trim()).filter(Boolean)
+      if (selected.length === 0) return
+      try {
+        await authorizePaths(selected)
+        await startSshTransfer({ direction: 'upload', destination, paths: selected })
+        const project = findProjectForPath(useProjectStore.getState().projects, destination)
+        if (project) {
+          if (pathsEqual(destination, project.path)) await refreshProjectTree(project)
+          else await expandProjectDir(project.id, destination, { force: true })
+        }
+        setExpandedPaths(existing => addPathToSet(existing, destination))
+      } catch (error) {
+        useProjectStore
+          .getState()
+          .pushToast('error', t('上传失败：{error}', { error: String(error) }))
+      }
+    },
+    [expandProjectDir, refreshProjectTree, t]
+  )
+
+  useEffect(() => {
+    uploadLocalPathsRef.current = uploadLocalPaths
+  }, [uploadLocalPaths])
+
   const uploadToRemote = async (destination: string, directory = false) => {
     const selected = await open({
       directory,
@@ -1069,17 +1103,79 @@ export default function Sidebar() {
       : typeof selected === 'string'
         ? [selected]
         : []
-    if (paths.length === 0) return
-    try {
-      await authorizePaths(paths)
-      await startSshTransfer({ direction: 'upload', destination, paths })
-      await refreshDirectory(destination)
-    } catch (error) {
-      useProjectStore
-        .getState()
-        .pushToast('error', t('上传失败：{error}', { error: String(error) }))
-    }
+    await uploadLocalPaths(destination, paths)
   }
+
+  useEffect(() => {
+    if (!isTauri()) return
+    const project = currentProject
+    if (!project || project.kind !== 'ssh' || unavailableProjectIds.includes(project.id)) return
+    let unlisten: (() => void) | undefined
+    let cancelled = false
+
+    const clearExternalHover = (forgetPaths = true) => {
+      if (forgetPaths) externalDropPathsRef.current = []
+      if (!externalDropActiveRef.current) return
+      externalDropActiveRef.current = false
+      if (explorerDragRef.current?.active) return
+      setDragOverPath(null)
+      setDragGhost(null)
+    }
+
+    const destinationLabel = (destination: string) =>
+      pathsEqual(destination, project.path) ? project.name : baseName(destination)
+
+    void getCurrentWebview()
+      .onDragDropEvent(event => {
+        const payload = event.payload
+        if (payload.type === 'leave') {
+          clearExternalHover()
+          return
+        }
+        if (explorerDragRef.current?.active) return
+        if (payload.type === 'enter') externalDropPathsRef.current = payload.paths
+        const point = logicalDropPoint(payload.position, window.devicePixelRatio)
+        const element = document.elementFromPoint(point.x, point.y)
+        const resolved = sshUploadDropFromQuery(project, {
+          inUploadZone: isExplorerUploadZone(element),
+          hit: readExplorerDropHit(element),
+        })
+        if (!resolved) {
+          clearExternalHover(payload.type === 'drop')
+          return
+        }
+        externalDropActiveRef.current = true
+        const count = (
+          payload.type === 'drop' ? payload.paths : externalDropPathsRef.current
+        ).length
+        const name = destinationLabel(resolved.destination)
+        setDragOverPath(prev =>
+          prev != null && pathsEqual(prev, resolved.highlight) ? prev : resolved.highlight
+        )
+        setDragGhost({
+          x: point.x,
+          y: point.y,
+          label:
+            count > 1
+              ? translate('上传 {count} 项到 {name}', { count, name })
+              : translate('上传到 {name}', { name }),
+        })
+        if (payload.type !== 'drop') return
+        clearExternalHover()
+        void uploadLocalPathsRef.current(resolved.destination, payload.paths)
+      })
+      .then(stop => {
+        if (cancelled) stop()
+        else unlisten = stop
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+      unlisten?.()
+      clearExternalHover()
+    }
+  }, [currentProject, unavailableProjectIds])
 
   const downloadFromRemote = async (paths: string[]) => {
     const destination = await open({
@@ -1710,6 +1806,7 @@ export default function Sidebar() {
                 <FavoriteItemsSection project={currentProject} />
 
                 <div
+                  data-explorer-upload=""
                   className="flex-1 min-h-0 flex flex-col"
                   onContextMenu={event =>
                     showContextMenu(event, { kind: 'project', project: currentProject })
