@@ -2365,7 +2365,12 @@ pub async fn ssh_git_push(path: String, manager: State<'_, SshManager>) -> Resul
 
 #[tauri::command]
 pub async fn ssh_git_fetch(path: String, manager: State<'_, SshManager>) -> Result<String, String> {
-    remote_git_simple(&manager, &path, vec!["fetch".to_string()]).await
+    remote_git_simple(
+        &manager,
+        &path,
+        vec!["fetch".to_string(), "--prune".to_string()],
+    )
+    .await
 }
 
 #[tauri::command]
@@ -2489,7 +2494,7 @@ pub async fn ssh_git_branch_list(
     )
     .await?;
     if local_output.exit_code != 0 {
-        return Err(format!("读取远程分支失败：{}", local_output.stderr.trim()));
+        return Err(format!("读取本地分支失败：{}", local_output.stderr.trim()));
     }
     let local = local_output
         .stdout
@@ -2520,8 +2525,13 @@ pub async fn ssh_git_branch_list(
         false,
     )
     .await?;
-    let remote = remote_output
-        .stdout
+    // 与本地实现一致：远程跟踪分支读取失败时按无远程分支处理。
+    let remote_stdout = if remote_output.exit_code == 0 {
+        remote_output.stdout.as_str()
+    } else {
+        ""
+    };
+    let remote = remote_stdout
         .lines()
         .map(str::trim)
         .filter(|name| !name.is_empty() && !name.ends_with("/HEAD"))
