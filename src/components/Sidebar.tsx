@@ -128,6 +128,8 @@ import { authorizePaths } from '../lib/pathAllowlist'
 import { requestSshReconnect } from '../lib/sshWorkspace'
 import { formatDirectoryErrorDetail } from '../lib/directoryError'
 import { startSshTransfer } from '../lib/sshTransfer'
+import { readClipboardFileList } from '../lib/sshTerminalPaste'
+import { planExplorerPaste, systemClipboardSignature } from '../lib/explorerPaste'
 
 type DirectoryDeleteStats = {
   path: string
@@ -230,6 +232,8 @@ export default function Sidebar() {
   const uploadLocalPathsRef = useRef<(destination: string, paths: string[]) => Promise<void>>(
     async () => {}
   )
+  // 应用内复制/剪切时系统剪贴板的文件签名，粘贴时据此判断系统剪贴板是否更新
+  const systemClipboardAtInternalCopyRef = useRef<string | null>(null)
   const scrolledRevealSeqRef = useRef(0)
   const preserveScrollTopRef = useRef<number | null>(null)
   const treeRevealPath = useProjectStore(s => s.treeRevealPath)
@@ -750,9 +754,17 @@ export default function Sidebar() {
     return anchorPath ? [anchorPath] : selectedPath ? [selectedPath] : []
   }
 
+  const rememberSystemClipboard = () => {
+    systemClipboardAtInternalCopyRef.current = null
+    void readClipboardFileList().then(files => {
+      systemClipboardAtInternalCopyRef.current = systemClipboardSignature(files)
+    })
+  }
+
   const cutExplorerPaths = (anchorPath?: string) => {
     const paths = pathsForClipboardAction(anchorPath)
     if (paths.length === 0) return
+    rememberSystemClipboard()
     setClipboard({ mode: 'cut', paths })
     useProjectStore.getState().pushToast('success', t('已剪切 {count} 项', { count: paths.length }))
   }
@@ -760,6 +772,7 @@ export default function Sidebar() {
   const copyExplorerPaths = (anchorPath?: string) => {
     const paths = pathsForClipboardAction(anchorPath)
     if (paths.length === 0) return
+    rememberSystemClipboard()
     setClipboard({ mode: 'copy', paths })
     useProjectStore.getState().pushToast('success', t('已复制 {count} 项', { count: paths.length }))
   }
@@ -868,10 +881,29 @@ export default function Sidebar() {
   }
 
   const pasteExplorerClipboard = async (hintPath?: string) => {
-    if (!clipboard || !currentProject) return
+    if (!currentProject) return
     const destDir = resolvePasteDest(hintPath)
     if (!destDir) return
-    const { mode, paths } = clipboard
+    // SSH 目标：系统剪贴板中的本机文件/文件夹直接上传
+    const systemFiles = isSshResource(destDir) ? await readClipboardFileList() : []
+    const plan = planExplorerPaste({
+      destDir,
+      clipboard,
+      systemFiles,
+      systemSignatureAtInternalCopy: systemClipboardAtInternalCopyRef.current,
+    })
+    if (plan.kind === 'none') {
+      if (isSshResource(destDir)) {
+        useProjectStore.getState().pushToast('info', t('剪贴板中没有可上传的本机文件'))
+      }
+      return
+    }
+    if (plan.kind === 'upload') {
+      // 跨本机/SSH 的剪切按复制处理，不删除本机源文件
+      await uploadLocalPathsRef.current(destDir, plan.paths)
+      return
+    }
+    const { mode, paths } = plan.clipboard
     try {
       const ok = await transferExplorerPaths(paths, destDir, mode)
       if (mode === 'cut') setClipboard(null)
@@ -1299,7 +1331,7 @@ export default function Sidebar() {
           label: t('粘贴'),
           icon: <ClipboardPaste size={14} />,
           shortcut: 'Ctrl+V',
-          disabled: unavailable || !clipboard || project.kind === 'ssh',
+          disabled: unavailable || (project.kind !== 'ssh' && !clipboard),
           action: () => void pasteExplorerClipboard(project.path),
         },
         {
@@ -1510,7 +1542,10 @@ export default function Sidebar() {
         label: t('粘贴'),
         icon: <ClipboardPaste size={14} />,
         shortcut: 'Ctrl+V',
-        disabled: !clipboard || isSshResource(node.path) !== clipboard.paths.every(p => isSshResource(p)),
+        // SSH 节点始终可粘贴：系统剪贴板中的本机文件会上传
+        disabled:
+          !isSshResource(node.path) &&
+          (!clipboard || clipboard.paths.some(p => isSshResource(p))),
         action: () => void pasteExplorerClipboard(node.is_dir ? node.path : parent),
       },
       {

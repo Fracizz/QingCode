@@ -18,7 +18,7 @@ QingCode 的 SSH 工作区直接在 Tauri 后端建立 SSH/SFTP 连接，不要�
 - 远程 PTY 终端。Linux 远端进入登录 shell；Windows OpenSSH 的盘符路径（`/D:/code/app`）支持根据用户配置启动 `powershell.exe -NoLogo`、`pwsh` 或 `cmd.exe`，提示符出现时直接进入项目根目录，不回显切目录命令，无版权横幅；远端 `DefaultShell` 为 cmd、PowerShell 或 Git Bash 时行为一致（启动命令整体加引号，切目录脚本走 `-EncodedCommand`）。设置 `terminal.integrated.sshUploadOnPaste`（默认关闭）开启后，在 SSH 终端里粘贴或拖入本机文件会先上传到项目内 `.qingcode/terminal-paste/`，再粘贴远端路径。超过 100MB 的文件或文件夹会被拒绝。设置页和终端右键可清理该目录。
 - Git 状态、历史、分支与切换、远程地址、Diff、丢弃、暂存、提交、拉取、推送和获取。
 - 使用远端项目工具格式化文件（Prettier、rustfmt、gofmt、shfmt、ruff/black）。
-- 在本地与 SSH 项目之间上传或下载文件和目录。资源管理器可右键上传，也可把本机文件或文件夹拖到 SSH 项目的文件树：文件夹接收到该目录，文件上则传到父目录，空白处和项目标题传到项目根。
+- 在本地与 SSH 项目之间上传或下载文件和目录。资源管理器可右键上传，也可把本机文件或文件夹拖到 SSH 项目的文件树：文件夹接收到该目录，文件上则传到父目录，空白处和项目标题传到项目根。在 SSH 项目里粘贴（Ctrl+V 或右键「粘贴」）时，系统剪贴板中的本机文件或文件夹、以及应用内复制的本地路径都会上传到目标目录；跨域剪切按复制处理，不删除本机源文件。
 - 多项目搜索可以混合本地项目和 SSH 项目。
 
 搜索结果会标明是否被截断；远程文件名搜索在匹配后限制结果数量，内容搜索先限制待扫描文件集合，再流式接收匹配结果。文件名搜索和内容搜索分别取消，切换查询会停止旧的后台搜索；单次远程搜索整体最长 45 秒。内容搜索的单文件匹配上限、8MB 文件清单、16MB 输出预算或单条 2MB 的输出记录上限同样会触发截断提示。搜索根目录在执行前通过 SFTP 解析真实路径，不允许从项目内的符号链接目录搜索到项目外。
@@ -51,7 +51,7 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 | 能力面 | Linux SSH vs 本地 | 说明 |
 |---|---|---|
 | 文本读写、新建、重命名、删除 | 已对齐 | 走 SFTP；删除不可作用于项目根 |
-| 资源管理器剪切 / 复制 / 粘贴 / 移动 | 已对齐 | 走 SFTP `ssh_move_path` / `ssh_copy_path_into`；跨域操作提示使用上传/下载 |
+| 资源管理器剪切 / 复制 / 粘贴 / 移动 | 已对齐 | 走 SFTP `ssh_move_path` / `ssh_copy_path_into`；粘贴本机文件/文件夹到 SSH 目录时自动上传 |
 | `files.exclude` / `explorer.excludeGitIgnore` | 部分对齐 | `ssh_scan_directory` 支持 `files.exclude` glob 排除；gitignore 排除仍仅本地 |
 | 操作系统文件监视与树自动刷新 | 仅本地 | SSH 不注册 watcher；切回窗口也不重扫远程树 |
 | 文件名 glob（如 `*.tsx`） | 仅本地 | 远程按字面子串匹配，`*` 是普通字符 |
@@ -70,7 +70,7 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 | 能力 | 状态 | 差距 |
 |---|---|---|
 | 浏览、读、写、新建文件/目录、重命名、删除 | 已对齐 | 写操作要求信任；SSH 拒绝删除项目根 |
-| 剪切、复制、粘贴、树内移动 | 已对齐 | 走 SFTP `ssh_move_path` / `ssh_copy_path_into`；跨域操作提示使用上传/下载；系统剪贴板复制文件仍仅本地 |
+| 剪切、复制、粘贴、树内移动 | 已对齐 | 走 SFTP `ssh_move_path` / `ssh_copy_path_into`；本机文件（系统剪贴板或应用内复制）粘贴到 SSH 目录时自动上传；SSH→本地仍需下载 |
 | 操作系统文件拖到文件树 | 仅 SSH | 拖入即上传；本地没有对等的导入路径 |
 | 上传 / 下载任务（进度、取消、重试、原子替换） | 仅 SSH | 只支持「本机 ↔ 当前 SSH 根」，不能 SSH↔SSH |
 | `files.exclude`、按 gitignore 隐藏 | 部分对齐 | `ssh_scan_directory` 支持 `files.exclude` glob 过滤；gitignore 隐藏仍仅本地 |

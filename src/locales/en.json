@@ -874,6 +874,7 @@
     "撤销": "Undo",
     "重做": "Redo",
     "粘贴失败: {error}": "Could not paste: {error}",
+    "剪贴板中没有可上传的本机文件": "No local files on the clipboard to upload",
     "从侧边栏打开文件开始编辑": "Open a file from the sidebar to start editing",
     "从侧边栏打开文件或选择项目开始工作": "Open a file from the sidebar or choose a project to start working",
     "文件: 自动保存": "Files: Auto Save",
