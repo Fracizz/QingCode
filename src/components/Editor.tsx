@@ -102,7 +102,6 @@ import {
 } from '../lib/editorSession'
 import { editorPerfProfileForTab, type EditorPerfProfile } from '../lib/fileSizePolicy'
 import { formatDocument } from '../lib/formatDocument'
-import { applyEffectiveSettings } from '../lib/effectiveSettings'
 import { copyPathAction, copyRelativePathAction } from '../lib/copyFileActions'
 import { COPY_RELATIVE_PATH_SHORTCUT } from '../lib/shortcuts'
 import { isSupportedEditorLanguage, loadLanguageSupport } from '../lib/editorLanguages'
@@ -447,7 +446,6 @@ export default function Editor() {
   const saveFile = useEditorStore(s => s.saveFile)
   const setCursor = useEditorStore(s => s.setCursor)
   const revealFileInTree = useProjectStore(s => s.revealFileInTree)
-  const currentProject = useProjectStore(s => s.currentProject)
   const setView = useUIStore(s => s.setView)
   const [contextMenu, setContextMenu] = useState<{
     x: number
@@ -592,10 +590,6 @@ export default function Editor() {
     window.addEventListener(THEME_SETTINGS_EVENT, onTheme)
     return () => window.removeEventListener(THEME_SETTINGS_EVENT, onTheme)
   }, [])
-
-  useEffect(() => {
-    void applyEffectiveSettings(currentProject)
-  }, [currentProject])
 
   useEffect(() => {
     const onMinimap = (event: Event) => {

@@ -39,6 +39,7 @@ import { startSystemThemeListener } from './lib/themeSettings'
 import { clampSidebarWidth, loadSidebarWidth, saveSidebarWidth } from './lib/sidebarLayout'
 import { dismissStartupSplash } from './lib/startupSplash'
 import { migrateLegacySettings } from './lib/migrateLegacySettings'
+import { applyEffectiveSettings } from './lib/effectiveSettings'
 import { useI18n } from './lib/i18n'
 import { useShortcutStore } from './store/shortcutStore'
 import { useAutoSave } from './hooks/useAutoSave'
@@ -122,6 +123,11 @@ function App() {
   const loadProjects = useProjectStore(s => s.loadProjects)
   const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const [trustTick, setTrustTick] = useState(0)
+  // 运行时设置必须在 App 层加载：欢迎页或收起编辑器时 Editor 不挂载，
+  // 否则终端滚动缓冲、SSH 粘贴上传等设置会一直停留在默认值。
+  useEffect(() => {
+    void applyEffectiveSettings(currentProject)
+  }, [currentProject])
   useEffect(() => {
     const sync = () => setTrustTick(n => n + 1)
     window.addEventListener(WORKSPACE_TRUST_CHANGED_EVENT, sync)
