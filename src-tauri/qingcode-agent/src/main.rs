@@ -1,16 +1,26 @@
 //! `qingcode-agent` CLI 入口。
 //!
-//! stdout 保持安静：客户端靠轮询状态文件发现端口，任何常规输出都可能
-//! 干扰链路。错误一律走 stderr 并用非零退出码收尾
-//! （参数错误 2、已有同 root 实例在运行 3、其余启动失败 1）。
+//! 三个子命令共用一个二进制：
+//! - `serve`：旧的直连模式。`127.0.0.1` 上一条 TCP 连接承载一次操作，
+//!   由主程序现有客户端使用，行为保持不变；
+//! - `daemon`：常驻进程，持有 PTY 与监视状态，只监听本地 Unix socket；
+//! - `connect --stdio`：SSH exec 进程里的连接代理，把 stdio 与 socket 对接。
+//!
+//! stdout 保持安静（`connect` 的 stdout 就是数据通道）：所有诊断输出都走 stderr，
+//! 并用退出码区分原因（参数错误 2、已有同 root 实例在运行 3、其余启动失败 1）。
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use qingcode_agent::{bind_server, generate_token, AgentStateFile, ServerCtx, AGENT_VERSION};
 
-const USAGE: &str =
-    "用法: qingcode-agent (--version | serve --root <目录> --state <文件> [--port <端口>])";
+const USAGE: &str = "\
+用法:
+  qingcode-agent --version
+  qingcode-agent serve --root <目录> --state <文件> [--port <端口>]
+  qingcode-agent daemon [--state-dir <目录>] [--max-ptys <数量>] [--scrollback-bytes <字节>]
+                        [--detached-ttl-secs <秒>] [--idle-exit-secs <秒>]
+  qingcode-agent connect --stdio [--ensure-daemon] [--state-dir <目录>]";
 
 /// 已有同 root 实例在运行时的退出码。调用方据此判定「无需再起」，而不是启动失败。
 const EXIT_ALREADY_RUNNING: u8 = 3;
@@ -57,15 +67,31 @@ fn main() -> ExitCode {
         eprintln!("{USAGE}");
         return ExitCode::from(2);
     };
-    if command != "serve" {
-        eprintln!("未知子命令: {command}\n{USAGE}");
-        return ExitCode::from(2);
+    let rest = &args[1..];
+    match command.as_str() {
+        "serve" => run_serve(rest),
+        #[cfg(unix)]
+        "daemon" => run_daemon(rest),
+        #[cfg(unix)]
+        "connect" => run_connect(rest),
+        #[cfg(not(unix))]
+        "daemon" | "connect" => {
+            eprintln!("子命令 {command} 仅在 unix 远端可用\n{USAGE}");
+            ExitCode::from(2)
+        }
+        other => {
+            eprintln!("未知子命令: {other}\n{USAGE}");
+            ExitCode::from(2)
+        }
     }
+}
 
+/// `serve`：保持既有行为与退出码，只把参数起点改成切片。
+fn run_serve(args: &[String]) -> ExitCode {
     let mut root: Option<PathBuf> = None;
     let mut state: Option<PathBuf> = None;
     let mut port = 0u16;
-    let mut index = 1;
+    let mut index = 0;
     while index < args.len() {
         let flag = args[index].as_str();
         let Some(value) = args.get(index + 1) else {
@@ -156,6 +182,135 @@ fn main() -> ExitCode {
         }
     });
     ExitCode::SUCCESS
+}
+
+/// `daemon`：常驻进程。抢不到单实例锁时按成功退出（已有实例在服务）。
+#[cfg(unix)]
+fn run_daemon(args: &[String]) -> ExitCode {
+    let options = match parse_daemon_args(args) {
+        Ok(options) => options,
+        Err(message) => {
+            eprintln!("{message}\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    match qingcode_agent::daemon::run(options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("{message}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// `connect --stdio`：代理退出即代表本次 SSH 会话结束，不触碰 daemon。
+#[cfg(unix)]
+fn run_connect(args: &[String]) -> ExitCode {
+    let options = match parse_connect_args(args) {
+        Ok(options) => options,
+        Err(message) => {
+            eprintln!("{message}\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    match qingcode_agent::connect::run_stdio(options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("{message}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+#[cfg(unix)]
+fn parse_daemon_args(args: &[String]) -> Result<qingcode_agent::daemon::DaemonOptions, String> {
+    use qingcode_agent::daemon::DaemonOptions;
+
+    let mut options = DaemonOptions::default();
+    let mut index = 0;
+    while index < args.len() {
+        let flag = args[index].as_str();
+        let Some(value) = args.get(index + 1) else {
+            return Err(format!("参数 {flag} 缺少取值"));
+        };
+        match flag {
+            // `--state` 是 serve 的状态文件；daemon 这里收它的目录形式，
+            // 两个名字都接受，避免调用方记混。
+            "--state-dir" | "--state" => options.state_dir = Some(PathBuf::from(value)),
+            "--max-ptys" => options.max_ptys = parse_usize(flag, value)?,
+            "--scrollback-bytes" => options.scrollback_bytes = parse_usize(flag, value)?,
+            "--pty-buffer-bytes" => options.pty_buffer_bytes = parse_usize(flag, value)?,
+            "--detached-ttl-secs" => {
+                options.detached_ttl = std::time::Duration::from_secs(parse_u64(flag, value)?)
+            }
+            "--idle-exit-secs" => {
+                options.idle_exit = std::time::Duration::from_secs(parse_u64(flag, value)?)
+            }
+            other => return Err(format!("未知参数: {other}")),
+        }
+        index += 2;
+    }
+    if options.max_ptys == 0 {
+        return Err("--max-ptys 必须大于 0".to_string());
+    }
+    Ok(options)
+}
+
+#[cfg(unix)]
+fn parse_connect_args(args: &[String]) -> Result<qingcode_agent::connect::ConnectOptions, String> {
+    use qingcode_agent::connect::ConnectOptions;
+
+    let mut options = ConnectOptions::default();
+    let mut stdio = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--stdio" => {
+                stdio = true;
+                index += 1;
+                continue;
+            }
+            "--ensure-daemon" => {
+                options.ensure_daemon = true;
+                index += 1;
+                continue;
+            }
+            flag => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err(format!("参数 {flag} 缺少取值"));
+                };
+                match flag {
+                    "--state-dir" | "--state" => {
+                        options.state_dir = Some(PathBuf::from(value));
+                    }
+                    "--start-timeout-secs" => {
+                        options.start_timeout =
+                            std::time::Duration::from_secs(parse_u64(flag, value)?);
+                    }
+                    other => return Err(format!("未知参数: {other}")),
+                }
+                index += 2;
+            }
+        }
+    }
+    if !stdio {
+        return Err("connect 需要 --stdio（本期只支持 stdio 代理模式）".to_string());
+    }
+    Ok(options)
+}
+
+#[cfg(unix)]
+fn parse_usize(flag: &str, value: &str) -> Result<usize, String> {
+    value
+        .parse::<usize>()
+        .map_err(|_| format!("{flag} 需要非负整数，实际为 {value}"))
+}
+
+#[cfg(unix)]
+fn parse_u64(flag: &str, value: &str) -> Result<u64, String> {
+    value
+        .parse::<u64>()
+        .map_err(|_| format!("{flag} 需要非负整数，实际为 {value}"))
 }
 
 /// 写出状态文件供客户端发现端口与 token，失败时进程以非零码退出。
@@ -270,5 +425,47 @@ mod tests {
         write_state(&state, u32::MAX, &root);
         assert_eq!(conflicting_instance(&state, &root), None);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_args_parse_and_reject_bad_values() {
+        let args = vec![
+            "--state-dir".to_string(),
+            "/tmp/run".to_string(),
+            "--max-ptys".to_string(),
+            "8".to_string(),
+            "--scrollback-bytes".to_string(),
+            "4096".to_string(),
+            "--detached-ttl-secs".to_string(),
+            "60".to_string(),
+        ];
+        let options = parse_daemon_args(&args).unwrap();
+        assert_eq!(options.state_dir, Some(PathBuf::from("/tmp/run")));
+        assert_eq!(options.max_ptys, 8);
+        assert_eq!(options.scrollback_bytes, 4096);
+        assert_eq!(options.detached_ttl, std::time::Duration::from_secs(60));
+
+        assert!(parse_daemon_args(&["--max-ptys".to_string(), "0".to_string()]).is_err());
+        assert!(parse_daemon_args(&["--max-ptys".to_string(), "abc".to_string()]).is_err());
+        assert!(parse_daemon_args(&["--bogus".to_string(), "1".to_string()]).is_err());
+        assert!(parse_daemon_args(&["--max-ptys".to_string()]).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connect_args_require_stdio() {
+        assert!(parse_connect_args(&["--ensure-daemon".to_string()]).is_err());
+        let options = parse_connect_args(&[
+            "--stdio".to_string(),
+            "--ensure-daemon".to_string(),
+            "--state-dir".to_string(),
+            "/tmp/run".to_string(),
+        ])
+        .unwrap();
+        assert!(options.ensure_daemon);
+        assert_eq!(options.state_dir, Some(PathBuf::from("/tmp/run")));
+        assert_eq!(options.start_timeout, std::time::Duration::from_secs(10));
+        assert!(parse_connect_args(&["--stdio".to_string(), "--nope".to_string()]).is_err());
     }
 }

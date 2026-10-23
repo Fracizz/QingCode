@@ -138,12 +138,19 @@ pub fn watch_loop(
         .map_err(|e| format!("注册目录监视失败: {e}"))?;
 
     let mut filter = EmitFilter::new(root);
+    // 注册递归监视时 notify 会枚举既有子目录，对每个子目录产出一条事件；
+    // 丢弃注册后 500ms 内的首批事件，避免客户端每次建立 watch 多一轮无谓刷新。
+    // 代价：恰好在建立监视的半秒内发生的真实修改也会被丢弃，属可接受取舍。
+    let registered_at = std::time::Instant::now();
     loop {
         if cancel.load(Ordering::SeqCst) {
             return Ok(());
         }
         match event_rx.recv_timeout(Duration::from_millis(250)) {
             Ok(Ok(events)) => {
+                if registered_at.elapsed() < Duration::from_millis(500) {
+                    continue;
+                }
                 for event in events {
                     let path = &event.path;
                     if !filter.should_emit(path) {

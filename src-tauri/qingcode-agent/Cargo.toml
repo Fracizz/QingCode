@@ -14,15 +14,26 @@ path = "src/lib.rs"
 name = "qingcode-agent"
 path = "src/main.rs"
 
-# 只使用主程序已在 Cargo.lock 中的依赖，避免为交叉编译引入新的 C 依赖，
-# 保证 x86_64/aarch64-unknown-linux-musl 纯 Rust 静态链接可用。
+# 依赖选择以「纯 Rust、无 C 依赖」为准，保证 x86_64/aarch64-unknown-linux-musl
+# 用 rust-lld 静态链接即可产出可直接下发的二进制。
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros", "fs", "signal"] }
+# 协议负载是 MessagePack（设计 §5.1），字节字段用 serde_bytes 走 bin 类型，
+# 避免 Vec<u8> 被编码成整数数组而膨胀数倍。
+rmp-serde = "1"
+serde_bytes = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "io-std", "time", "sync", "macros", "fs", "signal"] }
 ignore = "0.4.29"
 grep-searcher = "0.1.17"
 grep-regex = "0.1.14"
 grep-matcher = "0.1.9"
 notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
+# PTY 宿主（pty.rs）：portable-pty 在 Linux/macOS 走 openpty、Windows 走 ConPTY；
+# vt100 提供无界面终端模拟器，用于断线后的屏幕快照。
+portable-pty = "0.8"
+vt100 = "0.15"
+# flock / setsid / SIGHUP 等只有 unix 需要，Windows 目标上不会被链接。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

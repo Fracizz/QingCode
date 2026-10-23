@@ -8,9 +8,15 @@
 //! 按操作回 `records`（流式记录）/ `done`（结束）/ `error`；`watch` 连接会持续
 //! 推送事件记录，直到客户端断开。
 
-// 实现层：文件系统操作与文件监视，协议契约全部在本文件内定义。
+// 实现层：文件系统操作、文件监视与 PTY 宿主，协议契约全部在本文件内定义。
 mod ops;
+mod pty;
 mod watch;
+
+// 协议 v1 + daemon/connect：与上面的 `serve` 契约并存，互不影响。
+pub mod connect;
+pub mod daemon;
+pub mod proto;
 
 use serde::{Deserialize, Serialize};
 use std::io;
@@ -130,6 +136,11 @@ pub struct AgentStateFile {
 pub fn resolve_within_root(root: &Path, relative: &str) -> Result<PathBuf, String> {
     if relative.contains('\0') {
         return Err("路径包含无效字符".to_string());
+    }
+    // 绝对路径一律显式拒绝：静默重解释成 <root>/<绝对路径> 会把 /etc 之类
+    // 错误地映射进项目内的 etc/ 目录，报错信息也会误导调用方。
+    if relative.starts_with('/') {
+        return Err("路径越出了项目根".to_string());
     }
     let rel = relative.trim_matches('/');
     let mut path = root.to_path_buf();
@@ -495,6 +506,9 @@ mod tests {
         assert!(resolve_within_root(root, "../escape").is_err());
         assert!(resolve_within_root(root, "a/../../escape").is_err());
         assert!(resolve_within_root(root, "a\0b").is_err());
+        // 绝对路径必须显式拒绝，而不是被静默重解释成 <root>/etc。
+        assert!(resolve_within_root(root, "/etc").is_err());
+        assert!(resolve_within_root(root, "/srv/project/src").is_err());
     }
 
     #[test]
