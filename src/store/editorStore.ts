@@ -442,7 +442,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         } catch (e) {
           console.error('openFile failed:', e)
           if (!get().findTab(existing.id)) return
-          const { message, kind } = parseOpenFileError(e)
+          const { message, kind } = parseOpenFileError(e, path)
           set(s => {
             const next = mapTabEverywhere(s, existing.id, t => ({
               ...t,
@@ -493,7 +493,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     } catch (e) {
       console.error('openFile failed:', e)
       if (!get().findTab(id)) return
-      const { message, kind } = parseOpenFileError(e)
+      const { message, kind } = parseOpenFileError(e, path)
       set(s => {
         const next = mapTabEverywhere(s, id, t => ({
           ...t,
@@ -526,7 +526,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     } catch (e) {
       console.error('retryOpenFile failed:', e)
       if (!get().findTab(id)) return
-      const { message, kind } = parseOpenFileError(e)
+      const { message, kind } = parseOpenFileError(e, tab.path)
       set(s => {
         const next = mapTabEverywhere(s, id, t => ({
           ...t,
@@ -588,7 +588,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     } catch (e) {
       console.error('previewAnywayFromError failed:', e)
       if (!get().findTab(id)) return
-      const { message, kind } = parseOpenFileError(e)
+      const { message, kind } = parseOpenFileError(e, tab.path)
       set(s => {
         const next = mapTabEverywhere(s, id, t => ({
           ...t,
@@ -900,7 +900,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         } catch (e) {
           console.error('loadMissingTabContents failed:', e)
           if (!get().findTab(id)) return
-          const { message, kind } = parseOpenFileError(e)
+          const { message, kind } = parseOpenFileError(e, initial.path)
           set(s => {
             const next = mapTabEverywhere(s, id, t => ({
               ...t,

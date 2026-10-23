@@ -1648,6 +1648,12 @@ pub async fn ssh_read_file(
 ) -> Result<String, String> {
     let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
     ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    // Reject known-binary formats before pulling the whole file across SFTP.
+    if crate::binary_ext::is_binary_extension(&parsed.path) {
+        return Err(crate::binary_ext::unsupported_remote_binary_message(
+            &parsed.path,
+        ));
+    }
     let metadata = sftp
         .metadata(parsed.path.clone())
         .await
@@ -1673,6 +1679,13 @@ pub async fn ssh_detect_file_encoding(
 ) -> Result<String, String> {
     let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
     ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    // `detect` reads the head of the file; skip the round trip for formats that
+    // are binary by definition so the UI can name the real reason.
+    if crate::binary_ext::is_binary_extension(&parsed.path) {
+        return Err(crate::binary_ext::unsupported_remote_binary_message(
+            &parsed.path,
+        ));
+    }
     let bytes = sftp
         .read(parsed.path)
         .await
@@ -3786,7 +3799,7 @@ em-panel'"
         assert_eq!(cmd_target.resolved_shell, "cmd");
         assert_eq!(cmd_target.fallback_from, None);
         let cmd_percent = ssh_interactive_terminal_command("/D:/100%done", Some("cmd")).unwrap();
-        assert!(decoded_script(&cmd_percent.command, cmd_launcher).contains(r"'D:@%done'"));
+        assert!(decoded_script(&cmd_percent.command, cmd_launcher).contains(r"'D:\100%done'"));
         let cmd_root = ssh_interactive_terminal_command("/C:", Some("cmd")).unwrap();
         assert!(decoded_script(&cmd_root.command, cmd_launcher).contains(r"'C:'"));
 

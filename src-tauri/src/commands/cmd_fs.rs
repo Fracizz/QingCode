@@ -1,3 +1,4 @@
+use crate::binary_ext::{display_file_name, is_binary_extension, unsupported_text_file_message};
 use crate::file_encoding;
 use crate::path_guard::PathAllowlist;
 use serde::Serialize;
@@ -21,93 +22,6 @@ fn exceeds_editor_file_size_limit(size: u64) -> bool {
 
 fn exceeds_patch_file_size_limit(size: u64) -> bool {
     size > MAX_PATCH_FILE_SIZE
-}
-
-fn display_file_name(path: &str) -> &str {
-    Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(path)
-}
-
-fn file_extension_lower(name: &str) -> String {
-    Path::new(name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase()
-}
-
-fn is_binary_extension(name: &str) -> bool {
-    let ext = file_extension_lower(name);
-    matches!(
-        ext.as_str(),
-        "png"
-            | "jpg"
-            | "jpeg"
-            | "gif"
-            | "webp"
-            | "ico"
-            | "bmp"
-            | "woff"
-            | "woff2"
-            | "ttf"
-            | "otf"
-            | "eot"
-            | "pdf"
-            | "zip"
-            | "gz"
-            | "tar"
-            | "7z"
-            | "rar"
-            | "exe"
-            | "dll"
-            | "so"
-            | "dylib"
-            | "bin"
-            | "mp3"
-            | "mp4"
-            | "avi"
-            | "mov"
-            | "mkv"
-            | "wasm"
-            | "lock"
-            | "map"
-            | "pyc"
-            | "pyo"
-            | "pyd"
-            | "class"
-            | "o"
-            | "obj"
-            | "typed"
-            | "xlsx"
-            | "xlsm"
-            | "xls"
-            | "docx"
-            | "doc"
-            | "pptx"
-            | "ppt"
-            | "odt"
-            | "ods"
-            | "odp"
-            | "numbers"
-            | "pages"
-            | "key"
-            | "sqlite"
-            | "db"
-            | "7zip"
-    )
-}
-
-/// User-facing reason when a path cannot be opened as a text editor buffer.
-fn unsupported_text_file_message(path: &str) -> String {
-    let name = display_file_name(path);
-    let ext = file_extension_lower(name);
-    if !ext.is_empty() {
-        format!("暂不支持打开 .{ext} 格式（非文本文件），请用对应应用打开：{name}")
-    } else {
-        format!("暂不支持打开非文本或非 UTF-8 文件：{name}")
-    }
 }
 
 fn validate_entry_name(name: &str) -> Result<(), String> {

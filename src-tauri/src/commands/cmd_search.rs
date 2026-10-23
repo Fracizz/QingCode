@@ -1,3 +1,4 @@
+use crate::binary_ext::is_binary_extension;
 use crate::content_search;
 use crate::content_search::{
     ContentSearchOptions, ContentSearchResponse, DEFAULT_MAX_FILES_SCANNED, DEFAULT_MAX_MATCHES,
@@ -311,71 +312,6 @@ fn walk_file_extensions(
         }
         *counts.entry(ext).or_insert(0) += 1;
     }
-}
-
-fn is_binary_extension(name: &str) -> bool {
-    let ext = Path::new(name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    matches!(
-        ext.as_str(),
-        "png"
-            | "jpg"
-            | "jpeg"
-            | "gif"
-            | "webp"
-            | "ico"
-            | "bmp"
-            | "woff"
-            | "woff2"
-            | "ttf"
-            | "otf"
-            | "eot"
-            | "pdf"
-            | "zip"
-            | "gz"
-            | "tar"
-            | "7z"
-            | "rar"
-            | "exe"
-            | "dll"
-            | "so"
-            | "dylib"
-            | "bin"
-            | "mp3"
-            | "mp4"
-            | "avi"
-            | "mov"
-            | "mkv"
-            | "wasm"
-            | "lock"
-            | "map"
-            | "pyc"
-            | "pyo"
-            | "pyd"
-            | "class"
-            | "o"
-            | "obj"
-            | "typed"
-            | "xlsx"
-            | "xlsm"
-            | "xls"
-            | "docx"
-            | "doc"
-            | "pptx"
-            | "ppt"
-            | "odt"
-            | "ods"
-            | "odp"
-            | "numbers"
-            | "pages"
-            | "key"
-            | "sqlite"
-            | "db"
-            | "7zip"
-    )
 }
 
 /// Collect unique file extensions under the given project roots (ignores

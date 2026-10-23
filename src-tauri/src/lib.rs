@@ -1,5 +1,6 @@
 mod app_memory;
 mod app_paths;
+mod binary_ext;
 mod cli;
 mod clipboard_files;
 mod commands;
