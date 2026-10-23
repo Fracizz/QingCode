@@ -128,3 +128,39 @@ pnpm build
 | 仅 OpenCode/vim 闪烁 | 是否在 end 阶段立即 flush PTY resize；alternate 延迟是否仍为 100ms |
 | 拖动全程卡顿 | `pointermove` 是否新增 fit、canvas 复制、React 高频 setState 或 PTY 调用 |
 | 偶发一直显示旧画面 | render barrier/面板超时是否被删除；session 取消逻辑是否失效 |
+
+## 9. SIGWINCH 合并（TUI scrollback 放大问题）
+
+### 9.1 现象
+
+在终端里运行 Claude Code、OpenCode 等 inline 渲染的 TUI 后，终端前几屏被同一条启动
+banner（如 `Claude Code v2.x` / `Opus ... · Claude Pro`）反复刷满，滚动条暴涨，随后按
+`Ctrl+C` 才回到 shell。
+
+### 9.2 根因
+
+这是 TUI 侧的渲染缺陷被 resize 放大，不是 QingCode 把内容写重了：
+
+- Claude Code 在非 alternate screen 下重排（relayout）时，会把整屏内容**追加**进
+  scrollback，而不是原地重绘。已确认的上游问题：`anthropics/claude-code#46834`、
+  `#49086`、`#47235`、`#46462`。触发源包括 SIGWINCH、`Ctrl+O`、`Shift+Tab`、
+  超长输出突发。
+- 每次 PTY resize 都会同时产生两条重排信号：ConPTY 自身整屏 repaint + 应用收到
+  SIGWINCH。因此**一条多余的 resize = 一份重复的 banner**。
+- QingCode 在终端启动阶段本来会产生多次网格变化：初始 fit、`50/150/400ms` 补 fit、
+  `document.fonts.ready`、字体/主题设置下发；拖动主窗口时 ResizeObserver 更是每帧
+  变一次。旧实现在非拖动路径上**每次变化都立刻写 PTY**，`terminalStore.resizeTerminal`
+  也不去重，于是向上游放大成几十条 SIGWINCH。
+
+### 9.3 当前策略
+
+- `Terminal.tsx`：`onResize` 只保证「安静期（`TERMINAL_PTY_RESIZE_LEAD_GAP_MS`，
+  300ms）后的第一次变化」立即提交；窗口内的其余变化走 `schedulePtyResize` 合并成
+  一次（alternate 100ms / normal 500ms）。连续拖窗口期间 timer 不断重置，松手才发。
+- `terminalStore.resizeTerminal`：与上一次已下发的行列相同则直接返回，不触碰 PTY。
+- 不变量：任何情况下**同一段用户操作最多产生 1 次无意义 resize**。
+
+### 9.4 用户侧临时规避
+
+若仍遇到刷屏，可在启动前设置 `CLAUDE_CODE_NO_FLICKER=0`（关闭新版 flicker-free
+inline 重排）；部分版本/平台仍复现，属上游未修复问题。QingCode 侧只负责不再放大它。

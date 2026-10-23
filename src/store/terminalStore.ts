@@ -1504,6 +1504,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   resizeTerminal: async (id: string, cols: number, rows: number) => {
     const size = normalizePtySize(cols, rows)
+    const previous = lastPtySize.get(id)
+    // 行列没变就不要碰 PTY：ConPTY 每次 resize 都会整屏重绘，TUI 会跟着重排，
+    // 而 Claude Code 会把每次重排追加进 scrollback（上游 #46834）。
+    if (previous && previous.cols === size.cols && previous.rows === size.rows) return
     rememberPtySize(id, size.cols, size.rows)
     try {
       await resizeTerminal(id, size.cols, size.rows)

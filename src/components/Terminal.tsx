@@ -56,6 +56,7 @@ import {
 import {
   getTerminalPtyResizeDelay,
   isValidTerminalGridSize,
+  shouldSendPtyResizeNow,
   terminalGridSizeChanged,
   type TerminalGridSize,
 } from '@/lib/terminal/terminalResizePolicy'
@@ -195,6 +196,8 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   const ptyResizeTimerRef = useRef<number | null>(null)
   const pendingFitFlagsRef = useRef({ refresh: false, focusAfter: false })
   const pendingPtySizeRef = useRef<{ cols: number; rows: number } | null>(null)
+  /** 上一次真正写入 PTY 的尺寸时间，用于合并连续的 SIGWINCH。 */
+  const ptyResizeSentAtRef = useRef(0)
   const lastFitSizeRef = useRef({ w: 0, h: 0 })
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
@@ -381,7 +384,9 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     clearPtyResizeTimer()
     const pending = pendingPtySizeRef.current
     pendingPtySizeRef.current = null
-    if (pending) void resizeTerminal(terminalId, pending.cols, pending.rows)
+    if (!pending) return
+    ptyResizeSentAtRef.current = Date.now()
+    void resizeTerminal(terminalId, pending.cols, pending.rows)
   }, [clearPtyResizeTimer, resizeTerminal, terminalId])
 
   const schedulePtyResize = useCallback((next: TerminalGridSize) => {
@@ -633,13 +638,19 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     term.onResize(({ cols, rows }) => {
       // 拖动时合并 ConPTY 整屏刷新；暂停或松手后再发送最新行列。
-      if (isPanelResizing()) {
+      // 拖动结束后、启动字体加载、系统窗口连续缩放都会在很短时间内产生多次网格
+      // 变化，每条 SIGWINCH 都让 TUI 整屏重排一次（Claude Code 还会把每次重排
+      // 追加进 scrollback，见 anthropics/claude-code#46834）。因此只在「安静期」
+      // 后的第一次变化立即提交，300ms 内的其余变化合并成一次。
+      if (
+        isPanelResizing() ||
+        !shouldSendPtyResizeNow(ptyResizeSentAtRef.current, Date.now())
+      ) {
         schedulePtyResize({ cols, rows })
         return
       }
-      clearPtyResizeTimer()
-      pendingPtySizeRef.current = null
-      void resizeTerminal(terminalId, cols, rows)
+      pendingPtySizeRef.current = { cols, rows }
+      flushPendingPtyResize()
     })
     term.onData(data => {
       const status = useTerminalStore
@@ -810,6 +821,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     clearPtyResizeTimer,
     copySelection,
     fitSettledPanelGrid,
+    flushPendingPtyResize,
     isTerminalWritable,
     openSearch,
     pasteFromClipboard,
