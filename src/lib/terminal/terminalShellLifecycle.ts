@@ -27,3 +27,11 @@ export function restoredExitRecovery(options: {
   if (options.keepShell) return 'respawn'
   return 'locked'
 }
+
+/** SSH 断线后重开 Shell 的退避间隔；全部失败后停在已退出，可从标签手动重启。 */
+export const SSH_TERMINAL_RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 20_000] as const
+
+/** 第 `attempt` 次（从 0 开始）重连前的等待毫秒数；用完返回 null。 */
+export function sshTerminalReconnectDelay(attempt: number): number | null {
+  return SSH_TERMINAL_RECONNECT_DELAYS_MS[attempt] ?? null
+}

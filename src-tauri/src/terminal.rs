@@ -115,6 +115,8 @@ impl OutputGate {
 pub struct TerminalExitPayload {
     pub id: String,
     pub exit_code: u32,
+    /// SSH 连接断开导致的结束（不是进程自己退出）；本地终端恒为 false。
+    pub disconnected: bool,
 }
 
 #[derive(serde::Serialize, Clone)]
@@ -326,7 +328,14 @@ impl TerminalManager {
             };
             if is_current {
                 let exit_code = resolve_exit_code(status.map(|status| status.exit_code()).ok());
-                let _ = app.emit("terminal-exit", TerminalExitPayload { id, exit_code });
+                let _ = app.emit(
+                    "terminal-exit",
+                    TerminalExitPayload {
+                        id,
+                        exit_code,
+                        disconnected: false,
+                    },
+                );
             }
         });
 

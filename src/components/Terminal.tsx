@@ -8,6 +8,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import {
+  consumeTerminalDisconnectNotice,
   hasTerminalScrollback,
   subscribeTerminalOutput,
   useTerminalStore,
@@ -516,7 +517,11 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     const hadRestoredScrollback = hasTerminalScrollback(terminalId)
     // Restored scrollback is written via subscribeTerminalOutput; only show a
     // status line when there is nothing to replay (or after restore note).
-    if (tab?.status === 'exited' && !hadRestoredScrollback) {
+    if (
+      tab?.status === 'exited' &&
+      !consumeTerminalDisconnectNotice(terminalId) &&
+      !hadRestoredScrollback
+    ) {
       const detail =
         tab.exitCode === null
           ? translate('进程未启动')
@@ -888,6 +893,8 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         if (xtermRef.current !== term) return
         const latest = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
         if (!latest || latest.status !== 'exited') return
+        // 断线说明已由 store 写入输出，不再追加“进程未启动”。
+        if (!sessionOpen && consumeTerminalDisconnectNotice(terminalId)) return
         if (sessionOpen) {
           useTerminalStore.setState(state => ({
             terminals: state.terminals.map(tab =>

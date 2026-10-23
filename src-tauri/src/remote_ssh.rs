@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
-use tauri::{AppHandle, Emitter, State};
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 mod search;
@@ -246,38 +246,92 @@ struct ConnectedSession {
     config: Mutex<SshConnectionConfig>,
 }
 
-fn is_stale_channel_error(error: &str) -> bool {
-    [
-        "ConnectFailed",
-        "Keepalive timeout",
-        "Inactivity timeout",
-        "Connection closed",
-        "Connection timeout",
-    ]
-    .iter()
-    .any(|marker| error.contains(marker))
+/// 打开通道失败；`stale` 表示底层连接已不可用，应丢弃并重连。
+struct ChannelOpenError {
+    message: String,
+    stale: bool,
 }
+
+impl From<ChannelOpenError> for String {
+    fn from(error: ChannelOpenError) -> Self {
+        error.message
+    }
+}
+
+/// 按 russh 错误类型判断连接是否失效；在已关闭的连接上开通道得到的是
+/// `SendError` / `Disconnect`，而 keepalive 超时只会出现在后台连接任务里。
+fn is_stale_russh_error(error: &russh::Error) -> bool {
+    matches!(
+        error,
+        russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed)
+            | russh::Error::Disconnect
+            | russh::Error::HUP
+            | russh::Error::SendError
+            | russh::Error::RecvError
+            | russh::Error::KeepaliveTimeout
+            | russh::Error::InactivityTimeout
+            | russh::Error::ConnectionTimeout
+            | russh::Error::IO(_)
+    )
+}
+
+/// 服务端卡在横幅交换或认证时，russh 会无限等待；超时后才能把错误交给前端。
+const SSH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
+/// 会话已半死时 `channel_open_session` 也不会返回；超时后探测一次再决定是否重连。
+const SSH_CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
+const CHANNEL_OPEN_TIMEOUT_MARKER: &str = "通道超时";
+/// 主动探测的等待上限；连接只是慢时不应拆掉它（会杀掉所有远端终端）。
+const SSH_LIVENESS_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+/// 重连失败后的冷却期：并发的终端恢复直接复用这次失败，不排队逐个重试握手。
+const SSH_RECONNECT_FAILURE_COOLDOWN: Duration = Duration::from_secs(3);
+const SSH_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+/// 连续 5 次（约 75 秒）收不到任何回包才判定断开。
+const SSH_KEEPALIVE_MAX: usize = 4;
 
 fn ssh_client_config() -> client::Config {
     client::Config {
-        // russh does not reset its inactivity timer when it sends a keepalive.
-        // A 30s limit therefore drops Windows OpenSSH while ConPTY is still
-        // answering the previous probe. Keepalive failure is the disconnect signal.
+        // russh 只在收到回包时重置空闲计时器，发出保活本身不算；Windows OpenSSH
+        // 在 ConPTY 忙时回包很慢，空闲超时会误断。改为只以保活失败作为断开信号。
         inactivity_timeout: None,
-        keepalive_interval: Some(Duration::from_secs(20)),
-        keepalive_max: 8,
+        keepalive_interval: Some(SSH_KEEPALIVE_INTERVAL),
+        keepalive_max: SSH_KEEPALIVE_MAX,
         nodelay: true,
         ..Default::default()
     }
 }
 
+/// 发一次 ping 并等待回包；超时或连接已关闭都视为失效。
+async fn connection_responds(handle: &client::Handle<SshClient>) -> bool {
+    if handle.is_closed() {
+        return false;
+    }
+    matches!(
+        tokio::time::timeout(SSH_LIVENESS_PROBE_TIMEOUT, handle.send_ping()).await,
+        Ok(Ok(()))
+    ) && !handle.is_closed()
+}
+
 async fn open_session_channel_once(
     session: &ConnectedSession,
     purpose: &str,
-) -> Result<russh::Channel<client::Msg>, String> {
+) -> Result<russh::Channel<client::Msg>, ChannelOpenError> {
     let mut retries = 0;
     loop {
-        match session.handle.channel_open_session().await {
+        let opened = match tokio::time::timeout(
+            SSH_CHANNEL_OPEN_TIMEOUT,
+            session.handle.channel_open_session(),
+        )
+        .await
+        {
+            Ok(opened) => opened,
+            Err(_) => {
+                return Err(ChannelOpenError {
+                    message: format!("打开 SSH {purpose}{CHANNEL_OPEN_TIMEOUT_MARKER}，远端未响应"),
+                    stale: !connection_responds(&session.handle).await,
+                })
+            }
+        };
+        match opened {
             Ok(channel) => return Ok(channel),
             Err(russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed))
                 if retries < 2 =>
@@ -285,20 +339,31 @@ async fn open_session_channel_once(
                 retries += 1;
                 tokio::time::sleep(Duration::from_millis(150 * retries)).await;
             }
-            Err(error) => return Err(format!("打开 SSH {purpose}通道失败：{error}")),
+            Err(error) => {
+                return Err(ChannelOpenError {
+                    message: format!("打开 SSH {purpose}通道失败：{error}"),
+                    stale: is_stale_russh_error(&error) || session.handle.is_closed(),
+                })
+            }
         }
     }
 }
 
-async fn open_sftp_session(session: &ConnectedSession) -> Result<SftpSession, String> {
+async fn open_sftp_session(session: &ConnectedSession) -> Result<SftpSession, ChannelOpenError> {
     let channel = open_session_channel_once(session, "SFTP ").await?;
     channel
         .request_subsystem(true, "sftp")
         .await
-        .map_err(|error| format!("远端未启用 SFTP：{error}"))?;
+        .map_err(|error| ChannelOpenError {
+            message: format!("远端未启用 SFTP：{error}"),
+            stale: is_stale_russh_error(&error) || session.handle.is_closed(),
+        })?;
     let sftp = SftpSession::new(channel.into_stream())
         .await
-        .map_err(|error| format!("初始化 SFTP 失败：{error}"))?;
+        .map_err(|error| ChannelOpenError {
+            message: format!("初始化 SFTP 失败：{error}"),
+            stale: session.handle.is_closed(),
+        })?;
     sftp.set_timeout(30);
     Ok(sftp)
 }
@@ -323,11 +388,23 @@ fn claim_terminal_exit(alive: &AtomicBool) -> bool {
     alive.swap(false, Ordering::AcqRel)
 }
 
+/// 远端正常结束会先发 ExitStatus / ExitSignal / Close；什么都没收到就结束，
+/// 说明是连接断了，而不是 Shell 自己退出。
+fn is_terminal_end_message(message: &ChannelMsg) -> bool {
+    matches!(
+        message,
+        ChannelMsg::ExitStatus { .. } | ChannelMsg::ExitSignal { .. } | ChannelMsg::Close
+    )
+}
+
+/// 同一连接的重连串行执行；记住最近一次失败，冷却期内直接返回。
+type ReconnectGate = Arc<tokio::sync::Mutex<Option<(Instant, String)>>>;
+
 pub struct SshManager {
     sessions: RwLock<HashMap<String, Arc<ConnectedSession>>>,
     roots: RwLock<HashMap<String, RegisteredRoot>>,
     terminals: RwLock<HashMap<String, Arc<RemoteTerminalSession>>>,
-    reconnect_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    reconnect_gates: Mutex<HashMap<String, ReconnectGate>>,
 }
 
 impl SshManager {
@@ -354,27 +431,34 @@ impl SshManager {
         Ok(())
     }
 
-    fn reconnect_gate(&self, connection_id: &str) -> Result<Arc<tokio::sync::Mutex<()>>, String> {
+    fn reconnect_gate(&self, connection_id: &str) -> Result<ReconnectGate, String> {
         let mut gates = self
             .reconnect_gates
             .lock()
             .map_err(|_| "SSH 连接状态不可用".to_string())?;
         Ok(gates
             .entry(connection_id.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None)))
             .clone())
     }
 
+    /// 旧连接在新连接认证成功前一直留在表里：并发调用方会排队等这把锁而不是
+    /// 拿到“尚未建立”，重连失败时保存的配置（含密码）也不会丢。
     async fn reconnect_after_channel_failure(
         &self,
         connection_id: &str,
         failed: &Arc<ConnectedSession>,
     ) -> Result<Arc<ConnectedSession>, String> {
         let gate = self.reconnect_gate(connection_id)?;
-        let _guard = gate.lock().await;
-        if let Ok(current) = self.session(connection_id) {
-            if !Arc::ptr_eq(&current, failed) {
-                return Ok(current);
+        let mut last_failure = gate.lock().await;
+        // 等锁期间别人已重连成功则直接复用；连接被用户断开则不再复活。
+        let current = self.session(connection_id)?;
+        if !Arc::ptr_eq(&current, failed) {
+            return Ok(current);
+        }
+        if let Some((failed_at, error)) = last_failure.as_ref() {
+            if failed_at.elapsed() < SSH_RECONNECT_FAILURE_COOLDOWN {
+                return Err(error.clone());
             }
         }
         let config = failed
@@ -382,19 +466,35 @@ impl SshManager {
             .lock()
             .map_err(|_| "SSH 连接状态不可用".to_string())?
             .clone();
-        let old = self
-            .sessions
+        let connected = match authenticate_session(config).await {
+            Ok((connected, _)) => Arc::new(connected),
+            Err(error) => {
+                *last_failure = Some((Instant::now(), error.clone()));
+                return Err(error);
+            }
+        };
+        *last_failure = None;
+        self.sessions
             .write()
             .map_err(|_| "SSH 连接状态不可用".to_string())?
-            .remove(connection_id);
-        if let Some(old) = old {
-            let _ = old
-                .handle
-                .disconnect(Disconnect::ByApplication, "QingCode reconnect", "en")
-                .await;
-        }
-        let (connected, _) = store_authenticated_session(self, config).await?;
+            .insert(connection_id.to_string(), Arc::clone(&connected));
+        let _ = failed
+            .handle
+            .disconnect(Disconnect::ByApplication, "QingCode reconnect", "en")
+            .await;
         Ok(connected)
+    }
+
+    /// 读取端结束后移除终端记录；被替换的新终端（`alive` 不同）不受影响。
+    fn forget_terminal(&self, id: &str, alive: &Arc<AtomicBool>) {
+        if let Ok(mut terminals) = self.terminals.write() {
+            if terminals
+                .get(id)
+                .is_some_and(|session| Arc::ptr_eq(&session.alive, alive))
+            {
+                terminals.remove(id);
+            }
+        }
     }
 
     async fn live_session(&self, connection_id: &str) -> Result<Arc<ConnectedSession>, String> {
@@ -415,13 +515,13 @@ impl SshManager {
         let session = self.live_session(connection_id).await?;
         match open_session_channel_once(&session, purpose).await {
             Ok(channel) => Ok(channel),
-            Err(error) if is_stale_channel_error(&error) => {
+            Err(error) if error.stale => {
                 let session = self
                     .reconnect_after_channel_failure(connection_id, &session)
                     .await?;
-                open_session_channel_once(&session, purpose).await
+                Ok(open_session_channel_once(&session, purpose).await?)
             }
-            Err(error) => Err(error),
+            Err(error) => Err(error.message),
         }
     }
 
@@ -492,13 +592,13 @@ impl SshManager {
         let session = self.live_session(connection_id).await?;
         match open_sftp_session(&session).await {
             Ok(sftp) => Ok(sftp),
-            Err(error) if is_stale_channel_error(&error) => {
+            Err(error) if error.stale => {
                 let session = self
                     .reconnect_after_channel_failure(connection_id, &session)
                     .await?;
-                open_sftp_session(&session).await
+                Ok(open_sftp_session(&session).await?)
             }
-            Err(error) => Err(error),
+            Err(error) => Err(error.message),
         }
     }
 
@@ -546,6 +646,9 @@ impl SshManager {
         require_trust: bool,
     ) -> Result<RemoteExecResult, String> {
         let script = windows_git_script(native_root, args)?;
+        if let Some(command) = windows_powershell_inline_command(&script) {
+            return self.exec_command(uri, &command, None, require_trust).await;
+        }
         let input = encode_terminal_data(script.as_bytes());
         self.exec_command(
             uri,
@@ -797,6 +900,26 @@ fn windows_powershell_stdin_command() -> String {
         "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
         encode_terminal_data(&utf16)
     )
+}
+
+/// cmd.exe 单条命令行上限是 8191 字符，留出余量。
+const WINDOWS_INLINE_COMMAND_LIMIT: usize = 8000;
+
+/// 脚本直接放进 `-EncodedCommand`，不读 stdin。
+///
+/// 默认 shell 是 Git Bash 时，stdin 的 EOF 不一定传到 PowerShell，
+/// `ReadToEnd()` 会一直挂着，连接断开后进程也留在远端。命令行放不下时返回 None，
+/// 由调用方退回 stdin 方式。
+fn windows_powershell_inline_command(script: &str) -> Option<String> {
+    let utf16 = script
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    let command = format!(
+        "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand {}",
+        encode_terminal_data(&utf16)
+    );
+    (command.len() <= WINDOWS_INLINE_COMMAND_LIMIT).then_some(command)
 }
 
 /// 用 Process 直接启动 git 并原样转发 stdout 字节，避免 PowerShell 按行重编码破坏 `-z` 输出。
@@ -1124,21 +1247,46 @@ fn existing_session(manager: &SshManager, connection_id: &str) -> Option<Arc<Con
         .filter(|session| !session.handle.is_closed())
 }
 
-async fn store_authenticated_session(
-    manager: &SshManager,
+fn ssh_handshake_timeout_error(config: &SshConnectionConfig) -> String {
+    format!(
+        "SSH 连接超时：{}:{} 在 {} 秒内未完成握手，请检查远端 sshd 是否正常",
+        config.host,
+        config.port,
+        SSH_HANDSHAKE_TIMEOUT.as_secs()
+    )
+}
+
+/// 建立并认证一条新连接，但不登记到连接表。
+async fn authenticate_session(
     config: SshConnectionConfig,
-) -> Result<(Arc<ConnectedSession>, String), String> {
+) -> Result<(ConnectedSession, String), String> {
     let expected = config
         .host_key_fingerprint
         .clone()
         .filter(|value| !value.trim().is_empty());
+    let (handle, fingerprint) = tokio::time::timeout(SSH_HANDSHAKE_TIMEOUT, async {
+        let (mut handle, fingerprint) = open_transport(&config, expected).await?;
+        authenticate(&mut handle, &config).await?;
+        Ok::<_, String>((handle, fingerprint))
+    })
+    .await
+    .map_err(|_| ssh_handshake_timeout_error(&config))??;
+    Ok((
+        ConnectedSession {
+            handle,
+            config: Mutex::new(config),
+        },
+        fingerprint,
+    ))
+}
+
+async fn store_authenticated_session(
+    manager: &SshManager,
+    config: SshConnectionConfig,
+) -> Result<(Arc<ConnectedSession>, String), String> {
     let id = config.id.clone();
-    let (mut handle, fingerprint) = open_transport(&config, expected).await?;
-    authenticate(&mut handle, &config).await?;
-    let connected = Arc::new(ConnectedSession {
-        handle,
-        config: Mutex::new(config),
-    });
+    let (connected, fingerprint) = authenticate_session(config).await?;
+    let connected = Arc::new(connected);
     manager
         .sessions
         .write()
@@ -1274,6 +1422,10 @@ pub async fn ssh_disconnect(
     connection_id: String,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
+    // 等进行中的重连结束再移除，否则重连完成后会把连接重新插回表里。
+    let gate = manager.reconnect_gate(&connection_id)?;
+    let mut last_failure = gate.lock().await;
+    *last_failure = None;
     let session = manager
         .sessions
         .write()
@@ -3065,8 +3217,10 @@ async fn spawn_ssh_terminal(
     tauri::async_runtime::spawn(async move {
         let mut started_tx = started_tx;
         let mut exit_code = 0;
+        let mut ended_by_remote = false;
         let clear_sequence = b"\x1b[3J";
         while let Some(message) = reader.wait().await {
+            ended_by_remote |= is_terminal_end_message(&message);
             match message {
                 ChannelMsg::Data { data } | ChannelMsg::ExtendedData { data, .. } => {
                     if let Some(tx) = started_tx.take() {
@@ -3102,11 +3256,15 @@ async fn spawn_ssh_terminal(
             }
         }
         if claim_terminal_exit(&exit_alive) {
+            app_clone
+                .state::<SshManager>()
+                .forget_terminal(&terminal_id, &exit_alive);
             let _ = app_clone.emit(
                 "terminal-exit",
                 TerminalExitPayload {
                     id: terminal_id,
                     exit_code,
+                    disconnected: !ended_by_remote,
                 },
             );
         }
@@ -3641,14 +3799,34 @@ mod tests {
     fn ssh_client_waits_through_a_slow_keepalive_reply() {
         let config = ssh_client_config();
         assert!(config.inactivity_timeout.is_none());
-        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(20)));
-        assert_eq!(config.keepalive_max, 8);
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(15)));
+        assert_eq!(config.keepalive_max, 4);
         assert!(config.nodelay);
-        assert!(is_stale_channel_error("Keepalive timeout"));
-        assert!(is_stale_channel_error(
-            "打开 SSH SFTP 通道失败：Connection closed by the remote side"
-        ));
-        assert!(!is_stale_channel_error("远端未启用 SFTP"));
+    }
+
+    #[test]
+    fn closed_connection_errors_are_stale() {
+        // 在已关闭的连接上开通道实际得到的是这两种错误。
+        assert!(is_stale_russh_error(&russh::Error::SendError));
+        assert!(is_stale_russh_error(&russh::Error::Disconnect));
+        assert!(is_stale_russh_error(&russh::Error::HUP));
+        assert!(is_stale_russh_error(&russh::Error::KeepaliveTimeout));
+        assert!(is_stale_russh_error(&russh::Error::ChannelOpenFailure(
+            russh::ChannelOpenFailure::ConnectFailed
+        )));
+        assert!(!is_stale_russh_error(&russh::Error::ChannelOpenFailure(
+            russh::ChannelOpenFailure::AdministrativelyProhibited
+        )));
+        assert!(!is_stale_russh_error(&russh::Error::WrongChannel));
+    }
+
+    #[test]
+    fn terminal_end_messages_distinguish_exit_from_disconnect() {
+        assert!(is_terminal_end_message(&ChannelMsg::ExitStatus {
+            exit_status: 0
+        }));
+        assert!(is_terminal_end_message(&ChannelMsg::Close));
+        assert!(!is_terminal_end_message(&ChannelMsg::Eof));
     }
 
     #[test]
@@ -3671,6 +3849,27 @@ mod tests {
         assert!(encoded
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')));
+    }
+
+    #[test]
+    fn windows_git_runs_inline_without_reading_stdin() {
+        let script = windows_git_script(r"D:\code\app", &["status".to_string()]).unwrap();
+        let command = windows_powershell_inline_command(&script).unwrap();
+        let encoded = command
+            .strip_prefix("powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ")
+            .unwrap();
+        assert!(encoded
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')));
+        assert!(command.len() <= WINDOWS_INLINE_COMMAND_LIMIT);
+
+        let long_message = "x".repeat(WINDOWS_INLINE_COMMAND_LIMIT);
+        let long = windows_git_script(
+            r"D:\code\app",
+            &["commit".to_string(), "-m".to_string(), long_message],
+        )
+        .unwrap();
+        assert!(windows_powershell_inline_command(&long).is_none());
     }
 
     #[test]

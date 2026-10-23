@@ -165,6 +165,24 @@ function isLatestProjectTreeRefresh(projectId: string, sequence: number): boolea
 
 const SSH_DIRECTORY_UNAVAILABLE_RE =
   /远程项目目录不可用|读取远程项目目录失败|远程项目路径不是目录|远程目录不可用|远程路径不是目录/
+/** 远端没响应不是凭据问题，弹重新认证对话框没用，直接报错。 */
+const SSH_TIMEOUT_RE = /SSH 连接超时|通道超时/
+/** 连接超过这个时间才提示“正在连接”，快速切换时不闪 toast。 */
+const SSH_CONNECTING_HINT_DELAY_MS = 600
+
+/** 慢连接期间显示“正在连接”，返回的函数在连接结束后收起提示。 */
+function showSshConnectingHint(
+  get: () => Pick<ProjectState, 'toasts' | 'pushToast' | 'dismissToast'>,
+  project: Project
+): () => void {
+  const text = translate('正在连接 SSH 项目 {name}…', { name: project.name })
+  const timer = setTimeout(() => get().pushToast('info', text), SSH_CONNECTING_HINT_DELAY_MS)
+  return () => {
+    clearTimeout(timer)
+    const toast = get().toasts.find(t => t.kind === 'info' && t.text === text)
+    if (toast) get().dismissToast(toast.id)
+  }
+}
 
 async function syncAllowlistRoots(projects: Project[]): Promise<void> {
   try {
@@ -794,7 +812,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       await pushTrustedRootsToNative(forTrustSync)
 
       sshConnectionAttempted = true
-      await ensureSshWorkspaceConnected(project)
+      const hideConnectingHint = isSshProject(project)
+        ? showSshConnectingHint(get, project)
+        : () => {}
+      try {
+        await ensureSshWorkspaceConnected(project)
+      } finally {
+        hideConnectingHint()
+      }
       sshWorkspaceConnected = true
 
       // Ephemeral/empty projects use a scratch temp directory; do not block
@@ -825,7 +850,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       console.error('switchProject failed:', e)
       if (isSshProject(project)) {
         const remoteDirectoryFailed = SSH_DIRECTORY_UNAVAILABLE_RE.test(String(e))
-        if (sshWorkspaceConnected || !sshConnectionAttempted || remoteDirectoryFailed) {
+        const remoteTimedOut = SSH_TIMEOUT_RE.test(String(e))
+        if (
+          sshWorkspaceConnected ||
+          !sshConnectionAttempted ||
+          remoteDirectoryFailed ||
+          remoteTimedOut
+        ) {
           get().pushToast('error', `切换 SSH 项目失败: ${String(e)}`)
         } else {
           requestSshReconnect(project)

@@ -49,7 +49,10 @@ import {
   DEFAULT_PTY_ROWS,
   normalizePtySize,
 } from '@/lib/terminal/terminalPtySize'
-import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
+import {
+  shouldKeepShellAfterExit,
+  sshTerminalReconnectDelay,
+} from '@/lib/terminal/terminalShellLifecycle'
 import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
 import {
   effectiveShellForTerminalName,
@@ -82,6 +85,15 @@ const lastPtySize = new Map<string, { cols: number; rows: number }>()
 /** Kills from close/restart — do not auto-respawn a shell for these. */
 const intentionalPtyKills = new Set<string>()
 const reportedShellFallbacks = new Set<string>()
+/** SSH 断线后正在退避重连的终端；期间丢弃键入，避免逐键弹“终端不存在”。 */
+const sshRecoveryInFlight = new Set<string>()
+/** 已由 store 写过断线说明的已退出终端；视图不再追加“进程未启动”。 */
+const disconnectNoticeShown = new Set<string>()
+
+/** 视图挂载或状态变为已退出时调用：返回 true 表示断线说明已写入输出。 */
+export function consumeTerminalDisconnectNotice(id: string): boolean {
+  return disconnectNoticeShown.delete(id)
+}
 
 function isGeneratedShellName(tab: TerminalTab): boolean {
   if (/^(终端|Terminal) \d+$/.test(tab.name)) return true
@@ -215,6 +227,91 @@ async function respawnShellAfterExit(id: string): Promise<void> {
     }))
   } finally {
     ptySpawnInFlight.delete(id)
+  }
+}
+
+function publishTerminalNotice(id: string, text: string) {
+  publishTerminalOutput(id, new TextEncoder().encode(`\r\n\x1b[90m[${text}]\x1b[0m\r\n`))
+}
+
+function markDisconnectedExit(id: string) {
+  disconnectNoticeShown.add(id)
+  useTerminalStore.setState(s => ({
+    terminals: s.terminals.map(terminal =>
+      terminal.id === id ? { ...terminal, status: 'exited', exitCode: null } : terminal
+    ),
+  }))
+}
+
+const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+/**
+ * SSH 连接断开：交互式 Shell 按退避间隔重开（后端会先重连），一次性任务直接停下。
+ * 远端进程已随连接结束，重开后明确告知，不假装会话还在。
+ */
+async function recoverSshTerminalAfterDisconnect(id: string): Promise<void> {
+  const initial = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+  if (!initial || sshRecoveryInFlight.has(id)) return
+  if (!shouldKeepShellAfterExit(initial)) {
+    publishTerminalNotice(id, translate('SSH 连接已断开，任务已中止，可从终端标签重启'))
+    markDisconnectedExit(id)
+    return
+  }
+  sshRecoveryInFlight.add(id)
+  publishTerminalNotice(id, translate('SSH 连接已断开，正在重新连接…'))
+  useTerminalStore.setState(s => ({
+    terminals: s.terminals.map(terminal =>
+      terminal.id === id ? { ...terminal, status: 'starting', exitCode: null } : terminal
+    ),
+  }))
+  let lastError: unknown = null
+  try {
+    for (let attempt = 0; ; attempt += 1) {
+      const delay = sshTerminalReconnectDelay(attempt)
+      if (delay === null) break
+      await sleep(delay)
+      const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+      // 关闭、手动重启或已被其他路径接管时停止重试。
+      if (!tab || tab.status !== 'starting' || ptySpawnInFlight.has(id)) return
+      ptySpawnInFlight.add(id)
+      try {
+        const size = lastPtySize.get(id) ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS }
+        const result = await createTerminal({
+          id,
+          cwd: tab.cwd,
+          cols: size.cols,
+          rows: size.rows,
+          shell: tab.shell ?? null,
+        })
+        applyTerminalSpawnResult(id, result)
+        useTerminalStore.setState(s => ({
+          terminals: s.terminals.map(terminal =>
+            terminal.id === id
+              ? { ...terminal, status: 'running', exitCode: null, startedAt: Date.now() }
+              : terminal
+          ),
+        }))
+        publishTerminalNotice(id, translate('已重新连接，断线前运行的远端进程已结束'))
+        return
+      } catch (error) {
+        lastError = error
+      } finally {
+        ptySpawnInFlight.delete(id)
+      }
+    }
+    const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+    if (!tab || tab.status !== 'starting') return
+    publishTerminalNotice(id, translate('SSH 重新连接失败，可从终端标签重启'))
+    markDisconnectedExit(id)
+    useProjectStore
+      .getState()
+      .pushToast(
+        'error',
+        translate('「{name}」SSH 重新连接失败', { name: terminalDisplayLabel(tab.name) }),
+        String(lastError ?? '')
+      )
+  } finally {
+    sshRecoveryInFlight.delete(id)
   }
 }
 
@@ -1394,6 +1491,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   writeToTerminal: async (id: string, data: string) => {
+    if (sshRecoveryInFlight.has(id)) return
     recordTypedInput(id, data)
     try {
       await writeTerminal(id, data)
@@ -1510,8 +1608,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           error: `${terminalDisplayLabel(tab.name)}: ${event.payload.message}`,
         }))
       }),
-      listen<{ id: string; exit_code: number }>('terminal-exit', event => {
-        const { id, exit_code } = event.payload
+      listen<{ id: string; exit_code: number; disconnected?: boolean }>('terminal-exit', event => {
+        const { id, exit_code, disconnected } = event.payload
         clearTerminalCommandActivity(id)
         const tab = get().terminals.find(t => t.id === id)
         if (!tab) {
@@ -1528,6 +1626,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
               terminal.id === id ? { ...terminal, status: 'exited', exitCode: exit_code } : terminal
             ),
           }))
+          return
+        }
+        if (disconnected) {
+          void recoverSshTerminalAfterDisconnect(id)
           return
         }
         // OpenCode etc. often kill the whole ConPTY; reopen a shell so the

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   restoredExitRecovery,
   shouldKeepShellAfterExit,
+  sshTerminalReconnectDelay,
 } from '@/lib/terminal/terminalShellLifecycle'
 
 describe('shouldKeepShellAfterExit', () => {
@@ -66,5 +67,14 @@ describe('shouldKeepShellAfterExit', () => {
         shellKind: 'command',
       }),
     ).toBe(false)
+  })
+})
+
+describe('sshTerminalReconnectDelay', () => {
+  it('backs off and then gives up', () => {
+    expect(sshTerminalReconnectDelay(0)).toBe(1_000)
+    expect(sshTerminalReconnectDelay(1)).toBe(2_000)
+    expect(sshTerminalReconnectDelay(4)).toBe(20_000)
+    expect(sshTerminalReconnectDelay(5)).toBeNull()
   })
 })
