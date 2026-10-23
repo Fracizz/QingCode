@@ -13,6 +13,10 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 - Top-bar project badges for SSH projects now poll at 4x the configured interval with a 60-second focus cooldown
 - Writes under `release/`, `.dev` and `.venv` no longer trigger explorer and Git refreshes
 
+### Fixed
+
+- The source control toolbar's "last push" time is no longer always empty
+
 ## [0.1.13-beta.3] - 2026-10-23
 
 ### Fixed

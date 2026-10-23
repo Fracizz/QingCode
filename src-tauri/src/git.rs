@@ -139,12 +139,24 @@ fn read_last_fetch_at(root: &Path) -> Option<i64> {
     resolve_git_path(root, "FETCH_HEAD").and_then(|path| file_mtime_ms(&path))
 }
 
-fn read_last_reflog_at(root: &Path, needles: &[&str]) -> Option<i64> {
+/// reflog 里能认出「拉取」的动作 / 说明。
+const PULL_REFLOG_NEEDLES: &[&str] = &["pull ", "pull:", "merge branch", "fast-forward"];
+/// reflog 里能认出「推送」的动作。
+const PUSH_REFLOG_NEEDLES: &[&str] = &["push "];
+
+fn read_reflog_text(root: &Path) -> Option<String> {
     let output = run_git(root, &["reflog", "--date=unix", "-n", "100"]).ok()?;
     if !output.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&output.stdout);
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// 在一份 reflog 输出里找第一条命中 `needles` 的时间戳（毫秒）。
+///
+/// 每条 reflog 形如 `<sha> HEAD@{<unix>}: <action>: <message>`，`<message>` 可以缺省
+/// （`push origin main` 就没有）。因此动作段和说明段都要看：只匹配说明段会漏掉 push。
+fn reflog_timestamp(text: &str, needles: &[&str]) -> Option<i64> {
     for line in text.lines() {
         let marker = "HEAD@{";
         let Some(marker_at) = line.find(marker) else {
@@ -157,20 +169,30 @@ fn read_last_reflog_at(root: &Path, needles: &[&str]) -> Option<i64> {
         let Some(ts_secs) = rest[..end].parse::<i64>().ok() else {
             continue;
         };
-        let message = line.split(": ").skip(2).collect::<Vec<_>>().join(": ");
-        let lower = message.to_ascii_lowercase();
-        if needles.iter().any(|needle| lower.contains(needle)) {
+        let mut parts = line.splitn(3, ": ");
+        parts.next();
+        let action = parts.next().unwrap_or("").to_ascii_lowercase();
+        let message = parts.next().unwrap_or("").to_ascii_lowercase();
+        if needles
+            .iter()
+            .any(|needle| action.contains(needle) || message.contains(needle))
+        {
             return Some(ts_secs.saturating_mul(1000));
         }
     }
     None
 }
 
+/// 同步时间：`FETCH_HEAD` 的 mtime + **一次** reflog 扫描（pull / push 共用同一份输出）。
 fn read_sync_times(root: &Path) -> (Option<i64>, Option<i64>, Option<i64>) {
     let last_fetch_at = read_last_fetch_at(root);
-    let last_pull_at =
-        read_last_reflog_at(root, &["pull ", "pull:", "merge branch", "fast-forward"]);
-    let last_push_at = read_last_reflog_at(root, &["push "]);
+    let reflog = read_reflog_text(root);
+    let last_pull_at = reflog
+        .as_deref()
+        .and_then(|text| reflog_timestamp(text, PULL_REFLOG_NEEDLES));
+    let last_push_at = reflog
+        .as_deref()
+        .and_then(|text| reflog_timestamp(text, PUSH_REFLOG_NEEDLES));
     (last_fetch_at, last_pull_at, last_push_at)
 }
 
@@ -1901,6 +1923,34 @@ mod tests {
         assert!(list_commits(&empty, 20, 0).unwrap().is_empty());
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(empty).unwrap();
+    }
+
+    #[test]
+    fn reflog_timestamp_reads_action_and_message_from_one_scan() {
+        let text = concat!(
+            "1111111 HEAD@{1700000000}: clone: from https://example.com/repo.git\n",
+            "2222222 HEAD@{1700000500}: pull origin main: Fast-forward\n",
+            "3333333 HEAD@{1700000900}: push origin main\n",
+        );
+
+        // 只匹配说明段会漏掉 `push origin main`（它没有说明段）。
+        assert_eq!(
+            reflog_timestamp(text, PULL_REFLOG_NEEDLES),
+            Some(1_700_000_500_000)
+        );
+        assert_eq!(
+            reflog_timestamp(text, PUSH_REFLOG_NEEDLES),
+            Some(1_700_000_900_000)
+        );
+        assert_eq!(reflog_timestamp(text, &["rebase "]), None);
+        // 时间戳不是数字（--date 非 unix）时跳过该行而不是 panic。
+        assert_eq!(
+            reflog_timestamp(
+                "4444444 HEAD@{yesterday}: pull origin main\n",
+                PULL_REFLOG_NEEDLES
+            ),
+            None
+        );
     }
 
     #[test]
