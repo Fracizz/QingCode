@@ -90,11 +90,14 @@ import { confirmClearSshTerminalPasteUploads } from '../lib/sshTerminalPaste'
 import {
   getSshAgentEnabled,
   getSshAgentAutoDownload,
+  getSshAgentOfflineDir,
   loadScopedSshAgentEnabled,
   loadScopedSshAgentAutoDownload,
+  loadScopedSshAgentOfflineDir,
   parseSshAgentAutoDownload,
   saveScopedSshAgentEnabled,
   saveScopedSshAgentAutoDownload,
+  saveScopedSshAgentOfflineDir,
 } from '../lib/sshAgentSettings'
 import { isSshProject } from '../lib/sshWorkspace'
 import {
@@ -205,6 +208,8 @@ export default function SettingsEditor() {
   const [sshUploadOnPaste, setSshUploadOnPaste] = useState(getTerminalSshUploadOnPaste)
   const [sshAgentEnabled, setSshAgentEnabled] = useState(getSshAgentEnabled)
   const [sshAgentAutoDownload, setSshAgentAutoDownload] = useState(getSshAgentAutoDownload)
+  const [sshAgentOfflineDir, setSshAgentOfflineDir] = useState(getSshAgentOfflineDir)
+  const [sshAgentOfflineBusy, setSshAgentOfflineBusy] = useState(false)
   const [pasteCleanupBusy, setPasteCleanupBusy] = useState(false)
   const [editorGuidesEnabled, setEditorGuidesEnabled] = useState(
     DEFAULT_GLOBAL_SETTINGS['editor.guides.enabled'] !== false,
@@ -331,6 +336,7 @@ export default function SettingsEditor() {
     void loadScopedSshAgentAutoDownload(settingsScope, currentProject).then(
       setSshAgentAutoDownload,
     )
+    void loadScopedSshAgentOfflineDir(settingsScope, currentProject).then(setSshAgentOfflineDir)
   }, [scope, currentProject, settingsRevision])
 
   const workspaceLocked = scope === 'workspace'
@@ -459,6 +465,49 @@ export default function SettingsEditor() {
       await saveScopedSshAgentAutoDownload(settingsScope, enabled, currentProject)
     } catch (error) {
       pushToast('error', t('保存 SSH 代理设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const chooseSshAgentOfflineDir = async () => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    if (!isTauri()) {
+      pushToast('error', t('当前环境无法选择离线目录'))
+      return
+    }
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: t('选择离线代理目录'),
+    })
+    if (typeof selected !== 'string' || !selected) return
+    setSshAgentOfflineBusy(true)
+    try {
+      const resolved = await safeInvoke<string>('配置 SSH 离线代理目录', 'ssh_set_agent_offline_dir', {
+        dir: selected,
+      })
+      setSshAgentOfflineDir(resolved)
+      await saveScopedSshAgentOfflineDir(settingsScope, resolved, currentProject)
+      pushToast('success', t('已使用离线代理目录'))
+    } catch (error) {
+      pushToast('error', t('保存 SSH 代理设置失败: {error}', { error: String(error) }))
+    } finally {
+      setSshAgentOfflineBusy(false)
+    }
+  }
+
+  const clearSshAgentOfflineDir = async () => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setSshAgentOfflineBusy(true)
+    try {
+      setSshAgentOfflineDir('')
+      await saveScopedSshAgentOfflineDir(settingsScope, '', currentProject)
+      pushToast('success', t('已清除离线代理目录'))
+    } catch (error) {
+      pushToast('error', t('保存 SSH 代理设置失败: {error}', { error: String(error) }))
+    } finally {
+      setSshAgentOfflineBusy(false)
     }
   }
 
@@ -657,6 +706,13 @@ export default function SettingsEditor() {
           '格式化',
           '转到编辑器中的符号',
           '符号',
+          'SSH 代理',
+          '远端代理',
+          '自动下载',
+          '离线目录',
+          'ssh.agent.enabled',
+          'ssh.agent.autoDownload',
+          'ssh.agent.offlineDir',
         )
       }
       if (cat.id === 'language') {
@@ -1038,9 +1094,6 @@ export default function SettingsEditor() {
               '上传',
               'terminal-paste',
               'sshUploadOnPaste',
-              'SSH 代理',
-              '远端代理',
-              'ssh.agent.enabled',
             ) && (
               <Section
                 id="terminal"
@@ -1139,40 +1192,6 @@ export default function SettingsEditor() {
                   </select>
                 </SettingItem>
                 <SettingItem
-                  title={t('SSH › 代理: 远端代理')}
-                  description={t(
-                    '在 SSH 工作区部署远端代理（qingcode-agent），提供文件树自动刷新、内嵌内容搜索（无需远端 rg）与快速目录扫描。代理经 SSH 通道接入，只监听远端 127.0.0.1。关闭后完全回退纯 SSH 直连，远端零足迹。默认开启。',
-                  )}
-                  modified={!sshAgentEnabled}
-                >
-                  <select
-                    value={sshAgentEnabled ? 'on' : 'off'}
-                    onChange={e => void updateSshAgentEnabled(e.target.value === 'on')}
-                    className="setting-control setting-select"
-                    aria-label={t('SSH › 代理: 远端代理')}
-                  >
-                    <option value="on">{t('开启')}</option>
-                    <option value="off">{t('关闭')}</option>
-                  </select>
-                </SettingItem>
-                <SettingItem
-                  title={t('SSH › 代理: 缺失时自动下载')}
-                  description={t(
-                    '安装包不附带远端代理。缺失时从 GitHub Release 在线下载并做 sha256 校验。离线请把 agents 目录放在 QingCode.exe 旁边。默认开启。',
-                  )}
-                  modified={sshAgentAutoDownload !== parseSshAgentAutoDownload(DEFAULT_GLOBAL_SETTINGS['ssh.agent.autoDownload'])}
-                >
-                  <select
-                    value={sshAgentAutoDownload ? 'on' : 'off'}
-                    onChange={e => void updateSshAgentAutoDownload(e.target.value === 'on')}
-                    className="setting-control setting-select"
-                    aria-label={t('SSH › 代理: 缺失时自动下载')}
-                  >
-                    <option value="on">{t('开启')}</option>
-                    <option value="off">{t('关闭')}</option>
-                  </select>
-                </SettingItem>
-                <SettingItem
                   title={t('清理远程粘贴文件')}
                   description={t(
                     '删除当前 SSH 项目的 .qingcode/terminal-paste 目录。终端里已经粘贴的路径会失效。',
@@ -1257,7 +1276,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match(
+            {((!workspaceLocked && match(
               '功能',
               '快捷键',
               '打开方式',
@@ -1273,14 +1292,114 @@ export default function SettingsEditor() {
               'Git 随机刷新周期起始值',
               'Git 刷新周期起始值',
               '分钟',
-            ) &&
-              !workspaceLocked && (
+              'SSH 代理',
+              '远端代理',
+              '自动下载',
+              '离线目录',
+              'ssh.agent.enabled',
+              'ssh.agent.autoDownload',
+              'ssh.agent.offlineDir',
+            )) || match(
+              'SSH 代理',
+              '远端代理',
+              '自动下载',
+              '离线目录',
+              'ssh.agent.enabled',
+              'ssh.agent.autoDownload',
+              'ssh.agent.offlineDir',
+            )) && (
               <Section
                 id="features"
                 title={t('功能')}
                 onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
+                {match(
+                  'SSH 代理',
+                  '远端代理',
+                  '自动下载',
+                  '离线目录',
+                  'ssh.agent.enabled',
+                  'ssh.agent.autoDownload',
+                  'ssh.agent.offlineDir',
+                ) && (
+                  <>
+                    <SettingItem
+                      title={t('SSH › 代理: 远端代理')}
+                      description={t(
+                        '在 SSH 工作区部署远端代理（qingcode-agent），提供文件树自动刷新、内嵌内容搜索（无需远端 rg）与快速目录扫描。代理经 SSH 通道接入，只监听远端 127.0.0.1。关闭后完全回退纯 SSH 直连，远端零足迹。默认开启。',
+                      )}
+                      modified={!sshAgentEnabled}
+                    >
+                      <select
+                        value={sshAgentEnabled ? 'on' : 'off'}
+                        onChange={e => void updateSshAgentEnabled(e.target.value === 'on')}
+                        className="setting-control setting-select"
+                        aria-label={t('SSH › 代理: 远端代理')}
+                      >
+                        <option value="on">{t('开启')}</option>
+                        <option value="off">{t('关闭')}</option>
+                      </select>
+                    </SettingItem>
+                    <SettingItem
+                      title={t('SSH › 代理: 缺失时自动下载')}
+                      description={t(
+                        '安装包不附带远端代理。缺失时从 GitHub Release 在线下载并做 sha256 校验。也可以在下面手动选择离线目录。默认开启。',
+                      )}
+                      modified={sshAgentAutoDownload !== parseSshAgentAutoDownload(DEFAULT_GLOBAL_SETTINGS['ssh.agent.autoDownload'])}
+                    >
+                      <select
+                        value={sshAgentAutoDownload ? 'on' : 'off'}
+                        onChange={e => void updateSshAgentAutoDownload(e.target.value === 'on')}
+                        className="setting-control setting-select"
+                        aria-label={t('SSH › 代理: 缺失时自动下载')}
+                      >
+                        <option value="on">{t('开启')}</option>
+                        <option value="off">{t('关闭')}</option>
+                      </select>
+                    </SettingItem>
+                    <SettingItem
+                      title={t('SSH › 代理: 离线目录')}
+                      description={t(
+                        '手动选择解压后的 agents 目录，或包含 agents 子目录的文件夹。选中后优先于程序旁边的 agents 和在线下载。清除后恢复自动查找。',
+                      )}
+                      modified={sshAgentOfflineDir !== ''}
+                    >
+                      <div className="flex items-center gap-1.5 max-w-md">
+                        <Tooltip
+                          label={sshAgentOfflineDir}
+                          onlyWhenOverflow
+                          side="top"
+                          wrapperClassName="min-w-0 flex-1"
+                        >
+                          <span className="block truncate text-ui-sm opacity-80">
+                            {sshAgentOfflineDir || t('未选择离线目录')}
+                          </span>
+                        </Tooltip>
+                        <button
+                          type="button"
+                          disabled={sshAgentOfflineBusy}
+                          className="setting-control shrink-0 px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                          aria-label={t('选择离线目录')}
+                          onClick={() => void chooseSshAgentOfflineDir()}
+                        >
+                          {t('选择离线目录')}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={sshAgentOfflineBusy || !sshAgentOfflineDir}
+                          className="setting-control shrink-0 px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+                          aria-label={t('清除离线目录')}
+                          onClick={() => void clearSshAgentOfflineDir()}
+                        >
+                          {t('清除离线目录')}
+                        </button>
+                      </div>
+                    </SettingItem>
+                  </>
+                )}
+                {!workspaceLocked && (
+                <>
                 {match('会话状态', '会话状态保存', '会话') && (
                   <SettingItem
                     title={t('会话状态保存')}
@@ -1654,6 +1773,8 @@ export default function SettingsEditor() {
                       <ShortcutSettings />
                     </div>
                   </>
+                )}
+                </>
                 )}
               </Section>
             )}

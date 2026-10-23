@@ -23,6 +23,12 @@ export const SSH_AGENT_ENABLED_KEY = 'ssh.agent.enabled'
  */
 export const SSH_AGENT_AUTO_DOWNLOAD_KEY = 'ssh.agent.autoDownload'
 
+/**
+ * ssh.agent.offlineDir：手动选择的本机离线代理目录。空字符串表示不指定，
+ * 继续使用程序旁边的 agents 目录和在线下载。非空时优先于自动查找。
+ */
+export const SSH_AGENT_OFFLINE_DIR_KEY = 'ssh.agent.offlineDir'
+
 export function parseSshAgentEnabled(value: unknown): boolean {
   return value !== false
 }
@@ -40,9 +46,25 @@ export function readSshAgentAutoDownload(settings: Record<string, unknown>): boo
   return parseSshAgentAutoDownload(settings[SSH_AGENT_AUTO_DOWNLOAD_KEY])
 }
 
+export function parseSshAgentOfflineDir(value: unknown): string {
+  if (typeof value !== 'string') return ''
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > 1024 || trimmed.includes('\0') || trimmed.includes('ssh://')) {
+    return ''
+  }
+  return trimmed
+}
+
+export function readSshAgentOfflineDir(settings: Record<string, unknown>): string {
+  return parseSshAgentOfflineDir(settings[SSH_AGENT_OFFLINE_DIR_KEY])
+}
+
 let cachedSshAgentEnabled = parseSshAgentEnabled(DEFAULT_GLOBAL_SETTINGS[SSH_AGENT_ENABLED_KEY])
 let cachedSshAgentAutoDownload = parseSshAgentAutoDownload(
   DEFAULT_GLOBAL_SETTINGS[SSH_AGENT_AUTO_DOWNLOAD_KEY],
+)
+let cachedSshAgentOfflineDir = parseSshAgentOfflineDir(
+  DEFAULT_GLOBAL_SETTINGS[SSH_AGENT_OFFLINE_DIR_KEY],
 )
 
 export function getSshAgentEnabled(): boolean {
@@ -51,6 +73,10 @@ export function getSshAgentEnabled(): boolean {
 
 export function getSshAgentAutoDownload(): boolean {
   return cachedSshAgentAutoDownload
+}
+
+export function getSshAgentOfflineDir(): string {
+  return cachedSshAgentOfflineDir
 }
 
 export function notifySshAgentEnabledChanged(enabled: boolean) {
@@ -65,6 +91,7 @@ export async function loadEffectiveSshAgentEnabled(
   const merged = mergeSettings(global, workspace)
   const next = readSshAgentEnabled(merged)
   cachedSshAgentAutoDownload = readSshAgentAutoDownload(merged)
+  cachedSshAgentOfflineDir = readSshAgentOfflineDir(merged)
   notifySshAgentEnabledChanged(next)
   return next
 }
@@ -129,6 +156,37 @@ export async function saveScopedSshAgentAutoDownload(
   await pushSshAgentEnabledToNative()
 }
 
+export async function loadScopedSshAgentOfflineDir(
+  scope: 'global' | 'project',
+  project?: Project | null,
+): Promise<string> {
+  const next =
+    scope === 'project' && project
+      ? readSshAgentOfflineDir(await loadProjectSettings(project))
+      : readSshAgentOfflineDir(await loadGlobalSettings())
+  cachedSshAgentOfflineDir = next
+  return next
+}
+
+export async function saveScopedSshAgentOfflineDir(
+  scope: 'global' | 'project',
+  dir: string,
+  project?: Project | null,
+): Promise<void> {
+  const value = parseSshAgentOfflineDir(dir)
+  if (scope === 'project' && project) {
+    const current = await loadProjectSettings(project)
+    current[SSH_AGENT_OFFLINE_DIR_KEY] = value
+    await saveProjectSettings(project, current)
+  } else {
+    const current = await loadGlobalSettings()
+    current[SSH_AGENT_OFFLINE_DIR_KEY] = value
+    await saveGlobalSettings(current)
+  }
+  await loadEffectiveSshAgentEnabled(project)
+  await pushSshAgentEnabledToNative()
+}
+
 /** 后端是常驻进程：开关变化时即时同步，避免重启应用才生效。 */
 export async function pushSshAgentEnabledToNative(): Promise<void> {
   if (!isTauri()) return
@@ -138,6 +196,9 @@ export async function pushSshAgentEnabledToNative(): Promise<void> {
     })
     await safeInvoke('配置 SSH 远端代理下载', 'ssh_set_agent_auto_download', {
       enabled: getSshAgentAutoDownload(),
+    })
+    await safeInvoke('配置 SSH 离线代理目录', 'ssh_set_agent_offline_dir', {
+      dir: getSshAgentOfflineDir(),
     })
   } catch (e) {
     console.error('ssh_set_agent_enabled failed:', e)

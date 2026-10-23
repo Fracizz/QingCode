@@ -596,6 +596,8 @@ pub struct SshManager {
     agent_enabled: std::sync::atomic::AtomicBool,
     /// 本地 agent 二进制查找目录（安装目录、资源目录、环境变量指定等）。
     agent_binary_dirs: RwLock<Vec<PathBuf>>,
+    /// 设置页手动选择的离线目录，查找时排在其余目录之前。
+    agent_offline_dir: RwLock<Option<PathBuf>>,
     /// 本地没有二进制时的下载缓存目录（`ssh.agent.autoDownload` 开启时使用）。
     agent_cache_dir: RwLock<Option<PathBuf>>,
     /// 本地缺失二进制时是否自动从 GitHub Release 下载（默认关，用户显式开启）。
@@ -620,6 +622,7 @@ impl SshManager {
             agent_gates: Mutex::new(HashMap::new()),
             agent_enabled: std::sync::atomic::AtomicBool::new(true),
             agent_binary_dirs: RwLock::new(Vec::new()),
+            agent_offline_dir: RwLock::new(None),
             agent_cache_dir: RwLock::new(None),
             agent_auto_download: std::sync::atomic::AtomicBool::new(false),
             watch_supervisors: Mutex::new(HashMap::new()),
@@ -915,11 +918,43 @@ impl SshManager {
         }
     }
 
+    pub(crate) fn set_agent_offline_dir(&self, dir: Option<PathBuf>) {
+        let dir = dir.filter(|path| path.is_dir());
+        if let Ok(mut slot) = self.agent_offline_dir.write() {
+            *slot = dir;
+        }
+    }
+
+    /// 手动选择的目录排在最前；与自动目录重复时只保留这一次。
     pub(crate) fn agent_binary_dirs(&self) -> Vec<PathBuf> {
-        self.agent_binary_dirs
+        let mut dirs = self
+            .agent_binary_dirs
             .read()
             .map(|dirs| dirs.clone())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let offline = self
+            .agent_offline_dir
+            .read()
+            .ok()
+            .and_then(|slot| slot.clone())
+            .filter(|dir| dir.is_dir());
+        if let Some(offline) = offline {
+            dirs.retain(|dir| dir != &offline);
+            dirs.insert(0, offline);
+        }
+        dirs
+    }
+
+    /// 离线目录变更后，让之前因缺二进制而失败的槽重新尝试部署。
+    pub(crate) fn clear_unavailable_agents(&self) {
+        if let Ok(mut agents) = self.agents.write() {
+            for slot in agents.values_mut() {
+                if slot.endpoint.is_none() {
+                    slot.unavailable_reason = None;
+                    slot.activity = None;
+                }
+            }
+        }
     }
 
     pub(crate) fn agent_slot(&self, key: &str) -> Option<agent::AgentSlot> {
@@ -1263,6 +1298,29 @@ pub fn ssh_set_agent_auto_download(
         .agent_auto_download
         .store(enabled, std::sync::atomic::Ordering::SeqCst);
     Ok(())
+}
+
+/// `ssh.agent.offlineDir`：手动指定本机离线代理目录。空字符串表示清除。
+/// 目录本身或其中的 `agents` 子目录必须含有 `qingcode-agent` 文件。
+#[tauri::command]
+pub fn ssh_set_agent_offline_dir(
+    dir: String,
+    manager: State<'_, SshManager>,
+) -> Result<String, String> {
+    let trimmed = dir.trim();
+    if trimmed.is_empty() {
+        manager.set_agent_offline_dir(None);
+        manager.clear_unavailable_agents();
+        return Ok(String::new());
+    }
+    if trimmed.len() > 1024 || trimmed.contains('\0') || trimmed.contains("ssh://") {
+        return Err("离线目录必须是本机文件夹".to_string());
+    }
+    let resolved = agent::resolve_offline_agent_dir(Path::new(trimmed))?;
+    let text = resolved.to_string_lossy().into_owned();
+    manager.set_agent_offline_dir(Some(resolved));
+    manager.clear_unavailable_agents();
+    Ok(text)
 }
 
 #[derive(Debug)]
@@ -4364,6 +4422,26 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offline_dir_is_searched_before_other_agent_dirs() {
+        let manager = SshManager::new();
+        let root =
+            std::env::temp_dir().join(format!("qingcode-offline-order-{}", std::process::id()));
+        let offline = root.join("picked");
+        let other = root.join("bundled");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&offline).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        manager.set_agent_binary_dirs(vec![other.clone(), offline.clone()]);
+        manager.set_agent_offline_dir(Some(offline.clone()));
+        let dirs = manager.agent_binary_dirs();
+        assert_eq!(dirs.first(), Some(&offline));
+        assert_eq!(dirs.iter().filter(|dir| *dir == &offline).count(), 1);
+        manager.set_agent_offline_dir(None);
+        assert_eq!(manager.agent_binary_dirs().first(), Some(&other));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[tokio::test]
     async fn closed_flag_stream_marks_eof_but_not_data() {

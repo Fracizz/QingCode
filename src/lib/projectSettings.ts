@@ -107,6 +107,7 @@ function buildSharedDefaults(): SettingsFile {
     'terminal.integrated.sshUploadOnPaste': false,
     'ssh.agent.enabled': true,
     'ssh.agent.autoDownload': true,
+    'ssh.agent.offlineDir': '',
     custom: {},
   }
 }
@@ -249,9 +250,15 @@ __AUTOSAVE_SETTINGS__
 
   // ssh.agent.autoDownload：安装包不附带 agent 二进制。缺失时是否从 GitHub Release
   // （agent-v<版本> 标签）在线下载并做 sha256 校验。需要能访问 GitHub。
-  // 离线：把 agents 目录放在 QingCode.exe 旁边，或用 QINGCODE_AGENT_DIR 指定目录
-  // （本地文件优先于下载）。下载的执行文件不签名，信任源是本仓库官方 Release（默认 true）
+  // 离线：设置里手动选择 agents 目录，或把它放在 QingCode.exe 旁边，
+  // 或用 QINGCODE_AGENT_DIR 指定目录（本地文件优先于下载）。
+  // 下载的执行文件不签名，信任源是本仓库官方 Release（默认 true）
   "ssh.agent.autoDownload": true,
+
+  // ssh.agent.offlineDir：手动选择的离线代理目录（本机路径）。可填 agents 目录，
+  // 或包含 agents 子目录的文件夹。非空时优先于程序旁边的 agents、
+  // QINGCODE_AGENT_DIR 和在线下载。留空表示不手动指定（默认 ""）
+  "ssh.agent.offlineDir": "",
 `
 
 /** Auto-save keys live only in the global template; workspace inherits unless overridden. */

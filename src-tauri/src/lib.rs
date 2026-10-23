@@ -828,6 +828,7 @@ pub fn run() {
             remote_ssh::ssh_agent_restart,
             remote_ssh::ssh_agent_logs,
             remote_ssh::ssh_set_agent_auto_download,
+            remote_ssh::ssh_set_agent_offline_dir,
             remote_ssh::ssh_validate_directory,
             remote_ssh::ssh_scan_directory,
             remote_ssh::ssh_file_stat,

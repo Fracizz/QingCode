@@ -35,7 +35,7 @@ Linux / POSIX SSH 项目（已信任、设置 `ssh.agent.enabled` 默认开启�
 | 断线 | 只影响当次操作 | 代理死、daemon 与其中的终端继续运行，重连按 seq 补发输出或退化为屏幕快照 |
 | 状态 | 已全量启用，是回退的终点 | 后端/协议已就绪并在真机验证；**终端持久化的前端接入尚未做**（见未完成清单） |
 
-- **部署物**：单个静态 musl 二进制（约几 MB），上传到项目 `.qingcode/agent/qingcode-agent-<arch>`（x86_64 / aarch64）。本地二进制查找顺序：`QINGCODE_AGENT_DIR` 环境变量 → exe 目录 `/agents/` → exe 目录上级 `/agent/` → 资源目录 `/agents/` → 下载缓存目录（`autoDownload` 开启时）。开发与打包用 `scripts/build-agent.ps1` 产出并复制到 `src-tauri/target/agent/`。
+- **部署物**：单个静态 musl 二进制（约几 MB），上传到项目 `.qingcode/agent/qingcode-agent-<arch>`（x86_64 / aarch64）。本地二进制查找顺序：设置里手动选择的离线目录 → `QINGCODE_AGENT_DIR` 环境变量 → exe 目录 `/agents/` → exe 目录上级 `/agent/` → 资源目录 `/agents/` → 下载缓存目录（`autoDownload` 开启时）。开发与打包用 `scripts/build-agent.ps1` 产出并复制到 `src-tauri/target/agent/`。
 - **运行形态（`serve` 模式）**：`setsid + nohup` 守护进程，只监听远端 `127.0.0.1` 随机端口，客户端经 SSH `direct-tcpip` 通道接入，无公网暴露；token 写在项目 `.qingcode/agent/agent.json`（远端权限 0600）。应用重启后重连时先发现存活代理，免重新部署；版本不一致时校验进程身份后 kill 并重新部署。daemon 模式则常驻 `~/.qingcode/agent/run` 下，运行目录 0700、token 0600，经 `connect --stdio` 代理接入（见上表）。
 - **带来的能力**：
   - 远程文件树自动刷新（agent 递归 inotify → 后端复用本地 `fs-change` 事件管线：树刷新、脏标签冲突提示、Git 状态刷新全链路生效）；
@@ -49,7 +49,7 @@ Linux / POSIX SSH 项目（已信任、设置 `ssh.agent.enabled` 默认开启�
   - 远端保存文件也会触发一次 `fs-change`（尚未做本地那样的自写抑制），表现为多一次目录树刷新与 Git 刷新。
   - 单行超过 2MB 的内容搜索命中会截断并停止（与未部署代理时的 rg 路径一致）。
   - 远端代理不做自启动注册，注销/重启远端主机后需重新连接项目才会重新部署。
-  - **发行渠道**：安装包和便携版 exe 都不内置代理二进制。在线：`ssh.agent.autoDownload`（默认开）从 GitHub Release 的 `agent-v<版本>` 标签下载，`manifest.json` 含 sha256，校验通过才使用；需要能访问 GitHub，可用 `QINGCODE_AGENT_DOWNLOAD_BASE` 指向内网镜像。离线：把 `release/QingCode-agents.zip` 里的 `agents/` 放到 `QingCode.exe` 同目录，或设置 `QINGCODE_AGENT_DIR`。本地文件优先于下载。清单里有 Linux `qingcode-agent-x86_64` / `aarch64`，以及 Windows `qingcode-agent-windows-x86_64.exe`。
+  - **发行渠道**：安装包和便携版 exe 都不内置代理二进制。在线：`ssh.agent.autoDownload`（默认开）从 GitHub Release 的 `agent-v<版本>` 标签下载，`manifest.json` 含 sha256，校验通过才使用；需要能访问 GitHub，可用 `QINGCODE_AGENT_DOWNLOAD_BASE` 指向内网镜像。离线：设置 → 功能里手动选择解压后的 `agents` 目录（`ssh.agent.offlineDir`，优先于自动查找）；也可以把 `release/QingCode-agents.zip` 里的 `agents/` 放到 `QingCode.exe` 同目录，或设置 `QINGCODE_AGENT_DIR`。本地文件优先于下载。清单里有 Linux `qingcode-agent-x86_64` / `aarch64`，以及 Windows `qingcode-agent-windows-x86_64.exe`。
 
 搜索结果会标明是否被截断；远程文件名搜索在匹配后限制结果数量，内容搜索先限制待扫描文件集合，再流式接收匹配结果。文件名搜索和内容搜索分别取消，切换查询会停止旧的后台搜索；单次远程搜索整体最长 45 秒。内容搜索的单文件匹配上限、8MB 文件清单、16MB 输出预算或单条 2MB 的输出记录上限同样会触发截断提示。搜索根目录在执行前通过 SFTP 解析真实路径，不允许从项目内的符号链接目录搜索到项目外。
 
@@ -284,7 +284,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 26. 把 `content_search`、`file_encoding`/`exclude`、`git_status`/`git_command`、`format`、`path_guard`、`git`、`file_watcher`、`terminal` 与 Tauri 解耦为共用 crate，使本地与远端语义天然一致。
 
 **G. 设置（§10）**
-27. `remote.agent.mode`（auto/always/never 及连接级覆盖）、`remote.agent.installDir`、`remote.agent.detachedTerminalTtl`、`remote.agent.terminalScrollbackBytes`、`remote.agent.watch`（当前仅 `ssh.agent.enabled` 与 `ssh.agent.autoDownload`）。
+27. `remote.agent.mode`（auto/always/never 及连接级覆盖）、`remote.agent.installDir`、`remote.agent.detachedTerminalTtl`、`remote.agent.terminalScrollbackBytes`、`remote.agent.watch`（当前有 `ssh.agent.enabled`、`ssh.agent.autoDownload`，以及手动离线目录 `ssh.agent.offlineDir`）。
 
 ### 已知问题与瑕疵
 

@@ -533,8 +533,51 @@ async fn locate_local_agent_binary(
         }
     }
     Err(format!(
-        "本地未找到 QingCode agent 二进制（{binary_name}）。在线请打开「缺失时自动下载」；离线请把 agents 目录放到 QingCode.exe 旁边，或设置 QINGCODE_AGENT_DIR。已回退直连"
+        "本地未找到 QingCode agent 二进制（{binary_name}）。在线请打开「缺失时自动下载」；离线可在设置里选择 agents 目录，或把它放到 QingCode.exe 旁边。已回退直连"
     ))
+}
+
+fn dir_has_agent_binary(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        entry.path().is_file() && name.starts_with("qingcode-agent") && !name.ends_with(".download")
+    })
+}
+
+fn plain_local_path(path: PathBuf) -> PathBuf {
+    let text = path.to_string_lossy();
+    let Some(stripped) = text.strip_prefix(r"\\?\") else {
+        return path;
+    };
+    if let Some(unc) = stripped.strip_prefix(r"UNC\") {
+        return PathBuf::from(format!(r"\\{unc}"));
+    }
+    PathBuf::from(stripped)
+}
+
+/// 接受 agents 目录，或包含 `agents` 子目录的文件夹。返回实际存放二进制的目录。
+pub(crate) fn resolve_offline_agent_dir(path: &Path) -> Result<PathBuf, String> {
+    let canonical =
+        std::fs::canonicalize(path).map_err(|_| "离线目录不存在或无法访问".to_string())?;
+    if !canonical.is_dir() {
+        return Err("请选择文件夹，而不是文件".to_string());
+    }
+    let canonical = plain_local_path(canonical);
+    if dir_has_agent_binary(&canonical) {
+        return Ok(canonical);
+    }
+    let nested = canonical.join("agents");
+    if nested.is_dir() && dir_has_agent_binary(&nested) {
+        return Ok(nested);
+    }
+    Err(
+        "这个目录里没有 qingcode-agent 二进制。请选择解压后的 agents 目录，或包含 agents 子目录的文件夹。"
+            .to_string(),
+    )
 }
 
 /// agent 二进制的 GitHub Release 下载基址（独立发布的 `agent-v<版本>` 系列标签）。
@@ -1831,6 +1874,33 @@ mod tests {
         )
         .unwrap()
         .is_empty());
+    }
+
+    #[test]
+    fn resolve_offline_agent_dir_accepts_agents_folder_or_parent() {
+        let root = std::env::temp_dir().join(format!(
+            "qingcode-offline-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let agents = root.join("agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(agents.join("qingcode-agent-x86_64.download"), b"partial").unwrap();
+        assert!(resolve_offline_agent_dir(&agents).is_err());
+        std::fs::write(agents.join("qingcode-agent-x86_64"), b"bin").unwrap();
+        let from_parent = resolve_offline_agent_dir(&root).unwrap();
+        let from_agents = resolve_offline_agent_dir(&agents).unwrap();
+        assert!(from_parent.ends_with("agents"));
+        assert_eq!(from_parent, from_agents);
+        let empty = root.join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert!(resolve_offline_agent_dir(&empty).is_err());
+        assert!(resolve_offline_agent_dir(&agents.join("qingcode-agent-x86_64")).is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
