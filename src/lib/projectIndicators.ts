@@ -43,6 +43,21 @@ export function projectPathsMatch(a: string, b: string): boolean {
   return normalizedProjectPath(a) === normalizedProjectPath(b)
 }
 
+/**
+ * Git 更改数归属：状态库还停留在别的项目时返回 0。
+ *
+ * 切项目会立刻发起一次 Git 读取，但快照返回前 `dirtyCount` 仍是上一个项目的数字；
+ * 直接读它会把这个数字挂到新项目上（页面徽标 / 活动栏 / 状态栏都会跳一下）。
+ */
+export function gitDirtyCountForProject(
+  projectPath: string | null | undefined,
+  storeProjectPath: string | null | undefined,
+  storeDirtyCount: number
+): number {
+  if (!projectPath || !storeProjectPath) return 0
+  return projectPathsMatch(projectPath, storeProjectPath) ? storeDirtyCount : 0
+}
+
 /** Keep project-tab Git badges in lockstep with the activity-bar SCM badge. */
 export function notifyGitDirtyCount(projectPath: string, dirtyCount: number) {
   if (typeof window === 'undefined') return

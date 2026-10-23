@@ -31,6 +31,9 @@ export type FsChangePayload = {
 /** Per-path debounce for rapid external writes before content sync. */
 const CONTENT_SYNC_DEBOUNCE_MS = 350
 
+/** SSH 项目窗口聚焦时的 Git 刷新冷却：一次刷新 = 一次远程 git status。 */
+const SSH_GIT_FOCUS_COOLDOWN_MS = 60_000
+
 function normalize(path: string): string {
   return path.replace(/\\/g, '/').toLowerCase()
 }
@@ -144,7 +147,15 @@ export function useFileWatcher() {
       return
     }
     void useGitStatusStore.getState().refresh(currentProject.path)
-    const onFocus = () => useGitStatusStore.getState().scheduleRefresh(currentProject.path, 200)
+    // SSH 每次刷新都是一次远程往返：Alt-Tab 来回切不该连刷。
+    const focusCooldownMs = isSshResource(currentProject.path) ? SSH_GIT_FOCUS_COOLDOWN_MS : 0
+    let lastFocusRefreshAt = 0
+    const onFocus = () => {
+      const now = Date.now()
+      if (now - lastFocusRefreshAt < focusCooldownMs) return
+      lastFocusRefreshAt = now
+      useGitStatusStore.getState().scheduleRefresh(currentProject.path, 200)
+    }
     window.addEventListener('focus', onFocus)
     let refreshTimer: number | null = null
     const scheduleRefresh = () => {

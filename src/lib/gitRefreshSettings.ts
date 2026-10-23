@@ -12,6 +12,20 @@ export const DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES = 5
 export const MIN_GIT_REFRESH_INTERVAL_START_MINUTES = 5
 export const MAX_GIT_REFRESH_INTERVAL_START_MINUTES = 24 * 60
 
+/** 状态栏分支芯片的本地轮询周期。 */
+export const GIT_HEAD_REFRESH_MS = 15_000
+
+/**
+ * 状态栏取分支的轮询周期；SSH 项目返回 0（不轮询）。
+ *
+ * SSH 没有单独的 `git_head` 命令，取分支就是一次完整 `git status`：
+ * 15 秒一次等于每小时 240 次远程往返，只为显示一个很少变化的分支名。
+ * SSH 的分支名改为跟随 SCM / workdir 快照更新。
+ */
+export function gitHeadPollIntervalMs(isSshProject: boolean): number {
+  return isSshProject ? 0 : GIT_HEAD_REFRESH_MS
+}
+
 export function parseGitRefreshIntervalStartMinutes(value: unknown): number {
   const parsed =
     typeof value === 'number'

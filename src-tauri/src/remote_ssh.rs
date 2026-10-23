@@ -511,6 +511,8 @@ pub struct SshManager {
     terminals: RwLock<HashMap<String, Arc<RemoteTerminalSession>>>,
     reconnect_gates: Mutex<HashMap<String, ReconnectGate>>,
     exec_slots: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
+    /// 项目根相对仓库根的路径前缀（`git rev-parse --show-prefix`），按项目惰性缓存。
+    git_prefixes: Mutex<HashMap<String, String>>,
 }
 
 impl SshManager {
@@ -521,6 +523,26 @@ impl SshManager {
             terminals: RwLock::new(HashMap::new()),
             reconnect_gates: Mutex::new(HashMap::new()),
             exec_slots: Mutex::new(HashMap::new()),
+            git_prefixes: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn cached_git_prefix(&self, project_uri: &str) -> Option<String> {
+        self.git_prefixes
+            .lock()
+            .ok()
+            .and_then(|prefixes| prefixes.get(project_uri).cloned())
+    }
+
+    fn remember_git_prefix(&self, project_uri: &str, prefix: &str) {
+        if let Ok(mut prefixes) = self.git_prefixes.lock() {
+            prefixes.insert(project_uri.to_string(), prefix.to_string());
+        }
+    }
+
+    fn forget_git_prefix(&self, project_uri: &str) {
+        if let Ok(mut prefixes) = self.git_prefixes.lock() {
+            prefixes.remove(project_uri);
         }
     }
 
@@ -2602,6 +2624,78 @@ fn parse_git_branch_header(header: &str) -> (Option<String>, Option<String>, u32
     (Some(branch.to_string()), upstream, ahead, behind)
 }
 
+/// `git status --porcelain=v1 -z` 的解析结果；路径仍是「仓库根相对」。
+#[derive(Debug, Default, PartialEq, Eq)]
+struct RemoteGitStatusParse {
+    branch: Option<String>,
+    upstream: Option<String>,
+    ahead: u32,
+    behind: u32,
+    entries: Vec<(String, String)>,
+}
+
+/// 解析 `-z` 输出：分支头 + `XY<空格>PATH` 记录（R/C 后面紧跟原路径，需要跳过）。
+/// 编辑器自身的临时产物在这里就被剔除，避免徽标随粘贴上传抖动。
+fn parse_remote_git_status(stdout: &str) -> RemoteGitStatusParse {
+    let records = stdout.split('\0').collect::<Vec<_>>();
+    let mut parsed = RemoteGitStatusParse::default();
+    let mut index = 0usize;
+    while index < records.len() {
+        let record = records[index];
+        index += 1;
+        if record.starts_with("## ") {
+            let (branch, upstream, ahead, behind) = parse_git_branch_header(record);
+            parsed.branch = branch;
+            parsed.upstream = upstream;
+            parsed.ahead = ahead;
+            parsed.behind = behind;
+            continue;
+        }
+        if record.len() < 4 {
+            continue;
+        }
+        let status = record[..2].to_string();
+        let relative = record[3..].to_string();
+        if status.contains('R') || status.contains('C') {
+            index += 1;
+        }
+        if crate::git_status::is_editor_artifact(&relative, &status) {
+            continue;
+        }
+        parsed.entries.push((relative, status));
+    }
+    parsed
+}
+
+/// 项目根相对仓库根的路径前缀（如 `apps/web/`；项目根即仓库根时为空）。
+///
+/// 结果按项目缓存：`git status` 一个项目只探测一次，稳态不额外增加远程往返。
+async fn remote_git_prefix(manager: &SshManager, path: &str) -> String {
+    let key = normalize_remote_uri(path);
+    if let Some(cached) = manager.cached_git_prefix(&key) {
+        return cached;
+    }
+    let output = remote_git_command(
+        manager,
+        path,
+        vec!["rev-parse".to_string(), "--show-prefix".to_string()],
+        false,
+    )
+    .await;
+    let Ok(output) = output else {
+        return String::new();
+    };
+    if output.exit_code != 0 {
+        return String::new();
+    }
+    let mut prefix = output.stdout.trim().to_string();
+    if !prefix.is_empty() && !prefix.ends_with('/') {
+        prefix.push('/');
+    }
+    manager.remember_git_prefix(&key, &prefix);
+    prefix
+}
+
 #[tauri::command]
 pub async fn ssh_git_status(
     path: String,
@@ -2617,6 +2711,9 @@ pub async fn ssh_git_status(
             "-z",
             "--untracked-files=all",
             "--ignore-submodules=dirty",
+            // 限定在项目子树内：否则仓库其它目录的改动也会算进项目徽标。
+            "--",
+            ".",
         ]
         .map(str::to_string)
         .to_vec(),
@@ -2643,39 +2740,37 @@ pub async fn ssh_git_status(
         }
         return Err(format!("读取远程 Git 状态失败：{}", output.stderr.trim()));
     }
-    let records = output.stdout.split('\0').collect::<Vec<_>>();
-    let mut index = 0usize;
-    let mut branch = None;
-    let mut upstream = None;
-    let mut ahead = 0;
-    let mut behind = 0;
-    let mut changes = Vec::new();
-    while index < records.len() {
-        let record = records[index];
-        index += 1;
-        if record.starts_with("## ") {
-            (branch, upstream, ahead, behind) = parse_git_branch_header(record);
-            continue;
-        }
-        if record.len() < 4 {
-            continue;
-        }
-        let status = record[..2].to_string();
-        let relative = record[3..].to_string();
-        if status.contains('R') || status.contains('C') {
-            index += 1;
-        }
-        changes.push(RemoteGitChange {
-            path: relative,
-            status,
-        });
-    }
+    let parsed = parse_remote_git_status(&output.stdout);
+
+    // porcelain 永远是「仓库根相对」；项目根是仓库子目录时要裁掉前缀，
+    // 否则前端按 `项目根 + 相对路径` 拼出来的绝对路径是错的。
+    let prefix = remote_git_prefix(&manager, &path).await;
+    let prefix_matches = prefix.is_empty()
+        || parsed
+            .entries
+            .iter()
+            .all(|(relative, _)| relative.starts_with(prefix.as_str()));
+    let prefix = if prefix_matches {
+        prefix
+    } else {
+        // 缓存的前缀过期（项目被移动/重新 init）：本次退回仓库根相对，并让下次重新探测。
+        manager.forget_git_prefix(&normalize_remote_uri(&path));
+        String::new()
+    };
+    let changes = parsed
+        .entries
+        .into_iter()
+        .filter_map(|(relative, status)| {
+            crate::git_status::strip_git_prefix(&relative, &prefix)
+                .map(|path| RemoteGitChange { path, status })
+        })
+        .collect::<Vec<_>>();
     Ok(RemoteGitStatus {
         is_repository: true,
-        branch,
-        upstream,
-        behind,
-        ahead,
+        branch: parsed.branch,
+        upstream: parsed.upstream,
+        behind: parsed.behind,
+        ahead: parsed.ahead,
         last_fetch_at: None,
         last_pull_at: None,
         last_push_at: None,
@@ -3129,7 +3224,9 @@ async fn remote_git_show(
     revision: &str,
     file: &str,
 ) -> Result<String, String> {
-    let spec = format!("{revision}:{file}");
+    // `<rev>:<path>` 里的 path 是仓库根相对；项目根是子目录时要补回前缀，pathspec 则不用。
+    let prefix = remote_git_prefix(manager, path).await;
+    let spec = format!("{revision}:{prefix}{file}");
     let output = remote_git_command(
         manager,
         path,
@@ -4075,6 +4172,56 @@ mod tests {
         )
         .unwrap();
         assert!(windows_powershell_inline_command(&long).is_none());
+    }
+
+    #[test]
+    fn parse_remote_git_status_keeps_branch_and_skips_rename_source() {
+        let stdout =
+            "## test...origin/test [ahead 1]\0 M src/a.ts\0?? new.txt\0R  new.rs\0old.rs\0";
+        let parsed = parse_remote_git_status(stdout);
+        assert_eq!(parsed.branch.as_deref(), Some("test"));
+        assert_eq!(parsed.upstream.as_deref(), Some("origin/test"));
+        assert_eq!(parsed.ahead, 1);
+        assert_eq!(
+            parsed.entries,
+            vec![
+                ("src/a.ts".to_string(), " M".to_string()),
+                ("new.txt".to_string(), "??".to_string()),
+                ("new.rs".to_string(), "R ".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_remote_git_status_drops_editor_artifacts() {
+        let stdout = concat!(
+            "## main\0",
+            " M src/a.ts\0",
+            "?? .qingcode/terminal-paste/stamp/paste-1.png\0",
+            "?? .qingcode-transfer-abcd.tmp\0",
+            "?? .qingcode/run.json\0",
+        );
+        let parsed = parse_remote_git_status(stdout);
+        assert_eq!(
+            parsed.entries,
+            vec![
+                ("src/a.ts".to_string(), " M".to_string()),
+                (".qingcode/run.json".to_string(), "??".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn subdirectory_project_paths_are_rebased_onto_the_project_root() {
+        // 项目是仓库子目录：porcelain 仍返回仓库根相对，按前缀裁掉后才对得上项目内的文件。
+        let stdout = "## main\0 M apps/web/src/a.ts\0?? apps/web/new.txt\0";
+        let parsed = parse_remote_git_status(stdout);
+        let rebased: Vec<_> = parsed
+            .entries
+            .iter()
+            .filter_map(|(path, _)| crate::git_status::strip_git_prefix(path, "apps/web/"))
+            .collect();
+        assert_eq!(rebased, vec!["src/a.ts".to_string(), "new.txt".to_string()]);
     }
 
     #[test]

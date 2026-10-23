@@ -10,6 +10,7 @@ import {
   countDirtyTabsByProject,
   countRunningTerminalsByProject,
   GIT_DIRTY_COUNT_EVENT,
+  gitDirtyCountForProject,
   type GitDirtyCountDetail,
   projectGitRefreshDelay,
   projectPathsMatch,
@@ -199,16 +200,14 @@ export function useProjectIndicators(
   ])
 
   return useMemo(() => {
-    const useStoreForCurrent =
-      !!currentProject &&
-      !!storeProjectPath &&
-      projectPathsMatch(currentProject.path, storeProjectPath)
-
     return Object.fromEntries(
       projects.map(project => {
         const fromCache = gitChangesByProject[project.id] ?? 0
+        // 当前项目用状态库的实时值，但只在快照确实属于它时才采用（否则会串到上一个项目）。
         const gitChanges =
-          useStoreForCurrent && project.id === currentProject.id ? storeDirtyCount : fromCache
+          currentProject && project.id === currentProject.id
+            ? gitDirtyCountForProject(currentProject.path, storeProjectPath, storeDirtyCount)
+            : fromCache
         return [
           project.id,
           {

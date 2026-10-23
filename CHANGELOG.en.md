@@ -6,6 +6,18 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.13-beta.3] - 2026-10-23
+
+### Fixed
+
+- SSH projects no longer borrow another project's Git change count: switching projects clears the count before the new snapshot lands, so the activity bar, status bar and project tab always agree
+- When an SSH project sits inside a subdirectory of its repository, Git status is limited to the project subtree and paths are rebased onto it — outer-repo changes no longer leak into the count, and changes no longer decorate the wrong file
+- The editor's own paste uploads and write temporaries (`.qingcode/terminal-paste/`, `*.qingcode-*.tmp`) no longer count as Git changes
+
+### Changed
+
+- Slower Git refresh for SSH projects: the branch chip no longer polls every 15 seconds, the workdir snapshot returns the branch in the same round-trip, window-focus refresh has a 60-second cooldown, and focus no longer triggers an automatic fetch; switching projects, saving, opening source control and manual refresh still update immediately
+
 ## [0.1.13-beta.2] - 2026-10-09
 
 ### Added

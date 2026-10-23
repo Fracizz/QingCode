@@ -32,6 +32,8 @@ export function getGitWorkdirStatus(path: string): Promise<GitWorkdirStatus | nu
       status.is_repository
         ? {
             dirty_count: status.changes.length,
+            // 一次远程往返已经拿到分支，别再为状态栏单独跑一次全量 status。
+            branch: status.branch ?? null,
             entries: status.changes.map(change => ({
               path: `${path.replace(/\/+$/, '')}/${change.path}`,
               status: change.status,

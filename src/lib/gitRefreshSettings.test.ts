@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  GIT_HEAD_REFRESH_MS,
   GIT_REFRESH_INTERVAL_START_CACHE_KEY,
   MAX_GIT_REFRESH_INTERVAL_START_MINUTES,
   getGitRefreshIntervalStartMinutes,
+  gitHeadPollIntervalMs,
   parseGitRefreshIntervalStartMinutes,
   readGitRefreshIntervalStartMinutes,
 } from './gitRefreshSettings'
@@ -48,5 +50,10 @@ describe('gitRefreshSettings', () => {
     ).toBe(12)
     localStorage.setItem(GIT_REFRESH_INTERVAL_START_CACHE_KEY, '18')
     expect(getGitRefreshIntervalStartMinutes()).toBe(18)
+  })
+
+  it('stops polling the branch chip for SSH projects', () => {
+    expect(gitHeadPollIntervalMs(false)).toBe(GIT_HEAD_REFRESH_MS)
+    expect(gitHeadPollIntervalMs(true)).toBe(0)
   })
 })

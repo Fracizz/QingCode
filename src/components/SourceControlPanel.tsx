@@ -1726,6 +1726,9 @@ export default function SourceControlPanel() {
   useEffect(() => {
     const onFocus = () => {
       if (!projectPath || !status?.is_repository) return
+      // SSH 的 focus 自动 fetch 会连带 fetch + 全量刷新（3–4 次远程 exec），
+      // 而且 last_fetch_at 恒为空、节流形同失效；改为进入面板时 fetch 一次 + 手动检查更新。
+      if (isSshResource(projectPath)) return
       tryAutoFetch('window-focus')
     }
     window.addEventListener('focus', onFocus)

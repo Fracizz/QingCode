@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
-import { useGitStatusStore } from '../store/gitStatusStore'
+import { useActiveGitDirtyCount } from '../hooks/useActiveGitDirtyCount'
 import { useUIStore } from '../store/uiStore'
 
 interface Props {
@@ -35,7 +35,7 @@ export default function ActivityBar({
   terminalOpen,
 }: Props) {
   const { t } = useI18n()
-  const gitChanges = useGitStatusStore(s => s.dirtyCount)
+  const gitChanges = useActiveGitDirtyCount()
   const activityBarHidden = useUIStore(s => s.activityBarHidden)
   const setActivityBarHidden = useUIStore(s => s.setActivityBarHidden)
 

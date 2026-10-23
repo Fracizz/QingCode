@@ -11,6 +11,7 @@ import { isTauri, safeInvoke } from '../lib/tauri'
 import { getGitHead, type GitHeadInfo } from '../lib/ipc/git'
 import { isProjectRestricted, WORKSPACE_TRUST_CHANGED_EVENT } from '../lib/workspaceTrust'
 import { useGitStatusStore } from '../store/gitStatusStore'
+import { useActiveGitDirtyCount } from '../hooks/useActiveGitDirtyCount'
 import ContextMenu from './ContextMenu'
 import {
   FILE_ENCODING_OPTIONS,
@@ -19,6 +20,7 @@ import {
 } from '../lib/fileEncoding'
 import { checkForAppUpdate } from '../lib/appUpdate'
 import { formatAppMemoryMb } from '../lib/appMemory'
+import { gitHeadPollIntervalMs } from '../lib/gitRefreshSettings'
 import {
   readStatusBarRowTop,
   STATUS_BAR_ROW_ATTR,
@@ -39,7 +41,6 @@ type AppMemoryInfo = {
   projectTerminalBytes: number
 }
 
-const GIT_HEAD_REFRESH_MS = 15_000
 /** Background poll while the window is visible. */
 const APP_MEMORY_REFRESH_MS = 10_000
 /** Faster poll while the memory tip is open. */
@@ -76,7 +77,7 @@ export default function StatusBar() {
   const [memoryTipOpen, setMemoryTipOpen] = useState(false)
   const [updateBusy, setUpdateBusy] = useState(false)
   const [gitHead, setGitHead] = useState<GitHeadInfo | null>(null)
-  const gitDirtyCount = useGitStatusStore(s => s.dirtyCount)
+  const gitDirtyCount = useActiveGitDirtyCount()
   const [encodingMenu, setEncodingMenu] = useState<{
     x: number
     y: number
@@ -215,13 +216,25 @@ export default function StatusBar() {
 
     let cancelled = false
     const retryTimers: number[] = []
+    // SSH 取分支 = 一次完整 git status；分支名改为跟随 workdir / SCM 快照，不再单独轮询。
+    const sshProject = isSshResource(projectPath)
 
     const applyHead = (info: GitHeadInfo | null) => {
       if (!cancelled) setGitHead(info)
     }
 
+    const headFromCache = (): GitHeadInfo | null => {
+      const cached = useGitStatusStore.getState().peekPanelStatus(projectPath)
+      if (!cached?.is_repository || !cached.branch) return null
+      return { name: cached.branch, detached: cached.branch === 'HEAD' }
+    }
+
     /** Prefer filesystem HEAD; fall back to SCM cache branch when present. */
     const loadGitHead = async () => {
+      if (sshProject) {
+        applyHead(headFromCache())
+        return
+      }
       const cached = useGitStatusStore.getState().peekPanelStatus(projectPath)
       try {
         const info = await getGitHead(projectPath)
@@ -253,22 +266,21 @@ export default function StatusBar() {
     }
 
     // Seed immediately from SCM cache so the chip appears before IPC returns.
-    const seed = useGitStatusStore.getState().peekPanelStatus(projectPath)
-    if (seed?.is_repository && seed.branch) {
-      applyHead({ name: seed.branch, detached: false })
-    } else {
-      applyHead(null)
-    }
+    const seed = headFromCache()
+    if (seed) applyHead(seed)
+    else applyHead(null)
 
     void loadGitHead()
     // Allowlist sync can lag project switch; retry briefly so a race does not
-    // leave the status bar empty until the 15s poll.
-    for (const delay of [120, 400, 1000]) {
-      retryTimers.push(
-        window.setTimeout(() => {
-          void loadGitHead()
-        }, delay)
-      )
+    // leave the status bar empty until the 15s poll. SSH reuses the cache instead.
+    if (!sshProject) {
+      for (const delay of [120, 400, 1000]) {
+        retryTimers.push(
+          window.setTimeout(() => {
+            void loadGitHead()
+          }, delay)
+        )
+      }
     }
 
     const onFocus = () => {
@@ -285,16 +297,24 @@ export default function StatusBar() {
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('qingcode:git-worktree-changed', onWorktree)
-    const intervalId = window.setInterval(() => {
-      void loadGitHead()
-    }, GIT_HEAD_REFRESH_MS)
+    const pollMs = gitHeadPollIntervalMs(sshProject)
+    const intervalId = pollMs > 0
+      ? window.setInterval(() => {
+          void loadGitHead()
+        }, pollMs)
+      : null
 
-    // When SCM soft-refresh fills branch later, mirror it into the status bar.
+    // When SCM / workdir refresh fills branch later, mirror it into the status bar.
     const unsubScm = useGitStatusStore.subscribe(state => {
       if (cancelled || state.panelPath !== projectPath) return
       const branch = state.panelStatus?.is_repository ? state.panelStatus.branch : null
       if (!branch) return
-      setGitHead(prev => prev ?? { name: branch, detached: false })
+      setGitHead(prev => {
+        if (!sshProject) return prev ?? { name: branch, detached: false }
+        // SSH 没有轮询，分支名完全跟随快照：切分支后也要跟着变。
+        if (prev?.name === branch) return prev
+        return { name: branch, detached: branch === 'HEAD' }
+      })
     })
 
     return () => {
@@ -302,7 +322,7 @@ export default function StatusBar() {
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('qingcode:git-worktree-changed', onWorktree)
-      window.clearInterval(intervalId)
+      if (intervalId !== null) window.clearInterval(intervalId)
       for (const id of retryTimers) window.clearTimeout(id)
       unsubScm()
     }

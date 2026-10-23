@@ -5,6 +5,7 @@ import {
   countDirtyTabsByProject,
   countRunningTerminalsByProject,
   GIT_DIRTY_COUNT_EVENT,
+  gitDirtyCountForProject,
   notifyGitDirtyCount,
   projectGitRefreshDelay,
   projectPathsMatch,
@@ -20,6 +21,15 @@ function tab(id: string, path: string, dirty = true): EditorTab {
 }
 
 describe('project indicators', () => {
+  it('does not attribute a stale store count to another project', () => {
+    expect(gitDirtyCountForProject('D:\\code\\a', 'D:/code/a', 7)).toBe(7)
+    expect(gitDirtyCountForProject('D:\\code\\b', 'D:/code/a', 11)).toBe(0)
+    expect(gitDirtyCountForProject('ssh://c1/D:/code/app', 'ssh://c1/D:/code/app', 3)).toBe(3)
+    expect(gitDirtyCountForProject('ssh://c1/D:/code/app', 'ssh://c1/D:/code/other', 9)).toBe(0)
+    expect(gitDirtyCountForProject(null, 'D:/code/a', 4)).toBe(0)
+    expect(gitDirtyCountForProject('D:/code/a', null, 4)).toBe(0)
+  })
+
   it('randomizes background Git refreshes in whole minutes from a 5-minute floor', () => {
     expect(projectGitRefreshDelay(5, 0)).toBe(300_000)
     expect(projectGitRefreshDelay(5, 0.5)).toBe(420_000)

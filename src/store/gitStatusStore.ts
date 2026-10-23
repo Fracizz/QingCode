@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import type { GitStatus } from '@/lib/git/git'
 import { isTauri } from '../lib/tauri'
 import { getGitHead, getGitWorkdirStatus } from '../lib/ipc/git'
-import { notifyGitDirtyCount } from '../lib/projectIndicators'
+import { notifyGitDirtyCount, gitDirtyCountForProject } from '../lib/projectIndicators'
 import {
   absoluteGitPath,
   buildStatusMap,
@@ -32,6 +32,8 @@ type GitStatusState = {
   scheduleRefresh: (projectPath?: string | null, delayMs?: number) => void
   statusFor: (path: string) => string | null
   statusForDir: (dirPath: string) => string | null
+  /** 按归属读取脏数：路径不匹配时返回 0（不串台）。 */
+  dirtyCountFor: (projectPath?: string | null) => number
   /** Seed the SCM panel from the already-loaded workdir map. */
   peekPanelStatus: (projectPath: string) => GitStatus | null
   clear: () => void
@@ -39,7 +41,8 @@ type GitStatusState = {
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 let lastRefreshAt = 0
-let inFlight: Promise<void> | null = null
+/** 在飞读取：同一项目复用同一条 git status，而不是排队再跑一次。 */
+let inFlight: { projectPath: string; promise: Promise<void> } | null = null
 const MIN_REFRESH_GAP_MS = 1_500
 
 export const useGitStatusStore = create<GitStatusState>((set, get) => ({
@@ -83,6 +86,11 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
   statusFor: path => get().statusByPath.get(gitStatusKey(path)) ?? null,
 
   statusForDir: dirPath => dirGitStatus(get().statusByPath, dirPath),
+
+  dirtyCountFor: projectPath => {
+    const state = get()
+    return gitDirtyCountForProject(projectPath, state.projectPath, state.dirtyCount)
+  },
 
   peekPanelStatus: projectPath => {
     const state = get()
@@ -142,7 +150,20 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
     }
 
     const run = async () => {
-      set({ refreshing: true, projectPath })
+      if (get().projectPath !== projectPath) {
+        // 换了项目：先清空派生状态再读取，避免把上一个项目的数字当成新项目的。
+        set({
+          projectPath,
+          statusByPath: new Map(),
+          entries: [],
+          dirtyCount: 0,
+          refreshing: true,
+          panelPath: null,
+          panelStatus: null,
+        })
+      } else {
+        set({ refreshing: true, projectPath })
+      }
       try {
         const result: GitWorkdirStatus | null = await getGitWorkdirStatus(projectPath)
         if (get().projectPath !== projectPath) return
@@ -158,12 +179,11 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
           return
         }
         const previous = get().panelPath === projectPath ? get().panelStatus : null
+        // SSH 的 workdir 快照自带分支名；本地命令没有时沿用上一次快照。
+        const branch =
+          result.branch !== undefined ? result.branch : (previous?.branch ?? null)
         const panelStatus = preserveGitStatusMetadata(
-          gitStatusFromWorkdirEntries(
-            projectPath,
-            result.entries,
-            previous?.branch ?? null,
-          ),
+          gitStatusFromWorkdirEntries(projectPath, result.entries, branch),
           previous,
         )
         set({
@@ -201,13 +221,18 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
       }
     }
 
-    if (inFlight) {
-      await inFlight
+    // 同一项目的并发调用复用这次读取。
+    // 旧写法是 `await inFlight` 之后再新起一次 run()：两个调用同时到达时，
+    // 前者 settle 后两者都会继续往下走，于是同一个仓库并发跑两条 git status。
+    if (inFlight?.projectPath === projectPath) {
+      return inFlight.promise
     }
-    inFlight = run().finally(() => {
-      inFlight = null
+
+    const promise = run().finally(() => {
+      if (inFlight?.promise === promise) inFlight = null
     })
-    await inFlight
+    inFlight = { projectPath, promise }
+    await promise
   },
 
   scheduleRefresh: (projectPath, delayMs = 600) => {

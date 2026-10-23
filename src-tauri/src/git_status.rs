@@ -175,6 +175,50 @@ pub fn parse_porcelain_line(line: &str) -> Option<(String, String)> {
     Some((path.replace('\\', "/"), porcelain_xy_to_status(xy)))
 }
 
+/// QingCode 自身在项目内产生的临时/上传产物：不计入 Git 更改数，也不进 SCM 列表。
+///
+/// 只作用于未跟踪条目（`??`）：用户真正纳入版本管理的同名文件仍照常显示，
+/// `.qingcode/run.json`、`.qingcode/project-settings.json` 这类项目配置也保持可见（可以提交）。
+pub fn is_editor_artifact(relative_path: &str, status: &str) -> bool {
+    if status != "??" {
+        return false;
+    }
+    let path = relative_path.replace('\\', "/");
+    let normalized = path
+        .trim_start_matches("./")
+        .trim_start_matches('/')
+        .trim_end_matches('/');
+    if normalized.is_empty() {
+        return false;
+    }
+    // SSH 终端粘贴/拖入的上传目录：`.qingcode/terminal-paste/<stamp>/…`
+    if normalized == ".qingcode/terminal-paste"
+        || normalized.starts_with(".qingcode/terminal-paste/")
+        || normalized.contains("/.qingcode/terminal-paste/")
+    {
+        return true;
+    }
+    let name = normalized.rsplit('/').next().unwrap_or(normalized);
+    if !name.ends_with(".tmp") {
+        return false;
+    }
+    // 原子写入 / 传输的临时文件：`.qingcode-transfer-<uuid>.tmp`、`.<name>.qingcode-<uuid>.tmp`
+    name.starts_with(".qingcode-transfer-") || name.contains(".qingcode-")
+}
+
+/// 把 porcelain 的「仓库根相对」路径裁剪成「项目根相对」。
+///
+/// 远端项目常常是仓库的一个子目录：`git status` 无论在哪执行都返回仓库根相对路径，
+/// 前端却按 `项目根 + 相对路径` 拼绝对路径，不裁剪会挂错文件、并数进项目外的改动。
+/// `prefix` 形如 `apps/web/`（仓库根时为空）；路径不在其下或等于其本身时返回 `None`。
+pub fn strip_git_prefix(path: &str, prefix: &str) -> Option<String> {
+    if prefix.is_empty() {
+        return (!path.is_empty()).then(|| path.to_string());
+    }
+    let rest = path.strip_prefix(prefix)?;
+    (!rest.is_empty()).then(|| rest.to_string())
+}
+
 fn absolute_from_workdir(workdir: &Path, rel: &str) -> PathBuf {
     let mut abs = workdir.to_path_buf();
     for part in rel.split('/') {
@@ -211,6 +255,9 @@ pub fn read_git_workdir_status(path: &Path) -> Option<GitWorkdirStatus> {
         let Some((rel, status)) = parse_porcelain_line(line) else {
             continue;
         };
+        if is_editor_artifact(&rel, &status) {
+            continue;
+        }
         let abs = absolute_from_workdir(&workdir, &rel);
         entries.push(GitStatusEntry {
             path: abs.to_string_lossy().to_string(),
@@ -455,9 +502,16 @@ mod tests {
         fs::write(root.join("new.txt"), "untracked\n").unwrap();
         fs::create_dir_all(root.join(".qingcode")).unwrap();
         fs::write(root.join(".qingcode").join("run.json"), "{}\n").unwrap();
+        // 编辑器自身的粘贴上传与传输临时文件：真实仓库里也必须被过滤掉。
+        let paste_dir = root.join(".qingcode").join("terminal-paste").join("stamp");
+        fs::create_dir_all(&paste_dir).unwrap();
+        fs::write(paste_dir.join("paste-1.png"), b"\x89PNG\r\n\x1a\n").unwrap();
+        fs::write(root.join(".qingcode-transfer-abcd.tmp"), "partial\n").unwrap();
+        fs::write(root.join("tracked.txt.qingcode-1234.tmp"), "partial\n").unwrap();
 
         let status = read_git_workdir_status(&root).expect("porcelain status");
-        assert!(status.dirty_count >= 3);
+        // tracked.txt( M) + new.txt(??) + .qingcode/run.json(??)；粘贴上传与临时文件不计入。
+        assert_eq!(status.dirty_count, 3, "entries: {:?}", status.entries);
         let codes: Vec<_> = status.entries.iter().map(|e| e.status.as_str()).collect();
         assert!(codes.contains(&" M"));
         assert!(codes.contains(&"??"));
@@ -473,6 +527,12 @@ mod tests {
                 .iter()
                 .any(|p| p.ends_with("/.qingcode/run.json") || p.ends_with(".qingcode/run.json")),
             "expected expanded untracked file, got {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| {
+                p.contains("terminal-paste") || p.ends_with(".tmp") || p.contains(".qingcode-1")
+            }),
+            "editor artifacts must be filtered out, got {paths:?}"
         );
         assert!(
             !paths.iter().any(|p| {
@@ -496,5 +556,59 @@ mod tests {
             parse_porcelain_line("?? .qingcode/"),
             Some((".qingcode/".into(), "??".into()))
         );
+    }
+
+    #[test]
+    fn strip_git_prefix_rebases_repo_paths_onto_the_project_root() {
+        // 项目根就是仓库根：原样返回
+        assert_eq!(strip_git_prefix("src/a.ts", ""), Some("src/a.ts".into()));
+        // 项目根是仓库子目录：裁掉前缀
+        assert_eq!(
+            strip_git_prefix("apps/web/src/a.ts", "apps/web/"),
+            Some("src/a.ts".into())
+        );
+        assert_eq!(
+            strip_git_prefix("apps/web/new.txt", "apps/web/"),
+            Some("new.txt".into())
+        );
+        // 项目外的路径丢掉，避免把仓库其它目录的改动算进来
+        assert_eq!(strip_git_prefix("root.md", "apps/web/"), None);
+        assert_eq!(strip_git_prefix("apps/webtools/a.ts", "apps/web/"), None);
+        // 前缀本身不是文件
+        assert_eq!(strip_git_prefix("apps/web/", "apps/web/"), None);
+        assert_eq!(strip_git_prefix("", ""), None);
+    }
+
+    #[test]
+    fn editor_artifacts_are_ignored_only_when_untracked() {
+        // SSH 终端粘贴/拖入的上传目录
+        assert!(is_editor_artifact(
+            ".qingcode/terminal-paste/stamp/a.png",
+            "??"
+        ));
+        assert!(is_editor_artifact(
+            "app/.qingcode/terminal-paste/stamp/a.png",
+            "??"
+        ));
+        assert!(is_editor_artifact(".qingcode/terminal-paste", "??"));
+        // 传输与原子写入的临时文件
+        assert!(is_editor_artifact(".qingcode-transfer-1b2c.tmp", "??"));
+        assert!(is_editor_artifact("src/.qingcode-transfer-1b2c.tmp", "??"));
+        assert!(is_editor_artifact("src/main.ts.qingcode-9f8e.tmp", "??"));
+        assert!(is_editor_artifact(".main.ts.qingcode-9f8e.tmp", "??"));
+        // 项目配置与源码：保持可见，用户可以提交
+        assert!(!is_editor_artifact(".qingcode/run.json", "??"));
+        assert!(!is_editor_artifact(".qingcode/project-settings.json", "??"));
+        assert!(!is_editor_artifact("src/main.ts", "??"));
+        assert!(!is_editor_artifact("notes.txt", "??"));
+        // 已跟踪文件即使路径命中也不过滤（status 不是 ??）
+        assert!(!is_editor_artifact(
+            ".qingcode/terminal-paste/keep.png",
+            " M"
+        ));
+        assert!(!is_editor_artifact(
+            ".qingcode/terminal-paste/keep.png",
+            "A "
+        ));
     }
 }
