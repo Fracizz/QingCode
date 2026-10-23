@@ -40,7 +40,11 @@ import {
   markTerminalCommandStarted,
 } from '@/lib/terminal/terminalCommandActivity'
 import { MATERIAL_FOREST as M } from '../lib/materialForestTheme'
-import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
+import {
+  restoredExitRecovery,
+  shouldKeepShellAfterExit,
+} from '@/lib/terminal/terminalShellLifecycle'
+import { terminalSessionOpen } from '../lib/ipc/terminal'
 import {
   isPanelResizing,
   PANEL_RESIZE_BEGIN_EVENT,
@@ -665,12 +669,50 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         term.write(data, () => writeFlow.parsed(size))
       })
       const restored = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
-      if (restored?.status === 'exited' && hadRestoredScrollback) {
-        const note = restored.awaitingRestoreSpawn
-          ? translate('会话输出已恢复；进程将按原配置重新启动')
-          : translate('会话输出已恢复；可从终端标签重启进程')
+      if (restored?.status !== 'exited' || !hadRestoredScrollback) return
+      void (async () => {
+        let sessionOpen: boolean | null = null
+        try {
+          sessionOpen = await terminalSessionOpen(terminalId)
+        } catch {
+          sessionOpen = null
+        }
+        if (xtermRef.current !== term) return
+        const latest = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
+        if (!latest || latest.status !== 'exited') return
+        if (sessionOpen === null) {
+          if (latest.awaitingRestoreSpawn) {
+            term.writeln(
+              `\x1b[90m[${translate('会话输出已恢复；进程将按原配置重新启动')}]\x1b[0m`,
+            )
+          }
+          return
+        }
+        const recovery = restoredExitRecovery({
+          awaitingRestoreSpawn: latest.awaitingRestoreSpawn === true,
+          sessionOpen,
+          keepShell: shouldKeepShellAfterExit(latest),
+        })
+        if (recovery === 'reattach') {
+          useTerminalStore.setState(s => ({
+            terminals: s.terminals.map(tab =>
+              tab.id === terminalId && tab.status === 'exited'
+                ? { ...tab, status: 'running', exitCode: null }
+                : tab
+            ),
+          }))
+          return
+        }
+        if (recovery === 'respawn') {
+          void useTerminalStore.getState().restartTerminal(terminalId, { preserveOutput: true })
+          return
+        }
+        const note =
+          recovery === 'await-spawn'
+            ? translate('会话输出已恢复；进程将按原配置重新启动')
+            : translate('会话输出已恢复；可从终端标签重启进程')
         term.writeln(`\x1b[90m[${note}]\x1b[0m`)
-      }
+      })()
     }, 0)
 
     const ro = new ResizeObserver(() => {
@@ -835,27 +877,48 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         term.writeln(`\x1b[90m${translate('正在重启终端…')}\x1b[0m`)
       }
     } else if (terminal.status === 'exited' && previous !== 'exited') {
-      if (terminal.exitCode === null) {
-        term.writeln(`\r\n\x1b[90m[${translate('进程未启动')}${translate('，可从终端标签重启')}]\x1b[0m`)
-      } else if (!shouldKeepShellAfterExit(terminal)) {
-        // Run-config / one-shot tasks: PTY is gone — explain why typing is disabled.
-        term.writeln(
-          `\r\n\x1b[90m── ${translate('运行配置任务已结束（退出码 {code}）', {
-            code: String(terminal.exitCode),
-          })} ──\x1b[0m`,
-        )
-        term.writeln(
-          `\x1b[90m${translate(
-            '由运行配置拉起，结束后不能继续输入。点标签「重启」再跑，或新开普通终端。',
-          )}\x1b[0m`,
-        )
-      } else {
-        const detail = translate('进程已退出，退出码 {code}', { code: String(terminal.exitCode) })
-        term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
-      }
+      const exited = terminal
+      void (async () => {
+        let sessionOpen: boolean | null = null
+        try {
+          sessionOpen = await terminalSessionOpen(terminalId)
+        } catch {
+          sessionOpen = null
+        }
+        if (xtermRef.current !== term) return
+        const latest = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+        if (!latest || latest.status !== 'exited') return
+        if (sessionOpen) {
+          useTerminalStore.setState(state => ({
+            terminals: state.terminals.map(tab =>
+              tab.id === terminalId && tab.status === 'exited'
+                ? { ...tab, status: 'running', exitCode: null }
+                : tab
+            ),
+          }))
+          return
+        }
+        if (exited.exitCode === null) {
+          term.writeln(`\r\n\x1b[90m[${translate('进程未启动')}${translate('，可从终端标签重启')}]\x1b[0m`)
+        } else if (!shouldKeepShellAfterExit(exited)) {
+          term.writeln(
+            `\r\n\x1b[90m── ${translate('运行配置任务已结束（退出码 {code}）', {
+              code: String(exited.exitCode),
+            })} ──\x1b[0m`,
+          )
+          term.writeln(
+            `\x1b[90m${translate(
+              '由运行配置拉起，结束后不能继续输入。点标签「重启」再跑，或新开普通终端。',
+            )}\x1b[0m`,
+          )
+        } else {
+          const detail = translate('进程已退出，退出码 {code}', { code: String(exited.exitCode) })
+          term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
+        }
+      })()
     }
     previousStatusRef.current = terminal.status
-  }, [terminal])
+  }, [terminal, terminalId])
 
   useEffect(() => {
     if (!isTauri() || !isSshResource(terminal?.cwd ?? '')) return
@@ -903,7 +966,8 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         })
       }}
     >
-      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 py-2">
+      {/* 底边不再留 8px：它会和排不满一整行的余量叠在一起，看起来像空了一行。 */}
+      <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden px-2.5 pt-2">
         {searchOpen ? (
           <TerminalSearchBar
             query={searchQuery}

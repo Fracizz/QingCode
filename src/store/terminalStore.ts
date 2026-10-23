@@ -168,6 +168,11 @@ function consumeIntentionalPtyKill(id: string): boolean {
   return true
 }
 
+/** Drop a kill mark once that process is gone, so it cannot lock the next shell. */
+function releaseIntentionalPtyKill(id: string) {
+  intentionalPtyKills.delete(id)
+}
+
 type TerminalOutputListener = (data: Uint8Array) => void
 
 /** Re-open a shell after OpenCode/TUI tore down the ConPTY; keep scrollback. */
@@ -1078,6 +1083,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         .getState()
         .pushToast('error', translate('结束终端进程失败: {error}', { error: String(error) }))
     }
+    // Local kill removes the session before wait, so no terminal-exit follows.
+    // Leaving the mark set would treat the replacement shell's later exit as
+    // intentional and block input.
+    releaseIntentionalPtyKill(id)
     set(s => ({
       terminals: s.terminals.map(terminal =>
         terminal.id === id
@@ -1511,7 +1520,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
         // close / restart / replace — do not treat as a soft shell death.
         if (consumeIntentionalPtyKill(id)) {
-          if (tab.ptySpawnPending || tab.status === 'starting') return
+          // A replacement shell is already up or still starting. This exit
+          // belongs to the process we killed, not a real disconnect.
+          if (tab.ptySpawnPending || tab.status === 'starting' || tab.status === 'running') return
           set(s => ({
             terminals: s.terminals.map(terminal =>
               terminal.id === id ? { ...terminal, status: 'exited', exitCode: exit_code } : terminal

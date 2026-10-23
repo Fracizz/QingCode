@@ -313,6 +313,14 @@ struct RegisteredRoot {
 struct RemoteTerminalSession {
     input: tokio::sync::mpsc::Sender<Vec<u8>>,
     writer: Arc<ChannelWriteHalf<client::Msg>>,
+    /// Cleared when this channel is replaced or closed on purpose.
+    /// A stale reader must not emit `terminal-exit` for the replacement.
+    alive: Arc<AtomicBool>,
+}
+
+/// Returns true only for the reader that still owns the terminal id.
+fn claim_terminal_exit(alive: &AtomicBool) -> bool {
+    alive.swap(false, Ordering::AcqRel)
 }
 
 pub struct SshManager {
@@ -415,6 +423,18 @@ impl SshManager {
             }
             Err(error) => Err(error),
         }
+    }
+
+    pub fn terminal_is_open(&self, id: &str) -> bool {
+        self.terminals
+            .read()
+            .ok()
+            .and_then(|terminals| {
+                terminals
+                    .get(id)
+                    .map(|session| session.alive.load(Ordering::Acquire))
+            })
+            .unwrap_or(false)
     }
 
     fn session(&self, connection_id: &str) -> Result<Arc<ConnectedSession>, String> {
@@ -3013,17 +3033,23 @@ async fn spawn_ssh_terminal(
     let (mut reader, writer) = channel.split();
     let writer = Arc::new(writer);
     let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
-    manager
-        .terminals
-        .write()
-        .map_err(|_| "SSH 终端状态不可用".to_string())?
-        .insert(
+    let alive = Arc::new(AtomicBool::new(true));
+    {
+        let mut terminals = manager
+            .terminals
+            .write()
+            .map_err(|_| "SSH 终端状态不可用".to_string())?;
+        if let Some(previous) = terminals.insert(
             id.clone(),
             Arc::new(RemoteTerminalSession {
                 input: input_tx,
                 writer: Arc::clone(&writer),
+                alive: Arc::clone(&alive),
             }),
-        );
+        ) {
+            previous.alive.store(false, Ordering::Release);
+        }
+    }
 
     let (started_tx, started_rx) = if enter_directory.is_some() {
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -3036,6 +3062,7 @@ async fn spawn_ssh_terminal(
     let filtering_clone = Arc::clone(&is_filtering);
     let app_clone = app.clone();
     let terminal_id = id.clone();
+    let exit_alive = Arc::clone(&alive);
     tauri::async_runtime::spawn(async move {
         let mut started_tx = started_tx;
         let mut exit_code = 0;
@@ -3075,13 +3102,15 @@ async fn spawn_ssh_terminal(
                 _ => {}
             }
         }
-        let _ = app_clone.emit(
-            "terminal-exit",
-            TerminalExitPayload {
-                id: terminal_id,
-                exit_code,
-            },
-        );
+        if claim_terminal_exit(&exit_alive) {
+            let _ = app_clone.emit(
+                "terminal-exit",
+                TerminalExitPayload {
+                    id: terminal_id,
+                    exit_code,
+                },
+            );
+        }
     });
 
     if let (Some(input), Some(started_rx)) = (enter_directory, started_rx) {
@@ -3289,6 +3318,7 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
         .map_err(|_| "SSH 终端状态不可用".to_string())?
         .remove(&id);
     if let Some(session) = session {
+        session.alive.store(false, Ordering::Release);
         session
             .writer
             .close()
@@ -3301,6 +3331,20 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaced_ssh_terminal_does_not_emit_exit() {
+        let alive = AtomicBool::new(true);
+        alive.store(false, Ordering::Release);
+        assert!(!claim_terminal_exit(&alive));
+    }
+
+    #[test]
+    fn current_ssh_terminal_exit_is_reported_once() {
+        let alive = AtomicBool::new(true);
+        assert!(claim_terminal_exit(&alive));
+        assert!(!claim_terminal_exit(&alive));
+    }
 
     #[test]
     fn parses_remote_uri_without_losing_case() {

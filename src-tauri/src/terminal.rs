@@ -379,6 +379,10 @@ impl TerminalManager {
         }
     }
 
+    pub fn is_open(&self, id: &str) -> bool {
+        self.sessions.lock().unwrap().contains_key(id)
+    }
+
     pub fn kill(&self, id: &str) {
         let session = self.sessions.lock().unwrap().remove(id);
         if let Some(mut session) = session {

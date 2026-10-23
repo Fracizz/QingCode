@@ -83,6 +83,10 @@ export function killTerminal(id: string): Promise<void> {
   return safeInvoke('关闭终端', remote ? 'ssh_kill_terminal' : 'kill_terminal', { id })
 }
 
+export function terminalSessionOpen(id: string): Promise<boolean> {
+  return safeInvoke<boolean>('查询终端会话', 'terminal_session_open', { id })
+}
+
 export function writeTerminal(id: string, data: string): Promise<void> {
   return safeInvoke('终端输入', sshTerminalIds.has(id) ? 'ssh_write_terminal' : 'write_terminal', {
     id,

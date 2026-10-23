@@ -422,6 +422,15 @@ fn set_terminal_output_paused(id: String, paused: bool, state: tauri::State<'_, 
 }
 
 #[tauri::command]
+fn terminal_session_open(
+    id: String,
+    terminals: tauri::State<'_, TerminalManager>,
+    ssh: tauri::State<'_, remote_ssh::SshManager>,
+) -> bool {
+    terminals.is_open(&id) || ssh.terminal_is_open(&id)
+}
+
+#[tauri::command]
 fn kill_terminal(id: String, state: tauri::State<'_, TerminalManager>) -> Result<(), String> {
     state.kill(&id);
     Ok(())
@@ -743,6 +752,7 @@ pub fn run() {
             write_terminal,
             set_terminal_output_paused,
             kill_terminal,
+            terminal_session_open,
             resize_terminal,
             terminal_has_child_processes,
             get_app_memory,
