@@ -720,6 +720,45 @@ fn powershell_literal(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+/// 启动交互式 PowerShell / pwsh，并在提示符出现前进入项目目录。
+///
+/// 不能等 PTY 出字后再注入 `Set-Location; Clear-Host`。Windows OpenSSH 的
+/// ConPTY 启动时会写出 `\x1b[2J\x1b[m`，注入的回车会把其中的 `m` 粘到最后一条
+/// 命令上（`Clear-Hostm`），清屏失败，切目录命令和错误都留在屏幕上。
+/// `-EncodedCommand` 是纯 ASCII，路径里的引号和非 ASCII 也不会被 cmd 再解释一遍。
+fn windows_powershell_terminal(
+    executable: &str,
+    native: &str,
+    resolved_shell: &str,
+    fallback_from: Option<String>,
+) -> ResolvedSshTerminal {
+    let script = format!("Set-Location -LiteralPath '{}'", powershell_literal(native));
+    let utf16 = script
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<_>>();
+    ResolvedSshTerminal {
+        command: format!(
+            "{executable} -NoLogo -NoExit -EncodedCommand {}",
+            encode_terminal_data(&utf16)
+        ),
+        enter_directory: None,
+        resolved_shell: resolved_shell.to_string(),
+        fallback_from,
+    }
+}
+
+/// `cmd /K` 在进入交互提示符之前切到项目目录。`%` 即使在引号里也会被展开。
+fn windows_cmd_terminal(native: &str) -> ResolvedSshTerminal {
+    let escaped = native.replace('%', "%%");
+    ResolvedSshTerminal {
+        command: format!("cmd.exe /K cd /d \"{escaped}\""),
+        enter_directory: None,
+        resolved_shell: "cmd".to_string(),
+        fallback_from: None,
+    }
+}
+
 /// 按 MSVCRT 规则给 Windows 进程命令行参数加引号。
 fn windows_quote_arg(arg: &str) -> String {
     if !arg.is_empty() && !arg.contains([' ', '\t', '\n', '\x0b', '"']) {
@@ -845,49 +884,23 @@ fn ssh_interactive_terminal_command(
                 if native.contains('"') {
                     return Err("Windows 远程路径包含无法用于 CMD 的字符".to_string());
                 }
-                Ok(ResolvedSshTerminal {
-                    command: "cmd.exe".to_string(),
-                    enter_directory: Some(format!("cd /d \"{native}\" & cls\r")),
-                    resolved_shell: "cmd".to_string(),
-                    fallback_from: None,
-                })
+                Ok(windows_cmd_terminal(&native))
             }
-            "pwsh" => {
-                let script = format!(
-                    "Set-Location -LiteralPath '{}'; Clear-Host\r",
-                    powershell_literal(&native)
-                );
-                Ok(ResolvedSshTerminal {
-                    command: "pwsh.exe".to_string(),
-                    enter_directory: Some(script),
-                    resolved_shell: "pwsh".to_string(),
-                    fallback_from: None,
-                })
-            }
-            "powershell" | "auto" => {
-                let script = format!(
-                    "Set-Location -LiteralPath '{}'; Clear-Host\r",
-                    powershell_literal(&native)
-                );
-                Ok(ResolvedSshTerminal {
-                    command: "powershell.exe".to_string(),
-                    enter_directory: Some(script),
-                    resolved_shell: "powershell".to_string(),
-                    fallback_from: None,
-                })
-            }
-            unsupported => {
-                let script = format!(
-                    "Set-Location -LiteralPath '{}'; Clear-Host\r",
-                    powershell_literal(&native)
-                );
-                Ok(ResolvedSshTerminal {
-                    command: "powershell.exe".to_string(),
-                    enter_directory: Some(script),
-                    resolved_shell: "powershell".to_string(),
-                    fallback_from: Some(unsupported.to_string()),
-                })
-            }
+            "pwsh" => Ok(windows_powershell_terminal(
+                "pwsh.exe", &native, "pwsh", None,
+            )),
+            "powershell" | "auto" => Ok(windows_powershell_terminal(
+                "powershell.exe",
+                &native,
+                "powershell",
+                None,
+            )),
+            unsupported => Ok(windows_powershell_terminal(
+                "powershell.exe",
+                &native,
+                "powershell",
+                Some(unsupported.to_string()),
+            )),
         }
     } else {
         let quoted = shell_quote(path);
@@ -911,20 +924,6 @@ fn ssh_interactive_terminal_command(
             }),
         }
     }
-}
-
-#[cfg(test)]
-fn windows_terminal_startup_script(path: &str) -> Result<Option<String>, String> {
-    let Some(native) = windows_native_path(path) else {
-        return Ok(None);
-    };
-    if native.contains('\n') || native.contains('\r') {
-        return Err("Windows 远程路径包含无法用于 PowerShell 的字符".to_string());
-    }
-    Ok(Some(format!(
-        "Set-Location -LiteralPath '{}'; Clear-Host\r",
-        powershell_literal(&native)
-    )))
 }
 
 async fn resolve_remote_home(sftp: &SftpSession, username: &str) -> String {
@@ -3331,6 +3330,7 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::encode_terminal_data;
 
     #[test]
     fn replaced_ssh_terminal_does_not_emit_exit() {
@@ -3556,58 +3556,84 @@ mod tests {
         assert!(windows_native_path("/home/owner/app").is_none());
     }
 
+    fn expected_powershell_terminal(executable: &str, literal_path: &str) -> String {
+        let script = format!("Set-Location -LiteralPath '{literal_path}'");
+        let utf16 = script
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect::<Vec<_>>();
+        format!(
+            "{executable} -NoLogo -NoExit -EncodedCommand {}",
+            encode_terminal_data(&utf16)
+        )
+    }
+
     #[test]
     fn windows_terminal_starts_powershell_in_project() {
+        let quoted = ssh_interactive_terminal_command("/D:/code/it's", Some("powershell")).unwrap();
         assert_eq!(
-            windows_terminal_startup_script("/D:/code/it's")
-                .unwrap()
-                .as_deref(),
-            Some("Set-Location -LiteralPath 'D:\\code\\it''s'; Clear-Host\r")
+            quoted.command,
+            expected_powershell_terminal("powershell.exe", r"D:\code\it''s")
         );
+        assert!(quoted.enter_directory.is_none());
+
         let command = ssh_interactive_terminal_command("/D:/code/nem-panel", None).unwrap();
-        assert_eq!(command.command, "powershell.exe");
         assert_eq!(
-            command.enter_directory.as_deref(),
-            Some("Set-Location -LiteralPath 'D:\\code\\nem-panel'; Clear-Host\r")
+            command.command,
+            expected_powershell_terminal("powershell.exe", r"D:\code\nem-panel")
         );
+        assert!(command.enter_directory.is_none());
         assert_eq!(command.resolved_shell, "powershell");
         assert_eq!(command.fallback_from, None);
+        let encoded = command
+            .command
+            .strip_prefix("powershell.exe -NoLogo -NoExit -EncodedCommand ")
+            .unwrap();
+        assert!(encoded
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=')));
 
-        // Test CMD enters project root directly via cd /d & cls
         let cmd_target =
             ssh_interactive_terminal_command("/D:/code/nem-panel", Some("cmd")).unwrap();
-        assert_eq!(cmd_target.command, "cmd.exe");
         assert_eq!(
-            cmd_target.enter_directory.as_deref(),
-            Some("cd /d \"D:\\code\\nem-panel\" & cls\r")
+            cmd_target.command,
+            r#"cmd.exe /K cd /d "D:\code\nem-panel""#
         );
+        assert!(cmd_target.enter_directory.is_none());
         assert_eq!(cmd_target.resolved_shell, "cmd");
         assert_eq!(cmd_target.fallback_from, None);
+        let cmd_space =
+            ssh_interactive_terminal_command("/D:/code/my project", Some("cmd")).unwrap();
+        assert_eq!(
+            cmd_space.command,
+            r#"cmd.exe /K cd /d "D:\code\my project""#
+        );
+        let cmd_percent = ssh_interactive_terminal_command("/D:/100%done", Some("cmd")).unwrap();
+        assert_eq!(cmd_percent.command, r#"cmd.exe /K cd /d "D:\100%%done""#);
+        let cmd_root = ssh_interactive_terminal_command("/C:", Some("cmd")).unwrap();
+        assert_eq!(cmd_root.command, r#"cmd.exe /K cd /d "C:\""#);
+        assert!(ssh_interactive_terminal_command("/D:/code/a\"b", Some("cmd")).is_err());
 
-        // Test pwsh
         let pwsh_target =
             ssh_interactive_terminal_command("/D:/code/nem-panel", Some("pwsh")).unwrap();
-        assert_eq!(pwsh_target.command, "pwsh.exe");
         assert_eq!(
-            pwsh_target.enter_directory.as_deref(),
-            Some("Set-Location -LiteralPath 'D:\\code\\nem-panel'; Clear-Host\r")
+            pwsh_target.command,
+            expected_powershell_terminal("pwsh.exe", r"D:\code\nem-panel")
         );
+        assert!(pwsh_target.enter_directory.is_none());
         assert_eq!(pwsh_target.resolved_shell, "pwsh");
 
-        // Test fallback from unsupported shell on Windows OpenSSH
         let fallback =
             ssh_interactive_terminal_command("/D:/code/nem-panel", Some("bash")).unwrap();
-        assert_eq!(fallback.command, "powershell.exe");
         assert_eq!(
-            fallback.enter_directory.as_deref(),
-            Some("Set-Location -LiteralPath 'D:\\code\\nem-panel'; Clear-Host\r")
+            fallback.command,
+            expected_powershell_terminal("powershell.exe", r"D:\code\nem-panel")
         );
+        assert!(fallback.enter_directory.is_none());
         assert_eq!(fallback.resolved_shell, "powershell");
         assert_eq!(fallback.fallback_from, Some("bash".to_string()));
 
-        assert!(windows_terminal_startup_script("/home/owner/app")
-            .unwrap()
-            .is_none());
+        assert!(ssh_interactive_terminal_command("/D:/code/a\nb", None).is_err());
         assert!(reject_windows_remote_command("/D:/code/nem-panel").is_err());
     }
 
