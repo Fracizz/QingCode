@@ -26,6 +26,8 @@ const SHOW_DELAY = 600
 export const OVERFLOW_TOOLTIP_DELAY = 1000
 const VIEWPORT_MARGIN = 8
 const ARROW_EDGE_PAD = 10
+/** Below this, a side tip slides on-screen instead of wrapping into an unreadable column. */
+const MIN_SIDE_TIP_WIDTH = 160
 /** @deprecated use tipArrowBoxGap(zoom); kept for tests at zoom=1 */
 export const TOOLTIP_ARROW_GAP = tipArrowBoxGap(1)
 export { TIP_ARROW_CLEARANCE }
@@ -176,6 +178,28 @@ export function getTooltipPosition(
   }
 }
 
+/**
+ * Viewport width available beside a left/right anchor.
+ * When the natural tip is wider than that gap, cap it so the label wraps there
+ * instead of sliding back over the trigger (where a modal would cover the start).
+ * Returns undefined when the tip already fits, or when the gap is too narrow to wrap into.
+ */
+export function tooltipSideMaxWidth(
+  rect: RectLike,
+  side: TooltipSide,
+  tipVisualWidth: number,
+  viewportWidth: number,
+  gap = OFFSET,
+): number | undefined {
+  if (side !== 'left' && side !== 'right') return undefined
+  const room =
+    side === 'right'
+      ? viewportWidth - rect.right - gap - VIEWPORT_MARGIN
+      : rect.left - gap - VIEWPORT_MARGIN
+  if (!(tipVisualWidth > room) || room < MIN_SIDE_TIP_WIDTH) return undefined
+  return Math.floor(room)
+}
+
 /** Local X offset of a bottom caret so it points at the trigger center. */
 export function getTooltipArrowOffsetX(
   tipLeftStyle: number,
@@ -296,12 +320,25 @@ export default function Tooltip({
     const lineTop = resolveClearanceLineTop(rect)
     const placementRect = copyTooltipRect(rect, lineTop)
     const tipEl = tipRef.current
-    const tip = tipEl
-      ? { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
-      : undefined
     const viewport = { width: window.innerWidth, height: window.innerHeight }
     const zoom = readTooltipZoom(tipEl)
     const gap = arrow ? tipArrowBoxGap(zoom) : undefined
+    const gapPx = gap ?? OFFSET
+    let tip = tipEl
+      ? { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
+      : undefined
+    let sideMaxWidth: number | undefined
+    if (tipEl && tip && (side === 'left' || side === 'right')) {
+      // Measure the natural width first; an inline cap from the previous label would lie.
+      tipEl.style.maxWidth = ''
+      tip = { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
+      const cap = tooltipSideMaxWidth(rect, side, tip.width * zoom, viewport.width, gapPx)
+      if (cap != null) {
+        sideMaxWidth = cap / zoom
+        tipEl.style.maxWidth = `${sideMaxWidth}px`
+        tip = { width: tipEl.offsetWidth, height: tipEl.offsetHeight }
+      }
+    }
     let next = getTooltipPosition(
       placementRect,
       side,
@@ -310,6 +347,7 @@ export default function Tooltip({
       zoom,
       gap != null ? { gap } : undefined,
     )
+    if (sideMaxWidth != null) next = { ...next, maxWidth: sideMaxWidth }
 
     // Apply immediately, then sync caret tip → trigger top to TIP_ARROW_CLEARANCE.
     if (tipEl) {
@@ -413,13 +451,14 @@ export default function Tooltip({
       >
         {children}
       </span>
+      {/* z-[160]: above interrupt modals (z-140) so the backdrop cannot dim or cover the tip. */}
       {visible &&
         createPortal(
           <div
             ref={tipRef}
             role="tooltip"
             data-tooltip-arrow={showArrow ? '' : undefined}
-            className={`tooltip-enter ui-font-scaled fixed z-[100] pointer-events-none w-max rounded px-2.5 py-1.5 text-ui-xs leading-[var(--ui-line-height)] text-fg break-words whitespace-pre-line ${
+            className={`tooltip-enter ui-font-scaled fixed z-[160] pointer-events-none w-max rounded px-2.5 py-1.5 text-ui-xs leading-[var(--ui-line-height)] text-fg break-words whitespace-pre-line ${
               showArrow
                 ? 'max-w-[min(320px,calc(100vw-16px))] bg-bg-elevated'
                 : 'max-w-[min(480px,calc(100vw-16px))] border border-border-strong bg-bg-elevated shadow-lg shadow-black/40'
