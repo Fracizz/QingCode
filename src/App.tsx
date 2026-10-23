@@ -27,7 +27,12 @@ import { useCompareStore } from './store/compareStore'
 import { useCommandPaletteStore } from './store/commandPaletteStore'
 import { useSymbolPickerStore } from './store/symbolPickerStore'
 import { isTauri } from './lib/tauri'
-import { editorSurface } from './lib/editorSurface'
+import {
+  editorSurface,
+  isProjectWelcomePending,
+  noteProjectEditorOpened,
+} from './lib/editorSurface'
+import { isPinnedSettingsTab } from './utils/editorHelpers'
 import { tabNeedsDiskContent } from './lib/openFileError'
 import ResizableSidebar from './components/ResizableSidebar'
 import { startSystemThemeListener } from './lib/themeSettings'
@@ -70,6 +75,16 @@ const TerminalPanel = lazy(() => import('./components/TerminalPanel'))
 
 migrateLegacySettings()
 void import('./lib/minimapSettings').then(m => m.migrateLegacyMinimapSetting())
+
+let seenEditorTabs = useEditorStore.getState().tabs
+useEditorStore.subscribe(state => {
+  if (state.tabs === seenEditorTabs) return
+  seenEditorTabs = state.tabs
+  const projectId = useProjectStore.getState().currentProject?.id ?? null
+  if (projectId && state.tabs.some(tab => !isPinnedSettingsTab(tab.path))) {
+    noteProjectEditorOpened(projectId)
+  }
+})
 
 function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
   return <div className={className} aria-hidden="true" />
@@ -179,6 +194,8 @@ function App() {
     activeTabId,
     hasProject: currentProject !== null,
     projectsReady,
+    editorVisible: sideEditorSlotVisible,
+    projectWelcome: isProjectWelcomePending(currentProject?.id ?? null),
   })
 
   useLayoutEffect(() => {
