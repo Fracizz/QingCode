@@ -1,5 +1,5 @@
 use portable_pty::{ChildKiller, CommandBuilder, NativePtySystem, PtyPair, PtySize, PtySystem};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -944,21 +944,55 @@ fn is_console_noise_process(name: &str) -> bool {
     )
 }
 
+/// Meaningful descendants of `root`. Console hosts are not counted, but they
+/// are not leaves: a foreground program parented under conhost still counts.
+fn meaningful_descendant_count(processes: &[(u32, Option<u32>, &str)], root: u32) -> usize {
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (pid, parent, _) in processes {
+        if let Some(parent) = parent {
+            children.entry(*parent).or_default().push(*pid);
+        }
+    }
+    let names: HashMap<u32, &str> = processes
+        .iter()
+        .map(|(pid, _, name)| (*pid, *name))
+        .collect();
+    let mut stack = children.get(&root).cloned().unwrap_or_default();
+    let mut seen = HashSet::new();
+    let mut count = 0;
+    while let Some(pid) = stack.pop() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        if !is_console_noise_process(names.get(&pid).copied().unwrap_or("")) {
+            count += 1;
+        }
+        if let Some(kids) = children.get(&pid) {
+            stack.extend(kids.iter().copied());
+        }
+    }
+    count
+}
+
 fn count_meaningful_child_processes(parent_pid: u32) -> usize {
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
-    let parent = Pid::from_u32(parent_pid);
-    system
+    let owned: Vec<(u32, Option<u32>, String)> = system
         .processes()
         .values()
-        .filter(|process| {
-            if process.parent() != Some(parent) {
-                return false;
-            }
-            let name = process.name().to_string_lossy();
-            !is_console_noise_process(name.as_ref())
+        .map(|process| {
+            (
+                process.pid().as_u32(),
+                process.parent().map(|parent| parent.as_u32()),
+                process.name().to_string_lossy().into_owned(),
+            )
         })
-        .count()
+        .collect();
+    let processes: Vec<(u32, Option<u32>, &str)> = owned
+        .iter()
+        .map(|(pid, parent, name)| (*pid, *parent, name.as_str()))
+        .collect();
+    meaningful_descendant_count(&processes, parent_pid)
 }
 
 #[cfg(test)]
@@ -1362,5 +1396,26 @@ mod tests {
         assert!(is_console_noise_process("wslhost.exe"));
         assert!(!is_console_noise_process("opencode.exe"));
         assert!(!is_console_noise_process("node"));
+    }
+
+    #[test]
+    fn meaningful_descendants_ignore_console_host_but_count_its_children() {
+        let idle = [(10, None, "powershell.exe"), (11, Some(10), "conhost.exe")];
+        assert_eq!(meaningful_descendant_count(&idle, 10), 0);
+
+        let direct = [
+            (10, None, "powershell.exe"),
+            (11, Some(10), "conhost.exe"),
+            (12, Some(10), "claude.exe"),
+        ];
+        assert_eq!(meaningful_descendant_count(&direct, 10), 1);
+
+        // Some console apps are parented to conhost, not the shell.
+        let nested = [
+            (10, None, "powershell.exe"),
+            (11, Some(10), "conhost.exe"),
+            (12, Some(11), "claude.exe"),
+        ];
+        assert_eq!(meaningful_descendant_count(&nested, 10), 1);
     }
 }

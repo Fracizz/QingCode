@@ -29,6 +29,15 @@ export function isTransferActive(status: TransferStatus): boolean {
   return status === 'queued' || status === 'running' || status === 'cancelling'
 }
 
+/**
+ * In-progress ephemeral transfers stay out of the status strip. Mounting that
+ * row shrinks the workspace, and the terminal canvas flashes a blank frame.
+ * Failures still surface so they can be retried.
+ */
+export function visibleTransferTasks(tasks: TransferTask[]): TransferTask[] {
+  return tasks.filter(task => !(task.request.ephemeral && isTransferActive(task.status)))
+}
+
 export const useTransferStore = create<{
   tasks: TransferTask[]
   add: (task: TransferTask) => void

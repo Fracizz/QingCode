@@ -2,7 +2,9 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { safeInvoke } from './tauri'
 import { useTransferStore, isTransferActive, type TransferProgress, type TransferRequest } from '../store/transferStore'
 import { useProjectStore } from '../store/projectStore'
-import { findProjectForPath } from '../utils/fileReferences'
+import { findProjectForPath, parentPath, pathsEqual } from '../utils/fileReferences'
+import { findNodeByPath } from '../utils/fileTreeHelpers'
+import type { Project } from '../types'
 
 /** Subscribe before starting so even a tiny transfer has a complete lifecycle. */
 export async function startSshTransfer(request: TransferRequest): Promise<TransferProgress> {
@@ -43,12 +45,42 @@ export async function startSshTransfer(request: TransferRequest): Promise<Transf
   if (terminal && !isTransferActive(terminal.status)) result = terminal
   store.update(taskId, result)
   if (request.ephemeral && result.status === 'completed') store.dismiss(taskId)
-  if (request.direction === 'upload') {
-    const projects = useProjectStore.getState()
-    const project = findProjectForPath(projects.projects, request.destination)
-    if (project) void projects.refreshProjectTree(project)
-  }
+  if (request.direction === 'upload') refreshUploadedTree(request.destination, request.ephemeral === true)
   return result
+}
+
+/** Reload just the open paste folder. A full SSH tree refresh repaints the window. */
+function refreshUploadedTree(destination: string, ephemeral: boolean) {
+  const projects = useProjectStore.getState()
+  const project = findProjectForPath(projects.projects, destination)
+  if (!project) return
+  if (!ephemeral) {
+    void projects.refreshProjectTree(project)
+    return
+  }
+  const loaded = loadedUploadDirectory(project, destination)
+  if (loaded) {
+    void projects.expandProjectDir(project.id, loaded, { force: true })
+    return
+  }
+  const tree = projects.projectTrees[project.id] ?? []
+  const scratch = parentPath(parentPath(destination))
+  if (!pathsEqual(scratch, project.path) && !findNodeByPath(tree, scratch)) {
+    void projects.refreshProjectTree(project)
+  }
+}
+
+function loadedUploadDirectory(project: Project, destination: string): string | null {
+  const tree = useProjectStore.getState().projectTrees[project.id] ?? []
+  let dir = parentPath(destination)
+  while (dir && !pathsEqual(dir, project.path)) {
+    const node = findNodeByPath(tree, dir)
+    if (node?.is_dir && node.loaded) return dir
+    const next = parentPath(dir)
+    if (pathsEqual(next, dir)) break
+    dir = next
+  }
+  return null
 }
 
 export async function cancelSshTransfer(taskId: string): Promise<void> {

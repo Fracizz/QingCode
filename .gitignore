@@ -24,6 +24,10 @@ package-lock.json
 # dev 环境本地数据库（项目内，不提交）
 .dev
 
+# 本机 AI 助手的会话/计划临时目录（不提交）
+.workbuddy
+.zcode
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

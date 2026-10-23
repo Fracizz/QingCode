@@ -35,7 +35,12 @@ import { pickVisibleTabIndices } from '../lib/editorTabsLayout'
 
 /** Width reserved for the new-terminal control next to the last tab. */
 const TERMINAL_NEW_BTN_W = 32
-import { canCloseTerminalDirectly, isTerminalBusy, listBusyTerminals } from '@/lib/terminal/terminalClose'
+import {
+  canCloseTerminalDirectly,
+  isTerminalBusy,
+  listBusyTerminals,
+  terminalCloseButtonAction,
+} from '@/lib/terminal/terminalClose'
 import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
 import { subscribeTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
@@ -226,23 +231,8 @@ export default function TerminalTabs({
 
   useEffect(() => {
     if (!closeArmId) return
-    let cancelled = false
-    const syncArmState = async () => {
-      const armed = terminals.find(t => t.id === closeArmId)
-      if (!armed || armed.status === 'exited') {
-        if (!cancelled) setCloseArmId(null)
-        return
-      }
-      if (await canCloseTerminalDirectly(armed)) {
-        if (!cancelled) setCloseArmId(null)
-      }
-    }
-    void syncArmState()
-    const timer = window.setInterval(() => void syncArmState(), BUSY_POLL_MS)
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
+    const armed = terminals.find(t => t.id === closeArmId)
+    if (!armed || armed.status === 'exited') setCloseArmId(null)
   }, [closeArmId, terminals])
 
   useEffect(() => {
@@ -270,19 +260,15 @@ export default function TerminalTabs({
   const handleCloseClick = (event: ReactMouseEvent, id: string) => {
     event.stopPropagation()
     const terminal = terminals.find(t => t.id === id)
-    void (async () => {
-      if (await canCloseTerminalDirectly(terminal)) {
-        void handleCloseTab(id)
-        return
-      }
-      if (closeArmId === id) {
-        void handleCloseTab(id)
-        return
-      }
-      if (pane) setTerminalFocusPane(pane)
-      setActiveTerminal(id)
-      setCloseArmId(id)
-    })()
+    const action = terminalCloseButtonAction(terminal?.status, closeArmId === id)
+    if (action === 'close') {
+      void handleCloseTab(id)
+      return
+    }
+    if (action !== 'arm') return
+    if (pane) setTerminalFocusPane(pane)
+    setActiveTerminal(id)
+    setCloseArmId(id)
   }
 
   const handleClose = async (id: string) => {

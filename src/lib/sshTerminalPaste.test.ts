@@ -1,11 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({
-  authorizePaths: vi.fn(),
-  safeInvoke: vi.fn(),
-  startSshTransfer: vi.fn(),
-  pushToast: vi.fn(),
-}))
+const mocks = vi.hoisted(() => {
+  const toasts: { id: string; kind: string; text: string }[] = []
+  return {
+    authorizePaths: vi.fn(),
+    safeInvoke: vi.fn(),
+    startSshTransfer: vi.fn(),
+    toasts,
+    pushToast: vi.fn((kind: string, text: string) => {
+      toasts.push({ id: String(toasts.length + 1), kind, text })
+    }),
+    dismissToast: vi.fn((id: string) => {
+      const index = toasts.findIndex(toast => toast.id === id)
+      if (index >= 0) toasts.splice(index, 1)
+    }),
+  }
+})
 
 vi.mock('./pathAllowlist', () => ({ authorizePaths: mocks.authorizePaths }))
 vi.mock('./tauri', () => ({
@@ -18,6 +28,8 @@ vi.mock('../store/projectStore', () => ({
   useProjectStore: {
     getState: () => ({
       pushToast: mocks.pushToast,
+      dismissToast: mocks.dismissToast,
+      toasts: mocks.toasts,
       projects: [],
       refreshProjectTree: vi.fn(),
     }),
@@ -36,6 +48,7 @@ import {
   sshTerminalPasteRoot,
   SSH_TERMINAL_PASTE_MAX_BYTES,
   uploadLocalFilesForSshTerminal,
+  pasteLocalFilesIntoSshTerminal,
   clearSshTerminalPasteUploads,
   confirmClearSshTerminalPasteUploads,
 } from './sshTerminalPaste'
@@ -191,6 +204,47 @@ describe('uploadLocalFilesForSshTerminal', () => {
       uploadLocalFilesForSshTerminal('ssh://c1/home/owner/app', ['D:\\docs\\payload']),
     ).rejects.toThrow('payload')
     expect(mocks.startSshTransfer).not.toHaveBeenCalled()
+  })
+})
+
+describe('pasteLocalFilesIntoSshTerminal', () => {
+  afterEach(() => {
+    vi.clearAllMocks()
+    vi.useRealTimers()
+    mocks.toasts.splice(0)
+  })
+
+  function stubDirectories() {
+    mocks.safeInvoke.mockImplementation(async (_action: string, command: string, args: { parent?: string; name?: string }) => {
+      if (command === 'file_stat') return { size: 12, is_dir: false }
+      if (command === 'validate_directory') throw new Error('missing')
+      if (command === 'create_directory') return `${args.parent}/${args.name}`
+      return undefined
+    })
+  }
+
+  it('shows only the success toast when the upload finishes immediately', async () => {
+    vi.useFakeTimers()
+    stubDirectories()
+    mocks.startSshTransfer.mockResolvedValue({ status: 'completed' })
+    const text = await pasteLocalFilesIntoSshTerminal('ssh://c1/home/owner/app', ['D:\\docs\\note.txt'])
+    expect(text).toContain('note.txt')
+    expect(mocks.pushToast.mock.calls.map(call => call[0])).toEqual(['success'])
+  })
+
+  it('replaces the uploading toast after a slow upload', async () => {
+    vi.useFakeTimers()
+    stubDirectories()
+    mocks.startSshTransfer.mockImplementation(
+      () => new Promise(resolve => setTimeout(() => resolve({ status: 'completed' }), 800)),
+    )
+    const pending = pasteLocalFilesIntoSshTerminal('ssh://c1/home/owner/app', ['D:\\docs\\note.txt'])
+    await vi.advanceTimersByTimeAsync(400)
+    expect(mocks.pushToast.mock.calls.map(call => call[0])).toEqual(['info'])
+    await vi.advanceTimersByTimeAsync(400)
+    await pending
+    expect(mocks.pushToast.mock.calls.map(call => call[0])).toEqual(['info', 'success'])
+    expect(mocks.toasts.map(toast => toast.kind)).toEqual(['success'])
   })
 })
 

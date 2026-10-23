@@ -193,7 +193,6 @@ export async function uploadLocalFilesForSshTerminal(
 ): Promise<string | null> {
   if (!isSshResource(cwd) || localPaths.length === 0) return null
   await assertLocalPasteWithinSizeLimit(localPaths)
-  useProjectStore.getState().pushToast('info', translate('正在上传本机文件到远程终端…'))
   const root = resolveSshProjectRoot(cwd)
   const qingcode = await ensureSshDirectory(root, '.qingcode')
   const pasteRoot = await ensureSshDirectory(qingcode, TERMINAL_PASTE_DIR)
@@ -212,17 +211,37 @@ export async function uploadLocalFilesForSshTerminal(
   return formatRemotePasteText(cwd, uris)
 }
 
+const UPLOAD_NOTICE_DELAY_MS = 400
+
+function dismissToastText(text: string) {
+  const store = useProjectStore.getState()
+  for (const toast of store.toasts) {
+    if (toast.text === text) store.dismissToast(toast.id)
+  }
+}
+
 export async function pasteLocalFilesIntoSshTerminal(
   cwd: string,
   localPaths: string[],
 ): Promise<string | null> {
-  const store = useProjectStore.getState()
+  const uploading = translate('正在上传本机文件到远程终端…')
+  let announced = false
+  const timer = setTimeout(() => {
+    announced = true
+    useProjectStore.getState().pushToast('info', uploading)
+  }, UPLOAD_NOTICE_DELAY_MS)
+  const finishNotice = () => {
+    clearTimeout(timer)
+    if (announced) dismissToastText(uploading)
+  }
   try {
     const text = await uploadLocalFilesForSshTerminal(cwd, localPaths)
-    if (text) store.pushToast('success', translate('已上传并粘贴远程路径'))
+    finishNotice()
+    if (text) useProjectStore.getState().pushToast('success', translate('已上传并粘贴远程路径'))
     return text
   } catch (error) {
-    store.pushToast('error', translate('上传到远程终端失败：{error}', { error: String(error) }))
+    finishNotice()
+    useProjectStore.getState().pushToast('error', translate('上传到远程终端失败：{error}', { error: String(error) }))
     return null
   }
 }

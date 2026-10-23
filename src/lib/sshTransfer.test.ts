@@ -3,10 +3,19 @@ import { listen } from '@tauri-apps/api/event'
 import { safeInvoke } from './tauri'
 import { startSshTransfer, cancelSshTransfer, retrySshTransfer } from './sshTransfer'
 import { useTransferStore, type TransferProgress, type TransferRequest } from '../store/transferStore'
+import type { FileNode } from '../utils/fileTreeHelpers'
+import type { Project } from '../types'
+
+const projectState = vi.hoisted(() => ({
+  projects: [] as Project[],
+  projectTrees: {} as Record<string, FileNode[]>,
+  refreshProjectTree: vi.fn(),
+  expandProjectDir: vi.fn(),
+}))
 
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 vi.mock('./tauri', () => ({ safeInvoke: vi.fn() }))
-vi.mock('../store/projectStore', () => ({ useProjectStore: { getState: () => ({ projects: [], refreshProjectTree: vi.fn() }) } }))
+vi.mock('../store/projectStore', () => ({ useProjectStore: { getState: () => projectState } }))
 const request: TransferRequest = { direction: 'download', paths: ['ssh://c/a', 'ssh://c/b'], destination: 'D:/out' }
 const unlisten = vi.fn()
 let emit: (progress: TransferProgress) => void
@@ -21,6 +30,10 @@ function progress(status: TransferProgress['status'], values: Partial<TransferPr
 }
 beforeEach(() => {
   useTransferStore.setState({ tasks: [] })
+  projectState.projects = []
+  projectState.projectTrees = {}
+  projectState.refreshProjectTree.mockClear()
+  projectState.expandProjectDir.mockClear()
   unlisten.mockReset()
   vi.mocked(safeInvoke).mockReset()
   vi.mocked(listen).mockReset().mockImplementation(async (_name, handler) => {
@@ -101,5 +114,34 @@ describe('SSH transfer lifecycle', () => {
     await retrySshTransfer(failed.taskId)
     expect(vi.mocked(safeInvoke).mock.calls[1][2]).toMatchObject({ paths: [request.paths[1]], destination: request.destination })
     expect(useTransferStore.getState().tasks).toHaveLength(1)
+  })
+
+  it('refreshes only the open paste folder after an ephemeral upload', async () => {
+    vi.mocked(safeInvoke).mockImplementation(async () => progress('completed', { pendingPaths: [] }))
+    const project = { id: 'p', name: 'app', path: 'ssh://c/home/app', created_at: 0, last_opened_at: 0 }
+    projectState.projects = [project]
+    projectState.projectTrees = {
+      p: [{ name: 'terminal-paste', path: 'ssh://c/home/app/.qingcode/terminal-paste', is_dir: true, loaded: true }],
+    }
+    await startSshTransfer({
+      direction: 'upload', ephemeral: true, paths: ['D:/a.png'],
+      destination: 'ssh://c/home/app/.qingcode/terminal-paste/stamp',
+    })
+    expect(projectState.expandProjectDir).toHaveBeenCalledWith('p', 'ssh://c/home/app/.qingcode/terminal-paste', { force: true })
+    expect(projectState.refreshProjectTree).not.toHaveBeenCalled()
+  })
+
+  it('leaves a listed scratch folder alone when it is collapsed', async () => {
+    vi.mocked(safeInvoke).mockImplementation(async () => progress('completed', { pendingPaths: [] }))
+    projectState.projects = [{ id: 'p', name: 'app', path: 'ssh://c/home/app', created_at: 0, last_opened_at: 0 }]
+    projectState.projectTrees = {
+      p: [{ name: '.qingcode', path: 'ssh://c/home/app/.qingcode', is_dir: true, loaded: false }],
+    }
+    await startSshTransfer({
+      direction: 'upload', ephemeral: true, paths: ['D:/a.png'],
+      destination: 'ssh://c/home/app/.qingcode/terminal-paste/stamp',
+    })
+    expect(projectState.expandProjectDir).not.toHaveBeenCalled()
+    expect(projectState.refreshProjectTree).not.toHaveBeenCalled()
   })
 })

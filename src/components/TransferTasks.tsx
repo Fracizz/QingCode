@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, Download, Upload, X } from 'lucide-react'
-import { useTransferStore, isTransferActive, type TransferStatus } from '../store/transferStore'
+import { useTransferStore, isTransferActive, visibleTransferTasks, type TransferStatus } from '../store/transferStore'
 import { cancelSshTransfer, retrySshTransfer } from '../lib/sshTransfer'
 import { useI18n } from '../lib/i18n'
 import { formatBytes } from '../utils/formatBytes'
@@ -14,7 +14,7 @@ const STATUS_LABELS: Record<TransferStatus, string> = {
 
 export default function TransferTasks() {
   const { t } = useI18n()
-  const tasks = useTransferStore(state => state.tasks)
+  const tasks = visibleTransferTasks(useTransferStore(state => state.tasks))
   const dismiss = useTransferStore(state => state.dismiss)
   const [collapsed, setCollapsed] = useState(false)
   if (tasks.length === 0) return null
