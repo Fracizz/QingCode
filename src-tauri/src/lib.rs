@@ -1,6 +1,7 @@
 mod app_memory;
 mod app_paths;
 mod cli;
+mod clipboard_files;
 mod commands;
 mod content_search;
 mod exclude;

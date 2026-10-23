@@ -860,19 +860,7 @@ pub fn clipboard_write_files(
 /// clipboard holds plain text or is unavailable.
 #[tauri::command]
 pub fn clipboard_read_files() -> Result<Vec<String>, String> {
-    let mut clipboard =
-        arboard::Clipboard::new().map_err(|error| format!("无法打开系统剪贴板：{error}"))?;
-    match clipboard.get().file_list() {
-        Ok(paths) => Ok(paths
-            .into_iter()
-            .map(|path| display_path(&path))
-            .filter(|path| !path.trim().is_empty())
-            .collect()),
-        Err(arboard::Error::ContentNotAvailable) | Err(arboard::Error::ConversionFailure) => {
-            Ok(Vec::new())
-        }
-        Err(error) => Err(format!("读取剪贴板文件失败：{error}")),
-    }
+    crate::clipboard_files::read_clipboard_paths()
 }
 
 /// Write plain text to the OS clipboard (paths, references, etc.).
