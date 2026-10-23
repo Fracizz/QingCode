@@ -6,6 +6,13 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Fewer background Git reads: concurrent refreshes of the same project now coalesce into one, window-focus refresh on local projects has a 2-second cooldown, and project badges stop polling while the window is hidden
+- Reopening source control reuses commit history cached for the last 30 seconds, so one open no longer fetches history and remotes twice
+- Top-bar project badges for SSH projects now poll at 4x the configured interval with a 60-second focus cooldown
+- Writes under `release/`, `.dev` and `.venv` no longer trigger explorer and Git refreshes
+
 ## [0.1.13-beta.3] - 2026-10-23
 
 ### Fixed

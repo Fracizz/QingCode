@@ -108,7 +108,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 | 分支列表与切换、远程地址、历史、提交文件、工作区 vs HEAD Diff | 已对齐 | 两侧都不能在 UI 里新建或删除分支 |
 | 上次获取 / 拉取 / 推送时间 | 仅本地 | SSH 的 `last_fetch_at` 等字段始终为 `None`，工具栏同步时间芯片为空 |
 | 轻量脏标记（状态栏 / 项目徽章） | 部分对齐 | SSH 用完整 `git_status` 近似，多一次远程往返；徽标数字只归属当前项目，切项目时先归零再取快照 |
-| 自动刷新频率 | SSH 专属降频 | SSH 下状态栏分支芯片不轮询（每 15 秒一次全量 `git status` 太贵），分支名跟随 workdir / SCM 快照；窗口聚焦刷新冷却 60 秒；窗口聚焦不自动 fetch（进入源代码管理时仍会自动 fetch 一次，也可手动「检查更新」）。切项目、保存文件、打开源代码管理、手动刷新仍即时生效 |
+| 自动刷新频率 | SSH 专属降频 | SSH 下状态栏分支芯片不轮询（每 15 秒一次全量 `git status` 太贵），分支名跟随 workdir / SCM 快照；窗口聚焦刷新冷却 60 秒；顶栏多项目角标按 `qingcode.git.refreshIntervalStartMinutes` 的 **4 倍**周期轮询、聚焦冷却 60 秒，窗口不可见时不刷新；窗口聚焦不自动 fetch（进入源代码管理时仍会自动 fetch 一次，也可手动「检查更新」）。切项目、保存文件、打开源代码管理、手动刷新仍即时生效 |
 | 编辑器自身产物 | 已对齐 | `.qingcode/terminal-paste/` 与 `*.qingcode-*.tmp`、`.qingcode-transfer-*.tmp` 这类**未跟踪**临时文件不计入更改数；`.qingcode/run.json` 等项目配置仍正常显示、可提交 |
 | 冲突 | 部分对齐 | 状态里能看到冲突，拉取可返回 `has_conflicts`；两侧都没有三方合并或 accept ours/theirs |
 | stash、独立 merge/rebase、blame、amend | 两侧都没有 | |

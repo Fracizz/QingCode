@@ -107,6 +107,11 @@ import ScmCommitHistory, { SCM_COMMIT_PAGE_SIZE } from './ScmCommitHistory'
 import ScmToolbar, { ScmPullMenu, ScmPushMenu, ScmRemotesMenu } from './ScmToolbar'
 import ScmBranchMenu from './ScmBranchMenu'
 import { flattenRemoteRows, upstreamRemoteName } from '@/lib/git/scmRemotes'
+import {
+  clearScmCommitsCache,
+  readScmCommitsCache,
+  writeScmCommitsCache,
+} from '@/lib/git/scmCommitCache'
 import { canOpenGitPathInEditor, openWorkingTreeFile } from '@/lib/git/openWorkingTreeFile'
 import { translate, useI18n } from '../lib/i18n'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
@@ -811,11 +816,13 @@ export default function SourceControlPanel() {
         const more = next.length >= COMMIT_PAGE_SIZE
         commitsHasMoreRef.current = more
         setCommitsHasMore(more)
+        writeScmCommitsCache(path, { commits: next, hasMore: more })
         selectedCommitHashRef.current = null
         setSelectedCommitHash(null)
         return
       } catch {
         if (attempt === retryDelaysMs.length - 1 && isCurrentRequest()) {
+          clearScmCommitsCache(path)
           commitsRef.current = []
           setCommits([])
           commitsHasMoreRef.current = false
@@ -846,6 +853,7 @@ export default function SourceControlPanel() {
       const more = page.length >= COMMIT_PAGE_SIZE
       commitsHasMoreRef.current = more
       setCommitsHasMore(more)
+      writeScmCommitsCache(path, { commits: merged, hasMore: more })
     } catch {
       if (useProjectStore.getState().currentProject?.path === path) {
         commitsHasMoreRef.current = false
@@ -1013,12 +1021,23 @@ export default function SourceControlPanel() {
       if (seeded) {
         setStatus(seeded)
         setError(null)
-        void refresh({ soft: !gitStatusNeedsTrackingMetadata(seeded) })
-        if (seeded.is_repository) {
-          void loadCommits(projectPath)
-          void loadRemotes(projectPath)
-        } else {
+        // 软刷新只取 workdir 快照，不会自己拉历史 / 远程；硬刷新会。
+        // 之前两条都发，同一次打开会跑两遍 git_log。
+        const soft = !gitStatusNeedsTrackingMetadata(seeded)
+        void refresh({ soft })
+        if (!seeded.is_repository) {
           setRemotes([])
+        } else if (soft) {
+          const cached = readScmCommitsCache(projectPath)
+          if (cached) {
+            commitsRef.current = cached.commits
+            commitsHasMoreRef.current = cached.hasMore
+            setCommits(cached.commits)
+            setCommitsHasMore(cached.hasMore)
+          } else {
+            void loadCommits(projectPath)
+          }
+          void loadRemotes(projectPath)
         }
       } else {
         setStatus(null)

@@ -5,7 +5,7 @@ import { useTerminalStore } from '../store/terminalStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { useProjectStore } from '../store/projectStore'
 import { getGitWorkdirStatus } from '../lib/ipc/git'
-import { isTauri } from '../lib/tauri'
+import { isSshResource, isTauri } from '../lib/tauri'
 import {
   countDirtyTabsByProject,
   countRunningTerminalsByProject,
@@ -37,6 +37,8 @@ export const EMPTY_PROJECT_INDICATORS: ProjectIndicators = {
 }
 
 const PROJECT_GIT_FOCUS_COOLDOWN_MS = 15_000
+/** SSH 项目聚焦刷新的冷却：一次刷新 = 一次远程 git status 往返。 */
+const SSH_PROJECT_GIT_FOCUS_COOLDOWN_MS = 60_000
 
 export function useProjectIndicators(
   projects: Project[],
@@ -105,13 +107,18 @@ export function useProjectIndicators(
     )
     let cancelled = false
     let processing = false
+    /** 本地项目聚焦刷新冷却。 */
     let lastFocusRefreshAt = 0
+    /** SSH 项目聚焦刷新冷却（单独计时，避免和本地共用 15s 窗口）。 */
+    let lastSshFocusRefreshAt = 0
     const refreshTimers = new Map<string, number>()
     // All inactive-project Git commands share one queue to prevent concurrent polling bursts.
     const refreshQueue: Array<{ project: Project; scheduleNext: boolean }> = []
     const queuedByProject = new Map<string, { project: Project; scheduleNext: boolean }>()
 
     const refreshProject = async (project: Project) => {
+      // 窗口不可见时不打 Git：角标没人看，也避免和构建/终端抢磁盘。
+      if (typeof document !== 'undefined' && document.hidden) return
       try {
         const status = await getGitWorkdirStatus(project.path)
         if (cancelled) return
@@ -127,10 +134,15 @@ export function useProjectIndicators(
 
     const scheduleProject = (project: Project) => {
       if (cancelled || refreshTimers.has(project.id)) return
+      const delay = projectGitRefreshDelay(
+        gitRefreshIntervalStartMinutes,
+        Math.random(),
+        isSshResource(project.path)
+      )
       const timer = window.setTimeout(() => {
         refreshTimers.delete(project.id)
         enqueueProject(project, true)
-      }, projectGitRefreshDelay(gitRefreshIntervalStartMinutes))
+      }, delay)
       refreshTimers.set(project.id, timer)
     }
 
@@ -158,13 +170,27 @@ export function useProjectIndicators(
       void drainQueue()
     }
 
+    /**
+     * 聚焦 / 重新可见时的补刷：按协议分档冷却。
+     *
+     * 本地项目 15 秒；SSH 项目 60 秒（一次刷新 = 一次远程往返），两者独立计时，
+     * 免得多项目的 SSH 仓被 Alt-Tab 连续拉起远程 git status。
+     */
     const enqueueAllIfStale = (force = false) => {
-      if (!force && Date.now() - lastFocusRefreshAt < PROJECT_GIT_FOCUS_COOLDOWN_MS) return
-      lastFocusRefreshAt = Date.now()
+      const now = Date.now()
+      const canRefreshLocal = force || now - lastFocusRefreshAt >= PROJECT_GIT_FOCUS_COOLDOWN_MS
+      const canRefreshSsh = force || now - lastSshFocusRefreshAt >= SSH_PROJECT_GIT_FOCUS_COOLDOWN_MS
+      if (!canRefreshLocal && !canRefreshSsh) return
+      if (canRefreshLocal) lastFocusRefreshAt = now
+      if (canRefreshSsh) lastSshFocusRefreshAt = now
       const randomized = eligibleProjects
         .map(project => ({ project, rank: Math.random() }))
         .sort((a, b) => a.rank - b.rank)
-      for (const { project } of randomized) enqueueProject(project)
+      for (const { project } of randomized) {
+        if (isSshResource(project.path) ? canRefreshSsh : canRefreshLocal) {
+          enqueueProject(project)
+        }
+      }
     }
 
     for (const project of eligibleProjects) scheduleProject(project)

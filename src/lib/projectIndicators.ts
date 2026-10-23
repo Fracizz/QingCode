@@ -16,9 +16,18 @@ type ProjectEditorSessionLike = {
   tabs: EditorTab[]
 }
 
+/**
+ * SSH 项目后台角标的轮询倍率。
+ *
+ * 本地一次刷新是一个 `git status` 子进程；SSH 一次刷新是一次远程往返 + 远端全量
+ * `git status`，代价高一个数量级，因此拉长周期而不是与本地同频。
+ */
+export const SSH_PROJECT_GIT_REFRESH_MULTIPLIER = 4
+
 export function projectGitRefreshDelay(
   intervalStartMinutes = DEFAULT_GIT_REFRESH_INTERVAL_START_MINUTES,
-  randomValue = Math.random()
+  randomValue = Math.random(),
+  isSshProject = false
 ): number {
   const startMinutes = parseGitRefreshIntervalStartMinutes(intervalStartMinutes)
   const spreadMinutes = Math.max(1, Math.ceil(startMinutes / 2))
@@ -27,7 +36,8 @@ export function projectGitRefreshDelay(
     spreadMinutes,
     Math.floor(normalizedRandom * (spreadMinutes + 1))
   )
-  return (startMinutes + randomOffsetMinutes) * 60_000
+  const scale = isSshProject ? SSH_PROJECT_GIT_REFRESH_MULTIPLIER : 1
+  return (startMinutes + randomOffsetMinutes) * 60_000 * scale
 }
 
 export function normalizedProjectPath(path: string): string {

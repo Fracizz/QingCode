@@ -9,6 +9,7 @@ import {
   notifyGitDirtyCount,
   projectGitRefreshDelay,
   projectPathsMatch,
+  SSH_PROJECT_GIT_REFRESH_MULTIPLIER,
 } from './projectIndicators'
 
 const projects: Project[] = [
@@ -35,6 +36,12 @@ describe('project indicators', () => {
     expect(projectGitRefreshDelay(5, 0.5)).toBe(420_000)
     expect(projectGitRefreshDelay(5, 1)).toBe(480_000)
     expect(projectGitRefreshDelay(4, 0)).toBe(300_000)
+  })
+
+  it('backs off SSH project polling so a 5-minute floor does not mean 5-minute RTTs', () => {
+    expect(projectGitRefreshDelay(5, 0, true)).toBe(300_000 * SSH_PROJECT_GIT_REFRESH_MULTIPLIER)
+    expect(projectGitRefreshDelay(5, 1, true)).toBe(480_000 * SSH_PROJECT_GIT_REFRESH_MULTIPLIER)
+    expect(projectGitRefreshDelay(5, 0, false)).toBe(300_000)
   })
 
   it('groups dirty active and inactive tabs by owning project without duplicates', () => {

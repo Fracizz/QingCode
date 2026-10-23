@@ -34,6 +34,14 @@ const CONTENT_SYNC_DEBOUNCE_MS = 350
 /** SSH 项目窗口聚焦时的 Git 刷新冷却：一次刷新 = 一次远程 git status。 */
 const SSH_GIT_FOCUS_COOLDOWN_MS = 60_000
 
+/**
+ * 本地项目窗口聚焦时的 Git 刷新冷却。
+ *
+ * 本地一次刷新虽然只是一个子进程，但 `git status -uall` 在大仓库上要 0.3–0.6 秒；
+ * Alt-Tab 来回切时不该每 1.5 秒就重新扫一遍工作区。
+ */
+const LOCAL_GIT_FOCUS_COOLDOWN_MS = 2_000
+
 function normalize(path: string): string {
   return path.replace(/\\/g, '/').toLowerCase()
 }
@@ -147,9 +155,12 @@ export function useFileWatcher() {
       return
     }
     void useGitStatusStore.getState().refresh(currentProject.path)
-    // SSH 每次刷新都是一次远程往返：Alt-Tab 来回切不该连刷。
-    const focusCooldownMs = isSshResource(currentProject.path) ? SSH_GIT_FOCUS_COOLDOWN_MS : 0
-    let lastFocusRefreshAt = 0
+    // SSH 每次刷新都是一次远程往返，本地是一次全量 status：都不该被 Alt-Tab 连刷拉起。
+    const focusCooldownMs = isSshResource(currentProject.path)
+      ? SSH_GIT_FOCUS_COOLDOWN_MS
+      : LOCAL_GIT_FOCUS_COOLDOWN_MS
+    // 上一行刚刷新过一次，冷却从这里起算。
+    let lastFocusRefreshAt = Date.now()
     const onFocus = () => {
       const now = Date.now()
       if (now - lastFocusRefreshAt < focusCooldownMs) return

@@ -109,4 +109,24 @@ describe('gitStatusStore panel snapshot', () => {
     // 快照已带分支：不再为状态栏多跑一次全量 status。
     expect(vi.mocked(getGitHead)).not.toHaveBeenCalled()
   })
+
+  it('coalesces concurrent refreshes of the same project into one read', async () => {
+    let release: (value: GitWorkdirStatus | null) => void = () => {}
+    vi.mocked(getGitWorkdirStatus).mockReturnValueOnce(
+      new Promise<GitWorkdirStatus | null>(resolve => {
+        release = resolve
+      })
+    )
+
+    const first = useGitStatusStore.getState().refresh('D:/repo')
+    const second = useGitStatusStore.getState().refresh('D:/repo')
+    expect(vi.mocked(getGitWorkdirStatus)).toHaveBeenCalledTimes(1)
+
+    release({ dirty_count: 1, entries: [{ path: 'D:/repo/a.ts', status: ' M' }] })
+    await Promise.all([first, second])
+
+    // 第二个调用复用了在飞读取，没有排第二条 git status。
+    expect(vi.mocked(getGitWorkdirStatus)).toHaveBeenCalledTimes(1)
+    expect(useGitStatusStore.getState().dirtyCount).toBe(1)
+  })
 })

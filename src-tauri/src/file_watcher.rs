@@ -18,12 +18,15 @@ const HIGH_CHURN_DIRS: &[&str] = &[
     ".next",
     ".turbo",
     ".cache",
+    ".dev",
+    ".venv",
     "node_modules",
     "target",
     "dist",
     "build",
     "out",
     "coverage",
+    "release",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -406,6 +409,19 @@ mod tests {
         ));
         assert!(is_high_churn_path(
             Path::new(r"D:\Work\demo\node_modules\pkg\index.js"),
+            &roots
+        ));
+        // 打包产物与本地状态目录：写入不该触发全量 git status / 目录树刷新。
+        assert!(is_high_churn_path(
+            Path::new(r"D:\Work\demo\release\QingCode-setup.exe"),
+            &roots
+        ));
+        assert!(is_high_churn_path(
+            Path::new(r"D:\Work\demo\.venv\Lib\site-packages\x.py"),
+            &roots
+        ));
+        assert!(is_high_churn_path(
+            Path::new(r"D:\Work\demo\.dev\state.json"),
             &roots
         ));
         assert!(!is_high_churn_path(

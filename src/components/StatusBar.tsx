@@ -215,12 +215,16 @@ export default function StatusBar() {
     }
 
     let cancelled = false
+    /** 已经拿到过分支：后面的补偿重试就不必再跑。 */
+    let hasHead = false
     const retryTimers: number[] = []
     // SSH 取分支 = 一次完整 git status；分支名改为跟随 workdir / SCM 快照，不再单独轮询。
     const sshProject = isSshResource(projectPath)
 
     const applyHead = (info: GitHeadInfo | null) => {
-      if (!cancelled) setGitHead(info)
+      if (cancelled) return
+      hasHead = info !== null
+      setGitHead(info)
     }
 
     const headFromCache = (): GitHeadInfo | null => {
@@ -271,13 +275,13 @@ export default function StatusBar() {
     else applyHead(null)
 
     void loadGitHead()
-    // Allowlist sync can lag project switch; retry briefly so a race does not
-    // leave the status bar empty until the 15s poll. SSH reuses the cache instead.
+    // Allowlist sync can lag project switch; retry briefly, but only while the chip
+    // is still empty — a successful read must not be repeated three more times.
     if (!sshProject) {
       for (const delay of [120, 400, 1000]) {
         retryTimers.push(
           window.setTimeout(() => {
-            void loadGitHead()
+            if (!hasHead) void loadGitHead()
           }, delay)
         )
       }
@@ -289,14 +293,8 @@ export default function StatusBar() {
     const onVisibility = () => {
       if (!document.hidden) void loadGitHead()
     }
-    const onWorktree = (event: Event) => {
-      const detail = (event as CustomEvent<{ projectPath?: string }>).detail
-      if (detail?.projectPath && detail.projectPath !== projectPath) return
-      void loadGitHead()
-    }
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisibility)
-    window.addEventListener('qingcode:git-worktree-changed', onWorktree)
     const pollMs = gitHeadPollIntervalMs(sshProject)
     const intervalId = pollMs > 0
       ? window.setInterval(() => {
@@ -321,7 +319,6 @@ export default function StatusBar() {
       cancelled = true
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibility)
-      window.removeEventListener('qingcode:git-worktree-changed', onWorktree)
       if (intervalId !== null) window.clearInterval(intervalId)
       for (const id of retryTimers) window.clearTimeout(id)
       unsubScm()
