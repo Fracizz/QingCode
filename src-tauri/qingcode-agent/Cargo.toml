@@ -1,0 +1,28 @@
+[package]
+name = "qingcode-agent"
+version = "0.1.13-beta.3"
+description = "QingCode SSH 工作区远端代理（部署在远程主机上，经 SSH direct-tcpip 通道接入）"
+authors = ["Franciz"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "qingcode_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "qingcode-agent"
+path = "src/main.rs"
+
+# 只使用主程序已在 Cargo.lock 中的依赖，避免为交叉编译引入新的 C 依赖，
+# 保证 x86_64/aarch64-unknown-linux-musl 纯 Rust 静态链接可用。
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros", "fs"] }
+ignore = "0.4.29"
+grep-searcher = "0.1.17"
+grep-regex = "0.1.14"
+grep-matcher = "0.1.9"
+notify = "8.2.0"
+notify-debouncer-mini = "0.7.0"

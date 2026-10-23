@@ -87,6 +87,11 @@ import {
   saveScopedTerminalSshUploadOnPaste,
 } from '../lib/terminal/terminalSshUploadSettings'
 import { confirmClearSshTerminalPasteUploads } from '../lib/sshTerminalPaste'
+import {
+  getSshAgentEnabled,
+  loadScopedSshAgentEnabled,
+  saveScopedSshAgentEnabled,
+} from '../lib/sshAgentSettings'
 import { isSshProject } from '../lib/sshWorkspace'
 import {
   loadScopedEditorGuidesEnabled,
@@ -194,6 +199,7 @@ export default function SettingsEditor() {
   )
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const [sshUploadOnPaste, setSshUploadOnPaste] = useState(getTerminalSshUploadOnPaste)
+  const [sshAgentEnabled, setSshAgentEnabled] = useState(getSshAgentEnabled)
   const [pasteCleanupBusy, setPasteCleanupBusy] = useState(false)
   const [editorGuidesEnabled, setEditorGuidesEnabled] = useState(
     DEFAULT_GLOBAL_SETTINGS['editor.guides.enabled'] !== false,
@@ -316,6 +322,7 @@ export default function SettingsEditor() {
     void loadScopedTerminalSshUploadOnPaste(settingsScope, currentProject).then(
       setSshUploadOnPaste,
     )
+    void loadScopedSshAgentEnabled(settingsScope, currentProject).then(setSshAgentEnabled)
   }, [scope, currentProject, settingsRevision])
 
   const workspaceLocked = scope === 'workspace'
@@ -422,6 +429,17 @@ export default function SettingsEditor() {
       await saveScopedTerminalSshUploadOnPaste(settingsScope, enabled, currentProject)
     } catch (error) {
       pushToast('error', t('保存 SSH 终端粘贴上传设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const updateSshAgentEnabled = async (enabled: boolean) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setSshAgentEnabled(enabled)
+    try {
+      await saveScopedSshAgentEnabled(settingsScope, enabled, currentProject)
+    } catch (error) {
+      pushToast('error', t('保存 SSH 代理设置失败: {error}', { error: String(error) }))
     }
   }
 
@@ -1001,6 +1019,9 @@ export default function SettingsEditor() {
               '上传',
               'terminal-paste',
               'sshUploadOnPaste',
+              'SSH 代理',
+              '远端代理',
+              'ssh.agent.enabled',
             ) && (
               <Section
                 id="terminal"
@@ -1096,6 +1117,23 @@ export default function SettingsEditor() {
                   >
                     <option value="off">{t('关闭')}</option>
                     <option value="on">{t('开启')}</option>
+                  </select>
+                </SettingItem>
+                <SettingItem
+                  title={t('SSH › 代理: 远端代理')}
+                  description={t(
+                    '在 SSH 工作区部署远端代理（qingcode-agent），提供文件树自动刷新、内嵌内容搜索（无需远端 rg）与快速目录扫描。代理经 SSH 通道接入，只监听远端 127.0.0.1。关闭后完全回退纯 SSH 直连，远端零足迹。默认开启。',
+                  )}
+                  modified={!sshAgentEnabled}
+                >
+                  <select
+                    value={sshAgentEnabled ? 'on' : 'off'}
+                    onChange={e => void updateSshAgentEnabled(e.target.value === 'on')}
+                    className="setting-control setting-select"
+                    aria-label={t('SSH › 代理: 远端代理')}
+                  >
+                    <option value="on">{t('开启')}</option>
+                    <option value="off">{t('关闭')}</option>
                   </select>
                 </SettingItem>
                 <SettingItem

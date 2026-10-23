@@ -7,7 +7,7 @@ license = "MIT"
 edition = "2021"
 
 [workspace]
-members = ["."]
+members = [".", "qingcode-agent"]
 default-members = ["."]
 resolver = "2"
 
@@ -58,6 +58,8 @@ ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 arboard = { version = "3.6", default-features = false }
 russh = { version = "0.63.1", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "2.4.0"
+# SSH 远端代理（qingcode-agent）的协议契约：帧编解码与消息类型两端共用，避免漂移。
+qingcode-agent = { path = "qingcode-agent" }
 tokio = { version = "1", features = ["io-util", "sync", "time"] }
 # 注意：tokio / futures / chrono 不作为直接依赖。
 # 源码未直接使用它们；由 tauri / portable-pty 等按需拉取所需特性即可，

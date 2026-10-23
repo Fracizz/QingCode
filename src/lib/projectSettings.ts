@@ -105,6 +105,7 @@ function buildSharedDefaults(): SettingsFile {
     'terminal.integrated.scrollback': 5000,
     'terminal.integrated.cursorBlinking': true,
     'terminal.integrated.sshUploadOnPaste': false,
+    'ssh.agent.enabled': true,
     custom: {},
   }
 }
@@ -237,6 +238,13 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.cursorBlinking": true,
   // terminal.integrated.sshUploadOnPaste：SSH 终端粘贴/拖入本机文件时是否先上传再粘贴远端路径（默认 false）
   "terminal.integrated.sshUploadOnPaste": false,
+
+  // ============================== SSH ==============================
+  // ssh.agent.enabled：SSH 工作区是否部署远端代理（qingcode-agent）。代理经 SSH
+  // direct-tcpip 通道接入，只监听远端 127.0.0.1，部署在项目 .qingcode/agent/ 下。
+  // 关闭后完全回退纯 SFTP/exec 直连（远端零足迹），但失去文件树自动刷新、
+  // 内嵌内容搜索（无需远端 rg）与快速目录扫描（默认 true）
+  "ssh.agent.enabled": true,
 `
 
 /** Auto-save keys live only in the global template; workspace inherits unless overridden. */

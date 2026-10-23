@@ -4205,6 +4205,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "portable-pty",
+ "qingcode-agent",
  "rusqlite",
  "russh",
  "russh-sftp",
@@ -4221,6 +4222,21 @@ dependencies = [
  "ureq",
  "uuid",
  "winreg 0.55.0",
+]
+
+[[package]]
+name = "qingcode-agent"
+version = "0.1.13-beta.3"
+dependencies = [
+ "grep-matcher",
+ "grep-regex",
+ "grep-searcher",
+ "ignore",
+ "notify",
+ "notify-debouncer-mini",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

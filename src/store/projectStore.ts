@@ -60,6 +60,7 @@ import {
 } from '../lib/fileTreeCache'
 import { authorizePaths, syncRootsFromProjects } from '../lib/pathAllowlist'
 import { ensureWorkspaceTrust, pushTrustedRootsToNative } from '../lib/workspaceTrust'
+import { pushSshAgentEnabledToNative } from '../lib/sshAgentSettings'
 import {
   connectSshWorkspace,
   ensureSshWorkspaceConnected,
@@ -188,6 +189,8 @@ async function syncAllowlistRoots(projects: Project[]): Promise<void> {
   try {
     await syncRootsFromProjects(projects)
     await pushTrustedRootsToNative(projects)
+    // SSH 远端代理开关随项目列表一起在启动时同步到后端（常驻进程需要即时生效）。
+    await pushSshAgentEnabledToNative()
   } catch (error) {
     console.warn('sync project roots to path allowlist failed:', error)
   }
