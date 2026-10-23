@@ -11,11 +11,13 @@ use russh_sftp::protocol::OpenFlags;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 mod search;
 mod transfer;
@@ -244,6 +246,64 @@ impl client::Handler for SshClient {
 struct ConnectedSession {
     handle: client::Handle<SshClient>,
     config: Mutex<SshConnectionConfig>,
+    /// 整条连接共用一个 SFTP 会话，请求在其中多路复用。每次操作都新开通道时，
+    /// Windows OpenSSH 要为每次请求启动一个 sftp-server 进程，远端一卡就超时。
+    sftp: tokio::sync::Mutex<Option<CachedSftp>>,
+}
+
+struct CachedSftp {
+    sftp: Arc<SftpSession>,
+    closed: Arc<AtomicBool>,
+}
+
+/// 包住 SFTP 通道流，读到 EOF 或读写出错时置位，缓存的会话就不再复用。
+struct ClosedFlagStream<S> {
+    inner: S,
+    closed: Arc<AtomicBool>,
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for ClosedFlagStream<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let wants_data = buf.remaining() > 0;
+        let result = Pin::new(&mut self.inner).poll_read(cx, buf);
+        let ended = match &result {
+            Poll::Ready(Ok(())) => wants_data && buf.filled().len() == before,
+            Poll::Ready(Err(_)) => true,
+            Poll::Pending => false,
+        };
+        if ended {
+            self.closed.store(true, Ordering::Release);
+        }
+        result
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for ClosedFlagStream<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let result = Pin::new(&mut self.inner).poll_write(cx, buf);
+        if matches!(result, Poll::Ready(Err(_))) {
+            self.closed.store(true, Ordering::Release);
+        }
+        result
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        self.closed.store(true, Ordering::Release);
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
 }
 
 /// 打开通道失败；`stale` 表示底层连接已不可用，应丢弃并重连。
@@ -280,6 +340,10 @@ const SSH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 /// 会话已半死时 `channel_open_session` 也不会返回；超时后探测一次再决定是否重连。
 const SSH_CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 const CHANNEL_OPEN_TIMEOUT_MARKER: &str = "通道超时";
+/// 远端拒绝开通道（ConnectFailed）时的重试次数，共约 3 秒。
+const CHANNEL_OPEN_RETRIES: u32 = 5;
+/// sshd 默认每条连接最多 10 个会话；命令最多占 4 个，其余留给终端和 SFTP。
+const MAX_CONCURRENT_EXEC_CHANNELS: usize = 4;
 /// 主动探测的等待上限；连接只是慢时不应拆掉它（会杀掉所有远端终端）。
 /// 远端 CPU/内存占满时几秒不回包很常见，给足时间再判失效。
 const SSH_LIVENESS_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -335,22 +399,45 @@ async fn open_session_channel_once(
         match opened {
             Ok(channel) => return Ok(channel),
             Err(russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed))
-                if retries < 2 =>
+                if retries < CHANNEL_OPEN_RETRIES =>
             {
+                // sshd 的会话数到上限（MaxSessions，默认 10）时也回 ConnectFailed；
+                // 刚关闭的通道在卡顿的远端上要过一会儿才释放，退避久一点再试。
                 retries += 1;
-                tokio::time::sleep(Duration::from_millis(150 * retries)).await;
+                tokio::time::sleep(Duration::from_millis(200 * u64::from(retries))).await;
             }
             Err(error) => {
+                let detail = if matches!(
+                    error,
+                    russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed)
+                ) && !session.handle.is_closed()
+                {
+                    "远端拒绝打开新通道，可能已达 sshd 的 MaxSessions 上限（默认 10，终端开得过多）"
+                        .to_string()
+                } else {
+                    error.to_string()
+                };
                 return Err(ChannelOpenError {
-                    message: format!("打开 SSH {purpose}通道失败：{error}"),
+                    message: format!("打开 SSH {purpose}通道失败：{detail}"),
                     stale: is_stale_russh_error(&error) || session.handle.is_closed(),
-                })
+                });
             }
         }
     }
 }
 
-async fn open_sftp_session(session: &ConnectedSession) -> Result<SftpSession, ChannelOpenError> {
+/// 复用连接上已有的 SFTP 会话；没有或已关闭时新开一个并缓存。
+async fn open_sftp_session(
+    session: &ConnectedSession,
+) -> Result<Arc<SftpSession>, ChannelOpenError> {
+    // 持锁新开：并发的首批请求只会开一个会话。
+    let mut cached = session.sftp.lock().await;
+    if let Some(entry) = cached.as_ref() {
+        if !entry.closed.load(Ordering::Acquire) {
+            return Ok(Arc::clone(&entry.sftp));
+        }
+    }
+    *cached = None;
     let channel = open_session_channel_once(session, "SFTP ").await?;
     channel
         .request_subsystem(true, "sftp")
@@ -359,13 +446,23 @@ async fn open_sftp_session(session: &ConnectedSession) -> Result<SftpSession, Ch
             message: format!("远端未启用 SFTP：{error}"),
             stale: is_stale_russh_error(&error) || session.handle.is_closed(),
         })?;
-    let sftp = SftpSession::new(channel.into_stream())
+    let closed = Arc::new(AtomicBool::new(false));
+    let stream = ClosedFlagStream {
+        inner: channel.into_stream(),
+        closed: Arc::clone(&closed),
+    };
+    let sftp = SftpSession::new(stream)
         .await
         .map_err(|error| ChannelOpenError {
             message: format!("初始化 SFTP 失败：{error}"),
             stale: session.handle.is_closed(),
         })?;
     sftp.set_timeout(30);
+    let sftp = Arc::new(sftp);
+    *cached = Some(CachedSftp {
+        sftp: Arc::clone(&sftp),
+        closed,
+    });
     Ok(sftp)
 }
 
@@ -399,10 +496,10 @@ fn is_terminal_end_message(message: &ChannelMsg) -> bool {
     )
 }
 
-const BUSY_CONNECTION_MARKER: &str = "远端响应缓慢";
+const BUSY_CONNECTION_MARKER: &str = "为保留正在运行的终端未重连";
 
 fn busy_connection_error(message: &str) -> String {
-    format!("{message}（{BUSY_CONNECTION_MARKER}，为保留正在运行的终端未重连，请稍后重试）")
+    format!("{message}（连接仍在，{BUSY_CONNECTION_MARKER}，请稍后重试）")
 }
 
 /// 同一连接的重连串行执行；记住最近一次失败，冷却期内直接返回。
@@ -413,6 +510,7 @@ pub struct SshManager {
     roots: RwLock<HashMap<String, RegisteredRoot>>,
     terminals: RwLock<HashMap<String, Arc<RemoteTerminalSession>>>,
     reconnect_gates: Mutex<HashMap<String, ReconnectGate>>,
+    exec_slots: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
 }
 
 impl SshManager {
@@ -422,7 +520,21 @@ impl SshManager {
             roots: RwLock::new(HashMap::new()),
             terminals: RwLock::new(HashMap::new()),
             reconnect_gates: Mutex::new(HashMap::new()),
+            exec_slots: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// 同一连接上同时运行的远程命令数上限，给终端和 SFTP 留出会话名额。
+    fn exec_slots(&self, connection_id: &str) -> Result<Arc<tokio::sync::Semaphore>, String> {
+        let mut slots = self
+            .exec_slots
+            .lock()
+            .map_err(|_| "SSH 连接状态不可用".to_string())?;
+        Ok(Arc::clone(
+            slots.entry(connection_id.to_string()).or_insert_with(|| {
+                Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_EXEC_CHANNELS))
+            }),
+        ))
     }
 
     fn remember_config(
@@ -613,7 +725,7 @@ impl SshManager {
         Ok(())
     }
 
-    async fn open_sftp(&self, connection_id: &str) -> Result<SftpSession, String> {
+    async fn open_sftp(&self, connection_id: &str) -> Result<Arc<SftpSession>, String> {
         let session = self.live_session(connection_id).await?;
         match open_sftp_session(&session).await {
             Ok(sftp) => Ok(sftp),
@@ -634,7 +746,7 @@ impl SshManager {
         &self,
         uri: &str,
         require_trust: bool,
-    ) -> Result<(SftpSession, RemoteUri, RegisteredRoot), String> {
+    ) -> Result<(Arc<SftpSession>, RemoteUri, RegisteredRoot), String> {
         let parsed = parse_remote_uri(uri)?;
         let root = self.root_for_uri(uri, require_trust)?;
         let sftp = self.open_sftp(&parsed.connection_id).await?;
@@ -696,6 +808,11 @@ impl SshManager {
     ) -> Result<RemoteExecResult, String> {
         let parsed = parse_remote_uri(uri)?;
         self.root_for_uri(uri, require_trust)?;
+        let _slot = self
+            .exec_slots(&parsed.connection_id)?
+            .acquire_owned()
+            .await
+            .map_err(|_| "SSH 连接状态不可用".to_string())?;
         let mut channel = self
             .open_session_channel(&parsed.connection_id, "命令")
             .await?;
@@ -1317,6 +1434,7 @@ async fn authenticate_session(
         ConnectedSession {
             handle,
             config: Mutex::new(config),
+            sftp: tokio::sync::Mutex::new(None),
         },
         fingerprint,
     ))
@@ -3544,6 +3662,23 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn closed_flag_stream_marks_eof_but_not_data() {
+        let (client, mut server) = tokio::io::duplex(64);
+        let closed = Arc::new(AtomicBool::new(false));
+        let mut stream = ClosedFlagStream {
+            inner: client,
+            closed: Arc::clone(&closed),
+        };
+        server.write_all(b"ok").await.unwrap();
+        let mut buf = [0u8; 8];
+        assert_eq!(stream.read(&mut buf).await.unwrap(), 2);
+        assert!(!closed.load(Ordering::Acquire));
+        drop(server);
+        assert_eq!(stream.read(&mut buf).await.unwrap(), 0);
+        assert!(closed.load(Ordering::Acquire));
+    }
 
     #[test]
     fn replaced_ssh_terminal_does_not_emit_exit() {
