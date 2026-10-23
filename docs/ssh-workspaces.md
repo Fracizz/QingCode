@@ -21,17 +21,27 @@ QingCode 的 SSH 工作区直接在 Tauri 后端建立 SSH/SFTP 连接，默认�
 - 在本地与 SSH 项目之间上传或下载文件和目录。资源管理器可右键上传，也可把本机文件或文件夹拖到 SSH 项目的文件树：文件夹接收到该目录，文件上则传到父目录，空白处和项目标题传到项目根。在 SSH 项目里粘贴（Ctrl+V 或右键「粘贴」）时，系统剪贴板中的本机文件或文件夹、以及应用内复制的本地路径都会上传到目标目录；跨域剪切按复制处理，不删除本机源文件。
 - 多项目搜索可以混合本地项目和 SSH 项目。
 
-## 远端代理（qingcode-agent，MVP）
+## 远端代理（qingcode-agent）
 
-Linux / POSIX SSH 项目（已信任、设置 `ssh.agent.enabled` 默认开启）会在连接后自动部署远端代理：
+Linux / POSIX SSH 项目（已信任、设置 `ssh.agent.enabled` 默认开启）会在连接后自动部署远端代理。**设计稿见 D:/Download/ssh-agent-design.md（外部文档，未入库）**，当前进度见文末「实施进度与未完成清单」。
 
-- **部署物**：单个静态 musl 二进制（约几 MB），上传到项目 `.qingcode/agent/qingcode-agent-<arch>`（x86_64 / aarch64）。本地二进制查找顺序：`QINGCODE_AGENT_DIR` 环境变量 → exe 目录 `/agents/` → exe 目录上级 `/agent/` → 资源目录 `/agents/`。开发与打包用 `scripts/build-agent.ps1` 产出并复制到 `src-tauri/target/agent/`。
-- **运行形态**：`setsid + nohup` 守护进程，只监听远端 `127.0.0.1` 随机端口，客户端经 SSH `direct-tcpip` 通道接入，无公网暴露；token 写在项目 `.qingcode/agent/agent.json`（远端权限 0600）。应用重启后重连时先发现存活代理，免重新部署；版本不一致时自动 kill 旧进程并重新部署。
+### 运行形态（两套并存）
+
+| | `serve` 模式 | `daemon` 模式（新） |
+|---|---|---|
+| 进程 | 每项目根一个进程，随端口暴露给 direct-tcpip | 常驻 daemon + 每条 SSH exec 一个 `connect --stdio` 代理 |
+| 传输 | SSH `direct-tcpip` 通道 + JSON 帧 | SSH exec stdio + 协议 v1 二进制帧（MessagePack、256KB 信用窗口、优先级、CANCEL、PING/PONG） |
+| 安全 | token 在项目 `.qingcode/agent/agent.json`（0600） | token 在 `~/.qingcode/agent/run/token`（0600），运行目录 0700，`SO_PEERCRED` 同 uid 校验，`flock` 单实例 |
+| 断线 | 只影响当次操作 | 代理死、daemon 与其中的终端继续运行，重连按 seq 补发输出或退化为屏幕快照 |
+| 状态 | 已全量启用，是回退的终点 | 后端/协议已就绪并在真机验证；**终端持久化的前端接入尚未做**（见未完成清单） |
+
+- **部署物**：单个静态 musl 二进制（约几 MB），上传到项目 `.qingcode/agent/qingcode-agent-<arch>`（x86_64 / aarch64）。本地二进制查找顺序：`QINGCODE_AGENT_DIR` 环境变量 → exe 目录 `/agents/` → exe 目录上级 `/agent/` → 资源目录 `/agents/` → 下载缓存目录（`autoDownload` 开启时）。开发与打包用 `scripts/build-agent.ps1` 产出并复制到 `src-tauri/target/agent/`。
+- **运行形态（`serve` 模式）**：`setsid + nohup` 守护进程，只监听远端 `127.0.0.1` 随机端口，客户端经 SSH `direct-tcpip` 通道接入，无公网暴露；token 写在项目 `.qingcode/agent/agent.json`（远端权限 0600）。应用重启后重连时先发现存活代理，免重新部署；版本不一致时校验进程身份后 kill 并重新部署。daemon 模式则常驻 `~/.qingcode/agent/run` 下，运行目录 0700、token 0600，经 `connect --stdio` 代理接入（见上表）。
 - **带来的能力**：
   - 远程文件树自动刷新（agent 递归 inotify → 后端复用本地 `fs-change` 事件管线：树刷新、脏标签冲突提示、Git 状态刷新全链路生效）；
   - 内嵌内容搜索（ripgrep 引擎编译进代理，**不再要求远端安装 rg**，支持 ignore 文件与 glob 过滤，与远端 rg 结果语义一致）；
   - 目录扫描单往返（替代多次 SFTP round trip，高延迟链路下文件树展开更快）。
-- **远程终端不受影响**：代理与 PTY 终端完全正交，终端仍走独立 SSH PTY 通道；代理部署/重连不会触碰有活跃终端的连接（复用既有忙碌保护）。
+- **远程终端不受影响（现状）**：终端仍走独立 SSH PTY 通道，与代理完全正交；代理部署/重连不会触碰有活跃终端的连接。daemon 模式的 PTY 宿主已就绪，但前端尚未切过去（未完成项 A）。
 - **关闭与清理**：设置里关闭 `ssh.agent.enabled` 后完全回退直连（远端零足迹）。清理：删除项目内 `.qingcode/agent/` 目录即可；或按状态文件里的 pid `kill`。断开连接不终止远端代理（保活供快速重连，与 VS Code Server / Zed remote_server 生命周期策略一致）。
 - **已知限制（MVP）**：
   - 关闭开关只影响新的连接与后续操作，已在运行的远端代理与 watch 监督任务不会立即停止；重新打开后需重新连接项目才会恢复自动刷新。
@@ -195,7 +205,7 @@ SSH 仍可在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_fi
 ### 补齐进展与后续建议
 
 已于 2026-10-23 补齐：
-- **SSH 远端代理 MVP（qingcode-agent）**：Linux/POSIX 已信任项目自动部署（`ssh.agent.enabled` 可关）。提供远程文件树自动刷新（inotify → `fs-change` 管线）、内嵌内容搜索（不依赖远端 rg）与单往返目录扫描；agent 缺失/不可用时全部静默回退直连。构建：`scripts/build-agent.ps1`（x86_64/aarch64 musl 静态）。
+- **SSH 远端代理（qingcode-agent）**：文件树自动刷新、内嵌内容搜索（不依赖远端 rg）、单往返目录扫描、daemon 常驻 + PTY 宿主 + 协议 v1、客户端 daemon 接入、独立 GitHub Release 与按需下载。详见下文「远端代理：实施进度与未完成清单」。
 
 此前（2026-10-22）补齐：
 - **SSH 终端本机文件粘贴/拖放**：`terminal.integrated.sshUploadOnPaste` 默认关闭。开启后，资源管理器复制的文件、纯路径文本或拖到终端的本机文件会上传到 `.qingcode/terminal-paste/`，并粘贴远端路径。成功后不保留传输任务条。单个文件，或文件夹内文件合计，超过 100MB 时整次粘贴会被拒绝；设置页和终端右键可清理该目录。
@@ -211,4 +221,82 @@ SSH 仍可在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_fi
 2. 远程终端尊重配置文件/默认 shell，并正确探测忙碌状态。
 3. Markdown 远程图片、属性对话框。
 4. 连接配置管理页；再往后才是端口转发、Agent 转发、WSL 直连工作区。
-5. 远端代理后续方向：发布打包接入（安装包内置多架构二进制）、代理停止命令与版本清理、基于 agent 的远端语言服务（参考 Zed 的 musl 静态 remote_server 路线）。
+
+---
+
+## 远端代理：实施进度与未完成清单
+
+对照设计稿 `D:/Download/ssh-agent-design.md`（§11 分 M0–M5，一次完整发布）。**整体进度约 55%：架构、传输与发布链路已完成，能力域迁移与终端 UI 仍缺。**
+
+### 已完成（验证方式见「真机验收」）
+
+| 设计章节 | 内容 | 提交 |
+|---|---|---|
+| §3/§5 协议 | 协议 v1：`u32_be len + kind + stream_id` 帧、MessagePack 负载、1MB 上限、64KB 分片、256KB 信用窗口、优先级（8:1 防饿死）、CANCEL、15s PING/45s 断链 | `33d6eed` |
+| §3 daemon | 常驻进程 + `connect --stdio` 代理：`~/.qingcode/agent/run`（0700）、token 0600、`SO_PEERCRED` 同 uid、`flock` 单实例、10 分钟空转退出、24h detached TTL、64 PTY/256MB 限额、`agent.log` 5MB 滚动留 3 份 | `33d6eed` |
+| §6 PTY 宿主 | `portable-pty` + `vt100` 屏幕快照 + 环形缓冲（块级 seq）、`attach{fromSeq}` 补发或快照降级、总量硬上限淘汰（先 detached 最久）、SIGHUP/SIGKILL 生命周期、`hasChildren`（读 `/proc`） | `33d6eed` |
+| §3/§7 传输接入 | 客户端 scan/search/watch 优先走 daemon（`fs.scan` / `search.content` 流式 / `watch.subscribe`），回退链 daemon → serve → 直连；token 轮换自愈 | `4f91c6b` |
+| §4.2/§8.3 完整性 | `self-check --expect-sha256`；构建脚本生成 `manifest.json`（version + sha256 + size）；noexec 以 exec 失败暴露 | `4f91c6b` |
+| §4.1 发布 | `.github/workflows/agent-release.yml`：独立流水线（push `agent-v*` 标签或手动触发），ubuntu runner 双架构 musl + rust-lld，发布到 `agent-v<版本>` 标签 Release | `9c4081f` |
+| §4.1 下载 | `ssh.agent.autoDownload`（默认关）：缺失时从 Release 下载，流式算 sha256 对 manifest 后才落位缓存目录；`QINGCODE_AGENT_DOWNLOAD_BASE` 可指内网镜像 | `9c4081f` |
+| §7 子集 | 文件监视、内嵌内容搜索（无需远端 rg）、单往返目录扫描、gitignore/ignore 过滤 | `a214803` |
+| 打包 | NSIS 安装版内置 `agents/` 双架构二进制；`bump-version.ps1` 同步 agent 版本 | `a214803` |
+
+### 未完成清单
+
+**A. 终端持久化（设计最大收益点，M4）** — daemon 与 PTY 宿主已就绪，缺客户端：
+1. `pty.create/attach/detach/input/resize/kill/list` 的前端接线：SSH 终端改为走 daemon PTY 而非独立 PTY 通道；
+2. 断线接回：标签显示「重连中」（不是「已退出」）、重连后重下尺寸、`pty.attach` 补发或屏幕快照还原；
+3. 应用重启后按持久化的标签 ID 接回；孤儿终端提示「远端还有 N 个终端在运行」并可接回/结束；
+4. 有存活终端时升级 agent：新旧 daemon 并存，旧终端标「旧版 Agent」；
+5. 同一连接的 PTY 数据、输入与 RPC 在同一条 exec 通道上多路复用（当前每方法一条通道）。
+
+**B. 连接状态机与界面（§9/M2）**
+6. `RemoteBackend` trait（`DirectBackend` / `AgentBackend`）分派；
+7. 状态机 Disconnected → Authenticating → Probing → Installing → Handshaking → Ready(Agent)/Ready(Direct)；
+8. 事件 `ssh-agent-state`（模式、版本、降级原因）与命令 `ssh_agent_info` / `ssh_agent_restart` / `ssh_agent_logs`；
+9. 状态栏芯片「Agent vX」或「直连：<原因>」，点击可查看详情、重启 agent、查看日志。
+
+**C. 能力域迁移（§7/M3 大头）**
+10. `workspace.open` / `workspace.setTrust`：受信任的工作区注册 + 撤销信任后即时拒绝（写入、Git 修改类、运行任务、新建终端）；
+11. `fs.*` 全套：`fs.read` 偏移读取（替 4MB 单片）、`fs.write{expectedMtime}` 一次往返的写冲突检测、`fs.detectEncoding`（只读前 8KB）、属性对话框（birth time、目录统计）、`fs.readStream` 大文件跳行；
+12. `git.*` 走 agent + 监视 `.git/index|HEAD|refs` 主动推送 `git-changed`（状态栏可不降频）、`git.statusLight` 轻量脏标记、上次 fetch/pull/push 时间不再为空；
+13. `format.*`：Prettier/rustfmt/gofmt/shfmt/ruff-black 合并实现，本地与远端同一份（含 Python）；
+14. `task.spawn`：Windows 远端支持 `ps1`/`bat`/`command`；
+15. `transfer.*`：分块（1MB）+ 整体 sha256、按「临时文件 + 偏移」断点续传、小文件合并成 tar 流；
+16. 文件名搜索走 `ignore` + glob（当前仍是远端 `find` 子串匹配）；
+17. Markdown 远程相对图片：`ssh://` 路由到 `fs.read` 转 blob URL。
+
+**D. 安装与版本管理（§4.2/§4.3）**
+18. 安装目录改为 `~/.qingcode/agent/<version>-<build>/`（`$XDG_DATA_HOME`、`$XDG_RUNTIME_DIR` 兜底），多项目共享同一 daemon；当前仍是每项目目录部署 `serve` 进程 + daemon 走默认家目录；
+19. 上传前 SFTP `stat` 校验（存在/属主/权限 ≤0700/mtime）+ `self-check` 比对 manifest，任一不符才重装；
+20. 清理策略：删除未使用且非最近两个版本的安装目录；
+21. 版本共存：有存活终端时新旧 daemon 并存（依赖 A-5）；
+22. `PROTOCOL_VERSION` 向后兼容策略与 capabilities 分流（当前只声明 [1,1]）；
+23. zstd 压缩 + 目标清单管理（当前是裸二进制，安装包因此增加约 6.2MB）；armv7 / Windows / macOS 目标未提供。
+
+**E. 平台（§6.4）**
+24. Windows daemon：命名管道 + DACL、命名 mutex、ConPTY Job Object 脱离（或 `schtasks` 兜底），失败则关闭 `pty.persist`；macOS：`setsid` + FSEvents 验证；
+25. systemd `KillUserProcesses=yes` 探测与 `systemd-run --user --scope` 托管 + `loginctl enable-linger` 提示。
+
+**F. `qingcode-core` 抽取（M0）**
+26. 把 `content_search`、`file_encoding`/`exclude`、`git_status`/`git_command`、`format`、`path_guard`、`git`、`file_watcher`、`terminal` 与 Tauri 解耦为共用 crate，使本地与远端语义天然一致。
+
+**G. 设置（§10）**
+27. `remote.agent.mode`（auto/always/never 及连接级覆盖）、`remote.agent.installDir`、`remote.agent.detachedTerminalTtl`、`remote.agent.terminalScrollbackBytes`、`remote.agent.watch`（当前仅 `ssh.agent.enabled` 与 `ssh.agent.autoDownload`）。
+
+### 已知问题与瑕疵
+
+- **Flaky 测试**（Linux 时序敏感，单跑通过）：`daemon::tests::pty_input_keeps_frame_order`、`daemon::tests::instance_lock_is_exclusive_within_one_process`；Windows 全量的 `clipboard_files::tests::reads_png_clipboard_as_stable_temp_file`（沙箱 `OpenClipboard` 被拒）。
+- watch 建立的前 500ms 会丢弃事件（用来滤掉 notify 注册期的枚举噪声），该窗口内的真实修改同样丢失。
+- 内容搜索遇到单行 >2MB 的文件会截断并停止整次搜索（与直连 rg 路径行为一致，minified 产物后的文件命中会漏）。
+- `scan` 的 `done.files_scanned` 恒为 0（scan 语义上没有文件计数），前端不要用它做进度。
+- 关闭 `ssh.agent.enabled` 不停已运行的 daemon/远端进程；重新开启需重连项目才恢复自动刷新。
+- 远端保存文件仍会触发一次 `fs-change`（未做本地那样的自写抑制）。
+- `daemon` 目前每工作区仍各自起进程（多项目共享单 daemon 属未完成项 18）。
+
+### 真机验收
+
+- 目标主机 AlmaLinux 10.2 x86_64（SELinux Enforcing、**未安装 rg**）：`serve` 子集 56/56 断言通过（含符号链接逃逸双向拦截、3MB 单行截断、断会话存活、单实例 rc=3、agent.json 0600）；`daemon` 协议冒烟 15/15 通过（HELLO 协商、`fs.scan`、绝对路径拒绝、`pty.create/input` 实时回显、**SIGKILL 代理后 daemon 存活并重连补发历史输出**、`agent.shutdown` 零残留）。
+- 脚本：`scripts/e2e-ssh-agent/`（`run.sh` + `client.py` + `daemon_smoke.py` + README），凭据一律走环境变量，仓库内无密码/主机。
+- 未做：Windows / macOS / Alpine / arm64 主机验收；CI 上 `agent-release.yml` 的首次实跑。
