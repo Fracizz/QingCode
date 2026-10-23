@@ -39,7 +39,7 @@ pub struct GitStatus {
     pub last_fetch_at: Option<i64>,
     /// Last pull/merge from remote (ms since epoch), from HEAD reflog.
     pub last_pull_at: Option<i64>,
-    /// Last push time (ms since epoch), from HEAD reflog when available.
+    /// Last push time (ms since epoch), from the upstream branch reflog when available.
     pub last_push_at: Option<i64>,
     pub changes: Vec<GitChange>,
 }
@@ -141,11 +141,18 @@ fn read_last_fetch_at(root: &Path) -> Option<i64> {
 
 /// reflog 里能认出「拉取」的动作 / 说明。
 const PULL_REFLOG_NEEDLES: &[&str] = &["pull ", "pull:", "merge branch", "fast-forward"];
-/// reflog 里能认出「推送」的动作。
-const PUSH_REFLOG_NEEDLES: &[&str] = &["push "];
+/// 远程跟踪分支 reflog 里推送留下的动作。
+///
+/// `git push` 不写 HEAD 的 reflog，只更新 `refs/remotes/<remote>/<branch>`，
+/// 并记一条 `update by push`；所以推送时间要从上游分支的 reflog 里找。
+const PUSH_REFLOG_NEEDLES: &[&str] = &["update by push"];
 
-fn read_reflog_text(root: &Path) -> Option<String> {
-    let output = run_git(root, &["reflog", "--date=unix", "-n", "100"]).ok()?;
+fn read_reflog_text(root: &Path, reference: Option<&str>) -> Option<String> {
+    let mut args = vec!["reflog", "show", "--date=unix", "-n", "100"];
+    if let Some(reference) = reference {
+        args.push(reference);
+    }
+    let output = run_git(root, &args).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -154,11 +161,11 @@ fn read_reflog_text(root: &Path) -> Option<String> {
 
 /// 在一份 reflog 输出里找第一条命中 `needles` 的时间戳（毫秒）。
 ///
-/// 每条 reflog 形如 `<sha> HEAD@{<unix>}: <action>: <message>`，`<message>` 可以缺省
-/// （`push origin main` 就没有）。因此动作段和说明段都要看：只匹配说明段会漏掉 push。
+/// 每条 reflog 形如 `<sha> <ref>@{<unix>}: <action>: <message>`，`<message>` 可以缺省
+/// （`update by push` 就没有）。因此动作段和说明段都要看。
 fn reflog_timestamp(text: &str, needles: &[&str]) -> Option<i64> {
     for line in text.lines() {
-        let marker = "HEAD@{";
+        let marker = "@{";
         let Some(marker_at) = line.find(marker) else {
             continue;
         };
@@ -183,14 +190,15 @@ fn reflog_timestamp(text: &str, needles: &[&str]) -> Option<i64> {
     None
 }
 
-/// 同步时间：`FETCH_HEAD` 的 mtime + **一次** reflog 扫描（pull / push 共用同一份输出）。
-fn read_sync_times(root: &Path) -> (Option<i64>, Option<i64>, Option<i64>) {
+/// 同步时间：`FETCH_HEAD` 的 mtime + HEAD reflog（拉取）+ 上游分支 reflog（推送）。
+fn read_sync_times(root: &Path, upstream: Option<&str>) -> (Option<i64>, Option<i64>, Option<i64>) {
     let last_fetch_at = read_last_fetch_at(root);
-    let reflog = read_reflog_text(root);
-    let last_pull_at = reflog
+    let last_pull_at = read_reflog_text(root, None)
         .as_deref()
         .and_then(|text| reflog_timestamp(text, PULL_REFLOG_NEEDLES));
-    let last_push_at = reflog
+    let last_push_at = upstream
+        .filter(|name| !name.is_empty() && !name.starts_with('-'))
+        .and_then(|name| read_reflog_text(root, Some(&format!("refs/remotes/{name}"))))
         .as_deref()
         .and_then(|text| reflog_timestamp(text, PUSH_REFLOG_NEEDLES));
     (last_fetch_at, last_pull_at, last_push_at)
@@ -778,7 +786,8 @@ fn collect_git_status(root: &Path) -> Result<GitStatus, String> {
 fn collect_git_status_with_sync(root: &Path) -> Result<GitStatus, String> {
     let mut status = collect_git_status(root)?;
     if status.is_repository {
-        let (last_fetch_at, last_pull_at, last_push_at) = read_sync_times(root);
+        let (last_fetch_at, last_pull_at, last_push_at) =
+            read_sync_times(root, status.upstream.as_deref());
         status.last_fetch_at = last_fetch_at;
         status.last_pull_at = last_pull_at;
         status.last_push_at = last_push_at;
@@ -1926,31 +1935,67 @@ mod tests {
     }
 
     #[test]
-    fn reflog_timestamp_reads_action_and_message_from_one_scan() {
-        let text = concat!(
-            "1111111 HEAD@{1700000000}: clone: from https://example.com/repo.git\n",
-            "2222222 HEAD@{1700000500}: pull origin main: Fast-forward\n",
-            "3333333 HEAD@{1700000900}: push origin main\n",
+    fn reflog_timestamp_reads_action_and_message() {
+        let head = concat!(
+            "1111111 HEAD@{1700000000}: clone: from https://example.com/repo.git
+",
+            "2222222 HEAD@{1700000500}: pull origin main: Fast-forward
+",
         );
-
-        // 只匹配说明段会漏掉 `push origin main`（它没有说明段）。
         assert_eq!(
-            reflog_timestamp(text, PULL_REFLOG_NEEDLES),
+            reflog_timestamp(head, PULL_REFLOG_NEEDLES),
             Some(1_700_000_500_000)
         );
+        assert_eq!(reflog_timestamp(head, &["rebase "]), None);
+
+        // 推送只出现在远程跟踪分支的 reflog 里，且没有说明段。
+        let upstream = concat!(
+            "3333333 refs/remotes/origin/main@{1700000900}: update by push
+",
+            "2222222 refs/remotes/origin/main@{1700000400}: fetch: fast-forward
+",
+        );
         assert_eq!(
-            reflog_timestamp(text, PUSH_REFLOG_NEEDLES),
+            reflog_timestamp(upstream, PUSH_REFLOG_NEEDLES),
             Some(1_700_000_900_000)
         );
-        assert_eq!(reflog_timestamp(text, &["rebase "]), None);
         // 时间戳不是数字（--date 非 unix）时跳过该行而不是 panic。
         assert_eq!(
             reflog_timestamp(
-                "4444444 HEAD@{yesterday}: pull origin main\n",
+                "4444444 HEAD@{yesterday}: pull origin main
+",
                 PULL_REFLOG_NEEDLES
             ),
             None
         );
+    }
+
+    #[test]
+    fn sync_times_report_last_push_from_upstream_reflog() {
+        let base = temp_base("push-time");
+        let remote = base.join("remote.git");
+        fs::create_dir_all(&remote).unwrap();
+        git_success(&remote, &["init", "--bare"]);
+        let root = base.join("work");
+        fs::create_dir_all(&root).unwrap();
+        git_success(&root, &["init"]);
+        git_success(&root, &["config", "user.email", "test@qingcode.local"]);
+        git_success(&root, &["config", "user.name", "QingCode Test"]);
+        git_success(&root, &["commit", "--allow-empty", "-m", "init"]);
+        git_success(
+            &root,
+            &["remote", "add", "origin", &remote.to_string_lossy()],
+        );
+
+        let status = collect_git_status_with_sync(&root).unwrap();
+        assert_eq!(status.last_push_at, None);
+
+        git_success(&root, &["push", "-u", "origin", "HEAD"]);
+        let status = collect_git_status_with_sync(&root).unwrap();
+        assert!(status.upstream.is_some(), "{status:?}");
+        assert!(status.last_push_at.is_some(), "{status:?}");
+
+        let _ = fs::remove_dir_all(base);
     }
 
     #[test]

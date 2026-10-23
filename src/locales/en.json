@@ -872,6 +872,7 @@
     "移动 {count} 项": "Move {count} item(s)",
     "移动到 {name}": "Move to {name}",
     "上传到 {name}": "Upload to {name}",
+    "已上传到 {name}": "Uploaded to {name}",
     "上传 {count} 项到 {name}": "Upload {count} items to {name}",
     "移动失败: {error}": "Could not move: {error}",
     "目标已存在": "Destination Exists",

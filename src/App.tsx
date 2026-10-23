@@ -7,7 +7,6 @@ import EditorBreadcrumbs from './components/EditorBreadcrumbs'
 import StatusBar from './components/StatusBar'
 import TitleBar from './components/TitleBar'
 import Toaster from './components/Toaster'
-import TransferTasks from './components/TransferTasks'
 import ConfirmDialog from './components/ConfirmDialog'
 import ChoiceDialog from './components/ChoiceDialog'
 import PromptDialog from './components/PromptDialog'
@@ -473,7 +472,6 @@ function App() {
         </div>
       </div>
 
-      <TransferTasks />
       <StatusBar />
       <Toaster />
       <ConfirmDialog />

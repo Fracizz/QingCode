@@ -246,6 +246,31 @@ describe('pasteLocalFilesIntoSshTerminal', () => {
     expect(mocks.pushToast.mock.calls.map(call => call[0])).toEqual(['info', 'success'])
     expect(mocks.toasts.map(toast => toast.kind)).toEqual(['success'])
   })
+
+  it('keeps the uploading toast until the last concurrent paste finishes', async () => {
+    vi.useFakeTimers()
+    stubDirectories()
+    mocks.startSshTransfer
+      .mockImplementationOnce(
+        () => new Promise(resolve => setTimeout(() => resolve({ status: 'completed' }), 1600)),
+      )
+      .mockImplementationOnce(
+        () => new Promise(resolve => setTimeout(() => resolve({ status: 'completed' }), 800)),
+      )
+    const slow = pasteLocalFilesIntoSshTerminal('ssh://c1/home/owner/app', ['D:\\docs\\a.txt'])
+    const fast = pasteLocalFilesIntoSshTerminal('ssh://c1/home/owner/app', ['D:\\docs\\b.txt'])
+    await vi.advanceTimersByTimeAsync(400)
+    expect(mocks.toasts.some(toast => toast.kind === 'info')).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(400)
+    await fast
+    // 先完成的那次不能把仍在上传的进度提示关掉。
+    expect(mocks.toasts.some(toast => toast.kind === 'info')).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(800)
+    await slow
+    expect(mocks.toasts.some(toast => toast.kind === 'info')).toBe(false)
+  })
 })
 
 describe('sshTerminalPasteRoot', () => {

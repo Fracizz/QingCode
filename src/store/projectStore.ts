@@ -166,7 +166,7 @@ function isLatestProjectTreeRefresh(projectId: string, sequence: number): boolea
 const SSH_DIRECTORY_UNAVAILABLE_RE =
   /远程项目目录不可用|读取远程项目目录失败|远程项目路径不是目录|远程目录不可用|远程路径不是目录/
 /** 远端没响应不是凭据问题，弹重新认证对话框没用，直接报错。 */
-const SSH_TIMEOUT_RE = /SSH 连接超时|通道超时|为保留正在运行的终端未重连/
+const SSH_TIMEOUT_RE = /SSH 连接超时|通道超时/
 /** 连接超过这个时间才提示“正在连接”，快速切换时不闪 toast。 */
 const SSH_CONNECTING_HINT_DELAY_MS = 600
 

@@ -8,14 +8,21 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ### Changed
 
-- Fewer background Git reads: concurrent refreshes of the same project now coalesce into one, window-focus refresh on local projects has a 2-second cooldown, and project badges stop polling while the window is hidden
+- Fewer background Git reads: refreshes that arrive while a read of the same project is running now coalesce into one trailing read (changes saved meanwhile are not lost), window-focus refresh on local projects has a 2-second cooldown, and project badges stop polling while the window is hidden
 - Reopening source control reuses commit history cached for the last 30 seconds, so one open no longer fetches history and remotes twice
 - Top-bar project badges for SSH projects now poll at 4x the configured interval with a 60-second focus cooldown
-- Writes under `release/`, `.dev` and `.venv` no longer trigger explorer and Git refreshes
+- Writes under the project-root `release/` and any `.dev` or `.venv` no longer trigger explorer and Git refreshes (same-named source folders such as `src/release/` are unaffected)
 
 ### Fixed
 
-- The source control toolbar's "last push" time is no longer always empty
+- The source control toolbar's "last push" time is no longer always empty: it now reads `update by push` from the upstream branch reflog (`git push` does not write the HEAD reflog)
+- Local projects: the status bar branch updates right after switching branches in the terminal instead of waiting for the 15-second poll
+- SSH: remote commands now have an overall time limit (2 minutes, 15 minutes for fetch / pull / push), so a hung command no longer holds a concurrency slot forever
+- SSH: the shared SFTP session is treated as stalled after 45 seconds without a reply and replaced on the next operation
+- SSH: for projects in a repository subfolder, commit file lists stay inside the project and are project-relative; diffs resolve paths from the project folder; a failed prefix probe now reports an error instead of mislabeling paths
+- Pasting several local files into a remote terminal at once keeps the upload notice until the last upload finishes
+- A failed terminal resize no longer causes a retry at the same size to be skipped
+- SSH: each remote terminal now uses its own connection, so terminals across several projects no longer exhaust one connection's session limit (sshd `MaxSessions`), and a reconnect or stall on the main connection no longer drops older terminals in other projects
 
 ## [0.1.13-beta.3] - 2026-10-23
 

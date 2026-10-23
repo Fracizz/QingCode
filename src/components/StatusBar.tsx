@@ -293,8 +293,17 @@ export default function StatusBar() {
     const onVisibility = () => {
       if (!document.hidden) void loadGitHead()
     }
+    // 本地项目：在终端里 `git checkout` / `git switch` 会改写工作区并触发该事件，
+    // 分支芯片要跟着刷新，而不是等下一次 15 秒轮询。本地读 HEAD 很便宜；
+    // SSH 不监听（每次都是远程往返），分支名跟随 workdir 快照。
+    const onWorktree = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectPath?: string }>).detail
+      if (detail?.projectPath && detail.projectPath !== projectPath) return
+      void loadGitHead()
+    }
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onVisibility)
+    if (!sshProject) window.addEventListener('qingcode:git-worktree-changed', onWorktree)
     const pollMs = gitHeadPollIntervalMs(sshProject)
     const intervalId = pollMs > 0
       ? window.setInterval(() => {
@@ -319,6 +328,7 @@ export default function StatusBar() {
       cancelled = true
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('qingcode:git-worktree-changed', onWorktree)
       if (intervalId !== null) window.clearInterval(intervalId)
       for (const id of retryTimers) window.clearTimeout(id)
       unsubScm()

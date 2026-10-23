@@ -229,8 +229,8 @@ export default function Sidebar() {
   } | null>(null)
   const externalDropActiveRef = useRef(false)
   const externalDropPathsRef = useRef<string[]>([])
-  const uploadLocalPathsRef = useRef<(destination: string, paths: string[]) => Promise<void>>(
-    async () => {}
+  const uploadLocalPathsRef = useRef<(destination: string, paths: string[]) => Promise<boolean>>(
+    async () => false
   )
   // 应用内复制/剪切时系统剪贴板的文件签名，粘贴时据此判断系统剪贴板是否更新
   const systemClipboardAtInternalCopyRef = useRef<string | null>(null)
@@ -900,7 +900,12 @@ export default function Sidebar() {
     }
     if (plan.kind === 'upload') {
       // 跨本机/SSH 的剪切按复制处理，不删除本机源文件
-      await uploadLocalPathsRef.current(destDir, plan.paths)
+      const uploaded = await uploadLocalPathsRef.current(destDir, plan.paths)
+      // 写明目标目录：焦点意外留在资源管理器时，用户能看出文件传到了哪里
+      if (uploaded) {
+        const name = pathsEqual(destDir, currentProject.path) ? currentProject.name : baseName(destDir)
+        useProjectStore.getState().pushToast('success', t('已上传到 {name}', { name }))
+      }
       return
     }
     const { mode, paths } = plan.clipboard
@@ -1113,20 +1118,22 @@ export default function Sidebar() {
   const uploadLocalPaths = useCallback(
     async (destination: string, paths: string[]) => {
       const selected = paths.map(path => path.trim()).filter(Boolean)
-      if (selected.length === 0) return
+      if (selected.length === 0) return false
       try {
         await authorizePaths(selected)
-        await startSshTransfer({ direction: 'upload', destination, paths: selected })
+        const result = await startSshTransfer({ direction: 'upload', destination, paths: selected })
         const project = findProjectForPath(useProjectStore.getState().projects, destination)
         if (project) {
           if (pathsEqual(destination, project.path)) await refreshProjectTree(project)
           else await expandProjectDir(project.id, destination, { force: true })
         }
         setExpandedPaths(existing => addPathToSet(existing, destination))
+        return result.status === 'completed'
       } catch (error) {
         useProjectStore
           .getState()
           .pushToast('error', t('上传失败：{error}', { error: String(error) }))
+        return false
       }
     },
     [expandProjectDir, refreshProjectTree, t]

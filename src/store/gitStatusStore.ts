@@ -41,8 +41,9 @@ type GitStatusState = {
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 let lastRefreshAt = 0
-/** 在飞读取：同一项目复用同一条 git status，而不是排队再跑一次。 */
-let inFlight: { projectPath: string; promise: Promise<void> } | null = null
+/** 在飞读取；`again` 表示读取期间又有新的刷新请求，结束后需要补读一次。 */
+type InFlightRefresh = { projectPath: string; promise: Promise<void>; again: boolean }
+let inFlight: InFlightRefresh | null = null
 const MIN_REFRESH_GAP_MS = 1_500
 
 export const useGitStatusStore = create<GitStatusState>((set, get) => ({
@@ -221,18 +222,27 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => ({
       }
     }
 
-    // 同一项目的并发调用复用这次读取。
-    // 旧写法是 `await inFlight` 之后再新起一次 run()：两个调用同时到达时，
-    // 前者 settle 后两者都会继续往下走，于是同一个仓库并发跑两条 git status。
+    // 同一项目的并发调用合并：在飞读取可能早于这次调用之前的改动（例如刚保存），
+    // 直接复用它的结果会丢更新；因此只记一次补读，读完后再跑一轮。
+    // 期间再来多少次调用都只补读一次，同一仓库也不会并发跑两条 git status。
     if (inFlight?.projectPath === projectPath) {
+      inFlight.again = true
       return inFlight.promise
     }
 
-    const promise = run().finally(() => {
-      if (inFlight?.promise === promise) inFlight = null
-    })
-    inFlight = { projectPath, promise }
-    await promise
+    const entry: InFlightRefresh = { projectPath, again: false, promise: Promise.resolve() }
+    entry.promise = (async () => {
+      try {
+        do {
+          entry.again = false
+          await run()
+        } while (entry.again && get().projectPath === projectPath)
+      } finally {
+        if (inFlight === entry) inFlight = null
+      }
+    })()
+    inFlight = entry
+    await entry.promise
   },
 
   scheduleRefresh: (projectPath, delayMs = 600) => {

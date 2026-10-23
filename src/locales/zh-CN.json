@@ -864,6 +864,7 @@
     "移动 {count} 项": "移动 {count} 项",
     "移动到 {name}": "移动到 {name}",
     "上传到 {name}": "上传到 {name}",
+    "已上传到 {name}": "已上传到 {name}",
     "上传 {count} 项到 {name}": "上传 {count} 项到 {name}",
     "移动失败: {error}": "移动失败: {error}",
     "目标已存在": "目标已存在",

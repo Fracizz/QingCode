@@ -591,13 +591,28 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       void pasteFromClipboard(event)
     }
 
+    // 从截图工具等其它窗口点回终端时，WebView 激活窗口后会把焦点还给上次聚焦的元素
+    // （如资源管理器），覆盖这里的 focus；随后的 Ctrl+V 就被资源管理器当成上传处理。
+    // 因此在焦点恢复完成后再补一次，期间用户点了别处则不再抢焦点。
+    let focusClaim = 0
     const onMouseDown = () => {
+      const claim = ++focusClaim
       term.focus()
+      const reclaim = () => {
+        if (claim !== focusClaim || xtermRef.current !== term) return
+        if (!container.contains(document.activeElement)) term.focus()
+      }
+      window.requestAnimationFrame(reclaim)
+      window.setTimeout(reclaim, 120)
+    }
+    const onWindowPointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || !container.contains(event.target)) focusClaim += 1
     }
 
     const container = containerRef.current
     container.addEventListener('paste', onPaste, true)
     container.addEventListener('mousedown', onMouseDown)
+    window.addEventListener('pointerdown', onWindowPointerDown, true)
 
     const updateFont = () => {
       term.options.fontFamily = getResolvedTerminalFont()
@@ -811,6 +826,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       searchResultsSub.dispose()
       container.removeEventListener('paste', onPaste, true)
       container.removeEventListener('mousedown', onMouseDown)
+      window.removeEventListener('pointerdown', onWindowPointerDown, true)
       term.dispose()
       container.replaceChildren()
       xtermRef.current = null

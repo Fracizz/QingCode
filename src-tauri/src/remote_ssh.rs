@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
@@ -253,13 +253,64 @@ struct ConnectedSession {
 
 struct CachedSftp {
     sftp: Arc<SftpSession>,
-    closed: Arc<AtomicBool>,
+    health: Arc<SftpHealth>,
 }
 
-/// 包住 SFTP 通道流，读到 EOF 或读写出错时置位，缓存的会话就不再复用。
+/// 缓存 SFTP 会话的健康状态，由通道流在读写时更新。
+struct SftpHealth {
+    closed: AtomicBool,
+    started: Instant,
+    /// 上次读到回包之后第一条请求写出的时间（相对 `started` 的毫秒数 + 1）；0 表示没有未答请求。
+    unanswered_since_ms: AtomicU64,
+}
+
+impl SftpHealth {
+    fn new() -> Self {
+        Self {
+            closed: AtomicBool::new(false),
+            started: Instant::now(),
+            unanswered_since_ms: AtomicU64::new(0),
+        }
+    }
+
+    fn now_ms(&self) -> u64 {
+        u64::try_from(self.started.elapsed().as_millis())
+            .unwrap_or(u64::MAX)
+            .saturating_add(1)
+    }
+
+    fn mark_closed(&self) {
+        self.closed.store(true, Ordering::Release);
+    }
+
+    fn note_write(&self) {
+        let _ = self.unanswered_since_ms.compare_exchange(
+            0,
+            self.now_ms(),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+    }
+
+    fn note_read(&self) {
+        self.unanswered_since_ms.store(0, Ordering::Release);
+    }
+
+    /// 已关闭，或请求写出后 `stall` 内一直没有任何回包：通道多半已僵死，不再复用。
+    fn is_unusable(&self, stall: Duration) -> bool {
+        if self.closed.load(Ordering::Acquire) {
+            return true;
+        }
+        let since = self.unanswered_since_ms.load(Ordering::Acquire);
+        let stall_ms = u64::try_from(stall.as_millis()).unwrap_or(u64::MAX);
+        since != 0 && self.now_ms().saturating_sub(since) >= stall_ms
+    }
+}
+
+/// 包住 SFTP 通道流：读到 EOF 或读写出错时标记关闭，并记录请求 / 回包时间用于判断僵死。
 struct ClosedFlagStream<S> {
     inner: S,
-    closed: Arc<AtomicBool>,
+    health: Arc<SftpHealth>,
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for ClosedFlagStream<S> {
@@ -277,7 +328,9 @@ impl<S: AsyncRead + Unpin> AsyncRead for ClosedFlagStream<S> {
             Poll::Pending => false,
         };
         if ended {
-            self.closed.store(true, Ordering::Release);
+            self.health.mark_closed();
+        } else if matches!(result, Poll::Ready(Ok(()))) && buf.filled().len() > before {
+            self.health.note_read();
         }
         result
     }
@@ -290,8 +343,10 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for ClosedFlagStream<S> {
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         let result = Pin::new(&mut self.inner).poll_write(cx, buf);
-        if matches!(result, Poll::Ready(Err(_))) {
-            self.closed.store(true, Ordering::Release);
+        match &result {
+            Poll::Ready(Err(_)) => self.health.mark_closed(),
+            Poll::Ready(Ok(written)) if *written > 0 => self.health.note_write(),
+            _ => {}
         }
         result
     }
@@ -301,7 +356,7 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for ClosedFlagStream<S> {
     }
 
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        self.closed.store(true, Ordering::Release);
+        self.health.mark_closed();
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
@@ -342,8 +397,16 @@ const SSH_CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 const CHANNEL_OPEN_TIMEOUT_MARKER: &str = "通道超时";
 /// 远端拒绝开通道（ConnectFailed）时的重试次数，共约 3 秒。
 const CHANNEL_OPEN_RETRIES: u32 = 5;
-/// sshd 默认每条连接最多 10 个会话；命令最多占 4 个，其余留给终端和 SFTP。
+/// sshd 默认每条连接最多 10 个会话；主连接只跑 SFTP 和命令，命令最多同时 4 个。
 const MAX_CONCURRENT_EXEC_CHANNELS: usize = 4;
+/// 终端各用独立连接；sshd 的 MaxStartups 默认 10，未认证连接多了会被随机拒绝。
+const MAX_CONCURRENT_TERMINAL_HANDSHAKES: usize = 4;
+/// 普通远程命令（status、diff、show…）的整体时限；挂住的命令会一直占着并发名额。
+const REMOTE_EXEC_TIMEOUT: Duration = Duration::from_secs(120);
+/// 走网络的 Git 命令（fetch / pull / push / clone）可能很慢，单独放宽。
+const REMOTE_NETWORK_EXEC_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+/// 共用 SFTP 会话上的请求超过这么久没有任何回包就视为僵死，下次换新会话（单次请求超时 30 秒）。
+const SFTP_STALL_TIMEOUT: Duration = Duration::from_secs(45);
 /// 主动探测的等待上限；连接只是慢时不应拆掉它（会杀掉所有远端终端）。
 /// 远端 CPU/内存占满时几秒不回包很常见，给足时间再判失效。
 const SSH_LIVENESS_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -433,7 +496,7 @@ async fn open_sftp_session(
     // 持锁新开：并发的首批请求只会开一个会话。
     let mut cached = session.sftp.lock().await;
     if let Some(entry) = cached.as_ref() {
-        if !entry.closed.load(Ordering::Acquire) {
+        if !entry.health.is_unusable(SFTP_STALL_TIMEOUT) {
             return Ok(Arc::clone(&entry.sftp));
         }
     }
@@ -446,10 +509,10 @@ async fn open_sftp_session(
             message: format!("远端未启用 SFTP：{error}"),
             stale: is_stale_russh_error(&error) || session.handle.is_closed(),
         })?;
-    let closed = Arc::new(AtomicBool::new(false));
+    let health = Arc::new(SftpHealth::new());
     let stream = ClosedFlagStream {
         inner: channel.into_stream(),
-        closed: Arc::clone(&closed),
+        health: Arc::clone(&health),
     };
     let sftp = SftpSession::new(stream)
         .await
@@ -461,7 +524,7 @@ async fn open_sftp_session(
     let sftp = Arc::new(sftp);
     *cached = Some(CachedSftp {
         sftp: Arc::clone(&sftp),
-        closed,
+        health,
     });
     Ok(sftp)
 }
@@ -475,6 +538,8 @@ struct RegisteredRoot {
 
 struct RemoteTerminalSession {
     connection_id: String,
+    /// 终端独占的 SSH 连接；终端结束、被替换或关闭时一并断开。
+    transport: Arc<ConnectedSession>,
     input: tokio::sync::mpsc::Sender<Vec<u8>>,
     writer: Arc<ChannelWriteHalf<client::Msg>>,
     /// Cleared when this channel is replaced or closed on purpose.
@@ -496,10 +561,12 @@ fn is_terminal_end_message(message: &ChannelMsg) -> bool {
     )
 }
 
-const BUSY_CONNECTION_MARKER: &str = "为保留正在运行的终端未重连";
-
-fn busy_connection_error(message: &str) -> String {
-    format!("{message}（连接仍在，{BUSY_CONNECTION_MARKER}，请稍后重试）")
+/// 断开终端独占的连接；连接已关闭时忽略错误。
+async fn close_terminal_transport(transport: &ConnectedSession) {
+    let _ = transport
+        .handle
+        .disconnect(Disconnect::ByApplication, "QingCode terminal closed", "en")
+        .await;
 }
 
 /// 同一连接的重连串行执行；记住最近一次失败，冷却期内直接返回。
@@ -511,6 +578,8 @@ pub struct SshManager {
     terminals: RwLock<HashMap<String, Arc<RemoteTerminalSession>>>,
     reconnect_gates: Mutex<HashMap<String, ReconnectGate>>,
     exec_slots: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
+    /// 同时进行的终端连接握手数；一次恢复大量终端时不超过 sshd 的 MaxStartups。
+    terminal_handshakes: tokio::sync::Semaphore,
     /// 项目根相对仓库根的路径前缀（`git rev-parse --show-prefix`），按项目惰性缓存。
     git_prefixes: Mutex<HashMap<String, String>>,
 }
@@ -523,6 +592,7 @@ impl SshManager {
             terminals: RwLock::new(HashMap::new()),
             reconnect_gates: Mutex::new(HashMap::new()),
             exec_slots: Mutex::new(HashMap::new()),
+            terminal_handshakes: tokio::sync::Semaphore::new(MAX_CONCURRENT_TERMINAL_HANDSHAKES),
             git_prefixes: Mutex::new(HashMap::new()),
         }
     }
@@ -546,7 +616,7 @@ impl SshManager {
         }
     }
 
-    /// 同一连接上同时运行的远程命令数上限，给终端和 SFTP 留出会话名额。
+    /// 同一连接上同时运行的远程命令数上限，给 SFTP 留出会话名额。
     fn exec_slots(&self, connection_id: &str) -> Result<Arc<tokio::sync::Semaphore>, String> {
         let mut slots = self
             .exec_slots
@@ -657,9 +727,6 @@ impl SshManager {
         let session = self.live_session(connection_id).await?;
         match open_session_channel_once(&session, purpose).await {
             Ok(channel) => Ok(channel),
-            Err(error) if error.stale && self.keeps_busy_connection(connection_id, &session) => {
-                Err(busy_connection_error(&error.message))
-            }
             Err(error) if error.stale => {
                 let session = self
                     .reconnect_after_channel_failure(connection_id, &session)
@@ -670,18 +737,28 @@ impl SshManager {
         }
     }
 
-    /// 连接没真正关闭、上面还有终端在跑时不重连：远端多半只是卡顿（CPU/内存占满），
-    /// 重连会断开旧连接，把这些终端里正在运行的进程一起杀掉。真断线由保活检测关闭连接后再重连。
-    fn keeps_busy_connection(&self, connection_id: &str, session: &ConnectedSession) -> bool {
-        !session.handle.is_closed() && self.has_live_terminals(connection_id)
-    }
-
-    fn has_live_terminals(&self, connection_id: &str) -> bool {
-        self.terminals.read().is_ok_and(|terminals| {
-            terminals.values().any(|session| {
-                session.connection_id == connection_id && session.alive.load(Ordering::Acquire)
-            })
-        })
+    /// 为终端新建一条独占连接，沿用主连接已确认的配置（含主机指纹）。
+    ///
+    /// 终端不与 SFTP / 远程命令共用主连接：sshd 每条连接的会话数有上限（MaxSessions，默认 10），
+    /// 多个项目的终端挤在一条连接上很快就满；主连接卡死重连时也会把上面的终端一起断开。
+    async fn open_terminal_transport(
+        &self,
+        connection_id: &str,
+    ) -> Result<Arc<ConnectedSession>, String> {
+        let config = self
+            .live_session(connection_id)
+            .await?
+            .config
+            .lock()
+            .map_err(|_| "SSH 连接状态不可用".to_string())?
+            .clone();
+        let _handshake = self
+            .terminal_handshakes
+            .acquire()
+            .await
+            .map_err(|_| "SSH 连接状态不可用".to_string())?;
+        let (transport, _) = authenticate_session(config).await?;
+        Ok(Arc::new(transport))
     }
 
     pub fn terminal_is_open(&self, id: &str) -> bool {
@@ -751,9 +828,6 @@ impl SshManager {
         let session = self.live_session(connection_id).await?;
         match open_sftp_session(&session).await {
             Ok(sftp) => Ok(sftp),
-            Err(error) if error.stale && self.keeps_busy_connection(connection_id, &session) => {
-                Err(busy_connection_error(&error.message))
-            }
             Err(error) if error.stale => {
                 let session = self
                     .reconnect_after_channel_failure(connection_id, &session)
@@ -781,9 +855,21 @@ impl SshManager {
         command: &str,
         require_trust: bool,
     ) -> Result<RemoteExecResult, String> {
+        self.exec_uri_with_timeout(uri, command, require_trust, REMOTE_EXEC_TIMEOUT)
+            .await
+    }
+
+    async fn exec_uri_with_timeout(
+        &self,
+        uri: &str,
+        command: &str,
+        require_trust: bool,
+        timeout: Duration,
+    ) -> Result<RemoteExecResult, String> {
         let parsed = parse_remote_uri(uri)?;
         reject_windows_remote_command(&parsed.path)?;
-        self.exec_command(uri, command, None, require_trust).await
+        self.exec_command(uri, command, None, require_trust, timeout)
+            .await
     }
 
     async fn exec_uri_with_input(
@@ -795,8 +881,14 @@ impl SshManager {
     ) -> Result<RemoteExecResult, String> {
         let parsed = parse_remote_uri(uri)?;
         reject_windows_remote_command(&parsed.path)?;
-        self.exec_command(uri, command, Some(input), require_trust)
-            .await
+        self.exec_command(
+            uri,
+            command,
+            Some(input),
+            require_trust,
+            REMOTE_EXEC_TIMEOUT,
+        )
+        .await
     }
 
     /// 在 Windows OpenSSH 远端执行 git：脚本经 stdin 传给 PowerShell，避免默认 shell 的转义差异。
@@ -806,10 +898,13 @@ impl SshManager {
         native_root: &str,
         args: &[String],
         require_trust: bool,
+        timeout: Duration,
     ) -> Result<RemoteExecResult, String> {
         let script = windows_git_script(native_root, args)?;
         if let Some(command) = windows_powershell_inline_command(&script) {
-            return self.exec_command(uri, &command, None, require_trust).await;
+            return self
+                .exec_command(uri, &command, None, require_trust, timeout)
+                .await;
         }
         let input = encode_terminal_data(script.as_bytes());
         self.exec_command(
@@ -817,6 +912,7 @@ impl SshManager {
             &windows_powershell_stdin_command(),
             Some(input.as_bytes()),
             require_trust,
+            timeout,
         )
         .await
     }
@@ -827,6 +923,7 @@ impl SshManager {
         command: &str,
         input: Option<&[u8]>,
         require_trust: bool,
+        timeout: Duration,
     ) -> Result<RemoteExecResult, String> {
         let parsed = parse_remote_uri(uri)?;
         self.root_for_uri(uri, require_trust)?;
@@ -856,13 +953,24 @@ impl SshManager {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         let mut exit_code = None;
-        while let Some(message) = channel.wait().await {
-            match message {
-                ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
-                ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
-                ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status),
-                _ => {}
+        let collected = tokio::time::timeout(timeout, async {
+            while let Some(message) = channel.wait().await {
+                match message {
+                    ChannelMsg::Data { data } => stdout.extend_from_slice(&data),
+                    ChannelMsg::ExtendedData { data, .. } => stderr.extend_from_slice(&data),
+                    ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status),
+                    _ => {}
+                }
             }
+        })
+        .await;
+        if collected.is_err() {
+            // 关掉通道释放并发名额；远端进程随通道结束。
+            let _ = tokio::time::timeout(Duration::from_secs(1), channel.close()).await;
+            return Err(format!(
+                "远程命令超过 {} 秒未结束，已中止",
+                timeout.as_secs()
+            ));
         }
         Ok(RemoteExecResult {
             stdout: String::from_utf8_lossy(&stdout).into_owned(),
@@ -1618,6 +1726,18 @@ pub async fn ssh_disconnect(
         .write()
         .map_err(|_| "SSH 工作区状态不可用".to_string())?
         .retain(|_, root| remote_uri_connection_id(&root.uri) != Some(connection_id.as_str()));
+    // 终端各用独立连接，主连接断开不会带走它们，需要逐个断开。
+    let terminal_transports = manager
+        .terminals
+        .read()
+        .map_err(|_| "SSH 终端状态不可用".to_string())?
+        .values()
+        .filter(|terminal| terminal.connection_id == connection_id)
+        .map(|terminal| Arc::clone(&terminal.transport))
+        .collect::<Vec<_>>();
+    for transport in terminal_transports {
+        close_terminal_transport(&transport).await;
+    }
     if let Some(session) = session {
         session
             .handle
@@ -2670,10 +2790,11 @@ fn parse_remote_git_status(stdout: &str) -> RemoteGitStatusParse {
 /// 项目根相对仓库根的路径前缀（如 `apps/web/`；项目根即仓库根时为空）。
 ///
 /// 结果按项目缓存：`git status` 一个项目只探测一次，稳态不额外增加远程往返。
-async fn remote_git_prefix(manager: &SshManager, path: &str) -> String {
+/// 探测失败时返回错误，而不是退回空前缀把子目录项目的路径挂错。
+async fn remote_git_prefix(manager: &SshManager, path: &str) -> Result<String, String> {
     let key = normalize_remote_uri(path);
     if let Some(cached) = manager.cached_git_prefix(&key) {
-        return cached;
+        return Ok(cached);
     }
     let output = remote_git_command(
         manager,
@@ -2681,19 +2802,27 @@ async fn remote_git_prefix(manager: &SshManager, path: &str) -> String {
         vec!["rev-parse".to_string(), "--show-prefix".to_string()],
         false,
     )
-    .await;
-    let Ok(output) = output else {
-        return String::new();
-    };
+    .await?;
     if output.exit_code != 0 {
-        return String::new();
+        return Err(format!(
+            "读取远程 Git 项目前缀失败：{}",
+            output.stderr.trim()
+        ));
     }
     let mut prefix = output.stdout.trim().to_string();
     if !prefix.is_empty() && !prefix.ends_with('/') {
         prefix.push('/');
     }
     manager.remember_git_prefix(&key, &prefix);
-    prefix
+    Ok(prefix)
+}
+
+/// 状态条目是否都落在 `prefix` 下；`-- .` 限定子树后，不满足说明缓存的前缀已过期。
+fn entries_share_prefix(entries: &[(String, String)], prefix: &str) -> bool {
+    prefix.is_empty()
+        || entries
+            .iter()
+            .all(|(relative, _)| relative.starts_with(prefix))
 }
 
 #[tauri::command]
@@ -2744,19 +2873,12 @@ pub async fn ssh_git_status(
 
     // porcelain 永远是「仓库根相对」；项目根是仓库子目录时要裁掉前缀，
     // 否则前端按 `项目根 + 相对路径` 拼出来的绝对路径是错的。
-    let prefix = remote_git_prefix(&manager, &path).await;
-    let prefix_matches = prefix.is_empty()
-        || parsed
-            .entries
-            .iter()
-            .all(|(relative, _)| relative.starts_with(prefix.as_str()));
-    let prefix = if prefix_matches {
-        prefix
-    } else {
-        // 缓存的前缀过期（项目被移动/重新 init）：本次退回仓库根相对，并让下次重新探测。
+    let mut prefix = remote_git_prefix(&manager, &path).await?;
+    if !entries_share_prefix(&parsed.entries, &prefix) {
+        // 缓存的前缀过期（项目被移动 / 重新 init）：丢掉缓存，立刻重新探测一次。
         manager.forget_git_prefix(&normalize_remote_uri(&path));
-        String::new()
-    };
+        prefix = remote_git_prefix(&manager, &path).await?;
+    }
     let changes = parsed
         .entries
         .into_iter()
@@ -2807,9 +2929,10 @@ async fn remote_git_command(
     require_trust: bool,
 ) -> Result<RemoteExecResult, String> {
     let parsed = parse_remote_uri(path)?;
+    let timeout = remote_git_timeout(&args);
     if let Some(native_root) = windows_native_path(&parsed.path) {
         return manager
-            .exec_windows_git(path, &native_root, &args, require_trust)
+            .exec_windows_git(path, &native_root, &args, require_trust, timeout)
             .await;
     }
     let command = format!(
@@ -2820,7 +2943,17 @@ async fn remote_git_command(
             .collect::<Vec<_>>()
             .join(" ")
     );
-    manager.exec_uri(path, &command, require_trust).await
+    manager
+        .exec_uri_with_timeout(path, &command, require_trust, timeout)
+        .await
+}
+
+/// 走网络的 Git 子命令放宽时限，其余按普通命令处理。
+fn remote_git_timeout(args: &[String]) -> Duration {
+    match args.first().map(String::as_str) {
+        Some("fetch" | "pull" | "push" | "clone") => REMOTE_NETWORK_EXEC_TIMEOUT,
+        _ => REMOTE_EXEC_TIMEOUT,
+    }
 }
 
 #[tauri::command]
@@ -3195,6 +3328,8 @@ pub async fn ssh_git_commit_files(
             "--name-status".to_string(),
             "--pretty=format:".to_string(),
             "--no-renames".to_string(),
+            // 只列项目子树内的文件，路径相对项目根（与状态、Diff 的路径基准一致）。
+            "--relative".to_string(),
             rev,
         ],
         false,
@@ -3224,9 +3359,9 @@ async fn remote_git_show(
     revision: &str,
     file: &str,
 ) -> Result<String, String> {
-    // `<rev>:<path>` 里的 path 是仓库根相对；项目根是子目录时要补回前缀，pathspec 则不用。
-    let prefix = remote_git_prefix(manager, path).await;
-    let spec = format!("{revision}:{prefix}{file}");
+    // `<rev>:<path>` 默认按仓库根解析；`./` 让 Git 按 `-C` 所在的项目目录解析，
+    // 项目是仓库子目录时也不用额外探测前缀。
+    let spec = format!("{revision}:./{file}");
     let output = remote_git_command(
         manager,
         path,
@@ -3432,45 +3567,42 @@ async fn spawn_ssh_terminal(
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&cwd)?;
     manager.root_for_uri(&cwd, true)?;
-    let channel = manager
-        .open_session_channel(&parsed.connection_id, "终端")
+    let transport = manager
+        .open_terminal_transport(&parsed.connection_id)
         .await?;
-    channel
-        .request_pty(
-            true,
-            "xterm-256color",
-            u32::from(cols.unwrap_or(80)),
-            u32::from(rows.unwrap_or(24)),
-            0,
-            0,
-            &[],
-        )
-        .await
-        .map_err(|error| format!("申请远程 PTY 失败：{error}"))?;
-    channel
-        .exec(true, command)
-        .await
-        .map_err(|error| format!("启动远程 Shell 失败：{error}"))?;
+    let channel = match start_terminal_channel(&transport, cols, rows, command).await {
+        Ok(channel) => channel,
+        Err(error) => {
+            close_terminal_transport(&transport).await;
+            return Err(error);
+        }
+    };
     let (mut reader, writer) = channel.split();
     let writer = Arc::new(writer);
     let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(32);
     let alive = Arc::new(AtomicBool::new(true));
-    {
+    let previous = {
         let mut terminals = manager
             .terminals
             .write()
             .map_err(|_| "SSH 终端状态不可用".to_string())?;
-        if let Some(previous) = terminals.insert(
+        terminals.insert(
             id.clone(),
             Arc::new(RemoteTerminalSession {
                 connection_id: parsed.connection_id.clone(),
+                transport: Arc::clone(&transport),
                 input: input_tx,
                 writer: Arc::clone(&writer),
                 alive: Arc::clone(&alive),
             }),
-        ) {
-            previous.alive.store(false, Ordering::Release);
-        }
+        )
+    };
+    if let Some(previous) = previous {
+        // 同一 id 重新创建：旧终端的连接不再有人使用，断开以免残留远端 Shell。
+        previous.alive.store(false, Ordering::Release);
+        tauri::async_runtime::spawn(async move {
+            close_terminal_transport(&previous.transport).await;
+        });
     }
 
     let (started_tx, started_rx) = if enter_directory.is_some() {
@@ -3485,6 +3617,7 @@ async fn spawn_ssh_terminal(
     let app_clone = app.clone();
     let terminal_id = id.clone();
     let exit_alive = Arc::clone(&alive);
+    let reader_transport = Arc::clone(&transport);
     tauri::async_runtime::spawn(async move {
         let mut started_tx = started_tx;
         let mut exit_code = 0;
@@ -3526,6 +3659,7 @@ async fn spawn_ssh_terminal(
                 _ => {}
             }
         }
+        close_terminal_transport(&reader_transport).await;
         if claim_terminal_exit(&exit_alive) {
             app_clone
                 .state::<SshManager>()
@@ -3568,6 +3702,33 @@ async fn spawn_ssh_terminal(
         }
     });
     Ok(TerminalSpawnResult::default())
+}
+
+/// 在终端独占的连接上打开会话通道、申请 PTY 并启动命令。
+async fn start_terminal_channel(
+    transport: &ConnectedSession,
+    cols: Option<u16>,
+    rows: Option<u16>,
+    command: String,
+) -> Result<russh::Channel<client::Msg>, String> {
+    let channel = open_session_channel_once(transport, "终端").await?;
+    channel
+        .request_pty(
+            true,
+            "xterm-256color",
+            u32::from(cols.unwrap_or(80)),
+            u32::from(rows.unwrap_or(24)),
+            0,
+            0,
+            &[],
+        )
+        .await
+        .map_err(|error| format!("申请远程 PTY 失败：{error}"))?;
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|error| format!("启动远程 Shell 失败：{error}"))?;
+    Ok(channel)
 }
 
 #[tauri::command]
@@ -3747,11 +3908,10 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
         .remove(&id);
     if let Some(session) = session {
         session.alive.store(false, Ordering::Release);
-        session
-            .writer
-            .close()
-            .await
-            .map_err(|error| format!("关闭 SSH 终端失败：{error}"))?;
+        let closed = session.writer.close().await;
+        // 远端不回 Close 时读取端不会结束，这里直接断开终端独占的连接。
+        close_terminal_transport(&session.transport).await;
+        closed.map_err(|error| format!("关闭 SSH 终端失败：{error}"))?;
     }
     Ok(())
 }
@@ -3763,18 +3923,64 @@ mod tests {
     #[tokio::test]
     async fn closed_flag_stream_marks_eof_but_not_data() {
         let (client, mut server) = tokio::io::duplex(64);
-        let closed = Arc::new(AtomicBool::new(false));
+        let health = Arc::new(SftpHealth::new());
         let mut stream = ClosedFlagStream {
             inner: client,
-            closed: Arc::clone(&closed),
+            health: Arc::clone(&health),
         };
         server.write_all(b"ok").await.unwrap();
         let mut buf = [0u8; 8];
         assert_eq!(stream.read(&mut buf).await.unwrap(), 2);
-        assert!(!closed.load(Ordering::Acquire));
+        assert!(!health.is_unusable(Duration::from_secs(3600)));
         drop(server);
         assert_eq!(stream.read(&mut buf).await.unwrap(), 0);
-        assert!(closed.load(Ordering::Acquire));
+        assert!(health.is_unusable(Duration::from_secs(3600)));
+    }
+
+    #[tokio::test]
+    async fn sftp_health_flags_requests_left_unanswered() {
+        let (client, mut server) = tokio::io::duplex(64);
+        let health = Arc::new(SftpHealth::new());
+        let mut stream = ClosedFlagStream {
+            inner: client,
+            health: Arc::clone(&health),
+        };
+        // 空闲会话不算僵死，无论空闲多久。
+        assert!(!health.is_unusable(Duration::ZERO));
+
+        stream.write_all(b"req").await.unwrap();
+        assert!(health.is_unusable(Duration::ZERO));
+        assert!(!health.is_unusable(Duration::from_secs(3600)));
+
+        // 收到回包后不再有未答请求。
+        server.write_all(b"resp").await.unwrap();
+        let mut buf = [0u8; 8];
+        assert_eq!(stream.read(&mut buf).await.unwrap(), 4);
+        assert!(!health.is_unusable(Duration::ZERO));
+    }
+
+    #[test]
+    fn remote_git_network_commands_get_a_longer_timeout() {
+        let args = |name: &str| vec![name.to_string(), "origin".to_string()];
+        assert_eq!(
+            remote_git_timeout(&args("fetch")),
+            REMOTE_NETWORK_EXEC_TIMEOUT
+        );
+        assert_eq!(
+            remote_git_timeout(&args("push")),
+            REMOTE_NETWORK_EXEC_TIMEOUT
+        );
+        assert_eq!(remote_git_timeout(&args("status")), REMOTE_EXEC_TIMEOUT);
+        assert_eq!(remote_git_timeout(&[]), REMOTE_EXEC_TIMEOUT);
+    }
+
+    #[test]
+    fn entries_share_prefix_detects_a_stale_cached_prefix() {
+        let entries = vec![("apps/web/a.ts".to_string(), " M".to_string())];
+        assert!(entries_share_prefix(&entries, ""));
+        assert!(entries_share_prefix(&entries, "apps/web/"));
+        assert!(!entries_share_prefix(&entries, "apps/api/"));
+        assert!(entries_share_prefix(&[], "apps/api/"));
     }
 
     #[test]

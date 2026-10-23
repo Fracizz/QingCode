@@ -6,6 +6,9 @@ import { findProjectForPath, parentPath, pathsEqual } from '../utils/fileReferen
 import { findNodeByPath } from '../utils/fileTreeHelpers'
 import type { Project } from '../types'
 
+/** How long a finished transfer card stays before it leaves on its own. */
+export const COMPLETED_LINGER_MS = 2500
+
 /** Subscribe before starting so even a tiny transfer has a complete lifecycle. */
 export async function startSshTransfer(request: TransferRequest): Promise<TransferProgress> {
   const taskId = crypto.randomUUID()
@@ -44,7 +47,11 @@ export async function startSshTransfer(request: TransferRequest): Promise<Transf
   const terminal = useTransferStore.getState().tasks.find(task => task.taskId === taskId)
   if (terminal && !isTransferActive(terminal.status)) result = terminal
   store.update(taskId, result)
-  if (request.ephemeral && result.status === 'completed') store.dismiss(taskId)
+  if (result.status === 'completed') {
+    // 成功即走：粘贴上传立即移除，其余短暂提示后自动消失；失败/取消保留以便重试
+    if (request.ephemeral) store.dismiss(taskId)
+    else setTimeout(() => useTransferStore.getState().dismiss(taskId), COMPLETED_LINGER_MS)
+  }
   if (request.direction === 'upload') refreshUploadedTree(request.destination, request.ephemeral === true)
   return result
 }

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { listen } from '@tauri-apps/api/event'
 import { safeInvoke } from './tauri'
-import { startSshTransfer, cancelSshTransfer, retrySshTransfer } from './sshTransfer'
+import { startSshTransfer, cancelSshTransfer, retrySshTransfer, COMPLETED_LINGER_MS } from './sshTransfer'
 import { useTransferStore, type TransferProgress, type TransferRequest } from '../store/transferStore'
 import type { FileNode } from '../utils/fileTreeHelpers'
 import type { Project } from '../types'
@@ -103,6 +103,19 @@ describe('SSH transfer lifecycle', () => {
     const result = await startSshTransfer({ ...request, ephemeral: true })
     expect(result.status).toBe('completed')
     expect(useTransferStore.getState().tasks).toEqual([])
+  })
+
+  it('auto-dismisses a finished regular transfer after a short linger', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.mocked(safeInvoke).mockImplementation(async () => progress('completed', { completedFiles: 2, completedBytes: 100, pendingPaths: [] }))
+      await startSshTransfer(request)
+      expect(useTransferStore.getState().tasks[0].status).toBe('completed')
+      vi.advanceTimersByTime(COMPLETED_LINGER_MS)
+      expect(useTransferStore.getState().tasks).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('retries only pending paths after partial failure', async () => {

@@ -1512,6 +1512,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     try {
       await resizeTerminal(id, size.cols, size.rows)
     } catch (error) {
+      // 没下发成功就退回上一次的尺寸，否则同尺寸的重试会被上面的去重吞掉。
+      // 没有上一次（PTY 还没起来）时保留：spawn 会直接按这个尺寸创建。
+      // 期间若有更新的尺寸写进来，以新的为准。
+      const remembered = lastPtySize.get(id)
+      if (previous && remembered?.cols === size.cols && remembered.rows === size.rows) {
+        lastPtySize.set(id, previous)
+      }
       console.warn('resize_terminal failed:', error)
     }
   },

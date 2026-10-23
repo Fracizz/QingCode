@@ -26,8 +26,11 @@ const HIGH_CHURN_DIRS: &[&str] = &[
     "build",
     "out",
     "coverage",
-    "release",
 ];
+
+/// 只在项目根下第一级才算高 churn 的目录：`release/` 是打包产物，
+/// 但 `src/release/` 这类同名源码目录仍要正常刷新目录树与 Git。
+const ROOT_HIGH_CHURN_DIRS: &[&str] = &["release"];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -146,11 +149,18 @@ fn is_high_churn_path(path: &Path, roots: &[PathBuf]) -> bool {
         {
             return false;
         }
-        path_components[root_components.len()..].iter().any(|name| {
-            HIGH_CHURN_DIRS
+        let relative = &path_components[root_components.len()..];
+        let root_level = relative.first().is_some_and(|name| {
+            ROOT_HIGH_CHURN_DIRS
                 .iter()
                 .any(|ignored| name.eq_ignore_ascii_case(ignored))
-        })
+        });
+        root_level
+            || relative.iter().any(|name| {
+                HIGH_CHURN_DIRS
+                    .iter()
+                    .any(|ignored| name.eq_ignore_ascii_case(ignored))
+            })
     })
 }
 
@@ -422,6 +432,11 @@ mod tests {
         ));
         assert!(is_high_churn_path(
             Path::new(r"D:\Work\demo\.dev\state.json"),
+            &roots
+        ));
+        // 同名的源码目录不算产物。
+        assert!(!is_high_churn_path(
+            Path::new(r"D:\Work\demo\src\release\notes.ts"),
             &roots
         ));
         assert!(!is_high_churn_path(

@@ -213,11 +213,17 @@ export async function uploadLocalFilesForSshTerminal(
 
 const UPLOAD_NOTICE_DELAY_MS = 400
 
+/**
+ * 正在进行的粘贴上传数。同文案的 toast 会去重成一条，多次粘贴共用它；
+ * 只有最后一个上传结束时才收起，避免先完成的那次把别人的进度提示关掉。
+ */
+let activePasteUploads = 0
+
 function dismissToastText(text: string) {
   const store = useProjectStore.getState()
-  for (const toast of store.toasts) {
-    if (toast.text === text) store.dismissToast(toast.id)
-  }
+  // 先收集 id 再逐个关闭：边遍历边删会跳过相邻的同文案 toast。
+  const ids = store.toasts.filter(toast => toast.text === text).map(toast => toast.id)
+  for (const id of ids) store.dismissToast(id)
 }
 
 export async function pasteLocalFilesIntoSshTerminal(
@@ -225,14 +231,17 @@ export async function pasteLocalFilesIntoSshTerminal(
   localPaths: string[],
 ): Promise<string | null> {
   const uploading = translate('正在上传本机文件到远程终端…')
-  let announced = false
+  activePasteUploads += 1
+  let finished = false
   const timer = setTimeout(() => {
-    announced = true
-    useProjectStore.getState().pushToast('info', uploading)
+    if (!finished) useProjectStore.getState().pushToast('info', uploading)
   }, UPLOAD_NOTICE_DELAY_MS)
   const finishNotice = () => {
+    if (finished) return
+    finished = true
     clearTimeout(timer)
-    if (announced) dismissToastText(uploading)
+    activePasteUploads = Math.max(0, activePasteUploads - 1)
+    if (activePasteUploads === 0) dismissToastText(uploading)
   }
   try {
     const text = await uploadLocalFilesForSshTerminal(cwd, localPaths)

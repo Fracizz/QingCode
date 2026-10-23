@@ -30,9 +30,8 @@ export function isTransferActive(status: TransferStatus): boolean {
 }
 
 /**
- * In-progress ephemeral transfers stay out of the status strip. Mounting that
- * row shrinks the workspace, and the terminal canvas flashes a blank frame.
- * Failures still surface so they can be retried.
+ * In-progress ephemeral transfers (terminal paste) finish in a blink; a card
+ * for them would only flicker. Failures still surface so they can be retried.
  */
 export function visibleTransferTasks(tasks: TransferTask[]): TransferTask[] {
   return tasks.filter(task => !(task.request.ephemeral && isTransferActive(task.status)))

@@ -110,23 +110,39 @@ describe('gitStatusStore panel snapshot', () => {
     expect(vi.mocked(getGitHead)).not.toHaveBeenCalled()
   })
 
-  it('coalesces concurrent refreshes of the same project into one read', async () => {
+  it('coalesces refreshes during a read into a single trailing read', async () => {
     let release: (value: GitWorkdirStatus | null) => void = () => {}
-    vi.mocked(getGitWorkdirStatus).mockReturnValueOnce(
-      new Promise<GitWorkdirStatus | null>(resolve => {
-        release = resolve
+    vi.mocked(getGitWorkdirStatus)
+      .mockReturnValueOnce(
+        new Promise<GitWorkdirStatus | null>(resolve => {
+          release = resolve
+        })
+      )
+      // 补读看到的是读取期间新增的改动（例如刚保存的文件）。
+      .mockResolvedValueOnce({
+        dirty_count: 2,
+        entries: [
+          { path: 'D:/repo/a.ts', status: ' M' },
+          { path: 'D:/repo/b.ts', status: ' M' },
+        ],
       })
-    )
 
     const first = useGitStatusStore.getState().refresh('D:/repo')
     const second = useGitStatusStore.getState().refresh('D:/repo')
+    const third = useGitStatusStore.getState().refresh('D:/repo')
     expect(vi.mocked(getGitWorkdirStatus)).toHaveBeenCalledTimes(1)
 
     release({ dirty_count: 1, entries: [{ path: 'D:/repo/a.ts', status: ' M' }] })
-    await Promise.all([first, second])
+    await Promise.all([first, second, third])
 
-    // 第二个调用复用了在飞读取，没有排第二条 git status。
+    // 读取期间的两次调用只补读一次，并且不丢掉补读的结果。
+    expect(vi.mocked(getGitWorkdirStatus)).toHaveBeenCalledTimes(2)
+    expect(useGitStatusStore.getState().dirtyCount).toBe(2)
+  })
+
+  it('does not re-read when nothing asked for a refresh during the read', async () => {
+    vi.mocked(getGitWorkdirStatus).mockResolvedValueOnce({ dirty_count: 0, entries: [] })
+    await useGitStatusStore.getState().refresh('D:/repo')
     expect(vi.mocked(getGitWorkdirStatus)).toHaveBeenCalledTimes(1)
-    expect(useGitStatusStore.getState().dirtyCount).toBe(1)
   })
 })
