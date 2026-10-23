@@ -397,10 +397,12 @@ const SSH_CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 const CHANNEL_OPEN_TIMEOUT_MARKER: &str = "通道超时";
 /// 远端拒绝开通道（ConnectFailed）时的重试次数，共约 3 秒。
 const CHANNEL_OPEN_RETRIES: u32 = 5;
-/// sshd 默认每条连接最多 10 个会话；主连接只跑 SFTP 和命令，命令最多同时 4 个。
-const MAX_CONCURRENT_EXEC_CHANNELS: usize = 4;
-/// 终端各用独立连接；sshd 的 MaxStartups 默认 10，未认证连接多了会被随机拒绝。
-const MAX_CONCURRENT_TERMINAL_HANDSHAKES: usize = 4;
+/// sshd 默认每条连接最多 10 个会话；主连接只跑 SFTP 和命令：1 个 SFTP + 6 个命令，
+/// 留 3 个给僵死后换新的 SFTP 会话与重试余量。超出的命令排队，不报错。
+const MAX_CONCURRENT_EXEC_CHANNELS: usize = 6;
+/// 终端各用独立连接；sshd 的 MaxStartups 默认 10:30:100，未认证连接到 10 个起会被随机拒绝，
+/// 同时握手留在 6 个以内，给其它客户端留余量。
+const MAX_CONCURRENT_TERMINAL_HANDSHAKES: usize = 6;
 /// 普通远程命令（status、diff、show…）的整体时限；挂住的命令会一直占着并发名额。
 const REMOTE_EXEC_TIMEOUT: Duration = Duration::from_secs(120);
 /// 走网络的 Git 命令（fetch / pull / push / clone）可能很慢，单独放宽。
@@ -475,8 +477,7 @@ async fn open_session_channel_once(
                     russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed)
                 ) && !session.handle.is_closed()
                 {
-                    "远端拒绝打开新通道，可能已达 sshd 的 MaxSessions 上限（默认 10，终端开得过多）"
-                        .to_string()
+                    "远端拒绝打开新通道，可能已达 sshd 的 MaxSessions 上限（默认 10，可在远端 sshd_config 调大 MaxSessions 后重启 sshd）".to_string()
                 } else {
                     error.to_string()
                 };
@@ -757,7 +758,9 @@ impl SshManager {
             .acquire()
             .await
             .map_err(|_| "SSH 连接状态不可用".to_string())?;
-        let (transport, _) = authenticate_session(config).await?;
+        let (transport, _) = authenticate_session(config).await.map_err(|error| {
+            format!("{error}（每个终端单独占用一条 SSH 连接，终端很多时可在远端 sshd_config 调大 MaxStartups 后重启 sshd）")
+        })?;
         Ok(Arc::new(transport))
     }
 
