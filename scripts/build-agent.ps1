@@ -17,6 +17,12 @@
 # src-tauri/target/agent/，`pnpm tauri:dev` 都能自动发现（无需再打包一步）。
 # 发布打包时：scripts/package-installer.ps1 会把它复制进 src-tauri/resources/agents/
 # 由 tauri bundle.resources 打进安装包；scripts/package-exe.ps1 复制到 release/agents/。
+#
+# 完整性清单（设计 §4.2/§8.3）：构建结束后对本轮产物逐一计算 sha256 与大小，
+# 写入 src-tauri/target/agent/manifest.json。客户端部署前先 SFTP 拉取 manifest，
+# 再校验二进制摘要一致后才信任安装（配合 `qingcode-agent self-check
+# --expect-sha256 <hex>` 做远端复核）。manifest 只记录本轮构建的产物：
+# 用 -Targets 子集构建时，清单里就只有对应条目。
 
 param(
     [string]$Targets = "x86_64,aarch64",
@@ -57,6 +63,9 @@ try {
         $cargoTargetDir = Join-Path (Get-Location) "target"
     }
 
+    # manifest 只记录本轮构建的产物（见文件头注释）。
+    $artifacts = [ordered]@{}
+
     foreach ($arch in $Targets.Split(",")) {
         $arch = $arch.Trim()
         if (-not $arch) { continue }
@@ -87,7 +96,30 @@ try {
         $dest = Join-Path $outDir "qingcode-agent-$arch"
         Copy-Item -Force $bin $dest
         Write-Host "== 已复制：$dest ($([math]::Round((Get-Item $dest).Length / 1MB, 1)) MB)"
+
+        # PS 5.1 的 Get-FileHash 默认即 SHA256；统一小写，与 self-check 的输出一致。
+        $hash = (Get-FileHash -Algorithm SHA256 $dest).Hash.ToLowerInvariant()
+        $artifacts["qingcode-agent-$arch"] = [ordered]@{
+            sha256 = $hash
+            size   = (Get-Item $dest).Length
+        }
     }
+
+    # 版本号与 AGENT_VERSION 同源：直接从 qingcode-agent/Cargo.toml 读取
+    # （lib.rs 的 AGENT_VERSION = CARGO_PKG_VERSION = 该文件 version 字段）。
+    $versionLine = Select-String -Path (Join-Path (Get-Location) "qingcode-agent\Cargo.toml") `
+        -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1
+    if (-not $versionLine) { throw "无法从 qingcode-agent/Cargo.toml 读取版本号" }
+    $agentVersion = $versionLine.Matches[0].Groups[1].Value
+
+    $manifest = [ordered]@{
+        version   = $agentVersion
+        artifacts = $artifacts
+    }
+    $manifestPath = Join-Path $outDir "manifest.json"
+    # WriteAllText 用无 BOM 的 UTF-8，避免远端 shell/工具把 BOM 当内容。
+    [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 5) + "`n")
+    Write-Host "== 已生成 manifest（版本 $agentVersion）：$manifestPath"
 
     Write-Host "完成。产物目录：$outDir"
 }

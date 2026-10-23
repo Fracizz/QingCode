@@ -1,13 +1,16 @@
 //! `qingcode-agent` CLI 入口。
 //!
-//! 三个子命令共用一个二进制：
+//! 四个子命令共用一个二进制：
 //! - `serve`：旧的直连模式。`127.0.0.1` 上一条 TCP 连接承载一次操作，
 //!   由主程序现有客户端使用，行为保持不变；
 //! - `daemon`：常驻进程，持有 PTY 与监视状态，只监听本地 Unix socket；
-//! - `connect --stdio`：SSH exec 进程里的连接代理，把 stdio 与 socket 对接。
+//! - `connect --stdio`：SSH exec 进程里的连接代理，把 stdio 与 socket 对接；
+//! - `self-check`：安装完整性自检，打印自身二进制的 sha256（可对照期望值）。
 //!
-//! stdout 保持安静（`connect` 的 stdout 就是数据通道）：所有诊断输出都走 stderr，
-//! 并用退出码区分原因（参数错误 2、已有同 root 实例在运行 3、其余启动失败 1）。
+//! stdout 保持安静（`connect` 的 stdout 就是数据通道；`self-check` 的
+//! stdout 是它的唯一输出，客户端不拿它当数据通道用）：所有诊断输出都走
+//! stderr，并用退出码区分原因（参数错误 2、已有同 root 实例在运行 3、
+//! 其余启动失败 1）。
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -20,7 +23,8 @@ const USAGE: &str = "\
   qingcode-agent serve --root <目录> --state <文件> [--port <端口>]
   qingcode-agent daemon [--state-dir <目录>] [--max-ptys <数量>] [--scrollback-bytes <字节>]
                         [--detached-ttl-secs <秒>] [--idle-exit-secs <秒>]
-  qingcode-agent connect --stdio [--ensure-daemon] [--state-dir <目录>]";
+  qingcode-agent connect --stdio [--ensure-daemon] [--state-dir <目录>]
+  qingcode-agent self-check [--expect-sha256 <hex>]";
 
 /// 已有同 root 实例在运行时的退出码。调用方据此判定「无需再起」，而不是启动失败。
 const EXIT_ALREADY_RUNNING: u8 = 3;
@@ -70,6 +74,7 @@ fn main() -> ExitCode {
     let rest = &args[1..];
     match command.as_str() {
         "serve" => run_serve(rest),
+        "self-check" => run_self_check(rest),
         #[cfg(unix)]
         "daemon" => run_daemon(rest),
         #[cfg(unix)]
@@ -182,6 +187,106 @@ fn run_serve(args: &[String]) -> ExitCode {
         }
     });
     ExitCode::SUCCESS
+}
+
+/// `self-check`：安装完整性自检。
+///
+/// 语义：
+/// - 无参数：向 stdout 打印 `sha256 <hex>`（自身二进制的小写十六进制摘要），
+///   退出码 0；
+/// - `--expect-sha256 <hex>`：与自身摘要比对，一致退出 0，不一致退出 1
+///   （摘要照常打印，便于客户端在日志里看到实际值）；定位/读取自身失败
+///   退出 1；参数错误退出 2。
+///
+/// noexec 探测依赖一个刻意保持的事实：本子命令不做任何"探测挂载点"的逻辑。
+/// 客户端把二进制部署到 `~/.qingcode/agent/<version>-<build>/` 后，直接 exec
+/// 新目录里的 `qingcode-agent self-check`：若该文件系统挂了 noexec，exec 本身
+/// 就以 EACCES/ENOEXEC 失败，根本走不到本函数——客户端据此换目录重装；若
+/// exec 成功，即证明该路径下的二进制可执行。因此客户端必须先 exec self-check
+/// 成功（并校验 sha256 与 manifest 一致），才信任这次安装。
+///
+/// 比对不区分大小写：manifest.json 统一小写，这里对期望值做小写归一再比较。
+fn run_self_check(args: &[String]) -> ExitCode {
+    let expected = match parse_self_check_args(args) {
+        Ok(expected) => expected,
+        Err(message) => {
+            eprintln!("{message}\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    let actual = match self_exe_sha256() {
+        Ok(hex) => hex,
+        Err(message) => {
+            eprintln!("{message}");
+            return ExitCode::from(1);
+        }
+    };
+    println!("sha256 {actual}");
+    if let Some(expected) = expected {
+        if actual != expected {
+            eprintln!("sha256 与期望值不一致: 期望 {expected}");
+            return ExitCode::from(1);
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// 解析 self-check 参数。`--expect-sha256` 的取值必须是 64 位十六进制
+/// （大小写均可，归一为小写），提前拒绝明显非法的输入避免客户端拿
+/// 错误的期望值误判安装失败。
+fn parse_self_check_args(args: &[String]) -> Result<Option<String>, String> {
+    let mut expected: Option<String> = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--expect-sha256" => {
+                let Some(value) = args.get(index + 1) else {
+                    return Err("参数 --expect-sha256 缺少取值".to_string());
+                };
+                if value.len() != 64 || !value.bytes().all(|b| b.is_ascii_hexdigit()) {
+                    return Err(format!(
+                        "--expect-sha256 需要 64 位十六进制 sha256，实际为 {value}"
+                    ));
+                }
+                expected = Some(value.to_ascii_lowercase());
+                index += 2;
+            }
+            other => return Err(format!("未知参数: {other}")),
+        }
+    }
+    Ok(expected)
+}
+
+/// 自身二进制路径。Linux 优先 `/proc/self/exe`——内核维护的符号链接，
+/// 不受 argv[0] 欺骗与当前目录影响；非 Linux unix（macOS 等）没有 /proc，
+/// 与 Windows 一样退回 `current_exe()`。
+fn self_exe_path() -> Result<PathBuf, String> {
+    #[cfg(unix)]
+    {
+        let proc_exe = Path::new("/proc/self/exe");
+        if proc_exe.exists() {
+            return Ok(proc_exe.to_path_buf());
+        }
+    }
+    std::env::current_exe().map_err(|e| format!("定位自身二进制失败: {e}"))
+}
+
+/// 计算自身二进制的 sha256（小写十六进制）。
+fn self_exe_sha256() -> Result<String, String> {
+    let bytes = std::fs::read(self_exe_path()?).map_err(|e| format!("读取自身二进制失败: {e}"))?;
+    Ok(sha256_hex(&bytes))
+}
+
+/// sha256 的小写十六进制编码。
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// `daemon`：常驻进程。抢不到单实例锁时按成功退出（已有实例在服务）。
@@ -467,5 +572,70 @@ mod tests {
         assert_eq!(options.state_dir, Some(PathBuf::from("/tmp/run")));
         assert_eq!(options.start_timeout, std::time::Duration::from_secs(10));
         assert!(parse_connect_args(&["--stdio".to_string(), "--nope".to_string()]).is_err());
+    }
+
+    #[test]
+    fn sha256_hex_matches_known_vectors() {
+        // FIPS 180-4 标准向量：空串与 "abc"。
+        assert_eq!(
+            sha256_hex(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn self_exe_sha256_is_stable_and_hash_of_current_exe() {
+        let first = self_exe_sha256().unwrap();
+        assert_eq!(first.len(), 64);
+        assert!(
+            first.bytes().all(|b| b.is_ascii_hexdigit()) && first == first.to_lowercase(),
+            "摘要必须是 64 位小写十六进制: {first}"
+        );
+        // 两次计算一致（排除读到不完整/变化的文件）。
+        assert_eq!(self_exe_sha256().unwrap(), first);
+        // 与 current_exe 内容的独立哈希一致，排除读错文件的回归。
+        let raw = sha256_hex(&std::fs::read(std::env::current_exe().unwrap()).unwrap());
+        assert_eq!(first, raw);
+    }
+
+    #[test]
+    fn self_check_expect_mismatch_exits_1_and_match_exits_0() {
+        let actual = self_exe_sha256().unwrap();
+        // 全 0 期望值：几乎不可能与真实摘要一致 → 退出 1。
+        assert_eq!(
+            run_self_check(&["--expect-sha256".to_string(), "0".repeat(64)]),
+            ExitCode::from(1)
+        );
+        // 大写期望值应归一后判定一致（manifest 统一小写，但客户端容错）。
+        assert_eq!(
+            run_self_check(&["--expect-sha256".to_string(), actual.to_uppercase()]),
+            ExitCode::SUCCESS
+        );
+        // 无参数：仅打印摘要，成功退出。
+        assert_eq!(run_self_check(&[]), ExitCode::SUCCESS);
+        // 参数错误走 2。
+        assert_eq!(run_self_check(&["--bogus".to_string()]), ExitCode::from(2));
+        assert_eq!(
+            run_self_check(&["--expect-sha256".to_string()]),
+            ExitCode::from(2)
+        );
+    }
+
+    #[test]
+    fn self_check_args_reject_bad_hex() {
+        assert_eq!(parse_self_check_args(&[]).unwrap(), None);
+        assert!(parse_self_check_args(&["--expect-sha256".to_string(), "zz".to_string()]).is_err());
+        assert!(
+            parse_self_check_args(&["--expect-sha256".to_string(), "a".repeat(63)]).is_err(),
+            "63 位 hex 必须被拒绝"
+        );
+        assert_eq!(
+            parse_self_check_args(&["--expect-sha256".to_string(), "A".repeat(64)]).unwrap(),
+            Some("a".repeat(64))
+        );
     }
 }

@@ -535,6 +535,66 @@ async fn agent_search_file_contents(
         Ok(Some(endpoint)) => endpoint,
         _ => return Ok(None),
     };
+    let mut files = Vec::new();
+    let mut count = 0usize;
+    let mut per_file_truncated = false;
+    // daemon 传输优先：一条 exec 通道流式收 rg 同形记录（协议 v1 帧流）。
+    // 任何传输失败都只降级 daemon 标记（保留 serve 端点），继续走 serve 请求。
+    if let Some(daemon) = endpoint.daemon.as_ref() {
+        let params = agent::DaemonSearchParams {
+            root: registered.canonical_path.clone(),
+            query: query.to_string(),
+            ignore_case,
+            include_globs: extension_filters
+                .iter()
+                .map(|ext| format!("*.{}", ext.trim_start_matches('.')))
+                .collect(),
+            exclude_globs: exclude_patterns
+                .clone()
+                .unwrap_or_default()
+                .iter()
+                .map(|pattern| format!("!{pattern}"))
+                .collect(),
+            no_ignore: use_ignore_files == Some(false),
+            max_matches: max,
+            max_per_file: per_file,
+            max_files: file_limit,
+        };
+        let outcome = agent::daemon_search_content_call(
+            manager,
+            &connection_id,
+            daemon,
+            params,
+            started + SEARCH_TIMEOUT,
+            || control.cancelled(),
+            |record| {
+                let Ok(bytes) = serde_json::to_vec(record) else {
+                    return true;
+                };
+                append_content_record(
+                    &bytes,
+                    root,
+                    &mut files,
+                    &mut count,
+                    max,
+                    per_file,
+                    &mut per_file_truncated,
+                )
+            },
+        )
+        .await;
+        match outcome {
+            Ok(outcome) => {
+                return Ok(Some(content_response_from_outcome(
+                    outcome,
+                    files,
+                    count,
+                    per_file_truncated,
+                )));
+            }
+            Err(_) => agent::downgrade_agent_daemon(manager, &key),
+        }
+    }
     let request = qingcode_agent::AgentRequest {
         token: endpoint.token.clone(),
         op: qingcode_agent::AgentOp::SearchContent {
@@ -555,9 +615,6 @@ async fn agent_search_file_contents(
             max_files: file_limit,
         },
     };
-    let mut files = Vec::new();
-    let mut count = 0usize;
-    let mut per_file_truncated = false;
     let outcome = agent::agent_stream_call(
         manager,
         &connection_id,
@@ -589,24 +646,40 @@ async fn agent_search_file_contents(
             return Ok(None);
         }
     };
+    Ok(Some(content_response_from_outcome(
+        outcome,
+        files,
+        count,
+        per_file_truncated,
+    )))
+}
+
+/// 把流式调用结果映射成前端响应；daemon 与 serve 两条传输路径共用，
+/// 保证截断 / 取消语义一致。
+fn content_response_from_outcome(
+    outcome: agent::AgentStreamOutcome,
+    files: Vec<RemoteContentFile>,
+    count: usize,
+    per_file_truncated: bool,
+) -> RemoteContentResponse {
     match outcome {
         agent::AgentStreamOutcome::Done {
             truncated,
             files_scanned,
-        } => Ok(Some(RemoteContentResponse {
+        } => RemoteContentResponse {
             files,
             match_count: count,
             files_scanned,
             truncated: truncated || per_file_truncated,
             cancelled: false,
-        })),
-        agent::AgentStreamOutcome::Stopped => Ok(Some(RemoteContentResponse {
+        },
+        agent::AgentStreamOutcome::Stopped => RemoteContentResponse {
             files,
             match_count: count,
             files_scanned: 0,
             truncated: false,
             cancelled: true,
-        })),
+        },
     }
 }
 

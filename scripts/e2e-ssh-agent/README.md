@@ -2,7 +2,24 @@
 
 对 `src-tauri/qingcode-agent` 的 **`serve` 子集**（目录扫描 / 内容搜索 / 文件监视 / 单实例 / 权限 / 会话脱离存活）做真机端到端验收。
 
-**不覆盖**：PTY 持久化、daemon 架构 —— 由其它实现负责，不在本套脚本范围内。
+**不覆盖**：PTY 持久化、daemon 架构 —— 见下节 `daemon_smoke.py`。
+
+## daemon 协议冒烟（daemon_smoke.py）
+
+对 **daemon 架构**（协议 v1 + PTY 持久化）做真机冒烟：HELLO 握手 → agent.info →
+fs.scan（含绝对路径拒绝）→ pty.create/input 实时回显 → **杀掉 SSH 代理模拟断线** →
+重连后 pty.list / pty.attach{fromSeq:0} 验证终端存活与 seq 补发 → agent.shutdown。
+
+```bash
+wsl -d Ubuntu -- env \
+  QC_E2E_HOST=192.0.2.10 QC_E2E_USER=root QC_E2E_PASSWORD='<密码>' \
+  QC_E2E_BINARY=/mnt/d/Code/QingCode/src-tauri/target/agent/qingcode-agent-x86_64 \
+  python3 /mnt/d/Code/QingCode/scripts/e2e-ssh-agent/daemon_smoke.py
+```
+
+只依赖 python3 标准库（手写最小 MessagePack 编解码 + `connect --stdio` 上的协议 v1 帧）。
+注意两个 pgrep/pkill 坑：二进制名超 15 字符时 `/proc` comm 截断（必须 `pgrep -f`），
+且 `-f` 模式要用 `[x]` 字符类避免匹配到承载命令的 shell 自身。
 
 ## 前置条件
 
@@ -123,4 +140,10 @@ Git Bash 会把 `/mnt/d/...` 当 Windows 路径做转换，需加 `MSYS_NO_PATHC
 MSYS_NO_PATHCONV=1 wsl -d Ubuntu -- env QC_E2E_HOST=... QC_E2E_PASSWORD='...' \
   bash /mnt/d/Code/QingCode/scripts/e2e-ssh-agent/run.sh
 ```
+
+### 4. 部署后先跑 self-check 再信任安装
+
+SFTP 上传二进制后先在远端执行 `./qingcode-agent self-check`（打印 `sha256 <hex>`，
+可加 `--expect-sha256 <hex>` 对照 manifest.json，不一致退出 1）；noexec 挂载点
+在 exec 阶段就会直接失败，能跑起来即证明该目录可执行。
 

@@ -34,6 +34,9 @@ notify-debouncer-mini = "0.7.0"
 # vt100 提供无界面终端模拟器，用于断线后的屏幕快照。
 portable-pty = "0.8"
 vt100 = "0.15"
+# self-check 子命令计算自身二进制的 sha256（安装完整性校验，设计 §4.2/§8.3）。
+# 纯 Rust、无 C 依赖，musl 静态链接不受影响。
+sha2 = "0.10"
 # flock / setsid / SIGHUP 等只有 unix 需要，Windows 目标上不会被链接。
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

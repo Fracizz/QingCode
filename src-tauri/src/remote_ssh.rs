@@ -2065,6 +2065,22 @@ async fn agent_scan_entries(
         .ok()
         .flatten()?;
     let relative = remote_relative_to_root(canonical, &root.canonical_path);
+    // daemon 传输优先：一次 RPC 往返，目录树刷新与 watch 事件同源。传输失败
+    // 只降级 daemon 标记（保留 serve 端点），继续走 serve 请求。
+    if let Some(daemon) = endpoint.daemon.as_ref() {
+        match agent::daemon_scan_entries(
+            manager,
+            connection_id,
+            daemon,
+            &root.canonical_path,
+            &relative,
+        )
+        .await
+        {
+            Ok(entries) => return Some(entries),
+            Err(_) => agent::downgrade_agent_daemon(manager, &key),
+        }
+    }
     let request = qingcode_agent::AgentRequest {
         token: endpoint.token.clone(),
         op: qingcode_agent::AgentOp::Scan { path: relative },

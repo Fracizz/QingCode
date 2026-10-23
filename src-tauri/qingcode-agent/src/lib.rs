@@ -25,6 +25,20 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 /// 与 qingcode 主程序版本保持一致：客户端用它判断远端代理是否需要重新部署。
+///
+/// 单一来源：直接取 `CARGO_PKG_VERSION`（即 qingcode-agent/Cargo.toml 的
+/// `version` 字段），不得另设常量副本，避免两处漂移。构建脚本
+/// `scripts/build-agent.ps1` 生成 manifest.json 时也从同一个 Cargo.toml
+/// 读取版本号。
+///
+/// 与 [`proto::PROTOCOL_VERSION`] 的关系（两个常量各管一摊，不要混用）：
+/// `AGENT_VERSION` 是发版粒度，每次发布都会变，对应安装目录
+/// `~/.qingcode/agent/<version>-<build>/` 的版本段；`PROTOCOL_VERSION`
+/// 是线上协议粒度，只有帧格式或消息语义出现不兼容变更时才递增，小版本
+/// 发布（新增字段、新增操作）保持不变。
+///
+/// 客户端按 AGENT_VERSION 决定是否重新部署，按 PROTOCOL_VERSION 判定
+/// 能否互通；协议向后兼容/降级协商策略由客户端负责，代理侧本期不实现。
 pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 单帧上限。内容搜索单条记录（一行匹配文本）按客户端约定不超过 2MB，
