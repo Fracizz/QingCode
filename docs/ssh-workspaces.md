@@ -40,7 +40,8 @@ Linux / POSIX SSH 项目（已信任、设置 `ssh.agent.enabled` 默认开启�
 - **带来的能力**：
   - 远程文件树自动刷新（agent 递归 inotify → 后端复用本地 `fs-change` 事件管线：树刷新、脏标签冲突提示、Git 状态刷新全链路生效）；
   - 内嵌内容搜索（ripgrep 引擎编译进代理，**不再要求远端安装 rg**，支持 ignore 文件与 glob 过滤，与远端 rg 结果语义一致）；
-  - 目录扫描单往返（替代多次 SFTP round trip，高延迟链路下文件树展开更快）。
+  - 目录扫描单往返（替代多次 SFTP round trip，高延迟链路下文件树展开更快）；
+  - 状态栏芯片显示 `Agent v版本` 或「直连：原因」。点击可查看详情、重启代理、查看 `~/.qingcode/agent/run/agent.log` 末尾。
 - **远程终端不受影响（现状）**：终端仍走独立 SSH PTY 通道，与代理完全正交；代理部署/重连不会触碰有活跃终端的连接。daemon 模式的 PTY 宿主已就绪，但前端尚未切过去（未完成项 A）。
 - **关闭与清理**：设置里关闭 `ssh.agent.enabled` 后完全回退直连（远端零足迹）。清理：删除项目内 `.qingcode/agent/` 目录即可；或按状态文件里的 pid `kill`。断开连接不终止远端代理（保活供快速重连，与 VS Code Server / Zed remote_server 生命周期策略一致）。
 - **已知限制（MVP）**：
@@ -71,7 +72,7 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 
 ## 本地与 SSH 能力对照
 
-对照日期：2026-10-22。对象是 Linux / POSIX SSH 工作区相对本地工作区；Windows OpenSSH 另见本节末。两侧都没有的能力单独列出，避免误当成 SSH 缺口。
+对照日期：2026-10-23。对象是 Linux / POSIX SSH 工作区相对本地工作区；Windows OpenSSH 另见本节末。两侧都没有的能力单独列出，避免误当成 SSH 缺口。
 
 图例：**已对齐** · **部分对齐** · **仅本地** · **仅 SSH** · **两侧都没有**
 
@@ -86,7 +87,7 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 | 文件名 glob（如 `*.tsx`） | 仅本地 | 远程按字面子串匹配，`*` 是普通字符 |
 | 内容搜索（字面量）与工作区替换 | 部分对齐 | 部署代理后由代理内嵌 ripgrep 引擎执行（不要求远端 rg）；未部署时需远端 `rg`。远程忽略「跟随符号链接」，文件名搜索还忽略 ignore 文件 |
 | Git 核心 SCM | 部分对齐 | 状态到推送已对齐；拉取/推送/获取时间戳在 SSH 上始终为空 |
-| 终端 PTY | 部分对齐 | 可开多个远程终端，但忽略本机终端配置文件 / `default_shell` |
+| 终端 PTY | 部分对齐 | 可开多个远程终端。`ssh_create_terminal` 接受传入的 `shell`：Linux 为 `bash`/`zsh`/`sh`，否则远端登录 shell；Windows OpenSSH 为 `powershell`/`pwsh`/`cmd` |
 | 运行配置 | 部分对齐 | Linux SSH 仅 `command` / `sh` / `script`；CLI 改远程 `run.json` 必须 GUI 在线 |
 | 格式化 | 部分对齐 | 走远端工具；扩展名集合与本地不完全相同，Python 反而 SSH 可用 |
 | 工作区信任、项目 JSON5 设置、主题 | 已对齐 | 设置导入导出不含 SSH 项目 |
@@ -165,9 +166,9 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 
 ### 文件监视与外部更改
 
-仅本地注册操作系统 watcher（活动项目树 + 已打开的本地标签）。SSH 项目根和 SSH 标签都不会进入 `sync_file_watches`。
+本机 `sync_file_watches` 只登记本地路径：活动项目树和已打开标签都会跳过 `ssh://`。SSH 项目根和 SSH 标签不会进入本地操作系统 watcher。
 
-SSH 仍可在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_file` 做一次磁盘同步，脏标签冲突提示可以出现，但不会在远端文件被别人改写时自动刷新文件树或标签。
+部署 `qingcode-agent` 后，远端 inotify（`watch.subscribe`）由后端转成同一条 `fs-change`。文件树会自动刷新，已打开标签走同一套磁盘同步（含脏标签冲突提示），Git 状态刷新也跟着生效。未部署代理时没有这条推送：SSH 仍只在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_file` 对已打开文件做一次同步，脏标签冲突提示可以出现，但远端文件被别人改写时不会自动刷新文件树。
 
 ### Markdown、预览与打开方式
 
@@ -205,7 +206,7 @@ SSH 仍可在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_fi
 ### 补齐进展与后续建议
 
 已于 2026-10-23 补齐：
-- **SSH 远端代理（qingcode-agent）**：文件树自动刷新、内嵌内容搜索（不依赖远端 rg）、单往返目录扫描、daemon 常驻 + PTY 宿主 + 协议 v1、客户端 daemon 接入、独立 GitHub Release 与按需下载。详见下文「远端代理：实施进度与未完成清单」。
+- **SSH 远端代理（qingcode-agent）**：文件树自动刷新、内嵌内容搜索（不依赖远端 rg）、单往返目录扫描、daemon 常驻 + PTY 宿主 + 协议 v1、客户端 daemon 接入、独立 GitHub Release 与按需下载。状态栏可看代理阶段、重启代理和查看日志。详见下文「远端代理：实施进度与未完成清单」。
 
 此前（2026-10-22）补齐：
 - **SSH 终端本机文件粘贴/拖放**：`terminal.integrated.sshUploadOnPaste` 默认关闭。开启后，资源管理器复制的文件、纯路径文本或拖到终端的本机文件会上传到 `.qingcode/terminal-paste/`，并粘贴远端路径。成功后不保留传输任务条。单个文件，或文件夹内文件合计，超过 100MB 时整次粘贴会被拒绝；设置页和终端右键可清理该目录。
@@ -226,7 +227,7 @@ SSH 仍可在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_fi
 
 ## 远端代理：实施进度与未完成清单
 
-对照设计稿 `D:/Download/ssh-agent-design.md`（§11 分 M0–M5，一次完整发布）。**整体进度约 55%：架构、传输与发布链路已完成，能力域迁移与终端 UI 仍缺。**
+对照设计稿 `D:/Download/ssh-agent-design.md`（§11 分 M0–M5，一次完整发布）。**整体进度约 60%：架构、传输、发布链路和连接状态界面已完成，能力域迁移与终端持久化仍缺。**
 
 ### 已完成（验证方式见「真机验收」）
 
@@ -252,10 +253,10 @@ SSH 仍可在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_fi
 5. 同一连接的 PTY 数据、输入与 RPC 在同一条 exec 通道上多路复用（当前每方法一条通道）。
 
 **B. 连接状态机与界面（§9/M2）**
-6. `RemoteBackend` trait（`DirectBackend` / `AgentBackend`）分派；
-7. 状态机 Disconnected → Authenticating → Probing → Installing → Handshaking → Ready(Agent)/Ready(Direct)；
-8. 事件 `ssh-agent-state`（模式、版本、降级原因）与命令 `ssh_agent_info` / `ssh_agent_restart` / `ssh_agent_logs`；
-9. 状态栏芯片「Agent vX」或「直连：<原因>」，点击可查看详情、重启 agent、查看日志。
+6. `RemoteBackend` trait（`DirectBackend` / `AgentBackend`）分派。文件与 Git 仍走现有回退链，分派标签只体现在状态的 `transport`（daemon / serve / direct）；
+7. ~~状态机 Disconnected → Authenticating → Probing → Installing → Handshaking → Ready(Agent)/Ready(Direct)~~ 已落地。`Authenticating` 只在新建 SSH 会话握手时发出；已有会话从 `Probing` 或 `Ready(Direct)` 开始；
+8. ~~事件 `ssh-agent-state`（模式、版本、降级原因）与命令 `ssh_agent_info` / `ssh_agent_restart` / `ssh_agent_logs`~~ 已落地。日志只读 `$HOME/.qingcode/agent/run/agent.log` 末尾 200 行；文件不存在时返回说明，不报错；
+9. ~~状态栏芯片「Agent vX」或「直连：原因」，点击可查看详情、重启 agent、查看日志~~ 已落地。命令尚不存在时芯片隐藏。
 
 **C. 能力域迁移（§7/M3 大头）**
 10. `workspace.open` / `workspace.setTrust`：受信任的工作区注册 + 撤销信任后即时拒绝（写入、Git 修改类、运行任务、新建终端）；
@@ -287,7 +288,7 @@ SSH 仍可在**激活标签或窗口获得焦点**时用 `file_mtime` + `read_fi
 
 ### 已知问题与瑕疵
 
-- **Flaky 测试**（Linux 时序敏感，单跑通过）：`daemon::tests::pty_input_keeps_frame_order`、`daemon::tests::instance_lock_is_exclusive_within_one_process`；Windows 全量的 `clipboard_files::tests::reads_png_clipboard_as_stable_temp_file`（沙箱 `OpenClipboard` 被拒）。
+- Windows 全量的 `clipboard_files::tests::reads_png_clipboard_as_stable_temp_file` 会因沙箱拒绝 `OpenClipboard` 失败。这是环境限制，不是断言错误。
 - watch 建立的前 500ms 会丢弃事件（用来滤掉 notify 注册期的枚举噪声），该窗口内的真实修改同样丢失。
 - 内容搜索遇到单行 >2MB 的文件会截断并停止整次搜索（与直连 rg 路径行为一致，minified 产物后的文件命中会漏）。
 - `scan` 的 `done.files_scanned` 恒为 0（scan 语义上没有文件计数），前端不要用它做进度。

@@ -202,15 +202,22 @@ impl InstanceLock {
             .open(path)
             .map_err(|e| format!("打开锁文件 {} 失败: {e}", path.display()))?;
         // SAFETY: flock 只作用于本进程持有的 fd，不涉及内存安全。
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-        if result == 0 {
-            return Ok(Some(Self { _file: file }));
+        // 并行测试（以及真实的 SIGCHLD）会让 flock 返回 EINTR。这不是抢锁结果，
+        // 必须立刻重试；否则调用方会把「被信号打断」当成加锁失败。
+        loop {
+            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if result == 0 {
+                return Ok(Some(Self { _file: file }));
+            }
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EINTR) {
+                continue;
+            }
+            if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                return Ok(None);
+            }
+            return Err(format!("加锁 {} 失败: {error}", path.display()));
         }
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-            return Ok(None);
-        }
-        Err(format!("加锁 {} 失败: {error}", path.display()))
     }
 }
 
@@ -1779,10 +1786,19 @@ mod tests {
             "第二次加锁应当失败"
         );
         drop(first);
-        assert!(
-            InstanceLock::acquire(&path).unwrap().is_some(),
-            "释放后应能重新加锁"
-        );
+        // drop 只关掉本描述符。并行 PTY 测试若在持锁期间 fork，子进程在 exec
+        // 之前仍共享这份 fd（CLOEXEC 要到 exec 才关），锁会晚一点才放开。
+        // 重试「释放后能再次加锁」，不把持锁期间的第二次 acquire 放宽成可成功。
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut relocked = false;
+        while Instant::now() < deadline {
+            if InstanceLock::acquire(&path).unwrap().is_some() {
+                relocked = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(relocked, "释放后应能重新加锁");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -2011,6 +2027,36 @@ mod tests {
         let info = client.wait_response(id).await;
         let pty_id = info["id"].as_str().unwrap().to_string();
 
+        // 负载高时 shell 的提示符会插进逐字回显中间，把原序序列拆开。
+        // 先等 shell 执行完这条命令：关掉回显、打印标记（标记本身不出现在命令文本里），
+        // 再交给 cat 按写入顺序吐出后续字节。这是屏障，不是多等一会儿碰运气。
+        let marker = "QINGCODE_READY";
+        client
+            .request(
+                "pty.input",
+                &PtyInputParams {
+                    id: pty_id.clone(),
+                    data: b"stty -icanon -echo min 1 time 0; printf 'QING%s\\n' CODE_READY; cat\n"
+                        .to_vec(),
+                },
+            )
+            .await;
+        let mut echoed = String::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline && !echoed.contains(marker) {
+            let Some(frame) = client.poll_frame(Duration::from_millis(500)).await else {
+                continue;
+            };
+            if frame.kind == Kind::Event && frame.stream_id == CONTROL_STREAM {
+                if let Ok(Event::PtyData { id, data, .. }) = decode_value(&frame.payload) {
+                    if id == pty_id {
+                        echoed.push_str(&String::from_utf8_lossy(&data));
+                    }
+                }
+            }
+        }
+        assert!(echoed.contains(marker), "终端未进入按序回显: {echoed:?}");
+
         let sequence = "abcdefghijklmnopqrst";
         for ch in sequence.chars() {
             let mut buffer = [0u8; 4];
@@ -2024,10 +2070,19 @@ mod tests {
                 )
                 .await;
         }
+        // 换行只用来把可能按行缓冲的 cat 冲出去，不参与顺序断言。
+        client
+            .request(
+                "pty.input",
+                &PtyInputParams {
+                    id: pty_id.clone(),
+                    data: b"\n".to_vec(),
+                },
+            )
+            .await;
 
         // 回显里必须出现完整的原序序列；乱序会在这里失败。
-        let mut echoed = String::new();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(20);
         while Instant::now() < deadline && !echoed.contains(sequence) {
             let Some(frame) = client.poll_frame(Duration::from_millis(500)).await else {
                 continue;

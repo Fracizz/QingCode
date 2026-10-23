@@ -20,8 +20,10 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 mod agent;
+mod agent_status;
 mod search;
 mod transfer;
+pub use agent_status::{SshAgentLogs, SshAgentState};
 pub use search::*;
 pub use transfer::*;
 
@@ -600,6 +602,8 @@ pub struct SshManager {
     agent_auto_download: std::sync::atomic::AtomicBool,
     /// watch 监督任务句柄，key 同 agent slot；连接断开或重连时替换。
     watch_supervisors: Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
+    /// 已发给前端的 `ssh-agent-state`，按规范化 root URI 去重。
+    agent_snapshots: Mutex<HashMap<String, agent_status::SshAgentState>>,
 }
 
 impl SshManager {
@@ -619,6 +623,7 @@ impl SshManager {
             agent_cache_dir: RwLock::new(None),
             agent_auto_download: std::sync::atomic::AtomicBool::new(false),
             watch_supervisors: Mutex::new(HashMap::new()),
+            agent_snapshots: Mutex::new(HashMap::new()),
         }
     }
 
@@ -809,6 +814,13 @@ impl SshManager {
             .ok_or_else(|| "SSH 连接尚未建立，请重新连接".to_string())
     }
 
+    /// 会话仍在表里且传输未关闭。关闭的句柄不算已连接，状态机回到 disconnected。
+    pub(crate) fn connection_is_open(&self, connection_id: &str) -> bool {
+        self.session(connection_id)
+            .ok()
+            .is_some_and(|session| !session.handle.is_closed())
+    }
+
     fn root_for_uri(&self, uri: &str, require_trust: bool) -> Result<RegisteredRoot, String> {
         let roots = self
             .roots
@@ -824,6 +836,17 @@ impl SshManager {
             return Err("项目未信任（受限模式），无法修改文件或运行命令".to_string());
         }
         Ok(root)
+    }
+
+    fn roots_for_connection(&self, connection_id: &str) -> Vec<RegisteredRoot> {
+        let Ok(roots) = self.roots.read() else {
+            return Vec::new();
+        };
+        roots
+            .values()
+            .filter(|root| remote_uri_connection_id(&root.uri) == Some(connection_id))
+            .cloned()
+            .collect()
     }
 
     fn root_is_registered(&self, uri: &str) -> Result<bool, String> {
@@ -912,14 +935,50 @@ impl SshManager {
         }
     }
 
-    /// agent 调用失败后清空端点与不可用原因，下次再走发现/部署。
+    /// agent 调用失败后清空端点、不可用原因和部署中的瞬时阶段，下次再走发现/部署。
     pub(crate) fn clear_agent_endpoint(&self, key: &str) {
         if let Ok(mut agents) = self.agents.write() {
             if let Some(slot) = agents.get_mut(key) {
                 slot.endpoint = None;
                 slot.unavailable_reason = None;
+                slot.activity = None;
             }
         }
+    }
+
+    /// 记录发现/部署中的阶段。`None` 清掉瞬时阶段；没有 slot 时不新建空槽。
+    pub(crate) fn set_agent_activity(&self, key: &str, activity: Option<agent_status::AgentPhase>) {
+        let Ok(mut agents) = self.agents.write() else {
+            return;
+        };
+        if activity.is_none() && !agents.contains_key(key) {
+            return;
+        }
+        let slot = agents.entry(key.to_string()).or_default();
+        slot.activity = activity;
+    }
+
+    /// 快照变化时返回 true，调用方再 emit。相同载荷不重复发。
+    /// 转移表只做诊断，不因为跳步就丢掉这次发布。
+    pub(crate) fn record_agent_snapshot(&self, state: &agent_status::SshAgentState) -> bool {
+        let Ok(mut snapshots) = self.agent_snapshots.lock() else {
+            return true;
+        };
+        let key = normalize_remote_uri(&state.root_uri);
+        let previous = snapshots.get(&key).cloned();
+        if previous.as_ref() == Some(state) {
+            return false;
+        }
+        let legal = match &previous {
+            Some(previous) => {
+                agent_status::agent_phase_transition_allowed(previous.phase, state.phase)
+            }
+            None => true,
+        };
+        // 转移表不拦截发布：跳步时仍以当前槽位为准，避免界面停在过期阶段。
+        let _: bool = legal;
+        snapshots.insert(key, state.clone());
+        true
     }
 
     /// 连接断开时丢弃该连接的全部 agent 缓存：端口与 token 随远端进程生命周期变化，
@@ -1131,6 +1190,34 @@ pub fn ssh_set_agent_enabled(enabled: bool, manager: State<'_, SshManager>) -> R
         .agent_enabled
         .store(enabled, std::sync::atomic::Ordering::SeqCst);
     Ok(())
+}
+
+/// 查询某个 SSH 项目根当前的代理阶段。非 ssh URI 或未注册根直接拒绝。
+#[tauri::command]
+pub fn ssh_agent_info(
+    root_uri: String,
+    manager: State<'_, SshManager>,
+) -> Result<SshAgentState, String> {
+    agent_status::ssh_agent_info(root_uri, manager)
+}
+
+/// 清掉该根的 agent slot，必要时按 agent.json 里的 pid 结束 serve 进程，再重新 ensure。
+#[tauri::command]
+pub async fn ssh_agent_restart(
+    root_uri: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<SshAgentState, String> {
+    agent_status::ssh_agent_restart(root_uri, app, manager).await
+}
+
+/// 读取远端 `$HOME/.qingcode/agent/run/agent.log` 的末尾。文件不存在时返回说明，不报错。
+#[tauri::command]
+pub async fn ssh_agent_logs(
+    root_uri: String,
+    manager: State<'_, SshManager>,
+) -> Result<SshAgentLogs, String> {
+    agent_status::ssh_agent_logs(root_uri, manager).await
 }
 
 /// `ssh.agent.autoDownload`：本地缺失 agent 二进制时是否自动从 GitHub Release
@@ -1826,30 +1913,47 @@ pub async fn ssh_connect(
     if parsed_root.connection_id != config.id {
         return Err("SSH 项目与连接配置不匹配".to_string());
     }
-    let fingerprint = if existing_session(&manager, &config.id).is_some() {
+    // 只有这次新建会话才发 authenticating；已有会话时第一眼就是 probing / readyDirect。
+    let fresh_auth = existing_session(&manager, &config.id).is_none();
+    let fingerprint = if !fresh_auth {
         manager.remember_config(&config.id, config.clone())?;
         expected
     } else {
-        let (_connected, fingerprint) =
-            store_authenticated_session(&manager, config.clone()).await?;
-        fingerprint
+        // 会话还不存在，接下来才做握手认证。成功后会被 probing / readyDirect 盖掉。
+        agent_status::publish_authenticating(&app, &manager, &config.id, &root_uri);
+        match store_authenticated_session(&manager, config.clone()).await {
+            Ok((_connected, fingerprint)) => fingerprint,
+            Err(error) => {
+                agent_status::publish_disconnected(&app, &manager, &config.id, &root_uri);
+                return Err(error);
+            }
+        }
     };
-    let sftp = manager.open_sftp(&config.id).await?;
+    let abandon_fresh_auth = |error: String| {
+        if fresh_auth {
+            agent_status::publish_disconnected(&app, &manager, &config.id, &root_uri);
+        }
+        error
+    };
+    let sftp = manager
+        .open_sftp(&config.id)
+        .await
+        .map_err(&abandon_fresh_auth)?;
     let canonical_root = sftp
         .canonicalize(parsed_root.path)
         .await
-        .map_err(|error| format!("远程项目目录不可用：{error}"))?;
+        .map_err(|error| abandon_fresh_auth(format!("远程项目目录不可用：{error}")))?;
     let metadata = sftp
         .metadata(canonical_root.clone())
         .await
-        .map_err(|error| format!("读取远程项目目录失败：{error}"))?;
+        .map_err(|error| abandon_fresh_auth(format!("读取远程项目目录失败：{error}")))?;
     if !metadata.is_dir() {
-        return Err("远程项目路径不是目录".to_string());
+        return Err(abandon_fresh_auth("远程项目路径不是目录".to_string()));
     }
     manager
         .roots
         .write()
-        .map_err(|_| "SSH 工作区状态不可用".to_string())?
+        .map_err(|_| abandon_fresh_auth("SSH 工作区状态不可用".to_string()))?
         .insert(
             root_uri.clone(),
             RegisteredRoot {
@@ -1858,6 +1962,10 @@ pub async fn ssh_connect(
                 trusted,
             },
         );
+    // 先公布稳态，再拉起监督任务，避免监督任务先发出 installing 后被 probing 盖掉。
+    if let Ok(root) = manager.registered_root(&root_uri) {
+        agent_status::publish_root_state(&app, &manager, &root);
+    }
     // 已信任的非 Windows 远端：启动 watch 监督任务（agent 提供远端事件源）。
     // 重复连接同一根时先终止旧任务，避免出现两条并发的 watch 连接。
     if trusted && windows_native_path(&canonical_root).is_none() && manager.agent_enabled() {
@@ -1879,8 +1987,12 @@ pub async fn ssh_connect(
 #[tauri::command]
 pub async fn ssh_disconnect(
     connection_id: String,
+    app: tauri::AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
+    for root in manager.roots_for_connection(&connection_id) {
+        agent_status::publish_disconnected(&app, &manager, &connection_id, &root.uri);
+    }
     // 等进行中的重连结束再移除，否则重连完成后会把连接重新插回表里。
     let gate = manager.reconnect_gate(&connection_id)?;
     let mut last_failure = gate.lock().await;

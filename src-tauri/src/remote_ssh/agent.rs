@@ -75,6 +75,8 @@ pub(crate) struct DaemonAccess {
 pub(crate) struct AgentSlot {
     pub(crate) endpoint: Option<AgentEndpoint>,
     pub(crate) unavailable_reason: Option<String>,
+    /// 发现/部署过程中的瞬时阶段（installing / handshaking）。稳态为 None。
+    pub(crate) activity: Option<agent_status::AgentPhase>,
 }
 
 pub(crate) fn agent_slot_key(connection_id: &str, canonical_root: &str) -> String {
@@ -296,6 +298,7 @@ async fn try_discover_agent(
     connection_id: &str,
     sftp: &SftpSession,
     root: &RegisteredRoot,
+    app: Option<&tauri::AppHandle>,
 ) -> Option<AgentEndpoint> {
     let state_path = agent_state_path(&root.canonical_path);
     let metadata = sftp.metadata(state_path.clone()).await.ok()?;
@@ -322,6 +325,14 @@ async fn try_discover_agent(
         token: state.token,
         daemon: None,
     };
+    // ping 之前进入握手；失败则调用方继续安装。
+    agent_status::note_agent_activity(
+        manager,
+        app,
+        root,
+        connection_id,
+        agent_status::AgentPhase::Handshaking,
+    );
     ping_agent(manager, connection_id, &endpoint).await.ok()?;
     Some(endpoint)
 }
@@ -659,32 +670,68 @@ async fn discover_or_deploy_agent(
     manager: &SshManager,
     connection_id: &str,
     root: &RegisteredRoot,
+    app: Option<&tauri::AppHandle>,
 ) -> Result<AgentEndpoint, AgentDeployError> {
     let sftp = manager.open_sftp(connection_id).await?;
-    let (mut endpoint, remote_bin) =
-        if let Some(endpoint) = try_discover_agent(manager, connection_id, &sftp, root).await {
-            // 发现路径不知道部署时的二进制名，daemon 探测里现场用 `uname -m` 解析。
-            (endpoint, None)
-        } else {
-            let (arch, local_binary) = locate_local_agent_binary(manager, root)
-                .await
-                .map_err(AgentDeployError::permanent)?;
-            let remote_bin = agent_binary_path(&root.canonical_path, &arch);
-            upload_agent_binary(manager, &sftp, root, &local_binary, &remote_bin).await?;
-            let state_path = agent_state_path(&root.canonical_path);
-            let command = deploy_agent_command(&remote_bin, &root.canonical_path, &state_path);
-            manager
-                .exec_command(&root.uri, &command, None, true, REMOTE_EXEC_TIMEOUT)
-                .await
-                .map_err(|error| format!("启动远端 agent 失败：{error}"))?;
-            let endpoint = wait_agent_ready(manager, connection_id, &sftp, root)
-                .await
-                .ok_or_else(|| AgentDeployError::from("agent 启动超时".to_string()))?;
-            (endpoint, Some(remote_bin))
-        };
+    let (mut endpoint, remote_bin) = if let Some(endpoint) =
+        try_discover_agent(manager, connection_id, &sftp, root, app).await
+    {
+        // 发现路径不知道部署时的二进制名，daemon 探测里现场用 `uname -m` 解析。
+        (endpoint, None)
+    } else {
+        let (arch, local_binary) = locate_local_agent_binary(manager, root)
+            .await
+            .map_err(AgentDeployError::permanent)?;
+        let remote_bin = agent_binary_path(&root.canonical_path, &arch);
+        // 上传之前才标 installing；找本地二进制仍算 probing。
+        agent_status::note_agent_activity(
+            manager,
+            app,
+            root,
+            connection_id,
+            agent_status::AgentPhase::Installing,
+        );
+        upload_agent_binary(manager, &sftp, root, &local_binary, &remote_bin).await?;
+        let state_path = agent_state_path(&root.canonical_path);
+        let command = deploy_agent_command(&remote_bin, &root.canonical_path, &state_path);
+        manager
+            .exec_command(&root.uri, &command, None, true, REMOTE_EXEC_TIMEOUT)
+            .await
+            .map_err(|error| format!("启动远端 agent 失败：{error}"))?;
+        // serve ping 之前进入握手。
+        agent_status::note_agent_activity(
+            manager,
+            app,
+            root,
+            connection_id,
+            agent_status::AgentPhase::Handshaking,
+        );
+        let endpoint = wait_agent_ready(manager, connection_id, &sftp, root)
+            .await
+            .ok_or_else(|| AgentDeployError::from("agent 启动超时".to_string()))?;
+        (endpoint, Some(remote_bin))
+    };
+    // daemon 握手（token + HELLO）之前再标一次；已是 handshaking 时不会重复发事件。
+    agent_status::note_agent_activity(
+        manager,
+        app,
+        root,
+        connection_id,
+        agent_status::AgentPhase::Handshaking,
+    );
     endpoint.daemon =
         ensure_remote_daemon(manager, connection_id, root, remote_bin.as_deref()).await;
     Ok(endpoint)
+}
+
+fn publish_agent_if_watched(
+    app: Option<&tauri::AppHandle>,
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) {
+    if let Some(app) = app {
+        agent_status::publish_root_state(app, manager, root);
+    }
 }
 
 /// 读缓存：`Some(Some(..))` 命中端点，`Some(None)` 本次连接内已确定不可用，
@@ -706,44 +753,60 @@ pub(crate) async fn ensure_agent_endpoint(
     manager: &SshManager,
     root: &RegisteredRoot,
 ) -> Result<Option<AgentEndpoint>, String> {
-    // 本地 Windows 项目、未信任项目不部署 agent。
+    ensure_agent_endpoint_with_app(manager, root, None).await
+}
+
+/// 同 [`ensure_agent_endpoint`]，并在 `app` 存在时发布阶段变化。
+/// 目录扫描与搜索继续走无 app 的入口；watch 监督和 `ssh_agent_restart` 传入 app。
+pub(crate) async fn ensure_agent_endpoint_with_app(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&tauri::AppHandle>,
+) -> Result<Option<AgentEndpoint>, String> {
+    let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    let key = agent_slot_key(&connection_id, &root.canonical_path);
+    // 本地 Windows 项目、未信任项目、总开关关闭：不部署，直接公布直连原因。
     if !manager.agent_enabled()
         || windows_native_path(&root.canonical_path).is_some()
         || !root.trusted
     {
+        publish_agent_if_watched(app, manager, root);
         return Ok(None);
     }
-    let connection_id = parse_remote_uri(&root.uri)?.connection_id;
-    let key = agent_slot_key(&connection_id, &root.canonical_path);
     if let Some(cached) = cached_agent_slot(manager, &key) {
+        manager.set_agent_activity(&key, None);
+        publish_agent_if_watched(app, manager, root);
         return Ok(cached);
     }
     // 同一 (连接, 根) 的部署串行执行；拿不到锁的并发调用方等结果落盘后复用。
     let gate = manager.agent_gate(&key)?;
     let _guard = gate.lock().await;
     if let Some(cached) = cached_agent_slot(manager, &key) {
+        manager.set_agent_activity(&key, None);
+        publish_agent_if_watched(app, manager, root);
         return Ok(cached);
     }
-    match discover_or_deploy_agent(manager, &connection_id, root).await {
+    // 新一轮从 probing 开始，清掉上次中断留下的瞬时阶段。
+    manager.set_agent_activity(&key, None);
+    publish_agent_if_watched(app, manager, root);
+    match discover_or_deploy_agent(manager, &connection_id, root, app).await {
         Ok(endpoint) => {
-            manager.set_agent_slot(
-                &key,
-                AgentSlot {
-                    endpoint: Some(endpoint.clone()),
-                    unavailable_reason: None,
-                },
-            );
+            let mut slot = manager.agent_slot(&key).unwrap_or_default();
+            slot.endpoint = Some(endpoint.clone());
+            slot.unavailable_reason = None;
+            slot.activity = None;
+            manager.set_agent_slot(&key, slot);
+            publish_agent_if_watched(app, manager, root);
             Ok(Some(endpoint))
         }
         Err(error) => {
-            manager.set_agent_slot(
-                &key,
-                AgentSlot {
-                    endpoint: None,
-                    // 只有确定性失败才占住缓存，瞬时失败留空以便下次重试。
-                    unavailable_reason: error.permanent.then_some(error.reason),
-                },
-            );
+            let mut slot = manager.agent_slot(&key).unwrap_or_default();
+            slot.endpoint = None;
+            slot.activity = None;
+            // 只有确定性失败才占住缓存，瞬时失败留空以便下次重试。
+            slot.unavailable_reason = error.permanent.then_some(error.reason);
+            manager.set_agent_slot(&key, slot);
+            publish_agent_if_watched(app, manager, root);
             Ok(None)
         }
     }
@@ -1400,16 +1463,19 @@ pub(crate) fn spawn_agent_watch_supervisor(
             if manager.session(&connection_id).is_err()
                 || !manager.root_is_registered(&root_uri).unwrap_or(false)
             {
+                agent_status::publish_disconnected(&app, &manager, &connection_id, &root_uri);
                 break;
             }
             let Ok(root) = manager.registered_root(&root_uri) else {
+                agent_status::publish_disconnected(&app, &manager, &connection_id, &root_uri);
                 break;
             };
             if !root.trusted || !manager.agent_enabled() {
+                agent_status::publish_root_state(&app, &manager, &root);
                 break;
             }
             let key = agent_slot_key(&connection_id, &root.canonical_path);
-            let endpoint = match ensure_agent_endpoint(&manager, &root).await {
+            let endpoint = match ensure_agent_endpoint_with_app(&manager, &root, Some(&app)).await {
                 Ok(Some(endpoint)) => {
                     consecutive_failures = 0;
                     endpoint
@@ -1456,7 +1522,10 @@ pub(crate) fn spawn_agent_watch_supervisor(
                         tokio::time::sleep(AGENT_WATCH_RESTART_DELAY).await;
                         continue;
                     }
-                    Err(_) => downgrade_agent_daemon(&manager, &key),
+                    Err(_) => {
+                        downgrade_agent_daemon(&manager, &key);
+                        agent_status::publish_root_state(&app, &manager, &root);
+                    }
                 }
             }
             // serve 回退：打开 watch 连接；失败休眠后重试（下一轮会重新校验退出条件）。
@@ -1484,6 +1553,7 @@ pub(crate) fn spawn_agent_watch_supervisor(
                     // 端点可能已随远端进程消失（端口/token 失效）：清掉缓存，
                     // 下一轮重新走发现/部署，否则会一直对着死端口空转。
                     manager.clear_agent_endpoint(&key);
+                    agent_status::publish_root_state(&app, &manager, &root);
                     tokio::time::sleep(AGENT_WATCH_RESTART_DELAY).await;
                     continue;
                 }
@@ -1705,6 +1775,7 @@ mod tests {
                     daemon: None,
                 }),
                 unavailable_reason: None,
+                activity: None,
             },
         );
         assert_eq!(
@@ -1722,6 +1793,7 @@ mod tests {
             AgentSlot {
                 endpoint: None,
                 unavailable_reason: Some("远端架构不支持（armv7l）".to_string()),
+                activity: None,
             },
         );
         assert_eq!(
@@ -1860,6 +1932,7 @@ mod tests {
                     daemon: Some(sample_daemon_access()),
                 }),
                 unavailable_reason: None,
+                activity: None,
             },
         );
         downgrade_agent_daemon(&manager, &key);
