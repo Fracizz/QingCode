@@ -501,6 +501,115 @@ fn append_content_record(
     true
 }
 
+/// agent 路径的内容搜索：记录格式与 rg --json 一致，直接复用 append_content_record。
+/// 返回 Ok(None) 表示不走 agent（前置门不满足 / agent 不可用），由调用方回退 rg。
+#[allow(clippy::too_many_arguments)]
+async fn agent_search_file_contents(
+    manager: &SshManager,
+    root: &str,
+    canonical_root: &str,
+    query: &str,
+    ignore_case: bool,
+    extension_filters: &[String],
+    exclude_patterns: Option<Vec<String>>,
+    use_ignore_files: Option<bool>,
+    max: usize,
+    per_file: usize,
+    file_limit: usize,
+    control: &SearchControl,
+    started: Instant,
+) -> Result<Option<RemoteContentResponse>, String> {
+    let registered = manager.root_for_uri(root, false)?;
+    // agent 只搜索自己启动时的根：搜索根不是注册根（如子目录）时不走 agent，
+    // 避免把整个工作区的匹配误报给前端。
+    if !registered.trusted
+        || windows_native_path(&registered.canonical_path).is_some()
+        || !manager.agent_enabled()
+        || canonical_root.trim_end_matches('/') != registered.canonical_path.trim_end_matches('/')
+    {
+        return Ok(None);
+    }
+    let connection_id = parse_remote_uri(root)?.connection_id;
+    let key = agent::agent_slot_key(&connection_id, &registered.canonical_path);
+    let endpoint = match agent::ensure_agent_endpoint(manager, &registered).await {
+        Ok(Some(endpoint)) => endpoint,
+        _ => return Ok(None),
+    };
+    let request = qingcode_agent::AgentRequest {
+        token: endpoint.token.clone(),
+        op: qingcode_agent::AgentOp::SearchContent {
+            query: query.to_string(),
+            ignore_case,
+            include_globs: extension_filters
+                .iter()
+                .map(|ext| format!("*.{}", ext.trim_start_matches('.')))
+                .collect(),
+            exclude_globs: exclude_patterns
+                .unwrap_or_default()
+                .iter()
+                .map(|pattern| format!("!{pattern}"))
+                .collect(),
+            no_ignore: use_ignore_files == Some(false),
+            max_matches: max,
+            max_per_file: per_file,
+            max_files: file_limit,
+        },
+    };
+    let mut files = Vec::new();
+    let mut count = 0usize;
+    let mut per_file_truncated = false;
+    let outcome = agent::agent_stream_call(
+        manager,
+        &connection_id,
+        &endpoint,
+        request,
+        started + SEARCH_TIMEOUT,
+        || control.cancelled(),
+        |record| {
+            let Ok(bytes) = serde_json::to_vec(record) else {
+                return true;
+            };
+            append_content_record(
+                &bytes,
+                root,
+                &mut files,
+                &mut count,
+                max,
+                per_file,
+                &mut per_file_truncated,
+            )
+        },
+    )
+    .await;
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            // agent 失联或出错：清掉端点缓存并回退 rg，不让搜索失败。
+            manager.clear_agent_endpoint(&key);
+            return Ok(None);
+        }
+    };
+    match outcome {
+        agent::AgentStreamOutcome::Done {
+            truncated,
+            files_scanned,
+        } => Ok(Some(RemoteContentResponse {
+            files,
+            match_count: count,
+            files_scanned,
+            truncated: truncated || per_file_truncated,
+            cancelled: false,
+        })),
+        agent::AgentStreamOutcome::Stopped => Ok(Some(RemoteContentResponse {
+            files,
+            match_count: count,
+            files_scanned: 0,
+            truncated: false,
+            cancelled: true,
+        })),
+    }
+}
+
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn ssh_search_file_contents(
@@ -537,14 +646,38 @@ pub async fn ssh_search_file_contents(
         });
     };
     let per_file = max_matches_per_file.unwrap_or(20).clamp(1, 200);
+    let extension_filters = extensions
+        .or_else(|| extension.map(|value| vec![value]))
+        .unwrap_or_default();
+    // agent 优先：一次往返代替逐批 rg 进程；任何失败静默回退既有 rg 实现。
+    if !control.cancelled() {
+        match agent_search_file_contents(
+            &manager,
+            &root,
+            &canonical_root,
+            &query,
+            ignore_case,
+            &extension_filters,
+            exclude_patterns.clone(),
+            use_ignore_files,
+            max,
+            per_file,
+            file_limit,
+            &control,
+            started,
+        )
+        .await
+        {
+            Ok(Some(response)) => return Ok(response),
+            Ok(None) => {}
+            Err(_) => {}
+        }
+    }
     let mut filters = Vec::new();
     if use_ignore_files == Some(false) {
         filters.push("--no-ignore".to_string());
     }
-    for ext in extensions
-        .or_else(|| extension.map(|value| vec![value]))
-        .unwrap_or_default()
-    {
+    for ext in &extension_filters {
         filters.extend([
             "-g".to_string(),
             format!("*.{}", ext.trim_start_matches('.')),

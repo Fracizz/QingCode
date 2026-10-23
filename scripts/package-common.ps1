@@ -146,3 +146,111 @@ function Invoke-ForceQingcodeEmbedRebuild {
     throw "cargo clean -p qingcode --release failed with exit code $LASTEXITCODE. Close QingCode or tauri dev and retry."
   }
 }
+
+# --- SSH 远端 agent 二进制（qingcode-agent）打包支持 ---
+#
+# 运行时查找顺序（src-tauri/src/lib.rs 的 configure_ssh_agent_binary_dirs）：
+#   QINGCODE_AGENT_DIR → exe 目录/agents → exe 上级/agent → resource_dir/agents
+# 因此：
+#   - 安装版（NSIS / msi / dmg）：二进制进 bundle resources，落到 resource_dir/agents。
+#   - 便携版 exe：二进制复制到 exe 同目录 agents/。
+# 二进制由 scripts/build-agent.ps1 交叉编译（Linux musl 静态），产物在
+# src-tauri/target/agent/。
+#
+# 资源映射语义（已实测）：bundle.resources 的相对路径按 tauri.conf.json 所在目录
+# （src-tauri/）解析，因此键 `resources/agents/` 指向 src-tauri/resources/agents/；
+# 映射目标是资源目录下的 `agents/`。空目录会被 bundler 静默跳过（不会报错），
+# 这也是“干净树上不构建 agent 也能 tauri build 成功”的前提。
+
+function Resolve-AgentOutputDir {
+  param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+  # build-agent.ps1 固定输出到 src-tauri/target/agent（开发模式 exe 在
+  # src-tauri/target/{debug,release}/ 下，可被“exe 上级/agent”命中）。
+  Join-Path $ProjectRoot 'src-tauri\target\agent'
+}
+
+function Resolve-AgentStagingDir {
+  param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+  # 必须与 src-tauri/tauri.conf.json 的 bundle.resources 键（resources/agents/）一致。
+  Join-Path $ProjectRoot 'src-tauri\resources\agents'
+}
+
+function Invoke-AgentBinaryBuild {
+  param(
+    [Parameter(Mandatory = $true)][string]$ProjectRoot,
+    [switch]$SkipAgent,
+    # 逗号分隔的目标架构，空表示 build-agent.ps1 的默认值（x86_64,aarch64）。
+    [string]$Targets = ''
+  )
+
+  if ($SkipAgent) {
+    Write-Host '  agent: skipped (-SkipAgent)' -ForegroundColor Yellow
+    return
+  }
+
+  $script = Join-Path $ProjectRoot 'scripts\build-agent.ps1'
+  if (-not (Test-Path -LiteralPath $script)) {
+    throw "Agent build script not found: $script"
+  }
+  $pwshArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script)
+  if ($Targets) { $pwshArgs += @('-Targets', $Targets) }
+  & pwsh @pwshArgs
+  if ($LASTEXITCODE -ne 0) {
+    throw "build-agent.ps1 failed with exit code $LASTEXITCODE."
+  }
+}
+
+function Get-AgentBinaryFiles {
+  param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+  $src = Resolve-AgentOutputDir -ProjectRoot $ProjectRoot
+  if (-not (Test-Path -LiteralPath $src)) {
+    throw "Agent output directory not found: $src (run scripts/build-agent.ps1 first, or drop -SkipAgent)"
+  }
+  $files = @(Get-ChildItem -LiteralPath $src -File -Filter 'qingcode-agent-*' -ErrorAction SilentlyContinue)
+  if ($files.Count -eq 0) {
+    throw "No qingcode-agent-* binaries in $src (run scripts/build-agent.ps1 first, or drop -SkipAgent)"
+  }
+  return $files
+}
+
+function Copy-AgentBinariesToDirectory {
+  param(
+    [Parameter(Mandatory = $true)][string]$ProjectRoot,
+    [Parameter(Mandatory = $true)][string]$Destination
+  )
+
+  $files = Get-AgentBinaryFiles -ProjectRoot $ProjectRoot
+  if (-not (Test-Path -LiteralPath $Destination)) {
+    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+  }
+  foreach ($file in $files) {
+    Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $Destination $file.Name) -Force
+  }
+  Write-Host ("  agent: {0} -> {1}" -f (($files | ForEach-Object { $_.Name }) -join ', '), $Destination) -ForegroundColor DarkGray
+  return $files
+}
+
+function Publish-AgentBinariesToResourceDir {
+  param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+  # tauri build 的 bundle.resources 会把这个目录整体映射到 resource_dir/agents。
+  # 先清掉上次残留（例如构建中断留下的其它架构），保证进包内容确定。
+  Clear-AgentResourceDir -ProjectRoot $ProjectRoot
+  $destination = Resolve-AgentStagingDir -ProjectRoot $ProjectRoot
+  return (Copy-AgentBinariesToDirectory -ProjectRoot $ProjectRoot -Destination $destination)
+}
+
+function Clear-AgentResourceDir {
+  param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+  # 只删除临时二进制，保留 .gitignore 占位，目录不会变成空目录。
+  $destination = Resolve-AgentStagingDir -ProjectRoot $ProjectRoot
+  if (-not (Test-Path -LiteralPath $destination)) { return }
+  $stale = Get-ChildItem -LiteralPath $destination -File -Filter 'qingcode-agent-*' -ErrorAction SilentlyContinue
+  foreach ($file in $stale) {
+    Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
+  }
+}

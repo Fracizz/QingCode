@@ -8,6 +8,8 @@ param(
   [switch]$SkipIcons,
   # Skip copying to release/ when output already matches the build artifact.
   [switch]$SkipCopy,
+  # Skip building/copying the SSH remote agent binaries (src-tauri/target/agent).
+  [switch]$SkipAgent,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc for Windows ARM64).
   [string]$Target = ''
 )
@@ -118,6 +120,11 @@ try {
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
+  # SSH 远端 agent：便携版没有安装目录，运行时按「exe 同目录/agents」查找，
+  # 所以打包后要与 exe 并排放在 release/agents/ 一起分发。
+  Write-Step 'SSH agent binaries'
+  Invoke-AgentBinaryBuild -ProjectRoot $projectRoot -SkipAgent:$SkipAgent
+
   $frontendRebuilt = $false
   if ($SkipFrontend) {
     Write-Host '  skip frontend (-SkipFrontend)'
@@ -164,6 +171,11 @@ try {
   Write-Step 'Copy to release/'
   if (-not (Test-Path $outDir)) {
     New-Item -ItemType Directory -Path $outDir | Out-Null
+  }
+
+  # 便携版没有安装目录，agent 二进制与 exe 同目录（运行时「exe 目录/agents」）。
+  if (-not $SkipAgent) {
+    Copy-AgentBinariesToDirectory -ProjectRoot $projectRoot -Destination (Join-Path $outDir 'agents') | Out-Null
   }
 
   $versioned = Join-Path $outDir ("{0}_{1}{2}.exe" -f $productName, $version, $archSuffix)
@@ -225,7 +237,7 @@ try {
   Write-Host "  源: $($exe.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "Tips: -SkipFrontend (Rust only) · -Force (full rebuild) · install sccache for faster Rust rebuilds" -ForegroundColor DarkGray
+  Write-Host "Tips: -SkipFrontend (Rust only) · -SkipAgent · -Force (full rebuild) · install sccache for faster Rust rebuilds" -ForegroundColor DarkGray
 } finally {
   Pop-Location
 }

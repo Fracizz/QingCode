@@ -60,7 +60,7 @@ import {
 } from '../lib/fileTreeCache'
 import { authorizePaths, syncRootsFromProjects } from '../lib/pathAllowlist'
 import { ensureWorkspaceTrust, pushTrustedRootsToNative } from '../lib/workspaceTrust'
-import { pushSshAgentEnabledToNative } from '../lib/sshAgentSettings'
+import { pushSshAgentEnabledToNative, loadEffectiveSshAgentEnabled } from '../lib/sshAgentSettings'
 import {
   connectSshWorkspace,
   ensureSshWorkspaceConnected,
@@ -813,6 +813,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const known = get().projects
       const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
       await pushTrustedRootsToNative(forTrustSync)
+      // 项目作用域的 ssh.agent.enabled 可能覆盖全局值：切换项目时按当前项目重算并推给后端。
+      void loadEffectiveSshAgentEnabled(project)
+        .then(() => pushSshAgentEnabledToNative())
+        .catch(e => console.warn('sync ssh agent setting failed:', e))
 
       sshConnectionAttempted = true
       const hideConnectingHint = isSshProject(project)

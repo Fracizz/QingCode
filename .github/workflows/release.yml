@@ -41,8 +41,15 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
           CARGO=$(grep -E '^version\s*=\s*"' src-tauri/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+          # 远端 agent 的 AGENT_VERSION 取自该 crate 版本；漏 bump 会导致远端 agent
+          # 版本漂移、每次连接都重新部署，因此一并校验。
+          AGENT=$(grep -E '^version\s*=\s*"' src-tauri/qingcode-agent/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
           if [[ "$VERSION" != "$CONF" || "$VERSION" != "$CARGO" ]]; then
             echo "Version mismatch: package=$VERSION tauri=$CONF cargo=$CARGO" >&2
+            exit 1
+          fi
+          if [[ "$VERSION" != "$AGENT" ]]; then
+            echo "Version mismatch: package=$VERSION qingcode-agent=$AGENT" >&2
             exit 1
           fi
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
@@ -262,10 +269,28 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build SSH agent binaries and stage into bundle resources
+        shell: pwsh
+        run: |
+          ./scripts/build-agent.ps1
+          if ($LASTEXITCODE -ne 0) { throw "build-agent.ps1 failed with exit code $LASTEXITCODE" }
+          New-Item -ItemType Directory -Force -Path src-tauri/resources/agents | Out-Null
+          Copy-Item src-tauri/target/agent/qingcode-agent-* src-tauri/resources/agents/ -Force
+          Get-ChildItem src-tauri/resources/agents | Format-Table Name, Length
+
       - name: Build macOS arm64 (dmg + app zip)
         run: |
           chmod +x ./scripts/package-macos.sh
           ./scripts/package-macos.sh --force
+
+      - name: Verify agent binaries are inside the app bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APPDIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/QingCode.app"
+          test -f "$APPDIR/Contents/Resources/agents/qingcode-agent-x86_64"
+          test -f "$APPDIR/Contents/Resources/agents/qingcode-agent-aarch64"
+          ls -l "$APPDIR/Contents/Resources/agents"
 
       - name: Stage artifacts
         shell: bash

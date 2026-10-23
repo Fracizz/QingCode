@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
+mod agent;
 mod search;
 mod transfer;
 pub use search::*;
@@ -530,8 +531,10 @@ async fn open_sftp_session(
     Ok(sftp)
 }
 
+/// 已注册的远程项目根。类型对 crate 内可见（agent 集成在子模块里使用），
+/// 字段仍是本模块私有。
 #[derive(Clone, Debug)]
-struct RegisteredRoot {
+pub(crate) struct RegisteredRoot {
     uri: String,
     canonical_path: String,
     trusted: bool,
@@ -583,6 +586,16 @@ pub struct SshManager {
     terminal_handshakes: tokio::sync::Semaphore,
     /// 项目根相对仓库根的路径前缀（`git rev-parse --show-prefix`），按项目惰性缓存。
     git_prefixes: Mutex<HashMap<String, String>>,
+    /// 远端 agent 状态缓存，key 为 `agent_slot_key`（连接 id | 规范化项目根）。
+    agents: RwLock<HashMap<String, agent::AgentSlot>>,
+    /// 同一 (连接, 根) 的 agent 部署串行执行。
+    agent_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// 远端 agent 总开关；关闭后所有集成点静默回退直连路径。
+    agent_enabled: std::sync::atomic::AtomicBool,
+    /// 本地 agent 二进制查找目录（安装目录、资源目录、环境变量指定等）。
+    agent_binary_dirs: RwLock<Vec<PathBuf>>,
+    /// watch 监督任务句柄，key 同 agent slot；连接断开或重连时替换。
+    watch_supervisors: Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl SshManager {
@@ -595,6 +608,11 @@ impl SshManager {
             exec_slots: Mutex::new(HashMap::new()),
             terminal_handshakes: tokio::sync::Semaphore::new(MAX_CONCURRENT_TERMINAL_HANDSHAKES),
             git_prefixes: Mutex::new(HashMap::new()),
+            agents: RwLock::new(HashMap::new()),
+            agent_gates: Mutex::new(HashMap::new()),
+            agent_enabled: std::sync::atomic::AtomicBool::new(true),
+            agent_binary_dirs: RwLock::new(Vec::new()),
+            watch_supervisors: Mutex::new(HashMap::new()),
         }
     }
 
@@ -812,6 +830,96 @@ impl SshManager {
             .any(|root| normalize_remote_uri(&root.uri) == normalized))
     }
 
+    /// 按 URI 精确匹配已注册项目根（规范化比较），供 agent 监督任务克隆使用。
+    pub(crate) fn registered_root(&self, uri: &str) -> Result<RegisteredRoot, String> {
+        let normalized = normalize_remote_uri(uri);
+        self.roots
+            .read()
+            .map_err(|_| "SSH 工作区状态不可用".to_string())?
+            .values()
+            .find(|root| normalize_remote_uri(&root.uri) == normalized)
+            .cloned()
+            .ok_or_else(|| "远程路径不在已注册项目内".to_string())
+    }
+
+    fn agent_gate(&self, key: &str) -> Result<Arc<tokio::sync::Mutex<()>>, String> {
+        let mut gates = self
+            .agent_gates
+            .lock()
+            .map_err(|_| "SSH 连接状态不可用".to_string())?;
+        Ok(gates
+            .entry(key.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone())
+    }
+
+    pub(crate) fn agent_enabled(&self) -> bool {
+        self.agent_enabled.load(Ordering::SeqCst)
+    }
+
+    /// 设置本地 agent 二进制查找目录：去重且仅保留真实存在的目录。
+    pub(crate) fn set_agent_binary_dirs(&self, dirs: Vec<PathBuf>) {
+        let mut seen = std::collections::HashSet::new();
+        let filtered = dirs
+            .into_iter()
+            .filter(|dir| dir.is_dir() && seen.insert(dir.clone()))
+            .collect();
+        if let Ok(mut slot) = self.agent_binary_dirs.write() {
+            *slot = filtered;
+        }
+    }
+
+    pub(crate) fn agent_binary_dirs(&self) -> Vec<PathBuf> {
+        self.agent_binary_dirs
+            .read()
+            .map(|dirs| dirs.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn agent_slot(&self, key: &str) -> Option<agent::AgentSlot> {
+        self.agents
+            .read()
+            .ok()
+            .and_then(|agents| agents.get(key).cloned())
+    }
+
+    pub(crate) fn set_agent_slot(&self, key: &str, slot: agent::AgentSlot) {
+        if let Ok(mut agents) = self.agents.write() {
+            agents.insert(key.to_string(), slot);
+        }
+    }
+
+    /// agent 调用失败后清空端点与不可用原因，下次再走发现/部署。
+    pub(crate) fn clear_agent_endpoint(&self, key: &str) {
+        if let Ok(mut agents) = self.agents.write() {
+            if let Some(slot) = agents.get_mut(key) {
+                slot.endpoint = None;
+                slot.unavailable_reason = None;
+            }
+        }
+    }
+
+    /// 连接断开时丢弃该连接的全部 agent 缓存：端口与 token 随远端进程生命周期变化，
+    /// 重连后必须重新发现/部署。前缀匹配 `agent_slot_key` 的 `连接id|根` 形式。
+    fn purge_agent_state(&self, connection_id: &str) {
+        let prefix = format!("{connection_id}|");
+        if let Ok(mut agents) = self.agents.write() {
+            agents.retain(|key, _| !key.starts_with(&prefix));
+        }
+        if let Ok(mut gates) = self.agent_gates.lock() {
+            gates.retain(|key, _| !key.starts_with(&prefix));
+        }
+    }
+
+    /// 替换某个 (连接, 根) 的 watch 监督任务；重复连接同一根时先终止旧任务。
+    fn replace_watch_supervisor(&self, key: &str, handle: tauri::async_runtime::JoinHandle<()>) {
+        if let Ok(mut supervisors) = self.watch_supervisors.lock() {
+            if let Some(previous) = supervisors.insert(key.to_string(), handle) {
+                previous.abort();
+            }
+        }
+    }
+
     fn set_root_trust(&self, uri: &str, trusted: bool) -> Result<(), String> {
         let normalized = normalize_remote_uri(uri);
         let mut roots = self
@@ -991,6 +1099,15 @@ pub fn ssh_set_workspace_trust(
 ) -> Result<(), String> {
     parse_remote_uri(&root_uri)?;
     manager.set_root_trust(&root_uri, trusted)
+}
+
+/// 开关远端 agent 集成；关闭后既有调用方一律走 SFTP / rg 直连路径。
+#[tauri::command]
+pub fn ssh_set_agent_enabled(enabled: bool, manager: State<'_, SshManager>) -> Result<(), String> {
+    manager
+        .agent_enabled
+        .store(enabled, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -1661,6 +1778,7 @@ pub async fn ssh_connect(
     config: SshConnectionConfig,
     root_uri: String,
     trusted: bool,
+    app: tauri::AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<SshConnectResult, String> {
     let expected = config
@@ -1704,6 +1822,18 @@ pub async fn ssh_connect(
                 trusted,
             },
         );
+    // 已信任的非 Windows 远端：启动 watch 监督任务（agent 提供远端事件源）。
+    // 重复连接同一根时先终止旧任务，避免出现两条并发的 watch 连接。
+    if trusted && windows_native_path(&canonical_root).is_none() && manager.agent_enabled() {
+        let key = agent::agent_slot_key(&config.id, &canonical_root);
+        let handle = agent::spawn_agent_watch_supervisor(
+            app.clone(),
+            config.id.clone(),
+            normalize_remote_uri(&root_uri),
+            canonical_root.clone(),
+        );
+        manager.replace_watch_supervisor(&key, handle);
+    }
     Ok(SshConnectResult {
         fingerprint,
         canonical_root,
@@ -1729,6 +1859,23 @@ pub async fn ssh_disconnect(
         .write()
         .map_err(|_| "SSH 工作区状态不可用".to_string())?
         .retain(|_, root| remote_uri_connection_id(&root.uri) != Some(connection_id.as_str()));
+    // 停掉该连接的所有 agent watch 监督任务；监督任务自己也会因会话消失而退出，
+    // 这里主动 abort 避免任务在会话移除后还空转一轮。
+    if let Ok(mut supervisors) = manager.watch_supervisors.lock() {
+        let prefix = format!("{connection_id}|");
+        let stale: Vec<String> = supervisors
+            .keys()
+            .filter(|key| key.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for key in stale {
+            if let Some(handle) = supervisors.remove(&key) {
+                handle.abort();
+            }
+        }
+    }
+    // agent 的端口 / token 跟着远端进程走，重连后必须重新发现，缓存一律丢弃。
+    manager.purge_agent_state(&connection_id);
     // 终端各用独立连接，主连接断开不会带走它们，需要逐个断开。
     let terminal_transports = manager
         .terminals
@@ -1831,6 +1978,128 @@ async fn ensure_parent_path_within(
     ensure_existing_path_within(sftp, remote_parent_path(path)?, root).await
 }
 
+/// 把一组 (名称, 是否目录) 条目转成目录树节点：应用排除规则、按名称排序、目录优先。
+/// SFTP 与 agent 两条扫描路径共用，保证行为一致。
+fn collect_scan_nodes(
+    uri: &str,
+    path: &str,
+    root_posix: &str,
+    entries: impl IntoIterator<Item = (String, bool)>,
+    exclude_patterns: Option<&[String]>,
+) -> Vec<RemoteFileNode> {
+    let mut dirs = Vec::new();
+    let mut files = Vec::new();
+    for (name, is_dir) in entries {
+        if name.is_empty() || name == "." || name == ".." {
+            continue;
+        }
+
+        let full_posix = if path.ends_with('/') {
+            format!("{path}{name}")
+        } else {
+            format!("{path}/{name}")
+        };
+        let rel = match full_posix.strip_prefix(root_posix) {
+            Some(rest) => rest.trim_start_matches('/'),
+            None => &name,
+        };
+
+        let should_skip = match exclude_patterns {
+            Some(patterns) => {
+                if rel.is_empty() {
+                    false
+                } else {
+                    crate::exclude::is_path_excluded(rel, patterns)
+                }
+            }
+            None => crate::exclude::default_hard_ignore_name(&name),
+        };
+        if should_skip {
+            continue;
+        }
+
+        let node = RemoteFileNode {
+            path: join_remote_uri(uri, &name),
+            name,
+            is_dir,
+        };
+        if node.is_dir {
+            dirs.push(node);
+        } else {
+            files.push(node);
+        }
+    }
+    dirs.sort_by_key(|node| node.name.to_lowercase());
+    files.sort_by_key(|node| node.name.to_lowercase());
+    dirs.extend(files);
+    dirs
+}
+
+/// 计算绝对路径相对项目根的 POSIX 相对路径（agent scan/watch 参数约定，根为 ""）。
+fn remote_relative_to_root(canonical: &str, canonical_root: &str) -> String {
+    let root = canonical_root.trim_end_matches('/');
+    if root.is_empty() {
+        return canonical.trim_matches('/').to_string();
+    }
+    canonical
+        .strip_prefix(root)
+        .unwrap_or(canonical)
+        .trim_start_matches('/')
+        .to_string()
+}
+
+/// 经远端 agent 列出目录的直接子项；任何失败都清空端点缓存并返回 None，
+/// 由调用方回退 SFTP。返回 (名称, 是否目录) 交给 `collect_scan_nodes` 统一组装。
+async fn agent_scan_entries(
+    manager: &SshManager,
+    connection_id: &str,
+    root: &RegisteredRoot,
+    canonical: &str,
+) -> Option<Vec<(String, bool)>> {
+    if !manager.agent_enabled() || windows_native_path(&root.canonical_path).is_some() {
+        return None;
+    }
+    let key = agent::agent_slot_key(connection_id, &root.canonical_path);
+    let endpoint = agent::ensure_agent_endpoint(manager, root)
+        .await
+        .ok()
+        .flatten()?;
+    let relative = remote_relative_to_root(canonical, &root.canonical_path);
+    let request = qingcode_agent::AgentRequest {
+        token: endpoint.token.clone(),
+        op: qingcode_agent::AgentOp::Scan { path: relative },
+    };
+    let mut entries = Vec::new();
+    let outcome = agent::agent_stream_call(
+        manager,
+        connection_id,
+        &endpoint,
+        request,
+        Instant::now() + Duration::from_secs(15),
+        || false,
+        |record| {
+            let Some(name) = record.get("name").and_then(|value| value.as_str()) else {
+                return true;
+            };
+            let is_dir = record
+                .get("isDir")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            entries.push((name.to_string(), is_dir));
+            true
+        },
+    )
+    .await;
+    match outcome {
+        Ok(agent::AgentStreamOutcome::Done { .. }) => Some(entries),
+        _ => {
+            // 扫描失败说明 agent 可能已失联；清掉端点让下次重新发现/部署。
+            manager.clear_agent_endpoint(&key);
+            None
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn ssh_scan_directory(
     path: String,
@@ -1859,58 +2128,34 @@ pub async fn ssh_scan_directory(
     };
     let root_posix = root_posix.trim_end_matches('/').to_string();
 
-    let mut dirs = Vec::new();
-    let mut files = Vec::new();
+    // agent 优先：减少 SFTP 往返，且目录树刷新与 watch 事件同源。任何失败静默回退。
+    if root.trusted {
+        if let Some(entries) =
+            agent_scan_entries(&manager, &parsed.connection_id, &root, &canonical).await
+        {
+            return Ok(collect_scan_nodes(
+                &path,
+                &parsed.path,
+                &root_posix,
+                entries,
+                exclude_patterns.as_deref(),
+            ));
+        }
+    }
+
     let entries = sftp
         .read_dir(parsed.path.clone())
         .await
         .map_err(|error| format!("读取远程目录失败：{error}"))?;
-    for entry in entries {
-        let name = entry.file_name();
-        if name.is_empty() || name == "." || name == ".." {
-            continue;
-        }
-
-        let full_posix = if parsed.path.ends_with('/') {
-            format!("{}{name}", parsed.path)
-        } else {
-            format!("{}/{name}", parsed.path)
-        };
-        let rel = if full_posix.starts_with(&root_posix) {
-            full_posix[root_posix.len()..].trim_start_matches('/')
-        } else {
-            &name
-        };
-
-        let should_skip = match exclude_patterns.as_deref() {
-            Some(patterns) => {
-                if rel.is_empty() {
-                    false
-                } else {
-                    crate::exclude::is_path_excluded(rel, patterns)
-                }
-            }
-            None => crate::exclude::default_hard_ignore_name(&name),
-        };
-        if should_skip {
-            continue;
-        }
-
-        let node = RemoteFileNode {
-            path: join_remote_uri(&path, &name),
-            name,
-            is_dir: entry.metadata().is_dir(),
-        };
-        if node.is_dir {
-            dirs.push(node);
-        } else {
-            files.push(node);
-        }
-    }
-    dirs.sort_by_key(|node| node.name.to_lowercase());
-    files.sort_by_key(|node| node.name.to_lowercase());
-    dirs.extend(files);
-    Ok(dirs)
+    Ok(collect_scan_nodes(
+        &path,
+        &parsed.path,
+        &root_posix,
+        entries
+            .into_iter()
+            .map(|entry| (entry.file_name(), entry.metadata().is_dir())),
+        exclude_patterns.as_deref(),
+    ))
 }
 
 #[tauri::command]
@@ -4469,5 +4714,60 @@ mod tests {
         assert_eq!(bash_target.resolved_shell, "bash");
 
         assert!(reject_windows_remote_command("/home/owner/app").is_ok());
+    }
+
+    #[test]
+    fn collect_scan_nodes_orders_dirs_first_and_applies_excludes() {
+        let entries = vec![
+            ("zeta.ts".to_string(), false),
+            ("src".to_string(), true),
+            ("target".to_string(), true),
+            ("alpha.md".to_string(), false),
+        ];
+        let nodes = collect_scan_nodes("ssh://c1", "/srv/app", "/srv/app", entries, None);
+        let names: Vec<&str> = nodes.iter().map(|node| node.name.as_str()).collect();
+        // 目录优先（排序），其次文件（排序）；默认硬忽略目录被剔除。
+        assert_eq!(names, vec!["src", "alpha.md", "zeta.ts"]);
+        assert!(nodes.iter().all(|node| node.path.starts_with("ssh://c1/")));
+    }
+
+    #[test]
+    fn collect_scan_nodes_honors_exclude_patterns() {
+        let entries = vec![
+            ("keep.rs".to_string(), false),
+            ("skip.rs".to_string(), false),
+            ("sub".to_string(), true),
+            ("other".to_string(), true),
+        ];
+        let patterns = vec!["skip.rs".to_string()];
+        let nodes =
+            collect_scan_nodes("ssh://c1", "/srv/app", "/srv/app", entries, Some(&patterns));
+        // 目录优先（排序），被排除的 skip.rs 不出现。
+        let names: Vec<&str> = nodes.iter().map(|node| node.name.as_str()).collect();
+        assert_eq!(names, vec!["other", "sub", "keep.rs"]);
+    }
+
+    #[test]
+    fn collect_scan_nodes_matches_excludes_against_path_relative_to_root() {
+        let entries = vec![("mod.rs".to_string(), false), ("nested".to_string(), true)];
+        // 排除规则按「相对项目根」匹配：扫描子目录时 src/nested 仍能被命中。
+        let patterns = vec!["src/nested".to_string()];
+        let nodes = collect_scan_nodes(
+            "ssh://c1",
+            "/srv/app/src",
+            "/srv/app",
+            entries,
+            Some(&patterns),
+        );
+        let names: Vec<&str> = nodes.iter().map(|node| node.name.as_str()).collect();
+        assert_eq!(names, vec!["mod.rs"]);
+        assert_eq!(nodes[0].path, "ssh://c1/mod.rs");
+    }
+
+    #[test]
+    fn relative_to_root_handles_root_and_children() {
+        assert_eq!(remote_relative_to_root("/srv/app", "/srv/app"), "");
+        assert_eq!(remote_relative_to_root("/srv/app/src", "/srv/app"), "src");
+        assert_eq!(remote_relative_to_root("/srv/app/", "/srv/app/"), "");
     }
 }

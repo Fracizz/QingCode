@@ -614,6 +614,31 @@ fn repair_windows_main_window_size(window: &tauri::WebviewWindow) {
     let _ = window.reload();
 }
 
+/// 配置远端 agent 二进制的本地查找目录（按优先级）：
+/// `QINGCODE_AGENT_DIR` 环境变量 → 安装目录 `/agents` → 安装目录上级 `/agent`
+/// → 应用资源目录 `/agents`。目录不存在时由 `set_agent_binary_dirs` 自动过滤。
+fn configure_ssh_agent_binary_dirs(app: &tauri::AppHandle) {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Ok(dir) = std::env::var("QINGCODE_AGENT_DIR") {
+        if !dir.trim().is_empty() {
+            dirs.push(PathBuf::from(dir));
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe_dir) = exe.parent() {
+            dirs.push(exe_dir.join("agents"));
+            if let Some(parent) = exe_dir.parent() {
+                dirs.push(parent.join("agent"));
+            }
+        }
+    }
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        dirs.push(resource_dir.join("agents"));
+    }
+    app.state::<remote_ssh::SshManager>()
+        .set_agent_binary_dirs(dirs);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Some(code) = cli::try_run_as_cli() {
@@ -661,6 +686,7 @@ pub fn run() {
         .setup(move |app| {
             migrate_legacy_database();
             ipc::start_server(app.handle().clone());
+            configure_ssh_agent_binary_dirs(app.handle());
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
                 let mut window_config = window_config.clone();
                 if launch_as_external && window_config.label == MAIN_WINDOW_LABEL {
@@ -788,6 +814,7 @@ pub fn run() {
             remote_ssh::ssh_connection_status,
             remote_ssh::ssh_workspace_status,
             remote_ssh::ssh_set_workspace_trust,
+            remote_ssh::ssh_set_agent_enabled,
             remote_ssh::ssh_validate_directory,
             remote_ssh::ssh_scan_directory,
             remote_ssh::ssh_file_stat,

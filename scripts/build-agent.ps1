@@ -4,19 +4,41 @@
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-agent.ps1
 # 可选参数：
 #   -Targets x86_64,aarch64   目标架构（默认两者都构建）
-#   -SkipHostCheck            跳过 host 目标构建校验
+#   -MuslLinker <path>        显式指定 musl 链接器（默认自动探测 cc / rust-lld）
+#
+# 链接器：cargo 的 musl 目标默认调用 `cc`，Windows 上没有 C 工具链时链接会失败
+# （error: linker `cc` not found）。本脚本在 PATH 中找不到 `cc` 时会自动改用 rustup
+# 自带的 rust-lld（Rust 为 musl 目标提供自包含的 crt/libc.a，纯 Rust 依赖无需 C 交叉
+# 编译器），也可用 -MuslLinker 显式指定路径覆盖。
 #
 # 产物查找顺序（src-tauri/src/lib.rs setup）：
 #   QINGCODE_AGENT_DIR 环境变量 → exe 目录（/agents）→ exe 目录上级（/agent）→ 资源目录（/agents）
 # 开发模式下 exe 位于 src-tauri/target/{debug,release}/，因此默认把产物复制到
-# src-tauri/target/agent/，`pnpm tauri:dev` / 打包产物都能自动发现。
-# 发布打包脚本（package-installer.ps1）可把该目录一并复制进安装包（后续接入）。
+# src-tauri/target/agent/，`pnpm tauri:dev` 都能自动发现（无需再打包一步）。
+# 发布打包时：scripts/package-installer.ps1 会把它复制进 src-tauri/resources/agents/
+# 由 tauri bundle.resources 打进安装包；scripts/package-exe.ps1 复制到 release/agents/。
 
 param(
-    [string]$Targets = "x86_64,aarch64"
+    [string]$Targets = "x86_64,aarch64",
+    # 显式指定 musl 链接器（默认：PATH 有 cc 则交给 cargo，否则自动用 rust-lld）
+    [string]$MuslLinker = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+# 定位 rustup 工具链自带的 rust-lld（musl 自包含链接只需链接器驱动）。
+function Resolve-RustLld {
+    $sysroot = (& rustc --print sysroot) 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $sysroot) { return $null }
+    $hostLine = (& rustc -vV) | Where-Object { $_ -like "host:*" }
+    if (-not $hostLine) { return $null }
+    $hostTriple = $hostLine.Substring(5).Trim()
+    foreach ($name in @("rust-lld.exe", "rust-lld")) {
+        $candidate = Join-Path (Join-Path (Join-Path (Join-Path $sysroot "lib") "rustlib") $hostTriple) ("bin/$name")
+        if (Test-Path $candidate) { return $candidate }
+    }
+    return $null
+}
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location (Join-Path $repoRoot "src-tauri")
@@ -24,6 +46,16 @@ Push-Location (Join-Path $repoRoot "src-tauri")
 try {
     $outDir = Join-Path (Get-Location) "target\agent"
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+    # CI / IDE 可能用 CARGO_TARGET_DIR 重定向 cargo 输出，产物位置随之改变。
+    $cargoTargetDir = $env:CARGO_TARGET_DIR
+    if ($cargoTargetDir) {
+        if (-not [System.IO.Path]::IsPathRooted($cargoTargetDir)) {
+            $cargoTargetDir = Join-Path (Get-Location) $cargoTargetDir
+        }
+    } else {
+        $cargoTargetDir = Join-Path (Get-Location) "target"
+    }
 
     foreach ($arch in $Targets.Split(",")) {
         $arch = $arch.Trim()
@@ -33,11 +65,24 @@ try {
         rustup target add $target
         if ($LASTEXITCODE -ne 0) { throw "rustup target add $target 失败" }
 
+        # musl 链接器：显式参数 > 已有环境变量 > PATH 里的 cc > rust-lld。
+        $linkerVar = "CARGO_TARGET_" + $target.ToUpper().Replace("-", "_") + "_LINKER"
+        $linker = $MuslLinker
+        if (-not $linker) { $linker = [Environment]::GetEnvironmentVariable($linkerVar) }
+        if (-not $linker -and -not (Get-Command cc -ErrorAction SilentlyContinue)) {
+            $linker = Resolve-RustLld
+            if (-not $linker) {
+                throw "未找到 C 链接器 cc，也没有可用的 rust-lld；请安装 C 工具链或传入 -MuslLinker <path>"
+            }
+            Write-Host "== PATH 中没有 cc，改用 rust-lld：$linker"
+        }
+        if ($linker) { [Environment]::SetEnvironmentVariable($linkerVar, $linker) }
+
         Write-Host "== cargo build -p qingcode-agent --release --target $target"
         cargo build -p qingcode-agent --release --target $target
         if ($LASTEXITCODE -ne 0) { throw "构建 $target 失败" }
 
-        $bin = Join-Path (Get-Location) "target\$target\release\qingcode-agent"
+        $bin = Join-Path $cargoTargetDir "$target\release\qingcode-agent"
         if (-not (Test-Path $bin)) { throw "未找到构建产物：$bin" }
         $dest = Join-Path $outDir "qingcode-agent-$arch"
         Copy-Item -Force $bin $dest

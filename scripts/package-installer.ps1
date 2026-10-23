@@ -1,10 +1,12 @@
 # Build QingCode Windows NSIS installer (.exe setup) via Tauri.
-# Usage: ./scripts/package-installer.ps1 [-Force] [-SkipFrontend] [-Target <triple>]
+# Usage: ./scripts/package-installer.ps1 [-Force] [-SkipFrontend] [-Target <triple>] [-SkipAgent]
 [CmdletBinding()]
 param(
   [switch]$Force,
   [switch]$SkipFrontend,
   [switch]$SkipIcons,
+  # Skip building/bundling the SSH remote agent binaries (src-tauri/target/agent).
+  [switch]$SkipAgent,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc).
   [string]$Target = ''
 )
@@ -51,6 +53,7 @@ function Sync-IconsIfNeeded {
 }
 
 Push-Location $projectRoot
+$agentStaged = $false
 try {
   $totalSw = [Diagnostics.Stopwatch]::StartNew()
 
@@ -77,6 +80,17 @@ try {
   Write-Step 'Prepare (Windows x64 NSIS installer)'
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
+
+  # SSH 远端 agent：先编译 musl 静态二进制，再复制到 tauri bundle.resources 映射的
+  # src-tauri/resources/agents/（安装后落到 resource_dir/agents/）。构建结束在 finally 清理。
+  Write-Step 'SSH agent binaries'
+  if ($SkipAgent) {
+    Write-Host '  skip agent (-SkipAgent)' -ForegroundColor Yellow
+  } else {
+    Invoke-AgentBinaryBuild -ProjectRoot $projectRoot
+    Publish-AgentBinariesToResourceDir -ProjectRoot $projectRoot | Out-Null
+    $agentStaged = $true
+  }
 
   $frontendRebuilt = $false
   if ($SkipFrontend) {
@@ -176,7 +190,11 @@ try {
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
   Write-Host "Install notes: Start Menu shortcut always; desktop shortcut checked by default on finish page." -ForegroundColor DarkGray
-  Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
+  Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -SkipAgent · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {
+  # 暂存的 agent 二进制不能留在工作区（否则会被误提交，也污染后续 dev 运行）。
+  if ($agentStaged) {
+    Clear-AgentResourceDir -ProjectRoot $projectRoot
+  }
   Pop-Location
 }

@@ -8,6 +8,10 @@
 //! 按操作回 `records`（流式记录）/ `done`（结束）/ `error`；`watch` 连接会持续
 //! 推送事件记录，直到客户端断开。
 
+// 实现层：文件系统操作与文件监视，协议契约全部在本文件内定义。
+mod ops;
+mod watch;
+
 use serde::{Deserialize, Serialize};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -20,6 +24,10 @@ pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 单帧上限。内容搜索单条记录（一行匹配文本）按客户端约定不超过 2MB，
 /// 这里放宽到 4MB 兼容超长行的 lossy 截断。
 pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+
+/// watch 心跳间隔：无事件时每 15s 推一个空记录帧。客户端侧空闲轮询为 5s、
+/// 整体超时约 30s，心跳既不会打扰客户端，又能让半开连接在有限时间内写失败。
+const WATCH_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// 帧格式：4 字节小端长度 + JSON 负载。长度为 0 或超上限都视为协议错误。
 pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Vec<u8>> {
@@ -46,19 +54,26 @@ pub async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, payload: &[u8]) 
 }
 
 /// 客户端首帧：token 鉴权与操作参数一起送达，省一次往返。
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequest {
     pub token: String,
     pub op: AgentOp,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "type", content = "params", rename_all = "camelCase", rename_all_fields = "camelCase")]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(
+    tag = "type",
+    content = "params",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum AgentOp {
     Ping,
     /// 列出单个目录的直接子项。`path` 是相对代理根的 POSIX 路径（`""` 或 `.` 表示根）。
-    Scan { path: String },
+    Scan {
+        path: String,
+    },
     /// 字面量内容搜索，记录格式与 `rg --json` 的 match 记录一致，
     /// 客户端复用现有解析逻辑。每个文件最多产出 `max_per_file + 1` 条记录，
     /// 多出的 1 条用于向客户端标记单文件截断。
@@ -75,19 +90,27 @@ pub enum AgentOp {
         max_files: usize,
     },
     /// 递归监视目录，持续推送事件记录直到客户端断开。
-    Watch { path: String },
+    Watch {
+        path: String,
+    },
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AgentResponse {
-    Ok { version: String },
-    Records { data: Vec<serde_json::Value> },
+    Ok {
+        version: String,
+    },
+    Records {
+        data: Vec<serde_json::Value>,
+    },
     Done {
         truncated: bool,
         files_scanned: usize,
     },
-    Error { message: String },
+    Error {
+        message: String,
+    },
 }
 
 /// 远端状态文件（`<项目根>/.qingcode/agent/agent.json`）。
@@ -167,6 +190,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 /// 本地 watcher 同款的高变动目录：代理侧先过滤，避免事件流与刷新被构建产物淹没。
+/// 这些目录名在**任意层级**都算高变动。
 pub const HIGH_CHURN_DIRS: &[&str] = &[
     ".git",
     ".next",
@@ -180,18 +204,29 @@ pub const HIGH_CHURN_DIRS: &[&str] = &[
     "build",
     "out",
     "coverage",
-    "release",
 ];
 
+/// 只在项目根第一层才算高变动的目录，与主程序 `file_watcher.rs` 的
+/// `ROOT_HIGH_CHURN_DIRS` 保持一致：根级 `release/` 是打包产物，
+/// 但 `src/release/` 这类同名源码目录仍要正常刷新。
+pub const ROOT_HIGH_CHURN_DIRS: &[&str] = &["release"];
+
 /// `path` 相对 `root` 的后代里是否含有高变动目录段。
+/// 根级目录只匹配 [`ROOT_HIGH_CHURN_DIRS`] 里的名字，其余按任意层级匹配。
 pub fn is_high_churn_path(path: &Path, root: &Path) -> bool {
-    let Ok(path) = path.strip_prefix(root) else {
+    let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
-    path.components().any(|component| {
-        let name = component.as_os_str().to_string_lossy();
-        HIGH_CHURN_DIRS.iter().any(|dir| dir.eq_ignore_ascii_case(&name))
-    })
+    let matches_any =
+        |name: &str, dirs: &[&str]| dirs.iter().any(|dir| dir.eq_ignore_ascii_case(name));
+    if let Some(first) = relative.components().next() {
+        if matches_any(&first.as_os_str().to_string_lossy(), ROOT_HIGH_CHURN_DIRS) {
+            return true;
+        }
+    }
+    relative
+        .components()
+        .any(|component| matches_any(&component.as_os_str().to_string_lossy(), HIGH_CHURN_DIRS))
 }
 
 /// 服务器上下文与连接处理。
@@ -209,14 +244,9 @@ pub async fn bind_server(
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     let actual = listener.local_addr()?.port();
     let handle = tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let ctx = std::sync::Arc::clone(&ctx);
-                    tokio::spawn(handle_conn(ctx, stream));
-                }
-                Err(_) => break,
-            }
+        while let Ok((stream, _)) = listener.accept().await {
+            let ctx = std::sync::Arc::clone(&ctx);
+            tokio::spawn(handle_conn(ctx, stream));
         }
     });
     Ok((actual, handle))
@@ -228,22 +258,23 @@ pub async fn handle_conn(ctx: std::sync::Arc<ServerCtx>, stream: TcpStream) {
     let (mut reader, mut writer) = stream.into_split();
 
     // 首帧必须 10 秒内到达，防止半开连接占用任务。
-    let request = match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        read_frame(&mut reader),
-    )
-    .await
-    {
-        Ok(Ok(payload)) => payload,
-        _ => return,
-    };
+    let request =
+        match tokio::time::timeout(std::time::Duration::from_secs(10), read_frame(&mut reader))
+            .await
+        {
+            Ok(Ok(payload)) => payload,
+            _ => return,
+        };
     let Ok(request) = serde_json::from_slice::<AgentRequest>(&request) else {
         return;
     };
     if request.token != ctx.token {
-        let _ = write_response(&mut writer, &AgentResponse::Error {
-            message: "agent token 校验失败".to_string(),
-        })
+        let _ = write_response(
+            &mut writer,
+            &AgentResponse::Error {
+                message: "agent token 校验失败".to_string(),
+            },
+        )
         .await;
         return;
     }
@@ -297,21 +328,22 @@ async fn write_response<W: AsyncWrite + Unpin>(
     write_frame(writer, &payload).await
 }
 
-async fn handle_scan<W: AsyncWrite + Unpin>(
-    ctx: &ServerCtx,
-    writer: &mut W,
-    relative: &str,
-) {
+async fn handle_scan<W: AsyncWrite + Unpin>(ctx: &ServerCtx, writer: &mut W, relative: &str) {
     match ops::scan_dir(&ctx.root, relative) {
         Ok(entries) => {
             let data = entries
                 .iter()
-                .map(|entry| {
-                    serde_json::json!({ "name": entry.name, "isDir": entry.is_dir })
-                })
+                .map(|entry| serde_json::json!({ "name": entry.name, "isDir": entry.is_dir }))
                 .collect();
             let _ = write_response(writer, &AgentResponse::Records { data }).await;
-            let _ = write_response(writer, &AgentResponse::Done { truncated: false, files_scanned: 0 }).await;
+            let _ = write_response(
+                writer,
+                &AgentResponse::Done {
+                    truncated: false,
+                    files_scanned: 0,
+                },
+            )
+            .await;
         }
         Err(message) => {
             let _ = write_response(writer, &AgentResponse::Error { message }).await;
@@ -377,9 +409,12 @@ async fn handle_watch<W: AsyncWrite + Unpin>(
     {
         Some(resolved) if path_is_within(&resolved, &ctx.root) => resolved,
         _ => {
-            let _ = write_response(writer, &AgentResponse::Error {
-                message: "监视路径越出了项目根".to_string(),
-            })
+            let _ = write_response(
+                writer,
+                &AgentResponse::Error {
+                    message: "监视路径越出了项目根".to_string(),
+                },
+            )
             .await;
             return;
         }
@@ -392,24 +427,49 @@ async fn handle_watch<W: AsyncWrite + Unpin>(
         let _ = watch::watch_loop(resolved, cancel_for_task, tx);
     });
 
-    // watch 连接没有 done：客户端断开（读端 EOF）即结束。读端保活由
-    // 后台任务负责——客户端不再发送任何帧，这里只需要在写失败时收尾。
-    let mut write_error = false;
-    while let Some(event) = rx.recv().await {
-        if write_response(writer, &AgentResponse::Records { data: vec![event] })
-            .await
-            .is_err()
-        {
-            write_error = true;
-            break;
+    // 收尾条件有三条：客户端读端 EOF/错误、写失败、监视器任务结束。
+    // 只靠写失败是不够的——安静仓库里没有事件就永远不会写，客户端断开后
+    // watcher 任务与 inotify 实例会一直存活（客户端每轮超时重连还会不断累积）。
+    // 因此这里始终轮询读端，并用心跳帧让「客户端已死但 TCP 未断」也能暴露。
+    let mut heartbeat = tokio::time::interval_at(
+        tokio::time::Instant::now() + WATCH_HEARTBEAT,
+        WATCH_HEARTBEAT,
+    );
+    // 客户端在首帧之后不再发包，故任意读到字节/EOF/错误都按连接结束处理。
+    let mut read_buf = [0u8; 64];
+    loop {
+        tokio::select! {
+            biased;
+            _ = reader.read(&mut read_buf) => break,
+            event = rx.recv() => {
+                let Some(event) = event else {
+                    // 监视器已失效（如根目录被删除），没有可推送的事件了。
+                    break;
+                };
+                if write_response(writer, &AgentResponse::Records { data: vec![event] })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            _ = heartbeat.tick() => {
+                // 空 data 的心跳帧：客户端遍历 data 时自然忽略，协议无需新增消息类型。
+                if write_response(writer, &AgentResponse::Records { data: Vec::new() })
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
         }
     }
-    if write_error {
-        cancel.store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-    // 读端等 watcher 任务收尾，保证进程退出前释放 inotify 资源。
+    cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    // 先丢弃接收端：watcher 若正卡在 blocking_send（客户端不读、通道满），
+    // 会立刻收到错误返回，不必等满一个 250ms 轮询周期。
+    drop(rx);
+    // 等阻塞任务收尾，保证 debouncer 一定被 drop（inotify 实例随之释放）。
     let _ = watcher.await;
-    let _ = reader;
 }
 
 #[cfg(test)]
@@ -448,10 +508,100 @@ mod tests {
     #[test]
     fn high_churn_filter_matches_below_root_only() {
         let root = Path::new("/srv/project");
-        assert!(is_high_churn_path(Path::new("/srv/project/target/debug/x"), root));
-        assert!(is_high_churn_path(Path::new("/srv/project/node_modules/y"), root));
-        assert!(!is_high_churn_path(Path::new("/srv/project/src/main.rs"), root));
+        assert!(is_high_churn_path(
+            Path::new("/srv/project/target/debug/x"),
+            root
+        ));
+        assert!(is_high_churn_path(
+            Path::new("/srv/project/node_modules/y"),
+            root
+        ));
+        assert!(!is_high_churn_path(
+            Path::new("/srv/project/src/main.rs"),
+            root
+        ));
         assert!(!is_high_churn_path(Path::new("/srv/target/x"), root));
+    }
+
+    #[test]
+    fn high_churn_release_only_at_root_level() {
+        let root = Path::new("/srv/project");
+        // 根级 release 是打包产物目录，必须过滤。
+        assert!(is_high_churn_path(
+            Path::new("/srv/project/release/x"),
+            root
+        ));
+        assert!(is_high_churn_path(Path::new("/srv/project/release"), root));
+        // 子目录同名 release 是普通源码目录，与主程序一致要正常刷新。
+        assert!(!is_high_churn_path(
+            Path::new("/srv/project/src/release/x"),
+            root
+        ));
+        assert!(!is_high_churn_path(
+            Path::new("/srv/project/a/b/release/x"),
+            root
+        ));
+        // 其余目录名保持任意层级匹配。
+        assert!(is_high_churn_path(
+            Path::new("/srv/project/src/target/x"),
+            root
+        ));
+        assert!(is_high_churn_path(
+            Path::new("/srv/project/a/b/dist/x"),
+            root
+        ));
+    }
+
+    /// 临时目录：进程 id + 纳秒时间戳保证唯一，canonicalize 后返回。
+    fn temp_root(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "qingcode-agent-lib-{tag}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::canonicalize(&dir).unwrap()
+    }
+
+    /// 客户端断开读端后，handle_watch 必须自行收尾（而不是永远等事件）。
+    #[tokio::test]
+    async fn watch_returns_after_client_read_side_closes() {
+        let root = temp_root("watch-eof");
+        let ctx = std::sync::Arc::new(ServerCtx {
+            root: root.clone(),
+            token: "test-token".to_string(),
+        });
+        let (mut server_reader, client_writer) = tokio::io::duplex(64);
+        let (mut server_writer, client_reader) = tokio::io::duplex(64);
+        let ctx_for_task = std::sync::Arc::clone(&ctx);
+        let task = tokio::spawn(async move {
+            handle_watch(&ctx_for_task, &mut server_reader, &mut server_writer, "").await;
+        });
+        // 客户端写端关闭 → 服务端读端 EOF：安静目录里没有任何事件也应立即结束。
+        drop(client_writer);
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(5), task).await;
+        assert!(joined.is_ok(), "handle_watch 未在读端 EOF 后结束");
+        drop(client_reader);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn watch_rejects_path_outside_root() {
+        let root = temp_root("watch-escape");
+        let ctx = ServerCtx {
+            root: root.clone(),
+            token: "test-token".to_string(),
+        };
+        let (mut server_reader, _client_writer) = tokio::io::duplex(64);
+        let (mut server_writer, mut client_reader) = tokio::io::duplex(1024);
+        handle_watch(&ctx, &mut server_reader, &mut server_writer, "../").await;
+        let payload = read_frame(&mut client_reader).await.unwrap();
+        let response: AgentResponse = serde_json::from_slice(&payload).unwrap();
+        assert!(matches!(response, AgentResponse::Error { .. }));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
