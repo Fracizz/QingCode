@@ -281,7 +281,8 @@ const SSH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 const SSH_CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 const CHANNEL_OPEN_TIMEOUT_MARKER: &str = "通道超时";
 /// 主动探测的等待上限；连接只是慢时不应拆掉它（会杀掉所有远端终端）。
-const SSH_LIVENESS_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+/// 远端 CPU/内存占满时几秒不回包很常见，给足时间再判失效。
+const SSH_LIVENESS_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 /// 重连失败后的冷却期：并发的终端恢复直接复用这次失败，不排队逐个重试握手。
 const SSH_RECONNECT_FAILURE_COOLDOWN: Duration = Duration::from_secs(3);
 const SSH_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
@@ -376,6 +377,7 @@ struct RegisteredRoot {
 }
 
 struct RemoteTerminalSession {
+    connection_id: String,
     input: tokio::sync::mpsc::Sender<Vec<u8>>,
     writer: Arc<ChannelWriteHalf<client::Msg>>,
     /// Cleared when this channel is replaced or closed on purpose.
@@ -395,6 +397,12 @@ fn is_terminal_end_message(message: &ChannelMsg) -> bool {
         message,
         ChannelMsg::ExitStatus { .. } | ChannelMsg::ExitSignal { .. } | ChannelMsg::Close
     )
+}
+
+const BUSY_CONNECTION_MARKER: &str = "远端响应缓慢";
+
+fn busy_connection_error(message: &str) -> String {
+    format!("{message}（{BUSY_CONNECTION_MARKER}，为保留正在运行的终端未重连，请稍后重试）")
 }
 
 /// 同一连接的重连串行执行；记住最近一次失败，冷却期内直接返回。
@@ -515,6 +523,9 @@ impl SshManager {
         let session = self.live_session(connection_id).await?;
         match open_session_channel_once(&session, purpose).await {
             Ok(channel) => Ok(channel),
+            Err(error) if error.stale && self.keeps_busy_connection(connection_id, &session) => {
+                Err(busy_connection_error(&error.message))
+            }
             Err(error) if error.stale => {
                 let session = self
                     .reconnect_after_channel_failure(connection_id, &session)
@@ -523,6 +534,20 @@ impl SshManager {
             }
             Err(error) => Err(error.message),
         }
+    }
+
+    /// 连接没真正关闭、上面还有终端在跑时不重连：远端多半只是卡顿（CPU/内存占满），
+    /// 重连会断开旧连接，把这些终端里正在运行的进程一起杀掉。真断线由保活检测关闭连接后再重连。
+    fn keeps_busy_connection(&self, connection_id: &str, session: &ConnectedSession) -> bool {
+        !session.handle.is_closed() && self.has_live_terminals(connection_id)
+    }
+
+    fn has_live_terminals(&self, connection_id: &str) -> bool {
+        self.terminals.read().is_ok_and(|terminals| {
+            terminals.values().any(|session| {
+                session.connection_id == connection_id && session.alive.load(Ordering::Acquire)
+            })
+        })
     }
 
     pub fn terminal_is_open(&self, id: &str) -> bool {
@@ -592,6 +617,9 @@ impl SshManager {
         let session = self.live_session(connection_id).await?;
         match open_sftp_session(&session).await {
             Ok(sftp) => Ok(sftp),
+            Err(error) if error.stale && self.keeps_busy_connection(connection_id, &session) => {
+                Err(busy_connection_error(&error.message))
+            }
             Err(error) if error.stale => {
                 let session = self
                     .reconnect_after_channel_failure(connection_id, &session)
@@ -3220,6 +3248,7 @@ async fn spawn_ssh_terminal(
         if let Some(previous) = terminals.insert(
             id.clone(),
             Arc::new(RemoteTerminalSession {
+                connection_id: parsed.connection_id.clone(),
                 input: input_tx,
                 writer: Arc::clone(&writer),
                 alive: Arc::clone(&alive),
@@ -3791,6 +3820,7 @@ mod tests {
             decoded_script(&quoted.command, "powershell.exe -NoLogo -NoExit"),
             r"Set-Location -LiteralPath 'D:\code\it''s'"
         );
+        assert!(quoted.command.starts_with('"') && quoted.command.ends_with('"'));
         assert!(quoted.enter_directory.is_none());
 
         let command = ssh_interactive_terminal_command("/D:/code/nem-panel", None).unwrap();
