@@ -92,8 +92,160 @@ pub(crate) fn agent_state_path(canonical_root: &str) -> String {
     format!("{}/agent.json", agent_dir_path(canonical_root))
 }
 
+pub(crate) fn agent_binary_file_name(windows: bool, arch: &str) -> String {
+    if windows {
+        format!("qingcode-agent-windows-{arch}.exe")
+    } else {
+        format!("qingcode-agent-{arch}")
+    }
+}
+
 pub(crate) fn agent_binary_path(canonical_root: &str, arch: &str) -> String {
-    format!("{}/qingcode-agent-{arch}", agent_dir_path(canonical_root))
+    format!(
+        "{}/{}",
+        agent_dir_path(canonical_root),
+        agent_binary_file_name(false, arch)
+    )
+}
+
+pub(crate) fn agent_binary_remote_path(canonical_root: &str, windows: bool, arch: &str) -> String {
+    format!(
+        "{}/{}",
+        agent_dir_path(canonical_root),
+        agent_binary_file_name(windows, arch)
+    )
+}
+
+/// Windows 远端打印 `x86_64` 或 `aarch64`。不调用 `uname`，OpenSSH 默认 shell 不一定有它。
+pub(crate) fn windows_agent_arch_script() -> &'static str {
+    r"$arch = $env:PROCESSOR_ARCHITECTURE
+if ($arch -eq 'ARM64') { 'aarch64' } elseif ($arch -eq 'AMD64') { 'x86_64' } else { $arch }"
+}
+
+fn windows_agent_path_ok(path: &str) -> bool {
+    !path.is_empty() && !path.contains('"') && !path.contains('\n') && !path.contains('\r')
+}
+
+/// 脱离 OpenSSH 的 Job，避免 exec 通道结束时把 serve 进程一起杀掉。
+/// 不允许 breakaway 时退回 `Start-Process`。
+pub(crate) fn windows_deploy_agent_script(bin: &str, root: &str, state: &str) -> String {
+    format!(
+        r#"$ErrorActionPreference = 'Stop'
+$bin = '{bin}'
+$root = '{root}'
+$state = '{state}'
+if (-not (Test-Path -LiteralPath $bin)) {{ throw 'agent binary missing' }}
+$flags = 0x08000000 -bor 0x00000008 -bor 0x01000000
+$started = $false
+try {{
+  if (-not ('QingCode.AgentProc' -as [type])) {{
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public class QingCodeAgentProc {{
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+  public struct STARTUPINFO {{
+    public int cb; public string lpReserved; public string lpDesktop; public string lpTitle;
+    public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+    public short wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+  }}
+  [StructLayout(LayoutKind.Sequential)]
+  public struct PROCESS_INFORMATION {{
+    public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId;
+  }}
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+  public static extern bool CreateProcess(string app, string cmd, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr env, string dir, ref STARTUPINFO si, out PROCESS_INFORMATION pi);
+  [DllImport("kernel32.dll", SetLastError=true)]
+  public static extern bool CloseHandle(IntPtr h);
+}}
+'@
+  }}
+  $si = New-Object QingCode.AgentProc+STARTUPINFO
+  $si.cb = [Runtime.InteropServices.Marshal]::SizeOf($si)
+  $pi = New-Object QingCode.AgentProc+PROCESS_INFORMATION
+  $cmd = '"' + $bin + '" serve --root "' + $root + '" --state "' + $state + '"'
+  $dir = Split-Path -Parent $bin
+  $ok = [QingCode.AgentProc]::CreateProcess($null, $cmd, [IntPtr]::Zero, [IntPtr]::Zero, $false, $flags, [IntPtr]::Zero, $dir, [ref]$si, [ref]$pi)
+  if ($ok) {{
+    [QingCode.AgentProc]::CloseHandle($pi.hThread) | Out-Null
+    [QingCode.AgentProc]::CloseHandle($pi.hProcess) | Out-Null
+    $started = $true
+  }}
+}} catch {{}}
+if (-not $started) {{
+  Start-Process -FilePath $bin -ArgumentList @('serve','--root',$root,'--state',$state) -WindowStyle Hidden -WorkingDirectory (Split-Path -Parent $bin)
+}}
+"#,
+        bin = powershell_literal(bin),
+        root = powershell_literal(root),
+        state = powershell_literal(state),
+    )
+}
+
+pub(crate) fn windows_remove_file_script(path: &str) -> String {
+    format!(
+        "Remove-Item -LiteralPath '{}' -Force -ErrorAction SilentlyContinue",
+        powershell_literal(path)
+    )
+}
+
+/// 先核对进程名和命令行里的状态文件路径，再结束 serve。对不上就不杀。
+pub(crate) fn windows_kill_agent_script(pid: u32, state_path: &str) -> String {
+    format!(
+        r"$p = Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction SilentlyContinue
+if ($p -and $p.Name -like 'qingcode-agent*' -and $p.CommandLine -and $p.CommandLine.Contains('{state}')) {{
+  Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
+}}",
+        pid = pid,
+        state = powershell_literal(state_path),
+    )
+}
+
+fn windows_host_path(remote_path: &str) -> Option<String> {
+    windows_native_path(remote_path).filter(|path| windows_agent_path_ok(path))
+}
+
+fn windows_deploy_for(
+    remote_bin: &str,
+    remote_root: &str,
+    remote_state: &str,
+) -> Result<String, String> {
+    if windows_native_path(remote_root).is_none() {
+        return Ok(String::new());
+    }
+    let bin = windows_host_path(remote_bin).ok_or("Windows agent 路径无效")?;
+    let root = windows_host_path(remote_root).ok_or("Windows 项目路径无效")?;
+    let state = windows_host_path(remote_state).ok_or("Windows agent 状态路径无效")?;
+    Ok(windows_deploy_agent_script(&bin, &root, &state))
+}
+
+fn windows_remove_for(remote_bin: &str) -> String {
+    windows_host_path(remote_bin)
+        .map(|path| windows_remove_file_script(&path))
+        .unwrap_or_default()
+}
+
+fn windows_kill_for(state_path: &str, pid: u32) -> String {
+    windows_host_path(state_path)
+        .map(|path| windows_kill_agent_script(pid, &path))
+        .unwrap_or_default()
+}
+
+async fn exec_on_root(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    unix_command: &str,
+    windows_script: &str,
+) -> Result<RemoteExecResult, String> {
+    manager
+        .exec_remote_shell(
+            &root.uri,
+            unix_command,
+            windows_script,
+            true,
+            REMOTE_EXEC_TIMEOUT,
+        )
+        .await
 }
 
 /// 生成远端启动命令：`nohup setsid` 让 agent 脱离本次 SSH 会话存活，
@@ -309,15 +461,13 @@ async fn try_discover_agent(
     let state = parse_agent_state(&bytes).ok()?;
     if state.version != AGENT_VERSION {
         // 版本过期的 agent 不再复用；旧进程可能还占着端口，按身份校验后尽力清掉。
-        let _ = manager
-            .exec_command(
-                &root.uri,
-                &kill_agent_command(state.pid, &state_path),
-                None,
-                true,
-                REMOTE_EXEC_TIMEOUT,
-            )
-            .await;
+        let _ = exec_on_root(
+            manager,
+            root,
+            &kill_agent_command(state.pid, &state_path),
+            &windows_kill_for(&state_path, state.pid),
+        )
+        .await;
         return None;
     }
     let endpoint = AgentEndpoint {
@@ -342,16 +492,29 @@ async fn locate_local_agent_binary(
     manager: &SshManager,
     root: &RegisteredRoot,
 ) -> Result<(String, PathBuf), String> {
-    let arch = manager
-        .exec_command(&root.uri, "uname -m", None, true, REMOTE_EXEC_TIMEOUT)
-        .await?
-        .stdout
-        .trim()
-        .to_string();
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let arch = if windows {
+        manager
+            .exec_remote_shell(
+                &root.uri,
+                "uname -m",
+                windows_agent_arch_script(),
+                true,
+                REMOTE_EXEC_TIMEOUT,
+            )
+            .await?
+            .stdout
+    } else {
+        manager
+            .exec_command(&root.uri, "uname -m", None, true, REMOTE_EXEC_TIMEOUT)
+            .await?
+            .stdout
+    };
+    let arch = arch.trim().to_string();
     if arch != "x86_64" && arch != "aarch64" {
         return Err(format!("远端架构不支持（{arch}）"));
     }
-    let binary_name = format!("qingcode-agent-{arch}");
+    let binary_name = agent_binary_file_name(windows, &arch);
     for dir in manager.agent_binary_dirs() {
         let candidate = dir.join(&binary_name);
         if candidate.is_file() {
@@ -370,7 +533,7 @@ async fn locate_local_agent_binary(
         }
     }
     Err(format!(
-        "本地未找到 QingCode agent 二进制（{arch}），已回退直连模式"
+        "本地未找到 QingCode agent 二进制（{binary_name}）。在线请打开「缺失时自动下载」；离线请把 agents 目录放到 QingCode.exe 旁边，或设置 QINGCODE_AGENT_DIR。已回退直连"
     ))
 }
 
@@ -582,29 +745,29 @@ async fn upload_agent_binary(
     .map_err(|_| "agent 二进制提交超时".to_string())?;
     if renamed.is_err() {
         // 目标已存在（SFTP v3 rename 拒绝覆盖）：清掉旧文件后再 rename 一次。
+        let _ = exec_on_root(
+            manager,
+            root,
+            &format!("rm -f -- {}", shell_quote(remote_bin)),
+            &windows_remove_for(remote_bin),
+        )
+        .await;
+        sftp.rename(temp.clone(), remote_bin.to_string())
+            .await
+            .map_err(|error| format!("提交 agent 二进制失败：{error}"))?;
+    }
+    // Linux 赋可执行位。Windows 的 .exe 不需要 chmod，失败只影响本次启动。
+    if windows_native_path(&root.canonical_path).is_none() {
         let _ = manager
             .exec_command(
                 &root.uri,
-                &format!("rm -f -- {}", shell_quote(remote_bin)),
+                &format!("chmod 755 -- {}", shell_quote(remote_bin)),
                 None,
                 true,
                 REMOTE_EXEC_TIMEOUT,
             )
             .await;
-        sftp.rename(temp.clone(), remote_bin.to_string())
-            .await
-            .map_err(|error| format!("提交 agent 二进制失败：{error}"))?;
     }
-    // 赋可执行位；失败只影响本次启动，等就绪阶段兜底报错。
-    let _ = manager
-        .exec_command(
-            &root.uri,
-            &format!("chmod 755 -- {}", shell_quote(remote_bin)),
-            None,
-            true,
-            REMOTE_EXEC_TIMEOUT,
-        )
-        .await;
     Ok(())
 }
 
@@ -682,7 +845,11 @@ async fn discover_or_deploy_agent(
         let (arch, local_binary) = locate_local_agent_binary(manager, root)
             .await
             .map_err(AgentDeployError::permanent)?;
-        let remote_bin = agent_binary_path(&root.canonical_path, &arch);
+        let remote_bin = agent_binary_remote_path(
+            &root.canonical_path,
+            windows_native_path(&root.canonical_path).is_some(),
+            &arch,
+        );
         // 上传之前才标 installing；找本地二进制仍算 probing。
         agent_status::note_agent_activity(
             manager,
@@ -694,8 +861,16 @@ async fn discover_or_deploy_agent(
         upload_agent_binary(manager, &sftp, root, &local_binary, &remote_bin).await?;
         let state_path = agent_state_path(&root.canonical_path);
         let command = deploy_agent_command(&remote_bin, &root.canonical_path, &state_path);
+        let windows_script = windows_deploy_for(&remote_bin, &root.canonical_path, &state_path)
+            .map_err(AgentDeployError::from)?;
         manager
-            .exec_command(&root.uri, &command, None, true, REMOTE_EXEC_TIMEOUT)
+            .exec_remote_shell(
+                &root.uri,
+                &command,
+                &windows_script,
+                true,
+                REMOTE_EXEC_TIMEOUT,
+            )
             .await
             .map_err(|error| format!("启动远端 agent 失败：{error}"))?;
         // serve ping 之前进入握手。
@@ -765,11 +940,8 @@ pub(crate) async fn ensure_agent_endpoint_with_app(
 ) -> Result<Option<AgentEndpoint>, String> {
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
     let key = agent_slot_key(&connection_id, &root.canonical_path);
-    // 本地 Windows 项目、未信任项目、总开关关闭：不部署，直接公布直连原因。
-    if !manager.agent_enabled()
-        || windows_native_path(&root.canonical_path).is_some()
-        || !root.trusted
-    {
+    // 未信任项目、总开关关闭：不部署，直接公布直连原因。Windows 远端走 serve。
+    if !manager.agent_enabled() || !root.trusted {
         publish_agent_if_watched(app, manager, root);
         return Ok(None);
     }
@@ -1067,6 +1239,10 @@ async fn ensure_remote_daemon(
     root: &RegisteredRoot,
     remote_bin: Option<&str>,
 ) -> Option<DaemonAccess> {
+    // daemon / connect 只在 unix 远端编译。Windows 停在 serve。
+    if windows_native_path(&root.canonical_path).is_some() {
+        return None;
+    }
     let bin = match remote_bin {
         Some(bin) => bin.to_string(),
         None => {
@@ -1624,6 +1800,38 @@ pub(crate) fn spawn_agent_watch_supervisor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_binary_name_and_deploy_script_use_native_paths() {
+        assert_eq!(
+            agent_binary_file_name(true, "x86_64"),
+            "qingcode-agent-windows-x86_64.exe"
+        );
+        assert_eq!(
+            agent_binary_remote_path("/D:/code/app", true, "aarch64"),
+            "/D:/code/app/.qingcode/agent/qingcode-agent-windows-aarch64.exe"
+        );
+        let script = windows_deploy_for(
+            "/D:/code/app/.qingcode/agent/qingcode-agent-windows-x86_64.exe",
+            "/D:/code/app",
+            "/D:/code/app/.qingcode/agent/agent.json",
+        )
+        .unwrap();
+        assert!(script.contains(r"D:\code\app\.qingcode\agent\qingcode-agent-windows-x86_64.exe"));
+        assert!(
+            script.contains("CREATE")
+                || script.contains("0x01000000")
+                || script.contains("Start-Process")
+        );
+        assert!(script.contains(r"D:\code\app\.qingcode\agent\agent.json"));
+        assert!(windows_deploy_for(
+            "/srv/app/qingcode-agent-x86_64",
+            "/srv/app",
+            "/srv/app/agent.json"
+        )
+        .unwrap()
+        .is_empty());
+    }
 
     #[test]
     fn agent_paths_handle_trailing_slash_root() {

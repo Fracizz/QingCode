@@ -19,12 +19,15 @@ pub(crate) const SSH_AGENT_STATE_EVENT: &str = "ssh-agent-state";
 pub(crate) const AGENT_LOG_TAIL_COMMAND: &str =
     "tail -n 200 \"$HOME/.qingcode/agent/run/agent.log\"";
 
+/// Windows 远端目前只有 serve，daemon 日志多半不存在。文件在就读末尾，否则说明原因。
+const WINDOWS_AGENT_LOG_SCRIPT: &str = r"$log = Join-Path $env:USERPROFILE '.qingcode\agent\run\agent.log'
+if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Tail 200 } else { 'Windows 远端当前是 serve 模式，没有 daemon 日志。' }";
+
 const AGENT_LOG_MAX_LINES: usize = 200;
 const AGENT_LOG_MAX_BYTES: usize = 64 * 1024;
 const AGENT_LOG_MISSING: &str = "远端代理日志不存在";
 
 const REASON_AGENT_DISABLED: &str = "已关闭 ssh.agent.enabled";
-const REASON_WINDOWS_OPENSSH: &str = "Windows OpenSSH 不部署远端代理";
 const REASON_UNTRUSTED: &str = "工作区未信任";
 
 /// 连接阶段。serde 用 camelCase，与前端约定一致。
@@ -95,7 +98,6 @@ pub(crate) struct AgentSteadyInputs<'a> {
     pub root_uri: &'a str,
     pub session_connected: bool,
     pub agent_enabled: bool,
-    pub windows_native: bool,
     pub trusted: bool,
     pub slot: Option<AgentSlotView<'a>>,
 }
@@ -137,9 +139,6 @@ fn is_in_progress(phase: AgentPhase) -> bool {
 fn direct_gate_reason(input: &AgentSteadyInputs<'_>) -> Option<&'static str> {
     if !input.agent_enabled {
         return Some(REASON_AGENT_DISABLED);
-    }
-    if input.windows_native {
-        return Some(REASON_WINDOWS_OPENSSH);
     }
     if !input.trusted {
         return Some(REASON_UNTRUSTED);
@@ -280,7 +279,6 @@ pub(crate) fn state_for_root(
         root_uri: &normalize_remote_uri(&root.uri),
         session_connected: manager.connection_is_open(&parsed.connection_id),
         agent_enabled: manager.agent_enabled(),
-        windows_native: windows_native_path(&root.canonical_path).is_some(),
         trusted: root.trusted,
         slot: view,
     }))
@@ -377,8 +375,16 @@ async fn stop_recorded_serve_agent(manager: &SshManager, root: &RegisteredRoot) 
         return;
     };
     let command = agent::kill_agent_command(state.pid, &state_path);
+    let native_state = windows_native_path(&state_path).unwrap_or(state_path);
+    let windows_script = agent::windows_kill_agent_script(state.pid, &native_state);
     let _ = manager
-        .exec_command(&root.uri, &command, None, true, REMOTE_EXEC_TIMEOUT)
+        .exec_remote_shell(
+            &root.uri,
+            &command,
+            &windows_script,
+            true,
+            REMOTE_EXEC_TIMEOUT,
+        )
         .await;
 }
 
@@ -412,16 +418,11 @@ pub(crate) async fn ssh_agent_logs(
     manager: State<'_, SshManager>,
 ) -> Result<SshAgentLogs, String> {
     let root = require_registered_root(&manager, &root_uri)?;
-    if windows_native_path(&root.canonical_path).is_some() {
-        return Ok(SshAgentLogs {
-            text: "Windows OpenSSH 不部署远端代理，没有代理日志".to_string(),
-        });
-    }
     let result = manager
-        .exec_command(
+        .exec_remote_shell(
             &root.uri,
             AGENT_LOG_TAIL_COMMAND,
-            None,
+            WINDOWS_AGENT_LOG_SCRIPT,
             true,
             REMOTE_EXEC_TIMEOUT,
         )
@@ -438,7 +439,6 @@ mod tests {
     fn inputs<'a>(
         session_connected: bool,
         agent_enabled: bool,
-        windows_native: bool,
         trusted: bool,
         slot: Option<AgentSlotView<'a>>,
     ) -> AgentSteadyInputs<'a> {
@@ -447,14 +447,13 @@ mod tests {
             root_uri: "ssh://c1/srv/app",
             session_connected,
             agent_enabled,
-            windows_native,
             trusted,
             slot,
         }
     }
 
     fn ready_inputs(slot: Option<AgentSlotView<'_>>) -> AgentSteadyInputs<'_> {
-        inputs(true, true, false, true, slot)
+        inputs(true, true, true, slot)
     }
 
     fn assert_direct(state: &SshAgentState, reason: &str) {
@@ -469,19 +468,13 @@ mod tests {
 
     #[test]
     fn disabled_agent_is_ready_direct() {
-        let state = phase_for_slot(&inputs(true, false, false, true, None));
+        let state = phase_for_slot(&inputs(true, false, true, None));
         assert_direct(&state, REASON_AGENT_DISABLED);
     }
 
     #[test]
-    fn windows_openssh_is_ready_direct() {
-        let state = phase_for_slot(&inputs(true, true, true, true, None));
-        assert_direct(&state, REASON_WINDOWS_OPENSSH);
-    }
-
-    #[test]
     fn untrusted_root_is_ready_direct() {
-        let state = phase_for_slot(&inputs(true, true, false, false, None));
+        let state = phase_for_slot(&inputs(true, true, false, None));
         assert_direct(&state, REASON_UNTRUSTED);
     }
 
@@ -544,7 +537,6 @@ mod tests {
         let state = phase_for_slot(&inputs(
             false,
             true,
-            false,
             true,
             Some(AgentSlotView {
                 endpoint_has_daemon: Some(true),
@@ -575,7 +567,6 @@ mod tests {
     fn disabled_gate_wins_over_installing_activity() {
         let state = phase_for_slot(&inputs(
             true,
-            false,
             false,
             true,
             Some(AgentSlotView {
@@ -689,7 +680,7 @@ mod tests {
         assert!(value["reason"].is_null());
         assert!(value.get("connection_id").is_none());
 
-        let direct = phase_for_slot(&inputs(true, true, false, false, None));
+        let direct = phase_for_slot(&inputs(true, true, false, None));
         let value = serde_json::to_value(&direct).unwrap();
         assert_eq!(value["phase"], "readyDirect");
         assert_eq!(value["mode"], "direct");

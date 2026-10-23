@@ -53,7 +53,6 @@ function Sync-IconsIfNeeded {
 }
 
 Push-Location $projectRoot
-$agentStaged = $false
 try {
   $totalSw = [Diagnostics.Stopwatch]::StartNew()
 
@@ -81,15 +80,14 @@ try {
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
-  # SSH 远端 agent：先编译 musl 静态二进制，再复制到 tauri bundle.resources 映射的
-  # src-tauri/resources/agents/（安装后落到 resource_dir/agents/）。构建结束在 finally 清理。
-  Write-Step 'SSH agent binaries'
+  # 代理二进制不进 NSIS。编完后清掉 resources/agents 里的残留，离线包写到 release/agents。
+  Write-Step 'SSH agent binaries (not bundled)'
+  Clear-AgentResourceDir -ProjectRoot $projectRoot
   if ($SkipAgent) {
     Write-Host '  skip agent (-SkipAgent)' -ForegroundColor Yellow
   } else {
     Invoke-AgentBinaryBuild -ProjectRoot $projectRoot
-    Publish-AgentBinariesToResourceDir -ProjectRoot $projectRoot | Out-Null
-    $agentStaged = $true
+    Publish-AgentOfflinePack -ProjectRoot $projectRoot
   }
 
   $frontendRebuilt = $false
@@ -186,15 +184,15 @@ try {
   Write-Host "OK NSIS installer written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
   Write-Host "  $latest"
+  if (-not $SkipAgent) {
+    Write-Host "  $(Join-Path $outDir 'QingCode-agents.zip')  (offline agent pack; not inside the installer)"
+  }
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
   Write-Host "Install notes: Start Menu shortcut always; desktop shortcut checked by default on finish page." -ForegroundColor DarkGray
   Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -SkipAgent · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {
-  # 暂存的 agent 二进制不能留在工作区（否则会被误提交，也污染后续 dev 运行）。
-  if ($agentStaged) {
-    Clear-AgentResourceDir -ProjectRoot $projectRoot
-  }
+  Clear-AgentResourceDir -ProjectRoot $projectRoot
   Pop-Location
 }

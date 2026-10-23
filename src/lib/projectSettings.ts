@@ -106,7 +106,7 @@ function buildSharedDefaults(): SettingsFile {
     'terminal.integrated.cursorBlinking': true,
     'terminal.integrated.sshUploadOnPaste': false,
     'ssh.agent.enabled': true,
-    'ssh.agent.autoDownload': false,
+    'ssh.agent.autoDownload': true,
     custom: {},
   }
 }
@@ -247,11 +247,11 @@ __AUTOSAVE_SETTINGS__
   // 内嵌内容搜索（无需远端 rg）与快速目录扫描（默认 true）
   "ssh.agent.enabled": true,
 
-  // ssh.agent.autoDownload：本机没有随包携带 agent 二进制（如便携版）时，是否
-  // 自动从 GitHub Release（agent-v<版本> 标签）下载并做 sha256 校验。需要能访问
-  // GitHub；内网/离线主机请手动放置二进制或用 QINGCODE_AGENT_DIR 指定目录。
-  // 下载的执行文件不签名，信任源是本仓库官方 Release（默认 false）
-  "ssh.agent.autoDownload": false,
+  // ssh.agent.autoDownload：安装包不附带 agent 二进制。缺失时是否从 GitHub Release
+  // （agent-v<版本> 标签）在线下载并做 sha256 校验。需要能访问 GitHub。
+  // 离线：把 agents 目录放在 QingCode.exe 旁边，或用 QINGCODE_AGENT_DIR 指定目录
+  // （本地文件优先于下载）。下载的执行文件不签名，信任源是本仓库官方 Release（默认 true）
+  "ssh.agent.autoDownload": true,
 `
 
 /** Auto-save keys live only in the global template; workspace inherits unless overridden. */

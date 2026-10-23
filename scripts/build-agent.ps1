@@ -15,8 +15,8 @@
 #   QINGCODE_AGENT_DIR 环境变量 → exe 目录（/agents）→ exe 目录上级（/agent）→ 资源目录（/agents）
 # 开发模式下 exe 位于 src-tauri/target/{debug,release}/，因此默认把产物复制到
 # src-tauri/target/agent/，`pnpm tauri:dev` 都能自动发现（无需再打包一步）。
-# 发布打包时：scripts/package-installer.ps1 会把它复制进 src-tauri/resources/agents/
-# 由 tauri bundle.resources 打进安装包；scripts/package-exe.ps1 复制到 release/agents/。
+# 安装包不再内置这些二进制。scripts/package-installer.ps1 与 package-exe.ps1
+# 把产物放到 release/agents/（离线），客户端也可按 manifest 从 GitHub Release 在线下载。
 #
 # 完整性清单（设计 §4.2/§8.3）：构建结束后对本轮产物逐一计算 sha256 与大小，
 # 写入 src-tauri/target/agent/manifest.json。客户端部署前先 SFTP 拉取 manifest，
@@ -27,7 +27,9 @@
 param(
     [string]$Targets = "x86_64,aarch64",
     # 显式指定 musl 链接器（默认：PATH 有 cc 则交给 cargo，否则自动用 rust-lld）
-    [string]$MuslLinker = ""
+    [string]$MuslLinker = "",
+    # Windows 上默认再编一份本机 serve 用的 exe。macOS/Linux 的 pwsh 不要编 MSVC。
+    [switch]$SkipWindows
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,6 +104,26 @@ try {
         $artifacts["qingcode-agent-$arch"] = [ordered]@{
             sha256 = $hash
             size   = (Get-Item $dest).Length
+        }
+    }
+
+    if (-not $SkipWindows -and $env:OS -eq "Windows_NT") {
+        Write-Host "== cargo build -p qingcode-agent --release (windows serve)"
+        cargo build -p qingcode-agent --release
+        if ($LASTEXITCODE -ne 0) { throw "构建 Windows agent 失败" }
+        $winBin = Join-Path $cargoTargetDir "release\qingcode-agent.exe"
+        if (-not (Test-Path $winBin)) { throw "未找到 Windows 产物：$winBin" }
+        $hostLine = (& rustc -vV) | Where-Object { $_ -like "host:*" }
+        $hostTriple = if ($hostLine) { $hostLine.Substring(5).Trim() } else { "" }
+        $winArch = if ($hostTriple -like "aarch64*") { "aarch64" } else { "x86_64" }
+        $winName = "qingcode-agent-windows-$winArch.exe"
+        $winDest = Join-Path $outDir $winName
+        Copy-Item -Force $winBin $winDest
+        Write-Host "== 已复制：$winDest ($([math]::Round((Get-Item $winDest).Length / 1MB, 1)) MB)"
+        $winHash = (Get-FileHash -Algorithm SHA256 $winDest).Hash.ToLowerInvariant()
+        $artifacts[$winName] = [ordered]@{
+            sha256 = $winHash
+            size   = (Get-Item $winDest).Length
         }
     }
 

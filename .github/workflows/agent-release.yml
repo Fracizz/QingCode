@@ -63,8 +63,32 @@ jobs:
           path: dist/qingcode-agent-${{ matrix.arch }}
           if-no-files-found: error
 
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Windows serve binary
+        shell: pwsh
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml -p qingcode-agent --release
+          if ($LASTEXITCODE -ne 0) { throw "windows agent build failed: $LASTEXITCODE" }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item src-tauri/target/release/qingcode-agent.exe dist/qingcode-agent-windows-x86_64.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qingcode-agent-windows-x86_64
+          path: dist/qingcode-agent-windows-x86_64.exe
+          if-no-files-found: error
+
   publish:
-    needs: build
+    needs: [build, build-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -100,7 +124,7 @@ jobs:
             echo "  \"version\": \"$VERSION\","
             echo '  "artifacts": {'
             first=1
-            for f in qingcode-agent-x86_64 qingcode-agent-aarch64; do
+            for f in qingcode-agent-x86_64 qingcode-agent-aarch64 qingcode-agent-windows-x86_64.exe; do
               [ -f "$f" ] || continue
               SHA="$(sha256sum "$f" | cut -d' ' -f1)"
               SIZE="$(stat -c%s "$f")"
@@ -124,10 +148,10 @@ jobs:
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-              qingcode-agent-x86_64 qingcode-agent-aarch64 manifest.json
+              qingcode-agent-x86_64 qingcode-agent-aarch64 qingcode-agent-windows-x86_64.exe manifest.json
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
               --title "qingcode-agent ${TAG#agent-v}" \
-              --notes "qingcode-agent 远端代理独立发布。资产与 manifest.json（含 sha256）配合客户端 \`ssh.agent.autoDownload\` 使用。" \
-              qingcode-agent-x86_64 qingcode-agent-aarch64 manifest.json
+              --notes "qingcode-agent 远端代理独立发布。资产与 manifest.json（含 sha256）配合客户端 ssh.agent.autoDownload 使用。安装包不附带这些文件。" \
+              qingcode-agent-x86_64 qingcode-agent-aarch64 qingcode-agent-windows-x86_64.exe manifest.json
           fi

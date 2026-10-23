@@ -120,8 +120,7 @@ try {
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
-  # SSH 远端 agent：便携版没有安装目录，运行时按「exe 同目录/agents」查找，
-  # 所以打包后要与 exe 并排放在 release/agents/ 一起分发。
+  # 便携版 exe 本体不含代理。离线包在 release/agents/，使用时放到 exe 同目录。
   Write-Step 'SSH agent binaries'
   Invoke-AgentBinaryBuild -ProjectRoot $projectRoot -SkipAgent:$SkipAgent
 

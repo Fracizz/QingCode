@@ -523,7 +523,6 @@ async fn agent_search_file_contents(
     // agent 只搜索自己启动时的根：搜索根不是注册根（如子目录）时不走 agent，
     // 避免把整个工作区的匹配误报给前端。
     if !registered.trusted
-        || windows_native_path(&registered.canonical_path).is_some()
         || !manager.agent_enabled()
         || canonical_root.trim_end_matches('/') != registered.canonical_path.trim_end_matches('/')
     {

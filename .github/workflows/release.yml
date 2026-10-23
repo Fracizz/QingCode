@@ -167,6 +167,7 @@ jobs:
           # One file per platform/channel — no unversioned / legacy aliases.
           Copy-Item "release/QingCode_$ver.exe" "dist-release/QingCode_$ver-windows-x64.exe"
           Copy-Item "release/QingCode_$ver-setup.exe" "dist-release/QingCode_$ver-windows-x64-setup.exe"
+          Copy-Item "release/QingCode-agents.zip" "dist-release/QingCode_$ver-agents.zip"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -269,28 +270,10 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build SSH agent binaries and stage into bundle resources
-        shell: pwsh
-        run: |
-          ./scripts/build-agent.ps1
-          if ($LASTEXITCODE -ne 0) { throw "build-agent.ps1 failed with exit code $LASTEXITCODE" }
-          New-Item -ItemType Directory -Force -Path src-tauri/resources/agents | Out-Null
-          Copy-Item src-tauri/target/agent/qingcode-agent-* src-tauri/resources/agents/ -Force
-          Get-ChildItem src-tauri/resources/agents | Format-Table Name, Length
-
       - name: Build macOS arm64 (dmg + app zip)
         run: |
           chmod +x ./scripts/package-macos.sh
           ./scripts/package-macos.sh --force
-
-      - name: Verify agent binaries are inside the app bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-          APPDIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/QingCode.app"
-          test -f "$APPDIR/Contents/Resources/agents/qingcode-agent-x86_64"
-          test -f "$APPDIR/Contents/Resources/agents/qingcode-agent-aarch64"
-          ls -l "$APPDIR/Contents/Resources/agents"
 
       - name: Stage artifacts
         shell: bash

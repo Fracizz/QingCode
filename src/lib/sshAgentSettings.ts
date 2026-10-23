@@ -18,7 +18,8 @@ export const SSH_AGENT_ENABLED_KEY = 'ssh.agent.enabled'
 
 /**
  * ssh.agent.autoDownload：本机缺失 agent 二进制时是否自动从 GitHub Release
- * （agent-v<版本> 标签）下载并做 sha256 校验。默认关闭，由用户显式开启。
+ * （agent-v<版本> 标签）下载并做 sha256 校验。安装包不附带二进制，未设置时默认开启。
+ * 离线使用时把 agents 目录放在 QingCode.exe 旁边，查找顺序在下载之前。
  */
 export const SSH_AGENT_AUTO_DOWNLOAD_KEY = 'ssh.agent.autoDownload'
 
@@ -27,6 +28,7 @@ export function parseSshAgentEnabled(value: unknown): boolean {
 }
 
 export function parseSshAgentAutoDownload(value: unknown): boolean {
+  if (value == null) return true
   return value === true
 }
 

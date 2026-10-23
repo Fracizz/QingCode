@@ -27,12 +27,13 @@ describe('sshAgentSettings', () => {
     ).toBe(false)
   })
 
-  it('autoDownload defaults off and only accepts explicit true', () => {
-    expect(parseSshAgentAutoDownload(undefined)).toBe(false)
+  it('autoDownload defaults on and only accepts explicit true', () => {
+    expect(parseSshAgentAutoDownload(undefined)).toBe(true)
+    expect(parseSshAgentAutoDownload(null)).toBe(true)
     expect(parseSshAgentAutoDownload(false)).toBe(false)
     expect(parseSshAgentAutoDownload('true')).toBe(false)
     expect(parseSshAgentAutoDownload(true)).toBe(true)
-    expect(readSshAgentAutoDownload(DEFAULT_GLOBAL_SETTINGS)).toBe(false)
+    expect(readSshAgentAutoDownload(DEFAULT_GLOBAL_SETTINGS)).toBe(true)
     expect(
       readSshAgentAutoDownload({
         ...DEFAULT_GLOBAL_SETTINGS,

@@ -1065,6 +1065,38 @@ impl SshManager {
             .await
     }
 
+    /// Unix 走 shell 命令；Windows OpenSSH 把脚本放进 `powershell.exe -EncodedCommand`，
+    /// 避免默认 shell 是 cmd 还是 Git Bash 时转义不一致。只给代理部署这种固定脚本用。
+    pub(crate) async fn exec_remote_shell(
+        &self,
+        uri: &str,
+        unix_command: &str,
+        windows_script: &str,
+        require_trust: bool,
+        timeout: Duration,
+    ) -> Result<RemoteExecResult, String> {
+        let parsed = parse_remote_uri(uri)?;
+        if windows_native_path(&parsed.path).is_some() {
+            if let Some(command) = windows_powershell_inline_command(windows_script) {
+                return self
+                    .exec_command(uri, &command, None, require_trust, timeout)
+                    .await;
+            }
+            let input = encode_terminal_data(windows_script.as_bytes());
+            return self
+                .exec_command(
+                    uri,
+                    &windows_powershell_stdin_command(),
+                    Some(input.as_bytes()),
+                    require_trust,
+                    timeout,
+                )
+                .await;
+        }
+        self.exec_command(uri, unix_command, None, require_trust, timeout)
+            .await
+    }
+
     async fn exec_uri_with_input(
         &self,
         uri: &str,
@@ -1966,9 +1998,10 @@ pub async fn ssh_connect(
     if let Ok(root) = manager.registered_root(&root_uri) {
         agent_status::publish_root_state(&app, &manager, &root);
     }
-    // 已信任的非 Windows 远端：启动 watch 监督任务（agent 提供远端事件源）。
+    // 已信任的远端：启动 watch 监督任务（agent 提供远端事件源）。
+    // Windows OpenSSH 只跑 serve；Linux 优先 daemon，失败再回退 serve。
     // 重复连接同一根时先终止旧任务，避免出现两条并发的 watch 连接。
-    if trusted && windows_native_path(&canonical_root).is_none() && manager.agent_enabled() {
+    if trusted && manager.agent_enabled() {
         let key = agent::agent_slot_key(&config.id, &canonical_root);
         let handle = agent::spawn_agent_watch_supervisor(
             app.clone(),
@@ -2204,7 +2237,7 @@ async fn agent_scan_entries(
     root: &RegisteredRoot,
     canonical: &str,
 ) -> Option<Vec<(String, bool)>> {
-    if !manager.agent_enabled() || windows_native_path(&root.canonical_path).is_some() {
+    if !manager.agent_enabled() {
         return None;
     }
     let key = agent::agent_slot_key(connection_id, &root.canonical_path);

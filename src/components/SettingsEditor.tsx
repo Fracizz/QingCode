@@ -1158,7 +1158,7 @@ export default function SettingsEditor() {
                 <SettingItem
                   title={t('SSH › 代理: 缺失时自动下载')}
                   description={t(
-                    '本机没有随包携带远端代理二进制（如便携版）时，自动从 GitHub Release 下载并做 sha256 校验。需要能访问 GitHub；内网/离线主机请手动放置二进制。默认关闭。',
+                    '安装包不附带远端代理。缺失时从 GitHub Release 在线下载并做 sha256 校验。离线请把 agents 目录放在 QingCode.exe 旁边。默认开启。',
                   )}
                   modified={sshAgentAutoDownload !== parseSshAgentAutoDownload(DEFAULT_GLOBAL_SETTINGS['ssh.agent.autoDownload'])}
                 >

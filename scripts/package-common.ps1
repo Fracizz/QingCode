@@ -152,8 +152,9 @@ function Invoke-ForceQingcodeEmbedRebuild {
 # 运行时查找顺序（src-tauri/src/lib.rs 的 configure_ssh_agent_binary_dirs）：
 #   QINGCODE_AGENT_DIR → exe 目录/agents → exe 上级/agent → resource_dir/agents
 # 因此：
-#   - 安装版（NSIS / msi / dmg）：二进制进 bundle resources，落到 resource_dir/agents。
-#   - 便携版 exe：二进制复制到 exe 同目录 agents/。
+#   - 安装包和便携版 exe 都不把二进制打进程序本体。
+#   - 离线：release/agents/ 与 QingCode-agents.zip，放到 QingCode.exe 同目录的 agents/。
+#   - 在线：ssh.agent.autoDownload 按 manifest sha256 从 GitHub Release 下载到缓存目录。
 # 二进制由 scripts/build-agent.ps1 交叉编译（Linux musl 静态），产物在
 # src-tauri/target/agent/。
 #
@@ -241,6 +242,25 @@ function Publish-AgentBinariesToResourceDir {
   Clear-AgentResourceDir -ProjectRoot $ProjectRoot
   $destination = Resolve-AgentStagingDir -ProjectRoot $ProjectRoot
   return (Copy-AgentBinariesToDirectory -ProjectRoot $ProjectRoot -Destination $destination)
+}
+
+function Publish-AgentOfflinePack {
+  param([Parameter(Mandatory = $true)][string]$ProjectRoot)
+
+  $release = Join-Path $ProjectRoot 'release'
+  $destination = Join-Path $release 'agents'
+  Copy-AgentBinariesToDirectory -ProjectRoot $ProjectRoot -Destination $destination | Out-Null
+  $manifest = Join-Path (Resolve-AgentOutputDir -ProjectRoot $ProjectRoot) 'manifest.json'
+  if (Test-Path -LiteralPath $manifest) {
+    Copy-Item -LiteralPath $manifest -Destination (Join-Path $destination 'manifest.json') -Force
+  }
+  if (-not (Test-Path -LiteralPath $release)) {
+    New-Item -ItemType Directory -Force -Path $release | Out-Null
+  }
+  $zip = Join-Path $release 'QingCode-agents.zip'
+  if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
+  Compress-Archive -Path (Join-Path $destination '*') -DestinationPath $zip -Force
+  Write-Host "  offline agent pack: $zip" -ForegroundColor DarkGray
 }
 
 function Clear-AgentResourceDir {

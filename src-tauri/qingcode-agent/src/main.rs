@@ -37,7 +37,20 @@ fn is_pid_alive(pid: u32) -> bool {
     {
         pid > 0 && Path::new("/proc").join(pid.to_string()).exists()
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        if pid == 0 {
+            return false;
+        }
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .ok()
+            .is_some_and(|output| {
+                String::from_utf8_lossy(&output.stdout).contains(&pid.to_string())
+            })
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
         false

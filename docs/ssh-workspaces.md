@@ -49,7 +49,7 @@ Linux / POSIX SSH 项目（已信任、设置 `ssh.agent.enabled` 默认开启�
   - 远端保存文件也会触发一次 `fs-change`（尚未做本地那样的自写抑制），表现为多一次目录树刷新与 Git 刷新。
   - 单行超过 2MB 的内容搜索命中会截断并停止（与未部署代理时的 rg 路径一致）。
   - 远端代理不做自启动注册，注销/重启远端主机后需重新连接项目才会重新部署。
-  - **发行渠道**：NSIS 安装版把两个架构的代理二进制打进 `agents/`（安装目录与资源目录都能命中）；便携版是单文件 exe，渠道本身不附带二进制——可开启 `ssh.agent.autoDownload`（默认关）让客户端从 GitHub Release 独立发布的 `agent-v<版本>` 标签下载（`manifest.json` 含 sha256，下载后先校验再使用；需要能访问 GitHub，可用 `QINGCODE_AGENT_DOWNLOAD_BASE` 指向内网镜像），或手动把 `agents/qingcode-agent-<arch>` 放到 exe 同目录，否则自动回退直连。
+  - **发行渠道**：安装包和便携版 exe 都不内置代理二进制。在线：`ssh.agent.autoDownload`（默认开）从 GitHub Release 的 `agent-v<版本>` 标签下载，`manifest.json` 含 sha256，校验通过才使用；需要能访问 GitHub，可用 `QINGCODE_AGENT_DOWNLOAD_BASE` 指向内网镜像。离线：把 `release/QingCode-agents.zip` 里的 `agents/` 放到 `QingCode.exe` 同目录，或设置 `QINGCODE_AGENT_DIR`。本地文件优先于下载。清单里有 Linux `qingcode-agent-x86_64` / `aarch64`，以及 Windows `qingcode-agent-windows-x86_64.exe`。
 
 搜索结果会标明是否被截断；远程文件名搜索在匹配后限制结果数量，内容搜索先限制待扫描文件集合，再流式接收匹配结果。文件名搜索和内容搜索分别取消，切换查询会停止旧的后台搜索；单次远程搜索整体最长 45 秒。内容搜索的单文件匹配上限、8MB 文件清单、16MB 输出预算或单条 2MB 的输出记录上限同样会触发截断提示。搜索根目录在执行前通过 SFTP 解析真实路径，不允许从项目内的符号链接目录搜索到项目外。
 
@@ -63,7 +63,7 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 
 - 本地和 SSH 工作区均提供文件与文本导航，不提供语义定义跳转、引用查找或工作区符号搜索。
 - 内容搜索要求远端安装 `ripgrep`（`rg`），Git 功能要求远端安装 `git`；部署远端代理后内容搜索不再依赖远端 `rg`。
-- Linux / POSIX 远端支持远程命令、Git、搜索、格式化和运行任务。Windows OpenSSH 支持 SFTP 文件操作、交互式 PowerShell / CMD 终端和 Git（要求远端 `git.exe` 在 PATH 中，经 `powershell.exe` 直接启动 git，不依赖远端默认 shell 是 cmd 还是 PowerShell）；搜索、格式化以及 PowerShell / BAT 运行任务暂不可用。
+- Linux / POSIX 远端支持远程命令、Git、搜索、格式化和运行任务。Windows OpenSSH 支持 SFTP 文件操作、交互式 PowerShell / CMD 终端和 Git（要求远端 `git.exe` 在 PATH 中，经 `powershell.exe` 直接启动 git，不依赖远端默认 shell 是 cmd 还是 PowerShell）。部署 Windows 版 serve 代理后，目录扫描、内容搜索和文件树刷新可用。文件名搜索、格式化、PowerShell / BAT 运行任务和 daemon 仍不可用。
 - 连接每 15 秒保活一次，连续约 75 秒没有任何回包才判定断开，不使用空闲超时。打开通道 15 秒无响应时先发一次 ping（15 秒），只有 ping 也失败才按断线处理，连接只是慢时不会被拆掉。每个远程终端（含运行任务）各用一条独立的 SSH 连接，主连接只承载 SFTP 和远程命令：sshd 每条连接的会话数有上限（`MaxSessions`，默认 10），多个项目共用同一连接配置时终端不会把它占满；主连接重连也不会断开终端，一个终端的连接断了只影响它自己。终端连接同时最多 6 个在握手（避开 `MaxStartups` 默认的 10），握手失败时提示检查该项，终端结束、关闭或被同 id 替换时断开对应连接。主连接共用一个 SFTP 会话，请求发出后 45 秒没有任何回包即视为僵死，下次操作换新会话；远程命令同时最多 6 个（超出排队），普通命令（status / diff / show 等）超过 2 分钟、fetch / pull / push 超过 15 分钟会被中止并释放名额。传输已断开（按 russh 错误类型判断）或打开通道被拒绝（`ConnectFailed`）时重连一次：新连接认证成功前旧连接保留在表里，并发请求排队复用同一次重连；重连失败不会丢掉已保存的连接配置，3 秒内的并发请求直接复用这次失败。
 - SSH 终端区分远端正常退出与连接断开。断开后交互式终端按 1/2/5/10/20 秒退避自动重开（随之重连），成功后提示断线前的远端进程已结束；全部失败则停在已退出并提示，可从终端标签重启。运行配置等一次性任务断线后直接停下，不自动重跑。纯 SSH 无法在断线后保住远端进程，需要时请在远端自行使用 tmux / screen。家目录先用登录目录，否则再试 `/home/<用户>`、`/C:/Users/<用户>`、`/root` 和 `/`。
 - WSL 直连工作区尚未接入；可先通过 WSL 内的 SSH 服务使用同一 SSH 工作区能力。
@@ -123,7 +123,7 @@ SFTP v3 服务端拒绝覆盖式重命名时，上传使用 Linux `mv -fT` 原�
 | 文件名搜索（模糊、后缀、大小写、扩展名、`search.exclude`） | 部分对齐 | 远程 `find` 固定剪掉 `.git` / `node_modules` / `target`，并丢弃 `useIgnoreFiles` / `followSymlinks` |
 | 文件名 glob | 仅本地 | 远程把 `*.tsx` 当普通子串 |
 | 内容搜索 | 部分对齐 | 两侧都是字面量（无正则开关）。远程固定 `rg --fixed-strings`，需要远端 `rg`；`followSymlinks` 被忽略 |
-| 工作区替换 | 部分对齐 | 预览来自内容搜索命中，再走已映射的读写。搜索本身在 Windows OpenSSH 上不可用 |
+| 工作区替换 | 部分对齐 | 预览来自内容搜索命中，再走已映射的读写。Windows OpenSSH 上内容搜索要等 serve 代理部署成功；文件名搜索仍不可用 |
 | 取消、45 秒超时、截断提示 | 已对齐 | 远程额外返回截断元数据 |
 
 ### Git / 源代码管理
@@ -201,7 +201,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 
 ### Windows OpenSSH
 
-路径形如 `ssh://<id>/D:/code/app`。可用：SFTP 文件操作、交互式 PowerShell / CMD 终端、Git、与本机之间的上传下载。不可用：远程命令、搜索、格式化、运行任务。这是平台限制，不是 Linux SSH 的对照表所能概括的。
+路径形如 `ssh://<id>/D:/code/app`。可用：SFTP 文件操作、交互式 PowerShell / CMD 终端、Git、与本机之间的上传下载。部署 Windows 版 `qingcode-agent`（serve）后，目录扫描、内容搜索和文件树刷新走代理；daemon、终端持久化和 `ps1`/`bat` 运行任务还没有。不可用：任意远程命令、文件名搜索、格式化、运行任务。这是平台限制，不是 Linux SSH 的对照表所能概括的。
 
 ### 补齐进展与后续建议
 
@@ -241,7 +241,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 | §4.1 发布 | `.github/workflows/agent-release.yml`：独立流水线（push `agent-v*` 标签或手动触发），ubuntu runner 双架构 musl + rust-lld，发布到 `agent-v<版本>` 标签 Release | `9c4081f` |
 | §4.1 下载 | `ssh.agent.autoDownload`（默认关）：缺失时从 Release 下载，流式算 sha256 对 manifest 后才落位缓存目录；`QINGCODE_AGENT_DOWNLOAD_BASE` 可指内网镜像 | `9c4081f` |
 | §7 子集 | 文件监视、内嵌内容搜索（无需远端 rg）、单往返目录扫描、gitignore/ignore 过滤 | `a214803` |
-| 打包 | NSIS 安装版内置 `agents/` 双架构二进制；`bump-version.ps1` 同步 agent 版本 | `a214803` |
+| 打包 | 安装包不内置代理。离线为 `release/QingCode-agents.zip`，在线为 `agent-v*` Release；`bump-version.ps1` 同步 agent 版本 | `a214803` |
 
 ### 未完成清单
 
