@@ -594,6 +594,10 @@ pub struct SshManager {
     agent_enabled: std::sync::atomic::AtomicBool,
     /// 本地 agent 二进制查找目录（安装目录、资源目录、环境变量指定等）。
     agent_binary_dirs: RwLock<Vec<PathBuf>>,
+    /// 本地没有二进制时的下载缓存目录（`ssh.agent.autoDownload` 开启时使用）。
+    agent_cache_dir: RwLock<Option<PathBuf>>,
+    /// 本地缺失二进制时是否自动从 GitHub Release 下载（默认关，用户显式开启）。
+    agent_auto_download: std::sync::atomic::AtomicBool,
     /// watch 监督任务句柄，key 同 agent slot；连接断开或重连时替换。
     watch_supervisors: Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
 }
@@ -612,6 +616,8 @@ impl SshManager {
             agent_gates: Mutex::new(HashMap::new()),
             agent_enabled: std::sync::atomic::AtomicBool::new(true),
             agent_binary_dirs: RwLock::new(Vec::new()),
+            agent_cache_dir: RwLock::new(None),
+            agent_auto_download: std::sync::atomic::AtomicBool::new(false),
             watch_supervisors: Mutex::new(HashMap::new()),
         }
     }
@@ -855,6 +861,23 @@ impl SshManager {
 
     pub(crate) fn agent_enabled(&self) -> bool {
         self.agent_enabled.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn set_agent_cache_dir(&self, dir: PathBuf) {
+        if let Ok(mut slot) = self.agent_cache_dir.write() {
+            *slot = Some(dir);
+        }
+    }
+
+    pub(crate) fn agent_cache_dir(&self) -> Option<PathBuf> {
+        self.agent_cache_dir
+            .read()
+            .ok()
+            .and_then(|slot| slot.clone())
+    }
+
+    pub(crate) fn agent_auto_download(&self) -> bool {
+        self.agent_auto_download.load(Ordering::SeqCst)
     }
 
     /// 设置本地 agent 二进制查找目录：去重且仅保留真实存在的目录。
@@ -1106,6 +1129,19 @@ pub fn ssh_set_workspace_trust(
 pub fn ssh_set_agent_enabled(enabled: bool, manager: State<'_, SshManager>) -> Result<(), String> {
     manager
         .agent_enabled
+        .store(enabled, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+/// `ssh.agent.autoDownload`：本地缺失 agent 二进制时是否自动从 GitHub Release
+/// 下载（sha256 校验）。默认关闭，由设置页显式开启。
+#[tauri::command]
+pub fn ssh_set_agent_auto_download(
+    enabled: bool,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    manager
+        .agent_auto_download
         .store(enabled, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }

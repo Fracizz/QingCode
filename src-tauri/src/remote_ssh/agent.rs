@@ -347,9 +347,149 @@ async fn locate_local_agent_binary(
             return Ok((arch, candidate));
         }
     }
+    // 随包未携带二进制（如便携版单文件 exe）：按设置从 GitHub Release 下载。
+    if manager.agent_auto_download() {
+        match download_agent_binary(manager, &binary_name).await {
+            Ok(path) => return Ok((arch, path)),
+            Err(error) => {
+                return Err(format!(
+                    "本地未找到 agent 二进制（{arch}），自动下载失败：{error}"
+                ))
+            }
+        }
+    }
     Err(format!(
         "本地未找到 QingCode agent 二进制（{arch}），已回退直连模式"
     ))
+}
+
+/// agent 二进制的 GitHub Release 下载基址（独立发布的 `agent-v<版本>` 系列标签）。
+/// 可用 `QINGCODE_AGENT_DOWNLOAD_BASE` 覆盖（镜像/内网源）。
+fn agent_download_base() -> String {
+    if let Ok(base) = std::env::var("QINGCODE_AGENT_DOWNLOAD_BASE") {
+        let base = base.trim_end_matches('/').to_string();
+        if !base.is_empty() {
+            return base;
+        }
+    }
+    "https://github.com/Fracizz/QingCode/releases/download".to_string()
+}
+
+fn agent_release_tag() -> String {
+    format!("agent-v{}", qingcode_agent::AGENT_VERSION)
+}
+
+/// 下载清单 URL 与二进制 URL（抽成纯函数便于单测）。
+fn agent_download_urls(base: &str, tag: &str, binary_name: &str) -> (String, String) {
+    (
+        format!("{base}/{tag}/manifest.json"),
+        format!("{base}/{tag}/{binary_name}"),
+    )
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct AgentManifestArtifact {
+    sha256: String,
+    /// 保留以便未来做下载进度/体积预算；当前仅 manifest 完整性用。
+    #[allow(dead_code)]
+    #[serde(default)]
+    size: u64,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct AgentManifest {
+    /// 与 AGENT_VERSION 对应的发布版本；诊断日志用，运行时不读。
+    #[allow(dead_code)]
+    #[serde(default)]
+    version: String,
+    #[serde(default)]
+    artifacts: std::collections::HashMap<String, AgentManifestArtifact>,
+}
+
+fn parse_agent_manifest(bytes: &[u8]) -> Result<AgentManifest, String> {
+    serde_json::from_slice(bytes).map_err(|e| format!("解析 agent manifest 失败：{e}"))
+}
+
+fn verify_agent_sha256(expected: &str, actual: &[u8; 32]) -> Result<(), String> {
+    let actual_hex: String = actual.iter().map(|b| format!("{b:02x}")).collect();
+    if actual_hex.eq_ignore_ascii_case(expected.trim()) {
+        Ok(())
+    } else {
+        Err(format!(
+            "agent 二进制 sha256 校验失败：期望 {expected}，实际 {actual_hex}"
+        ))
+    }
+}
+
+/// 从 GitHub Release 下载 agent 二进制到缓存目录（`ssh.agent.autoDownload`）。
+/// 流程：取 manifest.json → 下载二进制（边下边算 sha256）→ 校验一致 → 原子落位。
+/// 安全说明：清单与二进制来自同一 GitHub Release（HTTPS），校验保证传输完整性；
+/// 不做代码签名，信任源是本仓库的 Release，可用环境变量指向内网镜像。
+async fn download_agent_binary(manager: &SshManager, binary_name: &str) -> Result<PathBuf, String> {
+    let cache_dir = manager.agent_cache_dir().ok_or("下载缓存目录未配置")?;
+    let binary_name = binary_name.to_string();
+    let (manifest_url, binary_url) =
+        agent_download_urls(&agent_download_base(), &agent_release_tag(), &binary_name);
+    tokio::task::spawn_blocking(move || {
+        use sha2::Digest;
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(std::time::Duration::from_secs(15))
+            .timeout_read(std::time::Duration::from_secs(120))
+            .build();
+        let manifest_bytes = agent
+            .get(&manifest_url)
+            .call()
+            .map_err(|e| format!("获取 manifest 失败：{e}"))?
+            .into_string()
+            .map_err(|e| format!("读取 manifest 失败：{e}"))?;
+        let manifest = parse_agent_manifest(manifest_bytes.as_bytes())?;
+        let expected = manifest
+            .artifacts
+            .get(&binary_name)
+            .ok_or_else(|| format!("manifest 缺少 {binary_name} 条目"))?
+            .sha256
+            .clone();
+
+        let response = agent
+            .get(&binary_url)
+            .call()
+            .map_err(|e| format!("下载二进制失败：{e}"))?;
+        let mut hasher = sha2::Sha256::new();
+        let tmp_path = cache_dir.join(format!(".{binary_name}.download-{}", std::process::id()));
+        std::fs::create_dir_all(&cache_dir).map_err(|e| format!("创建缓存目录失败：{e}"))?;
+        {
+            let mut file =
+                std::fs::File::create(&tmp_path).map_err(|e| format!("创建临时文件失败：{e}"))?;
+            use std::io::Read;
+            use std::io::Write as _;
+            let mut reader = response.into_reader();
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                let n = reader
+                    .read(&mut buf)
+                    .map_err(|e| format!("下载中断：{e}"))?;
+                if n == 0 {
+                    break;
+                }
+                hasher.update(&buf[..n]);
+                file.write_all(&buf[..n])
+                    .map_err(|e| format!("写入临时文件失败：{e}"))?;
+            }
+            file.sync_all().ok();
+        }
+        let digest: [u8; 32] = hasher.finalize().into();
+        verify_agent_sha256(&expected, &digest)?;
+        let final_path = cache_dir.join(binary_name);
+        // Windows 上 rename 不能覆盖已存在文件；先清旧再落位。
+        let _ = std::fs::remove_file(&final_path);
+        std::fs::rename(&tmp_path, &final_path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp_path);
+            format!("落位下载产物失败：{e}")
+        })?;
+        Ok(final_path)
+    })
+    .await
+    .map_err(|e| format!("下载任务失败：{e}"))?
 }
 
 /// 在 agent 部署目录写一个忽略自身的 `.gitignore`：状态文件含连接 token，
@@ -1755,5 +1895,55 @@ mod tests {
         let decoded: HelloRequest = proto::decode_value(&proto::encode(&hello).unwrap()).unwrap();
         assert_eq!(decoded.client_id, "c1");
         assert_eq!(decoded.protocol_min, PROTOCOL_VERSION);
+    }
+
+    #[test]
+    fn agent_download_urls_follow_release_layout() {
+        let (manifest, binary) = agent_download_urls(
+            "https://github.com/Fracizz/QingCode/releases/download",
+            "agent-v0.1.13-beta.3",
+            "qingcode-agent-x86_64",
+        );
+        assert_eq!(
+            manifest,
+            "https://github.com/Fracizz/QingCode/releases/download/agent-v0.1.13-beta.3/manifest.json"
+        );
+        assert_eq!(
+            binary,
+            "https://github.com/Fracizz/QingCode/releases/download/agent-v0.1.13-beta.3/qingcode-agent-x86_64"
+        );
+    }
+
+    #[test]
+    fn agent_download_base_follows_env_or_default() {
+        // 不改环境变量（并行测试共享进程环境）：无论外部是否设置，
+        // 函数返回值都应与「环境变量优先、默认 GitHub」的语义一致。
+        let expected = std::env::var("QINGCODE_AGENT_DOWNLOAD_BASE")
+            .ok()
+            .map(|v| v.trim_end_matches('/').to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "https://github.com/Fracizz/QingCode/releases/download".to_string());
+        assert_eq!(agent_download_base(), expected);
+    }
+
+    #[test]
+    fn parse_agent_manifest_extracts_artifact_sha256() {
+        let manifest = parse_agent_manifest(
+            br#"{"version":"0.1.13-beta.3","artifacts":{"qingcode-agent-x86_64":{"sha256":"abc123","size":10}}}"#,
+        )
+        .unwrap();
+        assert_eq!(manifest.version, "0.1.13-beta.3");
+        assert_eq!(manifest.artifacts["qingcode-agent-x86_64"].sha256, "abc123");
+        assert!(parse_agent_manifest(b"not json").is_err());
+    }
+
+    #[test]
+    fn verify_agent_sha256_matches_case_insensitively_and_rejects_wrong() {
+        use sha2::Digest;
+        let digest: [u8; 32] = sha2::Sha256::digest(b"hello").into();
+        let hex: String = digest.iter().map(|b| format!("{b:02X}")).collect();
+        assert!(verify_agent_sha256(&hex.to_lowercase(), &digest).is_ok());
+        assert!(verify_agent_sha256(&hex, &digest).is_ok());
+        assert!(verify_agent_sha256(&"0".repeat(64), &digest).is_err());
     }
 }

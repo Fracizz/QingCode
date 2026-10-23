@@ -1,0 +1,133 @@
+name: Agent Release
+
+# qingcode-agent 的独立构建与发布：与主程序 Release 分开走，
+# 标签独立命名（agent-v<qingcode-agent 版本>），资产供客户端
+# `ssh.agent.autoDownload` 在本机缺失二进制时下载（manifest.json 带 sha256）。
+
+on:
+  push:
+    tags:
+      - 'agent-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing agent-v* tag to (re)build. Leave empty to use qingcode-agent/Cargo.toml version and create/update the release.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: agent-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            arch: x86_64
+          - target: aarch64-unknown-linux-musl
+            arch: aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add ${{ matrix.target }}
+          # musl 目标自带 self-contained crt1.o/libc.a，链接器用工具链自带的
+          # rust-lld 即可，无需 musl-gcc（与本机 scripts/build-agent.ps1 的兜底一致）。
+          LLD="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld"
+          echo "CARGO_TARGET_${{ matrix.target }}_LINKER=$LLD" >> "$GITHUB_ENV"
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --manifest-path src-tauri/Cargo.toml \
+            -p qingcode-agent --release --target ${{ matrix.target }}
+          mkdir -p dist
+          cp "src-tauri/target/${{ matrix.target }}/release/qingcode-agent" \
+             "dist/qingcode-agent-${{ matrix.arch }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qingcode-agent-${{ matrix.arch }}
+          path: dist/qingcode-agent-${{ matrix.arch }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version and tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -m1 '^version' src-tauri/qingcode-agent/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="agent-v$VERSION"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate manifest
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          {
+            echo '{'
+            echo "  \"version\": \"$VERSION\","
+            echo '  "artifacts": {'
+            first=1
+            for f in qingcode-agent-x86_64 qingcode-agent-aarch64; do
+              [ -f "$f" ] || continue
+              SHA="$(sha256sum "$f" | cut -d' ' -f1)"
+              SIZE="$(stat -c%s "$f")"
+              [ $first -eq 0 ] && echo ','
+              first=0
+              printf '    "%s": {"sha256": "%s", "size": %s}' "$f" "$SHA" "$SIZE"
+            done
+            echo
+            echo '  }'
+            echo '}'
+          } > manifest.json
+          cat manifest.json
+
+      - name: Create or update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
+        shell: bash
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+              qingcode-agent-x86_64 qingcode-agent-aarch64 manifest.json
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "qingcode-agent ${TAG#agent-v}" \
+              --notes "qingcode-agent 远端代理独立发布。资产与 manifest.json（含 sha256）配合客户端 \`ssh.agent.autoDownload\` 使用。" \
+              qingcode-agent-x86_64 qingcode-agent-aarch64 manifest.json
+          fi

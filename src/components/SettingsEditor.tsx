@@ -89,8 +89,12 @@ import {
 import { confirmClearSshTerminalPasteUploads } from '../lib/sshTerminalPaste'
 import {
   getSshAgentEnabled,
+  getSshAgentAutoDownload,
   loadScopedSshAgentEnabled,
+  loadScopedSshAgentAutoDownload,
+  parseSshAgentAutoDownload,
   saveScopedSshAgentEnabled,
+  saveScopedSshAgentAutoDownload,
 } from '../lib/sshAgentSettings'
 import { isSshProject } from '../lib/sshWorkspace'
 import {
@@ -200,6 +204,7 @@ export default function SettingsEditor() {
   const [minimapEnabled, setMinimapEnabled] = useState(getMinimapEnabled)
   const [sshUploadOnPaste, setSshUploadOnPaste] = useState(getTerminalSshUploadOnPaste)
   const [sshAgentEnabled, setSshAgentEnabled] = useState(getSshAgentEnabled)
+  const [sshAgentAutoDownload, setSshAgentAutoDownload] = useState(getSshAgentAutoDownload)
   const [pasteCleanupBusy, setPasteCleanupBusy] = useState(false)
   const [editorGuidesEnabled, setEditorGuidesEnabled] = useState(
     DEFAULT_GLOBAL_SETTINGS['editor.guides.enabled'] !== false,
@@ -323,6 +328,9 @@ export default function SettingsEditor() {
       setSshUploadOnPaste,
     )
     void loadScopedSshAgentEnabled(settingsScope, currentProject).then(setSshAgentEnabled)
+    void loadScopedSshAgentAutoDownload(settingsScope, currentProject).then(
+      setSshAgentAutoDownload,
+    )
   }, [scope, currentProject, settingsRevision])
 
   const workspaceLocked = scope === 'workspace'
@@ -438,6 +446,17 @@ export default function SettingsEditor() {
     setSshAgentEnabled(enabled)
     try {
       await saveScopedSshAgentEnabled(settingsScope, enabled, currentProject)
+    } catch (error) {
+      pushToast('error', t('保存 SSH 代理设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const updateSshAgentAutoDownload = async (enabled: boolean) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !currentProject) return
+    setSshAgentAutoDownload(enabled)
+    try {
+      await saveScopedSshAgentAutoDownload(settingsScope, enabled, currentProject)
     } catch (error) {
       pushToast('error', t('保存 SSH 代理设置失败: {error}', { error: String(error) }))
     }
@@ -1131,6 +1150,23 @@ export default function SettingsEditor() {
                     onChange={e => void updateSshAgentEnabled(e.target.value === 'on')}
                     className="setting-control setting-select"
                     aria-label={t('SSH › 代理: 远端代理')}
+                  >
+                    <option value="on">{t('开启')}</option>
+                    <option value="off">{t('关闭')}</option>
+                  </select>
+                </SettingItem>
+                <SettingItem
+                  title={t('SSH › 代理: 缺失时自动下载')}
+                  description={t(
+                    '本机没有随包携带远端代理二进制（如便携版）时，自动从 GitHub Release 下载并做 sha256 校验。需要能访问 GitHub；内网/离线主机请手动放置二进制。默认关闭。',
+                  )}
+                  modified={sshAgentAutoDownload !== parseSshAgentAutoDownload(DEFAULT_GLOBAL_SETTINGS['ssh.agent.autoDownload'])}
+                >
+                  <select
+                    value={sshAgentAutoDownload ? 'on' : 'off'}
+                    onChange={e => void updateSshAgentAutoDownload(e.target.value === 'on')}
+                    className="setting-control setting-select"
+                    aria-label={t('SSH › 代理: 缺失时自动下载')}
                   >
                     <option value="on">{t('开启')}</option>
                     <option value="off">{t('关闭')}</option>

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  parseSshAgentAutoDownload,
   parseSshAgentEnabled,
+  readSshAgentAutoDownload,
   readSshAgentEnabled,
+  SSH_AGENT_AUTO_DOWNLOAD_KEY,
   SSH_AGENT_ENABLED_KEY,
 } from '@/lib/sshAgentSettings'
 import { DEFAULT_GLOBAL_SETTINGS } from '@/lib/projectSettings'
@@ -22,5 +25,19 @@ describe('sshAgentSettings', () => {
         [SSH_AGENT_ENABLED_KEY]: false,
       }),
     ).toBe(false)
+  })
+
+  it('autoDownload defaults off and only accepts explicit true', () => {
+    expect(parseSshAgentAutoDownload(undefined)).toBe(false)
+    expect(parseSshAgentAutoDownload(false)).toBe(false)
+    expect(parseSshAgentAutoDownload('true')).toBe(false)
+    expect(parseSshAgentAutoDownload(true)).toBe(true)
+    expect(readSshAgentAutoDownload(DEFAULT_GLOBAL_SETTINGS)).toBe(false)
+    expect(
+      readSshAgentAutoDownload({
+        ...DEFAULT_GLOBAL_SETTINGS,
+        [SSH_AGENT_AUTO_DOWNLOAD_KEY]: true,
+      }),
+    ).toBe(true)
   })
 })

@@ -54,6 +54,8 @@ notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
 # Sync HTTP for release checks only (avoid pulling reqwest/tokio net).
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+# sha256 for verifying downloaded remote-agent binaries (see remote_ssh/agent.rs).
+sha2 = "0.10"
 # OS file clipboard (CF_HDROP / NSPasteboard file URLs). No image feature.
 arboard = { version = "3.6", default-features = false }
 russh = { version = "0.63.1", default-features = false, features = ["ring", "rsa"] }

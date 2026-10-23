@@ -635,6 +635,15 @@ fn configure_ssh_agent_binary_dirs(app: &tauri::AppHandle) {
     if let Ok(resource_dir) = app.path().resource_dir() {
         dirs.push(resource_dir.join("agents"));
     }
+    // 下载缓存目录：便携版等未随包携带二进制时，`ssh.agent.autoDownload`
+    // 开启后从 GitHub Release 下载到这里（优先级最低，不遮蔽随包产物）。
+    if let Ok(cache_dir) = app.path().app_cache_dir() {
+        let dir = cache_dir.join("agents");
+        let _ = std::fs::create_dir_all(&dir);
+        app.state::<remote_ssh::SshManager>()
+            .set_agent_cache_dir(dir.clone());
+        dirs.push(dir);
+    }
     app.state::<remote_ssh::SshManager>()
         .set_agent_binary_dirs(dirs);
 }
@@ -815,6 +824,7 @@ pub fn run() {
             remote_ssh::ssh_workspace_status,
             remote_ssh::ssh_set_workspace_trust,
             remote_ssh::ssh_set_agent_enabled,
+            remote_ssh::ssh_set_agent_auto_download,
             remote_ssh::ssh_validate_directory,
             remote_ssh::ssh_scan_directory,
             remote_ssh::ssh_file_stat,
