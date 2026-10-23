@@ -252,7 +252,7 @@ SSH 添加流程使用 `SshProjectDialog`：填写连接信息 → 首次连接�
 
 文件：`src/components/SourceControlPanel.tsx`、`src/components/ScmInlineDiff.tsx`
 
-- 活动栏进入「源代码管理」后，**主编辑区整页**显示 SCM 工作台（参考 UGit 的变更/历史分区）；不再占用左侧窄侧栏。再点一次 SCM 图标回到资源管理器。
+- 活动栏进入「源代码管理」后，**主编辑区整页**显示 SCM 工作台（参考 UGit 的变更/历史分区）；不再占用左侧窄侧栏。再点一次 SCM 图标回到资源管理器。侧边终端布局下若编辑器列原本隐藏，进入整页视图（SCM / 设置）时临时显示且不持久化，离开时恢复进入前的编辑器列与侧栏展开状态（整页期间手动切换过编辑器列则以手动结果为准）。
 - 顶栏：分支下拉、检查更新、拉取、推送、**GIT 地址**分段（点击复制；多远程时下拉可选）。页签：**变更** | **历史**。
 - **变更**：左栏为变更/待提交列表与提交区；右栏内嵌 Diff（`git_file_contents` + DiffEditor）。单击查看差异；双击或右键「打开更改」可在编辑器标签中打开并切回资源管理器。左栏宽度可拖拽（`PanelResizer`，持久化 `qingcode:scm-layout`）。
 - SCM 内部分栏拖动时由 `requestAnimationFrame` 合并指针事件并直接更新分栏 DOM 宽度；松手后才提交 React 状态与 `localStorage`。禁止在每次 `pointermove` 中同步读布局、重渲染整个 SCM 或持久化。

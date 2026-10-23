@@ -21,6 +21,9 @@ beforeEach(() => {
     sideQuadTerminal: false,
     sideEditorVisible: true,
     terminalOpenSignal: 0,
+    view: 'explorer',
+    sidebarOpen: true,
+    fullPageRestore: null,
   })
 })
 
@@ -165,5 +168,58 @@ describe('side workspace columns', () => {
     useUIStore.getState().expandSideEditor()
     expect(useUIStore.getState().sideEditorVisible).toBe(true)
     expect(useUIStore.getState().sideQuadTerminal).toBe(true)
+  })
+})
+
+describe('full-page views (source control / settings)', () => {
+  beforeEach(() => {
+    useUIStore.setState({
+      panelLayout: 'sideTerminal',
+      sideDualTerminal: true,
+      sideEditorVisible: false,
+    })
+  })
+
+  it('shows the editor column temporarily without persisting it', () => {
+    useUIStore.getState().toggleActivityView('sourceControl')
+    expect(useUIStore.getState().view).toBe('sourceControl')
+    expect(useUIStore.getState().sideEditorVisible).toBe(true)
+    expect(memory.get(SIDE_WORKSPACE_KEY)).toBeUndefined()
+  })
+
+  it('restores the hidden editor column and collapsed sidebar on second click', () => {
+    useUIStore.setState({ sidebarOpen: false })
+    useUIStore.getState().toggleActivityView('sourceControl')
+    useUIStore.getState().toggleActivityView('sourceControl')
+    expect(useUIStore.getState()).toMatchObject({
+      view: 'explorer',
+      sidebarOpen: false,
+      sideEditorVisible: false,
+      fullPageRestore: null,
+    })
+  })
+
+  it('restores the editor column when switching to another activity view', () => {
+    useUIStore.getState().toggleActivityView('settings')
+    useUIStore.getState().toggleActivityView('sourceControl')
+    useUIStore.getState().toggleActivityView('search')
+    expect(useUIStore.getState().view).toBe('search')
+    expect(useUIStore.getState().sideEditorVisible).toBe(false)
+  })
+
+  it('keeps a manual editor toggle made while in the full-page view', () => {
+    useUIStore.getState().toggleActivityView('sourceControl')
+    useUIStore.getState().toggleSideEditorVisible()
+    useUIStore.getState().toggleSideEditorVisible()
+    useUIStore.getState().toggleActivityView('sourceControl')
+    expect(useUIStore.getState().sideEditorVisible).toBe(true)
+  })
+
+  it('does not persist the temporary editor column when toggling dual terminal', () => {
+    useUIStore.getState().toggleActivityView('sourceControl')
+    useUIStore.getState().toggleSideQuadTerminal()
+    expect(JSON.parse(memory.get(SIDE_WORKSPACE_KEY) ?? '{}')).toMatchObject({
+      editorVisible: false,
+    })
   })
 })

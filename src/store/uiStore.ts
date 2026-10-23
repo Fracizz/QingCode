@@ -58,6 +58,8 @@ interface UIState {
   projectManagerOpen: boolean
   /** Whether the named multi-project workspace manager modal is open. */
   workspaceManagerOpen: boolean
+  /** 进入整页视图（源代码管理/设置）前的布局快照，离开时恢复；null 表示不在整页视图。 */
+  fullPageRestore: FullPageRestore | null
   setView: (view: View) => void
   /** 切换项目时回到资源管理器视图，但保留侧栏的展开/收起状态。 */
   showExplorerViewKeepingSidebar: () => void
@@ -94,6 +96,52 @@ interface UIState {
   closeProjectManager: () => void
   openWorkspaceManager: () => void
   closeWorkspaceManager: () => void
+}
+
+interface FullPageRestore {
+  sidebarOpen: boolean
+  /** 进入前侧边终端布局的编辑器列是否可见；整页期间用户手动调整列后置为 null，不再恢复。 */
+  editorVisible: boolean | null
+}
+
+function isFullPageView(view: View) {
+  return view === 'sourceControl' || view === 'settings'
+}
+
+/** 进入整页视图：临时显示编辑器列（不持久化），并记录进入前的布局以便离开时恢复。 */
+function enterFullPage(state: UIState, view: View) {
+  const fullPageRestore = state.fullPageRestore ?? {
+    sidebarOpen: state.sidebarOpen,
+    editorVisible: state.sideEditorVisible,
+  }
+  return {
+    view,
+    sidebarOpen: true,
+    sideEditorVisible: true,
+    fullPageRestore,
+  }
+}
+
+/** 离开整页视图：恢复进入前的编辑器列可见性。 */
+function leaveFullPage(state: UIState) {
+  const restore = state.fullPageRestore
+  if (!restore) return {}
+  return {
+    fullPageRestore: null,
+    ...(restore.editorVisible === null ? {} : { sideEditorVisible: restore.editorVisible }),
+  }
+}
+
+/** 整页期间手动调整编辑器列后，离开时不再覆盖用户的新选择。 */
+function keepEditorAfterFullPage(state: UIState) {
+  return state.fullPageRestore
+    ? { fullPageRestore: { ...state.fullPageRestore, editorVisible: null } }
+    : {}
+}
+
+/** 需持久化的编辑器列可见性：整页期间临时显示的编辑器列不写入存储。 */
+function persistedEditorVisible(state: UIState) {
+  return state.fullPageRestore?.editorVisible ?? state.sideEditorVisible
 }
 
 function persistColumns(columns: SideWorkspaceColumns) {
@@ -141,37 +189,36 @@ export const useUIStore = create<UIState>((set) => ({
   settingsFocusSignal: 0,
   projectManagerOpen: false,
   workspaceManagerOpen: false,
+  fullPageRestore: null,
   setView: view =>
     set(state => {
-      const needsEditor = view === 'sourceControl' || view === 'settings'
-      if (!needsEditor || state.sideEditorVisible) {
-        return { view, sidebarOpen: true }
-      }
-      const columns = normalizeSideWorkspaceColumns({
-        ...columnsFromState(state),
-        editorVisible: true,
-      })
-      persistColumns(columns)
-      return { view, sidebarOpen: true, ...applyColumns(columns) }
+      if (isFullPageView(view)) return enterFullPage(state, view)
+      return { view, sidebarOpen: true, ...leaveFullPage(state) }
     }),
-  showExplorerViewKeepingSidebar: () => set({ view: 'explorer' }),
+  showExplorerViewKeepingSidebar: () =>
+    set(state => {
+      const restore = state.fullPageRestore
+      return {
+        view: 'explorer',
+        ...leaveFullPage(state),
+        ...(restore ? { sidebarOpen: restore.sidebarOpen } : {}),
+      }
+    }),
   toggleActivityView: view =>
     set(state => {
-      if (view === 'sourceControl' || view === 'settings') {
-        if (state.view === view) return { view: 'explorer', sidebarOpen: true }
-        const columns = normalizeSideWorkspaceColumns({
-          ...columnsFromState(state),
-          editorVisible: true,
-        })
-        if (!state.sideEditorVisible) persistColumns(columns)
+      if (isFullPageView(view)) {
+        if (state.view !== view) return enterFullPage(state, view)
+        // 再次点击整页视图图标：回到资源管理器，并恢复进入前的侧栏与编辑器列状态。
+        const restore = state.fullPageRestore
         return {
-          view,
-          sidebarOpen: true,
-          ...applyColumns(columns),
+          view: 'explorer',
+          ...leaveFullPage(state),
+          sidebarOpen: restore ? restore.sidebarOpen : true,
         }
       }
-      if (state.view === view && state.sidebarOpen) return { sidebarOpen: false }
-      return { view, sidebarOpen: true }
+      const leave = leaveFullPage(state)
+      if (state.view === view && state.sidebarOpen) return { sidebarOpen: false, ...leave }
+      return { view, sidebarOpen: true, ...leave }
     }),
   setActivityBarHidden: hidden => {
     saveActivityBarHidden(hidden)
@@ -185,6 +232,7 @@ export const useUIStore = create<UIState>((set) => ({
     }),
   setSearchRoot: path => set({ searchRoot: path }),
   requestSearch: (root, query) => set(state => ({
+    ...leaveFullPage(state),
     view: 'search',
     searchRoot: root ?? null,
     sidebarOpen: true,
@@ -192,25 +240,25 @@ export const useUIStore = create<UIState>((set) => ({
     globalSearchSignal: state.globalSearchSignal + 1,
   })),
   requestGlobalSearch: query => set(state => ({
+    ...leaveFullPage(state),
     view: 'search',
     searchRoot: null,
     sidebarOpen: true,
     globalSearchQuery: query?.trim() || null,
     globalSearchSignal: state.globalSearchSignal + 1,
   })),
-  requestNewFile: () => set({ view: 'explorer', sidebarOpen: true, pendingNewFile: true }),
+  requestNewFile: () =>
+    set(state => ({
+      ...leaveFullPage(state),
+      view: 'explorer',
+      sidebarOpen: true,
+      pendingNewFile: true,
+    })),
   clearPendingNewFile: () => set({ pendingNewFile: false }),
   requestSettings: query =>
     set(state => {
-      const columns = normalizeSideWorkspaceColumns({
-        ...columnsFromState(state),
-        editorVisible: true,
-      })
-      if (!state.sideEditorVisible) persistColumns(columns)
       return {
-        view: 'settings',
-        sidebarOpen: true,
-        ...applyColumns(columns),
+        ...enterFullPage(state, 'settings'),
         settingsFocusQuery: query ?? null,
         settingsFocusSignal: state.settingsFocusSignal + 1,
       }
@@ -230,7 +278,7 @@ export const useUIStore = create<UIState>((set) => ({
 
       return {
         panelLayout,
-        ...(columns ? applyColumns(columns) : {}),
+        ...(columns ? { ...applyColumns(columns), ...keepEditorAfterFullPage(state) } : {}),
         panelLayoutSwitching: dockChanged,
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }
@@ -255,6 +303,7 @@ export const useUIStore = create<UIState>((set) => ({
       persistColumns(columns)
       return {
         ...applyColumns(columns),
+        ...(patch.editorVisible === undefined ? {} : keepEditorAfterFullPage(state)),
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }
     }),
@@ -267,7 +316,7 @@ export const useUIStore = create<UIState>((set) => ({
         quadTerminal: false,
         editorVisible: state.sideEditorVisible,
       })
-      persistColumns(columns)
+      persistColumns({ ...columns, editorVisible: persistedEditorVisible(state) })
       return {
         ...applyColumns(columns),
         terminalOpenSignal: state.terminalOpenSignal + 1,
@@ -281,7 +330,7 @@ export const useUIStore = create<UIState>((set) => ({
         quadTerminal: nextQuad,
         editorVisible: state.sideEditorVisible,
       })
-      persistColumns(columns)
+      persistColumns({ ...columns, editorVisible: persistedEditorVisible(state) })
       return {
         ...applyColumns(columns),
         terminalOpenSignal: state.terminalOpenSignal + 1,
@@ -296,6 +345,7 @@ export const useUIStore = create<UIState>((set) => ({
       persistColumns(columns)
       return {
         ...applyColumns(columns),
+        ...keepEditorAfterFullPage(state),
         terminalOpenSignal: state.terminalOpenSignal + 1,
       }
     }),
