@@ -955,6 +955,7 @@ impl SshManager {
                 if slot.endpoint.is_none() {
                     slot.unavailable_reason = None;
                     slot.activity = None;
+                    slot.last_failure = None;
                 }
             }
         }
@@ -981,6 +982,7 @@ impl SshManager {
                 slot.endpoint = None;
                 slot.unavailable_reason = None;
                 slot.activity = None;
+                slot.last_failure = None;
                 slot.daemon_downgraded_at = None;
                 slot.deploy_failures = 0;
             }

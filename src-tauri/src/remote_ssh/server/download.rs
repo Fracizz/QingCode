@@ -134,6 +134,17 @@ fn server_release_tag() -> String {
     format!("server-v{}", qingcode_server::SERVER_VERSION)
 }
 
+/// GitHub Release 资产 404：标签没发或资产缺失，重试不会变好，按 permanent
+/// 缓存原因（部署门闩会把它公开展示）。之前一律按瞬态处理，导致「server-v*
+/// 标签未发布」时监督任务反复 404 后静默放弃，芯片永远停在无原因的探测态。
+fn release_404_error(asset: &str) -> ServerDeployError {
+    ServerDeployError::permanent(format!(
+        "GitHub Release {}/{} 不存在（尚未发布该标签或资产），无法自动下载；离线可在设置里选择 servers 目录",
+        server_release_tag(),
+        asset
+    ))
+}
+
 /// 下载清单 URL 与二进制 URL（抽成纯函数便于单测）。
 fn server_download_urls(base: &str, tag: &str, binary_name: &str) -> (String, String) {
     (
@@ -217,10 +228,12 @@ async fn download_server_binary(
             .timeout_connect(std::time::Duration::from_secs(15))
             .timeout_read(std::time::Duration::from_secs(120))
             .build();
-        let manifest_bytes = server
-            .get(&manifest_url)
-            .call()
-            .map_err(|e| transient(format!("获取 manifest 失败：{e}")))?
+        let manifest_bytes = match server.get(&manifest_url).call() {
+            Ok(response) => response,
+            Err(ureq::Error::Status(404, _)) => return Err(release_404_error("manifest.json")),
+            Err(e) => return Err(transient(format!("获取 manifest 失败：{e}"))),
+        };
+        let manifest_bytes = manifest_bytes
             .into_string()
             .map_err(|e| transient(format!("读取 manifest 失败：{e}")))?;
         let manifest = parse_server_manifest(manifest_bytes.as_bytes()).map_err(transient)?;
@@ -234,10 +247,11 @@ async fn download_server_binary(
             SERVER_DOWNLOAD_FALLBACK_MAX_BYTES
         };
 
-        let response = server
-            .get(&binary_url)
-            .call()
-            .map_err(|e| transient(format!("下载二进制失败：{e}")))?;
+        let response = match server.get(&binary_url).call() {
+            Ok(response) => response,
+            Err(ureq::Error::Status(404, _)) => return Err(release_404_error(&binary_name)),
+            Err(e) => return Err(transient(format!("下载二进制失败：{e}"))),
+        };
         let mut hasher = sha2::Sha256::new();
         let tmp_path = cache_dir.join(download_tmp_file_name(
             &binary_name,
@@ -295,6 +309,19 @@ async fn download_server_binary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_404_is_permanent_and_names_tag_and_asset() {
+        let error = release_404_error("manifest.json");
+        assert!(error.permanent);
+        assert!(!error.after_deploy);
+        assert!(
+            error.reason.contains(&server_release_tag()),
+            "原因应包含标签名：{}",
+            error.reason
+        );
+        assert!(error.reason.contains("manifest.json"));
+    }
 
     #[test]
     fn resolve_offline_server_dir_accepts_agents_folder_or_parent() {

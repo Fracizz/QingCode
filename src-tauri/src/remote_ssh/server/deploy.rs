@@ -518,6 +518,7 @@ pub(crate) async fn ensure_server_endpoint_with_app(
             slot.endpoint = Some(endpoint.clone());
             slot.unavailable_reason = None;
             slot.activity = None;
+            slot.last_failure = None;
             // 部署成功：退避计数清零，下一次失败重新从 1 数起。
             slot.deploy_failures = 0;
             manager.set_server_slot(&key, slot);
@@ -540,6 +541,10 @@ pub(crate) async fn ensure_server_endpoint_with_app(
                     reason = backoff.to_string();
                 }
             }
+            // 瞬时失败也把原因留在 slot 上：阶段仍是探测、之后自动重试，
+            // 但状态栏芯片能显示「原因：…」，不再是无解释的空转。确定性
+            // 失败同样记录（展示上 unavailable_reason 优先）。
+            slot.last_failure = Some(reason.clone());
             // 只有确定性失败才占住缓存，瞬时失败留空以便下次重试。
             slot.unavailable_reason = permanent.then_some(reason);
             manager.set_server_slot(&key, slot);

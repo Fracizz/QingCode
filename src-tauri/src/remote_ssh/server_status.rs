@@ -115,6 +115,8 @@ pub(crate) struct ServerSlotView<'a> {
     pub endpoint_has_daemon: Option<bool>,
     pub unavailable_reason: Option<&'a str>,
     pub activity: Option<ServerPhase>,
+    /// 最近一次瞬时失败原因，仅展示用；阶段保持探测，之后会重试。
+    pub last_failure: Option<&'a str>,
 }
 
 /// [`phase_for_slot`] 的输入。调用方负责填会话与门闩，本函数不读全局状态。
@@ -147,6 +149,11 @@ pub(crate) fn phase_for_slot(input: &ServerSteadyInputs<'_>) -> SshServerState {
         }
         if let Some(reason) = slot.unavailable_reason {
             return ready_direct(input, reason);
+        }
+        if let Some(reason) = slot.last_failure {
+            let mut state = plain_state(input, ServerPhase::Probing);
+            state.reason = Some(reason.to_string());
+            return state;
         }
     }
     plain_state(input, ServerPhase::Probing)
@@ -330,6 +337,7 @@ pub(crate) fn state_for_root(
             .map(|endpoint| endpoint.daemon.is_some()),
         unavailable_reason: slot.unavailable_reason.as_deref(),
         activity: slot.activity,
+        last_failure: slot.last_failure.as_deref(),
     });
     Ok(phase_for_slot(&ServerSteadyInputs {
         connection_id: &parsed.connection_id,
@@ -600,6 +608,7 @@ mod tests {
             endpoint_has_daemon: Some(true),
             unavailable_reason: None,
             activity: None,
+            last_failure: None,
         })));
         assert_eq!(state.phase, ServerPhase::ReadyServer);
         assert_eq!(state.mode, ServerMode::Server);
@@ -617,6 +626,7 @@ mod tests {
             endpoint_has_daemon: Some(false),
             unavailable_reason: None,
             activity: None,
+            last_failure: None,
         })));
         assert_eq!(state.phase, ServerPhase::ReadyServer);
         assert_eq!(state.mode, ServerMode::Server);
@@ -634,6 +644,7 @@ mod tests {
             endpoint_has_daemon: None,
             unavailable_reason: Some("远端架构不支持（armv7l）"),
             activity: None,
+            last_failure: None,
         })));
         assert_direct(&state, "远端架构不支持（armv7l）");
     }
@@ -649,6 +660,50 @@ mod tests {
     }
 
     #[test]
+    fn last_failure_keeps_probing_but_surfaces_reason() {
+        // 瞬时失败不是终态：阶段保持探测（之后自动重试），但原因要能展示，
+        // 芯片不再是「正在探测」却查不出任何解释。
+        let state = phase_for_slot(&ready_inputs(Some(ServerSlotView {
+            endpoint_has_daemon: None,
+            unavailable_reason: None,
+            activity: None,
+            last_failure: Some("获取 manifest 失败：status code 404"),
+        })));
+        assert_eq!(state.phase, ServerPhase::Probing);
+        assert_eq!(state.mode, ServerMode::Unknown);
+        assert_eq!(state.transport, None);
+        assert_eq!(state.version, None);
+        assert_eq!(
+            state.reason.as_deref(),
+            Some("获取 manifest 失败：status code 404")
+        );
+    }
+
+    #[test]
+    fn unavailable_reason_wins_over_last_failure() {
+        let state = phase_for_slot(&ready_inputs(Some(ServerSlotView {
+            endpoint_has_daemon: None,
+            unavailable_reason: Some("远端架构不支持（armv7l）"),
+            activity: None,
+            last_failure: Some("获取 manifest 失败：status code 404"),
+        })));
+        assert_direct(&state, "远端架构不支持（armv7l）");
+    }
+
+    #[test]
+    fn activity_wins_over_last_failure() {
+        // 新一轮部署已在进行：展示进行中阶段，不再显示上次的失败原因。
+        let state = phase_for_slot(&ready_inputs(Some(ServerSlotView {
+            endpoint_has_daemon: None,
+            unavailable_reason: None,
+            activity: Some(ServerPhase::Installing),
+            last_failure: Some("server 启动超时"),
+        })));
+        assert_eq!(state.phase, ServerPhase::Installing);
+        assert_eq!(state.reason, None);
+    }
+
+    #[test]
     fn missing_session_is_disconnected_even_with_endpoint() {
         let state = phase_for_slot(&inputs(
             false,
@@ -658,6 +713,7 @@ mod tests {
                 endpoint_has_daemon: Some(true),
                 unavailable_reason: None,
                 activity: Some(ServerPhase::Handshaking),
+                last_failure: None,
             }),
         ));
         assert_eq!(state.phase, ServerPhase::Disconnected);
@@ -673,6 +729,7 @@ mod tests {
             endpoint_has_daemon: Some(true),
             unavailable_reason: None,
             activity: Some(ServerPhase::Installing),
+            last_failure: None,
         })));
         assert_eq!(state.phase, ServerPhase::Installing);
         assert_eq!(state.mode, ServerMode::Unknown);
@@ -689,6 +746,7 @@ mod tests {
                 endpoint_has_daemon: None,
                 unavailable_reason: None,
                 activity: Some(ServerPhase::Installing),
+                last_failure: None,
             }),
         ));
         assert_direct(&state, REASON_SERVER_DISABLED);
@@ -766,6 +824,7 @@ mod tests {
             endpoint_has_daemon: Some(true),
             unavailable_reason: None,
             activity: None,
+            last_failure: None,
         })));
         let value = serde_json::to_value(&ready).unwrap();
         let mut keys: Vec<&str> = value

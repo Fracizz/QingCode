@@ -78,6 +78,10 @@ pub(crate) struct ServerSlot {
     pub(crate) daemon_downgraded_at: Option<Instant>,
     /// 连续「完整部署后仍未就绪」的次数，达到阈值触发部署退避；成功后清零。
     pub(crate) deploy_failures: u32,
+    /// 最近一次瞬时失败的原因，仅用于展示（阶段仍是探测/进行中，之后会自动
+    /// 重试）。与 [`ServerSlot::unavailable_reason`] 的区别：这里不代表终态，
+    /// 不参与端点缓存判断；成功部署或清除不可用原因时一并清掉。
+    pub(crate) last_failure: Option<String>,
 }
 
 pub(crate) fn server_slot_key(connection_id: &str, canonical_root: &str) -> String {
