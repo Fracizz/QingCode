@@ -19,12 +19,12 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
-mod agent;
-mod agent_status;
 mod search;
+mod server;
+mod server_status;
 mod transfer;
-pub use agent_status::{SshAgentLogs, SshAgentState};
 pub use search::*;
+pub use server_status::{SshServerLogs, SshServerState};
 pub use transfer::*;
 
 const SSH_URI_PREFIX: &str = "ssh://";
@@ -533,7 +533,7 @@ async fn open_sftp_session(
     Ok(sftp)
 }
 
-/// 已注册的远程项目根。类型对 crate 内可见（agent 集成在子模块里使用），
+/// 已注册的远程项目根。类型对 crate 内可见（server 集成在子模块里使用），
 /// 字段仍是本模块私有。
 #[derive(Clone, Debug)]
 pub(crate) struct RegisteredRoot {
@@ -588,24 +588,24 @@ pub struct SshManager {
     terminal_handshakes: tokio::sync::Semaphore,
     /// 项目根相对仓库根的路径前缀（`git rev-parse --show-prefix`），按项目惰性缓存。
     git_prefixes: Mutex<HashMap<String, String>>,
-    /// 远端 agent 状态缓存，key 为 `agent_slot_key`（连接 id | 规范化项目根）。
-    agents: RwLock<HashMap<String, agent::AgentSlot>>,
-    /// 同一 (连接, 根) 的 agent 部署串行执行。
-    agent_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    /// 远端 agent 总开关；关闭后所有集成点静默回退直连路径。
-    agent_enabled: std::sync::atomic::AtomicBool,
-    /// 本地 agent 二进制查找目录（安装目录、资源目录、环境变量指定等）。
-    agent_binary_dirs: RwLock<Vec<PathBuf>>,
+    /// 远端 server 状态缓存，key 为 `server_slot_key`（连接 id | 规范化项目根）。
+    servers: RwLock<HashMap<String, server::ServerSlot>>,
+    /// 同一 (连接, 根) 的 server 部署串行执行。
+    server_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// 远端 server 总开关；关闭后所有集成点静默回退直连路径。
+    server_enabled: std::sync::atomic::AtomicBool,
+    /// 本地 server 二进制查找目录（安装目录、资源目录、环境变量指定等）。
+    server_binary_dirs: RwLock<Vec<PathBuf>>,
     /// 设置页手动选择的离线目录，查找时排在其余目录之前。
-    agent_offline_dir: RwLock<Option<PathBuf>>,
-    /// 本地没有二进制时的下载缓存目录（`ssh.agent.autoDownload` 开启时使用）。
-    agent_cache_dir: RwLock<Option<PathBuf>>,
-    /// 本地缺失二进制时是否自动从 GitHub Release 下载（默认关，用户显式开启）。
-    agent_auto_download: std::sync::atomic::AtomicBool,
-    /// watch 监督任务句柄，key 同 agent slot；连接断开或重连时替换。
+    server_offline_dir: RwLock<Option<PathBuf>>,
+    /// 本地没有二进制时的下载缓存目录（`ssh.server.autoDownload` 开启时使用）。
+    server_cache_dir: RwLock<Option<PathBuf>>,
+    /// 本地缺失二进制时是否自动从 GitHub Release 下载（默认开：安装包不内置二进制）。
+    server_auto_download: std::sync::atomic::AtomicBool,
+    /// watch 监督任务句柄，key 同 server slot；连接断开或重连时替换。
     watch_supervisors: Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
-    /// 已发给前端的 `ssh-agent-state`，按规范化 root URI 去重。
-    agent_snapshots: Mutex<HashMap<String, agent_status::SshAgentState>>,
+    /// 已发给前端的 `ssh-server-state`，按规范化 root URI 去重。
+    server_snapshots: Mutex<HashMap<String, server_status::SshServerState>>,
 }
 
 impl SshManager {
@@ -618,15 +618,15 @@ impl SshManager {
             exec_slots: Mutex::new(HashMap::new()),
             terminal_handshakes: tokio::sync::Semaphore::new(MAX_CONCURRENT_TERMINAL_HANDSHAKES),
             git_prefixes: Mutex::new(HashMap::new()),
-            agents: RwLock::new(HashMap::new()),
-            agent_gates: Mutex::new(HashMap::new()),
-            agent_enabled: std::sync::atomic::AtomicBool::new(true),
-            agent_binary_dirs: RwLock::new(Vec::new()),
-            agent_offline_dir: RwLock::new(None),
-            agent_cache_dir: RwLock::new(None),
-            agent_auto_download: std::sync::atomic::AtomicBool::new(false),
+            servers: RwLock::new(HashMap::new()),
+            server_gates: Mutex::new(HashMap::new()),
+            server_enabled: std::sync::atomic::AtomicBool::new(true),
+            server_binary_dirs: RwLock::new(Vec::new()),
+            server_offline_dir: RwLock::new(None),
+            server_cache_dir: RwLock::new(None),
+            server_auto_download: std::sync::atomic::AtomicBool::new(true),
             watch_supervisors: Mutex::new(HashMap::new()),
-            agent_snapshots: Mutex::new(HashMap::new()),
+            server_snapshots: Mutex::new(HashMap::new()),
         }
     }
 
@@ -862,7 +862,7 @@ impl SshManager {
             .any(|root| normalize_remote_uri(&root.uri) == normalized))
     }
 
-    /// 按 URI 精确匹配已注册项目根（规范化比较），供 agent 监督任务克隆使用。
+    /// 按 URI 精确匹配已注册项目根（规范化比较），供 server 监督任务克隆使用。
     pub(crate) fn registered_root(&self, uri: &str) -> Result<RegisteredRoot, String> {
         let normalized = normalize_remote_uri(uri);
         self.roots
@@ -874,9 +874,9 @@ impl SshManager {
             .ok_or_else(|| "远程路径不在已注册项目内".to_string())
     }
 
-    fn agent_gate(&self, key: &str) -> Result<Arc<tokio::sync::Mutex<()>>, String> {
+    fn server_gate(&self, key: &str) -> Result<Arc<tokio::sync::Mutex<()>>, String> {
         let mut gates = self
-            .agent_gates
+            .server_gates
             .lock()
             .map_err(|_| "SSH 连接状态不可用".to_string())?;
         Ok(gates
@@ -885,55 +885,55 @@ impl SshManager {
             .clone())
     }
 
-    pub(crate) fn agent_enabled(&self) -> bool {
-        self.agent_enabled.load(Ordering::SeqCst)
+    pub(crate) fn server_enabled(&self) -> bool {
+        self.server_enabled.load(Ordering::SeqCst)
     }
 
-    pub(crate) fn set_agent_cache_dir(&self, dir: PathBuf) {
-        if let Ok(mut slot) = self.agent_cache_dir.write() {
+    pub(crate) fn set_server_cache_dir(&self, dir: PathBuf) {
+        if let Ok(mut slot) = self.server_cache_dir.write() {
             *slot = Some(dir);
         }
     }
 
-    pub(crate) fn agent_cache_dir(&self) -> Option<PathBuf> {
-        self.agent_cache_dir
+    pub(crate) fn server_cache_dir(&self) -> Option<PathBuf> {
+        self.server_cache_dir
             .read()
             .ok()
             .and_then(|slot| slot.clone())
     }
 
-    pub(crate) fn agent_auto_download(&self) -> bool {
-        self.agent_auto_download.load(Ordering::SeqCst)
+    pub(crate) fn server_auto_download(&self) -> bool {
+        self.server_auto_download.load(Ordering::SeqCst)
     }
 
-    /// 设置本地 agent 二进制查找目录：去重且仅保留真实存在的目录。
-    pub(crate) fn set_agent_binary_dirs(&self, dirs: Vec<PathBuf>) {
+    /// 设置本地 server 二进制查找目录：去重且仅保留真实存在的目录。
+    pub(crate) fn set_server_binary_dirs(&self, dirs: Vec<PathBuf>) {
         let mut seen = std::collections::HashSet::new();
         let filtered = dirs
             .into_iter()
             .filter(|dir| dir.is_dir() && seen.insert(dir.clone()))
             .collect();
-        if let Ok(mut slot) = self.agent_binary_dirs.write() {
+        if let Ok(mut slot) = self.server_binary_dirs.write() {
             *slot = filtered;
         }
     }
 
-    pub(crate) fn set_agent_offline_dir(&self, dir: Option<PathBuf>) {
+    pub(crate) fn set_server_offline_dir(&self, dir: Option<PathBuf>) {
         let dir = dir.filter(|path| path.is_dir());
-        if let Ok(mut slot) = self.agent_offline_dir.write() {
+        if let Ok(mut slot) = self.server_offline_dir.write() {
             *slot = dir;
         }
     }
 
     /// 手动选择的目录排在最前；与自动目录重复时只保留这一次。
-    pub(crate) fn agent_binary_dirs(&self) -> Vec<PathBuf> {
+    pub(crate) fn server_binary_dirs(&self) -> Vec<PathBuf> {
         let mut dirs = self
-            .agent_binary_dirs
+            .server_binary_dirs
             .read()
             .map(|dirs| dirs.clone())
             .unwrap_or_default();
         let offline = self
-            .agent_offline_dir
+            .server_offline_dir
             .read()
             .ok()
             .and_then(|slot| slot.clone())
@@ -946,9 +946,9 @@ impl SshManager {
     }
 
     /// 离线目录变更后，让之前因缺二进制而失败的槽重新尝试部署。
-    pub(crate) fn clear_unavailable_agents(&self) {
-        if let Ok(mut agents) = self.agents.write() {
-            for slot in agents.values_mut() {
+    pub(crate) fn clear_unavailable_servers(&self) {
+        if let Ok(mut servers) = self.servers.write() {
+            for slot in servers.values_mut() {
                 if slot.endpoint.is_none() {
                     slot.unavailable_reason = None;
                     slot.activity = None;
@@ -957,46 +957,53 @@ impl SshManager {
         }
     }
 
-    pub(crate) fn agent_slot(&self, key: &str) -> Option<agent::AgentSlot> {
-        self.agents
+    pub(crate) fn server_slot(&self, key: &str) -> Option<server::ServerSlot> {
+        self.servers
             .read()
             .ok()
-            .and_then(|agents| agents.get(key).cloned())
+            .and_then(|servers| servers.get(key).cloned())
     }
 
-    pub(crate) fn set_agent_slot(&self, key: &str, slot: agent::AgentSlot) {
-        if let Ok(mut agents) = self.agents.write() {
-            agents.insert(key.to_string(), slot);
+    pub(crate) fn set_server_slot(&self, key: &str, slot: server::ServerSlot) {
+        if let Ok(mut servers) = self.servers.write() {
+            servers.insert(key.to_string(), slot);
         }
     }
 
-    /// agent 调用失败后清空端点、不可用原因和部署中的瞬时阶段，下次再走发现/部署。
-    pub(crate) fn clear_agent_endpoint(&self, key: &str) {
-        if let Ok(mut agents) = self.agents.write() {
-            if let Some(slot) = agents.get_mut(key) {
+    /// server 调用失败后清空端点、不可用原因、部署退避计数与降级时间戳，
+    /// 下次再走完整的发现/部署。
+    pub(crate) fn clear_server_endpoint(&self, key: &str) {
+        if let Ok(mut servers) = self.servers.write() {
+            if let Some(slot) = servers.get_mut(key) {
                 slot.endpoint = None;
                 slot.unavailable_reason = None;
                 slot.activity = None;
+                slot.daemon_downgraded_at = None;
+                slot.deploy_failures = 0;
             }
         }
     }
 
     /// 记录发现/部署中的阶段。`None` 清掉瞬时阶段；没有 slot 时不新建空槽。
-    pub(crate) fn set_agent_activity(&self, key: &str, activity: Option<agent_status::AgentPhase>) {
-        let Ok(mut agents) = self.agents.write() else {
+    pub(crate) fn set_server_activity(
+        &self,
+        key: &str,
+        activity: Option<server_status::ServerPhase>,
+    ) {
+        let Ok(mut servers) = self.servers.write() else {
             return;
         };
-        if activity.is_none() && !agents.contains_key(key) {
+        if activity.is_none() && !servers.contains_key(key) {
             return;
         }
-        let slot = agents.entry(key.to_string()).or_default();
+        let slot = servers.entry(key.to_string()).or_default();
         slot.activity = activity;
     }
 
     /// 快照变化时返回 true，调用方再 emit。相同载荷不重复发。
     /// 转移表只做诊断，不因为跳步就丢掉这次发布。
-    pub(crate) fn record_agent_snapshot(&self, state: &agent_status::SshAgentState) -> bool {
-        let Ok(mut snapshots) = self.agent_snapshots.lock() else {
+    pub(crate) fn record_server_snapshot(&self, state: &server_status::SshServerState) -> bool {
+        let Ok(mut snapshots) = self.server_snapshots.lock() else {
             return true;
         };
         let key = normalize_remote_uri(&state.root_uri);
@@ -1006,7 +1013,7 @@ impl SshManager {
         }
         let legal = match &previous {
             Some(previous) => {
-                agent_status::agent_phase_transition_allowed(previous.phase, state.phase)
+                server_status::server_phase_transition_allowed(previous.phase, state.phase)
             }
             None => true,
         };
@@ -1016,14 +1023,14 @@ impl SshManager {
         true
     }
 
-    /// 连接断开时丢弃该连接的全部 agent 缓存：端口与 token 随远端进程生命周期变化，
-    /// 重连后必须重新发现/部署。前缀匹配 `agent_slot_key` 的 `连接id|根` 形式。
-    fn purge_agent_state(&self, connection_id: &str) {
+    /// 连接断开时丢弃该连接的全部 server 缓存：端口与 token 随远端进程生命周期变化，
+    /// 重连后必须重新发现/部署。前缀匹配 `server_slot_key` 的 `连接id|根` 形式。
+    fn purge_server_state(&self, connection_id: &str) {
         let prefix = format!("{connection_id}|");
-        if let Ok(mut agents) = self.agents.write() {
-            agents.retain(|key, _| !key.starts_with(&prefix));
+        if let Ok(mut servers) = self.servers.write() {
+            servers.retain(|key, _| !key.starts_with(&prefix));
         }
-        if let Ok(mut gates) = self.agent_gates.lock() {
+        if let Ok(mut gates) = self.server_gates.lock() {
             gates.retain(|key, _| !key.starts_with(&prefix));
         }
     }
@@ -1035,6 +1042,19 @@ impl SshManager {
                 previous.abort();
             }
         }
+    }
+
+    /// 该 (连接, 根) 是否已有未结束的 watch 监督任务；补信任时据此避免重启
+    /// 一条健康的 watch 连接。tauri 的句柄要经 `inner()` 才拿到 tokio 的完成态。
+    fn has_watch_supervisor(&self, key: &str) -> bool {
+        self.watch_supervisors
+            .lock()
+            .ok()
+            .is_some_and(|supervisors| {
+                supervisors
+                    .get(key)
+                    .is_some_and(|handle| !handle.inner().is_finished())
+            })
     }
 
     fn set_root_trust(&self, uri: &str, trusted: bool) -> Result<(), String> {
@@ -1244,82 +1264,124 @@ impl SshManager {
 pub fn ssh_set_workspace_trust(
     root_uri: String,
     trusted: bool,
+    app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
     parse_remote_uri(&root_uri)?;
-    manager.set_root_trust(&root_uri, trusted)
+    manager.set_root_trust(&root_uri, trusted)?;
+    // 连接建立后才补信任的根不会经历 ssh_connect 的拉起路径：这里补一条
+    // watch 监督任务（连接仍在、开关开启且没有存活任务时），否则远端变更
+    // 事件永远缺位。已有健康任务时不重启，避免白白断开一条 watch 连接。
+    if trusted {
+        if let Ok(root) = manager.registered_root(&root_uri) {
+            if let Ok(parsed) = parse_remote_uri(&root.uri) {
+                if root.trusted
+                    && manager.server_enabled()
+                    && manager.connection_is_open(&parsed.connection_id)
+                {
+                    let key = server::server_slot_key(&parsed.connection_id, &root.canonical_path);
+                    if !manager.has_watch_supervisor(&key) {
+                        let handle = server::spawn_server_watch_supervisor(
+                            app,
+                            parsed.connection_id.clone(),
+                            normalize_remote_uri(&root.uri),
+                            root.canonical_path.clone(),
+                        );
+                        manager.replace_watch_supervisor(&key, handle);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
-/// 开关远端 agent 集成；关闭后既有调用方一律走 SFTP / rg 直连路径。
+/// 开关远端 server 集成；关闭后既有调用方一律走 SFTP / rg 直连路径。
 #[tauri::command]
-pub fn ssh_set_agent_enabled(enabled: bool, manager: State<'_, SshManager>) -> Result<(), String> {
+pub fn ssh_set_server_enabled(enabled: bool, manager: State<'_, SshManager>) -> Result<(), String> {
     manager
-        .agent_enabled
+        .server_enabled
         .store(enabled, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
 
 /// 查询某个 SSH 项目根当前的代理阶段。非 ssh URI 或未注册根直接拒绝。
 #[tauri::command]
-pub fn ssh_agent_info(
+pub fn ssh_server_info(
     root_uri: String,
     manager: State<'_, SshManager>,
-) -> Result<SshAgentState, String> {
-    agent_status::ssh_agent_info(root_uri, manager)
+) -> Result<SshServerState, String> {
+    server_status::ssh_server_info(root_uri, manager)
 }
 
-/// 清掉该根的 agent slot，必要时按 agent.json 里的 pid 结束 serve 进程，再重新 ensure。
+/// 清掉该根的 server slot，必要时按 server.json 里的 pid 结束 serve 进程，再重新 ensure。
 #[tauri::command]
-pub async fn ssh_agent_restart(
+pub async fn ssh_server_restart(
     root_uri: String,
     app: AppHandle,
     manager: State<'_, SshManager>,
-) -> Result<SshAgentState, String> {
-    agent_status::ssh_agent_restart(root_uri, app, manager).await
+) -> Result<SshServerState, String> {
+    server_status::ssh_server_restart(root_uri, app, manager).await
 }
 
-/// 读取远端 `$HOME/.qingcode/agent/run/agent.log` 的末尾。文件不存在时返回说明，不报错。
+/// 停掉某根的远端 server：serve 按状态文件 pid 结束，daemon 尽力发
+/// `server.shutdown`。与 restart 的区别是不做后续 ensure，纯停止。
 #[tauri::command]
-pub async fn ssh_agent_logs(
+pub async fn ssh_server_stop(
+    root_uri: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    server_status::ssh_server_stop(root_uri, app, manager).await
+}
+
+/// 读取远端日志：daemon 日志（`$HOME/.qingcode/server/run/server.log`）在前，
+/// 项目 serve 日志（`<root>/.qingcode/server/serve.log`）在后，以分隔行拼接。
+/// 两者都缺时返回说明文字，不报错。
+#[tauri::command]
+pub async fn ssh_server_logs(
     root_uri: String,
     manager: State<'_, SshManager>,
-) -> Result<SshAgentLogs, String> {
-    agent_status::ssh_agent_logs(root_uri, manager).await
+) -> Result<SshServerLogs, String> {
+    server_status::ssh_server_logs(root_uri, manager).await
 }
 
-/// `ssh.agent.autoDownload`：本地缺失 agent 二进制时是否自动从 GitHub Release
-/// 下载（sha256 校验）。默认关闭，由设置页显式开启。
+/// `ssh.server.autoDownload`：本地缺失 server 二进制时是否自动从 GitHub Release
+/// 下载（sha256 校验）。默认开启；离线用户在设置里选择离线目录即可。
 #[tauri::command]
-pub fn ssh_set_agent_auto_download(
+pub fn ssh_set_server_auto_download(
     enabled: bool,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
     manager
-        .agent_auto_download
+        .server_auto_download
         .store(enabled, std::sync::atomic::Ordering::SeqCst);
+    // 与 offline_dir 一致：开关状态变化后让之前「本地缺二进制」的不可用槽
+    // 重新尝试，用户重开开关即可立即重试下载，不必断开重连。
+    manager.clear_unavailable_servers();
     Ok(())
 }
 
-/// `ssh.agent.offlineDir`：手动指定本机离线代理目录。空字符串表示清除。
-/// 目录本身或其中的 `agents` 子目录必须含有 `qingcode-agent` 文件。
+/// `ssh.server.offlineDir`：手动指定本机离线代理目录。空字符串表示清除。
+/// 目录本身或其中的 `servers` 子目录必须含有 `qingcode-server` 文件。
 #[tauri::command]
-pub fn ssh_set_agent_offline_dir(
+pub fn ssh_set_server_offline_dir(
     dir: String,
     manager: State<'_, SshManager>,
 ) -> Result<String, String> {
     let trimmed = dir.trim();
     if trimmed.is_empty() {
-        manager.set_agent_offline_dir(None);
-        manager.clear_unavailable_agents();
+        manager.set_server_offline_dir(None);
+        manager.clear_unavailable_servers();
         return Ok(String::new());
     }
     if trimmed.len() > 1024 || trimmed.contains('\0') || trimmed.contains("ssh://") {
         return Err("离线目录必须是本机文件夹".to_string());
     }
-    let resolved = agent::resolve_offline_agent_dir(Path::new(trimmed))?;
+    let resolved = server::resolve_offline_server_dir(Path::new(trimmed))?;
     let text = resolved.to_string_lossy().into_owned();
-    manager.set_agent_offline_dir(Some(resolved));
-    manager.clear_unavailable_agents();
+    manager.set_server_offline_dir(Some(resolved));
+    manager.clear_unavailable_servers();
     Ok(text)
 }
 
@@ -2010,18 +2072,18 @@ pub async fn ssh_connect(
         expected
     } else {
         // 会话还不存在，接下来才做握手认证。成功后会被 probing / readyDirect 盖掉。
-        agent_status::publish_authenticating(&app, &manager, &config.id, &root_uri);
+        server_status::publish_authenticating(&app, &manager, &config.id, &root_uri);
         match store_authenticated_session(&manager, config.clone()).await {
             Ok((_connected, fingerprint)) => fingerprint,
             Err(error) => {
-                agent_status::publish_disconnected(&app, &manager, &config.id, &root_uri);
+                server_status::publish_disconnected(&app, &manager, &config.id, &root_uri);
                 return Err(error);
             }
         }
     };
     let abandon_fresh_auth = |error: String| {
         if fresh_auth {
-            agent_status::publish_disconnected(&app, &manager, &config.id, &root_uri);
+            server_status::publish_disconnected(&app, &manager, &config.id, &root_uri);
         }
         error
     };
@@ -2054,14 +2116,14 @@ pub async fn ssh_connect(
         );
     // 先公布稳态，再拉起监督任务，避免监督任务先发出 installing 后被 probing 盖掉。
     if let Ok(root) = manager.registered_root(&root_uri) {
-        agent_status::publish_root_state(&app, &manager, &root);
+        server_status::publish_root_state(&app, &manager, &root);
     }
-    // 已信任的远端：启动 watch 监督任务（agent 提供远端事件源）。
+    // 已信任的远端：启动 watch 监督任务（server 提供远端事件源）。
     // Windows OpenSSH 只跑 serve；Linux 优先 daemon，失败再回退 serve。
     // 重复连接同一根时先终止旧任务，避免出现两条并发的 watch 连接。
-    if trusted && manager.agent_enabled() {
-        let key = agent::agent_slot_key(&config.id, &canonical_root);
-        let handle = agent::spawn_agent_watch_supervisor(
+    if trusted && manager.server_enabled() {
+        let key = server::server_slot_key(&config.id, &canonical_root);
+        let handle = server::spawn_server_watch_supervisor(
             app.clone(),
             config.id.clone(),
             normalize_remote_uri(&root_uri),
@@ -2082,7 +2144,7 @@ pub async fn ssh_disconnect(
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
     for root in manager.roots_for_connection(&connection_id) {
-        agent_status::publish_disconnected(&app, &manager, &connection_id, &root.uri);
+        server_status::publish_disconnected(&app, &manager, &connection_id, &root.uri);
     }
     // 等进行中的重连结束再移除，否则重连完成后会把连接重新插回表里。
     let gate = manager.reconnect_gate(&connection_id)?;
@@ -2098,7 +2160,7 @@ pub async fn ssh_disconnect(
         .write()
         .map_err(|_| "SSH 工作区状态不可用".to_string())?
         .retain(|_, root| remote_uri_connection_id(&root.uri) != Some(connection_id.as_str()));
-    // 停掉该连接的所有 agent watch 监督任务；监督任务自己也会因会话消失而退出，
+    // 停掉该连接的所有 server watch 监督任务；监督任务自己也会因会话消失而退出，
     // 这里主动 abort 避免任务在会话移除后还空转一轮。
     if let Ok(mut supervisors) = manager.watch_supervisors.lock() {
         let prefix = format!("{connection_id}|");
@@ -2113,8 +2175,8 @@ pub async fn ssh_disconnect(
             }
         }
     }
-    // agent 的端口 / token 跟着远端进程走，重连后必须重新发现，缓存一律丢弃。
-    manager.purge_agent_state(&connection_id);
+    // server 的端口 / token 跟着远端进程走，重连后必须重新发现，缓存一律丢弃。
+    manager.purge_server_state(&connection_id);
     // 终端各用独立连接，主连接断开不会带走它们，需要逐个断开。
     let terminal_transports = manager
         .terminals
@@ -2218,7 +2280,7 @@ async fn ensure_parent_path_within(
 }
 
 /// 把一组 (名称, 是否目录) 条目转成目录树节点：应用排除规则、按名称排序、目录优先。
-/// SFTP 与 agent 两条扫描路径共用，保证行为一致。
+/// SFTP 与 server 两条扫描路径共用，保证行为一致。
 fn collect_scan_nodes(
     uri: &str,
     path: &str,
@@ -2274,7 +2336,7 @@ fn collect_scan_nodes(
     dirs
 }
 
-/// 计算绝对路径相对项目根的 POSIX 相对路径（agent scan/watch 参数约定，根为 ""）。
+/// 计算绝对路径相对项目根的 POSIX 相对路径（server scan/watch 参数约定，根为 ""）。
 fn remote_relative_to_root(canonical: &str, canonical_root: &str) -> String {
     let root = canonical_root.trim_end_matches('/');
     if root.is_empty() {
@@ -2287,19 +2349,19 @@ fn remote_relative_to_root(canonical: &str, canonical_root: &str) -> String {
         .to_string()
 }
 
-/// 经远端 agent 列出目录的直接子项；任何失败都清空端点缓存并返回 None，
+/// 经远端 server 列出目录的直接子项；任何失败都清空端点缓存并返回 None，
 /// 由调用方回退 SFTP。返回 (名称, 是否目录) 交给 `collect_scan_nodes` 统一组装。
-async fn agent_scan_entries(
+async fn server_scan_entries(
     manager: &SshManager,
     connection_id: &str,
     root: &RegisteredRoot,
     canonical: &str,
 ) -> Option<Vec<(String, bool)>> {
-    if !manager.agent_enabled() {
+    if !manager.server_enabled() {
         return None;
     }
-    let key = agent::agent_slot_key(connection_id, &root.canonical_path);
-    let endpoint = agent::ensure_agent_endpoint(manager, root)
+    let key = server::server_slot_key(connection_id, &root.canonical_path);
+    let endpoint = server::ensure_server_endpoint(manager, root)
         .await
         .ok()
         .flatten()?;
@@ -2307,7 +2369,7 @@ async fn agent_scan_entries(
     // daemon 传输优先：一次 RPC 往返，目录树刷新与 watch 事件同源。传输失败
     // 只降级 daemon 标记（保留 serve 端点），继续走 serve 请求。
     if let Some(daemon) = endpoint.daemon.as_ref() {
-        match agent::daemon_scan_entries(
+        match server::daemon_scan_entries(
             manager,
             connection_id,
             daemon,
@@ -2317,15 +2379,15 @@ async fn agent_scan_entries(
         .await
         {
             Ok(entries) => return Some(entries),
-            Err(_) => agent::downgrade_agent_daemon(manager, &key),
+            Err(_) => server::downgrade_server_daemon(manager, &key),
         }
     }
-    let request = qingcode_agent::AgentRequest {
+    let request = qingcode_server::ServerRequest {
         token: endpoint.token.clone(),
-        op: qingcode_agent::AgentOp::Scan { path: relative },
+        op: qingcode_server::ServerOp::Scan { path: relative },
     };
     let mut entries = Vec::new();
-    let outcome = agent::agent_stream_call(
+    let outcome = server::server_stream_call(
         manager,
         connection_id,
         &endpoint,
@@ -2346,10 +2408,10 @@ async fn agent_scan_entries(
     )
     .await;
     match outcome {
-        Ok(agent::AgentStreamOutcome::Done { .. }) => Some(entries),
+        Ok(server::ServerStreamOutcome::Done { .. }) => Some(entries),
         _ => {
-            // 扫描失败说明 agent 可能已失联；清掉端点让下次重新发现/部署。
-            manager.clear_agent_endpoint(&key);
+            // 扫描失败说明 server 可能已失联；清掉端点让下次重新发现/部署。
+            manager.clear_server_endpoint(&key);
             None
         }
     }
@@ -2383,10 +2445,10 @@ pub async fn ssh_scan_directory(
     };
     let root_posix = root_posix.trim_end_matches('/').to_string();
 
-    // agent 优先：减少 SFTP 往返，且目录树刷新与 watch 事件同源。任何失败静默回退。
+    // server 优先：减少 SFTP 往返，且目录树刷新与 watch 事件同源。任何失败静默回退。
     if root.trusted {
         if let Some(entries) =
-            agent_scan_entries(&manager, &parsed.connection_id, &root, &canonical).await
+            server_scan_entries(&manager, &parsed.connection_id, &root, &canonical).await
         {
             return Ok(collect_scan_nodes(
                 &path,
@@ -4424,7 +4486,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn offline_dir_is_searched_before_other_agent_dirs() {
+    fn offline_dir_is_searched_before_other_server_dirs() {
         let manager = SshManager::new();
         let root =
             std::env::temp_dir().join(format!("qingcode-offline-order-{}", std::process::id()));
@@ -4433,13 +4495,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&offline).unwrap();
         std::fs::create_dir_all(&other).unwrap();
-        manager.set_agent_binary_dirs(vec![other.clone(), offline.clone()]);
-        manager.set_agent_offline_dir(Some(offline.clone()));
-        let dirs = manager.agent_binary_dirs();
+        manager.set_server_binary_dirs(vec![other.clone(), offline.clone()]);
+        manager.set_server_offline_dir(Some(offline.clone()));
+        let dirs = manager.server_binary_dirs();
         assert_eq!(dirs.first(), Some(&offline));
         assert_eq!(dirs.iter().filter(|dir| *dir == &offline).count(), 1);
-        manager.set_agent_offline_dir(None);
-        assert_eq!(manager.agent_binary_dirs().first(), Some(&other));
+        manager.set_server_offline_dir(None);
+        assert_eq!(manager.server_binary_dirs().first(), Some(&other));
         let _ = std::fs::remove_dir_all(&root);
     }
 

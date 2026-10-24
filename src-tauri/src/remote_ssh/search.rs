@@ -501,10 +501,10 @@ fn append_content_record(
     true
 }
 
-/// agent 路径的内容搜索：记录格式与 rg --json 一致，直接复用 append_content_record。
-/// 返回 Ok(None) 表示不走 agent（前置门不满足 / agent 不可用），由调用方回退 rg。
+/// server 路径的内容搜索：记录格式与 rg --json 一致，直接复用 append_content_record。
+/// 返回 Ok(None) 表示不走 server（前置门不满足 / server 不可用），由调用方回退 rg。
 #[allow(clippy::too_many_arguments)]
-async fn agent_search_file_contents(
+async fn server_search_file_contents(
     manager: &SshManager,
     root: &str,
     canonical_root: &str,
@@ -520,17 +520,17 @@ async fn agent_search_file_contents(
     started: Instant,
 ) -> Result<Option<RemoteContentResponse>, String> {
     let registered = manager.root_for_uri(root, false)?;
-    // agent 只搜索自己启动时的根：搜索根不是注册根（如子目录）时不走 agent，
+    // server 只搜索自己启动时的根：搜索根不是注册根（如子目录）时不走 server，
     // 避免把整个工作区的匹配误报给前端。
     if !registered.trusted
-        || !manager.agent_enabled()
+        || !manager.server_enabled()
         || canonical_root.trim_end_matches('/') != registered.canonical_path.trim_end_matches('/')
     {
         return Ok(None);
     }
     let connection_id = parse_remote_uri(root)?.connection_id;
-    let key = agent::agent_slot_key(&connection_id, &registered.canonical_path);
-    let endpoint = match agent::ensure_agent_endpoint(manager, &registered).await {
+    let key = server::server_slot_key(&connection_id, &registered.canonical_path);
+    let endpoint = match server::ensure_server_endpoint(manager, &registered).await {
         Ok(Some(endpoint)) => endpoint,
         _ => return Ok(None),
     };
@@ -540,7 +540,7 @@ async fn agent_search_file_contents(
     // daemon 传输优先：一条 exec 通道流式收 rg 同形记录（协议 v1 帧流）。
     // 任何传输失败都只降级 daemon 标记（保留 serve 端点），继续走 serve 请求。
     if let Some(daemon) = endpoint.daemon.as_ref() {
-        let params = agent::DaemonSearchParams {
+        let params = server::DaemonSearchParams {
             root: registered.canonical_path.clone(),
             query: query.to_string(),
             ignore_case,
@@ -559,7 +559,7 @@ async fn agent_search_file_contents(
             max_per_file: per_file,
             max_files: file_limit,
         };
-        let outcome = agent::daemon_search_content_call(
+        let outcome = server::daemon_search_content_call(
             manager,
             &connection_id,
             daemon,
@@ -591,12 +591,12 @@ async fn agent_search_file_contents(
                     per_file_truncated,
                 )));
             }
-            Err(_) => agent::downgrade_agent_daemon(manager, &key),
+            Err(_) => server::downgrade_server_daemon(manager, &key),
         }
     }
-    let request = qingcode_agent::AgentRequest {
+    let request = qingcode_server::ServerRequest {
         token: endpoint.token.clone(),
-        op: qingcode_agent::AgentOp::SearchContent {
+        op: qingcode_server::ServerOp::SearchContent {
             query: query.to_string(),
             ignore_case,
             include_globs: extension_filters
@@ -614,7 +614,7 @@ async fn agent_search_file_contents(
             max_files: file_limit,
         },
     };
-    let outcome = agent::agent_stream_call(
+    let outcome = server::server_stream_call(
         manager,
         &connection_id,
         &endpoint,
@@ -640,8 +640,8 @@ async fn agent_search_file_contents(
     let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(_) => {
-            // agent 失联或出错：清掉端点缓存并回退 rg，不让搜索失败。
-            manager.clear_agent_endpoint(&key);
+            // server 失联或出错：清掉端点缓存并回退 rg，不让搜索失败。
+            manager.clear_server_endpoint(&key);
             return Ok(None);
         }
     };
@@ -656,13 +656,13 @@ async fn agent_search_file_contents(
 /// 把流式调用结果映射成前端响应；daemon 与 serve 两条传输路径共用，
 /// 保证截断 / 取消语义一致。
 fn content_response_from_outcome(
-    outcome: agent::AgentStreamOutcome,
+    outcome: server::ServerStreamOutcome,
     files: Vec<RemoteContentFile>,
     count: usize,
     per_file_truncated: bool,
 ) -> RemoteContentResponse {
     match outcome {
-        agent::AgentStreamOutcome::Done {
+        server::ServerStreamOutcome::Done {
             truncated,
             files_scanned,
         } => RemoteContentResponse {
@@ -672,7 +672,7 @@ fn content_response_from_outcome(
             truncated: truncated || per_file_truncated,
             cancelled: false,
         },
-        agent::AgentStreamOutcome::Stopped => RemoteContentResponse {
+        server::ServerStreamOutcome::Stopped => RemoteContentResponse {
             files,
             match_count: count,
             files_scanned: 0,
@@ -721,9 +721,9 @@ pub async fn ssh_search_file_contents(
     let extension_filters = extensions
         .or_else(|| extension.map(|value| vec![value]))
         .unwrap_or_default();
-    // agent 优先：一次往返代替逐批 rg 进程；任何失败静默回退既有 rg 实现。
+    // server 优先：一次往返代替逐批 rg 进程；任何失败静默回退既有 rg 实现。
     if !control.cancelled() {
-        match agent_search_file_contents(
+        match server_search_file_contents(
             &manager,
             &root,
             &canonical_root,

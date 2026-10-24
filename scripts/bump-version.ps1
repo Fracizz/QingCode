@@ -93,7 +93,7 @@ function Set-ReadmeVersion([string]$Path, [string]$NewVersion) {
 
 $packageJson = Join-Path $projectRoot 'package.json'
 $cargoToml = Join-Path $projectRoot 'src-tauri\Cargo.toml'
-$agentCargoToml = Join-Path $projectRoot 'src-tauri\qingcode-agent\Cargo.toml'
+$serverCargoToml = Join-Path $projectRoot 'src-tauri\qingcode-server\Cargo.toml'
 $cargoLock = Join-Path $projectRoot 'src-tauri\Cargo.lock'
 $tauriConf = Join-Path $projectRoot 'src-tauri\tauri.conf.json'
 
@@ -101,11 +101,11 @@ Write-Host "Bumping version to $Version" -ForegroundColor Cyan
 Set-JsonVersion $packageJson $Version
 Set-CargoVersion $cargoToml $Version 'Cargo.toml'
 Set-JsonVersion $tauriConf $Version
-# 远端 agent 版本（AGENT_VERSION）取自该 crate 的版本，漏 bump 会让已部到远端的
-# agent 版本漂移、每次连接都重部署。
-Set-CargoVersion $agentCargoToml $Version 'qingcode-agent/Cargo.toml'
+# 远端 server 版本（SERVER_VERSION）取自该 crate 的版本，漏 bump 会让已部到远端的
+# server 版本漂移、每次连接都重部署。
+Set-CargoVersion $serverCargoToml $Version 'qingcode-server/Cargo.toml'
 Set-CargoLockPackageVersion $cargoLock 'qingcode' $Version
-Set-CargoLockPackageVersion $cargoLock 'qingcode-agent' $Version
+Set-CargoLockPackageVersion $cargoLock 'qingcode-server' $Version
 Set-ReadmeVersion (Join-Path $projectRoot 'README.md') $Version
 Set-ReadmeVersion (Join-Path $projectRoot 'README.en.md') $Version
 

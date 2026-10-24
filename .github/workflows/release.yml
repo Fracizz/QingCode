@@ -41,15 +41,15 @@ jobs:
           VERSION=$(node -p "require('./package.json').version")
           CONF=$(node -p "require('./src-tauri/tauri.conf.json').version")
           CARGO=$(grep -E '^version\s*=\s*"' src-tauri/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
-          # 远端 agent 的 AGENT_VERSION 取自该 crate 版本；漏 bump 会导致远端 agent
+          # 远端 server 的 SERVER_VERSION 取自该 crate 版本；漏 bump 会导致远端 server
           # 版本漂移、每次连接都重新部署，因此一并校验。
-          AGENT=$(grep -E '^version\s*=\s*"' src-tauri/qingcode-agent/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
+          SERVER=$(grep -E '^version\s*=\s*"' src-tauri/qingcode-server/Cargo.toml | head -n1 | sed -E 's/.*"([^"]+)".*/\1/')
           if [[ "$VERSION" != "$CONF" || "$VERSION" != "$CARGO" ]]; then
             echo "Version mismatch: package=$VERSION tauri=$CONF cargo=$CARGO" >&2
             exit 1
           fi
-          if [[ "$VERSION" != "$AGENT" ]]; then
-            echo "Version mismatch: package=$VERSION qingcode-agent=$AGENT" >&2
+          if [[ "$VERSION" != "$SERVER" ]]; then
+            echo "Version mismatch: package=$VERSION qingcode-server=$SERVER" >&2
             exit 1
           fi
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && -n "${{ inputs.tag }}" ]]; then
@@ -167,7 +167,7 @@ jobs:
           # One file per platform/channel — no unversioned / legacy aliases.
           Copy-Item "release/QingCode_$ver.exe" "dist-release/QingCode_$ver-windows-x64.exe"
           Copy-Item "release/QingCode_$ver-setup.exe" "dist-release/QingCode_$ver-windows-x64-setup.exe"
-          Copy-Item "release/QingCode-agents.zip" "dist-release/QingCode_$ver-agents.zip"
+          Copy-Item "release/QingCode-servers.zip" "dist-release/QingCode_$ver-servers.zip"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

@@ -185,7 +185,7 @@ try {
   Write-Host "  $versioned"
   Write-Host "  $latest"
   if (-not $SkipAgent) {
-    Write-Host "  $(Join-Path $outDir 'QingCode-agents.zip')  (offline agent pack; not inside the installer)"
+    Write-Host "  $(Join-Path $outDir 'QingCode-servers.zip')  (offline server pack; not inside the installer)"
   }
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray

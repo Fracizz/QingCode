@@ -105,9 +105,9 @@ function buildSharedDefaults(): SettingsFile {
     'terminal.integrated.scrollback': 5000,
     'terminal.integrated.cursorBlinking': true,
     'terminal.integrated.sshUploadOnPaste': false,
-    'ssh.agent.enabled': true,
-    'ssh.agent.autoDownload': true,
-    'ssh.agent.offlineDir': '',
+    'ssh.server.enabled': true,
+    'ssh.server.autoDownload': true,
+    'ssh.server.offlineDir': '',
     custom: {},
   }
 }
@@ -242,23 +242,23 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.sshUploadOnPaste": false,
 
   // ============================== SSH ==============================
-  // ssh.agent.enabled：SSH 工作区是否部署远端代理（qingcode-agent）。代理经 SSH
-  // direct-tcpip 通道接入，只监听远端 127.0.0.1，部署在项目 .qingcode/agent/ 下。
+  // ssh.server.enabled：SSH 工作区是否部署远端服务（qingcode-server）。服务经 SSH
+  // direct-tcpip 通道接入，只监听远端 127.0.0.1，部署在项目 .qingcode/server/ 下。
   // 关闭后完全回退纯 SFTP/exec 直连（远端零足迹），但失去文件树自动刷新、
   // 内嵌内容搜索（无需远端 rg）与快速目录扫描（默认 true）
-  "ssh.agent.enabled": true,
+  "ssh.server.enabled": true,
 
-  // ssh.agent.autoDownload：安装包不附带 agent 二进制。缺失时是否从 GitHub Release
-  // （agent-v<版本> 标签）在线下载并做 sha256 校验。需要能访问 GitHub。
-  // 离线：设置里手动选择 agents 目录，或把它放在 QingCode.exe 旁边，
-  // 或用 QINGCODE_AGENT_DIR 指定目录（本地文件优先于下载）。
+  // ssh.server.autoDownload：安装包不附带 server 二进制。缺失时是否从 GitHub Release
+  // （server-v<版本> 标签）在线下载并做 sha256 校验。需要能访问 GitHub。
+  // 离线：设置里手动选择 servers 目录，或把它放在 QingCode.exe 旁边，
+  // 或用 QINGCODE_SERVER_DIR 指定目录（本地文件优先于下载）。
   // 下载的执行文件不签名，信任源是本仓库官方 Release（默认 true）
-  "ssh.agent.autoDownload": true,
+  "ssh.server.autoDownload": true,
 
-  // ssh.agent.offlineDir：手动选择的离线代理目录（本机路径）。可填 agents 目录，
-  // 或包含 agents 子目录的文件夹。非空时优先于程序旁边的 agents、
-  // QINGCODE_AGENT_DIR 和在线下载。留空表示不手动指定（默认 ""）
-  "ssh.agent.offlineDir": "",
+  // ssh.server.offlineDir：手动选择的离线服务目录（本机路径）。可填 servers 目录，
+  // 或包含 servers 子目录的文件夹。非空时优先于程序旁边的 servers、
+  // QINGCODE_SERVER_DIR 和在线下载。留空表示不手动指定（默认 ""）
+  "ssh.server.offlineDir": "",
 `
 
 /** Auto-save keys live only in the global template; workspace inherits unless overridden. */

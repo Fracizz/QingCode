@@ -26,7 +26,7 @@
     "tauri:dev": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/tauri-dev.ps1",
     "tauri:dev:direct": "tauri dev",
     "icon:sync": "tauri icon public/app-icon-file.svg -o src-tauri/icons",
-    "build:agent": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-agent.ps1",
+    "build:server": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-server.ps1",
     "package": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-installer.ps1",
     "package:fast": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-installer.ps1 -SkipFrontend -SkipIcons",
     "package:exe": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-exe.ps1",

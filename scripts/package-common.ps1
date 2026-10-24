@@ -147,129 +147,129 @@ function Invoke-ForceQingcodeEmbedRebuild {
   }
 }
 
-# --- SSH 远端 agent 二进制（qingcode-agent）打包支持 ---
+# --- SSH 远端 server 二进制（qingcode-server）打包支持 ---
 #
-# 运行时查找顺序（src-tauri/src/lib.rs 的 configure_ssh_agent_binary_dirs）：
-#   QINGCODE_AGENT_DIR → exe 目录/agents → exe 上级/agent → resource_dir/agents
+# 运行时查找顺序（src-tauri/src/lib.rs 的 configure_ssh_server_binary_dirs）：
+#   QINGCODE_SERVER_DIR → exe 目录/servers → exe 上级/server → resource_dir/servers
 # 因此：
 #   - 安装包和便携版 exe 都不把二进制打进程序本体。
-#   - 离线：release/agents/ 与 QingCode-agents.zip，放到 QingCode.exe 同目录的 agents/。
-#   - 在线：ssh.agent.autoDownload 按 manifest sha256 从 GitHub Release 下载到缓存目录。
-# 二进制由 scripts/build-agent.ps1 交叉编译（Linux musl 静态），产物在
-# src-tauri/target/agent/。
+#   - 离线：release/servers/ 与 QingCode-servers.zip，放到 QingCode.exe 同目录的 servers/。
+#   - 在线：ssh.server.autoDownload 按 manifest sha256 从 GitHub Release 下载到缓存目录。
+# 二进制由 scripts/build-server.ps1 交叉编译（Linux musl 静态），产物在
+# src-tauri/target/server/。
 #
 # 资源映射语义（已实测）：bundle.resources 的相对路径按 tauri.conf.json 所在目录
-# （src-tauri/）解析，因此键 `resources/agents/` 指向 src-tauri/resources/agents/；
-# 映射目标是资源目录下的 `agents/`。空目录会被 bundler 静默跳过（不会报错），
-# 这也是“干净树上不构建 agent 也能 tauri build 成功”的前提。
+# （src-tauri/）解析，因此键 `resources/servers/` 指向 src-tauri/resources/servers/；
+# 映射目标是资源目录下的 `servers/`。空目录会被 bundler 静默跳过（不会报错），
+# 这也是“干净树上不构建 server 也能 tauri build 成功”的前提。
 
-function Resolve-AgentOutputDir {
+function Resolve-ServerOutputDir {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
 
-  # build-agent.ps1 固定输出到 src-tauri/target/agent（开发模式 exe 在
-  # src-tauri/target/{debug,release}/ 下，可被“exe 上级/agent”命中）。
-  Join-Path $ProjectRoot 'src-tauri\target\agent'
+  # build-server.ps1 固定输出到 src-tauri/target/server（开发模式 exe 在
+  # src-tauri/target/{debug,release}/ 下，可被“exe 上级/server”命中）。
+  Join-Path $ProjectRoot 'src-tauri\target\server'
 }
 
-function Resolve-AgentStagingDir {
+function Resolve-ServerStagingDir {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
 
-  # 必须与 src-tauri/tauri.conf.json 的 bundle.resources 键（resources/agents/）一致。
-  Join-Path $ProjectRoot 'src-tauri\resources\agents'
+  # 必须与 src-tauri/tauri.conf.json 的 bundle.resources 键（resources/servers/）一致。
+  Join-Path $ProjectRoot 'src-tauri\resources\servers'
 }
 
-function Invoke-AgentBinaryBuild {
+function Invoke-ServerBinaryBuild {
   param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
-    [switch]$SkipAgent,
-    # 逗号分隔的目标架构，空表示 build-agent.ps1 的默认值（x86_64,aarch64）。
+    [switch]$SkipServer,
+    # 逗号分隔的目标架构，空表示 build-server.ps1 的默认值（x86_64,aarch64）。
     [string]$Targets = ''
   )
 
-  if ($SkipAgent) {
-    Write-Host '  agent: skipped (-SkipAgent)' -ForegroundColor Yellow
+  if ($SkipServer) {
+    Write-Host '  server: skipped (-SkipServer)' -ForegroundColor Yellow
     return
   }
 
-  $script = Join-Path $ProjectRoot 'scripts\build-agent.ps1'
+  $script = Join-Path $ProjectRoot 'scripts\build-server.ps1'
   if (-not (Test-Path -LiteralPath $script)) {
-    throw "Agent build script not found: $script"
+    throw "Server build script not found: $script"
   }
   $pwshArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script)
   if ($Targets) { $pwshArgs += @('-Targets', $Targets) }
   & pwsh @pwshArgs
   if ($LASTEXITCODE -ne 0) {
-    throw "build-agent.ps1 failed with exit code $LASTEXITCODE."
+    throw "build-server.ps1 failed with exit code $LASTEXITCODE."
   }
 }
 
-function Get-AgentBinaryFiles {
+function Get-ServerBinaryFiles {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
 
-  $src = Resolve-AgentOutputDir -ProjectRoot $ProjectRoot
+  $src = Resolve-ServerOutputDir -ProjectRoot $ProjectRoot
   if (-not (Test-Path -LiteralPath $src)) {
-    throw "Agent output directory not found: $src (run scripts/build-agent.ps1 first, or drop -SkipAgent)"
+    throw "Server output directory not found: $src (run scripts/build-server.ps1 first, or drop -SkipServer)"
   }
-  $files = @(Get-ChildItem -LiteralPath $src -File -Filter 'qingcode-agent-*' -ErrorAction SilentlyContinue)
+  $files = @(Get-ChildItem -LiteralPath $src -File -Filter 'qingcode-server-*' -ErrorAction SilentlyContinue)
   if ($files.Count -eq 0) {
-    throw "No qingcode-agent-* binaries in $src (run scripts/build-agent.ps1 first, or drop -SkipAgent)"
+    throw "No qingcode-server-* binaries in $src (run scripts/build-server.ps1 first, or drop -SkipServer)"
   }
   return $files
 }
 
-function Copy-AgentBinariesToDirectory {
+function Copy-ServerBinariesToDirectory {
   param(
     [Parameter(Mandatory = $true)][string]$ProjectRoot,
     [Parameter(Mandatory = $true)][string]$Destination
   )
 
-  $files = Get-AgentBinaryFiles -ProjectRoot $ProjectRoot
+  $files = Get-ServerBinaryFiles -ProjectRoot $ProjectRoot
   if (-not (Test-Path -LiteralPath $Destination)) {
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
   }
   foreach ($file in $files) {
     Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $Destination $file.Name) -Force
   }
-  Write-Host ("  agent: {0} -> {1}" -f (($files | ForEach-Object { $_.Name }) -join ', '), $Destination) -ForegroundColor DarkGray
+  Write-Host ("  server: {0} -> {1}" -f (($files | ForEach-Object { $_.Name }) -join ', '), $Destination) -ForegroundColor DarkGray
   return $files
 }
 
-function Publish-AgentBinariesToResourceDir {
+function Publish-ServerBinariesToResourceDir {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
 
-  # tauri build 的 bundle.resources 会把这个目录整体映射到 resource_dir/agents。
+  # tauri build 的 bundle.resources 会把这个目录整体映射到 resource_dir/servers。
   # 先清掉上次残留（例如构建中断留下的其它架构），保证进包内容确定。
-  Clear-AgentResourceDir -ProjectRoot $ProjectRoot
-  $destination = Resolve-AgentStagingDir -ProjectRoot $ProjectRoot
-  return (Copy-AgentBinariesToDirectory -ProjectRoot $ProjectRoot -Destination $destination)
+  Clear-ServerResourceDir -ProjectRoot $ProjectRoot
+  $destination = Resolve-ServerStagingDir -ProjectRoot $ProjectRoot
+  return (Copy-ServerBinariesToDirectory -ProjectRoot $ProjectRoot -Destination $destination)
 }
 
-function Publish-AgentOfflinePack {
+function Publish-ServerOfflinePack {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
 
   $release = Join-Path $ProjectRoot 'release'
-  $destination = Join-Path $release 'agents'
-  Copy-AgentBinariesToDirectory -ProjectRoot $ProjectRoot -Destination $destination | Out-Null
-  $manifest = Join-Path (Resolve-AgentOutputDir -ProjectRoot $ProjectRoot) 'manifest.json'
+  $destination = Join-Path $release 'servers'
+  Copy-ServerBinariesToDirectory -ProjectRoot $ProjectRoot -Destination $destination | Out-Null
+  $manifest = Join-Path (Resolve-ServerOutputDir -ProjectRoot $ProjectRoot) 'manifest.json'
   if (Test-Path -LiteralPath $manifest) {
     Copy-Item -LiteralPath $manifest -Destination (Join-Path $destination 'manifest.json') -Force
   }
   if (-not (Test-Path -LiteralPath $release)) {
     New-Item -ItemType Directory -Force -Path $release | Out-Null
   }
-  $zip = Join-Path $release 'QingCode-agents.zip'
+  $zip = Join-Path $release 'QingCode-servers.zip'
   if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
   Compress-Archive -Path (Join-Path $destination '*') -DestinationPath $zip -Force
-  Write-Host "  offline agent pack: $zip" -ForegroundColor DarkGray
+  Write-Host "  offline server pack: $zip" -ForegroundColor DarkGray
 }
 
-function Clear-AgentResourceDir {
+function Clear-ServerResourceDir {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
 
   # 只删除临时二进制，保留 .gitignore 占位，目录不会变成空目录。
-  $destination = Resolve-AgentStagingDir -ProjectRoot $ProjectRoot
+  $destination = Resolve-ServerStagingDir -ProjectRoot $ProjectRoot
   if (-not (Test-Path -LiteralPath $destination)) { return }
-  $stale = Get-ChildItem -LiteralPath $destination -File -Filter 'qingcode-agent-*' -ErrorAction SilentlyContinue
+  $stale = Get-ChildItem -LiteralPath $destination -File -Filter 'qingcode-server-*' -ErrorAction SilentlyContinue
   foreach ($file in $stale) {
     Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
   }

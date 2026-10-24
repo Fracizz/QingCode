@@ -614,38 +614,45 @@ fn repair_windows_main_window_size(window: &tauri::WebviewWindow) {
     let _ = window.reload();
 }
 
-/// 配置远端 agent 二进制的本地查找目录（按优先级）：
-/// `QINGCODE_AGENT_DIR` 环境变量 → 安装目录 `/agents` → 安装目录上级 `/agent`
-/// → 应用资源目录 `/agents`。目录不存在时由 `set_agent_binary_dirs` 自动过滤。
-fn configure_ssh_agent_binary_dirs(app: &tauri::AppHandle) {
+/// 配置远端 server 二进制的本地查找目录（按优先级）：
+/// `QINGCODE_SERVER_DIR` 环境变量（旧名 `QINGCODE_AGENT_DIR` 兼容）→ 安装目录 `/servers`
+/// （旧名 `/agents` 兼容）→ 安装目录上级 `/server`（旧名 `/agent` 兼容）→ 应用资源目录
+/// `/servers`。目录不存在时由 `set_server_binary_dirs` 自动过滤。
+fn configure_ssh_server_binary_dirs(app: &tauri::AppHandle) {
     let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Ok(dir) = std::env::var("QINGCODE_AGENT_DIR") {
+    let env_dir = std::env::var("QINGCODE_SERVER_DIR")
+        .or_else(|_| std::env::var("QINGCODE_AGENT_DIR"))
+        .ok();
+    if let Some(dir) = env_dir {
         if !dir.trim().is_empty() {
             dirs.push(PathBuf::from(dir));
         }
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(exe_dir) = exe.parent() {
+            dirs.push(exe_dir.join("servers"));
             dirs.push(exe_dir.join("agents"));
             if let Some(parent) = exe_dir.parent() {
+                dirs.push(parent.join("server"));
                 dirs.push(parent.join("agent"));
             }
         }
     }
     if let Ok(resource_dir) = app.path().resource_dir() {
+        dirs.push(resource_dir.join("servers"));
         dirs.push(resource_dir.join("agents"));
     }
-    // 下载缓存目录：便携版等未随包携带二进制时，`ssh.agent.autoDownload`
+    // 下载缓存目录：便携版等未随包携带二进制时，`ssh.server.autoDownload`
     // 开启后从 GitHub Release 下载到这里（优先级最低，不遮蔽随包产物）。
     if let Ok(cache_dir) = app.path().app_cache_dir() {
-        let dir = cache_dir.join("agents");
+        let dir = cache_dir.join("servers");
         let _ = std::fs::create_dir_all(&dir);
         app.state::<remote_ssh::SshManager>()
-            .set_agent_cache_dir(dir.clone());
+            .set_server_cache_dir(dir.clone());
         dirs.push(dir);
     }
     app.state::<remote_ssh::SshManager>()
-        .set_agent_binary_dirs(dirs);
+        .set_server_binary_dirs(dirs);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -695,7 +702,7 @@ pub fn run() {
         .setup(move |app| {
             migrate_legacy_database();
             ipc::start_server(app.handle().clone());
-            configure_ssh_agent_binary_dirs(app.handle());
+            configure_ssh_server_binary_dirs(app.handle());
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
                 let mut window_config = window_config.clone();
                 if launch_as_external && window_config.label == MAIN_WINDOW_LABEL {
@@ -823,12 +830,13 @@ pub fn run() {
             remote_ssh::ssh_connection_status,
             remote_ssh::ssh_workspace_status,
             remote_ssh::ssh_set_workspace_trust,
-            remote_ssh::ssh_set_agent_enabled,
-            remote_ssh::ssh_agent_info,
-            remote_ssh::ssh_agent_restart,
-            remote_ssh::ssh_agent_logs,
-            remote_ssh::ssh_set_agent_auto_download,
-            remote_ssh::ssh_set_agent_offline_dir,
+            remote_ssh::ssh_set_server_enabled,
+            remote_ssh::ssh_server_info,
+            remote_ssh::ssh_server_restart,
+            remote_ssh::ssh_server_stop,
+            remote_ssh::ssh_server_logs,
+            remote_ssh::ssh_set_server_auto_download,
+            remote_ssh::ssh_set_server_offline_dir,
             remote_ssh::ssh_validate_directory,
             remote_ssh::ssh_scan_directory,
             remote_ssh::ssh_file_stat,

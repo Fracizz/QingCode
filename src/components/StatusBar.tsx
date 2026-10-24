@@ -29,7 +29,7 @@ import {
 import { isExternalFileWindow } from '../lib/windowSession'
 import { ProjectKindIcon } from './ProjectKindMark'
 import { isSshProject } from '../lib/sshWorkspace'
-import SshAgentStatusChip from './SshAgentStatusChip'
+import SshServerStatusChip from './SshServerStatusChip'
 import { isSshResource } from '../lib/tauri'
 import { parentPath, pathsEqual } from '../utils/fileReferences'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -436,7 +436,7 @@ export default function StatusBar() {
               {currentProject && isSshProject(currentProject) ? (
                 <>
                   <span className="flex-shrink-0 text-ui-2xs text-fg-muted">{t('SSH')}</span>
-                  <SshAgentStatusChip rootUri={currentProject.path} />
+                  <SshServerStatusChip rootUri={currentProject.path} />
                 </>
               ) : null}
             </>

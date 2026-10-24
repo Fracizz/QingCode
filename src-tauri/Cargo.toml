@@ -7,7 +7,7 @@ license = "MIT"
 edition = "2021"
 
 [workspace]
-members = [".", "qingcode-agent"]
+members = [".", "qingcode-server"]
 default-members = ["."]
 resolver = "2"
 
@@ -54,14 +54,14 @@ notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
 # Sync HTTP for release checks only (avoid pulling reqwest/tokio net).
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
-# sha256 for verifying downloaded remote-agent binaries (see remote_ssh/agent.rs).
+# sha256 for verifying downloaded remote-server binaries (see remote_ssh/server.rs).
 sha2 = "0.10"
 # OS file clipboard (CF_HDROP / NSPasteboard file URLs). No image feature.
 arboard = { version = "3.6", default-features = false }
 russh = { version = "0.63.1", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "2.4.0"
-# SSH 远端代理（qingcode-agent）的协议契约：帧编解码与消息类型两端共用，避免漂移。
-qingcode-agent = { path = "qingcode-agent" }
+# SSH 远端代理（qingcode-server）的协议契约：帧编解码与消息类型两端共用，避免漂移。
+qingcode-server = { path = "qingcode-server" }
 tokio = { version = "1", features = ["io-util", "sync", "time"] }
 # 注意：tokio / futures / chrono 不作为直接依赖。
 # 源码未直接使用它们；由 tauri / portable-pty 等按需拉取所需特性即可，

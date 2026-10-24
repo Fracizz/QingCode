@@ -60,7 +60,7 @@ import {
 } from '../lib/fileTreeCache'
 import { authorizePaths, syncRootsFromProjects } from '../lib/pathAllowlist'
 import { ensureWorkspaceTrust, pushTrustedRootsToNative } from '../lib/workspaceTrust'
-import { pushSshAgentEnabledToNative, loadEffectiveSshAgentEnabled } from '../lib/sshAgentSettings'
+import { pushSshServerSettingsToNative, loadEffectiveSshServerEnabled } from '../lib/sshServerSettings'
 import {
   connectSshWorkspace,
   ensureSshWorkspaceConnected,
@@ -189,8 +189,11 @@ async function syncAllowlistRoots(projects: Project[]): Promise<void> {
   try {
     await syncRootsFromProjects(projects)
     await pushTrustedRootsToNative(projects)
-    // SSH 远端代理开关随项目列表一起在启动时同步到后端（常驻进程需要即时生效）。
-    await pushSshAgentEnabledToNative()
+    // SSH 远端服务开关随项目列表一起在启动时同步到后端（常驻进程需要即时生效）。
+    // 必须先按设置文件重算再推送：模块缓存初值来自默认值，直接推送会把用户
+    // 显式关闭的开关/自动下载短暂置回默认，恰好赶上启动后的首次连接部署。
+    await loadEffectiveSshServerEnabled(null)
+    await pushSshServerSettingsToNative()
   } catch (error) {
     console.warn('sync project roots to path allowlist failed:', error)
   }
@@ -813,10 +816,15 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const known = get().projects
       const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
       await pushTrustedRootsToNative(forTrustSync)
-      // 项目作用域的 ssh.agent.enabled 可能覆盖全局值：切换项目时按当前项目重算并推给后端。
-      void loadEffectiveSshAgentEnabled(project)
-        .then(() => pushSshAgentEnabledToNative())
-        .catch(e => console.warn('sync ssh agent setting failed:', e))
+      // 项目作用域的 ssh.server.enabled 可能覆盖全局值：切换项目时按当前项目重算并推给后端。
+      // await 而不是 fire-and-forget：下面的 ensureSshWorkspaceConnected 会触发部署/下载，
+      // 必须让后端先拿到正确的开关值，避免按旧值部署。
+      try {
+        await loadEffectiveSshServerEnabled(project)
+        await pushSshServerSettingsToNative()
+      } catch (e) {
+        console.warn('sync ssh server setting failed:', e)
+      }
 
       sshConnectionAttempted = true
       const hideConnectingHint = isSshProject(project)
