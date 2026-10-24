@@ -9,7 +9,7 @@ import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
 import { isExternalFileWindow } from '../lib/windowSession'
 import { openFileFromDialog } from '../lib/openFileDialog'
-import { sshProjectDisplayPath } from '../lib/sshWorkspace'
+import { sshFileDisplayPath, sshProjectDisplayPath, sshRemotePathFromUri } from '../lib/sshWorkspace'
 
 /** Lightweight empty editor so CodeMirror is not downloaded until a file is opened. */
 export default function EmptyEditor() {
@@ -161,25 +161,32 @@ export default function EmptyEditor() {
             {t('最近打开的文件')}
           </div>
           <ul className="space-y-0.5">
-            {recent.map(file => (
-              <li key={file.path}>
-                <Tooltip label={file.path} side="bottom" wrapperClassName="block w-full">
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
-                    onClick={() => void openFile(file.path)}
-                  >
-                    <FileText size={12} className="flex-shrink-0 opacity-70" />
-                    <span className="truncate font-medium text-fg">
-                      {file.path.split(/[/\\]/).pop() || file.path}
-                    </span>
-                    <span className="text-ui-sm ml-auto max-w-[55%] truncate text-fg-dim">
-                      {file.path}
-                    </span>
-                  </button>
-                </Tooltip>
-              </li>
-            ))}
+            {recent.map(file => {
+              const isSsh = file.path.startsWith('ssh://')
+              const displayPath = isSsh ? sshRemotePathFromUri(file.path) : file.path
+              const tooltipPath = isSsh
+                ? sshFileDisplayPath(file.path, sshConnections)
+                : file.path
+              return (
+                <li key={file.path}>
+                  <Tooltip label={tooltipPath} side="bottom" wrapperClassName="block w-full">
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg transition-colors"
+                      onClick={() => void openFile(file.path)}
+                    >
+                      <FileText size={12} className="flex-shrink-0 opacity-70" />
+                      <span className="truncate font-medium text-fg">
+                        {file.path.split(/[/\\]/).pop() || file.path}
+                      </span>
+                      <span className="text-ui-sm ml-auto max-w-[55%] truncate text-fg-dim">
+                        {displayPath}
+                      </span>
+                    </button>
+                  </Tooltip>
+                </li>
+              )
+            })}
           </ul>
         </div>
       )}

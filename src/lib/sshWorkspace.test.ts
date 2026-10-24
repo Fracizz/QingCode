@@ -19,6 +19,7 @@ import {
   parentRemotePath,
   sshConnectionIdFromUri,
   sshConnectionLabel,
+  sshFileDisplayPath,
   sshProjectDisplayPath,
   sshRemotePathFromUri,
   sshRootUri,
@@ -127,6 +128,33 @@ describe('sshProjectDisplayPath', () => {
         },
       ])
     ).toBe('root@localhost:/home/code/ai-auto-test-dev')
+  })
+})
+
+describe('sshFileDisplayPath', () => {
+  it('prefixes the connection label instead of the internal id for file URIs', () => {
+    const path = 'ssh://23a6efe9-51bb-4121-9d8a-0b1c2d3e4f5f/D:/code/qingcode/DESIGN.md'
+    expect(
+      sshFileDisplayPath(path, [
+        {
+          id: '23a6efe9-51bb-4121-9d8a-0b1c2d3e4f5f',
+          name: 'WinDev',
+          username: 'administrator',
+          host: '192.168.252.107',
+          port: 28822,
+        },
+      ])
+    ).toBe('WinDev（administrator@192.168.252.107:28822）:/D:/code/qingcode/DESIGN.md')
+  })
+
+  it('falls back to the bare remote path when the connection is unknown', () => {
+    expect(sshFileDisplayPath('ssh://gone/home/app/README.md')).toBe('/home/app/README.md')
+  })
+
+  it('leaves local paths untouched', () => {
+    expect(sshFileDisplayPath('D:\\Code\\QingCode\\DESIGN.md')).toBe(
+      'D:\\Code\\QingCode\\DESIGN.md'
+    )
   })
 })
 

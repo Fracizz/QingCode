@@ -1,27 +1,18 @@
-use crate::binary_ext::{display_file_name, is_binary_extension, unsupported_text_file_message};
+use crate::binary_ext::display_file_name;
 use crate::file_encoding;
 use crate::path_guard::PathAllowlist;
 use serde::Serialize;
 use std::fs;
-use std::fs::File;
-use std::io::{copy, Read, Seek, SeekFrom, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 
 /// Full-buffer `read_file` / `write_file` budget (plain-text CodeMirror up to this size).
 const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;
-/// Legacy range-replace hard cap (same as full-buffer budget; UI no longer exposes patch).
-const MAX_PATCH_FILE_SIZE: u64 = 100 * 1024 * 1024;
-/// Max UTF-8 bytes accepted by `replace_file_range` (fragment edit).
-const MAX_REPLACE_TEXT_BYTES: u64 = 1024 * 1024;
 
 fn exceeds_editor_file_size_limit(size: u64) -> bool {
     size > MAX_EDITOR_FILE_SIZE
-}
-
-fn exceeds_patch_file_size_limit(size: u64) -> bool {
-    size > MAX_PATCH_FILE_SIZE
 }
 
 fn validate_entry_name(name: &str) -> Result<(), String> {
@@ -145,154 +136,6 @@ fn write_file_safely(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
     }
 
     fs::rename(temp_path, path)
-}
-
-#[tauri::command]
-pub async fn replace_file_range(
-    path: String,
-    start: u64,
-    end: u64,
-    text: String,
-    allowlist: State<'_, PathAllowlist>,
-) -> Result<super::cmd_stat::FileStat, String> {
-    allowlist.ensure_writable(&path)?;
-    tauri::async_runtime::spawn_blocking(move || replace_file_range_inner(path, start, end, text))
-        .await
-        .map_err(|error| format!("替换文件内容任务失败: {error}"))?
-}
-
-/// Stream a range replacement into a temp file, then atomically replace.
-/// Kept for compatibility; the UI opens ≤100MB files in CodeMirror instead.
-fn replace_file_range_inner(
-    path: String,
-    start: u64,
-    end: u64,
-    text: String,
-) -> Result<super::cmd_stat::FileStat, String> {
-    if start > end {
-        return Err("替换范围无效：起始位置大于结束位置".into());
-    }
-    let text_bytes = text.as_bytes();
-    if text_bytes.len() as u64 > MAX_REPLACE_TEXT_BYTES {
-        return Err(format!(
-            "替换内容不能超过 {}MB",
-            MAX_REPLACE_TEXT_BYTES / (1024 * 1024)
-        ));
-    }
-
-    let file_path = Path::new(&path);
-    let metadata = fs::metadata(file_path)
-        .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
-    if metadata.is_dir() {
-        return Err(format!("无法打开文件夹：{}", display_file_name(&path)));
-    }
-    let file_size = metadata.len();
-    if exceeds_patch_file_size_limit(file_size) {
-        return Err(format!(
-            "超过 100MB 的文件仅支持只读预览，无法编辑：{}",
-            display_file_name(&path)
-        ));
-    }
-    if is_binary_extension(&path) {
-        return Err(unsupported_text_file_message(&path));
-    }
-    if end > file_size {
-        return Err(format!(
-            "替换范围超出文件末尾：{}",
-            display_file_name(&path)
-        ));
-    }
-
-    let parent = file_path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let file_name = file_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("qingcode");
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-
-    let mut temp_path = None;
-    for attempt in 0..10 {
-        let candidate = parent.join(format!(".{file_name}.{nonce}.{attempt}.patch.tmp"));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(mut out) => {
-                let result = (|| -> Result<(), String> {
-                    let mut src = File::open(file_path).map_err(|e| {
-                        format!("读取文件失败：{}（{}）", display_file_name(&path), e)
-                    })?;
-                    if start > 0 {
-                        copy(&mut Read::by_ref(&mut src).take(start), &mut out)
-                            .map_err(|e| format!("写入临时文件失败：{}", e))?;
-                    }
-                    out.write_all(text_bytes)
-                        .map_err(|e| format!("写入替换内容失败：{}", e))?;
-                    if end < file_size {
-                        src.seek(SeekFrom::Start(end)).map_err(|e| e.to_string())?;
-                        copy(&mut src, &mut out).map_err(|e| format!("写入临时文件失败：{}", e))?;
-                    }
-                    out.sync_all()
-                        .map_err(|e| format!("同步临时文件失败：{}", e))?;
-                    Ok(())
-                })();
-                if let Err(error) = result {
-                    let _ = fs::remove_file(&candidate);
-                    return Err(error);
-                }
-                temp_path = Some(candidate);
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(format!("创建临时文件失败：{}", error));
-            }
-        }
-    }
-
-    let temp_path = temp_path.ok_or_else(|| "无法创建临时文件".to_string())?;
-
-    #[cfg(windows)]
-    {
-        if file_path.exists() {
-            let backup_path = parent.join(format!(".{file_name}.{nonce}.patch.backup"));
-            if let Err(error) = fs::rename(file_path, &backup_path) {
-                let _ = fs::remove_file(&temp_path);
-                return Err(format!("替换文件失败：{}", error));
-            }
-            if let Err(error) = fs::rename(&temp_path, file_path) {
-                let _ = fs::rename(&backup_path, file_path);
-                let _ = fs::remove_file(&temp_path);
-                return Err(format!("替换文件失败：{}", error));
-            }
-            let _ = fs::remove_file(backup_path);
-        } else if let Err(error) = fs::rename(&temp_path, file_path) {
-            let _ = fs::remove_file(&temp_path);
-            return Err(format!("替换文件失败：{}", error));
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        if let Err(error) = fs::rename(&temp_path, file_path) {
-            let _ = fs::remove_file(&temp_path);
-            return Err(format!("替换文件失败：{}", error));
-        }
-    }
-
-    let new_meta = fs::metadata(file_path)
-        .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
-    Ok(super::cmd_stat::FileStat {
-        size: new_meta.len(),
-        is_dir: false,
-    })
 }
 
 #[tauri::command]
@@ -808,28 +651,6 @@ mod tests {
         write_file_safely(&path, b"").unwrap();
 
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn replace_file_range_rewrites_middle() {
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("qingcode-replace-test-{nonce}"));
-        fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("sample.txt");
-        let body = "AAAOLDBBB";
-        fs::write(&path, body).unwrap();
-        let start = 3u64;
-        let end = 6u64;
-        let stat =
-            replace_file_range_inner(path.to_string_lossy().to_string(), start, end, "NEW".into())
-                .unwrap();
-        let next = fs::read_to_string(&path).unwrap();
-        assert_eq!(next, "AAANEWBBB");
-        assert_eq!(stat.size, next.len() as u64);
         fs::remove_dir_all(dir).unwrap();
     }
 

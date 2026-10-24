@@ -462,7 +462,7 @@ export default function StatusBar() {
               >
                 <button
                   type="button"
-                  className={`inline-flex min-w-0 max-w-full items-center gap-1.5 whitespace-nowrap ${STATUS_ACTION}`}
+                  className={`inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap ${STATUS_ACTION}`}
                   onClick={() => setView('sourceControl')}
                 >
                   <GitBranch size={13} className="flex-shrink-0" />

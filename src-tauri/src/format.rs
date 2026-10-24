@@ -96,41 +96,6 @@ fn look_up_prettier(start: &Path) -> Option<PathBuf> {
     look_up_node_bin(start, "prettier")
 }
 
-/// Walk ancestors for `.venv` / `venv` tool binaries (discovery only; no installs).
-#[allow(dead_code)] // Kept for restoring Python formatters (ruff/black).
-fn look_up_venv_tool(start: &Path, tool: &str) -> Option<PathBuf> {
-    let mut dir = start.to_path_buf();
-    if dir.is_file() {
-        dir.pop();
-    }
-    #[cfg(windows)]
-    let rels: [PathBuf; 2] = [
-        PathBuf::from(".venv")
-            .join("Scripts")
-            .join(format!("{tool}.exe")),
-        PathBuf::from("venv")
-            .join("Scripts")
-            .join(format!("{tool}.exe")),
-    ];
-    #[cfg(not(windows))]
-    let rels: [PathBuf; 2] = [
-        PathBuf::from(".venv").join("bin").join(tool),
-        PathBuf::from("venv").join("bin").join(tool),
-    ];
-    loop {
-        for rel in &rels {
-            let candidate = dir.join(rel);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-        if !dir.pop() {
-            break;
-        }
-    }
-    None
-}
-
 fn is_spawn_failure(err: &str) -> bool {
     err.starts_with("无法启动格式化工具") || err.starts_with("未找到格式化工具")
 }
@@ -343,6 +308,7 @@ fn run_windows_cmd_bin(
     run_with_stdin(cmd, content)
 }
 
+#[cfg(not(windows))]
 fn run_direct_bin(bin: &Path, cwd: &Path, args: &[&str], content: &str) -> Result<String, String> {
     let mut cmd = Command::new(bin);
     cmd.current_dir(cwd);
@@ -445,51 +411,8 @@ fn format_with_shfmt(path: &str, content: &str) -> Result<String, String> {
     }
 }
 
-#[allow(dead_code)] // Kept for restoring Python formatters.
-fn run_ruff_format(bin: &Path, cwd: &Path, path: &str, content: &str) -> Result<String, String> {
-    let args = ["format", "--stdin-filename", path, "-"];
-    #[cfg(windows)]
-    {
-        // Prefer direct spawn (finds `ruff.exe` on PATH). Fall back to cmd for .cmd shims.
-        match run_direct_bin(bin, cwd, &args, content) {
-            Ok(formatted) => return Ok(formatted),
-            Err(e) if is_spawn_failure(&e) || is_command_not_found(&e) => {}
-            Err(e) => return Err(e),
-        }
-        let mut cmd = Command::new("cmd");
-        cmd.current_dir(cwd)
-            .args(["/C", "ruff", "format", "--stdin-filename", path, "-"]);
-        run_with_stdin(cmd, content)
-    }
-    #[cfg(not(windows))]
-    {
-        run_direct_bin(bin, cwd, &args, content)
-    }
-}
-
-#[allow(dead_code)] // Kept for restoring Python formatters.
-fn run_black(bin: &Path, cwd: &Path, path: &str, content: &str) -> Result<String, String> {
-    let args = ["--stdin-filename", path, "-q", "-"];
-    #[cfg(windows)]
-    {
-        match run_direct_bin(bin, cwd, &args, content) {
-            Ok(formatted) => return Ok(formatted),
-            Err(e) if is_spawn_failure(&e) || is_command_not_found(&e) => {}
-            Err(e) => return Err(e),
-        }
-        let mut cmd = Command::new("cmd");
-        cmd.current_dir(cwd)
-            .args(["/C", "black", "--stdin-filename", path, "-q", "-"]);
-        run_with_stdin(cmd, content)
-    }
-    #[cfg(not(windows))]
-    {
-        run_direct_bin(bin, cwd, &args, content)
-    }
-}
-
 fn format_with_python(_path: &str, _content: &str) -> Result<String, String> {
-    // Temporarily disabled — ruff/black helpers retained above for a later restore.
+    // Temporarily disabled.
     Err(HINT_PYTHON.to_string())
 }
 

@@ -2124,7 +2124,7 @@ pub async fn ssh_connect(
         server_status::publish_root_state(&app, &manager, &root);
     }
     // 已信任的远端：启动 watch 监督任务（server 提供远端事件源）。
-    // Windows OpenSSH 只跑 serve；Linux 优先 daemon，失败再回退 serve。
+    // Windows 与 Linux 都优先 daemon（Windows 走命名管道），失败再回退 serve。
     // 重复连接同一根时先终止旧任务，避免出现两条并发的 watch 连接。
     if trusted && manager.server_enabled() {
         let key = server::server_slot_key(&config.id, &canonical_root);
@@ -3219,48 +3219,6 @@ pub async fn ssh_directory_delete_stats(
         file_count,
         total_size,
     })
-}
-
-#[tauri::command]
-pub async fn ssh_upload_paths(
-    destination: String,
-    local_paths: Vec<String>,
-    manager: State<'_, SshManager>,
-    allowlist: State<'_, PathAllowlist>,
-    app: AppHandle,
-) -> Result<(), String> {
-    let result = ssh_transfer_paths(
-        uuid::Uuid::new_v4().to_string(),
-        String::from("upload"),
-        local_paths,
-        destination,
-        manager,
-        allowlist,
-        app,
-    )
-    .await?;
-    result.error.map_or(Ok(()), Err)
-}
-
-#[tauri::command]
-pub async fn ssh_download_paths(
-    paths: Vec<String>,
-    destination: String,
-    manager: State<'_, SshManager>,
-    allowlist: State<'_, PathAllowlist>,
-    app: AppHandle,
-) -> Result<(), String> {
-    let result = ssh_transfer_paths(
-        uuid::Uuid::new_v4().to_string(),
-        String::from("download"),
-        paths,
-        destination,
-        manager,
-        allowlist,
-        app,
-    )
-    .await?;
-    result.error.map_or(Ok(()), Err)
 }
 
 fn fuzzy_contains(value: &str, query: &str) -> bool {

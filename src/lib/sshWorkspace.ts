@@ -90,7 +90,9 @@ export function sshConnectionTarget(
   return `${connection.username}@${connection.host}${port}`
 }
 
-export function sshConnectionLabel(connection: SshConnection): string {
+export function sshConnectionLabel(
+  connection: Pick<SshConnection, 'name' | 'username' | 'host' | 'port'>
+): string {
   const target = sshConnectionTarget(connection)
   const name = connection.name.trim()
   return name && name !== connection.host ? `${name}（${target}）` : target
@@ -145,6 +147,20 @@ export function sshProjectDisplayPath(
       item => item.id === project.connection_id || item.id === sshConnectionIdFromUri(project.path)
     )
   return resolved ? `${sshConnectionTarget(resolved)}:${remote}` : remote
+}
+
+/** Human-readable path for an `ssh://` file resource: connection label + remote path, never the internal id. */
+export function sshFileDisplayPath(
+  path: string,
+  connections: ReadonlyArray<
+    Pick<SshConnection, 'id' | 'name' | 'username' | 'host' | 'port'>
+  > = []
+): string {
+  const connectionId = sshConnectionIdFromUri(path)
+  if (!connectionId) return path
+  const remote = sshRemotePathFromUri(path)
+  const connection = connections.find(item => item.id === connectionId)
+  return connection ? `${sshConnectionLabel(connection)}:${remote}` : remote
 }
 
 export function sshRuntimeConfig(
