@@ -1,12 +1,12 @@
 # Build QingCode Windows NSIS installer (.exe setup) via Tauri.
-# Usage: ./scripts/package-installer.ps1 [-Force] [-SkipFrontend] [-Target <triple>] [-SkipAgent]
+# Usage: ./scripts/package-installer.ps1 [-Force] [-SkipFrontend] [-Target <triple>] [-SkipServer]
 [CmdletBinding()]
 param(
   [switch]$Force,
   [switch]$SkipFrontend,
   [switch]$SkipIcons,
-  # Skip building/bundling the SSH remote agent binaries (src-tauri/target/agent).
-  [switch]$SkipAgent,
+  # Skip building/bundling the SSH remote server binaries (src-tauri/target/server).
+  [switch]$SkipServer,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc).
   [string]$Target = ''
 )
@@ -80,14 +80,14 @@ try {
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
-  # 代理二进制不进 NSIS。编完后清掉 resources/agents 里的残留，离线包写到 release/agents。
-  Write-Step 'SSH agent binaries (not bundled)'
-  Clear-AgentResourceDir -ProjectRoot $projectRoot
-  if ($SkipAgent) {
-    Write-Host '  skip agent (-SkipAgent)' -ForegroundColor Yellow
+  # 代理二进制不进 NSIS。编完后清掉 resources/servers 里的残留，离线包写到 release/servers。
+  Write-Step 'SSH server binaries (not bundled)'
+  Clear-ServerResourceDir -ProjectRoot $projectRoot
+  if ($SkipServer) {
+    Write-Host '  skip server (-SkipServer)' -ForegroundColor Yellow
   } else {
-    Invoke-AgentBinaryBuild -ProjectRoot $projectRoot
-    Publish-AgentOfflinePack -ProjectRoot $projectRoot
+    Invoke-ServerBinaryBuild -ProjectRoot $projectRoot
+    Publish-ServerOfflinePack -ProjectRoot $projectRoot
   }
 
   $frontendRebuilt = $false
@@ -184,15 +184,15 @@ try {
   Write-Host "OK NSIS installer written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
   Write-Host "  $latest"
-  if (-not $SkipAgent) {
+  if (-not $SkipServer) {
     Write-Host "  $(Join-Path $outDir 'QingCode-servers.zip')  (offline server pack; not inside the installer)"
   }
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
   Write-Host "Install notes: Start Menu shortcut always; desktop shortcut checked by default on finish page." -ForegroundColor DarkGray
-  Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -SkipAgent · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
+  Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -SkipServer · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {
-  Clear-AgentResourceDir -ProjectRoot $projectRoot
+  Clear-ServerResourceDir -ProjectRoot $projectRoot
   Pop-Location
 }
