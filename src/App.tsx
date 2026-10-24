@@ -69,6 +69,7 @@ const SearchPanel = lazy(() => import('./components/SearchPanel'))
 const SourceControlPanel = lazy(() => import('./components/SourceControlPanel'))
 const RunPanel = lazy(() => import('./components/RunPanel'))
 const ProjectManager = lazy(() => import('./components/ProjectManager'))
+const RemoteConnectionsManager = lazy(() => import('./components/RemoteConnectionsManager'))
 const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'))
 const SettingsEditor = lazy(() => import('./components/SettingsEditor'))
 const TerminalPanel = lazy(() => import('./components/TerminalPanel'))
@@ -161,6 +162,7 @@ function App() {
   const sideEditorVisible = useUIStore(s => s.sideEditorVisible)
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
   const workspaceManagerOpen = useUIStore(s => s.workspaceManagerOpen)
+  const remoteConnectionsOpen = useUIStore(s => s.remoteConnectionsOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const shortcuts = useShortcutStore(s => s.shortcuts)
   const openPalette = useCommandPaletteStore(s => s.openPalette)
@@ -491,6 +493,11 @@ function App() {
       {workspaceManagerOpen && (
         <Suspense fallback={null}>
           <WorkspaceManager />
+        </Suspense>
+      )}
+      {remoteConnectionsOpen && (
+        <Suspense fallback={null}>
+          <RemoteConnectionsManager />
         </Suspense>
       )}
     </div>

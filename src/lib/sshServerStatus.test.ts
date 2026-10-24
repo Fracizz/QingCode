@@ -28,13 +28,13 @@ describe('sshServerStatus', () => {
   it('hides a disconnected chip and labels the ready states', () => {
     expect(sshServerChip(null)).toBeNull()
     expect(sshServerChip({ ...readyServer, phase: 'disconnected' })).toBeNull()
-    expect(sshServerChip(readyServer)).toEqual({ kind: 'version', version: '0.1.13' })
+    expect(sshServerChip(readyServer)).toEqual({ kind: 'agent' })
     expect(sshServerChip({ ...readyServer, version: null })).toEqual({ kind: 'agent' })
     expect(sshServerChip({ ...readyServer, phase: 'readyDirect', mode: 'direct', transport: 'direct', version: null, reason: '已关闭 ssh.server.enabled' })).toEqual({ kind: 'direct' })
     expect(sshServerChip({ ...readyServer, phase: 'installing' })).toEqual({ kind: 'pending' })
   })
 
-  it('builds the direct and agent tips', () => {
+  it('builds concise one-line tips', () => {
     expect(sshServerTipLines({
       ...readyServer,
       phase: 'readyDirect',
@@ -43,10 +43,24 @@ describe('sshServerStatus', () => {
       version: null,
       reason: '工作区未信任',
     })).toEqual([{ key: '直连：{reason}', params: { reason: '工作区未信任' } }])
-    expect(sshServerTipLines(readyServer).map(line => line.key)).toEqual([
-      'Server v{version}',
-      '传输：{transport}',
-      '阶段：{phase}',
+    // 多行原因（如部署诊断输出）在 tooltip 里只保留首行，完整内容进详情弹窗。
+    expect(sshServerTipLines({
+      ...readyServer,
+      phase: 'readyDirect',
+      mode: 'direct',
+      transport: 'direct',
+      version: null,
+      reason: '远端服务程序校验未通过：文件可能损坏。\n用法: qingcode-agent (--version | serve)\n',
+    })).toEqual([{
+      key: '直连：{reason}',
+      params: { reason: '远端服务程序校验未通过：文件可能损坏。' },
+    }])
+    expect(sshServerTipLines(readyServer)).toEqual([
+      { key: 'Server v{version}', params: { version: '0.1.13' } },
+    ])
+    expect(sshServerTipLines({ ...readyServer, version: null })).toEqual([{ key: 'Server' }])
+    expect(sshServerTipLines({ ...readyServer, phase: 'installing' })).toEqual([
+      { key: '阶段：{phase}', params: { phase: '正在安装' } },
     ])
   })
 

@@ -23,8 +23,8 @@ export type PersistedEditorTab = {
   dirty: boolean
   language?: string
   scroll?: PersistedScrollPos
-  /** Restored large files reopen in the slice viewer. */
-  viewMode?: 'view'
+  /** Restored large files reopen in the slice viewer; images in the image viewer. */
+  viewMode?: 'view' | 'image'
 }
 
 export type PersistedTerminalMeta = {
@@ -73,7 +73,7 @@ export type EditorTabSnapshotInput = {
   dirty: boolean
   language?: string
   scroll?: PersistedScrollPos | null
-  viewMode?: 'edit' | 'view'
+  viewMode?: 'edit' | 'view' | 'image'
 }
 
 export type TerminalSnapshotInput = {
@@ -124,7 +124,7 @@ function parseEditorTab(value: unknown): PersistedEditorTab | null {
   if (typeof value.language === 'string') tab.language = value.language
   const scroll = parseScroll(value.scroll)
   if (scroll) tab.scroll = scroll
-  if (value.viewMode === 'view') tab.viewMode = 'view'
+  if (value.viewMode === 'view' || value.viewMode === 'image') tab.viewMode = value.viewMode
   return tab
 }
 
@@ -296,7 +296,7 @@ export function serializeEditorTab(tab: EditorTabSnapshotInput): PersistedEditor
   if (tab.scroll && Number.isFinite(tab.scroll.top) && Number.isFinite(tab.scroll.left)) {
     out.scroll = { top: tab.scroll.top, left: tab.scroll.left }
   }
-  if (tab.viewMode === 'view') out.viewMode = 'view'
+  if (tab.viewMode === 'view' || tab.viewMode === 'image') out.viewMode = tab.viewMode
   return out
 }
 

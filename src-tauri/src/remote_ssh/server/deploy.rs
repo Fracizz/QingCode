@@ -255,17 +255,29 @@ async fn verify_remote_binary(
             ServerDeployError::permanent(format!("远端 server 自检执行失败：{error}"))
         })?;
     if result.exit_code != 0 {
-        let detail = result.stderr.trim();
-        let detail = if detail.is_empty() {
-            format!("退出码 {}", result.exit_code)
-        } else {
-            detail.to_string()
-        };
+        let detail = self_check_failure_detail(&result.stderr, result.exit_code);
         return Err(ServerDeployError::permanent(format!(
-            "远端 server 自检失败（{detail}）：二进制可能损坏或部署目录禁止执行（noexec），请检查远端磁盘后重试"
+            "远端服务程序校验未通过（{detail}）：文件可能损坏、版本过旧或部署目录不允许执行。请删除远端项目内的 .qingcode/server 目录后重新连接，重新连接后会自动重新部署"
         )));
     }
     Ok(())
+}
+
+/// 自检失败的用户可见摘要：stderr 常是整段 CLI 用法说明（如远端残留旧版
+/// 二进制不认识 self-check 时），属开发者信息，这里只保留首个非空行并截断；
+/// 没有 stderr 时退回退出码。完整输出不进界面。
+fn self_check_failure_detail(stderr: &str, exit_code: u32) -> String {
+    const MAX_LINE_CHARS: usize = 60;
+    let line = stderr.lines().map(str::trim).find(|line| !line.is_empty());
+    match line {
+        Some(line) if line.chars().count() <= MAX_LINE_CHARS => line.to_string(),
+        Some(line) => {
+            let mut head: String = line.chars().take(MAX_LINE_CHARS).collect();
+            head.push('…');
+            head
+        }
+        None => format!("退出码 {exit_code}"),
+    }
 }
 
 /// 清理改名前的旧版遗留：`.qingcode/agent/agent.json` 还在时，按其中的 pid
@@ -642,5 +654,25 @@ mod tests {
         // 普通字符串错误保持瞬时且不计退避（如 SFTP 打开失败）。
         let transient = ServerDeployError::from("open sftp 失败".to_string());
         assert!(!transient.permanent && !transient.after_deploy);
+    }
+
+    #[test]
+    fn self_check_detail_keeps_first_short_line_only() {
+        let stderr =
+            "未知子命令: self-check\n用法: qingcode-agent (--version | serve --root <目录>)\n";
+        assert_eq!(
+            self_check_failure_detail(stderr, 2),
+            "未知子命令: self-check"
+        );
+    }
+
+    #[test]
+    fn self_check_detail_truncates_long_line_and_falls_back_to_exit_code() {
+        let long = "x".repeat(80);
+        let detail = self_check_failure_detail(&long, 126);
+        assert_eq!(detail.chars().count(), 61);
+        assert!(detail.ends_with('…'));
+        assert_eq!(self_check_failure_detail("  \n \n", 126), "退出码 126");
+        assert_eq!(self_check_failure_detail("", 1), "退出码 1");
     }
 }

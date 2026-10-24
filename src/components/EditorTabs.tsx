@@ -463,35 +463,31 @@ export default function EditorTabs() {
             )
           })}
         </div>
-        <Tooltip
-          label={
-            hiddenCount > 0
-              ? t('显示所有打开的文件（{hidden} 个已折叠，最多 {max}）', {
-                  hidden: hiddenCount,
-                  max: MAX_OPEN_EDITOR_TABS,
-                })
-              : t('显示所有打开的文件（最多 {max} 个）', { max: MAX_OPEN_EDITOR_TABS })
-          }
-          side="bottom"
-          wrapperClassName="inline-flex h-full shrink-0 items-center pr-1"
-        >
-          <button
-            type="button"
-            aria-label={t('显示所有打开的文件')}
-            className="relative flex ui-chip h-6 w-7 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
-            onClick={event => {
-              const rect = event.currentTarget.getBoundingClientRect()
-              setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
-            }}
+        {hiddenCount > 0 && (
+          <Tooltip
+            label={t('显示所有打开的文件（{hidden} 个已折叠，最多 {max}）', {
+              hidden: hiddenCount,
+              max: MAX_OPEN_EDITOR_TABS,
+            })}
+            side="bottom"
+            wrapperClassName="inline-flex h-full shrink-0 items-center pr-1"
           >
-            <ChevronDown size={14} />
-            {hiddenCount > 0 && (
+            <button
+              type="button"
+              aria-label={t('显示所有打开的文件')}
+              className="relative flex ui-chip h-6 w-7 flex-shrink-0 items-center justify-center rounded text-fg-muted transition-colors hover:bg-bg-hover hover:text-fg"
+              onClick={event => {
+                const rect = event.currentTarget.getBoundingClientRect()
+                setOverflowMenu({ x: rect.right - 220, y: rect.bottom + 2 })
+              }}
+            >
+              <ChevronDown size={14} />
               <span className="absolute bottom-0.5 right-0.5 min-w-[12px] h-[12px] rounded-sm bg-action px-0.5 text-center text-[9px] font-semibold leading-[12px] text-on-action">
                 {hiddenCount > 99 ? '99+' : hiddenCount}
               </span>
-            )}
-          </button>
-        </Tooltip>
+            </button>
+          </Tooltip>
+        )}
 
         {/* Hidden measure layer: natural tab widths for overflow fitting. */}
         <div

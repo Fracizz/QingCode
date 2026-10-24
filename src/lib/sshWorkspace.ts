@@ -1,6 +1,7 @@
 import type { Project, SshConnection } from '../types'
 import { getSshConnection } from './projectRepository'
 import { safeInvoke } from './tauri'
+import { parseSshServerState, type SshServerState } from './sshServerStatus'
 import { isProjectTrusted } from './workspaceTrust'
 
 export interface SshSessionSecrets {
@@ -21,6 +22,9 @@ export interface SshRuntimeConfig {
 }
 
 export const SSH_RECONNECT_REQUEST_EVENT = 'qingcode:ssh-reconnect-request'
+
+/** 连接被新建/编辑/删除后广播，打开中的对话框据此刷新连接列表。 */
+export const SSH_CONNECTIONS_CHANGED_EVENT = 'qingcode:ssh-connections-changed'
 
 export function requestSshReconnect(project: Project): void {
   window.dispatchEvent(new CustomEvent<Project>(SSH_RECONNECT_REQUEST_EVENT, { detail: project }))
@@ -199,6 +203,37 @@ export async function isSshWorkspaceReady(rootUri: string): Promise<boolean> {
     return await safeInvoke<boolean>('检查 SSH 项目连接', 'ssh_workspace_status', { rootUri })
   } catch {
     return false
+  }
+}
+
+export interface SshWorkspaceRoot {
+  rootUri: string
+  trusted: boolean
+}
+
+/** 连接管理页：该连接当前会话下已注册的项目根。连接断开后为空。 */
+export async function listSshWorkspaceRoots(connectionId: string): Promise<SshWorkspaceRoot[]> {
+  try {
+    return await safeInvoke<SshWorkspaceRoot[]>('列出 SSH 项目根', 'ssh_workspace_roots', {
+      connectionId,
+    })
+  } catch {
+    return []
+  }
+}
+
+/** 连接管理页：该连接下全部已注册根的代理状态聚合。 */
+export async function listSshServerStates(connectionId: string): Promise<SshServerState[]> {
+  try {
+    const states = await safeInvoke<SshServerState[]>('查询远端服务状态', 'ssh_server_states', {
+      connectionId,
+    })
+    return states.flatMap(state => {
+      const parsed = parseSshServerState(state)
+      return parsed ? [parsed] : []
+    })
+  } catch {
+    return []
   }
 }
 

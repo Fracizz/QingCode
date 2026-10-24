@@ -19,6 +19,7 @@ import {
 } from './editorSession'
 import { shouldRestoreWorkspace } from './windowSession'
 import { isSessionPersistEnabled } from './sessionPersistSettings'
+import { isNonEditableViewMode } from './openFileError'
 import { isPinnedSettingsTab } from '../utils/editorHelpers'
 import { useEditorStore, type ProjectEditorSession } from '../store/editorStore'
 import {
@@ -251,7 +252,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
               id: tab.id,
               path: tab.path,
               name: tab.name,
-              dirty: tab.viewMode === 'view' ? false : tab.dirty,
+              dirty: isNonEditableViewMode(tab) ? false : tab.dirty,
               language: tab.language,
               scroll: scrollForTab(tab.id),
               viewMode: tab.viewMode,
@@ -264,7 +265,7 @@ export function captureWorkspaceSessionSnapshot(options?: {
       id: tab.id,
       path: tab.path,
       name: tab.name,
-      dirty: tab.viewMode === 'view' ? false : tab.dirty,
+      dirty: isNonEditableViewMode(tab) ? false : tab.dirty,
       language: tab.language,
       scroll: scrollForTab(tab.id),
       viewMode: tab.viewMode,

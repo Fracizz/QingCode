@@ -6,6 +6,7 @@ import {
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { translate } from './i18n'
+import { isNonEditableViewMode } from './openFileError'
 import { isPinnedSettingsTab } from '../utils/editorHelpers'
 import { EDIT_DEGRADED_BYTES, formatFileSize } from './fileSizePolicy'
 
@@ -76,7 +77,7 @@ export async function formatDocument(
     return
   }
 
-  if (isPinnedSettingsTab(tab.path) || tab.viewMode === 'view' || tab.loading || tab.openError) {
+  if (isPinnedSettingsTab(tab.path) || isNonEditableViewMode(tab) || tab.loading || tab.openError) {
     if (!quiet) toast('error', translate('当前标签不支持格式化'))
     return
   }

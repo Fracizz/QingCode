@@ -1,0 +1,934 @@
+import { useEffect, useRef, useState } from 'react'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { open } from '@tauri-apps/plugin-dialog'
+import {
+  FileText,
+  FolderOpen,
+  Globe,
+  KeyRound,
+  Plus,
+  RefreshCw,
+  ScrollText,
+  Server,
+  ShieldCheck,
+  ShieldOff,
+  Trash2,
+  X,
+} from 'lucide-react'
+import ModalOverlay from './ModalOverlay'
+import Tooltip from './Tooltip'
+import { confirmDialog } from '../store/confirmStore'
+import { useProjectStore } from '../store/projectStore'
+import { useUIStore } from '../store/uiStore'
+import { safeInvoke, isTauri } from '../lib/tauri'
+import { useI18n } from '../lib/i18n'
+import {
+  disconnectSshSession,
+  hasSshSessionSecrets,
+  isSshConnectionAlive,
+  isSshProject,
+  listSshServerStates,
+  listSshWorkspaceRoots,
+  NEW_SSH_CONNECTION_ID,
+  openSshSession,
+  probeSshHost,
+  sshConnectionIdFromUri,
+  sshConnectionLabel,
+  sshConnectionTarget,
+  sshProjectDisplayPath,
+  type SshSessionSecrets,
+  type SshWorkspaceRoot,
+} from '../lib/sshWorkspace'
+import {
+  isAgentCommandUnavailable,
+  parseSshServerState,
+  sshServerPhaseKey,
+  sshServerTransportKey,
+  type SshServerState,
+} from '../lib/sshServerStatus'
+import {
+  connectionFromForm,
+  emptyConnectionForm,
+  fingerprintStatus,
+  formEqualsConnection,
+  formFromConnection,
+  runtimeConfigFromForm,
+  targetChanged,
+  validateConnectionForm,
+  type SshConnectionForm,
+} from '../lib/sshConnectionForm'
+import type { Project } from '../types'
+
+const fieldClass =
+  'w-full rounded border border-border-strong bg-bg px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
+const labelClass = 'text-ui text-fg-muted'
+const helpClass = 'text-ui-sm leading-[var(--ui-line-height)] text-fg-muted'
+const sectionTitleClass = 'flex items-center gap-1.5 text-ui font-semibold text-fg'
+const valueBoxClass =
+  'mt-1 flex items-center gap-2 rounded border border-border-strong bg-bg px-2.5 py-1.5 font-mono text-ui text-fg-muted'
+const primaryButtonClass =
+  'rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50'
+const secondaryButtonClass =
+  'rounded border border-border-strong px-3 py-1.5 text-ui text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-40'
+
+type LogView = { rootUri: string; text: string; loading: boolean }
+
+/** 远程连接管理页：连接是跨项目资源，远程项目与远端服务都挂在连接下。 */
+export default function RemoteConnectionsManager() {
+  const { t } = useI18n()
+  const connections = useProjectStore(s => s.sshConnections)
+  const loadSshConnections = useProjectStore(s => s.loadSshConnections)
+  const saveSshConnection = useProjectStore(s => s.saveSshConnection)
+  const deleteSshConnection = useProjectStore(s => s.deleteSshConnection)
+  const projects = useProjectStore(s => s.projects)
+  const switchProject = useProjectStore(s => s.switchProject)
+  const pushToast = useProjectStore(s => s.pushToast)
+  const closeRemoteConnections = useUIStore(s => s.closeRemoteConnections)
+
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [form, setForm] = useState<SshConnectionForm>(emptyConnectionForm())
+  const [password, setPassword] = useState('')
+  const [passphrase, setPassphrase] = useState('')
+  /** 测试连接后确认的新指纹；保存时覆盖存档值。 */
+  const [fingerprintOverride, setFingerprintOverride] = useState<string | null>(null)
+  const [aliveMap, setAliveMap] = useState<Record<string, boolean>>({})
+  const [roots, setRoots] = useState<SshWorkspaceRoot[]>([])
+  const [serverStates, setServerStates] = useState<SshServerState[]>([])
+  const [detailLoading, setDetailLoading] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [busyRoot, setBusyRoot] = useState<string | null>(null)
+  const [logView, setLogView] = useState<LogView | null>(null)
+  const detailRequestRef = useRef(0)
+  /** 新建连接里测试成功产生的临时会话 id；保存转正或放弃表单时清理。 */
+  const pendingTestIdRef = useRef<string | null>(null)
+
+  const isNew = selectedId === NEW_SSH_CONNECTION_ID
+  const selected = connections.find(item => item.id === selectedId) ?? null
+
+  const refreshDetail = async (id: string) => {
+    const requestId = ++detailRequestRef.current
+    setDetailLoading(true)
+    const [alive, nextRoots, nextStates] = await Promise.all([
+      isSshConnectionAlive(id),
+      listSshWorkspaceRoots(id),
+      listSshServerStates(id),
+    ])
+    if (requestId !== detailRequestRef.current) return
+    setAliveMap(prev => ({ ...prev, [id]: alive }))
+    setRoots(nextRoots)
+    setServerStates(nextStates)
+    setDetailLoading(false)
+  }
+
+  // 初次打开：加载连接并默认选中第一个。
+  useEffect(() => {
+    void loadSshConnections().then(() => {
+      const saved = useProjectStore.getState().sshConnections
+      setSelectedId(prev => prev ?? saved[0]?.id ?? null)
+    })
+  }, [loadSshConnections])
+
+  // 切换选中连接：填充表单并拉取详情。
+  useEffect(() => {
+    const conn =
+      selectedId && selectedId !== NEW_SSH_CONNECTION_ID
+        ? useProjectStore.getState().sshConnections.find(item => item.id === selectedId)
+        : null
+    setForm(conn ? formFromConnection(conn) : emptyConnectionForm())
+    setPassword('')
+    setPassphrase('')
+    setFingerprintOverride(null)
+    setError('')
+    setRoots([])
+    setServerStates([])
+    if (conn) void refreshDetail(conn.id)
+  }, [selectedId])
+
+  // 离开未保存的新建表单：断开测试连接时产生的临时会话（已保存转正的不算）。
+  useEffect(() => {
+    if (selectedId === NEW_SSH_CONNECTION_ID) return
+    const pending = pendingTestIdRef.current
+    if (!pending) return
+    pendingTestIdRef.current = null
+    void disconnectSshSession(pending).catch(() => {})
+  }, [selectedId])
+
+  // 关闭管理页时同样清理未转正的临时会话。
+  useEffect(() => {
+    return () => {
+      const pending = pendingTestIdRef.current
+      if (pending) void disconnectSshSession(pending).catch(() => {})
+    }
+  }, [])
+
+  // 连接列表变化时修正失效的选中项。
+  useEffect(() => {
+    if (!selectedId || selectedId === NEW_SSH_CONNECTION_ID) return
+    if (!connections.some(item => item.id === selectedId)) {
+      setSelectedId(connections[0]?.id ?? null)
+    }
+  }, [connections, selectedId])
+
+  // 列表里的在线状态点；连接列表变化后刷新一轮。
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const ids = connections.map(item => item.id)
+      const entries = await Promise.all(
+        ids.map(async id => [id, await isSshConnectionAlive(id)] as const)
+      )
+      if (cancelled) return
+      setAliveMap(prev => ({ ...prev, ...Object.fromEntries(entries) }))
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [connections])
+
+  // 订阅代理状态事件，管理页与状态栏芯片看到同一份阶段模型。
+  useEffect(() => {
+    if (!isTauri() || !selectedId || selectedId === NEW_SSH_CONNECTION_ID) return
+    let cancelled = false
+    let unlisten: UnlistenFn | undefined
+    void listen<unknown>('ssh-server-state', event => {
+      const next = parseSshServerState(event.payload)
+      if (!next || cancelled || next.connectionId !== selectedId) return
+      setServerStates(prev => {
+        const index = prev.findIndex(item => item.rootUri === next.rootUri)
+        if (index === -1) return [...prev, next]
+        const copy = [...prev]
+        copy[index] = next
+        return copy
+      })
+    }).then(stop => {
+      if (cancelled) stop()
+      else unlisten = stop
+    })
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [selectedId])
+
+  const connectionProjects = selected
+    ? projects.filter(
+        project =>
+          isSshProject(project) &&
+          (project.connection_id === selected.id ||
+            sshConnectionIdFromUri(project.path) === selected.id)
+      )
+    : []
+
+  const effectiveFingerprint = fingerprintOverride ?? selected?.host_key_fingerprint ?? null
+  const dirty = selected ? !formEqualsConnection(form, selected) : true
+  const alive = selected ? aliveMap[selected.id] ?? false : false
+
+  const testConnection = async () => {
+    if (testing) return
+    const invalid = validateConnectionForm(form)
+    if (invalid) {
+      setError(t(invalid))
+      return
+    }
+    const id = isNew ? crypto.randomUUID() : selectedId!
+    const secrets: SshSessionSecrets = {
+      password: password || undefined,
+      passphrase: passphrase || undefined,
+    }
+    if (form.authKind === 'password' && !secrets.password && !hasSshSessionSecrets(id)) {
+      setError(t('请输入 SSH 密码以测试连接。'))
+      return
+    }
+    setTesting(true)
+    setError('')
+    try {
+      const probed = await probeSshHost(runtimeConfigFromForm(form, id, secrets))
+      const status = fingerprintStatus(selected?.host_key_fingerprint, probed)
+      if (status !== 'match') {
+        const accepted = await confirmDialog({
+          title: status === 'new' ? t('确认 SSH 主机指纹') : t('主机指纹已变化'),
+          message:
+            status === 'new'
+              ? t('首次连接 {target}，请确认主机指纹。', {
+                  target: sshConnectionTarget({
+                    username: form.username.trim() || 'user',
+                    host: form.host.trim() || 'host',
+                    port: Number.parseInt(form.port, 10) || 22,
+                  }),
+                })
+              : t('远端主机指纹与已存档不一致，可能是远端重装系统，也可能存在中间人风险。'),
+          detail: probed,
+          kind: 'warning',
+          confirmLabel: status === 'new' ? t('信任此主机') : t('接受新指纹'),
+          cancelLabel: t('取消'),
+        })
+        if (!accepted) return
+        setFingerprintOverride(probed)
+      } else {
+        setFingerprintOverride(null)
+      }
+      await openSshSession({
+        ...runtimeConfigFromForm(form, id, secrets),
+        hostKeyFingerprint: probed,
+      })
+      if (isNew) pendingTestIdRef.current = id
+      pushToast('success', t('SSH 连接成功'))
+      await refreshDetail(id)
+    } catch (reason) {
+      setError(String(reason))
+    } finally {
+      setTesting(false)
+    }
+  }
+
+  const saveConnection = async () => {
+    if (saving) return
+    const invalid = validateConnectionForm(form)
+    if (invalid) {
+      setError(t(invalid))
+      return
+    }
+    if (selected && targetChanged(form, selected) && !fingerprintOverride) {
+      setError(t('主机目标已变化，请先「测试连接」确认新的主机指纹。'))
+      return
+    }
+    if (!effectiveFingerprint) {
+      setError(t('请先「测试连接」确认主机指纹后再保存。'))
+      return
+    }
+    setSaving(true)
+    setError('')
+    try {
+      const base = selected ?? { id: crypto.randomUUID(), created_at: Date.now() }
+      await saveSshConnection(connectionFromForm(form, base, effectiveFingerprint))
+      pendingTestIdRef.current = null
+      pushToast('success', t('已保存 SSH 连接'))
+      setFingerprintOverride(null)
+      setSelectedId(base.id)
+    } catch (reason) {
+      setError(String(reason))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const removeConnection = async () => {
+    if (!selected) return
+    const refs = projects.filter(
+      project =>
+        project.connection_id === selected.id || sshConnectionIdFromUri(project.path) === selected.id
+    )
+    if (refs.length > 0) {
+      setError(
+        t('该连接仍被 {count} 个远程项目使用（{names}），请先在项目管理中删除或改绑这些项目。', {
+          count: refs.length,
+          names: refs.map(project => project.name).join('、'),
+        })
+      )
+      return
+    }
+    const accepted = await confirmDialog({
+      title: t('删除 SSH 连接'),
+      message: t('删除连接 {label}？此操作不可撤销。', { label: sshConnectionLabel(selected) }),
+      kind: 'warning',
+      confirmLabel: t('删除'),
+      cancelLabel: t('取消'),
+    })
+    if (!accepted) return
+    try {
+      await disconnectSshSession(selected.id).catch(() => {})
+      await deleteSshConnection(selected.id)
+      pushToast('success', t('已删除 SSH 连接'))
+      setSelectedId(null)
+    } catch (reason) {
+      setError(String(reason))
+    }
+  }
+
+  const disconnectConnection = async () => {
+    if (!selected) return
+    const accepted = await confirmDialog({
+      title: t('断开 SSH 连接'),
+      message: t(
+        '断开 {label}？打开的远程项目会失去连接，重新打开项目时可以重连（密码需重新输入）。',
+        { label: sshConnectionLabel(selected) }
+      ),
+      kind: 'warning',
+      confirmLabel: t('断开'),
+      cancelLabel: t('取消'),
+    })
+    if (!accepted) return
+    try {
+      await disconnectSshSession(selected.id)
+      pushToast('success', t('已断开连接'))
+      await refreshDetail(selected.id)
+    } catch (reason) {
+      setError(String(reason))
+    }
+  }
+
+  const revokeTrust = async (rootUri: string) => {
+    const accepted = await confirmDialog({
+      title: t('撤销工作区信任'),
+      message: t('撤销后该远程项目回到受限模式，写文件与运行命令前需要重新信任。'),
+      kind: 'warning',
+      confirmLabel: t('撤销信任'),
+      cancelLabel: t('取消'),
+    })
+    if (!accepted) return
+    try {
+      await safeInvoke('撤销 SSH 工作区信任', 'ssh_set_workspace_trust', {
+        rootUri,
+        trusted: false,
+      })
+      pushToast('success', t('已撤销信任'))
+      if (selectedId) await refreshDetail(selectedId)
+    } catch (reason) {
+      pushToast('error', t('撤销信任失败: {error}', { error: String(reason) }))
+    }
+  }
+
+  const restartServer = async (rootUri: string) => {
+    if (busyRoot) return
+    setBusyRoot(rootUri)
+    try {
+      await safeInvoke('重启远端服务', 'ssh_server_restart', { rootUri })
+      pushToast('success', t('已重启远端服务'))
+    } catch (reason) {
+      if (!isAgentCommandUnavailable(reason)) {
+        pushToast('error', t('重启远端服务失败: {error}', { error: String(reason) }))
+      }
+    } finally {
+      setBusyRoot(null)
+    }
+  }
+
+  const showLogs = async (rootUri: string) => {
+    setLogView({ rootUri, text: '', loading: true })
+    try {
+      const result = await safeInvoke<{ text: string }>('读取远端服务日志', 'ssh_server_logs', {
+        rootUri,
+      })
+      setLogView({ rootUri, text: result.text, loading: false })
+    } catch (reason) {
+      setLogView(null)
+      if (!isAgentCommandUnavailable(reason)) {
+        pushToast('error', t('读取远端服务日志失败: {error}', { error: String(reason) }))
+      }
+    }
+  }
+
+  const openProject = async (project: Project) => {
+    closeRemoteConnections()
+    await switchProject(project)
+  }
+
+  const choosePrivateKey = async () => {
+    const selectedPath = await open({
+      directory: false,
+      multiple: false,
+      title: '选择 SSH 私钥',
+    })
+    if (typeof selectedPath === 'string') {
+      setForm(prev => ({ ...prev, privateKeyPath: selectedPath }))
+    }
+  }
+
+  const remoteShort = (rootUri: string) => rootUri.replace(/^ssh:\/\/[^/]+/, '') || '/'
+
+  const renderForm = () => (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-3">
+      <label className={`col-span-2 ${labelClass}`}>
+        {t('连接名称')}
+        <input
+          value={form.name}
+          onChange={event => setForm(prev => ({ ...prev, name: event.target.value }))}
+          placeholder={t('默认使用主机名')}
+          className={`${fieldClass} mt-1`}
+        />
+      </label>
+      <label className={labelClass}>
+        {t('主机')}
+        <input
+          value={form.host}
+          onChange={event => setForm(prev => ({ ...prev, host: event.target.value }))}
+          placeholder="192.168.1.10"
+          className={`${fieldClass} mt-1`}
+        />
+      </label>
+      <label className={labelClass}>
+        {t('端口')}
+        <input
+          value={form.port}
+          onChange={event => setForm(prev => ({ ...prev, port: event.target.value }))}
+          inputMode="numeric"
+          className={`${fieldClass} mt-1`}
+        />
+      </label>
+      <label className={labelClass}>
+        {t('用户名')}
+        <input
+          value={form.username}
+          onChange={event => setForm(prev => ({ ...prev, username: event.target.value }))}
+          placeholder="root"
+          className={`${fieldClass} mt-1`}
+        />
+      </label>
+      <label className={labelClass}>
+        {t('认证方式')}
+        <select
+          value={form.authKind}
+          onChange={event =>
+            setForm(prev => ({ ...prev, authKind: event.target.value as SshConnectionForm['authKind'] }))
+          }
+          className={`${fieldClass} mt-1`}
+        >
+          <option value="privateKey">{t('私钥（推荐，WSL 无需密码）')}</option>
+          <option value="password">{t('密码（仅本次会话）')}</option>
+        </select>
+      </label>
+      {form.authKind === 'privateKey' ? (
+        <label className={`col-span-2 ${labelClass}`}>
+          {t('私钥文件（可选）')}
+          <div className="mt-1 flex gap-2">
+            <input
+              value={form.privateKeyPath}
+              onChange={event => setForm(prev => ({ ...prev, privateKeyPath: event.target.value }))}
+              placeholder={t('留空则使用 ~/.ssh/id_ed25519 等默认密钥')}
+              className={`${fieldClass} font-mono`}
+            />
+            <button
+              type="button"
+              onClick={() => void choosePrivateKey()}
+              className="inline-flex flex-shrink-0 items-center gap-1 rounded border border-border-strong px-2.5 text-ui text-fg hover:bg-bg-hover"
+            >
+              <KeyRound size={13} />
+              {t('选择')}
+            </button>
+          </div>
+        </label>
+      ) : null}
+      <label className={`col-span-2 ${labelClass}`}>
+        {isNew ? t('密码（测试连接用，不会保存）') : t('密码（仅测试连接用，不会保存）')}
+        <input
+          type="password"
+          value={password}
+          onChange={event => setPassword(event.target.value)}
+          className={`${fieldClass} mt-1`}
+        />
+      </label>
+      {form.authKind === 'privateKey' ? (
+        <label className={`col-span-2 ${labelClass}`}>
+          {t('私钥口令（如有，仅本次会话）')}
+          <input
+            type="password"
+            value={passphrase}
+            onChange={event => setPassphrase(event.target.value)}
+            className={`${fieldClass} mt-1`}
+          />
+        </label>
+      ) : null}
+      {selected ? (
+        <div className={`col-span-2 ${labelClass}`}>
+          {t('主机指纹')}
+          <div className={valueBoxClass}>
+            <Globe size={14} className="flex-shrink-0 text-fg-dim" />
+            <span className="min-w-0 flex-1 truncate">
+              {effectiveFingerprint ?? t('尚未确认（保存前需先测试连接）')}
+            </span>
+            {fingerprintOverride ? (
+              <span className="flex-shrink-0 rounded bg-warn/15 px-1.5 py-0.5 text-ui-2xs text-warn">
+                {t('已确认新指纹')}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+
+  return (
+    <>
+      <ModalOverlay onDismiss={closeRemoteConnections} zIndex="z-[130]">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="remote-connections-title"
+          className="ui-font-scaled modal-content-enter relative flex w-[75vw] max-w-[1100px] max-h-[80vh] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+          onPointerDown={event => event.stopPropagation()}
+        >
+          <div className="flex h-12 flex-shrink-0 items-center justify-between border-b border-border-strong px-4">
+            <div className="flex items-center gap-2 text-ui-lg font-semibold text-fg">
+              <Globe size={16} className="text-fg-muted" />
+              <h2 id="remote-connections-title">{t('远程连接')}</h2>
+              <span className="text-ui-sm font-normal text-fg-muted">
+                {t('连接 · 项目 · 远端服务')}
+              </span>
+            </div>
+            <Tooltip label={t('关闭')} side="left">
+              <button
+                type="button"
+                onClick={closeRemoteConnections}
+                className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                aria-label={t('关闭')}
+              >
+                <X size={18} />
+              </button>
+            </Tooltip>
+          </div>
+
+          <div className="flex min-h-0 flex-1">
+            <aside className="flex w-60 flex-shrink-0 flex-col border-r border-border-strong">
+              <div className="p-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(NEW_SSH_CONNECTION_ID)}
+                  className={`flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-ui transition-colors ${
+                    isNew
+                      ? 'border-brand/60 bg-brand/10 text-brand'
+                      : 'border-border-strong text-fg-muted hover:bg-bg-hover hover:text-fg'
+                  }`}
+                >
+                  <Plus size={14} />
+                  {t('新建连接')}
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+                {connections.map(connection => {
+                  const active = connection.id === selectedId
+                  const online = aliveMap[connection.id] ?? false
+                  return (
+                    <button
+                      key={connection.id}
+                      type="button"
+                      onClick={() => setSelectedId(connection.id)}
+                      className={`flex w-full flex-col gap-0.5 border-l-2 px-3 py-2 text-left transition-colors ${
+                        active
+                          ? 'border-brand bg-bg-active text-fg'
+                          : 'border-transparent text-fg-muted hover:bg-bg-hover hover:text-fg'
+                      }`}
+                    >
+                      <span className="flex items-center gap-1.5 text-ui">
+                        <span
+                          aria-hidden
+                          className={`h-[6px] w-[6px] flex-shrink-0 rounded-full ${
+                            online ? 'bg-accent' : 'bg-fg-dim'
+                          }`}
+                        />
+                        <span className="min-w-0 truncate">{connection.name}</span>
+                      </span>
+                      <span className="min-w-0 truncate pl-[13px] font-mono text-ui-2xs text-fg-dim">
+                        {sshConnectionTarget(connection)}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            </aside>
+
+            <section className="min-w-0 flex-1 overflow-y-auto px-4 py-4">
+              {isNew || selected ? (
+                <div className="flex flex-col gap-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Server size={15} className="flex-shrink-0 text-fg-muted" />
+                      <h3 className="min-w-0 truncate text-ui-lg font-semibold text-fg">
+                        {isNew ? t('新建连接') : selected!.name}
+                      </h3>
+                      {!isNew && (
+                        <span
+                          className={`flex-shrink-0 rounded px-1.5 py-0.5 text-ui-2xs ${
+                            alive ? 'bg-accent/15 text-accent' : 'bg-bg-active text-fg-dim'
+                          }`}
+                        >
+                          {alive ? t('在线') : t('离线')}
+                        </span>
+                      )}
+                    </div>
+                    {!isNew && selected && (
+                      <div className="flex flex-shrink-0 items-center gap-2">
+                        {alive && (
+                          <button
+                            type="button"
+                            onClick={() => void disconnectConnection()}
+                            className={secondaryButtonClass}
+                          >
+                            {t('断开连接')}
+                          </button>
+                        )}
+                        <Tooltip label={t('删除连接')} side="left">
+                          <button
+                            type="button"
+                            onClick={() => void removeConnection()}
+                            className="rounded border border-border-strong p-1.5 text-fg-dim hover:border-danger/50 hover:text-danger disabled:opacity-40"
+                            aria-label={t('删除连接')}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </Tooltip>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className={`${sectionTitleClass} mb-2`}>{t('基本信息')}</p>
+                    {renderForm()}
+                    {error ? (
+                      <p className="mt-3 whitespace-pre-wrap rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui text-danger">
+                        {error}
+                      </p>
+                    ) : null}
+                    <div className="mt-3 flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        disabled={testing}
+                        onClick={() => void testConnection()}
+                        className={secondaryButtonClass}
+                      >
+                        {testing ? t('正在连接…') : t('测试连接')}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={saving || (selected ? !dirty && !fingerprintOverride : false)}
+                        onClick={() => void saveConnection()}
+                        className={primaryButtonClass}
+                      >
+                        {saving ? t('正在保存…') : t('保存')}
+                      </button>
+                    </div>
+                  </div>
+
+                  {!isNew && selected && (
+                    <>
+                      <div>
+                        <p className={`${sectionTitleClass} mb-2`}>
+                          {t('远程项目')}
+                          <span className="ml-1 text-ui-sm font-normal text-fg-dim">
+                            {connectionProjects.length}
+                          </span>
+                        </p>
+                        {connectionProjects.length === 0 ? (
+                          <p className={helpClass}>{t('暂无使用此连接的远程项目。')}</p>
+                        ) : (
+                          <ul className="overflow-hidden rounded border border-border-strong">
+                            {connectionProjects.map(project => (
+                              <li
+                                key={project.id}
+                                className="flex items-center gap-2 border-b border-border px-3 py-2 last:border-b-0"
+                              >
+                                <FolderOpen size={13} className="flex-shrink-0 text-fg-dim" />
+                                <span className="min-w-0 flex-1 truncate text-ui text-fg">
+                                  {project.name}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-fg-dim">
+                                  {sshProjectDisplayPath(project, selected, connections)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void openProject(project)}
+                                  className="flex-shrink-0 rounded px-2 py-0.5 text-ui-2xs text-accent hover:bg-accent/10"
+                                >
+                                  {t('打开')}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className={`${sectionTitleClass} mb-2`}>{t('信任与项目根')}</p>
+                        {detailLoading ? (
+                          <p className={helpClass}>{t('正在读取…')}</p>
+                        ) : roots.length === 0 ? (
+                          <p className={helpClass}>
+                            {t('当前会话没有已注册的项目根。重新打开远程项目后会登记在这里。')}
+                          </p>
+                        ) : (
+                          <ul className="overflow-hidden rounded border border-border-strong">
+                            {roots.map(root => (
+                              <li
+                                key={root.rootUri}
+                                className="flex items-center gap-2 border-b border-border px-3 py-2 last:border-b-0"
+                              >
+                                {root.trusted ? (
+                                  <ShieldCheck size={13} className="flex-shrink-0 text-accent" />
+                                ) : (
+                                  <ShieldOff size={13} className="flex-shrink-0 text-warn" />
+                                )}
+                                <span className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-fg">
+                                  {remoteShort(root.rootUri)}
+                                </span>
+                                <span
+                                  className={`flex-shrink-0 rounded px-1.5 py-0.5 text-ui-2xs ${
+                                    root.trusted
+                                      ? 'bg-accent/15 text-accent'
+                                      : 'bg-warn/15 text-warn'
+                                  }`}
+                                >
+                                  {root.trusted ? t('已信任') : t('未信任')}
+                                </span>
+                                {root.trusted && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void revokeTrust(root.rootUri)}
+                                    className="flex-shrink-0 rounded px-2 py-0.5 text-ui-2xs text-fg-muted hover:bg-bg-hover hover:text-fg"
+                                  >
+                                    {t('撤销信任')}
+                                  </button>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+
+                      <div>
+                        <p className={`${sectionTitleClass} mb-2`}>
+                          {t('远端服务')}
+                          <Tooltip
+                            label={t('qingcode-server 经 SSH 通道接入；全局开关与离线目录在设置中配置。')}
+                            side="top"
+                          >
+                            <button
+                              type="button"
+                              className="rounded p-0.5 text-fg-dim hover:text-fg"
+                              aria-label={t('关于远端服务')}
+                            >
+                              <span
+                                aria-hidden
+                                className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-current text-[9px] leading-none"
+                              >
+                                ?
+                              </span>
+                            </button>
+                          </Tooltip>
+                        </p>
+                        {detailLoading ? (
+                          <p className={helpClass}>{t('正在读取…')}</p>
+                        ) : serverStates.length === 0 ? (
+                          <p className={helpClass}>
+                            {t('当前会话没有可查询的项目。重新打开远程项目后会显示服务状态。')}
+                          </p>
+                        ) : (
+                          <ul className="overflow-hidden rounded border border-border-strong">
+                            {serverStates.map(state => (
+                              <li
+                                key={state.rootUri}
+                                className="flex items-center gap-2 border-b border-border px-3 py-2 last:border-b-0"
+                              >
+                                <FileText size={13} className="flex-shrink-0 text-fg-dim" />
+                                <span className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-fg">
+                                  {remoteShort(state.rootUri)}
+                                </span>
+                                <span className="flex-shrink-0 text-ui-2xs text-fg-muted">
+                                  {t(sshServerPhaseKey(state.phase))}
+                                </span>
+                                {sshServerTransportKey(state.transport) ? (
+                                  <span className="flex-shrink-0 rounded bg-bg-active px-1.5 py-0.5 text-ui-2xs text-fg-muted">
+                                    {t(sshServerTransportKey(state.transport)!)}
+                                  </span>
+                                ) : null}
+                                {state.reason ? (
+                                  <Tooltip label={state.reason} side="left">
+                                    <span className="flex-shrink-0 text-ui-2xs text-warn">
+                                      {t('原因')}
+                                    </span>
+                                  </Tooltip>
+                                ) : null}
+                                <Tooltip label={t('重启远端服务')} side="top">
+                                  <button
+                                    type="button"
+                                    disabled={busyRoot === state.rootUri}
+                                    onClick={() => void restartServer(state.rootUri)}
+                                    className="flex-shrink-0 rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+                                    aria-label={t('重启远端服务')}
+                                  >
+                                    <RefreshCw size={12} />
+                                  </button>
+                                </Tooltip>
+                                <Tooltip label={t('查看日志')} side="left">
+                                  <button
+                                    type="button"
+                                    onClick={() => void showLogs(state.rootUri)}
+                                    className="flex-shrink-0 rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                                    aria-label={t('查看日志')}
+                                  >
+                                    <ScrollText size={12} />
+                                  </button>
+                                </Tooltip>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                  <Server size={28} className="text-fg-dim" />
+                  <p className={helpClass}>{t('还没有 SSH 连接。新建一个连接，或通过「打开 SSH 项目」创建。')}</p>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(NEW_SSH_CONNECTION_ID)}
+                    className={primaryButtonClass}
+                  >
+                    {t('新建连接')}
+                  </button>
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
+      </ModalOverlay>
+
+      {logView && (
+        <ModalOverlay onDismiss={() => setLogView(null)} zIndex="z-[135]">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="remote-connections-log-title"
+            className="modal-content-enter relative flex max-h-[min(70vh,520px)] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3"
+            onPointerDown={event => event.stopPropagation()}
+          >
+            <header className="flex h-11 flex-shrink-0 items-center justify-between gap-3 border-b border-border px-4">
+              <h2 id="remote-connections-log-title" className="min-w-0 truncate font-mono text-ui text-fg">
+                {remoteShort(logView.rootUri)}
+              </h2>
+              <div className="flex items-center gap-1">
+                <Tooltip label={t('刷新')} side="bottom">
+                  <button
+                    type="button"
+                    aria-label={t('刷新')}
+                    className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                    onClick={() => void showLogs(logView.rootUri)}
+                  >
+                    <RefreshCw size={16} />
+                  </button>
+                </Tooltip>
+                <Tooltip label={t('关闭')} side="bottom">
+                  <button
+                    type="button"
+                    aria-label={t('关闭')}
+                    className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                    onClick={() => setLogView(null)}
+                  >
+                    <X size={16} />
+                  </button>
+                </Tooltip>
+              </div>
+            </header>
+            <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+              <pre className="whitespace-pre-wrap font-mono text-ui-2xs text-fg">
+                {logView.loading ? t('读取日志中…') : logView.text || t('没有日志')}
+              </pre>
+            </div>
+          </section>
+        </ModalOverlay>
+      )}
+    </>
+  )
+}

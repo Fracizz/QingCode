@@ -11,15 +11,17 @@ import {
   sshServerPhaseKey,
   sshServerTipLines,
   sshServerTransportKey,
+  type SshServerChip,
   type SshServerState,
 } from '../lib/sshServerStatus'
 import StatusTip from './StatusTip'
 import ContextMenu from './ContextMenu'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
-import { RefreshCw, X } from 'lucide-react'
+import { RefreshCw, RotateCw, ScrollText, X } from 'lucide-react'
 
 const STATUS_ACTION = 'rounded px-1 -mx-1 text-fg hover:bg-bg-hover transition-colors'
+const CHIP_DOT = 'h-[5px] w-[5px] rounded-full ring-1 ring-white/10'
 
 type DialogKind = 'details' | 'logs'
 
@@ -88,7 +90,11 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
   const chip = sshServerChip(state)
   if (!chip || !state) return null
 
-  const tip = sshServerTipLines(state).map(line => translateTipLine(line, t)).join('\n')
+  const tipLines = [
+    ...sshServerTipLines(state).map(line => translateTipLine(line, t)),
+    t('点击查看详情'),
+  ]
+  const tip = tipLines.join('\n')
 
   const fetchLogs = () => {
     setLogs('')
@@ -129,14 +135,15 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
       <StatusTip label={tip}>
         <button
           type="button"
-          className={`inline-flex flex-shrink-0 items-center text-ui-2xs ${STATUS_ACTION}`}
-          aria-haspopup="menu"
-          aria-expanded={menu !== null}
-          onClick={event => {
-            const rect = event.currentTarget.getBoundingClientRect()
-            setMenu({ x: rect.left, y: rect.top })
+          className={`inline-flex flex-shrink-0 items-center gap-1.5 text-ui-2xs ${STATUS_ACTION}`}
+          aria-label={tipLines.join(' ')}
+          onClick={() => setDialog('details')}
+          onContextMenu={event => {
+            event.preventDefault()
+            setMenu({ x: event.clientX, y: event.clientY })
           }}
         >
+          <ChipDot kind={chip.kind} />
           <ChipText chip={chip} />
         </button>
       </StatusTip>
@@ -166,7 +173,31 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
                 {dialog === 'logs' ? t('Server 日志') : t('Server 详情')}
               </h2>
               <div className="flex items-center gap-1">
-                {dialog === 'logs' && (
+                {dialog === 'details' ? (
+                  <>
+                    <Tooltip label={t('重启 Server')} side="bottom">
+                      <button
+                        type="button"
+                        aria-label={t('重启 Server')}
+                        disabled={busy}
+                        className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+                        onClick={restart}
+                      >
+                        <RotateCw size={16} />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={t('查看 Server 日志')} side="bottom">
+                      <button
+                        type="button"
+                        aria-label={t('查看 Server 日志')}
+                        className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                        onClick={openLogs}
+                      >
+                        <ScrollText size={16} />
+                      </button>
+                    </Tooltip>
+                  </>
+                ) : (
                   <Tooltip label={t('刷新')} side="bottom">
                     <button
                       type="button"
@@ -213,9 +244,14 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
   )
 }
 
-function ChipText({ chip }: { chip: NonNullable<ReturnType<typeof sshServerChip>> }) {
+function ChipDot({ kind }: { kind: SshServerChip['kind'] }) {
+  const tone =
+    kind === 'agent' ? 'bg-accent' : kind === 'pending' ? 'bg-warn animate-pulse' : 'bg-fg-muted'
+  return <span aria-hidden className={`${CHIP_DOT} ${tone}`} />
+}
+
+function ChipText({ chip }: { chip: SshServerChip }) {
   const { t } = useI18n()
-  if (chip.kind === 'version') return <>{t('Server v{version}', { version: chip.version })}</>
   if (chip.kind === 'agent') return <>{t('Server')}</>
   if (chip.kind === 'direct') return <>{t('直连')}</>
   return <>{t('Server…')}</>
@@ -243,8 +279,6 @@ function translateTipLine(
       return t('Server v{version}', line.params)
     case 'Server':
       return t('Server')
-    case '传输：{transport}':
-      return t('传输：{transport}', { transport: transportText(line.params?.transport, t) })
     case '阶段：{phase}':
       return t('阶段：{phase}', { phase: phaseText(line.params?.phase, t) })
     case '原因：{reason}':

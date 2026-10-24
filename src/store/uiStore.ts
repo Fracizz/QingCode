@@ -58,6 +58,8 @@ interface UIState {
   projectManagerOpen: boolean
   /** Whether the named multi-project workspace manager modal is open. */
   workspaceManagerOpen: boolean
+  /** Whether the SSH remote connections manager modal is open. */
+  remoteConnectionsOpen: boolean
   /** 进入整页视图（源代码管理/设置）前的布局快照，离开时恢复；null 表示不在整页视图。 */
   fullPageRestore: FullPageRestore | null
   setView: (view: View) => void
@@ -96,6 +98,8 @@ interface UIState {
   closeProjectManager: () => void
   openWorkspaceManager: () => void
   closeWorkspaceManager: () => void
+  openRemoteConnections: () => void
+  closeRemoteConnections: () => void
 }
 
 interface FullPageRestore {
@@ -189,6 +193,7 @@ export const useUIStore = create<UIState>((set) => ({
   settingsFocusSignal: 0,
   projectManagerOpen: false,
   workspaceManagerOpen: false,
+  remoteConnectionsOpen: false,
   fullPageRestore: null,
   setView: view =>
     set(state => {
@@ -363,4 +368,6 @@ export const useUIStore = create<UIState>((set) => ({
   closeProjectManager: () => set({ projectManagerOpen: false }),
   openWorkspaceManager: () => set({ workspaceManagerOpen: true }),
   closeWorkspaceManager: () => set({ workspaceManagerOpen: false }),
+  openRemoteConnections: () => set({ remoteConnectionsOpen: true }),
+  closeRemoteConnections: () => set({ remoteConnectionsOpen: false }),
 }))

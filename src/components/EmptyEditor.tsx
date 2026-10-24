@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Clock, FileText, FolderOpen, Settings, Terminal as TerminalIcon } from 'lucide-react'
+import { Clock, FileText, FolderOpen, Globe, Settings, Terminal as TerminalIcon } from 'lucide-react'
 import AppIcon from './AppIcon'
 import Kbd from './Kbd'
 import Tooltip from './Tooltip'
@@ -23,6 +23,7 @@ export default function EmptyEditor() {
   const openFile = useEditorStore(s => s.openFile)
   const setView = useUIStore(s => s.setView)
   const openTerminalPanel = useUIStore(s => s.openTerminalPanel)
+  const openRemoteConnections = useUIStore(s => s.openRemoteConnections)
   const recent = recentFiles.slice(0, 8)
   const recentProjects = projects.filter(p => !p.hidden).slice(0, 5)
   const standaloneFiles = isExternalFileWindow() && !currentProject
@@ -54,6 +55,11 @@ export default function EmptyEditor() {
           label: t('打开项目'),
           onClick: () => void addProjectFromDialog(),
           primary: true,
+        },
+        {
+          icon: <Globe size={14} />,
+          label: t('远程连接'),
+          onClick: openRemoteConnections,
         },
         {
           icon: <TerminalIcon size={14} />,

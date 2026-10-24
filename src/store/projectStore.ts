@@ -20,6 +20,7 @@ import {
 import { shouldRestoreWorkspace } from '../lib/windowSession'
 import {
   deleteProjectRows,
+  deleteSshConnectionRow,
   insertProject,
   insertSshProject,
   listSshConnections,
@@ -68,6 +69,7 @@ import {
   isSshProject,
   requestSshReconnect,
   sshRootUri,
+  SSH_CONNECTIONS_CHANGED_EVENT,
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
 
@@ -108,6 +110,7 @@ interface ProjectState {
   loadProjects: (options?: { restoreCurrent?: boolean; syncFromSettings?: boolean }) => Promise<void>
   loadSshConnections: () => Promise<void>
   saveSshConnection: (connection: SshConnection) => Promise<void>
+  deleteSshConnection: (id: string) => Promise<void>
   addProject: (path: string) => Promise<boolean>
   addSshProject: (
     connection: SshConnection,
@@ -380,6 +383,13 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   saveSshConnection: async connection => {
     await upsertSshConnection(connection)
     await get().loadSshConnections()
+    window.dispatchEvent(new Event(SSH_CONNECTIONS_CHANGED_EVENT))
+  },
+
+  deleteSshConnection: async id => {
+    await deleteSshConnectionRow(id)
+    await get().loadSshConnections()
+    window.dispatchEvent(new Event(SSH_CONNECTIONS_CHANGED_EVENT))
   },
 
   addProject: async (path: string) => {

@@ -5,6 +5,7 @@ import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import { confirmDialog } from '../store/confirmStore'
 import { useProjectStore } from '../store/projectStore'
+import { useUIStore } from '../store/uiStore'
 import {
   browseSshDirectory,
   disconnectSshSession,
@@ -15,6 +16,7 @@ import {
   openSshSession,
   parentRemotePath,
   probeSshHost,
+  SSH_CONNECTIONS_CHANGED_EVENT,
   sshConnectionLabel,
   sshConnectionTarget,
   sshRuntimeConfig,
@@ -43,6 +45,7 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
   const sshConnections = useProjectStore(state => state.sshConnections)
   const loadSshConnections = useProjectStore(state => state.loadSshConnections)
   const saveSshConnection = useProjectStore(state => state.saveSshConnection)
+  const openRemoteConnections = useUIStore(state => state.openRemoteConnections)
   const [step, setStep] = useState<DialogStep>('connect')
   const [connectionId, setConnectionId] = useState(NEW_SSH_CONNECTION_ID)
   const [connectionName, setConnectionName] = useState('')
@@ -94,6 +97,23 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
       sessionEpochRef.current += 1
       browseRequestRef.current += 1
     }
+  }, [visible, loadSshConnections])
+
+  // 管理页里新建/编辑/删除连接后，同步这里的下拉与选中项。
+  useEffect(() => {
+    if (!visible) return
+    const refresh = () => {
+      void loadSshConnections().then(() => {
+        const saved = useProjectStore.getState().sshConnections
+        setConnectionId(prev =>
+          prev !== NEW_SSH_CONNECTION_ID && !saved.some(item => item.id === prev)
+            ? (saved[0]?.id ?? NEW_SSH_CONNECTION_ID)
+            : prev
+        )
+      })
+    }
+    window.addEventListener(SSH_CONNECTIONS_CHANGED_EVENT, refresh)
+    return () => window.removeEventListener(SSH_CONNECTIONS_CHANGED_EVENT, refresh)
   }, [visible, loadSshConnections])
 
   const discardSession = () => {
@@ -377,6 +397,16 @@ export default function SshProjectDialog({ open: visible, onClose, onAdded }: Pr
               <p className={`col-span-2 ${helpClass}`}>
                 SSH 连接与项目分开保存。同一连接可以继续打开多个远程项目。
               </p>
+              <div className="col-span-2 -mt-1 flex justify-end">
+                <button
+                  type="button"
+                  onClick={openRemoteConnections}
+                  className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-ui-sm text-accent hover:bg-accent/10"
+                >
+                  <Globe size={12} />
+                  管理连接…
+                </button>
+              </div>
               {creatingConnection ? (
                 <>
                   <label className={`col-span-2 ${labelClass}`}>

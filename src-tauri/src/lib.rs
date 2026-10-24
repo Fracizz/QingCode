@@ -830,6 +830,8 @@ pub fn run() {
             remote_ssh::ssh_disconnect,
             remote_ssh::ssh_connection_status,
             remote_ssh::ssh_workspace_status,
+            remote_ssh::ssh_workspace_roots,
+            remote_ssh::ssh_server_states,
             remote_ssh::ssh_set_workspace_trust,
             remote_ssh::ssh_set_server_enabled,
             remote_ssh::ssh_server_info,

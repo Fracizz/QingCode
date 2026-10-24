@@ -12,16 +12,17 @@ export function tabFromPersisted(tab: PersistedEditorTab): EditorTab {
   const draft = tab.dirty ? getDraft(tab.path) : null
   if (tab.dirty && draft) clearDraft(tab.path)
 
+  const readOnly = tab.viewMode === 'view' || tab.viewMode === 'image'
   const dirty = tab.dirty && !!draft
   const editorTab: EditorTab = {
     id: tab.id,
     path: tab.path,
     name: tab.name || tabNameFromPath(tab.path),
-    dirty: tab.viewMode === 'view' ? false : dirty,
+    dirty: readOnly ? false : dirty,
     language: tab.language || guessLanguage(tab.path),
-    viewMode: tab.viewMode === 'view' ? 'view' : 'edit',
+    viewMode: readOnly ? tab.viewMode : 'edit',
   }
-  if (draft && tab.viewMode !== 'view') editorTab.content = draft.content
+  if (draft && !readOnly) editorTab.content = draft.content
   return editorTab
 }
 

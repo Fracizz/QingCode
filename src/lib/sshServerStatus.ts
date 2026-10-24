@@ -35,7 +35,6 @@ const MODES = new Set<SshServerMode>(['agent', 'direct', 'unknown'])
 const TRANSPORTS = new Set<SshServerTransport>(['daemon', 'serve', 'direct'])
 
 export type SshServerChip =
-  | { kind: 'version'; version: string }
   | { kind: 'agent' }
   | { kind: 'direct' }
   | { kind: 'pending' }
@@ -72,9 +71,7 @@ export function parseSshServerState(value: unknown): SshServerState | null {
 
 export function sshServerChip(state: SshServerState | null): SshServerChip | null {
   if (!state || state.phase === 'disconnected') return null
-  if (state.phase === 'readyServer') {
-    return state.version ? { kind: 'version', version: state.version } : { kind: 'agent' }
-  }
+  if (state.phase === 'readyServer') return { kind: 'agent' }
   if (state.phase === 'readyDirect') return { kind: 'direct' }
   return { kind: 'pending' }
 }
@@ -105,19 +102,27 @@ export function sshServerPhaseKey(phase: SshServerPhase): string {
   }
 }
 
+/** tooltip 只保留原因首行：完整多行原因（如部署诊断细节）留给详情弹窗。 */
+function shortReason(reason: string): string {
+  return reason.split('\n', 1)[0].trim()
+}
+
+/** 单行摘要：状态栏只给一句话，完整信息留给「查看 Server 详情」弹窗。 */
 export function sshServerTipLines(state: SshServerState): SshServerTipLine[] {
   if (state.phase === 'readyDirect' || state.mode === 'direct') {
     return state.reason
-      ? [{ key: '直连：{reason}', params: { reason: state.reason } }]
+      ? [{ key: '直连：{reason}', params: { reason: shortReason(state.reason) } }]
       : [{ key: '直连' }]
   }
-  const lines: SshServerTipLine[] = []
-  if (state.version) lines.push({ key: 'Server v{version}', params: { version: state.version } })
-  else lines.push({ key: 'Agent' })
-  const transport = sshServerTransportKey(state.transport)
-  if (transport) lines.push({ key: '传输：{transport}', params: { transport } })
-  lines.push({ key: '阶段：{phase}', params: { phase: sshServerPhaseKey(state.phase) } })
-  if (state.reason) lines.push({ key: '原因：{reason}', params: { reason: state.reason } })
+  if (state.phase === 'readyServer') {
+    return state.version
+      ? [{ key: 'Server v{version}', params: { version: state.version } }]
+      : [{ key: 'Server' }]
+  }
+  const lines: SshServerTipLine[] = [
+    { key: '阶段：{phase}', params: { phase: sshServerPhaseKey(state.phase) } },
+  ]
+  if (state.reason) lines.push({ key: '原因：{reason}', params: { reason: shortReason(state.reason) } })
   return lines
 }
 

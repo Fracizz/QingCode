@@ -59,23 +59,30 @@ describe('SshServerStatusChip', () => {
     })
   })
 
-  it('shows the agent version and ignores another project event', async () => {
+  it('shows a concise chip whose aria-label carries the version, and ignores another project event', async () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
-    expect(await screen.findByRole('button', { name: 'Server v0.1.13' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Server v0.1.13 点击查看详情' }).textContent).toBe('Server')
     listeners[0]?.({ payload: { ...ready, rootUri: 'ssh://other/path', version: '9.9.9' } })
-    expect(screen.getByRole('button', { name: 'Server v0.1.13' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Server v0.1.13 点击查看详情' })).toBeTruthy()
     listeners[0]?.({ payload: { ...ready, version: '0.2.0' } })
-    expect(await screen.findByRole('button', { name: 'Server v0.2.0' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Server v0.2.0 点击查看详情' })).toBeTruthy()
   })
 
-  it('restarts the agent from the menu and toasts success', async () => {
+  it('opens the details dialog on click and restarts from the right-click menu', async () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Server v0.1.13' }))
+    const chip = await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' })
+    // 左键直接打开详情弹窗（头部带重启与日志入口）。
+    fireEvent.click(chip)
+    expect(await screen.findByText('Server 详情')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    // 右键菜单保留完整操作。
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'Server v0.1.13 点击查看详情' }))
     fireEvent.click(screen.getByText('重启 Server'))
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('重启 SSH Agent', 'ssh_server_restart', { rootUri })
     })
-    expect(await screen.findByRole('button', { name: 'Server v0.2.0' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Server v0.2.0 点击查看详情' })).toBeTruthy()
     await waitFor(() => {
       expect(pushToast).toHaveBeenCalledWith('success', '已重启远端服务')
     })
@@ -92,7 +99,7 @@ describe('SshServerStatusChip', () => {
     expect(screen.queryByText('直连')).toBeNull()
     // A later state event clears the error and restores the normal chip.
     listeners[0]?.({ payload: ready })
-    expect(await screen.findByRole('button', { name: 'Server v0.1.13' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' })).toBeTruthy()
   })
 
   it('hides the chip when the command is missing', async () => {
@@ -114,8 +121,9 @@ describe('SshServerStatusChip', () => {
       throw new Error(`unexpected ${command}`)
     })
     render(<SshServerStatusChip rootUri={rootUri} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Server v0.1.13' }))
-    fireEvent.click(screen.getByText('查看 Server 日志'))
+    // 详情弹窗头部的日志入口进入日志视图。
+    fireEvent.click(await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' }))
+    fireEvent.click(screen.getByRole('button', { name: '查看 Server 日志' }))
     expect(await screen.findByText('读取日志中…')).toBeTruthy()
     resolveLogs({ text: 'daemon up' })
     expect(await screen.findByText('daemon up')).toBeTruthy()

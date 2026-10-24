@@ -369,6 +369,12 @@ export async function upsertSshConnection(connection: SshConnection): Promise<vo
   )
 }
 
+export async function deleteSshConnectionRow(id: string): Promise<void> {
+  await withDb('删除 SSH 连接', d =>
+    d.execute('DELETE FROM ssh_connections WHERE id = $1', [id])
+  )
+}
+
 export async function deleteProjectRows(id: string): Promise<void> {
   await withDb('移除项目', async d => {
     await d.execute('DELETE FROM projects WHERE id = $1', [id])

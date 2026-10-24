@@ -1,6 +1,7 @@
 import { getLiveEditorContent, flushLiveEditorContent } from '@/lib/editorSession'
 import { getEditorPreferences } from '@/lib/editorSettings'
 import { resolveReadEncoding } from '@/lib/fileEncoding'
+import { isNonEditableViewMode } from '@/lib/openFileError'
 import { translate } from '@/lib/i18n'
 import { showGitHeadFile } from '@/lib/ipc/git'
 import { isTauri, safeInvoke } from '@/lib/tauri'
@@ -24,7 +25,7 @@ export async function openGitCompareWithHead(filePath: string): Promise<void> {
       .find(t => pathsEqual(t.path, filePath))
 
   let leftContent: string
-  if (tab && !tab.loading && !tab.openError && tab.viewMode !== 'view') {
+  if (tab && !tab.loading && !tab.openError && !isNonEditableViewMode(tab)) {
     flushLiveEditorContent(tab.id)
     leftContent = getLiveEditorContent(tab.id) ?? tab.content ?? ''
   } else {

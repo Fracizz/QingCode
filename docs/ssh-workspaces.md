@@ -45,7 +45,7 @@ Linux / POSIX SSH 项目（已信任、设置 `ssh.server.enabled` 默认开启�
   - 远程文件树自动刷新（server 递归 inotify → 后端复用本地 `fs-change` 事件管线：树刷新、脏标签冲突提示、Git 状态刷新全链路生效）；
   - 内嵌内容搜索（ripgrep 引擎编译进服务，**不再要求远端安装 rg**，支持 ignore 文件与 glob 过滤，与远端 rg 结果语义一致）；
   - 目录扫描单往返（替代多次 SFTP round trip，高延迟链路下文件树展开更快），`done.files_scanned` 上报真实条目数；
-  - 状态栏芯片显示 `Server v版本` 或「直连：原因」。点击可查看详情、重启 Server、查看日志（daemon 日志 + 项目 serve 日志两段拼接，各取末尾 200 行）。查询失败时芯片以 `!` 错误态显示「Server 状态未知」，不再伪装成直连；重启成功与失败均有明确 toast。
+  - 状态栏芯片只显示简洁状态：`Server`（绿点）/ `Server…`（黄点闪动，连接中）/ `直连`（灰点），版本等细节收进悬停摘要（`Server v版本` 等 + 「点击查看详情」）。**点击直接打开详情弹窗**（标准 modal，头部含重启与日志入口），右键菜单提供查看详情、重启 Server、查看日志（daemon 日志 + 项目 serve 日志两段拼接，各取末尾 200 行）。查询失败时芯片以 `!` 错误态显示「Server 状态未知」，不再伪装成直连；重启成功与失败均有明确 toast。
 - **远程终端不受影响（现状）**：终端仍走独立 SSH PTY 通道，与服务完全正交；服务部署/重连不会触碰有活跃终端的连接。daemon 模式的 PTY 宿主（`qingcode-server/src/pty.rs`）已就绪，但前端尚未切过去（未完成项 A）。
 - **关闭、停止与清理**：设置里关闭 `ssh.server.enabled` 后完全回退直连（远端零足迹），并对当前激活的 SSH 工作区自动调用 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon 尽力 `server.shutdown`）。命令 `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 均要求工作区已信任；「重启 Server」会同时重建 serve 与 daemon（此前只重建 serve）。迟授予信任的已连接项目会补启动文件树 watch 监督任务，不必重连。清理：删除项目内 `.qingcode/server/` 目录即可；或按状态文件里的 pid `kill`。断开连接不终止远端服务（保活供快速重连，与 VS Code Server / Zed remote_server 生命周期策略一致）。
 - **已知限制（MVP）**：
@@ -194,7 +194,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 | CLI `project add` | 仅本地 | SSH 项目只能从应用内对话框添加（连接、指纹、信任要一起建立） |
 | CLI `run *` | 部分对齐 | 本地可离线改文件；SSH 必须通过正在运行的 GUI 走 SFTP。启动/停止两侧都要 GUI |
 | CLI `open` | 仅本地 | 第二实例 / 外部窗口按本机路径归并 |
-| SSH 连接增删改页 | 仅 SSH 域且未做 | 打开项目时可新建或复用连接；没有编辑/删除连接的管理页。密码不落盘 |
+| SSH 连接增删改页 | 已做（SSH 域） | 「远程连接」管理页：新建/编辑/删除连接（删除前检查项目引用）、测试连接并确认指纹、按连接列出远程项目与已注册根（可撤销信任）、聚合远端服务状态（重启/日志）。入口：欢迎页、命令面板、打开 SSH 项目对话框。目标（主机/端口/用户名）变化后必须重新测试连接确认指纹才能保存；密码不落盘，仅会话内存 |
 
 ### 两侧都没有（不是 SSH 专属缺口）
 

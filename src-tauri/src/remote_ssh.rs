@@ -29,12 +29,11 @@ pub use transfer::*;
 
 const SSH_URI_PREFIX: &str = "ssh://";
 const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;
-
+const MAX_SLICE_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_DIFF_BYTES: u64 = 2 * 1024 * 1024;
 /// 图片查看上限：浏览器（WebView2）解码上限。与本地
 /// `commands::cmd_stat::IMAGE_MAX_BYTES` 独立定义，值必须保持一致。
 const IMAGE_MAX_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_SLICE_BYTES: u64 = 4 * 1024 * 1024;
-const MAX_DIFF_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -2229,6 +2228,44 @@ pub fn ssh_workspace_status(
         .get(&parsed.connection_id)
         .is_some_and(|session| !session.handle.is_closed());
     Ok(connection_alive && manager.root_is_registered(&root_uri)?)
+}
+
+/// 连接管理页用：某连接下全部已注册项目根及其信任状态。
+/// 根注册在内存里，连接断开即清空，重连后由 ssh_connect 重新登记。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshWorkspaceRoot {
+    pub root_uri: String,
+    pub trusted: bool,
+}
+
+#[tauri::command]
+pub fn ssh_workspace_roots(
+    connection_id: String,
+    manager: State<'_, SshManager>,
+) -> Result<Vec<SshWorkspaceRoot>, String> {
+    Ok(manager
+        .roots_for_connection(&connection_id)
+        .into_iter()
+        .map(|root| SshWorkspaceRoot {
+            root_uri: root.uri,
+            trusted: root.trusted,
+        })
+        .collect())
+}
+
+/// 连接管理页用：某连接下全部已注册根的代理状态聚合。
+/// 单个根解析失败只跳过该根，不拖垮整个列表。
+#[tauri::command]
+pub fn ssh_server_states(
+    connection_id: String,
+    manager: State<'_, SshManager>,
+) -> Result<Vec<server_status::SshServerState>, String> {
+    Ok(manager
+        .roots_for_connection(&connection_id)
+        .iter()
+        .filter_map(|root| server_status::state_for_root(&manager, root).ok())
+        .collect())
 }
 
 #[tauri::command]
@@ -4520,12 +4557,13 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn image_read_limit_stays_at_64mb_like_the_local_viewer() {
         // 本地 `cmd_stat::IMAGE_MAX_BYTES` 以同值字面量独立断言；两侧一起防漂移。
         assert_eq!(IMAGE_MAX_BYTES, 64 * 1024 * 1024);
     }
-    use super::*;
 
     #[test]
     fn offline_dir_is_searched_before_other_server_dirs() {
@@ -4798,6 +4836,45 @@ mod tests {
         assert!(!manager
             .root_is_registered("ssh://wsl/home/team/other")
             .unwrap());
+    }
+
+    #[test]
+    fn roots_for_connection_filters_by_connection_id() {
+        let manager = SshManager::new();
+        for (key, uri) in [
+            ("wsl-app", "ssh://wsl/home/app"),
+            ("wsl-docs", "ssh://wsl/home/docs"),
+            ("win-app", "ssh://w1n/D:/code/app"),
+        ] {
+            manager.roots.write().unwrap().insert(
+                key.to_string(),
+                RegisteredRoot {
+                    uri: uri.to_string(),
+                    canonical_path: uri
+                        .trim_start_matches("ssh://")
+                        .split_once('/')
+                        .map(|(_, path)| format!("/{path}"))
+                        .unwrap_or_else(|| "/".to_string()),
+                    trusted: key != "wsl-docs",
+                },
+            );
+        }
+        let roots = manager.roots_for_connection("wsl");
+        assert_eq!(roots.len(), 2);
+        assert!(roots.iter().all(|root| root.uri.starts_with("ssh://wsl/")));
+        assert!(manager.roots_for_connection("missing").is_empty());
+    }
+
+    #[test]
+    fn ssh_workspace_root_serializes_camel_case() {
+        let root = SshWorkspaceRoot {
+            root_uri: "ssh://wsl/home/app".to_string(),
+            trusted: true,
+        };
+        let value = serde_json::to_value(&root).unwrap();
+        assert_eq!(value["rootUri"], "ssh://wsl/home/app");
+        assert_eq!(value["trusted"], true);
+        assert!(value.get("root_uri").is_none());
     }
 
     #[test]
