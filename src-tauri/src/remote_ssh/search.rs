@@ -505,6 +505,7 @@ fn append_content_record(
 /// 返回 Ok(None) 表示不走 server（前置门不满足 / server 不可用），由调用方回退 rg。
 #[allow(clippy::too_many_arguments)]
 async fn server_search_file_contents(
+    app: &AppHandle,
     manager: &SshManager,
     root: &str,
     canonical_root: &str,
@@ -530,9 +531,8 @@ async fn server_search_file_contents(
     }
     let connection_id = parse_remote_uri(root)?.connection_id;
     let key = server::server_slot_key(&connection_id, &registered.canonical_path);
-    let endpoint = match server::ensure_server_endpoint(manager, &registered).await {
-        Ok(Some(endpoint)) => endpoint,
-        _ => return Ok(None),
+    let Some(endpoint) = server::ready_server_endpoint(app, manager, &registered).await else {
+        return Ok(None);
     };
     let mut files = Vec::new();
     let mut count = 0usize;
@@ -591,7 +591,10 @@ async fn server_search_file_contents(
                     per_file_truncated,
                 )));
             }
-            Err(_) => server::downgrade_server_daemon(manager, &key),
+            Err(_) => {
+                server::downgrade_server_daemon(manager, &key);
+                server_status::publish_root_state(app, manager, &registered);
+            }
         }
     }
     let request = qingcode_server::ServerRequest {
@@ -640,8 +643,8 @@ async fn server_search_file_contents(
     let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(_) => {
-            // server 失联或出错：清掉端点缓存并回退 rg，不让搜索失败。
-            manager.clear_server_endpoint(&key);
+            // server 失联或出错：清掉端点缓存并回退 rg，不让搜索失败；后台重新发现。
+            server::note_server_endpoint_lost(app, manager, &registered, &key);
             return Ok(None);
         }
     };
@@ -697,6 +700,7 @@ pub async fn ssh_search_file_contents(
     exclude_patterns: Option<Vec<String>>,
     use_ignore_files: Option<bool>,
     follow_symlinks: Option<bool>,
+    app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<RemoteContentResponse, String> {
     let _ = follow_symlinks;
@@ -724,6 +728,7 @@ pub async fn ssh_search_file_contents(
     // server 优先：一次往返代替逐批 rg 进程；任何失败静默回退既有 rg 实现。
     if !control.cancelled() {
         match server_search_file_contents(
+            &app,
             &manager,
             &root,
             &canonical_root,

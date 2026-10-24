@@ -221,7 +221,7 @@ fn pump_windows(
             }
         });
 
-        let upstream = tokio::spawn(async move {
+        let mut upstream = tokio::spawn(async move {
             while let Some(chunk) = up_rx.recv().await {
                 if let Err(e) = writer.write_all(&chunk).await {
                     debug_log(format_args!("upstream write err {e}"));
@@ -232,17 +232,26 @@ fn pump_windows(
             let _ = writer.flush().await;
         });
 
+        // 上行结束（stdin EOF = 客户端已关闭 SSH 通道）也要立刻收尾：命名管道
+        // 没有半关闭，daemon 看不到 EOF，若只等下行 EOF，代理会一直挂到 daemon
+        // 的心跳 PING 写 stdout 失败为止（约 30s），期间白占 sshd 会话名额。
         let mut buffer = [0u8; 16 * 1024];
         let result = loop {
-            match reader.read(&mut buffer).await {
-                Ok(0) => break Ok(()),
-                Ok(n) => {
-                    if down_tx.send(buffer[..n].to_vec()).await.is_err() {
-                        break Err("终端输出线程已退出".to_string());
+            tokio::select! {
+                read = reader.read(&mut buffer) => match read {
+                    Ok(0) => break Ok(()),
+                    Ok(n) => {
+                        if down_tx.send(buffer[..n].to_vec()).await.is_err() {
+                            break Err("终端输出线程已退出".to_string());
+                        }
                     }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => break Err(format!("转发 daemon 输出失败: {e}")),
+                },
+                _ = &mut upstream => {
+                    debug_log(format_args!("upstream finished, closing tunnel"));
+                    break Ok(());
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-                Err(e) => break Err(format!("转发 daemon 输出失败: {e}")),
             }
         };
         drop(down_tx);

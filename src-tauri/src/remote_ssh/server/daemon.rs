@@ -114,6 +114,9 @@ impl DaemonChannel {
     /// 尽力关闭通道：exec 通道被丢弃时不会自动 CLOSE，显式关闭避免长期
     /// 占用 sshd 的 MaxSessions 名额。
     pub(super) async fn shutdown(&mut self) {
+        // 先发 EOF 再 CLOSE：远端代理读到 stdin EOF 即退出并断开 daemon 连接，
+        // 不必等 sshd 回收 exec 进程（Windows OpenSSH 上可能拖到心跳超时）。
+        let _ = tokio::time::timeout(Duration::from_secs(1), self.channel.eof()).await;
         let _ = tokio::time::timeout(Duration::from_secs(1), self.channel.close()).await;
     }
 }
@@ -211,6 +214,23 @@ async fn open_daemon_channel_with(
         buffer: Vec::new(),
         stderr_notes: Vec::new(),
     };
+    // 握手失败也要关通道：直接丢弃 exec 通道不会发 CLOSE，会一直占着会话名额。
+    match daemon_hello(&mut channel, connection_id, daemon, policy).await {
+        Ok(()) => Ok(channel),
+        Err(error) => {
+            channel.shutdown().await;
+            Err(error)
+        }
+    }
+}
+
+/// 在已打开的 daemon 通道里完成 HELLO 握手与版本/能力校验。
+async fn daemon_hello(
+    channel: &mut DaemonChannel,
+    connection_id: &str,
+    daemon: &DaemonAccess,
+    policy: HelloPolicy,
+) -> Result<(), String> {
     let hello = HelloRequest {
         // 设计上 client_id 标识 QingCode 安装实例；这里用连接 id（同一 SSH
         // 配置稳定不变）。daemon 本期只透传记录，不作鉴权。
@@ -236,8 +256,7 @@ async fn open_daemon_channel_with(
     let hello: HelloResponse = proto::decode_value(&response.payload)
         .map_err(|error| format!("解析 daemon HELLO 失败：{error}"))?;
     // 协议版本无条件校验；版本与能力按策略放宽（只有淘汰旧 daemon 的路径放宽）。
-    validate_daemon_hello_with(&hello, policy)?;
-    Ok(channel)
+    validate_daemon_hello_with(&hello, policy)
 }
 
 /// serve server 就绪后尽力补一步 daemon 传输探测：

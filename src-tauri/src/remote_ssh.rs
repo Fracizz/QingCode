@@ -1314,9 +1314,18 @@ pub fn ssh_set_server_enabled(enabled: bool, manager: State<'_, SshManager>) -> 
 #[tauri::command]
 pub fn ssh_server_info(
     root_uri: String,
+    app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<SshServerState, String> {
-    server_status::ssh_server_info(root_uri, manager)
+    let state = server_status::ssh_server_info(root_uri.clone(), manager.clone())?;
+    // 「正在探测」却没有任务在推进（端点被清掉、监督任务已退出等）时，
+    // 查询顺手补一轮后台发现，结果经状态事件推回芯片。
+    if state.phase == server_status::ServerPhase::Probing {
+        if let Ok(root) = manager.registered_root(&root_uri) {
+            server::kick_server_discovery(&app, &manager, &root);
+        }
+    }
+    Ok(state)
 }
 
 /// 清掉该根的 server slot，必要时按 server.json 里的 pid 结束 serve 进程，再重新 ensure。
@@ -2395,6 +2404,7 @@ fn remote_relative_to_root(canonical: &str, canonical_root: &str) -> String {
 /// 经远端 server 列出目录的直接子项；任何失败都清空端点缓存并返回 None，
 /// 由调用方回退 SFTP。返回 (名称, 是否目录) 交给 `collect_scan_nodes` 统一组装。
 async fn server_scan_entries(
+    app: &AppHandle,
     manager: &SshManager,
     connection_id: &str,
     root: &RegisteredRoot,
@@ -2404,10 +2414,7 @@ async fn server_scan_entries(
         return None;
     }
     let key = server::server_slot_key(connection_id, &root.canonical_path);
-    let endpoint = server::ensure_server_endpoint(manager, root)
-        .await
-        .ok()
-        .flatten()?;
+    let endpoint = server::ready_server_endpoint(app, manager, root).await?;
     let relative = remote_relative_to_root(canonical, &root.canonical_path);
     // daemon 传输优先：一次 RPC 往返，目录树刷新与 watch 事件同源。传输失败
     // 只降级 daemon 标记（保留 serve 端点），继续走 serve 请求。
@@ -2422,7 +2429,11 @@ async fn server_scan_entries(
         .await
         {
             Ok(entries) => return Some(entries),
-            Err(_) => server::downgrade_server_daemon(manager, &key),
+            Err(_) => {
+                server::downgrade_server_daemon(manager, &key);
+                // 传输从 daemon 降到 serve，状态芯片要跟着变。
+                server_status::publish_root_state(app, manager, root);
+            }
         }
     }
     let request = qingcode_server::ServerRequest {
@@ -2453,8 +2464,8 @@ async fn server_scan_entries(
     match outcome {
         Ok(server::ServerStreamOutcome::Done { .. }) => Some(entries),
         _ => {
-            // 扫描失败说明 server 可能已失联；清掉端点让下次重新发现/部署。
-            manager.clear_server_endpoint(&key);
+            // 扫描失败说明 server 可能已失联；清掉端点并在后台重新发现/部署。
+            server::note_server_endpoint_lost(app, manager, root, &key);
             None
         }
     }
@@ -2466,6 +2477,7 @@ pub async fn ssh_scan_directory(
     workspace_root: Option<String>,
     exclude_patterns: Option<Vec<String>>,
     _exclude_git_ignore: Option<bool>,
+    app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<Vec<RemoteFileNode>, String> {
     let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
@@ -2491,7 +2503,7 @@ pub async fn ssh_scan_directory(
     // server 优先：减少 SFTP 往返，且目录树刷新与 watch 事件同源。任何失败静默回退。
     if root.trusted {
         if let Some(entries) =
-            server_scan_entries(&manager, &parsed.connection_id, &root, &canonical).await
+            server_scan_entries(&app, &manager, &parsed.connection_id, &root, &canonical).await
         {
             return Ok(collect_scan_nodes(
                 &path,

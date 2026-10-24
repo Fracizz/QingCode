@@ -32,7 +32,10 @@ pub(crate) use daemon::{
     daemon_scan_entries, daemon_search_content_call, downgrade_server_daemon,
     shutdown_remote_daemon, DaemonSearchParams,
 };
-pub(crate) use deploy::{ensure_server_endpoint, ensure_server_endpoint_with_app};
+pub(crate) use deploy::{
+    ensure_server_endpoint_with_app, kick_server_discovery, note_server_endpoint_lost,
+    ready_server_endpoint,
+};
 pub(crate) use download::resolve_offline_server_dir;
 pub(crate) use paths::{
     parse_server_state, server_serve_log_path, server_state_path, windows_host_path,

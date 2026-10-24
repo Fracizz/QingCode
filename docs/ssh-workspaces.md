@@ -45,6 +45,7 @@ Linux / POSIX SSH 项目（已信任、设置 `ssh.server.enabled` 默认开启�
   - 远程文件树自动刷新（server 递归 inotify → 后端复用本地 `fs-change` 事件管线：树刷新、脏标签冲突提示、Git 状态刷新全链路生效）；
   - 内嵌内容搜索（ripgrep 引擎编译进服务，**不再要求远端安装 rg**，支持 ignore 文件与 glob 过滤，与远端 rg 结果语义一致）；
   - 目录扫描单往返（替代多次 SFTP round trip，高延迟链路下文件树展开更快），`done.files_scanned` 上报真实条目数；
+  - 目录扫描与内容搜索**不等待部署**：只用已就绪的端点，发现/部署尚无结论时立即走直连，并在后台拉起一轮部署（watch 监督任务已在部署时不重复排队）。首次进入项目的文件树只需一次 SFTP 往返，不再被下载、上传、等就绪、daemon 握手卡住；部署完成后的展开、刷新与搜索自动切到 server；
   - 状态栏芯片只显示简洁状态：`Server`（绿点）/ `Server…`（黄点闪动，连接中）/ `直连`（灰点），版本等细节收进悬停摘要（`Server v版本` 等 + 「点击查看详情」）。**点击直接打开详情弹窗**（标准 modal，头部含重启与日志入口），右键菜单提供查看详情、重启 Server、查看日志（daemon 日志 + 项目 serve 日志两段拼接，各取末尾 200 行）。查询失败时芯片以 `!` 错误态显示「Server 状态未知」，不再伪装成直连；重启成功与失败均有明确 toast。
 - **远程终端不受影响（现状）**：终端仍走独立 SSH PTY 通道，与服务完全正交；服务部署/重连不会触碰有活跃终端的连接。daemon 模式的 PTY 宿主（`qingcode-server/src/pty.rs`）已就绪，但前端尚未切过去（未完成项 A）。
 - **关闭、停止与清理**：设置里关闭 `ssh.server.enabled` 后完全回退直连（远端零足迹），并对当前激活的 SSH 工作区自动调用 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon 尽力 `server.shutdown`）。命令 `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 均要求工作区已信任；「重启 Server」会同时重建 serve 与 daemon（此前只重建 serve）。迟授予信任的已连接项目会补启动文件树 watch 监督任务，不必重连。清理：删除项目内 `.qingcode/server/` 目录即可；或按状态文件里的 pid `kill`。断开连接不终止远端服务（保活供快速重连，与 VS Code Server / Zed remote_server 生命周期策略一致）。
@@ -323,3 +324,5 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 - 目标主机 Windows 11 28000（OpenSSH，Git Bash 默认 shell）：Windows daemon 冒烟 24/24 通过（`self-check`、`daemon --detach`、token/`run/pipe`、进程唯一、HELLO/server.info、`fs.scan` 原生 `C:/` 与 POSIX `/C:/` 两种根、越界拒绝、`pty.create/input` 回显、**杀掉本地代理后 daemon PID 不变**、`pty.list/attach` 含历史补发、错误 token 拒绝、重复启动不改 PID、`server.shutdown` 零残留）。本机另有跨进程集成测试 `tests/connect_stdio.rs` 覆盖代理 ↔ daemon 双向帧流。
 - 脚本：`scripts/e2e-ssh-server/`（`run.sh` + `client.py` + `daemon_smoke.py` + `daemon_smoke_windows.py` + README），凭据一律走环境变量，仓库内无密码/主机。
 - 未做：macOS / Alpine / arm64 主机验收；CI 上 `server-release.yml` 的首次实跑。
+
+长期方案（远端常驻 Agent、终端断线不丢、单连接多路复用、远程文件监视）见 [`ssh-agent-design.md`](ssh-agent-design.md)。

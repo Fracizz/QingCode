@@ -11,7 +11,7 @@ use super::paths::{
 };
 use super::scripts::{
     deploy_server_command, kill_server_command, legacy_agent_cleanup_command,
-    remote_sha256_command, remote_sha256_matches, self_check_command, sha256_of_file,
+    remote_sha256_command, remote_sha256_matches, self_check_command, sha256_of_file_cached,
     windows_deploy_for, windows_kill_for, windows_legacy_agent_cleanup_script,
     windows_remote_sha256_script, windows_remove_for, windows_self_check_script,
 };
@@ -77,7 +77,7 @@ async fn try_discover_server(
         return None;
     }
     if let Some((arch, local)) = local_binary {
-        let local_sha = sha256_of_file(local).ok()?;
+        let local_sha = sha256_of_file_cached(local).await.ok()?;
         let remote_bin = server_binary_remote_path(
             &root.canonical_path,
             windows_native_path(&root.canonical_path).is_some(),
@@ -417,8 +417,16 @@ async fn discover_or_deploy_server(
     )
     .await
     {
-        // 发现路径不知道部署时的二进制名，daemon 探测里现场用 `uname -m` 解析。
-        (endpoint, None)
+        // 定位本地二进制时已探测过远端架构，直接换算远端路径，省掉 daemon
+        // 探测里再跑一次 `uname -m`；本地缺二进制时才由 daemon 现场解析。
+        let remote_bin = local_binary.as_ref().map(|(arch, _)| {
+            server_binary_remote_path(
+                &root.canonical_path,
+                windows_native_path(&root.canonical_path).is_some(),
+                arch,
+            )
+        });
+        (endpoint, remote_bin)
     } else {
         let (arch, local_binary) = match local_binary {
             Some(local) => local,
@@ -438,7 +446,9 @@ async fn discover_or_deploy_server(
             server_status::ServerPhase::Installing,
         );
         // 本地摘要一份两用：幂等跳过上传 + 远端 self-check 期望值。
-        let local_sha256 = sha256_of_file(&local_binary).map_err(ServerDeployError::from)?;
+        let local_sha256 = sha256_of_file_cached(&local_binary)
+            .await
+            .map_err(ServerDeployError::from)?;
         upload_server_binary(
             manager,
             connection_id,
@@ -519,24 +529,101 @@ fn cached_server_slot(manager: &SshManager, key: &str) -> Option<Option<ServerEn
     slot.unavailable_reason.is_some().then_some(None)
 }
 
-/// 确保（连接, 项目根）对应的 server 端点可用。
+/// 只取已就绪的 server 端点，不等发现/部署。
+///
+/// 还没有结论时在后台拉起一轮发现/部署并立即返回 `None`，调用方本次回退
+/// 直连。目录扫描与内容搜索走这里：首次进入项目时 watch 监督任务正持有部署
+/// 门闩做完整部署（下载、上传、等就绪、daemon 握手可达数十秒），若同步等待，
+/// 文件树要等部署结束才出现；而直连只需一次 SFTP 往返。
+pub(crate) async fn ready_server_endpoint(
+    app: &tauri::AppHandle,
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) -> Option<ServerEndpoint> {
+    ensure_server_endpoint_inner(manager, root, Some(app), false)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// slot 还没有结论（无端点、无不可用原因）且没有部署在跑时，后台补一轮
+/// 发现/部署。状态查询与 server 调用失败后都走这里：否则 slot 停在「正在
+/// 探测」却没有任何任务在推进，状态芯片会一直卡住。
+pub(crate) fn kick_server_discovery(
+    app: &tauri::AppHandle,
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) {
+    if !manager.server_enabled() || !root.trusted {
+        return;
+    }
+    let Ok(parsed) = parse_remote_uri(&root.uri) else {
+        return;
+    };
+    if !manager.connection_is_open(&parsed.connection_id) {
+        return;
+    }
+    let key = server_slot_key(&parsed.connection_id, &root.canonical_path);
+    if cached_server_slot(manager, &key).is_none() {
+        spawn_background_deploy(app, manager, root, &key);
+    }
+}
+
+/// server 调用失败、端点可能已失联：清掉端点缓存，立即发布当前状态，并在
+/// 后台重新发现。此前这里只清缓存：芯片既不更新，也没有任务重新发现，
+/// 重新挂载时读到的就是无人处理的「正在探测」。
+pub(crate) fn note_server_endpoint_lost(
+    app: &tauri::AppHandle,
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    key: &str,
+) {
+    manager.clear_server_endpoint(key);
+    server_status::publish_root_state(app, manager, root);
+    kick_server_discovery(app, manager, root);
+}
+
+/// 后台跑一轮发现/部署。部署门闩已被占用（通常是 watch 监督任务正在部署）
+/// 时不再重复排队，结果落到 slot 后后续操作自然走 server。
+fn spawn_background_deploy(
+    app: &tauri::AppHandle,
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    key: &str,
+) {
+    let Ok(gate) = manager.server_gate(key) else {
+        return;
+    };
+    if gate.try_lock().is_err() {
+        return;
+    }
+    let app = app.clone();
+    let root = root.clone();
+    tauri::async_runtime::spawn(async move {
+        let manager = app.state::<SshManager>();
+        let _ = ensure_server_endpoint_with_app(&manager, &root, Some(&app)).await;
+    });
+}
+
+/// 确保（连接, 项目根）对应的 server 端点可用，必要时同步完成发现/部署，
+/// 并在 `app` 存在时发布阶段变化（watch 监督和 `ssh_server_restart` 使用）。
 ///
 /// 前置门不满足、server 未部署或任何失败都返回 `Ok(None)`——调用方一律回退
 /// 既有直连路径。成功结果缓存在 slot 里，之后走快路径；失败原因同样缓存，
 /// 避免每次目录扫描都重复探测部署。
-pub(crate) async fn ensure_server_endpoint(
-    manager: &SshManager,
-    root: &RegisteredRoot,
-) -> Result<Option<ServerEndpoint>, String> {
-    ensure_server_endpoint_with_app(manager, root, None).await
-}
-
-/// 同 [`ensure_server_endpoint`]，并在 `app` 存在时发布阶段变化。
-/// 目录扫描与搜索继续走无 app 的入口；watch 监督和 `ssh_server_restart` 传入 app。
 pub(crate) async fn ensure_server_endpoint_with_app(
     manager: &SshManager,
     root: &RegisteredRoot,
     app: Option<&tauri::AppHandle>,
+) -> Result<Option<ServerEndpoint>, String> {
+    ensure_server_endpoint_inner(manager, root, app, true).await
+}
+
+async fn ensure_server_endpoint_inner(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&tauri::AppHandle>,
+    wait_for_deploy: bool,
 ) -> Result<Option<ServerEndpoint>, String> {
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
     let key = server_slot_key(&connection_id, &root.canonical_path);
@@ -563,6 +650,12 @@ pub(crate) async fn ensure_server_endpoint_with_app(
         manager.set_server_activity(&key, None);
         publish_server_if_watched(app, manager, root);
         return Ok(cached);
+    }
+    if !wait_for_deploy {
+        if let Some(app) = app {
+            spawn_background_deploy(app, manager, root, &key);
+        }
+        return Ok(None);
     }
     // 同一 (连接, 根) 的部署串行执行；拿不到锁的并发调用方等结果落盘后复用。
     let gate = manager.server_gate(&key)?;
