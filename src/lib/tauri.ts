@@ -7,6 +7,7 @@ const SSH_COMMANDS: Partial<Record<string, string>> = {
   file_stat: 'ssh_file_stat',
   file_mtime: 'ssh_file_mtime',
   read_file: 'ssh_read_file',
+  read_image_file: 'ssh_read_image_file',
   detect_file_encoding: 'ssh_detect_file_encoding',
   read_file_slice: 'ssh_read_file_slice',
   find_line_offset: 'ssh_find_line_offset',

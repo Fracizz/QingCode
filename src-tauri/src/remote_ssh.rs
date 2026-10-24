@@ -29,6 +29,10 @@ pub use transfer::*;
 
 const SSH_URI_PREFIX: &str = "ssh://";
 const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;
+
+/// 图片查看上限：浏览器（WebView2）解码上限。与本地
+/// `commands::cmd_stat::IMAGE_MAX_BYTES` 独立定义，值必须保持一致。
+const IMAGE_MAX_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_SLICE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_DIFF_BYTES: u64 = 2 * 1024 * 1024;
 
@@ -2538,6 +2542,39 @@ pub async fn ssh_read_file(
         .map_err(|error| format!("远程文件解码失败：{error}"))
 }
 
+/// 图片查看专用：与 `ssh_read_file` 同一套守卫（sftp 会话 + 根目录边界 + 非目录 +
+/// 大小上限），但扩展名检查方向相反——只放行图片白名单（图片是主动允许的二进制）。
+/// 内容以原始字节（`tauri::ipc::Response`）直通前端，不做编码转换。
+#[tauri::command]
+pub async fn ssh_read_image_file(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<tauri::ipc::Response, String> {
+    let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    // 与 ssh_read_file 的黑名单方向相反：非图片扩展名直接拒绝，省一次 SFTP 往返。
+    if !crate::binary_ext::is_image_extension(&parsed.path) {
+        return Err(crate::binary_ext::unsupported_image_format_message(
+            &parsed.path,
+        ));
+    }
+    let metadata = sftp
+        .metadata(parsed.path.clone())
+        .await
+        .map_err(|error| format!("读取远程文件属性失败：{error}"))?;
+    if metadata.is_dir() {
+        return Err("无法把远程目录作为图片打开".to_string());
+    }
+    if metadata.len() > IMAGE_MAX_BYTES {
+        return Err(crate::binary_ext::image_too_large_message(metadata.len()));
+    }
+    let bytes = sftp
+        .read(parsed.path)
+        .await
+        .map_err(|error| format!("读取远程图片失败：{error}"))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 #[tauri::command]
 pub async fn ssh_detect_file_encoding(
     path: String,
@@ -4483,6 +4520,11 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn image_read_limit_stays_at_64mb_like_the_local_viewer() {
+        // 本地 `cmd_stat::IMAGE_MAX_BYTES` 以同值字面量独立断言；两侧一起防漂移。
+        assert_eq!(IMAGE_MAX_BYTES, 64 * 1024 * 1024);
+    }
     use super::*;
 
     #[test]

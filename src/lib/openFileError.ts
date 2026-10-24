@@ -6,6 +6,9 @@ export type OpenFileErrorKind =
   | 'access'
   | 'generic'
 
+/** How a tab renders: CodeMirror edit, large-file slice viewer, or image viewer. */
+export type EditorViewMode = 'edit' | 'view' | 'image'
+
 /**
  * Decoder plumbing that must never reach the UI verbatim.
  * `binary content` comes from `file_encoding::detect`, `unsupported text
@@ -164,18 +167,28 @@ export function canPreviewAnyway(kind: OpenFileErrorKind): boolean {
   return kind === 'encoding'
 }
 
+/**
+ * Whether the tab renders outside CodeMirror and therefore never participates
+ * in editing, saving, formatting, or dirty tracking (`view` = large-file slice
+ * viewer, `image` = image viewer). Distinct from {@link isViewOnlyTab}, which
+ * is specifically the LargeFileViewer entry point.
+ */
+export function isNonEditableViewMode(tab: { viewMode?: EditorViewMode }): boolean {
+  return tab.viewMode === 'view' || tab.viewMode === 'image'
+}
+
 export function isLoadingTab(tab: {
   loading?: boolean
   content?: string
   openError?: string
-  viewMode?: 'edit' | 'view'
+  viewMode?: EditorViewMode
   /** Set after a successful disk open; kept when plain tabs clear the Zustand buffer. */
   fileSize?: number
   diskMtime?: number | null
 }): boolean {
   if (tab.openError) return false
-  // View-mode tabs never hold full `content`; only the progressive spinner matters.
-  if (tab.viewMode === 'view') return Boolean(tab.loading)
+  // View/image tabs never hold full `content`; only the progressive spinner matters.
+  if (isNonEditableViewMode(tab)) return Boolean(tab.loading)
   if (tab.loading) return true
   // Plain-profile tabs clear `content` after bind (CM owns the buffer) but keep
   // fileSize/diskMtime — that must not look like "still opening".
@@ -192,18 +205,22 @@ export function tabNeedsDiskContent(tab: {
   loading?: boolean
   content?: string
   openError?: string
-  viewMode?: 'edit' | 'view'
+  viewMode?: EditorViewMode
   fileSize?: number
   diskMtime?: number | null
 }): boolean {
   if (tab.openError || tab.loading) return false
-  if (tab.viewMode === 'view') return tab.fileSize === undefined
+  if (isNonEditableViewMode(tab)) return tab.fileSize === undefined
   // Draft-restored buffers already have content; only mtime may be missing.
   if (tab.content !== undefined) return tab.diskMtime === undefined
   // Session restore / progressive open: never finished a disk populate.
   return tab.fileSize === undefined || tab.diskMtime === undefined
 }
 
-export function isViewOnlyTab(tab: { viewMode?: 'edit' | 'view'; openError?: string }): boolean {
+/** LargeFileViewer (read-only slice preview) rendering entry — images are handled by ImageViewer. */
+export function isViewOnlyTab(tab: {
+  viewMode?: EditorViewMode
+  openError?: string
+}): boolean {
   return tab.viewMode === 'view' && !tab.openError
 }

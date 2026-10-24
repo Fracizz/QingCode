@@ -128,13 +128,14 @@ import {
   MINIMAP_SETTINGS_EVENT,
 } from '../lib/minimapSettings'
 import { loadMinimapHideScrollbar } from '../lib/minimapPolicy'
-import { isLoadingTab, isOpenErrorTab, isViewOnlyTab } from '../lib/openFileError'
+import { isLoadingTab, isOpenErrorTab, isNonEditableViewMode, isViewOnlyTab } from '../lib/openFileError'
 import type { EditorTab } from '../types'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Kbd from './Kbd'
 import MarkdownPreview from './MarkdownPreview'
 import EditorOpenError from './EditorOpenError'
 import LargeFileViewer from './LargeFileViewer'
+import ImageViewer from './ImageViewer'
 import EditorMinimap from './EditorMinimap'
 import Tooltip from './Tooltip'
 const DiffEditor = lazy(() => import('./DiffEditor'))
@@ -468,7 +469,7 @@ export default function Editor() {
     activeTab.kind !== 'diff' &&
     !isOpenErrorTab(activeTab) &&
     !isLoadingTab(activeTab) &&
-    !isViewOnlyTab(activeTab)
+    !isNonEditableViewMode(activeTab)
   const activeProfile = activeTab ? editorPerfProfileForTab(activeTab) : 'full'
   const markdownTab = isMarkdownTab(activeTab) && activeProfile === 'full'
   const showPreviewPane = markdownTab && mdPreviewMode !== 'off'
@@ -941,6 +942,10 @@ export default function Editor() {
 
   if (isOpenErrorTab(activeTab)) {
     return <EditorOpenError tab={activeTab} />
+  }
+
+  if (activeTab.viewMode === 'image') {
+    return <ImageViewer tab={activeTab} />
   }
 
   if (isViewOnlyTab(activeTab)) {

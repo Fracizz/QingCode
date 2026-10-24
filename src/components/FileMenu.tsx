@@ -19,6 +19,7 @@ import {
   saveScopedAutoSaveSettings,
 } from '../lib/autoSaveSettings'
 import { isTauri } from '../lib/tauri'
+import { isNonEditableViewMode } from '../lib/openFileError'
 import { useI18n } from '../lib/i18n'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
@@ -91,7 +92,7 @@ export default function FileMenu({ onExit }: { onExit: () => void | Promise<void
   const canSave =
     !!activeTab &&
     !activeTab.openError &&
-    activeTab.viewMode !== 'view' &&
+    !isNonEditableViewMode(activeTab) &&
     activeTab.content !== undefined
   const dirtyCount = useEditorStore(s => {
     let count = s.tabs.filter(tab => tab.dirty).length

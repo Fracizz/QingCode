@@ -1,4 +1,7 @@
-use crate::binary_ext::{display_file_name, is_binary_extension, unsupported_text_file_message};
+use crate::binary_ext::{
+    display_file_name, image_too_large_message, is_binary_extension, is_image_extension,
+    unsupported_image_format_message, unsupported_text_file_message,
+};
 use crate::file_encoding;
 use crate::path_guard::PathAllowlist;
 use serde::Serialize;
@@ -14,6 +17,9 @@ const MAX_SLICE_BYTES: u64 = 256 * 1024;
 const MAX_VIEWER_FILE_SIZE: u64 = 500 * 1024 * 1024;
 /// Full-buffer `read_file` / `write_file` budget (plain-text CodeMirror up to this size).
 const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;
+/// 图片查看上限：超过该尺寸后浏览器（WebView2）解码会失败或内存占用过高。
+/// 远程侧 `remote_ssh::IMAGE_MAX_BYTES` 独立持有同值，两侧需同步修改。
+const IMAGE_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 pub struct FileStat {
@@ -159,6 +165,47 @@ fn read_file_inner(path: String, encoding: Option<&str>) -> Result<String, Strin
     let bytes = fs::read(file_path)
         .map_err(|e| format!("读取文件失败：{}（{}）", display_file_name(&path), e))?;
     file_encoding::decode(&bytes, enc).map_err(|_| decode_error_message(&path, enc))
+}
+
+/// 图片查看专用：以原始字节（`tauri::ipc::Response`）返回文件内容，
+/// 不做 JSON/base64 编码，避免大图在前端解码前再多一份内存拷贝。
+#[tauri::command]
+pub async fn read_image_file(
+    path: String,
+    allowlist: State<'_, PathAllowlist>,
+) -> Result<tauri::ipc::Response, String> {
+    allowlist.ensure_allowed(&path)?;
+    tauri::async_runtime::spawn_blocking(move || read_image_file_inner(path))
+        .await
+        .map_err(|error| format!("读取图片任务失败: {error}"))?
+}
+
+fn read_image_file_inner(path: String) -> Result<tauri::ipc::Response, String> {
+    let file_path = Path::new(&path);
+    let metadata = fs::metadata(file_path)
+        .map_err(|e| format!("无法访问文件 {}: {}", display_file_name(&path), e))?;
+    // 目录无论扩展名都先报"无法打开文件夹"，比格式提示更贴切。
+    if metadata.is_dir() {
+        return Err(format!("无法打开文件夹：{}", display_file_name(&path)));
+    }
+    // 图片是我们主动放行的二进制：不走 binary_ext 黑名单，只认图片白名单。
+    // 门禁放在 inner，命令层与单测两层都生效。
+    if !is_image_extension(&path) {
+        return Err(unsupported_image_format_message(&path));
+    }
+    ensure_image_size_within_limit(metadata.len())?;
+    let bytes = fs::read(file_path)
+        .map_err(|e| format!("读取图片失败：{}（{}）", display_file_name(&path), e))?;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// "大小→结果"纯函数，便于对 64MB 边界做单元测试。
+fn ensure_image_size_within_limit(size: u64) -> Result<(), String> {
+    if size > IMAGE_MAX_BYTES {
+        Err(image_too_large_message(size))
+    } else {
+        Ok(())
+    }
 }
 
 #[tauri::command]
@@ -436,6 +483,52 @@ mod tests {
             "undecodable bytes become U+FFFD"
         );
         assert!(slice.eof);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn image_size_gate_accepts_exactly_64mb_and_rejects_one_more_byte() {
+        assert_eq!(IMAGE_MAX_BYTES, 64 * 1024 * 1024);
+        assert!(ensure_image_size_within_limit(IMAGE_MAX_BYTES).is_ok());
+        assert!(ensure_image_size_within_limit(0).is_ok());
+        let error = ensure_image_size_within_limit(IMAGE_MAX_BYTES + 1).unwrap_err();
+        assert_eq!(error, "图片过大（67108865），超过 64MB 上限");
+    }
+
+    #[test]
+    fn image_read_returns_raw_bytes_without_wrapping() {
+        use tauri::ipc::{InvokeResponseBody, IpcResponse};
+
+        let dir = temp_dir("image-raw");
+        let path = dir.join("dot.png");
+        let content: Vec<u8> = (0..=255u8).cycle().take(4096).collect();
+        fs::write(&path, &content).unwrap();
+
+        let response = read_image_file_inner(path.to_string_lossy().to_string()).unwrap();
+        match response.body().unwrap() {
+            InvokeResponseBody::Raw(bytes) => assert_eq!(bytes, content),
+            body => panic!("image read must stay raw bytes, got {body:?}"),
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn image_read_rejects_text_files_and_directories() {
+        let dir = temp_dir("image-reject");
+        let text = dir.join("notes.txt");
+        fs::write(&text, b"plain text").unwrap();
+
+        let error = read_image_file_inner(text.to_string_lossy().to_string())
+            .err()
+            .expect("text file must be rejected by the image gate");
+        assert_eq!(error, "不是支持的图片格式：txt");
+
+        let sub = dir.join("album");
+        fs::create_dir(&sub).unwrap();
+        let error = read_image_file_inner(sub.to_string_lossy().to_string())
+            .err()
+            .expect("directory must be rejected by the image gate");
+        assert!(error.contains("无法打开文件夹"));
         fs::remove_dir_all(dir).unwrap();
     }
 }

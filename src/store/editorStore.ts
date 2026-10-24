@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { save } from '@tauri-apps/plugin-dialog'
 import { safeInvoke, isTauri } from '../lib/tauri'
-import { parseOpenFileError, tabNeedsDiskContent } from '../lib/openFileError'
+import { parseOpenFileError, tabNeedsDiskContent, isNonEditableViewMode } from '../lib/openFileError'
+import { IMAGE_MAX_BYTES, isImagePath } from '../lib/imageFiles'
 import {
   EDIT_DEGRADED_BYTES,
   EDIT_WARN_BYTES,
@@ -89,6 +90,38 @@ async function populateTabFromDisk(id: string, path: string, line?: number, colu
 
   if (stat.is_dir) {
     throw new Error(`无法打开文件夹：${tabNameFromPath(path)}`)
+  }
+
+  // Images render in ImageViewer; the component reads bytes itself, so the
+  // store only records metadata (size/mtime) and the view mode.
+  if (isImagePath(path)) {
+    if (stat.size > IMAGE_MAX_BYTES) {
+      throw new Error(`图片过大（${formatFileSize(stat.size)}），超过 64MB 上限`)
+    }
+    let mtime: number | null = null
+    try {
+      mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', { path })
+    } catch {
+      mtime = null
+    }
+    if (!get().findTab(id)) return
+    set(s => {
+      const next = mapTabEverywhere(s, id, t => ({
+        ...t,
+        content: undefined,
+        viewMode: 'image' as const,
+        fileSize: stat.size,
+        loading: false,
+        dirty: false,
+        openError: undefined,
+        openErrorKind: undefined,
+        diskMtime: mtime,
+        language: guessLanguage(path),
+      }))
+      if (!next) return s
+      return { ...next, pendingReveal: null }
+    })
+    return
   }
 
   const editMaxBytes = resolveEditMaxBytes(path)
@@ -789,7 +822,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   reopenWithEncoding: async (id, requestedEncoding) => {
     const tab = get().findTab(id)
-    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || tab.viewMode === 'view')
+    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || isNonEditableViewMode(tab))
       return
     if (!isTauri()) {
       useProjectStore.getState().pushToast('error', translate('当前环境无法重新打开文件'))
@@ -875,7 +908,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         if (!initial) return
         try {
           // Draft-restored buffers already have content; only refresh mtime.
-          if (initial.content !== undefined && initial.viewMode !== 'view') {
+          if (initial.content !== undefined && !isNonEditableViewMode(initial)) {
             let mtime: number | null = null
             try {
               mtime = await safeInvoke<number | null>('读取修改时间', 'file_mtime', {
@@ -936,7 +969,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   saveFile: async (id: string) => {
     const tab = get().findTab(id)
-    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || tab.viewMode === 'view')
+    if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || isNonEditableViewMode(tab))
       return
     // Format-on-save before reading the buffer for write (quiet: no success spam).
     try {
@@ -953,7 +986,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       afterFormat.kind === 'diff' ||
       afterFormat.openError ||
       afterFormat.loading ||
-      afterFormat.viewMode === 'view'
+      isNonEditableViewMode(afterFormat)
     ) {
       return
     }

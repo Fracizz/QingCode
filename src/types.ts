@@ -61,9 +61,10 @@ export interface EditorTab {
   language?: string
   /**
    * `view` = read-only slice viewer for files above the plain-edit cap (100–500MB).
+   * `image` = rendered image viewer (see src/lib/imageFiles.ts whitelist).
    * Default / omitted = CodeMirror edit (full / degraded / plain by size).
    */
-  viewMode?: 'edit' | 'view'
+  viewMode?: 'edit' | 'view' | 'image'
   /** On-disk size in bytes when known (used by large-file viewer). */
   fileSize?: number
   /** Session encoding used for read/write (from files.encoding at open). */

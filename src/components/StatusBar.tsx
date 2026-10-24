@@ -7,6 +7,7 @@ import { useUIStore } from '../store/uiStore'
 import { formatTerminalName } from '../utils/terminalName'
 import StatusTip from './StatusTip'
 import { useI18n } from '../lib/i18n'
+import { isNonEditableViewMode } from '../lib/openFileError'
 import { isTauri, safeInvoke } from '../lib/tauri'
 import { getGitHead, type GitHeadInfo } from '../lib/ipc/git'
 import { isProjectRestricted, WORKSPACE_TRUST_CHANGED_EVENT } from '../lib/workspaceTrust'
@@ -339,7 +340,7 @@ export default function StatusBar() {
   const showEditorHints = Boolean(activeTab)
   const showEncoding =
     activeTab?.kind === 'diff' ||
-    Boolean(activeTab && !activeTab.openError && activeTab.viewMode !== 'view')
+    Boolean(activeTab && !activeTab.openError && !isNonEditableViewMode(activeTab))
   const showMetaGroup = showEncoding || Boolean(appVersion) || Boolean(appMemory)
 
   const isSshActiveTab = isSshResource(activeTab?.path)
@@ -534,7 +535,7 @@ export default function StatusBar() {
               <div className={`text-ui-sm flex items-center font-mono ${STATUS_SECONDARY}`}>
                 {activeTab?.kind === 'diff' ? (
                   <span>{t('差异对比')}</span>
-                ) : activeTab && !activeTab.openError && activeTab.viewMode !== 'view' ? (
+                ) : activeTab && !activeTab.openError && !isNonEditableViewMode(activeTab) ? (
                   <StatusTip label={t('转换编码（下次保存）· 或按编码重新打开')}>
                     <button
                       type="button"

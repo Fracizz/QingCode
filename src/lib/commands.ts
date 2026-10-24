@@ -3,6 +3,7 @@ import { requestAppClose } from './appClose'
 import { getAutoSaveSettings } from './autoSave'
 import { saveScopedAutoSaveSettings } from './autoSaveSettings'
 import { formatDocument } from './formatDocument'
+import { isNonEditableViewMode } from './openFileError'
 import { translate } from './i18n'
 import { panelLayoutModeLabel, resolvePanelLayoutMode } from './panelLayoutMode'
 import { ensureSettingsFile, resolveGlobalSettingsPath } from './projectSettings'
@@ -108,7 +109,7 @@ export function resolveCommandShortcut(
 function activeEditableTab() {
   const { tabs, activeTabId } = useEditorStore.getState()
   const tab = tabs.find(t => t.id === activeTabId) ?? null
-  if (!tab || tab.openError || tab.viewMode === 'view' || tab.content === undefined) return null
+  if (!tab || tab.openError || isNonEditableViewMode(tab) || tab.content === undefined) return null
   return tab
 }
 
@@ -537,6 +538,12 @@ export function buildCommands(): AppCommand[] {
       title: '多项目工作区',
       keywords: 'workspace multi project group named',
       run: () => openWorkspaceManager(),
+    },
+    {
+      id: 'ssh.connections',
+      title: '远程连接管理',
+      keywords: 'ssh remote connection manager 远程 连接 管理 主机',
+      run: () => useUIStore.getState().openRemoteConnections(),
     },
     {
       id: 'workspace.saveVisible',
