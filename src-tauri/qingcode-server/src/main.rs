@@ -1,10 +1,11 @@
 //! `qingcode-server` CLI 入口。
 //!
-//! 四个子命令共用一个二进制：
+//! 四个子命令共用一个二进制（全平台可用；`daemon`/`connect` 在 Unix 用
+//! domain socket、Windows 用 named pipe，见 `ipc.rs`）：
 //! - `serve`：旧的直连模式。`127.0.0.1` 上一条 TCP 连接承载一次操作，
 //!   由主程序现有客户端使用，行为保持不变；
-//! - `daemon`：常驻进程，持有 PTY 与监视状态，只监听本地 Unix socket；
-//! - `connect --stdio`：SSH exec 进程里的连接代理，把 stdio 与 socket 对接；
+//! - `daemon`：常驻进程，持有 PTY 与监视状态，只监听本地 IPC；
+//! - `connect --stdio`：SSH exec 进程里的连接代理，把 stdio 与 IPC 对接；
 //! - `self-check`：安装完整性自检，打印自身二进制的 sha256（可对照期望值）。
 //!
 //! stdout 保持安静（`connect` 的 stdout 就是数据通道；`self-check` 的
@@ -22,7 +23,7 @@ const USAGE: &str = "\
 用法:
   qingcode-server --version
   qingcode-server serve --root <目录> --state <文件> [--port <端口>] [--detach --log-file <文件>]
-  qingcode-server daemon [--state-dir <目录>] [--max-ptys <数量>] [--scrollback-bytes <字节>]
+  qingcode-server daemon [--state-dir <目录>] [--detach] [--max-ptys <数量>] [--scrollback-bytes <字节>]
                         [--detached-ttl-secs <秒>] [--idle-exit-secs <秒>]
   qingcode-server connect --stdio [--ensure-daemon] [--state-dir <目录>]
   qingcode-server self-check [--expect-sha256 <hex>]";
@@ -89,15 +90,8 @@ fn main() -> ExitCode {
     match command.as_str() {
         "serve" => run_serve(rest),
         "self-check" => run_self_check(rest),
-        #[cfg(unix)]
         "daemon" => run_daemon(rest),
-        #[cfg(unix)]
         "connect" => run_connect(rest),
-        #[cfg(not(unix))]
-        "daemon" | "connect" => {
-            eprintln!("子命令 {command} 仅在 unix 远端可用\n{USAGE}");
-            ExitCode::from(2)
-        }
         other => {
             eprintln!("未知子命令: {other}\n{USAGE}");
             ExitCode::from(2)
@@ -228,25 +222,11 @@ fn run_serve(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `--detach`（仅 Windows）：再拉起一个脱离当前会话的自身副本后立即以 0 退出。
-///
-/// 思路来自 Zed remote_server 的 spawn_server_normal：原生 spawn、真实 argv
-/// （不经过 shell，没有二次引号转义），stdout/stderr 直接接到日志文件。创建
-/// 标志用 `CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB` 而不是 DETACHED_PROCESS：
-/// serve 依赖 `tokio::signal::ctrl_c()`，需要宿主控制台存在；BREAKAWAY 让子进程
-/// 脱离 sshd 的 Job 对象，exec 通道结束时不会被连坐。sshd 的 Job 对象可能禁止
-/// breakaway，此时去掉该标志重试一次。`--detach` 与 `--log-file` 不传给子进程：
-/// 子进程就是最终的前台 serve。
-/// 把 serve 以脱离方式重新拉起：CreateProcessW + HANDLE_LIST，只把日志句柄
-/// 交给子进程。
-///
-/// 为什么不走 std::process::Command：Windows 上 spawn 以 bInheritHandles=TRUE
-/// 复制父进程全部可继承句柄，SSH exec 会话的 stdout 管道正在其中——子进程持有
-/// 管道写端，sshd 永远等不到 EOF，客户端的 exec 通道就悬挂到超时（真机
-/// 192.168.252.107 实测；无 PTY 会话里管道不是 stdio，GetStdHandle 关不掉）。
-/// std 也没有暴露 PROC_THREAD_ATTRIBUTE_HANDLE_LIST 的口子，所以这里直接用
-/// Win32 API 把继承严格限定在日志句柄上（对齐 zed remote_server 的
-/// spawn_server_normal：原生 API + 脱离标志，不经任何 shell）。
+/// `serve --detach`（仅 Windows）：再拉起一个脱离当前会话的自身副本后立即退出。
+/// stdout/stderr 接到 --log-file，启动失败的诊断（端口占用、单实例 rc=3 等）
+/// 都落在这个文件里，脱离会话后仍可排查。`--detach` 与 `--log-file` 不传给
+/// 子进程：子进程就是最终的前台 serve。脱离 spawn 的机制与安全约束见
+/// `qingcode_server::winproc` 模块注释。
 #[cfg(windows)]
 fn spawn_detached_windows_serve(
     root: &Path,
@@ -254,24 +234,13 @@ fn spawn_detached_windows_serve(
     port: u16,
     log_path: Option<&Path>,
 ) -> ExitCode {
-    use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, FILE_SHARE_WRITE,
         OPEN_ALWAYS,
     };
-    use windows_sys::Win32::System::Threading::{
-        CreateProcessW, DeleteProcThreadAttributeList, InitializeProcThreadAttributeList,
-        UpdateProcThreadAttribute, CREATE_BREAKAWAY_FROM_JOB, CREATE_NO_WINDOW,
-        EXTENDED_STARTUPINFO_PRESENT, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-        STARTF_USESTDHANDLES, STARTUPINFOEXW,
-    };
-
-    fn to_wide(value: &OsStr) -> Vec<u16> {
-        value.encode_wide().chain(std::iter::once(0)).collect()
-    }
 
     let exe = match std::env::current_exe() {
         Ok(exe) => exe,
@@ -284,30 +253,30 @@ fn spawn_detached_windows_serve(
     // 子进程命令行与真实 argv 逐字对应；lpApplicationName 直接给 exe 路径，
     // 不做任何 shell 解析，路径含空格也安全。
     let mut line = format!(
-        "\"{}\" serve --root \"{}\" --state \"{}\"",
-        exe.display(),
-        root.display(),
-        state.display()
+        "{} serve --root {} --state {}",
+        qingcode_server::winproc::quote_windows_arg(exe.as_os_str()),
+        qingcode_server::winproc::quote_windows_arg(root.as_os_str()),
+        qingcode_server::winproc::quote_windows_arg(state.as_os_str()),
     );
     if port != 0 {
         line.push_str(&format!(" --port {port}"));
     }
-    let mut cmdline: Vec<u16> = line.encode_utf16().collect();
-    cmdline.push(0);
-    let exe_wide = to_wide(exe.as_os_str());
-    let dir = exe.parent().map(|dir| to_wide(dir.as_os_str()));
 
     // 日志句柄：FILE_APPEND_DATA 追加写，bInheritHandle=1 让它可被继承；
-    // 之后 HANDLE_LIST 把继承严格限定到这一个句柄。启动失败（端口占用、
-    // 单实例 rc=3 等）的 stderr 也落到这里，脱离会话后仍可排查。
+    // 之后 HANDLE_LIST 把继承严格限定到这一个句柄。
     let h_log = match log_path {
         Some(path) => {
-            let log_wide = to_wide(path.as_os_str());
+            let log_wide: Vec<u16> = path
+                .as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
             let sa = SECURITY_ATTRIBUTES {
                 nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
                 lpSecurityDescriptor: std::ptr::null_mut(),
                 bInheritHandle: 1,
             };
+            // SAFETY: 常规 CreateFileW；句柄在出错路径释放、成功路径移交子进程。
             let handle = unsafe {
                 CreateFileW(
                     log_wide.as_ptr(),
@@ -328,116 +297,23 @@ fn spawn_detached_windows_serve(
         None => None,
     };
 
-    // 属性列表：把可继承句柄限定为 [h_log]。UpdateProcThreadAttribute 只保存
-    // 指向句柄数组的指针，数组必须活到 CreateProcessW 之后（放在函数作用域）；
-    // 列表本身含内部指针，用 usize 缓冲保证指针对齐。
-    let mut handles: [*mut core::ffi::c_void; 1] = [h_log.unwrap_or(std::ptr::null_mut())];
-    let mut attr_size = 0usize;
-    unsafe { InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attr_size) };
-    if attr_size == 0 {
-        eprintln!("初始化进程属性列表失败");
-        if let Some(handle) = h_log {
-            unsafe {
-                CloseHandle(handle);
-            }
-        }
-        return ExitCode::from(1);
-    }
-    let mut attr_buf = vec![0usize; attr_size.div_ceil(std::mem::size_of::<usize>())];
-    let attr = attr_buf.as_mut_ptr() as *mut core::ffi::c_void;
-    let init_ok = unsafe { InitializeProcThreadAttributeList(attr, 1, 0, &mut attr_size) };
-    let update_ok = unsafe {
-        UpdateProcThreadAttribute(
-            attr,
-            0,
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
-            handles.as_mut_ptr() as *mut core::ffi::c_void,
-            std::mem::size_of::<*mut core::ffi::c_void>(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
+    let spawn = qingcode_server::winproc::DetachedSpawn {
+        command_line: line,
+        inherit: h_log.iter().copied().collect(),
+        stdio_handle: h_log,
     };
-    if init_ok == 0 || update_ok == 0 {
-        eprintln!("配置进程句柄继承列表失败");
-        unsafe {
-            DeleteProcThreadAttributeList(attr);
-        }
-        if let Some(handle) = h_log {
-            unsafe {
-                CloseHandle(handle);
+    match qingcode_server::winproc::spawn_detached(spawn) {
+        Ok(_) => ExitCode::SUCCESS,
+        Err(message) => {
+            eprintln!("{message}");
+            if let Some(handle) = h_log {
+                // SAFETY: h_log 由 CreateFileW 返回且仍有效。
+                unsafe { CloseHandle(handle) };
             }
-        }
-        return ExitCode::from(1);
-    }
-
-    let mut si: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
-    si.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
-    si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-    si.StartupInfo.hStdInput = std::ptr::null_mut();
-    si.StartupInfo.hStdOutput = h_log.unwrap_or(std::ptr::null_mut());
-    si.StartupInfo.hStdError = h_log.unwrap_or(std::ptr::null_mut());
-    si.lpAttributeList = attr;
-    let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
-
-    let mut flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB;
-    // bInheritHandles 必须为 TRUE，HANDLE_LIST 才会生效；列表外句柄一概不继承。
-    let spawned = unsafe {
-        CreateProcessW(
-            exe_wide.as_ptr(),
-            cmdline.as_mut_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            1,
-            flags,
-            std::ptr::null(),
-            dir.as_ref().map(|d| d.as_ptr()).unwrap_or(std::ptr::null()),
-            &si as *const STARTUPINFOEXW as *const _,
-            &mut pi,
-        )
-    } != 0;
-    if !spawned {
-        // sshd 的 Job 对象可能不允许 breakaway：去掉该标志重试一次。
-        flags &= !CREATE_BREAKAWAY_FROM_JOB;
-        let retried = unsafe {
-            CreateProcessW(
-                exe_wide.as_ptr(),
-                cmdline.as_mut_ptr(),
-                std::ptr::null(),
-                std::ptr::null(),
-                1,
-                flags,
-                std::ptr::null(),
-                dir.as_ref().map(|d| d.as_ptr()).unwrap_or(std::ptr::null()),
-                &si as *const STARTUPINFOEXW as *const _,
-                &mut pi,
-            )
-        } != 0;
-        if !retried {
-            eprintln!(
-                "拉起脱离 serve 进程失败（两次，含/不含 breakaway），GetLastError={}",
-                unsafe { GetLastError() }
-            );
-            unsafe {
-                DeleteProcThreadAttributeList(attr);
-                if let Some(handle) = h_log {
-                    CloseHandle(handle);
-                }
-            }
-            return ExitCode::from(1);
+            ExitCode::from(1)
         }
     }
-
-    unsafe {
-        DeleteProcThreadAttributeList(attr);
-        CloseHandle(pi.hProcess);
-        CloseHandle(pi.hThread);
-        if let Some(handle) = h_log {
-            CloseHandle(handle);
-        }
-    }
-    ExitCode::SUCCESS
 }
-
 /// `self-check`：安装完整性自检。
 ///
 /// 语义：
@@ -539,15 +415,35 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 /// `daemon`：常驻进程。抢不到单实例锁时按成功退出（已有实例在服务）。
-#[cfg(unix)]
+/// `--detach`（Windows 部署路径）：再拉起一个脱离副本后立即以 0 退出，
+/// 与 `serve --detach` 同机制（unix 上客户端用 nohup/setsid，--detach 是 no-op）。
 fn run_daemon(args: &[String]) -> ExitCode {
-    let options = match parse_daemon_args(args) {
-        Ok(options) => options,
+    let (options, detach) = match parse_daemon_args(args) {
+        Ok(parsed) => parsed,
         Err(message) => {
             eprintln!("{message}\n{USAGE}");
             return ExitCode::from(2);
         }
     };
+    if detach {
+        #[cfg(windows)]
+        {
+            return match qingcode_server::winproc::spawn_detached_daemon(
+                options.state_dir.as_deref(),
+            ) {
+                Ok(_) => ExitCode::SUCCESS,
+                Err(message) => {
+                    eprintln!("{message}");
+                    ExitCode::from(1)
+                }
+            };
+        }
+        #[cfg(not(windows))]
+        {
+            // unix 客户端部署命令直接 nohup/setsid 脱离 SSH 会话；--detach
+            // 在前台执行（行为与 serve 的 unix 分支一致），linux musl 构建照常编译。
+        }
+    }
     match qingcode_server::daemon::run(options) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
@@ -558,7 +454,6 @@ fn run_daemon(args: &[String]) -> ExitCode {
 }
 
 /// `connect --stdio`：代理退出即代表本次 SSH 会话结束，不触碰 daemon。
-#[cfg(unix)]
 fn run_connect(args: &[String]) -> ExitCode {
     let options = match parse_connect_args(args) {
         Ok(options) => options,
@@ -576,14 +471,22 @@ fn run_connect(args: &[String]) -> ExitCode {
     }
 }
 
-#[cfg(unix)]
-fn parse_daemon_args(args: &[String]) -> Result<qingcode_server::daemon::DaemonOptions, String> {
+fn parse_daemon_args(
+    args: &[String],
+) -> Result<(qingcode_server::daemon::DaemonOptions, bool), String> {
     use qingcode_server::daemon::DaemonOptions;
 
     let mut options = DaemonOptions::default();
+    let mut detach = false;
     let mut index = 0;
     while index < args.len() {
         let flag = args[index].as_str();
+        // --detach 是无值开关，单独消费一个参数位（与 serve 一致）。
+        if flag == "--detach" {
+            detach = true;
+            index += 1;
+            continue;
+        }
         let Some(value) = args.get(index + 1) else {
             return Err(format!("参数 {flag} 缺少取值"));
         };
@@ -607,10 +510,9 @@ fn parse_daemon_args(args: &[String]) -> Result<qingcode_server::daemon::DaemonO
     if options.max_ptys == 0 {
         return Err("--max-ptys 必须大于 0".to_string());
     }
-    Ok(options)
+    Ok((options, detach))
 }
 
-#[cfg(unix)]
 fn parse_connect_args(args: &[String]) -> Result<qingcode_server::connect::ConnectOptions, String> {
     use qingcode_server::connect::ConnectOptions;
 
@@ -653,14 +555,12 @@ fn parse_connect_args(args: &[String]) -> Result<qingcode_server::connect::Conne
     Ok(options)
 }
 
-#[cfg(unix)]
 fn parse_usize(flag: &str, value: &str) -> Result<usize, String> {
     value
         .parse::<usize>()
         .map_err(|_| format!("{flag} 需要非负整数，实际为 {value}"))
 }
 
-#[cfg(unix)]
 fn parse_u64(flag: &str, value: &str) -> Result<u64, String> {
     value
         .parse::<u64>()
@@ -794,11 +694,15 @@ mod tests {
             "--detached-ttl-secs".to_string(),
             "60".to_string(),
         ];
-        let options = parse_daemon_args(&args).unwrap();
+        let (options, detach) = parse_daemon_args(&args).unwrap();
+        assert!(!detach);
         assert_eq!(options.state_dir, Some(PathBuf::from("/tmp/run")));
         assert_eq!(options.max_ptys, 8);
         assert_eq!(options.scrollback_bytes, 4096);
         assert_eq!(options.detached_ttl, std::time::Duration::from_secs(60));
+        // --detach 是无值开关；unix 上仍前台执行（由外部 nohup/setsid 脱离）。
+        let (_, detach) = parse_daemon_args(&["--detach".to_string()]).unwrap();
+        assert!(detach);
 
         assert!(parse_daemon_args(&["--max-ptys".to_string(), "0".to_string()]).is_err());
         assert!(parse_daemon_args(&["--max-ptys".to_string(), "abc".to_string()]).is_err());

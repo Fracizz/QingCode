@@ -20,10 +20,8 @@
 //! 屏蔽。`has_children` 与 `reap` 依赖 `libc`/`/proc`，只在 unix 上实现；Windows
 //! 退化为「无子进程」与「用 `ChildKiller` 结束进程」，行为差异写在各函数注释里。
 
-// Windows 上唯一的使用方 `daemon` 整个模块是 `#![cfg(unix)]` 的，宿主在这里没有
-// 调用者，dead_code 会连片报警。宿主本身仍要求能在 Windows 编译并跑纯逻辑测试，
-// 所以只在非 unix 目标上关掉这条 lint；真实运行平台（unix）保持开启。
-#![cfg_attr(not(unix), allow(dead_code))]
+// daemon 已在全平台使用本宿主（Windows 走 ConPTY，见 daemon.rs / ipc.rs），
+// 不再需要按平台豁免 dead_code。
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};

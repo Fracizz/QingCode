@@ -4,8 +4,12 @@
 
 use std::io;
 
-use super::paths::server_binary_path;
-use super::scripts::{connect_daemon_command, daemon_token_command, start_daemon_command};
+use super::paths::{server_binary_path, server_binary_remote_path, windows_server_arch_script};
+use super::scripts::{
+    connect_daemon_command, connect_daemon_command_existing, daemon_token_command,
+    start_daemon_command, windows_connect_daemon_command, windows_connect_daemon_command_existing,
+    windows_daemon_start_script, windows_daemon_token_script, windows_stop_for,
+};
 use super::*;
 use qingcode_server::proto::{
     self, ErrorBody, Frame, HelloRequest, HelloResponse, Kind, ReceiverWindow, Request, Response,
@@ -41,6 +45,9 @@ pub(crate) struct DaemonChannel {
     channel: russh::Channel<client::Msg>,
     /// 已到达但尚未构成完整帧的字节：代理转发的是裸字节流，不保证按帧到达。
     buffer: Vec<u8>,
+    /// 代理/中间 shell 落在 stderr 的输出。不参与帧流，只在通道关闭时
+    /// 并入错误信息（Windows 的 shell 启动噪声会到这里，不能当失败）。
+    stderr_notes: Vec<String>,
 }
 
 impl DaemonChannel {
@@ -82,15 +89,21 @@ impl DaemonChannel {
                 // 代理进程退出（daemon 拒绝连接 / 已下线 / 会话结束）。
                 Ok(None) => return Err("daemon 连接代理已退出".to_string()),
                 Ok(Some(ChannelMsg::Data { data })) => self.buffer.extend_from_slice(&data),
-                // 代理只转发 daemon 字节流，stderr 出现即启动失败（如 socket 连不上）。
+                // stderr：不立即判失败——Windows 远端的代理可能经由 PowerShell
+                // 等中间 shell 启动，其启动噪声（CLIXML/进度流）会落到 stderr，
+                // 但真正的帧流不受影响。记下来，通道关闭时并入错误信息。
                 Ok(Some(ChannelMsg::ExtendedData { data, .. })) => {
-                    return Err(format!(
-                        "daemon 连接代理报错：{}",
-                        String::from_utf8_lossy(&data).trim()
-                    ));
+                    let note = String::from_utf8_lossy(&data).trim().to_string();
+                    if !note.is_empty() {
+                        self.stderr_notes.push(note);
+                    }
                 }
                 Ok(Some(ChannelMsg::Eof) | Some(ChannelMsg::Close)) => {
-                    return Err("daemon 连接已关闭".to_string());
+                    let notes = self.stderr_notes.join(" ");
+                    if notes.is_empty() {
+                        return Err("daemon 连接已关闭".to_string());
+                    }
+                    return Err(format!("daemon 连接已关闭：{notes}"));
                 }
                 Ok(Some(_)) => {}
                 Err(_) => return Err("daemon 响应超时".to_string()),
@@ -105,21 +118,48 @@ impl DaemonChannel {
     }
 }
 
-/// 校验 daemon 的 HELLO 应答：协议版本、server 版本一致，且本轮要用到的
-/// 能力都已声明。任何不符都视为 daemon 不可用（回退 serve）。
-fn validate_daemon_hello(response: &HelloResponse) -> Result<(), String> {
+/// HELLO 握手校验策略。
+///
+/// **协议版本永远校验**：不同协议的帧格式可能不同，放宽它会导致向不兼容的
+/// daemon 盲发帧。可放宽的只有 server 版本与能力声明。
+#[derive(Clone, Copy)]
+struct HelloPolicy {
+    require_version: bool,
+    require_capabilities: bool,
+}
+
+impl HelloPolicy {
+    /// 常规通道：版本一致 + 能力齐全（默认行为）。
+    const STRICT: Self = Self {
+        require_version: true,
+        require_capabilities: true,
+    };
+    /// 仅供「淘汰旧 daemon」：只要协议与 token 对得上就允许握手，不要求
+    /// server 版本匹配或能力齐全——旧实例本就该被拒绝于常规通道之外，
+    /// 这里只是借它的 token 取到连接并请求其退出。
+    const LENIENT: Self = Self {
+        require_version: false,
+        require_capabilities: false,
+    };
+}
+
+/// 校验 daemon 的 HELLO 应答（策略化）。协议版本无条件校验；server 版本与
+/// 能力声明由 `policy` 决定。常规通道用 [`HelloPolicy::STRICT`]。
+fn validate_daemon_hello_with(response: &HelloResponse, policy: HelloPolicy) -> Result<(), String> {
     if response.protocol != PROTOCOL_VERSION {
         return Err(format!("daemon 协议版本不兼容：{}", response.protocol));
     }
-    if response.server_version != SERVER_VERSION {
+    if policy.require_version && response.server_version != SERVER_VERSION {
         return Err(format!(
             "daemon 版本不匹配：远端 {}，本端 {SERVER_VERSION}",
             response.server_version
         ));
     }
-    for capability in ["fs.scan", "search.content", "watch.subscribe"] {
-        if !response.capabilities.iter().any(|item| item == capability) {
-            return Err(format!("daemon 缺少能力 {capability}"));
+    if policy.require_capabilities {
+        for capability in ["fs.scan", "search.content", "watch.subscribe"] {
+            if !response.capabilities.iter().any(|item| item == capability) {
+                return Err(format!("daemon 缺少能力 {capability}"));
+            }
         }
     }
     Ok(())
@@ -129,25 +169,47 @@ fn validate_daemon_hello(response: &HelloResponse) -> Result<(), String> {
 ///
 /// exec 通道跑 `connect --stdio --ensure-daemon`：daemon 缺席时由代理拉起，
 /// HELLO 携带 token 与协议区间 `[1, 1]`，daemon 校验 token / 协议后回 HELLO。
-/// 任何一步失败都返回 Err，由调用方决定降级。
+/// Windows 远端直接 exec 二进制本体（不经 PowerShell，避免其启动噪声破坏
+/// 帧流，见 [`windows_connect_daemon_command`]）。任何一步失败都返回 Err，
+/// 由调用方决定降级。
 pub(super) async fn open_daemon_channel(
     manager: &SshManager,
     connection_id: &str,
     daemon: &DaemonAccess,
 ) -> Result<DaemonChannel, String> {
+    open_daemon_channel_with(manager, connection_id, daemon, HelloPolicy::STRICT, true).await
+}
+
+/// 按给定 HELLO 校验策略打开 daemon 通道。除 [`shutdown_remote_daemon`]
+/// 的淘汰路径外都应使用 [`HelloPolicy::STRICT`]。
+///
+/// `ensure_daemon = false` 时只连已有实例：daemon 缺席立即失败，不会顺手拉起
+/// 一个（升级替换二进制前必须这样，否则会先启动旧版 daemon）。
+async fn open_daemon_channel_with(
+    manager: &SshManager,
+    connection_id: &str,
+    daemon: &DaemonAccess,
+    policy: HelloPolicy,
+    ensure_daemon: bool,
+) -> Result<DaemonChannel, String> {
+    let windows = windows_native_path(&daemon.bin).is_some();
+    let command = match (windows, ensure_daemon) {
+        (true, true) => windows_connect_daemon_command(&daemon.bin),
+        (true, false) => windows_connect_daemon_command_existing(&daemon.bin),
+        (false, true) => connect_daemon_command(&daemon.bin),
+        (false, false) => connect_daemon_command_existing(&daemon.bin),
+    };
     let channel = manager
         .open_session_channel(connection_id, "server 守护进程 ")
         .await?;
-    if let Err(error) = channel
-        .exec(true, connect_daemon_command(&daemon.bin))
-        .await
-    {
+    if let Err(error) = channel.exec(true, command).await {
         let _ = tokio::time::timeout(Duration::from_secs(1), channel.close()).await;
         return Err(format!("启动 daemon 连接代理失败：{error}"));
     }
     let mut channel = DaemonChannel {
         channel,
         buffer: Vec::new(),
+        stderr_notes: Vec::new(),
     };
     let hello = HelloRequest {
         // 设计上 client_id 标识 QingCode 安装实例；这里用连接 id（同一 SSH
@@ -173,26 +235,19 @@ pub(super) async fn open_daemon_channel(
     }
     let hello: HelloResponse = proto::decode_value(&response.payload)
         .map_err(|error| format!("解析 daemon HELLO 失败：{error}"))?;
-    validate_daemon_hello(&hello)?;
+    // 协议版本无条件校验；版本与能力按策略放宽（只有淘汰旧 daemon 的路径放宽）。
+    validate_daemon_hello_with(&hello, policy)?;
     Ok(channel)
 }
 
-/// 握手探针：验证 token / 版本 / 能力后立即关闭。
-async fn probe_daemon(manager: &SshManager, connection_id: &str, access: &DaemonAccess) -> bool {
-    match open_daemon_channel(manager, connection_id, access).await {
-        Ok(mut channel) => {
-            channel.shutdown().await;
-            true
-        }
-        Err(_) => false,
-    }
-}
-
 /// serve server 就绪后尽力补一步 daemon 传输探测：
-/// 1. 幂等启动 daemon（重复执行因 `flock` 抢不到锁直接退出，无副作用）；
+/// 1. 幂等启动 daemon（unix 靠 `flock`、Windows 靠命名管道首实例锁，重复
+///    执行都按「已有实例」退出，无副作用）；
 /// 2. 轮询读取 `run/token`（daemon 启动到 token 落盘有亚秒级延迟；旧 daemon
 ///    残留的 token 会被下一步的真实握手淘汰）；
 /// 3. 用一次真实握手验证 token、版本与能力，通过才标记 daemon 可用。
+///    远端 daemon 版本落后时（升级后旧 daemon 仍持锁），凭有效 token 发
+///    `server.shutdown` 淘汰旧实例，再拉起新版并复验一次。
 ///
 /// 任一步失败都返回 `None`：仅表示本轮无 daemon，不影响 serve 模式。
 pub(super) async fn ensure_remote_daemon(
@@ -201,38 +256,154 @@ pub(super) async fn ensure_remote_daemon(
     root: &RegisteredRoot,
     remote_bin: Option<&str>,
 ) -> Option<DaemonAccess> {
-    // daemon / connect 只在 unix 远端编译。Windows 停在 serve。
-    if windows_native_path(&root.canonical_path).is_some() {
-        return None;
-    }
+    let windows = windows_native_path(&root.canonical_path);
     let bin = match remote_bin {
         Some(bin) => bin.to_string(),
-        None => {
-            let arch = manager
-                .exec_command(&root.uri, "uname -m", None, true, REMOTE_EXEC_TIMEOUT)
-                .await
-                .ok()?
-                .stdout
-                .trim()
-                .to_string();
-            if arch != "x86_64" && arch != "aarch64" {
-                return None;
-            }
-            server_binary_path(&root.canonical_path, &arch)
-        }
+        None => resolve_daemon_binary(manager, root, windows.as_deref()).await?,
     };
-    let _ = manager
-        .exec_command(
-            &root.uri,
-            &start_daemon_command(&bin),
-            None,
-            true,
-            REMOTE_EXEC_TIMEOUT,
-        )
-        .await;
+    // 幂等启动：unix `nohup setsid`；Windows `daemon --detach` 自脱离。
+    if windows.is_some() {
+        let native_bin = windows_host_path(&bin)?;
+        let script = windows_daemon_start_script(&native_bin);
+        let _ = manager
+            .exec_remote_shell(&root.uri, "", &script, true, REMOTE_EXEC_TIMEOUT)
+            .await;
+    } else {
+        let _ = manager
+            .exec_command(
+                &root.uri,
+                &start_daemon_command(&bin),
+                None,
+                true,
+                REMOTE_EXEC_TIMEOUT,
+            )
+            .await;
+    }
     let deadline = Instant::now() + AGENT_DAEMON_ENSURE_TIMEOUT;
+    let mut restarted_for_stale_version = false;
     loop {
-        if let Ok(result) = manager
+        let token = read_daemon_token(manager, root, windows.is_some()).await;
+        if let Some(token) = token {
+            let access = DaemonAccess {
+                bin: bin.clone(),
+                token,
+            };
+            if !access.token.is_empty() {
+                match probe_daemon_versioned(manager, connection_id, &access).await {
+                    ProbeOutcome::Ready => return Some(access),
+                    ProbeOutcome::StaleVersion if !restarted_for_stale_version => {
+                        // 旧版 daemon 还持着单实例锁：拿它自己的 token 请求
+                        // 退出，再按新二进制拉起一轮。只做一次，避免循环。
+                        restarted_for_stale_version = true;
+                        shutdown_remote_daemon(manager, connection_id, &access).await;
+                        restart_daemon(manager, root, &bin, windows.is_some()).await;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+}
+
+/// 探测结果区分「连不上」与「版本过期」：后者值得淘汰旧实例后重试一轮。
+enum ProbeOutcome {
+    Ready,
+    StaleVersion,
+    Unavailable,
+}
+
+async fn probe_daemon_versioned(
+    manager: &SshManager,
+    connection_id: &str,
+    access: &DaemonAccess,
+) -> ProbeOutcome {
+    match open_daemon_channel(manager, connection_id, access).await {
+        Ok(mut channel) => {
+            channel.shutdown().await;
+            ProbeOutcome::Ready
+        }
+        Err(reason) if reason.contains("daemon 版本不匹配") => ProbeOutcome::StaleVersion,
+        Err(_) => ProbeOutcome::Unavailable,
+    }
+}
+
+/// 按平台重启 daemon（版本淘汰后的第二次拉起）。
+async fn restart_daemon(manager: &SshManager, root: &RegisteredRoot, bin: &str, windows: bool) {
+    if windows {
+        if let Some(native_bin) = windows_host_path(bin) {
+            let script = windows_daemon_start_script(&native_bin);
+            let _ = manager
+                .exec_remote_shell(&root.uri, "", &script, true, REMOTE_EXEC_TIMEOUT)
+                .await;
+        }
+    } else {
+        let _ = manager
+            .exec_command(
+                &root.uri,
+                &start_daemon_command(bin),
+                None,
+                true,
+                REMOTE_EXEC_TIMEOUT,
+            )
+            .await;
+    }
+}
+
+/// 解析 daemon 二进制的远端路径。unix 用 `uname -m`；Windows 用
+/// `$env:PROCESSOR_ARCHITECTURE` 换算（OpenSSH 默认 shell 不一定有 uname）。
+async fn resolve_daemon_binary(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    windows_native_root: Option<&str>,
+) -> Option<String> {
+    if windows_native_root.is_some() {
+        let script = windows_server_arch_script().to_string();
+        let result = manager
+            .exec_remote_shell(&root.uri, "", &script, true, REMOTE_EXEC_TIMEOUT)
+            .await
+            .ok()?;
+        let arch = result.stdout.trim();
+        if arch != "x86_64" && arch != "aarch64" {
+            return None;
+        }
+        return Some(server_binary_remote_path(&root.canonical_path, true, arch));
+    }
+    let arch = manager
+        .exec_command(&root.uri, "uname -m", None, true, REMOTE_EXEC_TIMEOUT)
+        .await
+        .ok()?
+        .stdout
+        .trim()
+        .to_string();
+    if arch != "x86_64" && arch != "aarch64" {
+        return None;
+    }
+    Some(server_binary_path(&root.canonical_path, &arch))
+}
+
+/// 读取 daemon 会话 token：unix shell 命令 / Windows PowerShell 脚本。
+async fn read_daemon_token(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    windows: bool,
+) -> Option<String> {
+    let result = if windows {
+        manager
+            .exec_remote_shell(
+                &root.uri,
+                "",
+                &windows_daemon_token_script(),
+                true,
+                REMOTE_EXEC_TIMEOUT,
+            )
+            .await
+    } else {
+        manager
             .exec_command(
                 &root.uri,
                 &daemon_token_command(),
@@ -241,20 +412,8 @@ pub(super) async fn ensure_remote_daemon(
                 REMOTE_EXEC_TIMEOUT,
             )
             .await
-        {
-            let access = DaemonAccess {
-                bin: bin.clone(),
-                token: result.stdout.trim().to_string(),
-            };
-            if !access.token.is_empty() && probe_daemon(manager, connection_id, &access).await {
-                return Some(access);
-            }
-        }
-        if Instant::now() >= deadline {
-            return None;
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-    }
+    };
+    result.ok().map(|result| result.stdout.trim().to_string())
 }
 
 /// 记录「daemon 传输暂不可用」：保留 serve 端点，只清 daemon 标记并记下降级
@@ -276,12 +435,35 @@ pub(crate) fn downgrade_server_daemon(manager: &SshManager, key: &str) {
 /// 尽力让远端 daemon 退出：一次真实握手（token 校验）+ `server.shutdown` RPC。
 /// daemon 已下线、token 失效或通道失败都只返回 false——调用方（restart/stop）
 /// 把它当 best-effort，随后的 ensure 会重新拉起 daemon。
+///
+/// 这里用 [`HelloPolicy::LENIENT`]：本函数的典型调用场景正是淘汰版本落后的
+/// 旧 daemon，严格策略会因 server 版本不匹配在握手阶段失败，从而永远无法
+/// 让旧实例退出。协议版本仍然严格校验，避免对不兼容帧格式盲发 shutdown。
 pub(crate) async fn shutdown_remote_daemon(
     manager: &SshManager,
     connection_id: &str,
     daemon: &DaemonAccess,
 ) -> bool {
-    let mut channel = match open_daemon_channel(manager, connection_id, daemon).await {
+    shutdown_remote_daemon_with(manager, connection_id, daemon, true).await
+}
+
+/// [`shutdown_remote_daemon`] 的实现。`ensure_daemon = false` 用于升级替换
+/// 二进制之前：只连已有 daemon，缺席时不做任何事，绝不能先拉起旧版实例。
+async fn shutdown_remote_daemon_with(
+    manager: &SshManager,
+    connection_id: &str,
+    daemon: &DaemonAccess,
+    ensure_daemon: bool,
+) -> bool {
+    let mut channel = match open_daemon_channel_with(
+        manager,
+        connection_id,
+        daemon,
+        HelloPolicy::LENIENT,
+        ensure_daemon,
+    )
+    .await
+    {
         Ok(channel) => channel,
         Err(_) => return false,
     };
@@ -294,6 +476,39 @@ pub(crate) async fn shutdown_remote_daemon(
     .await;
     channel.shutdown().await;
     result.is_ok()
+}
+
+/// 升级替换远端二进制之前，尽力结束占用目标 exe 的进程（Windows 文件锁）。
+///
+/// 先按 token 做一次宽松握手并请求 `server.shutdown`，让 daemon 自己收尾
+/// （日志、pipe 清理、PTY 销毁）；再用 `ExecutablePath` 精确兜底结束——serve
+/// 与 daemon 共用同一个 exe，且旧版二进制可能压根不支持 Windows 上的
+/// `connect`，那时只有兜底能释放文件锁。Unix 覆盖运行中的文件不冲突，
+/// 调用方仅应在 Windows 调用本函数。
+pub(crate) async fn stop_remote_daemon_for_upgrade(
+    manager: &SshManager,
+    connection_id: &str,
+    root: &RegisteredRoot,
+    remote_bin: &str,
+) {
+    if let Some(token) = read_daemon_token(manager, root, true).await {
+        if !token.is_empty() {
+            let access = DaemonAccess {
+                bin: remote_bin.to_string(),
+                token,
+            };
+            let _ = shutdown_remote_daemon_with(manager, connection_id, &access, false).await;
+        }
+    }
+    let script = windows_stop_for(remote_bin);
+    if script.is_empty() {
+        return;
+    }
+    let _ = manager
+        .exec_remote_shell(&root.uri, "", &script, true, REMOTE_EXEC_TIMEOUT)
+        .await;
+    // 进程退出后文件句柄释放有毫秒级延迟，给随后的 rename 留余量。
+    tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
 /// daemon 通道上的单请求 RPC：发 REQ、等 RES 或 ERR，返回 RES 的 result。
@@ -554,6 +769,11 @@ mod tests {
         }
     }
 
+    /// 常规通道的严格校验，避免每处测试重复写策略。
+    fn strict(response: &HelloResponse) -> Result<(), String> {
+        validate_daemon_hello_with(response, HelloPolicy::STRICT)
+    }
+
     #[test]
     fn daemon_hello_validation_accepts_compatible_daemon() {
         let response = hello_response(
@@ -566,27 +786,63 @@ mod tests {
                 "pty.persist",
             ],
         );
-        assert!(validate_daemon_hello(&response).is_ok());
+        assert!(strict(&response).is_ok());
     }
 
     #[test]
     fn daemon_hello_validation_rejects_version_and_capability_gaps() {
         // 协议版本不符：回退 serve。
-        assert!(validate_daemon_hello(&hello_response(99, SERVER_VERSION, &[])).is_err());
+        assert!(strict(&hello_response(99, SERVER_VERSION, &[])).is_err());
         // daemon 版本过期（旧进程还占着 flock 时可能出现）：回退 serve。
-        assert!(validate_daemon_hello(&hello_response(
+        assert!(strict(&hello_response(
             PROTOCOL_VERSION,
             "0.0.9",
             &["fs.scan", "search.content", "watch.subscribe"]
         ))
         .is_err());
         // 能力缺失：回退 serve。
-        assert!(validate_daemon_hello(&hello_response(
+        assert!(strict(&hello_response(
             PROTOCOL_VERSION,
             SERVER_VERSION,
             &["fs.scan"]
         ))
         .is_err());
+    }
+
+    #[test]
+    fn daemon_hello_validation_strict_rejects_stale_version_but_lenient_accepts() {
+        let stale = hello_response(
+            PROTOCOL_VERSION,
+            "0.0.9",
+            &["fs.scan", "search.content", "watch.subscribe"],
+        );
+        // 常规通道拒绝版本落后的旧 daemon。
+        assert!(strict(&stale).is_err());
+        assert!(validate_daemon_hello_with(&stale, HelloPolicy::STRICT).is_err());
+        // 淘汰旧 daemon 的宽松策略只看协议与 token，允许连上旧版本实例。
+        assert!(validate_daemon_hello_with(&stale, HelloPolicy::LENIENT).is_ok());
+    }
+
+    #[test]
+    fn daemon_hello_validation_rejects_wrong_protocol_under_both_policies() {
+        // 协议不兼容时帧格式可能不同：两种策略都必须拒绝，不能盲发帧。
+        let mismatched = hello_response(
+            PROTOCOL_VERSION + 1,
+            SERVER_VERSION,
+            &["fs.scan", "search.content", "watch.subscribe"],
+        );
+        for policy in [HelloPolicy::STRICT, HelloPolicy::LENIENT] {
+            assert!(validate_daemon_hello_with(&mismatched, policy).is_err());
+        }
+    }
+
+    #[test]
+    fn daemon_hello_validation_capability_gap_only_blocks_strict_policy() {
+        let missing = hello_response(PROTOCOL_VERSION, SERVER_VERSION, &["fs.scan"]);
+        // 能力缺失：常规通道回退 serve。
+        assert!(validate_daemon_hello_with(&missing, HelloPolicy::STRICT).is_err());
+        // 淘汰路径不依赖能力，只要求能发 shutdown RPC。
+        assert!(validate_daemon_hello_with(&missing, HelloPolicy::LENIENT).is_ok());
     }
 
     #[test]

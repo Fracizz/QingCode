@@ -1,6 +1,6 @@
 [package]
 name = "qingcode-server"
-version = "0.1.13-beta.3"
+version = "0.1.14-beta.1"
 description = "QingCode SSH 工作区远端代理（部署在远程主机上，经 SSH direct-tcpip 通道接入）"
 authors = ["Franciz"]
 license = "MIT"
@@ -53,6 +53,9 @@ libc = "0.2"
 windows-sys = { version = "0.60", features = [
   "Win32_Foundation",
   "Win32_Security",
+  # daemon named pipe 的「仅当前用户」DACL：SID → SDDL 字符串 → 安全描述符。
+  "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
+  "Win32_System_Pipes",
   "Win32_System_Threading",
 ] }

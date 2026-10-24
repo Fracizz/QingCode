@@ -1,25 +1,25 @@
-//! `daemon` 常驻进程：持有 PTY 与文件监视状态，经本地 Unix socket 与连接代理通信。
+//! `daemon` 常驻进程：持有 PTY 与文件监视状态，经本地 IPC 与连接代理通信
+//! （Unix domain socket ↔ Windows named pipe，见 [`crate::ipc`]）。
 //!
 //! 与 `serve` 的区别：`serve` 每条 TCP 连接只承载一次操作，进程随客户端退出；
 //! daemon 是每个远端用户一份的常驻进程，SSH 断开只让 `connect --stdio` 退出，
 //! PTY 与缓冲都留着，下次连接用 `pty.attach{fromSeq}` 接回。
 //!
 //! 安全边界（设计 §8）：
-//! - 运行目录 `~/.qingcode/server/run/` 权限 `0700`，socket 与 token 都在其中；
-//! - 接受连接时用 `SO_PEERCRED`（tokio 的 `peer_cred`）校验对端 uid；
+//! - Unix：运行目录 `~/.qingcode/server/run/` 权限 `0700`，接受连接时用
+//!   `SO_PEERCRED` 校验对端 uid；
+//! - Windows：运行目录在 `%USERPROFILE%` 下（继承用户私有 ACL），命名管道
+//!   DACL 只放行当前用户，跨用户连接在打开阶段即被拒绝；
 //! - HELLO 必须携带 `run/token` 的内容，错误即断开；
 //! - 文件操作按「项目根」做词法 + canonicalize 双重校验，不跟随符号链接越界。
 //!
-//! 单实例：`run/daemon.lock` 上的 `flock(LOCK_EX|LOCK_NB)`。抢不到锁说明已有实例，
-//! 本进程直接退出（退出码 0），由调用方连上那个实例。
-
-#![cfg(unix)]
+//! 单实例：Unix 是 `run/daemon.lock` 上的 `flock`；Windows 由命名管道的
+//! `FILE_FLAG_FIRST_PIPE_INSTANCE` 承担（另一进程已持有实例时创建失败）。
+//! 抢不到锁说明已有实例，本进程直接退出（退出码 0），由调用方连上那个实例。
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
-use std::os::fd::AsRawFd;
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,9 +29,10 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{json, Value};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::io::WriteHalf;
 use tokio::sync::{mpsc, Notify};
 
+use crate::ipc::{IpcEndpoint, IpcListener, IpcStream};
 use crate::proto::{
     encode, ErrorBody, Event, Frame, HelloRequest, HelloResponse, Kind, OutboundQueue, Priority,
     Request, Response, SenderWindow, StreamEnd, WindowCredit, CONTROL_STREAM, HEARTBEAT_INTERVAL,
@@ -108,7 +109,8 @@ pub struct RunDir {
 }
 
 impl RunDir {
-    /// 解析并创建运行目录，权限收紧到 `0700`。
+    /// 解析并创建运行目录。Unix 上权限收紧到 `0700`；Windows 依赖
+    /// `%USERPROFILE%` 自带的用户私有 ACL，不再额外设置。
     pub fn resolve(override_dir: Option<&Path>) -> Result<Self, String> {
         let dir = match override_dir {
             Some(path) => path.to_path_buf(),
@@ -120,13 +122,30 @@ impl RunDir {
         };
         std::fs::create_dir_all(&dir)
             .map_err(|e| format!("创建运行目录 {} 失败: {e}", dir.display()))?;
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| format!("无法收紧运行目录权限: {e}"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| format!("无法收紧运行目录权限: {e}"))?;
+        }
         Ok(Self { dir })
     }
 
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// 就绪标记：daemon 监听建立后出现的文件。Unix 是 socket 本身；
+    /// Windows 是写有管道名的 `run/pipe`（客户端据此判断 daemon 已监听）。
+    pub fn ready_marker(&self) -> PathBuf {
+        #[cfg(unix)]
+        {
+            self.socket()
+        }
+        #[cfg(windows)]
+        {
+            self.dir.join("pipe")
+        }
     }
 
     pub fn socket(&self) -> PathBuf {
@@ -137,26 +156,21 @@ impl RunDir {
         self.dir.join("token")
     }
 
-    pub fn lock(&self) -> PathBuf {
-        self.dir.join("daemon.lock")
-    }
-
     pub fn log(&self) -> PathBuf {
         self.dir.join("server.log")
     }
 
-    /// 生成新 token 并原子写入（`0600`）。
+    /// 生成新 token 并原子写入（Unix 上 `0600`）。
     ///
     /// 每次 daemon 启动都换 token：旧连接代理在进程退出后已不存在，
     /// 换新能顺带作废可能泄漏的旧 token。
     pub fn rotate_token(&self) -> Result<String, String> {
         let token = crate::generate_token();
         let temp = self.dir.join(format!(".token.tmp.{}", std::process::id()));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
+        let mut options = OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        private_mode(&mut options);
+        let mut file = options
             .open(&temp)
             .map_err(|e| format!("创建 token 文件失败: {e}"))?;
         file.write_all(token.as_bytes())
@@ -178,47 +192,24 @@ impl RunDir {
     }
 }
 
-/// 家目录：远端以 SSH 用户身份运行，`HOME` 一定存在；没有时返回 None。
-pub fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
-/// `flock` 单实例锁。持有期间其他进程 `acquire` 返回 `None`。
-pub struct InstanceLock {
-    _file: File,
-}
-
-impl InstanceLock {
-    /// 非阻塞抢锁。`Ok(None)` 表示已有实例在运行。
-    pub fn acquire(path: &Path) -> Result<Option<Self>, String> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(path)
-            .map_err(|e| format!("打开锁文件 {} 失败: {e}", path.display()))?;
-        // SAFETY: flock 只作用于本进程持有的 fd，不涉及内存安全。
-        // 并行测试（以及真实的 SIGCHLD）会让 flock 返回 EINTR。这不是抢锁结果，
-        // 必须立刻重试；否则调用方会把「被信号打断」当成加锁失败。
-        loop {
-            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-            if result == 0 {
-                return Ok(Some(Self { _file: file }));
-            }
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::EINTR) {
-                continue;
-            }
-            if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-                return Ok(None);
-            }
-            return Err(format!("加锁 {} 失败: {error}", path.display()));
-        }
+/// Unix 上把文件创建收紧到 `0600`（token 与日志）；Windows 上靠目录 ACL，no-op。
+fn private_mode(options: &mut OpenOptions) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
+    #[cfg(windows)]
+    let _ = options;
+}
+
+/// 家目录：Unix 看 `HOME`，Windows 看 `USERPROFILE`；都没有时返回 None。
+pub fn home_dir() -> Option<PathBuf> {
+    #[cfg(unix)]
+    let value = std::env::var_os("HOME");
+    #[cfg(windows)]
+    let value = std::env::var_os("USERPROFILE");
+    value.filter(|path| !path.is_empty()).map(PathBuf::from)
 }
 
 /// 滚动日志。
@@ -241,10 +232,10 @@ struct LogInner {
 impl Log {
     pub fn open(path: PathBuf) -> Result<Self, String> {
         let size = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o600)
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        private_mode(&mut options);
+        let file = options
             .open(&path)
             .map_err(|e| format!("打开日志 {} 失败: {e}", path.display()))?;
         Ok(Self {
@@ -293,12 +284,10 @@ impl Log {
             }
         }
         inner.size = 0;
-        inner.file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .mode(0o600)
-            .open(&self.path)
-            .ok();
+        let mut options = OpenOptions::new();
+        options.create(true).append(true);
+        private_mode(&mut options);
+        inner.file = options.open(&self.path).ok();
     }
 }
 
@@ -352,31 +341,33 @@ pub fn run(options: DaemonOptions) -> Result<(), String> {
     runtime.block_on(run_async(options))
 }
 
-/// 异步入口：建目录 → 抢锁 → 换 token → 监听 → 服务循环。
+/// 异步入口：建目录 → 抢单实例锁并监听 → 换 token → 服务循环。
 ///
 /// 已有实例时返回 `Ok(())`（调用方按「无需启动」处理）。
+///
+/// 顺序说明：监听（含单实例锁）必须在换 token 之前——Windows 上创建首个管道
+/// 实例就是抢锁，客户端「就绪」判定是「标记文件出现 + token 可读」，把监听
+/// 放前面保证 token 一定属于最终存活的那个实例。
 pub async fn run_async(options: DaemonOptions) -> Result<(), String> {
     let run_dir = RunDir::resolve(options.state_dir.as_deref())?;
-    let Some(_lock) = InstanceLock::acquire(&run_dir.lock())? else {
+    let endpoint = IpcEndpoint::new(run_dir.dir());
+    let Some(listener) = endpoint
+        .listen()
+        .map_err(|e| format!("监听 {} 失败: {e}", endpoint.describe()))?
+    else {
         return Ok(());
     };
     let token = run_dir.rotate_token()?;
     let log = Log::open(run_dir.log())?;
     log.info(&format!(
-        "daemon 启动 pid={} protocol={PROTOCOL_VERSION} max_ptys={}",
+        "daemon 启动 pid={} protocol={PROTOCOL_VERSION} ipc={} max_ptys={}",
         std::process::id(),
+        endpoint.describe(),
         options.max_ptys
     ));
 
-    // 抢到锁说明目录里的 socket 一定是上次崩溃的残留，删掉再绑。
-    let socket = run_dir.socket();
-    let _ = std::fs::remove_file(&socket);
-    let listener =
-        UnixListener::bind(&socket).map_err(|e| format!("绑定 {} 失败: {e}", socket.display()))?;
-    let _ = std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600));
-
     let result = serve(options, run_dir, token, log, listener).await;
-    let _ = std::fs::remove_file(&socket);
+    endpoint.cleanup();
     result
 }
 
@@ -385,8 +376,9 @@ async fn serve(
     run_dir: RunDir,
     token: String,
     log: Log,
-    listener: UnixListener,
+    listener: IpcListener,
 ) -> Result<(), String> {
+    let log = Arc::new(log);
     let (pty_tx, pty_rx) = mpsc::unbounded_channel::<PtyEvent>();
     let pty = Arc::new(PtyHost::new(
         options.max_ptys,
@@ -396,7 +388,7 @@ async fn serve(
     let daemon = Arc::new(Daemon {
         pty,
         token,
-        log: Arc::new(log),
+        log: Arc::clone(&log),
         started: Instant::now(),
         next_conn: AtomicU32::new(1),
         conns: Mutex::new(HashMap::new()),
@@ -409,6 +401,9 @@ async fn serve(
     });
 
     let pty_task = tokio::spawn(pty_events(Arc::clone(&daemon), pty_rx));
+    // accept 交给独立任务：Windows 上等待连接的管道实例不能被 select 取消
+    // 丢弃（详见 IpcListener::spawn_acceptor）。
+    let mut accept_rx = listener.spawn_acceptor(Some(Arc::clone(&log)));
     daemon.log.info("开始接受本地连接");
 
     let mut idle_since = Some(Instant::now());
@@ -442,17 +437,16 @@ async fn serve(
                     idle_since = None;
                 }
             }
-            accepted = listener.accept() => {
-                match accepted {
-                    Ok((stream, _)) => {
-                        if daemon.conns.lock().unwrap().len() >= MAX_CONNS {
-                            daemon.log.warn("连接数超过上限，拒绝新连接");
-                            continue;
-                        }
-                        tokio::spawn(handle_conn(Arc::clone(&daemon), stream));
-                    }
-                    Err(e) => daemon.log.warn(&format!("accept 失败: {e}")),
+            accepted = accept_rx.recv() => {
+                let Some(stream) = accepted else {
+                    daemon.log.warn("accept 任务退出");
+                    break;
+                };
+                if daemon.conns.lock().unwrap().len() >= MAX_CONNS {
+                    daemon.log.warn("连接数超过上限，拒绝新连接");
+                    continue;
                 }
+                tokio::spawn(handle_conn(Arc::clone(&daemon), stream));
             }
         }
     }
@@ -720,30 +714,40 @@ impl ConnCtx {
     }
 }
 
-/// 校验对端 uid 与握手，失败即断开。成功后才登记到连接表。
-async fn handle_conn(daemon: Arc<Daemon>, stream: UnixStream) {
-    let Ok(cred) = stream.peer_cred() else {
-        daemon.log.warn("无法获取对端凭据，拒绝连接");
-        return;
-    };
-    // SAFETY: geteuid 无副作用。
-    let self_uid = unsafe { libc::geteuid() };
-    if cred.uid() != self_uid {
-        daemon
-            .log
-            .warn(&format!("对端 uid {} 与本进程不符，拒绝连接", cred.uid()));
-        return;
+/// 校验对端身份与握手，失败即断开。成功后才登记到连接表。
+///
+/// 对端校验的平台语义见 [`IpcStream::verify_peer`]：Unix 比对 uid；
+/// Windows 的 named pipe DACL 已在打开阶段限定当前用户，这里取 pid 只为日志。
+async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
+    let debug = crate::debug_enabled();
+    if debug {
+        daemon.log.info("handle_conn: 进入");
     }
-    let (mut reader, writer) = stream.into_split();
+    let peer = match stream.verify_peer() {
+        Ok(peer) => peer,
+        Err(e) => {
+            daemon.log.warn(&format!("对端校验失败（{e}），拒绝连接"));
+            return;
+        }
+    };
+    if debug {
+        daemon.log.info(&format!("handle_conn: 对端 {peer}"));
+    }
+    let (mut reader, writer) = tokio::io::split(stream);
 
     let hello =
         match tokio::time::timeout(Duration::from_secs(10), proto::read_frame(&mut reader)).await {
             Ok(Ok(frame)) if frame.kind == Kind::Hello => frame,
-            _ => {
-                daemon.log.warn("握手超时或首帧不是 HELLO");
+            other => {
+                daemon.log.warn(&format!(
+                    "握手失败（等待 HELLO 超时或首帧类型不符）: {other:?}"
+                ));
                 return;
             }
         };
+    if debug {
+        daemon.log.info("handle_conn: HELLO 已收到");
+    }
     let Ok(request) = proto::decode_value::<HelloRequest>(&hello.payload) else {
         daemon.log.warn("HELLO 负载无法解码");
         return;
@@ -788,7 +792,7 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: UnixStream) {
         });
     }
     daemon.log.info(&format!(
-        "客户端 {} 接入（连接 {conn_id}，protocol {protocol}）",
+        "客户端 {} 接入（连接 {conn_id}，protocol {protocol}，{peer}）",
         request.client_id
     ));
 
@@ -891,33 +895,60 @@ fn negotiate(min: u32, max: u32) -> Option<u32> {
     Some(max.min(PROTOCOL_VERSION))
 }
 
-/// 可用 shell：登录 shell 优先，其余按常见路径探测。只回报名字，不带参数。
+/// 可用 shell：登录 shell 优先，其余按常见安装位探测。只回报名字，不带参数。
 fn available_shells() -> Vec<String> {
-    let mut shells = Vec::new();
-    if let Ok(shell) = std::env::var("SHELL") {
-        if let Some(name) = Path::new(&shell).file_name() {
-            shells.push(name.to_string_lossy().into_owned());
+    #[cfg(unix)]
+    {
+        let mut shells = Vec::new();
+        if let Ok(shell) = std::env::var("SHELL") {
+            if let Some(name) = Path::new(&shell).file_name() {
+                shells.push(name.to_string_lossy().into_owned());
+            }
         }
+        for name in ["bash", "zsh", "sh", "fish"] {
+            if shells.iter().any(|item| item == name) {
+                continue;
+            }
+            let exists = ["/bin", "/usr/bin", "/usr/local/bin"]
+                .iter()
+                .any(|dir| Path::new(dir).join(name).exists());
+            if exists {
+                shells.push(name.to_string());
+            }
+        }
+        shells
     }
-    for name in ["bash", "zsh", "sh", "fish"] {
-        if shells.iter().any(|item| item == name) {
-            continue;
+    #[cfg(windows)]
+    {
+        let mut shells = Vec::new();
+        if let Some(comspec) = std::env::var_os("COMSPEC") {
+            if let Some(name) = Path::new(&comspec).file_name() {
+                let name = name.to_string_lossy().into_owned();
+                if !shells.contains(&name) {
+                    shells.push(name);
+                }
+            }
         }
-        let exists = ["/bin", "/usr/bin", "/usr/local/bin"]
-            .iter()
-            .any(|dir| Path::new(dir).join(name).exists());
-        if exists {
-            shells.push(name.to_string());
+        let system_root = std::env::var_os("SystemRoot")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+        let powershell = system_root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+        if powershell.exists() {
+            shells.push("powershell.exe".to_string());
         }
+        // pwsh（PowerShell 7+）不固定安装位，按 PATH 探测。
+        if let Some(paths) = std::env::var_os("PATH") {
+            let found = std::env::split_paths(&paths).any(|dir| dir.join("pwsh.exe").exists());
+            if found {
+                shells.push("pwsh.exe".to_string());
+            }
+        }
+        shells
     }
-    shells
 }
 
 /// 写端：把优先级队列里的帧按序刷出。
-async fn writer_loop(
-    mut writer: tokio::net::unix::OwnedWriteHalf,
-    mut rx: mpsc::UnboundedReceiver<Outbound>,
-) {
+async fn writer_loop(mut writer: WriteHalf<IpcStream>, mut rx: mpsc::UnboundedReceiver<Outbound>) {
     let mut queue = OutboundQueue::new();
     loop {
         while let Ok(out) = rx.try_recv() {
@@ -1029,7 +1060,7 @@ async fn dispatch(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
 /// 项目根校验：必须是绝对路径、真实存在且是目录。canonicalize 之后的根
 /// 供 `resolve_within_root` 做词法边界检查，两条规则叠加才能挡住符号链接逃逸。
 fn canonical_root(root: &str) -> Result<PathBuf, String> {
-    let path = PathBuf::from(root);
+    let path = normalize_root_path(root);
     if !path.is_absolute() {
         return Err("root 必须是绝对路径".to_string());
     }
@@ -1038,6 +1069,30 @@ fn canonical_root(root: &str) -> Result<PathBuf, String> {
         return Err("路径不是目录".to_string());
     }
     Ok(canonical)
+}
+
+/// 把客户端传来的根路径归一成宿主平台可用的形式。
+///
+/// Windows 客户端（SFTP 与 SSH 资源）用 POSIX 风格表示远端路径，例如
+/// `/D:/code/app`。这在本机 `PathBuf::is_absolute()` 下是「有根无盘符」，
+/// 会被误判成相对路径——必须还原成 `D:\code\app` 再校验。只接受
+/// 「斜杠 + 盘符 + 冒号」这一种形态，其他 `/...` 路径照旧按原样拒绝。
+fn normalize_root_path(root: &str) -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(rest) = root.strip_prefix('/') {
+            let bytes = rest.as_bytes();
+            if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+                let native = rest.replace('/', "\\");
+                return PathBuf::from(if native.ends_with(':') {
+                    format!("{native}\\")
+                } else {
+                    native
+                });
+            }
+        }
+    }
+    PathBuf::from(root)
 }
 
 async fn search_content(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
@@ -1533,11 +1588,11 @@ mod tests {
         std::fs::canonicalize(&dir).unwrap()
     }
 
-    /// 等 socket 与 token 就绪（daemon 的启动是异步的）。
+    /// 等就绪标记与 token 出现（daemon 的启动是异步的）。
     async fn wait_ready(run_dir: &RunDir) {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
-            if run_dir.socket().exists() && run_dir.read_token().is_ok() {
+            if run_dir.ready_marker().exists() && run_dir.read_token().is_ok() {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -1545,14 +1600,28 @@ mod tests {
         panic!("daemon 未在 10s 内就绪");
     }
 
+    /// 测试用 shell 与提示命令：Unix 用 /bin/sh，Windows 用 COMSPEC（cmd.exe）。
+    /// `echo` 两边都有，输出带各自行尾，断言只看 marker 子串。
+    fn test_shell() -> String {
+        #[cfg(unix)]
+        {
+            "/bin/sh".to_string()
+        }
+        #[cfg(windows)]
+        {
+            std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+        }
+    }
+
     struct TestClient {
-        stream: UnixStream,
+        stream: IpcStream,
         next_id: u32,
     }
 
     impl TestClient {
         async fn connect(run_dir: &RunDir, token: &str) -> Self {
-            let stream = UnixStream::connect(run_dir.socket()).await.unwrap();
+            let endpoint = IpcEndpoint::new(run_dir.dir());
+            let stream = endpoint.connect().await.unwrap();
             let mut client = Self { stream, next_id: 1 };
             let hello = HelloRequest {
                 client_id: "test-client".into(),
@@ -1716,11 +1785,12 @@ mod tests {
         assert_eq!(record["data"]["path"]["text"], "./a.txt");
 
         // 越界路径必须被拒绝（ERR 帧），而不是静默返回空。
+        #[cfg(unix)]
+        let outside_root = "/nonexistent-root";
+        #[cfg(windows)]
+        let outside_root = "T:/definitely-not-a-root";
         let id = client
-            .request(
-                "fs.scan",
-                &json!({ "root": "/nonexistent-root", "path": "" }),
-            )
+            .request("fs.scan", &json!({ "root": outside_root, "path": "" }))
             .await;
         loop {
             let frame = client.next_frame().await;
@@ -1739,7 +1809,7 @@ mod tests {
             .expect("daemon 未退出")
             .unwrap();
         assert!(joined.is_ok());
-        assert!(!run_dir.socket().exists(), "退出后 socket 未清理");
+        assert!(!run_dir.ready_marker().exists(), "退出后就绪标记未清理");
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(run_dir.dir());
     }
@@ -1747,7 +1817,8 @@ mod tests {
     #[tokio::test]
     async fn wrong_token_is_rejected_without_hello() {
         let (run_dir, handle) = start_daemon("token").await;
-        let mut stream = UnixStream::connect(run_dir.socket()).await.unwrap();
+        let endpoint = IpcEndpoint::new(run_dir.dir());
+        let mut stream = endpoint.connect().await.unwrap();
         let hello = HelloRequest {
             client_id: "intruder".into(),
             protocol_min: 1,
@@ -1774,31 +1845,31 @@ mod tests {
         let _ = std::fs::remove_dir_all(run_dir.dir());
     }
 
-    #[test]
-    fn instance_lock_is_exclusive_within_one_process() {
+    /// 单实例：同一运行目录第二个监听请求必须失败，释放后可重新监听。
+    /// （Unix 靠 flock；Windows 靠 FIRST_PIPE_INSTANCE——语义一致，统一验证。
+    /// tokio 运行时：Windows 上创建管道实例需要注册 reactor。）
+    #[tokio::test]
+    async fn endpoint_listen_is_exclusive_within_one_process() {
         let dir = temp_dir("lock");
-        let path = dir.join("daemon.lock");
-        let first = InstanceLock::acquire(&path).unwrap().expect("首次加锁失败");
-        // flock 按「打开的文件描述」记账：同进程再 open 一次是独立描述，
-        // 会被已持有的锁挡住，正是我们需要的单实例语义。
+        let run_dir = RunDir::resolve(Some(&dir)).unwrap();
+        let endpoint = IpcEndpoint::new(run_dir.dir());
+        let first = endpoint.listen().unwrap().expect("首次监听失败");
         assert!(
-            InstanceLock::acquire(&path).unwrap().is_none(),
-            "第二次加锁应当失败"
+            endpoint.listen().unwrap().is_none(),
+            "第二次监听应当失败（已有实例）"
         );
         drop(first);
-        // drop 只关掉本描述符。并行 PTY 测试若在持锁期间 fork，子进程在 exec
-        // 之前仍共享这份 fd（CLOEXEC 要到 exec 才关），锁会晚一点才放开。
-        // 重试「释放后能再次加锁」，不把持锁期间的第二次 acquire 放宽成可成功。
+        // 释放后能再次监听；句柄异步回收可能有一瞬间延迟，短轮询等待。
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut relocked = false;
         while Instant::now() < deadline {
-            if InstanceLock::acquire(&path).unwrap().is_some() {
+            if endpoint.listen().unwrap().is_some() {
                 relocked = true;
                 break;
             }
             std::thread::sleep(Duration::from_millis(20));
         }
-        assert!(relocked, "释放后应能重新加锁");
+        assert!(relocked, "释放后应能重新监听");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1846,7 +1917,7 @@ mod tests {
         let id = client
             .request(
                 "pty.create",
-                &json!({ "cwd": root, "shell": "/bin/sh", "cols": 80, "rows": 24 }),
+                &json!({ "cwd": root, "shell": test_shell(), "cols": 80, "rows": 24 }),
             )
             .await;
         let info = client.wait_response(id).await;
@@ -1859,12 +1930,16 @@ mod tests {
             #[serde(with = "serde_bytes")]
             data: &'a [u8],
         }
+        #[cfg(unix)]
+        let marker_input: &[u8] = b"echo qingcode-marker\n";
+        #[cfg(windows)]
+        let marker_input: &[u8] = b"echo qingcode-marker\r\n";
         let id = client
             .request(
                 "pty.input",
                 &InputParams {
                     id: &pty_id,
-                    data: b"echo qingcode-marker\n",
+                    data: marker_input,
                 },
             )
             .await;
@@ -2011,6 +2086,8 @@ mod tests {
     }
 
     /// 终端输入必须按帧到达顺序落进 PTY：连发多个单字符 REQ，回显必须原序。
+    /// （stty/cat 是 unix 工具，Windows 由上面的存活/补发测试覆盖 PTY 主链路。）
+    #[cfg(unix)]
     #[tokio::test]
     async fn pty_input_keeps_frame_order() {
         let (run_dir, handle) = start_daemon("input-order").await;
@@ -2134,5 +2211,24 @@ mod tests {
         let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    /// Windows 客户端用 POSIX 风格表示远端根（`/D:/...`），必须还原成 Win32
+    /// 绝对路径，否则 `is_absolute()` 会误判为相对路径而整条 daemon 传输降级。
+    #[cfg(windows)]
+    #[test]
+    fn normalize_root_path_accepts_posix_drive_prefix() {
+        assert_eq!(
+            normalize_root_path("/D:/code/app"),
+            PathBuf::from(r"D:\code\app")
+        );
+        assert_eq!(
+            normalize_root_path("/D:/code\\app"),
+            PathBuf::from(r"D:\code\app")
+        );
+        assert_eq!(normalize_root_path("/C:"), PathBuf::from(r"C:\"));
+        // 非盘符形态保持原样，canonical_root 仍会拒绝（无盘符不是绝对路径）。
+        assert_eq!(normalize_root_path("/home/dev"), PathBuf::from("/home/dev"));
+        assert!(canonical_root("/home/dev").is_err());
     }
 }

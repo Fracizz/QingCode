@@ -16,7 +16,17 @@ mod watch;
 // 协议 v1 + daemon/connect：与上面的 `serve` 契约并存，互不影响。
 pub mod connect;
 pub mod daemon;
+pub mod ipc;
 pub mod proto;
+// Windows 脱离进程创建（CreateProcessW + HANDLE_LIST），serve 与 connect 共用。
+pub mod winproc;
+
+/// 连接级排查日志开关：`QINGCODE_SERVER_DEBUG=1` 时输出到 stderr（daemon 则写
+/// 服务日志）。默认静默——`connect` 的 stderr 会经 SSH 通道回到客户端日志，
+/// 常态下不应有噪声。
+pub(crate) fn debug_enabled() -> bool {
+    std::env::var_os("QINGCODE_SERVER_DEBUG").is_some()
+}
 
 use serde::{Deserialize, Serialize};
 use std::io;

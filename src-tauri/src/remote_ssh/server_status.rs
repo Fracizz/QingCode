@@ -23,8 +23,8 @@ pub(crate) const SERVER_LOG_TAIL_COMMAND: &str =
 /// 语言变化，用固定退出码判定比解析 stderr 可靠；unix 的 tail 不会用这个码。
 const SERVER_LOG_MISSING_EXIT: u32 = 3;
 
-/// Windows 远端目前只有 serve，daemon 日志多半不存在：文件在就读末尾，
-/// 不存在用 [`SERVER_LOG_MISSING_EXIT`] 告知调用方跳过该段。
+/// Windows daemon 日志在 `%USERPROFILE%\.qingcode\server\run\server.log`：
+/// 文件在就读末尾，不存在用 [`SERVER_LOG_MISSING_EXIT`] 告知调用方跳过该段。
 fn windows_daemon_log_script() -> String {
     format!(
         "$log = Join-Path $env:USERPROFILE '.qingcode\\server\\run\\server.log'\nif (Test-Path -LiteralPath $log) {{ Get-Content -LiteralPath $log -Tail {SERVER_LOG_MAX_LINES} }} else {{ exit {SERVER_LOG_MISSING_EXIT} }}"

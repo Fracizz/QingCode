@@ -1,8 +1,10 @@
 //! 部署编排：发现存活 server / 上传-校验-启动 / 等就绪，以及
 //! (连接, 根) 粒度的 slot 缓存、幂等跳过与部署退避。
 
-use super::daemon::{daemon_downgrade_retry_ready, ensure_remote_daemon};
-use super::download::locate_local_server_binary;
+use super::daemon::{
+    daemon_downgrade_retry_ready, ensure_remote_daemon, stop_remote_daemon_for_upgrade,
+};
+use super::download::{locate_local_server_binary, locate_local_server_binary_with};
 use super::paths::{
     legacy_agent_state_path, parse_server_state, server_binary_remote_path, server_dir_path,
     server_serve_log_path, server_state_path,
@@ -44,12 +46,17 @@ async fn exec_on_root(
 
 /// 在已有状态文件中发现存活 server：版本一致且 ping 通过才算可用。
 /// 版本不一致时尽力 kill 旧进程（错误忽略），随后走部署流程。
+///
+/// 版本号一致也**不足以**说明是同一构建（同一版本重打包、或本地换了离线包），
+/// 所以拿到本地二进制时再比对远端文件 sha256；内容不同同样视为不可复用，
+/// 清掉旧 serve 后重新部署。本地二进制定位失败时退回原有的版本号判断。
 async fn try_discover_server(
     manager: &SshManager,
     connection_id: &str,
     sftp: &SftpSession,
     root: &RegisteredRoot,
     app: Option<&tauri::AppHandle>,
+    local_binary: Option<&(String, std::path::PathBuf)>,
 ) -> Option<ServerEndpoint> {
     let state_path = server_state_path(&root.canonical_path);
     let metadata = sftp.metadata(state_path.clone()).await.ok()?;
@@ -68,6 +75,25 @@ async fn try_discover_server(
         )
         .await;
         return None;
+    }
+    if let Some((arch, local)) = local_binary {
+        let local_sha = sha256_of_file(local).ok()?;
+        let remote_bin = server_binary_remote_path(
+            &root.canonical_path,
+            windows_native_path(&root.canonical_path).is_some(),
+            arch,
+        );
+        if !remote_binary_sha_matches(manager, root, &remote_bin, &local_sha).await {
+            // 同版本不同构建：旧 serve 仍在跑旧代码，清掉后走完整部署。
+            let _ = exec_on_root(
+                manager,
+                root,
+                &kill_server_command(state.pid, &state_path),
+                &windows_kill_for(&state_path, state.pid),
+            )
+            .await;
+            return None;
+        }
     }
     let endpoint = ServerEndpoint {
         port: state.port,
@@ -111,6 +137,7 @@ async fn write_server_gitignore(sftp: &SftpSession, dir: &str) -> Result<(), Str
 /// 时照常走全量上传，安全回退。返回 true 表示实际上传，false 表示跳过。
 async fn upload_server_binary(
     manager: &SshManager,
+    connection_id: &str,
     sftp: &SftpSession,
     root: &RegisteredRoot,
     local: &Path,
@@ -166,14 +193,34 @@ async fn upload_server_binary(
         let _ = tokio::time::timeout(Duration::from_secs(2), sftp.remove_file(temp)).await;
         return Err(error);
     }
-    let renamed = tokio::time::timeout(
-        Duration::from_secs(15),
-        sftp.rename(temp.clone(), remote_bin.to_string()),
-    )
-    .await
-    .map_err(|_| "server 二进制提交超时".to_string())?;
-    if renamed.is_err() {
-        // 目标已存在（SFTP v3 rename 拒绝覆盖）：清掉旧文件后再 rename 一次。
+    // Windows 不允许替换正在运行的 exe：提交前先让 daemon/serve 退出并释放
+    // 文件锁（Unix 覆盖运行中的文件不冲突，不需要这一步）。
+    if windows_native_path(&root.canonical_path).is_some() {
+        stop_remote_daemon_for_upgrade(manager, connection_id, root, remote_bin).await;
+    }
+    replace_remote_binary(manager, sftp, root, &temp, remote_bin).await?;
+    Ok(true)
+}
+
+/// 用临时文件原子替换目标二进制。
+///
+/// SFTP v3 的 rename 不覆盖已存在目标，所以先重命名、失败再删旧文件重试。
+/// Windows 上进程退出后句柄释放、杀毒软件扫描都可能让删除/重命名短暂失败，
+/// 因此带退避重试；仍失败时给出可操作的错误信息。
+async fn replace_remote_binary(
+    manager: &SshManager,
+    sftp: &SftpSession,
+    root: &RegisteredRoot,
+    temp: &str,
+    remote_bin: &str,
+) -> Result<(), String> {
+    let mut last_error = String::new();
+    for attempt in 0..4u64 {
+        match sftp.rename(temp.to_string(), remote_bin.to_string()).await {
+            Ok(()) => return Ok(()),
+            Err(error) => last_error = error.to_string(),
+        }
+        // 目标已存在（SFTP v3 rename 拒绝覆盖）：清掉旧文件后再 rename。
         let _ = exec_on_root(
             manager,
             root,
@@ -181,11 +228,11 @@ async fn upload_server_binary(
             &windows_remove_for(remote_bin),
         )
         .await;
-        sftp.rename(temp.clone(), remote_bin.to_string())
-            .await
-            .map_err(|error| format!("提交 server 二进制失败：{error}"))?;
+        tokio::time::sleep(Duration::from_millis(200 * (attempt + 1))).await;
     }
-    Ok(true)
+    Err(format!(
+        "提交 server 二进制失败（目标文件可能仍被远端进程占用，请先停止远端 server 后重试）：{last_error}"
+    ))
 }
 
 /// 远端已部署二进制与本地摘要是否一致。任何一步失败（工具缺失、输出异常）
@@ -355,13 +402,28 @@ async fn discover_or_deploy_server(
     app: Option<&tauri::AppHandle>,
 ) -> Result<ServerEndpoint, ServerDeployError> {
     let sftp = manager.open_sftp(connection_id).await?;
-    let (mut endpoint, remote_bin) = if let Some(endpoint) =
-        try_discover_server(manager, connection_id, &sftp, root, app).await
+    // 先解析本地二进制（只查本地、不触发下载），供「同版本不同构建」的内容
+    // 强匹配；远端本来可用时不为比对额外下载，缺失就退回按版本号判断。
+    let local_binary = locate_local_server_binary_with(manager, root, false)
+        .await
+        .ok();
+    let (mut endpoint, remote_bin) = if let Some(endpoint) = try_discover_server(
+        manager,
+        connection_id,
+        &sftp,
+        root,
+        app,
+        local_binary.as_ref(),
+    )
+    .await
     {
         // 发现路径不知道部署时的二进制名，daemon 探测里现场用 `uname -m` 解析。
         (endpoint, None)
     } else {
-        let (arch, local_binary) = locate_local_server_binary(manager, root).await?;
+        let (arch, local_binary) = match local_binary {
+            Some(local) => local,
+            None => locate_local_server_binary(manager, root).await?,
+        };
         let remote_bin = server_binary_remote_path(
             &root.canonical_path,
             windows_native_path(&root.canonical_path).is_some(),
@@ -379,6 +441,7 @@ async fn discover_or_deploy_server(
         let local_sha256 = sha256_of_file(&local_binary).map_err(ServerDeployError::from)?;
         upload_server_binary(
             manager,
+            connection_id,
             &sftp,
             root,
             &local_binary,

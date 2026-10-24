@@ -19,6 +19,17 @@ pub(super) async fn locate_local_server_binary(
     manager: &SshManager,
     root: &RegisteredRoot,
 ) -> Result<(String, PathBuf), ServerDeployError> {
+    locate_local_server_binary_with(manager, root, true).await
+}
+
+/// 同 [`locate_local_server_binary`]，但 `allow_download = false` 时只在本地目录
+/// 里找。发现已有远端 server 的路径用它做内容强匹配——远端本来就能用时，
+/// 不该为了比对再触发一次网络下载。
+pub(super) async fn locate_local_server_binary_with(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    allow_download: bool,
+) -> Result<(String, PathBuf), ServerDeployError> {
     let windows = windows_native_path(&root.canonical_path).is_some();
     let arch = if windows {
         manager
@@ -56,7 +67,7 @@ pub(super) async fn locate_local_server_binary(
         }
     }
     // 随包未携带二进制（如便携版单文件 exe）：按设置从 GitHub Release 下载。
-    if manager.server_auto_download() {
+    if allow_download && manager.server_auto_download() {
         return download_server_binary(manager, &binary_name)
             .await
             .map(|path| (arch, path));

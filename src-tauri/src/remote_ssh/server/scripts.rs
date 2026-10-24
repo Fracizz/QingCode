@@ -67,6 +67,27 @@ if ($p -and $p.Name -like 'qingcode-server*' -and $p.CommandLine -and $p.Command
     )
 }
 
+/// Windows：结束所有以 `bin` 为可执行文件的进程（替换二进制前释放文件锁）。
+///
+/// Windows 不允许覆盖或删除正在运行的 exe。同一个二进制可能同时以 serve、
+/// daemon、connect 代理三种身份在跑，升级时必须让它们全部退出。只按
+/// `ExecutablePath` 精确（大小写不敏感）匹配，其他路径的进程一律不动。
+pub(crate) fn windows_stop_processes_script(bin: &str) -> String {
+    format!(
+        r"$target = '{bin}'
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+  Where-Object {{ $_.ExecutablePath -and ($_.ExecutablePath -ieq $target) }} |
+  ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+        bin = powershell_literal(bin),
+    )
+}
+
+pub(super) fn windows_stop_for(remote_bin: &str) -> String {
+    windows_host_path(remote_bin)
+        .map(|path| windows_stop_processes_script(&path))
+        .unwrap_or_default()
+}
+
 pub(super) fn windows_deploy_for(
     remote_bin: &str,
     remote_root: &str,
@@ -126,10 +147,55 @@ pub(crate) fn connect_daemon_command(bin: &str) -> String {
     format!("{} connect --stdio --ensure-daemon", shell_quote(bin))
 }
 
+/// 只连已有 daemon 的代理命令：缺席时立刻失败，**不会**顺手拉起新实例。
+/// 升级淘汰旧 daemon 时用它，避免在替换二进制前反而先启动一个旧版 daemon。
+pub(crate) fn connect_daemon_command_existing(bin: &str) -> String {
+    format!("{} connect --stdio", shell_quote(bin))
+}
+
 /// 读取 daemon 会话 token 的命令。token 由 daemon 启动时写入
 /// `$HOME/.qingcode/server/run/token`（权限 `0600`），仅同一 SSH 用户可读。
 pub(crate) fn daemon_token_command() -> String {
     "cat \"$HOME/.qingcode/server/run/token\" 2>/dev/null".to_string()
+}
+
+/// Windows：daemon 幂等启动脚本（经 exec_remote_shell 的 PowerShell 包装）。
+/// `daemon --detach` 由 server 自身再拉起脱离副本（`CREATE_NO_WINDOW |
+/// CREATE_BREAKAWAY_FROM_JOB`，与 serve `--detach` 同机制），启动器立即退出；
+/// 已有实例时新 daemon 抢不到首实例锁，按成功退出，重复执行无副作用。
+pub(crate) fn windows_daemon_start_script(native_bin: &str) -> String {
+    format!(
+        "$ErrorActionPreference = 'Stop'
+& '{bin}' daemon --detach
+if ($LASTEXITCODE -ne 0) {{ exit 1 }}",
+        bin = powershell_literal(native_bin),
+    )
+}
+
+/// Windows：读取 daemon 会话 token 的脚本。token 路径由 daemon 侧
+/// `%USERPROFILE%\.qingcode\server\run\token` 决定，这里用同一环境变量拼出。
+pub(crate) fn windows_daemon_token_script() -> String {
+    "$token = Join-Path $env:USERPROFILE '.qingcode\\server\\run\\token'
+Get-Content -LiteralPath $token -ErrorAction SilentlyContinue"
+        .to_string()
+}
+
+/// Windows：connect 代理的 exec 命令——**不经过 PowerShell 包装**，直接 exec
+/// 二进制本体。PS 的启动噪声（`#< CLIXML`、模块加载进度流）会混进 stdout
+/// 破坏二进制帧流；远端默认 shell（cmd / Git Bash）对原生进程是句柄直通，
+/// 帧流原样可达。反斜杠转正斜格并去 POSIX 前导斜杠：`/D:/x/y.exe` →
+/// `D:/x/y.exe`，bash 与 cmd 都能直接执行。
+pub(crate) fn windows_connect_daemon_command(remote_bin: &str) -> String {
+    let trimmed = remote_bin.trim_start_matches('/');
+    let forward = trimmed.replace('\\', "/");
+    format!("\"{forward}\" connect --stdio --ensure-daemon")
+}
+
+/// 只连已有 daemon 的 Windows 代理命令（不会拉起新实例），用于升级前淘汰旧实例。
+pub(crate) fn windows_connect_daemon_command_existing(remote_bin: &str) -> String {
+    let trimmed = remote_bin.trim_start_matches('/');
+    let forward = trimmed.replace('\\', "/");
+    format!("\"{forward}\" connect --stdio")
 }
 
 /// 生成清理旧 server 的命令：先校验 `/proc/<pid>/cmdline` 的进程身份再 kill。
@@ -422,5 +488,31 @@ mod tests {
         let script = windows_remote_sha256_script(r"D:\app\bin.exe");
         assert!(script.contains("Get-FileHash"));
         assert!(script.contains(r"'D:\app\bin.exe'"));
+    }
+
+    #[test]
+    fn windows_stop_processes_script_matches_exact_executable_path() {
+        let script =
+            windows_stop_for("/D:/code/app/.qingcode/server/qingcode-server-windows-x86_64.exe");
+        // 精确匹配可执行文件完整路径（大小写不敏感），不按进程名一刀切。
+        assert!(
+            script.contains(r"'D:\code\app\.qingcode\server\qingcode-server-windows-x86_64.exe'")
+        );
+        assert!(script.contains("$_.ExecutablePath -ieq $target"));
+        assert!(script.contains("Stop-Process -Id $_.ProcessId -Force"));
+        assert!(!script.contains("Name -like"));
+        // 非 Windows 路径不生成脚本。
+        assert!(windows_stop_for("/srv/app/bin/qingcode-server-x86_64").is_empty());
+    }
+
+    #[test]
+    fn connect_existing_commands_do_not_ensure_daemon() {
+        // 升级淘汰路径只连已有 daemon，绝不能顺手拉起旧版实例。
+        let unix = connect_daemon_command_existing("/srv/bin/qingcode-server");
+        assert!(unix.ends_with(" connect --stdio"));
+        assert!(!unix.contains("--ensure-daemon"));
+        let windows = windows_connect_daemon_command_existing("/D:/app/qingcode-server.exe");
+        assert_eq!(windows, "\"D:/app/qingcode-server.exe\" connect --stdio");
+        assert!(!windows.contains("--ensure-daemon"));
     }
 }
