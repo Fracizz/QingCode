@@ -14,8 +14,8 @@ export interface Project {
   sort_order?: number
   /** In-memory only; not persisted to the projects table and lost on restart. */
   ephemeral?: boolean
-  /** Local filesystem or an SSH-backed workspace. Missing means local for legacy rows. */
-  kind?: 'local' | 'ssh'
+  /** Local filesystem, WSL, or an SSH-backed workspace. Missing means local for legacy rows. */
+  kind?: 'local' | 'ssh' | 'wsl'
   /** SSH connection row used by remote projects. */
   connection_id?: string
   /** Provider-native root path (`/home/user/project` for SSH). */

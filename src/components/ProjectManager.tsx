@@ -46,8 +46,8 @@ import SegmentedControl from './SegmentedControl'
 import Tooltip from './Tooltip'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
-import { ProjectKindIcon, SshKindBadge } from './ProjectKindMark'
-import { isSshProject, sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
+import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
+import { sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
 
 type SortKey = 'name' | 'path' | 'last_opened_at' | 'created_at'
 type SortDir = 'asc' | 'desc'
@@ -496,6 +496,7 @@ export default function ProjectManager() {
                           ) : (
                             <ProjectKindIcon
                               project={project}
+                              connections={sshConnections}
                               size={13}
                               className="text-accent flex-shrink-0"
                             />
@@ -527,7 +528,7 @@ export default function ProjectManager() {
                               )}
                             </button>
                           </Tooltip>
-                          {isSshProject(project) ? <SshKindBadge /> : null}
+                          <ProjectKindBadge project={project} connections={sshConnections} />
                         </div>
                       </td>
                       <td className="px-3 py-2 align-middle">

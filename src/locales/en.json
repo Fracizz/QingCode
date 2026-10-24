@@ -144,6 +144,8 @@
     "读取日志中…": "Loading log…",
     "没有日志": "No log output",
     "SSH 远程项目": "SSH remote project",
+    "WSL 项目": "WSL Project",
+    "WSL 路径：{path}": "WSL path: {path}",
     "SSH 连接：{connection}": "SSH connection: {connection}",
     "远程路径：{path}": "Remote path: {path}",
     "暂不支持直接将远程文件夹添加为本地项目": "Adding a remote folder directly as a local project is not supported",
@@ -1454,6 +1456,22 @@
     "加载图片失败": "Could not load the image",
     "适应窗口": "Fit to window",
     "原始大小": "Actual size",
-    "图片过大（{size}），超过 64MB 上限": "Image too large ({size}), exceeds the 64MB limit"
+    "图片过大（{size}），超过 64MB 上限": "Image too large ({size}), exceeds the 64MB limit",
+    "创建项目": "Create Project",
+    "项目名称": "Project Name",
+    "新项目": "New Project",
+    "设备": "Device",
+    "此电脑": "This Computer",
+    "添加远程设备…": "Add remote device…",
+    "选择文件夹": "Select Folder",
+    "QingCode 可读取和编辑这些文件夹": "QingCode can read and edit these folders",
+    "已选文件夹": "Selected folder",
+    "更改": "Change",
+    "清除选择": "Clear selection",
+    "正在创建…": "Creating…",
+    "创建项目失败": "Failed to create project",
+    "打开目录选择器失败": "Failed to open directory picker",
+    "请输入项目文件夹路径：": "Please enter project folder path:",
+    "远程设备": "Remote device"
   }
 }

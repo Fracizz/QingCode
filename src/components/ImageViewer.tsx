@@ -93,7 +93,7 @@ export default function ImageViewer({ tab }: Props) {
     safeInvoke<ArrayBuffer | Uint8Array>('读取图片', 'read_image_file', { path: tab.path })
       .then(bytes => {
         if (id !== requestId.current) return
-        createdUrl = URL.createObjectURL(new Blob([bytes], { type: mimeForImage(tab.path) }))
+        createdUrl = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: mimeForImage(tab.path) }))
         setObjectUrl(createdUrl)
         setByteLength(bytes.byteLength)
         setLoading(false)

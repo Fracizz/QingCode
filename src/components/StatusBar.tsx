@@ -30,6 +30,7 @@ import {
 import { isExternalFileWindow } from '../lib/windowSession'
 import { ProjectKindIcon } from './ProjectKindMark'
 import { isSshProject } from '../lib/sshWorkspace'
+import { isWslProject } from '../lib/wslWorkspace'
 import SshServerStatusChip from './SshServerStatusChip'
 import { isSshResource } from '../lib/tauri'
 import { parentPath, pathsEqual } from '../utils/fileReferences'
@@ -61,6 +62,7 @@ const STATUS_SECONDARY = 'text-fg/85'
 export default function StatusBar() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
+  const sshConnections = useProjectStore(s => s.sshConnections)
   const projects = useProjectStore(s => s.projects)
   const addProject = useProjectStore(s => s.addProject)
   const switchProject = useProjectStore(s => s.switchProject)
@@ -425,6 +427,7 @@ export default function StatusBar() {
               {currentProject ? (
                 <ProjectKindIcon
                   project={currentProject}
+                  connections={sshConnections}
                   size={13}
                   className="flex-shrink-0 text-brand"
                 />
@@ -434,7 +437,9 @@ export default function StatusBar() {
               <span className="min-w-0 max-w-[45%] truncate">
                 {currentProject ? currentProject.name : t('未选择项目')}
               </span>
-              {currentProject && isSshProject(currentProject) ? (
+              {currentProject && isWslProject(currentProject, sshConnections) ? (
+                <span className="flex-shrink-0 text-ui-2xs text-fg-muted">{t('WSL')}</span>
+              ) : currentProject && isSshProject(currentProject) ? (
                 <>
                   <span className="flex-shrink-0 text-ui-2xs text-fg-muted">{t('SSH')}</span>
                   <SshServerStatusChip rootUri={currentProject.path} />

@@ -2,6 +2,7 @@ import Database from '@tauri-apps/plugin-sql'
 import { safeInvoke, isTauri, NotInTauriError } from './tauri'
 import type { Project, RecentFile, SshConnection } from '../types'
 import { baseName, normalizeProjectPath } from '../utils/fileTreeHelpers'
+import { isWslPath } from './wslWorkspace'
 import {
   loadGlobalSettings,
   readProjectEntries,
@@ -282,14 +283,15 @@ export async function insertProject(
   path: string,
   now: number
 ): Promise<void> {
+  const kind = isWslPath(path) ? 'wsl' : 'local'
   await withDb('添加项目', async d => {
     const [{ max_order }] = await d.select<{ max_order: number | null }[]>(
       'SELECT MAX(sort_order) AS max_order FROM projects'
     )
     const sortOrder = (Number(max_order) || 0) + 1
     await d.execute(
-      'INSERT INTO projects (id, name, path, created_at, last_opened_at, sort_order) VALUES ($1, $2, $3, $4, $5, $6)',
-      [id, name, path, now, now, sortOrder]
+      'INSERT INTO projects (id, name, path, created_at, last_opened_at, sort_order, kind) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+      [id, name, path, now, now, sortOrder, kind]
     )
   })
 }

@@ -41,6 +41,34 @@ describe('projectChipTooltipLabel', () => {
     expect(projectChipTooltipLabel(sshProject, [], t)).toContain('SSH 连接：wsl-connection')
   })
 
+  it('shows WSL distro and POSIX path for WSL project', () => {
+    const wslProject: Project = {
+      id: 'wsl-1',
+      name: 'QingCode',
+      path: String.raw`\\wsl$\Ubuntu\home\code\QingCode`,
+      kind: 'wsl',
+      created_at: 1,
+      last_opened_at: 1,
+    }
+    expect(projectChipTooltipLabel(wslProject, [], t)).toBe(
+      'QingCode · WSL 项目（Ubuntu）\nWSL 路径：/home/code/QingCode'
+    )
+  })
+
+  it('shows WSL project path when distro name cannot be extracted', () => {
+    const wslProject: Project = {
+      id: 'wsl-2',
+      name: 'QingCode',
+      path: 'D:/some/path',
+      kind: 'wsl',
+      created_at: 1,
+      last_opened_at: 1,
+    }
+    expect(projectChipTooltipLabel(wslProject, [], t)).toBe(
+      'QingCode · WSL 项目\n路径：D:/some/path'
+    )
+  })
+
   it('keeps local project tooltips concise', () => {
     expect(
       projectChipTooltipLabel(

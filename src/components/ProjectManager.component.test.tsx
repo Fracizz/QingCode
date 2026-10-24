@@ -163,6 +163,25 @@ describe('ProjectManager', () => {
     expect(screen.queryByText(/ssh:\/\/c451183d/)).not.toBeInTheDocument()
   })
 
+  it('renders WSL project with cloud icon and WSL badge', () => {
+    const wslProject: Project = {
+      id: 'p-wsl',
+      name: 'QingCode',
+      path: String.raw`\\wsl$\Ubuntu\home\code\QingCode`,
+      kind: 'wsl',
+      created_at: 4,
+      last_opened_at: 4,
+      hidden: 0,
+    }
+    useProjectStore.setState({
+      projects: [visibleProject, wslProject],
+      currentProject: visibleProject,
+    })
+    render(<ProjectManager />)
+    expect(screen.getByText('WSL')).toBeInTheDocument()
+    expect(document.querySelector('.lucide-cloud')).toBeInTheDocument()
+  })
+
   it('activates a project by clicking its name button', async () => {
     render(<ProjectManager />)
     fireEvent.click(screen.getByRole('button', { name: 'Beta' }))

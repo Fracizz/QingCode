@@ -5,6 +5,11 @@ import {
   sshConnectionLabel,
   sshRemotePathFromUri,
 } from './sshWorkspace'
+import {
+  isWslProject,
+  wslDistroNameFromPath,
+  wslDistroPathFromPath,
+} from './wslWorkspace'
 
 type Translate = (source: string, values?: Record<string, string | number>) => string
 
@@ -13,6 +18,18 @@ export function projectChipTooltipLabel(
   connections: ReadonlyArray<SshConnection>,
   t: Translate
 ): string {
+  if (isWslProject(project)) {
+    const distro = wslDistroNameFromPath(project.path)
+    const posixPath = wslDistroPathFromPath(project.path)
+    const title = distro
+      ? `${project.name} · ${t('WSL 项目')}（${distro}）`
+      : `${project.name} · ${t('WSL 项目')}`
+    const pathLine = posixPath
+      ? t('WSL 路径：{path}', { path: posixPath })
+      : t('路径：{path}', { path: project.path })
+    return [title, pathLine].join('\n')
+  }
+
   if (!isSshProject(project)) return project.name
 
   const connectionId = project.connection_id || sshConnectionIdFromUri(project.path)

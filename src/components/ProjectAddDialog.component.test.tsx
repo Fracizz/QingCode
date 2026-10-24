@@ -75,8 +75,8 @@ describe('ProjectAddDialog', () => {
       sshConnections: [
         {
           id: 'c1',
-          name: 'wsl',
-          host: 'localhost',
+          name: 'dev-server',
+          host: 'remotehost',
           port: 22,
           username: 'root',
           auth_kind: 'privateKey',
@@ -89,8 +89,46 @@ describe('ProjectAddDialog', () => {
     render(<ProjectAddDialog open onClose={vi.fn()} />)
 
     expect(
-      screen.getByRole('option', { name: '远程仓库 — root@localhost:/root/.claude' })
+      screen.getByRole('option', { name: '远程仓库 — root@remotehost:/root/.claude' })
     ).toHaveTextContent('SSH')
+  })
+
+  it('marks WSL projects with cloud icon and WSL badge in the picker list', () => {
+    useProjectStore.setState({
+      projects: [
+        first,
+        {
+          id: 'ssh-wsl',
+          name: 'QingCode',
+          path: 'ssh://conn-wsl/home/code/QingCode',
+          kind: 'ssh',
+          connection_id: 'conn-wsl',
+          root_path: '/home/code/QingCode',
+          created_at: 3,
+          last_opened_at: 3,
+        },
+      ],
+      sshConnections: [
+        {
+          id: 'conn-wsl',
+          name: 'WSL',
+          host: 'localhost',
+          port: 22,
+          username: 'franciz',
+          auth_kind: 'privateKey',
+          host_key_fingerprint: 'fp',
+          created_at: 1,
+          updated_at: 1,
+        },
+      ],
+    })
+    render(<ProjectAddDialog open onClose={vi.fn()} />)
+
+    const wslOption = screen.getByRole('option', {
+      name: 'QingCode — franciz@localhost:/home/code/QingCode',
+    })
+    expect(wslOption).toHaveTextContent('WSL')
+    expect(document.querySelector('.lucide-cloud')).toBeInTheDocument()
   })
 
   it('replaces the project picker with the SSH dialog instead of stacking overlays', () => {
