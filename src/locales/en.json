@@ -1335,7 +1335,7 @@
     "上传未完成": "Upload did not finish",
     "终端粘贴上传不接受超过 100MB 的文件或文件夹：{name}": "Terminal paste upload rejects files or folders over 100MB: {name}",
     "终端 › 集成: SSH 粘贴上传": "Terminal › Integrated: SSH paste upload",
-    "在 SSH 终端粘贴或拖入本机文件时，先上传到项目 .qingcode/terminal-paste/，再粘贴远端路径。默认关闭。超过 100MB 的文件或文件夹会被拒绝。": "When pasting or dropping local files into an SSH terminal, upload them to .qingcode/terminal-paste/ and paste the remote path. Off by default. Files or folders over 100MB are rejected.",
+    "在 SSH 终端粘贴或拖入本机文件时，先上传到项目 .qingcode/terminal-paste/，再粘贴远端路径。默认开启。超过 100MB 的文件或文件夹会被拒绝。": "When pasting or dropping local files into an SSH terminal, upload them to .qingcode/terminal-paste/ and paste the remote path. On by default. Files or folders over 100MB are rejected.",
     "清理远程粘贴文件": "Clean up remote paste files",
     "删除当前 SSH 项目的 .qingcode/terminal-paste 目录。终端里已经粘贴的路径会失效。": "Delete this SSH project's .qingcode/terminal-paste directory. Paths already pasted into the terminal will stop working.",
     "删除该 SSH 项目下的 .qingcode/terminal-paste 目录？": "Delete .qingcode/terminal-paste in this SSH project?",

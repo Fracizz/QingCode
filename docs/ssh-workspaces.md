@@ -15,7 +15,7 @@ QingCode 的 SSH 工作区直接在 Tauri 后端建立 SSH/SFTP 连接，默认�
 
 - 通过 SFTP 浏览、读取、编辑、新建、重命名和删除远程文件。
 - 文件名搜索兼容常见 GNU/BusyBox `find`；内容搜索由远端 `rg` 执行，并固定按普通文本匹配。
-- 远程 PTY 终端。Linux 远端进入登录 shell；Windows OpenSSH 的盘符路径（`/D:/code/app`）支持根据用户配置启动 `powershell.exe -NoLogo`、`pwsh` 或 `cmd.exe`，提示符出现时直接进入项目根目录，不回显切目录命令，无版权横幅；远端 `DefaultShell` 为 cmd、PowerShell 或 Git Bash 时行为一致（启动命令整体加引号，切目录脚本走 `-EncodedCommand`）。设置 `terminal.integrated.sshUploadOnPaste`（默认关闭）开启后，在 SSH 终端里粘贴或拖入本机文件会先上传到项目内 `.qingcode/terminal-paste/`，再粘贴远端路径。超过 100MB 的文件或文件夹会被拒绝。设置页和终端右键可清理该目录。
+- 远程 PTY 终端。Linux 远端进入登录 shell；Windows OpenSSH 的盘符路径（`/D:/code/app`）支持根据用户配置启动 `powershell.exe -NoLogo`、`pwsh` 或 `cmd.exe`，提示符出现时直接进入项目根目录，不回显切目录命令，无版权横幅；远端 `DefaultShell` 为 cmd、PowerShell 或 Git Bash 时行为一致（启动命令整体加引号，切目录脚本走 `-EncodedCommand`）。设置 `terminal.integrated.sshUploadOnPaste`（默认开启）生效后，在 SSH 终端里粘贴或拖入本机文件会先上传到项目内 `.qingcode/terminal-paste/`，再粘贴远端路径。超过 100MB 的文件或文件夹会被拒绝。设置页和终端右键可清理该目录。
 - Git 状态、历史、分支与切换、远程地址、Diff、丢弃、暂存、提交、拉取、推送和获取。
 - 使用远端项目工具格式化文件（Prettier、rustfmt、gofmt、shfmt、ruff/black）。
 - 在本地与 SSH 项目之间上传或下载文件和目录。资源管理器可右键上传，也可把本机文件或文件夹拖到 SSH 项目的文件树：文件夹接收到该目录，文件上则传到父目录，空白处和项目标题传到项目根。在 SSH 项目里粘贴（Ctrl+V 或右键「粘贴」）时，系统剪贴板中的本机文件或文件夹、以及应用内复制的本地路径都会上传到目标目录；跨域剪切按复制处理，不删除本机源文件。
@@ -151,7 +151,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 
 | 能力 | 状态 | 差距 |
 |---|---|---|
-| 远程 PTY、cwd、缩放、多终端、复制粘贴 | 部分对齐 | 写入和开终端要求信任。`terminal.integrated.sshUploadOnPaste` 默认关闭；开启后粘贴/拖入本机文件会上传到 `.qingcode/terminal-paste/` 再粘贴远端路径。超过 100MB 的文件或文件夹会被拒绝。设置或终端右键可清理 |
+| 远程 PTY、cwd、缩放、多终端、复制粘贴 | 部分对齐 | 写入和开终端要求信任。`terminal.integrated.sshUploadOnPaste` 默认开启；粘贴/拖入本机文件会上传到 `.qingcode/terminal-paste/` 再粘贴远端路径。超过 100MB 的文件或文件夹会被拒绝。设置或终端右键可清理 |
 | 终端配置文件 / `default_shell` / 本机 shell 选择 | 部分对齐 | `ssh_create_terminal` 支持传递 `shell`。Linux 支持 `bash`/`zsh`/`sh` 或默认登录 Shell；Windows OpenSSH 支持 `powershell`、`pwsh` 与 `cmd`，提示符出现时直接位于项目根目录，无命令回显 |
 | 配置启动命令（`interactive`） | 部分对齐 | Linux SSH 可用 `/bin/sh -lc …; exec 登录 shell`；Windows OpenSSH 拒绝 |
 | 关闭前「子进程仍在运行」探测 | 仅本地 | `terminal_has_child_processes` 未映射；失败时按忙碌处理，SSH 终端关闭常会多一次确认 |
@@ -214,7 +214,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 - **改名与部署加固（同日第二轮）**：全面改名 qingcode-agent → qingcode-server，设置键迁移 `ssh.server.*`（读取兼容旧 `ssh.agent.*`，保存时清理）；`ssh.server.autoDownload` 默认开；部署幂等（远端 sha256 一致跳过上传）与连续失败退避（提示 `AllowTcpForwarding`）、失败分类（网络类瞬时）；上传后 `self-check` 成功才启动；新增 `ssh_server_stop`，设置里关闭远端服务时对当前 SSH 工作区自动调用；「重启 Server」同时重建 serve 与 daemon；serve 输出落盘 `.qingcode/server/serve.log`，「查看 Server 日志」返回 daemon 与 serve 两段日志；restart/logs/stop 要求工作区已信任；迟授予信任补启动 watch；daemon 降级 5 分钟冷却重试；token 改 OS 随机源；`files_scanned` 真实计数；状态芯片错误态与重启/保存失败 toast、日志对话框加载态与刷新按钮、设置导入后立即推送后端；并发下载临时文件唯一命名与按 manifest 体积上限。详见下文「远端服务：实施进度与未完成清单」。
 
 此前（2026-10-22）补齐：
-- **SSH 终端本机文件粘贴/拖放**：`terminal.integrated.sshUploadOnPaste` 默认关闭。开启后，资源管理器复制的文件、纯路径文本或拖到终端的本机文件会上传到 `.qingcode/terminal-paste/`，并粘贴远端路径。成功后不保留传输任务条。单个文件，或文件夹内文件合计，超过 100MB 时整次粘贴会被拒绝；设置页和终端右键可清理该目录。
+- **SSH 终端本机文件粘贴/拖放**：`terminal.integrated.sshUploadOnPaste` 默认开启。资源管理器复制的文件、纯路径文本或拖到终端的本机文件会上传到 `.qingcode/terminal-paste/`，并粘贴远端路径。成功后不保留传输任务条。单个文件，或文件夹内文件合计，超过 100MB 时整次粘贴会被拒绝；设置页和终端右键可清理该目录。
 - **门控防护**：全面门控在文件管理器打开、项目重新定位、状态栏「作为项目打开」等入口，避免 `ssh://` 交给本地 API 导致报错或写坏项目配置。
 - **资源管理器移动/复制**：新增 `ssh_move_path` 与 `ssh_copy_path_into` 命令，完整支持同连接下的剪切、复制、粘贴与树内移动 DnD。
 - **文件排除**：`ssh_scan_directory` 接入 `files.exclude` 配置并按 glob 规则在远端过滤。

@@ -1114,9 +1114,12 @@ export default function SettingsEditor() {
                 <SettingItem
                   title={t('终端 › 集成: SSH 粘贴上传')}
                   description={t(
-                    '在 SSH 终端粘贴或拖入本机文件时，先上传到项目 .qingcode/terminal-paste/，再粘贴远端路径。默认关闭。超过 100MB 的文件或文件夹会被拒绝。',
+                    '在 SSH 终端粘贴或拖入本机文件时，先上传到项目 .qingcode/terminal-paste/，再粘贴远端路径。默认开启。超过 100MB 的文件或文件夹会被拒绝。',
                   )}
-                  modified={sshUploadOnPaste}
+                  modified={
+                    sshUploadOnPaste !==
+                    DEFAULT_GLOBAL_SETTINGS['terminal.integrated.sshUploadOnPaste']
+                  }
                 >
                   <select
                     value={sshUploadOnPaste ? 'on' : 'off'}

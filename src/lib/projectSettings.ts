@@ -104,7 +104,7 @@ function buildSharedDefaults(): SettingsFile {
     'explorer.excludeGitIgnore': false,
     'terminal.integrated.scrollback': 5000,
     'terminal.integrated.cursorBlinking': true,
-    'terminal.integrated.sshUploadOnPaste': false,
+    'terminal.integrated.sshUploadOnPaste': true,
     'ssh.server.enabled': true,
     'ssh.server.autoDownload': true,
     'ssh.server.offlineDir': '',
@@ -238,8 +238,8 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.scrollback": 5000,
   // terminal.integrated.cursorBlinking：终端光标是否闪烁
   "terminal.integrated.cursorBlinking": true,
-  // terminal.integrated.sshUploadOnPaste：SSH 终端粘贴/拖入本机文件时是否先上传再粘贴远端路径（默认 false）
-  "terminal.integrated.sshUploadOnPaste": false,
+  // terminal.integrated.sshUploadOnPaste：SSH 终端粘贴/拖入本机文件时是否先上传再粘贴远端路径（默认 true）
+  "terminal.integrated.sshUploadOnPaste": true,
 
   // ============================== SSH ==============================
   // ssh.server.enabled：SSH 工作区是否部署远端服务（qingcode-server）。服务经 SSH

@@ -15,12 +15,12 @@ describe('terminalSshUploadSettings', () => {
   })
 
   it('reads terminal.integrated.sshUploadOnPaste', () => {
-    expect(readTerminalSshUploadOnPaste(DEFAULT_GLOBAL_SETTINGS)).toBe(false)
+    expect(readTerminalSshUploadOnPaste(DEFAULT_GLOBAL_SETTINGS)).toBe(true)
     expect(
       readTerminalSshUploadOnPaste({
         ...DEFAULT_GLOBAL_SETTINGS,
-        [SSH_UPLOAD_ON_PASTE_KEY]: true,
+        [SSH_UPLOAD_ON_PASTE_KEY]: false,
       }),
-    ).toBe(true)
+    ).toBe(false)
   })
 })
