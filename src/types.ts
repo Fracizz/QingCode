@@ -107,8 +107,20 @@ export interface TerminalTab {
   pane?: 'primary' | 'secondary' | 'bl' | 'br'
   /** Legacy flag; OSC follow is decided by shellKind + generic-title filter. */
   allowTitleRename?: boolean
-  status: 'starting' | 'running' | 'exited'
+  status: 'starting' | 'running' | 'reconnecting' | 'exited'
   exitCode: number | null
+  /** SSH terminal hosted by the remote daemon; survives transport reconnects. */
+  persistent?: boolean
+  /** Daemon-owned PTY id used to reattach after the app restarts. */
+  ptyId?: string
+  /** SSH connection that owns `ptyId`; persisted with the tab for restart restore. */
+  connectionId?: string
+  /** Why the backend fell back to a non-persistent SSH terminal, when known. */
+  persistentFallbackReason?: string
+  /** Latest transport disconnect reason shown in tab tooltips. */
+  disconnectReason?: string | null
+  /** Current persistent reconnect attempt reported by the backend. */
+  connectionAttempt?: number
   /** Wall-clock ms when the process was spawned; used to detect quick failures. */
   startedAt?: number
   /**

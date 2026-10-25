@@ -34,20 +34,25 @@ import {
   getSshServerAutoDownload,
   getSshServerEnabled,
   getSshServerOfflineDir,
+  getSshServerPersistentTerminals,
   loadEffectiveSshServerEnabled,
   parseSshServerAutoDownload,
   parseSshServerEnabled,
   parseSshServerOfflineDir,
+  parseSshServerPersistentTerminals,
   readSshServerAutoDownload,
   readSshServerEnabled,
   readSshServerOfflineDir,
+  readSshServerPersistentTerminals,
   saveScopedSshServerEnabled,
+  saveScopedSshServerPersistentTerminals,
   LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY,
   LEGACY_SSH_AGENT_ENABLED_KEY,
   LEGACY_SSH_AGENT_OFFLINE_DIR_KEY,
   SSH_SERVER_AUTO_DOWNLOAD_KEY,
   SSH_SERVER_ENABLED_KEY,
   SSH_SERVER_OFFLINE_DIR_KEY,
+  SSH_SERVER_PERSISTENT_TERMINALS_KEY,
 } from '@/lib/sshServerSettings'
 import type { SettingsFile } from '@/lib/projectSettings'
 import { DEFAULT_GLOBAL_SETTINGS } from '@/lib/projectSettings'
@@ -97,6 +102,92 @@ describe('sshServerSettings', () => {
         [SSH_SERVER_OFFLINE_DIR_KEY]: '  D:/offline/agents  ',
       }),
     ).toBe('D:/offline/agents')
+  })
+})
+
+describe('sshServerSettings persistent terminals', () => {
+  const project = { id: 'p1', name: 'P', path: 'D:/p', created_at: 1, last_opened_at: 1 }
+
+  function settingsWith(entries: Record<string, unknown>): SettingsFile {
+    return { version: 1, custom: {}, ...entries }
+  }
+
+  beforeEach(() => {
+    loadGlobalSettings.mockReset().mockResolvedValue(settingsWith({}))
+    loadProjectSettings.mockReset().mockResolvedValue(settingsWith({}))
+    saveGlobalSettings.mockReset().mockResolvedValue(undefined)
+    saveProjectSettings.mockReset().mockResolvedValue(undefined)
+    safeInvoke.mockReset().mockResolvedValue(undefined)
+  })
+
+  it('parses non-boolean values back to the enabled default', () => {
+    expect(parseSshServerPersistentTerminals(undefined)).toBe(true)
+    expect(parseSshServerPersistentTerminals('false')).toBe(true)
+    expect(parseSshServerPersistentTerminals(false)).toBe(false)
+    expect(readSshServerPersistentTerminals({})).toBe(true)
+    expect(
+      readSshServerPersistentTerminals({
+        [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: false,
+      }),
+    ).toBe(false)
+  })
+
+  it('updates the cache from merged global and workspace settings', async () => {
+    loadGlobalSettings.mockResolvedValue(
+      settingsWith({ [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: false }),
+    )
+    loadProjectSettings.mockResolvedValue(
+      settingsWith({ [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: true }),
+    )
+
+    await loadEffectiveSshServerEnabled(project)
+
+    expect(getSshServerPersistentTerminals()).toBe(true)
+  })
+
+  it('saves the global toggle and pushes the effective value to native', async () => {
+    let global = settingsWith({
+      [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: true,
+      [LEGACY_SSH_AGENT_ENABLED_KEY]: true,
+    })
+    loadGlobalSettings.mockImplementation(async () => global)
+    saveGlobalSettings.mockImplementation(async settings => {
+      global = settings
+    })
+
+    await saveScopedSshServerPersistentTerminals('global', false, null)
+
+    expect(saveGlobalSettings).toHaveBeenCalledTimes(1)
+    expect(global[SSH_SERVER_PERSISTENT_TERMINALS_KEY]).toBe(false)
+    expect(global[LEGACY_SSH_AGENT_ENABLED_KEY]).toBe(true)
+    expect(getSshServerPersistentTerminals()).toBe(false)
+    expect(safeInvoke).toHaveBeenCalledWith(
+      '配置 SSH 持久化终端',
+      'ssh_set_persistent_terminals_enabled',
+      { enabled: false },
+    )
+  })
+
+  it('saves the workspace override without changing the global value', async () => {
+    let workspace = settingsWith({})
+    loadGlobalSettings.mockResolvedValue(
+      settingsWith({ [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: true }),
+    )
+    loadProjectSettings.mockImplementation(async () => workspace)
+    saveProjectSettings.mockImplementation(async (_project, settings) => {
+      workspace = settings
+    })
+
+    await saveScopedSshServerPersistentTerminals('project', false, project)
+
+    expect(saveProjectSettings).toHaveBeenCalledTimes(1)
+    expect(workspace[SSH_SERVER_PERSISTENT_TERMINALS_KEY]).toBe(false)
+    expect(getSshServerPersistentTerminals()).toBe(false)
+    expect(safeInvoke).toHaveBeenCalledWith(
+      '配置 SSH 持久化终端',
+      'ssh_set_persistent_terminals_enabled',
+      { enabled: false },
+    )
   })
 })
 

@@ -56,11 +56,15 @@ describe('SshServerSettingsSection', () => {
 
   beforeEach(() => {
     invoke.mockReset().mockResolvedValue(undefined)
-    loadGlobalSettings
-      .mockReset()
-      .mockResolvedValue(settingsWith({ 'ssh.agent.enabled': true, 'ssh.agent.autoDownload': false }))
+    let globalSettings = settingsWith({
+      'ssh.agent.enabled': true,
+      'ssh.agent.autoDownload': false,
+    })
+    loadGlobalSettings.mockReset().mockImplementation(async () => globalSettings)
     loadProjectSettings.mockReset().mockResolvedValue(settingsWith({}))
-    saveGlobalSettings.mockReset().mockResolvedValue(undefined)
+    saveGlobalSettings.mockReset().mockImplementation(async settings => {
+      globalSettings = settings
+    })
     saveProjectSettings.mockReset().mockResolvedValue(undefined)
     pushToast.mockReset()
     useProjectStore.setState({ pushToast })
@@ -99,6 +103,55 @@ describe('SshServerSettingsSection', () => {
     await waitFor(() => expect(saveGlobalSettings).toHaveBeenCalledTimes(1))
     expect(invoke).not.toHaveBeenCalledWith('停止远端服务', 'ssh_server_stop', expect.anything())
     expect(pushToast).not.toHaveBeenCalled()
+  })
+
+  it('shows the persistent terminal toggle and explains the fallback in a tooltip', async () => {
+    render(<SshServerSettingsSection scope="user" project={sshProject} settingsRevision={0} />)
+
+    const toggle = screen.getByLabelText('SSH › 服务: 持久化终端') as HTMLSelectElement
+    await waitFor(() => expect(toggle.value).toBe('on'))
+    fireEvent.mouseEnter(toggle.parentElement as HTMLElement)
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(
+      '关闭后新开的终端将直连 SSH，断线会结束远端进程；已经打开的持久化终端不受影响。',
+    )
+  })
+
+  it('saves and pushes the persistent terminal toggle', async () => {
+    render(<SshServerSettingsSection scope="user" project={sshProject} settingsRevision={0} />)
+
+    const toggle = screen.getByLabelText('SSH › 服务: 持久化终端') as HTMLSelectElement
+    await waitFor(() => expect(toggle.value).toBe('on'))
+    fireEvent.change(toggle, { target: { value: 'off' } })
+
+    await waitFor(() => expect(saveGlobalSettings).toHaveBeenCalledTimes(1))
+    const saved = saveGlobalSettings.mock.calls[0][0] as Record<string, unknown>
+    expect(saved['ssh.server.persistentTerminals']).toBe(false)
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        '配置 SSH 持久化终端',
+        'ssh_set_persistent_terminals_enabled',
+        { enabled: false },
+      )
+    })
+  })
+
+  it('loads and saves a workspace persistent terminal override', async () => {
+    let workspaceSettings = settingsWith({ 'ssh.server.persistentTerminals': true })
+    loadProjectSettings.mockImplementation(async () => workspaceSettings)
+    saveProjectSettings.mockImplementation(async (_project, settings) => {
+      workspaceSettings = settings
+    })
+    render(
+      <SshServerSettingsSection scope="workspace" project={sshProject} settingsRevision={0} />,
+    )
+
+    const toggle = screen.getByLabelText('SSH › 服务: 持久化终端') as HTMLSelectElement
+    await waitFor(() => expect(toggle.value).toBe('on'))
+    fireEvent.change(toggle, { target: { value: 'off' } })
+
+    await waitFor(() => expect(saveProjectSettings).toHaveBeenCalledTimes(1))
+    expect(workspaceSettings['ssh.server.persistentTerminals']).toBe(false)
   })
 
   it('toasts when stopping the remote server fails', async () => {

@@ -4173,7 +4173,7 @@ dependencies = [
 
 [[package]]
 name = "qingcode-server"
-version = "0.1.14-beta.1"
+version = "0.1.14-beta.3"
 dependencies = [
  "getrandom 0.4.3",
  "grep-matcher",

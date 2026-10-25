@@ -541,6 +541,11 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return
     }
     try {
+      if (target && isSshProject(target)) {
+        await safeInvoke('注销 SSH 项目', 'ssh_forget_workspace_root', {
+          rootUri: target.path,
+        })
+      }
       await deleteProjectRows(id)
       const wasCurrent = get().currentProject?.id === id
       set(s => {

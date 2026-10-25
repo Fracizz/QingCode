@@ -1,9 +1,7 @@
 use crate::file_encoding;
 use crate::git::validate_commit_rev;
 use crate::path_guard::{validate_entry_name, PathAllowlist};
-use crate::terminal::{
-    encode_terminal_data, TerminalDataPayload, TerminalExitPayload, TerminalSpawnResult,
-};
+use crate::terminal::{encode_terminal_data, TerminalDataPayload, TerminalSpawnResult};
 use russh::client;
 use russh::keys::{load_secret_key, HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{ChannelMsg, ChannelWriteHalf, Disconnect};
@@ -229,11 +227,15 @@ struct SshClient {
     observed_fingerprint: Arc<Mutex<Option<String>>>,
     /// 连接结束的原因（远端 DISCONNECT 或传输错误），供状态芯片展示和排查断线。
     disconnect_reason: Arc<Mutex<Option<String>>>,
+    keepalive_window: Duration,
 }
 
 /// 把 russh 的断开原因转成用户可读文本。保活超时单独说明判定口径，
 /// 便于区分「网络/远端无响应」与「远端主动断开」。
-fn describe_disconnect(reason: &client::DisconnectReason<russh::Error>) -> String {
+fn describe_disconnect(
+    reason: &client::DisconnectReason<russh::Error>,
+    keepalive_window: Duration,
+) -> String {
     match reason {
         client::DisconnectReason::ReceivedDisconnect(info) => {
             let message = info.message.trim();
@@ -245,7 +247,7 @@ fn describe_disconnect(reason: &client::DisconnectReason<russh::Error>) -> Strin
         }
         client::DisconnectReason::Error(russh::Error::KeepaliveTimeout) => format!(
             "保活超时：约 {} 秒未收到远端任何回包（网络中断、远端休眠或 sshd 无响应）",
-            SSH_KEEPALIVE_INTERVAL.as_secs() * (SSH_KEEPALIVE_MAX as u64 + 1)
+            keepalive_window.as_secs()
         ),
         client::DisconnectReason::Error(error) => format!("连接异常断开：{error}"),
     }
@@ -276,7 +278,7 @@ impl client::Handler for SshClient {
         reason: client::DisconnectReason<Self::Error>,
     ) -> Result<(), Self::Error> {
         if let Ok(mut slot) = self.disconnect_reason.lock() {
-            slot.get_or_insert_with(|| describe_disconnect(&reason));
+            slot.get_or_insert_with(|| describe_disconnect(&reason, self.keepalive_window));
         }
         match reason {
             client::DisconnectReason::ReceivedDisconnect(_) => Ok(()),
@@ -471,21 +473,47 @@ const SFTP_STALL_TIMEOUT: Duration = Duration::from_secs(45);
 const SSH_LIVENESS_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 /// 重连失败后的冷却期：并发的终端恢复直接复用这次失败，不排队逐个重试握手。
 const SSH_RECONNECT_FAILURE_COOLDOWN: Duration = Duration::from_secs(3);
-/// 保活间隔：VS Code / Zed 的应用层心跳约 20～25 秒判定断开，SSH 层没有
-/// 「忙时不判」的保护，取 10 秒 × 4 个周期（约 40 秒）兼顾发现速度与误判。
-const SSH_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
-/// 连续 4 个周期（约 40 秒）收不到任何回包才判定断开。
-const SSH_KEEPALIVE_MAX: usize = 3;
+/// 主连接承载 SFTP、命令和 watch，取 10 秒 × 4 个周期（约 40 秒）兼顾恢复速度。
+const SSH_MAIN_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+/// russh 在首次保活后再等待 3 个周期，合计 4 个周期（约 40 秒）。
+const SSH_MAIN_KEEPALIVE_MAX: usize = 3;
+const SSH_MAIN_KEEPALIVE_WINDOW: Duration = Duration::from_secs(40);
+/// 终端独占连接里的 TUI 可能在远端忙时长时间不响应，改回 15 秒 × 5 个周期（约 75 秒）。
+const SSH_TERMINAL_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
+/// russh 在首次保活后再等待 4 个周期，合计 5 个周期（约 75 秒）。
+const SSH_TERMINAL_KEEPALIVE_MAX: usize = 4;
+const SSH_TERMINAL_KEEPALIVE_WINDOW: Duration = Duration::from_secs(75);
 
-fn ssh_client_config() -> client::Config {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConnectionPurpose {
+    Main,
+    Terminal,
+}
+
+fn ssh_client_config(purpose: ConnectionPurpose) -> client::Config {
+    let (keepalive_interval, keepalive_max) = match purpose {
+        ConnectionPurpose::Main => (Some(SSH_MAIN_KEEPALIVE_INTERVAL), SSH_MAIN_KEEPALIVE_MAX),
+        ConnectionPurpose::Terminal => (
+            Some(SSH_TERMINAL_KEEPALIVE_INTERVAL),
+            SSH_TERMINAL_KEEPALIVE_MAX,
+        ),
+    };
+
     client::Config {
         // russh 只在收到回包时重置空闲计时器，发出保活本身不算；Windows OpenSSH
         // 在 ConPTY 忙时回包很慢，空闲超时会误断。改为只以保活失败作为断开信号。
         inactivity_timeout: None,
-        keepalive_interval: Some(SSH_KEEPALIVE_INTERVAL),
-        keepalive_max: SSH_KEEPALIVE_MAX,
+        keepalive_interval,
+        keepalive_max,
         nodelay: true,
         ..Default::default()
+    }
+}
+
+fn keepalive_window(purpose: ConnectionPurpose) -> Duration {
+    match purpose {
+        ConnectionPurpose::Main => SSH_MAIN_KEEPALIVE_WINDOW,
+        ConnectionPurpose::Terminal => SSH_TERMINAL_KEEPALIVE_WINDOW,
     }
 }
 
@@ -638,6 +666,7 @@ pub struct SshManager {
     sessions: RwLock<HashMap<String, Arc<ConnectedSession>>>,
     roots: RwLock<HashMap<String, RegisteredRoot>>,
     terminals: RwLock<HashMap<String, Arc<RemoteTerminalSession>>>,
+    persistent_terminals: RwLock<HashMap<String, Arc<server::PersistentTerminal>>>,
     reconnect_gates: Mutex<HashMap<String, ReconnectGate>>,
     exec_slots: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
     /// 同时进行的终端连接握手数；一次恢复大量终端时不超过 sshd 的 MaxStartups。
@@ -650,6 +679,10 @@ pub struct SshManager {
     server_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     /// 远端 server 总开关；关闭后所有集成点静默回退直连路径。
     server_enabled: std::sync::atomic::AtomicBool,
+    /// 远端 daemon 是否托管交互式终端；关闭后新终端一律直连。
+    persistent_terminals_enabled: std::sync::atomic::AtomicBool,
+    /// 本安装实例 UUID；daemon 的 clientId 为 `<uuid>:<connection_id>`。
+    client_id: RwLock<String>,
     /// 本地 server 二进制查找目录（安装目录、资源目录、环境变量指定等）。
     server_binary_dirs: RwLock<Vec<PathBuf>>,
     /// 设置页手动选择的离线目录，查找时排在其余目录之前。
@@ -673,6 +706,7 @@ impl SshManager {
             sessions: RwLock::new(HashMap::new()),
             roots: RwLock::new(HashMap::new()),
             terminals: RwLock::new(HashMap::new()),
+            persistent_terminals: RwLock::new(HashMap::new()),
             reconnect_gates: Mutex::new(HashMap::new()),
             exec_slots: Mutex::new(HashMap::new()),
             terminal_handshakes: tokio::sync::Semaphore::new(MAX_CONCURRENT_TERMINAL_HANDSHAKES),
@@ -680,6 +714,8 @@ impl SshManager {
             servers: RwLock::new(HashMap::new()),
             server_gates: Mutex::new(HashMap::new()),
             server_enabled: std::sync::atomic::AtomicBool::new(true),
+            persistent_terminals_enabled: std::sync::atomic::AtomicBool::new(true),
+            client_id: RwLock::new(uuid::Uuid::new_v4().to_string()),
             server_binary_dirs: RwLock::new(Vec::new()),
             server_offline_dir: RwLock::new(None),
             server_cache_dir: RwLock::new(None),
@@ -771,7 +807,7 @@ impl SshManager {
             .lock()
             .map_err(|_| "SSH 连接状态不可用".to_string())?
             .clone();
-        let connected = match authenticate_session(config).await {
+        let connected = match authenticate_session(config, ConnectionPurpose::Main).await {
             Ok((connected, _)) => Arc::new(connected),
             Err(error) => {
                 *last_failure = Some((Instant::now(), error.clone()));
@@ -798,6 +834,17 @@ impl SshManager {
                 .is_some_and(|session| Arc::ptr_eq(&session.alive, alive))
             {
                 terminals.remove(id);
+            }
+        }
+    }
+
+    pub(crate) fn forget_persistent_terminal(&self, terminal: &Arc<server::PersistentTerminal>) {
+        if let Ok(mut terminals) = self.persistent_terminals.write() {
+            if terminals
+                .get(terminal.id())
+                .is_some_and(|current| Arc::ptr_eq(current, terminal))
+            {
+                terminals.remove(terminal.id());
             }
         }
     }
@@ -850,14 +897,16 @@ impl SshManager {
             .acquire()
             .await
             .map_err(|_| "SSH 连接状态不可用".to_string())?;
-        let (transport, _) = authenticate_session(config).await.map_err(|error| {
-            format!("{error}（每个终端单独占用一条 SSH 连接，终端很多时可在远端 sshd_config 调大 MaxStartups 后重启 sshd）")
-        })?;
+        let (transport, _) =
+            authenticate_session(config, ConnectionPurpose::Terminal).await.map_err(|error| {
+                format!("{error}（每个终端单独占用一条 SSH 连接，终端很多时可在远端 sshd_config 调大 MaxStartups 后重启 sshd）")
+            })?;
         Ok(Arc::new(transport))
     }
 
     pub fn terminal_is_open(&self, id: &str) -> bool {
-        self.terminals
+        let direct = self
+            .terminals
             .read()
             .ok()
             .and_then(|terminals| {
@@ -865,7 +914,74 @@ impl SshManager {
                     .get(id)
                     .map(|session| session.alive.load(Ordering::Acquire))
             })
-            .unwrap_or(false)
+            .unwrap_or(false);
+        direct
+            || self
+                .persistent_terminals
+                .read()
+                .ok()
+                .and_then(|terminals| terminals.get(id).map(|terminal| terminal.is_open()))
+                .unwrap_or(false)
+    }
+
+    pub(crate) fn set_client_id(&self, client_id: String) {
+        if let Ok(mut current) = self.client_id.write() {
+            *current = client_id;
+        }
+    }
+
+    pub(crate) fn daemon_client_id(&self, connection_id: &str) -> String {
+        let installation = self
+            .client_id
+            .read()
+            .map(|client_id| client_id.clone())
+            .unwrap_or_else(|_| "unknown-install".to_string());
+        format!("{installation}:{connection_id}")
+    }
+
+    pub(crate) fn persistent_terminals_enabled(&self) -> bool {
+        self.persistent_terminals_enabled.load(Ordering::SeqCst)
+    }
+
+    async fn kill_persistent_terminals_where(
+        &self,
+        predicate: impl Fn(&server::PersistentTerminal) -> bool,
+    ) {
+        let terminals = self
+            .persistent_terminals
+            .read()
+            .map(|terminals| {
+                terminals
+                    .values()
+                    .filter(|terminal| predicate(terminal))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let handles = terminals
+            .into_iter()
+            .map(|terminal| {
+                tauri::async_runtime::spawn(async move {
+                    let _ = terminal.kill().await;
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            let _ = handle.await;
+        }
+    }
+
+    async fn kill_persistent_terminals_for_connection(&self, connection_id: &str) {
+        self.kill_persistent_terminals_where(|terminal| terminal.connection_id() == connection_id)
+            .await;
+    }
+
+    async fn kill_persistent_terminals_for_root(&self, root_uri: &str) {
+        let root_uri = normalize_remote_uri(root_uri);
+        self.kill_persistent_terminals_where(|terminal| {
+            normalize_remote_uri(terminal.root_uri()) == root_uri
+        })
+        .await;
     }
 
     fn session(&self, connection_id: &str) -> Result<Arc<ConnectedSession>, String> {
@@ -1366,13 +1482,33 @@ impl SshManager {
 }
 
 #[tauri::command]
-pub fn ssh_set_workspace_trust(
+pub async fn ssh_set_workspace_trust(
     root_uri: String,
     trusted: bool,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
     parse_remote_uri(&root_uri)?;
+    if !trusted {
+        manager.kill_persistent_terminals_for_root(&root_uri).await;
+        if let Ok(root) = manager.registered_root(&root_uri) {
+            if let Ok(parsed) = parse_remote_uri(&root.uri) {
+                if let Err(error) = server::kill_detached_terminals(
+                    &parsed.connection_id,
+                    &app,
+                    &manager,
+                    Some(&root.canonical_path),
+                )
+                .await
+                {
+                    return Err(format!(
+                        "无法确认远端终端已结束，暂未撤销信任（{}）：{error}",
+                        root.uri
+                    ));
+                }
+            }
+        }
+    }
     manager.set_root_trust(&root_uri, trusted)?;
     // 连接建立后才补信任的根不会经历 ssh_connect 的拉起路径：这里补一条
     // watch 监督任务（连接仍在、开关开启且没有存活任务时），否则远端变更
@@ -1406,6 +1542,19 @@ pub fn ssh_set_workspace_trust(
 pub fn ssh_set_server_enabled(enabled: bool, manager: State<'_, SshManager>) -> Result<(), String> {
     manager
         .server_enabled
+        .store(enabled, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+/// `ssh.server.persistentTerminals`：关闭后新开的交互式终端回退直连，
+/// 已在运行的 daemon PTY 不受影响。
+#[tauri::command]
+pub fn ssh_set_persistent_terminals_enabled(
+    enabled: bool,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    manager
+        .persistent_terminals_enabled
         .store(enabled, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
@@ -1892,6 +2041,7 @@ fn shell_quote(value: &str) -> String {
 async fn open_transport(
     config: &SshConnectionConfig,
     expected_fingerprint: Option<String>,
+    purpose: ConnectionPurpose,
 ) -> Result<OpenedTransport, String> {
     let observed = Arc::new(Mutex::new(None));
     let disconnect_reason = Arc::new(Mutex::new(None));
@@ -1899,8 +2049,9 @@ async fn open_transport(
         expected_fingerprint,
         observed_fingerprint: Arc::clone(&observed),
         disconnect_reason: Arc::clone(&disconnect_reason),
+        keepalive_window: keepalive_window(purpose),
     };
-    let client_config = ssh_client_config();
+    let client_config = ssh_client_config(purpose);
     let result = client::connect(
         Arc::new(client_config),
         (config.host.as_str(), config.port),
@@ -2032,6 +2183,7 @@ pub async fn ssh_probe_host(config: SshConnectionConfig) -> Result<SshHostProbe,
         expected_fingerprint: None,
         observed_fingerprint: Arc::clone(&observed),
         disconnect_reason: Arc::new(Mutex::new(None)),
+        keepalive_window: keepalive_window(ConnectionPurpose::Main),
     };
     let result = client::connect(
         Arc::new(client::Config {
@@ -2074,6 +2226,7 @@ fn ssh_handshake_timeout_error(config: &SshConnectionConfig) -> String {
 /// 建立并认证一条新连接，但不登记到连接表。
 async fn authenticate_session(
     config: SshConnectionConfig,
+    purpose: ConnectionPurpose,
 ) -> Result<(ConnectedSession, String), String> {
     let expected = config
         .host_key_fingerprint
@@ -2082,7 +2235,7 @@ async fn authenticate_session(
     let (handle, fingerprint, disconnect_reason) =
         tokio::time::timeout(SSH_HANDSHAKE_TIMEOUT, async {
             let (mut handle, fingerprint, disconnect_reason) =
-                open_transport(&config, expected).await?;
+                open_transport(&config, expected, purpose).await?;
             authenticate(&mut handle, &config).await?;
             Ok::<_, String>((handle, fingerprint, disconnect_reason))
         })
@@ -2104,7 +2257,7 @@ async fn store_authenticated_session(
     config: SshConnectionConfig,
 ) -> Result<(Arc<ConnectedSession>, String), String> {
     let id = config.id.clone();
-    let (connected, fingerprint) = authenticate_session(config).await?;
+    let (connected, fingerprint) = authenticate_session(config, ConnectionPurpose::Main).await?;
     let connected = Arc::new(connected);
     manager
         .sessions
@@ -2277,6 +2430,13 @@ pub async fn ssh_disconnect(
     app: tauri::AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
+    if let Err(error) = server::kill_detached_terminals(&connection_id, &app, &manager, None).await
+    {
+        eprintln!("[WARN] 断开连接时清理远端终端失败（{connection_id}）：{error}");
+    }
+    manager
+        .kill_persistent_terminals_for_connection(&connection_id)
+        .await;
     for root in manager.roots_for_connection(&connection_id) {
         server_status::publish_disconnected(&app, &manager, &connection_id, &root.uri);
     }
@@ -4277,6 +4437,34 @@ pub async fn ssh_format_document(
     }
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TerminalExitPayload {
+    id: String,
+    exit_code: u32,
+    disconnected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+/// 读循环可能先于 russh 的 disconnected 回调结束；短暂等待原因写入后再上报。
+async fn wait_for_closed_reason(transport: &ConnectedSession) -> Option<String> {
+    if let Some(reason) = transport.closed_reason() {
+        return Some(reason);
+    }
+    let wait_for_reason = async {
+        loop {
+            if let Some(reason) = transport.closed_reason() {
+                return reason;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    };
+    tokio::time::timeout(Duration::from_millis(500), wait_for_reason)
+        .await
+        .ok()
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn spawn_ssh_terminal(
     id: String,
@@ -4339,9 +4527,11 @@ async fn spawn_ssh_terminal(
     let filtering_clone = Arc::clone(&is_filtering);
     let app_clone = app.clone();
     let terminal_id = id.clone();
+    let connection_id = parsed.connection_id.clone();
     let exit_alive = Arc::clone(&alive);
     let reader_transport = Arc::clone(&transport);
     tauri::async_runtime::spawn(async move {
+        let started_at = Instant::now();
         let mut started_tx = started_tx;
         let mut exit_code = 0;
         let mut ended_by_remote = false;
@@ -4382,17 +4572,31 @@ async fn spawn_ssh_terminal(
                 _ => {}
             }
         }
+        let disconnected = !ended_by_remote;
+        let reason = if disconnected {
+            wait_for_closed_reason(&reader_transport).await
+        } else {
+            None
+        };
         close_terminal_transport(&reader_transport).await;
         if claim_terminal_exit(&exit_alive) {
             app_clone
                 .state::<SshManager>()
                 .forget_terminal(&terminal_id, &exit_alive);
+            if disconnected {
+                let reason_text = reason.as_deref().unwrap_or("原因未知");
+                eprintln!(
+                    "[WARN] terminal {terminal_id} 连接 {connection_id} 断开：{reason_text}，存活 {:.1} 秒",
+                    started_at.elapsed().as_secs_f64()
+                );
+            }
             let _ = app_clone.emit(
                 "terminal-exit",
                 TerminalExitPayload {
                     id: terminal_id,
                     exit_code,
-                    disconnected: !ended_by_remote,
+                    disconnected,
+                    reason,
                 },
             );
         }
@@ -4454,6 +4658,107 @@ async fn start_terminal_channel(
     Ok(channel)
 }
 
+fn persistent_shell_launch(
+    path: &str,
+    shell: Option<&str>,
+) -> Result<server::PersistentLaunch, String> {
+    let resolved = ssh_interactive_terminal_command(path, shell)?;
+    let resolved_shell = resolved.resolved_shell;
+    let shell = if windows_native_path(path).is_some() {
+        Some(resolved_shell.clone())
+    } else {
+        matches!(resolved_shell.as_str(), "bash" | "zsh" | "sh").then(|| resolved_shell.clone())
+    };
+    Ok(server::PersistentLaunch {
+        shell,
+        args: Vec::new(),
+        env: std::collections::BTreeMap::new(),
+        name: None,
+        resolved_shell,
+        fallback_from: resolved.fallback_from,
+    })
+}
+
+fn persistent_profile_launch(
+    path: &str,
+    target: &str,
+    env: &HashMap<String, String>,
+    shell: Option<&str>,
+    name: &str,
+) -> Result<server::PersistentLaunch, String> {
+    let mut launch = persistent_shell_launch(path, shell)?;
+    launch.name = Some(name.to_string());
+    launch.env = env
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    if windows_native_path(path).is_some() {
+        launch.args = if launch.resolved_shell == "cmd" {
+            vec!["/K".to_string(), target.to_string()]
+        } else {
+            vec![
+                "-NoLogo".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                target.to_string(),
+            ]
+        };
+    } else {
+        launch.args = vec![
+            "-c".to_string(),
+            format!("{target}; exec \"${{SHELL:-/bin/sh}}\" -l"),
+        ];
+    }
+    Ok(launch)
+}
+
+fn direct_windows_profile_command(
+    path: &str,
+    target: &str,
+    env: &HashMap<String, String>,
+    shell: Option<&str>,
+) -> Result<String, String> {
+    let native = windows_native_path(path)
+        .ok_or_else(|| "直连 profile 终端需要 Windows 远程路径".to_string())?;
+    let launch = persistent_profile_launch(path, target, env, shell, "profile")?;
+    let mut script = String::new();
+    for (key, value) in env {
+        script.push_str(&format!("$env:{key} = '{}'; ", powershell_literal(value)));
+    }
+    if launch.resolved_shell == "cmd" {
+        script.push_str(&format!(
+            "$ProgressPreference = 'SilentlyContinue'; Set-Location -LiteralPath '{}'; & cmd.exe /K '{}'; exit $LASTEXITCODE",
+            powershell_literal(&native),
+            powershell_literal(target)
+        ));
+        Ok(windows_encoded_powershell(
+            "powershell.exe -NoLogo -NoProfile -NonInteractive",
+            &script,
+            true,
+        ))
+    } else {
+        let launcher = if launch.resolved_shell == "pwsh" {
+            "pwsh.exe -NoLogo -NoExit"
+        } else {
+            "powershell.exe -NoLogo -NoExit"
+        };
+        script.push_str(&format!(
+            "Set-Location -LiteralPath '{}'; {target}",
+            powershell_literal(&native)
+        ));
+        Ok(windows_encoded_powershell(launcher, &script, true))
+    }
+}
+
+fn direct_spawn_result_fallback(
+    mut result: TerminalSpawnResult,
+    reason: Option<String>,
+) -> TerminalSpawnResult {
+    result.persistent = false;
+    result.persistent_fallback_reason = reason;
+    result
+}
+
 #[tauri::command]
 pub async fn ssh_create_terminal(
     id: String,
@@ -4465,8 +4770,40 @@ pub async fn ssh_create_terminal(
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&cwd)?;
+    let root = manager.root_for_uri(&cwd, true)?;
+    let sftp = manager.open_sftp(&parsed.connection_id).await?;
+    let working_directory = ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
     let spec = ssh_interactive_terminal_command(&parsed.path, shell.as_deref())?;
-    let mut result = spawn_ssh_terminal(
+    let persistent_reason = if !manager.server_enabled() {
+        Some("已关闭 ssh.server.enabled".to_string())
+    } else if !manager.persistent_terminals_enabled() {
+        Some("已关闭 ssh.server.persistentTerminals".to_string())
+    } else {
+        match persistent_shell_launch(&parsed.path, shell.as_deref()) {
+            Ok(launch) => match server::spawn_persistent_terminal(
+                id.clone(),
+                root,
+                working_directory,
+                cols.unwrap_or(80),
+                rows.unwrap_or(24),
+                launch,
+                app.clone(),
+                &manager,
+            )
+            .await
+            {
+                Ok(result) => return Ok(result),
+                Err(reason) => {
+                    eprintln!(
+                            "[WARN] persistent terminal {id} creation failed, falling back to direct SSH: {reason}"
+                        );
+                    Some(reason)
+                }
+            },
+            Err(reason) => Some(reason),
+        }
+    };
+    let result = spawn_ssh_terminal(
         id,
         cwd,
         cols,
@@ -4477,6 +4814,7 @@ pub async fn ssh_create_terminal(
         spec.enter_directory,
     )
     .await?;
+    let mut result = direct_spawn_result_fallback(result, persistent_reason);
     result.resolved_shell = Some(spec.resolved_shell);
     result.fallback_from = spec.fallback_from;
     Ok(result)
@@ -4540,19 +4878,27 @@ pub async fn ssh_spawn_script(
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
-    let _ = shell;
     if matches!(shell_kind.as_str(), "ps1" | "bat") {
         return Err("SSH Linux 项目暂不支持 PowerShell 或 BAT 任务".to_string());
     }
     let parsed = parse_remote_uri(&cwd)?;
-    reject_windows_remote_command(&parsed.path)?;
+    let root = manager.root_for_uri(&cwd, true)?;
+    let persistent_cwd = if shell_kind == "interactive" {
+        let sftp = manager.open_sftp(&parsed.connection_id).await?;
+        Some(ensure_existing_path_within(&sftp, &parsed.path, &root).await?)
+    } else {
+        None
+    };
+    if shell_kind != "interactive" {
+        reject_windows_remote_command(&parsed.path)?;
+    }
     let target = if target.starts_with(SSH_URI_PREFIX) {
         parse_remote_uri(&target)?.path
     } else {
         target
     };
     let mut env_prefix = String::new();
-    for (key, value) in env {
+    for (key, value) in &env {
         if key.is_empty()
             || !key.bytes().enumerate().all(|(index, byte)| {
                 byte == b'_'
@@ -4561,7 +4907,7 @@ pub async fn ssh_spawn_script(
         {
             return Err(format!("无效的远程任务环境变量名：{key}"));
         }
-        env_prefix.push_str(&format!("{key}={} ", shell_quote(&value)));
+        env_prefix.push_str(&format!("{key}={} ", shell_quote(value)));
     }
     let invocation = match shell_kind.as_str() {
         "sh" => format!("{env_prefix}exec /bin/sh {}", shell_quote(&target)),
@@ -4572,8 +4918,44 @@ pub async fn ssh_spawn_script(
         ),
         _ => format!("{env_prefix}exec /bin/sh -lc {}", shell_quote(&target)),
     };
-    let command = format!("cd -- {} && {invocation}", shell_quote(&parsed.path));
-    spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, command, None).await
+    let command = if shell_kind == "interactive" && windows_native_path(&parsed.path).is_some() {
+        direct_windows_profile_command(&parsed.path, &target, &env, shell.as_deref())?
+    } else {
+        format!("cd -- {} && {invocation}", shell_quote(&parsed.path))
+    };
+    let mut persistent_reason = None;
+    if shell_kind == "interactive" {
+        if !manager.server_enabled() {
+            persistent_reason = Some("已关闭 ssh.server.enabled".to_string());
+        } else if !manager.persistent_terminals_enabled() {
+            persistent_reason = Some("已关闭 ssh.server.persistentTerminals".to_string());
+        } else {
+            let launch =
+                persistent_profile_launch(&parsed.path, &target, &env, shell.as_deref(), &id)?;
+            match server::spawn_persistent_terminal(
+                id.clone(),
+                root,
+                persistent_cwd.expect("interactive terminals have a validated cwd"),
+                cols.unwrap_or(80),
+                rows.unwrap_or(24),
+                launch,
+                app.clone(),
+                &manager,
+            )
+            .await
+            {
+                Ok(result) => return Ok(result),
+                Err(reason) => {
+                    eprintln!(
+                        "[WARN] persistent profile terminal {id} creation failed, falling back to direct SSH: {reason}"
+                    );
+                    persistent_reason = Some(reason);
+                }
+            }
+        }
+    }
+    let result = spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, command, None).await?;
+    Ok(direct_spawn_result_fallback(result, persistent_reason))
 }
 
 #[tauri::command]
@@ -4584,6 +4966,15 @@ pub async fn ssh_write_terminal(
 ) -> Result<(), String> {
     if data.len() > 1024 * 1024 {
         return Err("单次终端输入不能超过 1MB，请分段粘贴".to_string());
+    }
+    let persistent = manager
+        .persistent_terminals
+        .read()
+        .map_err(|_| "SSH 终端状态不可用".to_string())?
+        .get(&id)
+        .cloned();
+    if let Some(terminal) = persistent {
+        return terminal.write(data.into_bytes());
     }
     let input = manager
         .terminals
@@ -4609,6 +5000,15 @@ pub async fn ssh_resize_terminal(
     rows: u16,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
+    let persistent = manager
+        .persistent_terminals
+        .read()
+        .map_err(|_| "SSH 终端状态不可用".to_string())?
+        .get(&id)
+        .cloned();
+    if let Some(terminal) = persistent {
+        return terminal.resize(cols, rows);
+    }
     let writer = manager
         .terminals
         .read()
@@ -4624,6 +5024,15 @@ pub async fn ssh_resize_terminal(
 
 #[tauri::command]
 pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Result<(), String> {
+    let persistent = manager
+        .persistent_terminals
+        .write()
+        .map_err(|_| "SSH 终端状态不可用".to_string())?
+        .remove(&id);
+    if let Some(terminal) = persistent {
+        terminal.kill().await?;
+        return Ok(());
+    }
     let session = manager
         .terminals
         .write()
@@ -4636,6 +5045,70 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
         close_terminal_transport(&session.transport).await;
         closed.map_err(|error| format!("关闭 SSH 终端失败：{error}"))?;
     }
+    Ok(())
+}
+
+/// 查询当前 QingCode 安装在该 SSH 连接下遗留的持久化终端。
+#[tauri::command]
+pub async fn ssh_list_detached_terminals(
+    connection_id: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<Vec<server::DetachedTerminal>, String> {
+    if connection_id.trim().is_empty() {
+        return Err("connectionId 不能为空".to_string());
+    }
+    server::list_detached_terminals(&connection_id, &app, &manager).await
+}
+
+/// 把本地标签接回一个仍由 daemon 托管的 PTY。
+#[tauri::command]
+pub async fn ssh_attach_terminal(
+    id: String,
+    pty_id: String,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<TerminalSpawnResult, String> {
+    let parsed = parse_remote_uri(&cwd)?;
+    let root = manager.root_for_uri(&cwd, true)?;
+    if remote_uri_connection_id(&root.uri) != Some(parsed.connection_id.as_str()) {
+        return Err("终端工作目录与 SSH 连接不匹配".to_string());
+    }
+    server::attach_persistent_terminal(id, pty_id, root, cols, rows, app, &manager).await
+}
+
+/// 项目从 QingCode 移除后注销对应根，并尽力结束其中仍由 daemon 托管的终端。
+#[tauri::command]
+pub async fn ssh_forget_workspace_root(
+    root_uri: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    let normalized = normalize_remote_uri(&root_uri);
+    let root = manager.registered_root(&root_uri)?;
+    let parsed = parse_remote_uri(&root.uri)?;
+    manager.kill_persistent_terminals_for_root(&root.uri).await;
+    if let Err(error) = server::kill_detached_terminals(
+        &parsed.connection_id,
+        &app,
+        &manager,
+        Some(&root.canonical_path),
+    )
+    .await
+    {
+        return Err(format!(
+            "无法确认远端终端已结束，暂未移除项目（{}）：{error}",
+            root.uri
+        ));
+    }
+    manager
+        .roots
+        .write()
+        .map_err(|_| "SSH 工作区状态不可用".to_string())?
+        .remove(&normalized);
     Ok(())
 }
 
@@ -4876,6 +5349,16 @@ mod tests {
     }
 
     #[test]
+    fn daemon_client_id_combines_install_uuid_and_connection() {
+        let manager = SshManager::new();
+        manager.set_client_id("8f2af0e7-7a7e-4af0-9f67-2bc588c9146e".to_string());
+        assert_eq!(
+            manager.daemon_client_id("remote-a"),
+            "8f2af0e7-7a7e-4af0-9f67-2bc588c9146e:remote-a"
+        );
+    }
+
+    #[test]
     fn connected_root_trust_can_be_updated_without_reconnecting() {
         let manager = SshManager::new();
         manager.roots.write().unwrap().insert(
@@ -5108,32 +5591,99 @@ mod tests {
     }
 
     #[test]
+    fn windows_profile_direct_fallback_sets_cwd_env_and_command() {
+        let env = HashMap::from([("OPENCODE_MODE".to_string(), "dev".to_string())]);
+        let powershell = direct_windows_profile_command(
+            "/D:/code/my project",
+            "opencode --watch",
+            &env,
+            Some("powershell"),
+        )
+        .unwrap();
+        let script = decoded_script(&powershell, "powershell.exe -NoLogo -NoExit");
+        assert!(script.contains(r"$env:OPENCODE_MODE = 'dev'"));
+        assert!(script.contains(r"Set-Location -LiteralPath 'D:\code\my project'"));
+        assert!(script.ends_with("opencode --watch"));
+
+        let cmd = direct_windows_profile_command(
+            "/D:/code/my project",
+            "opencode --watch",
+            &HashMap::new(),
+            Some("cmd"),
+        )
+        .unwrap();
+        let script = decoded_script(&cmd, "powershell.exe -NoLogo -NoProfile -NonInteractive");
+        assert!(script.contains(r"& cmd.exe /K 'opencode --watch'"));
+    }
+
+    #[test]
     fn disconnect_reason_explains_keepalive_timeout_and_remote_close() {
-        let keepalive = describe_disconnect(&client::DisconnectReason::Error(
-            russh::Error::KeepaliveTimeout,
-        ));
+        let keepalive = describe_disconnect(
+            &client::DisconnectReason::Error(russh::Error::KeepaliveTimeout),
+            keepalive_window(ConnectionPurpose::Main),
+        );
         assert!(keepalive.starts_with("保活超时"));
         assert!(keepalive.contains("40 秒"));
-        let remote = describe_disconnect(&client::DisconnectReason::ReceivedDisconnect(
-            client::RemoteDisconnectInfo {
+        let terminal_keepalive = describe_disconnect(
+            &client::DisconnectReason::Error(russh::Error::KeepaliveTimeout),
+            keepalive_window(ConnectionPurpose::Terminal),
+        );
+        assert!(terminal_keepalive.starts_with("保活超时"));
+        assert!(terminal_keepalive.contains("75 秒"));
+        let remote = describe_disconnect(
+            &client::DisconnectReason::ReceivedDisconnect(client::RemoteDisconnectInfo {
                 reason_code: russh::Disconnect::ByApplication,
                 message: " sshd restarting ".to_string(),
                 lang_tag: String::new(),
-            },
-        ));
+            }),
+            keepalive_window(ConnectionPurpose::Main),
+        );
         assert!(remote.starts_with("远端主动断开"));
         assert!(remote.ends_with("sshd restarting"));
-        let io = describe_disconnect(&client::DisconnectReason::Error(russh::Error::HUP));
+        let io = describe_disconnect(
+            &client::DisconnectReason::Error(russh::Error::HUP),
+            keepalive_window(ConnectionPurpose::Main),
+        );
         assert!(io.starts_with("连接异常断开"));
     }
 
     #[test]
     fn ssh_client_waits_through_a_slow_keepalive_reply() {
-        let config = ssh_client_config();
-        assert!(config.inactivity_timeout.is_none());
-        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(10)));
-        assert_eq!(config.keepalive_max, 3);
-        assert!(config.nodelay);
+        let main = ssh_client_config(ConnectionPurpose::Main);
+        assert!(main.inactivity_timeout.is_none());
+        assert_eq!(main.keepalive_interval, Some(Duration::from_secs(10)));
+        assert_eq!(main.keepalive_max, 3);
+        assert!(main.nodelay);
+
+        let terminal = ssh_client_config(ConnectionPurpose::Terminal);
+        assert!(terminal.inactivity_timeout.is_none());
+        assert_eq!(terminal.keepalive_interval, Some(Duration::from_secs(15)));
+        assert_eq!(terminal.keepalive_max, 4);
+        assert!(terminal.nodelay);
+    }
+
+    #[test]
+    fn terminal_exit_payload_serializes_reason_only_when_present() {
+        let disconnected = serde_json::to_value(TerminalExitPayload {
+            id: "terminal-1".to_string(),
+            exit_code: 1,
+            disconnected: true,
+            reason: Some("保活超时：约 75 秒未收到远端任何回包".to_string()),
+        })
+        .unwrap();
+        assert_eq!(
+            disconnected.get("reason").and_then(|value| value.as_str()),
+            Some("保活超时：约 75 秒未收到远端任何回包")
+        );
+
+        let completed = serde_json::to_value(TerminalExitPayload {
+            id: "terminal-1".to_string(),
+            exit_code: 0,
+            disconnected: false,
+            reason: None,
+        })
+        .unwrap();
+        assert!(completed.get("reason").is_none());
     }
 
     #[test]

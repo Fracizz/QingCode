@@ -146,6 +146,14 @@ fn spawn_terminal_writer(
 pub struct TerminalSpawnResult {
     pub resolved_shell: Option<String>,
     pub fallback_from: Option<String>,
+    /// SSH 终端由远端 daemon 托管；本地终端恒为 false。
+    pub persistent: bool,
+    /// daemon PTY id；持久化 SSH 终端成功创建或接入时返回。
+    pub pty_id: Option<String>,
+    /// daemon PTY 所属 SSH 连接；与 `pty_id` 一起用于应用重启后的接回。
+    pub connection_id: Option<String>,
+    /// 持久化终端创建失败或条件不满足时，回退直连的原因。
+    pub persistent_fallback_reason: Option<String>,
 }
 
 struct TerminalSession {
@@ -486,6 +494,10 @@ impl ResolvedHostShell {
         TerminalSpawnResult {
             resolved_shell: Some(self.id.clone()),
             fallback_from: self.fallback_from.clone(),
+            persistent: false,
+            pty_id: None,
+            connection_id: None,
+            persistent_fallback_reason: None,
         }
     }
 }

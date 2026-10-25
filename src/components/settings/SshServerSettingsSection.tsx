@@ -5,16 +5,21 @@ import { isTauri, safeInvoke } from '../../lib/tauri'
 import { DEFAULT_GLOBAL_SETTINGS } from '../../lib/projectSettings'
 import {
   SSH_SERVER_AUTO_DOWNLOAD_KEY,
+  SSH_SERVER_PERSISTENT_TERMINALS_KEY,
   getSshServerAutoDownload,
   getSshServerEnabled,
   getSshServerOfflineDir,
+  getSshServerPersistentTerminals,
   loadScopedSshServerAutoDownload,
   loadScopedSshServerEnabled,
   loadScopedSshServerOfflineDir,
+  loadScopedSshServerPersistentTerminals,
   parseSshServerAutoDownload,
+  parseSshServerPersistentTerminals,
   saveScopedSshServerAutoDownload,
   saveScopedSshServerEnabled,
   saveScopedSshServerOfflineDir,
+  saveScopedSshServerPersistentTerminals,
 } from '../../lib/sshServerSettings'
 import { isSshProject } from '../../lib/sshWorkspace'
 import { useProjectStore } from '../../store/projectStore'
@@ -32,13 +37,16 @@ type Props = {
 }
 
 /**
- * SSH 远端服务（qingcode-server）设置分区：总开关、缺失时自动下载、离线目录。
+ * SSH 远端服务（qingcode-server）设置分区：总开关、持久化终端、自动下载、离线目录。
  * 从 SettingsEditor 迁出，行为保持不变。
  */
 export default function SshServerSettingsSection({ scope, project, settingsRevision }: Props) {
   const { t } = useI18n()
   const pushToast = useProjectStore(s => s.pushToast)
   const [enabled, setEnabled] = useState(getSshServerEnabled)
+  const [persistentTerminals, setPersistentTerminals] = useState(
+    getSshServerPersistentTerminals,
+  )
   const [autoDownload, setAutoDownload] = useState(getSshServerAutoDownload)
   const [offlineDir, setOfflineDir] = useState(getSshServerOfflineDir)
   const [offlineBusy, setOfflineBusy] = useState(false)
@@ -46,6 +54,9 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
   useEffect(() => {
     const settingsScope = scope === 'workspace' ? 'project' : 'global'
     void loadScopedSshServerEnabled(settingsScope, project).then(setEnabled)
+    void loadScopedSshServerPersistentTerminals(settingsScope, project).then(
+      setPersistentTerminals,
+    )
     void loadScopedSshServerAutoDownload(settingsScope, project).then(setAutoDownload)
     void loadScopedSshServerOfflineDir(settingsScope, project).then(setOfflineDir)
   }, [scope, project, settingsRevision])
@@ -79,6 +90,17 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
       await saveScopedSshServerAutoDownload(settingsScope, value, project)
     } catch (error) {
       pushToast('error', t('保存自动下载设置失败: {error}', { error: String(error) }))
+    }
+  }
+
+  const updatePersistentTerminals = async (value: boolean) => {
+    const settingsScope = scope === 'workspace' ? 'project' : 'global'
+    if (settingsScope === 'project' && !project) return
+    setPersistentTerminals(value)
+    try {
+      await saveScopedSshServerPersistentTerminals(settingsScope, value, project)
+    } catch (error) {
+      pushToast('error', t('保存持久化终端设置失败: {error}', { error: String(error) }))
     }
   }
 
@@ -149,6 +171,36 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
           <option value="on">{t('开启')}</option>
           <option value="off">{t('关闭')}</option>
         </select>
+      </SettingItem>
+      <SettingItem
+        title={t('SSH › 服务: 持久化终端')}
+        description={t(
+          'SSH 断开时由远端 qingcode-server daemon 保持终端进程，重连后接回。关闭后新开的终端直连 SSH，断线会结束远端进程；已经打开的持久化终端不受影响。默认开启。',
+        )}
+        modified={
+          persistentTerminals !==
+          parseSshServerPersistentTerminals(
+            DEFAULT_GLOBAL_SETTINGS[SSH_SERVER_PERSISTENT_TERMINALS_KEY],
+          )
+        }
+      >
+        <Tooltip
+          label={t(
+            '关闭后新开的终端将直连 SSH，断线会结束远端进程；已经打开的持久化终端不受影响。',
+          )}
+          side="left"
+          delay={0}
+        >
+          <select
+            value={persistentTerminals ? 'on' : 'off'}
+            onChange={e => void updatePersistentTerminals(e.target.value === 'on')}
+            className="setting-control setting-select"
+            aria-label={t('SSH › 服务: 持久化终端')}
+          >
+            <option value="on">{t('开启')}</option>
+            <option value="off">{t('关闭')}</option>
+          </select>
+        </Tooltip>
       </SettingItem>
       <SettingItem
         title={t('SSH › 服务: 缺失时自动下载')}
