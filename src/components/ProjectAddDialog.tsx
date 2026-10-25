@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
-import { AlertTriangle, Check, FilePlus2, FolderOpen, ListChecks, Server } from 'lucide-react'
+import { AlertTriangle, Check, Cloud, FilePlus2, FolderPlus, ListChecks } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
@@ -7,7 +7,6 @@ import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { relocateProjectWithDialog } from '../utils/projectActions'
 import type { Project } from '../types'
-import SshProjectDialog from './SshProjectDialog'
 import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
 import { sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
 
@@ -37,17 +36,17 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const addEmptyProject = useProjectStore(s => s.addEmptyProject)
-  const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const unhideProject = useProjectStore(s => s.unhideProject)
   const setView = useUIStore(s => s.setView)
   const openProjectManager = useUIStore(s => s.openProjectManager)
+  const openCreateProject = useUIStore(s => s.openCreateProject)
+  const openRemoteConnections = useUIStore(s => s.openRemoteConnections)
 
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
   const [addingEmpty, setAddingEmpty] = useState(false)
-  const [sshOpen, setSshOpen] = useState(false)
 
   const projects = useMemo(() => sortProjects(allProjects), [allProjects])
   const filtered = useMemo(() => {
@@ -73,13 +72,12 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        if (sshOpen) return
         onClose()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [open, onClose, sshOpen])
+  }, [open, onClose])
 
   useEffect(() => {
     queueMicrotask(() =>
@@ -110,10 +108,14 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
     await switchProject(project)
   }
 
-  const handleOpenFolder = () => {
+  const handleCreate = () => {
     onClose()
-    setView('explorer')
-    void addProjectFromDialog()
+    openCreateProject()
+  }
+
+  const handleRemote = () => {
+    onClose()
+    openRemoteConnections()
   }
 
   const handleAddEmpty = async () => {
@@ -153,149 +155,136 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
       event.preventDefault()
       const selected = filtered[activeIndex]
       if (selected) void selectProject(selected)
-      else if (filtered.length === 0) handleOpenFolder()
+      else if (filtered.length === 0) handleCreate()
     }
   }
 
   return (
-    <>
-      {sshOpen ? null : (
-        <ModalOverlay onDismiss={onClose} zIndex="z-[110]">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="project-add-title"
-            aria-describedby="project-add-description"
-            className="ui-font-scaled modal-content-enter relative flex w-full max-w-[420px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
-            onPointerDown={event => event.stopPropagation()}
-          >
-            <h2 id="project-add-title" className="sr-only">
-              {t('选择项目')}
-            </h2>
-            <p id="project-add-description" className="sr-only">
-              {t('从已添加项目中切换，或打开文件夹添加项目。')}
+    <ModalOverlay onDismiss={onClose} zIndex="z-[110]">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="project-add-title"
+        aria-describedby="project-add-description"
+        className="ui-font-scaled modal-content-enter relative flex w-full max-w-[420px] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        onPointerDown={event => event.stopPropagation()}
+      >
+        <h2 id="project-add-title" className="sr-only">
+          {t('选择项目')}
+        </h2>
+        <p id="project-add-description" className="sr-only">
+          {t('从已添加项目中切换，或打开文件夹添加项目。')}
+        </p>
+        <div className="flex flex-shrink-0 items-center gap-2 border-b border-border px-2.5 py-2">
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            onKeyDown={onInputKeyDown}
+            placeholder={t('选择项目…')}
+            aria-controls="project-add-list"
+            className="modal-search-input"
+          />
+          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-ui-2xs leading-none text-fg-dim sm:inline">
+            Esc
+          </kbd>
+        </div>
+
+        <div
+          id="project-add-list"
+          ref={listRef}
+          role="listbox"
+          aria-label={t('选择项目')}
+          className="max-h-[min(240px,36vh)] overflow-y-auto py-0.5"
+        >
+          {filtered.length === 0 ? (
+            <p className="text-ui-sm px-3 py-5 text-center text-fg-dim">
+              {projects.length === 0 ? t('暂无项目，可打开文件夹添加') : t('没有匹配的项目')}
             </p>
-            <div className="flex flex-shrink-0 items-center gap-2 border-b border-border px-2.5 py-2">
-              <input
-                ref={inputRef}
-                type="text"
-                value={query}
-                onChange={event => setQuery(event.target.value)}
-                onKeyDown={onInputKeyDown}
-                placeholder={t('选择项目…')}
-                aria-controls="project-add-list"
-                className="modal-search-input"
-              />
-              <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-ui-2xs leading-none text-fg-dim sm:inline">
-                Esc
-              </kbd>
-            </div>
-
-            <div
-              id="project-add-list"
-              ref={listRef}
-              role="listbox"
-              aria-label={t('选择项目')}
-              className="max-h-[min(240px,36vh)] overflow-y-auto py-0.5"
-            >
-              {filtered.length === 0 ? (
-                <p className="text-ui-sm px-3 py-5 text-center text-fg-dim">
-                  {projects.length === 0 ? t('暂无项目，可打开文件夹添加') : t('没有匹配的项目')}
-                </p>
-              ) : (
-                filtered.map((project, index) => {
-                  const unavailable = unavailableProjectIds.includes(project.id)
-                  const isCurrent = currentProject?.id === project.id
-                  const active = index === activeIndex
-                  const location = sshProjectDisplayPath(project, null, sshConnections)
-                  return (
-                    <Tooltip
-                      key={project.id}
-                      label={location}
-                      side="right"
-                      wrapperClassName="block w-full"
-                    >
-                      <button
-                        type="button"
-                        role="option"
-                        aria-label={`${project.name} — ${location}`}
-                        aria-selected={active || isCurrent}
-                        data-project-index={index}
-                        onMouseEnter={() => setActiveIndex(index)}
-                        onClick={() => void selectProject(project)}
-                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors
-                      ${active ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover'}`}
-                      >
-                        <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
-                          {unavailable ? (
-                            <AlertTriangle size={13} className="text-warn" />
-                          ) : isCurrent ? (
-                            <Check size={12} className="text-accent" />
-                          ) : (
-                            <ProjectKindIcon
-                              project={project}
-                              connections={sshConnections}
-                              size={13}
-                              className="text-accent"
-                            />
-                          )}
-                        </span>
-                        <span className="min-w-0 flex-1 truncate text-ui">{project.name}</span>
-                        <ProjectKindBadge project={project} connections={sshConnections} />
-                        {project.hidden ? (
-                          <span className="flex-shrink-0 text-ui-2xs text-fg-dim">
-                            {t('已隐藏')}
-                          </span>
-                        ) : null}
-                      </button>
-                    </Tooltip>
-                  )
-                })
-              )}
-            </div>
-
-            <div className="grid grid-cols-4 gap-0.5 border-t border-border px-1 py-1.5">
-              <button type="button" onClick={handleOpenFolder} className={footerActionClass}>
-                <FolderOpen size={14} />
-                <span className="whitespace-nowrap">{t('打开文件夹')}</span>
-              </button>
-              <button type="button" onClick={() => setSshOpen(true)} className={footerActionClass}>
-                <Server size={14} />
-                <span className="whitespace-nowrap">SSH</span>
-              </button>
-              <Tooltip
-                label={t('退出后从列表移除')}
-                side="top"
-                wrapperClassName="flex w-full min-w-0"
-              >
-                <button
-                  type="button"
-                  disabled={addingEmpty}
-                  onClick={() => void handleAddEmpty()}
-                  aria-label={`${t('临时项目')} — ${t('退出后从列表移除')}`}
-                  className={footerActionClass}
+          ) : (
+            filtered.map((project, index) => {
+              const unavailable = unavailableProjectIds.includes(project.id)
+              const isCurrent = currentProject?.id === project.id
+              const active = index === activeIndex
+              const location = sshProjectDisplayPath(project, null, sshConnections)
+              return (
+                <Tooltip
+                  key={project.id}
+                  label={location}
+                  side="right"
+                  wrapperClassName="block w-full"
                 >
-                  <FilePlus2 size={14} />
-                  <span className="whitespace-nowrap">{t('临时项目')}</span>
-                </button>
-              </Tooltip>
-              <button type="button" onClick={handleManage} className={footerActionClass}>
-                <ListChecks size={14} />
-                <span className="whitespace-nowrap">{t('项目管理')}</span>
-              </button>
-            </div>
-          </div>
-        </ModalOverlay>
-      )}
-      <SshProjectDialog
-        open={sshOpen}
-        onClose={() => setSshOpen(false)}
-        onAdded={() => {
-          setSshOpen(false)
-          onClose()
-          setView('explorer')
-        }}
-      />
-    </>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-label={`${project.name} — ${location}`}
+                    aria-selected={active || isCurrent}
+                    data-project-index={index}
+                    onMouseEnter={() => setActiveIndex(index)}
+                    onClick={() => void selectProject(project)}
+                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors
+                  ${active ? 'bg-bg-active text-fg' : 'text-fg hover:bg-bg-hover'}`}
+                  >
+                    <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center">
+                      {unavailable ? (
+                        <AlertTriangle size={13} className="text-warn" />
+                      ) : isCurrent ? (
+                        <Check size={12} className="text-accent" />
+                      ) : (
+                        <ProjectKindIcon
+                          project={project}
+                          connections={sshConnections}
+                          size={13}
+                          className="text-accent"
+                        />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-ui">{project.name}</span>
+                    <ProjectKindBadge project={project} connections={sshConnections} />
+                    {project.hidden ? (
+                      <span className="flex-shrink-0 text-ui-2xs text-fg-dim">
+                        {t('已隐藏')}
+                      </span>
+                    ) : null}
+                  </button>
+                </Tooltip>
+              )
+            })
+          )}
+        </div>
+
+        <div className="grid grid-cols-4 gap-0.5 border-t border-border px-1 py-1.5">
+          <button type="button" onClick={handleCreate} className={footerActionClass}>
+            <FolderPlus size={14} />
+            <span className="whitespace-nowrap">{t('新建项目')}</span>
+          </button>
+          <Tooltip
+            label={t('退出后从列表移除')}
+            side="top"
+            wrapperClassName="flex w-full min-w-0"
+          >
+            <button
+              type="button"
+              disabled={addingEmpty}
+              onClick={() => void handleAddEmpty()}
+              aria-label={`${t('临时项目')} — ${t('退出后从列表移除')}`}
+              className={footerActionClass}
+            >
+              <FilePlus2 size={14} />
+              <span className="whitespace-nowrap">{t('临时项目')}</span>
+            </button>
+          </Tooltip>
+          <button type="button" onClick={handleRemote} className={footerActionClass}>
+            <Cloud size={14} />
+            <span className="whitespace-nowrap">{t('远程连接')}</span>
+          </button>
+          <button type="button" onClick={handleManage} className={footerActionClass}>
+            <ListChecks size={14} />
+            <span className="whitespace-nowrap">{t('项目管理')}</span>
+          </button>
+        </div>
+      </div>
+    </ModalOverlay>
   )
 }

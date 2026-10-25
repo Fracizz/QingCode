@@ -84,7 +84,7 @@ export default function ProjectManager() {
   const switchProject = useProjectStore(s => s.switchProject)
   const hideProject = useProjectStore(s => s.hideProject)
   const unhideProject = useProjectStore(s => s.unhideProject)
-  const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
+  const openCreateProject = useUIStore(s => s.openCreateProject)
   const closeProjectManager = useUIStore(s => s.closeProjectManager)
   const openWorkspaceManager = useUIStore(s => s.openWorkspaceManager)
 
@@ -290,10 +290,10 @@ export default function ProjectManager() {
         <div className="flex items-center gap-2 px-4 py-2 border-b border-border flex-shrink-0 flex-wrap">
           <button
             type="button"
-            onClick={() => void addProjectFromDialog()}
+            onClick={openCreateProject}
             className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors"
           >
-            <FolderPlus size={13} /> {t('添加文件夹')}
+            <FolderPlus size={13} /> {t('新建项目')}
           </button>
           <button
             type="button"

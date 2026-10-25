@@ -869,6 +869,10 @@ async fn ensure_server_endpoint_inner(
     match discover_or_deploy_server(manager, &connection_id, root, app).await {
         Ok(endpoint) => {
             let mut slot = manager.server_slot(&key).unwrap_or_default();
+            // 本轮 daemon 探测未通过（含总截止超时）也记成降级：否则
+            // `daemon_downgraded_at` 为空，冷却重试永远不会触发，这条连接
+            // 在端点重建前只能停在 serve 传输。
+            slot.daemon_downgraded_at = endpoint.daemon.is_none().then(Instant::now);
             slot.endpoint = Some(endpoint.clone());
             slot.unavailable_reason = None;
             slot.activity = None;

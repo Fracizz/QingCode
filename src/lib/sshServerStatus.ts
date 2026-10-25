@@ -7,7 +7,8 @@ export type SshServerPhase =
   | 'readyServer'
   | 'readyDirect'
 
-export type SshServerMode = 'agent' | 'direct' | 'unknown'
+/** 与后端 `ServerMode`（serde camelCase）一致：`server` / `direct` / `unknown`。 */
+export type SshServerMode = 'server' | 'direct' | 'unknown'
 
 export type SshServerTransport = 'daemon' | 'serve' | 'direct'
 
@@ -31,7 +32,16 @@ const PHASES = new Set<SshServerPhase>([
   'readyDirect',
 ])
 
-const MODES = new Set<SshServerMode>(['agent', 'direct', 'unknown'])
+const MODES = new Set<SshServerMode>(['server', 'direct', 'unknown'])
+
+/**
+ * 旧名兼容：代理改名 qingcode-server 之前载荷里是 `agent`。后端现在发 `server`，
+ * 之前前端只认 `agent`，导致所有 readyServer 载荷被整条丢弃、芯片永远停在中间阶段。
+ */
+function normalizeMode(mode: unknown): SshServerMode | null {
+  if (mode === 'agent') return 'server'
+  return typeof mode === 'string' && MODES.has(mode as SshServerMode) ? (mode as SshServerMode) : null
+}
 const TRANSPORTS = new Set<SshServerTransport>(['daemon', 'serve', 'direct'])
 
 export type SshServerChip =
@@ -50,10 +60,10 @@ export function parseSshServerState(value: unknown): SshServerState | null {
   const connectionId = record.connectionId
   const rootUri = record.rootUri
   const phase = record.phase
-  const mode = record.mode
+  const mode = normalizeMode(record.mode)
   if (typeof connectionId !== 'string' || typeof rootUri !== 'string') return null
   if (typeof phase !== 'string' || !PHASES.has(phase as SshServerPhase)) return null
-  if (typeof mode !== 'string' || !MODES.has(mode as SshServerMode)) return null
+  if (!mode) return null
   const version = nullableString(record.version)
   const reason = nullableString(record.reason)
   const transport = nullableTransport(record.transport)
@@ -62,7 +72,7 @@ export function parseSshServerState(value: unknown): SshServerState | null {
     connectionId,
     rootUri,
     phase: phase as SshServerPhase,
-    mode: mode as SshServerMode,
+    mode,
     version,
     transport,
     reason,
@@ -124,6 +134,28 @@ export function sshServerTipLines(state: SshServerState): SshServerTipLine[] {
   ]
   if (state.reason) lines.push({ key: '原因：{reason}', params: { reason: shortReason(state.reason) } })
   return lines
+}
+
+/** 与后端 server_status.rs 的直连原因保持一致。 */
+const REASON_SERVER_DISABLED = '已关闭 ssh.server.enabled'
+const REASON_UNTRUSTED = '工作区未信任'
+
+/**
+ * 直连状态下能否一键切到 Server：返回 null 表示可以直接重新部署；
+ * 总开关关闭或工作区未信任时重新部署也只会回到直连，返回需要先处理的提示 key。
+ */
+export function sshServerSwitchBlocker(state: SshServerState): string | null {
+  const reason = state.reason?.trim() ?? ''
+  if (reason.startsWith(REASON_SERVER_DISABLED)) {
+    return '远端服务已在设置中关闭，请先在 设置 › 功能 中开启「SSH › 服务: 远端服务」'
+  }
+  if (reason.startsWith(REASON_UNTRUSTED)) return '请先信任该工作区，再切换到 Server'
+  return null
+}
+
+/** 当前是否处于直连（含部署失败后的回退），用于决定是否展示「切换到 Server」。 */
+export function sshServerIsDirect(state: SshServerState): boolean {
+  return state.phase === 'readyDirect' || state.mode === 'direct'
 }
 
 export function sshServerEventMatches(eventRootUri: string, activeRootUri: string): boolean {

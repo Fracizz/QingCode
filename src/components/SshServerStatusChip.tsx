@@ -8,6 +8,8 @@ import {
   parseSshServerState,
   sshServerChip,
   sshServerEventMatches,
+  sshServerIsDirect,
+  sshServerSwitchBlocker,
   sshServerPhaseKey,
   sshServerTipLines,
   sshServerTransportKey,
@@ -22,6 +24,8 @@ import { RefreshCw, RotateCw, ScrollText, X } from 'lucide-react'
 
 const STATUS_ACTION = 'rounded px-1 -mx-1 text-fg hover:bg-bg-hover transition-colors'
 const CHIP_DOT = 'h-[5px] w-[5px] rounded-full ring-1 ring-white/10'
+/** 探测/安装/握手期间的补查间隔；最终状态到达后停止。 */
+const SSH_SERVER_PENDING_POLL_MS = 1500
 
 type DialogKind = 'details' | 'logs'
 
@@ -41,17 +45,32 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
     if (!isTauri()) return
     let cancelled = false
     let unlisten: UnlistenFn | undefined
-    const apply = (value: unknown) => {
+    let pollTimer: ReturnType<typeof setTimeout> | undefined
+    // 每收到一条状态事件递增。查询发出后若有事件到达，查询结果即为旧快照，
+    // 必须丢弃，否则晚到的「正在探测」会覆盖已收到的「已就绪」。
+    let eventSeq = 0
+    const parse = (value: unknown) => {
       const next = parseSshServerState(value)
-      if (!next || cancelled || !sshServerEventMatches(next.rootUri, rootUri)) return
+      return next && sshServerEventMatches(next.rootUri, rootUri) ? next : null
+    }
+    const accept = (next: SshServerState) => {
       setHidden(false)
       setInfoError(null)
       setState(next)
+      // 中间阶段补查：最终状态事件一旦漏掉，后端按快照去重不会再发。
+      clearTimeout(pollTimer)
+      pollTimer = undefined
+      if (sshServerChip(next)?.kind === 'pending') {
+        pollTimer = setTimeout(() => void query(), SSH_SERVER_PENDING_POLL_MS)
+      }
     }
-    void safeInvoke<unknown>('读取 SSH Agent 状态', 'ssh_server_info', { rootUri })
-      .then(apply)
-      .catch(error => {
-        if (cancelled) return
+    const query = async () => {
+      const seq = eventSeq
+      let value: unknown
+      try {
+        value = await safeInvoke<unknown>('读取 SSH Agent 状态', 'ssh_server_info', { rootUri })
+      } catch (error) {
+        if (cancelled || seq !== eventSeq) return
         if (isAgentCommandUnavailable(error)) {
           setHidden(true)
           setState(null)
@@ -60,13 +79,34 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
         // 查询失败时不能伪装成直连：以独立错误态展示，等状态事件恢复。
         setState(null)
         setInfoError(String(error))
-      })
-    void listen<unknown>('ssh-server-state', event => apply(event.payload)).then(stop => {
-      if (cancelled) stop()
-      else unlisten = stop
-    })
+        return
+      }
+      if (cancelled || seq !== eventSeq) return
+      const next = parse(value)
+      if (next) accept(next)
+    }
+    void (async () => {
+      // 先订阅再查询：查询返回前完成的部署只会发一次事件，订阅晚了就永远收不到。
+      try {
+        const stop = await listen<unknown>('ssh-server-state', event => {
+          const next = parse(event.payload)
+          if (!next || cancelled) return
+          eventSeq += 1
+          accept(next)
+        })
+        if (cancelled) {
+          stop()
+          return
+        }
+        unlisten = stop
+      } catch {
+        // 订阅失败仍靠查询 + 中间阶段补查收口。
+      }
+      if (!cancelled) await query()
+    })()
     return () => {
       cancelled = true
+      clearTimeout(pollTimer)
       unlisten?.()
     }
   }, [rootUri])
@@ -113,6 +153,10 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
     fetchLogs()
   }
 
+  const direct = sshServerIsDirect(state)
+  const switchBlocker = direct ? sshServerSwitchBlocker(state) : null
+
+  // 直连时同一个后端命令（清缓存 + 重新发现/部署）即「切换到 Server」。
   const restart = () => {
     if (busy) return
     setBusy(true)
@@ -120,15 +164,28 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
       .then(value => {
         const next = parseSshServerState(value)
         if (next) setState(next)
-        pushToast('success', t('已重启远端服务'))
+        if (!direct) {
+          pushToast('success', t('已重启远端服务'))
+        } else if (next?.phase === 'readyServer') {
+          pushToast('success', t('已切换到 Server'))
+        } else if (next && sshServerIsDirect(next)) {
+          pushToast('warn', t('仍为直连'), next.reason ?? undefined)
+        } else {
+          pushToast('info', t('正在部署远端服务…'))
+        }
       })
       .catch(error => {
-        if (!isAgentCommandUnavailable(error)) {
-          pushToast('error', t('重启 Server 失败: {error}', { error: String(error) }))
-        }
+        if (isAgentCommandUnavailable(error)) return
+        pushToast(
+          'error',
+          direct
+            ? t('切换到 Server 失败: {error}', { error: String(error) })
+            : t('重启 Server 失败: {error}', { error: String(error) }),
+        )
       })
       .finally(() => setBusy(false))
   }
+  const restartLabel = direct ? t('切换到 Server') : t('重启 Server')
 
   return (
     <>
@@ -155,7 +212,7 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
           onClose={() => setMenu(null)}
           items={[
             { label: t('查看 Server 详情'), action: () => setDialog('details') },
-            { label: t('重启 Server'), disabled: busy, action: restart },
+            { label: restartLabel, disabled: busy || !!switchBlocker, action: restart },
             { label: t('查看 Server 日志'), action: openLogs },
           ]}
         />
@@ -175,11 +232,11 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
               <div className="flex items-center gap-1">
                 {dialog === 'details' ? (
                   <>
-                    <Tooltip label={t('重启 Server')} side="bottom">
+                    <Tooltip label={restartLabel} side="bottom">
                       <button
                         type="button"
-                        aria-label={t('重启 Server')}
-                        disabled={busy}
+                        aria-label={restartLabel}
+                        disabled={busy || !!switchBlocker}
                         className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
                         onClick={restart}
                       >
@@ -237,6 +294,21 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
                 </pre>
               )}
             </div>
+            {dialog === 'details' && direct ? (
+              <footer className="flex flex-shrink-0 items-center justify-end gap-3 border-t border-border px-4 py-3">
+                {switchBlocker ? (
+                  <p className="min-w-0 flex-1 text-ui-xs text-fg-muted">{t(switchBlocker)}</p>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={busy || !!switchBlocker}
+                  className="flex-shrink-0 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40"
+                  onClick={restart}
+                >
+                  {busy ? t('正在切换…') : t('切换到 Server')}
+                </button>
+              </footer>
+            ) : null}
           </section>
         </ModalOverlay>
       )}
@@ -326,7 +398,7 @@ function modeText(
   mode: SshServerState['mode'],
   t: (source: string, values?: Record<string, string | number>) => string,
 ): string {
-  if (mode === 'agent') return t('Server')
+  if (mode === 'server') return t('Server')
   if (mode === 'direct') return t('直连')
   return t('未知')
 }

@@ -111,7 +111,8 @@ interface ProjectState {
   loadSshConnections: () => Promise<void>
   saveSshConnection: (connection: SshConnection) => Promise<void>
   deleteSshConnection: (id: string) => Promise<void>
-  addProject: (path: string) => Promise<boolean>
+  /** `name` 为空时使用目录名。 */
+  addProject: (path: string, name?: string) => Promise<boolean>
   addSshProject: (
     connection: SshConnection,
     rootPath: string,
@@ -392,10 +393,10 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     window.dispatchEvent(new Event(SSH_CONNECTIONS_CHANGED_EVENT))
   },
 
-  addProject: async (path: string) => {
+  addProject: async (path: string, requestedName?: string) => {
     try {
       await safeInvoke('检查项目目录', 'validate_directory', { path })
-      const name = baseName(path)
+      const name = requestedName?.trim() || baseName(path)
       const id = crypto.randomUUID()
       const now = Date.now()
       // Ask trust before writing the project into the list / top bar.

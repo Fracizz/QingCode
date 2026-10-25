@@ -35,15 +35,16 @@ import { pickVisibleTabIndices } from '../lib/editorTabsLayout'
 
 /** Width reserved for the new-terminal control next to the last tab. */
 const TERMINAL_NEW_BTN_W = 32
+/** Must match the strip's `gap-1` / `px-1.5` so overflow fitting counts spacing. */
+const TERMINAL_TAB_GAP = 4
+const TERMINAL_STRIP_PAD_X = 12
 import {
   canCloseTerminalDirectly,
-  isTerminalBusy,
   listBusyTerminals,
   terminalCloseButtonAction,
 } from '@/lib/terminal/terminalClose'
 import { shouldKeepShellAfterExit } from '@/lib/terminal/terminalShellLifecycle'
 import { shouldShowAppContextMenu } from '../lib/devBuild'
-import { subscribeTerminalCommandActivity } from '@/lib/terminal/terminalCommandActivity'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
@@ -51,22 +52,9 @@ import { useI18n } from '../lib/i18n'
 import { terminalShellLabelKey } from '@/lib/terminal/terminalShell'
 
 const CLOSE_ARM_MS = 4000
-/** Child-process probe interval; shell-integration updates refresh immediately. */
-const BUSY_POLL_MS = 1200
-
-function sameIdSet(a: Set<string>, b: Set<string>): boolean {
-  if (a.size !== b.size) return false
-  for (const id of a) {
-    if (!b.has(id)) return false
-  }
-  return true
-}
-
-/** Pulse only when busy (child process / run task); idle shells stay static green. */
-function terminalStatusDotClass(status: TerminalTab['status'], busy: boolean): string {
-  if (status === 'running') return busy ? 'text-ok dirty-pulse' : 'text-ok'
-  if (status === 'starting') return 'text-warn'
-  return 'text-fg-dim'
+/** Exited tabs end with the restart button, which already carries its own hit area. */
+function terminalTabPaddingClass(status: TerminalTab['status']): string {
+  return status === 'exited' ? 'pl-0.5 pr-0.5' : 'pl-0.5 pr-2.5'
 }
 
 export default function TerminalTabs({
@@ -124,7 +112,6 @@ export default function TerminalTabs({
   const [profileMenu, setProfileMenu] = useState<{ x: number; y: number } | null>(null)
   const [overflowMenu, setOverflowMenu] = useState<{ x: number; y: number } | null>(null)
   const [closeArmId, setCloseArmId] = useState<string | null>(null)
-  const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set())
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   const [visibleIndices, setVisibleIndices] = useState<number[]>([])
@@ -161,12 +148,16 @@ export default function TerminalTabs({
     }
 
     const compute = () => {
+      // 每个标签宽度连同其后的间距一起计；末尾多算的一个间距在 available 里补回。
       const widths = Array.from(
         measure.querySelectorAll<HTMLElement>('[data-tab-measure-id]'),
-        el => el.offsetWidth,
+        el => el.offsetWidth + TERMINAL_TAB_GAP,
       )
       // Overflow / panel actions sit outside `tabsArea`; only reserve the `+` width.
-      const available = Math.max(0, area.clientWidth - TERMINAL_NEW_BTN_W)
+      const available = Math.max(
+        0,
+        area.clientWidth - TERMINAL_NEW_BTN_W - TERMINAL_STRIP_PAD_X + TERMINAL_TAB_GAP,
+      )
       const next =
         widths.length !== count
           ? Array.from({ length: count }, (_, i) => i)
@@ -202,32 +193,6 @@ export default function TerminalTabs({
     }, 0)
     return () => window.clearTimeout(timer)
   }, [renamingId])
-
-  useEffect(() => {
-    let cancelled = false
-    const syncBusy = async () => {
-      const candidates = terminals.filter(
-        t => t.projectId === currentProject?.id && t.status !== 'exited',
-      )
-      const next = new Set<string>()
-      for (const terminal of candidates) {
-        if (await isTerminalBusy(terminal)) next.add(terminal.id)
-      }
-      if (!cancelled) {
-        setBusyIds(prev => (sameIdSet(prev, next) ? prev : next))
-      }
-    }
-    void syncBusy()
-    const timer = window.setInterval(() => void syncBusy(), BUSY_POLL_MS)
-    const unsubscribe = subscribeTerminalCommandActivity(() => {
-      void syncBusy()
-    })
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-      unsubscribe()
-    }
-  }, [terminals, currentProject?.id])
 
   useEffect(() => {
     if (!closeArmId) return
@@ -600,7 +565,7 @@ export default function TerminalTabs({
                     ? translate('终端 - 次窗格')
                     : translate('终端')
             }
-            className="flex h-full min-w-0 shrink items-center gap-1 overflow-hidden px-1"
+            className="flex h-full min-w-0 shrink items-center gap-1 overflow-hidden px-1.5"
             onKeyDown={event => {
               if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
               if (visibleTabIndices.length === 0) return
@@ -630,7 +595,7 @@ export default function TerminalTabs({
                   tabIndex={isActive ? 0 : -1}
                   aria-selected={isActive}
                   draggable={renamingId !== t.id}
-                  className={`group relative flex ui-chip h-6 flex-shrink-0 cursor-pointer select-none items-center gap-0.5 whitespace-nowrap rounded px-0.5 text-ui transition-colors
+                  className={`group relative flex ui-chip h-6 flex-shrink-0 cursor-pointer select-none items-center gap-1 whitespace-nowrap rounded ${terminalTabPaddingClass(t.status)} text-ui transition-colors
                     ${isActive ? 'bg-bg-active text-fg' : 'text-fg-muted hover:bg-bg-hover hover:text-fg'}
                     ${draggedTerminalId === t.id ? 'opacity-45' : ''}`}
                   onDragStart={event => handleTabDragStart(event, t.id)}
@@ -796,13 +761,6 @@ export default function TerminalTabs({
                       </button>
                     </Tooltip>
                   )}
-                  <span className="flex h-4 w-3 shrink-0 items-center justify-center">
-                    <Circle
-                      size={7}
-                      fill="currentColor"
-                      className={terminalStatusDotClass(t.status, busyIds.has(t.id))}
-                    />
-                  </span>
                 </div>
               )
             })}
@@ -904,14 +862,11 @@ export default function TerminalTabs({
             <div
               key={`measure-${term.id}`}
               data-tab-measure-id={term.id}
-              className="flex ui-chip h-6 items-center gap-0.5 whitespace-nowrap rounded px-0.5"
+              className={`flex ui-chip h-6 items-center gap-1 whitespace-nowrap rounded ${terminalTabPaddingClass(term.status)}`}
             >
               <span className="ui-chip h-6 w-5 flex-shrink-0" />
               <span className="max-w-[12rem] truncate text-ui">{formatTerminalName(term.name)}</span>
               {term.status === 'exited' && <span className="ui-chip h-6 w-5 flex-shrink-0" />}
-              <span className="flex h-4 w-3 shrink-0 items-center justify-center">
-                <Circle size={7} fill="currentColor" />
-              </span>
             </div>
           ))}
         </div>

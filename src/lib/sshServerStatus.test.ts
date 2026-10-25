@@ -4,6 +4,8 @@ import {
   parseSshServerState,
   sshServerChip,
   sshServerEventMatches,
+  sshServerIsDirect,
+  sshServerSwitchBlocker,
   sshServerTipLines,
   type SshServerState,
 } from './sshServerStatus'
@@ -12,13 +14,30 @@ const readyServer: SshServerState = {
   connectionId: 'c1',
   rootUri: 'ssh://c1/home/app',
   phase: 'readyServer',
-  mode: 'agent',
+  mode: 'server',
   version: '0.1.13',
   transport: 'daemon',
   reason: null,
 }
 
 describe('sshServerStatus', () => {
+  it('offers switching to Server from direct mode unless a precondition blocks it', () => {
+    const direct: SshServerState = { ...readyServer, phase: 'readyDirect', mode: 'direct', transport: 'direct', version: null, reason: 'server 启动超时' }
+    expect(sshServerIsDirect(readyServer)).toBe(false)
+    expect(sshServerIsDirect(direct)).toBe(true)
+    expect(sshServerSwitchBlocker(direct)).toBeNull()
+    expect(sshServerSwitchBlocker({ ...direct, reason: null })).toBeNull()
+    expect(sshServerSwitchBlocker({ ...direct, reason: '已关闭 ssh.server.enabled' })).toContain('设置')
+    expect(sshServerSwitchBlocker({ ...direct, reason: '工作区未信任' })).toContain('信任')
+  })
+
+  it('accepts the backend server mode and maps the legacy agent alias', () => {
+    // 后端 ServerMode::Server 序列化为 "server"；曾因前端只认 agent 而整条丢弃。
+    expect(parseSshServerState({ ...readyServer, mode: 'server' })?.mode).toBe('server')
+    expect(parseSshServerState({ ...readyServer, mode: 'agent' })?.mode).toBe('server')
+    expect(parseSshServerState({ ...readyServer, mode: 'proxy' })).toBeNull()
+  })
+
   it('parses a camelCase payload and rejects a bad phase', () => {
     expect(parseSshServerState(readyServer)).toEqual(readyServer)
     expect(parseSshServerState({ ...readyServer, phase: 'booting' })).toBeNull()

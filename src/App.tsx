@@ -70,6 +70,7 @@ const SourceControlPanel = lazy(() => import('./components/SourceControlPanel'))
 const RunPanel = lazy(() => import('./components/RunPanel'))
 const ProjectManager = lazy(() => import('./components/ProjectManager'))
 const RemoteConnectionsManager = lazy(() => import('./components/RemoteConnectionsManager'))
+const CreateProjectDialog = lazy(() => import('./components/CreateProjectDialog'))
 const WorkspaceManager = lazy(() => import('./components/WorkspaceManager'))
 const SettingsEditor = lazy(() => import('./components/SettingsEditor'))
 const TerminalPanel = lazy(() => import('./components/TerminalPanel'))
@@ -121,7 +122,6 @@ function App() {
   const currentProject = useProjectStore(s => s.currentProject)
   const projects = useProjectStore(s => s.projects)
   const loadProjects = useProjectStore(s => s.loadProjects)
-  const addProjectFromDialog = useProjectStore(s => s.addProjectFromDialog)
   const [trustTick, setTrustTick] = useState(0)
   // 运行时设置必须在 App 层加载：欢迎页或收起编辑器时 Editor 不挂载，
   // 否则终端滚动缓冲、SSH 粘贴上传等设置会一直停留在默认值。
@@ -163,6 +163,7 @@ function App() {
   const projectManagerOpen = useUIStore(s => s.projectManagerOpen)
   const workspaceManagerOpen = useUIStore(s => s.workspaceManagerOpen)
   const remoteConnectionsOpen = useUIStore(s => s.remoteConnectionsOpen)
+  const createProjectOpen = useUIStore(s => s.createProjectOpen)
   const openProjectManager = useUIStore(s => s.openProjectManager)
   const shortcuts = useShortcutStore(s => s.shortcuts)
   const openPalette = useCommandPaletteStore(s => s.openPalette)
@@ -324,8 +325,7 @@ function App() {
   ])
 
   const handleAddProject = () => {
-    setView('explorer')
-    addProjectFromDialog()
+    useUIStore.getState().openCreateProject()
   }
 
   const inTauri = isTauri()
@@ -493,6 +493,18 @@ function App() {
       {workspaceManagerOpen && (
         <Suspense fallback={null}>
           <WorkspaceManager />
+        </Suspense>
+      )}
+      {createProjectOpen && (
+        <Suspense fallback={null}>
+          <CreateProjectDialog
+            open
+            onClose={() => useUIStore.getState().closeCreateProject()}
+            onCreated={() => {
+              useUIStore.getState().closeCreateProject()
+              useUIStore.getState().setView('explorer')
+            }}
+          />
         </Suspense>
       )}
       {remoteConnectionsOpen && (

@@ -131,12 +131,26 @@ describe('ProjectAddDialog', () => {
     expect(document.querySelector('.lucide-cloud')).toBeInTheDocument()
   })
 
-  it('replaces the project picker with the SSH dialog instead of stacking overlays', () => {
-    render(<ProjectAddDialog open onClose={vi.fn()} />)
+  it('hands off to the unified create-project dialog instead of stacking overlays', () => {
+    const onClose = vi.fn()
+    render(<ProjectAddDialog open onClose={onClose} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'SSH' }))
+    fireEvent.click(screen.getByRole('button', { name: '新建项目' }))
 
-    expect(screen.getByRole('dialog', { name: '打开 SSH 项目' })).toBeInTheDocument()
-    expect(screen.queryByRole('dialog', { name: '选择项目' })).not.toBeInTheDocument()
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(useUIStore.getState().createProjectOpen).toBe(true)
+  })
+
+  it('opens the remote connections manager from the footer', () => {
+    const onClose = vi.fn()
+    render(<ProjectAddDialog open onClose={onClose} />)
+
+    fireEvent.click(screen.getByRole('button', { name: '远程连接' }))
+
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(useUIStore.getState()).toMatchObject({
+      remoteConnectionsOpen: true,
+      remoteConnectionsCreating: false,
+    })
   })
 })

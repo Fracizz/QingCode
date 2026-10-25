@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SshServerStatusChip from './SshServerStatusChip'
 import { useProjectStore } from '../store/projectStore'
@@ -37,10 +37,18 @@ const ready = {
   connectionId: 'c1',
   rootUri,
   phase: 'readyServer',
-  mode: 'agent',
+  mode: 'server',
   version: '0.1.13',
   transport: 'daemon',
   reason: null,
+}
+
+const probing = {
+  ...ready,
+  phase: 'probing',
+  mode: 'unknown',
+  version: null,
+  transport: null,
 }
 
 describe('SshServerStatusChip', () => {
@@ -100,6 +108,64 @@ describe('SshServerStatusChip', () => {
     // A later state event clears the error and restores the normal chip.
     listeners[0]?.({ payload: ready })
     expect(await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' })).toBeTruthy()
+  })
+
+  it('subscribes to state events before reading the snapshot', async () => {
+    let listenersAtQuery = -1
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') {
+        listenersAtQuery = listeners.length
+        return ready
+      }
+      throw new Error(`unexpected ${command}`)
+    })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' })
+    expect(listenersAtQuery).toBe(1)
+  })
+
+  it('recovers from a probing snapshot by polling and stops once ready', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      let calls = 0
+      invoke.mockImplementation(async (_action: string, command: string) => {
+        if (command !== 'ssh_server_info') throw new Error(`unexpected ${command}`)
+        calls += 1
+        if (calls === 1) return probing
+        if (calls === 2) return { ...probing, phase: 'handshaking' }
+        return ready
+      })
+      render(<SshServerStatusChip rootUri={rootUri} />)
+      expect(await screen.findByText('Server…')).toBeTruthy()
+      await act(() => vi.advanceTimersByTimeAsync(1600))
+      await act(() => vi.advanceTimersByTimeAsync(1600))
+      expect(await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' })).toBeTruthy()
+      const settled = calls
+      await act(() => vi.advanceTimersByTimeAsync(5000))
+      expect(calls).toBe(settled)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops a snapshot that was requested before a newer state event', async () => {
+    let resolveInfo: (value: unknown) => void = () => {}
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') {
+        return await new Promise(resolve => {
+          resolveInfo = resolve
+        })
+      }
+      throw new Error(`unexpected ${command}`)
+    })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    await waitFor(() => expect(invoke).toHaveBeenCalled())
+    act(() => listeners[0]?.({ payload: ready }))
+    expect(await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' })).toBeTruthy()
+    // 晚到的旧快照不能把已就绪覆盖回「正在探测」。
+    await act(async () => resolveInfo(probing))
+    expect(screen.getByRole('button', { name: 'Server v0.1.13 点击查看详情' })).toBeTruthy()
+    expect(screen.queryByText('Server…')).toBeNull()
   })
 
   it('hides the chip when the command is missing', async () => {

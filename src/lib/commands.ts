@@ -553,9 +553,9 @@ export function buildCommands(): AppCommand[] {
     },
     {
       id: 'project.add',
-      title: '添加项目',
-      keywords: 'add project folder',
-      run: () => void useProjectStore.getState().addProjectFromDialog(),
+      title: '新建项目',
+      keywords: 'add create new project folder wsl ssh remote 添加 创建 远程',
+      run: () => useUIStore.getState().openCreateProject(),
     },
     {
       id: 'app.quit',

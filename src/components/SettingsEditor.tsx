@@ -178,6 +178,8 @@ const ABOUT_REMOTES: { id: string; label: string; cloneUrl: string; pageUrl: str
 
 /** SSH 远端服务设置的搜索关键词：分区可见性与行级过滤共用同一份列表。 */
 const SSH_SERVER_SEARCH_TERMS: string[] = [
+  '远程连接',
+  'SSH 连接',
   'SSH 服务',
   '远端服务',
   '自动下载',
@@ -1240,6 +1242,20 @@ export default function SettingsEditor() {
                 onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
+                {match('远程连接', 'SSH 连接') && (
+                  <SettingItem
+                    title={t('远程连接')}
+                    description={t('集中管理 SSH 主机：新建、编辑、测试连接、断开，并查看挂在主机下的远程项目与远端服务。')}
+                  >
+                    <button
+                      type="button"
+                      className="setting-control px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60"
+                      onClick={() => useUIStore.getState().openRemoteConnections()}
+                    >
+                      {t('管理远程连接…')}
+                    </button>
+                  </SettingItem>
+                )}
                 {match(...SSH_SERVER_SEARCH_TERMS) && (
                   <SshServerSettingsSection
                     scope={scope}

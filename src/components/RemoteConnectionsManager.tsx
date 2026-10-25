@@ -84,8 +84,11 @@ export default function RemoteConnectionsManager() {
   const switchProject = useProjectStore(s => s.switchProject)
   const pushToast = useProjectStore(s => s.pushToast)
   const closeRemoteConnections = useUIStore(s => s.closeRemoteConnections)
+  const creatingForProject = useUIStore(s => s.remoteConnectionsCreating)
 
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(
+    creatingForProject ? NEW_SSH_CONNECTION_ID : null
+  )
   const [form, setForm] = useState<SshConnectionForm>(emptyConnectionForm())
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
@@ -232,7 +235,7 @@ export default function RemoteConnectionsManager() {
       setError(t(invalid))
       return
     }
-    const id = isNew ? crypto.randomUUID() : selectedId!
+    const id = isNew ? (pendingTestIdRef.current ?? crypto.randomUUID()) : selectedId!
     const secrets: SshSessionSecrets = {
       password: password || undefined,
       passphrase: passphrase || undefined,
@@ -301,11 +304,19 @@ export default function RemoteConnectionsManager() {
     setSaving(true)
     setError('')
     try {
-      const base = selected ?? { id: crypto.randomUUID(), created_at: Date.now() }
+      // 新建连接沿用测试时的会话 id，保存后会话直接归属该连接，不再遗留临时会话。
+      const base = selected ?? {
+        id: pendingTestIdRef.current ?? crypto.randomUUID(),
+        created_at: Date.now(),
+      }
       await saveSshConnection(connectionFromForm(form, base, effectiveFingerprint))
       pendingTestIdRef.current = null
       pushToast('success', t('已保存 SSH 连接'))
       setFingerprintOverride(null)
+      if (isNew && creatingForProject) {
+        closeRemoteConnections()
+        return
+      }
       setSelectedId(base.id)
     } catch (reason) {
       setError(String(reason))

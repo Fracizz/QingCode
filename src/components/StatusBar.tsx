@@ -437,12 +437,13 @@ export default function StatusBar() {
               <span className="min-w-0 max-w-[45%] truncate">
                 {currentProject ? currentProject.name : t('未选择项目')}
               </span>
-              {currentProject && isWslProject(currentProject, sshConnections) ? (
-                <span className="flex-shrink-0 text-ui-2xs text-fg-muted">{t('WSL')}</span>
-              ) : currentProject && isSshProject(currentProject) ? (
+              {currentProject && (isWslProject(currentProject, sshConnections) || isSshProject(currentProject)) ? (
                 <>
-                  <span className="flex-shrink-0 text-ui-2xs text-fg-muted">{t('SSH')}</span>
-                  <SshServerStatusChip rootUri={currentProject.path} />
+                  <span className="flex-shrink-0 text-ui-2xs text-fg-muted">
+                    {isWslProject(currentProject, sshConnections) ? t('WSL') : t('SSH')}
+                  </span>
+                  {/* 经 SSH 接入的 WSL 同样走远端 server，状态芯片不能因 WSL 徽标被隐藏 */}
+                  {isSshProject(currentProject) ? <SshServerStatusChip rootUri={currentProject.path} /> : null}
                 </>
               ) : null}
             </>

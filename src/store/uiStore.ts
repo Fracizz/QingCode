@@ -60,6 +60,10 @@ interface UIState {
   workspaceManagerOpen: boolean
   /** Whether the SSH remote connections manager modal is open. */
   remoteConnectionsOpen: boolean
+  /** 远程连接管理页从「创建项目 → 添加远程主机」打开：直接进入新建表单，保存后自动关闭。 */
+  remoteConnectionsCreating: boolean
+  /** Whether the unified create-project dialog is open. */
+  createProjectOpen: boolean
   /** 进入整页视图（源代码管理/设置）前的布局快照，离开时恢复；null 表示不在整页视图。 */
   fullPageRestore: FullPageRestore | null
   setView: (view: View) => void
@@ -99,7 +103,10 @@ interface UIState {
   openWorkspaceManager: () => void
   closeWorkspaceManager: () => void
   openRemoteConnections: () => void
+  openRemoteConnectionsForCreate: () => void
   closeRemoteConnections: () => void
+  openCreateProject: () => void
+  closeCreateProject: () => void
 }
 
 interface FullPageRestore {
@@ -194,6 +201,8 @@ export const useUIStore = create<UIState>((set) => ({
   projectManagerOpen: false,
   workspaceManagerOpen: false,
   remoteConnectionsOpen: false,
+  remoteConnectionsCreating: false,
+  createProjectOpen: false,
   fullPageRestore: null,
   setView: view =>
     set(state => {
@@ -368,6 +377,10 @@ export const useUIStore = create<UIState>((set) => ({
   closeProjectManager: () => set({ projectManagerOpen: false }),
   openWorkspaceManager: () => set({ workspaceManagerOpen: true }),
   closeWorkspaceManager: () => set({ workspaceManagerOpen: false }),
-  openRemoteConnections: () => set({ remoteConnectionsOpen: true }),
-  closeRemoteConnections: () => set({ remoteConnectionsOpen: false }),
+  openRemoteConnections: () => set({ remoteConnectionsOpen: true, remoteConnectionsCreating: false }),
+  openRemoteConnectionsForCreate: () =>
+    set({ remoteConnectionsOpen: true, remoteConnectionsCreating: true }),
+  closeRemoteConnections: () => set({ remoteConnectionsOpen: false, remoteConnectionsCreating: false }),
+  openCreateProject: () => set({ createProjectOpen: true }),
+  closeCreateProject: () => set({ createProjectOpen: false }),
 }))

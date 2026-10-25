@@ -20,8 +20,17 @@ use qingcode_server::SERVER_VERSION;
 /// daemon 握手应答时限：`connect --ensure-daemon` 可能在通道内现拉 daemon
 /// （代理内部启动等待上限 10s），给足余量再判失败。
 const AGENT_DAEMON_HELLO_TIMEOUT: Duration = Duration::from_secs(20);
-/// 部署后 daemon 就绪探测的总时限（token 轮询 + 握手探针，超出即视为本轮无 daemon）。
-const AGENT_DAEMON_ENSURE_TIMEOUT: Duration = Duration::from_secs(10);
+/// 部署后 daemon 就绪探测的总时限：覆盖启动、token 轮询、握手探针与旧版本
+/// 淘汰的全部步骤，每一步的超时都按剩余预算截断（见 [`daemon_step_budget`]），
+/// 超出即视为本轮无 daemon、直接发布 serve 端点。此前只在轮询末尾检查，
+/// 单步 exec（120s）或握手（20s）阻塞时状态会长时间停在「正在握手」。
+const AGENT_DAEMON_ENSURE_TIMEOUT: Duration = Duration::from_secs(30);
+/// daemon 启动与 token 读取单步 exec 的上限（正常亚秒级完成）。
+const AGENT_DAEMON_STEP_TIMEOUT: Duration = Duration::from_secs(15);
+// 单步上限都不超过总时限，最坏情况下探测也在总截止时收口。
+const _: () = assert!(AGENT_DAEMON_STEP_TIMEOUT.as_secs() <= AGENT_DAEMON_ENSURE_TIMEOUT.as_secs());
+const _: () =
+    assert!(AGENT_DAEMON_HELLO_TIMEOUT.as_secs() <= AGENT_DAEMON_ENSURE_TIMEOUT.as_secs());
 /// daemon `fs.scan` 请求的整体时限（与 serve 路径的 15s 对齐）。
 const AGENT_DAEMON_SCAN_TIMEOUT: Duration = Duration::from_secs(15);
 /// daemon 传输降级后的重试冷却：降级时间戳超过这个时长，ensure 快路径
@@ -180,7 +189,15 @@ pub(super) async fn open_daemon_channel(
     connection_id: &str,
     daemon: &DaemonAccess,
 ) -> Result<DaemonChannel, String> {
-    open_daemon_channel_with(manager, connection_id, daemon, HelloPolicy::STRICT, true).await
+    open_daemon_channel_with(
+        manager,
+        connection_id,
+        daemon,
+        HelloPolicy::STRICT,
+        true,
+        Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT,
+    )
+    .await
 }
 
 /// 按给定 HELLO 校验策略打开 daemon 通道。除 [`shutdown_remote_daemon`]
@@ -188,12 +205,14 @@ pub(super) async fn open_daemon_channel(
 ///
 /// `ensure_daemon = false` 时只连已有实例：daemon 缺席立即失败，不会顺手拉起
 /// 一个（升级替换二进制前必须这样，否则会先启动旧版 daemon）。
+/// `hello_deadline` 是 HELLO 应答的截止时刻，探测路径用它把握手限制在总预算内。
 async fn open_daemon_channel_with(
     manager: &SshManager,
     connection_id: &str,
     daemon: &DaemonAccess,
     policy: HelloPolicy,
     ensure_daemon: bool,
+    hello_deadline: Instant,
 ) -> Result<DaemonChannel, String> {
     let windows = windows_native_path(&daemon.bin).is_some();
     let command = match (windows, ensure_daemon) {
@@ -215,7 +234,7 @@ async fn open_daemon_channel_with(
         stderr_notes: Vec::new(),
     };
     // 握手失败也要关通道：直接丢弃 exec 通道不会发 CLOSE，会一直占着会话名额。
-    match daemon_hello(&mut channel, connection_id, daemon, policy).await {
+    match daemon_hello(&mut channel, connection_id, daemon, policy, hello_deadline).await {
         Ok(()) => Ok(channel),
         Err(error) => {
             channel.shutdown().await;
@@ -230,6 +249,7 @@ async fn daemon_hello(
     connection_id: &str,
     daemon: &DaemonAccess,
     policy: HelloPolicy,
+    deadline: Instant,
 ) -> Result<(), String> {
     let hello = HelloRequest {
         // 设计上 client_id 标识 QingCode 安装实例；这里用连接 id（同一 SSH
@@ -247,9 +267,7 @@ async fn daemon_hello(
             proto::encode(&hello).map_err(|error| format!("编码 HELLO 失败：{error}"))?,
         ))
         .await?;
-    let response = channel
-        .next_frame(Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT)
-        .await?;
+    let response = channel.next_frame(deadline).await?;
     if response.kind != Kind::Hello {
         return Err(format!("daemon 握手应答异常（{}）", response.kind.as_str()));
     }
@@ -275,47 +293,37 @@ pub(super) async fn ensure_remote_daemon(
     root: &RegisteredRoot,
     remote_bin: &str,
 ) -> Option<DaemonAccess> {
-    let windows = windows_native_path(&root.canonical_path);
+    let windows = windows_native_path(&root.canonical_path).is_some();
     // 这里只接受调用方已经通过可信 SHA-256 校验的路径。此前 `None` 会按
     // 项目根重新解析 `<项目>/.qingcode/server/...`，构成项目内代码执行路径；
     // 现在可选路径 API 已删除，编译器不允许再传入无校验回退。
     let bin = remote_bin.to_string();
-    // 幂等启动：unix `nohup setsid`；Windows `daemon --detach` 自脱离。
-    if windows.is_some() {
-        let native_bin = windows_host_path(&bin)?;
-        let script = windows_daemon_start_script(&native_bin);
-        let _ = manager
-            .exec_remote_shell(&root.uri, "", &script, true, REMOTE_EXEC_TIMEOUT)
-            .await;
-    } else {
-        let _ = manager
-            .exec_command(
-                &root.uri,
-                &start_daemon_command(&bin),
-                None,
-                true,
-                REMOTE_EXEC_TIMEOUT,
-            )
-            .await;
+    if windows {
+        // Windows 二进制路径无法换算成本机路径时不做任何远端调用。
+        windows_host_path(&bin)?;
     }
+    // 总截止从第一步开始计：启动、轮询、握手、淘汰旧版本都扣同一份预算。
     let deadline = Instant::now() + AGENT_DAEMON_ENSURE_TIMEOUT;
+    // 幂等启动：unix `nohup setsid`；Windows `daemon --detach` 自脱离。
+    start_daemon(manager, root, &bin, windows, deadline).await;
     let mut restarted_for_stale_version = false;
     loop {
-        let token = read_daemon_token(manager, root, windows.is_some()).await;
+        let token = read_daemon_token(manager, root, windows, deadline).await;
         if let Some(token) = token {
             let access = DaemonAccess {
                 bin: bin.clone(),
                 token,
             };
             if !access.token.is_empty() {
-                match probe_daemon_versioned(manager, connection_id, &access).await {
+                match probe_daemon_versioned(manager, connection_id, &access, deadline).await {
                     ProbeOutcome::Ready => return Some(access),
                     ProbeOutcome::StaleVersion if !restarted_for_stale_version => {
                         // 旧版 daemon 还持着单实例锁：拿它自己的 token 请求
                         // 退出，再按新二进制拉起一轮。只做一次，避免循环。
                         restarted_for_stale_version = true;
-                        shutdown_remote_daemon(manager, connection_id, &access).await;
-                        restart_daemon(manager, root, &bin, windows.is_some()).await;
+                        shutdown_remote_daemon_until(manager, connection_id, &access, deadline)
+                            .await;
+                        start_daemon(manager, root, &bin, windows, deadline).await;
                         continue;
                     }
                     _ => {}
@@ -325,8 +333,14 @@ pub(super) async fn ensure_remote_daemon(
         if Instant::now() >= deadline {
             return None;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(500).min(deadline - Instant::now())).await;
     }
+}
+
+/// 单步可用的时长：剩余总预算与单步上限取小；预算耗尽返回 `None`，调用方跳过该步。
+fn daemon_step_budget(deadline: Instant, now: Instant, cap: Duration) -> Option<Duration> {
+    let remaining = deadline.checked_duration_since(now)?;
+    (!remaining.is_zero()).then(|| remaining.min(cap))
 }
 
 /// 探测结果区分「连不上」与「版本过期」：后者值得淘汰旧实例后重试一轮。
@@ -340,8 +354,22 @@ async fn probe_daemon_versioned(
     manager: &SshManager,
     connection_id: &str,
     access: &DaemonAccess,
+    deadline: Instant,
 ) -> ProbeOutcome {
-    match open_daemon_channel(manager, connection_id, access).await {
+    let Some(budget) = daemon_step_budget(deadline, Instant::now(), AGENT_DAEMON_HELLO_TIMEOUT)
+    else {
+        return ProbeOutcome::Unavailable;
+    };
+    match open_daemon_channel_with(
+        manager,
+        connection_id,
+        access,
+        HelloPolicy::STRICT,
+        true,
+        Instant::now() + budget,
+    )
+    .await
+    {
         Ok(mut channel) => {
             channel.shutdown().await;
             ProbeOutcome::Ready
@@ -351,24 +379,29 @@ async fn probe_daemon_versioned(
     }
 }
 
-/// 按平台重启 daemon（版本淘汰后的第二次拉起）。
-async fn restart_daemon(manager: &SshManager, root: &RegisteredRoot, bin: &str, windows: bool) {
+/// 按平台幂等拉起 daemon（首次启动与版本淘汰后的第二次拉起共用）。
+/// 结果只尽力而为：失败或超时都交给随后的 token 轮询判定。
+async fn start_daemon(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    bin: &str,
+    windows: bool,
+    deadline: Instant,
+) {
+    let Some(timeout) = daemon_step_budget(deadline, Instant::now(), AGENT_DAEMON_STEP_TIMEOUT)
+    else {
+        return;
+    };
     if windows {
         if let Some(native_bin) = windows_host_path(bin) {
             let script = windows_daemon_start_script(&native_bin);
             let _ = manager
-                .exec_remote_shell(&root.uri, "", &script, true, REMOTE_EXEC_TIMEOUT)
+                .exec_remote_shell(&root.uri, "", &script, true, timeout)
                 .await;
         }
     } else {
         let _ = manager
-            .exec_command(
-                &root.uri,
-                &start_daemon_command(bin),
-                None,
-                true,
-                REMOTE_EXEC_TIMEOUT,
-            )
+            .exec_command(&root.uri, &start_daemon_command(bin), None, true, timeout)
             .await;
     }
 }
@@ -378,26 +411,16 @@ async fn read_daemon_token(
     manager: &SshManager,
     root: &RegisteredRoot,
     windows: bool,
+    deadline: Instant,
 ) -> Option<String> {
+    let timeout = daemon_step_budget(deadline, Instant::now(), AGENT_DAEMON_STEP_TIMEOUT)?;
     let result = if windows {
         manager
-            .exec_remote_shell(
-                &root.uri,
-                "",
-                &windows_daemon_token_script(),
-                true,
-                REMOTE_EXEC_TIMEOUT,
-            )
+            .exec_remote_shell(&root.uri, "", &windows_daemon_token_script(), true, timeout)
             .await
     } else {
         manager
-            .exec_command(
-                &root.uri,
-                &daemon_token_command(),
-                None,
-                true,
-                REMOTE_EXEC_TIMEOUT,
-            )
+            .exec_command(&root.uri, &daemon_token_command(), None, true, timeout)
             .await
     };
     result.ok().map(|result| result.stdout.trim().to_string())
@@ -431,16 +454,50 @@ pub(crate) async fn shutdown_remote_daemon(
     connection_id: &str,
     daemon: &DaemonAccess,
 ) -> bool {
-    shutdown_remote_daemon_with(manager, connection_id, daemon, true).await
+    let now = Instant::now();
+    shutdown_remote_daemon_with(
+        manager,
+        connection_id,
+        daemon,
+        true,
+        now + AGENT_DAEMON_HELLO_TIMEOUT,
+        now + AGENT_DAEMON_HELLO_TIMEOUT + AGENT_PING_TIMEOUT,
+    )
+    .await
+}
+
+/// ensure 探测里淘汰旧版本 daemon：握手与 RPC 都不越过探测总截止。
+async fn shutdown_remote_daemon_until(
+    manager: &SshManager,
+    connection_id: &str,
+    daemon: &DaemonAccess,
+    deadline: Instant,
+) -> bool {
+    let now = Instant::now();
+    let Some(hello) = daemon_step_budget(deadline, now, AGENT_DAEMON_HELLO_TIMEOUT) else {
+        return false;
+    };
+    shutdown_remote_daemon_with(
+        manager,
+        connection_id,
+        daemon,
+        true,
+        now + hello,
+        deadline.min(now + hello + AGENT_PING_TIMEOUT),
+    )
+    .await
 }
 
 /// [`shutdown_remote_daemon`] 的实现。`ensure_daemon = false` 用于升级替换
 /// 二进制之前：只连已有 daemon，缺席时不做任何事，绝不能先拉起旧版实例。
+/// `hello_deadline` / `rpc_deadline` 分别限制握手与 `server.shutdown` 应答。
 async fn shutdown_remote_daemon_with(
     manager: &SshManager,
     connection_id: &str,
     daemon: &DaemonAccess,
     ensure_daemon: bool,
+    hello_deadline: Instant,
+    rpc_deadline: Instant,
 ) -> bool {
     let mut channel = match open_daemon_channel_with(
         manager,
@@ -448,6 +505,7 @@ async fn shutdown_remote_daemon_with(
         daemon,
         HelloPolicy::LENIENT,
         ensure_daemon,
+        hello_deadline,
     )
     .await
     {
@@ -458,7 +516,7 @@ async fn shutdown_remote_daemon_with(
         &mut channel,
         "server.shutdown",
         &serde_json::json!({}),
-        Instant::now() + AGENT_PING_TIMEOUT,
+        rpc_deadline,
     )
     .await;
     channel.shutdown().await;
@@ -800,6 +858,28 @@ mod tests {
         assert!(validate_daemon_hello_with(&missing, HelloPolicy::STRICT).is_err());
         // 淘汰路径不依赖能力，只要求能发 shutdown RPC。
         assert!(validate_daemon_hello_with(&missing, HelloPolicy::LENIENT).is_ok());
+    }
+
+    #[test]
+    fn daemon_step_budget_caps_each_step_by_remaining_deadline() {
+        let now = Instant::now();
+        let cap = Duration::from_secs(15);
+        // 预算充足：用单步上限，而不是 exec 默认的 120s。
+        assert_eq!(
+            daemon_step_budget(now + Duration::from_secs(30), now, cap),
+            Some(cap)
+        );
+        // 预算不足：截到剩余时长，整轮探测不会越过总截止。
+        assert_eq!(
+            daemon_step_budget(now + Duration::from_secs(4), now, cap),
+            Some(Duration::from_secs(4))
+        );
+        // 预算耗尽：跳过该步，ensure 直接以无 daemon 收口。
+        assert_eq!(daemon_step_budget(now, now, cap), None);
+        assert_eq!(
+            daemon_step_budget(now, now + Duration::from_secs(1), cap),
+            None
+        );
     }
 
     #[test]

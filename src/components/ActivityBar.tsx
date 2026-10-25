@@ -9,6 +9,7 @@ import {
   GitBranch,
   ChevronLeft,
   ChevronRight,
+  Cloud,
 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
@@ -38,6 +39,7 @@ export default function ActivityBar({
   const gitChanges = useActiveGitDirtyCount()
   const activityBarHidden = useUIStore(s => s.activityBarHidden)
   const setActivityBarHidden = useUIStore(s => s.setActivityBarHidden)
+  const openRemoteConnections = useUIStore(s => s.openRemoteConnections)
 
   if (activityBarHidden) {
     return (
@@ -107,8 +109,9 @@ export default function ActivityBar({
         </button>
       </Tooltip>
 
-      <Item icon={<FolderPlus size={22} />} label={t('添加项目')} onClick={onAddProject} />
+      <Item icon={<FolderPlus size={22} />} label={t('新建项目')} onClick={onAddProject} />
       <Item icon={<ListChecks size={22} />} label={t('项目管理')} onClick={onManageProjects} />
+      <Item icon={<Cloud size={22} />} label={t('远程连接')} onClick={openRemoteConnections} />
       <Item
         icon={<Terminal size={22} />}
         label={t('终端')}
