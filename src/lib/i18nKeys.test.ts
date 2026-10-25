@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import * as ts from 'typescript'
 
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const EN_JSON_PATH = path.join(SRC_ROOT, 'locales', 'en.json')
@@ -25,28 +26,110 @@ function collectBackendFiles(dir: string, acc: string[] = []): string[] {
 }
 
 /**
- * Haystack for "is this message key still referenced anywhere" checks:
- * frontend sources (comments stripped), Rust backend sources, and the plain-text
- * help documents that are bundled verbatim (`?raw`) and never go through t().
+ * Exact string literals used by frontend (comments stripped) and Rust sources.
+ * This intentionally excludes documentation: bundled help text is not routed
+ * through the locale packages, so mentioning a label there does not make its
+ * translation entry live.
  */
-function buildKeyHaystack(): string {
-  const frontend = collectSourceFiles(SRC_ROOT).map(file =>
-    stripComments(fs.readFileSync(file, 'utf8')),
-  )
+function buildKeyReferences(): Set<string> {
+  const references = new Set<string>()
+  for (const file of collectSourceFiles(SRC_ROOT)) {
+    collectTypeScriptLiterals(file, references)
+  }
   const backendDir = path.join(REPO_ROOT, 'src-tauri', 'src')
-  const backend = fs.existsSync(backendDir)
-    ? collectBackendFiles(backendDir).map(file => fs.readFileSync(file, 'utf8'))
-    : []
-  const docs = ['HELP.md', '帮助文档.md']
-    .map(name => path.join(REPO_ROOT, name))
-    .filter(file => fs.existsSync(file))
-    .map(file => fs.readFileSync(file, 'utf8'))
-  return [...frontend, ...backend, ...docs].join('\n')
+  if (fs.existsSync(backendDir)) {
+    for (const file of collectBackendFiles(backendDir)) {
+      collectRustStringLiterals(fs.readFileSync(file, 'utf8'), references)
+    }
+  }
+  return references
 }
 
-/** Keys are Chinese literals; a `\n` in the key shows up escaped in source text. */
-function haystackContainsKey(haystack: string, key: string): boolean {
-  return haystack.includes(key) || haystack.includes(JSON.stringify(key).slice(1, -1))
+function collectTypeScriptLiterals(file: string, out: Set<string>): void {
+  const source = ts.createSourceFile(
+    file,
+    fs.readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  )
+  const visit = (node: ts.Node): void => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      out.add(node.text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+}
+
+/** Collect normal and raw Rust string literals while ignoring comments and chars. */
+function collectRustStringLiterals(source: string, out: Set<string>): void {
+  let i = 0
+  while (i < source.length) {
+    if (source[i] === '/' && source[i + 1] === '/') {
+      i += 2
+      while (i < source.length && source[i] !== '\n') i++
+      continue
+    }
+    if (source[i] === '/' && source[i + 1] === '*') {
+      i += 2
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) i++
+      i += 2
+      continue
+    }
+    if (source[i] === 'r') {
+      let hashes = 0
+      let cursor = i + 1
+      while (source[cursor] === '#') {
+        hashes++
+        cursor++
+      }
+      if (source[cursor] === '"') {
+        const terminator = `"${'#'.repeat(hashes)}`
+        const end = source.indexOf(terminator, cursor + 1)
+        if (end >= 0) {
+          out.add(source.slice(cursor + 1, end))
+          i = end + terminator.length
+          continue
+        }
+      }
+    }
+    if (source[i] === "'") {
+      if (source[i + 1] === '\\') {
+        i += 2
+        while (i < source.length && source[i] !== "'") i++
+        if (source[i] === "'") i++
+        continue
+      }
+      if (source[i + 2] === "'") {
+        i += 3
+        continue
+      }
+      // Lifetime or label, not a char literal.
+      i++
+      continue
+    }
+    if (source[i] !== '"') {
+      i++
+      continue
+    }
+    let raw = ''
+    i++
+    while (i < source.length) {
+      if (source[i] === '\\') {
+        raw += source[i] + (source[i + 1] ?? '')
+        i += 2
+        continue
+      }
+      if (source[i] === '"') {
+        i++
+        break
+      }
+      raw += source[i]
+      i++
+    }
+    out.add(unescapeString(raw))
+  }
 }
 
 type KeyHit = { key: string; file: string; line: number }
@@ -351,22 +434,36 @@ describe('i18n English message budget', () => {
    * Keys that are only ever reached through runtime-composed strings cannot be
    * found by a static scan. List them here instead of deleting them.
    */
-  const RUNTIME_ONLY_KEYS: string[] = []
+  const RUNTIME_ONLY_KEYS = [
+    ['拉取失败', '拉取'],
+    ['切换分支失败', '切换'],
+    ['推送失败', '推送'],
+    ['检查更新失败', '检查更新'],
+    ['操作失败', '继续'],
+  ].flatMap(([fail, action]) => [
+    `${fail}：本地修改「{file}」尚未提交，请先提交或暂存后再${action}`,
+    `${fail}：本地有未提交修改（{files}），请先提交或暂存后再${action}`,
+    `${fail}：远程认证失败，请检查凭据或 SSH 密钥`,
+    `${fail}：无法连接远程仓库，请检查网络或远程地址`,
+    `${fail}：操作已取消`,
+    `${fail}：{detail}`,
+  ])
 
   it('every en.json message key is still referenced by source text', () => {
     const enLocale = JSON.parse(fs.readFileSync(EN_JSON_PATH, 'utf8')) as {
       messages: Record<string, string>
     }
-    const haystack = buildKeyHaystack()
+    const references = buildKeyReferences()
+    const missingRuntime = RUNTIME_ONLY_KEYS.filter(key => !(key in enLocale.messages))
+    expect(missingRuntime, 'RUNTIME_ONLY_KEYS must exist in en.json').toEqual([])
 
     const extras = Object.keys(enLocale.messages)
       .filter(key => !RUNTIME_ONLY_KEYS.includes(key))
-      .filter(key => !haystackContainsKey(haystack, key))
+      .filter(key => !references.has(key))
       .sort((a, b) => a.localeCompare(b, 'zh-CN'))
 
     if (extras.length > 0) {
       const details = extras
-        .slice(0, 25)
         .map(key => `  ${JSON.stringify(key)}`)
         .join('\n')
       expect.fail(

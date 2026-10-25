@@ -71,4 +71,3 @@ export function isVersionSkipped(latest: string, skipped: string | null): boolea
 export function notifyUpdateSettingsChanged(settings: UpdateSettings) {
   window.dispatchEvent(new CustomEvent(UPDATE_SETTINGS_EVENT, { detail: settings }))
 }
-

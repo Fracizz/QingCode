@@ -37,6 +37,9 @@ pub(crate) fn is_binary_extension(name: &str) -> bool {
             | "ttf"
             | "otf"
             | "eot"
+            | "avif"
+            | "tif"
+            | "tiff"
             | "pdf"
             | "zip"
             | "gz"
@@ -78,6 +81,15 @@ pub(crate) fn is_binary_extension(name: &str) -> bool {
             | "db"
             | "7zip"
     )
+}
+
+/// Content search uses the shared binary list with one ambiguity resolved.
+///
+/// `.key` is both Apple Keynote's format and a common extension for PEM text
+/// keys. Always skipping it would make private keys invisible to content search;
+/// the searcher's NUL-byte detection still rejects actual Keynote archives.
+pub(crate) fn is_content_search_binary_extension(name: &str) -> bool {
+    file_extension_lower(name) != "key" && is_binary_extension(name)
 }
 
 /// 图片查看功能主动放行的二进制格式（allowlist，方向与上面的黑名单相反）。
@@ -170,6 +182,25 @@ mod tests {
         assert!(is_binary_extension("dir/x.xlsx"));
         assert!(!is_binary_extension("x.lock"));
         assert!(!is_binary_extension("x.map"));
+    }
+
+    #[test]
+    fn content_search_keeps_ambiguous_text_private_keys() {
+        assert!(!is_content_search_binary_extension("server.key"));
+        assert!(!is_content_search_binary_extension("SERVER.KEY"));
+        // The searcher's NUL detection distinguishes a Keynote archive at read time.
+        assert!(!is_content_search_binary_extension("deck.key"));
+        assert!(is_content_search_binary_extension("report.docx"));
+    }
+
+    #[test]
+    fn web_images_and_unsupported_tiff_are_all_binary() {
+        for name in ["photo.avif", "image.png"] {
+            assert!(is_image_extension(name), "{name}");
+            assert!(is_binary_extension(name), "{name}");
+        }
+        assert!(is_binary_extension("scan.tif"));
+        assert!(is_binary_extension("scan.tiff"));
     }
 
     #[test]

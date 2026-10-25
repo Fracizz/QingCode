@@ -26,4 +26,3 @@ export const EXPLORER_FAVORITES_ITEM_PL = 'pl-5'
 export const EXPLORER_FAVORITES_ITEM_ROW = `${EXPLORER_TREE_NODE_ROW} items-start rounded-sm py-1 pr-2`
 /** Fixed slot so remove control never overlaps truncated labels. */
 export const EXPLORER_FAVORITES_ACTION_COL = 'flex w-[18px] shrink-0 items-center justify-center'
-

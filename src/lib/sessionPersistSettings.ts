@@ -81,4 +81,3 @@ export function notifySessionPersistChanged(enabled: boolean) {
     new CustomEvent(SESSION_PERSIST_EVENT, { detail: { enabled } }),
   )
 }
-

@@ -360,8 +360,8 @@ fn search_file_contents_impl(
             }
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            // Single source of truth for "cannot be a text buffer" (see binary_ext).
-            if crate::binary_ext::is_binary_extension(&name)
+            // Shared binary list; ambiguous `.key` files defer to NUL detection.
+            if crate::binary_ext::is_content_search_binary_extension(&name)
                 || !matches_extensions(&name, extensions.as_deref())
             {
                 return WalkState::Continue;
@@ -641,6 +641,34 @@ mod tests {
             texts.iter().any(|t| t.contains("findme_text")),
             "plain text still matches: {texts:?}"
         );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn searches_text_key_lock_and_source_map_files() {
+        let dir = temp_dir("text-ambiguous-ext");
+        fs::write(dir.join("server.key"), "findme_key\n").unwrap();
+        fs::write(dir.join("package.lock"), "findme_lock\n").unwrap();
+        fs::write(dir.join("bundle.map"), "findme_map\n").unwrap();
+        fs::write(dir.join("deck.key"), "PK\u{0}\u{0}findme_binary").unwrap();
+
+        let resp = search(&dir, opts("findme"));
+        let texts: Vec<_> = resp
+            .files
+            .iter()
+            .flat_map(|f| f.matches.iter().map(|m| m.text.as_str()))
+            .collect();
+        assert!(texts.iter().any(|text| text.contains("findme_key")));
+        assert!(texts.iter().any(|text| text.contains("findme_lock")));
+        assert!(texts.iter().any(|text| text.contains("findme_map")));
+        assert!(!texts.iter().any(|text| text.contains("findme_binary")));
+
+        let mut key_only = opts("findme");
+        key_only.extensions = Some(vec!["key".to_string()]);
+        let resp = search(&dir, key_only);
+        assert_eq!(resp.match_count, 1, "resp={resp:?}");
+        assert!(resp.files[0].name.eq_ignore_ascii_case("server.key"));
 
         fs::remove_dir_all(dir).unwrap();
     }

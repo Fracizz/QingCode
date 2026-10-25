@@ -91,4 +91,3 @@ export async function safeInvoke<T = unknown>(
     recordTauriCommandDuration(resolvedCommand, performance.now() - started, succeeded)
   }
 }
-

@@ -96,4 +96,3 @@ export async function saveGitRefreshIntervalStartMinutes(value: unknown): Promis
   applyGitRefreshIntervalStartMinutes(intervalStartMinutes, true)
   return intervalStartMinutes
 }
-

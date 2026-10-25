@@ -69,4 +69,3 @@ export function notifyProjectIndicatorsChanged(enabled: boolean) {
     new CustomEvent(PROJECT_INDICATORS_EVENT, { detail: { enabled } }),
   )
 }
-

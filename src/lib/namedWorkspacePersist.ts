@@ -362,4 +362,3 @@ export function setActiveNamedWorkspaceId(
   }
   return { ...catalog, updatedAt: now, activeWorkspaceId: id }
 }
-

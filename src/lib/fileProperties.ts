@@ -73,4 +73,3 @@ export function formatFileTime(ms: number | null, locale: string): string {
     timeStyle: 'medium',
   }).format(new Date(ms))
 }
-

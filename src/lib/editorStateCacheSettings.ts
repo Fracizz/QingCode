@@ -45,4 +45,3 @@ export async function saveEditorStateCacheSize(
   applyEditorStateCacheSize(normalized)
   return normalized
 }
-
