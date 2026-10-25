@@ -45,8 +45,6 @@ export default function Toaster() {
             }}
             className="toast-enter toast-item relative overflow-hidden bg-bg-elevated border border-border-strong rounded-lg shadow-elevation-2 px-3.5 py-3 flex items-start gap-2.5 text-ui-lg max-w-sm transition-all duration-150 hover:shadow-elevation-3"
           >
-            {/* Left color indicator bar */}
-            <span className={`absolute left-0 top-0 bottom-0 w-[3px] ${barColor}`} aria-hidden="true" />
             <Icon size={16} className={`${color} mt-0.5 flex-shrink-0`} />
             <div className="flex-1 min-w-0">
               <div role={t.kind === 'error' ? 'alert' : 'status'} aria-atomic="true">
