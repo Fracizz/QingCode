@@ -280,6 +280,25 @@ mod tests {
     }
 
     #[test]
+    fn windows_roots_equate_verbatim_state_path_with_sftp_root() {
+        assert!(remote_roots_equivalent(
+            r"\\?\D:\code\qingcode",
+            "/D:/code/qingcode",
+            true,
+        ));
+        assert!(remote_roots_equivalent(
+            r"\\?\D:\code\qingcode\",
+            "/d:/Code/QingCode",
+            true,
+        ));
+        assert!(!remote_roots_equivalent(
+            r"\\?\D:\code\qingcode",
+            "/D:/code/other",
+            true,
+        ));
+    }
+
+    #[test]
     fn discovery_requires_version_root_and_trusted_checksum() {
         let sha = "a".repeat(64);
         assert!(can_reuse_discovered_server(
@@ -326,7 +345,7 @@ mod tests {
         ));
         assert!(can_reuse_discovered_server(
             SERVER_VERSION,
-            "/D:/code/app/",
+            r"\\?\D:\code\app",
             "/D:/Code/App",
             true,
             Some(&sha),

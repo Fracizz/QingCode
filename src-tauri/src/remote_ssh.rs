@@ -1487,12 +1487,27 @@ fn home_path_candidates(username: &str) -> Vec<String> {
     paths
 }
 
-/// Windows OpenSSH SFTP paths look like `/D:/code/app`.
+/// Windows OpenSSH SFTP paths look like `/D:/code/app`. The server writes the
+/// canonicalized root with the Windows verbatim prefix (`\\?\D:\code\app`), so
+/// both forms must normalize to the same native drive path.
 fn windows_native_path(path: &str) -> Option<String> {
-    let rest = path.strip_prefix('/')?;
+    let path = path.trim().trim_matches('"');
+    let path = path
+        .strip_prefix(r"\\?\")
+        .or_else(|| path.strip_prefix("//?/"))
+        .unwrap_or(path);
+    let rest = path.strip_prefix('/').unwrap_or(path);
     let mut chars = rest.chars();
     let drive = chars.next()?;
     if !drive.is_ascii_alphabetic() || chars.next() != Some(':') {
+        return None;
+    }
+    // Reject drive-relative paths such as `D:code`; only `D:`, `D:\...` and
+    // `D:/...` identify an absolute Windows location.
+    if chars
+        .next()
+        .is_some_and(|separator| separator != '\\' && separator != '/')
+    {
         return None;
     }
     let native = rest.replace('/', "\\");
@@ -4879,8 +4894,17 @@ mod tests {
             windows_native_path("/D:/code/nem-panel").as_deref(),
             Some(r"D:\code\nem-panel")
         );
+        assert_eq!(
+            windows_native_path(r"\\?\D:\code\nem-panel").as_deref(),
+            Some(r"D:\code\nem-panel")
+        );
+        assert_eq!(
+            windows_native_path("//?/D:/code/nem-panel").as_deref(),
+            Some(r"D:\code\nem-panel")
+        );
         assert_eq!(windows_native_path("/C:").as_deref(), Some(r"C:\"));
         assert!(windows_native_path("/home/owner/app").is_none());
+        assert!(windows_native_path(r"D:code\relative").is_none());
     }
 
     const BASE64_ALPHABET: &[u8] =
