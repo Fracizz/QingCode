@@ -1,4 +1,4 @@
-use crate::exclude;
+use crate::exclude::should_skip_path;
 use crate::path_guard::PathAllowlist;
 use ignore::WalkBuilder;
 use serde::Serialize;
@@ -12,26 +12,6 @@ pub struct FileNode {
     pub is_dir: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub children: Option<Vec<FileNode>>,
-}
-
-fn should_skip_path(
-    workspace_root: &str,
-    full_path: &str,
-    name: &str,
-    exclude_patterns: Option<&[String]>,
-) -> bool {
-    match exclude_patterns {
-        Some(patterns) => {
-            if let Some(rel) = exclude::relative_to_root(workspace_root, full_path) {
-                if rel.is_empty() {
-                    return false;
-                }
-                return exclude::is_path_excluded(&rel, patterns);
-            }
-            exclude::is_path_excluded(name, patterns)
-        }
-        None => exclude::default_hard_ignore_name(name),
-    }
 }
 
 fn list_dir_one_level(

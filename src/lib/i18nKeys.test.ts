@@ -8,6 +8,47 @@ const EN_JSON_PATH = path.join(SRC_ROOT, 'locales', 'en.json')
 
 const CALL_NAME_RE = /\b(t|translate|translateFor)\s*\(/g
 
+const REPO_ROOT = path.resolve(SRC_ROOT, '..')
+
+/** Walk `src-tauri/src` for Rust sources; their user-facing strings are translated too. */
+function collectBackendFiles(dir: string, acc: string[] = []): string[] {
+  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (ent.name === 'target' || ent.name === 'node_modules') continue
+    const full = path.join(dir, ent.name)
+    if (ent.isDirectory()) {
+      collectBackendFiles(full, acc)
+      continue
+    }
+    if (ent.name.endsWith('.rs')) acc.push(full)
+  }
+  return acc
+}
+
+/**
+ * Haystack for "is this message key still referenced anywhere" checks:
+ * frontend sources (comments stripped), Rust backend sources, and the plain-text
+ * help documents that are bundled verbatim (`?raw`) and never go through t().
+ */
+function buildKeyHaystack(): string {
+  const frontend = collectSourceFiles(SRC_ROOT).map(file =>
+    stripComments(fs.readFileSync(file, 'utf8')),
+  )
+  const backendDir = path.join(REPO_ROOT, 'src-tauri', 'src')
+  const backend = fs.existsSync(backendDir)
+    ? collectBackendFiles(backendDir).map(file => fs.readFileSync(file, 'utf8'))
+    : []
+  const docs = ['HELP.md', '帮助文档.md']
+    .map(name => path.join(REPO_ROOT, name))
+    .filter(file => fs.existsSync(file))
+    .map(file => fs.readFileSync(file, 'utf8'))
+  return [...frontend, ...backend, ...docs].join('\n')
+}
+
+/** Keys are Chinese literals; a `\n` in the key shows up escaped in source text. */
+function haystackContainsKey(haystack: string, key: string): boolean {
+  return haystack.includes(key) || haystack.includes(JSON.stringify(key).slice(1, -1))
+}
+
 type KeyHit = { key: string; file: string; line: number }
 
 /** Walk source files under src/, skipping locales and test files. */
@@ -302,5 +343,36 @@ describe('i18n English message coverage', () => {
 
     // Sanity: the UI surface uses hundreds of static Chinese source keys.
     expect(uniqueKeys.length).toBeGreaterThan(300)
+  })
+})
+
+describe('i18n English message budget', () => {
+  /**
+   * Keys that are only ever reached through runtime-composed strings cannot be
+   * found by a static scan. List them here instead of deleting them.
+   */
+  const RUNTIME_ONLY_KEYS: string[] = []
+
+  it('every en.json message key is still referenced by source text', () => {
+    const enLocale = JSON.parse(fs.readFileSync(EN_JSON_PATH, 'utf8')) as {
+      messages: Record<string, string>
+    }
+    const haystack = buildKeyHaystack()
+
+    const extras = Object.keys(enLocale.messages)
+      .filter(key => !RUNTIME_ONLY_KEYS.includes(key))
+      .filter(key => !haystackContainsKey(haystack, key))
+      .sort((a, b) => a.localeCompare(b, 'zh-CN'))
+
+    if (extras.length > 0) {
+      const details = extras
+        .slice(0, 25)
+        .map(key => `  ${JSON.stringify(key)}`)
+        .join('\n')
+      expect.fail(
+        `${extras.length} en.json message key(s) are not referenced by any source string.\n` +
+          `Delete them, or add them to RUNTIME_ONLY_KEYS when they are composed at runtime:\n${details}`,
+      )
+    }
   })
 })

@@ -233,18 +233,6 @@ pub fn decode_value<T: DeserializeOwned>(payload: &[u8]) -> io::Result<T> {
     rmp_serde::from_slice(payload).map_err(|e| invalid(format!("MessagePack 解码失败: {e}")))
 }
 
-/// 字节块的线格式：MessagePack `bin`，只有 2~5 字节头部开销。
-pub fn encode_bytes(bytes: &[u8]) -> io::Result<Vec<u8>> {
-    rmp_serde::to_vec(serde_bytes::Bytes::new(bytes))
-        .map_err(|e| invalid(format!("字节块编码失败: {e}")))
-}
-
-pub fn decode_bytes(payload: &[u8]) -> io::Result<Vec<u8>> {
-    let bytes: serde_bytes::ByteBuf =
-        rmp_serde::from_slice(payload).map_err(|e| invalid(format!("字节块解码失败: {e}")))?;
-    Ok(bytes.into_vec())
-}
-
 /// 握手首帧：客户端在 10s 内必须发出，之后才允许其他帧。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -797,14 +785,6 @@ mod tests {
         drop(client);
         let error = read_frame(&mut server).await.unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
-    }
-
-    #[test]
-    fn bytes_are_encoded_as_msgpack_bin_not_arrays() {
-        let payload = encode_bytes(b"abc").unwrap();
-        // bin8 的 MessagePack 标记是 0xc4；若走 Vec<u8> 会是 0x93（3 元素数组）。
-        assert_eq!(payload[0], 0xc4);
-        assert_eq!(decode_bytes(&payload).unwrap(), b"abc");
     }
 
     #[test]

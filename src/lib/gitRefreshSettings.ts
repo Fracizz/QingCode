@@ -97,8 +97,3 @@ export async function saveGitRefreshIntervalStartMinutes(value: unknown): Promis
   return intervalStartMinutes
 }
 
-export function defaultGitRefreshIntervalStartMinutes(): number {
-  return parseGitRefreshIntervalStartMinutes(
-    DEFAULT_GLOBAL_SETTINGS[GIT_REFRESH_INTERVAL_START_MINUTES_KEY]
-  )
-}

@@ -70,6 +70,3 @@ export function notifyProjectIndicatorsChanged(enabled: boolean) {
   )
 }
 
-export function defaultProjectIndicatorsEnabled(): boolean {
-  return parseProjectIndicatorsEnabled(DEFAULT_GLOBAL_SETTINGS[PROJECT_INDICATORS_ENABLED_KEY])
-}

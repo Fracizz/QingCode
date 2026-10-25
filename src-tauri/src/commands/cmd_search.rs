@@ -1,10 +1,10 @@
 use crate::binary_ext::is_binary_extension;
 use crate::content_search;
 use crate::content_search::{
-    ContentSearchOptions, ContentSearchResponse, DEFAULT_MAX_FILES_SCANNED, DEFAULT_MAX_MATCHES,
-    DEFAULT_MAX_MATCHES_PER_FILE,
+    matches_extensions, ContentSearchOptions, ContentSearchResponse, DEFAULT_MAX_FILES_SCANNED,
+    DEFAULT_MAX_MATCHES, DEFAULT_MAX_MATCHES_PER_FILE,
 };
-use crate::exclude;
+use crate::exclude::{self, should_skip_path};
 use crate::path_guard::PathAllowlist;
 use ignore::WalkBuilder;
 use serde::Serialize;
@@ -68,16 +68,6 @@ fn normalize_extensions(extensions: Option<Vec<String>>) -> Option<Vec<String>> 
                 .collect::<Vec<_>>()
         })
         .filter(|exts| !exts.is_empty())
-}
-
-fn matches_extensions(name: &str, extensions: Option<&[String]>) -> bool {
-    match extensions {
-        None | Some([]) => true,
-        Some(exts) => Path::new(name)
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| exts.iter().any(|want| e.eq_ignore_ascii_case(want))),
-    }
 }
 
 fn normalize_path_separators(path: &str) -> String {
@@ -160,26 +150,6 @@ fn fuzzy_match(haystack: &str, needle: &str) -> bool {
         }
     }
     true
-}
-
-fn should_skip_path(
-    workspace_root: &str,
-    full_path: &str,
-    name: &str,
-    exclude_patterns: Option<&[String]>,
-) -> bool {
-    match exclude_patterns {
-        Some(patterns) => {
-            if let Some(rel) = exclude::relative_to_root(workspace_root, full_path) {
-                if rel.is_empty() {
-                    return false;
-                }
-                return exclude::is_path_excluded(&rel, patterns);
-            }
-            exclude::is_path_excluded(name, patterns)
-        }
-        None => exclude::default_hard_ignore_name(name),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

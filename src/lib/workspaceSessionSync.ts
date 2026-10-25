@@ -49,9 +49,6 @@ let hydrated = false
 /** False until project list has loaded — avoids writing an empty snapshot over storage. */
 let persistReady = false
 let persistTimer: ReturnType<typeof setTimeout> | null = null
-let unsubEditor: (() => void) | null = null
-let unsubTerminal: (() => void) | null = null
-let unsubProject: (() => void) | null = null
 
 function splitPinned(tabs: EditorTab[]) {
   const pinned: EditorTab[] = []
@@ -324,9 +321,9 @@ export function installWorkspaceSessionPersistence() {
   installed = true
   if (!shouldRestoreWorkspace()) return
 
-  unsubEditor = useEditorStore.subscribe(() => scheduleWorkspaceSessionPersist())
-  unsubTerminal = useTerminalStore.subscribe(() => scheduleWorkspaceSessionPersist())
-  unsubProject = useProjectStore.subscribe((state, prev) => {
+  useEditorStore.subscribe(() => scheduleWorkspaceSessionPersist())
+  useTerminalStore.subscribe(() => scheduleWorkspaceSessionPersist())
+  useProjectStore.subscribe((state, prev) => {
     if (state.currentProject?.id !== prev.currentProject?.id) {
       scheduleWorkspaceSessionPersist()
     }
@@ -343,17 +340,3 @@ export function flushWorkspaceSessionPersist() {
   persistNow()
 }
 
-/** Test helper — reset module flags between Vitest cases. */
-export function _resetWorkspaceSessionSyncForTests() {
-  if (persistTimer) clearTimeout(persistTimer)
-  persistTimer = null
-  unsubEditor?.()
-  unsubTerminal?.()
-  unsubProject?.()
-  unsubEditor = null
-  unsubTerminal = null
-  unsubProject = null
-  installed = false
-  hydrated = false
-  persistReady = false
-}

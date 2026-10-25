@@ -82,6 +82,3 @@ export function notifySessionPersistChanged(enabled: boolean) {
   )
 }
 
-export function defaultSessionPersist(): boolean {
-  return parseSessionPersist(DEFAULT_GLOBAL_SETTINGS[SESSION_PERSIST_KEY])
-}

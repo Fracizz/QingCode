@@ -92,7 +92,3 @@ export async function safeInvoke<T = unknown>(
   }
 }
 
-/** Throws a friendly error if called outside the Tauri runtime. */
-export async function requireTauri(action: string): Promise<void> {
-  if (!isTauri()) throw new NotInTauriError(action)
-}

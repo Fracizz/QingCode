@@ -11,13 +11,8 @@ export const EXPLORER_HEADING_LABEL = 'truncate leading-tight'
  */
 export const EXPLORER_TREE_CHEVRON_COL =
   'flex w-[14px] shrink-0 items-center justify-center text-fg-dim'
-export const EXPLORER_TREE_ROW = 'flex items-center gap-1'
 export const EXPLORER_TREE_NODE_ROW =
   'flex w-full items-center gap-1 pr-2 py-[3px] text-ui select-none'
-/** depth 1 → 20px — siblings of .agents / .git under the project root */
-export const EXPLORER_TREE_DEPTH1_PL = 'pl-5'
-/** depth 2 → 32px — children nested under 收藏夹 */
-export const EXPLORER_TREE_DEPTH2_PL = 'pl-8'
 
 /** VS Code-style collapsible subsection (收藏夹). */
 export const EXPLORER_SUBSECTION_HEADER =
@@ -32,6 +27,3 @@ export const EXPLORER_FAVORITES_ITEM_ROW = `${EXPLORER_TREE_NODE_ROW} items-star
 /** Fixed slot so remove control never overlaps truncated labels. */
 export const EXPLORER_FAVORITES_ACTION_COL = 'flex w-[18px] shrink-0 items-center justify-center'
 
-export function explorerTreePaddingPx(depth: number): number {
-  return depth * 12 + 8
-}

@@ -26,7 +26,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::daemon::{home_dir, RunDir};
+use crate::daemon::RunDir;
 use crate::ipc::IpcEndpoint;
 
 /// `connect` 的启动参数。
@@ -439,11 +439,6 @@ fn endpoint_is_ready(endpoint: &IpcEndpoint, run_dir: &RunDir) -> bool {
     }
 }
 
-/// 运行目录的默认位置，供诊断信息使用。
-pub fn default_run_dir() -> Option<PathBuf> {
-    home_dir().map(|home| home.join(".qingcode").join("server").join("run"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -579,12 +574,5 @@ mod tests {
         let copied = copy_flushing(&mut reader, &mut output).unwrap();
         assert_eq!(copied, input.len() as u64);
         assert_eq!(output, input);
-    }
-
-    #[test]
-    fn default_run_dir_is_under_home() {
-        if let Some(dir) = default_run_dir() {
-            assert!(dir.ends_with("server/run"));
-        }
     }
 }

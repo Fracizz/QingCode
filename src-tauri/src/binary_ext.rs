@@ -163,6 +163,16 @@ mod tests {
     }
 
     #[test]
+    fn office_documents_are_binary_but_text_lockfiles_are_not() {
+        // 回归：content_search 曾自带一份分歧清单，导致 .docx 被当文本、
+        // 而 .lock/.map 反被当二进制跳过。以本模块为唯一权威源。
+        assert!(is_binary_extension("x.docx"));
+        assert!(is_binary_extension("dir/x.xlsx"));
+        assert!(!is_binary_extension("x.lock"));
+        assert!(!is_binary_extension("x.map"));
+    }
+
+    #[test]
     fn local_message_keeps_the_associated_app_hint() {
         let message = unsupported_text_file_message("/tmp/paste.png");
         assert!(message.contains("暂不支持打开 .png 格式"));

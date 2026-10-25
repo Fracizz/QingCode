@@ -258,7 +258,20 @@ fn normalize_key(path: &Path) -> String {
     s
 }
 
-fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+/// Reject empty / `.` / `..` / path-separator names for create/rename targets.
+///
+/// Single copy shared by the local file commands, the remote SFTP mutation
+/// commands, and the transfers module — they previously each had an identical
+/// private duplicate.
+pub(crate) fn validate_entry_name(name: &str) -> Result<(), String> {
+    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        Err("名称不能为空或包含路径分隔符".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     #[cfg(windows)]
     {
         let raw = path.to_string_lossy();
@@ -269,7 +282,7 @@ fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     path
 }
 
-fn display_path(path: &Path) -> String {
+pub(crate) fn display_path(path: &Path) -> String {
     let raw = path.to_string_lossy();
     #[cfg(windows)]
     {
@@ -281,20 +294,9 @@ fn display_path(path: &Path) -> String {
 }
 
 /// App-owned settings directory (global default-settings.json) is always allowed.
-fn app_settings_dir() -> PathBuf {
-    if cfg!(debug_assertions) {
-        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let project_root = manifest.parent().expect("CARGO_MANIFEST_DIR has no parent");
-        project_root.join(".dev")
-    } else {
-        dirs::data_dir()
-            .expect("no data dir")
-            .join("com.qingcode.app")
-    }
-}
-
+/// Delegates to the single `app_data_dir` implementation in `app_paths`.
 fn is_under_app_settings_dir(resolved: &Path) -> bool {
-    let dir = app_settings_dir();
+    let dir = crate::app_paths::app_data_dir();
     if let Ok(canon) = fs::canonicalize(&dir) {
         return path_is_within(resolved, &strip_verbatim_prefix(canon));
     }

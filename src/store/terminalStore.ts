@@ -475,9 +475,6 @@ export function hydrateTerminalOutputForTabs(terminalIds: Iterable<string>) {
   }
 }
 
-export function getTerminalCommandHistory(id: string): string[] {
-  return terminalCommandHistory.get(id) ?? []
-}
 
 export function subscribeTerminalOutput(id: string, listener: TerminalOutputListener) {
   // Deliver already-batched live bytes to existing views before a new view replays the ring.
@@ -583,11 +580,6 @@ export const TERMINAL_FOCUS_PANES: readonly TerminalFocusPane[] = [
   'br',
 ] as const
 
-export function isTerminalFocusPane(value: unknown): value is TerminalFocusPane {
-  return (
-    value === 'primary' || value === 'secondary' || value === 'bl' || value === 'br'
-  )
-}
 
 /** Pane that owns a session; legacy tabs without `pane` belong to primary. */
 export function terminalPaneOf(tab: Pick<TerminalTab, 'pane'>): TerminalFocusPane {

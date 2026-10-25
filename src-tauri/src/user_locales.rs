@@ -1,5 +1,6 @@
 //! User-installable UI locale packs under the app data `locales/` directory.
 
+use crate::app_paths::app_data_dir;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;
@@ -16,18 +17,6 @@ const EXAMPLE_LOCALE_JSON: &str = r#"{
   }
 }
 "#;
-
-fn app_data_dir() -> PathBuf {
-    if cfg!(debug_assertions) {
-        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let project_root = manifest.parent().expect("CARGO_MANIFEST_DIR has no parent");
-        project_root.join(".dev")
-    } else {
-        dirs::data_dir()
-            .expect("no data dir")
-            .join("com.qingcode.app")
-    }
-}
 
 /// Absolute path to the user locales directory (created on demand).
 pub fn ensure_user_locales_dir() -> PathBuf {

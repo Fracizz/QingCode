@@ -84,11 +84,11 @@ pointerup / settle
 | `src/hooks/useTerminalPanel.ts` | Pointer Capture、每帧合并 dock 像素尺寸、触发 begin/settle |
 | `src/lib/panelResize.ts` | canvas 快照、settle `waitUntil`、合成帧与超时兜底 |
 | `src/components/Terminal.tsx` | 阻止拖动中 fit、最终网格提交、`onRender` 屏障、PTY 调度 |
-| `src/lib/terminalRenderBarrier.ts` | xterm 实际渲染完成信号与 250ms 安全超时 |
-| `src/lib/terminalResizePolicy.ts` | 网格校验和 normal/alternate PTY 延迟策略 |
+| `src/lib/terminal/terminalRenderBarrier.ts` | xterm 实际渲染完成信号与 250ms 安全超时 |
+| `src/lib/terminal/terminalResizePolicy.ts` | 网格校验和 normal/alternate PTY 延迟策略 |
 | `src/styles/xterm.css` | 快照覆盖层、原尺寸显示、背景补齐和裁剪 |
 | `src/lib/panelResize.test.ts` | 快照必须跨越 render readiness 和额外合成帧 |
-| `src/lib/terminalRenderBarrier.test.ts` | rendered、unchanged、timeout 三条屏障路径 |
+| `src/lib/terminal/terminalRenderBarrier.test.ts` | rendered、unchanged、timeout 三条屏障路径 |
 
 ## 6. 性能约束
 
@@ -102,7 +102,7 @@ pointerup / settle
 自动检查：
 
 ```bash
-pnpm exec vitest run src/lib/panelResize.test.ts src/lib/terminalRenderBarrier.test.ts src/lib/terminalResizePolicy.test.ts
+pnpm exec vitest run src/lib/panelResize.test.ts src/lib/terminal/terminalRenderBarrier.test.ts src/lib/terminal/terminalResizePolicy.test.ts
 pnpm check:frontend
 pnpm build
 ```

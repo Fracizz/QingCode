@@ -52,9 +52,6 @@ function normalizePathKey(path: string): string {
 /** In-flight syncs keyed by normalized path — shared across watcher / focus / activate. */
 const syncingPaths = new Set<string>()
 
-export function isOpenFileSyncInFlight(path: string): boolean {
-  return syncingPaths.has(normalizePathKey(path))
-}
 
 /** Test helper — clears the in-flight set between cases. */
 export function resetOpenFileSyncInFlightForTests(): void {

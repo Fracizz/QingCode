@@ -175,10 +175,6 @@ struct ServerManifestArtifact {
 
 #[derive(Debug, Clone, serde::Deserialize)]
 struct ServerManifest {
-    /// 与 SERVER_VERSION 对应的发布版本；诊断日志用，运行时不读。
-    #[allow(dead_code)]
-    #[serde(default)]
-    version: String,
     #[serde(default)]
     artifacts: std::collections::HashMap<String, ServerManifestArtifact>,
 }
@@ -396,7 +392,6 @@ mod tests {
             br#"{"version":"0.1.13-beta.3","artifacts":{"qingcode-server-x86_64":{"sha256":"abc123","size":10}}}"#,
         )
         .unwrap();
-        assert_eq!(manifest.version, "0.1.13-beta.3");
         assert_eq!(
             manifest.artifacts["qingcode-server-x86_64"].sha256,
             "abc123"

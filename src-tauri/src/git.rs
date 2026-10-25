@@ -1120,7 +1120,7 @@ pub async fn git_log(
         .map_err(|error| format!("读取提交记录失败：{error}"))?
 }
 
-fn validate_commit_rev(rev: &str) -> Result<&str, String> {
+pub(crate) fn validate_commit_rev(rev: &str) -> Result<&str, String> {
     let rev = rev.trim();
     if rev.is_empty() || rev.len() > 64 || !rev.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("无效的提交哈希".to_string());

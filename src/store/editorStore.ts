@@ -269,7 +269,6 @@ interface EditorState {
   goForward: () => Promise<void>
   canGoBack: () => boolean
   canGoForward: () => boolean
-  clearNavigationHistory: () => void
   closeTab: (id: string) => void
   closeOtherTabs: (id: string) => void
   closeTabsToRight: (id: string) => void
@@ -288,8 +287,6 @@ interface EditorState {
   saveFile: (id: string) => Promise<void>
   saveAs: (id: string) => Promise<void>
   closeAllTabs: () => void
-  /** @deprecated Prefer activateProjectSession — kept for callers that only filter by path. */
-  closeTabsOutsideProject: (projectPath: string) => void
   /**
    * Stash the current project's editor UI into `projectSessions` and restore
    * the target project's session. Pinned settings tabs stay visible.
@@ -379,7 +376,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   canGoBack: () => canNavigateBack(get().navigationHistory),
   canGoForward: () => canNavigateForward(get().navigationHistory),
-  clearNavigationHistory: () => set({ navigationHistory: EMPTY_NAVIGATION_HISTORY }),
 
   goBack: async () => {
     const current = snapshotEditorLocation()
@@ -1148,22 +1144,6 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     })
   },
 
-  closeTabsOutsideProject: (projectPath: string) =>
-    set(s => {
-      const closed = s.tabs
-        .filter(tab => !isDescendantOf(tab.path, projectPath) && !isPinnedSettingsTab(tab.path))
-        .map(tab => tab.id)
-      disposeEditorSessions(closed)
-      const tabs = s.tabs.filter(
-        tab => isDescendantOf(tab.path, projectPath) || isPinnedSettingsTab(tab.path)
-      )
-      return {
-        tabs,
-        activeTabId: tabs.some(tab => tab.id === s.activeTabId)
-          ? s.activeTabId
-          : (tabs[0]?.id ?? null),
-      }
-    }),
 
   activateProjectSession: (fromProjectId, toProjectId) => {
     if (fromProjectId === toProjectId) return

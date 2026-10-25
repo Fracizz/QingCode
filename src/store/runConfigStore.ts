@@ -27,11 +27,6 @@ interface RunConfigFile {
   configs: RunConfig[]
 }
 
-/** `.qingcode/run.json` schema stored at the project root. */
-export interface RunConfigFileV1 {
-  version: 1
-  configs: RunConfig[]
-}
 
 function projectConfigDir(project: Project): string {
   const sep = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'

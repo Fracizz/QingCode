@@ -1,5 +1,6 @@
 use crate::file_encoding;
-use crate::path_guard::PathAllowlist;
+use crate::git::validate_commit_rev;
+use crate::path_guard::{validate_entry_name, PathAllowlist};
 use crate::terminal::{
     encode_terminal_data, TerminalDataPayload, TerminalExitPayload, TerminalSpawnResult,
 };
@@ -1882,14 +1883,6 @@ fn remote_parent_path(path: &str) -> Result<&str, String> {
     path.rsplit_once('/')
         .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
         .ok_or_else(|| "远程路径缺少父目录".to_string())
-}
-
-fn validate_entry_name(name: &str) -> Result<(), String> {
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
-        Err("名称不能为空或包含路径分隔符".to_string())
-    } else {
-        Ok(())
-    }
 }
 
 fn shell_quote(value: &str) -> String {
@@ -3824,14 +3817,6 @@ pub async fn ssh_git_pull(
         has_conflicts: !conflict_paths.is_empty(),
         conflict_paths,
     })
-}
-
-fn validate_commit_rev(rev: &str) -> Result<&str, String> {
-    let rev = rev.trim();
-    if rev.is_empty() || rev.len() > 64 || !rev.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Err("无效的提交哈希".to_string());
-    }
-    Ok(rev)
 }
 
 fn validate_branch_name(branch: &str) -> Result<&str, String> {

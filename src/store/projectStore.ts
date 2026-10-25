@@ -125,8 +125,6 @@ interface ProjectState {
   hideProject: (id: string) => Promise<void>
   /** Hide the given project ids from the title bar (batch). Prefer switching to `keepId` if current is hidden. */
   hideProjectsByIds: (ids: string[], keepId?: string) => Promise<void>
-  /** Hide every visible title-bar project except `keepId`. */
-  hideOtherProjects: (keepId: string) => Promise<void>
   unhideProject: (id: string) => Promise<void>
   /** Persist a manual sort order for a project (used by the project manager). */
   setProjectSortOrder: (id: string, sortOrder: number) => Promise<void>
@@ -668,12 +666,6 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
   },
 
-  hideOtherProjects: async (keepId: string) => {
-    const others = get()
-      .projects.filter(p => !p.hidden && p.id !== keepId)
-      .map(p => p.id)
-    await get().hideProjectsByIds(others, keepId)
-  },
 
   unhideProject: async (id: string) => {
     const target = get().projects.find(p => p.id === id)

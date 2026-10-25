@@ -57,15 +57,6 @@ function buildRegex(query: string, ignoreCase: boolean): RegExp {
   return new RegExp(query, ignoreCase ? 'giu' : 'gu')
 }
 
-export function countRegexMatches(content: string, query: string, ignoreCase: boolean): number {
-  try {
-    const re = buildRegex(query, ignoreCase)
-    const matches = content.match(re)
-    return matches?.length ?? 0
-  } catch {
-    return 0
-  }
-}
 
 export function applyRegexReplace(
   content: string,

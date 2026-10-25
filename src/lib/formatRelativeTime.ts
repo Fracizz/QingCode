@@ -20,10 +20,3 @@ export function formatRelativeTime(
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-export function latestTimestamp(...values: Array<number | null | undefined>): number | null {
-  let best = 0
-  for (const value of values) {
-    if (value != null && value > best) best = value
-  }
-  return best > 0 ? best : null
-}

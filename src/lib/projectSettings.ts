@@ -23,13 +23,9 @@ export interface SettingsFile {
   [key: string]: unknown
 }
 
-/** @deprecated Prefer SettingsFile */
-export type ProjectSettingsFile = SettingsFile
 
 export type SettingsScope = 'global' | 'project'
 
-export const PROJECT_SETTINGS_RELATIVE_PATH = '.qingcode/project-settings.json'
-export const GLOBAL_SETTINGS_DISPLAY_PATH = '全局设置 / default-settings.json'
 
 export const PROJECTS_KEY = 'qingcode.projects'
 export const PROJECTS_SYNC_ON_STARTUP_KEY = 'qingcode.projects.syncOnStartup'
@@ -133,8 +129,6 @@ export const DEFAULT_PROJECT_SETTINGS: SettingsFile = (() => {
   return next
 })()
 
-/** @deprecated Prefer DEFAULT_GLOBAL_SETTINGS */
-export const DEFAULT_SETTINGS = DEFAULT_GLOBAL_SETTINGS
 
 const SHARED_SETTINGS_BODY = `
   // ============================== 编辑器 ==============================
@@ -378,8 +372,6 @@ ${settingsBodyWithAutoSave(PROJECT_AUTOSAVE_SETTINGS_BODY)}
 }
 `
 
-/** @deprecated Prefer DEFAULT_GLOBAL_SETTINGS_TEXT */
-export const DEFAULT_SETTINGS_TEXT = DEFAULT_GLOBAL_SETTINGS_TEXT
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -653,10 +645,6 @@ export function parseSettings(input: unknown, scope: SettingsScope = 'global'): 
   return next
 }
 
-/** @deprecated Prefer parseSettings */
-export function parseProjectSettings(input: unknown): SettingsFile {
-  return parseSettings(input, 'project')
-}
 
 export function validateSettings(input: unknown): string | null {
   if (!isRecord(input)) return '设置必须是 JSON 对象'
@@ -668,10 +656,6 @@ export function validateSettings(input: unknown): string | null {
   return null
 }
 
-/** @deprecated Prefer validateSettings */
-export function validateProjectSettings(input: unknown): string | null {
-  return validateSettings(input)
-}
 
 export function readProjectEntries(settings: SettingsFile): SettingsProjectEntry[] {
   const raw = settings[PROJECTS_KEY]

@@ -1,6 +1,6 @@
 use crate::binary_ext::display_file_name;
 use crate::file_encoding;
-use crate::path_guard::PathAllowlist;
+use crate::path_guard::{display_path, validate_entry_name, PathAllowlist};
 use serde::Serialize;
 use std::fs;
 use std::io::Write;
@@ -13,14 +13,6 @@ const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;
 
 fn exceeds_editor_file_size_limit(size: u64) -> bool {
     size > MAX_EDITOR_FILE_SIZE
-}
-
-fn validate_entry_name(name: &str) -> Result<(), String> {
-    if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
-        Err("名称不能为空或包含路径分隔符".to_string())
-    } else {
-        Ok(())
-    }
 }
 
 #[tauri::command]
@@ -560,17 +552,6 @@ fn check_symlink_write_inner(
             resolved_path: Some(display_path(&resolved)),
         }),
     }
-}
-
-fn display_path(path: &Path) -> String {
-    let raw = path.to_string_lossy();
-    #[cfg(windows)]
-    {
-        if let Some(stripped) = raw.strip_prefix(r"\\?\") {
-            return stripped.to_string();
-        }
-    }
-    raw.to_string()
 }
 
 /// Absolute path suitable for OS file-list clipboard (strip Windows `\\?\` prefix).

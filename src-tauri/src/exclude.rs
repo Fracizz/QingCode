@@ -155,6 +155,30 @@ pub fn default_hard_ignore_name(name: &str) -> bool {
     )
 }
 
+/// Whether a walk entry should be skipped.
+///
+/// Single copy shared by the file-tree scan (`cmd_scan`) and the fuzzy file
+/// search (`cmd_search`); both had byte-identical private duplicates.
+pub(crate) fn should_skip_path(
+    workspace_root: &str,
+    full_path: &str,
+    name: &str,
+    exclude_patterns: Option<&[String]>,
+) -> bool {
+    match exclude_patterns {
+        Some(patterns) => {
+            if let Some(rel) = relative_to_root(workspace_root, full_path) {
+                if rel.is_empty() {
+                    return false;
+                }
+                return is_path_excluded(&rel, patterns);
+            }
+            is_path_excluded(name, patterns)
+        }
+        None => default_hard_ignore_name(name),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
