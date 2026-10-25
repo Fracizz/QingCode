@@ -45,14 +45,25 @@ describe('ProjectKindMark', () => {
       expect(svg).toHaveClass('lucide-cloud')
     })
 
-    it('renders a monitor icon for SSH project', () => {
+    it('renders a cloud icon for SSH projects on POSIX and Windows remotes', () => {
       const { container } = render(
         <ProjectKindIcon
           project={{ kind: 'ssh', path: 'ssh://c1/home/user/project' }}
         />
       )
-      const svg = container.querySelector('svg')
-      expect(svg).toHaveClass('lucide-monitor')
+      expect(container.querySelector('svg')).toHaveClass('lucide-cloud')
+
+      const windowsProject = render(
+        <ProjectKindIcon
+          project={{
+            kind: 'ssh',
+            path: 'ssh://c1/D:/code/nem-panel',
+            connection_id: 'c1',
+          }}
+          connections={[{ id: 'c1', name: 'WinDev' }]}
+        />
+      )
+      expect(windowsProject.container.querySelector('svg')).toHaveClass('lucide-cloud')
     })
 
     it('renders a folder icon for local project', () => {

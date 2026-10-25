@@ -1,4 +1,4 @@
-import { Cloud, Folder, FolderOpen, Monitor } from 'lucide-react'
+import { Cloud, Folder, FolderOpen } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { isSshProject } from '../lib/sshWorkspace'
@@ -18,11 +18,8 @@ export function ProjectKindIcon({
   className?: string
   open?: boolean
 }) {
-  if (isWslProject(project, connections)) {
+  if (isWslProject(project, connections) || isSshProject(project)) {
     return <Cloud size={size} className={className} />
-  }
-  if (isSshProject(project)) {
-    return <Monitor size={size} className={className} />
   }
   const Icon = open ? FolderOpen : Folder
   return <Icon size={size} className={className} />
