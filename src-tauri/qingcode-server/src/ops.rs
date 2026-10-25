@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use grep_matcher::Matcher;
 use grep_regex::RegexMatcherBuilder;
-use grep_searcher::{Searcher, SearcherBuilder, Sink, SinkMatch};
+use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
 use ignore::overrides::OverrideBuilder;
 use ignore::WalkBuilder;
 use tokio::sync::mpsc::Sender;
@@ -213,7 +213,10 @@ pub fn search_content(
         .case_insensitive(params.ignore_case)
         .build(&escape_regex_literal(&params.query))
         .map_err(|e| format!("构建搜索匹配器失败: {e}"))?;
-    let mut searcher = SearcherBuilder::new().line_number(true).build();
+    let mut searcher = SearcherBuilder::new()
+        .line_number(true)
+        .binary_detection(BinaryDetection::quit(b'\0'))
+        .build();
 
     let mut session = SearchSession {
         send,
@@ -410,6 +413,41 @@ mod tests {
         assert_eq!(subs.len(), 3);
         let starts: Vec<u64> = subs.iter().map(|s| s["start"].as_u64().unwrap()).collect();
         assert_eq!(starts, vec![0, 3, 6]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn search_content_treats_angle_brackets_as_literals() {
+        let root = temp_root("search-angle-brackets");
+        write_file(
+            &root.join("markup.html"),
+            "<div>literal</div>\ndiv\ncomparison: a>b\n",
+        );
+
+        let (tag_records, _) = run_search(&root, &base_params("<div")).await;
+        assert_eq!(tag_records.len(), 1);
+        assert_eq!(tag_records[0]["data"]["line_number"], 1);
+
+        let (comparison_records, _) = run_search(&root, &base_params("a>b")).await;
+        assert_eq!(comparison_records.len(), 1);
+        assert_eq!(comparison_records[0]["data"]["line_number"], 3);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn search_content_skips_binary_files() {
+        let root = temp_root("search-binary");
+        write_file(&root.join("text.txt"), "needle in text\n");
+        std::fs::write(
+            root.join("binary.bin"),
+            b"\0binary before match\nneedle in binary\n",
+        )
+        .unwrap();
+
+        let (records, summary) = run_search(&root, &base_params("needle")).await;
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["data"]["path"]["text"], "./text.txt");
+        assert_eq!(summary.files_scanned, 2);
         let _ = std::fs::remove_dir_all(&root);
     }
 

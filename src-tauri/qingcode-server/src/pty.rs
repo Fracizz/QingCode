@@ -26,17 +26,25 @@
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use portable_pty::{native_pty_system, Child, ChildKiller, CommandBuilder, MasterPty, PtySize};
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use vt100::Parser;
 
 /// 单次从 master 读的字节数。和主程序终端一致：8KB 足够摊薄系统调用，
 /// 又不会让单个 seq 块在环形缓冲里占太大地盘。
 const READ_BUF_BYTES: usize = 8 * 1024;
+
+/// 非阻塞 PTY 无数据时的等待周期。用 select 而不是忙等，64 个空闲终端
+/// 也只产生很低唤醒率。
+#[cfg(unix)]
+const READ_WAIT_TIMEOUT_US: libc::suseconds_t = 250_000;
+
+/// 非阻塞写入遇到 `WouldBlock` 后的重试间隔。队列 task 在此期间仍可被取消。
+const WRITE_RETRY_DELAY: Duration = Duration::from_millis(1);
 
 /// `vt100` 的 scrollback 以**行**为单位分配，一行 `cols` 个 cell，单 cell 十几字节。
 /// 若直接按「字节预算 / 列数」折算，2MB/80 列 ≈ 26k 行，每个终端要吃掉几十 MB；
@@ -224,9 +232,18 @@ struct PtyTerm {
     created: u64,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
+    /// Unix 上 writer 与 reader 共享 master 的 open file description；把该
+    /// description 置为非阻塞后，reader 必须走 poll，writer 才能安全取消。
+    writer_nonblocking: bool,
     proc: Mutex<ProcHandles>,
     state: Mutex<TermState>,
 }
+
+#[cfg(unix)]
+type ReaderWakeup = Option<std::os::fd::RawFd>;
+
+#[cfg(not(unix))]
+type ReaderWakeup = ();
 
 struct HostInner {
     terms: HashMap<String, Arc<PtyTerm>>,
@@ -240,7 +257,7 @@ pub struct PtyHost {
     inner: Arc<Mutex<HostInner>>,
     max_ptys: usize,
     total_buffer_bytes: usize,
-    event_sink: UnboundedSender<PtyEvent>,
+    event_sink: Sender<PtyEvent>,
     id_counter: AtomicU64,
     created_counter: AtomicU64,
 }
@@ -256,11 +273,7 @@ impl std::fmt::Debug for PtyHost {
 }
 
 impl PtyHost {
-    pub fn new(
-        max_ptys: usize,
-        total_buffer_bytes: usize,
-        event_sink: UnboundedSender<PtyEvent>,
-    ) -> Self {
+    pub fn new(max_ptys: usize, total_buffer_bytes: usize, event_sink: Sender<PtyEvent>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(HostInner {
                 terms: HashMap::new(),
@@ -319,6 +332,16 @@ impl PtyHost {
             .master
             .take_writer()
             .map_err(|err| format!("无法写入 PTY：{err}"))?;
+        #[cfg(unix)]
+        let master_fd = pair.master.as_raw_fd();
+        #[cfg(unix)]
+        let writer_nonblocking = master_fd.is_some_and(set_nonblocking);
+        #[cfg(not(unix))]
+        let writer_nonblocking = false;
+        #[cfg(unix)]
+        let reader_wakeup = master_fd.filter(|_| writer_nonblocking);
+        #[cfg(not(unix))]
+        let reader_wakeup = ();
 
         let id = self.next_id();
         let ring_capacity = opts.scrollback_bytes;
@@ -327,6 +350,7 @@ impl PtyHost {
             created: self.created_counter.fetch_add(1, Ordering::Relaxed),
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
+            writer_nonblocking,
             proc: Mutex::new(ProcHandles {
                 pid,
                 killer: Some(killer),
@@ -351,13 +375,22 @@ impl PtyHost {
         let sink = self.event_sink.clone();
         let budget = self.total_buffer_bytes;
         let thread_id = id.clone();
+        let term_for_reader = Arc::clone(&term);
         let spawned = std::thread::Builder::new()
             .name(format!("pty-{thread_id}"))
             .spawn(move || {
-                read_loop(inner_for_reader, budget, thread_id, reader, child, sink);
+                read_loop(
+                    inner_for_reader,
+                    budget,
+                    term_for_reader,
+                    reader,
+                    child,
+                    sink,
+                    reader_wakeup,
+                );
             });
         if let Err(err) = spawned {
-            lock(&self.inner).terms.remove(&id);
+            remove_term_locked(&mut lock(&self.inner), &id, &term);
             return Err(format!("无法启动终端读取线程：{err}"));
         }
 
@@ -373,16 +406,34 @@ impl PtyHost {
 
     /// 把客户端输入写进 PTY。写入可能因为内核缓冲满而阻塞，
     /// 期间不持有宿主锁（只持有该终端自己的写句柄）。
+    #[cfg(test)]
     pub fn write(&self, id: &str, data: &[u8]) -> Result<(), String> {
+        let term = self.term(id)?;
+        write_blocking(&term, data, None)
+    }
+
+    /// daemon 队列使用的可取消写入。
+    ///
+    /// Unix 上 master 已置为非阻塞，`WouldBlock` 时让出执行权并检查取消标记，
+    /// 因此连接断开后不会留下卡死在 `write(2)` 里的 blocking task。其他平台
+    /// 仍走 blocking 线程池，取消标记会在进入写调用前生效。
+    pub async fn write_interruptible(
+        &self,
+        id: &str,
+        data: Vec<u8>,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<(), String> {
         let term = self.term(id)?;
         if lock(&term.state).exited.is_some() {
             return Err("终端进程已退出".to_string());
         }
-        let mut writer = lock(&term.writer);
-        writer
-            .write_all(data)
-            .map_err(|err| format!("写入终端失败：{err}"))?;
-        writer.flush().map_err(|err| format!("写入终端失败：{err}"))
+        if term.writer_nonblocking {
+            write_nonblocking(&term, &data, &cancel).await
+        } else {
+            tokio::task::spawn_blocking(move || write_blocking(&term, &data, Some(cancel.as_ref())))
+                .await
+                .map_err(|err| format!("写入终端任务异常结束：{err}"))?
+        }
     }
 
     /// 调整终端尺寸：内核 winsize（触发 SIGWINCH）+ 解析器网格一起改。
@@ -442,12 +493,18 @@ impl PtyHost {
     /// 结束终端：先对进程组发 `SIGHUP` 让 shell 能正常收尾，1 秒后仍未退出
     /// 再用 portable-pty 的 killer（unix 上是 `SIGKILL`）兜底。
     pub fn kill(&self, id: &str) -> Result<(), String> {
-        let term = self.term(id)?;
+        let Ok(term) = self.term(id) else {
+            return Ok(());
+        };
         if lock(&term.state).exited.is_some() {
+            remove_term_locked(&mut lock(&self.inner), id, &term);
             return Ok(());
         }
         let pid = lock(&term.proc).pid;
         hangup(pid, &term);
+        // kill 是明确终止意图：立即释放 registry 槽位与缓冲记账。读线程仍持有
+        // 实例并在进程真正退出后发送 Exit，路由由 Exit 收尾。
+        remove_term_locked(&mut lock(&self.inner), id, &term);
         let term_for_watchdog = Arc::clone(&term);
         std::thread::Builder::new()
             .name(format!("pty-kill-{id}"))
@@ -519,7 +576,7 @@ impl PtyHost {
         let mut reclaimed: Vec<(String, Arc<PtyTerm>)> = Vec::new();
         {
             let mut inner = lock(&self.inner);
-            let expired: Vec<String> = inner
+            let expired: Vec<(String, Arc<PtyTerm>)> = inner
                 .terms
                 .iter()
                 .filter_map(|(id, term)| {
@@ -529,17 +586,14 @@ impl PtyHost {
                     }
                     let detached_at = state.detached_at?;
                     if now.saturating_duration_since(detached_at) >= detached_ttl {
-                        Some(id.clone())
+                        Some((id.clone(), Arc::clone(term)))
                     } else {
                         None
                     }
                 })
                 .collect();
-            for id in expired {
-                if let Some(term) = inner.terms.remove(&id) {
-                    // 回收的终端连同它的缓冲一起释放，总量账目同步扣减。
-                    let freed = lock(&term.state).ring.bytes();
-                    inner.total_bytes = inner.total_bytes.saturating_sub(freed);
+            for (id, term) in expired {
+                if let Some(term) = remove_term_locked(&mut inner, &id, &term) {
                     reclaimed.push((id, term));
                 }
             }
@@ -583,6 +637,166 @@ impl PtyHost {
     }
 }
 
+/// 从 registry 移除一个具体实例，并同步扣减它的缓冲记账。以 `Arc` 身份而不是
+/// 仅按字符串删除，避免迟到的旧读线程误删后来复用同一 id 的新实例；重复调用
+/// 返回 `None`，因此是幂等的。
+fn remove_term_locked(
+    host: &mut HostInner,
+    id: &str,
+    expected: &Arc<PtyTerm>,
+) -> Option<Arc<PtyTerm>> {
+    if !host
+        .terms
+        .get(id)
+        .is_some_and(|current| Arc::ptr_eq(current, expected))
+    {
+        return None;
+    }
+    let term = host.terms.remove(id)?;
+    let freed = lock(&term.state).ring.bytes();
+    host.total_bytes = host.total_bytes.saturating_sub(freed);
+    Some(term)
+}
+
+fn write_blocking(term: &PtyTerm, data: &[u8], cancel: Option<&AtomicBool>) -> Result<(), String> {
+    if lock(&term.state).exited.is_some() {
+        return Err("终端进程已退出".to_string());
+    }
+
+    let mut offset = 0;
+    while offset < data.len() {
+        if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+            return Err("终端输入写入已取消".to_string());
+        }
+        let written = {
+            let mut writer = lock(&term.writer);
+            writer.write(&data[offset..])
+        };
+        match written {
+            Ok(0) => return Err("写入终端失败：写入长度为 0".to_string()),
+            Ok(written) => offset += written,
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(WRITE_RETRY_DELAY);
+            }
+            Err(err) => return Err(format!("写入终端失败：{err}")),
+        }
+    }
+
+    loop {
+        let flushed = {
+            let mut writer = lock(&term.writer);
+            writer.flush()
+        };
+        match flushed {
+            Ok(()) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+                    return Err("终端输入写入已取消".to_string());
+                }
+                std::thread::sleep(WRITE_RETRY_DELAY);
+            }
+            Err(err) => return Err(format!("写入终端失败：{err}")),
+        }
+    }
+}
+
+async fn write_nonblocking(term: &PtyTerm, data: &[u8], cancel: &AtomicBool) -> Result<(), String> {
+    let mut offset = 0;
+    while offset < data.len() {
+        if cancel.load(Ordering::SeqCst) {
+            return Err("终端输入写入已取消".to_string());
+        }
+        let written = {
+            let mut writer = lock(&term.writer);
+            writer.write(&data[offset..])
+        };
+        match written {
+            Ok(0) => return Err("写入终端失败：写入长度为 0".to_string()),
+            Ok(written) => {
+                offset += written;
+                // 即使内核连续接收多段数据，也把同一连接的其他 PTY 队列
+                // 调度起来；不能让一个高速输入队列独占 current-thread runtime。
+                tokio::task::yield_now().await;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                tokio::time::sleep(WRITE_RETRY_DELAY).await;
+            }
+            Err(err) => return Err(format!("写入终端失败：{err}")),
+        }
+    }
+
+    loop {
+        let flushed = {
+            let mut writer = lock(&term.writer);
+            writer.flush()
+        };
+        match flushed {
+            Ok(()) => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                if cancel.load(Ordering::SeqCst) {
+                    return Err("终端输入写入已取消".to_string());
+                }
+                tokio::time::sleep(WRITE_RETRY_DELAY).await;
+            }
+            Err(err) => return Err(format!("写入终端失败：{err}")),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn set_nonblocking(fd: std::os::fd::RawFd) -> bool {
+    // SAFETY: fd 来自仍存活的 MasterPty；F_GETFL/F_SETFL 只读写该 fd 的状态位。
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return false;
+    }
+    unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) == 0 }
+}
+
+#[cfg(unix)]
+fn wait_readable(fd: ReaderWakeup) {
+    let Some(fd) = fd else {
+        return;
+    };
+    if fd < 0 || fd as usize >= libc::FD_SETSIZE {
+        std::thread::sleep(Duration::from_micros(READ_WAIT_TIMEOUT_US as u64));
+        return;
+    }
+    loop {
+        // SAFETY: fd_set/timeval 都是本函数栈上的有效对象；select 只在调用
+        // 期间读写它们，且 fd 来自仍存活的 MasterPty。
+        let mut readfds = unsafe { std::mem::zeroed::<libc::fd_set>() };
+        let mut timeout = libc::timeval {
+            tv_sec: 0,
+            tv_usec: READ_WAIT_TIMEOUT_US,
+        };
+        unsafe {
+            libc::FD_ZERO(&mut readfds);
+            libc::FD_SET(fd, &mut readfds);
+        }
+        let result = unsafe {
+            libc::select(
+                fd + 1,
+                &mut readfds,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut timeout,
+            )
+        };
+        if result >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
+        {
+            return;
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn wait_readable(_: ReaderWakeup) {}
+
 /// 读线程主循环：把 master 的输出同时喂给解析器、环形缓冲和事件通道。
 ///
 /// 读线程是唯一往缓冲里写的线程，因此 seq 天然单调；它最后负责 `wait` 出退出码，
@@ -590,27 +804,33 @@ impl PtyHost {
 fn read_loop(
     inner: Arc<Mutex<HostInner>>,
     budget: usize,
-    id: String,
+    term: Arc<PtyTerm>,
     mut reader: Box<dyn Read + Send>,
     mut child: Box<dyn Child + Send + Sync>,
-    sink: UnboundedSender<PtyEvent>,
+    sink: Sender<PtyEvent>,
+    reader_wakeup: ReaderWakeup,
 ) {
+    let id = term.id.clone();
     let mut buf = [0u8; READ_BUF_BYTES];
     loop {
+        wait_readable(reader_wakeup);
         match reader.read(&mut buf) {
             Ok(0) => break,
-            Ok(n) => push_output(&inner, budget, &id, &sink, &buf[..n]),
+            Ok(n) => {
+                if !push_output(&inner, budget, &id, &sink, &buf[..n]) {
+                    break;
+                }
+            }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => continue,
             // Linux 上从端全部关闭后主端返回 EIO，语义上等价 EOF。
             Err(_) => break,
         }
     }
     let code = child.wait().ok().map(|status| status.exit_code() as i32);
-    if let Some(term) = lock(&inner).terms.get(&id).cloned() {
-        // `wait` 失败（极罕见）时仍需标记已退出，否则 attach 会一直报「运行中」。
-        lock(&term.state).exited = Some(code.unwrap_or(-1));
-    }
-    let _ = sink.send(PtyEvent::Exit { id, code });
+    lock(&term.state).exited = Some(code.unwrap_or(-1));
+    remove_term_locked(&mut lock(&inner), &id, &term);
+    let _ = sink.blocking_send(PtyEvent::Exit { id, code });
 }
 
 /// 处理一块输出：解析、入缓冲、记账、必要时淘汰，最后推事件。
@@ -622,16 +842,16 @@ fn push_output(
     inner: &Mutex<HostInner>,
     budget: usize,
     id: &str,
-    sink: &UnboundedSender<PtyEvent>,
+    sink: &Sender<PtyEvent>,
     data: &[u8],
-) {
+) -> bool {
     if data.is_empty() {
-        return;
+        return true;
     }
     let seq = {
         let mut host = lock(inner);
         let Some(term) = host.terms.get(id).cloned() else {
-            return;
+            return false;
         };
         let (seq, added) = {
             let mut state = lock(&term.state);
@@ -644,11 +864,12 @@ fn push_output(
         evict_locked(&mut host, budget);
         seq
     };
-    let _ = sink.send(PtyEvent::Data {
+    sink.blocking_send(PtyEvent::Data {
         id: id.to_string(),
         seq,
         data: data.to_vec(),
-    });
+    })
+    .is_ok()
 }
 
 /// 总缓冲超预算时的淘汰：按「detached 最久优先」清空整条缓冲，进程保留。
@@ -928,7 +1149,7 @@ mod tests {
 
     #[test]
     fn ids_are_unique_hex() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
         let host = PtyHost::new(4, 1024, tx);
         let first = host.next_id();
         let second = host.next_id();
@@ -939,11 +1160,7 @@ mod tests {
 
     /// 按 id 累计数据块字节数，直到够 `want` 或超时。
     #[cfg(unix)]
-    async fn wait_for_bytes(
-        rx: &mut tokio::sync::mpsc::UnboundedReceiver<PtyEvent>,
-        id: &str,
-        want: usize,
-    ) {
+    async fn wait_for_bytes(rx: &mut tokio::sync::mpsc::Receiver<PtyEvent>, id: &str, want: usize) {
         let mut got = 0usize;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         while got < want {
@@ -963,6 +1180,40 @@ mod tests {
     }
 
     #[cfg(unix)]
+    async fn wait_for_text(rx: &mut tokio::sync::mpsc::Receiver<PtyEvent>, id: &str, needle: &str) {
+        let mut output = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        while !String::from_utf8_lossy(&output).contains(needle) {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            assert!(!remaining.is_zero(), "等待终端 {id} 输出超时");
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Some(PtyEvent::Data {
+                    id: event_id, data, ..
+                })) if event_id == id => output.extend_from_slice(&data),
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => panic!("等待终端 {id} 输出时事件流中断"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_exit(
+        rx: &mut tokio::sync::mpsc::Receiver<PtyEvent>,
+        id: &str,
+    ) -> Option<i32> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            assert!(!remaining.is_zero(), "等待终端 {id} 退出超时");
+            match tokio::time::timeout(remaining, rx.recv()).await {
+                Ok(Some(PtyEvent::Exit { id: event_id, code })) if event_id == id => return code,
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => panic!("等待终端 {id} 退出时事件流中断"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
     fn sh_options(scrollback_bytes: usize, client_id: &str) -> PtyCreateOptions {
         PtyCreateOptions {
             cwd: std::env::temp_dir(),
@@ -976,30 +1227,25 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn pty_streams_data_then_exit_and_replays_from_seq() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    async fn pty_replays_while_running_then_releases_registry_on_exit() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let host = PtyHost::new(4, 4 * 1024 * 1024, tx);
         let info = host
             .create(sh_options(64 * 1024, "client-a"))
             .expect("创建 PTY 失败");
-        host.write(&info.id, b"printf hello; sleep 0.2; exit\n")
+        host.write(&info.id, b"printf hello; sleep 0.2\n")
             .expect("写入终端失败");
 
         let mut output = Vec::new();
         let mut seqs = Vec::new();
-        let mut exit = None;
-        loop {
+        while !String::from_utf8_lossy(&output).contains("hello") {
             match tokio::time::timeout(Duration::from_secs(20), rx.recv()).await {
-                Ok(Some(PtyEvent::Data { seq, data, .. })) => {
+                Ok(Some(PtyEvent::Data { id, seq, data, .. })) if id == info.id => {
                     seqs.push(seq);
                     output.extend_from_slice(&data);
                 }
-                Ok(Some(PtyEvent::Exit { code, .. })) => {
-                    exit = Some(code);
-                    break;
-                }
-                Ok(None) => break,
-                Err(_) => panic!("等待 exit 事件超时"),
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => panic!("等待 hello 输出超时"),
             }
         }
 
@@ -1009,13 +1255,11 @@ mod tests {
             seqs.windows(2).all(|pair| pair[1] == pair[0] + 1),
             "seq 应严格递增且连续：{seqs:?}"
         );
-        assert_eq!(exit, Some(Some(0)), "sh 正常退出应带 code 0");
-
-        // 从 0 重放：缓冲还在，给缺失块而不是快照。
+        // 进程仍在运行时从 0 重放。
         let replay_all = host.attach(&info.id, 0, "client-a").expect("attach 失败");
         assert!(replay_all.screen.is_none(), "缓冲未淘汰时不该给屏幕快照");
         assert!(!replay_all.replay.is_empty());
-        assert_eq!(replay_all.exited, Some(0));
+        assert_eq!(replay_all.exited, None);
         assert_eq!(replay_all.replay[0].0, 0);
         assert_eq!((replay_all.cols, replay_all.rows), (80, 24));
 
@@ -1033,12 +1277,166 @@ mod tests {
             .expect("attach 失败");
         assert!(ahead.screen.is_some());
         assert!(ahead.replay.is_empty());
+
+        host.write(&info.id, b"exit\n").unwrap();
+        assert_eq!(wait_for_exit(&mut rx, &info.id).await, Some(0));
+        assert!(host.list().is_empty(), "自然退出后仍留在 registry");
+        assert_eq!(host.buffered_bytes(), 0, "退出后缓冲记账未释放");
+        assert!(
+            host.attach(&info.id, 0, "client-a").is_err(),
+            "已退出终端不应还能 attach"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn natural_exit_and_kill_release_slot_for_immediate_reuse() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let host = PtyHost::new(1, 64 * 1024, tx);
+
+        let natural = host.create(sh_options(16 * 1024, "client-a")).unwrap();
+        host.write(&natural.id, b"printf natural\nexit\n").unwrap();
+        wait_for_exit(&mut rx, &natural.id).await;
+        assert!(host.list().is_empty(), "自然退出后 list 未移除终端");
+        assert_eq!(host.buffered_bytes(), 0, "自然退出后 total_bytes 未归零");
+
+        let killed = host.create(sh_options(16 * 1024, "client-a")).unwrap();
+        host.kill(&killed.id).unwrap();
+        assert!(host.list().is_empty(), "kill 返回后 registry 仍有终端");
+        assert_eq!(host.buffered_bytes(), 0, "kill 后 total_bytes 未归零");
+        wait_for_exit(&mut rx, &killed.id).await;
+
+        let replacement = host.create(sh_options(16 * 1024, "client-a")).unwrap();
+        host.kill(&replacement.id).unwrap();
+        wait_for_exit(&mut rx, &replacement.id).await;
+        assert!(host.list().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remove_is_idempotent_and_never_deletes_a_reused_id() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let host = PtyHost::new(4, 64 * 1024, tx);
+        let old_info = host.create(sh_options(4096, "client-a")).unwrap();
+        let old_term = lock(&host.inner).terms.get(&old_info.id).cloned().unwrap();
+
+        assert!(
+            remove_term_locked(&mut lock(&host.inner), &old_info.id, &old_term).is_some(),
+            "首次移除应成功"
+        );
+        assert!(
+            remove_term_locked(&mut lock(&host.inner), &old_info.id, &old_term).is_none(),
+            "重复移除必须幂等"
+        );
+
+        let new_info = host.create(sh_options(4096, "client-a")).unwrap();
+        let new_term = lock(&host.inner).terms.get(&new_info.id).cloned().unwrap();
+        {
+            let mut inner = lock(&host.inner);
+            inner.terms.remove(&new_info.id).unwrap();
+            inner
+                .terms
+                .insert(old_info.id.clone(), Arc::clone(&new_term));
+        }
+
+        force_kill(&old_term);
+        wait_for_exit(&mut rx, &old_info.id).await;
+        assert!(
+            Arc::ptr_eq(
+                lock(&host.inner).terms.get(&old_info.id).unwrap(),
+                &new_term
+            ),
+            "旧实例的迟到清理误删了同 id 新实例"
+        );
+
+        assert!(
+            remove_term_locked(&mut lock(&host.inner), &old_info.id, &new_term).is_some(),
+            "按实例身份仍应能移除新实例"
+        );
+        force_kill(&new_term);
+        wait_for_exit(&mut rx, &new_info.id).await;
+        assert_eq!(host.buffered_bytes(), 0);
+    }
+
+    /// 队列关闭时，非阻塞 writer 必须在下一次取消检查退出，不能留下卡在
+    /// `write(2)` 的 blocking task（否则重连后的同一 PTY 会被旧写锁住）。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn interruptible_write_stops_when_cancelled() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let host = Arc::new(PtyHost::new(4, 4 * 1024 * 1024, tx));
+        let info = host
+            .create(sh_options(64 * 1024, "client-a"))
+            .expect("创建 PTY 失败");
+        host.write(
+            &info.id,
+            b"stty -echo; printf 'WRITE%s\\n' _READY; exec sh -c 'while read x; do sleep 1; done'\n",
+        )
+        .unwrap();
+        wait_for_text(&mut rx, &info.id, "WRITE_READY").await;
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let task_host = Arc::clone(&host);
+        let task_id = info.id.clone();
+        let task_cancel = Arc::clone(&cancel);
+        let writer = tokio::spawn(async move {
+            task_host
+                .write_interruptible(&task_id, vec![b'x'; 8 * 1024 * 1024], task_cancel)
+                .await
+        });
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        cancel.store(true, Ordering::SeqCst);
+        let result = tokio::time::timeout(Duration::from_secs(2), writer)
+            .await
+            .expect("取消后 writer 仍卡在写入")
+            .expect("writer task panic");
+        assert!(
+            result.unwrap_err().contains("取消"),
+            "取消写入应返回明确错误"
+        );
+
+        host.kill(&info.id).unwrap();
+    }
+
+    /// 没有消费者时 PTY reader 必须停在有界事件队列上，不能继续读 master
+    /// 并把输出堆进用户态内存。
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn bounded_event_sink_backpressures_pty_reader() {
+        const EVENT_DEPTH: usize = 4;
+        let (tx, rx) = tokio::sync::mpsc::channel(EVENT_DEPTH);
+        let host = PtyHost::new(4, 1024 * 1024, tx);
+        let info = host.create(sh_options(256 * 1024, "client-a")).unwrap();
+        host.write(
+            &info.id,
+            b"i=0; while [ $i -lt 100000 ]; do echo qingcode-backpressure; i=$((i+1)); done\n",
+        )
+        .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while rx.len() < EVENT_DEPTH {
+            assert!(Instant::now() < deadline, "事件队列未被输出填满");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(rx.len(), EVENT_DEPTH, "事件队列不得超过容量");
+        let stuck_at = host.list()[0].seq;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            host.list()[0].seq,
+            stuck_at,
+            "sink 满后 reader 仍继续推进 seq，说明背压没有生效"
+        );
+
+        host.kill(&info.id).unwrap();
+        drop(rx);
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn detach_keeps_process_and_marks_info() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let host = PtyHost::new(4, 1024 * 1024, tx);
         let info = host.create(sh_options(4096, "client-a")).unwrap();
         // 不同客户端的 detach 不应生效，避免旧连接误伤。
@@ -1061,7 +1459,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn has_children_sees_running_command() {
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let host = PtyHost::new(4, 1024 * 1024, tx);
         let info = host.create(sh_options(4096, "client-a")).unwrap();
         assert!(!host.has_children(&info.id), "刚起来的 shell 没有子进程");
@@ -1081,7 +1479,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn total_buffer_budget_evicts_longest_detached_buffer() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let budget = 8 * 1024;
         let host = PtyHost::new(4, budget, tx);
 

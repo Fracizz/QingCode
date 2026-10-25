@@ -1441,12 +1441,14 @@ mod tests {
         assert_eq!(decode_git_text(&[0xD6, 0xD0, 0xCE, 0xC4]), "中文");
     }
 
+    #[cfg(windows)]
     #[test]
     fn resolve_relative_rejects_parent_dir() {
         let root = Path::new(r#"D:\project"#);
         assert!(resolve_relative(root, "../outside.txt").is_err());
     }
 
+    #[cfg(windows)]
     #[test]
     fn resolve_relative_normalizes_separators() {
         let root = Path::new(r#"D:\project"#);

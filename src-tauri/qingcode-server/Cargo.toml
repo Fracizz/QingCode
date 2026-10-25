@@ -28,6 +28,7 @@ ignore = "0.4.29"
 grep-searcher = "0.1.17"
 grep-regex = "0.1.14"
 grep-matcher = "0.1.9"
+regex-syntax = "0.8"
 notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
 # PTY 宿主（pty.rs）：portable-pty 在 Linux/macOS 走 openpty、Windows 走 ConPTY；

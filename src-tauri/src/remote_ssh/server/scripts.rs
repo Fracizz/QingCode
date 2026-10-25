@@ -8,6 +8,42 @@ use super::*;
 /// 1MB 就先删掉重建，日志才是有界的，长期开着的仓库不会把它堆成巨文件。
 pub(crate) const SERVE_LOG_TRUNCATE_BYTES: u64 = 1024 * 1024;
 
+/// Unix 用户私有 server 目录：用调用方的 umask 与显式 chmod 保证父目录和
+/// 版本目录都是 0700。目录列表由调用方按 `.qingcode` → `server` → 版本目录
+/// 传入。
+pub(crate) fn private_server_dirs_command(dirs: &[String]) -> String {
+    let quoted = dirs
+        .iter()
+        .map(|dir| shell_quote(dir))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!("umask 077; mkdir -p -- {quoted} && chmod 700 -- {quoted}")
+}
+
+/// Windows 用户私有 server 目录：`%USERPROFILE%` 默认只允许当前用户访问，
+/// 创建时沿用该 ACL。
+pub(crate) fn windows_create_server_dirs_script(native_dirs: &[String]) -> String {
+    let entries = native_dirs
+        .iter()
+        .map(|dir| format!("'{}'", powershell_literal(dir)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "$ErrorActionPreference = 'Stop'
+@({entries}) | ForEach-Object {{ New-Item -ItemType Directory -Force -LiteralPath $_ | Out-Null }}"
+    )
+}
+
+/// 读取远端用户家目录。Unix 走登录 shell；Windows 由 PowerShell 读取
+/// `%USERPROFILE%`，调用方再转成 SFTP 的 `/C:/...` 形态。
+pub(crate) fn remote_home_command() -> &'static str {
+    "printf '%s\\n' \"$HOME\""
+}
+
+pub(crate) fn windows_remote_home_script() -> &'static str {
+    "$env:USERPROFILE"
+}
+
 /// Windows 部署脚本：只负责日志截断 + 以简单参数调用 `serve --detach`。
 ///
 /// 为什么不再用 PowerShell P/Invoke CreateProcess（真机实测三连坑）：
@@ -82,6 +118,18 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
     )
 }
 
+/// Unix：按可执行文件路径精确结束旧版项目内 server/daemon。只读
+/// `/proc/<pid>/exe`，不会执行目标文件；用于迁移时清理旧二进制。
+pub(crate) fn kill_processes_by_executable_command(bin: &str) -> String {
+    let bin = shell_quote(bin);
+    format!(
+        "for exe in /proc/[0-9]*/exe; do \
+         [ \"$(readlink -- \"$exe\" 2>/dev/null)\" = {bin} ] || continue; \
+         pid=${{exe#/proc/}}; pid=${{pid%/exe}}; kill \"$pid\" 2>/dev/null || true; \
+         done; true"
+    )
+}
+
 pub(super) fn windows_stop_for(remote_bin: &str) -> String {
     windows_host_path(remote_bin)
         .map(|path| windows_stop_processes_script(&path))
@@ -107,12 +155,6 @@ pub(super) fn windows_deploy_for(
 pub(super) fn windows_remove_for(remote_bin: &str) -> String {
     windows_host_path(remote_bin)
         .map(|path| windows_remove_file_script(&path))
-        .unwrap_or_default()
-}
-
-pub(super) fn windows_kill_for(state_path: &str, pid: u32) -> String {
-    windows_host_path(state_path)
-        .map(|path| windows_kill_server_script(pid, &path))
         .unwrap_or_default()
 }
 
@@ -214,36 +256,6 @@ pub(crate) fn kill_server_command(pid: u32, state_path: &str) -> String {
          && tr '\\000' '\\n' < /proc/{pid}/cmdline | grep -qxF -- {} \
          && kill {pid} 2>/dev/null || true",
         shell_quote(state_path)
-    )
-}
-
-/// 清理旧版（改名 server 之前）遗留的 agent serve：身份校验与
-/// [`kill_server_command`] 同构，但 cmdline 里匹配的是旧二进制名
-/// `qingcode-agent`。身份对上才 kill，并**只删旧状态文件本身**——不动整个
-/// `.qingcode/agent/` 目录，那里可能有用户自己的文件。
-pub(crate) fn legacy_agent_cleanup_command(pid: u32, state_path: &str) -> String {
-    format!(
-        "if test -r /proc/{pid}/cmdline \
-         && tr '\\000' '\\n' < /proc/{pid}/cmdline | grep -q -- qingcode-agent \
-         && tr '\\000' '\\n' < /proc/{pid}/cmdline | grep -qxF -- {}; then \
-         kill {pid} 2>/dev/null; rm -f -- {}; fi",
-        shell_quote(state_path),
-        shell_quote(state_path)
-    )
-}
-
-/// Windows 版旧版 agent 清理：进程名/命令行校验后再 Stop-Process，
-/// 成功路径里顺带删除旧状态文件（不删旧目录）。
-pub(crate) fn windows_legacy_agent_cleanup_script(pid: u32, state_path: &str) -> String {
-    format!(
-        r"$p = Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' -ErrorAction SilentlyContinue
-$state = '{state}'
-if ($p -and $p.Name -like 'qingcode-agent*' -and $p.CommandLine -and $p.CommandLine.Contains($state)) {{
-  Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue
-  Remove-Item -LiteralPath $state -Force -ErrorAction SilentlyContinue
-}}",
-        pid = pid,
-        state = powershell_literal(state_path),
     )
 }
 
@@ -362,7 +374,7 @@ pub(super) async fn sha256_of_file_cached(path: &Path) -> Result<String, String>
 
 #[cfg(test)]
 mod tests {
-    use super::super::paths::{server_binary_file_name, server_binary_remote_path};
+    use super::super::paths::{server_binary_file_name, server_install_dir};
     use super::*;
 
     #[tokio::test]
@@ -390,17 +402,25 @@ mod tests {
             "qingcode-server-windows-x86_64.exe"
         );
         assert_eq!(
-            server_binary_remote_path("/D:/code/app", true, "aarch64"),
-            "/D:/code/app/.qingcode/server/qingcode-server-windows-aarch64.exe"
+            format!(
+                "{}/{}",
+                server_install_dir("/C:/Users/dev", qingcode_server::SERVER_VERSION),
+                server_binary_file_name(true, "aarch64")
+            ),
+            format!(
+                "/C:/Users/dev/.qingcode/server/{}/qingcode-server-windows-aarch64.exe",
+                qingcode_server::SERVER_VERSION
+            )
         );
         let script = windows_deploy_for(
-            "/D:/code/app/.qingcode/server/qingcode-server-windows-x86_64.exe",
+            "/C:/Users/dev/.qingcode/server/0.1.13/qingcode-server-windows-x86_64.exe",
             "/D:/code/app",
             "/D:/code/app/.qingcode/server/server.json",
             "/D:/code/app/.qingcode/server/serve.log",
         )
         .unwrap();
-        assert!(script.contains(r"D:\code\app\.qingcode\server\qingcode-server-windows-x86_64.exe"));
+        assert!(script
+            .contains(r"C:\Users\dev\.qingcode\server\0.1.13\qingcode-server-windows-x86_64.exe"));
         // 脱离会话由 serve --detach 原生完成，客户端脚本只传简单 argv。
         assert!(script.contains("--detach"));
         assert!(script.contains("--log-file"));
@@ -524,27 +544,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_agent_cleanup_verifies_identity_and_removes_only_state_file() {
-        let command = legacy_agent_cleanup_command(1234, "/srv/app/.qingcode/agent/agent.json");
-        // 与 kill_server_command 同构的身份校验，但匹配的是旧二进制名。
-        assert!(command.contains("/proc/1234/cmdline"));
-        assert!(command.contains("grep -q -- qingcode-agent"));
-        assert!(!command.contains("grep -q -- qingcode-server"));
-        // 只删旧状态文件本身，绝不能 rm 整个 .qingcode/agent 目录。
-        assert!(command.contains("rm -f -- '/srv/app/.qingcode/agent/agent.json'"));
-        assert!(!command.contains("rm -rf"));
-        assert!(!command.contains("rm -r "));
-        // 身份对不上时无副作用：命令包在 if 里而不是 || true 链。
-        assert!(command.starts_with("if test -r /proc/1234/cmdline"));
-        assert!(command.trim_end().ends_with("fi"));
-
-        let script = windows_legacy_agent_cleanup_script(7, r"D:\app\.qingcode\agent\agent.json");
-        assert!(script.contains("qingcode-agent*"));
-        assert!(script.contains("Stop-Process -Id 7"));
-        assert!(script.contains("Remove-Item -LiteralPath $state -Force"));
-    }
-
-    #[test]
     fn remote_sha256_commands_reference_the_binary_only() {
         let command = remote_sha256_command("/srv/app/bin/qingcode-server-x86_64");
         assert!(command.contains("sha256sum -- '/srv/app/bin/qingcode-server-x86_64'"));
@@ -579,5 +578,40 @@ mod tests {
         let windows = windows_connect_daemon_command_existing("/D:/app/qingcode-server.exe");
         assert_eq!(windows, "\"D:/app/qingcode-server.exe\" connect --stdio");
         assert!(!windows.contains("--ensure-daemon"));
+    }
+
+    #[test]
+    fn private_server_directory_commands_quote_and_tighten_every_component() {
+        let dirs = vec![
+            "/home/dev/.qingcode".to_string(),
+            "/home/dev/.qingcode/server".to_string(),
+            "/home/dev/.qingcode/server/0.1.13".to_string(),
+        ];
+        let command = private_server_dirs_command(&dirs);
+        assert!(command.starts_with("umask 077; mkdir -p --"));
+        assert!(command.contains("chmod 700 --"));
+        assert!(command.contains("'/home/dev/.qingcode/server/0.1.13'"));
+
+        let script = windows_create_server_dirs_script(&[
+            r"C:\Users\dev\.qingcode".to_string(),
+            r"C:\Users\dev\.qingcode\server".to_string(),
+            r"C:\Users\dev\.qingcode\server\0.1.13".to_string(),
+        ]);
+        assert!(script.contains("New-Item -ItemType Directory -Force"));
+        assert!(script.contains(r"'C:\Users\dev\.qingcode\server\0.1.13'"));
+    }
+
+    #[test]
+    fn legacy_process_cleanup_matches_exact_executable_without_running_it() {
+        let command = kill_processes_by_executable_command(
+            "/srv/app/.qingcode/server/qingcode-server-x86_64",
+        );
+        assert!(command.contains("/proc/[0-9]*/exe"));
+        assert!(command.contains("readlink"));
+        assert!(command.contains("'/srv/app/.qingcode/server/qingcode-server-x86_64'"));
+        assert!(command.contains("kill \"$pid\""));
+        // 清理命令本身不能包含执行目标二进制、self-check 或 connect。
+        assert!(!command.contains(" self-check"));
+        assert!(!command.contains(" connect"));
     }
 }

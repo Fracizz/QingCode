@@ -410,6 +410,7 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
     #[test]
     fn high_churn_filter_only_applies_below_watched_root() {
         let roots = vec![PathBuf::from(r"D:\Work\demo")];

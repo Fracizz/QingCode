@@ -86,7 +86,7 @@ fn connect_blocking_or_spawn(
                 ));
             }
             let mut child = spawn_daemon(options.state_dir.as_deref())?;
-            wait_ready(run_dir, options.start_timeout, &mut child)?;
+            wait_ready(endpoint, run_dir, options.start_timeout, &mut child)?;
             endpoint
                 .blocking_connect()
                 .map_err(|e| format!("daemon 已启动但连接失败: {e}"))
@@ -175,7 +175,7 @@ fn pump_windows(
                 ));
             }
             let mut child = spawn_daemon(options.state_dir.as_deref())?;
-            wait_ready(&run_dir, options.start_timeout, &mut child)?;
+            wait_ready(&endpoint, &run_dir, options.start_timeout, &mut child)?;
             runtime
                 .block_on(connect_async(&endpoint))
                 .map_err(|e| format!("daemon 已启动但连接失败: {e}"))?
@@ -289,6 +289,20 @@ fn debug_log(message: std::fmt::Arguments<'_>) {
     }
 }
 
+/// token 比较不因首个不同字节提前返回，避免通过响应时间逐字节猜测 token。
+pub fn constant_time_token_eq(expected: &str, actual: &str) -> bool {
+    let expected = expected.as_bytes();
+    let actual = actual.as_bytes();
+    let mut diff = expected.len() ^ actual.len();
+    let length = expected.len().max(actual.len());
+    for index in 0..length {
+        let expected_byte = expected.get(index).copied().unwrap_or(0);
+        let actual_byte = actual.get(index).copied().unwrap_or(0);
+        diff |= usize::from(expected_byte ^ actual_byte);
+    }
+    diff == 0
+}
+
 /// `std::io::copy` + 及时 flush：终端输出中间可能没有换行，留在缓冲里就等于丢帧。
 /// Unix 泵使用；Windows 走异步分片，不需要它（测试仍覆盖这段逻辑）。
 #[cfg(any(unix, test))]
@@ -384,21 +398,23 @@ fn spawn_daemon(state_dir: Option<&Path>) -> Result<SpawnedDaemon, String> {
     }
 }
 
-/// 等就绪标记与 token 出现。子进程提前退出（例如抢锁失败但锁被占）时立刻返回，
-/// 避免白等满超时。
+/// 等就绪标记与 token 出现，并真实连接一次 IPC 端点。仅凭残留 socket/token
+/// 文件无法证明 daemon 存活；探测连接失败时继续等待新 daemon 接管。
+/// 子进程提前退出（例如抢锁失败但锁被占）时立刻返回，避免白等满超时。
 fn wait_ready(
+    endpoint: &IpcEndpoint,
     run_dir: &RunDir,
     timeout: Duration,
     child: &mut SpawnedDaemon,
 ) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     loop {
-        if run_dir.ready_marker().exists() && run_dir.read_token().is_ok() {
+        if endpoint_is_ready(endpoint, run_dir) {
             return Ok(());
         }
         if let Ok(Some(status)) = child.try_wait() {
             // 抢锁失败时子进程会直接退出：此时另一个 daemon 应该已经就绪。
-            if run_dir.ready_marker().exists() && run_dir.read_token().is_ok() {
+            if endpoint_is_ready(endpoint, run_dir) {
                 return Ok(());
             }
             return Err(format!("daemon 启动后立即退出（{status}）"));
@@ -407,6 +423,19 @@ fn wait_ready(
             return Err(format!("等待 daemon 就绪超时（{}s）", timeout.as_secs()));
         }
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn endpoint_is_ready(endpoint: &IpcEndpoint, run_dir: &RunDir) -> bool {
+    if !run_dir.ready_marker().exists() || run_dir.read_token().is_err() {
+        return false;
+    }
+    match endpoint.blocking_connect() {
+        Ok(pair) => {
+            drop(pair);
+            true
+        }
+        Err(_) => false,
     }
 }
 
@@ -468,7 +497,12 @@ mod tests {
         let run_dir = RunDir::resolve(Some(&dir)).unwrap();
         let mut spawned = SpawnedDaemon::from_test_child(exit_now_command().spawn().unwrap());
         let started = Instant::now();
-        let result = wait_ready(&run_dir, Duration::from_secs(10), &mut spawned);
+        let result = wait_ready(
+            &IpcEndpoint::new(run_dir.dir()),
+            &run_dir,
+            Duration::from_secs(10),
+            &mut spawned,
+        );
         assert!(result.is_err());
         assert!(
             started.elapsed() < Duration::from_secs(5),
@@ -482,9 +516,59 @@ mod tests {
         let dir = temp_dir("timeout");
         let run_dir = RunDir::resolve(Some(&dir)).unwrap();
         let mut spawned = SpawnedDaemon::from_test_child(sleep_command().spawn().unwrap());
-        let result = wait_ready(&run_dir, Duration::from_millis(300), &mut spawned);
+        let result = wait_ready(
+            &IpcEndpoint::new(run_dir.dir()),
+            &run_dir,
+            Duration::from_millis(300),
+            &mut spawned,
+        );
         assert!(matches!(result, Err(ref message) if message.contains("超时")));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wait_ready_rejects_stale_socket_and_token() {
+        let dir = temp_dir("stale");
+        let run_dir = RunDir::resolve(Some(&dir)).unwrap();
+        // Unix socket 文件在 listener drop 后仍保留，connect 会得到 ConnectionRefused。
+        let listener = std::os::unix::net::UnixListener::bind(run_dir.socket()).unwrap();
+        drop(listener);
+        std::fs::write(run_dir.token(), b"stale-token").unwrap();
+        let mut spawned = SpawnedDaemon::from_test_child(sleep_command().spawn().unwrap());
+
+        let result = wait_ready(
+            &IpcEndpoint::new(run_dir.dir()),
+            &run_dir,
+            Duration::from_millis(300),
+            &mut spawned,
+        );
+
+        assert!(
+            matches!(result, Err(ref message) if message.contains("超时")),
+            "残留 socket/token 被误判为就绪: {result:?}"
+        );
+        let SpawnedDaemon::Unix(child) = &mut spawned;
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn constant_time_token_eq_matches_exact_tokens_only() {
+        assert!(constant_time_token_eq(
+            "0123456789abcdef",
+            "0123456789abcdef"
+        ));
+        assert!(!constant_time_token_eq(
+            "0123456789abcdef",
+            "0123456789abcdee"
+        ));
+        assert!(!constant_time_token_eq(
+            "0123456789abcdef",
+            "0123456789abcdef0"
+        ));
+        assert!(!constant_time_token_eq("short", "longer"));
     }
 
     #[test]

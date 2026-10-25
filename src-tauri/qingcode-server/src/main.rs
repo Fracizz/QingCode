@@ -31,9 +31,8 @@ const USAGE: &str = "\
 /// 已有同 root 实例在运行时的退出码。调用方据此判定「无需再起」，而不是启动失败。
 const EXIT_ALREADY_RUNNING: u8 = 3;
 
-/// pid 是否仍存活。代理只跑在 Linux 远端，用 `/proc/<pid>` 存在性判定（无新依赖）；
-/// 其他平台没有便宜的等价手段，退化为「无法判定 → 视为未运行」，
-/// 由后续 bind 失败兜底。
+/// pid 是否仍存活。Unix 用 `/proc/<pid>` 存在性判定，Windows 通过 `tasklist`
+/// 查询；其他平台退化为「无法判定 → 视为未运行」，由后续 bind 失败兜底。
 fn is_pid_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
@@ -578,12 +577,47 @@ fn write_state_file(state: &Path, port: u16, token: &str, root: &Path) -> Result
     };
     let payload =
         serde_json::to_vec_pretty(&file).map_err(|e| format!("序列化状态文件失败: {e}"))?;
-    std::fs::write(state, payload).map_err(|e| format!("写入状态文件失败: {e}"))?;
-    // 状态文件含连接 token，远端部署时收紧到仅属主可读写。
+
+    // 状态文件含连接 token。Unix 上先以 0600 创建同目录临时文件，写完并
+    // fsync 后再 rename，既没有「先写后 chmod」的泄露窗口，也保证读者只会
+    // 看到完整 JSON。
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(state, std::fs::Permissions::from_mode(0o600));
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let parent = state
+            .parent()
+            .ok_or_else(|| format!("状态文件缺少父目录: {}", state.display()))?;
+        let file_name = state
+            .file_name()
+            .ok_or_else(|| format!("状态文件路径无效: {}", state.display()))?
+            .to_string_lossy();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|value| value.as_nanos())
+            .unwrap_or(0);
+        let temp = parent.join(format!(".{file_name}.tmp.{}.{nanos}", std::process::id()));
+        let result = (|| -> std::io::Result<()> {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&temp)?;
+            file.write_all(&payload)?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&temp, state)
+        })();
+        if let Err(error) = result {
+            let _ = std::fs::remove_file(&temp);
+            return Err(format!("原子写入状态文件失败: {error}"));
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(state, payload).map_err(|e| format!("写入状态文件失败: {e}"))?;
     }
     Ok(())
 }
@@ -678,6 +712,41 @@ mod tests {
         // pid 已退出：状态文件是残留，允许接管。
         write_state(&state, u32::MAX, &root);
         assert_eq!(conflicting_instance(&state, &root), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_state_file_is_private_for_create_and_replace() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = temp_root("private-state");
+        let state = root.join("server.json");
+
+        write_state_file(&state, 12345, "fresh-token", &root).unwrap();
+        let mode = std::fs::metadata(&state).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "新建状态文件权限不是 0600");
+        let payload: ServerStateFile =
+            serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
+        assert_eq!(payload.token, "fresh-token");
+
+        // 旧版本可能留下 0644 文件；原子替换后也必须恢复 0600。
+        std::fs::set_permissions(&state, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_state_file(&state, 12346, "rotated-token", &root).unwrap();
+        let mode = std::fs::metadata(&state).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "替换后状态文件权限不是 0600");
+        let payload: ServerStateFile =
+            serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
+        assert_eq!(payload.port, 12346);
+        assert_eq!(payload.token, "rotated-token");
+        assert!(
+            std::fs::read_dir(&root).unwrap().all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp.")),
+            "原子写入后残留临时文件"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

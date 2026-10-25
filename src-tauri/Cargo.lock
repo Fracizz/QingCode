@@ -4238,6 +4238,7 @@ dependencies = [
  "notify",
  "notify-debouncer-mini",
  "portable-pty",
+ "regex-syntax",
  "rmp-serde",
  "serde",
  "serde_bytes",

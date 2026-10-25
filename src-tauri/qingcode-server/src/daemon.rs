@@ -17,7 +17,7 @@
 //! `FILE_FLAG_FIRST_PIPE_INSTANCE` 承担（另一进程已持有实例时创建失败）。
 //! 抢不到锁说明已有实例，本进程直接退出（退出码 0），由调用方连上那个实例。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{json, Value};
-use tokio::io::WriteHalf;
+use tokio::io::{AsyncWrite, WriteHalf};
 use tokio::sync::{mpsc, Notify};
 
 use crate::ipc::{IpcEndpoint, IpcListener, IpcStream};
@@ -66,6 +66,12 @@ const MAX_CONNS: usize = 64;
 /// 每条连接的终端输入队列深度。正常按键只有几十字节；给到 64 条足以吸收
 /// 快速粘贴，同时在极端洪泛时把内存钉住（不会像无界队列那样无限增长）。
 const INPUT_QUEUE_DEPTH: usize = 64;
+
+const PTY_EVENT_QUEUE_DEPTH: usize = 256;
+const OUTBOUND_CONTROL_DEPTH: usize = 32;
+const OUTBOUND_DATA_DEPTH: usize = 64;
+const INBOUND_FRAME_QUEUE_DEPTH: usize = 32;
+const ROUTE_PENDING_MAX_BYTES: usize = 2 * 1024 * 1024;
 
 /// 能力列表：客户端按它开关功能，不写死平台规则。
 pub const CAPABILITIES: &[&str] = &[
@@ -379,7 +385,7 @@ async fn serve(
     listener: IpcListener,
 ) -> Result<(), String> {
     let log = Arc::new(log);
-    let (pty_tx, pty_rx) = mpsc::unbounded_channel::<PtyEvent>();
+    let (pty_tx, pty_rx) = mpsc::channel::<PtyEvent>(PTY_EVENT_QUEUE_DEPTH);
     let pty = Arc::new(PtyHost::new(
         options.max_ptys,
         options.pty_buffer_bytes,
@@ -468,8 +474,8 @@ struct Daemon {
     started: Instant,
     next_conn: AtomicU32,
     conns: Mutex<HashMap<u32, ConnHandle>>,
-    /// pty id → 当前持有它的连接 id。断线后清除，PTY 继续运行。
-    routes: Mutex<HashMap<String, u32>>,
+    /// pty id → 当前路由。创建、attach、实时事件消费和 detach 都以这把锁为同步边界。
+    routes: Mutex<HashMap<String, PtyRoute>>,
     shutdown: Notify,
     detached_ttl: Duration,
     idle_exit: Duration,
@@ -479,12 +485,119 @@ struct Daemon {
 
 #[derive(Clone)]
 struct ConnHandle {
-    tx: mpsc::UnboundedSender<Outbound>,
+    outbound: OutboundSender,
+    inputs: Arc<InputQueues>,
 }
 
+#[derive(Debug)]
 struct Outbound {
     priority: Priority,
     frame: Frame,
+}
+
+#[derive(Clone)]
+struct OutboundSender {
+    control: mpsc::Sender<Outbound>,
+    data: mpsc::Sender<Outbound>,
+    disconnect: Arc<Notify>,
+    closing: Arc<AtomicBool>,
+}
+
+impl OutboundSender {
+    fn new(
+        control: mpsc::Sender<Outbound>,
+        data: mpsc::Sender<Outbound>,
+        disconnect: Arc<Notify>,
+    ) -> Self {
+        Self {
+            control,
+            data,
+            disconnect,
+            closing: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn try_send(&self, priority: Priority, frame: Frame) -> bool {
+        let tx = if priority == Priority::Control {
+            &self.control
+        } else {
+            &self.data
+        };
+        match tx.try_send(Outbound { priority, frame }) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) | Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.abort();
+                false
+            }
+        }
+    }
+
+    fn abort(&self) {
+        if !self.closing.swap(true, Ordering::SeqCst) {
+            self.disconnect.notify_one();
+        }
+    }
+}
+
+/// 路由的交付阶段。attach 在 `Replaying` 阶段先发送快照/补发流；期间到达的
+/// 实时事件进入 `pending`。重放结束后短暂进入 `Draining`，把 pending 排空，
+/// 最后一个事件入队后才切到 `Live`，避免实时事件越过重放或重复发送。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RoutePhase {
+    Replaying,
+    Draining,
+    Live,
+}
+
+#[derive(Debug)]
+struct PtyRoute {
+    conn_id: u32,
+    /// 下一个应投递给客户端的 PTY 数据块 seq。attach 时从快照的 `seq_end` 开始。
+    next_seq: u64,
+    phase: RoutePhase,
+    pending: VecDeque<Outbound>,
+    pending_bytes: usize,
+    /// attach 应答已经带有退出码时，不再重复发送同一终端的 `pty.exit`。
+    exit_delivered: bool,
+}
+
+impl PtyRoute {
+    fn new(conn_id: u32, next_seq: u64, phase: RoutePhase, exit_delivered: bool) -> Self {
+        Self {
+            conn_id,
+            next_seq,
+            phase,
+            pending: VecDeque::new(),
+            pending_bytes: 0,
+            exit_delivered,
+        }
+    }
+
+    fn push_pending(&mut self, outbound: Outbound) -> Result<(), u32> {
+        let size = outbound.frame.payload.len() + proto::FRAME_HEADER_BYTES;
+        if self.pending_bytes + size > ROUTE_PENDING_MAX_BYTES {
+            return Err(self.conn_id);
+        }
+        self.pending_bytes += size;
+        self.pending.push_back(outbound);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RouteDataOutcome {
+    NoRoute,
+    Duplicate,
+    Queued,
+    Sent,
+    Overflow {
+        conn_id: u32,
+    },
+    SequenceGap {
+        conn_id: u32,
+        expected: u64,
+        actual: u64,
+    },
 }
 
 impl Daemon {
@@ -496,26 +609,181 @@ impl Daemon {
         self.conns.lock().unwrap().len()
     }
 
-    fn send_to_conn(&self, conn_id: u32, priority: Priority, frame: Frame) {
-        let conns = self.conns.lock().unwrap();
-        if let Some(handle) = conns.get(&conn_id) {
-            let _ = handle.tx.send(Outbound { priority, frame });
+    fn send_to_conn(&self, conn_id: u32, priority: Priority, frame: Frame) -> bool {
+        let handle = self.conns.lock().unwrap().get(&conn_id).cloned();
+        handle.is_some_and(|handle| handle.outbound.try_send(priority, frame))
+    }
+
+    fn disconnect_conn(&self, conn_id: u32) {
+        let handle = self.conns.lock().unwrap().get(&conn_id).cloned();
+        if let Some(handle) = handle {
+            handle.outbound.abort();
         }
     }
 
-    fn route_of(&self, pty_id: &str) -> Option<u32> {
-        self.routes.lock().unwrap().get(pty_id).copied()
+    fn cancel_input_for_conn(&self, conn_id: u32, pty_id: &str) {
+        let handle = self.conns.lock().unwrap().get(&conn_id).cloned();
+        if let Some(handle) = handle {
+            handle.inputs.cancel(pty_id);
+        }
     }
 
-    fn set_route(&self, pty_id: &str, conn_id: u32) {
-        self.routes
-            .lock()
-            .unwrap()
-            .insert(pty_id.to_string(), conn_id);
+    /// 在 routes 锁内完成 PTY 快照/补发游标捕获与 route 安装。
+    ///
+    /// `pty_events` 消费事件时必须先拿同一把锁。因此 attach 快照之后、route
+    /// 安装之前到达的事件不会以「无 route」被消费；它们会在锁释放后看到
+    /// `next_seq == seq_end`，进入 pending 等待重放结束。
+    fn install_attach_route<F>(
+        &self,
+        pty_id: &str,
+        conn_id: u32,
+        attach: F,
+    ) -> Result<crate::pty::AttachResult, String>
+    where
+        F: FnOnce() -> Result<crate::pty::AttachResult, String>,
+    {
+        let mut routes = self.routes.lock().unwrap();
+        let attach = attach()?;
+        routes.insert(
+            pty_id.to_string(),
+            PtyRoute::new(
+                conn_id,
+                attach.seq_end,
+                RoutePhase::Replaying,
+                attach.exited.is_some(),
+            ),
+        );
+        Ok(attach)
     }
 
-    fn clear_route(&self, pty_id: &str) {
-        self.routes.lock().unwrap().remove(pty_id);
+    /// 创建与首个 live route 安装共用路由锁，避免 shell 的首批输出在
+    /// create 返回、route 尚未安装时被事件任务消费后形成 seq 空洞。
+    fn create_pty_with_route(
+        &self,
+        conn_id: u32,
+        options: PtyCreateOptions,
+    ) -> Result<crate::pty::PtyInfo, String> {
+        let mut routes = self.routes.lock().unwrap();
+        let info = self.pty.create(options)?;
+        routes.insert(
+            info.id.clone(),
+            PtyRoute::new(conn_id, info.seq, RoutePhase::Live, false),
+        );
+        Ok(info)
+    }
+
+    /// 按 handoff 游标投递一块 PTY 输出。调用者必须在同一把锁内完成游标
+    /// 校验、pending/live 决策和（live 路径的）入队，这样 attach 切换时才
+    /// 不会出现重复或越过重放的事件。
+    fn dispatch_pty_data(&self, pty_id: &str, seq: u64, frames: Vec<Outbound>) -> RouteDataOutcome {
+        let mut routes = self.routes.lock().unwrap();
+        let Some(route) = routes.get_mut(pty_id) else {
+            return RouteDataOutcome::NoRoute;
+        };
+        if seq < route.next_seq {
+            return RouteDataOutcome::Duplicate;
+        }
+        if seq > route.next_seq {
+            return RouteDataOutcome::SequenceGap {
+                conn_id: route.conn_id,
+                expected: route.next_seq,
+                actual: seq,
+            };
+        }
+        match route.phase {
+            RoutePhase::Replaying | RoutePhase::Draining => {
+                for outbound in frames {
+                    if let Err(conn_id) = route.push_pending(outbound) {
+                        return RouteDataOutcome::Overflow { conn_id };
+                    }
+                }
+                route.next_seq = seq.wrapping_add(1);
+                RouteDataOutcome::Queued
+            }
+            RoutePhase::Live => {
+                let conn_id = route.conn_id;
+                for outbound in frames {
+                    if !self.send_to_conn(conn_id, outbound.priority, outbound.frame) {
+                        return RouteDataOutcome::Overflow { conn_id };
+                    }
+                }
+                route.next_seq = seq.wrapping_add(1);
+                RouteDataOutcome::Sent
+            }
+        }
+    }
+
+    /// 退出事件不参与数据 seq，但仍必须与重放保持先后顺序，并与 attach
+    /// 应答中的 `exited` 去重。
+    fn dispatch_pty_exit(&self, pty_id: &str, frame: Outbound) -> bool {
+        let mut routes = self.routes.lock().unwrap();
+        let Some(route) = routes.get_mut(pty_id) else {
+            return false;
+        };
+        if route.exit_delivered {
+            return false;
+        }
+        route.exit_delivered = true;
+        let conn_id = route.conn_id;
+        self.cancel_input_for_conn(conn_id, pty_id);
+        match route.phase {
+            RoutePhase::Replaying | RoutePhase::Draining => {
+                let size = frame.frame.payload.len() + proto::FRAME_HEADER_BYTES;
+                route.pending_bytes += size;
+                route.pending.push_back(frame);
+            }
+            RoutePhase::Live => {
+                self.send_to_conn(conn_id, frame.priority, frame.frame);
+                routes.remove(pty_id);
+            }
+        }
+        true
+    }
+
+    /// 重放流已经全部入队后调用：排空重放期间积累的实时事件。
+    /// 每次取出 pending 时保持 `Draining`，所以排空过程中新到的事件仍会排队，
+    /// 不会在上一批事件尚未入队时直接走 live 路径。
+    fn finish_attach_replay(&self, pty_id: &str, conn_id: u32) {
+        loop {
+            let pending = {
+                let mut routes = self.routes.lock().unwrap();
+                let Some(route) = routes.get_mut(pty_id) else {
+                    return;
+                };
+                if route.conn_id != conn_id {
+                    return;
+                }
+                route.phase = RoutePhase::Draining;
+                let pending: Vec<Outbound> = route.pending.drain(..).collect();
+                route.pending_bytes = 0;
+                if pending.is_empty() {
+                    if route.exit_delivered {
+                        routes.remove(pty_id);
+                    } else {
+                        route.phase = RoutePhase::Live;
+                    }
+                    return;
+                }
+                pending
+            };
+            for outbound in pending {
+                if !self.send_to_conn(conn_id, outbound.priority, outbound.frame) {
+                    self.disconnect_conn(conn_id);
+                    return;
+                }
+            }
+        }
+    }
+
+    /// `pty.detach` 来自旧连接时不能误删新连接刚安装的路由。
+    fn clear_route_for_conn(&self, pty_id: &str, conn_id: u32) {
+        let mut routes = self.routes.lock().unwrap();
+        if routes
+            .get(pty_id)
+            .is_some_and(|route| route.conn_id == conn_id)
+        {
+            routes.remove(pty_id);
+        }
     }
 
     /// 连接断开时把它名下的终端标记为 detached，但绝不结束进程。
@@ -524,13 +792,13 @@ impl Daemon {
             let routes = self.routes.lock().unwrap();
             routes
                 .iter()
-                .filter(|(_, owner)| **owner == conn_id)
+                .filter(|(_, route)| route.conn_id == conn_id)
                 .map(|(id, _)| id.clone())
                 .collect()
         };
         for id in owned {
             let _ = self.pty.detach(&id, client_id);
-            self.clear_route(&id);
+            self.clear_route_for_conn(&id, conn_id);
             self.log.info(&format!(
                 "终端 {id} 已 detached（连接 {conn_id} 断开，进程保留）"
             ));
@@ -547,13 +815,10 @@ impl Daemon {
 struct ConnCtx {
     conn_id: u32,
     client_id: String,
-    tx: mpsc::UnboundedSender<Outbound>,
+    outbound: OutboundSender,
     cancels: Arc<Mutex<HashMap<u32, Arc<AtomicBool>>>>,
     windows: Arc<Mutex<HashMap<u32, Arc<SenderWindow>>>>,
-    /// 终端写入队列。按键顺序必须等于帧到达顺序，所以 `pty.input` 不参与
-    /// 「一个 REQ 一个 task」的并发派发，而是在读循环里按顺序入队、由单个
-    /// 任务串行写（见 [`pty_input_loop`]）。
-    inputs: mpsc::Sender<PtyInput>,
+    inputs: Arc<InputQueues>,
 }
 
 /// 一条待写入终端的输入。
@@ -561,6 +826,45 @@ struct PtyInput {
     request_id: u32,
     pty_id: String,
     data: Vec<u8>,
+}
+
+struct InputQueue {
+    tx: mpsc::Sender<PtyInput>,
+    cancel: Arc<AtomicBool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+#[derive(Default)]
+struct InputQueues {
+    queues: Mutex<HashMap<String, InputQueue>>,
+}
+
+impl InputQueues {
+    fn cancel(&self, pty_id: &str) {
+        if let Some(queue) = self
+            .queues
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(pty_id)
+        {
+            queue.cancel.store(true, Ordering::SeqCst);
+            queue.task.abort();
+        }
+    }
+
+    fn cancel_all(&self) {
+        let queues: Vec<InputQueue> = self
+            .queues
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .drain()
+            .map(|(_, queue)| queue)
+            .collect();
+        for queue in queues {
+            queue.cancel.store(true, Ordering::SeqCst);
+            queue.task.abort();
+        }
+    }
 }
 
 /// `pty.input` 的参数。放在模块级是因为读循环也要用它（不能只在 dispatch 里）。
@@ -573,29 +877,44 @@ struct PtyInputParams {
     data: Vec<u8>,
 }
 
-/// 串行消费终端输入：一次只写一条，写完再取下一条。
-///
-/// `PtyHost::write` 是阻塞写入（子进程不读 stdin 时会一直等），所以每条都
-/// 丢进 blocking 线程池；串行 await 保证「先到的按键先写进 PTY」。
-async fn pty_input_loop(conn: ConnCtx, pty: Arc<PtyHost>, mut rx: mpsc::Receiver<PtyInput>) {
-    while let Some(input) = rx.recv().await {
-        let pty = Arc::clone(&pty);
+/// 串行消费单个 PTY 的输入。每个 PTY 独立 task，所以一个子进程不读 stdin
+/// 时不会占住同连接其他终端的队列。
+async fn pty_input_loop(
+    conn: ConnCtx,
+    pty: Arc<PtyHost>,
+    pty_id: String,
+    mut rx: mpsc::Receiver<PtyInput>,
+    cancel: Arc<AtomicBool>,
+) {
+    while !cancel.load(Ordering::SeqCst) {
+        let Some(input) = rx.recv().await else {
+            break;
+        };
         let PtyInput {
-            request_id,
-            pty_id,
-            data,
+            request_id, data, ..
         } = input;
-        let written = tokio::task::spawn_blocking(move || pty.write(&pty_id, &data)).await;
-        match written {
-            Ok(Ok(())) => conn.respond(request_id, json!({ "ok": true })),
-            Ok(Err(message)) => conn.fail(request_id, "pty", message),
-            Err(_) => conn.fail(request_id, "internal", "写入终端任务异常结束"),
+        let written = pty
+            .write_interruptible(&pty_id, data, Arc::clone(&cancel))
+            .await;
+        if cancel.load(Ordering::SeqCst) {
+            break;
         }
+        match written {
+            Ok(()) => conn.respond(request_id, json!({ "ok": true })),
+            Err(message) => {
+                conn.fail(request_id, "pty", message);
+                conn.inputs.cancel(&pty_id);
+                break;
+            }
+        }
+    }
+    while let Ok(input) = rx.try_recv() {
+        conn.fail(input.request_id, "pty", "终端已结束，输入未写入");
     }
 }
 
 /// 在读循环里按帧序把 `pty.input` 入队。
-fn enqueue_pty_input(conn: &ConnCtx, request: Request) {
+fn enqueue_pty_input(conn: &ConnCtx, pty: Arc<PtyHost>, request: Request) {
     let id = request.id;
     let Ok(params) = request.parse::<PtyInputParams>() else {
         conn.fail(id, "badRequest", "pty.input 参数错误");
@@ -606,7 +925,44 @@ fn enqueue_pty_input(conn: &ConnCtx, request: Request) {
         pty_id: params.id,
         data: params.data,
     };
-    match conn.inputs.try_send(input) {
+    let pty_id = input.pty_id.clone();
+    let tx = {
+        let mut queues = conn
+            .inputs
+            .queues
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if queues
+            .get(&pty_id)
+            .is_some_and(|queue| queue.task.is_finished())
+        {
+            queues.remove(&pty_id);
+        }
+        match queues.get(&pty_id) {
+            Some(queue) => queue.tx.clone(),
+            None => {
+                let (tx, rx) = mpsc::channel::<PtyInput>(INPUT_QUEUE_DEPTH);
+                let cancel = Arc::new(AtomicBool::new(false));
+                let task = tokio::spawn(pty_input_loop(
+                    conn.clone(),
+                    Arc::clone(&pty),
+                    pty_id.clone(),
+                    rx,
+                    Arc::clone(&cancel),
+                ));
+                queues.insert(
+                    pty_id.clone(),
+                    InputQueue {
+                        tx: tx.clone(),
+                        cancel,
+                        task,
+                    },
+                );
+                tx
+            }
+        }
+    };
+    match tx.try_send(input) {
         Ok(()) => {}
         Err(mpsc::error::TrySendError::Full(_)) => conn.fail(
             id,
@@ -614,14 +970,15 @@ fn enqueue_pty_input(conn: &ConnCtx, request: Request) {
             format!("终端输入队列已满（{INPUT_QUEUE_DEPTH} 条待写），请稍后重试"),
         ),
         Err(mpsc::error::TrySendError::Closed(_)) => {
+            conn.inputs.cancel(&pty_id);
             conn.fail(id, "internal", "连接已关闭，输入未写入")
         }
     }
 }
 
 impl ConnCtx {
-    fn send(&self, priority: Priority, frame: Frame) {
-        let _ = self.tx.send(Outbound { priority, frame });
+    fn send(&self, priority: Priority, frame: Frame) -> bool {
+        self.outbound.try_send(priority, frame)
     }
 
     fn respond(&self, id: u32, result: Value) {
@@ -679,8 +1036,7 @@ impl ConnCtx {
                     if result.is_err() {
                         return false;
                     }
-                    self.send(priority, Frame::new(Kind::StreamData, id, payload));
-                    return true;
+                    return self.send(priority, Frame::new(Kind::StreamData, id, payload));
                 }
                 _ = tokio::time::sleep(Duration::from_millis(200)) => {}
             }
@@ -752,7 +1108,7 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
         daemon.log.warn("HELLO 负载无法解码");
         return;
     };
-    if request.token != daemon.token {
+    if !crate::connect::constant_time_token_eq(&daemon.token, &request.token) {
         daemon
             .log
             .warn(&format!("客户端 {} token 校验失败", request.client_id));
@@ -767,12 +1123,18 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
     };
 
     let conn_id = daemon.next_conn.fetch_add(1, Ordering::Relaxed);
-    let (tx, rx) = mpsc::unbounded_channel::<Outbound>();
-    daemon
-        .conns
-        .lock()
-        .unwrap()
-        .insert(conn_id, ConnHandle { tx: tx.clone() });
+    let (control_tx, control_rx) = mpsc::channel::<Outbound>(OUTBOUND_CONTROL_DEPTH);
+    let (data_tx, data_rx) = mpsc::channel::<Outbound>(OUTBOUND_DATA_DEPTH);
+    let disconnect = Arc::new(Notify::new());
+    let outbound = OutboundSender::new(control_tx, data_tx, Arc::clone(&disconnect));
+    let inputs = Arc::new(InputQueues::default());
+    daemon.conns.lock().unwrap().insert(
+        conn_id,
+        ConnHandle {
+            outbound: outbound.clone(),
+            inputs: Arc::clone(&inputs),
+        },
+    );
 
     let response = HelloResponse {
         protocol,
@@ -786,51 +1148,60 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
         pty_count: daemon.pty.list().len(),
     };
     if let Ok(payload) = encode(&response) {
-        let _ = tx.send(Outbound {
-            priority: Priority::Control,
-            frame: Frame::new(Kind::Hello, CONTROL_STREAM, payload),
-        });
+        outbound.try_send(
+            Priority::Control,
+            Frame::new(Kind::Hello, CONTROL_STREAM, payload),
+        );
     }
     daemon.log.info(&format!(
         "客户端 {} 接入（连接 {conn_id}，protocol {protocol}，{peer}）",
         request.client_id
     ));
 
-    let writer_task = tokio::spawn(writer_loop(writer, rx));
-    let (frame_tx, mut frame_rx) = mpsc::unbounded_channel::<Frame>();
+    let mut writer_task = tokio::spawn(writer_loop(writer, control_rx, data_rx));
+    let (frame_tx, mut frame_rx) = mpsc::channel::<Frame>(INBOUND_FRAME_QUEUE_DEPTH);
     // 读端单独一个任务：帧读到一半时不能被 `select!` 取消（read_exact 不是
     // cancel-safe），否则会丢字节、后续帧全部错位。
     let reader_task = tokio::spawn(async move {
         while let Ok(frame) = proto::read_frame(&mut reader).await {
-            if frame_tx.send(frame).is_err() {
+            if frame_tx.send(frame).await.is_err() {
                 break;
             }
         }
     });
 
-    let (input_tx, input_rx) = mpsc::channel::<PtyInput>(INPUT_QUEUE_DEPTH);
     let ctx = ConnCtx {
         conn_id,
         client_id: request.client_id.clone(),
-        tx,
+        outbound,
         cancels: Arc::new(Mutex::new(HashMap::new())),
         windows: Arc::new(Mutex::new(HashMap::new())),
-        inputs: input_tx,
+        inputs,
     };
-    let input_task = tokio::spawn(pty_input_loop(
-        ctx.clone(),
-        Arc::clone(&daemon.pty),
-        input_rx,
-    ));
     let mut last_seen = Instant::now();
     let mut heartbeat = tokio::time::interval_at(
         tokio::time::Instant::now() + HEARTBEAT_INTERVAL,
         HEARTBEAT_INTERVAL,
     );
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut writer_done = false;
     loop {
         tokio::select! {
             biased;
+            _ = disconnect.notified() => {
+                daemon.log.warn(&format!(
+                    "连接 {conn_id} 发送背压达到上限，断开等待客户端重连"
+                ));
+                break;
+            }
+            result = &mut writer_task => {
+                writer_done = true;
+                match result {
+                    Ok(()) => daemon.log.warn(&format!("连接 {conn_id} writer 已退出")),
+                    Err(error) => daemon.log.warn(&format!("连接 {conn_id} writer 异常: {error}")),
+                }
+                break;
+            }
             _ = heartbeat.tick() => {
                 if last_seen.elapsed() > HEARTBEAT_TIMEOUT {
                     daemon.log.warn(&format!("连接 {conn_id} 心跳超时"));
@@ -847,7 +1218,7 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
                             // 终端输入顺序敏感：按帧到达顺序入队，由单个任务串行写；
                             // 其余请求各自一个任务，互不阻塞。
                             if request.method == "pty.input" {
-                                enqueue_pty_input(&ctx, request);
+                                enqueue_pty_input(&ctx, Arc::clone(&daemon.pty), request);
                             } else {
                                 let daemon = Arc::clone(&daemon);
                                 let ctx = ctx.clone();
@@ -876,7 +1247,7 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
     }
 
     reader_task.abort();
-    input_task.abort();
+    ctx.inputs.cancel_all();
     daemon.detach_owned_ptys(conn_id, &ctx.client_id);
     daemon.conns.lock().unwrap().remove(&conn_id);
     // 置位所有取消标记：搜索/监视任务在下一个检查点退出。
@@ -884,7 +1255,15 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
         flag.store(true, Ordering::SeqCst);
     }
     drop(ctx);
-    let _ = writer_task.await;
+    if !writer_done {
+        match tokio::time::timeout(Duration::from_millis(500), &mut writer_task).await {
+            Ok(_) => {}
+            Err(_) => {
+                writer_task.abort();
+                let _ = writer_task.await;
+            }
+        }
+    }
     daemon.log.info(&format!("连接 {conn_id} 断开"));
 }
 
@@ -947,36 +1326,89 @@ fn available_shells() -> Vec<String> {
     }
 }
 
-/// 写端：把优先级队列里的帧按序刷出。
-async fn writer_loop(mut writer: WriteHalf<IpcStream>, mut rx: mpsc::UnboundedReceiver<Outbound>) {
+/// 写端：每写完一帧都重新吸纳两条有界通道，使 PING/控制帧能插到尚未发送
+/// 的 Terminal/RPC/Bulk 前面。
+async fn writer_loop(
+    writer: WriteHalf<IpcStream>,
+    control_rx: mpsc::Receiver<Outbound>,
+    data_rx: mpsc::Receiver<Outbound>,
+) {
+    let _ = write_outbound_loop(writer, control_rx, data_rx).await;
+}
+
+async fn write_outbound_loop<W: AsyncWrite + Unpin>(
+    mut writer: W,
+    mut control_rx: mpsc::Receiver<Outbound>,
+    mut data_rx: mpsc::Receiver<Outbound>,
+) -> std::io::Result<()> {
     let mut queue = OutboundQueue::new();
+    let mut control_open = true;
+    let mut data_open = true;
     loop {
-        while let Ok(out) = rx.try_recv() {
-            if queue.push_with(out.priority, out.frame).is_err() {
-                // 队列上限 8MB：只有对端长期不读才会到这里。直接断开，
-                // 让客户端重连后重新 attach（PTY 不受影响）。
-                return;
-            }
+        drain_ready(&mut control_rx, &mut data_rx, &mut queue)?;
+        let Some(frame) = queue.pop() else {
+            let Some(out) = next_outbound(
+                &mut control_rx,
+                &mut data_rx,
+                &mut control_open,
+                &mut data_open,
+            )
+            .await
+            else {
+                return Ok(());
+            };
+            queue.push_with(out.priority, out.frame)?;
+            continue;
+        };
+        proto::write_frame(&mut writer, &frame).await?;
+    }
+}
+
+fn drain_ready(
+    control_rx: &mut mpsc::Receiver<Outbound>,
+    data_rx: &mut mpsc::Receiver<Outbound>,
+    queue: &mut OutboundQueue,
+) -> std::io::Result<()> {
+    loop {
+        match control_rx.try_recv() {
+            Ok(out) => queue.push_with(out.priority, out.frame)?,
+            Err(mpsc::error::TryRecvError::Empty) => break,
+            Err(mpsc::error::TryRecvError::Disconnected) => break,
         }
-        while let Some(frame) = queue.pop() {
-            if proto::write_frame(&mut writer, &frame).await.is_err() {
-                return;
-            }
+    }
+    loop {
+        match data_rx.try_recv() {
+            Ok(out) => queue.push_with(out.priority, out.frame)?,
+            Err(mpsc::error::TryRecvError::Empty) => break,
+            Err(mpsc::error::TryRecvError::Disconnected) => break,
         }
-        match rx.recv().await {
-            Some(out) => {
-                if queue.push_with(out.priority, out.frame).is_err() {
-                    return;
+    }
+    Ok(())
+}
+
+async fn next_outbound(
+    control_rx: &mut mpsc::Receiver<Outbound>,
+    data_rx: &mut mpsc::Receiver<Outbound>,
+    control_open: &mut bool,
+    data_open: &mut bool,
+) -> Option<Outbound> {
+    loop {
+        if !*control_open && !*data_open {
+            return None;
+        }
+        tokio::select! {
+            biased;
+            item = control_rx.recv(), if *control_open => {
+                match item {
+                    Some(out) => return Some(out),
+                    None => *control_open = false,
                 }
             }
-            None => {
-                // 发送端已释放：把剩下的帧写完再收尾。
-                while let Some(frame) = queue.pop() {
-                    if proto::write_frame(&mut writer, &frame).await.is_err() {
-                        return;
-                    }
+            item = data_rx.recv(), if *data_open => {
+                match item {
+                    Some(out) => return Some(out),
+                    None => *data_open = false,
                 }
-                return;
             }
         }
     }
@@ -1359,12 +1791,15 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
             };
             // pty.rs 的 create 要 openpty + fork/exec，且限额检查与创建在同一把宿主锁里，
             // 直接放在 async 里会阻塞 worker（其它连接的心跳与应答都得等）。
-            let pty = Arc::clone(&daemon.pty);
-            let created = tokio::task::spawn_blocking(move || pty.create(options)).await;
+            let daemon_for_create = Arc::clone(&daemon);
+            let conn_id = conn.conn_id;
+            let created = tokio::task::spawn_blocking(move || {
+                daemon_for_create.create_pty_with_route(conn_id, options)
+            })
+            .await;
             match created {
                 Ok(Ok(info)) => {
                     let pty_id = info.id.clone();
-                    daemon.set_route(&pty_id, conn.conn_id);
                     conn.respond(id, json!(PtyInfoDto::from(info)));
                     daemon
                         .log
@@ -1411,17 +1846,17 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 conn.fail(id, "badRequest", "pty.attach 参数错误");
                 return;
             };
-            let attach = match daemon
-                .pty
-                .attach(&params.id, params.from_seq, &conn.client_id)
-            {
+            let attach = match daemon.install_attach_route(&params.id, conn.conn_id, || {
+                daemon
+                    .pty
+                    .attach(&params.id, params.from_seq, &conn.client_id)
+            }) {
                 Ok(attach) => attach,
                 Err(message) => {
                     conn.fail(id, "pty", message);
                     return;
                 }
             };
-            daemon.set_route(&params.id, conn.conn_id);
             conn.respond(
                 id,
                 json!({
@@ -1464,6 +1899,11 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                     error: None,
                 },
             );
+            if ok {
+                daemon.finish_attach_replay(&params.id, conn.conn_id);
+            } else {
+                daemon.clear_route_for_conn(&params.id, conn.conn_id);
+            }
             conn.clear_window(id);
             daemon
                 .log
@@ -1480,7 +1920,8 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
             };
             match daemon.pty.detach(&params.id, &conn.client_id) {
                 Ok(()) => {
-                    daemon.clear_route(&params.id);
+                    conn.inputs.cancel(&params.id);
+                    daemon.clear_route_for_conn(&params.id, conn.conn_id);
                     conn.respond(id, json!({ "ok": true }));
                 }
                 Err(message) => conn.fail(id, "pty", message),
@@ -1495,11 +1936,9 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 conn.fail(id, "badRequest", "pty.kill 参数错误");
                 return;
             };
+            conn.inputs.cancel(&params.id);
             match daemon.pty.kill(&params.id) {
-                Ok(()) => {
-                    daemon.clear_route(&params.id);
-                    conn.respond(id, json!({ "ok": true }));
-                }
+                Ok(()) => conn.respond(id, json!({ "ok": true })),
                 Err(message) => conn.fail(id, "pty", message),
             }
         }
@@ -1526,14 +1965,11 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
 }
 
 /// 把 PtyHost 推来的事件路由给当前持有该终端的连接。
-async fn pty_events(daemon: Arc<Daemon>, mut rx: mpsc::UnboundedReceiver<PtyEvent>) {
+async fn pty_events(daemon: Arc<Daemon>, mut rx: mpsc::Receiver<PtyEvent>) {
     while let Some(event) = rx.recv().await {
         match event {
             PtyEvent::Data { id, seq, data } => {
-                let Some(conn_id) = daemon.route_of(&id) else {
-                    // 没有客户端持有：数据留在环形缓冲里，等 attach 补发。
-                    continue;
-                };
+                let mut frames = Vec::new();
                 for chunk in proto::split_chunks(&data, Some(seq)) {
                     let event = Event::PtyData {
                         id: id.clone(),
@@ -1544,24 +1980,40 @@ async fn pty_events(daemon: Arc<Daemon>, mut rx: mpsc::UnboundedReceiver<PtyEven
                     let Ok(payload) = encode(&event) else {
                         continue;
                     };
-                    daemon.send_to_conn(
-                        conn_id,
-                        Priority::Terminal,
-                        Frame::new(Kind::Event, CONTROL_STREAM, payload),
-                    );
+                    frames.push(Outbound {
+                        priority: Priority::Terminal,
+                        frame: Frame::new(Kind::Event, CONTROL_STREAM, payload),
+                    });
+                }
+                match daemon.dispatch_pty_data(&id, seq, frames) {
+                    RouteDataOutcome::Overflow { conn_id }
+                    | RouteDataOutcome::SequenceGap { conn_id, .. } => {
+                        daemon.log.warn(&format!(
+                            "终端 {id} 输出投递失败（seq={seq}），断开连接 {conn_id} 等待重连 attach"
+                        ));
+                        daemon.clear_route_for_conn(&id, conn_id);
+                        daemon.disconnect_conn(conn_id);
+                    }
+                    RouteDataOutcome::NoRoute
+                    | RouteDataOutcome::Duplicate
+                    | RouteDataOutcome::Queued
+                    | RouteDataOutcome::Sent => {}
                 }
             }
             PtyEvent::Exit { id, code } => {
                 daemon.log.info(&format!("终端 {id} 退出（code={code:?}）"));
-                if let Some(conn_id) = daemon.route_of(&id) {
-                    let event = Event::PtyExit { id, code };
-                    if let Ok(payload) = encode(&event) {
-                        daemon.send_to_conn(
-                            conn_id,
-                            Priority::Terminal,
-                            Frame::new(Kind::Event, CONTROL_STREAM, payload),
-                        );
-                    }
+                let event = Event::PtyExit {
+                    id: id.clone(),
+                    code,
+                };
+                if let Ok(payload) = encode(&event) {
+                    daemon.dispatch_pty_exit(
+                        &id,
+                        Outbound {
+                            priority: Priority::Terminal,
+                            frame: Frame::new(Kind::Event, CONTROL_STREAM, payload),
+                        },
+                    );
                 }
             }
         }
@@ -1574,6 +2026,7 @@ mod tests {
     use crate::proto::{decode_value, StreamChunk};
     use serde::Serialize;
     use serde_json::json;
+    use tokio::io::AsyncReadExt;
 
     fn temp_dir(tag: &str) -> PathBuf {
         let nanos = SystemTime::now()
@@ -1586,6 +2039,165 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::canonicalize(&dir).unwrap()
+    }
+
+    fn route_test_daemon(tag: &str) -> (Arc<Daemon>, mpsc::Receiver<Outbound>, RunDir) {
+        let state_dir = temp_dir(tag);
+        let run_dir = RunDir::resolve(Some(&state_dir)).unwrap();
+        let (pty_tx, _pty_rx) = mpsc::channel(8);
+        let pty = Arc::new(PtyHost::new(4, 1024 * 1024, pty_tx));
+        let (control_tx, _control_rx) = mpsc::channel(8);
+        let (data_tx, data_rx) = mpsc::channel(8);
+        let outbound = OutboundSender::new(control_tx, data_tx, Arc::new(Notify::new()));
+        let inputs = Arc::new(InputQueues::default());
+        let mut conns = HashMap::new();
+        conns.insert(41, ConnHandle { outbound, inputs });
+        let daemon = Arc::new(Daemon {
+            pty,
+            token: "test-token".to_string(),
+            log: Arc::new(Log::open(run_dir.log()).unwrap()),
+            started: Instant::now(),
+            next_conn: AtomicU32::new(42),
+            conns: Mutex::new(conns),
+            routes: Mutex::new(HashMap::new()),
+            shutdown: Notify::new(),
+            detached_ttl: DETACHED_TTL,
+            idle_exit: IDLE_EXIT,
+            scrollback_bytes: 4096,
+            run_dir: run_dir.clone(),
+        });
+        (daemon, data_rx, run_dir)
+    }
+
+    fn pty_data_outbound(pty_id: &str, seq: u64, data: &[u8]) -> Outbound {
+        let event = Event::PtyData {
+            id: pty_id.to_string(),
+            seq,
+            offset: 0,
+            data: data.to_vec(),
+        };
+        Outbound {
+            priority: Priority::Terminal,
+            frame: Frame::new(
+                Kind::Event,
+                CONTROL_STREAM,
+                encode(&event).expect("编码 PTY 事件失败"),
+            ),
+        }
+    }
+
+    fn routed_pty_data(frame: &Frame) -> Option<(u64, Vec<u8>)> {
+        if frame.kind != Kind::Event {
+            return None;
+        }
+        match decode_value::<Event>(&frame.payload).ok()? {
+            Event::PtyData { seq, data, .. } => Some((seq, data)),
+            _ => None,
+        }
+    }
+
+    /// attach 快照返回 `seq_end = 3` 的同时，读线程正试图投递 seq 3。
+    /// 事件必须等 routes 锁释放后进入 pending，重放结束后按 2、3、4 连续
+    /// 投递；attach 前已进入事件队列的 0/1/2 只能由重放提供一次。
+    #[test]
+    fn attach_handoff_keeps_cutover_event_once_and_in_sequence() {
+        let (daemon, mut conn_rx, run_dir) = route_test_daemon("attach-handoff");
+        let pty_id = "pty-handoff";
+        let conn_id = 41;
+
+        // 快照之前已发出的数据没有 route，交给 attach 的 ring/screen 恢复。
+        assert_eq!(
+            daemon.dispatch_pty_data(pty_id, 0, vec![pty_data_outbound(pty_id, 0, b"old")]),
+            RouteDataOutcome::NoRoute
+        );
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let event_daemon = Arc::clone(&daemon);
+        let event_thread = std::thread::spawn(move || {
+            entered_tx.send(()).unwrap();
+            event_daemon.dispatch_pty_data(
+                pty_id,
+                3,
+                vec![pty_data_outbound(pty_id, 3, b"cutover")],
+            )
+        });
+
+        let attach = daemon
+            .install_attach_route(pty_id, conn_id, || {
+                // routes 锁已经由 install_attach_route 持有。等事件线程进入投递
+                // 路径后再返回快照，稳定复现「快照之后、route 安装之前」的窗口。
+                entered_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("事件线程未进入 attach 窗口");
+                Ok(crate::pty::AttachResult {
+                    screen: None,
+                    replay: vec![(2, b"replay".to_vec())],
+                    seq_end: 3,
+                    cols: 80,
+                    rows: 24,
+                    exited: None,
+                })
+            })
+            .unwrap();
+        assert_eq!(attach.seq_end, 3);
+        assert_eq!(
+            event_thread.join().unwrap(),
+            RouteDataOutcome::Queued,
+            "切点事件必须进入重放期间的 pending，不能因无 route 丢失"
+        );
+
+        // 0..seq_end 已包含在 attach 恢复内容中，重放后不得再次投递。
+        for seq in 0..attach.seq_end {
+            assert_eq!(
+                daemon.dispatch_pty_data(
+                    pty_id,
+                    seq,
+                    vec![pty_data_outbound(pty_id, seq, b"duplicate")]
+                ),
+                RouteDataOutcome::Duplicate
+            );
+        }
+
+        // 模拟 attach 任务按协议顺序先发 seq 2 的补发块和 STREAM_END，再排空 pending。
+        for (seq, data) in attach.replay {
+            daemon.send_to_conn(
+                conn_id,
+                Priority::Terminal,
+                pty_data_outbound(pty_id, seq, &data).frame,
+            );
+        }
+        daemon.send_to_conn(
+            conn_id,
+            Priority::Terminal,
+            Frame::new(
+                Kind::StreamEnd,
+                7,
+                encode(&StreamEnd {
+                    ok: true,
+                    summary: json!({ "seqEnd": attach.seq_end }),
+                    error: None,
+                })
+                .unwrap(),
+            ),
+        );
+        daemon.finish_attach_replay(pty_id, conn_id);
+
+        // 切换到 live 后继续从 seq 4 投递，不应有任何空洞。
+        assert_eq!(
+            daemon.dispatch_pty_data(pty_id, 4, vec![pty_data_outbound(pty_id, 4, b"live")]),
+            RouteDataOutcome::Sent
+        );
+
+        let replayed = conn_rx.try_recv().unwrap().frame;
+        assert_eq!(routed_pty_data(&replayed), Some((2, b"replay".to_vec())));
+        assert_eq!(conn_rx.try_recv().unwrap().frame.kind, Kind::StreamEnd);
+        let cutover = conn_rx.try_recv().unwrap().frame;
+        assert_eq!(routed_pty_data(&cutover), Some((3, b"cutover".to_vec())));
+        let live = conn_rx.try_recv().unwrap().frame;
+        assert_eq!(routed_pty_data(&live), Some((4, b"live".to_vec())));
+        assert!(conn_rx.try_recv().is_err(), "同一 PTY 输出被重复投递");
+
+        let _ = std::fs::remove_dir_all(run_dir.dir());
     }
 
     /// 等就绪标记与 token 出现（daemon 的启动是异步的）。
@@ -1906,6 +2518,125 @@ mod tests {
         assert_eq!(negotiate(0, 0), None, "客户端最高版本低于 daemon 最低");
     }
 
+    #[tokio::test]
+    async fn bounded_outbound_keeps_control_capacity_under_data_flood() {
+        let (control_tx, mut control_rx) = mpsc::channel::<Outbound>(OUTBOUND_CONTROL_DEPTH);
+        let (data_tx, data_rx) = mpsc::channel::<Outbound>(OUTBOUND_DATA_DEPTH);
+        let disconnect = Arc::new(Notify::new());
+        let outbound = OutboundSender::new(control_tx, data_tx, Arc::clone(&disconnect));
+
+        for index in 0..OUTBOUND_DATA_DEPTH {
+            assert!(outbound.try_send(
+                Priority::Bulk,
+                Frame::new(Kind::StreamData, index as u32, Vec::new())
+            ));
+        }
+        assert_eq!(data_rx.len(), OUTBOUND_DATA_DEPTH);
+        assert!(
+            outbound.try_send(Priority::Control, Frame::empty(Kind::Ping, CONTROL_STREAM)),
+            "数据队列满时 PING 仍应使用独立控制容量"
+        );
+        for _ in 1..OUTBOUND_CONTROL_DEPTH {
+            assert!(outbound.try_send(Priority::Control, Frame::empty(Kind::Ping, CONTROL_STREAM)));
+        }
+        assert!(
+            !outbound.try_send(Priority::Control, Frame::empty(Kind::Pong, CONTROL_STREAM)),
+            "控制队列满时必须拒绝新帧"
+        );
+        assert!(outbound.closing.load(Ordering::SeqCst));
+        tokio::time::timeout(Duration::from_millis(100), disconnect.notified())
+            .await
+            .expect("队列满后必须通知连接断开");
+        assert_eq!(control_rx.try_recv().unwrap().frame.kind, Kind::Ping);
+        assert_eq!(data_rx.len(), OUTBOUND_DATA_DEPTH, "已入队帧不能被静默丢弃");
+    }
+
+    #[tokio::test]
+    async fn writer_rechecks_priority_after_every_written_frame() {
+        let (mut peer, server) = tokio::io::duplex(1024);
+        let (control_tx, control_rx) = mpsc::channel::<Outbound>(OUTBOUND_CONTROL_DEPTH);
+        let (data_tx, data_rx) = mpsc::channel::<Outbound>(OUTBOUND_DATA_DEPTH);
+
+        let first = Frame::new(Kind::StreamData, 1, vec![b'a'; 64 * 1024]);
+        let encoded_first = first.encode().unwrap();
+        data_tx
+            .send(Outbound {
+                priority: Priority::Bulk,
+                frame: first,
+            })
+            .await
+            .unwrap();
+        data_tx
+            .send(Outbound {
+                priority: Priority::Bulk,
+                frame: Frame::new(Kind::StreamData, 4, vec![b'b'; 32]),
+            })
+            .await
+            .unwrap();
+        let writer = tokio::spawn(write_outbound_loop(server, control_rx, data_rx));
+
+        let mut first_byte = [0u8; 1];
+        tokio::time::timeout(Duration::from_secs(5), peer.read_exact(&mut first_byte))
+            .await
+            .expect("writer 未开始写首个 bulk 帧")
+            .unwrap();
+        assert_eq!(first_byte[0], encoded_first[0]);
+
+        control_tx
+            .send(Outbound {
+                priority: Priority::Control,
+                frame: Frame::empty(Kind::Ping, CONTROL_STREAM),
+            })
+            .await
+            .unwrap();
+        data_tx
+            .send(Outbound {
+                priority: Priority::Terminal,
+                frame: Frame::new(Kind::Req, 3, b"key".to_vec()),
+            })
+            .await
+            .unwrap();
+        data_tx
+            .send(Outbound {
+                priority: Priority::Rpc,
+                frame: Frame::new(Kind::Res, 2, Vec::new()),
+            })
+            .await
+            .unwrap();
+
+        let mut rest = vec![0u8; encoded_first.len() - 1];
+        peer.read_exact(&mut rest).await.unwrap();
+        assert_eq!(rest, encoded_first[1..]);
+
+        let control = tokio::time::timeout(Duration::from_secs(5), proto::read_frame(&mut peer))
+            .await
+            .expect("等待 Control 超时")
+            .unwrap();
+        assert_eq!(control.kind, Kind::Ping);
+        let terminal = tokio::time::timeout(Duration::from_secs(5), proto::read_frame(&mut peer))
+            .await
+            .expect("等待 Terminal 超时")
+            .unwrap();
+        assert_eq!(terminal.kind, Kind::Req);
+        assert_eq!(terminal.stream_id, 3);
+        let rpc = tokio::time::timeout(Duration::from_secs(5), proto::read_frame(&mut peer))
+            .await
+            .expect("等待 Rpc 超时")
+            .unwrap();
+        assert_eq!(rpc.kind, Kind::Res);
+        assert_eq!(rpc.stream_id, 2);
+        let bulk = tokio::time::timeout(Duration::from_secs(5), proto::read_frame(&mut peer))
+            .await
+            .expect("等待 Bulk 超时")
+            .unwrap();
+        assert_eq!(bulk.kind, Kind::StreamData);
+        assert_eq!(bulk.stream_id, 4);
+
+        drop(control_tx);
+        drop(data_tx);
+        writer.await.unwrap().unwrap();
+    }
+
     /// 断线重连后按 fromSeq 补发，seq 连续且内容不丢。
     #[tokio::test]
     async fn pty_survives_disconnect_and_attach_replays_output() {
@@ -2178,6 +2909,131 @@ mod tests {
         );
 
         let id = client.request("pty.kill", &json!({ "id": pty_id })).await;
+        client.wait_response(id).await;
+        let id = client.request("server.shutdown", &json!({})).await;
+        client.wait_response(id).await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    /// 一个 PTY 的子进程不读 stdin 时，它自己的写任务等待；同连接另一个 PTY
+    /// 的输入仍必须及时完成。同时验证每终端 64 深度队列仍返回 ptyBusy。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn blocked_pty_input_does_not_stall_sibling_or_bypass_queue_limit() {
+        let (run_dir, handle) = start_daemon("input-isolation").await;
+        let token = run_dir.read_token().unwrap();
+        let root = temp_dir("input-isolation-root");
+        let mut client = TestClient::connect(&run_dir, &token).await;
+
+        let id = client
+            .request(
+                "pty.create",
+                &json!({ "cwd": root, "shell": "/bin/sh", "cols": 80, "rows": 24 }),
+            )
+            .await;
+        let blocked = client.wait_response(id).await["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let id = client
+            .request(
+                "pty.create",
+                &json!({ "cwd": root, "shell": "/bin/sh", "cols": 80, "rows": 24 }),
+            )
+            .await;
+        let sibling = client.wait_response(id).await["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        client
+            .request(
+                "pty.input",
+                &PtyInputParams {
+                    id: blocked.clone(),
+                    data:
+                        b"stty -echo; printf 'BLOCK%s\\n' _READY; exec sh -c 'while read x; do sleep 1; done'\n"
+                            .to_vec(),
+                },
+            )
+            .await;
+        let mut output = String::new();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline && !output.contains("BLOCK_READY") {
+            let frame = client.next_frame().await;
+            if frame.kind == Kind::Event && frame.stream_id == CONTROL_STREAM {
+                if let Ok(Event::PtyData { id, data, .. }) = decode_value(&frame.payload) {
+                    if id == blocked {
+                        output.push_str(&String::from_utf8_lossy(&data));
+                    }
+                }
+            }
+        }
+        assert!(output.contains("BLOCK_READY"), "阻塞终端未就绪: {output:?}");
+
+        for _ in 0..12 {
+            client
+                .request(
+                    "pty.input",
+                    &PtyInputParams {
+                        id: blocked.clone(),
+                        data: vec![b'x'; 768 * 1024],
+                    },
+                )
+                .await;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        for _ in 0..70 {
+            client
+                .request(
+                    "pty.input",
+                    &PtyInputParams {
+                        id: blocked.clone(),
+                        data: b"x".to_vec(),
+                    },
+                )
+                .await;
+        }
+
+        let sibling_input = client
+            .request(
+                "pty.input",
+                &PtyInputParams {
+                    id: sibling.clone(),
+                    data: b"printf 'SIBLING%s\\n' _READY\n".to_vec(),
+                },
+            )
+            .await;
+
+        let mut saw_busy = false;
+        let mut sibling_ok = false;
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < deadline && !(saw_busy && sibling_ok) {
+            let Some(frame) = client.poll_frame(Duration::from_millis(200)).await else {
+                continue;
+            };
+            match frame.kind {
+                Kind::Err => {
+                    if let Ok(error) = decode_value::<ErrorBody>(&frame.payload) {
+                        saw_busy |= error.code == "ptyBusy";
+                    }
+                }
+                Kind::Res if frame.stream_id == sibling_input => {
+                    let response: Response = decode_value(&frame.payload).unwrap();
+                    sibling_ok = response.result["ok"].as_bool().unwrap_or(false);
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_busy, "同一 PTY 的第 65 条待写输入应返回 ptyBusy");
+        assert!(sibling_ok, "阻塞 PTY 拖住了同连接另一个 PTY 的输入");
+
+        let id = client.request("pty.kill", &json!({ "id": blocked })).await;
+        client.wait_response(id).await;
+        let id = client.request("pty.kill", &json!({ "id": sibling })).await;
         client.wait_response(id).await;
         let id = client.request("server.shutdown", &json!({})).await;
         client.wait_response(id).await;

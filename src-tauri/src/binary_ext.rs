@@ -8,7 +8,7 @@ use std::path::Path;
 
 /// Lowercased extension without the dot; `""` when the name has none.
 pub(crate) fn file_extension_lower(name: &str) -> String {
-    Path::new(name)
+    Path::new(display_file_name(name))
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
@@ -110,10 +110,12 @@ pub(crate) fn image_too_large_message(size: u64) -> String {
 }
 
 pub(crate) fn display_file_name(path: &str) -> &str {
-    Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(path)
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    if name.is_empty() {
+        path
+    } else {
+        name
+    }
 }
 
 /// User-facing reason when a local path cannot be opened as a text buffer.

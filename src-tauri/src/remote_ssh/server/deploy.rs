@@ -1,19 +1,20 @@
 //! 部署编排：发现存活 server / 上传-校验-启动 / 等就绪，以及
 //! (连接, 根) 粒度的 slot 缓存、幂等跳过与部署退避。
 
-use super::daemon::{
-    daemon_downgrade_retry_ready, ensure_remote_daemon, stop_remote_daemon_for_upgrade,
-};
+use super::daemon::{daemon_downgrade_retry_ready, ensure_remote_daemon};
 use super::download::{locate_local_server_binary, locate_local_server_binary_with};
 use super::paths::{
-    legacy_agent_state_path, parse_server_state, server_binary_remote_path, server_dir_path,
-    server_serve_log_path, server_state_path,
+    can_reuse_discovered_server, legacy_agent_state_path, legacy_project_agent_binary_path,
+    legacy_project_server_binary_path, parse_server_state, project_server_dir_path,
+    remote_roots_equivalent, server_binary_file_name, server_gitignore_path, server_install_dir,
+    server_serve_log_path, server_state_path, user_server_root, windows_remote_path,
 };
 use super::scripts::{
-    deploy_server_command, kill_server_command, legacy_agent_cleanup_command,
-    remote_sha256_command, remote_sha256_matches, self_check_command, sha256_of_file_cached,
-    windows_deploy_for, windows_kill_for, windows_legacy_agent_cleanup_script,
-    windows_remote_sha256_script, windows_remove_for, windows_self_check_script,
+    deploy_server_command, kill_processes_by_executable_command, private_server_dirs_command,
+    remote_home_command, remote_sha256_command, remote_sha256_matches, self_check_command,
+    sha256_of_file_cached, windows_create_server_dirs_script, windows_deploy_for,
+    windows_remote_home_script, windows_remote_sha256_script, windows_remove_for,
+    windows_self_check_script, windows_stop_for,
 };
 use super::serve::ping_server;
 use super::*;
@@ -26,6 +27,8 @@ const AGENT_READY_POLL: Duration = Duration::from_millis(300);
 /// 部署退避阈值：同一 (连接, 根) 连续这么多次完整部署都等不到就绪，
 /// 说明不是瞬时抖动（典型如 sshd 禁了 TCP 转发），缓存成不可用等人介入。
 pub(crate) const SERVER_DEPLOY_BACKOFF_THRESHOLD: u32 = 2;
+const SERVER_STATE_GITIGNORE: &[u8] = b"*\n";
+const SERVER_STATE_GITIGNORE_MAX_BYTES: u64 = 64 * 1024;
 
 async fn exec_on_root(
     manager: &SshManager,
@@ -44,20 +47,112 @@ async fn exec_on_root(
         .await
 }
 
-/// 在已有状态文件中发现存活 server：版本一致且 ping 通过才算可用。
-/// 版本不一致时尽力 kill 旧进程（错误忽略），随后走部署流程。
+/// 确保项目状态目录存在，并在任何读写前确认真实路径仍位于项目根内。
 ///
-/// 版本号一致也**不足以**说明是同一构建（同一版本重打包、或本地换了离线包），
-/// 所以拿到本地二进制时再比对远端文件 sha256；内容不同同样视为不可复用，
-/// 清掉旧 serve 后重新部署。本地二进制定位失败时退回原有的版本号判断。
+/// `.qingcode` 与 `.qingcode/server` 分两步创建和 canonicalize：前者若是指向
+/// 项目外的符号链接，在创建子目录前就会被拒绝；后者同样不能跳转到项目根外
+/// 或 `.qingcode` 之外。目录通过校验后才创建 `*` 忽略文件，防止 token 状态和
+/// 日志被提交。
+async fn ensure_project_server_state_dir(
+    sftp: &SftpSession,
+    root: &RegisteredRoot,
+) -> Result<(), ServerDeployError> {
+    let root_path = root.canonical_path.trim_end_matches('/');
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let qingcode_dir = format!("{root_path}/.qingcode");
+    let server_dir = project_server_dir_path(root_path);
+
+    let _ = sftp.create_dir(qingcode_dir.clone()).await;
+    let resolved_qingcode = sftp
+        .canonicalize(qingcode_dir.clone())
+        .await
+        .map_err(|error| format!("项目 .qingcode 目录不可用：{error}"))?;
+    if !remote_path_is_within(&resolved_qingcode, &root.canonical_path)
+        || !remote_roots_equivalent(&resolved_qingcode, &qingcode_dir, windows)
+    {
+        return Err(ServerDeployError::permanent(
+            "项目 .qingcode 目录跳出了项目根",
+        ));
+    }
+
+    let _ = sftp.create_dir(server_dir.clone()).await;
+    let resolved_server = sftp
+        .canonicalize(server_dir.clone())
+        .await
+        .map_err(|error| format!("项目 server 状态目录不可用：{error}"))?;
+    if !remote_path_is_within(&resolved_server, &root.canonical_path)
+        || !remote_roots_equivalent(&resolved_server, &server_dir, windows)
+    {
+        return Err(ServerDeployError::permanent(
+            "项目 server 状态目录跳出了项目根",
+        ));
+    }
+
+    let gitignore = server_gitignore_path(root_path);
+    match sftp
+        .open_with_flags(gitignore.clone(), remote_write_flags(true))
+        .await
+    {
+        Ok(mut file) => {
+            file.write_all(SERVER_STATE_GITIGNORE)
+                .await
+                .map_err(|error| format!("写入项目 server .gitignore 失败：{error}"))?;
+            file.shutdown()
+                .await
+                .map_err(|error| format!("完成项目 server .gitignore 写入失败：{error}"))?;
+        }
+        // 已有文件不覆盖用户内容，但必须确认其中包含 `*`，否则 token 状态和
+        // 日志仍可能被提交。文件过大或无法读取时拒绝继续部署。
+        Err(create_error) => match sftp.metadata(gitignore.clone()).await {
+            Ok(metadata)
+                if metadata
+                    .size
+                    .is_none_or(|size| size <= SERVER_STATE_GITIGNORE_MAX_BYTES) =>
+            {
+                let existing = sftp
+                    .read(gitignore)
+                    .await
+                    .map_err(|error| format!("读取项目 server .gitignore 失败：{error}"))?;
+                if !gitignore_excludes_directory(&existing) {
+                    return Err(ServerDeployError::permanent(
+                        "项目 .qingcode/server/.gitignore 必须包含一行 `*`，以阻止状态 token 和日志进入版本库",
+                    ));
+                }
+            }
+            Ok(_) => {
+                return Err(ServerDeployError::permanent(
+                    "项目 .qingcode/server/.gitignore 过大，拒绝继续部署",
+                ));
+            }
+            Err(_) => {
+                return Err(format!("创建项目 server .gitignore 失败：{create_error}").into());
+            }
+        },
+    }
+    Ok(())
+}
+
+fn gitignore_excludes_directory(bytes: &[u8]) -> bool {
+    std::str::from_utf8(bytes)
+        .ok()
+        .is_some_and(|text| text.lines().any(|line| line.trim() == "*"))
+}
+
+/// 在已有状态文件中发现存活 server。只有状态版本、项目根、本地可信摘要与
+/// 用户私有安装目录中的远端摘要全部匹配时才复用；任何一项缺失都重新部署。
+///
+/// `local_sha256 = None` 时直接拒绝发现，绝不能仅凭项目内 `server.json`
+/// 的版本号去连接或执行 `<项目>/.qingcode/server/` 中的文件。
 async fn try_discover_server(
     manager: &SshManager,
     connection_id: &str,
     sftp: &SftpSession,
     root: &RegisteredRoot,
     app: Option<&tauri::AppHandle>,
-    local_binary: Option<&(String, std::path::PathBuf)>,
+    local_sha256: Option<&str>,
+    remote_bin: &str,
 ) -> Option<ServerEndpoint> {
+    let local_sha256 = local_sha256?;
     let state_path = server_state_path(&root.canonical_path);
     let metadata = sftp.metadata(state_path.clone()).await.ok()?;
     if metadata.is_dir() {
@@ -65,35 +160,17 @@ async fn try_discover_server(
     }
     let bytes = sftp.read(state_path.clone()).await.ok()?;
     let state = parse_server_state(&bytes).ok()?;
-    if state.version != SERVER_VERSION {
-        // 版本过期的 server 不再复用；旧进程可能还占着端口，按身份校验后尽力清掉。
-        let _ = exec_on_root(
-            manager,
-            root,
-            &kill_server_command(state.pid, &state_path),
-            &windows_kill_for(&state_path, state.pid),
-        )
-        .await;
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let remote_matches = remote_binary_sha_matches(manager, root, remote_bin, local_sha256).await;
+    if !can_reuse_discovered_server(
+        &state.version,
+        &state.root,
+        &root.canonical_path,
+        windows,
+        Some(local_sha256),
+        remote_matches,
+    ) {
         return None;
-    }
-    if let Some((arch, local)) = local_binary {
-        let local_sha = sha256_of_file_cached(local).await.ok()?;
-        let remote_bin = server_binary_remote_path(
-            &root.canonical_path,
-            windows_native_path(&root.canonical_path).is_some(),
-            arch,
-        );
-        if !remote_binary_sha_matches(manager, root, &remote_bin, &local_sha).await {
-            // 同版本不同构建：旧 serve 仍在跑旧代码，清掉后走完整部署。
-            let _ = exec_on_root(
-                manager,
-                root,
-                &kill_server_command(state.pid, &state_path),
-                &windows_kill_for(&state_path, state.pid),
-            )
-            .await;
-            return None;
-        }
     }
     let endpoint = ServerEndpoint {
         port: state.port,
@@ -112,65 +189,164 @@ async fn try_discover_server(
     Some(endpoint)
 }
 
-/// 在 server 部署目录写一个忽略自身的 `.gitignore`：状态文件含连接 token，
-/// 二进制也不该进用户仓库。已存在时按独占创建失败处理，不影响部署。
-async fn write_server_gitignore(sftp: &SftpSession, dir: &str) -> Result<(), String> {
-    let mut file = sftp
-        .open_with_flags(format!("{dir}/.gitignore"), remote_write_flags(true))
-        .await
-        .map_err(|error| format!("创建 server .gitignore 失败：{error}"))?;
-    file.write_all(b"*\n")
-        .await
-        .map_err(|error| format!("写入 server .gitignore 失败：{error}"))?;
-    file.shutdown()
-        .await
-        .map_err(|error| format!("完成 server .gitignore 写入失败：{error}"))
+/// 解析远端用户家目录并统一成 SFTP 路径。Windows 只接受盘符路径，
+/// UNC / 相对路径直接拒绝，避免把共享目录当成用户私有安装位置。
+async fn resolve_server_home(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) -> Result<String, ServerDeployError> {
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let result = exec_on_root(
+        manager,
+        root,
+        remote_home_command(),
+        windows_remote_home_script(),
+    )
+    .await
+    .map_err(|error| ServerDeployError::permanent(format!("无法读取远端用户家目录：{error}")))?;
+    if result.exit_code != 0 {
+        return Err(ServerDeployError::permanent(format!(
+            "无法读取远端用户家目录（退出码 {}）",
+            result.exit_code
+        )));
+    }
+    let raw = result.stdout.trim();
+    if raw.is_empty() {
+        return Err(ServerDeployError::permanent("远端用户家目录为空"));
+    }
+    let home = if windows {
+        windows_remote_path(raw).ok_or_else(|| {
+            ServerDeployError::permanent("Windows 远端 USERPROFILE 不是受支持的盘符路径")
+        })?
+    } else {
+        validate_remote_path(raw)
+            .map_err(|error| ServerDeployError::permanent(format!("远端家目录无效：{error}")))?;
+        normalize_remote_path(raw)
+    };
+    if home == "/" {
+        return Err(ServerDeployError::permanent(
+            "远端家目录不能是根目录，无法建立用户私有安装目录",
+        ));
+    }
+    Ok(home)
 }
 
-/// 上传 server 二进制：逐级建目录，临时文件 + rename 原子落位。
+/// 创建并验证 `~/.qingcode/server/<version>`。Unix 上每一级都收紧到 0700；
+/// Windows 依赖 `%USERPROFILE%` 的用户私有 ACL。canonicalize 后仍必须位于
+/// 家目录内，拒绝通过符号链接把安装目录重定向到外部位置。
+async fn prepare_server_install_dir(
+    manager: &SshManager,
+    sftp: &SftpSession,
+    root: &RegisteredRoot,
+    home: &str,
+) -> Result<String, ServerDeployError> {
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let qingcode_dir = format!("{}/.qingcode", home.trim_end_matches('/'));
+    let server_root = user_server_root(home);
+    let install_dir = server_install_dir(home, SERVER_VERSION);
+    let dirs = vec![
+        qingcode_dir.clone(),
+        server_root.clone(),
+        install_dir.clone(),
+    ];
+    if windows {
+        let native_dirs = dirs
+            .iter()
+            .map(|dir| {
+                windows_host_path(dir)
+                    .ok_or_else(|| ServerDeployError::permanent("Windows server 安装路径无效"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let result = exec_on_root(
+            manager,
+            root,
+            "",
+            &windows_create_server_dirs_script(&native_dirs),
+        )
+        .await
+        .map_err(|error| {
+            ServerDeployError::permanent(format!("创建 Windows server 安装目录失败：{error}"))
+        })?;
+        if result.exit_code != 0 {
+            return Err(ServerDeployError::permanent(format!(
+                "创建 Windows server 安装目录失败（退出码 {}）",
+                result.exit_code
+            )));
+        }
+    } else {
+        let result = exec_on_root(manager, root, &private_server_dirs_command(&dirs), "")
+            .await
+            .map_err(|error| {
+                ServerDeployError::permanent(format!("创建用户私有 server 目录失败：{error}"))
+            })?;
+        if result.exit_code != 0 {
+            return Err(ServerDeployError::permanent(format!(
+                "创建或收紧用户私有 server 目录失败（退出码 {}）",
+                result.exit_code
+            )));
+        }
+    }
+    let resolved_home = sftp
+        .canonicalize(home.to_string())
+        .await
+        .map_err(|error| ServerDeployError::permanent(format!("远端家目录不可用：{error}")))?;
+    let resolved_install = sftp
+        .canonicalize(install_dir)
+        .await
+        .map_err(|error| ServerDeployError::permanent(format!("server 安装目录不可用：{error}")))?;
+    if resolved_install == resolved_home
+        || !remote_path_is_within(&resolved_install, &resolved_home)
+    {
+        return Err(ServerDeployError::permanent(
+            "server 安装目录不在远端用户家目录内",
+        ));
+    }
+    Ok(resolved_install)
+}
+
+/// 已通过本地可信文件定位的目标；远端路径必须位于用户私有版本目录。
+struct ServerInstallTarget<'a> {
+    home: &'a str,
+    install_dir: &'a str,
+    remote_bin: &'a str,
+    local_sha256: &'a str,
+}
+
+/// 上传 server 二进制到用户私有版本目录，临时文件 + rename 原子落位。
 ///
 /// 幂等优化：上传前先在远端算已存在二进制的 sha256，与本地一致就跳过上传。
 /// 之前每次部署失败重试都是全量 SFTP 上传（ping 打不通时变成热循环：上传
 /// 几十 MB → 新 serve 因旧实例 rc=3 退出 → 15s 轮询超时 → 再来一遍）。
-/// sha256 逐字节一致则版本必然一致（版本升级 = 二进制变化 = sha 变化），
-/// 不会出现旧注释担心的「复用出旧版本 serve」；远端算不出摘要或对不上
-/// 时照常走全量上传，安全回退。返回 true 表示实际上传，false 表示跳过。
+/// sha256 逐字节一致则版本必然一致；远端算不出摘要或对不上时照常全量上传。
 async fn upload_server_binary(
     manager: &SshManager,
-    connection_id: &str,
     sftp: &SftpSession,
     root: &RegisteredRoot,
     local: &Path,
-    remote_bin: &str,
-    local_sha256: &str,
+    target: &ServerInstallTarget<'_>,
 ) -> Result<bool, String> {
-    if remote_binary_sha_matches(manager, root, remote_bin, local_sha256).await {
+    if remote_binary_sha_matches(manager, root, target.remote_bin, target.local_sha256).await {
         return Ok(false);
     }
-    let dir = server_dir_path(&root.canonical_path);
-    let parent = format!("{}/.qingcode", root.canonical_path.trim_end_matches('/'));
-    // 逐级建目录：SFTP 的 mkdir 不递归，父目录缺失时子目录必然失败。已存在则忽略错误。
-    let _ = sftp.create_dir(parent).await;
-    let _ = sftp.create_dir(dir.clone()).await;
-
-    // 上传前先确认目录仍在项目根内（防止 root 被符号链接重定向）。
+    // 上传前再确认目录仍在家目录内（防止 root 被符号链接重定向）。
     let resolved_dir = sftp
-        .canonicalize(dir.clone())
+        .canonicalize(target.install_dir.to_string())
         .await
         .map_err(|error| format!("server 部署目录不可用：{error}"))?;
-    if !remote_path_is_within(&resolved_dir, &root.canonical_path) {
-        return Err("server 部署目录跳出了项目根".to_string());
+    let resolved_home = sftp
+        .canonicalize(target.home.to_string())
+        .await
+        .map_err(|error| format!("远端家目录不可用：{error}"))?;
+    if !remote_path_is_within(&resolved_dir, &resolved_home) {
+        return Err("server 部署目录跳出了远端用户家目录".to_string());
     }
-
-    // 状态文件含 token、二进制不该进用户仓库：目录内放一个忽略自身的 .gitignore。
-    let _ = write_server_gitignore(sftp, &resolved_dir).await;
 
     let bytes =
         std::fs::read(local).map_err(|error| format!("读取本地 server 二进制失败：{error}"))?;
     // SFTP v3 的 rename 不覆盖已存在目标，先写临时文件再原子替换。
     let temp = format!(
         "{}/qingcode-server.tmp-{}",
-        dir,
+        resolved_dir,
         uuid::Uuid::new_v4().simple()
     );
     let write_result: Result<(), String> = async {
@@ -193,13 +369,34 @@ async fn upload_server_binary(
         let _ = tokio::time::timeout(Duration::from_secs(2), sftp.remove_file(temp)).await;
         return Err(error);
     }
-    // Windows 不允许替换正在运行的 exe：提交前先让 daemon/serve 退出并释放
-    // 文件锁（Unix 覆盖运行中的文件不冲突，不需要这一步）。
-    if windows_native_path(&root.canonical_path).is_some() {
-        stop_remote_daemon_for_upgrade(manager, connection_id, root, remote_bin).await;
-    }
-    replace_remote_binary(manager, sftp, root, &temp, remote_bin).await?;
+    // 目标摘要已不匹配，目标文件不可信；这里只按可执行文件路径清理进程，
+    // 绝不执行它请求 shutdown。Windows 由此释放文件锁，Unix 也避免旧
+    // serve/daemon 继续运行旧代码。
+    stop_processes_for_binary(manager, root, target.remote_bin).await;
+    replace_remote_binary(manager, sftp, root, &temp, target.remote_bin).await?;
     Ok(true)
+}
+
+/// 按目标路径清理 server/daemon 进程。只读取进程元数据或 PowerShell
+/// `ExecutablePath`，不会执行待替换的二进制。
+async fn stop_processes_for_binary(manager: &SshManager, root: &RegisteredRoot, remote_bin: &str) {
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let command = if windows {
+        String::new()
+    } else {
+        kill_processes_by_executable_command(remote_bin)
+    };
+    let script = if windows {
+        windows_stop_for(remote_bin)
+    } else {
+        String::new()
+    };
+    if command.is_empty() && script.is_empty() {
+        return;
+    }
+    let _ = exec_on_root(manager, root, &command, &script).await;
+    // 进程退出与句柄释放有毫秒级延迟，给随后 rename 留余量。
+    tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
 /// 用临时文件原子替换目标二进制。
@@ -265,21 +462,26 @@ async fn remote_binary_sha_matches(
     remote_sha256_matches(&result.stdout, local_sha256)
 }
 
-/// 远端 exec `self-check --expect-sha256`：校验落盘二进制与本地逐字节一致，
-/// 同时探测部署目录是否 noexec（exec 失败会以非零码暴露）。失败按 permanent
-/// 处理——传输损坏 / 磁盘坏 / noexec 不会因重试自愈，缓存成不可用等人工介入。
+/// 先在不执行目标文件的前提下用远端 `sha256sum` / `Get-FileHash` 比对本地
+/// 摘要，只有一致后才 exec `self-check` 探测 noexec。这样损坏、被替换或
+/// 来源不明的文件永远不会进入执行阶段。失败按 permanent 处理。
 async fn verify_remote_binary(
     manager: &SshManager,
     root: &RegisteredRoot,
     remote_bin: &str,
     local_sha256: &str,
 ) -> Result<(), ServerDeployError> {
-    // unix 上 exec 前补可执行位：跳过上传的旧文件可能权限被改动过。
+    if !remote_binary_sha_matches(manager, root, remote_bin, local_sha256).await {
+        return Err(ServerDeployError::permanent(
+            "远端 server 二进制 SHA-256 与本地可信文件不一致，已拒绝执行",
+        ));
+    }
+    // 用户目录与文件都只允许当前用户访问；跳过上传的旧文件也可能权限被改动。
     if windows_native_path(&root.canonical_path).is_none() {
         let _ = manager
             .exec_command(
                 &root.uri,
-                &format!("chmod 755 -- {}", shell_quote(remote_bin)),
+                &format!("chmod 700 -- {}", shell_quote(remote_bin)),
                 None,
                 true,
                 REMOTE_EXEC_TIMEOUT,
@@ -304,7 +506,7 @@ async fn verify_remote_binary(
     if result.exit_code != 0 {
         let detail = self_check_failure_detail(&result.stderr, result.exit_code);
         return Err(ServerDeployError::permanent(format!(
-            "远端服务程序校验未通过（{detail}）：文件可能损坏、版本过旧或部署目录不允许执行。请删除远端项目内的 .qingcode/server 目录后重新连接，重新连接后会自动重新部署"
+            "远端服务程序自检未通过（{detail}）：用户私有安装目录可能不允许执行，或文件在摘要校验后被替换。请重新连接以重新部署"
         )));
     }
     Ok(())
@@ -327,31 +529,26 @@ fn self_check_failure_detail(stderr: &str, exit_code: u32) -> String {
     }
 }
 
-/// 清理改名前的旧版遗留：`.qingcode/agent/agent.json` 还在时，按其中的 pid
-/// 尽力杀掉旧 serve 并删除该状态文件（不删整个旧目录）。任何失败都不影响
-/// 本次部署——旧进程最多多占一个端口，不值得为它中断升级。
-async fn cleanup_legacy_agent_state(
+/// 清理旧版项目内安装：只按路径结束进程并删除文件，绝不执行项目目录中的
+/// 二进制。包括改名前的 `qingcode-agent-*`、当前旧布局 `qingcode-server-*`
+/// 和旧状态文件。清理失败不影响已经通过校验的新版本安装。
+async fn cleanup_legacy_project_install(
     manager: &SshManager,
-    root: &RegisteredRoot,
     sftp: &SftpSession,
+    root: &RegisteredRoot,
+    arch: &str,
 ) {
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let binaries = [
+        legacy_project_server_binary_path(&root.canonical_path, windows, arch),
+        legacy_project_agent_binary_path(&root.canonical_path, windows, arch),
+    ];
+    for binary in binaries {
+        stop_processes_for_binary(manager, root, &binary).await;
+        let _ = tokio::time::timeout(Duration::from_secs(2), sftp.remove_file(binary)).await;
+    }
     let legacy_state = legacy_agent_state_path(&root.canonical_path);
-    let Ok(bytes) = sftp.read(legacy_state.clone()).await else {
-        return;
-    };
-    let Ok(state) = parse_server_state(&bytes) else {
-        return;
-    };
-    let windows_script = windows_host_path(&legacy_state)
-        .map(|path| windows_legacy_agent_cleanup_script(state.pid, &path))
-        .unwrap_or_default();
-    let _ = exec_on_root(
-        manager,
-        root,
-        &legacy_agent_cleanup_command(state.pid, &legacy_state),
-        &windows_script,
-    )
-    .await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), sftp.remove_file(legacy_state)).await;
 }
 
 /// 等待 server 启动就绪：状态文件出现、可解析且 ping 通过。
@@ -370,6 +567,15 @@ async fn wait_server_ready(
         tokio::time::sleep(AGENT_READY_POLL).await;
         if let Ok(bytes) = sftp.read(state_path.clone()).await {
             if let Ok(state) = parse_server_state(&bytes) {
+                if state.version != SERVER_VERSION
+                    || !remote_roots_equivalent(
+                        &state.root,
+                        &root.canonical_path,
+                        windows_native_path(&root.canonical_path).is_some(),
+                    )
+                {
+                    continue;
+                }
                 let endpoint = ServerEndpoint {
                     port: state.port,
                     token: state.token,
@@ -402,101 +608,91 @@ async fn discover_or_deploy_server(
     app: Option<&tauri::AppHandle>,
 ) -> Result<ServerEndpoint, ServerDeployError> {
     let sftp = manager.open_sftp(connection_id).await?;
-    // 先解析本地二进制（只查本地、不触发下载），供「同版本不同构建」的内容
-    // 强匹配；远端本来可用时不为比对额外下载，缺失就退回按版本号判断。
-    let local_binary = locate_local_server_binary_with(manager, root, false)
+    // 发现和启动 serve 都依赖这里的状态文件与日志目录；干净项目必须先创建
+    // 并验证项目内目录，再进入 try_discover 或安装流程。
+    ensure_project_server_state_dir(&sftp, root).await?;
+    // 先解析本地二进制（只查本地、不触发下载）。本地没有可信文件时不做
+    // 发现，后续必须下载或由用户提供离线文件。
+    let local_candidate = locate_local_server_binary_with(manager, root, false)
         .await
         .ok();
-    let (mut endpoint, remote_bin) = if let Some(endpoint) = try_discover_server(
-        manager,
-        connection_id,
-        &sftp,
-        root,
-        app,
-        local_binary.as_ref(),
-    )
-    .await
-    {
-        // 定位本地二进制时已探测过远端架构，直接换算远端路径，省掉 daemon
-        // 探测里再跑一次 `uname -m`；本地缺二进制时才由 daemon 现场解析。
-        let remote_bin = local_binary.as_ref().map(|(arch, _)| {
-            server_binary_remote_path(
-                &root.canonical_path,
-                windows_native_path(&root.canonical_path).is_some(),
-                arch,
-            )
-        });
-        (endpoint, remote_bin)
-    } else {
-        let (arch, local_binary) = match local_binary {
-            Some(local) => local,
-            None => locate_local_server_binary(manager, root).await?,
-        };
-        let remote_bin = server_binary_remote_path(
-            &root.canonical_path,
-            windows_native_path(&root.canonical_path).is_some(),
-            &arch,
-        );
-        // 上传之前才标 installing；找本地二进制仍算 probing。
-        server_status::note_server_activity(
-            manager,
-            app,
-            root,
-            connection_id,
-            server_status::ServerPhase::Installing,
-        );
-        // 本地摘要一份两用：幂等跳过上传 + 远端 self-check 期望值。
-        let local_sha256 = sha256_of_file_cached(&local_binary)
+    let windows = windows_native_path(&root.canonical_path).is_some();
+
+    if let Some((arch, local_binary)) = local_candidate.as_ref() {
+        let home = resolve_server_home(manager, root).await?;
+        let install_dir = prepare_server_install_dir(manager, &sftp, root, &home).await?;
+        let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, arch));
+        let local_sha256 = sha256_of_file_cached(local_binary)
             .await
             .map_err(ServerDeployError::from)?;
-        upload_server_binary(
+        if let Some(mut endpoint) = try_discover_server(
             manager,
             connection_id,
             &sftp,
             root,
-            &local_binary,
+            app,
+            Some(&local_sha256),
             &remote_bin,
-            &local_sha256,
         )
         .await
-        .map_err(ServerDeployError::deploy_stage)?;
-        // 落盘校验（sha256 + noexec 探测）通过才允许启动。
-        verify_remote_binary(manager, root, &remote_bin, &local_sha256).await?;
-        // 顺手清掉改名前的旧版遗留（旧 serve 进程 + agent.json），尽力而为。
-        cleanup_legacy_agent_state(manager, root, &sftp).await;
-        let state_path = server_state_path(&root.canonical_path);
-        let serve_log = server_serve_log_path(&root.canonical_path);
-        let command =
-            deploy_server_command(&remote_bin, &root.canonical_path, &state_path, &serve_log);
-        let windows_script =
-            windows_deploy_for(&remote_bin, &root.canonical_path, &state_path, &serve_log)
-                .map_err(ServerDeployError::from)?;
-        manager
-            .exec_remote_shell(
-                &root.uri,
-                &command,
-                &windows_script,
-                true,
-                REMOTE_EXEC_TIMEOUT,
-            )
-            .await
-            .map_err(|error| {
-                ServerDeployError::deploy_stage(format!("启动远端 server 失败：{error}"))
-            })?;
-        // serve ping 之前进入握手。
-        server_status::note_server_activity(
-            manager,
-            app,
-            root,
-            connection_id,
-            server_status::ServerPhase::Handshaking,
-        );
-        let endpoint = wait_server_ready(manager, connection_id, &sftp, root)
-            .await
-            .ok_or_else(|| ServerDeployError::deploy_stage("server 启动超时".to_string()))?;
-        (endpoint, Some(remote_bin))
+        {
+            cleanup_legacy_project_install(manager, &sftp, root, arch).await;
+            endpoint.daemon = ensure_remote_daemon(manager, connection_id, root, &remote_bin).await;
+            return Ok(endpoint);
+        }
+    }
+
+    let (arch, local_binary) = match local_candidate {
+        Some(local) => local,
+        None => locate_local_server_binary(manager, root).await?,
     };
-    // daemon 握手（token + HELLO）之前再标一次；已是 handshaking 时不会重复发事件。
+    let home = resolve_server_home(manager, root).await?;
+    let install_dir = prepare_server_install_dir(manager, &sftp, root, &home).await?;
+    let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, &arch));
+    // 上传之前才标 installing；找本地二进制仍算 probing。
+    server_status::note_server_activity(
+        manager,
+        app,
+        root,
+        connection_id,
+        server_status::ServerPhase::Installing,
+    );
+    // 本地摘要一份两用：幂等跳过上传 + 远端 self-check 期望值。
+    let local_sha256 = sha256_of_file_cached(&local_binary)
+        .await
+        .map_err(ServerDeployError::from)?;
+    let target = ServerInstallTarget {
+        home: &home,
+        install_dir: &install_dir,
+        remote_bin: &remote_bin,
+        local_sha256: &local_sha256,
+    };
+    upload_server_binary(manager, &sftp, root, &local_binary, &target)
+        .await
+        .map_err(ServerDeployError::deploy_stage)?;
+    // 先做无执行的 sha256 校验，再 self-check（同时探测 noexec）。
+    verify_remote_binary(manager, root, &remote_bin, &local_sha256).await?;
+    // 新版本已可信后才清理旧项目目录；清理过程不会执行旧二进制。
+    cleanup_legacy_project_install(manager, &sftp, root, &arch).await;
+    let state_path = server_state_path(&root.canonical_path);
+    let serve_log = server_serve_log_path(&root.canonical_path);
+    let command = deploy_server_command(&remote_bin, &root.canonical_path, &state_path, &serve_log);
+    let windows_script =
+        windows_deploy_for(&remote_bin, &root.canonical_path, &state_path, &serve_log)
+            .map_err(ServerDeployError::from)?;
+    manager
+        .exec_remote_shell(
+            &root.uri,
+            &command,
+            &windows_script,
+            true,
+            REMOTE_EXEC_TIMEOUT,
+        )
+        .await
+        .map_err(|error| {
+            ServerDeployError::deploy_stage(format!("启动远端 server 失败：{error}"))
+        })?;
+    // serve ping 之前进入握手。
     server_status::note_server_activity(
         manager,
         app,
@@ -504,8 +700,10 @@ async fn discover_or_deploy_server(
         connection_id,
         server_status::ServerPhase::Handshaking,
     );
-    endpoint.daemon =
-        ensure_remote_daemon(manager, connection_id, root, remote_bin.as_deref()).await;
+    let mut endpoint = wait_server_ready(manager, connection_id, &sftp, root)
+        .await
+        .ok_or_else(|| ServerDeployError::deploy_stage("server 启动超时".to_string()))?;
+    endpoint.daemon = ensure_remote_daemon(manager, connection_id, root, &remote_bin).await;
     Ok(endpoint)
 }
 
@@ -733,7 +931,14 @@ async fn retry_downgraded_daemon(
     if !daemon_missing || !daemon_downgrade_retry_ready(slot.daemon_downgraded_at, Instant::now()) {
         return;
     }
-    match ensure_remote_daemon(manager, connection_id, root, None).await {
+    // 降级重试也重新走「本地文件 + 用户私有安装路径 + 远端 sha256」校验。
+    // 这里没有 None 回退分支，因此不可能重新解析到项目内二进制。
+    let Some(remote_bin) = find_verified_installed_binary(manager, root).await else {
+        slot.daemon_downgraded_at = Some(Instant::now());
+        manager.set_server_slot(key, slot);
+        return;
+    };
+    match ensure_remote_daemon(manager, connection_id, root, &remote_bin).await {
         Some(access) => {
             if let Some(endpoint) = slot.endpoint.as_mut() {
                 endpoint.daemon = Some(access);
@@ -746,6 +951,29 @@ async fn retry_downgraded_daemon(
             manager.set_server_slot(key, slot);
         }
     }
+}
+
+/// 降级重试时重新定位可信安装：本地二进制的 SHA-256 必须与用户私有版本
+/// 目录中的远端文件一致。任一步失败都返回 `None`，调用方继续走 serve。
+async fn find_verified_installed_binary(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) -> Option<String> {
+    let (arch, local_binary) = locate_local_server_binary_with(manager, root, false)
+        .await
+        .ok()?;
+    let connection_id = parse_remote_uri(&root.uri).ok()?.connection_id;
+    let sftp = manager.open_sftp(&connection_id).await.ok()?;
+    let home = resolve_server_home(manager, root).await.ok()?;
+    let install_dir = prepare_server_install_dir(manager, &sftp, root, &home)
+        .await
+        .ok()?;
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, &arch));
+    let local_sha256 = sha256_of_file_cached(&local_binary).await.ok()?;
+    remote_binary_sha_matches(manager, root, &remote_bin, &local_sha256)
+        .await
+        .then_some(remote_bin)
 }
 
 #[cfg(test)]
@@ -835,5 +1063,13 @@ mod tests {
         assert!(detail.ends_with('…'));
         assert_eq!(self_check_failure_detail("  \n \n", 126), "退出码 126");
         assert_eq!(self_check_failure_detail("", 1), "退出码 1");
+    }
+
+    #[test]
+    fn project_server_gitignore_blocks_every_state_artifact() {
+        assert_eq!(SERVER_STATE_GITIGNORE, b"*\n");
+        assert!(gitignore_excludes_directory(b"# local\n*\n"));
+        assert!(!gitignore_excludes_directory(b"server.json\nserve.log\n"));
+        assert!(!gitignore_excludes_directory(&[0xff, b'\n']));
     }
 }

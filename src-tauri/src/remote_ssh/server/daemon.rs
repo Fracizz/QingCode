@@ -4,11 +4,11 @@
 
 use std::io;
 
-use super::paths::{server_binary_path, server_binary_remote_path, windows_server_arch_script};
+use super::paths::windows_host_path;
 use super::scripts::{
     connect_daemon_command, connect_daemon_command_existing, daemon_token_command,
     start_daemon_command, windows_connect_daemon_command, windows_connect_daemon_command_existing,
-    windows_daemon_start_script, windows_daemon_token_script, windows_stop_for,
+    windows_daemon_start_script, windows_daemon_token_script,
 };
 use super::*;
 use qingcode_server::proto::{
@@ -273,13 +273,13 @@ pub(super) async fn ensure_remote_daemon(
     manager: &SshManager,
     connection_id: &str,
     root: &RegisteredRoot,
-    remote_bin: Option<&str>,
+    remote_bin: &str,
 ) -> Option<DaemonAccess> {
     let windows = windows_native_path(&root.canonical_path);
-    let bin = match remote_bin {
-        Some(bin) => bin.to_string(),
-        None => resolve_daemon_binary(manager, root, windows.as_deref()).await?,
-    };
+    // 这里只接受调用方已经通过可信 SHA-256 校验的路径。此前 `None` 会按
+    // 项目根重新解析 `<项目>/.qingcode/server/...`，构成项目内代码执行路径；
+    // 现在可选路径 API 已删除，编译器不允许再传入无校验回退。
+    let bin = remote_bin.to_string();
     // 幂等启动：unix `nohup setsid`；Windows `daemon --detach` 自脱离。
     if windows.is_some() {
         let native_bin = windows_host_path(&bin)?;
@@ -373,38 +373,6 @@ async fn restart_daemon(manager: &SshManager, root: &RegisteredRoot, bin: &str, 
     }
 }
 
-/// 解析 daemon 二进制的远端路径。unix 用 `uname -m`；Windows 用
-/// `$env:PROCESSOR_ARCHITECTURE` 换算（OpenSSH 默认 shell 不一定有 uname）。
-async fn resolve_daemon_binary(
-    manager: &SshManager,
-    root: &RegisteredRoot,
-    windows_native_root: Option<&str>,
-) -> Option<String> {
-    if windows_native_root.is_some() {
-        let script = windows_server_arch_script().to_string();
-        let result = manager
-            .exec_remote_shell(&root.uri, "", &script, true, REMOTE_EXEC_TIMEOUT)
-            .await
-            .ok()?;
-        let arch = result.stdout.trim();
-        if arch != "x86_64" && arch != "aarch64" {
-            return None;
-        }
-        return Some(server_binary_remote_path(&root.canonical_path, true, arch));
-    }
-    let arch = manager
-        .exec_command(&root.uri, "uname -m", None, true, REMOTE_EXEC_TIMEOUT)
-        .await
-        .ok()?
-        .stdout
-        .trim()
-        .to_string();
-    if arch != "x86_64" && arch != "aarch64" {
-        return None;
-    }
-    Some(server_binary_path(&root.canonical_path, &arch))
-}
-
 /// 读取 daemon 会话 token：unix shell 命令 / Windows PowerShell 脚本。
 async fn read_daemon_token(
     manager: &SshManager,
@@ -495,39 +463,6 @@ async fn shutdown_remote_daemon_with(
     .await;
     channel.shutdown().await;
     result.is_ok()
-}
-
-/// 升级替换远端二进制之前，尽力结束占用目标 exe 的进程（Windows 文件锁）。
-///
-/// 先按 token 做一次宽松握手并请求 `server.shutdown`，让 daemon 自己收尾
-/// （日志、pipe 清理、PTY 销毁）；再用 `ExecutablePath` 精确兜底结束——serve
-/// 与 daemon 共用同一个 exe，且旧版二进制可能压根不支持 Windows 上的
-/// `connect`，那时只有兜底能释放文件锁。Unix 覆盖运行中的文件不冲突，
-/// 调用方仅应在 Windows 调用本函数。
-pub(crate) async fn stop_remote_daemon_for_upgrade(
-    manager: &SshManager,
-    connection_id: &str,
-    root: &RegisteredRoot,
-    remote_bin: &str,
-) {
-    if let Some(token) = read_daemon_token(manager, root, true).await {
-        if !token.is_empty() {
-            let access = DaemonAccess {
-                bin: remote_bin.to_string(),
-                token,
-            };
-            let _ = shutdown_remote_daemon_with(manager, connection_id, &access, false).await;
-        }
-    }
-    let script = windows_stop_for(remote_bin);
-    if script.is_empty() {
-        return;
-    }
-    let _ = manager
-        .exec_remote_shell(&root.uri, "", &script, true, REMOTE_EXEC_TIMEOUT)
-        .await;
-    // 进程退出后文件句柄释放有毫秒级延迟，给随后的 rename 留余量。
-    tokio::time::sleep(Duration::from_millis(300)).await;
 }
 
 /// daemon 通道上的单请求 RPC：发 REQ、等 RES 或 ERR，返回 RES 的 result。
@@ -769,7 +704,10 @@ mod tests {
 
     fn sample_daemon_access() -> DaemonAccess {
         DaemonAccess {
-            bin: "/srv/app/.qingcode/server/qingcode-server-x86_64".to_string(),
+            bin: format!(
+                "/home/dev/.qingcode/server/{}/qingcode-server-x86_64",
+                SERVER_VERSION
+            ),
             token: "token-123".to_string(),
         }
     }

@@ -60,6 +60,8 @@ fn apply_no_window(cmd: &mut Command) {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+    #[cfg(not(windows))]
+    let _ = cmd;
 }
 
 fn cwd_for_file(path: &str) -> &Path {
@@ -294,6 +296,7 @@ fn run_with_stdin_timeout(
     String::from_utf8(output.stdout).map_err(|e| format!("格式化输出不是有效 UTF-8: {e}"))
 }
 
+#[cfg(windows)]
 fn run_windows_cmd_bin(
     bin: &Path,
     cwd: &Path,

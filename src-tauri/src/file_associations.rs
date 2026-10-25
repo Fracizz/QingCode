@@ -4,10 +4,15 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
 const PROGID: &str = "QingCode.Document";
+#[cfg(windows)]
 const APP_KEY: &str = "QingCode.exe";
+#[cfg(windows)]
 const FRIENDLY_NAME: &str = "QingCode";
+#[cfg(windows)]
 const REGISTRATION_VERSION_NAME: &str = "QingCodeRegistrationVersion";
+#[cfg(windows)]
 const REGISTRATION_VERSION: u32 = 2;
 
 /// Text/code extensions QingCode can open (exclude binaries rejected by `read_file`).
@@ -115,6 +120,7 @@ pub fn supported_file_extensions() -> Vec<String> {
         .collect()
 }
 
+#[cfg(windows)]
 fn is_empty_legacy_default(owned_open_with: bool, default: Option<&str>) -> bool {
     owned_open_with && default == Some("")
 }
@@ -417,6 +423,7 @@ mod tests {
         assert!(editable.iter().any(|ext| ext == "cmd"));
     }
 
+    #[cfg(windows)]
     #[test]
     fn legacy_cleanup_only_removes_our_blank_default_override() {
         assert!(is_empty_legacy_default(true, Some("")));

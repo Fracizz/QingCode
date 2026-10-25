@@ -85,9 +85,12 @@ impl IpcEndpoint {
         }
         #[cfg(windows)]
         {
-            Ok(IpcStream::PipeClient(
-                tokio::net::windows::named_pipe::ClientOptions::new().open(self.pipe_name())?,
-            ))
+            let stream =
+                tokio::net::windows::named_pipe::ClientOptions::new().open(self.pipe_name())?;
+            windows::verify_pipe_server_owner(std::os::windows::io::AsRawHandle::as_raw_handle(
+                &stream,
+            ) as _)?;
+            Ok(IpcStream::PipeClient(stream))
         }
     }
 
@@ -545,11 +548,15 @@ mod windows {
         SDDL_REVISION_1,
     };
     use windows_sys::Win32::Security::{
-        GetTokenInformation, TokenUser, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+        GetLengthSid, GetTokenInformation, TokenUser, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
     };
     use windows_sys::Win32::Storage::FileSystem::{CreateFileW, OPEN_EXISTING};
-    use windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId;
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows_sys::Win32::System::Pipes::{
+        GetNamedPipeClientProcessId, GetNamedPipeServerProcessId,
+    };
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
 
     fn to_wide(value: &OsStr) -> Vec<u16> {
         value.encode_wide().chain(std::iter::once(0)).collect()
@@ -609,6 +616,104 @@ mod windows {
         }
         let slice = unsafe { std::slice::from_raw_parts(pointer, length) };
         String::from_utf16_lossy(slice)
+    }
+
+    fn token_user_sid(token: HANDLE) -> io::Result<Vec<u8>> {
+        let mut length = 0u32;
+        // 第一次调用只查询所需长度；ERROR_INSUFFICIENT_BUFFER 是预期结果。
+        unsafe {
+            GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &mut length);
+        }
+        if length == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "TokenInformation 长度查询失败",
+            ));
+        }
+        let mut buffer = vec![0u8; length as usize];
+        if unsafe {
+            GetTokenInformation(
+                token,
+                TokenUser,
+                buffer.as_mut_ptr() as *mut _,
+                length,
+                &mut length,
+            )
+        } == 0
+        {
+            return Err(last_error());
+        }
+        let user = buffer.as_ptr() as *const TOKEN_USER;
+        let sid = unsafe { (*user).User.Sid };
+        let sid_length = unsafe { GetLengthSid(sid) } as usize;
+        if sid_length == 0 || sid_length > buffer.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "TokenUser 返回了非法 SID",
+            ));
+        }
+        Ok(unsafe { std::slice::from_raw_parts(sid as *const u8, sid_length) }.to_vec())
+    }
+
+    fn process_user_sid(process_id: u32) -> io::Result<Vec<u8>> {
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+        if process.is_null() {
+            return Err(last_error());
+        }
+        let mut token: HANDLE = std::ptr::null_mut();
+        let opened = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
+        let open_error = last_error();
+        unsafe {
+            CloseHandle(process);
+        }
+        if opened == 0 {
+            return Err(open_error);
+        }
+        let sid = token_user_sid(token);
+        unsafe {
+            CloseHandle(token);
+        }
+        sid
+    }
+
+    fn current_user_sid() -> io::Result<Vec<u8>> {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return Err(last_error());
+        }
+        let sid = token_user_sid(token);
+        unsafe {
+            CloseHandle(token);
+        }
+        sid
+    }
+
+    fn sid_bytes_match(left: &[u8], right: &[u8]) -> bool {
+        if left.len() != right.len() {
+            return false;
+        }
+        left.iter()
+            .zip(right)
+            .fold(0u8, |diff, (left, right)| diff | (left ^ right))
+            == 0
+    }
+
+    /// 确认已连接命名管道的服务端进程属于当前用户。其他用户即使抢注了同名
+    /// 管道并放开 DACL，也无法通过这一步，HELLO/token 不会发给攻击进程。
+    pub(super) fn verify_pipe_server_owner(pipe: HANDLE) -> io::Result<u32> {
+        let mut server_pid = 0u32;
+        if unsafe { GetNamedPipeServerProcessId(pipe, &mut server_pid) } == 0 {
+            return Err(last_error());
+        }
+        let server_sid = process_user_sid(server_pid)?;
+        let current_sid = current_user_sid()?;
+        if !sid_bytes_match(&server_sid, &current_sid) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!("命名管道服务端 pid {server_pid} 不属于当前用户"),
+            ));
+        }
+        Ok(server_pid)
     }
 
     /// 「仅当前用户完全访问」的安全描述符（D:P 表示无 ACE 匹配即拒绝）。
@@ -709,7 +814,10 @@ mod windows {
             return Err(last_error());
         }
         // SAFETY: handle 来自 CreateFileW 且未在其他地方使用。
-        Ok(unsafe { std::os::windows::io::FromRawHandle::from_raw_handle(handle) })
+        let file: std::fs::File =
+            unsafe { std::os::windows::io::FromRawHandle::from_raw_handle(handle) };
+        verify_pipe_server_owner(std::os::windows::io::AsRawHandle::as_raw_handle(&file) as _)?;
+        Ok(file)
     }
 
     /// 取命名管道客户端的 pid（日志用；访问控制由 DACL 保证）。
@@ -750,6 +858,17 @@ mod windows {
         let sddl = user_only_sddl().unwrap();
         assert!(sddl.starts_with("D:P(A;;GA;;;"), "意外的前缀: {sddl}");
         assert!(sddl.len() > "D:P(A;;GA;;;".len(), "缺少 SID: {sddl}");
+    }
+
+    #[test]
+    fn current_process_sid_can_be_read_and_matches_itself() {
+        let process_sid = process_user_sid(unsafe {
+            windows_sys::Win32::System::Threading::GetCurrentProcessId()
+        })
+        .unwrap();
+        let token_sid = current_user_sid().unwrap();
+        assert!(sid_bytes_match(&process_sid, &token_sid));
+        assert!(!process_sid.is_empty());
     }
 }
 

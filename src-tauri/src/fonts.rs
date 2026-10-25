@@ -1,3 +1,4 @@
+#[cfg(windows)]
 use std::collections::BTreeSet;
 
 /// Installed font family names for the settings font pickers.

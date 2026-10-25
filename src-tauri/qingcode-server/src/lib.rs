@@ -42,10 +42,11 @@ use tokio::net::TcpStream;
 /// 读取版本号。
 ///
 /// 与 [`proto::PROTOCOL_VERSION`] 的关系（两个常量各管一摊，不要混用）：
-/// `SERVER_VERSION` 是发版粒度，每次发布都会变，对应安装目录
-/// `~/.qingcode/server/<version>-<build>/` 的版本段；`PROTOCOL_VERSION`
-/// 是线上协议粒度，只有帧格式或消息语义出现不兼容变更时才递增，小版本
-/// 发布（新增字段、新增操作）保持不变。
+/// `SERVER_VERSION` 是发版粒度，每次发布都会变，对应部署在
+/// `~/.qingcode/server/<version>/qingcode-server-<arch>` 的二进制版本
+/// （项目内 `.qingcode/server/` 只保存 serve 状态与日志）；
+/// `PROTOCOL_VERSION` 是线上协议粒度，只有帧格式或消息语义出现不兼容
+/// 变更时才递增，小版本发布（新增字段、新增操作）保持不变。
 ///
 /// 客户端按 SERVER_VERSION 决定是否重新部署，按 PROTOCOL_VERSION 判定
 /// 能否互通；协议向后兼容/降级协商策略由客户端负责，代理侧本期不实现。
@@ -59,6 +60,10 @@ pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 /// 整体超时约 45s（3 个心跳周期，见客户端 AGENT_WATCH_FRAME_TIMEOUT），
 /// 心跳既不会打扰客户端，又能让半开连接在有限时间内写失败。
 const WATCH_HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// serve 同时处理的连接上限。每个请求都可能启动扫描、搜索或 watch，
+/// 无上限会让本机其他用户用大量连接耗尽进程资源。
+const MAX_SERVE_CONNECTIONS: usize = 32;
 
 /// 帧格式：4 字节小端长度 + JSON 负载。长度为 0 或超上限都视为协议错误。
 pub async fn read_frame<R: AsyncRead + Unpin>(reader: &mut R) -> io::Result<Vec<u8>> {
@@ -187,14 +192,7 @@ pub fn path_is_within(child: &Path, root: &Path) -> bool {
 
 /// 把字面量文本转义为等价正则（客户端侧的 `rg --fixed-strings` 语义）。
 pub fn escape_regex_literal(pattern: &str) -> String {
-    let mut out = String::with_capacity(pattern.len() * 2);
-    for ch in pattern.chars() {
-        if ch.is_ascii_punctuation() {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
+    regex_syntax::escape(pattern)
 }
 
 /// 生成连接 token：所有平台统一走 OS 随机源（getrandom：Linux 走
@@ -267,10 +265,20 @@ pub async fn bind_server(
 ) -> io::Result<(u16, tokio::task::JoinHandle<()>)> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port)).await?;
     let actual = listener.local_addr()?.port();
+    let limit = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_SERVE_CONNECTIONS));
     let handle = tokio::spawn(async move {
-        while let Ok((stream, _)) = listener.accept().await {
+        while let Ok((stream, peer)) = listener.accept().await {
+            if !peer.ip().is_loopback() {
+                continue;
+            }
+            let Ok(permit) = std::sync::Arc::clone(&limit).try_acquire_owned() else {
+                continue;
+            };
             let ctx = std::sync::Arc::clone(&ctx);
-            tokio::spawn(handle_conn(ctx, stream));
+            tokio::spawn(async move {
+                let _permit = permit;
+                handle_conn(ctx, stream).await;
+            });
         }
     });
     Ok((actual, handle))
@@ -292,7 +300,7 @@ pub async fn handle_conn(ctx: std::sync::Arc<ServerCtx>, stream: TcpStream) {
     let Ok(request) = serde_json::from_slice::<ServerRequest>(&request) else {
         return;
     };
-    if request.token != ctx.token {
+    if !connect::constant_time_token_eq(&ctx.token, &request.token) {
         let _ = write_response(
             &mut writer,
             &ServerResponse::Error {
@@ -508,6 +516,10 @@ mod tests {
         assert_eq!(escape_regex_literal("a.b*c"), r"a\.b\*c");
         assert_eq!(escape_regex_literal("中文"), "中文");
         assert_eq!(escape_regex_literal("a b"), "a b");
+        // `<` / `>` 不是 regex 元字符；反斜杠会让 regex 1.10+ 把它们解释成
+        // 单词边界，导致搜索误报或漏报。必须保持字面量。
+        assert_eq!(escape_regex_literal("<div"), "<div");
+        assert_eq!(escape_regex_literal("a>b"), "a>b");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # SSH 工作区
 
-QingCode 的 SSH 工作区直接在 Tauri 后端建立 SSH/SFTP 连接，默认会尝试在远端部署轻量服务 `qingcode-server`（前称 `qingcode-agent` / 远端代理，已全面改名；可一键关闭，关闭后回到零足迹直连），但不强制要求：服务不可用时所有功能自动回退纯 SSH 路径。
+QingCode 的 SSH 工作区直接在 Tauri 后端建立 SSH/SFTP 连接，默认会尝试在远端部署轻量服务 `qingcode-server`（可一键关闭，关闭后回到零足迹直连），但不强制要求：服务不可用时所有功能自动回退纯 SSH 路径。
 
 ## 使用方式
 
@@ -23,9 +23,9 @@ QingCode 的 SSH 工作区直接在 Tauri 后端建立 SSH/SFTP 连接，默认�
 
 ## 远端服务（qingcode-server）
 
-Linux / POSIX SSH 项目（已信任、设置 `ssh.server.enabled` 默认开启）会在连接后自动部署远端服务。**设计稿见 D:/Download/ssh-agent-design.md（外部文档，未入库；文中 agent 即现 qingcode-server）**，当前进度见文末「实施进度与未完成清单」。
+Linux / POSIX SSH 项目（已信任、设置 `ssh.server.enabled` 默认开启）会在连接后自动部署远端服务。设计状态与实现边界见仓库内的 [`ssh-agent-design.md`](ssh-agent-design.md)，当前进度见文末「实施进度与未完成清单」。
 
-命名迁移说明：设置键 `ssh.agent.enabled` / `ssh.agent.autoDownload` / `ssh.agent.offlineDir` 读取时仍回退兼容，保存时自动迁移为 `ssh.server.*` 并清理旧键；远端旧目录 `.qingcode/agent/`（含旧状态文件 `agent.json`）在部署时会被发现并按 pid 尽力清掉旧 serve；离线目录与下载缓存里的旧名二进制 `qingcode-agent-*` 仍可读取；环境变量 `QINGCODE_AGENT_DIR` / `QINGCODE_AGENT_DOWNLOAD_BASE` 作为旧名继续兼容，优先使用 `QINGCODE_SERVER_DIR` / `QINGCODE_SERVER_DOWNLOAD_BASE`。
+历史兼容说明：旧设置键、旧环境变量、旧离线文件名和旧远端目录仍可读取，但只作为迁移别名；当前名称统一为 `ssh.server.*`、`QINGCODE_SERVER_*`、`qingcode-server-*` 和 `.qingcode/server/`。迁移时只清理旧目录中的进程与二进制，不执行其中的文件。
 
 ### 运行形态（两套并存）
 
@@ -37,8 +37,9 @@ Linux / POSIX SSH 项目（已信任、设置 `ssh.server.enabled` 默认开启�
 | 断线 | 只影响当次操作 | 代理死、daemon 与其中的终端继续运行，重连按 seq 补发输出或退化为屏幕快照 |
 | 状态 | 已全量启用，是回退的终点 | 后端/协议已就绪并在真机验证；**终端持久化的前端接入尚未做**（见未完成清单） |
 
-- **部署物**：单个静态 musl 二进制（约几 MB），上传到项目 `.qingcode/server/qingcode-server-<arch>`（x86_64 / aarch64）。本地二进制查找顺序：设置里手动选择的离线目录（`ssh.server.offlineDir`）→ `QINGCODE_SERVER_DIR` 环境变量（旧名 `QINGCODE_AGENT_DIR` 兼容）→ exe 目录 `/servers`（旧名 `/agents` 兼容）→ exe 目录上级 `/server`（旧名 `/agent` 兼容）→ 资源目录 `/servers`（旧名 `/agents` 兼容）→ 下载缓存目录（`ssh.server.autoDownload` 开启时）。开发与打包用 `scripts/build-server.ps1` 产出并复制到 `src-tauri/target/server/`。
-- **部署幂等与自检**：上传前先在远端计算已存在二进制的 sha256，与本地一致就跳过上传（版本一致必然 sha 一致，避免失败重试时反复全量上传几十 MB）；确需上传时走「临时文件 + 原子替换」，上传后远端执行 `self-check --expect-sha256`，校验成功才启动（同时探测部署目录 noexec）。
+- **部署物**：单个静态 musl 二进制（约几 MB），安装到当前 SSH 用户的 `~/.qingcode/server/<version>/qingcode-server-<arch>`；Windows 为 `%USERPROFILE%\.qingcode\server\<version>\qingcode-server-windows-<arch>.exe`。目录在 Unix 收紧到 `0700`，文件为 `0700`；Windows 依赖 `%USERPROFILE%` 的用户私有 ACL。项目内 `.qingcode/server/` 只保留 serve 的 `server.json` / `serve.log` 数据文件，不再存放可执行文件。本地二进制查找顺序：设置里手动选择的离线目录（`ssh.server.offlineDir`）→ `QINGCODE_SERVER_DIR` 环境变量（历史别名兼容）→ exe 目录 `/servers`（历史 `/agents` 兼容）→ exe 目录上级 `/server`（历史 `/agent` 兼容）→ 资源目录 `/servers` → 下载缓存目录（`ssh.server.autoDownload` 开启时）。开发与打包用 `scripts/build-server.ps1` 产出并复制到 `src-tauri/target/server/`。
+- **安全校验与旧目录迁移**：没有本地可信二进制时**不做发现，也不会执行远端已有文件**；发现存活服务必须同时匹配 `server.json` 的版本、项目根，以及用户私有版本目录中二进制的 sha256。确需安装时走「临时文件 + 原子替换」，先在不执行目标文件的情况下比对 sha256，再执行 `self-check --expect-sha256` 并探测 noexec，全部通过才启动。旧版位于项目目录的二进制会按路径结束进程后删除，绝不作为回退执行；daemon 降级后的重试同样重新校验用户私有安装路径。
+- **部署幂等**：上传前先在远端计算已存在二进制的 sha256，与本地一致就跳过上传，避免失败重试时反复全量上传几十 MB；同版本不同构建或本地离线包变化会因摘要不同触发重装。
 - **部署失败分类与退避**：自动下载的网络类失败（断网、GitHub 不可达）按瞬时处理，不缓存为整连接不可用，下次调用自动重试；sha 不符、体积超出 manifest 声明、自检失败是确定性失败，缓存为不可用等待人工介入。同一 (连接, 根) 连续 2 次完整部署都等不到就绪（典型如 sshd 禁了 TCP 转发，ping 永远打不通）也会标记不可用并提示检查 `AllowTcpForwarding`、重启远端服务或断开重连，直到重连才解冻；切换 `ssh.server.autoDownload` 开关或修改离线目录会清空不可用缓存立即重试，无需重连。
 - **运行形态（`serve` 模式）**：`setsid + nohup` 守护进程，只监听远端 `127.0.0.1` 随机端口，客户端经 SSH `direct-tcpip` 通道接入，无公网暴露；token 写在项目 `.qingcode/server/server.json`（远端权限 0600），serve 的输出重定向到 `.qingcode/server/serve.log`（启动前超过 1MB 先截断，端口占用、rc=3 退出等启动失败有迹可查）。应用重启后重连时先发现存活服务，免重新部署；版本不一致时校验进程身份后 kill 并重新部署。daemon 模式则常驻 `~/.qingcode/server/run` 下，运行目录 0700、token 0600（由 OS 随机源生成，daemon 每次启动轮换），经 `connect --stdio` 代理接入（见上表）。daemon 传输失败只降级该端点的 daemon 标记（serve 照常可用），5 分钟冷却后自动重新探测，daemon 崩溃不会永久留在 serve 模式。
 - **带来的能力**：
@@ -48,7 +49,7 @@ Linux / POSIX SSH 项目（已信任、设置 `ssh.server.enabled` 默认开启�
   - 目录扫描与内容搜索**不等待部署**：只用已就绪的端点，发现/部署尚无结论时立即走直连，并在后台拉起一轮部署（watch 监督任务已在部署时不重复排队）。首次进入项目的文件树只需一次 SFTP 往返，不再被下载、上传、等就绪、daemon 握手卡住；部署完成后的展开、刷新与搜索自动切到 server；
   - 状态栏芯片只显示简洁状态：`Server`（绿点）/ `Server…`（黄点闪动，连接中）/ `直连`（灰点），版本等细节收进悬停摘要（`Server v版本` 等 + 「点击查看详情」）。**点击直接打开详情弹窗**（标准 modal，头部含重启与日志入口），右键菜单提供查看详情、重启 Server、查看日志（daemon 日志 + 项目 serve 日志两段拼接，各取末尾 200 行）。查询失败时芯片以 `!` 错误态显示「Server 状态未知」，不再伪装成直连；重启成功与失败均有明确 toast。
 - **远程终端不受影响（现状）**：终端仍走独立 SSH PTY 通道，与服务完全正交；服务部署/重连不会触碰有活跃终端的连接。daemon 模式的 PTY 宿主（`qingcode-server/src/pty.rs`）已就绪，但前端尚未切过去（未完成项 A）。
-- **关闭、停止与清理**：设置里关闭 `ssh.server.enabled` 后完全回退直连（远端零足迹），并对当前激活的 SSH 工作区自动调用 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon 尽力 `server.shutdown`）。命令 `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 均要求工作区已信任；「重启 Server」会同时重建 serve 与 daemon（此前只重建 serve）。迟授予信任的已连接项目会补启动文件树 watch 监督任务，不必重连。清理：删除项目内 `.qingcode/server/` 目录即可；或按状态文件里的 pid `kill`。断开连接不终止远端服务（保活供快速重连，与 VS Code Server / Zed remote_server 生命周期策略一致）。
+- **关闭、停止与清理**：设置里关闭 `ssh.server.enabled` 后完全回退直连，并对当前激活的 SSH 工作区自动调用 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon 尽力 `server.shutdown`）；已安装二进制保留在用户目录供下次复用。命令 `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 均要求工作区已信任；「重启 Server」会同时重建 serve 与 daemon（此前只重建 serve）。迟授予信任的已连接项目会补启动文件树 watch 监督任务，不必重连。清理：删除项目内 `.qingcode/server/` 数据目录仅停止本项目的 serve；二进制需同时删除 `~/.qingcode/server/` 下对应版本目录。断开连接不终止远端服务（保活供快速重连，与 VS Code Server / Zed remote_server 生命周期策略一致）。
 - **已知限制（MVP）**：
   - 关闭总开关会停止当前激活 SSH 工作区的远端服务，其他已连接 SSH 工作区的远端进程不会被逐一停止；重新打开后需重新连接项目才会恢复自动刷新。
   - 远端保存文件也会触发一次 `fs-change`（尚未做本地那样的自写抑制），表现为多一次目录树刷新与 Git 刷新。
@@ -212,7 +213,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 
 已于 2026-10-24 补齐：
 - **Windows daemon**：`qingcode-server` 全平台支持 `daemon` / `connect`。Windows 用命名管道承载 IPC：名字由运行目录规范化路径的 SHA-256 派生，DACL 只放行当前用户（等价 Unix 的 0700 + `SO_PEERCRED`），`FILE_FLAG_FIRST_PIPE_INSTANCE` 承担单实例锁；acceptor 在独立任务里等待连接（避免 select 取消关闭实例），并丢弃拿不到对端 pid 的幽灵连接。`connect --stdio` 改用 tokio overlapped 客户端：Windows 同步管道句柄在一边阻塞读时另一边写会失败（`ERROR_NO_DATA`），overlapped 才能双向并发。服务端同时接受客户端发来的 POSIX 风格根路径 `/D:/...`（归一为 `D:\...` 后再做边界校验）。旧版 daemon 用宽松握手（只校验协议）发 `server.shutdown` 淘汰。新增跨进程集成测试与 Windows 真机冒烟 24 项。
-- **Windows 升级路径**：发现阶段按远端二进制 sha256 强匹配（同版本号不同构建也会重装）；替换前先优雅 `server.shutdown`，再按 `ExecutablePath` 精确结束同路径的 serve/daemon——真机验证「文件被替换但旧 daemon 仍持锁跑旧代码」的场景，确认只有先停旧实例新版本才会接管。
+- **Windows 升级路径**：发现阶段按远端二进制 sha256 强匹配（同版本号不同构建也会重装）；摘要不一致时不再执行旧文件，而是按 `ExecutablePath` 精确结束占用用户私有安装路径的 serve/daemon，再提交已校验的新文件。真机验证过「文件被替换但旧 daemon 仍持锁跑旧代码」的风险，因此必须先停旧实例才能完成替换。
 
 已于 2026-10-23 补齐：
 - **SSH 远端服务（qingcode-server，前身为 qingcode-agent）**：文件树自动刷新、内嵌内容搜索（不依赖远端 rg）、单往返目录扫描、daemon 常驻 + PTY 宿主 + 协议 v1、客户端 daemon 接入、独立 GitHub Release（`server-v*` 标签）与按需下载。状态栏可看服务阶段、重启 Server 和查看日志。
@@ -237,7 +238,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 
 ## 远端服务：实施进度与未完成清单
 
-对照设计稿 `D:/Download/ssh-agent-design.md`（§11 分 M0–M5，一次完整发布；文中 agent 即现 qingcode-server）。**整体进度约 60%：架构、传输、发布链路、连接状态界面和部署加固已完成，能力域迁移与终端持久化仍缺。**
+对照 [`ssh-agent-design.md`](ssh-agent-design.md)（§11 分 M0–M5，一次完整发布；文中 agent 即现 qingcode-server）。**整体仍为部分实现：架构、传输、发布链路、连接状态界面、用户私有安装和部署加固已完成，能力域迁移与客户端终端持久化仍缺。**
 
 ### 已完成（验证方式见「真机验收」）
 
@@ -248,7 +249,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 | §6.4 Windows daemon | 命名管道 `\\.\pipe\qingcode-server-daemon-<hash>` + 仅当前用户 DACL（SDDL `D:P(A;;GA;;;<sid>)`）+ `FILE_FLAG_FIRST_PIPE_INSTANCE` 单实例；`connect --stdio` 用 tokio overlapped 客户端（Windows 同步句柄一边阻塞读时写会 `ERROR_NO_DATA(232)`）；acceptor 独立任务避免 select 取消丢实例、幽灵连接校验；服务端归一 POSIX 风格根路径 `/D:/...`；旧 daemon 用宽松握手淘汰 | 本轮 |
 | §6 PTY 宿主 | `portable-pty` + `vt100` 屏幕快照 + 环形缓冲（块级 seq）、`attach{fromSeq}` 补发或快照降级、总量硬上限淘汰（先 detached 最久）、SIGHUP/SIGKILL 生命周期、`hasChildren`（读 `/proc`） | `33d6eed` |
 | §3/§7 传输接入 | 客户端 scan/search/watch 优先走 daemon（`fs.scan` / `search.content` 流式 / `watch.subscribe`），回退链 daemon → serve → 直连；token 轮换自愈 | `4f91c6b` |
-| §4.2/§8.3 完整性 | `self-check --expect-sha256`；构建脚本生成 `manifest.json`（version + sha256 + size）；noexec 以 exec 失败暴露 | `4f91c6b` |
+| §4.2/§8.3 完整性 | 安装或复用前先比对本地可信文件与用户私有安装路径的 sha256，通过后才执行 `self-check --expect-sha256` 探测 noexec；构建脚本生成 `manifest.json`（version + sha256 + size） | 本轮 |
 | §4.1 发布 | `.github/workflows/server-release.yml`（原 `agent-release.yml`）：独立流水线（push `server-v*` 标签或手动触发），ubuntu runner 双架构 musl + rust-lld，发布到 `server-v<版本>` 标签 Release，资产 `qingcode-server-<arch>` / `qingcode-server-windows-x86_64.exe` / `manifest.json` | `9c4081f` |
 | §4.1 下载 | `ssh.server.autoDownload`（**默认开**）：缺失时从 Release 下载，流式算 sha256 对 manifest 后才落位缓存目录；`QINGCODE_SERVER_DOWNLOAD_BASE` 可指内网镜像（旧名 `QINGCODE_AGENT_DOWNLOAD_BASE` 兼容） | `9c4081f` |
 | §7 子集 | 文件监视、内嵌内容搜索（无需远端 rg）、单往返目录扫描、gitignore/ignore 过滤 | `a214803` |
@@ -260,7 +261,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 | 部署加固 | 幂等部署（上传前比对远端 sha256，一致跳过）；上传后 `self-check --expect-sha256` 成功才启动；失败分类（网络类瞬时不占缓存，sha 不符/超体积/自检失败 permanent）；连续 2 次完整部署失败退避为不可用并提示 `AllowTcpForwarding`，重连解冻；切换 autoDownload / 离线目录清不可用缓存立即重试 | 本轮 |
 | 停止、重启与日志 | 新命令 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon `server.shutdown`）；设置关闭总开关时对当前 SSH 工作区自动调用；「重启 Server」同时重建 serve 与 daemon；serve 输出重定向 `.qingcode/server/serve.log`（>1MB 启动前截断）；「查看 Server 日志」拼接 daemon 日志与项目 serve 日志两段（各 tail 200 行） | 本轮 |
 | 信任与降级重试 | `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 要求工作区已信任；迟授予信任补启动文件树 watch 监督；daemon 传输降级后 5 分钟冷却重试（不再一次失败永久走 serve） | 本轮 |
-| 升级健壮性 | 发现阶段除版本号外再比远端二进制 sha256（同版本重打包也会重装）；Windows 提交新二进制前先 `server.shutdown` 再按 `ExecutablePath` 兜底结束 serve/daemon（避免旧实例继续持锁跑旧代码）；replace 失败带退避重试并给出可操作错误 | 本轮 |
+| 升级健壮性 | 发现阶段除版本号外再比远端二进制与本地可信文件的 sha256（同版本重打包也会重装）；摘要不一致时不执行目标文件，按路径结束占用用户私有安装目录的 serve/daemon 后再替换；replace 失败带退避重试并给出可操作错误 | 本轮 |
 | 其他修复 | token 改 OS 随机源生成（getrandom，此前 Windows 用时间 + pid）；scan `done.files_scanned` 真实计数；并发下载临时文件唯一命名 + 失败清理 + 按 manifest size 设上限；状态芯片错误态（`!`，不伪装直连）、重启成功 toast、日志对话框加载态与刷新按钮、设置导入后立即推送后端、保存/推送失败明确 toast | 本轮 |
 
 本轮改动尚未提交，提交列为「本轮」。
@@ -291,7 +292,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 17. Markdown 远程相对图片：`ssh://` 路由到 `fs.read` 转 blob URL。
 
 **D. 安装与版本管理（§4.2/§4.3）**
-18. 共享版本化安装目录：`~/.qingcode/server/<version>-<build>/`（`$XDG_DATA_HOME`、`$XDG_RUNTIME_DIR` 兜底），多项目共用同一安装与清理策略。当前 daemon 已按远端用户 `flock` 单实例、可多工作区共用，但仍无版本化安装目录；serve 仍是每项目 `.qingcode/server/` 目录各部署一份；
+18. 版本化安装的剩余项：当前已安装到 `~/.qingcode/server/<version>/`，多项目共用同一份二进制，项目内 `.qingcode/server/` 只保存本项目状态与日志。仍缺 `$XDG_DATA_HOME` / `$XDG_RUNTIME_DIR` 兜底、build 段与最近版本清理；
 19. ~~上传前校验 + `self-check` 比对 manifest，任一不符才重装~~ 已按 sha256 幂等实现：上传前比对远端已存在二进制 sha256（一致跳过上传），上传后 `self-check --expect-sha256` 成功才启动。stat 属性校验（属主/权限 ≤0700/mtime）未做，sha 一致即视为有效；
 20. 清理策略：删除未使用且非最近两个版本的安装目录；
 21. 版本共存：有存活终端时新旧 daemon 并存（依赖 A-5）；
@@ -315,8 +316,8 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 - 内容搜索遇到单行 >2MB 的文件会截断并停止整次搜索（与直连 rg 路径行为一致，minified 产物后的文件命中会漏）。
 - 关闭 `ssh.server.enabled` 会停止当前激活 SSH 工作区的远端服务，其他已连接 SSH 工作区的远端进程不会被逐一停止；重新开启需重连项目才恢复自动刷新。
 - 远端保存文件仍会触发一次 `fs-change`（未做本地那样的自写抑制）。
-- daemon 按 `flock` 每远端用户单实例，多工作区共用同一 daemon；每项目各自隔离的是 serve 进程。共享版本化安装目录与跨项目清理见未完成项 18。
-- Windows 远端升级时不能只替换文件：新版系统上「删除 + rename」可能成功（POSIX delete 语义），但旧 daemon 仍在跑旧代码并占着单实例锁，新 daemon 起不来，客户端会继续连旧实例。现在部署流程在替换前先按 token 发 `server.shutdown`，再按 `ExecutablePath` 精确结束同路径的 serve/daemon，然后才提交新文件；同版本号但内容不同的构建也会被 sha256 强匹配识别并触发重装。版本化安装目录（未完成项 18）落地后可进一步做到新旧版本共存。
+- daemon 按 `flock` 每远端用户单实例，多工作区共用同一 daemon；每项目各自隔离的是 serve 进程。二进制已共享安装到用户私有版本目录，跨项目旧版本清理仍见未完成项 18。
+- Windows 远端升级时不能只替换文件：新版系统上「删除 + rename」可能成功（POSIX delete 语义），但旧 daemon 仍在跑旧代码并占着单实例锁，新 daemon 起不来，客户端会继续连旧实例。现在摘要不一致时会先按 `ExecutablePath` 精确结束占用用户私有安装路径的 serve/daemon，再提交新文件；不会执行未通过 sha256 校验的目标文件。新旧版本并存仍依赖服务端 PTY 客户端接线。
 
 ### 真机验收
 

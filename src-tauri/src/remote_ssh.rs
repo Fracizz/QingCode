@@ -2104,7 +2104,7 @@ pub async fn ssh_connect(
     let sftp = manager
         .open_sftp(&config.id)
         .await
-        .map_err(&abandon_fresh_auth)?;
+        .map_err(abandon_fresh_auth)?;
     let canonical_root = sftp
         .canonicalize(parsed_root.path)
         .await
@@ -4921,8 +4921,10 @@ mod tests {
             }
         }
         let utf16 = bytes
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect::<Vec<_>>();
         String::from_utf16(&utf16).unwrap()
     }
