@@ -532,6 +532,20 @@ impl OutboundSender {
         }
     }
 
+    /// 等待有界队列腾出容量后再发送。用于没有重放机制的数据流（例如文件
+    /// 监视），背压会传回生产者，而不是写满后断开整条连接。
+    async fn send_async(&self, priority: Priority, frame: Frame) -> bool {
+        if self.closing.load(Ordering::SeqCst) {
+            return false;
+        }
+        let tx = if priority == Priority::Control {
+            &self.control
+        } else {
+            &self.data
+        };
+        tx.send(Outbound { priority, frame }).await.is_ok()
+    }
+
     fn abort(&self) {
         if !self.closing.swap(true, Ordering::SeqCst) {
             self.disconnect.notify_one();
@@ -733,8 +747,11 @@ impl Daemon {
                 route.pending.push_back(frame);
             }
             RoutePhase::Live => {
-                self.send_to_conn(conn_id, frame.priority, frame.frame);
+                let delivered = self.send_to_conn(conn_id, frame.priority, frame.frame);
                 routes.remove(pty_id);
+                if delivered {
+                    self.pty.release_exited(pty_id);
+                }
             }
         }
         true
@@ -759,6 +776,7 @@ impl Daemon {
                 if pending.is_empty() {
                     if route.exit_delivered {
                         routes.remove(pty_id);
+                        self.pty.release_exited(pty_id);
                     } else {
                         route.phase = RoutePhase::Live;
                     }
@@ -979,6 +997,10 @@ fn enqueue_pty_input(conn: &ConnCtx, pty: Arc<PtyHost>, request: Request) {
 impl ConnCtx {
     fn send(&self, priority: Priority, frame: Frame) -> bool {
         self.outbound.try_send(priority, frame)
+    }
+
+    async fn send_async(&self, priority: Priority, frame: Frame) -> bool {
+        self.outbound.send_async(priority, frame).await
     }
 
     fn respond(&self, id: u32, result: Value) {
@@ -1688,7 +1710,13 @@ async fn watch_subscribe(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
         let Ok(payload) = encode(&event) else {
             continue;
         };
-        conn.send(Priority::Rpc, Frame::new(Kind::Event, id, payload));
+        if !conn
+            .send_async(Priority::Rpc, Frame::new(Kind::Event, id, payload))
+            .await
+        {
+            cancel.store(true, Ordering::SeqCst);
+            break;
+        }
     }
     drop(rx);
     let error = match watcher.await {
@@ -2637,6 +2665,118 @@ mod tests {
         writer.await.unwrap().unwrap();
     }
 
+    /// 断线期间退出的终端必须保留到下一次 attach 交付退出码和最后输出。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn detached_exit_replays_code_and_tail_then_releases_tombstone() {
+        let (run_dir, handle) = start_daemon("pty-detached-exit").await;
+        let token = run_dir.read_token().unwrap();
+        let root = temp_dir("pty-detached-exit-root");
+        let mut client = TestClient::connect(&run_dir, &token).await;
+
+        let id = client
+            .request(
+                "pty.create",
+                &json!({ "cwd": root, "shell": test_shell(), "cols": 80, "rows": 24 }),
+            )
+            .await;
+        let info = client.wait_response(id).await;
+        let pty_id = info["id"].as_str().unwrap().to_string();
+
+        #[derive(Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct InputParams<'a> {
+            id: &'a str,
+            #[serde(with = "serde_bytes")]
+            data: &'a [u8],
+        }
+        let id = client
+            .request(
+                "pty.input",
+                &InputParams {
+                    id: &pty_id,
+                    data: b"echo qingcode-tail-before-exit; sleep 0.3; exit 3\n",
+                },
+            )
+            .await;
+        client.wait_response(id).await;
+
+        // SSH 掉线后终端继续运行，并在此后自然退出。
+        drop(client);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let mut client = TestClient::connect(&run_dir, &token).await;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let id = client.request("pty.list", &json!({})).await;
+            let list = client.wait_response(id).await;
+            let exited = list["ptys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|item| item["id"] == pty_id.as_str())
+                .and_then(|item| item["exited"].as_i64());
+            if exited == Some(3) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "终端未按预期退出: {list}");
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        let id = client
+            .request("pty.attach", &json!({ "id": pty_id, "fromSeq": 0 }))
+            .await;
+        let mut attach_exited = None;
+        let mut replayed = Vec::new();
+        loop {
+            let frame = client.next_frame().await;
+            match frame.kind {
+                Kind::Res if frame.stream_id == id => {
+                    let response: Response = decode_value(&frame.payload).unwrap();
+                    attach_exited = response.result["exited"].as_i64();
+                }
+                Kind::StreamData if frame.stream_id == id => {
+                    let chunk: StreamChunk = decode_value(&frame.payload).unwrap();
+                    replayed.extend_from_slice(&chunk.data);
+                    let credit = proto::encode(&WindowCredit {
+                        credit: frame.payload.len() as u32,
+                    })
+                    .unwrap();
+                    client.send(Kind::Window, id, &credit).await;
+                }
+                Kind::StreamEnd if frame.stream_id == id => {
+                    let end: StreamEnd = decode_value(&frame.payload).unwrap();
+                    assert!(end.ok, "attach 重放失败: {end:?}");
+                    assert_eq!(end.summary["exited"].as_i64(), Some(3));
+                    break;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(attach_exited, Some(3));
+        assert!(
+            String::from_utf8_lossy(&replayed).contains("qingcode-tail-before-exit"),
+            "重放缺少终端尾部输出: {:?}",
+            String::from_utf8_lossy(&replayed)
+        );
+
+        let id = client.request("pty.list", &json!({})).await;
+        let list = client.wait_response(id).await;
+        assert!(
+            list["ptys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["id"] != pty_id.as_str()),
+            "Exit 成功交付后墓碑未释放: {list}"
+        );
+
+        let id = client.request("server.shutdown", &json!({})).await;
+        client.wait_response(id).await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
     /// 断线重连后按 fromSeq 补发，seq 连续且内容不丢。
     #[tokio::test]
     async fn pty_survives_disconnect_and_attach_replays_output() {
@@ -2813,6 +2953,80 @@ mod tests {
         client.wait_response(id).await;
         let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
         let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    /// 客户端暂停消费时，watch 事件突发必须通过有界队列把背压传回监视器，
+    /// 不能像 PTY 溢出那样断开整条 daemon 连接。
+    #[tokio::test]
+    async fn watch_burst_backpressures_without_disconnecting() {
+        let (run_dir, handle) = start_daemon("watch-burst").await;
+        let token = run_dir.read_token().unwrap();
+        let root_base = temp_dir("watch-burst-root");
+        #[cfg(unix)]
+        let root = {
+            // 只增加测试路径长度，让 500 条路径事件足以填满 IPC 发送缓冲，
+            // 稳定覆盖 writer 暂停、数据队列满的场景。
+            let mut nested = root_base.clone();
+            for segment in [
+                "a".repeat(80),
+                "b".repeat(80),
+                "c".repeat(80),
+                "d".repeat(80),
+            ] {
+                nested.push(segment);
+            }
+            std::fs::create_dir_all(&nested).unwrap();
+            std::fs::canonicalize(nested).unwrap()
+        };
+        #[cfg(windows)]
+        let root = root_base.clone();
+
+        let mut client = TestClient::connect(&run_dir, &token).await;
+        let id = client
+            .request("watch.subscribe", &json!({ "root": root }))
+            .await;
+        let ack = client.wait_response(id).await;
+        assert_eq!(ack["subscribed"], true);
+
+        // 避开 watcher 初始化后的 500ms 预热窗口，再停止消费事件。
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        let filler_len = if cfg!(windows) { 96 } else { 200 };
+        for index in 0..500 {
+            let name = format!("burst-{index:03}-{}.txt", "x".repeat(filler_len));
+            std::fs::write(root.join(name), b"x").unwrap();
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        let mut fs_changes = 0;
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while fs_changes < 64 && Instant::now() < deadline {
+            let Some(frame) = client.poll_frame(Duration::from_secs(2)).await else {
+                break;
+            };
+            if frame.kind == Kind::Event
+                && frame.stream_id == id
+                && matches!(
+                    decode_value::<Event>(&frame.payload),
+                    Ok(Event::FsChange { .. })
+                )
+            {
+                fs_changes += 1;
+            }
+        }
+        assert!(
+            fs_changes >= 64,
+            "事件突发后只收到 {fs_changes} 条 FsChange，连接可能已断开"
+        );
+
+        let info_id = client.request("server.info", &json!({})).await;
+        let info = client.wait_response(info_id).await;
+        assert_eq!(info["pid"].as_u64(), Some(u64::from(std::process::id())));
+
+        let shutdown_id = client.request("server.shutdown", &json!({})).await;
+        client.wait_response(shutdown_id).await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
+        let _ = std::fs::remove_dir_all(&root_base);
         let _ = std::fs::remove_dir_all(run_dir.dir());
     }
 

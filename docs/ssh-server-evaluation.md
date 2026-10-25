@@ -8,6 +8,9 @@
 >
 > 复查（2026-10-24）：复查 `1f3f4dc` 时发现修复引入的 6 个新问题，见文末
 > [「复查：新问题与任务卡」](#复查新问题与任务卡)。每张任务卡可独立交给子代理处理。
+>
+> R1–R6 修复状态（2026-10-24）：6 项均已完成代码修复与回归测试，`pnpm check`
+> 通过。下方任务卡的“现状”保留为修复前记录，不再代表当前代码。
 
 ## 结论
 
@@ -115,7 +118,7 @@ R1、R3、R5 都改 `pty.rs`，必须交给同一个子代理按 R1 → R3 → R
 | A | R1 → R3 → R5 | `qingcode-server/src/pty.rs`，少量 `daemon.rs` | R1 中，R3/R5 低 |
 | B | R2 | `qingcode-server/src/daemon.rs` | 中（影响已上线的文件监视，最先做） |
 | C | R4 | `qingcode-server/src/watch.rs` | 低 |
-| D | R6 | `src/content_search.rs` | 低 |
+| D | R6 | `src-tauri/src/content_search.rs` | 低 |
 
 A 与 B 都会动 `daemon.rs`：A 只改 `dispatch_pty_exit` / `finish_attach_replay` 附近，B 只改 `OutboundSender` 与 `watch_subscribe`，合并时注意冲突。
 
@@ -208,7 +211,7 @@ A 与 B 都会动 `daemon.rs`：A 只改 `dispatch_pty_exit` / `finish_attach_re
 
 以下是设计目标层面的缺口，涉及前后端协议与交互，需先写设计再拆任务：
 
-1. **客户端接入 PTY**：把远程终端改走 daemon 的 `pty.*`，实现断线自动 attach、应用重启后接回、孤儿终端提示（设计 §6.2）。前置条件：R1、R2 完成。
+1. **客户端接入 PTY**：把远程终端改走 daemon 的 `pty.*`，实现断线自动 attach、应用重启后接回、孤儿终端提示（设计 §6.2）。前置条件 R1、R2 已完成。
 2. **单条常驻通道**：客户端从「每次调用一个 exec 通道」改为「一条常驻通道 + 按 `stream_id` 分发」，并补上请求 id 分配、取消与信用窗口管理。
 3. **`workspace.open` 与 daemon 侧信任校验**：daemon 不再接受任意绝对路径作为根（设计 §8.4、§8.5）。
 4. **收敛 serve 路径**：daemon 稳定后移除 serve（TCP+JSON），只保留 daemon 与直连两条路径。

@@ -222,10 +222,14 @@ impl Sink for CollectSink<'_> {
     }
 }
 
+type ScanHook = Option<Arc<dyn Fn(usize) + Send + Sync>>;
+
 struct SharedState {
     search_id: u64,
     /// External cancel token; when true, search stops and reports `cancelled`.
     cancel_flag: Option<Arc<AtomicBool>>,
+    #[cfg(test)]
+    scan_hook: ScanHook,
     should_quit: AtomicBool,
     max_matches: usize,
     max_files_scanned: usize,
@@ -275,6 +279,16 @@ pub fn search_file_contents(
     search_id: u64,
     cancel_flag: Option<Arc<AtomicBool>>,
 ) -> ContentSearchResponse {
+    search_file_contents_impl(root, options, search_id, cancel_flag, None)
+}
+
+fn search_file_contents_impl(
+    root: &Path,
+    options: ContentSearchOptions,
+    search_id: u64,
+    cancel_flag: Option<Arc<AtomicBool>>,
+    _scan_hook: ScanHook,
+) -> ContentSearchResponse {
     let trimmed = options.query.trim();
     if trimmed.is_empty() {
         return ContentSearchResponse {
@@ -311,6 +325,8 @@ pub fn search_file_contents(
     let state = Arc::new(SharedState {
         search_id,
         cancel_flag,
+        #[cfg(test)]
+        scan_hook: _scan_hook,
         should_quit: AtomicBool::new(false),
         max_matches: options.max_matches.max(1),
         max_files_scanned: options.max_files_scanned.max(1),
@@ -402,14 +418,15 @@ pub fn search_file_contents(
                 }
             }
 
-            {
+            let scanned = {
                 let mut scanned = state.files_scanned.lock().unwrap();
                 *scanned += 1;
                 if *scanned > state.max_files_scanned {
                     state.note_truncated();
                     return WalkState::Quit;
                 }
-            }
+                *scanned
+            };
 
             if state.check_quit() {
                 return WalkState::Quit;
@@ -423,6 +440,12 @@ pub fn search_file_contents(
                 should_quit: &state.should_quit,
             };
             let _ = searcher.search_path(&matcher, path, sink);
+            #[cfg(test)]
+            if let Some(scan_hook) = &state.scan_hook {
+                scan_hook(scanned);
+            }
+            #[cfg(not(test))]
+            let _ = scanned;
             if file_matches.is_empty() {
                 return if state.check_quit() {
                     WalkState::Quit
@@ -479,6 +502,16 @@ pub fn search_file_contents(
         truncated: state.truncated.load(Ordering::Relaxed) && !cancelled,
         cancelled,
     }
+}
+
+#[cfg(test)]
+fn search_file_contents_with_scan_hook(
+    root: &Path,
+    options: ContentSearchOptions,
+    cancel_flag: Option<Arc<AtomicBool>>,
+    scan_hook: Arc<dyn Fn(usize) + Send + Sync>,
+) -> ContentSearchResponse {
+    search_file_contents_impl(root, options, 0, cancel_flag, Some(scan_hook))
 }
 
 #[cfg(test)]
@@ -674,6 +707,44 @@ mod tests {
             resp.files_scanned
         );
         assert!(cancel.load(Ordering::SeqCst));
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cancel_flag_during_search_stops_before_scanning_all_files() {
+        let dir = temp_dir("cancel-in-flight");
+        for index in 0..200 {
+            fs::write(dir.join(format!("file-{index:03}.txt")), "needle\n").unwrap();
+        }
+
+        let cancel = Arc::new(AtomicBool::new(false));
+        let first_file_scanned = Arc::new(AtomicBool::new(false));
+        let hook_cancel = Arc::clone(&cancel);
+        let hook_first_file_scanned = Arc::clone(&first_file_scanned);
+        let scan_hook = Arc::new(move |scanned: usize| {
+            if scanned == 1 {
+                hook_first_file_scanned.store(true, Ordering::SeqCst);
+                hook_cancel.store(true, Ordering::SeqCst);
+            }
+        });
+
+        let mut o = opts("needle");
+        o.use_ignore_files = false;
+        o.max_matches = 10_000;
+        o.max_files_scanned = 10_000;
+        let resp = search_file_contents_with_scan_hook(&dir, o, Some(cancel), scan_hook);
+
+        assert!(
+            first_file_scanned.load(Ordering::SeqCst),
+            "扫描钩子未观察到首个文件完成"
+        );
+        assert!(resp.cancelled, "resp={resp:?}");
+        assert!(
+            resp.files_scanned < 200,
+            "取消后不应扫描全部文件，scanned={}",
+            resp.files_scanned
+        );
 
         fs::remove_dir_all(dir).unwrap();
     }

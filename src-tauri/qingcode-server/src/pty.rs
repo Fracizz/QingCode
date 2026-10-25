@@ -38,13 +38,17 @@ use vt100::Parser;
 /// 又不会让单个 seq 块在环形缓冲里占太大地盘。
 const READ_BUF_BYTES: usize = 8 * 1024;
 
-/// 非阻塞 PTY 无数据时的等待周期。用 select 而不是忙等，64 个空闲终端
+/// 非阻塞 PTY 无数据时的等待周期。用 poll 而不是忙等，64 个空闲终端
 /// 也只产生很低唤醒率。
 #[cfg(unix)]
-const READ_WAIT_TIMEOUT_US: libc::suseconds_t = 250_000;
+const READ_WAIT_TIMEOUT_MS: libc::c_int = 250;
 
 /// 非阻塞写入遇到 `WouldBlock` 后的重试间隔。队列 task 在此期间仍可被取消。
 const WRITE_RETRY_DELAY: Duration = Duration::from_millis(1);
+
+/// 已退出终端在没有连接接手时的保留时长。保留 ring 与 parser 是为了让
+/// 断线期间结束的进程仍能在重连后补发最后输出和退出码。
+const EXITED_RETENTION: Duration = Duration::from_secs(30 * 60);
 
 /// `vt100` 的 scrollback 以**行**为单位分配，一行 `cols` 个 cell，单 cell 十几字节。
 /// 若直接按「字节预算 / 列数」折算，2MB/80 列 ≈ 26k 行，每个终端要吃掉几十 MB；
@@ -217,6 +221,7 @@ struct TermState {
     attached: bool,
     detached_at: Option<Instant>,
     exited: Option<i32>,
+    exited_at: Option<Instant>,
     /// 当前接着的客户端；`detach` 只接受归属者，避免旧连接把别人接回的终端踢下线。
     owner: Option<String>,
 }
@@ -298,7 +303,12 @@ impl PtyHost {
         let program = opts.shell.clone().unwrap_or_else(default_shell);
 
         let mut inner = lock(&self.inner);
-        if inner.terms.len() >= self.max_ptys {
+        let active_count = inner
+            .terms
+            .values()
+            .filter(|term| lock(&term.state).exited.is_none())
+            .count();
+        if active_count >= self.max_ptys {
             return Err(format!(
                 "终端数量已达上限（{} 个），请先结束其他终端",
                 self.max_ptys
@@ -364,6 +374,7 @@ impl PtyHost {
                 attached: true,
                 detached_at: None,
                 exited: None,
+                exited_at: None,
                 owner: Some(opts.client_id),
             }),
         });
@@ -490,32 +501,35 @@ impl PtyHost {
         Ok(())
     }
 
+    /// release 已退出终端的墓碑。调用方必须先确认退出事件已成功交给客户端；
+    /// 仍在运行的终端不受影响，避免迟到清理误杀活着进程。
+    pub fn release_exited(&self, id: &str) {
+        let term = lock(&self.inner).terms.get(id).cloned();
+        let Some(term) = term else {
+            return;
+        };
+        let exited = lock(&term.state).exited.is_some();
+        if exited {
+            remove_term_locked(&mut lock(&self.inner), id, &term);
+        }
+    }
+
     /// 结束终端：先对进程组发 `SIGHUP` 让 shell 能正常收尾，1 秒后仍未退出
-    /// 再用 portable-pty 的 killer（unix 上是 `SIGKILL`）兜底。
+    /// 再强制结束整个进程组。
     pub fn kill(&self, id: &str) -> Result<(), String> {
         let Ok(term) = self.term(id) else {
             return Ok(());
         };
-        if lock(&term.state).exited.is_some() {
+        let exited = lock(&term.state).exited.is_some();
+        if exited {
             remove_term_locked(&mut lock(&self.inner), id, &term);
             return Ok(());
         }
-        let pid = lock(&term.proc).pid;
-        hangup(pid, &term);
+        let terminated = terminate(&term);
         // kill 是明确终止意图：立即释放 registry 槽位与缓冲记账。读线程仍持有
         // 实例并在进程真正退出后发送 Exit，路由由 Exit 收尾。
         remove_term_locked(&mut lock(&self.inner), id, &term);
-        let term_for_watchdog = Arc::clone(&term);
-        std::thread::Builder::new()
-            .name(format!("pty-kill-{id}"))
-            .spawn(move || {
-                std::thread::sleep(Duration::from_secs(1));
-                if lock(&term_for_watchdog.state).exited.is_none() {
-                    force_kill(&term_for_watchdog);
-                }
-            })
-            .map_err(|err| format!("无法启动终端回收线程：{err}"))?;
-        Ok(())
+        terminated
     }
 
     pub fn list(&self) -> Vec<PtyInfo> {
@@ -569,41 +583,57 @@ impl PtyHost {
         }
     }
 
-    /// 回收 detached 超过 `detached_ttl` 的终端：发 `SIGHUP` 并从宿主移除，
-    /// 返回被回收的 id。进程退出后由读线程收尾，事件仍会照常发 `pty.exit`。
+    /// 回收 detached 超过 `detached_ttl` 的终端，以及超过 30 分钟保留期的
+    /// 退出墓碑，返回被回收的 id。运行中的终端会先 HUP，再由看门狗强杀。
     pub fn reap(&self, detached_ttl: Duration) -> Vec<String> {
-        let now = Instant::now();
-        let mut reclaimed: Vec<(String, Arc<PtyTerm>)> = Vec::new();
+        self.reap_at(Instant::now(), detached_ttl, EXITED_RETENTION)
+    }
+
+    fn reap_at(
+        &self,
+        now: Instant,
+        detached_ttl: Duration,
+        exited_retention: Duration,
+    ) -> Vec<String> {
+        let mut reclaimed: Vec<(String, Arc<PtyTerm>, bool)> = Vec::new();
         {
             let mut inner = lock(&self.inner);
-            let expired: Vec<(String, Arc<PtyTerm>)> = inner
+            let expired: Vec<(String, Arc<PtyTerm>, bool)> = inner
                 .terms
                 .iter()
                 .filter_map(|(id, term)| {
                     let state = lock(&term.state);
+                    if let Some(exited_at) = state.exited_at {
+                        if now.saturating_duration_since(exited_at) >= exited_retention {
+                            return Some((id.clone(), Arc::clone(term), false));
+                        }
+                        return None;
+                    }
                     if state.attached {
                         return None;
                     }
                     let detached_at = state.detached_at?;
                     if now.saturating_duration_since(detached_at) >= detached_ttl {
-                        Some((id.clone(), Arc::clone(term)))
+                        Some((id.clone(), Arc::clone(term), true))
                     } else {
                         None
                     }
                 })
                 .collect();
-            for (id, term) in expired {
+            for (id, term, was_running) in expired {
                 if let Some(term) = remove_term_locked(&mut inner, &id, &term) {
-                    reclaimed.push((id, term));
+                    reclaimed.push((id, term, was_running));
                 }
             }
         }
         // 先在锁外发信号，避免 syscall / 阻塞拖住整个宿主。
-        for (_, term) in &reclaimed {
-            let pid = lock(&term.proc).pid;
-            hangup(pid, term);
+        for (_, term, was_running) in &reclaimed {
+            if !was_running {
+                continue;
+            }
+            let _ = terminate(term);
         }
-        reclaimed.into_iter().map(|(id, _)| id).collect()
+        reclaimed.into_iter().map(|(id, _, _)| id).collect()
     }
 
     fn term(&self, id: &str) -> Result<Arc<PtyTerm>, String> {
@@ -762,31 +792,19 @@ fn wait_readable(fd: ReaderWakeup) {
     let Some(fd) = fd else {
         return;
     };
-    if fd < 0 || fd as usize >= libc::FD_SETSIZE {
-        std::thread::sleep(Duration::from_micros(READ_WAIT_TIMEOUT_US as u64));
+    if fd < 0 {
+        std::thread::sleep(Duration::from_millis(READ_WAIT_TIMEOUT_MS as u64));
         return;
     }
     loop {
-        // SAFETY: fd_set/timeval 都是本函数栈上的有效对象；select 只在调用
-        // 期间读写它们，且 fd 来自仍存活的 MasterPty。
-        let mut readfds = unsafe { std::mem::zeroed::<libc::fd_set>() };
-        let mut timeout = libc::timeval {
-            tv_sec: 0,
-            tv_usec: READ_WAIT_TIMEOUT_US,
+        let mut pollfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
         };
-        unsafe {
-            libc::FD_ZERO(&mut readfds);
-            libc::FD_SET(fd, &mut readfds);
-        }
-        let result = unsafe {
-            libc::select(
-                fd + 1,
-                &mut readfds,
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                &mut timeout,
-            )
-        };
+        // SAFETY: pollfd 是栈上的有效对象，poll 只在本调用期间读写它；
+        // fd 来自仍存活的 MasterPty。POLLHUP/POLLERR 也由随后的 read 处理。
+        let result = unsafe { libc::poll(&mut pollfd, 1, READ_WAIT_TIMEOUT_MS) };
         if result >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
         {
             return;
@@ -828,8 +846,11 @@ fn read_loop(
         }
     }
     let code = child.wait().ok().map(|status| status.exit_code() as i32);
-    lock(&term.state).exited = Some(code.unwrap_or(-1));
-    remove_term_locked(&mut lock(&inner), &id, &term);
+    {
+        let mut state = lock(&term.state);
+        state.exited = Some(code.unwrap_or(-1));
+        state.exited_at = Some(Instant::now());
+    }
     let _ = sink.blocking_send(PtyEvent::Exit { id, code });
 }
 
@@ -848,10 +869,15 @@ fn push_output(
     if data.is_empty() {
         return true;
     }
+    if sink.is_closed() {
+        return false;
+    }
     let seq = {
         let mut host = lock(inner);
         let Some(term) = host.terms.get(id).cloned() else {
-            return false;
+            // 终端已从 registry 移除但读线程尚未结束：继续排空 master，
+            // 否则进程可能因 PTY 输出缓冲写满而永远退不出去。
+            return true;
         };
         let (seq, added) = {
             let mut state = lock(&term.state);
@@ -983,12 +1009,51 @@ fn hangup(pid: Option<u32>, term: &PtyTerm) {
     }
     #[cfg(not(unix))]
     let _ = pid;
-    // Windows（或 unix 上拿不到 pid）：用 portable-pty 的 Killer，
-    // Windows 上是 TerminateProcess，unix 上是 SIGKILL。
+    // Windows（或 unix 上拿不到 pid）：交给 portable-pty；Windows 上是
+    // TerminateProcess，unix 上无 pid 时最后仍会走该平台的安全兜底。
     force_kill(term);
 }
 
+/// 终止一个仍在运行的终端：先发 HUP 给进程组，给 shell 一秒收尾时间，
+/// 到时仍未退出就强制结束。kill 与超时 reap 共用同一套看门狗。
+fn terminate(term: &Arc<PtyTerm>) -> Result<(), String> {
+    if lock(&term.state).exited.is_some() {
+        return Ok(());
+    }
+    let pid = lock(&term.proc).pid;
+    hangup(pid, term);
+    let term_for_watchdog = Arc::clone(term);
+    let id = term.id.clone();
+    std::thread::Builder::new()
+        .name(format!("pty-terminate-{id}"))
+        .spawn(move || {
+            std::thread::sleep(Duration::from_secs(1));
+            if lock(&term_for_watchdog.state).exited.is_none() {
+                force_kill(&term_for_watchdog);
+            }
+        })
+        .map(|_| ())
+        .map_err(|err| {
+            // 看门狗起不来时立即强杀，至少不能把忽略 HUP 的进程留在后台。
+            force_kill(term);
+            format!("无法启动终端回收线程：{err}")
+        })
+}
+
 fn force_kill(term: &PtyTerm) {
+    #[cfg(unix)]
+    {
+        if let Some(pid) = lock(&term.proc).pid.filter(|pid| *pid > 0) {
+            let pid = pid as libc::pid_t;
+            // SAFETY: kill(2) 只读取 pid；先打进程组覆盖前台管道，再打单个
+            // pid 兜住不是进程组长的 shell。SIGKILL 不可被 trap/nohup 忽略。
+            unsafe {
+                libc::kill(-pid, libc::SIGKILL);
+                libc::kill(pid, libc::SIGKILL);
+            }
+            return;
+        }
+    }
     if let Some(killer) = lock(&term.proc).killer.as_mut() {
         let _ = killer.kill();
     }
@@ -1147,6 +1212,45 @@ mod tests {
         assert_eq!((size.cols, size.rows), (MAX_COLS, MAX_ROWS));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn wait_readable_supports_fds_above_fd_setsize() {
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+        let mut pipe_fds = [-1; 2];
+        // SAFETY: pipe_fds 指向两个可写 int，pipe(2) 成功时填入两个新 fd。
+        assert_eq!(unsafe { libc::pipe(pipe_fds.as_mut_ptr()) }, 0);
+        // SAFETY: 两个 fd 刚由 pipe(2) 创建且所有权转移给 OwnedFd。
+        let read_end = unsafe { OwnedFd::from_raw_fd(pipe_fds[0]) };
+        let write_end = unsafe { OwnedFd::from_raw_fd(pipe_fds[1]) };
+
+        // SAFETY: read_end 有效；F_DUPFD 只读取 fd 并返回新 fd，不转移所有权。
+        let high_fd = unsafe { libc::fcntl(read_end.as_raw_fd(), libc::F_DUPFD, 1100) };
+        if high_fd < 0 {
+            // 测试进程 fd 配额不足时无法构造 >= 1024 的场景，直接跳过。
+            return;
+        }
+        // SAFETY: fcntl 成功返回的新 fd 未在别处持有。
+        let high_read = unsafe { OwnedFd::from_raw_fd(high_fd) };
+        // SAFETY: write_end 有效，单字节缓冲区在调用期间存活。
+        let written = unsafe {
+            libc::write(
+                write_end.as_raw_fd(),
+                b"x".as_ptr().cast(),
+                std::mem::size_of::<u8>(),
+            )
+        };
+        assert_eq!(written, 1);
+
+        let started = Instant::now();
+        wait_readable(Some(high_read.as_raw_fd()));
+        assert!(
+            started.elapsed() < Duration::from_millis(50),
+            "poll 对高编号 fd 没有立即返回：{:?}",
+            started.elapsed()
+        );
+    }
+
     #[test]
     fn ids_are_unique_hex() {
         let (tx, _rx) = tokio::sync::mpsc::channel(8);
@@ -1227,7 +1331,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn pty_replays_while_running_then_releases_registry_on_exit() {
+    async fn pty_replays_while_running_then_keeps_exit_tombstone() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let host = PtyHost::new(4, 4 * 1024 * 1024, tx);
         let info = host
@@ -1280,12 +1384,118 @@ mod tests {
 
         host.write(&info.id, b"exit\n").unwrap();
         assert_eq!(wait_for_exit(&mut rx, &info.id).await, Some(0));
-        assert!(host.list().is_empty(), "自然退出后仍留在 registry");
+        assert_eq!(host.list().len(), 1, "未交付的退出终端应作为墓碑保留");
+        let exited = host
+            .attach(&info.id, 0, "client-b")
+            .expect("退出后、释放前应还能 attach");
+        assert_eq!(exited.exited, Some(0));
+        assert!(exited.screen.is_some() || !exited.replay.is_empty());
+        host.release_exited(&info.id);
+        assert!(host.list().is_empty(), "Exit 交付后应释放墓碑");
         assert_eq!(host.buffered_bytes(), 0, "退出后缓冲记账未释放");
         assert!(
             host.attach(&info.id, 0, "client-a").is_err(),
             "已退出终端不应还能 attach"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn detached_exit_keeps_replay_until_released() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let host = PtyHost::new(4, 1024 * 1024, tx);
+        let info = host.create(sh_options(64 * 1024, "client-a")).unwrap();
+        host.write(&info.id, b"echo done; exit 7\n").unwrap();
+        host.detach(&info.id, "client-a").unwrap();
+
+        assert_eq!(wait_for_exit(&mut rx, &info.id).await, Some(7));
+        let attached = host
+            .attach(&info.id, 0, "client-b")
+            .expect("detached 退出后应能接回墓碑");
+        assert_eq!(attached.exited, Some(7));
+        let replay = attached
+            .replay
+            .iter()
+            .flat_map(|(_, data)| data.iter().copied())
+            .collect::<Vec<_>>();
+        assert!(
+            String::from_utf8_lossy(&replay).contains("done"),
+            "退出后的重放缺少尾部输出：{:?}",
+            String::from_utf8_lossy(&replay)
+        );
+
+        host.release_exited(&info.id);
+        assert!(host.list().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn exited_tombstones_do_not_consume_pty_limit() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let host = PtyHost::new(1, 64 * 1024, tx);
+
+        let first = host.create(sh_options(16 * 1024, "client-a")).unwrap();
+        host.write(&first.id, b"exit\n").unwrap();
+        wait_for_exit(&mut rx, &first.id).await;
+        assert_eq!(host.list().len(), 1, "首个终端应作为墓碑保留");
+
+        let second = host
+            .create(sh_options(16 * 1024, "client-b"))
+            .expect("墓碑不应占用 max_ptys 名额");
+        host.release_exited(&first.id);
+        assert!(!host.list().is_empty(), "第二个终端应仍在运行");
+        host.kill(&second.id).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reap_removes_expired_exit_tombstone() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let host = PtyHost::new(1, 64 * 1024, tx);
+        let info = host.create(sh_options(4096, "client-a")).unwrap();
+        host.write(&info.id, b"exit\n").unwrap();
+        wait_for_exit(&mut rx, &info.id).await;
+
+        assert!(
+            host.reap_at(Instant::now(), Duration::ZERO, EXITED_RETENTION)
+                .is_empty(),
+            "未到保留期时不能回收墓碑"
+        );
+        assert_eq!(host.list().len(), 1);
+
+        let removed = host.reap_at(
+            Instant::now() + EXITED_RETENTION,
+            Duration::ZERO,
+            EXITED_RETENTION,
+        );
+        assert_eq!(removed, vec![info.id]);
+        assert!(host.list().is_empty());
+        assert_eq!(host.buffered_bytes(), 0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn reap_force_kills_terminal_that_ignores_hangup() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let host = PtyHost::new(2, 1024 * 1024, tx);
+        let info = host.create(sh_options(64 * 1024, "client-a")).unwrap();
+        let term = lock(&host.inner).terms.get(&info.id).cloned().unwrap();
+        host.write(
+            &info.id,
+            b"trap '' HUP; m=REAP; printf '%s_READY\\n' \"$m\"; while :; do echo x; sleep 0.05; done\n",
+        )
+        .unwrap();
+        wait_for_text(&mut rx, &info.id, "REAP_READY").await;
+        host.detach(&info.id, "client-a").unwrap();
+
+        assert_eq!(host.reap(Duration::ZERO), vec![info.id.clone()]);
+        let exit =
+            tokio::time::timeout(Duration::from_secs(5), wait_for_exit(&mut rx, &info.id)).await;
+        if exit.is_err() {
+            force_kill(&term);
+        }
+        exit.expect("回收后读线程未在 5 秒内等到退出事件");
+        assert!(host.list().is_empty());
     }
 
     #[cfg(unix)]
@@ -1297,19 +1507,24 @@ mod tests {
         let natural = host.create(sh_options(16 * 1024, "client-a")).unwrap();
         host.write(&natural.id, b"printf natural\nexit\n").unwrap();
         wait_for_exit(&mut rx, &natural.id).await;
-        assert!(host.list().is_empty(), "自然退出后 list 未移除终端");
-        assert_eq!(host.buffered_bytes(), 0, "自然退出后 total_bytes 未归零");
+        assert_eq!(host.list().len(), 1, "未交付的自然退出应保留墓碑");
+        assert_eq!(host.list()[0].exited, Some(0));
 
         let killed = host.create(sh_options(16 * 1024, "client-a")).unwrap();
         host.kill(&killed.id).unwrap();
-        assert!(host.list().is_empty(), "kill 返回后 registry 仍有终端");
-        assert_eq!(host.buffered_bytes(), 0, "kill 后 total_bytes 未归零");
         wait_for_exit(&mut rx, &killed.id).await;
+        assert_eq!(host.list().len(), 1, "只剩自然退出的墓碑");
+        host.release_exited(&natural.id);
+        assert!(host.list().is_empty());
+        assert_eq!(host.buffered_bytes(), 0, "释放后 total_bytes 未归零");
 
         let replacement = host.create(sh_options(16 * 1024, "client-a")).unwrap();
         host.kill(&replacement.id).unwrap();
         wait_for_exit(&mut rx, &replacement.id).await;
-        assert!(host.list().is_empty());
+        assert!(
+            host.list().is_empty(),
+            "kill 会立即释放 registry 槽位，不应留下墓碑"
+        );
     }
 
     #[cfg(unix)]

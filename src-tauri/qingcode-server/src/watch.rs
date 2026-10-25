@@ -27,7 +27,7 @@ const DIR_CACHE_LIMIT: usize = 4096;
 
 /// inotify 配额耗尽时使用的轮询间隔。轮询只作为 watch 注册失败后的兜底，
 /// 不参与正常路径。
-const WATCH_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const WATCH_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const WATCH_POLL_CANCEL_SLICE: Duration = Duration::from_millis(100);
 
 /// 事件过滤器：先做廉价字面过滤（越界 / 高变动目录 / 自写临时文件），
@@ -212,10 +212,17 @@ fn refresh_watch_tree(
         .map(|meta| meta.file_type().is_dir())
         .unwrap_or(false);
     if is_real_dir && !is_high_churn_path(path, root) {
+        if watched.contains(path) {
+            // 子目录创建会单独产生事件，无需在父目录事件中重复枚举整棵子树。
+            return Ok(());
+        }
         register_watch_tree(debouncer, root, path, watched)
-    } else {
+    } else if watched.contains(path) {
         // 删除/重命名/符号链接目录：释放逻辑记录，后续同名真实目录可重新注册。
         watched.retain(|dir| !dir.starts_with(path));
+        Ok(())
+    } else {
+        // 普通文件是最常见的事件；它不可能拥有已注册的后代，避免遍历整个集合。
         Ok(())
     }
 }
@@ -298,8 +305,8 @@ fn poll_changes(
         .collect()
 }
 
-fn wait_for_poll(cancel: &AtomicBool) -> bool {
-    let deadline = Instant::now() + WATCH_POLL_INTERVAL;
+fn wait_for_poll(cancel: &AtomicBool, poll_interval: Duration) -> bool {
+    let deadline = Instant::now() + poll_interval;
     while Instant::now() < deadline {
         if cancel.load(Ordering::SeqCst) {
             return true;
@@ -315,12 +322,13 @@ fn poll_loop(
     root: PathBuf,
     cancel: Arc<AtomicBool>,
     send: Sender<serde_json::Value>,
+    poll_interval: Duration,
 ) -> Result<(), String> {
     let mut previous =
         poll_snapshot(&root).map_err(|error| format!("建立文件监视轮询快照失败: {error}"))?;
     let mut filter = EmitFilter::new(root.clone());
     loop {
-        if wait_for_poll(&cancel) {
+        if wait_for_poll(&cancel, poll_interval) {
             return Ok(());
         }
         let current = match poll_snapshot(&root) {
@@ -362,7 +370,7 @@ pub fn watch_loop(
     if let Err(error) = register_watch_tree(&mut debouncer, &root, &root, &mut watched) {
         if should_fallback_to_polling(&error) {
             drop(debouncer);
-            return poll_loop(root, cancel, send);
+            return poll_loop(root, cancel, send, WATCH_POLL_INTERVAL);
         }
         return Err(format!("注册目录监视失败: {error}"));
     }
@@ -386,7 +394,12 @@ pub fn watch_loop(
                     {
                         if should_fallback_to_polling(&error) {
                             drop(debouncer);
-                            return poll_loop(filter.root.clone(), cancel, send);
+                            return poll_loop(
+                                filter.root.clone(),
+                                cancel,
+                                send,
+                                WATCH_POLL_INTERVAL,
+                            );
                         }
                         return Err(format!("注册新增目录监视失败: {error}"));
                     }
@@ -411,7 +424,7 @@ pub fn watch_loop(
             Ok(Err(error)) => {
                 if should_fallback_to_polling(&error) {
                     drop(debouncer);
-                    return poll_loop(filter.root.clone(), cancel, send);
+                    return poll_loop(filter.root.clone(), cancel, send, WATCH_POLL_INTERVAL);
                 }
                 // 其他瞬时错误（如子目录被短暂移除）：忽略，等待后续事件。
             }
@@ -441,6 +454,18 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::canonicalize(&dir).unwrap()
+    }
+
+    fn test_debouncer() -> (
+        Debouncer<RecommendedWatcher>,
+        mpsc::Receiver<DebounceEventResult>,
+    ) {
+        let (event_tx, event_rx) = mpsc::channel();
+        let debouncer = new_debouncer(Duration::from_millis(10), move |result| {
+            let _ = event_tx.send(result);
+        })
+        .unwrap();
+        (debouncer, event_rx)
     }
 
     #[test]
@@ -523,6 +548,134 @@ mod tests {
         }
         let transient = NotifyError::new(NotifyErrorKind::PathNotFound);
         assert!(!should_fallback_to_polling(&transient));
+    }
+
+    #[test]
+    fn refresh_watch_tree_file_events_do_not_scan_watched_directories() {
+        let root = temp_root("file-refresh");
+        let file = root.join("src/main.rs");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "x").unwrap();
+        let (mut debouncer, _event_rx) = test_debouncer();
+        let mut watched = (0..2_000)
+            .map(|index| root.join(format!("watched-{index:04}")))
+            .collect::<HashSet<_>>();
+        let expected = watched.clone();
+
+        let started = Instant::now();
+        for _ in 0..10_000 {
+            refresh_watch_tree(&mut debouncer, &root, &file, &mut watched).unwrap();
+        }
+        let elapsed = started.elapsed();
+
+        assert_eq!(watched, expected);
+        // 宽松上限只用于捕获退化为逐事件全量扫描；正常实现远低于该值。
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "ordinary file events took {elapsed:?}"
+        );
+        drop(debouncer);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_watch_tree_does_not_reenumerate_watched_directory() {
+        let root = temp_root("watched-directory");
+        let watched_dir = root.join("src");
+        std::fs::create_dir_all(watched_dir.join("nested")).unwrap();
+        let (mut debouncer, _event_rx) = test_debouncer();
+        let mut watched = HashSet::from([root.clone(), watched_dir.clone()]);
+        let expected = watched.clone();
+
+        refresh_watch_tree(&mut debouncer, &root, &watched_dir, &mut watched).unwrap();
+
+        assert_eq!(watched, expected);
+        assert!(!watched.contains(&watched_dir.join("nested")));
+        drop(debouncer);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_watch_tree_removes_deleted_directory_descendants() {
+        let root = temp_root("deleted-directory");
+        let deleted = root.join("src/gone");
+        std::fs::create_dir_all(deleted.join("nested")).unwrap();
+        let (mut debouncer, _event_rx) = test_debouncer();
+        let mut watched = HashSet::from([
+            root.clone(),
+            root.join("src"),
+            deleted.clone(),
+            deleted.join("nested"),
+            root.join("src/gone-elsewhere"),
+        ]);
+
+        std::fs::remove_dir_all(&deleted).unwrap();
+        refresh_watch_tree(&mut debouncer, &root, &deleted, &mut watched).unwrap();
+
+        assert_eq!(
+            watched,
+            HashSet::from([
+                root.clone(),
+                root.join("src"),
+                root.join("src/gone-elsewhere"),
+            ])
+        );
+        drop(debouncer);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn refresh_watch_tree_registers_new_directory_tree() {
+        let root = temp_root("new-directory");
+        let source = root.join("src");
+        let new_dir = source.join("new");
+        std::fs::create_dir_all(new_dir.join("nested")).unwrap();
+        let (mut debouncer, _event_rx) = test_debouncer();
+        let mut watched = HashSet::from([root.clone(), source]);
+
+        refresh_watch_tree(&mut debouncer, &root, &new_dir, &mut watched).unwrap();
+
+        assert!(watched.contains(&root.join("src/new")));
+        assert!(watched.contains(&root.join("src/new/nested")));
+        drop(debouncer);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn polling_loop_uses_injected_interval_and_reports_file_changes() {
+        let root = temp_root("polling");
+        let file = root.join("watched.txt");
+        std::fs::write(&file, "x").unwrap();
+        let (send, mut receive) = tokio::sync::mpsc::channel(8);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let poll_root = root.clone();
+        let poll_cancel = cancel.clone();
+        let handle = std::thread::spawn(move || {
+            poll_loop(poll_root, poll_cancel, send, Duration::from_millis(100))
+        });
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut record = None;
+        let mut content_len = 1;
+        while Instant::now() < deadline {
+            content_len += 1;
+            std::fs::write(&file, "x".repeat(content_len)).unwrap();
+            if let Ok(event) = receive.try_recv() {
+                record = Some(event);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        cancel.store(true, Ordering::SeqCst);
+        let poll_result = handle.join().unwrap();
+
+        assert!(poll_result.is_ok(), "poll loop failed: {poll_result:?}");
+        let record = record.expect("polling loop did not report the changed file");
+        let expected_path = file.to_string_lossy().into_owned();
+        assert_eq!(record["path"], json!(expected_path));
+        assert_eq!(record["kind"], json!("any"));
+        assert_eq!(record["isDir"], json!(false));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
