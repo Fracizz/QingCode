@@ -77,6 +77,30 @@ describe('SshServerStatusChip', () => {
     expect(await screen.findByRole('button', { name: 'Server v0.2.0 点击查看详情' })).toBeTruthy()
   })
 
+  it('subscribes before reading status and refreshes a pending snapshot', async () => {
+    let infoCalls = 0
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command !== 'ssh_server_info') throw new Error(`unexpected ${command}`)
+      // The first snapshot must be requested only after the event listener exists.
+      expect(listeners).toHaveLength(1)
+      infoCalls += 1
+      return infoCalls === 1
+        ? { ...ready, phase: 'probing', mode: 'unknown', version: null, transport: null }
+        : ready
+    })
+
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    expect(await screen.findByRole('button', { name: /正在探测/ })).toBeTruthy()
+    expect(
+      await screen.findByRole(
+        'button',
+        { name: 'Server v0.1.13 点击查看详情' },
+        { timeout: 3000 },
+      )
+    ).toBeTruthy()
+    expect(infoCalls).toBe(2)
+  })
+
   it('opens the details dialog on click and restarts from the right-click menu', async () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
     const chip = await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' })
