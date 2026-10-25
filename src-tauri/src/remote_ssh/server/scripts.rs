@@ -22,6 +22,9 @@ pub(crate) fn private_server_dirs_command(dirs: &[String]) -> String {
 
 /// Windows 用户私有 server 目录：`%USERPROFILE%` 默认只允许当前用户访问，
 /// 创建时沿用该 ACL。
+///
+/// 走 .NET 的 `CreateDirectory` 而不是 `New-Item`：`New-Item` 没有
+/// `-LiteralPath` 参数（只有 `-Path`），而 `-Path` 会把 `[` / `]` 当通配符。
 pub(crate) fn windows_create_server_dirs_script(native_dirs: &[String]) -> String {
     let entries = native_dirs
         .iter()
@@ -30,7 +33,7 @@ pub(crate) fn windows_create_server_dirs_script(native_dirs: &[String]) -> Strin
         .join(", ");
     format!(
         "$ErrorActionPreference = 'Stop'
-@({entries}) | ForEach-Object {{ New-Item -ItemType Directory -Force -LiteralPath $_ | Out-Null }}"
+@({entries}) | ForEach-Object {{ [System.IO.Directory]::CreateDirectory($_) | Out-Null }}"
     )
 }
 
@@ -597,7 +600,10 @@ mod tests {
             r"C:\Users\dev\.qingcode\server".to_string(),
             r"C:\Users\dev\.qingcode\server\0.1.13".to_string(),
         ]);
-        assert!(script.contains("New-Item -ItemType Directory -Force"));
+        // New-Item 不接受 -LiteralPath；误用它会让脚本在远端以 exit 1 失败。
+        assert!(!script.contains("New-Item"));
+        assert!(!script.contains("-LiteralPath"));
+        assert!(script.contains("[System.IO.Directory]::CreateDirectory($_)"));
         assert!(script.contains(r"'C:\Users\dev\.qingcode\server\0.1.13'"));
     }
 
