@@ -121,6 +121,8 @@
     "常驻 daemon": "resident daemon",
     "项目 serve": "project serve",
     "未连接": "Disconnected",
+    "已断开": "Disconnected",
+    "耗时": "Timing",
     "正在认证": "Authenticating",
     "正在探测": "Probing",
     "正在安装": "Installing",

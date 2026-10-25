@@ -277,7 +277,8 @@ async fn daemon_hello(
     validate_daemon_hello_with(&hello, policy)
 }
 
-/// serve server 就绪后尽力补一步 daemon 传输探测：
+/// serve server 就绪后尽力补一步 daemon 传输探测（后台执行，见 deploy 的
+/// `spawn_daemon_probe`）。先用现有 token 直连已有实例，失败才走下面的启动流程：
 /// 1. 幂等启动 daemon（unix 靠 `flock`、Windows 靠命名管道首实例锁，重复
 ///    执行都按「已有实例」退出，无副作用）；
 /// 2. 轮询读取 `run/token`（daemon 启动到 token 落盘有亚秒级延迟；旧 daemon
@@ -304,31 +305,38 @@ pub(super) async fn ensure_remote_daemon(
     }
     // 总截止从第一步开始计：启动、轮询、握手、淘汰旧版本都扣同一份预算。
     let deadline = Instant::now() + AGENT_DAEMON_ENSURE_TIMEOUT;
-    // 幂等启动：unix `nohup setsid`；Windows `daemon --detach` 自脱离。
-    start_daemon(manager, root, &bin, windows, deadline).await;
+    // 先连已有实例：重连、多项目、冷却重试时 daemon 通常早就在跑，直接读 token
+    // 握手即可，省掉一次启动 exec（Windows 上是一次 PowerShell 冷启动）。
+    // 读不到 token 或握手失败才幂等启动（unix `nohup setsid`；Windows
+    // `daemon --detach` 自脱离）。
+    let mut started = false;
     let mut restarted_for_stale_version = false;
     loop {
         let token = read_daemon_token(manager, root, windows, deadline).await;
-        if let Some(token) = token {
+        if let Some(token) = token.filter(|token| !token.is_empty()) {
             let access = DaemonAccess {
                 bin: bin.clone(),
                 token,
             };
-            if !access.token.is_empty() {
-                match probe_daemon_versioned(manager, connection_id, &access, deadline).await {
-                    ProbeOutcome::Ready => return Some(access),
-                    ProbeOutcome::StaleVersion if !restarted_for_stale_version => {
-                        // 旧版 daemon 还持着单实例锁：拿它自己的 token 请求
-                        // 退出，再按新二进制拉起一轮。只做一次，避免循环。
-                        restarted_for_stale_version = true;
-                        shutdown_remote_daemon_until(manager, connection_id, &access, deadline)
-                            .await;
-                        start_daemon(manager, root, &bin, windows, deadline).await;
-                        continue;
-                    }
-                    _ => {}
+            match probe_daemon_versioned(manager, connection_id, &access, deadline).await {
+                ProbeOutcome::Ready => return Some(access),
+                ProbeOutcome::StaleVersion if !restarted_for_stale_version => {
+                    // 旧版 daemon 还持着单实例锁：拿它自己的 token 请求
+                    // 退出，再按新二进制拉起一轮。只做一次，避免循环。
+                    restarted_for_stale_version = true;
+                    shutdown_remote_daemon_until(manager, connection_id, &access, deadline).await;
+                    start_daemon(manager, root, &bin, windows, deadline).await;
+                    started = true;
+                    continue;
                 }
+                _ => {}
             }
+        }
+        // 首轮没有可用实例（无 token / 握手失败）：拉起后立即重读，不先睡。
+        if !started {
+            start_daemon(manager, root, &bin, windows, deadline).await;
+            started = true;
+            continue;
         }
         if Instant::now() >= deadline {
             return None;

@@ -9,10 +9,17 @@ use qingcode_server::{read_frame, write_frame, ServerOp, ServerRequest, ServerRe
 
 /// watch 通道异常断开后重启前的间隔。
 const AGENT_WATCH_RESTART_DELAY: Duration = Duration::from_secs(2);
-/// endpoint 尚未就绪时监督任务的重试间隔。
-const AGENT_WATCH_RETRY_DELAY: Duration = Duration::from_secs(5);
-/// endpoint 连续拿不到的次数上限，超过后监督任务退出。
-const AGENT_WATCH_MAX_RETRIES: usize = 3;
+/// endpoint 未就绪或主连接中断时的重试间隔表（秒），对齐 VS Code Remote 的重连节奏：
+/// 断开后第一次重连立即进行（循环里不先睡），失败后依次等 5、5、10…秒，
+/// 此后固定 30 秒。监督任务不再因连续失败退出：此前连续 3 次失败（约 15 秒）
+/// 就永久退出，断网稍久 watch 就再也回不来，只能手动重连项目。
+const AGENT_WATCH_RETRY_SCHEDULE: [u64; 8] = [5, 5, 10, 10, 10, 10, 10, 30];
+
+/// 第 `failures` 次连续失败后的等待时长（`failures` 从 1 起算）。
+pub(crate) fn watch_retry_delay(failures: u32) -> Duration {
+    let index = (failures.max(1) as usize - 1).min(AGENT_WATCH_RETRY_SCHEDULE.len() - 1);
+    Duration::from_secs(AGENT_WATCH_RETRY_SCHEDULE[index])
+}
 /// watch 空闲轮询间隔：没有事件时定期回来检查会话存活与总开关。
 const AGENT_WATCH_IDLE_POLL: Duration = Duration::from_secs(5);
 /// watch 读帧超时：超过这个时间没收到任何帧就判定连接已死并重连。
@@ -130,7 +137,8 @@ pub(crate) fn ssh_uri_for_watch_event(
 /// daemon 通道上的 watch 会话：订阅受理后循环接收 EVENT 推送并转成
 /// `fs-change` 事件发给前端，直到会话失效、远端 watcher 结束或 server 被关闭。
 /// 返回 Err 仅代表订阅建立失败（通道/握手/RES 阶段），调用方据此降级 serve；
-/// 会话中途结束一律返回 Ok，由监督任务的下一轮重连决定传输。
+/// 会话中途结束（读帧超时、通道关闭、连接断开）一律返回 Ok，由监督任务的下一轮
+/// 重连决定传输——此前中途错误也会冒泡成 Err，网络一抖就把 daemon 降级 5 分钟。
 pub(crate) async fn daemon_watch_session(
     app: &tauri::AppHandle,
     manager: &SshManager,
@@ -163,7 +171,9 @@ pub(crate) async fn daemon_watch_session(
                 return Ok(());
             }
             let deadline = Instant::now() + AGENT_WATCH_FRAME_TIMEOUT;
-            let frame = channel.next_frame(deadline).await?;
+            let Ok(frame) = channel.next_frame(deadline).await else {
+                return Ok(());
+            };
             match frame.kind {
                 Kind::Event => {
                     let Ok(event) = proto::decode_value::<Event>(&frame.payload) else {
@@ -224,7 +234,7 @@ pub(crate) fn spawn_server_watch_supervisor(
     canonical_root: String,
 ) -> tauri::async_runtime::JoinHandle<()> {
     tauri::async_runtime::spawn(async move {
-        let mut consecutive_failures = 0usize;
+        let mut consecutive_failures = 0u32;
         loop {
             let manager = app.state::<SshManager>();
             if manager.session(&connection_id).is_err()
@@ -242,6 +252,22 @@ pub(crate) fn spawn_server_watch_supervisor(
                 break;
             }
             let key = server_slot_key(&connection_id, &root.canonical_path);
+            // 主连接已断开（保活超时、远端断开）：先主动重连，不动 slot——远端
+            // serve/daemon 进程不随 SSH 连接退出，重连后端点照样可用，免去整轮
+            // 重新发现。断开期间芯片显示「已断开」及原因。
+            if !manager.connection_is_open(&connection_id) {
+                server_status::publish_root_state(&app, &manager, &root);
+                if manager
+                    .ensure_connection_alive(&connection_id)
+                    .await
+                    .is_err()
+                {
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
+                    continue;
+                }
+                server_status::publish_root_state(&app, &manager, &root);
+            }
             let endpoint = match ensure_server_endpoint_with_app(&manager, &root, Some(&app)).await
             {
                 Ok(Some(endpoint)) => {
@@ -257,19 +283,13 @@ pub(crate) fn spawn_server_watch_supervisor(
                     {
                         break;
                     }
-                    consecutive_failures += 1;
-                    if consecutive_failures >= AGENT_WATCH_MAX_RETRIES {
-                        break;
-                    }
-                    tokio::time::sleep(AGENT_WATCH_RETRY_DELAY).await;
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
                     continue;
                 }
                 Err(_) => {
-                    consecutive_failures += 1;
-                    if consecutive_failures >= AGENT_WATCH_MAX_RETRIES {
-                        break;
-                    }
-                    tokio::time::sleep(AGENT_WATCH_RETRY_DELAY).await;
+                    consecutive_failures = consecutive_failures.saturating_add(1);
+                    tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
                     continue;
                 }
             };
@@ -290,6 +310,8 @@ pub(crate) fn spawn_server_watch_supervisor(
                         tokio::time::sleep(AGENT_WATCH_RESTART_DELAY).await;
                         continue;
                     }
+                    // 连接本身断了不是 daemon 的错：回到循环顶部重连，保留 daemon 标记。
+                    Err(_) if !manager.connection_is_open(&connection_id) => continue,
                     Err(_) => {
                         downgrade_server_daemon(&manager, &key);
                         server_status::publish_root_state(&app, &manager, &root);
@@ -317,6 +339,8 @@ pub(crate) fn spawn_server_watch_supervisor(
             .await;
             let mut stream = match stream {
                 Ok(stream) => stream,
+                // 同上：连接断开时端点未必失效，不清缓存，重连后直接复用。
+                Err(_) if !manager.connection_is_open(&connection_id) => continue,
                 Err(_) => {
                     // 端点可能已随远端进程消失（端口/token 失效）：清掉缓存，
                     // 下一轮重新走发现/部署，否则会一直对着死端口空转。
@@ -338,6 +362,14 @@ pub(crate) fn spawn_server_watch_supervisor(
                     }
                     if Instant::now() >= deadline {
                         // 心跳缺席：连接半死。只重连，不 emit 任何事件。
+                        break 'watch;
+                    }
+                    // 后台 daemon 探测已通过：断开 serve watch，下一轮改走 daemon。
+                    if manager
+                        .server_slot(&key)
+                        .and_then(|slot| slot.endpoint)
+                        .is_some_and(|endpoint| endpoint.daemon.is_some())
+                    {
                         break 'watch;
                     }
                     match tokio::time::timeout(AGENT_WATCH_IDLE_POLL, &mut frame).await {
@@ -392,6 +424,19 @@ pub(crate) fn spawn_server_watch_supervisor(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watch_retry_delay_backs_off_and_caps() {
+        assert_eq!(watch_retry_delay(1), Duration::from_secs(5));
+        assert_eq!(watch_retry_delay(2), Duration::from_secs(5));
+        assert_eq!(watch_retry_delay(3), Duration::from_secs(10));
+        assert_eq!(watch_retry_delay(7), Duration::from_secs(10));
+        // 表尾之后固定 30 秒，也不会溢出。
+        assert_eq!(watch_retry_delay(8), Duration::from_secs(30));
+        assert_eq!(watch_retry_delay(u32::MAX), Duration::from_secs(30));
+        // 0 视同第一次失败。
+        assert_eq!(watch_retry_delay(0), Duration::from_secs(5));
+    }
 
     #[test]
     fn watch_event_filter_skips_server_and_temp_files() {

@@ -168,6 +168,29 @@ describe('SshServerStatusChip', () => {
     expect(screen.queryByText('Server…')).toBeNull()
   })
 
+  it('shows stage timings in the details dialog', async () => {
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') return { ...ready, timings: '发现 1.2s · 合计 1.5s' }
+      throw new Error(`unexpected ${command}`)
+    })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' }))
+    expect(await screen.findByText('发现 1.2s · 合计 1.5s')).toBeTruthy()
+  })
+
+  it('shows a disconnected chip with the reason and recovers on the next state event', async () => {
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') {
+        return { ...probing, phase: 'disconnected', reason: '保活超时：约 40 秒未收到远端任何回包' }
+      }
+      throw new Error(`unexpected ${command}`)
+    })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    expect(await screen.findByText('已断开')).toBeTruthy()
+    act(() => listeners[0]?.({ payload: ready }))
+    expect(await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' })).toBeTruthy()
+  })
+
   it('hides the chip when the command is missing', async () => {
     invoke.mockRejectedValue(Object.assign(new Error('command ssh_server_info not found'), { name: 'Error' }))
     render(<SshServerStatusChip rootUri={rootUri} />)

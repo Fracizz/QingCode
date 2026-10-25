@@ -47,6 +47,63 @@ async fn exec_on_root(
         .await
 }
 
+/// 发现/部署的分阶段计时：每个阶段结束时 `mark`，最终摘要写进 slot，
+/// 详情面板展示，用来对照各步远端往返的真实耗时。
+pub(super) struct StageTimer {
+    started: Instant,
+    last: Instant,
+    stages: Vec<(&'static str, Duration)>,
+}
+
+impl StageTimer {
+    pub(super) fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            started: now,
+            last: now,
+            stages: Vec::new(),
+        }
+    }
+
+    pub(super) fn mark(&mut self, label: &'static str) {
+        let now = Instant::now();
+        self.stages.push((label, now - self.last));
+        self.last = now;
+    }
+
+    pub(super) fn summary(&self) -> String {
+        format_stage_timings(&self.stages, self.started.elapsed())
+    }
+}
+
+/// 「状态目录 0.3s · 发现 1.2s · 合计 1.5s」。纯函数便于单测。
+pub(super) fn format_stage_timings(stages: &[(&str, Duration)], total: Duration) -> String {
+    stages
+        .iter()
+        .map(|(label, elapsed)| format!("{label} {:.1}s", elapsed.as_secs_f64()))
+        .chain(std::iter::once(format!("合计 {:.1}s", total.as_secs_f64())))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+/// 解析并准备用户私有安装位置（家目录, 安装目录）。同一连接内结果不变，
+/// 缓存后重连、多项目、重新发现都不必再起两次远端 shell；部署失败或断开时
+/// 缓存会被丢弃，下次重新创建并校验。
+async fn resolve_install_location(
+    manager: &SshManager,
+    sftp: &SftpSession,
+    root: &RegisteredRoot,
+    connection_id: &str,
+) -> Result<(String, String), ServerDeployError> {
+    if let Some(cached) = manager.cached_server_install(connection_id) {
+        return Ok(cached);
+    }
+    let home = resolve_server_home(manager, root).await?;
+    let install_dir = prepare_server_install_dir(manager, sftp, root, &home).await?;
+    manager.remember_server_install(connection_id, &home, &install_dir);
+    Ok((home, install_dir))
+}
+
 /// 确保项目状态目录存在，并在任何读写前确认真实路径仍位于项目根内。
 ///
 /// `.qingcode` 与 `.qingcode/server` 分两步创建和 canonicalize：前者若是指向
@@ -470,8 +527,11 @@ async fn verify_remote_binary(
     root: &RegisteredRoot,
     remote_bin: &str,
     local_sha256: &str,
+    sha_verified: bool,
 ) -> Result<(), ServerDeployError> {
-    if !remote_binary_sha_matches(manager, root, remote_bin, local_sha256).await {
+    // 上传前已比对一致而跳过上传时，摘要刚刚校验过，不必再算一遍；
+    // 真正上传了新文件则必须重新校验落盘结果。
+    if !sha_verified && !remote_binary_sha_matches(manager, root, remote_bin, local_sha256).await {
         return Err(ServerDeployError::permanent(
             "远端 server 二进制 SHA-256 与本地可信文件不一致，已拒绝执行",
         ));
@@ -544,6 +604,16 @@ async fn cleanup_legacy_project_install(
         legacy_project_agent_binary_path(&root.canonical_path, windows, arch),
     ];
     for binary in binaries {
+        // 旧布局文件绝大多数时候早已不在：先用一次 SFTP 确认存在，再做进程清理。
+        // 此前每次发现都无条件跑两轮远端进程枚举（Windows 上是 Win32_Process
+        // 全量查询 + 300ms 等待），是重连变慢的主要来源。
+        let exists = matches!(
+            tokio::time::timeout(Duration::from_secs(2), sftp.metadata(binary.clone())).await,
+            Ok(Ok(_))
+        );
+        if !exists {
+            continue;
+        }
         stop_processes_for_binary(manager, root, &binary).await;
         let _ = tokio::time::timeout(Duration::from_secs(2), sftp.remove_file(binary)).await;
     }
@@ -564,18 +634,18 @@ async fn wait_server_ready(
         if Instant::now() >= deadline {
             return None;
         }
-        tokio::time::sleep(AGENT_READY_POLL).await;
+        // 先查后睡：启动脚本返回时状态文件常常已经写好，不必白等一个轮询间隔。
         if let Ok(bytes) = sftp.read(state_path.clone()).await {
-            if let Ok(state) = parse_server_state(&bytes) {
-                if state.version != SERVER_VERSION
-                    || !remote_roots_equivalent(
+            // 版本或根不符（旧实例的残留状态）：等新进程覆盖，落到下面的 sleep。
+            let state = parse_server_state(&bytes).ok().filter(|state| {
+                state.version == SERVER_VERSION
+                    && remote_roots_equivalent(
                         &state.root,
                         &root.canonical_path,
                         windows_native_path(&root.canonical_path).is_some(),
                     )
-                {
-                    continue;
-                }
+            });
+            if let Some(state) = state {
                 let endpoint = ServerEndpoint {
                     port: state.port,
                     token: state.token,
@@ -586,6 +656,7 @@ async fn wait_server_ready(
                 }
             }
         }
+        tokio::time::sleep(AGENT_READY_POLL).await;
     }
 }
 
@@ -597,20 +668,23 @@ fn deploy_backoff_reason(failures: u32) -> Option<&'static str> {
     )
 }
 
-/// 发现或部署远端 server；不可用时返回原因，调用方回退直连。
+/// 发现或部署远端 serve；不可用时返回原因，调用方回退直连。
 ///
-/// serve 端点就绪后尽力补一步 daemon 传输探测（见 [`ensure_remote_daemon`]）：
-/// 探测失败只表示本轮没有 daemon 可用，serve 模式照常返回。
+/// 返回 serve 端点与已通过 SHA-256 校验的远端二进制路径。daemon 探测不在这里
+/// 做：调用方先发布 serve 就绪，再在后台补探 daemon（见 [`spawn_daemon_probe`]），
+/// 状态芯片与文件操作不必等 daemon 的启动、token 轮询与握手。
 async fn discover_or_deploy_server(
     manager: &SshManager,
     connection_id: &str,
     root: &RegisteredRoot,
     app: Option<&tauri::AppHandle>,
-) -> Result<ServerEndpoint, ServerDeployError> {
+    timer: &mut StageTimer,
+) -> Result<(ServerEndpoint, String), ServerDeployError> {
     let sftp = manager.open_sftp(connection_id).await?;
     // 发现和启动 serve 都依赖这里的状态文件与日志目录；干净项目必须先创建
     // 并验证项目内目录，再进入 try_discover 或安装流程。
     ensure_project_server_state_dir(&sftp, root).await?;
+    timer.mark("状态目录");
     // 先解析本地二进制（只查本地、不触发下载）。本地没有可信文件时不做
     // 发现，后续必须下载或由用户提供离线文件。
     let local_candidate = locate_local_server_binary_with(manager, root, false)
@@ -619,13 +693,14 @@ async fn discover_or_deploy_server(
     let windows = windows_native_path(&root.canonical_path).is_some();
 
     if let Some((arch, local_binary)) = local_candidate.as_ref() {
-        let home = resolve_server_home(manager, root).await?;
-        let install_dir = prepare_server_install_dir(manager, &sftp, root, &home).await?;
+        let (_, install_dir) =
+            resolve_install_location(manager, &sftp, root, connection_id).await?;
+        timer.mark("安装目录");
         let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, arch));
         let local_sha256 = sha256_of_file_cached(local_binary)
             .await
             .map_err(ServerDeployError::from)?;
-        if let Some(mut endpoint) = try_discover_server(
+        let discovered = try_discover_server(
             manager,
             connection_id,
             &sftp,
@@ -634,11 +709,12 @@ async fn discover_or_deploy_server(
             Some(&local_sha256),
             &remote_bin,
         )
-        .await
-        {
+        .await;
+        timer.mark("发现");
+        if let Some(endpoint) = discovered {
             cleanup_legacy_project_install(manager, &sftp, root, arch).await;
-            endpoint.daemon = ensure_remote_daemon(manager, connection_id, root, &remote_bin).await;
-            return Ok(endpoint);
+            timer.mark("旧版清理");
+            return Ok((endpoint, remote_bin));
         }
     }
 
@@ -646,8 +722,7 @@ async fn discover_or_deploy_server(
         Some(local) => local,
         None => locate_local_server_binary(manager, root).await?,
     };
-    let home = resolve_server_home(manager, root).await?;
-    let install_dir = prepare_server_install_dir(manager, &sftp, root, &home).await?;
+    let (home, install_dir) = resolve_install_location(manager, &sftp, root, connection_id).await?;
     let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, &arch));
     // 上传之前才标 installing；找本地二进制仍算 probing。
     server_status::note_server_activity(
@@ -657,6 +732,7 @@ async fn discover_or_deploy_server(
         connection_id,
         server_status::ServerPhase::Installing,
     );
+    timer.mark("准备安装");
     // 本地摘要一份两用：幂等跳过上传 + 远端 self-check 期望值。
     let local_sha256 = sha256_of_file_cached(&local_binary)
         .await
@@ -667,11 +743,17 @@ async fn discover_or_deploy_server(
         remote_bin: &remote_bin,
         local_sha256: &local_sha256,
     };
-    upload_server_binary(manager, &sftp, root, &local_binary, &target)
+    let uploaded = upload_server_binary(manager, &sftp, root, &local_binary, &target)
         .await
         .map_err(ServerDeployError::deploy_stage)?;
+    timer.mark(if uploaded {
+        "上传"
+    } else {
+        "比对(免上传)"
+    });
     // 先做无执行的 sha256 校验，再 self-check（同时探测 noexec）。
-    verify_remote_binary(manager, root, &remote_bin, &local_sha256).await?;
+    verify_remote_binary(manager, root, &remote_bin, &local_sha256, !uploaded).await?;
+    timer.mark("自检");
     // 新版本已可信后才清理旧项目目录；清理过程不会执行旧二进制。
     cleanup_legacy_project_install(manager, &sftp, root, &arch).await;
     let state_path = server_state_path(&root.canonical_path);
@@ -692,6 +774,7 @@ async fn discover_or_deploy_server(
         .map_err(|error| {
             ServerDeployError::deploy_stage(format!("启动远端 server 失败：{error}"))
         })?;
+    timer.mark("启动 serve");
     // serve ping 之前进入握手。
     server_status::note_server_activity(
         manager,
@@ -700,11 +783,11 @@ async fn discover_or_deploy_server(
         connection_id,
         server_status::ServerPhase::Handshaking,
     );
-    let mut endpoint = wait_server_ready(manager, connection_id, &sftp, root)
+    let endpoint = wait_server_ready(manager, connection_id, &sftp, root)
         .await
         .ok_or_else(|| ServerDeployError::deploy_stage("server 启动超时".to_string()))?;
-    endpoint.daemon = ensure_remote_daemon(manager, connection_id, root, &remote_bin).await;
-    Ok(endpoint)
+    timer.mark("等待就绪");
+    Ok((endpoint, remote_bin))
 }
 
 fn publish_server_if_watched(
@@ -833,6 +916,7 @@ async fn ensure_server_endpoint_inner(
     if let Some(cached) = cached_server_slot(manager, &key) {
         // daemon 降级满冷却期后补一次探测：降级只清 daemon 标记，若不重试，
         // daemon 崩溃后这条连接永远回不去 daemon 传输，直到端点整体重建。
+        // 有 AppHandle 时放到后台，不让本次操作陪着等 daemon 握手。
         if cached
             .as_ref()
             .is_some_and(|endpoint| endpoint.daemon.is_none())
@@ -843,7 +927,10 @@ async fn ensure_server_endpoint_inner(
                 Instant::now(),
             )
         {
-            retry_downgraded_daemon(manager, &connection_id, root, &key).await;
+            match app {
+                Some(app) => spawn_daemon_probe(app, root, &key, None),
+                None => probe_daemon_for_slot(manager, root, &key, None).await,
+            }
         }
         manager.set_server_activity(&key, None);
         publish_server_if_watched(app, manager, root);
@@ -857,7 +944,7 @@ async fn ensure_server_endpoint_inner(
     }
     // 同一 (连接, 根) 的部署串行执行；拿不到锁的并发调用方等结果落盘后复用。
     let gate = manager.server_gate(&key)?;
-    let _guard = gate.lock().await;
+    let guard = gate.lock().await;
     if let Some(cached) = cached_server_slot(manager, &key) {
         manager.set_server_activity(&key, None);
         publish_server_if_watched(app, manager, root);
@@ -866,27 +953,36 @@ async fn ensure_server_endpoint_inner(
     // 新一轮从 probing 开始，清掉上次中断留下的瞬时阶段。
     manager.set_server_activity(&key, None);
     publish_server_if_watched(app, manager, root);
-    match discover_or_deploy_server(manager, &connection_id, root, app).await {
-        Ok(endpoint) => {
+    let mut timer = StageTimer::new();
+    match discover_or_deploy_server(manager, &connection_id, root, app, &mut timer).await {
+        Ok((endpoint, remote_bin)) => {
             let mut slot = manager.server_slot(&key).unwrap_or_default();
-            // 本轮 daemon 探测未通过（含总截止超时）也记成降级：否则
-            // `daemon_downgraded_at` 为空，冷却重试永远不会触发，这条连接
-            // 在端点重建前只能停在 serve 传输。
-            slot.daemon_downgraded_at = endpoint.daemon.is_none().then(Instant::now);
             slot.endpoint = Some(endpoint.clone());
             slot.unavailable_reason = None;
             slot.activity = None;
             slot.last_failure = None;
             // 部署成功：退避计数清零，下一次失败重新从 1 数起。
             slot.deploy_failures = 0;
+            slot.daemon_downgraded_at = None;
+            slot.last_timings = Some(timer.summary());
             manager.set_server_slot(&key, slot);
+            // serve 已可用就先发布就绪；daemon 在后台探测，通过后再把传输升级为
+            // daemon（watch 监督任务会察觉并切换）。
             publish_server_if_watched(app, manager, root);
+            drop(guard);
+            match app {
+                Some(app) => spawn_daemon_probe(app, root, &key, Some(remote_bin)),
+                None => probe_daemon_for_slot(manager, root, &key, Some(remote_bin)).await,
+            }
             Ok(Some(endpoint))
         }
         Err(error) => {
+            // 安装目录可能已被远端删除或权限被改：下次重新创建并校验。
+            manager.forget_server_install(&connection_id);
             let mut slot = manager.server_slot(&key).unwrap_or_default();
             slot.endpoint = None;
             slot.activity = None;
+            slot.last_timings = Some(timer.summary());
             let mut permanent = error.permanent;
             let mut reason = error.reason;
             if error.after_deploy {
@@ -912,48 +1008,112 @@ async fn ensure_server_endpoint_inner(
     }
 }
 
-/// daemon 降级冷却到点后的重试：拿部署门闩串行化并发探测，成功恢复
-/// daemon 标记；失败把降级时间戳重置为现在，再等一个完整冷却期，
-/// 避免后续每次操作都对着已知失败的 daemon 白白探测一轮。
-async fn retry_downgraded_daemon(
-    manager: &SshManager,
-    connection_id: &str,
+/// 在后台为已就绪的 serve 端点补探 daemon 传输，完成后发布新状态。
+/// `daemon_probe_pending` 去重：发现成功与冷却重试不会同时各跑一轮。
+fn spawn_daemon_probe(
+    app: &tauri::AppHandle,
     root: &RegisteredRoot,
     key: &str,
+    remote_bin: Option<String>,
 ) {
-    let Ok(gate) = manager.server_gate(key) else {
-        return;
-    };
-    let _guard = gate.lock().await;
+    let manager = app.state::<SshManager>();
     let Some(mut slot) = manager.server_slot(key) else {
         return;
     };
-    let daemon_missing = slot
-        .endpoint
-        .as_ref()
-        .is_some_and(|endpoint| endpoint.daemon.is_none());
-    if !daemon_missing || !daemon_downgrade_retry_ready(slot.daemon_downgraded_at, Instant::now()) {
+    if slot.daemon_probe_pending {
         return;
     }
-    // 降级重试也重新走「本地文件 + 用户私有安装路径 + 远端 sha256」校验。
-    // 这里没有 None 回退分支，因此不可能重新解析到项目内二进制。
-    let Some(remote_bin) = find_verified_installed_binary(manager, root).await else {
-        slot.daemon_downgraded_at = Some(Instant::now());
+    slot.daemon_probe_pending = true;
+    manager.set_server_slot(key, slot);
+    let app = app.clone();
+    let root = root.clone();
+    let key = key.to_string();
+    tauri::async_runtime::spawn(async move {
+        let manager = app.state::<SshManager>();
+        probe_daemon_for_slot(&manager, &root, &key, remote_bin).await;
+        server_status::publish_root_state(&app, &manager, &root);
+    });
+}
+
+/// 为 slot 里的 serve 端点探测 daemon：拿部署门闩与重新部署互斥。端点在等锁或
+/// 探测期间被替换、清掉，或刚有一次失败尚在冷却中，就放弃本轮、不写回结果。
+/// 失败记下降级时间，冷却后由 ensure 快路径再试。
+///
+/// `remote_bin` 是本轮部署刚校验过的二进制；`None`（冷却重试）时重新走
+/// 「本地文件 + 用户私有安装路径 + 远端 sha256」校验，不可能解析到项目内二进制。
+async fn probe_daemon_for_slot(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    key: &str,
+    remote_bin: Option<String>,
+) {
+    let finish = |access: Option<DaemonAccess>, token: Option<&str>, elapsed: Option<Duration>| {
+        let Some(mut slot) = manager.server_slot(key) else {
+            return;
+        };
+        slot.daemon_probe_pending = false;
+        let current = slot
+            .endpoint
+            .as_ref()
+            .is_some_and(|endpoint| Some(endpoint.token.as_str()) == token);
+        if current {
+            slot.daemon_downgraded_at = access.is_none().then(Instant::now);
+            if let Some(endpoint) = slot.endpoint.as_mut() {
+                endpoint.daemon = access;
+            }
+            if let Some(elapsed) = elapsed {
+                slot.last_timings = Some(append_stage_timing(
+                    slot.last_timings.as_deref(),
+                    "daemon",
+                    elapsed,
+                ));
+            }
+        }
         manager.set_server_slot(key, slot);
+    };
+    let (Ok(parsed), Ok(gate)) = (parse_remote_uri(&root.uri), manager.server_gate(key)) else {
+        finish(None, None, None);
         return;
     };
-    match ensure_remote_daemon(manager, connection_id, root, &remote_bin).await {
-        Some(access) => {
-            if let Some(endpoint) = slot.endpoint.as_mut() {
-                endpoint.daemon = Some(access);
-            }
-            slot.daemon_downgraded_at = None;
-            manager.set_server_slot(key, slot);
-        }
-        None => {
-            slot.daemon_downgraded_at = Some(Instant::now());
-            manager.set_server_slot(key, slot);
-        }
+    let _guard = gate.lock().await;
+    let Some(slot) = manager.server_slot(key) else {
+        return;
+    };
+    let waiting_cooldown = slot
+        .daemon_downgraded_at
+        .is_some_and(|at| !daemon_downgrade_retry_ready(Some(at), Instant::now()));
+    let token = slot
+        .endpoint
+        .as_ref()
+        .filter(|endpoint| endpoint.daemon.is_none())
+        .map(|endpoint| endpoint.token.clone());
+    let Some(token) = token.filter(|_| !waiting_cooldown) else {
+        finish(None, None, None);
+        return;
+    };
+    let started = Instant::now();
+    let remote_bin = match remote_bin {
+        Some(bin) => Some(bin),
+        None => find_verified_installed_binary(manager, root).await,
+    };
+    let access = match remote_bin {
+        Some(bin) => ensure_remote_daemon(manager, &parsed.connection_id, root, &bin).await,
+        None => None,
+    };
+    finish(access, Some(&token), Some(started.elapsed()));
+}
+
+/// 把后台阶段（如 daemon 探测）追加到耗时摘要末尾并标注「后台」。摘要里的
+/// 「合计」仍表示到 serve 就绪的等待时长，后台阶段不计入。
+pub(super) fn append_stage_timing(
+    existing: Option<&str>,
+    label: &str,
+    elapsed: Duration,
+) -> String {
+    let stage = format!("{label} {:.1}s（后台）", elapsed.as_secs_f64());
+    match existing {
+        Some(existing) if !existing.is_empty() => format!("{existing} · {stage}"),
+        _ => stage,
     }
 }
 
@@ -968,8 +1128,7 @@ async fn find_verified_installed_binary(
         .ok()?;
     let connection_id = parse_remote_uri(&root.uri).ok()?.connection_id;
     let sftp = manager.open_sftp(&connection_id).await.ok()?;
-    let home = resolve_server_home(manager, root).await.ok()?;
-    let install_dir = prepare_server_install_dir(manager, &sftp, root, &home)
+    let (_, install_dir) = resolve_install_location(manager, &sftp, root, &connection_id)
         .await
         .ok()?;
     let windows = windows_native_path(&root.canonical_path).is_some();
@@ -983,6 +1142,32 @@ async fn find_verified_installed_binary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stage_timings_list_each_stage_then_total() {
+        let text = format_stage_timings(
+            &[
+                ("状态目录", Duration::from_millis(340)),
+                ("发现", Duration::from_millis(1260)),
+            ],
+            Duration::from_millis(1600),
+        );
+        assert_eq!(text, "状态目录 0.3s · 发现 1.3s · 合计 1.6s");
+        assert_eq!(format_stage_timings(&[], Duration::ZERO), "合计 0.0s");
+    }
+
+    #[test]
+    fn background_stage_is_appended_without_touching_total() {
+        let base = "发现 1.3s · 合计 1.6s";
+        assert_eq!(
+            append_stage_timing(Some(base), "daemon", Duration::from_millis(2100)),
+            "发现 1.3s · 合计 1.6s · daemon 2.1s（后台）"
+        );
+        assert_eq!(
+            append_stage_timing(None, "daemon", Duration::from_millis(900)),
+            "daemon 0.9s（后台）"
+        );
+    }
 
     #[test]
     fn server_slot_cache_tracks_ready_and_unavailable_states() {

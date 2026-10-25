@@ -85,6 +85,11 @@ pub(crate) struct ServerSlot {
     /// 重试）。与 [`ServerSlot::unavailable_reason`] 的区别：这里不代表终态，
     /// 不参与端点缓存判断；成功部署或清除不可用原因时一并清掉。
     pub(crate) last_failure: Option<String>,
+    /// 最近一次发现/部署的分阶段耗时摘要（如「目录 0.8s · 校验 1.1s · 合计 2.3s」），
+    /// 仅用于详情面板展示与性能回归对照。
+    pub(crate) last_timings: Option<String>,
+    /// 后台 daemon 探测正在进行：避免发现成功与冷却重试同时各拉一轮。
+    pub(crate) daemon_probe_pending: bool,
 }
 
 pub(crate) fn server_slot_key(connection_id: &str, canonical_root: &str) -> String {

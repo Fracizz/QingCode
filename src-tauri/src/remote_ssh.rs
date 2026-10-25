@@ -226,6 +226,28 @@ pub struct RemoteGitFileContents {
 struct SshClient {
     expected_fingerprint: Option<String>,
     observed_fingerprint: Arc<Mutex<Option<String>>>,
+    /// 连接结束的原因（远端 DISCONNECT 或传输错误），供状态芯片展示和排查断线。
+    disconnect_reason: Arc<Mutex<Option<String>>>,
+}
+
+/// 把 russh 的断开原因转成用户可读文本。保活超时单独说明判定口径，
+/// 便于区分「网络/远端无响应」与「远端主动断开」。
+fn describe_disconnect(reason: &client::DisconnectReason<russh::Error>) -> String {
+    match reason {
+        client::DisconnectReason::ReceivedDisconnect(info) => {
+            let message = info.message.trim();
+            if message.is_empty() {
+                format!("远端主动断开（{:?}）", info.reason_code)
+            } else {
+                format!("远端主动断开（{:?}）：{message}", info.reason_code)
+            }
+        }
+        client::DisconnectReason::Error(russh::Error::KeepaliveTimeout) => format!(
+            "保活超时：约 {} 秒未收到远端任何回包（网络中断、远端休眠或 sshd 无响应）",
+            SSH_KEEPALIVE_INTERVAL.as_secs() * (SSH_KEEPALIVE_MAX as u64 + 1)
+        ),
+        client::DisconnectReason::Error(error) => format!("连接异常断开：{error}"),
+    }
 }
 
 impl client::Handler for SshClient {
@@ -247,6 +269,19 @@ impl client::Handler for SshClient {
             .as_deref()
             .is_some_and(|expected| expected == fingerprint))
     }
+
+    async fn disconnected(
+        &mut self,
+        reason: client::DisconnectReason<Self::Error>,
+    ) -> Result<(), Self::Error> {
+        if let Ok(mut slot) = self.disconnect_reason.lock() {
+            slot.get_or_insert_with(|| describe_disconnect(&reason));
+        }
+        match reason {
+            client::DisconnectReason::ReceivedDisconnect(_) => Ok(()),
+            client::DisconnectReason::Error(error) => Err(error),
+        }
+    }
 }
 
 struct ConnectedSession {
@@ -255,6 +290,21 @@ struct ConnectedSession {
     /// 整条连接共用一个 SFTP 会话，请求在其中多路复用。每次操作都新开通道时，
     /// Windows OpenSSH 要为每次请求启动一个 sftp-server 进程，远端一卡就超时。
     sftp: tokio::sync::Mutex<Option<CachedSftp>>,
+    /// 与 [`SshClient::disconnect_reason`] 共享：传输结束后记录原因。
+    disconnect_reason: Arc<Mutex<Option<String>>>,
+}
+
+impl ConnectedSession {
+    /// 连接已关闭时的断开原因；仍在线或原因未知返回 `None`。
+    fn closed_reason(&self) -> Option<String> {
+        if !self.handle.is_closed() {
+            return None;
+        }
+        self.disconnect_reason
+            .lock()
+            .ok()
+            .and_then(|reason| reason.clone())
+    }
 }
 
 struct CachedSftp {
@@ -420,9 +470,11 @@ const SFTP_STALL_TIMEOUT: Duration = Duration::from_secs(45);
 const SSH_LIVENESS_PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 /// 重连失败后的冷却期：并发的终端恢复直接复用这次失败，不排队逐个重试握手。
 const SSH_RECONNECT_FAILURE_COOLDOWN: Duration = Duration::from_secs(3);
-const SSH_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
-/// 连续 5 次（约 75 秒）收不到任何回包才判定断开。
-const SSH_KEEPALIVE_MAX: usize = 4;
+/// 保活间隔：VS Code / Zed 的应用层心跳约 20～25 秒判定断开，SSH 层没有
+/// 「忙时不判」的保护，取 10 秒 × 4 个周期（约 40 秒）兼顾发现速度与误判。
+const SSH_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+/// 连续 4 个周期（约 40 秒）收不到任何回包才判定断开。
+const SSH_KEEPALIVE_MAX: usize = 3;
 
 fn ssh_client_config() -> client::Config {
     client::Config {
@@ -609,6 +661,9 @@ pub struct SshManager {
     watch_supervisors: Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
     /// 已发给前端的 `ssh-server-state`，按规范化 root URI 去重。
     server_snapshots: Mutex<HashMap<String, server_status::SshServerState>>,
+    /// 已解析并校验过的用户私有安装位置（家目录, 安装目录），按连接 id 缓存。
+    /// 同一连接内不会变化；Windows 上每次解析都要起两次 PowerShell。
+    server_installs: Mutex<HashMap<String, (String, String)>>,
 }
 
 impl SshManager {
@@ -630,6 +685,7 @@ impl SshManager {
             server_auto_download: std::sync::atomic::AtomicBool::new(true),
             watch_supervisors: Mutex::new(HashMap::new()),
             server_snapshots: Mutex::new(HashMap::new()),
+            server_installs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -825,6 +881,19 @@ impl SshManager {
         self.session(connection_id)
             .ok()
             .is_some_and(|session| !session.handle.is_closed())
+    }
+
+    /// 主连接已断开时记录的原因（保活超时、远端断开等）；在线或未知返回 `None`。
+    pub(crate) fn connection_closed_reason(&self, connection_id: &str) -> Option<String> {
+        self.session(connection_id)
+            .ok()
+            .and_then(|session| session.closed_reason())
+    }
+
+    /// 主连接已关闭时立即重连（复用已确认的配置与指纹）；仍在线直接返回。
+    /// watch 监督任务用它在断线后主动恢复，而不是等用户下一次操作。
+    pub(crate) async fn ensure_connection_alive(&self, connection_id: &str) -> Result<(), String> {
+        self.live_session(connection_id).await.map(|_| ())
     }
 
     fn root_for_uri(&self, uri: &str, require_trust: bool) -> Result<RegisteredRoot, String> {
@@ -1037,6 +1106,36 @@ impl SshManager {
         }
         if let Ok(mut gates) = self.server_gates.lock() {
             gates.retain(|key, _| !key.starts_with(&prefix));
+        }
+        self.forget_server_install(connection_id);
+    }
+
+    /// 该连接已校验过的（家目录, 安装目录）。
+    pub(crate) fn cached_server_install(&self, connection_id: &str) -> Option<(String, String)> {
+        self.server_installs
+            .lock()
+            .ok()
+            .and_then(|installs| installs.get(connection_id).cloned())
+    }
+
+    pub(crate) fn remember_server_install(
+        &self,
+        connection_id: &str,
+        home: &str,
+        install_dir: &str,
+    ) {
+        if let Ok(mut installs) = self.server_installs.lock() {
+            installs.insert(
+                connection_id.to_string(),
+                (home.to_string(), install_dir.to_string()),
+            );
+        }
+    }
+
+    /// 部署失败或断开时丢弃缓存：安装目录可能已被远端删除，下次重新创建并校验。
+    pub(crate) fn forget_server_install(&self, connection_id: &str) {
+        if let Ok(mut installs) = self.server_installs.lock() {
+            installs.remove(connection_id);
         }
     }
 
@@ -1800,11 +1899,13 @@ fn shell_quote(value: &str) -> String {
 async fn open_transport(
     config: &SshConnectionConfig,
     expected_fingerprint: Option<String>,
-) -> Result<(client::Handle<SshClient>, String), String> {
+) -> Result<OpenedTransport, String> {
     let observed = Arc::new(Mutex::new(None));
+    let disconnect_reason = Arc::new(Mutex::new(None));
     let handler = SshClient {
         expected_fingerprint,
         observed_fingerprint: Arc::clone(&observed),
+        disconnect_reason: Arc::clone(&disconnect_reason),
     };
     let client_config = ssh_client_config();
     let result = client::connect(
@@ -1822,8 +1923,15 @@ async fn open_transport(
     if fingerprint.is_empty() {
         return Err("SSH 服务端未提供主机密钥".to_string());
     }
-    Ok((handle, fingerprint))
+    Ok((handle, fingerprint, disconnect_reason))
 }
+
+/// 已握手的传输：句柄、主机指纹、断开原因槽位。
+type OpenedTransport = (
+    client::Handle<SshClient>,
+    String,
+    Arc<Mutex<Option<String>>>,
+);
 
 fn explicit_private_key_path(config: &SshConnectionConfig) -> Option<PathBuf> {
     config
@@ -1930,6 +2038,7 @@ pub async fn ssh_probe_host(config: SshConnectionConfig) -> Result<SshHostProbe,
     let handler = SshClient {
         expected_fingerprint: None,
         observed_fingerprint: Arc::clone(&observed),
+        disconnect_reason: Arc::new(Mutex::new(None)),
     };
     let result = client::connect(
         Arc::new(client::Config {
@@ -1977,18 +2086,21 @@ async fn authenticate_session(
         .host_key_fingerprint
         .clone()
         .filter(|value| !value.trim().is_empty());
-    let (handle, fingerprint) = tokio::time::timeout(SSH_HANDSHAKE_TIMEOUT, async {
-        let (mut handle, fingerprint) = open_transport(&config, expected).await?;
-        authenticate(&mut handle, &config).await?;
-        Ok::<_, String>((handle, fingerprint))
-    })
-    .await
-    .map_err(|_| ssh_handshake_timeout_error(&config))??;
+    let (handle, fingerprint, disconnect_reason) =
+        tokio::time::timeout(SSH_HANDSHAKE_TIMEOUT, async {
+            let (mut handle, fingerprint, disconnect_reason) =
+                open_transport(&config, expected).await?;
+            authenticate(&mut handle, &config).await?;
+            Ok::<_, String>((handle, fingerprint, disconnect_reason))
+        })
+        .await
+        .map_err(|_| ssh_handshake_timeout_error(&config))??;
     Ok((
         ConnectedSession {
             handle,
             config: Mutex::new(config),
             sftp: tokio::sync::Mutex::new(None),
+            disconnect_reason,
         },
         fingerprint,
     ))
@@ -5011,11 +5123,31 @@ mod tests {
     }
 
     #[test]
+    fn disconnect_reason_explains_keepalive_timeout_and_remote_close() {
+        let keepalive = describe_disconnect(&client::DisconnectReason::Error(
+            russh::Error::KeepaliveTimeout,
+        ));
+        assert!(keepalive.starts_with("保活超时"));
+        assert!(keepalive.contains("40 秒"));
+        let remote = describe_disconnect(&client::DisconnectReason::ReceivedDisconnect(
+            client::RemoteDisconnectInfo {
+                reason_code: russh::Disconnect::ByApplication,
+                message: " sshd restarting ".to_string(),
+                lang_tag: String::new(),
+            },
+        ));
+        assert!(remote.starts_with("远端主动断开"));
+        assert!(remote.ends_with("sshd restarting"));
+        let io = describe_disconnect(&client::DisconnectReason::Error(russh::Error::HUP));
+        assert!(io.starts_with("连接异常断开"));
+    }
+
+    #[test]
     fn ssh_client_waits_through_a_slow_keepalive_reply() {
         let config = ssh_client_config();
         assert!(config.inactivity_timeout.is_none());
-        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(15)));
-        assert_eq!(config.keepalive_max, 4);
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(10)));
+        assert_eq!(config.keepalive_max, 3);
         assert!(config.nodelay);
     }
 

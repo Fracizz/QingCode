@@ -287,6 +287,7 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
                   <Detail label={t('版本')} value={state.version ?? t('未知')} />
                   <Detail label={t('传输')} value={transportText(sshServerTransportKey(state.transport), t)} />
                   {state.reason ? <Detail label={t('原因')} value={state.reason} /> : null}
+                  {state.timings ? <Detail label={t('耗时')} value={state.timings} /> : null}
                 </dl>
               ) : (
                 <pre className="whitespace-pre-wrap font-mono text-ui-2xs text-fg">
@@ -318,7 +319,13 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
 
 function ChipDot({ kind }: { kind: SshServerChip['kind'] }) {
   const tone =
-    kind === 'agent' ? 'bg-accent' : kind === 'pending' ? 'bg-warn animate-pulse' : 'bg-fg-muted'
+    kind === 'agent'
+      ? 'bg-accent'
+      : kind === 'pending'
+        ? 'bg-warn animate-pulse'
+        : kind === 'offline'
+          ? 'bg-danger'
+          : 'bg-fg-muted'
   return <span aria-hidden className={`${CHIP_DOT} ${tone}`} />
 }
 
@@ -326,6 +333,7 @@ function ChipText({ chip }: { chip: SshServerChip }) {
   const { t } = useI18n()
   if (chip.kind === 'agent') return <>{t('Server')}</>
   if (chip.kind === 'direct') return <>{t('直连')}</>
+  if (chip.kind === 'offline') return <>{t('已断开')}</>
   return <>{t('Server…')}</>
 }
 

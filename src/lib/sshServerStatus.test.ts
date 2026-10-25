@@ -18,6 +18,7 @@ const readyServer: SshServerState = {
   version: '0.1.13',
   transport: 'daemon',
   reason: null,
+  timings: null,
 }
 
 describe('sshServerStatus', () => {
@@ -36,6 +37,23 @@ describe('sshServerStatus', () => {
     expect(parseSshServerState({ ...readyServer, mode: 'server' })?.mode).toBe('server')
     expect(parseSshServerState({ ...readyServer, mode: 'agent' })?.mode).toBe('server')
     expect(parseSshServerState({ ...readyServer, mode: 'proxy' })).toBeNull()
+  })
+
+  it('parses optional timings and shows an offline chip only for unexpected disconnects', () => {
+    expect(parseSshServerState(readyServer)?.timings).toBeNull()
+    expect(parseSshServerState({ ...readyServer, timings: '发现 1.2s · 合计 1.5s' })?.timings).toBe(
+      '发现 1.2s · 合计 1.5s',
+    )
+    expect(parseSshServerState({ ...readyServer, timings: 3 })).toBeNull()
+    const disconnected: SshServerState = {
+      ...readyServer,
+      phase: 'disconnected',
+      mode: 'unknown',
+      version: null,
+      transport: null,
+    }
+    expect(sshServerChip(disconnected)).toBeNull()
+    expect(sshServerChip({ ...disconnected, reason: '保活超时' })).toEqual({ kind: 'offline' })
   })
 
   it('parses a camelCase payload and rejects a bad phase', () => {

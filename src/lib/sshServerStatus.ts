@@ -20,6 +20,8 @@ export type SshServerState = {
   version: string | null
   transport: SshServerTransport | null
   reason: string | null
+  /** 最近一次发现/部署的分阶段耗时摘要；旧版后端不发此字段。 */
+  timings?: string | null
 }
 
 const PHASES = new Set<SshServerPhase>([
@@ -48,6 +50,8 @@ export type SshServerChip =
   | { kind: 'agent' }
   | { kind: 'direct' }
   | { kind: 'pending' }
+  /** 意外断线（保活超时、远端断开）：后台正在自动重连。 */
+  | { kind: 'offline' }
 
 export type SshServerTipLine = {
   key: string
@@ -67,7 +71,10 @@ export function parseSshServerState(value: unknown): SshServerState | null {
   const version = nullableString(record.version)
   const reason = nullableString(record.reason)
   const transport = nullableTransport(record.transport)
+  // timings 缺省（旧版后端）按 null 处理，类型不符才判为非法载荷。
+  const timings = record.timings === undefined ? null : nullableString(record.timings)
   if (version === undefined || reason === undefined || transport === undefined) return null
+  if (timings === undefined) return null
   return {
     connectionId,
     rootUri,
@@ -76,11 +83,14 @@ export function parseSshServerState(value: unknown): SshServerState | null {
     version,
     transport,
     reason,
+    timings,
   }
 }
 
 export function sshServerChip(state: SshServerState | null): SshServerChip | null {
-  if (!state || state.phase === 'disconnected') return null
+  if (!state) return null
+  // 主动断开没有原因，芯片隐藏；意外断线带原因，显示「已断开」直到自动重连成功。
+  if (state.phase === 'disconnected') return state.reason ? { kind: 'offline' } : null
   if (state.phase === 'readyServer') return { kind: 'agent' }
   if (state.phase === 'readyDirect') return { kind: 'direct' }
   return { kind: 'pending' }

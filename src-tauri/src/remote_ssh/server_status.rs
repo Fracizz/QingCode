@@ -99,6 +99,8 @@ pub struct SshServerState {
     pub version: Option<String>,
     pub transport: Option<ServerTransport>,
     pub reason: Option<String>,
+    /// 最近一次发现/部署的分阶段耗时摘要；只在就绪时给出。
+    pub timings: Option<String>,
 }
 
 /// `ssh_server_logs` 的返回值。
@@ -188,6 +190,7 @@ fn plain_state(input: &ServerSteadyInputs<'_>, phase: ServerPhase) -> SshServerS
         version: None,
         transport: None,
         reason: None,
+        timings: None,
     }
 }
 
@@ -200,6 +203,7 @@ fn ready_direct(input: &ServerSteadyInputs<'_>, reason: &str) -> SshServerState 
         version: None,
         transport: Some(ServerTransport::Direct),
         reason: Some(reason.to_string()),
+        timings: None,
     }
 }
 
@@ -216,6 +220,7 @@ fn ready_server(input: &ServerSteadyInputs<'_>, has_daemon: bool) -> SshServerSt
             ServerTransport::Serve
         }),
         reason: None,
+        timings: None,
     }
 }
 
@@ -339,14 +344,25 @@ pub(crate) fn state_for_root(
         activity: slot.activity,
         last_failure: slot.last_failure.as_deref(),
     });
-    Ok(phase_for_slot(&ServerSteadyInputs {
+    let mut state = phase_for_slot(&ServerSteadyInputs {
         connection_id: &parsed.connection_id,
         root_uri: &normalize_remote_uri(&root.uri),
         session_connected: manager.connection_is_open(&parsed.connection_id),
         server_enabled: manager.server_enabled(),
         trusted: root.trusted,
         slot: view,
-    }))
+    });
+    match state.phase {
+        ServerPhase::ReadyServer => {
+            state.timings = slot.and_then(|slot| slot.last_timings);
+        }
+        // 意外断线（保活超时、远端断开）带上原因；用户主动断开时没有原因。
+        ServerPhase::Disconnected => {
+            state.reason = manager.connection_closed_reason(&parsed.connection_id);
+        }
+        _ => {}
+    }
+    Ok(state)
 }
 
 fn emit_state(app: &AppHandle, manager: &SshManager, state: &SshServerState) {
@@ -378,6 +394,7 @@ pub(crate) fn publish_authenticating(
             version: None,
             transport: None,
             reason: None,
+            timings: None,
         },
     );
 }
@@ -399,6 +416,7 @@ pub(crate) fn publish_disconnected(
             version: None,
             transport: None,
             reason: None,
+            timings: None,
         },
     );
 }
@@ -842,10 +860,13 @@ mod tests {
                 "phase",
                 "reason",
                 "rootUri",
+                "timings",
                 "transport",
                 "version",
             ]
         );
+        // 耗时摘要由 state_for_root 按 slot 填充；纯阶段计算不带。
+        assert!(value["timings"].is_null());
         assert_eq!(value["connectionId"], "c1");
         assert_eq!(value["rootUri"], "ssh://c1/srv/app");
         assert_eq!(value["phase"], "readyServer");
