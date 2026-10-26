@@ -325,7 +325,14 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 - Windows single-file exe packaging (`pnpm package:exe`)
 - GitHub / Gitee Release workflow and version scripts
 
-[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/Fracizz/QingCode/compare/v0.1.13-beta.2...HEAD
+[0.1.13-beta.3]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.13-beta.3
+[0.1.13-beta.2]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.13-beta.2
+[0.1.13-beta.1]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.13-beta.1
+[0.1.12]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.12
+[0.1.11]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.11
+[0.1.10]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.10
+[0.1.9]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.9
 [0.1.8]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.8
 [0.1.7]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.7
 [0.1.6]: https://github.com/Fracizz/QingCode/releases/tag/v0.1.6

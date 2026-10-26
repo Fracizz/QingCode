@@ -2,7 +2,9 @@
 //! SSH exec 通道内运行 `connect --stdio --ensure-daemon`，与远端常驻
 //! daemon 之间完成 HELLO 握手、RPC、scan/search/watch 调用与降级管理。
 
+use std::collections::HashMap;
 use std::io;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use super::paths::windows_host_path;
 use super::scripts::{
@@ -12,10 +14,11 @@ use super::scripts::{
 };
 use super::*;
 use qingcode_server::proto::{
-    self, ErrorBody, Frame, HelloRequest, HelloResponse, Kind, ReceiverWindow, Request, Response,
-    StreamChunk, StreamEnd, WindowCredit, CONTROL_STREAM, PROTOCOL_VERSION, WINDOW_BYTES,
+    self, ErrorBody, Event, Frame, HelloRequest, HelloResponse, Kind, ReceiverWindow, Request,
+    Response, StreamChunk, StreamEnd, WindowCredit, CONTROL_STREAM, PROTOCOL_VERSION, WINDOW_BYTES,
 };
 use qingcode_server::SERVER_VERSION;
+use tokio::sync::{mpsc, oneshot};
 
 /// daemon 握手应答时限：`connect --ensure-daemon` 可能在通道内现拉 daemon
 /// （代理内部启动等待上限 10s），给足余量再判失败。
@@ -36,6 +39,7 @@ const AGENT_DAEMON_SCAN_TIMEOUT: Duration = Duration::from_secs(15);
 /// daemon 传输降级后的重试冷却：降级时间戳超过这个时长，ensure 快路径
 /// 才会重新探测 daemon，避免每次操作都对着一个已知失败的 daemon 空转。
 const AGENT_DAEMON_RETRY_AFTER_DOWNGRADE: Duration = Duration::from_secs(5 * 60);
+const DAEMON_SESSION_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// 单请求 exec 通道上的请求 id。通道不做多路复用（见 [`DaemonChannel`]），
 /// 一条通道同时只有一个在途请求。
@@ -130,6 +134,505 @@ impl DaemonChannel {
     }
 }
 
+enum SessionInbound {
+    Response(serde_json::Value),
+    Error(String),
+    StreamData(StreamChunk),
+    StreamEnd(StreamEnd),
+}
+
+enum SessionOutbound {
+    Frame(Frame),
+    Shutdown,
+}
+
+struct SessionState {
+    pending: Mutex<HashMap<u32, oneshot::Sender<Result<serde_json::Value, String>>>>,
+    streams: Mutex<HashMap<u32, mpsc::UnboundedSender<SessionInbound>>>,
+    events: mpsc::UnboundedSender<Event>,
+    next_stream_id: AtomicU32,
+    closed: AtomicBool,
+    closed_reason: Mutex<Option<String>>,
+    closed_notify: tokio::sync::Notify,
+    last_frame: Mutex<Instant>,
+}
+
+impl SessionState {
+    fn mark_closed(&self, reason: &str) {
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        if let Ok(mut closed_reason) = self.closed_reason.lock() {
+            *closed_reason = Some(reason.to_string());
+        }
+        let pending = {
+            let mut pending = self
+                .pending
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            std::mem::take(&mut *pending)
+        };
+        for (_, sender) in pending {
+            let _ = sender.send(Err(reason.to_string()));
+        }
+        let streams = {
+            let mut streams = self
+                .streams
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            std::mem::take(&mut *streams)
+        };
+        for (_, sender) in streams {
+            let _ = sender.send(SessionInbound::Error(reason.to_string()));
+        }
+        self.closed_notify.notify_waiters();
+    }
+
+    fn note_frame(&self) {
+        if let Ok(mut last_frame) = self.last_frame.lock() {
+            *last_frame = Instant::now();
+        }
+    }
+}
+
+/// 一条常驻 daemon 通道上的多路复用会话。
+///
+/// 写端串行发送，读端按 `stream_id` 把 REQ/RES/ERR/STREAM_* 路由到各自的
+/// 请求通道；PTY 事件走单独的事件队列。旧的 [`daemon_rpc`] 继续保留给
+/// scan/search/watch 的单请求通道，两者互不影响。
+pub(super) struct DaemonSession {
+    outbound: mpsc::Sender<SessionOutbound>,
+    state: Arc<SessionState>,
+    events: Option<mpsc::UnboundedReceiver<Event>>,
+}
+
+pub(super) struct DaemonAttachResult {
+    pub(super) response: serde_json::Value,
+    pub(super) chunks: Vec<StreamChunk>,
+    pub(super) stream_end: StreamEnd,
+}
+
+impl DaemonSession {
+    /// 在调用者明确传入的独占终端连接上建立 daemon 会话。
+    ///
+    /// 这个构造器刻意不接收 [`SshManager`]，避免持久化终端误把 daemon 帧
+    /// 发到共享主连接上。`client_id` 也必须由调用者显式传入，确保 create、
+    /// reconnect 和应用重启后的 attach 使用同一个安装/连接归属。
+    pub(super) async fn open_on_transport(
+        transport: &ConnectedSession,
+        client_id: &str,
+        daemon: &DaemonAccess,
+    ) -> Result<Self, String> {
+        if client_id.trim().is_empty() {
+            return Err("daemon clientId 不能为空".to_string());
+        }
+        let channel = open_daemon_channel_on_transport(
+            transport,
+            client_id,
+            daemon,
+            HelloPolicy::TERMINAL,
+            true,
+            Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT,
+        )
+        .await?;
+        Ok(Self::from_channel(channel))
+    }
+
+    fn from_channel(channel: DaemonChannel) -> Self {
+        let (mut reader, writer) = channel.channel.split();
+        let stderr_notes = channel.stderr_notes;
+        let (outbound_tx, mut outbound_rx) = mpsc::channel::<SessionOutbound>(64);
+        let (events_tx, events_rx) = mpsc::unbounded_channel::<Event>();
+        let state = Arc::new(SessionState {
+            pending: Mutex::new(HashMap::new()),
+            streams: Mutex::new(HashMap::new()),
+            events: events_tx,
+            next_stream_id: AtomicU32::new(1),
+            closed: AtomicBool::new(false),
+            closed_reason: Mutex::new(None),
+            closed_notify: tokio::sync::Notify::new(),
+            last_frame: Mutex::new(Instant::now()),
+        });
+
+        let writer_state = Arc::clone(&state);
+        tauri::async_runtime::spawn(async move {
+            while let Some(outbound) = outbound_rx.recv().await {
+                match outbound {
+                    SessionOutbound::Frame(frame) => {
+                        let Ok(bytes) = frame.encode() else {
+                            writer_state.mark_closed("编码 daemon 帧失败");
+                            return;
+                        };
+                        if let Err(error) = writer.data(&bytes[..]).await {
+                            writer_state.mark_closed(&format!("发送 daemon 帧失败：{error}"));
+                            return;
+                        }
+                    }
+                    SessionOutbound::Shutdown => {
+                        let _ = tokio::time::timeout(Duration::from_secs(1), writer.eof()).await;
+                        let _ = tokio::time::timeout(Duration::from_secs(1), writer.close()).await;
+                        return;
+                    }
+                }
+            }
+        });
+
+        let reader_state = Arc::clone(&state);
+        let ping_writer = outbound_tx.clone();
+        let reader_notes = stderr_notes;
+        tauri::async_runtime::spawn(async move {
+            let mut buffer = Vec::new();
+            let mut stderr_notes = reader_notes;
+            while let Some(message) = reader.wait().await {
+                match message {
+                    ChannelMsg::Data { data } => {
+                        buffer.extend_from_slice(&data);
+                        loop {
+                            match proto::decode(&buffer) {
+                                Ok((frame, used)) => {
+                                    buffer.drain(..used);
+                                    reader_state.note_frame();
+                                    if frame.kind == Kind::Ping {
+                                        let _ = ping_writer.try_send(SessionOutbound::Frame(
+                                            Frame::empty(Kind::Pong, frame.stream_id),
+                                        ));
+                                    } else {
+                                        route_session_frame(&reader_state, frame);
+                                    }
+                                }
+                                Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
+                                    break;
+                                }
+                                Err(error) => {
+                                    reader_state
+                                        .mark_closed(&format!("daemon 帧解析失败：{error}"));
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    ChannelMsg::ExtendedData { data, .. } => {
+                        let note = String::from_utf8_lossy(&data).trim().to_string();
+                        if !note.is_empty() {
+                            stderr_notes.push(note);
+                        }
+                    }
+                    ChannelMsg::Eof | ChannelMsg::Close => {
+                        let note = stderr_notes.join(" ");
+                        let reason = if note.is_empty() {
+                            "daemon 连接已关闭".to_string()
+                        } else {
+                            format!("daemon 连接已关闭：{note}")
+                        };
+                        reader_state.mark_closed(&reason);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            let note = stderr_notes.join(" ");
+            reader_state.mark_closed(&if note.is_empty() {
+                "daemon 连接代理已退出".to_string()
+            } else {
+                format!("daemon 连接代理已退出：{note}")
+            });
+        });
+
+        Self {
+            outbound: outbound_tx,
+            state,
+            events: Some(events_rx),
+        }
+    }
+
+    fn begin_oneshot_request<T: serde::Serialize>(
+        &self,
+        method: &str,
+        params: &T,
+    ) -> Result<(u32, oneshot::Receiver<Result<serde_json::Value, String>>), String> {
+        if self.state.closed.load(Ordering::Acquire) {
+            return Err("daemon 连接已关闭".to_string());
+        }
+        let stream_id = self.state.next_stream_id.fetch_add(1, Ordering::Relaxed);
+        let request = Request::with_params(stream_id, method, params)
+            .map_err(|error| format!("编码 daemon 请求失败：{error}"))?;
+        let payload =
+            proto::encode(&request).map_err(|error| format!("编码 daemon 帧失败：{error}"))?;
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.state
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(stream_id, reply_tx);
+        if self
+            .outbound
+            .try_send(SessionOutbound::Frame(Frame::new(
+                Kind::Req,
+                stream_id,
+                payload,
+            )))
+            .is_err()
+        {
+            self.finish_request(stream_id);
+            return Err("daemon 请求发送队列已关闭".to_string());
+        }
+        Ok((stream_id, reply_rx))
+    }
+
+    fn begin_stream_request<T: serde::Serialize>(
+        &self,
+        method: &str,
+        params: &T,
+    ) -> Result<(u32, mpsc::UnboundedReceiver<SessionInbound>), String> {
+        if self.state.closed.load(Ordering::Acquire) {
+            return Err("daemon 连接已关闭".to_string());
+        }
+        let stream_id = self.state.next_stream_id.fetch_add(1, Ordering::Relaxed);
+        let request = Request::with_params(stream_id, method, params)
+            .map_err(|error| format!("编码 daemon 请求失败：{error}"))?;
+        let payload =
+            proto::encode(&request).map_err(|error| format!("编码 daemon 帧失败：{error}"))?;
+        let (reply_tx, reply_rx) = mpsc::unbounded_channel();
+        self.state
+            .streams
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(stream_id, reply_tx);
+        if self
+            .outbound
+            .try_send(SessionOutbound::Frame(Frame::new(
+                Kind::Req,
+                stream_id,
+                payload,
+            )))
+            .is_err()
+        {
+            self.finish_stream_request(stream_id);
+            return Err("daemon 请求发送队列已关闭".to_string());
+        }
+        Ok((stream_id, reply_rx))
+    }
+
+    fn finish_request(&self, stream_id: u32) {
+        self.state
+            .pending
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&stream_id);
+    }
+
+    fn finish_stream_request(&self, stream_id: u32) {
+        self.state
+            .streams
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&stream_id);
+    }
+
+    pub(super) async fn request<T: serde::Serialize>(
+        &self,
+        method: &str,
+        params: &T,
+    ) -> Result<serde_json::Value, String> {
+        self.request_with_timeout(method, params, DAEMON_SESSION_REQUEST_TIMEOUT)
+            .await
+    }
+
+    async fn request_with_timeout<T: serde::Serialize>(
+        &self,
+        method: &str,
+        params: &T,
+        timeout: Duration,
+    ) -> Result<serde_json::Value, String> {
+        let (stream_id, replies) = self.begin_oneshot_request(method, params)?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        match tokio::time::timeout_at(deadline, replies).await {
+            Ok(Ok(result)) => result.map_err(|message| format!("daemon {method} 失败：{message}")),
+            Ok(Err(_)) => Err("daemon 连接已关闭".to_string()),
+            Err(_) => {
+                self.finish_request(stream_id);
+                Err(format!("daemon {method} 请求超时"))
+            }
+        }
+    }
+
+    pub(super) async fn attach(
+        &self,
+        pty_id: &str,
+        from_seq: u64,
+    ) -> Result<DaemonAttachResult, String> {
+        let (stream_id, mut replies) = self.begin_stream_request(
+            "pty.attach",
+            &serde_json::json!({ "id": pty_id, "fromSeq": from_seq }),
+        )?;
+        let deadline = tokio::time::Instant::now() + DAEMON_SESSION_REQUEST_TIMEOUT;
+        let mut response = None;
+        let mut chunks = Vec::new();
+        let mut receiver = ReceiverWindow::new(WINDOW_BYTES);
+        loop {
+            let reply = match tokio::time::timeout_at(deadline, replies.recv()).await {
+                Ok(reply) => reply,
+                Err(_) => {
+                    self.finish_stream_request(stream_id);
+                    return Err("daemon pty.attach 请求超时".to_string());
+                }
+            };
+            match reply {
+                Some(SessionInbound::Response(value)) => response = Some(value),
+                Some(SessionInbound::Error(message)) => {
+                    self.finish_stream_request(stream_id);
+                    return Err(message);
+                }
+                Some(SessionInbound::StreamData(chunk)) => {
+                    if let Some(credit) = receiver.consume(
+                        proto::encode(&chunk)
+                            .map(|payload| payload.len())
+                            .unwrap_or_default(),
+                    ) {
+                        if let Ok(payload) = proto::encode(&WindowCredit { credit }) {
+                            let _ = self.outbound.try_send(SessionOutbound::Frame(Frame::new(
+                                Kind::Window,
+                                stream_id,
+                                payload,
+                            )));
+                        }
+                    }
+                    chunks.push(chunk);
+                }
+                Some(SessionInbound::StreamEnd(stream_end)) => {
+                    self.finish_stream_request(stream_id);
+                    let response =
+                        response.ok_or_else(|| "daemon pty.attach 缺少应答".to_string())?;
+                    return Ok(DaemonAttachResult {
+                        response,
+                        chunks,
+                        stream_end,
+                    });
+                }
+                None => {
+                    self.finish_stream_request(stream_id);
+                    return Err("daemon 连接已关闭".to_string());
+                }
+            }
+        }
+    }
+
+    pub(super) fn send_ping(&self) {
+        let _ = self.outbound.try_send(SessionOutbound::Frame(Frame::empty(
+            Kind::Ping,
+            CONTROL_STREAM,
+        )));
+    }
+
+    pub(super) fn last_frame_age(&self) -> Duration {
+        self.state
+            .last_frame
+            .lock()
+            .map(|last| last.elapsed())
+            .unwrap_or(Duration::MAX)
+    }
+
+    pub(super) fn is_closed(&self) -> bool {
+        self.state.closed.load(Ordering::Acquire)
+    }
+
+    pub(super) fn closed_reason(&self) -> Option<String> {
+        self.state
+            .closed_reason
+            .lock()
+            .ok()
+            .and_then(|reason| reason.clone())
+    }
+
+    pub(super) async fn wait_closed(&self) {
+        loop {
+            let notified = self.state.closed_notify.notified();
+            if self.is_closed() {
+                return;
+            }
+            notified.await;
+            if self.is_closed() {
+                return;
+            }
+        }
+    }
+
+    pub(super) fn take_events(&mut self) -> Option<mpsc::UnboundedReceiver<Event>> {
+        self.events.take()
+    }
+
+    pub(super) fn shutdown(&self) {
+        let _ = self.outbound.try_send(SessionOutbound::Shutdown);
+        self.state.mark_closed("daemon 会话已关闭");
+    }
+}
+
+fn route_session_frame(state: &SessionState, frame: Frame) {
+    match frame.kind {
+        Kind::Event => {
+            if let Ok(event) = proto::decode_value::<Event>(&frame.payload) {
+                let _ = state.events.send(event);
+            }
+        }
+        Kind::Res => {
+            if let Ok(response) = proto::decode_value::<Response>(&frame.payload) {
+                let sender = state
+                    .pending
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&response.id);
+                if let Some(sender) = sender {
+                    let _ = sender.send(Ok(response.result));
+                } else {
+                    dispatch_session_stream(
+                        state,
+                        response.id,
+                        SessionInbound::Response(response.result),
+                    );
+                }
+            }
+        }
+        Kind::Err => {
+            if let Ok(error) = proto::decode_value::<ErrorBody>(&frame.payload) {
+                let message = format!("{}：{}", error.code, error.message);
+                let sender = state
+                    .pending
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&error.id);
+                if let Some(sender) = sender {
+                    let _ = sender.send(Err(message));
+                } else {
+                    dispatch_session_stream(state, error.id, SessionInbound::Error(message));
+                }
+            }
+        }
+        Kind::StreamData => {
+            if let Ok(chunk) = proto::decode_value::<StreamChunk>(&frame.payload) {
+                dispatch_session_stream(state, frame.stream_id, SessionInbound::StreamData(chunk));
+            }
+        }
+        Kind::StreamEnd => {
+            if let Ok(end) = proto::decode_value::<StreamEnd>(&frame.payload) {
+                dispatch_session_stream(state, frame.stream_id, SessionInbound::StreamEnd(end));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn dispatch_session_stream(state: &SessionState, stream_id: u32, reply: SessionInbound) {
+    let sender = state
+        .streams
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&stream_id)
+        .cloned();
+    if let Some(sender) = sender {
+        let _ = sender.send(reply);
+    }
+}
+
 /// HELLO 握手校验策略。
 ///
 /// **协议版本永远校验**：不同协议的帧格式可能不同，放宽它会导致向不兼容的
@@ -137,21 +640,26 @@ impl DaemonChannel {
 #[derive(Clone, Copy)]
 struct HelloPolicy {
     require_version: bool,
-    require_capabilities: bool,
+    required_capabilities: &'static [&'static str],
 }
 
 impl HelloPolicy {
     /// 常规通道：版本一致 + 能力齐全（默认行为）。
     const STRICT: Self = Self {
         require_version: true,
-        require_capabilities: true,
+        required_capabilities: &["fs.scan", "search.content", "watch.subscribe"],
+    };
+    /// 持久化终端通道只要求与 PTY 接入直接相关的能力。
+    const TERMINAL: Self = Self {
+        require_version: true,
+        required_capabilities: &["pty.persist", "pty.attach"],
     };
     /// 仅供「淘汰旧 daemon」：只要协议与 token 对得上就允许握手，不要求
     /// server 版本匹配或能力齐全——旧实例本就该被拒绝于常规通道之外，
     /// 这里只是借它的 token 取到连接并请求其退出。
     const LENIENT: Self = Self {
         require_version: false,
-        require_capabilities: false,
+        required_capabilities: &[],
     };
 }
 
@@ -167,9 +675,9 @@ fn validate_daemon_hello_with(response: &HelloResponse, policy: HelloPolicy) -> 
             response.server_version
         ));
     }
-    if policy.require_capabilities {
-        for capability in ["fs.scan", "search.content", "watch.subscribe"] {
-            if !response.capabilities.iter().any(|item| item == capability) {
+    if !policy.required_capabilities.is_empty() {
+        for capability in policy.required_capabilities {
+            if !response.capabilities.iter().any(|item| item == *capability) {
                 return Err(format!("daemon 缺少能力 {capability}"));
             }
         }
@@ -214,16 +722,64 @@ async fn open_daemon_channel_with(
     ensure_daemon: bool,
     hello_deadline: Instant,
 ) -> Result<DaemonChannel, String> {
+    let channel = manager
+        .open_session_channel(connection_id, "server 守护进程 ")
+        .await?;
+    let client_id = manager.daemon_client_id(connection_id);
+    open_daemon_channel_on_opened_channel(
+        channel,
+        &client_id,
+        daemon,
+        policy,
+        ensure_daemon,
+        hello_deadline,
+    )
+    .await
+}
+
+/// 在已经由调用者选定并独占的 SSH 连接上打开 daemon 通道。
+///
+/// 持久化终端必须使用这个入口；它不会触碰 `SshManager` 的共享 session，
+/// 因此创建、重连和离线 kill 的 daemon 帧都只经过终端自己的 SSH channel。
+async fn open_daemon_channel_on_transport(
+    transport: &ConnectedSession,
+    client_id: &str,
+    daemon: &DaemonAccess,
+    policy: HelloPolicy,
+    ensure_daemon: bool,
+    hello_deadline: Instant,
+) -> Result<DaemonChannel, String> {
+    let channel = open_session_channel_once(transport, "server 守护进程 ").await?;
+    open_daemon_channel_on_opened_channel(
+        channel,
+        client_id,
+        daemon,
+        policy,
+        ensure_daemon,
+        hello_deadline,
+    )
+    .await
+}
+
+fn daemon_connect_command(daemon: &DaemonAccess, ensure_daemon: bool) -> String {
     let windows = windows_native_path(&daemon.bin).is_some();
-    let command = match (windows, ensure_daemon) {
+    match (windows, ensure_daemon) {
         (true, true) => windows_connect_daemon_command(&daemon.bin),
         (true, false) => windows_connect_daemon_command_existing(&daemon.bin),
         (false, true) => connect_daemon_command(&daemon.bin),
         (false, false) => connect_daemon_command_existing(&daemon.bin),
-    };
-    let channel = manager
-        .open_session_channel(connection_id, "server 守护进程 ")
-        .await?;
+    }
+}
+
+async fn open_daemon_channel_on_opened_channel(
+    channel: russh::Channel<client::Msg>,
+    client_id: &str,
+    daemon: &DaemonAccess,
+    policy: HelloPolicy,
+    ensure_daemon: bool,
+    hello_deadline: Instant,
+) -> Result<DaemonChannel, String> {
+    let command = daemon_connect_command(daemon, ensure_daemon);
     if let Err(error) = channel.exec(true, command).await {
         let _ = tokio::time::timeout(Duration::from_secs(1), channel.close()).await;
         return Err(format!("启动 daemon 连接代理失败：{error}"));
@@ -234,7 +790,7 @@ async fn open_daemon_channel_with(
         stderr_notes: Vec::new(),
     };
     // 握手失败也要关通道：直接丢弃 exec 通道不会发 CLOSE，会一直占着会话名额。
-    match daemon_hello(&mut channel, connection_id, daemon, policy, hello_deadline).await {
+    match daemon_hello(&mut channel, client_id, daemon, policy, hello_deadline).await {
         Ok(()) => Ok(channel),
         Err(error) => {
             channel.shutdown().await;
@@ -246,15 +802,13 @@ async fn open_daemon_channel_with(
 /// 在已打开的 daemon 通道里完成 HELLO 握手与版本/能力校验。
 async fn daemon_hello(
     channel: &mut DaemonChannel,
-    connection_id: &str,
+    client_id: &str,
     daemon: &DaemonAccess,
     policy: HelloPolicy,
     deadline: Instant,
 ) -> Result<(), String> {
     let hello = HelloRequest {
-        // 设计上 client_id 标识 QingCode 安装实例；这里用连接 id（同一 SSH
-        // 配置稳定不变）。daemon 本期只透传记录，不作鉴权。
-        client_id: connection_id.to_string(),
+        client_id: client_id.to_string(),
         protocol_min: PROTOCOL_VERSION,
         protocol_max: PROTOCOL_VERSION,
         token: daemon.token.clone(),
@@ -866,6 +1420,95 @@ mod tests {
         assert!(validate_daemon_hello_with(&missing, HelloPolicy::STRICT).is_err());
         // 淘汰路径不依赖能力，只要求能发 shutdown RPC。
         assert!(validate_daemon_hello_with(&missing, HelloPolicy::LENIENT).is_ok());
+    }
+
+    #[test]
+    fn persistent_terminal_falls_back_when_capability_missing() {
+        let read_only = hello_response(
+            PROTOCOL_VERSION,
+            SERVER_VERSION,
+            &["fs.scan", "search.content", "watch.subscribe"],
+        );
+        assert!(validate_daemon_hello_with(&read_only, HelloPolicy::TERMINAL).is_err());
+
+        let persistent = hello_response(
+            PROTOCOL_VERSION,
+            SERVER_VERSION,
+            &["pty.persist", "pty.attach"],
+        );
+        assert!(validate_daemon_hello_with(&persistent, HelloPolicy::TERMINAL).is_ok());
+    }
+
+    #[tokio::test]
+    async fn session_routes_concurrent_replies_and_events_by_stream_id() {
+        let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+        let state = SessionState {
+            pending: Mutex::new(HashMap::new()),
+            streams: Mutex::new(HashMap::new()),
+            events: events_tx,
+            next_stream_id: AtomicU32::new(1),
+            closed: AtomicBool::new(false),
+            closed_reason: Mutex::new(None),
+            closed_notify: tokio::sync::Notify::new(),
+            last_frame: Mutex::new(Instant::now()),
+        };
+        let mut replies = Vec::new();
+        for stream_id in 1..=10 {
+            let (tx, rx) = oneshot::channel();
+            state.pending.lock().unwrap().insert(stream_id, tx);
+            replies.push((stream_id, rx));
+        }
+        let (stream_tx, mut stream_rx) = mpsc::unbounded_channel();
+        state.streams.lock().unwrap().insert(99, stream_tx);
+
+        for stream_id in (1..=10).rev() {
+            let event = Event::PtyData {
+                id: "pty".to_string(),
+                seq: stream_id as u64,
+                offset: 0,
+                data: vec![stream_id as u8],
+            };
+            route_session_frame(
+                &state,
+                Frame::new(Kind::Event, CONTROL_STREAM, proto::encode(&event).unwrap()),
+            );
+            let response = Response {
+                id: stream_id,
+                result: serde_json::json!({ "stream": stream_id }),
+            };
+            route_session_frame(
+                &state,
+                Frame::new(Kind::Res, stream_id, proto::encode(&response).unwrap()),
+            );
+        }
+        let chunk = StreamChunk {
+            seq: Some(7),
+            offset: 0,
+            data: b"replay".to_vec(),
+            last: true,
+        };
+        route_session_frame(
+            &state,
+            Frame::new(Kind::StreamData, 99, proto::encode(&chunk).unwrap()),
+        );
+
+        for (stream_id, rx) in replies {
+            let result = rx.await.unwrap().unwrap();
+            assert_eq!(result["stream"], stream_id);
+        }
+        for stream_id in (1..=10).rev() {
+            match events_rx.recv().await.unwrap() {
+                Event::PtyData { seq, data, .. } => {
+                    assert_eq!(seq, stream_id as u64);
+                    assert_eq!(data, vec![stream_id as u8]);
+                }
+                _ => panic!("wrong event routed"),
+            }
+        }
+        match stream_rx.recv().await.unwrap() {
+            SessionInbound::StreamData(chunk) => assert_eq!(chunk.data, b"replay"),
+            _ => panic!("wrong stream frame routed"),
+        }
     }
 
     #[test]

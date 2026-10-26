@@ -17,7 +17,7 @@
 //! `FILE_FLAG_FIRST_PIPE_INSTANCE` 承担（另一进程已持有实例时创建失败）。
 //! 抢不到锁说明已有实例，本进程直接退出（退出码 0），由调用方连上那个实例。
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -38,7 +38,7 @@ use crate::proto::{
     Request, Response, SenderWindow, StreamEnd, WindowCredit, CONTROL_STREAM, HEARTBEAT_INTERVAL,
     HEARTBEAT_TIMEOUT, PROTOCOL_MIN, PROTOCOL_VERSION, WINDOW_BYTES,
 };
-use crate::pty::{PtyCreateOptions, PtyEvent, PtyHost};
+use crate::pty::{InputError, InputOutcome, PtyCreateOptions, PtyEvent, PtyHost};
 use crate::{ops, proto, watch, SERVER_VERSION};
 
 /// 每个 daemon 的 PTY 数量上限（设计 §6.3）。
@@ -485,6 +485,7 @@ struct Daemon {
 
 #[derive(Clone)]
 struct ConnHandle {
+    client_id: String,
     outbound: OutboundSender,
     inputs: Arc<InputQueues>,
 }
@@ -795,12 +796,27 @@ impl Daemon {
 
     /// `pty.detach` 来自旧连接时不能误删新连接刚安装的路由。
     fn clear_route_for_conn(&self, pty_id: &str, conn_id: u32) {
+        // 先抓 client_id，再删 route。若连接清理并发执行并移除 conns，
+        // 这里仍能用已取得的归属完成 detach，避免留下 attached 幽灵。
+        let client_id = self
+            .conns
+            .lock()
+            .unwrap()
+            .get(&conn_id)
+            .map(|handle| handle.client_id.clone());
         let mut routes = self.routes.lock().unwrap();
-        if routes
+        let matches = routes
             .get(pty_id)
-            .is_some_and(|route| route.conn_id == conn_id)
-        {
-            routes.remove(pty_id);
+            .is_some_and(|route| route.conn_id == conn_id);
+        let removed = matches && routes.remove(pty_id).is_some();
+        drop(routes);
+        if removed {
+            // attach 成功会先把终端标为 attached，再开始补发；补发失败时
+            // 路由会被移除，这里必须同步 detach，否则终端既不在路由表里，
+            // 也不会进入 detached TTL 或孤儿列表。
+            if let Some(client_id) = client_id {
+                let _ = self.pty.detach(pty_id, &client_id);
+            }
         }
     }
 
@@ -843,6 +859,7 @@ struct ConnCtx {
 struct PtyInput {
     request_id: u32,
     pty_id: String,
+    seq: Option<u64>,
     data: Vec<u8>,
 }
 
@@ -891,6 +908,8 @@ impl InputQueues {
 #[serde(rename_all = "camelCase")]
 struct PtyInputParams {
     id: String,
+    #[serde(default)]
+    seq: Option<u64>,
     #[serde(with = "serde_bytes")]
     data: Vec<u8>,
 }
@@ -909,17 +928,49 @@ async fn pty_input_loop(
             break;
         };
         let PtyInput {
-            request_id, data, ..
+            request_id,
+            seq,
+            data,
+            ..
         } = input;
+        let Some(seq) = seq else {
+            let written = pty
+                .write_interruptible(&pty_id, data, Arc::clone(&cancel))
+                .await;
+            if cancel.load(Ordering::SeqCst) {
+                break;
+            }
+            match written {
+                Ok(()) => conn.respond(request_id, json!({ "ok": true })),
+                Err(message) => {
+                    conn.fail(request_id, "pty", message);
+                    conn.inputs.cancel(&pty_id);
+                    break;
+                }
+            }
+            continue;
+        };
         let written = pty
-            .write_interruptible(&pty_id, data, Arc::clone(&cancel))
+            .write_input(&pty_id, seq, data, Arc::clone(&cancel))
             .await;
         if cancel.load(Ordering::SeqCst) {
             break;
         }
         match written {
-            Ok(()) => conn.respond(request_id, json!({ "ok": true })),
-            Err(message) => {
+            Ok(InputOutcome::Written) => conn.respond(request_id, json!({ "ok": true })),
+            Ok(InputOutcome::Duplicate) => {
+                conn.respond(request_id, json!({ "ok": true, "duplicate": true }));
+            }
+            Err(InputError::Gap { expected }) => {
+                conn.fail(
+                    request_id,
+                    "ptyInputSequence",
+                    format!("终端输入序号不连续：期望 {expected}，实际 {seq}"),
+                );
+                conn.inputs.cancel(&pty_id);
+                break;
+            }
+            Err(InputError::Other(message)) => {
                 conn.fail(request_id, "pty", message);
                 conn.inputs.cancel(&pty_id);
                 break;
@@ -941,6 +992,7 @@ fn enqueue_pty_input(conn: &ConnCtx, pty: Arc<PtyHost>, request: Request) {
     let input = PtyInput {
         request_id: id,
         pty_id: params.id,
+        seq: params.seq,
         data: params.data,
     };
     let pty_id = input.pty_id.clone();
@@ -1153,6 +1205,7 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
     daemon.conns.lock().unwrap().insert(
         conn_id,
         ConnHandle {
+            client_id: request.client_id.clone(),
             outbound: outbound.clone(),
             inputs: Arc::clone(&inputs),
         },
@@ -1303,10 +1356,13 @@ fn available_shells() -> Vec<String> {
         let mut shells = Vec::new();
         if let Ok(shell) = std::env::var("SHELL") {
             if let Some(name) = Path::new(&shell).file_name() {
-                shells.push(name.to_string_lossy().into_owned());
+                let name = name.to_string_lossy();
+                if matches!(name.as_ref(), "bash" | "zsh" | "sh") {
+                    shells.push(name.into_owned());
+                }
             }
         }
-        for name in ["bash", "zsh", "sh", "fish"] {
+        for name in ["bash", "zsh", "sh"] {
             if shells.iter().any(|item| item == name) {
                 continue;
             }
@@ -1747,6 +1803,12 @@ async fn watch_subscribe(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
 #[serde(rename_all = "camelCase")]
 struct PtyInfoDto {
     id: String,
+    name: Option<String>,
+    next_input_seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cwd: Option<String>,
     seq: u64,
     cols: u16,
     rows: u16,
@@ -1758,6 +1820,10 @@ impl From<crate::pty::PtyInfo> for PtyInfoDto {
     fn from(info: crate::pty::PtyInfo) -> Self {
         Self {
             id: info.id,
+            name: info.name,
+            next_input_seq: info.next_input_seq,
+            owner: info.owner,
+            cwd: info.cwd,
             seq: info.seq,
             cols: info.cols,
             rows: info.rows,
@@ -1765,6 +1831,22 @@ impl From<crate::pty::PtyInfo> for PtyInfoDto {
             detached: info.detached,
         }
     }
+}
+
+/// 新客户端按 `clientId` 查孤儿终端时，只返回本安装、本连接下仍存活且
+/// 当前无人接着的 PTY。旧客户端不传 `clientId`，继续保持完整列表语义。
+fn filter_pty_list(
+    ptys: impl IntoIterator<Item = crate::pty::PtyInfo>,
+    client_id: Option<&str>,
+) -> Vec<crate::pty::PtyInfo> {
+    let Some(client_id) = client_id else {
+        return ptys.into_iter().collect();
+    };
+    ptys.into_iter()
+        .filter(|info| {
+            info.detached && info.exited.is_none() && info.owner.as_deref() == Some(client_id)
+        })
+        .collect()
 }
 
 async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
@@ -1778,6 +1860,12 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 cwd: Option<String>,
                 #[serde(default)]
                 shell: Option<String>,
+                #[serde(default)]
+                args: Vec<String>,
+                #[serde(default)]
+                env: BTreeMap<String, String>,
+                #[serde(default)]
+                name: Option<String>,
                 #[serde(default = "default_cols")]
                 cols: u16,
                 #[serde(default = "default_rows")]
@@ -1812,6 +1900,9 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
             let options = PtyCreateOptions {
                 cwd,
                 shell: params.shell,
+                args: params.args,
+                env: params.env,
+                name: params.name,
                 cols: params.cols.max(1),
                 rows: params.rows.max(1),
                 scrollback_bytes: daemon.scrollback_bytes,
@@ -1891,6 +1982,7 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                     "screen": attach.screen,
                     "cols": attach.cols,
                     "rows": attach.rows,
+                    "nextInputSeq": attach.next_input_seq,
                     "exited": attach.exited,
                     "seqEnd": attach.seq_end,
                 }),
@@ -1971,7 +2063,24 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
             }
         }
         "pty.list" => {
-            let ptys: Vec<PtyInfoDto> = daemon.pty.list().into_iter().map(Into::into).collect();
+            #[derive(Default, Deserialize)]
+            #[serde(rename_all = "camelCase")]
+            struct ListParams {
+                #[serde(default)]
+                client_id: Option<String>,
+            }
+            let params = match params::<ListParams>(&request) {
+                Ok(params) => params,
+                Err(_) => {
+                    conn.fail(id, "badRequest", "pty.list 参数错误");
+                    return;
+                }
+            };
+            let ptys: Vec<PtyInfoDto> =
+                filter_pty_list(daemon.pty.list(), params.client_id.as_deref())
+                    .into_iter()
+                    .map(Into::into)
+                    .collect();
             conn.respond(id, json!({ "ptys": ptys }));
         }
         "pty.hasChildren" => {
@@ -2079,7 +2188,14 @@ mod tests {
         let outbound = OutboundSender::new(control_tx, data_tx, Arc::new(Notify::new()));
         let inputs = Arc::new(InputQueues::default());
         let mut conns = HashMap::new();
-        conns.insert(41, ConnHandle { outbound, inputs });
+        conns.insert(
+            41,
+            ConnHandle {
+                client_id: "test-client".to_string(),
+                outbound,
+                inputs,
+            },
+        );
         let daemon = Arc::new(Daemon {
             pty,
             token: "test-token".to_string(),
@@ -2095,6 +2211,55 @@ mod tests {
             run_dir: run_dir.clone(),
         });
         (daemon, data_rx, run_dir)
+    }
+
+    fn test_pty_info(
+        id: &str,
+        owner: Option<&str>,
+        detached: bool,
+        exited: Option<i32>,
+    ) -> crate::pty::PtyInfo {
+        crate::pty::PtyInfo {
+            id: id.to_string(),
+            name: None,
+            next_input_seq: 0,
+            owner: owner.map(str::to_string),
+            cwd: Some("/srv/app".to_string()),
+            seq: 0,
+            cols: 80,
+            rows: 24,
+            exited,
+            detached,
+        }
+    }
+
+    #[test]
+    fn client_id_filter_keeps_only_owned_detached_running_ptys() {
+        let ptys = vec![
+            test_pty_info("owned", Some("install:conn"), true, None),
+            test_pty_info("attached", Some("install:conn"), false, None),
+            test_pty_info("other-owner", Some("install:other"), true, None),
+            test_pty_info("exited", Some("install:conn"), true, Some(0)),
+            test_pty_info("missing-owner", None, true, None),
+        ];
+        let filtered = filter_pty_list(ptys, Some("install:conn"));
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|info| info.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["owned"]
+        );
+
+        // 旧客户端不传 clientId：保留完整列表语义。
+        let legacy = filter_pty_list(
+            vec![
+                test_pty_info("attached", Some("install:conn"), false, None),
+                test_pty_info("exited", Some("install:conn"), true, Some(1)),
+            ],
+            None,
+        );
+        assert_eq!(legacy.len(), 2);
     }
 
     fn pty_data_outbound(pty_id: &str, seq: u64, data: &[u8]) -> Outbound {
@@ -2163,6 +2328,7 @@ mod tests {
                     seq_end: 3,
                     cols: 80,
                     rows: 24,
+                    next_input_seq: 0,
                     exited: None,
                 })
             })
@@ -2332,6 +2498,46 @@ mod tests {
             }
         }
 
+        #[cfg(unix)]
+        async fn wait_response_collecting_events(&mut self, id: u32) -> (Value, Vec<Event>) {
+            let mut events = Vec::new();
+            loop {
+                let frame = self.next_frame().await;
+                match frame.kind {
+                    Kind::Res if frame.stream_id == id => {
+                        let response: Response = decode_value(&frame.payload).unwrap();
+                        return (response.result, events);
+                    }
+                    Kind::Err if frame.stream_id == id => {
+                        let error: ErrorBody = decode_value(&frame.payload).unwrap();
+                        panic!("请求 {id} 失败: {error:?}");
+                    }
+                    Kind::Event => {
+                        if let Ok(event) = decode_value::<Event>(&frame.payload) {
+                            events.push(event);
+                        }
+                    }
+                    _ => continue,
+                }
+            }
+        }
+
+        async fn wait_error(&mut self, id: u32) -> ErrorBody {
+            loop {
+                let frame = self.next_frame().await;
+                match frame.kind {
+                    Kind::Err if frame.stream_id == id => {
+                        return decode_value(&frame.payload).unwrap();
+                    }
+                    Kind::Res if frame.stream_id == id => {
+                        let response: Response = decode_value(&frame.payload).unwrap();
+                        panic!("请求 {id} 应失败，却返回: {:?}", response.result);
+                    }
+                    _ => continue,
+                }
+            }
+        }
+
         /// 收集一条流的所有 STREAM_DATA，返回（拼接后的负载列表, STREAM_END）。
         async fn collect_stream(&mut self, id: u32) -> (Vec<Vec<u8>>, StreamEnd) {
             let mut records: Vec<Vec<u8>> = Vec::new();
@@ -2451,6 +2657,29 @@ mod tests {
         assert!(joined.is_ok());
         assert!(!run_dir.ready_marker().exists(), "退出后就绪标记未清理");
         let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    #[tokio::test]
+    async fn ping_frame_gets_pong() {
+        let (run_dir, handle) = start_daemon("ping-pong").await;
+        let token = run_dir.read_token().unwrap();
+        let mut client = TestClient::connect(&run_dir, &token).await;
+
+        client.send(Kind::Ping, CONTROL_STREAM, &[]).await;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            assert!(Instant::now() < deadline, "PING 未收到 PONG");
+            let frame = client.next_frame().await;
+            if frame.kind == Kind::Pong {
+                assert_eq!(frame.stream_id, CONTROL_STREAM);
+                break;
+            }
+        }
+
+        let id = client.request("server.shutdown", &json!({})).await;
+        client.wait_response(id).await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
         let _ = std::fs::remove_dir_all(run_dir.dir());
     }
 
@@ -2759,7 +2988,9 @@ mod tests {
             String::from_utf8_lossy(&replayed)
         );
 
-        let id = client.request("pty.list", &json!({})).await;
+        let id = client
+            .request("pty.list", &json!({ "clientId": "test-client" }))
+            .await;
         let list = client.wait_response(id).await;
         assert!(
             list["ptys"]
@@ -2777,9 +3008,118 @@ mod tests {
         let _ = std::fs::remove_dir_all(run_dir.dir());
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn pty_create_accepts_args_and_env_and_rejects_preload() {
+        let (run_dir, handle) = start_daemon("pty-create-options").await;
+        let token = run_dir.read_token().unwrap();
+        let root = temp_dir("pty-create-options-root");
+        let mut client = TestClient::connect(&run_dir, &token).await;
+
+        let id = client
+            .request(
+                "pty.create",
+                &json!({
+                    "cwd": root,
+                    "shell": "/bin/sh",
+                    "args": ["-c", "printf 'args-env:%s:%s:%s\\n' \"$Q_TEST\" \"$TERM\" \"$COLORTERM\""],
+                    "env": { "Q_TEST": "ok" },
+                    "name": "test-profile",
+                    "cols": 80,
+                    "rows": 24
+                }),
+            )
+            .await;
+        let (info, events) = client.wait_response_collecting_events(id).await;
+        assert_eq!(info["name"].as_str(), Some("test-profile"));
+        let pty_id = info["id"].as_str().unwrap().to_string();
+
+        let mut output = Vec::new();
+        for event in events {
+            if let Event::PtyData {
+                id, data, offset, ..
+            } = event
+            {
+                if id == pty_id && offset == 0 {
+                    output.extend_from_slice(&data);
+                }
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !String::from_utf8_lossy(&output).contains("args-env:ok:xterm-256color:truecolor") {
+            assert!(Instant::now() < deadline, "未收到参数和环境变量校验输出");
+            let frame = client.next_frame().await;
+            if frame.kind == Kind::Event {
+                if let Ok(Event::PtyData { id, data, .. }) = decode_value(&frame.payload) {
+                    if id == pty_id {
+                        output.extend_from_slice(&data);
+                    }
+                }
+            }
+        }
+
+        let id = client
+            .request(
+                "pty.create",
+                &json!({
+                    "cwd": root,
+                    "shell": "/bin/sh",
+                    "env": { "LD_PRELOAD": "/tmp/not-allowed.so" },
+                    "cols": 80,
+                    "rows": 24
+                }),
+            )
+            .await;
+        let error = client.wait_error(id).await;
+        assert!(
+            error.message.contains("LD_PRELOAD") && error.message.contains("不允许"),
+            "动态加载器变量必须被明确拒绝: {error:?}"
+        );
+
+        let id = client.request("pty.kill", &json!({ "id": pty_id })).await;
+        client.wait_response(id).await;
+        let id = client.request("server.shutdown", &json!({})).await;
+        client.wait_response(id).await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    #[tokio::test]
+    async fn pty_create_rejects_unknown_shell_with_clear_error() {
+        let (run_dir, handle) = start_daemon("pty-unknown-shell").await;
+        let token = run_dir.read_token().unwrap();
+        let root = temp_dir("pty-unknown-shell-root");
+        let mut client = TestClient::connect(&run_dir, &token).await;
+        let unknown = "qingcode-shell-that-does-not-exist";
+
+        let id = client
+            .request(
+                "pty.create",
+                &json!({
+                    "cwd": root,
+                    "shell": unknown,
+                    "cols": 80,
+                    "rows": 24
+                }),
+            )
+            .await;
+        let error = client.wait_error(id).await;
+        assert!(
+            error.message.contains(unknown) && error.message.contains("不支持 shell"),
+            "未知 shell 应返回明确错误: {error:?}"
+        );
+
+        let id = client.request("server.shutdown", &json!({})).await;
+        client.wait_response(id).await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
     /// 断线重连后按 fromSeq 补发，seq 连续且内容不丢。
     #[tokio::test]
-    async fn pty_survives_disconnect_and_attach_replays_output() {
+    async fn connection_drop_detaches_attached_ptys_and_keeps_process() {
         let (run_dir, handle) = start_daemon("pty").await;
         let token = run_dir.read_token().unwrap();
         let root = temp_dir("pty-root");
@@ -2836,14 +3176,40 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         let mut client = TestClient::connect(&run_dir, &token).await;
-        let id = client.request("pty.list", &json!({})).await;
+        let id = client
+            .request("pty.list", &json!({ "clientId": "test-client" }))
+            .await;
         let list = client.wait_response(id).await;
         let found = list["ptys"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|item| item["id"] == pty_id.as_str());
-        assert!(found, "重连后终端不见了: {list}");
+            .find(|item| item["id"] == pty_id.as_str())
+            .cloned();
+        let found = found.unwrap_or_else(|| panic!("重连后终端不见了: {list}"));
+        assert_eq!(
+            found["detached"], true,
+            "连接断开后终端应处于 detached: {found}"
+        );
+        assert!(
+            found["exited"].is_null(),
+            "detach 不应结束终端进程: {found}"
+        );
+        assert_eq!(found["owner"], "test-client");
+        assert!(found["cwd"].as_str().is_some());
+
+        let id = client
+            .request("pty.list", &json!({ "clientId": "another-install:conn" }))
+            .await;
+        let other = client.wait_response(id).await;
+        assert!(
+            other["ptys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["id"] != pty_id.as_str()),
+            "clientId 不匹配时不应暴露其他安装的终端: {other}"
+        );
 
         // 从 0 开始补发：seq 必须严格递增，内容里含 marker。
         let id = client
@@ -3058,6 +3424,7 @@ mod tests {
                 "pty.input",
                 &PtyInputParams {
                     id: pty_id.clone(),
+                    seq: None,
                     data: b"stty -icanon -echo min 1 time 0; printf 'QING%s\\n' CODE_READY; cat\n"
                         .to_vec(),
                 },
@@ -3087,6 +3454,7 @@ mod tests {
                     "pty.input",
                     &PtyInputParams {
                         id: pty_id.clone(),
+                        seq: None,
                         data: ch.encode_utf8(&mut buffer).as_bytes().to_vec(),
                     },
                 )
@@ -3098,6 +3466,7 @@ mod tests {
                 "pty.input",
                 &PtyInputParams {
                     id: pty_id.clone(),
+                    seq: None,
                     data: b"\n".to_vec(),
                 },
             )
@@ -3121,6 +3490,57 @@ mod tests {
             echoed.contains(sequence),
             "输入顺序被打乱，回显为: {echoed:?}"
         );
+
+        let id = client.request("pty.kill", &json!({ "id": pty_id })).await;
+        client.wait_response(id).await;
+        let id = client.request("server.shutdown", &json!({})).await;
+        client.wait_response(id).await;
+        let _ = tokio::time::timeout(Duration::from_secs(10), handle).await;
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn duplicate_pty_input_sequence_is_acknowledged_without_rewriting() {
+        let (run_dir, handle) = start_daemon("input-dedup").await;
+        let token = run_dir.read_token().unwrap();
+        let root = temp_dir("input-dedup-root");
+        let mut client = TestClient::connect(&run_dir, &token).await;
+
+        let id = client
+            .request(
+                "pty.create",
+                &json!({ "cwd": root, "shell": "/bin/sh", "cols": 80, "rows": 24 }),
+            )
+            .await;
+        let info = client.wait_response(id).await;
+        assert_eq!(info["nextInputSeq"].as_u64(), Some(0));
+        let pty_id = info["id"].as_str().unwrap().to_string();
+
+        let params = json!({
+            "id": pty_id.clone(),
+            "seq": 0,
+            "data": serde_bytes::ByteBuf::from(b"printf dedup-ok\\n\n".to_vec()),
+        });
+        let id = client.request("pty.input", &params).await;
+        let first = client.wait_response(id).await;
+        assert_eq!(first["ok"], true);
+        assert!(first.get("duplicate").is_none());
+
+        let id = client.request("pty.input", &params).await;
+        let duplicate = client.wait_response(id).await;
+        assert_eq!(duplicate["duplicate"], true);
+
+        let id = client.request("pty.list", &json!({})).await;
+        let list = client.wait_response(id).await;
+        let pty = list["ptys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id"] == pty_id.as_str())
+            .unwrap();
+        assert_eq!(pty["nextInputSeq"].as_u64(), Some(1));
 
         let id = client.request("pty.kill", &json!({ "id": pty_id })).await;
         client.wait_response(id).await;
@@ -3167,6 +3587,7 @@ mod tests {
                 "pty.input",
                 &PtyInputParams {
                     id: blocked.clone(),
+                    seq: None,
                     data:
                         b"stty -echo; printf 'BLOCK%s\\n' _READY; exec sh -c 'while read x; do sleep 1; done'\n"
                             .to_vec(),
@@ -3193,6 +3614,7 @@ mod tests {
                     "pty.input",
                     &PtyInputParams {
                         id: blocked.clone(),
+                        seq: None,
                         data: vec![b'x'; 768 * 1024],
                     },
                 )
@@ -3206,6 +3628,7 @@ mod tests {
                     "pty.input",
                     &PtyInputParams {
                         id: blocked.clone(),
+                        seq: None,
                         data: b"x".to_vec(),
                     },
                 )
@@ -3217,6 +3640,7 @@ mod tests {
                 "pty.input",
                 &PtyInputParams {
                     id: sibling.clone(),
+                    seq: None,
                     data: b"printf 'SIBLING%s\\n' _READY\n".to_vec(),
                 },
             )

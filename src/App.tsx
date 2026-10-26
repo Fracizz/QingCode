@@ -116,6 +116,7 @@ function App() {
   const { t } = useI18n()
   const activateProject = useTerminalStore(s => s.activateProject)
   const spawnRestoredTerminals = useTerminalStore(s => s.spawnRestoredTerminals)
+  const syncDetachedTerminals = useTerminalStore(s => s.syncDetachedTerminals)
   const initializeTerminalEvents = useTerminalStore(s => s.initializeTerminalEvents)
   const loadRunConfigs = useRunConfigStore(s => s.loadConfigs)
   const loadMissingTabContents = useEditorStore(s => s.loadMissingTabContents)
@@ -291,19 +292,21 @@ function App() {
     void loadMissingTabContents()
   }, [currentProject, tabsNeedContentLoad, loadMissingTabContents])
 
-  // When the current project already has terminal tabs, apply each run config's
-  // restore policy before spawning restored PTYs. Do not auto-create a terminal
-  // just because the project has none.
+  // Once an SSH workspace is ready, surface detached daemons even when the
+  // project has no restored tabs. Existing tabs still honor run-config policy
+  // before their first attach/spawn attempt.
   useEffect(() => {
     if (!currentProject || !projectTrusted) return
     const projectId = currentProject.id
-    if (!useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
-      return
-    }
     activateProject(projectId)
     let cancelled = false
     const cancelDeferred = scheduleDeferredWork(() => {
       void (async () => {
+        await syncDetachedTerminals(projectId)
+        if (cancelled) return
+        if (!useTerminalStore.getState().terminals.some(t => t.projectId === projectId)) {
+          return
+        }
         const configs = await loadRunConfigs(currentProject)
         if (cancelled) return
         await applyRunConfigSessionRestorePolicy(projectId, configs)
@@ -321,6 +324,7 @@ function App() {
     loadRunConfigs,
     projectTrusted,
     spawnRestoredTerminals,
+    syncDetachedTerminals,
     terminalOpen,
   ])
 

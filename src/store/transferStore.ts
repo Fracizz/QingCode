@@ -18,7 +18,6 @@ export interface TransferProgress {
   currentPath?: string | null
   currentBytes?: number
   currentTotalBytes?: number
-  failedPath?: string | null
   error?: string | null
 }
 export interface TransferTask extends TransferProgress {

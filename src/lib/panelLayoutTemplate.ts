@@ -6,7 +6,6 @@ export type PanelLayoutTemplate = 'classic' | 'sideTerminal'
 
 export const DEFAULT_PANEL_LAYOUT: PanelLayoutTemplate = 'classic'
 
-export const PANEL_LAYOUT_TEMPLATES: PanelLayoutTemplate[] = ['classic', 'sideTerminal']
 
 export function parsePanelLayoutTemplate(value: unknown): PanelLayoutTemplate {
   if (value === 'classic' || value === 'sideTerminal') return value

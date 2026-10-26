@@ -19,6 +19,7 @@ import {
   List,
   ChevronDown,
   ChevronRight,
+  LoaderCircle,
 } from 'lucide-react'
 import {
   MAX_TERMINALS_PER_PROJECT,
@@ -50,6 +51,7 @@ import Tooltip from './Tooltip'
 import type { TerminalTab } from '../types'
 import { useI18n } from '../lib/i18n'
 import { terminalShellLabelKey } from '@/lib/terminal/terminalShell'
+import { isSshResource } from '@/lib/tauri'
 
 const CLOSE_ARM_MS = 4000
 /** Exited tabs end with the restart button, which already carries its own hit area. */
@@ -588,6 +590,29 @@ export default function TerminalTabs({
               if (!t) return null
               const isCloseArmed = closeArmId === t.id
               const isActive = t.id === paneActiveId
+              const persistentWarning =
+                isSshResource(t.cwd) &&
+                t.persistent !== true &&
+                t.status !== 'starting'
+              const tooltipLines = [
+                t.launchCommand.trim() && t.launchCommand.trim() !== t.name
+                  ? `${t.name}\n> ${t.launchCommand.trim()}`
+                  : t.name,
+                t.resolvedShell
+                  ? `${translate('Shell')}: ${translate(terminalShellLabelKey(t.resolvedShell))}`
+                  : null,
+                t.status === 'reconnecting'
+                  ? translate('正在重新连接，远端进程仍在运行')
+                  : null,
+                persistentWarning ? translate('此终端断线会结束远端进程') : null,
+                persistentWarning && t.persistentFallbackReason
+                  ? translate('未能持久化：{reason}', {
+                      reason: t.persistentFallbackReason,
+                    })
+                  : persistentWarning && t.disconnectReason
+                    ? translate('断开原因：{reason}', { reason: t.disconnectReason })
+                    : null,
+              ].filter((line): line is string => line !== null).join('\n')
               return (
                 <div
                   key={t.id}
@@ -705,20 +730,25 @@ export default function TerminalTabs({
                     </>
                   ) : (
                     <Tooltip
-                      label={[
-                        t.launchCommand.trim() && t.launchCommand.trim() !== t.name
-                          ? `${t.name}\n> ${t.launchCommand.trim()}`
-                          : t.name,
-                        t.resolvedShell
-                          ? `${translate('Shell')}: ${translate(terminalShellLabelKey(t.resolvedShell))}`
-                          : null,
-                      ].filter((line): line is string => line !== null).join('\n')}
+                      label={tooltipLines}
                       side="top"
                       wrapperClassName="flex items-center gap-1.5 min-w-0 max-w-[12rem]"
                     >
                       <span className={`text-ui truncate ${t.status === 'exited' ? 'opacity-60' : ''}`}>
                         {formatTerminalName(t.name)}
                       </span>
+                    </Tooltip>
+                  )}
+                  {t.status === 'reconnecting' && renamingId !== t.id && (
+                    <Tooltip
+                      label={translate('正在重新连接，远端进程仍在运行')}
+                      side="top"
+                    >
+                      <LoaderCircle
+                        size={12}
+                        aria-label={translate('正在重新连接，远端进程仍在运行')}
+                        className="flex-shrink-0 animate-spin text-warn"
+                      />
                     </Tooltip>
                   )}
                   {t.status === 'exited' && renamingId !== t.id && (
@@ -866,6 +896,9 @@ export default function TerminalTabs({
             >
               <span className="ui-chip h-6 w-5 flex-shrink-0" />
               <span className="max-w-[12rem] truncate text-ui">{formatTerminalName(term.name)}</span>
+              {term.status === 'reconnecting' && (
+                <span className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
+              )}
               {term.status === 'exited' && <span className="ui-chip h-6 w-5 flex-shrink-0" />}
             </div>
           ))}

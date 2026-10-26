@@ -91,8 +91,3 @@ export async function safeInvoke<T = unknown>(
     recordTauriCommandDuration(resolvedCommand, performance.now() - started, succeeded)
   }
 }
-
-/** Throws a friendly error if called outside the Tauri runtime. */
-export async function requireTauri(action: string): Promise<void> {
-  if (!isTauri()) throw new NotInTauriError(action)
-}

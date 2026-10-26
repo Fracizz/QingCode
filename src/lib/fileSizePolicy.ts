@@ -25,11 +25,6 @@ export const PLAIN_EDIT_MAX_BYTES = 100 * 1024 * 1024
 /** Pure read-only slice viewer hard cap (matches Rust `MAX_VIEWER_FILE_SIZE`). */
 export const VIEW_MAX_BYTES = 500 * 1024 * 1024
 
-/** @deprecated Use PLAIN_EDIT_MAX_BYTES — kept as alias for older call sites. */
-export const VIEW_PATCH_MAX_BYTES = PLAIN_EDIT_MAX_BYTES
-
-/** Max UTF-8 bytes allowed in a single range-replace patch (legacy backend). */
-export const REPLACE_FRAGMENT_MAX_BYTES = 1 * 1024 * 1024
 
 export type FileOpenTier = 'edit' | 'edit-plain' | 'view' | 'reject'
 
@@ -56,9 +51,6 @@ export function setActiveMaxSizeForEdit(rules: MaxSizeForEditMap) {
   activeMaxSizeForEdit = { ...rules }
 }
 
-export function getActiveMaxSizeForEdit(): MaxSizeForEditMap {
-  return activeMaxSizeForEdit
-}
 
 /** Parse bytes from a number or strings like `20MB`, `50m`, `1024KB`. */
 export function parseSizeToBytes(value: unknown): number | null {

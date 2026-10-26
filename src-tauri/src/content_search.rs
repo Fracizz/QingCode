@@ -93,56 +93,7 @@ fn is_hard_ignored_dir(name: &str) -> bool {
     )
 }
 
-fn is_binary_extension(name: &str) -> bool {
-    let ext = Path::new(name)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    matches!(
-        ext.as_str(),
-        "png"
-            | "jpg"
-            | "jpeg"
-            | "gif"
-            | "webp"
-            | "ico"
-            | "bmp"
-            | "woff"
-            | "woff2"
-            | "ttf"
-            | "otf"
-            | "eot"
-            | "pdf"
-            | "zip"
-            | "gz"
-            | "tar"
-            | "7z"
-            | "rar"
-            | "exe"
-            | "dll"
-            | "so"
-            | "dylib"
-            | "bin"
-            | "mp3"
-            | "mp4"
-            | "avi"
-            | "mov"
-            | "mkv"
-            | "wasm"
-            | "lock"
-            | "map"
-            | "pyc"
-            | "pyo"
-            | "pyd"
-            | "class"
-            | "o"
-            | "obj"
-            | "typed"
-    )
-}
-
-fn matches_extensions(name: &str, extensions: Option<&[String]>) -> bool {
+pub(crate) fn matches_extensions(name: &str, extensions: Option<&[String]>) -> bool {
     match extensions {
         None | Some([]) => true,
         Some(exts) => Path::new(name)
@@ -409,7 +360,10 @@ fn search_file_contents_impl(
             }
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if is_binary_extension(&name) || !matches_extensions(&name, extensions.as_deref()) {
+            // Shared binary list; ambiguous `.key` files defer to NUL detection.
+            if crate::binary_ext::is_content_search_binary_extension(&name)
+                || !matches_extensions(&name, extensions.as_deref())
+            {
                 return WalkState::Continue;
             }
             if let Ok(meta) = entry.metadata() {
@@ -661,6 +615,60 @@ mod tests {
             !paths.iter().any(|p| p.contains("node_modules")),
             "{paths:?}"
         );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn skips_office_documents_like_the_shared_binary_extension_list() {
+        // 回归：content_search 曾自带一份 39 项清单，与 binary_ext 的权威源分歧，
+        // 于是 .docx 这类 ZIP 容器会被当文本扫出乱码命中。两处必须只剩一份清单。
+        let dir = temp_dir("binary-ext");
+        fs::write(dir.join("report.docx"), "findme_docx\n").unwrap();
+        fs::write(dir.join("notes.txt"), "findme_text\n").unwrap();
+
+        let resp = search(&dir, opts("findme"));
+        let texts: Vec<_> = resp
+            .files
+            .iter()
+            .flat_map(|f| f.matches.iter().map(|m| m.text.clone()))
+            .collect();
+        assert!(
+            !texts.iter().any(|t| t.contains("findme_docx")),
+            ".docx is a binary container and must not be content-searched: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| t.contains("findme_text")),
+            "plain text still matches: {texts:?}"
+        );
+
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn searches_text_key_lock_and_source_map_files() {
+        let dir = temp_dir("text-ambiguous-ext");
+        fs::write(dir.join("server.key"), "findme_key\n").unwrap();
+        fs::write(dir.join("package.lock"), "findme_lock\n").unwrap();
+        fs::write(dir.join("bundle.map"), "findme_map\n").unwrap();
+        fs::write(dir.join("deck.key"), "PK\u{0}\u{0}findme_binary").unwrap();
+
+        let resp = search(&dir, opts("findme"));
+        let texts: Vec<_> = resp
+            .files
+            .iter()
+            .flat_map(|f| f.matches.iter().map(|m| m.text.as_str()))
+            .collect();
+        assert!(texts.iter().any(|text| text.contains("findme_key")));
+        assert!(texts.iter().any(|text| text.contains("findme_lock")));
+        assert!(texts.iter().any(|text| text.contains("findme_map")));
+        assert!(!texts.iter().any(|text| text.contains("findme_binary")));
+
+        let mut key_only = opts("findme");
+        key_only.extensions = Some(vec!["key".to_string()]);
+        let resp = search(&dir, key_only);
+        assert_eq!(resp.match_count, 1, "resp={resp:?}");
+        assert!(resp.files[0].name.eq_ignore_ascii_case("server.key"));
 
         fs::remove_dir_all(dir).unwrap();
     }

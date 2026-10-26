@@ -6,7 +6,6 @@ interface CommandPaletteState {
   seedQuery: string
   openPalette: (seedQuery?: string) => void
   closePalette: () => void
-  togglePalette: () => void
 }
 
 export const useCommandPaletteStore = create<CommandPaletteState>(set => ({
@@ -14,5 +13,4 @@ export const useCommandPaletteStore = create<CommandPaletteState>(set => ({
   seedQuery: '',
   openPalette: (seedQuery = '') => set({ open: true, seedQuery }),
   closePalette: () => set({ open: false, seedQuery: '' }),
-  togglePalette: () => set(state => ({ open: !state.open, seedQuery: '' })),
 }))

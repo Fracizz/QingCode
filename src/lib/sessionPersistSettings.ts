@@ -81,7 +81,3 @@ export function notifySessionPersistChanged(enabled: boolean) {
     new CustomEvent(SESSION_PERSIST_EVENT, { detail: { enabled } }),
   )
 }
-
-export function defaultSessionPersist(): boolean {
-  return parseSessionPersist(DEFAULT_GLOBAL_SETTINGS[SESSION_PERSIST_KEY])
-}

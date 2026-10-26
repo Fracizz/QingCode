@@ -7,7 +7,6 @@
 import { pathsEqual } from '../utils/fileReferences'
 import { getLocaleOptions, translateFor } from './i18n'
 import {
-  WORKSPACE_SESSION_VERSION,
   parseProjectSession,
   type PersistedEditorTab,
   type PersistedProjectSession,
@@ -363,6 +362,3 @@ export function setActiveNamedWorkspaceId(
   }
   return { ...catalog, updatedAt: now, activeWorkspaceId: id }
 }
-
-/** Sanity: snapshot version we embed is the same as auto-session. */
-export const EMBEDDED_SESSION_VERSION = WORKSPACE_SESSION_VERSION

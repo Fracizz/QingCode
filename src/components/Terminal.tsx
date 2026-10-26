@@ -33,6 +33,7 @@ import {
 } from '@/lib/terminal/terminalCursorSettings'
 import {
   TERMINAL_CLEAR_EVENT,
+  TERMINAL_RESET_EVENT,
   TERMINAL_SEARCH_EVENT,
   type TerminalViewBridgeDetail,
 } from '@/lib/terminal/terminalViewBridge'
@@ -273,6 +274,15 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     setSearchMatchIndex(-1)
     setSearchMatchTotal(0)
   }, [])
+
+  const resetTerminalView = useCallback(() => {
+    const term = xtermRef.current
+    if (!term) return
+    term.reset()
+    term.scrollToBottom()
+    searchAddonRef.current?.clearDecorations()
+    resetSearchMatch()
+  }, [resetSearchMatch])
 
   const openSearch = useCallback(() => {
     setSearchOpen(true)
@@ -881,13 +891,20 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       if (!matches(detail)) return
       openSearch()
     }
+    const onReset = (event: Event) => {
+      const detail = (event as CustomEvent<TerminalViewBridgeDetail>).detail
+      if (!matches(detail)) return
+      resetTerminalView()
+    }
     window.addEventListener(TERMINAL_CLEAR_EVENT, onClear)
     window.addEventListener(TERMINAL_SEARCH_EVENT, onSearch)
+    window.addEventListener(TERMINAL_RESET_EVENT, onReset)
     return () => {
       window.removeEventListener(TERMINAL_CLEAR_EVENT, onClear)
       window.removeEventListener(TERMINAL_SEARCH_EVENT, onSearch)
+      window.removeEventListener(TERMINAL_RESET_EVENT, onReset)
     }
-  }, [clearBuffer, openSearch, terminalId])
+  }, [clearBuffer, openSearch, resetTerminalView, terminalId])
 
   useEffect(() => {
     if (!searchOpen || !searchQuery.trim()) {

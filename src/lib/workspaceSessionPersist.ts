@@ -43,6 +43,12 @@ export type PersistedTerminalMeta = {
   /** Run-config task linkage (rehydrated into runningByTask after restart). */
   runConfigId?: string
   runTaskId?: string
+  /** True when the tab is hosted by the remote daemon. */
+  persistent?: boolean
+  /** Daemon PTY id, persisted only for restart reattach. */
+  ptyId?: string
+  /** SSH connection that owns the daemon PTY. */
+  connectionId?: string
 }
 
 export type PersistedProjectSession = {
@@ -90,6 +96,9 @@ export type TerminalSnapshotInput = {
   allowTitleRename?: boolean
   runConfigId?: string
   runTaskId?: string
+  persistent?: boolean
+  ptyId?: string
+  connectionId?: string
 }
 
 export type ProjectEditorSessionInput = {
@@ -178,6 +187,13 @@ function parseTerminal(value: unknown): PersistedTerminalMeta | null {
   }
   if (typeof value.runTaskId === 'string' && value.runTaskId) {
     terminal.runTaskId = value.runTaskId
+  }
+  if (typeof value.persistent === 'boolean') terminal.persistent = value.persistent
+  if (typeof value.ptyId === 'string' && value.ptyId.trim()) {
+    terminal.ptyId = value.ptyId.trim()
+  }
+  if (typeof value.connectionId === 'string' && value.connectionId.trim()) {
+    terminal.connectionId = value.connectionId.trim()
   }
   return terminal
 }
@@ -317,6 +333,9 @@ export function serializeTerminalMeta(terminal: TerminalSnapshotInput): Persiste
   }
   if (terminal.runConfigId) out.runConfigId = terminal.runConfigId
   if (terminal.runTaskId) out.runTaskId = terminal.runTaskId
+  if (typeof terminal.persistent === 'boolean') out.persistent = terminal.persistent
+  if (terminal.ptyId) out.ptyId = terminal.ptyId
+  if (terminal.connectionId) out.connectionId = terminal.connectionId
   return out
 }
 

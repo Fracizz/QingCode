@@ -73,8 +73,3 @@ export function formatFileTime(ms: number | null, locale: string): string {
     timeStyle: 'medium',
   }).format(new Date(ms))
 }
-
-/** @deprecated Use {@link formatFileTime}. */
-export function formatModifiedTime(ms: number | null, locale: string): string {
-  return formatFileTime(ms, locale)
-}

@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
+  attachTerminal,
   createTerminal,
   killTerminal,
+  listDetachedTerminals,
   resizeTerminal,
   spawnTerminalScript,
   writeTerminal,
@@ -50,9 +52,13 @@ import {
   normalizePtySize,
 } from '@/lib/terminal/terminalPtySize'
 import {
+  parseTerminalExitEvent,
+  planTerminalConnectionEvent,
   shouldKeepShellAfterExit,
   sshTerminalReconnectDelay,
+  terminalDisconnectNotice,
 } from '@/lib/terminal/terminalShellLifecycle'
+import { requestTerminalReset } from '@/lib/terminal/terminalViewBridge'
 import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
 import {
   effectiveShellForTerminalName,
@@ -65,6 +71,13 @@ import { clearTerminalCommandActivity } from '@/lib/terminal/terminalCommandActi
 import { isSessionPersistEnabled } from '../lib/sessionPersistSettings'
 import { recordPerformanceThroughput } from '../lib/performanceDiagnostics'
 import { decodeTerminalEventData } from '../utils/terminalIpc'
+import { isSshProject, sshConnectionIdFromUri } from '../lib/sshWorkspace'
+import { choiceDialog } from './choiceStore'
+import {
+  filterUnownedDetachedTerminals,
+  planTerminalRestore,
+  type SshDetachedTerminal,
+} from '@/lib/terminal/terminalRestorePlan'
 
 export const MAX_TERMINALS_PER_PROJECT = 10
 /** @deprecated Cleared on boot; durable metadata lives in workspaceSessionPersist. */
@@ -89,6 +102,8 @@ const reportedShellFallbacks = new Set<string>()
 const sshRecoveryInFlight = new Set<string>()
 /** 已由 store 写过断线说明的已退出终端；视图不再追加“进程未启动”。 */
 const disconnectNoticeShown = new Set<string>()
+/** One detached-terminal query per project/connection during this app session. */
+const detachedTerminalSyncs = new Set<string>()
 
 /** 视图挂载或状态变为已退出时调用：返回 true 表示断线说明已写入输出。 */
 export function consumeTerminalDisconnectNotice(id: string): boolean {
@@ -106,7 +121,62 @@ function isGeneratedShellName(tab: TerminalTab): boolean {
   })
 }
 
-function applyTerminalSpawnResult(id: string, result: TerminalSpawnResult | null | undefined) {
+type TerminalSpawnResultCompat = TerminalSpawnResult & {
+  persistent?: unknown
+  ptyId?: unknown
+  connectionId?: unknown
+  persistentReason?: unknown
+  persistentFallbackReason?: unknown
+}
+
+function applyTerminalSpawnResult(
+  id: string,
+  result: TerminalSpawnResultCompat | null | undefined,
+) {
+  const persistent = typeof result?.persistent === 'boolean' ? result.persistent : undefined
+  const ptyId =
+    typeof result?.ptyId === 'string' && result.ptyId.trim()
+      ? result.ptyId.trim()
+      : undefined
+  const connectionId =
+    typeof result?.connectionId === 'string' && result.connectionId.trim()
+      ? result.connectionId.trim()
+      : undefined
+  const rawFallbackReason =
+    result?.persistentFallbackReason ?? result?.persistentReason
+  const persistentFallbackReason =
+    typeof rawFallbackReason === 'string' && rawFallbackReason.trim()
+      ? rawFallbackReason.trim()
+      : undefined
+  if (
+    persistent !== undefined ||
+    ptyId ||
+    connectionId ||
+    persistentFallbackReason
+  ) {
+    useTerminalStore.setState(state => ({
+      terminals: state.terminals.map(terminal =>
+        terminal.id === id
+          ? {
+              ...terminal,
+              ...(persistent === undefined ? {} : { persistent }),
+              ...(ptyId ? { ptyId } : {}),
+              ...(connectionId
+                ? { connectionId }
+                : !terminal.connectionId
+                  ? {
+                      connectionId:
+                        sshConnectionIdFromUri(terminal.cwd) ?? terminal.connectionId,
+                    }
+                  : {}),
+              ...(persistent === false ? { ptyId: undefined } : {}),
+              ...(persistentFallbackReason ? { persistentFallbackReason } : {}),
+            }
+          : terminal
+      ),
+    }))
+  }
+
   const resolvedShell = isTerminalShellId(result?.resolvedShell) ? result.resolvedShell : undefined
   if (resolvedShell && resolvedShell !== 'auto') {
     useTerminalStore.setState(state => {
@@ -243,25 +313,74 @@ function markDisconnectedExit(id: string) {
   }))
 }
 
+async function killRestoredPersistentTerminalBeforeAttach(tab: TerminalTab): Promise<void> {
+  if (!tab.persistent || !tab.ptyId || !tab.connectionId) return
+  const temporaryId = crypto.randomUUID()
+  const size = lastPtySize.get(tab.id) ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS }
+  try {
+    await attachTerminal({
+      id: temporaryId,
+      ptyId: tab.ptyId,
+      cwd: tab.cwd,
+      cols: size.cols,
+      rows: size.rows,
+    })
+    await killTerminal(temporaryId)
+  } catch (error) {
+    console.warn(`kill restored terminal ${tab.ptyId} failed:`, error)
+  }
+}
+
+async function killTerminalForClose(tab: TerminalTab, spawnInFlight: boolean): Promise<void> {
+  if (tab.awaitingRestoreSpawn && tab.persistent && tab.ptyId && !spawnInFlight) {
+    await killRestoredPersistentTerminalBeforeAttach(tab)
+  } else if (!tab.awaitingRestoreSpawn) {
+    await killTerminal(tab.id)
+  }
+}
+
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
 /**
  * SSH 连接断开：交互式 Shell 按退避间隔重开（后端会先重连），一次性任务直接停下。
  * 远端进程已随连接结束，重开后明确告知，不假装会话还在。
  */
-async function recoverSshTerminalAfterDisconnect(id: string): Promise<void> {
+async function restartTerminalAfterDisconnect(id: string, rawReason: unknown): Promise<void> {
   const initial = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
   if (!initial || sshRecoveryInFlight.has(id)) return
   if (!shouldKeepShellAfterExit(initial)) {
-    publishTerminalNotice(id, translate('SSH 连接已断开，任务已中止，可从终端标签重启'))
+    const notice = terminalDisconnectNotice('stopped', rawReason)
+    publishTerminalNotice(id, translate(notice.key, notice.values))
+    useTerminalStore.setState(s => ({
+      terminals: s.terminals.map(terminal =>
+        terminal.id === id
+          ? {
+              ...terminal,
+              disconnectReason: notice.values?.reason
+                ? String(notice.values.reason)
+                : terminal.disconnectReason,
+            }
+          : terminal
+      ),
+    }))
     markDisconnectedExit(id)
     return
   }
   sshRecoveryInFlight.add(id)
-  publishTerminalNotice(id, translate('SSH 连接已断开，正在重新连接…'))
+  const notice = terminalDisconnectNotice('reconnecting', rawReason)
+  publishTerminalNotice(id, translate(notice.key, notice.values))
   useTerminalStore.setState(s => ({
     terminals: s.terminals.map(terminal =>
-      terminal.id === id ? { ...terminal, status: 'starting', exitCode: null } : terminal
+      terminal.id === id
+        ? {
+            ...terminal,
+            status: 'starting',
+            exitCode: null,
+            disconnectReason: notice.values?.reason
+              ? String(notice.values.reason)
+              : terminal.disconnectReason,
+          }
+        : terminal
     ),
   }))
   let lastError: unknown = null
@@ -313,6 +432,23 @@ async function recoverSshTerminalAfterDisconnect(id: string): Promise<void> {
   } finally {
     sshRecoveryInFlight.delete(id)
   }
+}
+
+/** Direct SSH terminals still restart with the legacy bounded backoff. */
+async function recoverSshTerminalAfterDisconnect(id: string, rawReason: unknown): Promise<void> {
+  const initial = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+  if (!initial || initial.persistent === true) return
+  await restartTerminalAfterDisconnect(id, rawReason)
+}
+
+/** A persistent terminal whose daemon disappeared must restart as a new shell. */
+async function recoverPersistentTerminalAfterDaemonRestart(
+  id: string,
+  rawReason: unknown,
+): Promise<void> {
+  const initial = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+  if (!initial || initial.persistent !== true) return
+  await restartTerminalAfterDisconnect(id, rawReason)
 }
 
 /** Always-on ring used for persistence + restore replay. */
@@ -442,6 +578,17 @@ function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   if (options?.persist !== false) scheduleTerminalOutputPersist()
 }
 
+/** Discard queued/previous replay bytes before a fresh daemon screen snapshot. */
+function prepareTerminalOutputForSnapshot(id: string) {
+  terminalPendingOutput.delete(id)
+  cancelScheduledOutputFlush(id)
+  terminalScrollbackRings.delete(id)
+  terminalRingUpdatedAt.delete(id)
+  terminalRingVersions.delete(id)
+  terminalScrollbackTextCache.delete(id)
+  scheduleTerminalOutputPersist()
+}
+
 /** Seed live rings from durable storage (called during workspace hydrate). */
 export function seedTerminalOutputFromPersist(
   id: string,
@@ -475,9 +622,6 @@ export function hydrateTerminalOutputForTabs(terminalIds: Iterable<string>) {
   }
 }
 
-export function getTerminalCommandHistory(id: string): string[] {
-  return terminalCommandHistory.get(id) ?? []
-}
 
 export function subscribeTerminalOutput(id: string, listener: TerminalOutputListener) {
   // Deliver already-batched live bytes to existing views before a new view replays the ring.
@@ -583,11 +727,6 @@ export const TERMINAL_FOCUS_PANES: readonly TerminalFocusPane[] = [
   'br',
 ] as const
 
-export function isTerminalFocusPane(value: unknown): value is TerminalFocusPane {
-  return (
-    value === 'primary' || value === 'secondary' || value === 'bl' || value === 'br'
-  )
-}
 
 /** Pane that owns a session; legacy tabs without `pane` belong to primary. */
 export function terminalPaneOf(tab: Pick<TerminalTab, 'pane'>): TerminalFocusPane {
@@ -707,6 +846,8 @@ interface TerminalState {
   ) => Promise<void>
   /** Spawn PTYs for tabs restored after restart (once). */
   spawnRestoredTerminals: (projectId: string) => Promise<void>
+  /** After the SSH workspace is ready, surface detached daemon terminals once. */
+  syncDetachedTerminals: (projectId: string) => Promise<void>
   activateProject: (projectId: string) => void
   updateProjectPath: (projectId: string, path: string) => void
   setActiveTerminal: (id: string) => void
@@ -973,6 +1114,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       cwd: projectPath,
       profileId: profile.id,
       shell,
+      connectionId:
+        project?.connection_id ?? sshConnectionIdFromUri(projectPath),
       // `;` joins multi-line profile commands for PowerShell-family shells.
       launchCommand: profile.command.trim().replace(/\s*\n+\s*/g, '; '),
       pane: focusPane,
@@ -1030,6 +1173,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       launchCommand: target,
       shellKind,
       env,
+      connectionId:
+        project?.connection_id ?? sshConnectionIdFromUri(cwd),
       pane: focusPane,
       allowTitleRename: false,
       status: 'starting',
@@ -1052,6 +1197,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   closeTerminal: async (id: string) => {
+    const spawnInFlight = ptySpawnInFlight.has(id)
     clearPtySpawnFallback(id)
     ptySpawnInFlight.delete(id)
     lastPtySize.delete(id)
@@ -1059,9 +1205,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const terminal = get().terminals.find(candidate => candidate.id === id)
     // Restored metadata has no PTY until its first spawn. Removing an opted-out
     // run-config tab must not call kill_terminal or show a false close error.
-    if (!terminal?.awaitingRestoreSpawn) {
+    if (terminal) {
       try {
-        await killTerminal(id)
+        await killTerminalForClose(terminal, spawnInFlight)
       } catch (error) {
         useProjectStore
           .getState()
@@ -1084,21 +1230,26 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const keep = get().terminals.find(t => t.id === id)
     if (!keep) return
     const keepPane = terminalPaneOf(keep)
-    const others = get()
+    const otherTabs = get()
       .terminals.filter(
         t =>
           t.projectId === keep.projectId &&
           t.id !== id &&
           terminalPaneOf(t) === keepPane,
       )
-      .map(t => t.id)
+    const others = otherTabs.map(t => t.id)
+    const spawnInFlight = new Map(otherTabs.map(tab => [tab.id, ptySpawnInFlight.has(tab.id)]))
     for (const tid of others) {
       clearPtySpawnFallback(tid)
       ptySpawnInFlight.delete(tid)
       lastPtySize.delete(tid)
       markIntentionalPtyKill(tid)
     }
-    await Promise.all(others.map(tid => killTerminal(tid).catch(() => undefined)))
+    await Promise.all(
+      otherTabs.map(tab =>
+        killTerminalForClose(tab, spawnInFlight.get(tab.id) === true).catch(() => undefined),
+      ),
+    )
     set(s => {
       const otherSet = new Set(others)
       const terminals = s.terminals.filter(t => !otherSet.has(t.id))
@@ -1112,16 +1263,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   closeAllProjectTerminals: async (projectId: string) => {
-    const ids = get()
-      .terminals.filter(t => t.projectId === projectId)
-      .map(t => t.id)
+    const tabs = get().terminals.filter(t => t.projectId === projectId)
+    const ids = tabs.map(t => t.id)
+    const spawnInFlight = new Map(tabs.map(tab => [tab.id, ptySpawnInFlight.has(tab.id)]))
     for (const id of ids) {
       clearPtySpawnFallback(id)
       ptySpawnInFlight.delete(id)
       lastPtySize.delete(id)
       markIntentionalPtyKill(id)
     }
-    await Promise.all(ids.map(id => killTerminal(id).catch(() => undefined)))
+    await Promise.all(
+      tabs.map(tab =>
+        killTerminalForClose(tab, spawnInFlight.get(tab.id) === true).catch(() => undefined),
+      ),
+    )
     set(s => ({
       terminals: s.terminals.filter(t => t.projectId !== projectId),
       ...clearProjectPaneMaps(s, projectId, ids),
@@ -1130,16 +1285,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   closeProjectTerminals: async (projectId: string) => {
-    const ids = get()
-      .terminals.filter(terminal => terminal.projectId === projectId)
-      .map(terminal => terminal.id)
+    const tabs = get().terminals.filter(terminal => terminal.projectId === projectId)
+    const ids = tabs.map(terminal => terminal.id)
+    const spawnInFlight = new Map(tabs.map(tab => [tab.id, ptySpawnInFlight.has(tab.id)]))
     for (const id of ids) {
       clearPtySpawnFallback(id)
       ptySpawnInFlight.delete(id)
       lastPtySize.delete(id)
       markIntentionalPtyKill(id)
     }
-    await Promise.all(ids.map(id => killTerminal(id).catch(() => undefined)))
+    await Promise.all(
+      tabs.map(tab =>
+        killTerminalForClose(tab, spawnInFlight.get(tab.id) === true).catch(() => undefined),
+      ),
+    )
     set(s => ({
       terminals: s.terminals.filter(terminal => terminal.projectId !== projectId),
       ...clearProjectPaneMaps(s, projectId, ids),
@@ -1305,13 +1464,228 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (pending.length === 0) return
     for (const t of pending) restoreSpawnInFlight.add(t.id)
     try {
-      // Keep awaitingRestoreSpawn until restartTerminal flips status to
-      // starting — otherwise run-config UI briefly treats tabs as idle.
-      // Preserve scrollback across restore respawn (manual restart still clears).
-      await Promise.all(pending.map(t => get().restartTerminal(t.id, { preserveOutput: true })))
+      // Hydrated tabs have no live local PTY, so do not route through
+      // restartTerminal: that would kill the daemon PTY we are trying to attach.
+      set(s => ({
+        terminals: s.terminals.map(terminal =>
+          pending.some(t => t.id === terminal.id)
+            ? {
+                ...terminal,
+                status: 'starting',
+                exitCode: null,
+                startedAt: Date.now(),
+                restorePreservedOutput: true,
+                ptySpawnPending: true,
+              }
+            : terminal
+        ),
+      }))
+      await Promise.all(
+        pending.map(t => {
+          const remembered = lastPtySize.get(t.id)
+          return get().spawnPendingTerminal(
+            t.id,
+            remembered?.cols ?? DEFAULT_PTY_COLS,
+            remembered?.rows ?? DEFAULT_PTY_ROWS,
+          )
+        }),
+      )
     } finally {
       for (const t of pending) restoreSpawnInFlight.delete(t.id)
     }
+  },
+
+  syncDetachedTerminals: async (projectId: string) => {
+    const projectState = useProjectStore.getState()
+    const project =
+      projectState.projects.find(candidate => candidate.id === projectId) ??
+      (projectState.currentProject?.id === projectId ? projectState.currentProject : null)
+    if (!project || !isSshProject(project)) return
+    const connectionId =
+      project.connection_id ?? sshConnectionIdFromUri(project.path)
+    if (!connectionId) return
+
+    const syncKey = `${projectId}:${connectionId}`
+    if (detachedTerminalSyncs.has(syncKey)) return
+    detachedTerminalSyncs.add(syncKey)
+
+    let detached: SshDetachedTerminal[]
+    try {
+      detached = await listDetachedTerminals(connectionId)
+    } catch (error) {
+      detachedTerminalSyncs.delete(syncKey)
+      console.warn('ssh_list_detached_terminals failed:', error)
+      return
+    }
+
+    // 同一连接下其他 SSH 项目的根：终端归给最深的包含根，不跨项目接回或结束。
+    const connectionRoots = useProjectStore
+      .getState()
+      .projects.filter(
+        candidate =>
+          candidate.id !== project.id &&
+          isSshProject(candidate) &&
+          (candidate.connection_id ?? sshConnectionIdFromUri(candidate.path)) === connectionId
+      )
+      .map(candidate => candidate.path)
+    const orphans = filterUnownedDetachedTerminals(
+      detached,
+      get().terminals,
+      connectionId,
+      project.path,
+      connectionRoots,
+    )
+    if (orphans.length === 0) return
+
+    const openOrphanActions = async () => {
+      const action = await choiceDialog({
+        title: translate('发现远端终端'),
+        message: translate('远端还有 {count} 个终端在运行', {
+          count: orphans.length,
+        }),
+        detail: translate('这些终端没有对应的本地标签，仍在该 SSH 连接上运行。'),
+        options: [
+          { id: 'attach', label: translate('接回'), primary: true },
+          { id: 'kill', label: translate('全部结束'), danger: true },
+          { id: 'later', label: translate('稍后处理') },
+        ],
+      })
+      if (action !== 'attach' && action !== 'kill') return
+
+      if (action === 'kill') {
+        const failures: string[] = []
+        for (const terminal of orphans) {
+          const id = crypto.randomUUID()
+          try {
+            await attachTerminal({
+              id,
+              ptyId: terminal.ptyId,
+              cwd: terminal.cwd,
+              cols: terminal.cols,
+              rows: terminal.rows,
+            })
+            await killTerminal(id)
+          } catch (error) {
+            failures.push(
+              `${terminal.name || terminal.ptyId}: ${String(error)}`,
+            )
+          }
+        }
+        if (failures.length > 0) {
+          useProjectStore.getState().pushToast(
+            'error',
+            translate('结束远端终端失败: {error}', {
+              error: failures[0],
+            }),
+            failures.length > 1
+              ? translate('另有 {count} 个终端未能结束', {
+                  count: failures.length - 1,
+                })
+              : undefined,
+          )
+        } else {
+          useProjectStore
+            .getState()
+            .pushToast(
+              'success',
+              translate('已结束 {count} 个远端终端', { count: orphans.length }),
+            )
+        }
+        return
+      }
+
+      const capacity = Math.max(
+        0,
+        MAX_TERMINALS_PER_PROJECT - get().terminals.filter(t => t.projectId === projectId).length,
+      )
+      const accepted = orphans.slice(0, capacity)
+      if (accepted.length === 0) {
+        useProjectStore
+          .getState()
+          .pushToast(
+            'info',
+            translate('每个项目最多可创建 {count} 个终端', {
+              count: MAX_TERMINALS_PER_PROJECT,
+            }),
+          )
+        return
+      }
+
+      const pane = get().terminalFocusPane
+      const added: TerminalTab[] = []
+      for (const terminal of accepted) {
+        const id = crypto.randomUUID()
+        const name = disambiguateTerminalName(
+          terminal.name || translate('远端终端'),
+          get().terminals.map(tab => tab.name),
+        )
+        const tab: TerminalTab = {
+          id,
+          name,
+          projectId,
+          cwd: terminal.cwd,
+          launchCommand: '',
+          pane,
+          status: 'starting',
+          exitCode: null,
+          startedAt: Date.now(),
+          persistent: true,
+          ptyId: terminal.ptyId,
+          connectionId,
+          awaitingRestoreSpawn: true,
+          ptySpawnPending: true,
+        }
+        set(state => ({
+          terminals: [...state.terminals, tab],
+          ...bindTerminalToPane(state, projectId, pane, id),
+        }))
+        added.push(tab)
+      }
+      useUIStore.getState().openTerminalPanel()
+      await Promise.all(
+        added.map(tab => {
+          const terminal = accepted.find(candidate => candidate.ptyId === tab.ptyId)
+          return get().spawnPendingTerminal(
+            tab.id,
+            terminal?.cols ?? DEFAULT_PTY_COLS,
+            terminal?.rows ?? DEFAULT_PTY_ROWS,
+          )
+        }),
+      )
+      const recovered = added.filter(tab =>
+        get().terminals.some(
+          terminal => terminal.id === tab.id && terminal.status === 'running',
+        ),
+      ).length
+      if (recovered > 0) {
+        useProjectStore
+          .getState()
+          .pushToast(
+            'success',
+            translate('已接回 {count} 个远端终端', { count: recovered }),
+          )
+      }
+      if (accepted.length < orphans.length) {
+        useProjectStore
+          .getState()
+          .pushToast(
+            'info',
+            translate('受终端数量上限限制，还有 {count} 个远端终端未接回', {
+              count: orphans.length - accepted.length,
+            }),
+          )
+      }
+    }
+
+    useProjectStore.getState().pushToast(
+      'info',
+      translate('远端还有 {count} 个终端在运行', { count: orphans.length }),
+      undefined,
+      {
+        label: translate('查看'),
+        onAction: openOrphanActions,
+      },
+    )
   },
 
   activateProject: (projectId: string) =>
@@ -1538,44 +1912,79 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       ),
     }))
     try {
-      const plan = planTerminalSpawn(tab)
       let spawnResult: TerminalSpawnResult | undefined
-      if (plan.mode === 'script') {
-        spawnResult = await spawnTerminalScript({
-          id,
-          cwd: tab.cwd,
-          shellKind: plan.shellKind,
-          target: plan.target,
-          env: plan.env,
-          cols: size.cols,
-          rows: size.rows,
-        })
-      } else if (plan.mode === 'interactive') {
-        // Profiles (e.g. OpenCode): one path — run command, keep shell via -NoExit.
-        spawnResult = await spawnTerminalScript({
-          id,
-          cwd: tab.cwd,
-          shellKind: 'interactive',
-          target: plan.command,
-          env: tab.env ?? {},
-          cols: size.cols,
-          rows: size.rows,
-          shell: tab.shell ?? null,
-        })
-      } else {
-        spawnResult = await createTerminal({
-          id,
-          cwd: tab.cwd,
-          cols: size.cols,
-          rows: size.rows,
-          shell: tab.shell ?? null,
-        })
+      const restorePlan = planTerminalRestore(tab)
+      if (restorePlan.mode === 'attach') {
+        try {
+          spawnResult = await attachTerminal({
+            id,
+            ptyId: restorePlan.ptyId,
+            cwd: restorePlan.cwd,
+            cols: size.cols,
+            rows: size.rows,
+          })
+        } catch (error) {
+          // The daemon may have exited or expired the PTY. Keep the persisted
+          // tab usable by falling back to the ordinary shell creation path.
+          console.warn(`ssh_attach_terminal ${restorePlan.ptyId} failed:`, error)
+        }
       }
+      if (!get().terminals.some(terminal => terminal.id === id)) {
+        if (spawnResult) await killTerminal(id)
+        return
+      }
+      if (!spawnResult) {
+        const plan = planTerminalSpawn(tab)
+        if (plan.mode === 'script') {
+          spawnResult = await spawnTerminalScript({
+            id,
+            cwd: tab.cwd,
+            shellKind: plan.shellKind,
+            target: plan.target,
+            env: plan.env,
+            cols: size.cols,
+            rows: size.rows,
+          })
+        } else if (plan.mode === 'interactive') {
+          // Profiles (e.g. OpenCode): one path — run command, keep shell via -NoExit.
+          spawnResult = await spawnTerminalScript({
+            id,
+            cwd: tab.cwd,
+            shellKind: 'interactive',
+            target: plan.command,
+            env: tab.env ?? {},
+            cols: size.cols,
+            rows: size.rows,
+            shell: tab.shell ?? null,
+            name: tab.name,
+          })
+        } else {
+          spawnResult = await createTerminal({
+            id,
+            cwd: tab.cwd,
+            cols: size.cols,
+            rows: size.rows,
+            shell: tab.shell ?? null,
+          })
+        }
+      }
+      if (!get().terminals.some(terminal => terminal.id === id)) {
+        await killTerminal(id)
+        return
+      }
+      // 以后端结果为准：接回失败回退新建时可能是直连终端（persistent=false），
+      // 不能沿用旧 ptyId，否则断线提示消失、下次重启又去接回已失效的 PTY。
       applyTerminalSpawnResult(id, spawnResult)
       set(s => ({
         terminals: s.terminals.map(terminal =>
-          terminal.id === id && terminal.status === 'starting'
-            ? { ...terminal, status: 'running', restorePreservedOutput: undefined }
+          terminal.id === id
+            ? {
+                ...terminal,
+                status: 'running',
+                awaitingRestoreSpawn: false,
+                restorePreservedOutput: undefined,
+                ptySpawnPending: false,
+              }
             : terminal
         ),
       }))
@@ -1588,6 +1997,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
                 ...terminal,
                 status: 'exited',
                 exitCode: null,
+                awaitingRestoreSpawn: false,
                 restorePreservedOutput: undefined,
                 ptySpawnPending: false,
               }
@@ -1606,7 +2016,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     })),
 
   initializeTerminalEvents: async () => {
-    const [unlistenData, unlistenInputError, unlistenExit] = await Promise.all([
+    const [
+      unlistenData,
+      unlistenInputError,
+      unlistenExit,
+      unlistenConnection,
+      unlistenReset,
+    ] = await Promise.all([
       listen<{ id: string; data: unknown }>('terminal-data', event => {
         if (get().terminals.some(terminal => terminal.id === event.payload.id)) {
           publishTerminalOutput(event.payload.id, event.payload.data)
@@ -1619,8 +2035,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           error: `${terminalDisplayLabel(tab.name)}: ${event.payload.message}`,
         }))
       }),
-      listen<{ id: string; exit_code: number; disconnected?: boolean }>('terminal-exit', event => {
-        const { id, exit_code, disconnected } = event.payload
+      listen<unknown>('terminal-exit', event => {
+        const parsed = parseTerminalExitEvent(event.payload)
+        if (!parsed) return
+        const { id, exitCode: exit_code, disconnected, reason } = parsed
         clearTerminalCommandActivity(id)
         const tab = get().terminals.find(t => t.id === id)
         if (!tab) {
@@ -1640,7 +2058,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           return
         }
         if (disconnected) {
-          void recoverSshTerminalAfterDisconnect(id)
+          if (tab.persistent === true) {
+            void recoverPersistentTerminalAfterDaemonRestart(id, reason)
+          } else {
+            void recoverSshTerminalAfterDisconnect(id, reason)
+          }
           return
         }
         // OpenCode etc. often kill the whole ConPTY; reopen a shell so the
@@ -1676,12 +2098,46 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             )
         }
       }),
+      listen<unknown>('terminal-connection', event => {
+        if (!event.payload || typeof event.payload !== 'object') return
+        const payload = event.payload as Record<string, unknown>
+        const id = typeof payload.id === 'string' ? payload.id : null
+        if (!id) return
+        const tab = get().terminals.find(terminal => terminal.id === id)
+        if (!tab || tab.persistent !== true) return
+        const plan = planTerminalConnectionEvent(tab, payload)
+        if (!plan) return
+        set(s => ({
+          terminals: s.terminals.map(terminal =>
+            terminal.id === id
+              ? {
+                  ...terminal,
+                  status: plan.status,
+                  exitCode: null,
+                  connectionAttempt: plan.attempt ?? terminal.connectionAttempt,
+                  disconnectReason: plan.reason ?? terminal.disconnectReason,
+                }
+              : terminal
+          ),
+        }))
+        if (plan.notice) {
+          publishTerminalNotice(id, translate(plan.notice.key, plan.notice.values))
+        }
+      }),
+      listen<{ id?: unknown }>('terminal-reset', event => {
+        const id = event.payload?.id
+        if (typeof id !== 'string' || !get().terminals.some(terminal => terminal.id === id)) return
+        prepareTerminalOutputForSnapshot(id)
+        requestTerminalReset(id)
+      }),
     ])
 
     return () => {
       unlistenData()
       unlistenExit()
       unlistenInputError()
+      unlistenConnection()
+      unlistenReset()
     }
   },
 }))

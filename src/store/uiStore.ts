@@ -92,7 +92,6 @@ interface UIState {
   setPanelLayoutMode: (mode: PanelLayoutPreset) => void
   /** Cycle classic → side → dual+editor. */
   togglePanelLayout: () => void
-  setSideWorkspaceColumns: (columns: Partial<SideWorkspaceColumns>) => void
   toggleSideDualTerminal: () => void
   toggleSideQuadTerminal: () => void
   toggleSideEditorVisible: () => void
@@ -307,20 +306,6 @@ export const useUIStore = create<UIState>((set) => ({
       (state.sideDualTerminal || state.sideQuadTerminal ? 'sideDualEditor' : 'sideTerminal')
     state.setPanelLayoutMode(nextPanelLayoutMode(cycleFrom))
   },
-  setSideWorkspaceColumns: patch =>
-    set(state => {
-      const columns = normalizeSideWorkspaceColumns({
-        dualTerminal: patch.dualTerminal ?? state.sideDualTerminal,
-        quadTerminal: patch.quadTerminal ?? state.sideQuadTerminal,
-        editorVisible: patch.editorVisible ?? state.sideEditorVisible,
-      })
-      persistColumns(columns)
-      return {
-        ...applyColumns(columns),
-        ...(patch.editorVisible === undefined ? {} : keepEditorAfterFullPage(state)),
-        terminalOpenSignal: state.terminalOpenSignal + 1,
-      }
-    }),
   toggleSideDualTerminal: () =>
     set(state => {
       const nextDual = !state.sideDualTerminal

@@ -10,7 +10,6 @@ export const WORKSPACE_TRUST_CHANGED_EVENT = 'qingcode:workspace-trust-changed'
 
 /** @deprecated Kept so older builds' keys can be migrated. */
 export const RUN_TRUST_STORAGE_KEY = 'qingcode:run-trust'
-export const RUN_TRUST_CHANGED_EVENT = WORKSPACE_TRUST_CHANGED_EVENT
 
 export type WorkspaceTrustLevel = 'trusted' | 'restricted'
 

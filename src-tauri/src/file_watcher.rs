@@ -1,7 +1,7 @@
 //! Debounced filesystem watching for open files and project roots.
 //! Emits `fs-change` events to the frontend; self-writes can be suppressed briefly.
 
-use crate::path_guard::PathAllowlist;
+use crate::path_guard::{strip_verbatim_prefix, PathAllowlist};
 use notify::RecursiveMode;
 use notify_debouncer_mini::{new_debouncer, DebounceEventResult, DebouncedEventKind, Debouncer};
 use serde::Serialize;
@@ -118,17 +118,6 @@ fn dunce_simplify(path: &Path) -> PathBuf {
         return strip_verbatim_prefix(canon);
     }
     strip_verbatim_prefix(path.to_path_buf())
-}
-
-fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
-    #[cfg(windows)]
-    {
-        let s = path.to_string_lossy();
-        if let Some(rest) = s.strip_prefix(r"\\?\") {
-            return PathBuf::from(rest);
-        }
-    }
-    path
 }
 
 fn is_high_churn_path(path: &Path, roots: &[PathBuf]) -> bool {

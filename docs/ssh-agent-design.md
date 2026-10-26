@@ -1,8 +1,8 @@
 # SSH Server 模式设计
 
-状态：部分实现（2026-10-24）。本文同时保留目标架构与实施设计，不能把后文的“目标 / 结果”列直接当成当前能力；用户可见行为和限制以 [`ssh-workspaces.md`](ssh-workspaces.md) 为准。
+状态：部分实现（2026-10-25）。本文同时保留目标架构与实施设计，不能把后文的“目标 / 结果”列直接当成当前能力；用户可见行为和限制以 [`ssh-workspaces.md`](ssh-workspaces.md) 为准。
 
-## 0. 当前实现边界（2026-10-24）
+## 0. 当前实现边界（2026-10-25）
 
 当前远端服务名为 `qingcode-server`，已有实现与设计目标要分开阅读。
 
@@ -11,12 +11,13 @@
 - `serve`、`daemon`、`connect --stdio` 三种运行入口，daemon 走协议 v1，Windows 使用带当前用户 DACL 的命名管道。
 - `fs.scan`、`search.content`、`watch.subscribe` 及 daemon 侧的 PTY 宿主、屏幕快照和环形缓冲。
 - 客户端 daemon → serve → 直连的回退链，Server 状态芯片、重启、停止和日志查看。
+- **[P2 已实现]** 前端交互式终端接入 daemon PTY：项目已信任、`ssh.server.enabled` 与 `ssh.server.persistentTerminals` 开启、daemon 可用且声明 `pty.persist` 时由 daemon 托管；SSH 断开后按 seq 补发或快照恢复，重连期间输入由后端缓冲。daemon 不可用、能力缺失、创建失败或设置关闭时自动回退直连。远端真机验收待 WP-G。
+- **[P3 已实现]** 应用重启后按持久化标签中的 `ptyId` / `connectionId` 优先接回 daemon PTY，失败回退普通新建；连接就绪后查询本安装的 detached 终端，对没有本地标签的孤儿终端提示接回或全部结束。远端真机验收待 WP-G 的 G21/G22。
 - 二进制安装到用户私有 `~/.qingcode/server/<version>/`（Windows 为 `%USERPROFILE%\.qingcode\server\<version>\`）；发现和启动前必须将远端文件 SHA-256 与本地可信文件或已验证下载结果匹配。
 - 旧版写在项目 `.qingcode/server/` 的二进制只按路径清理，绝不执行；daemon 降级后的重试同样重新执行本地文件与用户私有安装路径的摘要校验。
 
 **尚未实现：**
 
-- 前端终端接入 daemon PTY；断线保活、应用重启接回和孤儿终端管理仍未接线。
 - 一条常驻 exec 通道内按 `stream_id` 多路复用；当前扫描、搜索、watch 仍各自打开通道。
 - `workspace.open` / `workspace.setTrust` 以及 daemon 侧完整的信任和项目根注册。
 - `fs.*`、`git.*`、`format.*`、`task.*`、`transfer.*` 能力域迁移；这些功能仍主要走 serve 或直连。
@@ -142,7 +143,7 @@ kind  := HELLO | REQ | RES | ERR | EVENT | STREAM_DATA | STREAM_END | WINDOW | C
 - **流控**：每个流有独立的信用窗口（默认 256KB），接收方用 `WINDOW` 帧补充信用。这样一个下载很慢、迟迟不消费，也只会卡住它自己的流，不会拖住整个通道。
 - **发送优先级**：控制帧和 PING 最高，其次是终端输入输出，再次是普通 RPC，最低是批量数据（传输、读大文件、搜索结果）。发送端按优先级轮转发帧，所以即使下载大文件，终端按键回显的延迟也不超过发送一块数据的时间。
 - **取消**：任何请求或流都可以用 `CANCEL{stream_id}` 取消，daemon 收到后会结束对应的子进程或 I/O。
-- **心跳**：沿用直连模式的参数，每 15 秒一次 PING，约 45 秒内收不到任何帧就判定断开。SSH 层的保活仍然保留，约 40 秒。
+- **心跳**：持久化终端每 10 秒向 daemon 通道发一次 `PING`，30 秒内没有收到任何帧就判定通道断开；SSH 层保活独立保留。主连接为 10 秒 × 4 个周期（约 40 秒），直连终端与持久化终端的 SSH 保活为 15 秒 × 5 个周期（约 75 秒）。
 
 ### 5.2 握手
 
@@ -187,18 +188,18 @@ A → HELLO { protocol, server_version, build, os, arch, home, shells[], tools{g
       已被覆盖 → 先发屏幕快照（contents_formatted，含颜色与光标），再接上实时流
 ```
 
-- 客户端仍按 1/2/5/10/20 秒退避重连。之后不再放弃，而是每 30 秒重试一次，直到用户关闭标签。终端标签上显示「重连中」，不显示「已退出」。
+- P2 客户端首次立即重连，失败后依次等待 5、5、10、10、10、10、10 秒，之后每 30 秒重试一次且不设上限，直到用户关闭标签、项目被移除，或 `pty.attach` 返回终端不存在。终端标签上显示「重连中」，不显示「已退出」。重连期间允许输入，后端按顺序缓冲，接回后再冲刷。
 - 接回后：
   - 重新下发当前的终端尺寸；
   - 断线期间进程如果已经退出，补发 `pty.exit`，带退出码；
   - 不再提示「断线前的进程已结束」，因为进程还活着。
-- 应用重启后，前端按持久化的终端标签 ID 接回。不在任何标签里的孤儿终端汇总成一条提示：「远端还有 N 个终端在运行」，可以接回，也可以结束。
+- **[P3 已实现]** 应用重启后，前端按持久化标签中的 `ptyId` / `connectionId` 优先调用 `ssh_attach_terminal`，失败时回退普通新建。连接就绪后，不在任何标签里的 detached 终端会汇总成一条提示：「远端还有 N 个终端在运行」，可以接回，也可以全部结束。该流程仍待 WP-G 的 G21/G22 真机验收。
 
 ### 6.3 生命周期与回收
 
 - daemon 在以下两种情况退出：
   - 没有任何客户端连着，也没有存活的 PTY，持续 10 分钟；
-  - 有 PTY 但一直没有客户端，超过 `remote.server.detachedTerminalTtl`（默认 24 小时）。此时先向所有 PTY 发 SIGHUP，再退出。
+  - 有 PTY 但一直没有客户端，超过当前的 24 小时 detached TTL。此时先向所有 PTY 发 SIGHUP，再退出。`remote.server.detachedTerminalTtl` 可配置项尚未落地。
 - 单实例：`run/daemon.lock` 用 `flock` 加锁（Windows 上用命名 mutex）。两个代理同时执行 `--ensure-daemon` 时只会启动一个 daemon。
 - 限额：
   - 每个 daemon 最多 64 个 PTY，超出返回明确错误；

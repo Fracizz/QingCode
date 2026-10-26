@@ -1,4 +1,8 @@
 import { isSshResource, safeInvoke } from '../tauri'
+import {
+  parseSshDetachedTerminal,
+  type SshDetachedTerminal,
+} from '../terminal/terminalRestorePlan'
 
 const sshTerminalIds = new Set<string>()
 
@@ -29,6 +33,23 @@ export function setTerminalOutputPaused(id: string, holder: object, paused: bool
 export type TerminalSpawnResult = {
   resolvedShell?: unknown
   fallbackFrom?: unknown
+  /** Set by `ssh_create_terminal` / `ssh_attach_terminal`. */
+  persistent?: boolean
+  /** Daemon PTY id; required when `persistent` is true. */
+  ptyId?: string
+  /** SSH connection owning the daemon PTY. */
+  connectionId?: string
+}
+
+export type TerminalAttachArgs = {
+  /** Local QingCode terminal tab id. */
+  id: string
+  /** Daemon PTY id returned by create/list. */
+  ptyId: string
+  /** SSH resource URI under a registered workspace root. */
+  cwd: string
+  cols: number
+  rows: number
 }
 
 export function createTerminal(args: {
@@ -37,6 +58,8 @@ export function createTerminal(args: {
   cols: number
   rows: number
   shell?: string | null
+  /** 标签名；SSH 持久化终端交给 daemon 保存，接回孤儿终端时用作标签名。 */
+  name?: string | null
 }): Promise<TerminalSpawnResult> {
   if (isSshResource(args.cwd)) {
     sshTerminalIds.add(args.id)
@@ -51,6 +74,36 @@ export function createTerminal(args: {
   return safeInvoke('新建终端', 'create_terminal', args)
 }
 
+/**
+ * Attach a local terminal tab to an existing daemon PTY.
+ * The backend returns the same spawn result shape as `ssh_create_terminal`.
+ */
+export function attachTerminal(args: TerminalAttachArgs): Promise<TerminalSpawnResult> {
+  sshTerminalIds.add(args.id)
+  return safeInvoke<TerminalSpawnResult>(
+    '接回 SSH 终端',
+    'ssh_attach_terminal',
+    args,
+  ).catch(error => {
+    sshTerminalIds.delete(args.id)
+    throw error
+  })
+}
+
+/** List detached daemon PTYs owned by this QingCode installation. */
+export async function listDetachedTerminals(
+  connectionId: string,
+): Promise<SshDetachedTerminal[]> {
+  const result = await safeInvoke<unknown[]>(
+    '查询远端终端',
+    'ssh_list_detached_terminals',
+    { connectionId },
+  )
+  return result
+    .map(parseSshDetachedTerminal)
+    .filter((terminal): terminal is SshDetachedTerminal => terminal != null)
+}
+
 export function spawnTerminalScript(args: {
   id: string
   cwd: string
@@ -60,6 +113,8 @@ export function spawnTerminalScript(args: {
   cols: number
   rows: number
   shell?: string | null
+  /** 标签名；SSH 持久化终端交给 daemon 保存，接回孤儿终端时用作标签名。 */
+  name?: string | null
 }): Promise<TerminalSpawnResult> {
   if (isSshResource(args.cwd)) {
     sshTerminalIds.add(args.id)

@@ -26,6 +26,7 @@ mod download;
 mod paths;
 mod scripts;
 mod serve;
+mod terminal;
 mod watch;
 
 pub(crate) use daemon::{
@@ -42,6 +43,10 @@ pub(crate) use paths::{
 };
 pub(crate) use scripts::{kill_server_command, windows_kill_server_script};
 pub(crate) use serve::{server_stream_call, ServerStreamOutcome};
+pub(crate) use terminal::{
+    attach_persistent_terminal, kill_detached_terminals, list_detached_terminals,
+    spawn_persistent_terminal, DetachedTerminal, PersistentLaunch, PersistentTerminal,
+};
 pub(crate) use watch::spawn_server_watch_supervisor;
 
 /// server 首次 ping / 单次往返的响应时限。

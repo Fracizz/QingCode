@@ -655,6 +655,15 @@ fn configure_ssh_server_binary_dirs(app: &tauri::AppHandle) {
         .set_server_binary_dirs(dirs);
 }
 
+fn configure_ssh_client_id(app: &tauri::AppHandle) {
+    let client_id = app_paths::load_or_create_client_id().unwrap_or_else(|error| {
+        eprintln!("[WARN] 无法持久化 qingcode-client-id：{error}");
+        uuid::Uuid::new_v4().to_string()
+    });
+    app.state::<remote_ssh::SshManager>()
+        .set_client_id(client_id);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Some(code) = cli::try_run_as_cli() {
@@ -703,6 +712,7 @@ pub fn run() {
             migrate_legacy_database();
             ipc::start_server(app.handle().clone());
             configure_ssh_server_binary_dirs(app.handle());
+            configure_ssh_client_id(app.handle());
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
                 let mut window_config = window_config.clone();
                 if launch_as_external && window_config.label == MAIN_WINDOW_LABEL {
@@ -832,6 +842,7 @@ pub fn run() {
             remote_ssh::ssh_server_states,
             remote_ssh::ssh_set_workspace_trust,
             remote_ssh::ssh_set_server_enabled,
+            remote_ssh::ssh_set_persistent_terminals_enabled,
             remote_ssh::ssh_server_info,
             remote_ssh::ssh_server_restart,
             remote_ssh::ssh_server_stop,
@@ -885,6 +896,9 @@ pub fn run() {
             remote_ssh::ssh_write_terminal,
             remote_ssh::ssh_resize_terminal,
             remote_ssh::ssh_kill_terminal,
+            remote_ssh::ssh_list_detached_terminals,
+            remote_ssh::ssh_attach_terminal,
+            remote_ssh::ssh_forget_workspace_root,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

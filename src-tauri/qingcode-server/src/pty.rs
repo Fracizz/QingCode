@@ -23,9 +23,9 @@
 // daemon 已在全平台使用本宿主（Windows 走 ConPTY，见 daemon.rs / ipc.rs），
 // 不再需要按平台豁免 dead_code。
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -75,7 +75,14 @@ pub struct PtyCreateOptions {
     /// 终端工作目录（项目根）。
     pub cwd: PathBuf,
     /// 显式指定的 shell；`None` 时用 `$SHELL`，再退化到 `/bin/sh`（登录 shell）。
+    /// Windows 默认 `powershell.exe`，显式值只允许 powershell、pwsh 和 cmd。
     pub shell: Option<String>,
+    /// 传给 shell 的附加参数（终端配置文件的启动参数）。
+    pub args: Vec<String>,
+    /// 追加到 daemon 基础环境上的变量；固定 TERM / COLORTERM 不允许覆盖。
+    pub env: BTreeMap<String, String>,
+    /// 终端配置文件名称，仅作为终端元数据保留。
+    pub name: Option<String>,
     pub cols: u16,
     pub rows: u16,
     /// 该终端环形缓冲的字节上限（0 表示不缓冲，重连一律走屏幕快照）。
@@ -88,6 +95,13 @@ pub struct PtyCreateOptions {
 #[derive(Debug, Clone)]
 pub struct PtyInfo {
     pub id: String,
+    pub name: Option<String>,
+    /// 下一个应由客户端写入的输入序号。
+    pub next_input_seq: u64,
+    /// 发起创建/接入的客户端；detach 后保留，供应用重启时精确筛出孤儿终端。
+    pub owner: Option<String>,
+    /// PTY 的远端工作目录，用于映射回 QingCode 的 SSH 资源 URI。
+    pub cwd: Option<String>,
     /// 下一个将被分配的 seq（即客户端已经收到的最大 seq + 1）。
     pub seq: u64,
     pub cols: u16,
@@ -110,7 +124,55 @@ pub struct AttachResult {
     pub seq_end: u64,
     pub cols: u16,
     pub rows: u16,
+    pub next_input_seq: u64,
     pub exited: Option<i32>,
+}
+
+/// [`PtyHost::write_input`] 的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputOutcome {
+    Written,
+    /// 该序号此前已写入，本次未重复写。
+    Duplicate,
+}
+
+/// [`PtyHost::write_input`] 的失败。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputError {
+    /// 序号跳号：客户端漏发了中间的输入。
+    Gap {
+        expected: u64,
+    },
+    Other(String),
+}
+
+/// 带序号写入的进度：`skip` 是续写起点，每写出一段就落到终端状态里。
+#[derive(Clone, Copy)]
+struct InputProgress {
+    seq: u64,
+    skip: usize,
+}
+
+/// 记录已写偏移；整笔写完（含 flush）后推进序号并清掉进度。
+fn record_input_progress(
+    term: &PtyTerm,
+    progress: Option<InputProgress>,
+    offset: usize,
+    done: bool,
+) {
+    let Some(progress) = progress else {
+        return;
+    };
+    let mut state = lock(&term.state);
+    if state.next_input_seq != progress.seq {
+        return;
+    }
+    if done {
+        state.next_input_seq = state.next_input_seq.wrapping_add(1);
+        state.input_partial = None;
+    } else {
+        state.input_partial = Some((progress.seq, offset));
+    }
 }
 
 /// 宿主向 daemon 推送的事件。
@@ -224,6 +286,11 @@ struct TermState {
     exited_at: Option<Instant>,
     /// 当前接着的客户端；`detach` 只接受归属者，避免旧连接把别人接回的终端踢下线。
     owner: Option<String>,
+    /// 单调输入序号；客户端重连时用同一序号重发，宿主据此去重。
+    next_input_seq: u64,
+    /// 当前序号已写入 PTY 的字节数 `(seq, offset)`：写到一半被取消或连接被中止时，
+    /// 重发同一序号从这里续写，不重复写已送达的前缀。
+    input_partial: Option<(u64, usize)>,
 }
 
 /// 进程控制句柄：`pid` 用于 `/proc` 查询与 `SIGHUP`，`killer` 是 portable-pty 的兜底。
@@ -234,14 +301,21 @@ struct ProcHandles {
 
 struct PtyTerm {
     id: String,
+    name: Option<String>,
+    cwd: String,
     created: u64,
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    /// Windows 上子进程退出后由等待线程取走并释放（关闭 ConPTY），读线程才能拿到 EOF；
+    /// 取走后为 `None`，resize 视为无操作。
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     writer: Mutex<Box<dyn Write + Send>>,
     /// Unix 上 writer 与 reader 共享 master 的 open file description；把该
     /// description 置为非阻塞后，reader 必须走 poll，writer 才能安全取消。
     writer_nonblocking: bool,
     proc: Mutex<ProcHandles>,
     state: Mutex<TermState>,
+    /// 带序号输入的串行闸：旧连接的写入结束（含 blocking 线程里仍在进行的写）
+    /// 之前，新连接对同一序号的重发在这里等待，再按已推进的序号判定是否重复。
+    input_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[cfg(unix)]
@@ -295,12 +369,13 @@ impl PtyHost {
     /// 创建终端。整个「限额检查 + openpty + spawn」在同一把锁内完成，
     /// 保证并发创建也不会突破 `max_ptys`（spawn 只花几毫秒，可以接受）。
     pub fn create(&self, opts: PtyCreateOptions) -> Result<PtyInfo, String> {
+        validate_create_options(&opts)?;
+        let shell = resolve_shell(opts.shell.as_deref())?;
         let cols = clamp_cols(opts.cols);
         let rows = clamp_rows(opts.rows);
         if !opts.cwd.is_dir() {
             return Err(format!("终端工作目录不存在：{}", opts.cwd.display()));
         }
-        let program = opts.shell.clone().unwrap_or_else(default_shell);
 
         let mut inner = lock(&self.inner);
         let active_count = inner
@@ -318,18 +393,23 @@ impl PtyHost {
         let pair = native_pty_system()
             .openpty(pty_size(cols, rows))
             .map_err(|err| format!("无法创建 PTY：{err}"))?;
-        let mut cmd = CommandBuilder::new(&program);
-        // 默认 shell 走登录 shell（与直连模式一致，加载用户的 profile）。
-        // 显式指定 shell 时按调用方给的程序原样启动。
-        #[cfg(unix)]
-        if opts.shell.is_none() {
+        let mut cmd = CommandBuilder::new(&shell.program);
+        // Unix 的默认与显式 shell 都按登录 shell 启动，和直连终端规则一致。
+        if shell.login {
             cmd.arg("-l");
         }
+        cmd.args(&opts.args);
         cmd.cwd(&opts.cwd);
+        for (key, value) in &opts.env {
+            cmd.env(key, value);
+        }
+        // 固定值最后写入，确保基础环境或调用方环境都不能改变 TUI 的色彩能力探测。
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
         let child = pair
             .slave
             .spawn_command(cmd)
-            .map_err(|err| format!("无法启动终端程序「{program}」：{err}"))?;
+            .map_err(|err| format!("无法启动终端程序「{}」：{err}", shell.program))?;
         let pid = child.process_id();
         let killer = child.clone_killer();
         // 关掉从端：主端读到 EOF/EIO 就等价于「shell 及其所有子进程都退出了」。
@@ -357,8 +437,10 @@ impl PtyHost {
         let ring_capacity = opts.scrollback_bytes;
         let term = Arc::new(PtyTerm {
             id: id.clone(),
+            name: opts.name.clone(),
+            cwd: opts.cwd.to_string_lossy().into_owned(),
             created: self.created_counter.fetch_add(1, Ordering::Relaxed),
-            master: Mutex::new(pair.master),
+            master: Mutex::new(Some(pair.master)),
             writer: Mutex::new(writer),
             writer_nonblocking,
             proc: Mutex::new(ProcHandles {
@@ -375,8 +457,11 @@ impl PtyHost {
                 detached_at: None,
                 exited: None,
                 exited_at: None,
-                owner: Some(opts.client_id),
+                owner: Some(opts.client_id.clone()),
+                next_input_seq: 0,
+                input_partial: None,
             }),
+            input_gate: Arc::new(tokio::sync::Mutex::new(())),
         });
         // 先把终端放进表里，读线程一启动就能找到自己（否则首批输出会丢）。
         inner.terms.insert(id.clone(), Arc::clone(&term));
@@ -387,6 +472,30 @@ impl PtyHost {
         let budget = self.total_buffer_bytes;
         let thread_id = id.clone();
         let term_for_reader = Arc::clone(&term);
+        // Windows ConPTY：子进程退出后伪控制台不关闭，读端永远等不到 EOF。
+        // 单独起线程等子进程，退出后释放 master（ClosePseudoConsole），读线程随即
+        // 读到 EOF，再从这里取退出码。
+        #[cfg(windows)]
+        let exit_source = {
+            let (code_tx, code_rx) = std::sync::mpsc::channel::<Option<i32>>();
+            let term_for_waiter = Arc::clone(&term);
+            let mut child = child;
+            let waiter = std::thread::Builder::new()
+                .name(format!("pty-wait-{id}"))
+                .spawn(move || {
+                    let code = child.wait().ok().map(|status| status.exit_code() as i32);
+                    let _ = code_tx.send(code);
+                    let master = lock(&term_for_waiter.master).take();
+                    drop(master);
+                });
+            if let Err(err) = waiter {
+                remove_term_locked(&mut lock(&self.inner), &id, &term);
+                return Err(format!("无法启动终端等待线程：{err}"));
+            }
+            ExitSource::Waiter(code_rx)
+        };
+        #[cfg(not(windows))]
+        let exit_source = ExitSource::Child(child);
         let spawned = std::thread::Builder::new()
             .name(format!("pty-{thread_id}"))
             .spawn(move || {
@@ -395,7 +504,7 @@ impl PtyHost {
                     budget,
                     term_for_reader,
                     reader,
-                    child,
+                    exit_source,
                     sink,
                     reader_wakeup,
                 );
@@ -407,6 +516,10 @@ impl PtyHost {
 
         Ok(PtyInfo {
             id,
+            name: opts.name,
+            next_input_seq: 0,
+            owner: Some(opts.client_id),
+            cwd: Some(opts.cwd.to_string_lossy().into_owned()),
             seq: 0,
             cols,
             rows,
@@ -417,10 +530,10 @@ impl PtyHost {
 
     /// 把客户端输入写进 PTY。写入可能因为内核缓冲满而阻塞，
     /// 期间不持有宿主锁（只持有该终端自己的写句柄）。
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub fn write(&self, id: &str, data: &[u8]) -> Result<(), String> {
         let term = self.term(id)?;
-        write_blocking(&term, data, None)
+        write_blocking(&term, data, None, None)
     }
 
     /// daemon 队列使用的可取消写入。
@@ -439,11 +552,13 @@ impl PtyHost {
             return Err("终端进程已退出".to_string());
         }
         if term.writer_nonblocking {
-            write_nonblocking(&term, &data, &cancel).await
+            write_nonblocking(&term, &data, None, &cancel).await
         } else {
-            tokio::task::spawn_blocking(move || write_blocking(&term, &data, Some(cancel.as_ref())))
-                .await
-                .map_err(|err| format!("写入终端任务异常结束：{err}"))?
+            tokio::task::spawn_blocking(move || {
+                write_blocking(&term, &data, None, Some(cancel.as_ref()))
+            })
+            .await
+            .map_err(|err| format!("写入终端任务异常结束：{err}"))?
         }
     }
 
@@ -452,9 +567,11 @@ impl PtyHost {
         let cols = clamp_cols(cols);
         let rows = clamp_rows(rows);
         let term = self.term(id)?;
-        lock(&term.master)
-            .resize(pty_size(cols, rows))
-            .map_err(|err| format!("调整终端尺寸失败：{err}"))?;
+        if let Some(master) = lock(&term.master).as_ref() {
+            master
+                .resize(pty_size(cols, rows))
+                .map_err(|err| format!("调整终端尺寸失败：{err}"))?;
+        }
         let mut state = lock(&term.state);
         state.parser.set_size(rows, cols);
         state.cols = cols;
@@ -462,11 +579,69 @@ impl PtyHost {
         Ok(())
     }
 
+    /// 写入一笔带序号的客户端输入，保证每个序号至多写入一次、前缀不重复。
+    ///
+    /// 检查序号、写入、推进序号在同一终端的输入闸内完成：旧连接卡在写入上时，
+    /// 新连接重发同一序号会等旧写入结束，再判定为重复；写到一半被取消的序号，
+    /// 重发时从已写偏移续写。
+    pub async fn write_input(
+        &self,
+        id: &str,
+        seq: u64,
+        data: Vec<u8>,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<InputOutcome, InputError> {
+        let term = self.term(id).map_err(InputError::Other)?;
+        let gate = Arc::clone(&term.input_gate).lock_owned().await;
+        let skip = {
+            let state = lock(&term.state);
+            if seq < state.next_input_seq {
+                return Ok(InputOutcome::Duplicate);
+            }
+            if seq != state.next_input_seq {
+                return Err(InputError::Gap {
+                    expected: state.next_input_seq,
+                });
+            }
+            if state.exited.is_some() {
+                return Err(InputError::Other("终端进程已退出".to_string()));
+            }
+            state
+                .input_partial
+                .filter(|(partial_seq, _)| *partial_seq == seq)
+                .map_or(0, |(_, offset)| offset.min(data.len()))
+        };
+        let progress = Some(InputProgress { seq, skip });
+        let written = if term.writer_nonblocking {
+            let written = write_nonblocking(&term, &data, progress, &cancel).await;
+            drop(gate);
+            written
+        } else {
+            // 闸随 blocking 写一起走：任务被中止后线程里的写入仍在进行，不能提前放行。
+            tokio::task::spawn_blocking(move || {
+                let _gate = gate;
+                write_blocking(&term, &data, progress, Some(cancel.as_ref()))
+            })
+            .await
+            .map_err(|err| InputError::Other(format!("写入终端任务异常结束：{err}")))?
+        };
+        written
+            .map(|()| InputOutcome::Written)
+            .map_err(InputError::Other)
+    }
+
     /// 客户端接回终端。`from_seq` 仍被缓冲覆盖时只补缺失块，否则给屏幕快照。
     /// 无论哪条路径都会把终端标记为已接入（`detached = false`）。
     pub fn attach(&self, id: &str, from_seq: u64, client_id: &str) -> Result<AttachResult, String> {
         let term = self.term(id)?;
         let mut state = lock(&term.state);
+        if state
+            .owner
+            .as_deref()
+            .is_some_and(|owner| owner != client_id)
+        {
+            return Err("终端不属于当前客户端，拒绝接入".to_string());
+        }
         state.attached = true;
         state.detached_at = None;
         state.owner = Some(client_id.to_string());
@@ -482,6 +657,7 @@ impl PtyHost {
             seq_end,
             cols: state.cols,
             rows: state.rows,
+            next_input_seq: state.next_input_seq,
             exited: state.exited,
         })
     }
@@ -497,7 +673,8 @@ impl PtyHost {
         }
         state.attached = false;
         state.detached_at = Some(Instant::now());
-        state.owner = None;
+        // 保留 owner：应用重启后要按安装 UUID + 连接 id 找回无人接着的终端。
+        // 后续 attach 若换了客户端会覆盖它，旧连接的迟到 detach 仍会因归属不符被忽略。
         Ok(())
     }
 
@@ -544,6 +721,10 @@ impl PtyHost {
                         term.created,
                         PtyInfo {
                             id: term.id.clone(),
+                            name: term.name.clone(),
+                            next_input_seq: state.next_input_seq,
+                            owner: state.owner.clone(),
+                            cwd: Some(term.cwd.clone()),
                             seq: state.ring.seq_end(),
                             cols: state.cols,
                             rows: state.rows,
@@ -688,12 +869,17 @@ fn remove_term_locked(
     Some(term)
 }
 
-fn write_blocking(term: &PtyTerm, data: &[u8], cancel: Option<&AtomicBool>) -> Result<(), String> {
+fn write_blocking(
+    term: &PtyTerm,
+    data: &[u8],
+    progress: Option<InputProgress>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), String> {
     if lock(&term.state).exited.is_some() {
         return Err("终端进程已退出".to_string());
     }
 
-    let mut offset = 0;
+    let mut offset = progress.map_or(0, |progress| progress.skip);
     while offset < data.len() {
         if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
             return Err("终端输入写入已取消".to_string());
@@ -704,7 +890,10 @@ fn write_blocking(term: &PtyTerm, data: &[u8], cancel: Option<&AtomicBool>) -> R
         };
         match written {
             Ok(0) => return Err("写入终端失败：写入长度为 0".to_string()),
-            Ok(written) => offset += written,
+            Ok(written) => {
+                offset += written;
+                record_input_progress(term, progress, offset, false);
+            }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(WRITE_RETRY_DELAY);
@@ -719,7 +908,10 @@ fn write_blocking(term: &PtyTerm, data: &[u8], cancel: Option<&AtomicBool>) -> R
             writer.flush()
         };
         match flushed {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                record_input_progress(term, progress, offset, true);
+                return Ok(());
+            }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
@@ -732,8 +924,13 @@ fn write_blocking(term: &PtyTerm, data: &[u8], cancel: Option<&AtomicBool>) -> R
     }
 }
 
-async fn write_nonblocking(term: &PtyTerm, data: &[u8], cancel: &AtomicBool) -> Result<(), String> {
-    let mut offset = 0;
+async fn write_nonblocking(
+    term: &PtyTerm,
+    data: &[u8],
+    progress: Option<InputProgress>,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let mut offset = progress.map_or(0, |progress| progress.skip);
     while offset < data.len() {
         if cancel.load(Ordering::SeqCst) {
             return Err("终端输入写入已取消".to_string());
@@ -746,6 +943,7 @@ async fn write_nonblocking(term: &PtyTerm, data: &[u8], cancel: &AtomicBool) -> 
             Ok(0) => return Err("写入终端失败：写入长度为 0".to_string()),
             Ok(written) => {
                 offset += written;
+                record_input_progress(term, progress, offset, false);
                 // 即使内核连续接收多段数据，也把同一连接的其他 PTY 队列
                 // 调度起来；不能让一个高速输入队列独占 current-thread runtime。
                 tokio::task::yield_now().await;
@@ -764,7 +962,10 @@ async fn write_nonblocking(term: &PtyTerm, data: &[u8], cancel: &AtomicBool) -> 
             writer.flush()
         };
         match flushed {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                record_input_progress(term, progress, offset, true);
+                return Ok(());
+            }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 if cancel.load(Ordering::SeqCst) {
@@ -815,6 +1016,25 @@ fn wait_readable(fd: ReaderWakeup) {
 #[cfg(not(unix))]
 fn wait_readable(_: ReaderWakeup) {}
 
+/// 读线程取退出码的来源：Unix 直接 `wait` 子进程；Windows 由等待线程转交。
+enum ExitSource {
+    #[cfg_attr(windows, allow(dead_code))]
+    Child(Box<dyn Child + Send + Sync>),
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Waiter(std::sync::mpsc::Receiver<Option<i32>>),
+}
+
+impl ExitSource {
+    fn wait(self) -> Option<i32> {
+        match self {
+            ExitSource::Child(mut child) => {
+                child.wait().ok().map(|status| status.exit_code() as i32)
+            }
+            ExitSource::Waiter(rx) => rx.recv().ok().flatten(),
+        }
+    }
+}
+
 /// 读线程主循环：把 master 的输出同时喂给解析器、环形缓冲和事件通道。
 ///
 /// 读线程是唯一往缓冲里写的线程，因此 seq 天然单调；它最后负责 `wait` 出退出码，
@@ -824,7 +1044,7 @@ fn read_loop(
     budget: usize,
     term: Arc<PtyTerm>,
     mut reader: Box<dyn Read + Send>,
-    mut child: Box<dyn Child + Send + Sync>,
+    exit_source: ExitSource,
     sink: Sender<PtyEvent>,
     reader_wakeup: ReaderWakeup,
 ) {
@@ -845,7 +1065,7 @@ fn read_loop(
             Err(_) => break,
         }
     }
-    let code = child.wait().ok().map(|status| status.exit_code() as i32);
+    let code = exit_source.wait();
     {
         let mut state = lock(&term.state);
         state.exited = Some(code.unwrap_or(-1));
@@ -972,23 +1192,208 @@ fn parser_scrollback_lines(buffer_bytes: usize, cols: u16) -> usize {
     (buffer_bytes / cols).min(MAX_PARSER_SCROLLBACK_LINES)
 }
 
-fn default_shell() -> String {
-    #[cfg(unix)]
-    {
-        // daemon 的 `$SHELL` 就是登录用户的默认 shell；路径不存在时退回 /bin/sh，
-        // 免得远端环境变量指到一个已卸载的 shell 上直接起不来。
-        if let Ok(shell) = std::env::var("SHELL") {
-            let shell = shell.trim().to_string();
-            if !shell.is_empty() && std::path::Path::new(&shell).exists() {
-                return shell;
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellLaunch {
+    program: String,
+    login: bool,
+}
+
+fn validate_create_options(opts: &PtyCreateOptions) -> Result<(), String> {
+    if opts.args.iter().any(|arg| arg.contains('\0')) {
+        return Err("终端参数包含无效字符".to_string());
+    }
+    if opts.name.as_deref().is_some_and(|name| name.contains('\0')) {
+        return Err("终端名称包含无效字符".to_string());
+    }
+    for (key, value) in &opts.env {
+        if key.is_empty() || key.contains('=') || key.contains('\0') {
+            return Err(format!("环境变量名「{key}」无效"));
+        }
+        if value.contains('\0') {
+            return Err(format!("环境变量「{key}」的值包含无效字符"));
+        }
+        // 动态加载器变量能让任意共享库注入终端进程，必须在启动前拒绝。
+        // TERM / COLORTERM 是固定能力声明，也不允许调用方覆盖。
+        let upper = key.to_ascii_uppercase();
+        if upper.starts_with("LD_")
+            || upper.starts_with("DYLD_")
+            || matches!(upper.as_str(), "TERM" | "COLORTERM")
+        {
+            return Err(format!("环境变量「{key}」不允许由 pty.create 覆盖"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn resolve_shell(requested: Option<&str>) -> Result<ShellLaunch, String> {
+    fn executable(path: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+
+    fn find_in_path(name: &str) -> Option<PathBuf> {
+        let paths = std::env::var_os("PATH")
+            .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+            .filter(|paths| !paths.is_empty())
+            .unwrap_or_else(|| {
+                ["/bin", "/usr/bin", "/usr/local/bin"]
+                    .into_iter()
+                    .map(PathBuf::from)
+                    .collect()
+            });
+        paths
+            .into_iter()
+            .filter(|dir| dir.is_absolute())
+            .map(|dir| dir.join(name))
+            .find(|candidate| executable(candidate))
+    }
+
+    fn explicit(value: &str) -> Result<ShellLaunch, String> {
+        let requested = Path::new(value);
+        let Some(name) = requested.file_name().and_then(|name| name.to_str()) else {
+            return Err(format!("shell 路径无效：「{value}」"));
+        };
+        if !matches!(name, "bash" | "zsh" | "sh") {
+            return Err(format!(
+                "不支持 shell「{value}」；可用 shell：bash、zsh、sh"
+            ));
+        }
+        let path = if requested.is_absolute() {
+            requested.to_path_buf()
+        } else if value.contains('/') {
+            return Err(format!("shell 路径必须是绝对路径：「{value}」"));
+        } else {
+            find_in_path(name).ok_or_else(|| format!("shell 不存在或不可执行：「{value}」"))?
+        };
+        if !executable(&path) {
+            return Err(format!("shell 不存在或不可执行：{}", path.display()));
+        }
+        Ok(ShellLaunch {
+            program: path.to_string_lossy().into_owned(),
+            login: true,
+        })
+    }
+
+    match requested.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => {
+            if value.contains('\0') {
+                return Err("shell 路径包含无效字符".to_string());
+            }
+            explicit(value)
+        }
+        None => {
+            // 默认跟随登录用户的 SHELL；值失效时按方案回退到 /bin/sh。
+            if let Ok(value) = std::env::var("SHELL") {
+                let value = value.trim();
+                if Path::new(value).is_absolute() && executable(Path::new(value)) {
+                    return Ok(ShellLaunch {
+                        program: value.to_string(),
+                        login: true,
+                    });
+                }
+            }
+            let fallback = Path::new("/bin/sh");
+            if executable(fallback) {
+                Ok(ShellLaunch {
+                    program: fallback.to_string_lossy().into_owned(),
+                    login: true,
+                })
+            } else {
+                Err("默认 shell /bin/sh 不存在或不可执行".to_string())
             }
         }
-        "/bin/sh".to_string()
     }
-    #[cfg(windows)]
-    {
-        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+}
+
+#[cfg(windows)]
+fn resolve_shell(requested: Option<&str>) -> Result<ShellLaunch, String> {
+    fn canonical_name(value: &str) -> Option<&'static str> {
+        let lower = value.to_ascii_lowercase();
+        match lower.strip_suffix(".exe").unwrap_or(&lower) {
+            "powershell" => Some("powershell.exe"),
+            "pwsh" => Some("pwsh.exe"),
+            "cmd" => Some("cmd.exe"),
+            _ => None,
+        }
     }
+
+    fn find_in_path(name: &str) -> Option<PathBuf> {
+        let paths = std::env::var_os("PATH")
+            .map(|value| std::env::split_paths(&value).collect::<Vec<_>>())
+            .unwrap_or_default();
+        paths
+            .into_iter()
+            .filter(|dir| dir.is_absolute())
+            .map(|dir| dir.join(name))
+            .find(|candidate| candidate.is_file())
+    }
+
+    fn find_known(name: &str) -> Option<PathBuf> {
+        if name.eq_ignore_ascii_case("cmd.exe") {
+            if let Some(comspec) = std::env::var_os("COMSPEC") {
+                let path = PathBuf::from(comspec);
+                if path.is_file() {
+                    return Some(path);
+                }
+            }
+        }
+        if name.eq_ignore_ascii_case("powershell.exe") {
+            let system_root = std::env::var_os("SystemRoot")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+            let path = system_root.join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+        find_in_path(name)
+    }
+
+    let path = match requested.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(value) => {
+            if value.contains('\0') {
+                return Err("shell 路径包含无效字符".to_string());
+            }
+            let candidate = Path::new(value);
+            let base = candidate
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(canonical_name);
+            let Some(name) = base else {
+                return Err(format!(
+                    "不支持 shell「{value}」；可用 shell：powershell、pwsh、cmd"
+                ));
+            };
+            let path = if candidate.is_absolute() {
+                candidate.to_path_buf()
+            } else if value.contains('/') || value.contains('\\') {
+                return Err(format!("shell 路径必须是绝对路径：「{value}」"));
+            } else {
+                find_known(name).ok_or_else(|| format!("shell 不存在：「{value}」"))?
+            };
+            if !path.is_file() {
+                return Err(format!("shell 不存在：{}", path.display()));
+            }
+            path
+        }
+        None => {
+            let name = "powershell.exe";
+            find_known(name).ok_or_else(|| "默认 shell powershell.exe 不存在".to_string())?
+        }
+    };
+    Ok(ShellLaunch {
+        program: path.to_string_lossy().into_owned(),
+        login: false,
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
+fn resolve_shell(requested: Option<&str>) -> Result<ShellLaunch, String> {
+    let _ = requested;
+    Err("当前平台不支持 daemon PTY".to_string())
 }
 
 /// 给终端进程（组）发 SIGHUP。unix 上同时打进程组和单个 pid：
@@ -1283,7 +1688,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     async fn wait_for_text(rx: &mut tokio::sync::mpsc::Receiver<PtyEvent>, id: &str, needle: &str) {
         let mut output = Vec::new();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
@@ -1300,7 +1704,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     async fn wait_for_exit(
         rx: &mut tokio::sync::mpsc::Receiver<PtyEvent>,
         id: &str,
@@ -1322,11 +1725,77 @@ mod tests {
         PtyCreateOptions {
             cwd: std::env::temp_dir(),
             shell: Some("/bin/sh".to_string()),
+            args: Vec::new(),
+            env: BTreeMap::new(),
+            name: None,
             cols: 80,
             rows: 24,
             scrollback_bytes,
             client_id: client_id.to_string(),
         }
+    }
+
+    /// 交互式 shell：Unix 用 /bin/sh，Windows 用 ConPTY 下的 PowerShell。
+    fn interactive_options() -> PtyCreateOptions {
+        #[cfg(unix)]
+        {
+            sh_options(64 * 1024, "client-a")
+        }
+        #[cfg(windows)]
+        {
+            PtyCreateOptions {
+                cwd: std::env::temp_dir(),
+                shell: Some("powershell.exe".to_string()),
+                args: vec!["-NoProfile".to_string(), "-NoLogo".to_string()],
+                env: BTreeMap::new(),
+                name: None,
+                cols: 80,
+                rows: 24,
+                scrollback_bytes: 64 * 1024,
+                client_id: "client-a".to_string(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn sequenced_input_is_written_at_most_once_and_resumes_partial_writes() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let host = Arc::new(PtyHost::new(4, 4 * 1024 * 1024, tx));
+        let info = host.create(interactive_options()).unwrap();
+        let cancel = || Arc::new(AtomicBool::new(false));
+        let enter = if cfg!(windows) { "\r" } else { "\n" };
+        let line = |text: &str| format!("{text}{enter}").into_bytes();
+
+        // 同一序号并发重发（旧连接仍在写、新连接重发）：只写一次，另一笔判重复。
+        let (first, second) = tokio::join!(
+            host.write_input(&info.id, 0, line("echo one"), cancel()),
+            host.write_input(&info.id, 0, line("echo one"), cancel()),
+        );
+        let mut outcomes = [first.unwrap(), second.unwrap()];
+        outcomes.sort_by_key(|outcome| *outcome == InputOutcome::Duplicate);
+        assert_eq!(outcomes, [InputOutcome::Written, InputOutcome::Duplicate]);
+
+        // 跳号被拒绝，序号不推进。
+        assert_eq!(
+            host.write_input(&info.id, 2, b"x".to_vec(), cancel()).await,
+            Err(InputError::Gap { expected: 1 })
+        );
+
+        // 模拟上次写到一半被中止：已送达 `echo ` 前缀，重发时只续写剩余部分。
+        let term = host.term(&info.id).unwrap();
+        lock(&term.state).input_partial = Some((1, b"echo ".len()));
+        assert_eq!(
+            host.write_input(&info.id, 1, line("echo resumed-marker"), cancel())
+                .await,
+            Ok(InputOutcome::Written)
+        );
+        {
+            let state = lock(&term.state);
+            assert_eq!(state.next_input_seq, 2);
+            assert!(state.input_partial.is_none());
+        }
+        wait_for_text(&mut rx, &info.id, "resumed-marker").await;
+        host.kill(&info.id).unwrap();
     }
 
     #[cfg(unix)]
@@ -1337,6 +1806,8 @@ mod tests {
         let info = host
             .create(sh_options(64 * 1024, "client-a"))
             .expect("创建 PTY 失败");
+        assert_eq!(info.owner.as_deref(), Some("client-a"));
+        assert!(info.cwd.is_some());
         host.write(&info.id, b"printf hello; sleep 0.2\n")
             .expect("写入终端失败");
 
@@ -1386,7 +1857,7 @@ mod tests {
         assert_eq!(wait_for_exit(&mut rx, &info.id).await, Some(0));
         assert_eq!(host.list().len(), 1, "未交付的退出终端应作为墓碑保留");
         let exited = host
-            .attach(&info.id, 0, "client-b")
+            .attach(&info.id, 0, "client-a")
             .expect("退出后、释放前应还能 attach");
         assert_eq!(exited.exited, Some(0));
         assert!(exited.screen.is_some() || !exited.replay.is_empty());
@@ -1410,7 +1881,7 @@ mod tests {
 
         assert_eq!(wait_for_exit(&mut rx, &info.id).await, Some(7));
         let attached = host
-            .attach(&info.id, 0, "client-b")
+            .attach(&info.id, 0, "client-a")
             .expect("detached 退出后应能接回墓碑");
         assert_eq!(attached.exited, Some(7));
         let replay = attached
@@ -1662,12 +2133,17 @@ mod tests {
         let listed = host.list();
         assert_eq!(listed.len(), 1);
         assert!(listed[0].detached);
+        assert_eq!(listed[0].owner.as_deref(), Some("client-a"));
+        assert!(listed[0].cwd.is_some());
         assert_eq!(listed[0].exited, None, "detach 不影响进程");
+        assert!(
+            host.attach(&info.id, 0, "client-b").is_err(),
+            "不同安装/客户端不能接走已有 owner 的终端"
+        );
 
         // 终端的 shell 仍在运行，可以继续接收输入。
         host.write(&info.id, b"printf alive\n").unwrap();
         wait_for_bytes(&mut rx, &info.id, 1).await;
-        assert!(!host.has_children(&info.id), "空闲 shell 没有子进程");
         host.kill(&info.id).unwrap();
     }
 
@@ -1677,7 +2153,6 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(64);
         let host = PtyHost::new(4, 1024 * 1024, tx);
         let info = host.create(sh_options(4096, "client-a")).unwrap();
-        assert!(!host.has_children(&info.id), "刚起来的 shell 没有子进程");
 
         host.write(&info.id, b"sleep 2\n").unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -1693,7 +2168,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn total_buffer_budget_evicts_longest_detached_buffer() {
+    async fn attach_after_buffer_eviction_returns_screen_snapshot() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(64);
         let budget = 8 * 1024;
         let host = PtyHost::new(4, budget, tx);
@@ -1731,5 +2206,157 @@ mod tests {
 
         host.kill(&first.id).unwrap();
         host.kill(&second.id).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn random_disconnects_never_lose_or_duplicate_output() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2048);
+        let host = PtyHost::new(2, 16 * 1024 * 1024, tx);
+        let info = host
+            .create(sh_options(8 * 1024 * 1024, "chaos-client"))
+            .expect("创建混沌测试终端失败");
+        host.write(
+            &info.id,
+            b"stty -echo; i=0; while [ $i -lt 120 ]; do printf 'chaos-%03d\\n' \"$i\"; i=$((i+1)); sleep 0.01; done; printf 'chaos-%s\\n' done\n",
+        )
+        .unwrap();
+
+        let mut next_seq = 0u64;
+        let mut output = Vec::new();
+        let mut seen = std::collections::BTreeMap::new();
+        let mut rng = 0x5eed_cafe_f00d_beefu64;
+
+        for round in 0..50 {
+            // 先消费少量“在线”输出，再随机断开；实际 daemon 的路由也按同样的
+            // next_seq 语义丢弃 attach 与实时流之间的重叠块。
+            let live_reads = (rng as usize % 5) + 1;
+            for _ in 0..live_reads {
+                if let Ok(Some(PtyEvent::Data { id, seq, data })) =
+                    tokio::time::timeout(Duration::from_millis(20), rx.recv()).await
+                {
+                    if id == info.id && seq >= next_seq {
+                        assert_eq!(seq, next_seq, "在线输出出现 seq 空洞");
+                        assert!(seen.insert(seq, data.clone()).is_none());
+                        output.extend_from_slice(&data);
+                        next_seq += 1;
+                    }
+                }
+            }
+
+            host.detach(&info.id, "chaos-client").unwrap();
+            tokio::time::sleep(Duration::from_millis(5 + rng % 11)).await;
+
+            let attached = host
+                .attach(&info.id, next_seq, "chaos-client")
+                .expect("混沌重连失败");
+            assert!(attached.screen.is_none(), "缓冲足够大时不应退化为屏幕快照");
+            for (seq, data) in attached.replay {
+                assert_eq!(seq, next_seq, "重放出现 seq 空洞");
+                assert!(seen.insert(seq, data.clone()).is_none(), "重放出现重复 seq");
+                output.extend_from_slice(&data);
+                next_seq += 1;
+            }
+            while let Ok(PtyEvent::Data { id, seq, data }) = rx.try_recv() {
+                if id != info.id || seq < next_seq {
+                    continue;
+                }
+                assert_eq!(seq, next_seq, "attach 后排空实时事件出现 seq 空洞");
+                assert!(
+                    seen.insert(seq, data.clone()).is_none(),
+                    "实时流出现重复 seq"
+                );
+                output.extend_from_slice(&data);
+                next_seq += 1;
+            }
+            if String::from_utf8_lossy(&output).contains("chaos-done") {
+                break;
+            }
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(round + 1);
+        }
+
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !String::from_utf8_lossy(&output).contains("chaos-done") {
+            assert!(Instant::now() < deadline, "混沌输出未在 20 秒内完成");
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let Ok(Some(PtyEvent::Data { id, seq, data })) =
+                tokio::time::timeout(remaining, rx.recv()).await
+            else {
+                panic!("混沌测试终端提前结束或事件流中断");
+            };
+            if id != info.id || seq < next_seq {
+                continue;
+            }
+            assert_eq!(seq, next_seq, "收尾阶段出现 seq 空洞");
+            assert!(
+                seen.insert(seq, data.clone()).is_none(),
+                "收尾阶段出现重复 seq"
+            );
+            output.extend_from_slice(&data);
+            next_seq += 1;
+        }
+
+        let text = String::from_utf8_lossy(&output);
+        let numbers: Vec<usize> = text
+            .lines()
+            .filter_map(|line| line.find("chaos-").map(|start| &line[start + 6..]))
+            .filter_map(|value| {
+                let digits = value
+                    .char_indices()
+                    .take_while(|(_, ch)| ch.is_ascii_digit())
+                    .map(|(index, _)| index)
+                    .last()
+                    .map(|index| &value[..=index])?;
+                (digits.len() == 3)
+                    .then(|| digits.parse::<usize>().ok())
+                    .flatten()
+            })
+            .collect();
+        assert_eq!(
+            numbers,
+            (0..120).collect::<Vec<_>>(),
+            "混沌重连后输出序号不连续或重复"
+        );
+
+        host.kill(&info.id).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_conpty_runs_powershell_command() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let host = PtyHost::new(2, 4 * 1024 * 1024, tx);
+        let cwd = std::env::temp_dir().join(format!(
+            "qingcode-conpty-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|value| value.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&cwd).unwrap();
+        let info = host
+            .create(PtyCreateOptions {
+                cwd: cwd.clone(),
+                shell: Some("powershell.exe".to_string()),
+                args: vec![
+                    "-NoProfile".to_string(),
+                    "-Command".to_string(),
+                    "Write-Output ok".to_string(),
+                ],
+                env: BTreeMap::new(),
+                name: Some("windows-conpty".to_string()),
+                cols: 80,
+                rows: 24,
+                scrollback_bytes: 1024 * 1024,
+                client_id: "windows-test".to_string(),
+            })
+            .expect("ConPTY 创建失败");
+
+        wait_for_text(&mut rx, &info.id, "ok").await;
+        assert_eq!(wait_for_exit(&mut rx, &info.id).await, Some(0));
+        let _ = std::fs::remove_dir_all(cwd);
     }
 }
