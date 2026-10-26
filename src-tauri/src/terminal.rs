@@ -1,4 +1,5 @@
 use portable_pty::{ChildKiller, CommandBuilder, NativePtySystem, PtyPair, PtySize, PtySystem};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -780,6 +781,31 @@ fn validate_terminal_cwd(cwd: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 去掉 Windows canonicalize 产生的 verbatim 前缀（`\\?\D:\...`、`\\?\UNC\...`）。
+///
+/// CreateProcess 能接受该前缀，但 PowerShell 无法把它映射到盘符，提示符会显示成
+/// `PS Microsoft.PowerShell.Core\FileSystem::\\?\D:\...>`，因此交给 shell 前必须还原。
+fn strip_windows_verbatim_prefix(cwd: &str) -> Cow<'_, str> {
+    let Some(rest) = cwd.strip_prefix(r"\\?\") else {
+        return Cow::Borrowed(cwd);
+    };
+    if rest
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"UNC\"))
+    {
+        return Cow::Owned(format!(r"\\{}", &rest[4..]));
+    }
+    Cow::Borrowed(rest)
+}
+
+fn shell_working_directory(cwd: &str) -> Cow<'_, str> {
+    if cfg!(windows) {
+        strip_windows_verbatim_prefix(cwd)
+    } else {
+        Cow::Borrowed(cwd)
+    }
+}
+
 fn build_host_shell_command(
     shell: Option<&str>,
     cwd: &str,
@@ -790,7 +816,8 @@ fn build_host_shell_command(
         cmd.arg(arg);
     }
     if !cwd.is_empty() {
-        cmd.cwd(cwd);
+        let cwd = shell_working_directory(cwd);
+        cmd.cwd(cwd.as_ref());
     }
     Ok((cmd, resolved))
 }
@@ -810,7 +837,8 @@ fn build_script_command(
         cmd.arg(arg);
     }
     if let Some(ref cwd) = spec.cwd {
-        cmd.cwd(cwd);
+        let cwd = shell_working_directory(cwd);
+        cmd.cwd(cwd.as_ref());
     }
     for (k, v) in spec.env {
         cmd.env(k, v);
@@ -1122,6 +1150,37 @@ mod tests {
         assert_eq!(infer_script_kind("scripts/build.bat"), "bat");
         assert_eq!(infer_script_kind("scripts/build.CMD"), "bat");
         assert_eq!(infer_script_kind("scripts/build.sh"), "sh");
+    }
+
+    #[test]
+    fn strip_windows_verbatim_prefix_restores_drive_paths() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\D:\code\qingcode"),
+            r"D:\code\qingcode"
+        );
+        assert_eq!(strip_windows_verbatim_prefix(r"\\?\C:\"), r"C:\");
+    }
+
+    #[test]
+    fn strip_windows_verbatim_prefix_restores_unc_paths() {
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\UNC\server\share\project"),
+            r"\\server\share\project"
+        );
+        assert_eq!(
+            strip_windows_verbatim_prefix(r"\\?\unc\server\share"),
+            r"\\server\share"
+        );
+    }
+
+    #[test]
+    fn strip_windows_verbatim_prefix_leaves_normal_paths_untouched() {
+        assert_eq!(strip_windows_verbatim_prefix(r"D:\code"), r"D:\code");
+        assert_eq!(
+            strip_windows_verbatim_prefix("/home/dev/code"),
+            "/home/dev/code"
+        );
+        assert_eq!(strip_windows_verbatim_prefix(""), "");
     }
 
     #[test]
