@@ -1255,6 +1255,9 @@ async fn find_verified_installed_binary(
 }
 
 #[cfg(test)]
+mod real_host_bench;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -53,8 +53,10 @@ SFTP 编辑或界面验收；这些需要另外运行客户端集成测试或真
 - `live_backend_sftp_trust_pool_concurrency_and_reconnect`：产品 `SshManager` 的
   已确认指纹校验、信任门禁、SFTP 读写和边界、16 路 SFTP、24 路命令、16 个
   终端通道连接池及已确认断线后的重连。设置 `QC_LIVE_HOST`、`QC_LIVE_PORT`
-  （可选）、`QC_LIVE_USER`、`QC_LIVE_PASSWORD`、`QC_LIVE_FINGERPRINT` 和
-  `QC_LIVE_PARENT`。父目录必须已存在；只创建/清理其中本轮的 UUID 测试目录。
+  （可选）、`QC_LIVE_USER`、`QC_LIVE_FINGERPRINT` 和 `QC_LIVE_PARENT`。
+  密码认证使用 `QC_LIVE_PASSWORD`；已有私钥可设置 `QC_LIVE_PRIVATE_KEY`，
+  加密私钥另设 `QC_LIVE_PASSPHRASE`，此时不要求密码。父目录必须已存在；
+  只创建/清理其中本轮的 UUID 测试目录。
 - `live_daemon_backpressure_reconnects_and_accepts_input`：真实 russh/daemon 客户端
   产生 4MB 输出并暂停事件消费，验证 2MB 积压保护、原 daemon 存活、attach 恢复
   和后续输入。还需 `QC_LIVE_SERVER_BIN`、`QC_LIVE_SERVER_RUN`、

@@ -293,8 +293,6 @@ impl client::Handler for SshClient {
         if let Ok(mut observed) = self.observed_fingerprint.lock() {
             *observed = Some(fingerprint.clone());
         }
-        #[cfg(test)]
-        eprintln!("SSH_TRACE server key received");
         Ok(self
             .expected_fingerprint
             .as_deref()
@@ -519,7 +517,7 @@ fn is_session_channel_refusal(error: &russh::Error) -> bool {
 /// 远端拒绝开通道时的重试次数，共约 3 秒。
 const CHANNEL_OPEN_RETRIES: u32 = 5;
 /// sshd 默认每条连接最多 10 个会话；主连接预留 1 个 SFTP、Windows 的 1 个路径校验
-/// 和最多 6 个命令，留余量给 watch / scan 与重试。超出的命令排队，不报错。
+/// 和最多 6 个命令/主连接回退终端，留余量给 watch / scan 与重试。超出的命令排队。
 const MAX_CONCURRENT_EXEC_CHANNELS: usize = 6;
 /// 终端各用独立连接；sshd 的 MaxStartups 默认 10:30:100，未认证连接到 10 个起会被随机拒绝，
 /// 同时握手留在 6 个以内，给其它客户端留余量。
@@ -774,7 +772,26 @@ struct TerminalTransportPoolState {
     entries: Vec<PooledTerminalTransport>,
     /// 该连接的 sshd 会话上限；`None` 表示还没探测过。
     limit: Option<SshdSessionLimit>,
+    /// 借用主连接通道的终端数（专用连接握手失败时的回退），受
+    /// [`TERMINAL_MAIN_FALLBACK_LIMIT`] 限制。
+    main_fallback: usize,
+    /// 最近一次专用终端连接握手失败的时间与原因：冷却期内直接走主连接回退，
+    /// 不再每开一个终端都白等握手超时（失败的握手还会让远端继续追加罚时）。
+    handshake_failure: Option<(Instant, String)>,
 }
+
+/// 主连接上最多借给终端的 daemon 通道数：主连接还要承载 SFTP、命令与
+/// scan/search/watch，sshd 的 MaxSessions（默认 10）不能都给终端。
+const TERMINAL_MAIN_FALLBACK_LIMIT: usize = 4;
+/// 专用终端连接握手失败后，多久内不再尝试新握手、直接回退主连接。
+const TERMINAL_HANDSHAKE_FAILURE_COOLDOWN: Duration = Duration::from_secs(120);
+
+/// 专用终端连接握手失败时附带的排查提示。
+///
+/// OpenSSH 9.8+（含 Windows 版 9.8p2）默认开启 PerSourcePenalties：连接异常结束、
+/// 认证前断开等都会给来源 IP 记罚时，罚时内该 IP 的新连接一律被拒（远端回
+/// `Not allowed at this time` 或握手无响应），已建立的连接不受影响。
+const TERMINAL_HANDSHAKE_PENALTY_HINT: &str = "若远端为 OpenSSH 9.8 及以上（含 Windows 版），可能是 PerSourcePenalties 正对本机 IP 罚时拒绝新连接，可在远端 sshd_config 加入 PerSourcePenaltyExemptList <本机 IP> 或 PerSourcePenalties no 后重启 sshd";
 
 /// 同一 SSH 连接配置下，server 模式终端共用的连接；锁同时串行化探测与新连接握手。
 type TerminalTransportPool = Arc<tokio::sync::Mutex<TerminalTransportPoolState>>;
@@ -809,6 +826,10 @@ struct TerminalTransportLease {
     transport: Arc<ConnectedSession>,
     released: AtomicBool,
     pool: TerminalTransportPool,
+    /// 借用的是主连接（专用连接握手失败时的回退）：归还时只减计数，绝不断开。
+    main_fallback: bool,
+    /// 回退终端与命令共用主连接预算；release 时立即归还，不必等租约对象析构。
+    main_slot: Mutex<Option<tokio::sync::OwnedSemaphorePermit>>,
     /// 已有共享连接全满、本次新开了连接时给用户的提示。
     notice: Option<String>,
 }
@@ -830,11 +851,17 @@ impl TerminalTransportLease {
         if self.released.swap(true, Ordering::AcqRel) {
             return;
         }
+        drop(self.main_slot.lock().unwrap().take());
         let transport = Arc::clone(&self.transport);
         let pool = Arc::clone(&self.pool);
+        let main_fallback = self.main_fallback;
         tauri::async_runtime::spawn(async move {
             // 名额只在池锁内增减，这里持锁判断空闲不会与新租约竞争。
             let mut state = pool.lock().await;
+            if main_fallback {
+                state.main_fallback = state.main_fallback.saturating_sub(1);
+                return;
+            }
             let Some(index) = state
                 .entries
                 .iter()
@@ -982,6 +1009,16 @@ impl SshManager {
                 Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_EXEC_CHANNELS))
             }),
         ))
+    }
+
+    fn try_main_fallback_slot(
+        &self,
+        connection_id: &str,
+    ) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.exec_slots(connection_id)
+            .ok()?
+            .try_acquire_owned()
+            .ok()
     }
 
     fn remember_config(
@@ -1160,23 +1197,52 @@ impl SshManager {
                 transport: Arc::clone(&entry.transport),
                 released: AtomicBool::new(false),
                 pool: Arc::clone(&pool),
+                main_fallback: false,
+                main_slot: Mutex::new(None),
                 notice: None,
             });
         }
         let full = state.entries.len();
-        let transport = self
-            .handshake_terminal_transport(connection_id)
-            .await
-            .map_err(|error| {
-                if full == 0 {
-                    format!("{error}（终端共享 SSH 连接握手失败，可检查远端 sshd 状态与 MaxStartups）")
+        // 刚失败过的握手在冷却期内不再重试：直接回退主连接，避免每个终端都等满
+        // 握手超时，也避免失败握手让远端 sshd 继续给本机 IP 追加罚时。
+        let cooling = state
+            .handshake_failure
+            .as_ref()
+            .filter(|(at, _)| at.elapsed() < TERMINAL_HANDSHAKE_FAILURE_COOLDOWN)
+            .map(|(_, error)| error.clone());
+        let fresh_failure = cooling.is_none();
+        let handshake = match cooling {
+            Some(error) => Err(error),
+            None => self.handshake_terminal_transport(connection_id).await,
+        };
+        let transport = match handshake {
+            Ok(transport) => {
+                state.handshake_failure = None;
+                transport
+            }
+            Err(error) => {
+                if fresh_failure {
+                    eprintln!(
+                        "[WARN] terminal transport handshake failed for {connection_id}: {error}"
+                    );
+                    state.handshake_failure = Some((Instant::now(), error.clone()));
+                }
+                if let Some(lease) = self
+                    .lease_main_fallback(connection_id, &pool, &mut state, &error, fresh_failure)
+                    .await
+                {
+                    return Ok(lease);
+                }
+                return Err(if full == 0 {
+                    format!("{error}（终端共享 SSH 连接握手失败，可检查远端 sshd 状态与 MaxStartups；{TERMINAL_HANDSHAKE_PENALTY_HINT}）")
                 } else {
                     format!(
                         "{error}（已有 {full} 条终端共享连接均已占满，{}；可在远端 sshd_config 调大 MaxSessions 后重启 sshd）",
                         limit.describe()
                     )
-                }
-            })?;
+                });
+            }
+        };
         state.entries.push(PooledTerminalTransport {
             transport: Arc::clone(&transport),
             leased: 1,
@@ -1186,7 +1252,45 @@ impl SshManager {
             transport,
             released: AtomicBool::new(false),
             pool: Arc::clone(&pool),
+            main_fallback: false,
+            main_slot: Mutex::new(None),
             notice: (full > 0).then(|| terminal_pool_full_notice(full, limit)),
+        })
+    }
+
+    /// 专用终端连接握手失败时，向已认证的主连接借一个 daemon 通道。
+    ///
+    /// 只用现有主连接、不触发重连（重连同样要新握手）；主连接无响应或借用数已达
+    /// [`TERMINAL_MAIN_FALLBACK_LIMIT`] 时返回 `None`，由调用方按原错误报错。
+    /// `announce` 为真时附带提示（只在刚失败那一次提示，冷却期内静默借用）。
+    async fn lease_main_fallback(
+        &self,
+        connection_id: &str,
+        pool: &TerminalTransportPool,
+        state: &mut TerminalTransportPoolState,
+        error: &str,
+        announce: bool,
+    ) -> Option<TerminalTransportLease> {
+        if state.main_fallback >= TERMINAL_MAIN_FALLBACK_LIMIT {
+            return None;
+        }
+        let main = self.session(connection_id).ok()?;
+        if !connection_responds(&main.handle).await {
+            return None;
+        }
+        let slot = self.try_main_fallback_slot(connection_id)?;
+        state.main_fallback += 1;
+        Some(TerminalTransportLease {
+            transport: main,
+            released: AtomicBool::new(false),
+            pool: Arc::clone(pool),
+            main_fallback: true,
+            main_slot: Mutex::new(Some(slot)),
+            notice: announce.then(|| {
+                format!(
+                    "终端专用 SSH 连接握手失败（{error}），已改用主连接承载终端（最多 {TERMINAL_MAIN_FALLBACK_LIMIT} 个）；{TERMINAL_HANDSHAKE_PENALTY_HINT}"
+                )
+            }),
         })
     }
 
@@ -2382,22 +2486,12 @@ async fn open_transport(
         keepalive_window: keepalive_window(purpose),
     };
     let client_config = ssh_client_config(purpose);
-    #[cfg(test)]
-    eprintln!("SSH_TRACE {purpose:?} connect start");
-    #[cfg(not(test))]
     let result = client::connect(
         Arc::new(client_config),
         (config.host.as_str(), config.port),
         handler,
     )
     .await;
-    #[cfg(test)]
-    let result = live_acceptance::traced_connect(client_config, config, handler).await;
-    #[cfg(test)]
-    eprintln!(
-        "SSH_TRACE {purpose:?} transport finished: ok={}",
-        result.is_ok()
-    );
     let fingerprint = observed
         .lock()
         .ok()
@@ -2640,11 +2734,7 @@ async fn authenticate_session(
         tokio::time::timeout(SSH_HANDSHAKE_TIMEOUT, async {
             let (mut handle, fingerprint, disconnect_reason) =
                 open_transport(&config, expected, purpose).await?;
-            #[cfg(test)]
-            eprintln!("SSH_TRACE {purpose:?} auth start");
             authenticate(&mut handle, &config).await?;
-            #[cfg(test)]
-            eprintln!("SSH_TRACE {purpose:?} authenticated");
             Ok::<_, String>((handle, fingerprint, disconnect_reason))
         })
         .await
@@ -6048,6 +6138,27 @@ mod tests {
         assert_eq!(super::pick_terminal_transport([(10, 10), (3, 10)]), Some(1));
         assert_eq!(super::pick_terminal_transport([(10, 10), (4, 4)]), None);
         assert_eq!(super::pick_terminal_transport(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn main_terminal_fallback_and_commands_share_session_budget() {
+        let manager = SshManager::new();
+        let slots = manager.exec_slots("budget-test").unwrap();
+        let mut terminals: Vec<_> = (0..TERMINAL_MAIN_FALLBACK_LIMIT)
+            .map(|_| manager.try_main_fallback_slot("budget-test").unwrap())
+            .collect();
+        let commands: Vec<_> = (TERMINAL_MAIN_FALLBACK_LIMIT..MAX_CONCURRENT_EXEC_CHANNELS)
+            .map(|_| Arc::clone(&slots).try_acquire_owned().unwrap())
+            .collect();
+        assert_eq!(slots.available_permits(), 0);
+        assert!(manager.try_main_fallback_slot("budget-test").is_none());
+        assert!(Arc::clone(&slots).try_acquire_owned().is_err());
+
+        drop(terminals.pop());
+        let replacement = Arc::clone(&slots).try_acquire_owned().unwrap();
+        assert!(manager.try_main_fallback_slot("budget-test").is_none());
+        drop((terminals, commands, replacement));
+        assert_eq!(slots.available_permits(), MAX_CONCURRENT_EXEC_CHANNELS);
     }
 
     #[test]

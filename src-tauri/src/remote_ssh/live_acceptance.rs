@@ -5,97 +5,19 @@
 use super::*;
 use serde_json::json;
 
-pub(super) async fn traced_connect(
-    client_config: client::Config,
-    config: &SshConnectionConfig,
-    handler: SshClient,
-) -> Result<client::Handle<SshClient>, russh::Error> {
-    let socket = tokio::net::TcpStream::connect((config.host.as_str(), config.port)).await?;
-    if client_config.nodelay {
-        socket.set_nodelay(true)?;
-    }
-    let port = socket.local_addr()?.port();
-    eprintln!("SSH_TRACE TCP connected local_port={port}");
-    client::connect_stream(
-        Arc::new(client_config),
-        TracedSocket {
-            socket,
-            port,
-            reads: 0,
-            writes: 0,
-        },
-        handler,
-    )
-    .await
-}
-
-struct TracedSocket {
-    socket: tokio::net::TcpStream,
-    port: u16,
-    reads: usize,
-    writes: usize,
-}
-
-impl AsyncRead for TracedSocket {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        let before = buf.filled().len();
-        let result = std::pin::Pin::new(&mut self.socket).poll_read(cx, buf);
-        if matches!(result, std::task::Poll::Ready(Ok(()))) {
-            self.reads += 1;
-            if self.reads <= 4 {
-                eprintln!(
-                    "SSH_TRACE port={} read#{} bytes={}",
-                    self.port,
-                    self.reads,
-                    buf.filled().len() - before
-                );
-            }
-        }
-        result
-    }
-}
-
-impl AsyncWrite for TracedSocket {
-    fn poll_write(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<std::io::Result<usize>> {
-        let result = std::pin::Pin::new(&mut self.socket).poll_write(cx, buf);
-        if let std::task::Poll::Ready(Ok(count)) = result {
-            self.writes += 1;
-            if self.writes <= 4 {
-                eprintln!(
-                    "SSH_TRACE port={} write#{} bytes={count}",
-                    self.port, self.writes
-                );
-            }
-        }
-        result
-    }
-    fn poll_flush(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.socket).poll_flush(cx)
-    }
-    fn poll_shutdown(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        std::pin::Pin::new(&mut self.socket).poll_shutdown(cx)
-    }
-}
-
 fn required(name: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| panic!("{name} is required for live acceptance"))
 }
 
 fn config() -> SshConnectionConfig {
+    let private_key_path = std::env::var("QC_LIVE_PRIVATE_KEY")
+        .ok()
+        .filter(|path| !path.trim().is_empty());
+    let (auth_kind, password) = if private_key_path.is_some() {
+        ("privateKey", None)
+    } else {
+        ("password", Some(required("QC_LIVE_PASSWORD")))
+    };
     SshConnectionConfig {
         id: format!("live-{}", uuid::Uuid::new_v4()),
         host: required("QC_LIVE_HOST"),
@@ -104,10 +26,10 @@ fn config() -> SshConnectionConfig {
             .parse()
             .expect("QC_LIVE_PORT"),
         username: required("QC_LIVE_USER"),
-        auth_kind: "password".into(),
-        password: Some(required("QC_LIVE_PASSWORD")),
-        private_key_path: None,
-        passphrase: None,
+        auth_kind: auth_kind.into(),
+        password,
+        private_key_path,
+        passphrase: std::env::var("QC_LIVE_PASSPHRASE").ok(),
         host_key_fingerprint: Some(required("QC_LIVE_FINGERPRINT")),
         mode: Some(RemoteMode::Server),
     }
@@ -436,6 +358,76 @@ async fn exercise(
     println!("LIVE_STAGE terminal pool released");
     let pool_elapsed_ms = pool_started.elapsed().as_secs_f64() * 1000.0;
 
+    // Force the cooldown branch without provoking an actual failed handshake.
+    // Main-connection terminals must leave room for concurrent commands/SFTP.
+    pool.lock().await.handshake_failure = Some((Instant::now(), "live budget test".into()));
+    let mut fallback_leases = Vec::new();
+    let mut fallback_channels = Vec::new();
+    for _ in 0..TERMINAL_MAIN_FALLBACK_LIMIT {
+        let lease = manager.lease_daemon_terminal_transport(id, uri).await?;
+        check(
+            lease.main_fallback,
+            "forced cooldown did not use main connection",
+        )?;
+        fallback_channels.push(
+            open_session_channel_once(&lease, "live fallback budget")
+                .await
+                .map_err(|e| e.message)?,
+        );
+        fallback_leases.push(lease);
+    }
+    let slots = manager.exec_slots(id)?;
+    assert_eq!(
+        slots.available_permits(),
+        MAX_CONCURRENT_EXEC_CHANNELS - TERMINAL_MAIN_FALLBACK_LIMIT
+    );
+    let mut fallback_commands = tokio::task::JoinSet::new();
+    for _ in 0..MAX_CONCURRENT_EXEC_CHANNELS {
+        let manager = Arc::clone(manager);
+        let uri = uri.to_string();
+        fallback_commands.spawn(async move {
+            manager
+                .exec_remote_shell(
+                    &uri,
+                    "sleep 0.05; printf 'budget-ok'",
+                    "Start-Sleep -Milliseconds 50; [Console]::Write('budget-ok')",
+                    true,
+                    Duration::from_secs(20),
+                )
+                .await
+        });
+    }
+    assert_eq!(
+        sftp.read(renamed.clone())
+            .await
+            .map_err(|e| e.to_string())?,
+        content.as_bytes()
+    );
+    while let Some(result) = fallback_commands.join_next().await {
+        let result = result.map_err(|e| e.to_string())??;
+        check(
+            result.exit_code == 0 && result.stdout == "budget-ok",
+            "command failed alongside main terminal fallbacks",
+        )?;
+    }
+    for channel in fallback_channels {
+        let _ = channel.close().await;
+    }
+    for lease in &fallback_leases {
+        lease.release();
+        lease.release();
+    }
+    // A released lease may remain alive in a reconnect loop. Return permits
+    // immediately and only once, without requiring the lease object to drop.
+    assert_eq!(slots.available_permits(), MAX_CONCURRENT_EXEC_CHANNELS);
+    drop(fallback_leases);
+    pool.lock().await.handshake_failure = None;
+    check(
+        !main.handle.is_closed(),
+        "fallback release disconnected main SSH",
+    )?;
+    println!("LIVE_STAGE main fallback terminals share command budget and preserve SFTP");
+
     close_terminal_transport(&main).await;
     // disconnect() queues the SSH message; wait for the transport to actually
     // close before testing recovery from a confirmed loss (rather than racing
@@ -464,7 +456,8 @@ async fn exercise(
             "pool": {"channels": 16, "ssh_transports": transport_count, "capacity": capacity,
                 "elapsed_ms": pool_elapsed_ms, "released": true},
             "trust_denial": true, "changed_fingerprint_rejected": true,
-        "symlink_escape_rejected": true, "main_reconnect": true, "git_available": git_available
+        "symlink_escape_rejected": true, "main_reconnect": true, "git_available": git_available,
+        "main_fallback_shared_budget": true
         })
     );
     Ok(())

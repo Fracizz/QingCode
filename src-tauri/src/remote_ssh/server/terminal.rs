@@ -1572,6 +1572,9 @@ fn remove_persistent_terminal(app: &AppHandle, terminal: &Arc<PersistentTerminal
 }
 
 #[cfg(test)]
+mod real_host_stability;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[cfg(unix)]

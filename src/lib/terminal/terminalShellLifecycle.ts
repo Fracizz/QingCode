@@ -159,6 +159,19 @@ export function restoredExitRecovery(options: {
   return 'locked'
 }
 
+/**
+ * 断线重连期间单独按下 Ctrl+C 视为“放弃重连并退出”：
+ * 否则这次按键会排进待发队列，重连后才误发给远端程序，等待期间也无法脱身。
+ */
+export function shouldCancelReconnectOnInput(
+  tab: Pick<TerminalTab, 'status'>,
+  recovering: boolean,
+  data: string,
+): boolean {
+  if (data !== '\x03') return false
+  return tab.status === 'reconnecting' || (recovering && tab.status === 'starting')
+}
+
 /** SSH 断线后重开 Shell 的退避间隔；全部失败后停在已退出，可从标签手动重启。 */
 export const SSH_TERMINAL_RECONNECT_DELAYS_MS = [1_000, 2_000, 5_000, 10_000, 20_000] as const
 
