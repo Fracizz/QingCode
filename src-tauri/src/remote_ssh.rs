@@ -454,6 +454,12 @@ const SSH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 /// 会话已半死时 `channel_open_session` 也不会返回；超时后探测一次再决定是否重连。
 const SSH_CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 const CHANNEL_OPEN_TIMEOUT_MARKER: &str = "通道超时";
+/// 远端以 ConnectFailed 拒绝开通道（多为 MaxSessions 打满）时错误信息里的固定片段。
+const CHANNEL_REFUSED_MARKER: &str = "远端拒绝打开新通道";
+
+fn is_channel_refused_error(message: &str) -> bool {
+    message.contains(CHANNEL_REFUSED_MARKER)
+}
 /// 远端拒绝开通道（ConnectFailed）时的重试次数，共约 3 秒。
 const CHANNEL_OPEN_RETRIES: u32 = 5;
 /// sshd 默认每条连接最多 10 个会话；主连接只跑 SFTP 和命令：1 个 SFTP + 6 个命令，
@@ -462,6 +468,8 @@ const MAX_CONCURRENT_EXEC_CHANNELS: usize = 6;
 /// 终端各用独立连接；sshd 的 MaxStartups 默认 10:30:100，未认证连接到 10 个起会被随机拒绝，
 /// 同时握手留在 6 个以内，给其它客户端留余量。
 const MAX_CONCURRENT_TERMINAL_HANDSHAKES: usize = 6;
+/// 读取远端 sshd_config 的时限；超时按 OpenSSH 默认值处理，不阻塞新建终端太久。
+const SSHD_LIMITS_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// 普通远程命令（status、diff、show…）的整体时限；挂住的命令会一直占着并发名额。
 const REMOTE_EXEC_TIMEOUT: Duration = Duration::from_secs(120);
 /// 走网络的 Git 命令（fetch / pull / push / clone）可能很慢，单独放宽。
@@ -564,7 +572,7 @@ async fn open_session_channel_once(
                     russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed)
                 ) && !session.handle.is_closed()
                 {
-                    "远端拒绝打开新通道，可能已达 sshd 的 MaxSessions 上限（默认 10，可在远端 sshd_config 调大 MaxSessions 后重启 sshd）".to_string()
+                    format!("{CHANNEL_REFUSED_MARKER}，可能已达 sshd 的 MaxSessions 上限（默认 10，可在远端 sshd_config 调大 MaxSessions 后重启 sshd）")
                 } else {
                     error.to_string()
                 };
@@ -659,6 +667,170 @@ async fn close_terminal_transport(transport: &ConnectedSession) {
         .await;
 }
 
+/// server 模式的持久终端共用 SSH 连接，每个终端占一个 daemon 通道。
+///
+/// 每条连接能开的通道数由远端 sshd 的 `MaxSessions` 决定（OpenSSH 默认 10）。容量取自
+/// 远端 sshd_config；读不到时用默认值，实际被 sshd 拒绝时按当时已开的通道数修正。
+/// 满了再开一条共享连接，终端总数不设上限（daemon 自身另有 PTY 上限）。
+struct PooledTerminalTransport {
+    transport: Arc<ConnectedSession>,
+    /// 已租出的通道名额。
+    leased: usize,
+    /// 这条连接最多承载的终端数。
+    capacity: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SshdSessionLimitSource {
+    /// 远端 sshd_config 中的 `MaxSessions`。
+    Config,
+    /// 读不到配置时的 OpenSSH 默认值。
+    Default,
+    /// 共享连接上开通道被 sshd 拒绝时实测得到。
+    Observed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SshdSessionLimit {
+    max_sessions: usize,
+    source: SshdSessionLimitSource,
+}
+
+impl SshdSessionLimit {
+    /// MaxSessions 为 0/1 时无法复用连接，退化为每个终端一条连接。
+    fn transport_capacity(self) -> usize {
+        self.max_sessions.max(1)
+    }
+
+    fn describe(self) -> String {
+        let source = match self.source {
+            SshdSessionLimitSource::Config => "远端 sshd_config 的 MaxSessions",
+            SshdSessionLimitSource::Default => "未读到 sshd_config，按 OpenSSH 默认 MaxSessions",
+            SshdSessionLimitSource::Observed => "sshd 实际拒绝新通道时测得",
+        };
+        format!("每条连接最多 {} 个终端，{source}", self.transport_capacity())
+    }
+}
+
+#[derive(Default)]
+struct TerminalTransportPoolState {
+    entries: Vec<PooledTerminalTransport>,
+    /// 该连接的 sshd 会话上限；`None` 表示还没探测过。
+    limit: Option<SshdSessionLimit>,
+}
+
+/// 同一 SSH 连接配置下，server 模式终端共用的连接；锁同时串行化探测与新连接握手。
+type TerminalTransportPool = Arc<tokio::sync::Mutex<TerminalTransportPoolState>>;
+
+/// 第一条未满的共享连接；参数为各连接的（已租出, 容量）。
+fn pick_terminal_transport(slots: impl IntoIterator<Item = (usize, usize)>) -> Option<usize> {
+    slots
+        .into_iter()
+        .position(|(leased, capacity)| leased < capacity)
+}
+
+/// sshd 拒绝开新通道时，连接上已开的通道数就是它的实际上限。
+///
+/// `leased` 含本次被拒的租约；除它之外一个通道都没有时说明不是会话数打满，
+/// 返回 `None`，不据此修正容量。
+fn observed_capacity_after_refusal(leased: usize) -> Option<usize> {
+    leased.checked_sub(1).filter(|open| *open > 0)
+}
+
+fn terminal_pool_full_notice(full: usize, limit: SshdSessionLimit) -> String {
+    format!(
+        "已有 {full} 条终端共享 SSH 连接均已占满（{}），已为新终端新开第 {} 条连接",
+        limit.describe(),
+        full + 1
+    )
+}
+
+/// 共享终端连接上的一个 daemon 通道名额。
+///
+/// 归还最后一个名额时关闭这条空闲连接；`release` 可重复调用，Drop 时也会归还。
+struct TerminalTransportLease {
+    transport: Arc<ConnectedSession>,
+    released: AtomicBool,
+    pool: TerminalTransportPool,
+    /// 已有共享连接全满、本次新开了连接时给用户的提示。
+    notice: Option<String>,
+}
+
+impl std::ops::Deref for TerminalTransportLease {
+    type Target = ConnectedSession;
+
+    fn deref(&self) -> &ConnectedSession {
+        &self.transport
+    }
+}
+
+impl TerminalTransportLease {
+    fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+
+    fn release(&self) {
+        if self.released.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let transport = Arc::clone(&self.transport);
+        let pool = Arc::clone(&self.pool);
+        tauri::async_runtime::spawn(async move {
+            // 名额只在池锁内增减，这里持锁判断空闲不会与新租约竞争。
+            let mut state = pool.lock().await;
+            let Some(index) = state
+                .entries
+                .iter()
+                .position(|entry| Arc::ptr_eq(&entry.transport, &transport))
+            else {
+                return;
+            };
+            let entry = &mut state.entries[index];
+            entry.leased = entry.leased.saturating_sub(1);
+            if entry.leased > 0 {
+                return;
+            }
+            state.entries.remove(index);
+            drop(state);
+            close_terminal_transport(&transport).await;
+        });
+    }
+
+    /// sshd 拒绝在这条连接上开新通道：把它标满，并按实测值修正该连接以后的容量。
+    ///
+    /// 返回 `true` 表示确实是会话数打满，调用方应换一条连接重试一次。
+    async fn mark_refused(&self) -> bool {
+        let mut state = self.pool.lock().await;
+        let Some(entry) = state
+            .entries
+            .iter_mut()
+            .find(|entry| Arc::ptr_eq(&entry.transport, &self.transport))
+        else {
+            return false;
+        };
+        let Some(observed) = observed_capacity_after_refusal(entry.leased) else {
+            return false;
+        };
+        entry.capacity = observed;
+        let lowered = state
+            .limit
+            .is_none_or(|limit| observed < limit.transport_capacity());
+        if lowered {
+            state.limit = Some(SshdSessionLimit {
+                max_sessions: observed,
+                source: SshdSessionLimitSource::Observed,
+            });
+        }
+        true
+    }
+}
+
+impl Drop for TerminalTransportLease {
+    fn drop(&mut self) {
+        self.release();
+    }
+}
+
 /// 同一连接的重连串行执行；记住最近一次失败，冷却期内直接返回。
 type ReconnectGate = Arc<tokio::sync::Mutex<Option<(Instant, String)>>>;
 
@@ -671,6 +843,8 @@ pub struct SshManager {
     exec_slots: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
     /// 同时进行的终端连接握手数；一次恢复大量终端时不超过 sshd 的 MaxStartups。
     terminal_handshakes: tokio::sync::Semaphore,
+    /// server 模式终端共用的 SSH 连接池，按连接 id 分组。
+    terminal_transport_pools: Mutex<HashMap<String, TerminalTransportPool>>,
     /// 项目根相对仓库根的路径前缀（`git rev-parse --show-prefix`），按项目惰性缓存。
     git_prefixes: Mutex<HashMap<String, String>>,
     /// 远端 server 状态缓存，key 为 `server_slot_key`（连接 id | 规范化项目根）。
@@ -710,6 +884,7 @@ impl SshManager {
             reconnect_gates: Mutex::new(HashMap::new()),
             exec_slots: Mutex::new(HashMap::new()),
             terminal_handshakes: tokio::sync::Semaphore::new(MAX_CONCURRENT_TERMINAL_HANDSHAKES),
+            terminal_transport_pools: Mutex::new(HashMap::new()),
             git_prefixes: Mutex::new(HashMap::new()),
             servers: RwLock::new(HashMap::new()),
             server_gates: Mutex::new(HashMap::new()),
@@ -885,6 +1060,116 @@ impl SshManager {
         &self,
         connection_id: &str,
     ) -> Result<Arc<ConnectedSession>, String> {
+        self.handshake_terminal_transport(connection_id).await.map_err(|error| {
+            format!("{error}（每个终端单独占用一条 SSH 连接，终端很多时可在远端 sshd_config 调大 MaxStartups 后重启 sshd）")
+        })
+    }
+
+    /// 为 server 模式终端租一个 daemon 通道名额：优先复用已有共享连接，
+    /// 都满了（或已失效）才握手新建，避免每个终端都新开 SSH 连接导致握手超时。
+    ///
+    /// `root_uri` 只用于首次读取远端 sshd 的 MaxSessions。
+    async fn lease_daemon_terminal_transport(
+        &self,
+        connection_id: &str,
+        root_uri: &str,
+    ) -> Result<TerminalTransportLease, String> {
+        let pool = {
+            let mut pools = self
+                .terminal_transport_pools
+                .lock()
+                .map_err(|_| "SSH 连接状态不可用".to_string())?;
+            Arc::clone(pools.entry(connection_id.to_string()).or_default())
+        };
+        let mut state = pool.lock().await;
+        let limit = match state.limit {
+            Some(limit) => limit,
+            None => {
+                let limit = self.probe_sshd_session_limit(root_uri).await;
+                state.limit = Some(limit);
+                limit
+            }
+        };
+        // 半死的连接上开通道会一直卡到超时；只对将要复用的连接探测一次，失效就换掉。
+        // 它上面其它终端的 daemon 会话会各自重连，进程不受影响。
+        while let Some(index) = pick_terminal_transport(
+            state
+                .entries
+                .iter()
+                .map(|entry| (entry.leased, entry.capacity)),
+        ) {
+            if !connection_responds(&state.entries[index].transport.handle).await {
+                let stale = state.entries.remove(index);
+                close_terminal_transport(&stale.transport).await;
+                continue;
+            }
+            let entry = &mut state.entries[index];
+            entry.leased += 1;
+            return Ok(TerminalTransportLease {
+                transport: Arc::clone(&entry.transport),
+                released: AtomicBool::new(false),
+                pool: Arc::clone(&pool),
+                notice: None,
+            });
+        }
+        let full = state.entries.len();
+        let transport = self
+            .handshake_terminal_transport(connection_id)
+            .await
+            .map_err(|error| {
+                if full == 0 {
+                    format!("{error}（终端共享 SSH 连接握手失败，可检查远端 sshd 状态与 MaxStartups）")
+                } else {
+                    format!(
+                        "{error}（已有 {full} 条终端共享连接均已占满，{}；可在远端 sshd_config 调大 MaxSessions 后重启 sshd）",
+                        limit.describe()
+                    )
+                }
+            })?;
+        state.entries.push(PooledTerminalTransport {
+            transport: Arc::clone(&transport),
+            leased: 1,
+            capacity: limit.transport_capacity(),
+        });
+        Ok(TerminalTransportLease {
+            transport,
+            released: AtomicBool::new(false),
+            pool: Arc::clone(&pool),
+            notice: (full > 0).then(|| terminal_pool_full_notice(full, limit)),
+        })
+    }
+
+    /// 读取远端 sshd 的 MaxSessions；读不到、超时或无法解析时按 OpenSSH 默认值。
+    async fn probe_sshd_session_limit(&self, root_uri: &str) -> SshdSessionLimit {
+        let fallback = SshdSessionLimit {
+            max_sessions: sshd_limits::OPENSSH_DEFAULT_MAX_SESSIONS,
+            source: SshdSessionLimitSource::Default,
+        };
+        let probed = self
+            .exec_remote_shell(
+                root_uri,
+                sshd_limits::SSHD_CONFIG_UNIX_COMMAND,
+                sshd_limits::SSHD_CONFIG_WINDOWS_SCRIPT,
+                true,
+                SSHD_LIMITS_PROBE_TIMEOUT,
+            )
+            .await;
+        match probed {
+            Ok(result) => sshd_limits::parse_sshd_max_sessions(&result.stdout).map_or(fallback, |max_sessions| SshdSessionLimit {
+                max_sessions,
+                source: SshdSessionLimitSource::Config,
+            }),
+            Err(error) => {
+                eprintln!("[WARN] reading remote sshd MaxSessions failed: {error}");
+                fallback
+            }
+        }
+    }
+
+    async fn handshake_terminal_transport(
+        &self,
+        connection_id: &str,
+    ) -> Result<Arc<ConnectedSession>, String> {
         let config = self
             .live_session(connection_id)
             .await?
@@ -897,10 +1182,7 @@ impl SshManager {
             .acquire()
             .await
             .map_err(|_| "SSH 连接状态不可用".to_string())?;
-        let (transport, _) =
-            authenticate_session(config, ConnectionPurpose::Terminal).await.map_err(|error| {
-                format!("{error}（每个终端单独占用一条 SSH 连接，终端很多时可在远端 sshd_config 调大 MaxStartups 后重启 sshd）")
-            })?;
+        let (transport, _) = authenticate_session(config, ConnectionPurpose::Terminal).await?;
         Ok(Arc::new(transport))
     }
 
@@ -4776,7 +5058,7 @@ pub async fn ssh_create_terminal(
         match persistent_shell_launch(&parsed.path, shell.as_deref()) {
             Ok(launch) => match server::spawn_persistent_terminal(
                 id.clone(),
-                root,
+                root.clone(),
                 working_directory,
                 cols.unwrap_or(80),
                 rows.unwrap_or(24),
@@ -4788,6 +5070,14 @@ pub async fn ssh_create_terminal(
             {
                 Ok(result) => return Ok(result),
                 Err(reason) => {
+                    // daemon 已就绪（server 模式）时失败多半是网络/握手问题，回退直连
+                    // 只会再握手一次并同样超时，还会悄悄变成非持久终端；直接报错。
+                    let daemon_ready = server::ready_server_endpoint(&app, &manager, &root)
+                        .await
+                        .is_some_and(|endpoint| endpoint.daemon.is_some());
+                    if daemon_ready {
+                        return Err(reason);
+                    }
                     eprintln!(
                             "[WARN] persistent terminal {id} creation failed, falling back to direct SSH: {reason}"
                         );
@@ -5134,6 +5424,51 @@ async fn kill_detached_terminals_best_effort(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn terminal_pool_picks_first_transport_with_room() {
+        assert_eq!(super::pick_terminal_transport([(10, 10), (3, 10)]), Some(1));
+        assert_eq!(super::pick_terminal_transport([(10, 10), (4, 4)]), None);
+        assert_eq!(super::pick_terminal_transport(std::iter::empty()), None);
+    }
+
+    #[test]
+    fn terminal_pool_refusal_learns_open_channel_count() {
+        // 含本次被拒的租约：已开 3 个通道时 sshd 拒绝，实际上限就是 3。
+        assert_eq!(super::observed_capacity_after_refusal(4), Some(3));
+        // 一个通道都没开就被拒，不是会话数打满，不修正容量。
+        assert_eq!(super::observed_capacity_after_refusal(1), None);
+        assert_eq!(super::observed_capacity_after_refusal(0), None);
+    }
+
+    #[test]
+    fn terminal_pool_capacity_follows_sshd_max_sessions() {
+        let limit = |max_sessions, source| super::SshdSessionLimit {
+            max_sessions,
+            source,
+        };
+        use super::SshdSessionLimitSource::{Config, Default, Observed};
+        assert_eq!(limit(20, Config).transport_capacity(), 20);
+        assert_eq!(limit(10, Default).transport_capacity(), 10);
+        // MaxSessions 0/1 无法复用连接，退化为每个终端一条连接。
+        assert_eq!(limit(0, Config).transport_capacity(), 1);
+        assert_eq!(limit(1, Observed).transport_capacity(), 1);
+    }
+
+    #[test]
+    fn terminal_pool_full_notice_names_count_and_source() {
+        let notice = super::terminal_pool_full_notice(
+            2,
+            super::SshdSessionLimit {
+                max_sessions: 10,
+                source: super::SshdSessionLimitSource::Config,
+            },
+        );
+        assert!(notice.contains("已有 2 条"));
+        assert!(notice.contains("每条连接最多 10 个终端"));
+        assert!(notice.contains("MaxSessions"));
+        assert!(notice.contains("第 3 条"));
+    }
+
     use super::*;
 
     #[test]

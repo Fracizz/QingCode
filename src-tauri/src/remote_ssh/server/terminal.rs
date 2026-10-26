@@ -1,6 +1,6 @@
 //! qingcode-server daemon 托管的持久化终端。
 //!
-//! 每个终端独占一条 SSH 连接和一条 daemon 会话。SSH 断开只销毁代理通道，
+//! 终端共用 SSH 连接（每条最多 6 个），各占一条 daemon 会话。SSH 断开只销毁代理通道，
 //! daemon 里的 PTY 继续运行；重连时按 seq 补发输出，缓冲已淘汰时先 reset
 //! 前端 xterm 再写屏幕快照。
 
@@ -460,9 +460,50 @@ fn emit_exit(
 }
 
 struct ActiveSession {
-    transport: Arc<ConnectedSession>,
+    transport: TerminalTransportLease,
     session: DaemonSession,
     events: mpsc::UnboundedReceiver<Event>,
+}
+
+/// 在共享终端连接上打开 daemon 会话。
+///
+/// 连接因 sshd 会话数打满而拒绝开通道时，按实测值修正该连接容量，换一条连接重试一次。
+async fn open_terminal_daemon_session(
+    manager: &SshManager,
+    connection_id: &str,
+    root_uri: &str,
+    client_id: &str,
+    daemon: &DaemonAccess,
+) -> Result<(TerminalTransportLease, DaemonSession), String> {
+    let mut retried = false;
+    loop {
+        let transport = manager
+            .lease_daemon_terminal_transport(connection_id, root_uri)
+            .await?;
+        match DaemonSession::open_on_transport(&transport, client_id, daemon).await {
+            Ok(session) => return Ok((transport, session)),
+            Err(error) => {
+                let retry = !retried
+                    && is_channel_refused_error(&error)
+                    && transport.mark_refused().await;
+                transport.release();
+                if !retry {
+                    return Err(error);
+                }
+                retried = true;
+            }
+        }
+    }
+}
+
+/// 已有共享连接全满、新开了连接时提示用户（前端以 info toast 展示）。
+fn emit_terminal_pool_notice(app: &AppHandle, connection_id: &str, transport: &TerminalTransportLease) {
+    if let Some(message) = transport.notice() {
+        let _ = app.emit(
+            "ssh-terminal-pool-notice",
+            serde_json::json!({ "connectionId": connection_id, "message": message }),
+        );
+    }
 }
 
 enum ConnectedEnd {
@@ -502,15 +543,15 @@ pub(crate) async fn list_detached_terminals(
         .daemon
         .as_ref()
         .ok_or_else(|| "远端 server 当前没有 daemon 端点".to_string())?;
-    let transport = manager.open_terminal_transport(connection_id).await?;
     let client_id = manager.daemon_client_id(connection_id);
-    let session = match DaemonSession::open_on_transport(&transport, &client_id, daemon).await {
-        Ok(session) => session,
-        Err(error) => {
-            close_terminal_transport(&transport).await;
-            return Err(error);
-        }
-    };
+    let (transport, session) = open_terminal_daemon_session(
+        manager,
+        connection_id,
+        &endpoint_root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
     let result = async {
         let ptys = request_owned_detached_ptys(&session, &client_id).await?;
         Ok(ptys
@@ -520,7 +561,7 @@ pub(crate) async fn list_detached_terminals(
     }
     .await;
     session.shutdown();
-    close_terminal_transport(&transport).await;
+    transport.release();
     result
 }
 
@@ -552,15 +593,15 @@ pub(crate) async fn kill_detached_terminals(
         .daemon
         .as_ref()
         .ok_or_else(|| "远端 server 当前没有 daemon 端点".to_string())?;
-    let transport = manager.open_terminal_transport(connection_id).await?;
     let client_id = manager.daemon_client_id(connection_id);
-    let session = match DaemonSession::open_on_transport(&transport, &client_id, daemon).await {
-        Ok(session) => session,
-        Err(error) => {
-            close_terminal_transport(&transport).await;
-            return Err(error);
-        }
-    };
+    let (transport, session) = open_terminal_daemon_session(
+        manager,
+        connection_id,
+        &endpoint_root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
     let result = async {
         let mut killed = 0usize;
         for info in request_owned_detached_ptys(&session, &client_id).await? {
@@ -585,7 +626,7 @@ pub(crate) async fn kill_detached_terminals(
     }
     .await;
     session.shutdown();
-    close_terminal_transport(&transport).await;
+    transport.release();
     result
 }
 
@@ -612,17 +653,16 @@ pub(crate) async fn attach_persistent_terminal(
         .daemon
         .as_ref()
         .ok_or_else(|| "远端 server 当前没有 daemon 端点".to_string())?;
-    let transport = manager
-        .open_terminal_transport(&parsed.connection_id)
-        .await?;
     let client_id = manager.daemon_client_id(&parsed.connection_id);
-    let mut session = match DaemonSession::open_on_transport(&transport, &client_id, daemon).await {
-        Ok(session) => session,
-        Err(error) => {
-            close_terminal_transport(&transport).await;
-            return Err(error);
-        }
-    };
+    let (transport, mut session) = open_terminal_daemon_session(
+        manager,
+        &parsed.connection_id,
+        &root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    emit_terminal_pool_notice(&app, &parsed.connection_id, &transport);
 
     let owned = request_owned_detached_ptys(&session, &client_id).await;
     let info = match owned {
@@ -630,24 +670,24 @@ pub(crate) async fn attach_persistent_terminal(
             Some(info) => info,
             None => {
                 session.shutdown();
-                close_terminal_transport(&transport).await;
+                transport.release();
                 return Err(format!("PTY 不存在、已退出或不属于当前客户端：{pty_id}"));
             }
         },
         Err(error) => {
             session.shutdown();
-            close_terminal_transport(&transport).await;
+            transport.release();
             return Err(error);
         }
     };
     let Some(cwd) = info.cwd.as_deref() else {
         session.shutdown();
-        close_terminal_transport(&transport).await;
+        transport.release();
         return Err(format!("PTY 缺少工作目录，无法安全接回：{pty_id}"));
     };
     if !root.trusted || !daemon_path_is_within(cwd, &root.canonical_path) {
         session.shutdown();
-        close_terminal_transport(&transport).await;
+        transport.release();
         return Err("PTY 工作目录不在当前可信项目根内".to_string());
     }
 
@@ -655,12 +695,12 @@ pub(crate) async fn attach_persistent_terminal(
         Ok(attach) => attach,
         Err(error) if attach_terminal_is_gone(&error) => {
             session.shutdown();
-            close_terminal_transport(&transport).await;
+            transport.release();
             return Err(format!("PTY 不存在或已退出：{pty_id}"));
         }
         Err(error) => {
             session.shutdown();
-            close_terminal_transport(&transport).await;
+            transport.release();
             return Err(error);
         }
     };
@@ -678,12 +718,12 @@ pub(crate) async fn attach_persistent_terminal(
             .request("pty.kill", &serde_json::json!({ "id": pty_id }))
             .await;
         session.shutdown();
-        close_terminal_transport(&transport).await;
+        transport.release();
         return Err(format!("PTY 已退出，无法接回：{pty_id}"));
     }
     let Some(events) = session.take_events() else {
         session.shutdown();
-        close_terminal_transport(&transport).await;
+        transport.release();
         return Err("daemon 会话事件流已初始化".to_string());
     };
 
@@ -707,7 +747,7 @@ pub(crate) async fn attach_persistent_terminal(
         Ok(result) => result,
         Err(error) => {
             session.shutdown();
-            close_terminal_transport(&transport).await;
+            transport.release();
             return Err(error);
         }
     };
@@ -727,7 +767,7 @@ pub(crate) async fn attach_persistent_terminal(
         Ok(previous) => previous,
         Err(()) => {
             session.shutdown();
-            close_terminal_transport(&transport).await;
+            transport.release();
             return Err("SSH 终端状态不可用".to_string());
         }
     };
@@ -797,12 +837,17 @@ pub(crate) async fn spawn_persistent_terminal(
         .daemon
         .as_ref()
         .ok_or_else(|| "远端 server 当前没有 daemon 端点".to_string())?;
-    let transport = manager
-        .open_terminal_transport(&parsed.connection_id)
-        .await?;
     let client_id = manager.daemon_client_id(&parsed.connection_id);
+    let (transport, mut session) = open_terminal_daemon_session(
+        manager,
+        &parsed.connection_id,
+        &root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    emit_terminal_pool_notice(&app, &parsed.connection_id, &transport);
     let opened = async {
-        let mut session = DaemonSession::open_on_transport(&transport, &client_id, daemon).await?;
         let response = session
             .request(
                 "pty.create",
@@ -833,13 +878,14 @@ pub(crate) async fn spawn_persistent_terminal(
         let events = session
             .take_events()
             .ok_or_else(|| "daemon 会话事件流已初始化".to_string())?;
-        Ok::<_, String>((session, events, pty_id, seq, next_input_seq))
+        Ok::<_, String>((events, pty_id, seq, next_input_seq))
     }
     .await;
-    let (session, events, pty_id, seq, next_input_seq) = match opened {
+    let (events, pty_id, seq, next_input_seq) = match opened {
         Ok(opened) => opened,
         Err(error) => {
-            close_terminal_transport(&transport).await;
+            session.shutdown();
+            transport.release();
             return Err(error);
         }
     };
@@ -868,7 +914,7 @@ pub(crate) async fn spawn_persistent_terminal(
             Ok(previous) => previous,
             Err(_) => {
                 session.shutdown();
-                close_terminal_transport(&transport).await;
+                transport.release();
                 return Err("SSH 终端状态不可用".to_string());
             }
         }
@@ -918,7 +964,7 @@ async fn run_persistent_terminal(
                 terminal.mark_closed();
                 // shell 正常退出也要释放独占的 SSH 连接与 daemon 会话。
                 active.session.shutdown();
-                close_terminal_transport(&active.transport).await;
+                active.transport.release();
                 emit_exit(&app, &terminal.id, code, false, None);
                 remove_persistent_terminal(&app, &terminal);
                 return;
@@ -926,13 +972,13 @@ async fn run_persistent_terminal(
             ConnectedEnd::Closed => {
                 terminal.mark_closed();
                 active.session.shutdown();
-                close_terminal_transport(&active.transport).await;
+                active.transport.release();
                 remove_persistent_terminal(&app, &terminal);
                 return;
             }
             ConnectedEnd::Disconnected(reason) => {
                 active.session.shutdown();
-                close_terminal_transport(&active.transport).await;
+                active.transport.release();
                 let mut kill_acks = Vec::new();
                 let mut attempt = 0u32;
                 loop {
@@ -1162,18 +1208,21 @@ async fn reconnect_terminal(
     let Some(daemon) = endpoint.daemon.as_ref() else {
         return ReconnectEnd::Retry;
     };
-    let transport = match manager.open_terminal_transport(&parsed.connection_id).await {
-        Ok(transport) => transport,
-        Err(_) => return ReconnectEnd::Retry,
-    };
     let client_id = manager.daemon_client_id(&parsed.connection_id);
     // 握手失败（HELLO 超时、通道被拒、网络刚恢复时的 reset）都是瞬时故障，
     // 不能据此断定 daemon 已重启：只有握手成功后 attach 明确返回「终端不存在」
     // 才结束终端，否则继续重试，进程仍在 daemon 里运行。
-    let mut session = match DaemonSession::open_on_transport(&transport, &client_id, daemon).await {
-        Ok(session) => session,
+    let (transport, mut session) = match open_terminal_daemon_session(
+        manager,
+        &parsed.connection_id,
+        &root.uri,
+        &client_id,
+        daemon,
+    )
+    .await
+    {
+        Ok(opened) => opened,
         Err(error) => {
-            close_terminal_transport(&transport).await;
             eprintln!(
                 "[WARN] persistent terminal {} daemon handshake failed, will retry: {error}",
                 terminal.id
@@ -1186,18 +1235,18 @@ async fn reconnect_terminal(
         Ok(attach) => attach,
         Err(error) if attach_terminal_is_gone(&error) => {
             session.shutdown();
-            close_terminal_transport(&transport).await;
+            transport.release();
             return ReconnectEnd::Terminated("远端 daemon 已重启，终端进程已结束".to_string());
         }
         Err(_) => {
             session.shutdown();
-            close_terminal_transport(&transport).await;
+            transport.release();
             return ReconnectEnd::Retry;
         }
     };
     let Some(events) = session.take_events() else {
         session.shutdown();
-        close_terminal_transport(&transport).await;
+        transport.release();
         return ReconnectEnd::Retry;
     };
     let (exited, restore) = match apply_attach_restore(terminal, app, &attach).await {
@@ -1205,7 +1254,7 @@ async fn reconnect_terminal(
         Err(error) => {
             // 已写出的输出已推进 next_seq，下次 attach 从缺口续补。
             session.shutdown();
-            close_terminal_transport(&transport).await;
+            transport.release();
             eprintln!(
                 "[WARN] persistent terminal {} attach restore failed, will retry: {error}",
                 terminal.id
@@ -1222,12 +1271,12 @@ async fn reconnect_terminal(
         .is_err()
     {
         session.shutdown();
-        close_terminal_transport(&transport).await;
+        transport.release();
         return ReconnectEnd::Retry;
     }
     if let Err(error) = flush_pending_to_session(terminal, &session).await {
         session.shutdown();
-        close_terminal_transport(&transport).await;
+        transport.release();
         eprintln!(
             "[WARN] persistent terminal {} could not flush pending input after attach: {error}",
             terminal.id
@@ -1242,7 +1291,7 @@ async fn reconnect_terminal(
     emit_connection(app, &terminal.id, "attached", None, None, restore_name);
     if let Some(code) = exited {
         session.shutdown();
-        close_terminal_transport(&transport).await;
+        transport.release();
         return ReconnectEnd::Exited(u32::try_from(code).unwrap_or(0));
     }
     ReconnectEnd::Connected(ActiveSession {
@@ -1386,25 +1435,25 @@ async fn kill_offline(terminal: &PersistentTerminal, root: &RegisteredRoot, app:
         {
             if let Some(endpoint) = server::ready_server_endpoint(app, &manager, root).await {
                 if let Some(daemon) = endpoint.daemon.as_ref() {
-                    if let Ok(transport) =
-                        manager.open_terminal_transport(&parsed.connection_id).await
+                    let client_id = manager.daemon_client_id(&parsed.connection_id);
+                    if let Ok((transport, session)) = open_terminal_daemon_session(
+                        &manager,
+                        &parsed.connection_id,
+                        &root.uri,
+                        &client_id,
+                        daemon,
+                    )
+                    .await
                     {
-                        let client_id = manager.daemon_client_id(&parsed.connection_id);
-                        if let Ok(session) =
-                            DaemonSession::open_on_transport(&transport, &client_id, daemon).await
-                        {
                             let killed = session
                                 .request("pty.kill", &serde_json::json!({ "id": terminal.pty_id }))
                                 .await
                                 .is_ok();
                             session.shutdown();
-                            close_terminal_transport(&transport).await;
+                            transport.release();
                             if killed {
                                 return;
                             }
-                        } else {
-                            close_terminal_transport(&transport).await;
-                        }
                     }
                 }
             }

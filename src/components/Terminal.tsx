@@ -200,6 +200,8 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   /** 上一次真正写入 PTY 的尺寸时间，用于合并连续的 SIGWINCH。 */
   const ptyResizeSentAtRef = useRef(0)
   const lastFitSizeRef = useRef({ w: 0, h: 0 })
+  /** 重挂回放后停在全屏 TUI 上，等网格就绪后让程序整屏重绘一次。 */
+  const redrawPendingRef = useRef(false)
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
   const [contextMenu, setContextMenu] = useState<{
@@ -213,6 +215,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   const [searchMatchTotal, setSearchMatchTotal] = useState(0)
   const writeToTerminal = useTerminalStore(s => s.writeToTerminal)
   const resizeTerminal = useTerminalStore(s => s.resizeTerminal)
+  const redrawTerminal = useTerminalStore(s => s.redrawTerminal)
   const spawnPendingTerminal = useTerminalStore(s => s.spawnPendingTerminal)
   const terminal = useTerminalStore(s => s.terminals.find(tab => tab.id === terminalId))
   const ptySpawnPending = terminal?.ptySpawnPending === true
@@ -410,6 +413,20 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     }, delay)
   }, [clearPtyResizeTimer, flushPendingPtyResize])
 
+  const flushPendingRedraw = useCallback(() => {
+    const term = xtermRef.current
+    const container = containerRef.current
+    if (!redrawPendingRef.current || !term || !isActiveRef.current) return
+    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+    redrawPendingRef.current = false
+    // 回放的旧字节按旧网格排版，而当前尺寸与 PTY 相同时 resize 会被去重，
+    // TUI 收不到 SIGWINCH 就不会重绘，画面一直错位（切换项目后常见）。
+    clearPtyResizeTimer()
+    pendingPtySizeRef.current = null
+    ptyResizeSentAtRef.current = Date.now()
+    void redrawTerminal(terminalId, term.cols, term.rows)
+  }, [clearPtyResizeTimer, redrawTerminal, terminalId])
+
   const fitNow = useCallback((refresh = false, focusAfter = false) => {
     const container = containerRef.current
     if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
@@ -428,13 +445,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       if (pending) {
         void spawnPendingTerminal(terminalId, term.cols, term.rows)
       }
+      flushPendingRedraw()
       if (refresh) {
         term.refresh(0, term.rows - 1)
         term.scrollToBottom()
       }
       if (focusAfter && isActiveRef.current) term.focus()
     } catch {}
-  }, [commitGridSize, readProposedGridSize, spawnPendingTerminal, terminalId])
+  }, [commitGridSize, flushPendingRedraw, readProposedGridSize, spawnPendingTerminal, terminalId])
 
   const scheduleFit = useCallback((refresh = false, focusAfter = false) => {
     pendingFitFlagsRef.current = {
@@ -704,11 +722,24 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     )
     let unsubscribeOutput: (() => void) | undefined
     const subscribeTimer = window.setTimeout(() => {
+      // 回放前先按容器定好行列：否则历史字节会写进默认 80x20 网格，
+      // 之后再 fit 也无法还原（切换项目回来时终端视图是重新挂载的）。
+      resizeGridFromContainer()
+      let replaying = true
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
         const size = data.length
+        const isReplay = replaying
         writeFlow.written(size)
-        term.write(data, () => writeFlow.parsed(size))
+        term.write(data, () => {
+          writeFlow.parsed(size)
+          if (!isReplay || xtermRef.current !== term) return
+          // 只对全屏 TUI（备用缓冲区）补一次重绘；普通 Shell 的回放本身就是最终画面。
+          if (term.buffer.active.type !== 'alternate') return
+          redrawPendingRef.current = true
+          scheduleFit(true, false)
+        })
       })
+      replaying = false
       const restored = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
       if (restored?.status !== 'exited' || !hadRestoredScrollback) return
       void (async () => {
@@ -851,6 +882,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     isTerminalWritable,
     openSearch,
     pasteFromClipboard,
+    resizeGridFromContainer,
     resizeTerminal,
     scheduleFit,
     schedulePtyResize,
