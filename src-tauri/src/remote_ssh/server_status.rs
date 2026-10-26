@@ -51,10 +51,12 @@ const SERVER_LOG_MAX_LINES: usize = 200;
 const SERVER_LOG_MAX_BYTES: usize = 64 * 1024;
 const SERVER_LOG_MISSING: &str = "远端代理日志不存在";
 
-const REASON_SERVER_DISABLED: &str = "已关闭 ssh.server.enabled";
+const REASON_SSH_MODE: &str = "SSH 模式（连接配置）";
 const REASON_UNTRUSTED: &str = "工作区未信任";
 /// restart / logs / stop 这类会触碰远端进程的命令在未信任根上直接拒绝。
 const REASON_UNTRUSTED_COMMAND: &str = "工作区未信任，无法操作远端服务";
+const REASON_SSH_MODE_COMMAND: &str =
+    "该连接为 SSH 模式，没有远端服务；如需 Server 模式请在「远程连接」中切换";
 
 /// 连接阶段。serde 用 camelCase，与前端约定一致。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -96,6 +98,8 @@ pub struct SshServerState {
     pub root_uri: String,
     pub phase: ServerPhase,
     pub mode: ServerMode,
+    /// 连接配置里的模式（连接时固定）；会话不存在时为 null。
+    pub connection_mode: Option<RemoteMode>,
     pub version: Option<String>,
     pub transport: Option<ServerTransport>,
     pub reason: Option<String>,
@@ -127,7 +131,7 @@ pub(crate) struct ServerSteadyInputs<'a> {
     pub connection_id: &'a str,
     pub root_uri: &'a str,
     pub session_connected: bool,
-    pub server_enabled: bool,
+    pub connection_mode: Option<RemoteMode>,
     pub trusted: bool,
     pub slot: Option<ServerSlotView<'a>>,
 }
@@ -172,8 +176,8 @@ fn is_in_progress(phase: ServerPhase) -> bool {
 }
 
 fn direct_gate_reason(input: &ServerSteadyInputs<'_>) -> Option<&'static str> {
-    if !input.server_enabled {
-        return Some(REASON_SERVER_DISABLED);
+    if input.connection_mode != Some(RemoteMode::Server) {
+        return Some(REASON_SSH_MODE);
     }
     if !input.trusted {
         return Some(REASON_UNTRUSTED);
@@ -187,6 +191,7 @@ fn plain_state(input: &ServerSteadyInputs<'_>, phase: ServerPhase) -> SshServerS
         root_uri: input.root_uri.to_string(),
         phase,
         mode: ServerMode::Unknown,
+        connection_mode: input.connection_mode,
         version: None,
         transport: None,
         reason: None,
@@ -200,6 +205,7 @@ fn ready_direct(input: &ServerSteadyInputs<'_>, reason: &str) -> SshServerState 
         root_uri: input.root_uri.to_string(),
         phase: ServerPhase::ReadyDirect,
         mode: ServerMode::Direct,
+        connection_mode: input.connection_mode,
         version: None,
         transport: Some(ServerTransport::Direct),
         reason: Some(reason.to_string()),
@@ -213,6 +219,7 @@ fn ready_server(input: &ServerSteadyInputs<'_>, has_daemon: bool) -> SshServerSt
         root_uri: input.root_uri.to_string(),
         phase: ServerPhase::ReadyServer,
         mode: ServerMode::Server,
+        connection_mode: input.connection_mode,
         version: Some(qingcode_server::SERVER_VERSION.to_string()),
         transport: Some(if has_daemon {
             ServerTransport::Daemon
@@ -348,7 +355,7 @@ pub(crate) fn state_for_root(
         connection_id: &parsed.connection_id,
         root_uri: &normalize_remote_uri(&root.uri),
         session_connected: manager.connection_is_open(&parsed.connection_id),
-        server_enabled: manager.server_enabled(),
+        connection_mode: manager.connection_mode(&parsed.connection_id),
         trusted: root.trusted,
         slot: view,
     });
@@ -391,6 +398,7 @@ pub(crate) fn publish_authenticating(
             root_uri: normalize_remote_uri(root_uri),
             phase: ServerPhase::Authenticating,
             mode: ServerMode::Unknown,
+            connection_mode: manager.connection_mode(connection_id),
             version: None,
             transport: None,
             reason: None,
@@ -413,6 +421,7 @@ pub(crate) fn publish_disconnected(
             root_uri: normalize_remote_uri(root_uri),
             phase: ServerPhase::Disconnected,
             mode: ServerMode::Unknown,
+            connection_mode: manager.connection_mode(connection_id),
             version: None,
             transport: None,
             reason: None,
@@ -489,6 +498,16 @@ pub(crate) fn ssh_server_info(
     state_for_root(&manager, &root)
 }
 
+/// 重启、日志只属于 Server 模式；SSH 模式的连接不部署也不读取远端 server。
+/// 停止不受此限：切换到 SSH 模式前后都允许清理遗留的远端进程。
+fn require_server_mode_connection(manager: &SshManager, connection_id: &str) -> Result<(), String> {
+    if manager.server_mode(connection_id) {
+        Ok(())
+    } else {
+        Err(REASON_SSH_MODE_COMMAND.to_string())
+    }
+}
+
 pub(crate) async fn ssh_server_restart(
     root_uri: String,
     app: AppHandle,
@@ -497,6 +516,7 @@ pub(crate) async fn ssh_server_restart(
     let root = require_trusted_root(&manager, &root_uri)?;
     let parsed = parse_remote_uri(&root.uri)?;
     manager.session(&parsed.connection_id)?;
+    require_server_mode_connection(&manager, &parsed.connection_id)?;
     let key = server::server_slot_key(&parsed.connection_id, &root.canonical_path);
     // 重启应把 serve 与 daemon 一起重建：daemon 活着时先请求其退出
     // （`server.shutdown`），发送失败（不在/通道坏/token 失效）只跳过——
@@ -546,6 +566,7 @@ pub(crate) async fn ssh_server_logs(
     manager: State<'_, SshManager>,
 ) -> Result<SshServerLogs, String> {
     let root = require_trusted_root(&manager, &root_uri)?;
+    require_server_mode_connection(&manager, &parse_remote_uri(&root.uri)?.connection_id)?;
     // 段一：daemon 日志（固定路径，远端 home 下）。
     let daemon = manager
         .exec_remote_shell(
@@ -580,7 +601,7 @@ mod tests {
 
     fn inputs<'a>(
         session_connected: bool,
-        server_enabled: bool,
+        server_mode: bool,
         trusted: bool,
         slot: Option<ServerSlotView<'a>>,
     ) -> ServerSteadyInputs<'a> {
@@ -588,7 +609,11 @@ mod tests {
             connection_id: "c1",
             root_uri: "ssh://c1/srv/app",
             session_connected,
-            server_enabled,
+            connection_mode: Some(if server_mode {
+                RemoteMode::Server
+            } else {
+                RemoteMode::Ssh
+            }),
             trusted,
             slot,
         }
@@ -609,9 +634,19 @@ mod tests {
     }
 
     #[test]
-    fn disabled_server_is_ready_direct() {
+    fn ssh_mode_connection_is_ready_direct() {
         let state = phase_for_slot(&inputs(true, false, true, None));
-        assert_direct(&state, REASON_SERVER_DISABLED);
+        assert_direct(&state, REASON_SSH_MODE);
+        assert_eq!(state.connection_mode, Some(RemoteMode::Ssh));
+    }
+
+    #[test]
+    fn unknown_connection_mode_never_deploys() {
+        // 会话尚未经 ssh_connect 定下模式时按直连处理，不能默认成 Server。
+        let mut input = inputs(true, true, true, None);
+        input.connection_mode = None;
+        let state = phase_for_slot(&input);
+        assert_direct(&state, REASON_SSH_MODE);
     }
 
     #[test]
@@ -767,7 +802,7 @@ mod tests {
                 last_failure: None,
             }),
         ));
-        assert_direct(&state, REASON_SERVER_DISABLED);
+        assert_direct(&state, REASON_SSH_MODE);
     }
 
     #[test]
@@ -856,6 +891,7 @@ mod tests {
             keys,
             vec![
                 "connectionId",
+                "connectionMode",
                 "mode",
                 "phase",
                 "reason",
@@ -871,6 +907,7 @@ mod tests {
         assert_eq!(value["rootUri"], "ssh://c1/srv/app");
         assert_eq!(value["phase"], "readyServer");
         assert_eq!(value["mode"], "server");
+        assert_eq!(value["connectionMode"], "server");
         assert_eq!(value["version"], qingcode_server::SERVER_VERSION);
         assert_eq!(value["transport"], "daemon");
         assert!(value["reason"].is_null());

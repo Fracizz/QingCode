@@ -167,7 +167,7 @@ pub(crate) async fn daemon_watch_session(
         // RES 只表示订阅受理；空闲时 daemon 每 15s 发一次 PING，
         // `next_frame` 自动回 PONG，使连接在无变更的仓库上也能保活。
         loop {
-            if manager.session(connection_id).is_err() || !manager.server_enabled() {
+            if !manager.server_mode(connection_id) {
                 return Ok(());
             }
             let deadline = Instant::now() + AGENT_WATCH_FRAME_TIMEOUT;
@@ -247,7 +247,7 @@ pub(crate) fn spawn_server_watch_supervisor(
                 server_status::publish_disconnected(&app, &manager, &connection_id, &root_uri);
                 break;
             };
-            if !root.trusted || !manager.server_enabled() {
+            if !root.trusted || !manager.server_mode(&connection_id) {
                 server_status::publish_root_state(&app, &manager, &root);
                 break;
             }
@@ -357,7 +357,7 @@ pub(crate) fn spawn_server_watch_supervisor(
                 // 每个帧重新计时：从"上一帧到达"起算 AGENT_WATCH_FRAME_TIMEOUT。
                 let deadline = Instant::now() + AGENT_WATCH_FRAME_TIMEOUT;
                 let bytes = loop {
-                    if manager.session(&connection_id).is_err() || !manager.server_enabled() {
+                    if !manager.server_mode(&connection_id) {
                         break 'watch;
                     }
                     if Instant::now() >= deadline {

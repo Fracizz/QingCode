@@ -344,8 +344,8 @@ export async function upsertSshConnection(connection: SshConnection): Promise<vo
     d.execute(
       `INSERT INTO ssh_connections
         (id, name, host, port, username, auth_kind, private_key_path,
-         host_key_fingerprint, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         host_key_fingerprint, created_at, updated_at, mode)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT(id) DO UPDATE SET
          name = excluded.name,
          host = excluded.host,
@@ -354,7 +354,8 @@ export async function upsertSshConnection(connection: SshConnection): Promise<vo
          auth_kind = excluded.auth_kind,
          private_key_path = excluded.private_key_path,
          host_key_fingerprint = excluded.host_key_fingerprint,
-         updated_at = excluded.updated_at`,
+         updated_at = excluded.updated_at,
+         mode = excluded.mode`,
       [
         connection.id,
         connection.name,
@@ -366,6 +367,7 @@ export async function upsertSshConnection(connection: SshConnection): Promise<vo
         connection.host_key_fingerprint,
         connection.created_at,
         connection.updated_at,
+        connection.mode ?? null,
       ]
     )
   )

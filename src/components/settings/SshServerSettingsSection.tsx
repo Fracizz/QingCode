@@ -16,7 +16,6 @@ import {
   saveScopedSshServerEnabled,
   saveScopedSshServerOfflineDir,
 } from '../../lib/sshServerSettings'
-import { isSshProject } from '../../lib/sshWorkspace'
 import { useProjectStore } from '../../store/projectStore'
 import type { Project } from '../../types'
 import { SettingItem } from '../SettingsLayout'
@@ -51,23 +50,11 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
   }, [scope, project, settingsRevision])
 
   const updateEnabled = async (value: boolean) => {
-    const settingsScope = scope === 'workspace' ? 'project' : 'global'
-    if (settingsScope === 'project' && !project) return
     setEnabled(value)
     try {
-      await saveScopedSshServerEnabled(settingsScope, value, project)
+      await saveScopedSshServerEnabled('global', value, project)
     } catch (error) {
-      pushToast('error', t('保存远端服务开关失败: {error}', { error: String(error) }))
-      return
-    }
-    // 关闭服务且当前激活项目是 SSH 工作区时停掉远端服务（fire-and-forget）；
-    // 成功不提示，ssh-server-state 事件会刷新状态芯片。
-    if (!value && project && isSshProject(project)) {
-      void safeInvoke('停止远端服务', 'ssh_server_stop', { rootUri: project.path }).catch(
-        error => {
-          pushToast('error', t('停止远端服务失败: {error}', { error: String(error) }))
-        },
-      )
+      pushToast('error', t('保存默认连接模式失败: {error}', { error: String(error) }))
     }
   }
 
@@ -133,23 +120,25 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
 
   return (
     <>
-      <SettingItem
-        title={t('SSH › 服务: 远端服务')}
-        description={t(
-          '在 SSH 工作区部署远端服务（qingcode-server），提供文件树自动刷新、内嵌内容搜索（无需远端 rg）与快速目录扫描。服务经 SSH 通道接入，只监听远端 127.0.0.1。关闭后完全回退纯 SSH 直连，远端零足迹。默认开启。',
-        )}
-        modified={!enabled}
-      >
-        <select
-          value={enabled ? 'on' : 'off'}
-          onChange={e => void updateEnabled(e.target.value === 'on')}
-          className="setting-control setting-select"
-          aria-label={t('SSH › 服务: 远端服务')}
+      {scope !== 'workspace' && (
+        <SettingItem
+          title={t('新建连接的默认模式')}
+          description={t(
+            '新建 SSH 连接时默认使用 Server 模式（部署 qingcode-server，终端断线不丢）还是 SSH 模式（零足迹直连）。每个连接的模式在「远程连接」管理页单独设置；修改已有连接的模式后需要重新连接才生效。',
+          )}
+          modified={!enabled}
         >
-          <option value="on">{t('开启')}</option>
-          <option value="off">{t('关闭')}</option>
-        </select>
-      </SettingItem>
+          <select
+            value={enabled ? 'server' : 'ssh'}
+            onChange={e => void updateEnabled(e.target.value === 'server')}
+            className="setting-control setting-select"
+            aria-label={t('新建连接的默认模式')}
+          >
+            <option value="server">{t('Server')}</option>
+            <option value="ssh">{t('SSH')}</option>
+          </select>
+        </SettingItem>
+      )}
       <SettingItem
         title={t('SSH › 服务: 缺失时自动下载')}
         description={t(

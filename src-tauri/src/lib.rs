@@ -383,6 +383,12 @@ fn get_column_migrations() -> Vec<Migration> {
                   );",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 7,
+            description: "add ssh connection mode",
+            sql: "ALTER TABLE ssh_connections ADD COLUMN mode TEXT;",
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -841,7 +847,6 @@ pub fn run() {
             remote_ssh::ssh_workspace_roots,
             remote_ssh::ssh_server_states,
             remote_ssh::ssh_set_workspace_trust,
-            remote_ssh::ssh_set_server_enabled,
             remote_ssh::ssh_server_info,
             remote_ssh::ssh_server_restart,
             remote_ssh::ssh_server_stop,

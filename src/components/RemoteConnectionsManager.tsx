@@ -32,13 +32,16 @@ import {
   NEW_SSH_CONNECTION_ID,
   openSshSession,
   probeSshHost,
+  resolveSshConnectionMode,
   sshConnectionIdFromUri,
   sshConnectionLabel,
   sshConnectionTarget,
   sshProjectDisplayPath,
+  switchSshConnectionMode,
   type SshSessionSecrets,
   type SshWorkspaceRoot,
 } from '../lib/sshWorkspace'
+import { getSshServerEnabled } from '../lib/sshServerSettings'
 import {
   isAgentCommandUnavailable,
   parseSshServerState,
@@ -57,7 +60,7 @@ import {
   validateConnectionForm,
   type SshConnectionForm,
 } from '../lib/sshConnectionForm'
-import type { Project } from '../types'
+import type { Project, SshConnectionMode } from '../types'
 
 const fieldClass =
   'w-full rounded border border-border-strong bg-bg px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
@@ -90,6 +93,9 @@ export default function RemoteConnectionsManager() {
     creatingForProject ? NEW_SSH_CONNECTION_ID : null
   )
   const [form, setForm] = useState<SshConnectionForm>(emptyConnectionForm())
+  const [mode, setMode] = useState<SshConnectionMode>(() =>
+    getSshServerEnabled() ? 'server' : 'ssh'
+  )
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
   /** 测试连接后确认的新指纹；保存时覆盖存档值。 */
@@ -140,6 +146,13 @@ export default function RemoteConnectionsManager() {
         ? useProjectStore.getState().sshConnections.find(item => item.id === selectedId)
         : null
     setForm(conn ? formFromConnection(conn) : emptyConnectionForm())
+    setMode(
+      conn
+        ? resolveSshConnectionMode(conn, getSshServerEnabled())
+        : getSshServerEnabled()
+          ? 'server'
+          : 'ssh'
+    )
     setPassword('')
     setPassphrase('')
     setFingerprintOverride(null)
@@ -225,7 +238,10 @@ export default function RemoteConnectionsManager() {
     : []
 
   const effectiveFingerprint = fingerprintOverride ?? selected?.host_key_fingerprint ?? null
-  const dirty = selected ? !formEqualsConnection(form, selected) : true
+  const dirty = selected
+    ? !formEqualsConnection(form, selected) ||
+      mode !== resolveSshConnectionMode(selected, getSshServerEnabled())
+    : true
   const alive = selected ? aliveMap[selected.id] ?? false : false
 
   const testConnection = async () => {
@@ -247,7 +263,8 @@ export default function RemoteConnectionsManager() {
     setTesting(true)
     setError('')
     try {
-      const probed = await probeSshHost(runtimeConfigFromForm(form, id, secrets))
+      const runtimeConfig = { ...runtimeConfigFromForm(form, id, secrets), mode }
+      const probed = await probeSshHost(runtimeConfig)
       const status = fingerprintStatus(selected?.host_key_fingerprint, probed)
       if (status !== 'match') {
         const accepted = await confirmDialog({
@@ -273,7 +290,7 @@ export default function RemoteConnectionsManager() {
         setFingerprintOverride(null)
       }
       await openSshSession({
-        ...runtimeConfigFromForm(form, id, secrets),
+        ...runtimeConfig,
         hostKeyFingerprint: probed,
       })
       if (isNew) pendingTestIdRef.current = id
@@ -301,6 +318,22 @@ export default function RemoteConnectionsManager() {
       setError(t('请先「测试连接」确认主机指纹后再保存。'))
       return
     }
+    const modeChanged = Boolean(
+      selected && mode !== resolveSshConnectionMode(selected, getSshServerEnabled())
+    )
+    const reconnectNeeded = modeChanged && alive
+    if (reconnectNeeded && selected) {
+      const accepted = await confirmDialog({
+        title: t('切换连接模式'),
+        message: t('将断开并重新连接 {name}；SSH 模式下终端断线即结束进程。', {
+          name: sshConnectionLabel(selected),
+        }),
+        kind: 'warning',
+        confirmLabel: t('保存并重新连接'),
+        cancelLabel: t('取消'),
+      })
+      if (!accepted) return
+    }
     setSaving(true)
     setError('')
     try {
@@ -309,7 +342,17 @@ export default function RemoteConnectionsManager() {
         id: pendingTestIdRef.current ?? crypto.randomUUID(),
         created_at: Date.now(),
       }
-      await saveSshConnection(connectionFromForm(form, base, effectiveFingerprint))
+      const saved = connectionFromForm(form, base, effectiveFingerprint)
+      if (reconnectNeeded && selected) {
+        // 先保存其他字段并保留旧模式，再由切换逻辑写新模式并断开重连。
+        await saveSshConnection({
+          ...saved,
+          mode: selected.mode ?? resolveSshConnectionMode(selected, getSshServerEnabled()),
+        })
+        await switchSshConnectionMode(selected.id, mode)
+      } else {
+        await saveSshConnection({ ...saved, mode })
+      }
       pendingTestIdRef.current = null
       pushToast('success', t('已保存 SSH 连接'))
       setFingerprintOverride(null)
@@ -318,8 +361,12 @@ export default function RemoteConnectionsManager() {
         return
       }
       setSelectedId(base.id)
+      if (selected) await refreshDetail(selected.id)
     } catch (reason) {
       setError(String(reason))
+      if (reconnectNeeded) {
+        pushToast('error', t('切换连接模式失败: {error}', { error: String(reason) }))
+      }
     } finally {
       setSaving(false)
     }
@@ -521,6 +568,44 @@ export default function RemoteConnectionsManager() {
           </div>
         </label>
       ) : null}
+      <div className={`col-span-2 ${labelClass}`}>
+        {t('连接模式')}
+        <div className="mt-1 flex flex-col gap-1.5">
+          <label className="flex items-start gap-2 text-ui text-fg">
+            <input
+              type="radio"
+              name="ssh-connection-mode"
+              value="server"
+              checked={mode === 'server'}
+              onChange={() => setMode('server')}
+              className="mt-0.5"
+            />
+            <span>
+              {t('Server 模式')}
+              <span className="ml-1 text-fg-muted">
+                — {t('部署 qingcode-server，终端断线不丢')}
+              </span>
+            </span>
+          </label>
+          <label className="flex items-start gap-2 text-ui text-fg">
+            <input
+              type="radio"
+              name="ssh-connection-mode"
+              value="ssh"
+              checked={mode === 'ssh'}
+              onChange={() => setMode('ssh')}
+              className="mt-0.5"
+            />
+            <span>
+              {t('SSH 模式')}
+              <span className="ml-1 text-fg-muted">— {t('零足迹直连')}</span>
+            </span>
+          </label>
+        </div>
+        <p className={`${helpClass} mt-1`}>
+          {t('每个连接的模式单独保存；修改已有连接的模式后需要重新连接才生效。')}
+        </p>
+      </div>
       <label className={`col-span-2 ${labelClass}`}>
         {isNew ? t('密码（测试连接用，不会保存）') : t('密码（仅测试连接用，不会保存）')}
         <input

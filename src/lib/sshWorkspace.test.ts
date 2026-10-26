@@ -2,13 +2,29 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   getSshConnection: vi.fn(),
+  upsertSshConnection: vi.fn(),
+  getSshServerEnabled: vi.fn(() => true),
   isProjectTrusted: vi.fn(() => true),
   safeInvoke: vi.fn(),
+  currentProject: null as unknown,
+  refreshProjectTree: vi.fn(),
 }))
 
-vi.mock('./projectRepository', () => ({ getSshConnection: mocks.getSshConnection }))
+vi.mock('./projectRepository', () => ({
+  getSshConnection: mocks.getSshConnection,
+  upsertSshConnection: mocks.upsertSshConnection,
+}))
+vi.mock('./sshServerSettings', () => ({ getSshServerEnabled: mocks.getSshServerEnabled }))
 vi.mock('./tauri', () => ({ safeInvoke: mocks.safeInvoke }))
 vi.mock('./workspaceTrust', () => ({ isProjectTrusted: mocks.isProjectTrusted }))
+vi.mock('../store/projectStore', () => ({
+  useProjectStore: {
+    getState: () => ({
+      currentProject: mocks.currentProject,
+      refreshProjectTree: mocks.refreshProjectTree,
+    }),
+  },
+}))
 
 import {
   ensureSshWorkspaceConnected,
@@ -17,17 +33,23 @@ import {
   joinSshResource,
   normalizeRemotePath,
   parentRemotePath,
+  resolveSshConnectionMode,
   sshConnectionIdFromUri,
   sshConnectionLabel,
   sshFileDisplayPath,
   sshProjectDisplayPath,
   sshRemotePathFromUri,
   sshRootUri,
+  switchSshConnectionMode,
 } from './sshWorkspace'
 import type { Project, SshConnection } from '../types'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.getSshServerEnabled.mockReturnValue(true)
+  mocks.upsertSshConnection.mockResolvedValue(undefined)
+  mocks.currentProject = null
+  mocks.refreshProjectTree.mockResolvedValue(undefined)
 })
 
 describe('sshRootUri', () => {
@@ -223,5 +245,252 @@ describe('ensureSshWorkspaceConnected', () => {
 
     await Promise.all([ensureSshWorkspaceConnected(first), ensureSshWorkspaceConnected(second)])
     expect(mocks.safeInvoke.mock.calls.filter(call => call[1] === 'ssh_connect')).toHaveLength(2)
+  })
+})
+
+describe('resolveSshConnectionMode', () => {
+  it('keeps valid modes and falls back to the global default', () => {
+    expect(resolveSshConnectionMode({ mode: 'server' }, false)).toBe('server')
+    expect(resolveSshConnectionMode({ mode: 'ssh' }, true)).toBe('ssh')
+    expect(resolveSshConnectionMode({ mode: null }, true)).toBe('server')
+    expect(resolveSshConnectionMode({}, false)).toBe('ssh')
+    expect(
+      resolveSshConnectionMode({ mode: 'foo' as unknown as 'server' }, true)
+    ).toBe('server')
+  })
+})
+
+describe('connectSshWorkspace mode backfill', () => {
+  const base: SshConnection = {
+    id: 'c1',
+    name: 'WSL',
+    host: 'localhost',
+    port: 22,
+    username: 'root',
+    auth_kind: 'privateKey',
+    host_key_fingerprint: 'SHA256:test',
+    created_at: 1,
+    updated_at: 1,
+    mode: null,
+  }
+  const project: Project = {
+    id: 'p1',
+    name: 'app',
+    path: 'ssh://c1/home/app',
+    kind: 'ssh',
+    connection_id: 'c1',
+    root_path: '/home/app',
+    created_at: 1,
+    last_opened_at: 1,
+  }
+
+  function mockConnect() {
+    mocks.safeInvoke.mockImplementation(
+      async (_label: string, command: string, args: Record<string, unknown>) => {
+        if (command === 'ssh_workspace_status') return false
+        if (command === 'ssh_connection_status') return true
+        if (command === 'ssh_connect') return { fingerprint: 'SHA256:test' }
+        throw new Error(`Unexpected command: ${command} ${JSON.stringify(args)}`)
+      }
+    )
+  }
+
+  it('writes the resolved mode back once and uses it for the session', async () => {
+    mockConnect()
+    mocks.getSshConnection.mockResolvedValue({ ...base })
+    mocks.getSshServerEnabled.mockReturnValue(false)
+
+    await ensureSshWorkspaceConnected(project)
+
+    expect(mocks.upsertSshConnection).toHaveBeenCalledTimes(1)
+    expect(mocks.upsertSshConnection).toHaveBeenCalledWith({ ...base, mode: 'ssh' })
+    const connect = mocks.safeInvoke.mock.calls.find(call => call[1] === 'ssh_connect')
+    expect((connect?.[2] as { config: { mode: string } }).config.mode).toBe('ssh')
+  })
+
+  it('does not rewrite an existing valid mode', async () => {
+    mockConnect()
+    mocks.getSshConnection.mockResolvedValue({ ...base, mode: 'server' })
+
+    await ensureSshWorkspaceConnected(project)
+
+    expect(mocks.upsertSshConnection).not.toHaveBeenCalled()
+  })
+
+  it('still connects when persisting the resolved mode fails', async () => {
+    mockConnect()
+    mocks.getSshConnection.mockResolvedValue({ ...base, mode: 'foo' as never })
+    mocks.upsertSshConnection.mockRejectedValue(new Error('disk full'))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(ensureSshWorkspaceConnected(project)).resolves.toBeUndefined()
+
+    expect(mocks.safeInvoke).toHaveBeenCalledWith(
+      '连接 SSH 项目',
+      'ssh_connect',
+      expect.objectContaining({ config: expect.objectContaining({ mode: 'server' }) })
+    )
+    warn.mockRestore()
+  })
+})
+
+describe('switchSshConnectionMode', () => {
+  const project: Project = {
+    id: 'p1',
+    name: 'app',
+    path: 'ssh://c1/home/app',
+    kind: 'ssh',
+    connection_id: 'c1',
+    root_path: '/home/app',
+    created_at: 1,
+    last_opened_at: 1,
+  }
+
+  function connection(mode: SshConnection['mode']): SshConnection {
+    return {
+      id: 'c1',
+      name: 'WSL',
+      host: 'localhost',
+      port: 22,
+      username: 'root',
+      auth_kind: 'privateKey',
+      host_key_fingerprint: 'SHA256:test',
+      created_at: 1,
+      updated_at: 1,
+      mode,
+    }
+  }
+
+  function storedConnection(initial: SshConnection['mode']) {
+    let stored = connection(initial)
+    mocks.getSshConnection.mockImplementation(async () => stored)
+    mocks.upsertSshConnection.mockImplementation(async (next: SshConnection) => {
+      stored = next
+    })
+    return () => stored
+  }
+
+  it('returns early when the mode is unchanged', async () => {
+    storedConnection('server')
+
+    await switchSshConnectionMode('c1', 'server')
+
+    expect(mocks.upsertSshConnection).not.toHaveBeenCalled()
+    expect(mocks.safeInvoke).not.toHaveBeenCalled()
+  })
+
+  it('only writes the row when the connection is offline', async () => {
+    const read = storedConnection('server')
+    mocks.safeInvoke.mockResolvedValue(false)
+
+    await switchSshConnectionMode('c1', 'ssh')
+
+    expect(read().mode).toBe('ssh')
+    expect(mocks.safeInvoke).toHaveBeenCalledTimes(1)
+    expect(mocks.safeInvoke).toHaveBeenCalledWith('检查 SSH 连接', 'ssh_connection_status', {
+      connectionId: 'c1',
+    })
+  })
+
+  it('stops every root, keeps going when one stop fails, then disconnects and reconnects the current project', async () => {
+    storedConnection('server')
+    mocks.currentProject = project
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mocks.safeInvoke.mockImplementation(
+      async (_label: string, command: string, args: Record<string, unknown>) => {
+        if (command === 'ssh_connection_status') return true
+        if (command === 'ssh_workspace_roots') {
+          return [
+            { rootUri: 'ssh://c1/home/a', trusted: true },
+            { rootUri: 'ssh://c1/home/b', trusted: true },
+          ]
+        }
+        if (command === 'ssh_server_stop') {
+          if (args.rootUri === 'ssh://c1/home/a') throw new Error('daemon offline')
+          return undefined
+        }
+        if (command === 'ssh_disconnect') return undefined
+        if (command === 'ssh_workspace_status') return false
+        if (command === 'ssh_connect') return { fingerprint: 'SHA256:test' }
+        throw new Error(`Unexpected command: ${command}`)
+      }
+    )
+
+    await switchSshConnectionMode('c1', 'ssh')
+
+    const stops = mocks.safeInvoke.mock.calls.filter(call => call[1] === 'ssh_server_stop')
+    expect(stops.map(call => (call[2] as { rootUri: string }).rootUri)).toEqual([
+      'ssh://c1/home/a',
+      'ssh://c1/home/b',
+    ])
+    expect(mocks.safeInvoke).toHaveBeenCalledWith('断开 SSH 连接', 'ssh_disconnect', {
+      connectionId: 'c1',
+    })
+    expect(mocks.safeInvoke).toHaveBeenCalledWith(
+      '连接 SSH 项目',
+      'ssh_connect',
+      expect.objectContaining({ config: expect.objectContaining({ mode: 'ssh' }) })
+    )
+    expect(mocks.refreshProjectTree).toHaveBeenCalledWith(project)
+    warn.mockRestore()
+  })
+
+  it('keeps the new mode in the database when reconnecting fails', async () => {
+    const read = storedConnection('server')
+    mocks.currentProject = project
+    mocks.safeInvoke.mockImplementation(
+      async (_label: string, command: string) => {
+        if (command === 'ssh_connection_status') return true
+        if (command === 'ssh_workspace_roots') return []
+        if (command === 'ssh_disconnect') return undefined
+        if (command === 'ssh_workspace_status') return false
+        if (command === 'ssh_connect') throw new Error('auth failed')
+        throw new Error(`Unexpected command: ${command}`)
+      }
+    )
+
+    await expect(switchSshConnectionMode('c1', 'ssh')).rejects.toThrow('auth failed')
+    expect(read().mode).toBe('ssh')
+    expect(mocks.refreshProjectTree).not.toHaveBeenCalled()
+  })
+
+  it('does not reconnect when the current project belongs to another connection', async () => {
+    storedConnection('server')
+    mocks.currentProject = { ...project, path: 'ssh://c2/home/app', connection_id: 'c2' }
+    mocks.safeInvoke.mockImplementation(async (_label: string, command: string) => {
+      if (command === 'ssh_connection_status') return true
+      if (command === 'ssh_workspace_roots') return []
+      if (command === 'ssh_disconnect') return undefined
+      throw new Error(`Unexpected command: ${command}`)
+    })
+
+    await switchSshConnectionMode('c1', 'ssh')
+
+    expect(mocks.safeInvoke).not.toHaveBeenCalledWith(
+      '连接 SSH 项目',
+      'ssh_connect',
+      expect.anything()
+    )
+    expect(mocks.refreshProjectTree).not.toHaveBeenCalled()
+  })
+
+  it('serializes concurrent switches and disconnects only once', async () => {
+    storedConnection('server')
+    mocks.safeInvoke.mockImplementation(async (_label: string, command: string) => {
+      if (command === 'ssh_connection_status') return true
+      if (command === 'ssh_workspace_roots') return []
+      if (command === 'ssh_disconnect') return undefined
+      throw new Error(`Unexpected command: ${command}`)
+    })
+
+    await Promise.all([
+      switchSshConnectionMode('c1', 'ssh'),
+      switchSshConnectionMode('c1', 'ssh'),
+    ])
+
+    expect(mocks.upsertSshConnection).toHaveBeenCalledTimes(1)
+    expect(
+      mocks.safeInvoke.mock.calls.filter(call => call[1] === 'ssh_disconnect')
+    ).toHaveLength(1)
   })
 })

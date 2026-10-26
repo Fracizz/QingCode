@@ -70,12 +70,12 @@ describe('SshServerSettingsSection', () => {
     useProjectStore.setState({ pushToast })
   })
 
-  it('turning the server off saves the new key, drops legacy keys, and stops the remote server', async () => {
+  it('saves the default mode globally, drops legacy keys, and never stops the remote server', async () => {
     render(<SshServerSettingsSection scope="user" project={sshProject} settingsRevision={0} />)
 
-    const toggle = screen.getByLabelText('SSH › 服务: 远端服务') as HTMLSelectElement
-    expect(toggle.value).toBe('on')
-    fireEvent.change(toggle, { target: { value: 'off' } })
+    const toggle = screen.getByLabelText('新建连接的默认模式') as HTMLSelectElement
+    expect(toggle.value).toBe('server')
+    fireEvent.change(toggle, { target: { value: 'ssh' } })
 
     await waitFor(() => expect(saveGlobalSettings).toHaveBeenCalledTimes(1))
     const saved = saveGlobalSettings.mock.calls[0][0] as Record<string, unknown>
@@ -83,54 +83,28 @@ describe('SshServerSettingsSection', () => {
     expect('ssh.agent.enabled' in saved).toBe(false)
     expect('ssh.agent.autoDownload' in saved).toBe(false)
 
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('停止远端服务', 'ssh_server_stop', {
-        rootUri: 'ssh://c1/home/app',
-      })
-    })
-    // Success stays quiet — status events refresh the chip instead.
-    expect(pushToast).not.toHaveBeenCalled()
-  })
-
-  it('does not stop the remote server for a local project', async () => {
-    const localProject = { ...sshProject, path: 'D:/local', kind: 'local' }
-    render(<SshServerSettingsSection scope="user" project={localProject} settingsRevision={0} />)
-
-    fireEvent.change(screen.getByLabelText('SSH › 服务: 远端服务'), {
-      target: { value: 'off' },
-    })
-
-    await waitFor(() => expect(saveGlobalSettings).toHaveBeenCalledTimes(1))
+    // 关闭开关只影响新建连接的默认值，不再停止已有连接的远端服务。
     expect(invoke).not.toHaveBeenCalledWith('停止远端服务', 'ssh_server_stop', expect.anything())
     expect(pushToast).not.toHaveBeenCalled()
   })
 
-  it('toasts when stopping the remote server fails', async () => {
-    invoke.mockImplementation(async (_action: string, command: string) => {
-      if (command === 'ssh_server_stop') throw new Error('not connected')
-      return undefined
-    })
-    render(<SshServerSettingsSection scope="user" project={sshProject} settingsRevision={0} />)
+  it('hides the default-mode toggle in workspace scope', async () => {
+    render(<SshServerSettingsSection scope="workspace" project={sshProject} settingsRevision={0} />)
 
-    fireEvent.change(screen.getByLabelText('SSH › 服务: 远端服务'), {
-      target: { value: 'off' },
-    })
-
-    await waitFor(() => {
-      expect(pushToast).toHaveBeenCalledWith('error', '停止远端服务失败: Error: not connected')
-    })
+    expect(screen.queryByLabelText('新建连接的默认模式')).toBeNull()
+    expect(await screen.findByLabelText('SSH › 服务: 缺失时自动下载')).toBeTruthy()
   })
 
-  it('reports save failures with the dedicated toggle message', async () => {
+  it('reports save failures with the dedicated message', async () => {
     saveGlobalSettings.mockRejectedValue(new Error('disk full'))
     render(<SshServerSettingsSection scope="user" project={sshProject} settingsRevision={0} />)
 
-    fireEvent.change(screen.getByLabelText('SSH › 服务: 远端服务'), {
-      target: { value: 'off' },
+    fireEvent.change(screen.getByLabelText('新建连接的默认模式'), {
+      target: { value: 'ssh' },
     })
 
     await waitFor(() => {
-      expect(pushToast).toHaveBeenCalledWith('error', '保存远端服务开关失败: Error: disk full')
+      expect(pushToast).toHaveBeenCalledWith('error', '保存默认连接模式失败: Error: disk full')
     })
     expect(invoke).not.toHaveBeenCalledWith('停止远端服务', 'ssh_server_stop', expect.anything())
   })

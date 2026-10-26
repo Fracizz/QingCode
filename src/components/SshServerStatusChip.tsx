@@ -10,7 +10,6 @@ import {
   sshServerChip,
   sshServerCanSwitchToSshMode,
   sshServerEventMatches,
-  sshServerDisabledBySetting,
   sshServerIsDirect,
   sshServerSwitchBlocker,
   sshServerPhaseKey,
@@ -24,7 +23,9 @@ import StatusTip from './StatusTip'
 import ContextMenu from './ContextMenu'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
-import { switchToServerMode, switchToSshMode } from '../lib/serverModeError'
+import { confirmDialog } from '../store/confirmStore'
+import { switchSshConnectionMode, sshConnectionLabel } from '../lib/sshWorkspace'
+import type { SshConnectionMode } from '../types'
 import { RefreshCw, RotateCw, ScrollText, X } from 'lucide-react'
 
 const STATUS_ACTION = 'rounded px-1 -mx-1 text-fg hover:bg-bg-hover transition-colors'
@@ -37,6 +38,7 @@ type DialogKind = 'details' | 'logs'
 export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
   const { t } = useI18n()
   const pushToast = useProjectStore(s => s.pushToast)
+  const sshConnections = useProjectStore(s => s.sshConnections)
   const [state, setState] = useState<SshServerState | null>(null)
   const [infoError, setInfoError] = useState<string | null>(null)
   const [hidden, setHidden] = useState(false)
@@ -158,29 +160,48 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
     fetchLogs()
   }
 
+  const sshMode = state.connectionMode === 'ssh'
   const direct = sshServerIsDirect(state)
   const canSwitchToSsh = sshServerCanSwitchToSshMode(state)
-  // SSH 模式（设置关闭）下「切换到 Server」直接先开启设置，不再要求去设置页。
-  const disabledBySetting = direct && sshServerDisabledBySetting(state)
-  const switchBlocker = direct && !disabledBySetting ? sshServerSwitchBlocker(state) : null
+  const switchBlocker = !sshMode && direct ? sshServerSwitchBlocker(state) : null
 
-  const switchModeToSsh = () => {
-    if (busy) return
+  const switchConnectionMode = async (target: SshConnectionMode) => {
+    if (busy || !state) return
+    const connectionId = state.connectionId
+    const connection = sshConnections.find(item => item.id === connectionId)
+    const name = connection ? sshConnectionLabel(connection) : connectionId
     setBusy(true)
-    void switchToSshMode()
-      .then(() => pushToast('success', t('已切换到 SSH 模式')))
-      .catch(error => {
-        pushToast('error', t('切到 SSH 模式失败: {error}', { error: String(error) }))
+    try {
+      const accepted = await confirmDialog({
+        title: target === 'ssh' ? t('切换到 SSH 模式') : t('切换到 Server 模式'),
+        message: t('将断开并重新连接 {name}；SSH 模式下终端断线即结束进程。', { name }),
+        kind: 'warning',
+        confirmLabel: t('切换并重连'),
+        cancelLabel: t('取消'),
       })
-      .finally(() => setBusy(false))
+      if (!accepted) return
+      await switchSshConnectionMode(connectionId, target)
+      pushToast(
+        'success',
+        target === 'ssh' ? t('已切换到 SSH 模式') : t('已切换到 Server 模式'),
+      )
+    } catch (error) {
+      pushToast(
+        'error',
+        target === 'ssh'
+          ? t('切到 SSH 模式失败: {error}', { error: String(error) })
+          : t('切换 Server 模式失败: {error}', { error: String(error) }),
+      )
+    } finally {
+      setBusy(false)
+    }
   }
 
   // 直连时同一个后端命令（清缓存 + 重新发现/部署）即「切换到 Server」。
   const restart = () => {
     if (busy) return
     setBusy(true)
-    void (disabledBySetting ? switchToServerMode() : Promise.resolve())
-      .then(() => safeInvoke<unknown>('重启 SSH Agent', 'ssh_server_restart', { rootUri }))
+    void safeInvoke<unknown>('重启 SSH Agent', 'ssh_server_restart', { rootUri })
       .then(value => {
         const next = parseSshServerState(value)
         if (next) setState(next)
@@ -200,7 +221,7 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
           'error',
           direct
             ? t('切换到 Server 失败: {error}', { error: String(error) })
-            : t('重启 Server 失败: {error}', { error: String(error) }),
+            : t('重启 Server 失败: {error}', { error: String(error) })
         )
       })
       .finally(() => setBusy(false))
@@ -232,11 +253,27 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
           onClose={() => setMenu(null)}
           items={[
             { label: t('查看 Server 详情'), action: () => setDialog('details') },
-            { label: restartLabel, disabled: busy || !!switchBlocker, action: restart },
-            ...(canSwitchToSsh
-              ? [{ label: t('切到 SSH 模式'), disabled: busy, action: switchModeToSsh }]
-              : []),
-            { label: t('查看 Server 日志'), action: openLogs },
+            ...(sshMode
+              ? [
+                  {
+                    label: t('切换到 Server'),
+                    disabled: busy,
+                    action: () => void switchConnectionMode('server'),
+                  },
+                ]
+              : [
+                  { label: restartLabel, disabled: busy || !!switchBlocker, action: restart },
+                  ...(canSwitchToSsh
+                    ? [
+                        {
+                          label: t('切到 SSH 模式'),
+                          disabled: busy,
+                          action: () => void switchConnectionMode('ssh'),
+                        },
+                      ]
+                    : []),
+                  { label: t('查看 Server 日志'), action: openLogs },
+                ]),
           ]}
         />
       )}
@@ -255,27 +292,31 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
               <div className="flex items-center gap-1">
                 {dialog === 'details' ? (
                   <>
-                    <Tooltip label={restartLabel} side="bottom">
-                      <button
-                        type="button"
-                        aria-label={restartLabel}
-                        disabled={busy || !!switchBlocker}
-                        className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
-                        onClick={restart}
-                      >
-                        <RotateCw size={16} />
-                      </button>
-                    </Tooltip>
-                    <Tooltip label={t('查看 Server 日志')} side="bottom">
-                      <button
-                        type="button"
-                        aria-label={t('查看 Server 日志')}
-                        className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
-                        onClick={openLogs}
-                      >
-                        <ScrollText size={16} />
-                      </button>
-                    </Tooltip>
+                    {sshMode ? null : (
+                      <>
+                        <Tooltip label={restartLabel} side="bottom">
+                          <button
+                            type="button"
+                            aria-label={restartLabel}
+                            disabled={busy || !!switchBlocker}
+                            className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
+                            onClick={restart}
+                          >
+                            <RotateCw size={16} />
+                          </button>
+                        </Tooltip>
+                        <Tooltip label={t('查看 Server 日志')} side="bottom">
+                          <button
+                            type="button"
+                            aria-label={t('查看 Server 日志')}
+                            className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
+                            onClick={openLogs}
+                          >
+                            <ScrollText size={16} />
+                          </button>
+                        </Tooltip>
+                      </>
+                    )}
                   </>
                 ) : (
                   <Tooltip label={t('刷新')} side="bottom">
@@ -320,7 +361,16 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
             </div>
             {dialog === 'details' ? (
               <footer className="flex flex-shrink-0 items-center justify-end gap-3 border-t border-border px-4 py-3">
-                {direct ? (
+                {sshMode ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="flex-shrink-0 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40"
+                    onClick={() => void switchConnectionMode('server')}
+                  >
+                    {busy ? t('正在切换…') : t('切换到 Server')}
+                  </button>
+                ) : direct ? (
                   <>
                     {switchBlocker ? (
                       <p className="min-w-0 flex-1 text-ui-xs text-fg-muted">{t(switchBlocker)}</p>
@@ -339,7 +389,7 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
                     type="button"
                     disabled={busy}
                     className="flex-shrink-0 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40"
-                    onClick={switchModeToSsh}
+                    onClick={() => void switchConnectionMode('ssh')}
                   >
                     {busy ? t('正在切换…') : t('切到 SSH 模式')}
                   </button>
@@ -368,6 +418,7 @@ function ChipDot({ kind }: { kind: SshServerChip['kind'] }) {
 function ChipText({ chip }: { chip: SshServerChip }) {
   const { t } = useI18n()
   if (chip.kind === 'agent') return <>{t('Server')}</>
+  if (chip.kind === 'ssh') return <>{t('SSH')}</>
   if (chip.kind === 'direct') return <>{t('直连')}</>
   if (chip.kind === 'offline') return <>{t('已断开')}</>
   return <>{t('Server…')}</>
@@ -436,6 +487,8 @@ function translateTipLine(
   t: (source: string, values?: Record<string, string | number>) => string,
 ): string {
   switch (line.key) {
+    case 'SSH 模式（连接配置）':
+      return t('SSH 模式（连接配置）')
     case '直连：{reason}':
       return t('直连：{reason}', line.params)
     case '直连':

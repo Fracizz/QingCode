@@ -26,6 +26,7 @@ import {
   normalizeRemotePath,
   openSshSession,
   parentRemotePath,
+  resolveSshConnectionMode,
   SSH_CONNECTIONS_CHANGED_EVENT,
   sshConnectionTarget,
   sshRuntimeConfig,
@@ -33,6 +34,7 @@ import {
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
 import { isWslPath, WSL_ROOT_PATH, wslSupported } from '../lib/wslWorkspace'
+import { getSshServerEnabled } from '../lib/sshServerSettings'
 import type { SshConnection } from '../types'
 
 interface Props {
@@ -223,7 +225,9 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
     setSshPhase('connecting')
     setError('')
     try {
-      const opened = await openSshSession(sshRuntimeConfig(target, secrets))
+      const opened = await openSshSession(
+        sshRuntimeConfig(target, secrets, resolveSshConnectionMode(target, getSshServerEnabled()))
+      )
       if (epoch !== epochRef.current) return
       secretsRef.current = secrets
       setSshPhase('browse')

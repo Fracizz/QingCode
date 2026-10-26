@@ -23,7 +23,7 @@ SSH 主机统一在「远程连接」管理页维护（活动栏云图标、项�
 
 ## 远端服务（qingcode-server）
 
-Linux / POSIX SSH 项目（已信任、设置 `ssh.server.enabled` 默认开启）会在连接后自动部署远端服务。设计状态与实现边界见仓库内的 [`ssh-agent-design.md`](ssh-agent-design.md)，当前进度见文末「实施进度与未完成清单」。
+Linux / POSIX SSH 项目（已信任、所在连接为 Server 模式）会在连接后自动部署远端服务。设计状态与实现边界见仓库内的 [`ssh-agent-design.md`](ssh-agent-design.md)，当前进度见文末「实施进度与未完成清单」。
 
 历史兼容说明：旧设置键、旧环境变量、旧离线文件名和旧远端目录仍可读取，但只作为迁移别名；当前名称统一为 `ssh.server.*`、`QINGCODE_SERVER_*`、`qingcode-server-*` 和 `.qingcode/server/`。迁移时只清理旧目录中的进程与二进制，不执行其中的文件。
 
@@ -50,16 +50,19 @@ Linux / POSIX SSH 项目（已信任、设置 `ssh.server.enabled` 默认开启�
   - 状态栏芯片只显示简洁状态：`Server`（绿点）/ `Server…`（黄点闪动，连接中）/ `直连`（灰点），版本等细节收进悬停摘要（`Server v版本` 等 + 「点击查看详情」）。**点击直接打开详情弹窗**（标准 modal，头部含重启与日志入口），右键菜单提供查看详情、重启 Server、查看日志（daemon 日志 + 项目 serve 日志两段拼接，各取末尾 200 行）。查询失败时芯片以 `!` 错误态显示「Server 状态未知」，不再伪装成直连；重启成功与失败均有明确 toast。意外断线（保活超时、远端断开）时芯片显示 `已断开`（红点），详情里给出断开原因，后台自动重连成功后恢复；用户主动断开不显示。详情弹窗的「耗时」以分阶段条形图给出最近一次发现/部署的耗时：顶部是就绪用时（合计），各阶段按时长画条、最慢的前台阶段高亮，daemon 等后台阶段单独分组且不计入就绪用时；摘要格式无法识别时原样显示文本（后端摘要形如 `状态目录 0.3s · 安装目录 0.9s · 发现 1.2s · 合计 2.6s · daemon 1.8s（后台）`），用于对照远端往返开销。
   - **就绪路径提速**：serve ping 通即发布 `Server` 就绪，daemon 探测（读 token → 握手，失败才启动 daemon）转入后台，通过后 watch 自动从 serve 切到 daemon；家目录与用户私有安装目录按连接缓存（部署失败或断开时丢弃），并按「用户名@主机:端口#已校验主机指纹」持久化到本地应用数据目录 `ssh-server-installs.json`，应用重启后首次连接免去「读家目录 + 建目录」那次远端 shell——命中时仍 canonicalize 复核安装目录位于家目录内且与缓存逐字一致，不符即删除条目走完整准备；指纹变化即换键失效，部署失败同样删除；旧版项目内安装只在文件确实存在时才做进程清理（此前每次发现都要两轮远端进程枚举，Windows 上是 `Win32_Process` 全量查询）；上传前已比对一致时不重复计算 sha256；读家目录与建用户私有安装目录合并为一次远端往返，两次 canonicalize 并发；发现阶段已比对一致的摘要（serve 已退出、需重新启动时）直接复用，不再二次比对；chmod、self-check 与启动 serve 合并为一次远端往返（自检失败以退出码 41 中止，不会启动未通过校验的二进制）——Windows 远端每次往返都要冷启动 PowerShell，这几项合计省下 3～4 次往返；daemon 探测整轮 30 秒封顶、单步 exec 15 秒；
   - **watch 断线恢复**：主连接断开时 watch 监督任务主动重连（首次立即重连，失败后按 5、5、10、10、10、10、10 秒、此后每 30 秒重试，不再连续 3 次失败就永久退出），断线期间保留 serve/daemon 端点与 daemon 标记，重连后直接复用，不重新部署；daemon watch 会话中途断开不再把 daemon 降级 5 分钟。
-- **Server / SSH 模式**：`ssh.server.enabled` 即模式开关，两种模式互不回退。
-  - Server 模式（开启）：交互式终端、运行任务（含 sh / 脚本 / 命令类一次性任务，由 daemon 以 `/bin/sh -l -c` 执行）、目录扫描、内容搜索（含子目录搜索，经 daemon）、文件监听只走 server。首次使用会等待发现/部署（最长 180 秒）与 daemon 探测（最长 30 秒）完成；server 或 daemon 不可用时直接报错，错误以「Server 模式：」开头，提示里提供「切到 SSH 模式」一键切换（写全局设置），状态栏芯片菜单同样提供。
-  - SSH 模式（关闭）：不部署也不调用 server，终端、运行任务、扫描、搜索全部直连，终端断线即结束进程。
+- **Server / SSH 模式**：参考 VS Code Remote-SSH（remote authority 在窗口打开时解析）与 Zed（`RemoteClient` 持有一个 `RemoteConnection`），模式是**连接级属性**，两种模式互不回退。
+  - 模式存在每个 SSH 连接配置里（SQLite `ssh_connections.mode`，`server` / `ssh`），在「远程连接」管理页设置；`ssh_connect` 时随配置传给后端并固定在会话里，会话期间不可变。同一连接下的所有项目共用一个模式，不同连接可以各用各的模式同时打开。后端不再有全局模式开关（`ssh_set_server_enabled` 已删除），所有分支按会话模式判断；会话不存在或尚未定下模式时一律按非 Server 处理。
+  - 改模式 = 保存连接配置 + 断开重连（等同 VS Code 的 Reload Window）。从 Server 切到 SSH 时先对该连接已注册的根尽力调用 `ssh_server_stop`。已注册项目根的会话收到不同模式的 `ssh_connect` 会报「连接模式已变更」，必须先断开。
+  - 全局设置 `ssh.server.enabled` 只表示「新建连接的默认模式」，也用于给升级前没有模式字段的旧连接补值（首次连接时写回数据库）；不再支持项目级覆盖。
+  - Server 模式：交互式终端、运行任务（含 sh / 脚本 / 命令类一次性任务，由 daemon 以 `/bin/sh -l -c` 执行）、目录扫描、内容搜索（含子目录搜索，经 daemon）、文件监听只走 server。首次使用会等待发现/部署（最长 180 秒）与 daemon 探测（最长 30 秒）完成；server 或 daemon 不可用时直接报错，错误以「Server 模式：」开头，提示里提供「切到 SSH 模式」一键切换（改当前连接的模式并重连），状态栏芯片菜单同样提供。
+  - SSH 模式：不部署也不调用 server，终端、运行任务、扫描、搜索全部直连，终端断线即结束进程。`ssh_server_restart` / `ssh_server_logs` 直接拒绝，列出与清理 detached 终端返回空，接回 daemon 终端报错后由前端新建普通终端；状态芯片显示 `SSH`，`SshServerState.connectionMode` 为 `ssh`。
   - 两种模式下文件读写、stat、Git、上传下载都走主连接（SFTP / 远程命令），server 没有对应接口。
   - 未受信任项目不部署 server，浏览仍走 SFTP；终端与运行任务需要信任。
   - 原 `ssh.server.persistentTerminals` 已删除：Server 模式下终端必然由 daemon 托管。
 - **持久化终端（P2/P3）**：Server 模式下项目已信任、daemon 端点可用且 HELLO 声明 `pty.persist` 时，交互式终端由 daemon 的 PTY 宿主托管。SSH 断开后 daemon 将终端标为 detached，进程继续运行并继续缓冲输出；重连优先按输出序号补发，缓冲已被淘汰时改用屏幕快照恢复。daemon 不可用或缺少能力时新建直接报错，不回退直连。应用重启后，带 `ptyId` / `connectionId` 的持久化标签会优先接回原 PTY，接回失败再新建普通终端；连接就绪后还会汇总属于本安装且没有本地标签的 detached 终端，提示接回或全部结束。上述能力仍需 WP-G 的 G21/G22 真机验收。
-- **关闭、停止与清理**：设置里关闭 `ssh.server.enabled`（切到 SSH 模式）后全部直连，并对当前激活的 SSH 工作区自动调用 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon 尽力 `server.shutdown`）；已安装二进制保留在用户目录供下次复用。命令 `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 均要求工作区已信任；「重启 Server」会同时重建 serve 与 daemon（此前只重建 serve）。迟授予信任的已连接项目会补启动文件树 watch 监督任务，不必重连。清理：删除项目内 `.qingcode/server/` 数据目录仅停止本项目的 serve；二进制需同时删除 `~/.qingcode/server/` 下对应版本目录。断开连接不终止远端服务（保活供快速重连，与 VS Code Server / Zed remote_server 生命周期策略一致）。
+- **关闭、停止与清理**：把连接切到 SSH 模式后全部直连，切换时对该连接已注册的根调用 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon 尽力 `server.shutdown`）；已安装二进制保留在用户目录供下次复用。命令 `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 均要求工作区已信任；「重启 Server」会同时重建 serve 与 daemon（此前只重建 serve）。迟授予信任的已连接项目会补启动文件树 watch 监督任务，不必重连。清理：删除项目内 `.qingcode/server/` 数据目录仅停止本项目的 serve；二进制需同时删除 `~/.qingcode/server/` 下对应版本目录。断开连接不终止远端服务（保活供快速重连，与 VS Code Server / Zed remote_server 生命周期策略一致）。
 - **已知限制（MVP）**：
-  - 关闭总开关会停止当前激活 SSH 工作区的远端服务，其他已连接 SSH 工作区的远端进程不会被逐一停止；重新打开后需重新连接项目才会恢复自动刷新。
+  - 切到 SSH 模式只停止该连接当时已注册的根上的远端服务；同一远端用户下其他连接部署的服务不受影响。
   - 远端保存文件也会触发一次 `fs-change`（尚未做本地那样的自写抑制），表现为多一次目录树刷新与 Git 刷新。
   - 单行超过 2MB 的内容搜索命中会截断并停止（与未部署服务时的 rg 路径一致）。
   - 远端服务不做自启动注册，注销/重启远端主机后需重新连接项目才会重新部署。
@@ -269,7 +272,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 | §4.1 离线目录 | `ssh.server.offlineDir` 手动选择离线 `servers` 目录（校验含 `qingcode-server` 文件） | `65b43a8` |
 | 改名与设置迁移 | qingcode-agent → qingcode-server 全面改名：设置键 `ssh.server.*`（读取兼容旧 `ssh.agent.*`，保存时迁移清理）、命令 `ssh_server_*`、事件 `ssh-server-state`、远端目录 `.qingcode/server/` 与 `$HOME/.qingcode/server/`、daemon 能力 `server.shutdown`、Release 标签 `server-v*` 与资产名、工作流 `server-release.yml`、脚本 `build-server.ps1` / `e2e-ssh-server/`、环境变量 `QINGCODE_SERVER_*`（旧名兼容）、本地目录 `servers/`（旧 `agents/` 与旧二进制名兼容读取）、离线包 `QingCode-servers.zip` | 本轮 |
 | 部署加固 | 幂等部署（上传前比对远端 sha256，一致跳过）；上传后 `self-check --expect-sha256` 成功才启动；失败分类（网络类瞬时不占缓存，sha 不符/超体积/自检失败 permanent）；连续 2 次完整部署失败退避为不可用并提示 `AllowTcpForwarding`，重连解冻；切换 autoDownload / 离线目录清不可用缓存立即重试 | 本轮 |
-| 停止、重启与日志 | 新命令 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon `server.shutdown`）；设置关闭总开关时对当前 SSH 工作区自动调用；「重启 Server」同时重建 serve 与 daemon；serve 输出重定向 `.qingcode/server/serve.log`（>1MB 启动前截断）；「查看 Server 日志」拼接 daemon 日志与项目 serve 日志两段（各 tail 200 行） | 本轮 |
+| 停止、重启与日志 | 新命令 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon `server.shutdown`）；连接切到 SSH 模式时对该连接已注册的根调用；「重启 Server」同时重建 serve 与 daemon；serve 输出重定向 `.qingcode/server/serve.log`（>1MB 启动前截断）；「查看 Server 日志」拼接 daemon 日志与项目 serve 日志两段（各 tail 200 行） | 本轮 |
 | 信任与降级重试 | `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 要求工作区已信任；迟授予信任补启动文件树 watch 监督；daemon 传输降级后 5 分钟冷却重试（不再一次失败永久走 serve） | 本轮 |
 | 升级健壮性 | 发现阶段除版本号外再比远端二进制与本地可信文件的 sha256（同版本重打包也会重装）；摘要不一致时不执行目标文件，按路径结束占用用户私有安装目录的 serve/daemon 后再替换；replace 失败带退避重试并给出可操作错误 | 本轮 |
 | 其他修复 | token 改 OS 随机源生成（getrandom，此前 Windows 用时间 + pid）；scan `done.files_scanned` 真实计数；并发下载临时文件唯一命名 + 失败清理 + 按 manifest size 设上限；状态芯片错误态（`!`，不伪装直连）、重启成功 toast、日志对话框加载态与刷新按钮、设置导入后立即推送后端、保存/推送失败明确 toast | 本轮 |
@@ -317,14 +320,14 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 26. 把 `content_search`、`file_encoding`/`exclude`、`git_status`/`git_command`、`format`、`path_guard`、`git`、`file_watcher`、`terminal` 与 Tauri 解耦为共用 crate，使本地与远端语义天然一致。
 
 **G. 设置（§10）**
-27. `remote.server.mode`（auto/always/never 及连接级覆盖）、`remote.server.installDir`、`remote.server.detachedTerminalTtl`、`remote.server.terminalScrollbackBytes`、`remote.server.watch`（当前有 `ssh.server.enabled`、`ssh.server.persistentTerminals`（默认开）、`ssh.server.autoDownload`，以及手动离线目录 `ssh.server.offlineDir`；旧 `ssh.agent.*` 读取兼容、保存时迁移清理）。
+27. `remote.server.mode`（auto/always/never 及连接级覆盖）、`remote.server.installDir`、`remote.server.detachedTerminalTtl`、`remote.server.terminalScrollbackBytes`、`remote.server.watch`（当前有连接级模式 `ssh_connections.mode`、新建连接默认模式 `ssh.server.enabled`、`ssh.server.autoDownload`，以及手动离线目录 `ssh.server.offlineDir`；旧 `ssh.agent.*` 读取兼容、保存时迁移清理）。
 
 ### 已知问题与瑕疵
 
 - Windows 全量的 `clipboard_files::tests::reads_png_clipboard_as_stable_temp_file` 会因沙箱拒绝 `OpenClipboard` 失败。这是环境限制，不是断言错误。
 - watch 建立的前 500ms 会丢弃事件（用来滤掉 notify 注册期的枚举噪声），该窗口内的真实修改同样丢失。
 - 内容搜索遇到单行 >2MB 的文件会截断并停止整次搜索（与直连 rg 路径行为一致，minified 产物后的文件命中会漏）。
-- 关闭 `ssh.server.enabled` 会停止当前激活 SSH 工作区的远端服务，其他已连接 SSH 工作区的远端进程不会被逐一停止；重新开启需重连项目才恢复自动刷新。
+- 连接切到 SSH 模式只停止该连接已注册根的远端服务，同一远端用户下其他连接部署的服务不受影响。
 - 远端保存文件仍会触发一次 `fs-change`（未做本地那样的自写抑制）。
 - daemon 按 `flock` 每远端用户单实例，多工作区共用同一 daemon；每项目各自隔离的是 serve 进程。二进制已共享安装到用户私有版本目录，跨项目旧版本清理仍见未完成项 18。
 - Windows 远端升级时不能只替换文件：新版系统上「删除 + rename」可能成功（POSIX delete 语义），但旧 daemon 仍在跑旧代码并占着单实例锁，新 daemon 起不来，客户端会继续连旧实例。现在摘要不一致时会先按 `ExecutablePath` 精确结束占用用户私有安装路径的 serve/daemon，再提交新文件；不会执行未通过 sha256 校验的目标文件。新旧版本并存仍依赖服务端 PTY 客户端接线。

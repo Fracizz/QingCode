@@ -1,3 +1,5 @@
+import type { SshConnectionMode } from '../types'
+
 export type SshServerPhase =
   | 'disconnected'
   | 'authenticating'
@@ -17,6 +19,8 @@ export type SshServerState = {
   rootUri: string
   phase: SshServerPhase
   mode: SshServerMode
+  /** 连接配置里的模式（连接时固定）；旧版后端不发，按 server 兼容。 */
+  connectionMode: SshConnectionMode
   version: string | null
   transport: SshServerTransport | null
   reason: string | null
@@ -49,6 +53,8 @@ const TRANSPORTS = new Set<SshServerTransport>(['daemon', 'serve', 'direct'])
 export type SshServerChip =
   | { kind: 'agent' }
   | { kind: 'direct' }
+  /** 连接配置为 SSH 模式：零足迹直连，没有远端服务。 */
+  | { kind: 'ssh' }
   | { kind: 'pending' }
   /** 意外断线（保活超时、远端断开）：后台正在自动重连。 */
   | { kind: 'offline' }
@@ -71,6 +77,9 @@ export function parseSshServerState(value: unknown): SshServerState | null {
   const version = nullableString(record.version)
   const reason = nullableString(record.reason)
   const transport = nullableTransport(record.transport)
+  // 旧版后端不发 connectionMode：按 server 兼容，避免整条状态被丢弃。
+  const connectionMode: SshConnectionMode =
+    record.connectionMode === 'ssh' ? 'ssh' : 'server'
   // timings 缺省（旧版后端）按 null 处理，类型不符才判为非法载荷。
   const timings = record.timings === undefined ? null : nullableString(record.timings)
   if (version === undefined || reason === undefined || transport === undefined) return null
@@ -80,6 +89,7 @@ export function parseSshServerState(value: unknown): SshServerState | null {
     rootUri,
     phase: phase as SshServerPhase,
     mode,
+    connectionMode,
     version,
     transport,
     reason,
@@ -91,6 +101,7 @@ export function sshServerChip(state: SshServerState | null): SshServerChip | nul
   if (!state) return null
   // 主动断开没有原因，芯片隐藏；意外断线带原因，显示「已断开」直到自动重连成功。
   if (state.phase === 'disconnected') return state.reason ? { kind: 'offline' } : null
+  if (state.connectionMode === 'ssh') return { kind: 'ssh' }
   if (state.phase === 'readyServer') return { kind: 'agent' }
   if (state.phase === 'readyDirect') return { kind: 'direct' }
   return { kind: 'pending' }
@@ -129,6 +140,9 @@ function shortReason(reason: string): string {
 
 /** 单行摘要：状态栏只给一句话，完整信息留给「查看 Server 详情」弹窗。 */
 export function sshServerTipLines(state: SshServerState): SshServerTipLine[] {
+  if (state.connectionMode === 'ssh') {
+    return [{ key: 'SSH 模式（连接配置）' }]
+  }
   if (state.phase === 'readyDirect' || state.mode === 'direct') {
     return state.reason
       ? [{ key: '直连：{reason}', params: { reason: shortReason(state.reason) } }]
@@ -147,25 +161,23 @@ export function sshServerTipLines(state: SshServerState): SshServerTipLine[] {
 }
 
 /** 与后端 server_status.rs 的直连原因保持一致。 */
-const REASON_SERVER_DISABLED = '已关闭 ssh.server.enabled'
 const REASON_UNTRUSTED = '工作区未信任'
 
 /**
  * 直连状态下能否一键切到 Server：返回 null 表示可以直接重新部署；
- * 总开关关闭或工作区未信任时重新部署也只会回到直连，返回需要先处理的提示 key。
+ * 工作区未信任时重新部署也只会回到直连，返回需要先处理的提示 key。
+ * SSH 模式是连接配置，可以随时切换，因此没有阻塞项。
  */
 export function sshServerSwitchBlocker(state: SshServerState): string | null {
+  if (state.connectionMode === 'ssh') return null
   const reason = state.reason?.trim() ?? ''
-  if (reason.startsWith(REASON_SERVER_DISABLED)) {
-    return '远端服务已在设置中关闭，请先在 设置 › 功能 中开启「SSH › 服务: 远端服务」'
-  }
   if (reason.startsWith(REASON_UNTRUSTED)) return '请先信任该工作区，再切换到 Server'
   return null
 }
 
-/** 直连是因为设置关闭了远端服务（SSH 模式）：「切换到 Server」应先开启设置。 */
+/** 连接配置为 SSH 模式（零足迹直连）：芯片显示「SSH」而不是「直连」。 */
 export function sshServerDisabledBySetting(state: SshServerState): boolean {
-  return (state.reason?.trim() ?? '').startsWith(REASON_SERVER_DISABLED)
+  return state.connectionMode === 'ssh'
 }
 
 /** 当前是否处于直连（含部署失败后的回退），用于决定是否展示「切换到 Server」。 */
@@ -173,9 +185,9 @@ export function sshServerIsDirect(state: SshServerState): boolean {
   return state.phase === 'readyDirect' || state.mode === 'direct'
 }
 
-/** 非直连（Server 就绪、部署中或断线）才提供「切到 SSH 模式」。 */
+/** 非 SSH 模式且非直连（Server 就绪、部署中或断线）才提供「切到 SSH 模式」。 */
 export function sshServerCanSwitchToSshMode(state: SshServerState): boolean {
-  return !sshServerIsDirect(state)
+  return state.connectionMode !== 'ssh' && !sshServerIsDirect(state)
 }
 
 export function sshServerEventMatches(eventRootUri: string, activeRootUri: string): boolean {

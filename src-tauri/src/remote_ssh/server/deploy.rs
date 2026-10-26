@@ -867,8 +867,11 @@ pub(crate) async fn require_server_endpoint(
     root: &RegisteredRoot,
     need_daemon: bool,
 ) -> Result<ServerEndpoint, String> {
-    if !manager.server_enabled() {
-        return Err("当前为 SSH 模式（ssh.server.enabled 已关闭），不使用远端 server".to_string());
+    match remote_uri_connection_id(&root.uri).and_then(|id| manager.connection_mode(id)) {
+        Some(RemoteMode::Server) => {}
+        Some(RemoteMode::Ssh) => return Err("该连接为 SSH 模式，不使用远端 server".to_string()),
+        // 会话已被断开（或尚未经 ssh_connect 定下模式）：不能当成 SSH 模式。
+        None => return Err("SSH 连接未建立".to_string()),
     }
     if !root.trusted {
         return Err(server_mode_error("项目未受信任，无法使用远端 server"));
@@ -926,7 +929,7 @@ pub(crate) fn kick_server_discovery(
     manager: &SshManager,
     root: &RegisteredRoot,
 ) {
-    if !manager.server_enabled() || !root.trusted {
+    if !manager.root_server_mode(root) || !root.trusted {
         return;
     }
     let Ok(parsed) = parse_remote_uri(&root.uri) else {
@@ -999,8 +1002,8 @@ async fn ensure_server_endpoint_inner(
 ) -> Result<Option<ServerEndpoint>, String> {
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
     let key = server_slot_key(&connection_id, &root.canonical_path);
-    // 未信任项目、总开关关闭：不部署，直接公布直连原因。Windows 远端走 serve。
-    if !manager.server_enabled() || !root.trusted {
+    // 未信任项目、SSH 模式连接：不部署，直接公布直连原因。Windows 远端走 serve。
+    if !manager.server_mode(&connection_id) || !root.trusted {
         publish_server_if_watched(app, manager, root);
         return Ok(None);
     }

@@ -235,10 +235,8 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.sshUploadOnPaste": true,
 
   // ============================== SSH ==============================
-  // ssh.server.enabled：SSH 工作区是否部署远端服务（qingcode-server）。服务经 SSH
-  // direct-tcpip 通道接入，只监听远端 127.0.0.1，部署在项目 .qingcode/server/ 下。
-  // 关闭后完全回退纯 SFTP/exec 直连（远端零足迹），但失去文件树自动刷新、
-  // 内嵌内容搜索（无需远端 rg）与快速目录扫描（默认 true）
+  // ssh.server.enabled：新建 SSH 连接的默认模式（true=Server，false=SSH）。
+  // 已有连接在「远程连接」管理页单独设置；修改后需要重新连接才生效（默认 true）
   "ssh.server.enabled": true,
 
   // ssh.server.autoDownload：安装包不附带 server 二进制。缺失时是否从 GitHub Release

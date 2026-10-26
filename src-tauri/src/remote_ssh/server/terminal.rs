@@ -528,6 +528,9 @@ pub(crate) async fn list_detached_terminals(
     app: &AppHandle,
     manager: &SshManager,
 ) -> Result<Vec<DetachedTerminal>, String> {
+    if !manager.server_mode(connection_id) {
+        return Ok(Vec::new());
+    }
     let roots = manager.roots_for_connection(connection_id);
     let Some(endpoint_root) = roots
         .iter()
@@ -578,6 +581,10 @@ pub(crate) async fn kill_detached_terminals(
     manager: &SshManager,
     root_uri: Option<&str>,
 ) -> Result<usize, String> {
+    // SSH 模式的连接没有 daemon，也就没有托管终端可清理。
+    if !manager.server_mode(connection_id) {
+        return Ok(0);
+    }
     let roots = manager.roots_for_connection(connection_id);
     let Some(endpoint_root) = roots
         .iter()

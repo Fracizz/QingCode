@@ -824,9 +824,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const known = get().projects
       const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
       await pushTrustedRootsToNative(forTrustSync)
-      // 项目作用域的 ssh.server.enabled 可能覆盖全局值：切换项目时按当前项目重算并推给后端。
-      // await 而不是 fire-and-forget：下面的 ensureSshWorkspaceConnected 会触发部署/下载，
-      // 必须让后端先拿到正确的开关值，避免按旧值部署。
+      // 模式已是连接配置属性，不再随项目推送；但 autoDownload / offlineDir 仍可被项目设置
+      // 覆盖，连接（可能触发部署/下载）前按当前项目重算并推给后端。
       try {
         await loadEffectiveSshServerEnabled(project)
         await pushSshServerSettingsToNative()

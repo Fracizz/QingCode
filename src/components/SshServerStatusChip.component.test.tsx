@@ -5,14 +5,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SshServerStatusChip from './SshServerStatusChip'
 import { useProjectStore } from '../store/projectStore'
 
-const { invoke, listeners, switchToSshMode, switchToServerMode } = vi.hoisted(() => ({
+const { invoke, listeners, switchSshConnectionMode, confirmDialog } = vi.hoisted(() => ({
   invoke: vi.fn(),
   listeners: [] as Array<(event: { payload: unknown }) => void>,
-  switchToSshMode: vi.fn(),
-  switchToServerMode: vi.fn(),
+  switchSshConnectionMode: vi.fn(),
+  confirmDialog: vi.fn(),
 }))
 
-vi.mock('../lib/serverModeError', () => ({ switchToSshMode, switchToServerMode }))
+vi.mock('../lib/sshWorkspace', () => ({
+  switchSshConnectionMode,
+  sshConnectionLabel: () => 'WSL（root@localhost）',
+}))
+vi.mock('../store/confirmStore', () => ({ confirmDialog }))
 
 vi.mock('../lib/tauri', () => ({
   isTauri: () => true,
@@ -42,6 +46,7 @@ const ready = {
   rootUri,
   phase: 'readyServer',
   mode: 'server',
+  connectionMode: 'server',
   version: '0.1.13',
   transport: 'daemon',
   reason: null,
@@ -62,8 +67,8 @@ describe('SshServerStatusChip', () => {
     listeners.splice(0, listeners.length)
     invoke.mockReset()
     pushToast.mockReset()
-    switchToSshMode.mockReset().mockResolvedValue(undefined)
-    switchToServerMode.mockReset().mockResolvedValue(undefined)
+    switchSshConnectionMode.mockReset().mockResolvedValue(undefined)
+    confirmDialog.mockReset().mockResolvedValue(true)
     useProjectStore.setState({ pushToast })
     invoke.mockImplementation(async (_action: string, command: string) => {
       if (command === 'ssh_server_info') return ready
@@ -107,14 +112,15 @@ describe('SshServerStatusChip', () => {
     const chip = await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' })
     fireEvent.contextMenu(chip)
     fireEvent.click(screen.getByText('切到 SSH 模式'))
-    await waitFor(() => expect(switchToSshMode).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(switchSshConnectionMode).toHaveBeenCalledWith('c1', 'ssh'))
+    expect(confirmDialog).toHaveBeenCalledTimes(1)
     expect(pushToast).toHaveBeenCalledWith('success', '已切换到 SSH 模式')
 
     // 详情弹窗同样提供该操作。
     fireEvent.click(screen.getByRole('button', { name: 'Server v0.1.13 点击查看详情' }))
     expect(await screen.findByText('Server 详情')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '切到 SSH 模式' }))
-    await waitFor(() => expect(switchToSshMode).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(switchSshConnectionMode).toHaveBeenCalledTimes(2))
   })
 
   it('does not offer switching to SSH mode while already direct', async () => {
@@ -139,36 +145,33 @@ describe('SshServerStatusChip', () => {
     expect(screen.queryByRole('button', { name: '切到 SSH 模式' })).toBeNull()
   })
 
-  it('switches back to Server mode in one click when the setting turned it off', async () => {
+  it('shows SSH for a connection configured in SSH mode and switches back to Server', async () => {
     const sshMode = {
       ...ready,
       phase: 'readyDirect',
       mode: 'direct',
+      connectionMode: 'ssh',
       version: null,
       transport: 'direct',
-      reason: '已关闭 ssh.server.enabled',
+      reason: 'SSH 模式（连接配置）',
     }
     invoke.mockImplementation(async (_action: string, command: string) => {
       if (command === 'ssh_server_info') return sshMode
-      if (command === 'ssh_server_restart') return ready
       throw new Error(`unexpected ${command}`)
     })
     render(<SshServerStatusChip rootUri={rootUri} />)
-    const chip = await screen.findByRole('button', { name: /^直连/ })
-    fireEvent.click(chip)
-    // 头部图标按钮与底部主按钮同名，取底部主按钮。
-    const buttons = await screen.findAllByRole('button', { name: '切换到 Server' })
-    const button = buttons[buttons.length - 1]
-    // 不再要求先去设置页开启：按钮可用，先写设置再重新部署。
-    expect((button as HTMLButtonElement).disabled).toBe(false)
-    fireEvent.click(button)
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('重启 SSH Agent', 'ssh_server_restart', { rootUri })
+    const chip = await screen.findByRole('button', {
+      name: 'SSH 模式（连接配置） 点击查看详情',
     })
-    expect(switchToServerMode).toHaveBeenCalledTimes(1)
-    expect(switchToServerMode.mock.invocationCallOrder[0]).toBeLessThan(
-      invoke.mock.invocationCallOrder[invoke.mock.calls.findIndex(call => call[1] === 'ssh_server_restart')],
-    )
+    expect(chip.textContent).toBe('SSH')
+    fireEvent.contextMenu(chip)
+    // SSH 模式没有远端服务：隐藏重启与日志，只提供切回 Server。
+    expect(screen.queryByText('重启 Server')).toBeNull()
+    expect(screen.queryByText('查看 Server 日志')).toBeNull()
+    fireEvent.click(screen.getByText('切换到 Server'))
+    await waitFor(() => expect(switchSshConnectionMode).toHaveBeenCalledWith('c1', 'server'))
+    expect(confirmDialog).toHaveBeenCalledTimes(1)
+    expect(pushToast).toHaveBeenCalledWith('success', '已切换到 Server 模式')
   })
 
   it('shows an error chip instead of faking direct mode when info fails', async () => {

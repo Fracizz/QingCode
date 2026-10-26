@@ -49,6 +49,28 @@ pub struct SshConnectionConfig {
     pub private_key_path: Option<String>,
     pub passphrase: Option<String>,
     pub host_key_fingerprint: Option<String>,
+    /// 连接模式（与 Zed / VS Code 一样属于连接本身）：连接时确定，会话期间不变，
+    /// 修改后必须断开重连。`ssh_open_session` 可不带，`ssh_connect` 必须带。
+    #[serde(default)]
+    pub mode: Option<RemoteMode>,
+}
+
+/// SSH 连接模式。Server 模式下终端、运行任务、扫描、搜索、监听只走 qingcode-server，
+/// 失败报错不回退；SSH 模式下不部署也不调用 server，全部直连。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteMode {
+    Server,
+    Ssh,
+}
+
+impl RemoteMode {
+    fn label(self) -> &'static str {
+        match self {
+            RemoteMode::Server => "Server",
+            RemoteMode::Ssh => "SSH",
+        }
+    }
 }
 
 fn default_ssh_port() -> u16 {
@@ -855,9 +877,6 @@ pub struct SshManager {
     servers: RwLock<HashMap<String, server::ServerSlot>>,
     /// 同一 (连接, 根) 的 server 部署串行执行。
     server_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    /// 模式开关：开启为 Server 模式（终端、运行任务、扫描、搜索只走 server，
-    /// 失败报错不回退）；关闭为 SSH 模式（全部直连，不部署 server）。
-    server_enabled: std::sync::atomic::AtomicBool,
     /// 本安装实例 UUID；daemon 的 clientId 为 `<uuid>:<connection_id>`。
     client_id: RwLock<String>,
     /// 本地 server 二进制查找目录（安装目录、资源目录、环境变量指定等）。
@@ -891,7 +910,6 @@ impl SshManager {
             git_prefixes: Mutex::new(HashMap::new()),
             servers: RwLock::new(HashMap::new()),
             server_gates: Mutex::new(HashMap::new()),
-            server_enabled: std::sync::atomic::AtomicBool::new(true),
             client_id: RwLock::new(uuid::Uuid::new_v4().to_string()),
             server_binary_dirs: RwLock::new(Vec::new()),
             server_offline_dir: RwLock::new(None),
@@ -945,7 +963,7 @@ impl SshManager {
             .config
             .lock()
             .map_err(|_| "SSH 连接状态不可用".to_string())?;
-        *stored = config;
+        *stored = merge_remembered_config(stored.mode, config);
         Ok(())
     }
 
@@ -1361,8 +1379,22 @@ impl SshManager {
             .clone())
     }
 
-    pub(crate) fn server_enabled(&self) -> bool {
-        self.server_enabled.load(Ordering::SeqCst)
+    /// 会话在 `ssh_connect` 时固定的模式；会话不存在或尚未经 `ssh_connect` 定下模式时为 `None`。
+    pub(crate) fn connection_mode(&self, connection_id: &str) -> Option<RemoteMode> {
+        let session = self.session(connection_id).ok()?;
+        let config = session.config.lock().ok()?;
+        config.mode
+    }
+
+    /// 该连接是否处于 Server 模式。会话不存在时为 false：所有 server 路径据此停下，
+    /// SSH 模式的连接从头到尾不会触碰 server 状态。
+    pub(crate) fn server_mode(&self, connection_id: &str) -> bool {
+        self.connection_mode(connection_id) == Some(RemoteMode::Server)
+    }
+
+    /// 项目根所在连接是否处于 Server 模式。
+    pub(crate) fn root_server_mode(&self, root: &RegisteredRoot) -> bool {
+        remote_uri_connection_id(&root.uri).is_some_and(|id| self.server_mode(id))
     }
 
     pub(crate) fn set_server_cache_dir(&self, dir: PathBuf) {
@@ -1791,7 +1823,7 @@ pub async fn ssh_set_workspace_trust(
         if let Ok(root) = manager.registered_root(&root_uri) {
             if let Ok(parsed) = parse_remote_uri(&root.uri) {
                 if root.trusted
-                    && manager.server_enabled()
+                    && manager.server_mode(&parsed.connection_id)
                     && manager.connection_is_open(&parsed.connection_id)
                 {
                     let key = server::server_slot_key(&parsed.connection_id, &root.canonical_path);
@@ -1808,15 +1840,6 @@ pub async fn ssh_set_workspace_trust(
             }
         }
     }
-    Ok(())
-}
-
-/// 切换 Server / SSH 模式；只影响之后的新操作，已由 daemon 托管的终端继续运行。
-#[tauri::command]
-pub fn ssh_set_server_enabled(enabled: bool, manager: State<'_, SshManager>) -> Result<(), String> {
-    manager
-        .server_enabled
-        .store(enabled, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
 
@@ -2475,6 +2498,50 @@ fn existing_session(manager: &SshManager, connection_id: &str) -> Option<Arc<Con
         .filter(|session| !session.handle.is_closed())
 }
 
+/// 不带模式的调用（浏览目录的 ssh_open_session）不能抹掉会话已定下的模式。
+fn merge_remembered_config(
+    stored_mode: Option<RemoteMode>,
+    config: SshConnectionConfig,
+) -> SshConnectionConfig {
+    let mode = config.mode.or(stored_mode);
+    SshConnectionConfig { mode, ..config }
+}
+
+/// 前端据「连接模式已变更」识别该错误：切换模式必须先 `ssh_disconnect` 再连接。
+fn mode_changed_error(current: Option<RemoteMode>, requested: RemoteMode) -> String {
+    let current = current.map_or("未定", RemoteMode::label);
+    format!(
+        "连接模式已变更：该连接当前为 {current} 模式，请求 {} 模式，请先断开连接再重连",
+        requested.label()
+    )
+}
+
+/// 会话已有项目根时模式不可改：只有浏览目录用的会话（还没有根）可以在连接时定下新模式。
+fn mode_conflict(
+    current: Option<RemoteMode>,
+    requested: RemoteMode,
+    has_roots: bool,
+) -> Option<String> {
+    match current {
+        Some(current) if current != requested && has_roots => {
+            Some(mode_changed_error(Some(current), requested))
+        }
+        _ => None,
+    }
+}
+
+fn ensure_mode_unchanged(
+    manager: &SshManager,
+    connection_id: &str,
+    requested: RemoteMode,
+) -> Result<(), String> {
+    let has_roots = !manager.roots_for_connection(connection_id).is_empty();
+    match mode_conflict(manager.connection_mode(connection_id), requested, has_roots) {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
+}
+
 fn ssh_handshake_timeout_error(config: &SshConnectionConfig) -> String {
     format!(
         "SSH 连接超时：{}:{} 在 {} 秒内未完成握手，请检查远端 sshd 是否正常",
@@ -2539,7 +2606,14 @@ pub async fn ssh_open_session(
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "连接前必须确认 SSH 主机指纹".to_string())?;
     let fingerprint = if existing_session(&manager, &config.id).is_some() {
-        manager.remember_config(&config.id, config.clone())?;
+        // 模式只由 ssh_connect 定下：测试连接或浏览目录不能改动在用会话的模式。
+        manager.remember_config(
+            &config.id,
+            SshConnectionConfig {
+                mode: None,
+                ..config.clone()
+            },
+        )?;
         expected
     } else {
         let (_connected, fingerprint) =
@@ -2613,9 +2687,13 @@ pub async fn ssh_connect(
     if parsed_root.connection_id != config.id {
         return Err("SSH 项目与连接配置不匹配".to_string());
     }
+    let mode = config
+        .mode
+        .ok_or_else(|| "SSH 连接缺少模式（Server / SSH）".to_string())?;
     // 只有这次新建会话才发 authenticating；已有会话时第一眼就是 probing / readyDirect。
     let fresh_auth = existing_session(&manager, &config.id).is_none();
     let fingerprint = if !fresh_auth {
+        ensure_mode_unchanged(&manager, &config.id, mode)?;
         manager.remember_config(&config.id, config.clone())?;
         expected
     } else {
@@ -2650,6 +2728,14 @@ pub async fn ssh_connect(
     if !metadata.is_dir() {
         return Err(abandon_fresh_auth("远程项目路径不是目录".to_string()));
     }
+    // 并发的另一次 ssh_connect 可能在上面的 await 期间把会话改成了别的模式；
+    // 登记根之前再确认一次，保证同一会话下所有根的模式一致。
+    if manager.connection_mode(&config.id) != Some(mode) {
+        return Err(abandon_fresh_auth(mode_changed_error(
+            manager.connection_mode(&config.id),
+            mode,
+        )));
+    }
     manager
         .roots
         .write()
@@ -2669,7 +2755,7 @@ pub async fn ssh_connect(
     // 已信任的远端：启动 watch 监督任务（server 提供远端事件源）。
     // Windows 与 Linux 都优先 daemon（Windows 走命名管道），失败再回退 serve。
     // 重复连接同一根时先终止旧任务，避免出现两条并发的 watch 连接。
-    if trusted && manager.server_enabled() {
+    if trusted && mode == RemoteMode::Server {
         let key = server::server_slot_key(&config.id, &canonical_root);
         let handle = server::spawn_server_watch_supervisor(
             app.clone(),
@@ -3047,7 +3133,7 @@ pub async fn ssh_scan_directory(
 
     // Server 模式只经 server 扫描，与 watch 事件同源，失败直接报错；SSH 模式与
     // 未受信任项目（不部署 server）走 SFTP。
-    if root.trusted && manager.server_enabled() {
+    if root.trusted && manager.server_mode(&parsed.connection_id) {
         let entries =
             server_scan_entries(&app, &manager, &parsed.connection_id, &root, &canonical).await?;
         return Ok(collect_scan_nodes(
@@ -5035,7 +5121,7 @@ fn direct_windows_profile_command(
 }
 
 /// SSH 模式下终端直连、断线即结束进程；前端据此在标签上提示。
-const SSH_MODE_DIRECT_REASON: &str = "SSH 模式（ssh.server.enabled 已关闭），终端直连";
+const SSH_MODE_DIRECT_REASON: &str = "SSH 模式（连接配置），终端直连";
 
 /// Server 模式下的失败统一带上模式前缀，前端据此提供「切到 SSH 模式」。
 fn into_server_mode_error(error: String) -> String {
@@ -5071,7 +5157,7 @@ pub async fn ssh_create_terminal(
     let working_directory = ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
     let spec = ssh_interactive_terminal_command(&parsed.path, shell.as_deref())?;
     // Server 模式只走 daemon，SSH 模式只走直连，两者不再互相回退。
-    if manager.server_enabled() {
+    if manager.server_mode(&parsed.connection_id) {
         let launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
         return server::spawn_persistent_terminal(
             id,
@@ -5168,7 +5254,7 @@ pub async fn ssh_spawn_script(
     }
     let parsed = parse_remote_uri(&cwd)?;
     let root = manager.root_for_uri(&cwd, true)?;
-    let server_mode = manager.server_enabled();
+    let server_mode = manager.server_mode(&parsed.connection_id);
     let persistent_cwd = if shell_kind == "interactive" || server_mode {
         let sftp = manager.open_sftp(&parsed.connection_id).await?;
         Some(ensure_existing_path_within(&sftp, &parsed.path, &root).await?)
@@ -5418,6 +5504,56 @@ async fn kill_detached_terminals_best_effort(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn connection_mode_deserializes_lowercase_and_defaults_to_none() {
+        let with_mode: super::SshConnectionConfig = serde_json::from_value(serde_json::json!({
+            "id": "c1", "host": "h", "username": "u", "mode": "ssh"
+        }))
+        .unwrap();
+        assert_eq!(with_mode.mode, Some(super::RemoteMode::Ssh));
+        let without: super::SshConnectionConfig =
+            serde_json::from_value(serde_json::json!({ "id": "c1", "host": "h", "username": "u" }))
+                .unwrap();
+        assert_eq!(without.mode, None);
+        assert!(
+            serde_json::from_value::<super::SshConnectionConfig>(serde_json::json!({
+                "id": "c1", "host": "h", "username": "u", "mode": "direct"
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn mode_conflict_only_when_roots_registered_under_other_mode() {
+        use super::{mode_conflict, RemoteMode::*};
+        assert!(mode_conflict(Some(Server), Ssh, true)
+            .unwrap()
+            .contains("连接模式已变更"));
+        assert!(mode_conflict(Some(Ssh), Server, true).is_some());
+        // 只用来浏览目录的会话（还没有根）可以在连接时定下模式。
+        assert!(mode_conflict(Some(Server), Ssh, false).is_none());
+        assert!(mode_conflict(None, Ssh, true).is_none());
+        assert!(mode_conflict(Some(Ssh), Ssh, true).is_none());
+    }
+
+    #[test]
+    fn remembered_config_keeps_mode_when_incoming_has_none() {
+        use super::{merge_remembered_config, RemoteMode};
+        let kept = merge_remembered_config(Some(RemoteMode::Server), sample_config(None));
+        assert_eq!(kept.mode, Some(RemoteMode::Server));
+        let mut incoming = sample_config(None);
+        incoming.mode = Some(RemoteMode::Ssh);
+        let replaced = merge_remembered_config(Some(RemoteMode::Server), incoming);
+        assert_eq!(replaced.mode, Some(RemoteMode::Ssh));
+    }
+
+    #[test]
+    fn server_mode_is_false_without_session() {
+        let manager = super::SshManager::new();
+        assert_eq!(manager.connection_mode("missing"), None);
+        assert!(!manager.server_mode("missing"));
+    }
+
     #[test]
     fn server_mode_errors_carry_prefix_once() {
         let wrapped = super::into_server_mode_error("远端 daemon 尚未就绪".to_string());
@@ -5698,6 +5834,7 @@ mod tests {
             private_key_path: private_key_path.map(str::to_string),
             passphrase: None,
             host_key_fingerprint: None,
+            mode: None,
         }
     }
 

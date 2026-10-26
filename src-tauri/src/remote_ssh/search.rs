@@ -522,7 +522,7 @@ async fn server_search_file_contents(
     started: Instant,
 ) -> Result<Option<RemoteContentResponse>, String> {
     let registered = manager.root_for_uri(root, false)?;
-    if !registered.trusted || !manager.server_enabled() {
+    if !registered.trusted || !manager.root_server_mode(&registered) {
         return Ok(None);
     }
     // serve 端点只能搜索自己启动时的根；子目录搜索交给 daemon（root 传子目录），

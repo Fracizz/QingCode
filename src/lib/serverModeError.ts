@@ -1,6 +1,10 @@
 import { translate } from './i18n'
 import { useProjectStore } from '../store/projectStore'
-import { switchGlobalSshServerMode } from './sshServerSettings'
+import {
+  isSshProject,
+  sshConnectionIdFromUri,
+  switchSshConnectionMode,
+} from './sshWorkspace'
 
 /** 后端在 Server 模式无法继续时给错误消息加的统一前缀。 */
 export const SERVER_MODE_ERROR_PREFIX = 'Server 模式：'
@@ -22,34 +26,45 @@ export function isServerModeError(error: unknown): boolean {
   return message.includes(SERVER_MODE_ERROR_PREFIX)
 }
 
-/**
- * 全局关闭 ssh.server.enabled，之后的新操作全部直连；当前项目的单独覆盖一并移除。
- * 不停止远端 server：已由 daemon 托管的终端继续运行。失败向上抛出由调用方提示。
- */
-export async function switchToSshMode(): Promise<void> {
-  await switchGlobalSshServerMode(false, useProjectStore.getState().currentProject)
+/** 当前项目所属的 SSH 连接；非 SSH 项目或拿不到连接时返回 undefined。 */
+export function currentSshConnectionId(): string | undefined {
+  const project = useProjectStore.getState().currentProject
+  if (!project || !isSshProject(project)) return undefined
+  return project.connection_id || sshConnectionIdFromUri(project.path) || undefined
 }
 
-/** 全局开启 ssh.server.enabled（切回 Server 模式），当前项目的单独覆盖一并移除。 */
-export async function switchToServerMode(): Promise<void> {
-  await switchGlobalSshServerMode(true, useProjectStore.getState().currentProject)
+/**
+ * 把指定连接切到 SSH 模式：保存连接配置并断开重连当前项目。
+ * 不停止其他项目的远端服务，失败向上抛出由调用方提示。
+ */
+export async function switchToSshMode(connectionId: string): Promise<void> {
+  await switchSshConnectionMode(connectionId, 'ssh')
+}
+
+/** 把指定连接切回 Server 模式：保存连接配置并断开重连当前项目。 */
+export async function switchToServerMode(connectionId: string): Promise<void> {
+  await switchSshConnectionMode(connectionId, 'server')
 }
 
 /**
  * Server 模式错误的一键修复操作：切到 SSH 模式。
- * 非 Server 模式错误返回 undefined，调用方只在相关错误上挂 action。
+ * 非 Server 模式错误或无法解析连接时返回 undefined，调用方只在相关错误上挂 action。
  */
 export function serverModeErrorAction(
   error: unknown,
   t: Translator = translate,
+  connectionId: string = currentSshConnectionId() ?? '',
 ): { label: string; onAction: () => Promise<void> } | undefined {
   if (!isServerModeError(error)) return undefined
+  if (!connectionId && !currentSshConnectionId()) return undefined
   return {
     label: t('切到 SSH 模式'),
     onAction: async () => {
       const pushToast = useProjectStore.getState().pushToast
       try {
-        await switchToSshMode()
+        const target = connectionId || currentSshConnectionId()
+        if (!target) throw new Error('缺少 SSH 连接')
+        await switchToSshMode(target)
         pushToast('success', t('已切换到 SSH 模式'))
       } catch (switchError) {
         pushToast('error', t('切到 SSH 模式失败: {error}', { error: String(switchError) }))

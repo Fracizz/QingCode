@@ -10,9 +10,8 @@ import { mergeSettings } from '@/lib/autoSaveSettings'
 import { isTauri, safeInvoke } from '@/lib/tauri'
 
 /**
- * ssh.server.enabled：是否在 SSH 工作区部署远端服务（qingcode-server）。
- * 关闭后完全回退纯 SFTP/exec 直连（远端零足迹），代价是失去文件树自动刷新、
- * 内嵌内容搜索与快速目录扫描。默认开启。
+ * ssh.server.enabled：新建 SSH 连接的默认模式（true=Server，false=SSH）。
+ * 已有的连接在「远程连接」管理页单独设置；修改后需要重新连接才生效。
  */
 export const SSH_SERVER_ENABLED_KEY = 'ssh.server.enabled'
 
@@ -116,7 +115,8 @@ export async function loadEffectiveSshServerEnabled(
   const global = await loadGlobalSettings()
   const workspace = project ? await loadProjectSettings(project) : null
   const merged = mergeSettings(global, workspace)
-  const next = readSshServerEnabled(merged)
+  // 模式不再支持项目作用域：enabled 只读全局，作为新建连接的默认值。
+  const next = readSshServerEnabled(global)
   cachedSshServerAutoDownload = readSshServerAutoDownload(merged)
   cachedSshServerOfflineDir = readSshServerOfflineDir(merged)
   notifySshServerEnabledChanged(next)
@@ -124,57 +124,23 @@ export async function loadEffectiveSshServerEnabled(
 }
 
 export async function loadScopedSshServerEnabled(
-  scope: 'global' | 'project',
-  project?: Project | null,
+  _scope: 'global' | 'project',
+  _project?: Project | null,
 ): Promise<boolean> {
-  const next =
-    scope === 'project' && project
-      ? readSshServerEnabled(await loadProjectSettings(project))
-      : readSshServerEnabled(await loadGlobalSettings())
+  const next = readSshServerEnabled(await loadGlobalSettings())
   notifySshServerEnabledChanged(next)
   return next
 }
 
 export async function saveScopedSshServerEnabled(
-  scope: 'global' | 'project',
+  _scope: 'global' | 'project',
   enabled: boolean,
   project?: Project | null,
 ): Promise<void> {
-  if (scope === 'project' && project) {
-    const current = await loadProjectSettings(project)
-    current[SSH_SERVER_ENABLED_KEY] = enabled
-    dropLegacyKeys(current)
-    await saveProjectSettings(project, current)
-  } else {
-    const current = await loadGlobalSettings()
-    current[SSH_SERVER_ENABLED_KEY] = enabled
-    dropLegacyKeys(current)
-    await saveGlobalSettings(current)
-  }
-  await loadEffectiveSshServerEnabled(project)
-  await pushSshServerSettingsToNative()
-}
-
-/**
- * 一键切换 Server / SSH 模式：写全局 `ssh.server.enabled`。当前项目若在项目设置里
- * 单独覆盖了该键，一并移除覆盖，否则重新加载项目时会算回原来的模式。
- */
-export async function switchGlobalSshServerMode(
-  enabled: boolean,
-  project?: Project | null,
-): Promise<void> {
-  if (project) {
-    const current = await loadProjectSettings(project)
-    if (SSH_SERVER_ENABLED_KEY in current) {
-      delete current[SSH_SERVER_ENABLED_KEY]
-      dropLegacyKeys(current)
-      await saveProjectSettings(project, current)
-    }
-  }
-  const global = await loadGlobalSettings()
-  global[SSH_SERVER_ENABLED_KEY] = enabled
-  dropLegacyKeys(global)
-  await saveGlobalSettings(global)
+  const current = await loadGlobalSettings()
+  current[SSH_SERVER_ENABLED_KEY] = enabled
+  dropLegacyKeys(current)
+  await saveGlobalSettings(current)
   await loadEffectiveSshServerEnabled(project)
   await pushSshServerSettingsToNative()
 }
@@ -251,9 +217,7 @@ export async function saveScopedSshServerOfflineDir(
 export async function pushSshServerSettingsToNative(): Promise<void> {
   if (!isTauri()) return
   try {
-    await safeInvoke('配置 SSH 远端服务', 'ssh_set_server_enabled', {
-      enabled: getSshServerEnabled(),
-    })
+    // 模式是连接配置属性，连接时随 config 传后端；全局开关不再推送。
     await safeInvoke('配置 SSH 远端服务下载', 'ssh_set_server_auto_download', {
       enabled: getSshServerAutoDownload(),
     })

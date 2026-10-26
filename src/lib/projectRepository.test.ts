@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Project } from '../types'
+import type { Project, SshConnection } from '../types'
 
 // Shared mock state must be hoisted so the vi.mock factories (which run before
 // top-level imports) can reference it safely.
@@ -39,6 +39,7 @@ import {
   importSettingsProjects,
   persistProjectsToUserSettings,
   setProjectsSortOrders,
+  upsertSshConnection,
 } from './projectRepository'
 import { safeInvoke } from './tauri'
 
@@ -210,5 +211,51 @@ describe('deleteProjectRows', () => {
       'DELETE FROM favorite_items WHERE project_id = $1',
       ['p1'],
     )
+  })
+})
+
+describe('upsertSshConnection mode column', () => {
+  const connection: SshConnection = {
+    id: 'c1',
+    name: 'WSL',
+    host: 'localhost',
+    port: 22,
+    username: 'root',
+    auth_kind: 'privateKey',
+    host_key_fingerprint: 'SHA256:test',
+    created_at: 1,
+    updated_at: 2,
+    mode: 'ssh',
+  }
+
+  beforeEach(() => {
+    mockDb.execute.mockReset().mockResolvedValue(undefined)
+  })
+
+  it('persists the connection mode', async () => {
+    await upsertSshConnection(connection)
+
+    const [sql, params] = mockDb.execute.mock.calls[0]
+    expect(String(sql)).toContain('mode = excluded.mode')
+    expect(params).toEqual([
+      'c1',
+      'WSL',
+      'localhost',
+      22,
+      'root',
+      'privateKey',
+      null,
+      'SHA256:test',
+      1,
+      2,
+      'ssh',
+    ])
+  })
+
+  it('writes null for legacy rows without a mode', async () => {
+    await upsertSshConnection({ ...connection, mode: null })
+
+    const [, params] = mockDb.execute.mock.calls[0]
+    expect((params as unknown[])[10]).toBeNull()
   })
 })

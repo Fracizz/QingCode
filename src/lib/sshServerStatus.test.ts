@@ -17,6 +17,7 @@ const readyServer: SshServerState = {
   rootUri: 'ssh://c1/home/app',
   phase: 'readyServer',
   mode: 'server',
+  connectionMode: 'server',
   version: '0.1.13',
   transport: 'daemon',
   reason: null,
@@ -32,8 +33,37 @@ describe('sshServerStatus', () => {
     expect(sshServerCanSwitchToSshMode(direct)).toBe(false)
     expect(sshServerSwitchBlocker(direct)).toBeNull()
     expect(sshServerSwitchBlocker({ ...direct, reason: null })).toBeNull()
-    expect(sshServerSwitchBlocker({ ...direct, reason: '已关闭 ssh.server.enabled' })).toContain('设置')
     expect(sshServerSwitchBlocker({ ...direct, reason: '工作区未信任' })).toContain('信任')
+  })
+
+  it('treats the connection mode as authoritative and never blocks switching from SSH', () => {
+    const sshState: SshServerState = {
+      ...readyServer,
+      phase: 'readyDirect',
+      mode: 'direct',
+      connectionMode: 'ssh',
+      transport: 'direct',
+      version: null,
+      reason: 'SSH 模式（连接配置）',
+    }
+    expect(sshServerChip(sshState)).toEqual({ kind: 'ssh' })
+    expect(sshServerSwitchBlocker(sshState)).toBeNull()
+    expect(sshServerCanSwitchToSshMode(sshState)).toBe(false)
+    expect(sshServerTipLines(sshState)).toEqual([{ key: 'SSH 模式（连接配置）' }])
+  })
+
+  it('parses old events without connectionMode as server', () => {
+    const legacy = parseSshServerState({
+      connectionId: 'c1',
+      rootUri: 'ssh://c1/home/app',
+      phase: 'readyDirect',
+      mode: 'direct',
+      version: null,
+      transport: 'direct',
+      reason: '已关闭 ssh.server.enabled',
+    })
+    expect(legacy?.connectionMode).toBe('server')
+    expect(sshServerSwitchBlocker(legacy!)).toBeNull()
   })
 
   it('accepts the backend server mode and maps the legacy agent alias', () => {

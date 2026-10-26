@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { switchGlobalSshServerMode, pushToast, currentProject } = vi.hoisted(() => ({
-  switchGlobalSshServerMode: vi.fn(),
+const { switchSshConnectionMode, pushToast, currentProject } = vi.hoisted(() => ({
+  switchSshConnectionMode: vi.fn(),
   pushToast: vi.fn(),
   currentProject: { id: 'p1', name: 'remote', path: 'ssh://c1/home/u/app' },
 }))
 
-vi.mock('./sshServerSettings', () => ({ switchGlobalSshServerMode }))
+vi.mock('./sshWorkspace', async () => {
+  const actual = await vi.importActual<typeof import('./sshWorkspace')>('./sshWorkspace')
+  return { ...actual, switchSshConnectionMode }
+})
 
 vi.mock('../store/projectStore', () => ({
   useProjectStore: {
@@ -45,24 +48,24 @@ describe('isServerModeError', () => {
 
 describe('switchToSshMode', () => {
   beforeEach(() => {
-    switchGlobalSshServerMode.mockReset().mockResolvedValue(undefined)
+    switchSshConnectionMode.mockReset().mockResolvedValue(undefined)
     pushToast.mockReset()
   })
 
-  it('switches globally and passes the current project to clear its override', async () => {
-    await switchToSshMode()
-    expect(switchGlobalSshServerMode).toHaveBeenCalledWith(false, currentProject)
+  it('switches the given connection to SSH mode', async () => {
+    await switchToSshMode('c1')
+    expect(switchSshConnectionMode).toHaveBeenCalledWith('c1', 'ssh')
   })
 
   it('propagates failures instead of swallowing them', async () => {
-    switchGlobalSshServerMode.mockRejectedValue(new Error('disk full'))
-    await expect(switchToSshMode()).rejects.toThrow('disk full')
+    switchSshConnectionMode.mockRejectedValue(new Error('disk full'))
+    await expect(switchToSshMode('c1')).rejects.toThrow('disk full')
   })
 })
 
 describe('serverModeErrorAction', () => {
   beforeEach(() => {
-    switchGlobalSshServerMode.mockReset().mockResolvedValue(undefined)
+    switchSshConnectionMode.mockReset().mockResolvedValue(undefined)
     pushToast.mockReset()
   })
 
@@ -70,19 +73,36 @@ describe('serverModeErrorAction', () => {
     expect(serverModeErrorAction(new Error('断开连接'), t)).toBeUndefined()
   })
 
-  it('offers the switch action and reports success', async () => {
+  it('resolves the connection from the current SSH project', async () => {
     const action = serverModeErrorAction(
       new Error(`新建终端失败: ${SERVER_MODE_ERROR_PREFIX}daemon 未就绪`),
       t,
     )
     expect(action?.label).toBe('切到 SSH 模式')
     await action?.onAction()
-    expect(switchGlobalSshServerMode).toHaveBeenCalledWith(false, currentProject)
+    expect(switchSshConnectionMode).toHaveBeenCalledWith('c1', 'ssh')
     expect(pushToast).toHaveBeenCalledWith('success', '已切换到 SSH 模式')
   })
 
+  it('uses the explicit connection id when provided', async () => {
+    const action = serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}daemon 未就绪`, t, 'c9')
+    await action?.onAction()
+    expect(switchSshConnectionMode).toHaveBeenCalledWith('c9', 'ssh')
+  })
+
+  it('offers no action when no SSH connection can be resolved', () => {
+    const local = { id: 'p2', name: 'local', path: 'D:/code/app' }
+    const original = currentProject.path
+    currentProject.path = local.path
+    try {
+      expect(serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}daemon 未就绪`, t)).toBeUndefined()
+    } finally {
+      currentProject.path = original
+    }
+  })
+
   it('reports failures from switching as an error toast', async () => {
-    switchGlobalSshServerMode.mockRejectedValue(new Error('disk full'))
+    switchSshConnectionMode.mockRejectedValue(new Error('disk full'))
     const action = serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}daemon 未就绪`, t)
     await action?.onAction()
     expect(pushToast).toHaveBeenCalledWith(

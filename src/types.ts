@@ -22,6 +22,9 @@ export interface Project {
   root_path?: string
 }
 
+/** SSH 工作区模式：Server（部署 qingcode-server）或 SSH（全部直连）。 */
+export type SshConnectionMode = 'server' | 'ssh'
+
 export interface SshConnection {
   id: string
   name: string
@@ -33,6 +36,8 @@ export interface SshConnection {
   host_key_fingerprint: string
   created_at: number
   updated_at: number
+  /** 连接配置的模式；旧版行为 null，读取时按全局默认解析。 */
+  mode?: SshConnectionMode | null
 }
 
 export interface RecentFile {

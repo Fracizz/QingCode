@@ -42,7 +42,6 @@ import {
   readSshServerEnabled,
   readSshServerOfflineDir,
   saveScopedSshServerEnabled,
-  switchGlobalSshServerMode,
   LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY,
   LEGACY_SSH_AGENT_ENABLED_KEY,
   LEGACY_SSH_AGENT_OFFLINE_DIR_KEY,
@@ -134,7 +133,7 @@ describe('sshServerSettings legacy ssh.agent.* keys', () => {
     expect(getSshServerOfflineDir()).toBe('D:/legacy-agents')
   })
 
-  it('prefers the new ssh.server.* keys over legacy ones after merge', async () => {
+  it('prefers global enabled over a workspace override', async () => {
     loadGlobalSettings.mockResolvedValue(
       settingsWith({
         [SSH_SERVER_ENABLED_KEY]: true,
@@ -143,10 +142,10 @@ describe('sshServerSettings legacy ssh.agent.* keys', () => {
         [LEGACY_SSH_AGENT_OFFLINE_DIR_KEY]: 'D:/legacy',
       }),
     )
-    // Workspace overlay wins over global for keys it defines.
+    // 模式不再支持项目作用域：工作区覆盖 enabled 也不影响新建连接的默认模式。
     loadProjectSettings.mockResolvedValue(settingsWith({ [SSH_SERVER_ENABLED_KEY]: false }))
 
-    await expect(loadEffectiveSshServerEnabled(project)).resolves.toBe(false)
+    await expect(loadEffectiveSshServerEnabled(project)).resolves.toBe(true)
     expect(getSshServerOfflineDir()).toBe('D:/new')
   })
 
@@ -175,40 +174,29 @@ describe('sshServerSettings legacy ssh.agent.* keys', () => {
     )
   })
 
-  it('drops legacy keys when saving the workspace toggle', async () => {
+  it('ignores the project scope when saving the default mode', async () => {
     loadProjectSettings.mockResolvedValue(
       settingsWith({ [LEGACY_SSH_AGENT_ENABLED_KEY]: true }),
     )
 
     await saveScopedSshServerEnabled('project', false, project)
 
-    expect(saveProjectSettings).toHaveBeenCalledTimes(1)
-    const saved = saveProjectSettings.mock.calls[0][1] as Record<string, unknown>
+    // 模式只写全局：项目作用域不再持久化该键。
+    expect(saveGlobalSettings).toHaveBeenCalledTimes(1)
+    expect(saveProjectSettings).not.toHaveBeenCalled()
+    const saved = saveGlobalSettings.mock.calls[0][0] as Record<string, unknown>
     expect(saved[SSH_SERVER_ENABLED_KEY]).toBe(false)
     expect(LEGACY_SSH_AGENT_ENABLED_KEY in saved).toBe(false)
   })
-  it('switching to SSH mode clears the project override and pushes false', async () => {
-    loadProjectSettings.mockResolvedValue(settingsWith({ [SSH_SERVER_ENABLED_KEY]: true }))
-    await switchGlobalSshServerMode(false, project)
-    const savedProject = saveProjectSettings.mock.calls[0][1] as Record<string, unknown>
-    expect(SSH_SERVER_ENABLED_KEY in savedProject).toBe(false)
-    const savedGlobal = saveGlobalSettings.mock.calls[0][0] as Record<string, unknown>
-    expect(savedGlobal[SSH_SERVER_ENABLED_KEY]).toBe(false)
-    expect(safeInvoke).toHaveBeenCalledWith('配置 SSH 远端服务', 'ssh_set_server_enabled', {
-      enabled: false,
-    })
-  })
 
-  it('switching to SSH mode leaves project settings untouched without an override', async () => {
-    await switchGlobalSshServerMode(false, project)
-    expect(saveProjectSettings).not.toHaveBeenCalled()
-    expect(saveGlobalSettings).toHaveBeenCalledTimes(1)
-  })
-  it('switching back to Server mode writes true globally', async () => {
-    await switchGlobalSshServerMode(true, project)
-    const savedGlobal = saveGlobalSettings.mock.calls[0][0] as Record<string, unknown>
-    expect(savedGlobal[SSH_SERVER_ENABLED_KEY]).toBe(true)
-    expect(safeInvoke).toHaveBeenCalledWith('配置 SSH 远端服务', 'ssh_set_server_enabled', {
+  it('never pushes the removed ssh_set_server_enabled command', async () => {
+    await saveScopedSshServerEnabled('global', false, null)
+    expect(safeInvoke).not.toHaveBeenCalledWith(
+      '配置 SSH 远端服务',
+      'ssh_set_server_enabled',
+      expect.anything(),
+    )
+    expect(safeInvoke).toHaveBeenCalledWith('配置 SSH 远端服务下载', 'ssh_set_server_auto_download', {
       enabled: true,
     })
   })

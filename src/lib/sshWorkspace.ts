@@ -1,5 +1,6 @@
-import type { Project, SshConnection } from '../types'
-import { getSshConnection } from './projectRepository'
+import type { Project, SshConnection, SshConnectionMode } from '../types'
+import { getSshConnection, upsertSshConnection } from './projectRepository'
+import { getSshServerEnabled } from './sshServerSettings'
 import { safeInvoke } from './tauri'
 import { parseSshServerState, type SshServerState } from './sshServerStatus'
 import { isProjectTrusted } from './workspaceTrust'
@@ -15,6 +16,8 @@ export interface SshRuntimeConfig {
   port: number
   username: string
   authKind: 'privateKey' | 'password'
+  /** 连接时固定的工作区模式；旧调用方可省略，默认按连接配置解析。 */
+  mode?: SshConnectionMode
   password?: string
   privateKeyPath?: string
   passphrase?: string
@@ -34,6 +37,32 @@ export const NEW_SSH_CONNECTION_ID = '__new__'
 
 const sessionSecrets = new Map<string, SshSessionSecrets>()
 const workspaceConnectQueues = new Map<string, Promise<void>>()
+const connectionModeQueues = new Map<string, Promise<void>>()
+
+/**
+ * 旧库行 `mode` 为空时按全局默认（ssh.server.enabled）解析；非法值同理。
+ * 只用于连接前/切换前的一次性解析，不改变持久化行。
+ */
+export function resolveSshConnectionMode(
+  connection: Pick<SshConnection, 'mode'>,
+  globalDefaultEnabled: boolean
+): SshConnectionMode {
+  if (connection.mode === 'server' || connection.mode === 'ssh') return connection.mode
+  return globalDefaultEnabled ? 'server' : 'ssh'
+}
+
+/** 判断项目是否挂在该连接下（显式字段优先，兼容只有 ssh:// URI 的旧行）。 */
+export function projectUsesSshConnection(
+  project: Pick<Project, 'connection_id' | 'path'>,
+  connectionId: string
+): boolean {
+  return project.connection_id === connectionId || sshConnectionIdFromUri(project.path) === connectionId
+}
+
+function broadcastSshConnectionsChanged(): void {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(new CustomEvent(SSH_CONNECTIONS_CHANGED_EVENT))
+}
 
 export function rememberSshSessionSecrets(id: string, secrets: SshSessionSecrets): void {
   if (secrets.password || secrets.passphrase) {
@@ -165,7 +194,8 @@ export function sshFileDisplayPath(
 
 export function sshRuntimeConfig(
   connection: SshConnection,
-  secrets: SshSessionSecrets = {}
+  secrets: SshSessionSecrets = {},
+  mode: SshConnectionMode = resolveSshConnectionMode(connection, getSshServerEnabled())
 ): SshRuntimeConfig {
   return {
     id: connection.id,
@@ -173,6 +203,7 @@ export function sshRuntimeConfig(
     port: connection.port,
     username: connection.username,
     authKind: connection.auth_kind,
+    mode,
     privateKeyPath: connection.private_key_path,
     hostKeyFingerprint: connection.host_key_fingerprint,
     ...secrets,
@@ -259,12 +290,74 @@ export async function connectSshWorkspace(
   secrets: SshSessionSecrets = {}
 ): Promise<void> {
   const merged = sshSecretsFor(connection.id, secrets)
+  const mode = resolveSshConnectionMode(connection, getSshServerEnabled())
+  // 旧库行没有 mode：按全局默认解析后回填一次；失败不阻断连接。
+  if (connection.mode !== mode) {
+    try {
+      await upsertSshConnection({ ...connection, mode })
+    } catch (error) {
+      console.warn('persist resolved ssh connection mode failed:', error)
+    }
+  }
   await safeInvoke('连接 SSH 项目', 'ssh_connect', {
-    config: sshRuntimeConfig(connection, merged),
+    config: sshRuntimeConfig(connection, merged, mode),
     rootUri: project.path,
     trusted: isProjectTrusted(project),
   })
   rememberSshSessionSecrets(connection.id, merged)
+}
+
+/**
+ * 切换连接配置的模式：写库后断开并按新模式重连当前项目。
+ * 同一连接的切换串行执行，重复点击只会在第一次真正断开一次。
+ */
+export async function switchSshConnectionMode(
+  connectionId: string,
+  mode: SshConnectionMode
+): Promise<void> {
+  const previous = connectionModeQueues.get(connectionId) ?? Promise.resolve()
+  const current = previous
+    .catch(() => undefined)
+    .then(async () => {
+      const connection = await getSshConnection(connectionId)
+      if (!connection) throw new Error('SSH 连接配置不存在')
+      const previousMode = resolveSshConnectionMode(connection, getSshServerEnabled())
+      if (previousMode === mode) return
+      await upsertSshConnection({ ...connection, mode })
+      broadcastSshConnectionsChanged()
+
+      if (!(await isSshConnectionAlive(connectionId))) return
+
+      // Server → SSH：尽力停掉远端服务，单个根失败只记录，不阻断切模式。
+      if (previousMode === 'server' && mode === 'ssh') {
+        const roots = await listSshWorkspaceRoots(connectionId)
+        for (const root of roots) {
+          try {
+            await safeInvoke('停止远端服务', 'ssh_server_stop', { rootUri: root.rootUri })
+          } catch (error) {
+            console.warn('stop ssh server before switching mode failed:', error)
+          }
+        }
+      }
+
+      await disconnectSshSession(connectionId)
+
+      // 动态导入避免与 projectStore 形成模块环；其他打开的项目在激活时按新模式连接。
+      const { useProjectStore } = await import('../store/projectStore')
+      const project = useProjectStore.getState().currentProject
+      if (!project || !projectUsesSshConnection(project, connectionId)) return
+      await ensureSshWorkspaceConnected(project)
+      await useProjectStore.getState().refreshProjectTree(project)
+    })
+  connectionModeQueues.set(connectionId, current)
+
+  try {
+    await current
+  } finally {
+    if (connectionModeQueues.get(connectionId) === current) {
+      connectionModeQueues.delete(connectionId)
+    }
+  }
 }
 
 export async function ensureSshWorkspaceConnected(project: Project): Promise<void> {
