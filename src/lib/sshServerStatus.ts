@@ -53,7 +53,7 @@ const TRANSPORTS = new Set<SshServerTransport>(['daemon', 'serve', 'direct'])
 export type SshServerChip =
   | { kind: 'agent' }
   | { kind: 'direct' }
-  /** 连接配置为 SSH 模式：零足迹直连，没有远端服务。 */
+  /** 高级兼容模式：SSH 直连，不部署远端服务。 */
   | { kind: 'ssh' }
   | { kind: 'pending' }
   /** 意外断线（保活超时、远端断开）：后台正在自动重连。 */
@@ -112,9 +112,9 @@ export function sshServerChip(state: SshServerState | null): SshServerChip | nul
  * 增强层，不能把 Server/daemon 展示成另一种独立协议。
  */
 export function sshServerModeKey(state: SshServerState): string {
-  // SSH 模式的连接不部署远端服务：认证完成后一律是纯 SSH。
+  // 兼容连接不部署远端服务，明确标明这是用户主动启用的兼容模式。
   if (state.connectionMode === 'ssh' && state.phase !== 'disconnected' && state.phase !== 'authenticating') {
-    return 'SSH 直连'
+    return 'SSH 兼容模式'
   }
   if (state.phase === 'readyServer') return 'SSH + 远端服务'
   if (state.phase === 'readyDirect') return 'SSH 直连'
@@ -166,7 +166,7 @@ function shortReason(reason: string): string {
 /** 状态栏提示先说明连接模式，再给出运行方式或回退原因。 */
 export function sshServerTipLines(state: SshServerState): SshServerTipLine[] {
   if (state.connectionMode === 'ssh') {
-    return [{ key: 'SSH 直连' }, { key: 'SSH 模式（连接配置）' }]
+    return [{ key: 'SSH 兼容模式' }, { key: '已启用兼容模式，不部署远端服务' }]
   }
   if (state.phase === 'readyDirect' || state.mode === 'direct') {
     const lines: SshServerTipLine[] = [{ key: 'SSH 直连' }]
@@ -213,11 +213,6 @@ export function sshServerDisabledBySetting(state: SshServerState): boolean {
 /** 当前是否处于直连（含部署失败后的回退），用于决定是否展示「切换到远端服务」。 */
 export function sshServerIsDirect(state: SshServerState): boolean {
   return state.phase === 'readyDirect' || state.mode === 'direct'
-}
-
-/** 非 SSH 模式且非直连（Server 就绪、部署中或断线）才提供「切到 SSH 模式」。 */
-export function sshServerCanSwitchToSshMode(state: SshServerState): boolean {
-  return state.connectionMode !== 'ssh' && !sshServerIsDirect(state)
 }
 
 export function sshServerEventMatches(eventRootUri: string, activeRootUri: string): boolean {

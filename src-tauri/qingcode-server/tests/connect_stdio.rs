@@ -127,3 +127,138 @@ fn connect_stdio_proxies_frames_across_processes() {
     let _ = daemon.wait();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Keep subscribed clients open while requesting shutdown. Testing a real child
+/// is essential: an in-process run_async result does not prove that Tokio's
+/// blocking watcher threads let the process (and its single-instance lock) exit.
+#[test]
+fn daemon_shutdown_exits_with_multiple_active_watchers() {
+    struct ChildGuard(Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    struct Proxy {
+        child: ChildGuard,
+        reader: Option<std::process::ChildStdout>,
+    }
+    impl Proxy {
+        fn send(&mut self, kind: Kind, id: u32, payload: Vec<u8>) {
+            self.child
+                .0
+                .stdin
+                .as_mut()
+                .unwrap()
+                .write_all(&Frame::new(kind, id, payload).encode().unwrap())
+                .unwrap();
+        }
+        fn next(&mut self) -> Frame {
+            let mut reader = self.reader.take().unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let result = read_frame(&mut reader);
+                let _ = tx.send((result, reader));
+            });
+            let (result, reader) = rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("daemon response timed out");
+            self.reader = Some(reader);
+            result.unwrap()
+        }
+        fn request(&mut self, id: u32, method: &str, params: serde_json::Value) {
+            self.send(
+                Kind::Req,
+                id,
+                proto::encode(&proto::Request {
+                    id,
+                    method: method.into(),
+                    params: proto::encode(&params).unwrap(),
+                })
+                .unwrap(),
+            );
+            loop {
+                let frame = self.next();
+                if frame.kind == Kind::Ping {
+                    self.send(Kind::Pong, 0, vec![]);
+                }
+                if frame.stream_id == id && matches!(frame.kind, Kind::Res | Kind::Err) {
+                    assert_eq!(frame.kind, Kind::Res, "request {method} failed");
+                    return;
+                }
+            }
+        }
+    }
+    let dir = temp_dir("shutdown-watchers");
+    let run_dir = RunDir::resolve(Some(&dir)).unwrap();
+    let root = dir.join("project");
+    std::fs::create_dir(&root).unwrap();
+    let mut daemon = ChildGuard(
+        Command::new(env!("CARGO_BIN_EXE_qingcode-server"))
+            .args(["daemon", "--state-dir"])
+            .arg(&dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    wait_daemon_ready(&run_dir, &mut daemon.0);
+    let token = run_dir.read_token().unwrap();
+    let mut proxies = Vec::new();
+    for index in 0..3 {
+        let mut child = Command::new(env!("CARGO_BIN_EXE_qingcode-server"))
+            .args(["connect", "--stdio", "--state-dir"])
+            .arg(&dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let reader = child.stdout.take();
+        let mut proxy = Proxy {
+            child: ChildGuard(child),
+            reader,
+        };
+        proxy.send(
+            Kind::Hello,
+            0,
+            proto::encode(&HelloRequest {
+                client_id: format!("shutdown-watch-{index}"),
+                protocol_min: 1,
+                protocol_max: 1,
+                token: token.clone(),
+                resume_token: None,
+            })
+            .unwrap(),
+        );
+        assert_eq!(proxy.next().kind, Kind::Hello);
+        for id in 1..=4 {
+            proxy.request(id, "watch.subscribe", serde_json::json!({"root": root}));
+            if id == 1 {
+                // Do not wait for END: cancellation and the next subscription
+                // intentionally overlap, as during rapid project switching.
+                proxy.send(Kind::Cancel, id, vec![]);
+            }
+        }
+        proxies.push(proxy);
+    }
+    std::thread::sleep(Duration::from_millis(400));
+    proxies[0].request(99, "server.shutdown", serde_json::json!({}));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = daemon.0.try_wait().unwrap() {
+            assert!(status.success(), "daemon shutdown failed: {status}");
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "daemon kept running with active watchers after shutdown"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    drop(proxies);
+    drop(daemon);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

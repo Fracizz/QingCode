@@ -4,7 +4,7 @@
 //! daemon 里的 PTY 继续运行；重连时按 seq 补发输出，缓冲已淘汰时先 reset
 //! 前端 xterm 再写屏幕快照。
 
-use super::daemon::{DaemonAttachResult, DaemonSession};
+use super::daemon::{DaemonAttachResult, DaemonSession, SessionEventReceiver};
 use super::*;
 use crate::terminal::{encode_terminal_data, TerminalDataPayload, TerminalSpawnResult};
 use qingcode_server::proto::{Event, StreamChunk};
@@ -211,6 +211,22 @@ fn seq_is_new(seq: u64, next_seq: u64) -> bool {
 
 fn attach_terminal_is_gone(error: &str) -> bool {
     error.contains("终端不存在") || error.contains("不存在或已回收") || error.contains("已回收")
+}
+
+/// attach 已确认退出时，daemon 可以立即回收终端；此后不能再调整尺寸或补发输入。
+/// 把存活会话的准备工作放在惰性 future 中，保证退出路径不会向已回收的 PTY 发 RPC。
+async fn prepare_reconnected_terminal<F>(
+    exited: Option<i32>,
+    prepare_live: F,
+) -> Result<Option<u32>, String>
+where
+    F: std::future::Future<Output = Result<(), String>>,
+{
+    if let Some(code) = exited {
+        return Ok(Some(u32::try_from(code).unwrap_or(0)));
+    }
+    prepare_live.await?;
+    Ok(None)
 }
 
 /// 把 attach 的 STREAM_DATA 分片按 seq/offset 还原成完整逻辑块。
@@ -462,7 +478,7 @@ fn emit_exit(
 struct ActiveSession {
     transport: TerminalTransportLease,
     session: DaemonSession,
-    events: mpsc::UnboundedReceiver<Event>,
+    events: SessionEventReceiver,
 }
 
 /// 在共享终端连接上打开 daemon 会话。
@@ -1270,26 +1286,31 @@ async fn reconnect_terminal(
             return ReconnectEnd::Retry;
         }
     };
-    let (cols, rows) = *terminal
-        .size
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if resize_session(&session, &terminal.pty_id, cols, rows)
-        .await
-        .is_err()
+    match prepare_reconnected_terminal(exited, async {
+        let (cols, rows) = *terminal
+            .size
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        resize_session(&session, &terminal.pty_id, cols, rows).await?;
+        flush_pending_to_session(terminal, &session).await
+    })
+    .await
     {
-        session.shutdown();
-        transport.release();
-        return ReconnectEnd::Retry;
-    }
-    if let Err(error) = flush_pending_to_session(terminal, &session).await {
-        session.shutdown();
-        transport.release();
-        eprintln!(
-            "[WARN] persistent terminal {} could not flush pending input after attach: {error}",
-            terminal.id
-        );
-        return ReconnectEnd::Retry;
+        Ok(Some(code)) => {
+            session.shutdown();
+            transport.release();
+            return ReconnectEnd::Exited(code);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            session.shutdown();
+            transport.release();
+            eprintln!(
+                "[WARN] persistent terminal {} could not prepare live session after attach: {error}",
+                terminal.id
+            );
+            return ReconnectEnd::Retry;
+        }
     }
     let restore_name = match restore {
         RestoreKind::Snapshot => Some("snapshot"),
@@ -1297,11 +1318,6 @@ async fn reconnect_terminal(
         RestoreKind::None | RestoreKind::Exit => Some("none"),
     };
     emit_connection(app, &terminal.id, "attached", None, None, restore_name);
-    if let Some(code) = exited {
-        session.shutdown();
-        transport.release();
-        return ReconnectEnd::Exited(u32::try_from(code).unwrap_or(0));
-    }
     ReconnectEnd::Connected(ActiveSession {
         transport,
         session,
@@ -1600,6 +1616,41 @@ mod tests {
             closed: AtomicBool::new(false),
             commands,
         }
+    }
+
+    #[tokio::test]
+    async fn reconnect_to_exited_terminal_preserves_exit_without_sending_pending_input() {
+        let terminal = test_terminal();
+        let pending = b"echo queued-during-disconnect\n".to_vec();
+        terminal.write(pending.clone()).unwrap();
+
+        // 模拟 attach 已报告退出、daemon 随即回收 PTY。旧逻辑会先发 resize/input，
+        // 将这里的「不存在」误作传输故障重试，最终误报 daemon 重启并丢失退出码。
+        let result = prepare_reconnected_terminal(Some(7), async {
+            terminal.pop_pending();
+            Err("终端不存在或已回收".to_string())
+        })
+        .await;
+        assert_eq!(result, Ok(Some(7)));
+        assert_eq!(terminal.pop_pending(), Some(pending));
+    }
+
+    #[tokio::test]
+    async fn reconnect_to_live_terminal_prepares_session_and_propagates_failure() {
+        let terminal = test_terminal();
+        terminal.write(b"echo live\n".to_vec()).unwrap();
+        let result = prepare_reconnected_terminal(None, async {
+            assert_eq!(terminal.pop_pending(), Some(b"echo live\n".to_vec()));
+            Ok(())
+        })
+        .await;
+        assert_eq!(result, Ok(None));
+
+        let result = prepare_reconnected_terminal(None, async {
+            Err("daemon pty.resize 请求超时".to_string())
+        })
+        .await;
+        assert_eq!(result, Err("daemon pty.resize 请求超时".to_string()));
     }
 
     #[test]

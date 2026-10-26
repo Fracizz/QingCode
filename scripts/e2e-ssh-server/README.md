@@ -1,8 +1,72 @@
 # SSH 远端代理（qingcode-server）真机端到端验收
 
-对 `src-tauri/qingcode-server` 的 **`serve` 子集**（目录扫描 / 内容搜索 / 文件监视 / 单实例 / 权限 / 会话脱离存活）做真机端到端验收。
+现有 `run.sh` 对 `src-tauri/qingcode-server` 的 **`serve` 子集**（目录扫描 / 内容搜索 /
+文件监视 / 单实例 / 权限 / 会话脱离存活）做真机端到端验收。
+PTY 持久化与 daemon 架构使用下列长测和 `daemon_smoke.py`。
 
-**不覆盖**：PTY 持久化、daemon 架构 —— 见下节 `daemon_smoke.py`。
+## 长连接、并发与持久化验收
+
+`stability.py`（Linux）和 `stability_windows.py`（Windows）使用 `sshctl` 清单中的
+连接与凭据，经真实 SSH exec 启动 `connect --stdio`，验证 daemon 协议、PTY、扫描、
+搜索、监视和断线接回。脚本不在源码或报告中存储密码。每次使用一个**不存在的独立目录**，
+二进制、项目夹和 `--state-dir` 都放在其中，不停止用户原有 daemon。
+
+```powershell
+python scripts/e2e-ssh-server/stability.py --host HOST `
+  --binary src-tauri/target/server/qingcode-server-x86_64 `
+  --remote-dir /tmp/qingcode-stability-UNIQUE --duration 1860 `
+  --output .dev/server-stability/linux
+
+python scripts/e2e-ssh-server/stability_windows.py --host HOST `
+  --binary src-tauri/target/server/qingcode-server-windows-x86_64.exe `
+  --remote-dir C:/Users/Administrator/qingcode-stability-UNIQUE `
+  --duration 1860 --connections 8 --output .dev/server-stability/windows
+```
+
+默认 `sshctl` 为 `%USERPROFILE%/.codex/skills/sshctl/bin/sshctl.exe`，可用 `--sshctl`
+覆盖。先通过技能的 `search` / `add` 设置清单；不要把凭据写进命令脚本或项目设置。
+Linux 目标需要 bash、top、基本 coreutils，可运行静态 musl 版 server；不要求安装
+Python、Git、ripgrep 或 OpenCode。Windows 脚本在 OpenCode 可用时额外启动其真实 TUI。
+
+Linux 长测保留一个完全无用户输入的 shell、一个 shell 和一个持续刷新的 `top`，另开
+8 条连接持续并发执行扫描、流式搜索、状态和终端输入。1860 秒后分别检查连接仍开着、
+交互仍能执行、shell PID 保持，并收集 daemon RSS、线程数、句柄数与请求延迟。
+功能阶段验证 Unicode、根边界与符号链接逃逸、监视、强杀 SSH 代理后接回、历史补发、
+输入序号幂等与 resize。`Session` 客户端使用读线程与有截止时间的队列，处理 PING/PONG、
+WINDOW 和按 stream id 分发的并发响应，不使用可能永久阻塞的同步 read 充当超时。
+测试客户端自身的编解码、超时及代理清理回归可独立运行：
+
+```powershell
+python -W error::ResourceWarning -m unittest discover -s scripts/e2e-ssh-server -p 'test_stability*.py'
+```
+
+结果写入 `progress.jsonl` 和 `summary.json`，失败退出码为 1。测试目录保留以便诊断，
+成功收尾会显式结束本轮 PTY 和 daemon；失败时应先保留日志，再按已确认的专用路径清理。
+`--duration` 可缩短用于脚本预检，缩短运行不构成 30 分钟验收。
+
+Windows 的 `--local` 只跑本机命名管道/ConPTY 补充测试，应明确标注为本机结果。
+以上脚本验证的是 server + SSH 协议路径，不能替代桌面客户端的 russh 连接池、信任门禁、
+SFTP 编辑或界面验收；这些需要另外运行客户端集成测试或真机桌面检查。
+
+客户端后端另有两个默认忽略的真机测试：
+
+- `live_backend_sftp_trust_pool_concurrency_and_reconnect`：产品 `SshManager` 的
+  已确认指纹校验、信任门禁、SFTP 读写和边界、16 路 SFTP、24 路命令、16 个
+  终端通道连接池及已确认断线后的重连。设置 `QC_LIVE_HOST`、`QC_LIVE_PORT`
+  （可选）、`QC_LIVE_USER`、`QC_LIVE_PASSWORD`、`QC_LIVE_FINGERPRINT` 和
+  `QC_LIVE_PARENT`。父目录必须已存在；只创建/清理其中本轮的 UUID 测试目录。
+- `live_daemon_backpressure_reconnects_and_accepts_input`：真实 russh/daemon 客户端
+  产生 4MB 输出并暂停事件消费，验证 2MB 积压保护、原 daemon 存活、attach 恢复
+  和后续输入。还需 `QC_LIVE_SERVER_BIN`、`QC_LIVE_SERVER_RUN`、
+  `QC_LIVE_SERVER_TOKEN`、`QC_LIVE_ROOT`，均指向本轮专用 daemon，不能用用户现有实例。
+
+```powershell
+cargo test --manifest-path src-tauri/Cargo.toml -p qingcode --lib `
+  live_backend_sftp_trust_pool_concurrency_and_reconnect -- --ignored --nocapture
+```
+
+这些测试不创建 WebView，也不代替界面交互验收。指纹须先独立核验；不要把密码或
+daemon token 保存在报告中。Linux 没有 Git 时后端测试明确记录 `git_available=false`。
 
 ## daemon 协议冒烟（daemon_smoke.py）
 

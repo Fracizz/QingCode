@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SshServerStatusChip from './SshServerStatusChip'
 import { useProjectStore } from '../store/projectStore'
+import { useUIStore } from '../store/uiStore'
 
 const { invoke, listeners, switchSshConnectionMode, confirmDialog } = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -15,6 +16,7 @@ const { invoke, listeners, switchSshConnectionMode, confirmDialog } = vi.hoisted
 vi.mock('../lib/sshWorkspace', () => ({
   switchSshConnectionMode,
   sshConnectionLabel: () => 'WSL（root@localhost）',
+  sshRemotePathFromUri: (path: string) => path.replace(/^ssh:\/\/[^/]+/, '') || '/',
 }))
 vi.mock('../store/confirmStore', () => ({ confirmDialog }))
 
@@ -65,14 +67,17 @@ const serverChipName = (version = '0.1.13') =>
 
 describe('SshServerStatusChip', () => {
   const pushToast = vi.fn()
+  const requestSettings = vi.fn()
 
   beforeEach(() => {
     listeners.splice(0, listeners.length)
     invoke.mockReset()
     pushToast.mockReset()
+    requestSettings.mockReset()
     switchSshConnectionMode.mockReset().mockResolvedValue(undefined)
     confirmDialog.mockReset().mockResolvedValue(true)
-    useProjectStore.setState({ pushToast })
+    useProjectStore.setState({ pushToast, sshConnections: [] })
+    useUIStore.setState({ requestSettings })
     invoke.mockImplementation(async (_action: string, command: string) => {
       if (command === 'ssh_server_info') return ready
       if (command === 'ssh_server_restart') return { ...ready, version: '0.2.0' }
@@ -118,10 +123,10 @@ describe('SshServerStatusChip', () => {
   it('opens the details dialog on click and restarts from the right-click menu', async () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
     const chip = await screen.findByRole('button', { name: serverChipName() })
-    // 左键直接打开详情弹窗（头部带重启与日志入口）。
+    // 左键打开连接概览，右键保留快捷操作。
     fireEvent.click(chip)
-    expect(await screen.findByText('远端服务详情')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    expect(await screen.findByRole('dialog', { name: '远程连接' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '关闭对话框' }))
     // 右键菜单保留完整操作。
     fireEvent.contextMenu(screen.getByRole('button', { name: serverChipName() }))
     fireEvent.click(screen.getByText('重启远端服务'))
@@ -134,20 +139,42 @@ describe('SshServerStatusChip', () => {
     })
   })
 
-  it('offers switching to SSH mode from the Server chip and dialog', async () => {
+  it('keeps Server actions focused on restart and logs without offering direct mode', async () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
     const chip = await screen.findByRole('button', { name: serverChipName() })
     fireEvent.contextMenu(chip)
-    fireEvent.click(screen.getByText('切到 SSH 模式'))
-    await waitFor(() => expect(switchSshConnectionMode).toHaveBeenCalledWith('c1', 'ssh'))
-    expect(confirmDialog).toHaveBeenCalledTimes(1)
-    expect(pushToast).toHaveBeenCalledWith('success', '已切换到 SSH 模式')
+    expect(screen.queryByText('切到 SSH 模式')).toBeNull()
+    expect(screen.getByText('重启远端服务')).toBeTruthy()
+    expect(screen.getByText('查看远端服务日志')).toBeTruthy()
+    expect(switchSshConnectionMode).not.toHaveBeenCalled()
+    expect(confirmDialog).not.toHaveBeenCalled()
 
-    // 详情弹窗同样提供该操作。
+    // 详情同样只提供服务恢复操作。
     fireEvent.click(screen.getByRole('button', { name: serverChipName() }))
-    expect(await screen.findByText('远端服务详情')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '切到 SSH 模式' }))
-    await waitFor(() => expect(switchSshConnectionMode).toHaveBeenCalledTimes(2))
+    expect(await screen.findByRole('dialog', { name: '远程连接' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '切到 SSH 模式' })).toBeNull()
+    expect(screen.getAllByRole('button', { name: '重启远端服务' })).toHaveLength(1)
+  })
+
+  it('cancels a service restart without calling the backend', async () => {
+    confirmDialog.mockResolvedValue(false)
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.contextMenu(await screen.findByRole('button', { name: serverChipName() }))
+    fireEvent.click(screen.getByText('重启远端服务'))
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledWith({
+      title: '重启远端服务',
+      message: '重启会结束此远端服务托管的终端，可能影响同一远端用户下的其他项目。',
+      kind: 'warning', confirmLabel: '重启', cancelLabel: '取消',
+    }))
+    expect(invoke).not.toHaveBeenCalledWith('重启 SSH Agent', 'ssh_server_restart', { rootUri })
+  })
+
+  it('opens installation settings from Server details and closes the dialog', async () => {
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
+    fireEvent.click(screen.getByRole('button', { name: '服务安装设置' }))
+    expect(requestSettings).toHaveBeenCalledWith('ssh.server')
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('does not offer switching to SSH mode while already direct', async () => {
@@ -168,7 +195,7 @@ describe('SshServerStatusChip', () => {
     fireEvent.contextMenu(chip)
     expect(screen.queryByText('切到 SSH 模式')).toBeNull()
     fireEvent.click(chip)
-    expect(await screen.findByText('远端服务详情')).toBeTruthy()
+    expect(await screen.findByRole('dialog', { name: '远程连接' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '切到 SSH 模式' })).toBeNull()
   })
 
@@ -188,9 +215,9 @@ describe('SshServerStatusChip', () => {
     })
     render(<SshServerStatusChip rootUri={rootUri} />)
     const chip = await screen.findByRole('button', {
-      name: 'SSH 直连 SSH 模式（连接配置） 点击查看详情',
+      name: 'SSH 兼容模式 已启用兼容模式，不部署远端服务 点击查看详情',
     })
-    expect(chip.textContent).toBe('SSH 直连')
+    expect(chip.textContent).toBe('SSH 兼容模式')
     fireEvent.contextMenu(chip)
     // SSH 模式没有远端服务：隐藏重启与日志，只提供切回 Server。
     expect(screen.queryByText('重启远端服务')).toBeNull()
@@ -213,6 +240,43 @@ describe('SshServerStatusChip', () => {
     // A later state event clears the error and restores the normal chip.
     listeners[0]?.({ payload: ready })
     expect(await screen.findByRole('button', { name: serverChipName() })).toBeTruthy()
+  })
+
+  it('retries a failed status query when the error chip is clicked', async () => {
+    invoke.mockRejectedValueOnce(new Error('connection lost'))
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: '远端服务状态未知' }))
+    expect(await screen.findByRole('button', { name: serverChipName() })).toBeTruthy()
+    expect(switchSshConnectionMode).not.toHaveBeenCalled()
+  })
+
+  it('retries an unavailable Server without offering compatibility mode', async () => {
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') {
+        return { ...ready, phase: 'readyDirect', mode: 'direct', reason: 'server 启动超时' }
+      }
+      if (command === 'ssh_server_restart') return ready
+      throw new Error(`unexpected ${command}`)
+    })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.contextMenu(await screen.findByRole('button', { name: /server 启动超时/ }))
+    expect(screen.queryByText('切到 SSH 模式')).toBeNull()
+    fireEvent.click(screen.getByText('重启远端服务'))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('重启 SSH Agent', 'ssh_server_restart', { rootUri }))
+    expect(switchSshConnectionMode).not.toHaveBeenCalled()
+    expect(await screen.findByRole('button', { name: serverChipName() })).toBeTruthy()
+  })
+
+  it('keeps Server retries disabled until the workspace is trusted', async () => {
+    invoke.mockResolvedValue({ ...ready, phase: 'readyDirect', mode: 'direct', reason: '工作区未信任' })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: /工作区未信任/ }))
+    expect(screen.getByText('请先信任该工作区，再切换到远端服务')).toBeTruthy()
+    for (const retry of screen.getAllByRole('button', { name: '重试远端服务' })) {
+      expect((retry as HTMLButtonElement).disabled).toBe(true)
+      fireEvent.click(retry)
+    }
+    expect(invoke).not.toHaveBeenCalledWith('重启 SSH Agent', 'ssh_server_restart', { rootUri })
   })
 
   it('subscribes to state events before reading the snapshot', async () => {
@@ -281,6 +345,7 @@ describe('SshServerStatusChip', () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
     fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
     expect(await screen.findByText('就绪用时 1.5s')).toBeTruthy()
+    fireEvent.click(screen.getByText('就绪用时 1.5s'))
     expect(screen.getByRole('list', { name: '分阶段耗时' }).textContent).toContain('发现1.2s')
   })
 
@@ -326,16 +391,84 @@ describe('SshServerStatusChip', () => {
       throw new Error(`unexpected ${command}`)
     })
     render(<SshServerStatusChip rootUri={rootUri} />)
-    // 详情弹窗头部的日志入口进入日志视图。
+    // 在同一弹窗内切换到日志视图。
     fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
-    fireEvent.click(screen.getByRole('button', { name: '查看远端服务日志' }))
+    fireEvent.click(screen.getByRole('tab', { name: '服务日志' }))
     expect(await screen.findByText('读取日志中…')).toBeTruthy()
     resolveLogs({ text: 'daemon up' })
     expect(await screen.findByText('daemon up')).toBeTruthy()
     // The refresh button re-fetches and shows the loading state again.
-    fireEvent.click(screen.getByRole('button', { name: '刷新' }))
+    fireEvent.click(screen.getByRole('button', { name: '刷新日志' }))
     expect(await screen.findByText('读取日志中…')).toBeTruthy()
     resolveLogs({ text: 'daemon up again' })
     expect(await screen.findByText('daemon up again')).toBeTruthy()
+  })
+
+  it('keeps logs while refreshing and lets the user return to the overview with the keyboard', async () => {
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
+    expect(screen.getByText('/home/app')).toBeTruthy()
+    expect(screen.getByText('远端服务已就绪')).toBeTruthy()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '关闭对话框' }))
+    const overview = screen.getByRole('tab', { name: '概览' })
+    fireEvent.keyDown(overview, { key: 'ArrowRight' })
+    expect(await screen.findByText('daemon up')).toBeTruthy()
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_logs') return new Promise(() => {})
+      throw new Error(`unexpected ${command}`)
+    })
+    fireEvent.click(screen.getByRole('button', { name: '刷新日志' }))
+    expect(screen.getByText('daemon up')).toBeTruthy()
+    expect((screen.getByRole('button', { name: '刷新日志' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.keyDown(screen.getByRole('tab', { name: '服务日志' }), { key: 'ArrowLeft' })
+    expect(screen.getByText('远端服务已就绪')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '概览' }).getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('shows a log error inline and recovers through refresh', async () => {
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
+    invoke.mockRejectedValueOnce(new Error('permission denied'))
+    fireEvent.click(screen.getByRole('tab', { name: '服务日志' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('permission denied')
+    expect(screen.queryByText('暂无日志。服务启动后可刷新查看。')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '刷新日志' }))
+    expect(await screen.findByText('daemon up')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('does not offer duplicate deployment while the service is being prepared', async () => {
+    invoke.mockResolvedValue(probing)
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: /正在探测/ }))
+    expect(screen.getByText('正在检查远端服务')).toBeTruthy()
+    const retry = screen.getByRole('button', { name: '重试远端服务' }) as HTMLButtonElement
+    expect(retry.disabled).toBe(true)
+    fireEvent.click(retry)
+    expect(confirmDialog).not.toHaveBeenCalled()
+  })
+
+  it('ignores log responses from the previous project', async () => {
+    let resolveOldLogs: (value: { text: string }) => void = () => {}
+    const newRoot = 'ssh://c1/home/another'
+    invoke.mockImplementation(async (_action: string, command: string, args: { rootUri: string }) => {
+      if (command === 'ssh_server_info') return { ...ready, rootUri: args.rootUri }
+      if (command === 'ssh_server_logs') {
+        if (args.rootUri === newRoot) return { text: 'new project logs' }
+        return new Promise(resolve => { resolveOldLogs = resolve })
+      }
+      throw new Error(`unexpected ${command}`)
+    })
+    const { rerender } = render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
+    fireEvent.click(screen.getByRole('tab', { name: '服务日志' }))
+    rerender(<SshServerStatusChip rootUri={newRoot} />)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
+    fireEvent.click(screen.getByRole('tab', { name: '服务日志' }))
+    expect(await screen.findByText('new project logs')).toBeTruthy()
+    await act(async () => resolveOldLogs({ text: 'old project logs' }))
+    expect(screen.getByText('new project logs')).toBeTruthy()
+    expect(screen.queryByText('old project logs')).toBeNull()
   })
 })

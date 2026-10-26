@@ -3,7 +3,6 @@ import {
   isAgentCommandUnavailable,
   parseSshServerState,
   parseSshServerTimings,
-  sshServerCanSwitchToSshMode,
   sshServerChip,
   sshServerEventMatches,
   sshServerIsDirect,
@@ -30,8 +29,6 @@ describe('sshServerStatus', () => {
     const direct: SshServerState = { ...readyServer, phase: 'readyDirect', mode: 'direct', transport: 'direct', version: null, reason: 'server 启动超时' }
     expect(sshServerIsDirect(readyServer)).toBe(false)
     expect(sshServerIsDirect(direct)).toBe(true)
-    expect(sshServerCanSwitchToSshMode(readyServer)).toBe(true)
-    expect(sshServerCanSwitchToSshMode(direct)).toBe(false)
     expect(sshServerSwitchBlocker(direct)).toBeNull()
     expect(sshServerSwitchBlocker({ ...direct, reason: null })).toBeNull()
     expect(sshServerSwitchBlocker({ ...direct, reason: '工作区未信任' })).toContain('信任')
@@ -49,10 +46,9 @@ describe('sshServerStatus', () => {
     }
     expect(sshServerChip(sshState)).toEqual({ kind: 'ssh' })
     expect(sshServerSwitchBlocker(sshState)).toBeNull()
-    expect(sshServerCanSwitchToSshMode(sshState)).toBe(false)
     expect(sshServerTipLines(sshState)).toEqual([
-      { key: 'SSH 直连' },
-      { key: 'SSH 模式（连接配置）' },
+      { key: 'SSH 兼容模式' },
+      { key: '已启用兼容模式，不部署远端服务' },
     ])
   })
 

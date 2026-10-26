@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   writeTerminal: vi.fn(async () => undefined),
   choiceDialog: vi.fn(),
   pushToast: vi.fn(),
+  serverModeErrorAction: vi.fn(),
   projectState: {
     projects: [] as Array<Record<string, unknown>>,
     currentProject: null as Record<string, unknown> | null,
@@ -57,6 +58,8 @@ vi.mock('./projectStore', () => ({
 vi.mock('./choiceStore', () => ({
   choiceDialog: (...args: unknown[]) => mocks.choiceDialog(...args),
 }))
+
+vi.mock('../lib/serverModeError', () => ({ serverModeErrorAction: mocks.serverModeErrorAction }))
 
 vi.mock('./uiStore', () => ({
   useUIStore: {
@@ -102,6 +105,7 @@ describe('terminal persistent connection events', () => {
     mocks.listDetachedTerminals.mockReset()
     mocks.choiceDialog.mockReset()
     mocks.pushToast.mockReset()
+    mocks.serverModeErrorAction.mockReset()
     mocks.projectState.projects = []
     mocks.projectState.currentProject = null
     mocks.attachTerminal.mockResolvedValue({ persistent: true })
@@ -165,6 +169,30 @@ describe('terminal persistent connection events', () => {
       status: 'running',
       persistent: true,
     })
+  })
+
+  it('binds a delayed spawn error to the original project root despite switching projects', async () => {
+    const root = 'ssh://conn/home/app'
+    const other = { id: 'p2', name: 'other', path: 'ssh://conn/home/other' }
+    mocks.projectState.projects = [{ id: 'p1', name: 'original', path: root }, other]
+    mocks.projectState.currentProject = mocks.projectState.projects[0]
+    let rejectSpawn!: (error: Error) => void
+    mocks.createTerminal.mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectSpawn = reject }))
+    useTerminalStore.setState({
+      terminals: [terminal({ cwd: `${root}/nested`, status: 'starting', ptySpawnPending: true })],
+    })
+
+    const spawning = useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+    mocks.projectState.currentProject = other
+    const error = new Error('Server 模式：daemon 未就绪')
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      rejectSpawn(error)
+      await spawning
+      expect(mocks.serverModeErrorAction).toHaveBeenCalledWith(error, root)
+    } finally {
+      log.mockRestore()
+    }
   })
 
   it('prefers attaching a restored daemon PTY and stores its fresh identity', async () => {

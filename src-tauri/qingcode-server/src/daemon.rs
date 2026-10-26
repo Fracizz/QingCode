@@ -60,8 +60,9 @@ pub const REAP_INTERVAL: Duration = Duration::from_secs(60);
 pub const LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 pub const LOG_KEEP: usize = 3;
 
-/// 单条连接的最大并发数。正常场景只有一条主连接，留余量给同机多窗口。
-const MAX_CONNS: usize = 64;
+/// 每个持久化终端占一条 daemon 通道；终端打满时仍为扫描、搜索、监视和
+/// 控制操作保留 16 条连接，避免文件能力在达到 PTY 上限之前被挤掉。
+const MAX_CONNS: usize = MAX_PTYS + 16;
 
 /// 每条连接的终端输入队列深度。正常按键只有几十字节；给到 64 条足以吸收
 /// 快速粘贴，同时在极端洪泛时把内存钉住（不会像无界队列那样无限增长）。
@@ -400,6 +401,7 @@ async fn serve(
         conns: Mutex::new(HashMap::new()),
         routes: Mutex::new(HashMap::new()),
         shutdown: Notify::new(),
+        closing: AtomicBool::new(false),
         detached_ttl: options.detached_ttl,
         idle_exit: options.idle_exit,
         scrollback_bytes: options.scrollback_bytes,
@@ -413,6 +415,7 @@ async fn serve(
     daemon.log.info("开始接受本地连接");
 
     let mut idle_since = Some(Instant::now());
+    let mut connections = tokio::task::JoinSet::new();
     let mut reap = tokio::time::interval(REAP_INTERVAL);
     reap.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -448,15 +451,36 @@ async fn serve(
                     daemon.log.warn("accept 任务退出");
                     break;
                 };
-                if daemon.conns.lock().unwrap().len() >= MAX_CONNS {
+                while connections.try_join_next().is_some() {}
+                // 包含尚未完成 HELLO 的连接，不能靠并发握手绕过总量上限。
+                if connections.len() >= MAX_CONNS {
                     daemon.log.warn("连接数超过上限，拒绝新连接");
                     continue;
                 }
-                tokio::spawn(handle_conn(Arc::clone(&daemon), stream));
+                connections.spawn(handle_conn(Arc::clone(&daemon), stream));
             }
+            Some(_) = connections.join_next(), if !connections.is_empty() => {}
         }
     }
 
+    // 先让连接走正常收尾，置位搜索/监视的取消标记。直接返回并销毁 runtime
+    // 会中止 async 连接任务，却永久等待仍在 watch_loop 中的 spawn_blocking。
+    // closing 同时覆盖 HELLO 正好在关服期间完成、晚于快照登记的连接。
+    daemon.closing.store(true, Ordering::SeqCst);
+    let handles: Vec<_> = daemon.conns.lock().unwrap().values().cloned().collect();
+    for handle in handles {
+        handle.outbound.abort();
+    }
+    if tokio::time::timeout(Duration::from_secs(3), async {
+        while connections.join_next().await.is_some() {}
+    })
+    .await
+    .is_err()
+    {
+        // 未完成 HELLO 的连接还没有阻塞任务，不必等满握手时限。
+        connections.abort_all();
+        while connections.join_next().await.is_some() {}
+    }
     // 退出前给所有终端发 SIGHUP（kill 内部先 SIGHUP 再降级）。
     for info in daemon.pty.list() {
         let _ = daemon.pty.kill(&info.id);
@@ -477,6 +501,7 @@ struct Daemon {
     /// pty id → 当前路由。创建、attach、实时事件消费和 detach 都以这把锁为同步边界。
     routes: Mutex<HashMap<String, PtyRoute>>,
     shutdown: Notify,
+    closing: AtomicBool,
     detached_ttl: Duration,
     idle_exit: Duration,
     scrollback_bytes: usize,
@@ -679,6 +704,17 @@ impl Daemon {
         options: PtyCreateOptions,
     ) -> Result<crate::pty::PtyInfo, String> {
         let mut routes = self.routes.lock().unwrap();
+        // spawn_blocking 的 create 可能晚于原连接退出才开始。与 detach 共用
+        // routes 锁，确保关服/断线以后不会新建一个无人接管的 attached PTY。
+        let connection_open = self
+            .conns
+            .lock()
+            .unwrap()
+            .get(&conn_id)
+            .is_some_and(|conn| !conn.outbound.closing.load(Ordering::SeqCst));
+        if self.closing.load(Ordering::SeqCst) || !connection_open {
+            return Err("连接已关闭，终端未创建".to_string());
+        }
         let info = self.pty.create(options)?;
         routes.insert(
             info.id.clone(),
@@ -1083,8 +1119,13 @@ impl ConnCtx {
 
     /// 为流登记取消标记，返回共享句柄（`CANCEL` 帧会置位）。
     fn cancel_flag(&self, id: u32) -> Arc<AtomicBool> {
-        let flag = Arc::new(AtomicBool::new(false));
-        self.cancels.lock().unwrap().insert(id, Arc::clone(&flag));
+        // dispatch 任务可能晚于连接收尾才开始；这种订阅一开始就必须取消。
+        // 在同一把锁内读取 closing 并登记，避免关服在两步之间漏掉新标记。
+        let mut cancels = self.cancels.lock().unwrap();
+        let flag = Arc::new(AtomicBool::new(
+            self.outbound.closing.load(Ordering::SeqCst),
+        ));
+        cancels.insert(id, Arc::clone(&flag));
         flag
     }
 
@@ -1210,6 +1251,9 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
             inputs: Arc::clone(&inputs),
         },
     );
+    if daemon.closing.load(Ordering::SeqCst) {
+        outbound.abort();
+    }
 
     let response = HelloResponse {
         protocol,
@@ -1321,6 +1365,9 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
         }
     }
 
+    // 普通 EOF/心跳超时同样先标记 closing；已派发但尚未开始的监视任务
+    // 可能晚于此处登记取消标记，此时 cancel_flag 必须直接返回已取消状态。
+    ctx.outbound.abort();
     reader_task.abort();
     ctx.inputs.cancel_all();
     daemon.detach_owned_ptys(conn_id, &ctx.client_id);
@@ -2205,6 +2252,7 @@ mod tests {
             conns: Mutex::new(conns),
             routes: Mutex::new(HashMap::new()),
             shutdown: Notify::new(),
+            closing: AtomicBool::new(false),
             detached_ttl: DETACHED_TTL,
             idle_exit: IDLE_EXIT,
             scrollback_bytes: 4096,
@@ -2657,6 +2705,74 @@ mod tests {
         assert!(joined.is_ok());
         assert!(!run_dir.ready_marker().exists(), "退出后就绪标记未清理");
         let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    #[tokio::test]
+    async fn full_terminal_connection_population_keeps_control_channel_available() {
+        let (run_dir, handle) = start_daemon("connection-reserve").await;
+        let token = run_dir.read_token().unwrap();
+        // The desktop opens one daemon connection per terminal. Represent that
+        // full population without launching 64 operating-system shell processes.
+        let mut terminals = Vec::new();
+        for _ in 0..MAX_PTYS {
+            terminals.push(TestClient::connect(&run_dir, &token).await);
+        }
+        let mut control = TestClient::connect(&run_dir, &token).await;
+        let id = control.request("server.info", &json!({})).await;
+        let info = control.wait_response(id).await;
+        assert_eq!(info["pid"].as_u64(), Some(u64::from(std::process::id())));
+        let id = control.request("server.shutdown", &json!({})).await;
+        control.wait_response(id).await;
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        drop(terminals);
+        drop(control);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    #[test]
+    fn disconnected_connection_cancels_late_watch_registration() {
+        let (control, _control_rx) = mpsc::channel(1);
+        let (data, _data_rx) = mpsc::channel(1);
+        let ctx = ConnCtx {
+            conn_id: 1,
+            client_id: "late-watch".into(),
+            outbound: OutboundSender::new(control, data, Arc::new(Notify::new())),
+            cancels: Arc::new(Mutex::new(HashMap::new())),
+            windows: Arc::new(Mutex::new(HashMap::new())),
+            inputs: Arc::new(InputQueues::default()),
+        };
+        ctx.outbound.abort();
+        assert!(ctx.cancel_flag(1).load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn shutdown_or_disconnected_connection_rejects_late_pty_creation() {
+        let (daemon, _events, run_dir) = route_test_daemon("late-create");
+        let options = || PtyCreateOptions {
+            cwd: run_dir.dir().to_path_buf(),
+            shell: None,
+            args: vec![],
+            env: BTreeMap::new(),
+            name: None,
+            cols: 80,
+            rows: 24,
+            scrollback_bytes: 4096,
+            client_id: "test-client".into(),
+        };
+        daemon.closing.store(true, Ordering::SeqCst);
+        let shutdown = daemon.create_pty_with_route(41, options()).unwrap_err();
+        assert!(shutdown.contains("连接已关闭"));
+        daemon.closing.store(false, Ordering::SeqCst);
+        daemon.conns.lock().unwrap().remove(&41);
+        let disconnected = daemon.create_pty_with_route(41, options()).unwrap_err();
+        assert!(disconnected.contains("连接已关闭"));
+        assert!(daemon.pty.list().is_empty());
+        drop(daemon);
         let _ = std::fs::remove_dir_all(run_dir.dir());
     }
 

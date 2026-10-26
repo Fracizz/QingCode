@@ -235,8 +235,9 @@ __AUTOSAVE_SETTINGS__
   "terminal.integrated.sshUploadOnPaste": true,
 
   // ============================== SSH ==============================
-  // ssh.server.enabled：新建 SSH 连接的默认模式（true=Server，false=SSH）。
-  // 已有连接在「远程连接」管理页单独设置；修改后需要重新连接才生效（默认 true）
+  // ssh.server.enabled：仅兼容尚未保存 mode 的旧连接（true=Server，false=SSH，默认 true）。
+  // 新建连接固定默认 Server；SSH 直连在每个连接的「高级」兼容选项中设置。
+  // 此键只读取用户设置，工作区覆盖无效。
   "ssh.server.enabled": true,
 
   // ssh.server.autoDownload：安装包不附带 server 二进制。缺失时是否从 GitHub Release

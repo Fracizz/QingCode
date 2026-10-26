@@ -5,7 +5,7 @@ use crate::terminal::{encode_terminal_data, TerminalDataPayload, TerminalSpawnRe
 use russh::client;
 use russh::keys::{load_secret_key, HashAlg, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{ChannelMsg, ChannelWriteHalf, Disconnect};
-use russh_sftp::client::SftpSession;
+use russh_sftp::client::SftpSession as RawSftpSession;
 use russh_sftp::protocol::OpenFlags;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -18,11 +18,14 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
+#[cfg(test)]
+mod live_acceptance;
 mod search;
 mod server;
 mod server_status;
 mod sshd_limits;
 mod transfer;
+mod windows_path_guard;
 pub use search::*;
 pub use server_status::{SshServerLogs, SshServerState};
 pub use transfer::*;
@@ -290,6 +293,8 @@ impl client::Handler for SshClient {
         if let Ok(mut observed) = self.observed_fingerprint.lock() {
             *observed = Some(fingerprint.clone());
         }
+        #[cfg(test)]
+        eprintln!("SSH_TRACE server key received");
         Ok(self
             .expected_fingerprint
             .as_deref()
@@ -336,6 +341,21 @@ impl ConnectedSession {
 struct CachedSftp {
     sftp: Arc<SftpSession>,
     health: Arc<SftpHealth>,
+}
+
+/// Keep Windows physical-path metadata on the same authenticated connection.
+/// The weak reference avoids a cycle through ConnectedSession's SFTP cache.
+struct SftpSession {
+    inner: RawSftpSession,
+    transport: std::sync::Weak<ConnectedSession>,
+    windows_guard: windows_path_guard::WindowsPathGuard,
+}
+
+impl std::ops::Deref for SftpSession {
+    type Target = RawSftpSession;
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
 }
 
 /// 缓存 SFTP 会话的健康状态，由通道流在读写时更新。
@@ -477,16 +497,29 @@ const SSH_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(20);
 /// 会话已半死时 `channel_open_session` 也不会返回；超时后探测一次再决定是否重连。
 const SSH_CHANNEL_OPEN_TIMEOUT: Duration = Duration::from_secs(15);
 const CHANNEL_OPEN_TIMEOUT_MARKER: &str = "通道超时";
-/// 远端以 ConnectFailed 拒绝开通道（多为 MaxSessions 打满）时错误信息里的固定片段。
+/// 远端拒绝开通道（多为 MaxSessions 打满）时错误信息里的固定片段。
 const CHANNEL_REFUSED_MARKER: &str = "远端拒绝打开新通道";
 
 fn is_channel_refused_error(message: &str) -> bool {
     message.contains(CHANNEL_REFUSED_MARKER)
 }
-/// 远端拒绝开通道（ConnectFailed）时的重试次数，共约 3 秒。
+/// OpenSSH Linux 会以 AdministrativelyProhibited 表示 MaxSessions 打满，
+/// Windows 等实现也可能返回 ConnectFailed。两者都允许有限退避，不把
+/// AdministrativelyProhibited 当成连接失效去重建整条主连接。
+fn is_session_channel_refusal(error: &russh::Error) -> bool {
+    matches!(
+        error,
+        russh::Error::ChannelOpenFailure(
+            russh::ChannelOpenFailure::ConnectFailed
+                | russh::ChannelOpenFailure::AdministrativelyProhibited
+        )
+    )
+}
+
+/// 远端拒绝开通道时的重试次数，共约 3 秒。
 const CHANNEL_OPEN_RETRIES: u32 = 5;
-/// sshd 默认每条连接最多 10 个会话；主连接只跑 SFTP 和命令：1 个 SFTP + 6 个命令，
-/// 留 3 个给僵死后换新的 SFTP 会话与重试余量。超出的命令排队，不报错。
+/// sshd 默认每条连接最多 10 个会话；主连接预留 1 个 SFTP、Windows 的 1 个路径校验
+/// 和最多 6 个命令，留余量给 watch / scan 与重试。超出的命令排队，不报错。
 const MAX_CONCURRENT_EXEC_CHANNELS: usize = 6;
 /// 终端各用独立连接；sshd 的 MaxStartups 默认 10:30:100，未认证连接到 10 个起会被随机拒绝，
 /// 同时握手留在 6 个以内，给其它客户端留余量。
@@ -581,20 +614,14 @@ async fn open_session_channel_once(
         };
         match opened {
             Ok(channel) => return Ok(channel),
-            Err(russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed))
-                if retries < CHANNEL_OPEN_RETRIES =>
-            {
-                // sshd 的会话数到上限（MaxSessions，默认 10）时也回 ConnectFailed；
+            Err(error) if is_session_channel_refusal(&error) && retries < CHANNEL_OPEN_RETRIES => {
+                // sshd 的会话数到上限（MaxSessions，默认 10）时会拒绝新通道；
                 // 刚关闭的通道在卡顿的远端上要过一会儿才释放，退避久一点再试。
                 retries += 1;
                 tokio::time::sleep(Duration::from_millis(200 * u64::from(retries))).await;
             }
             Err(error) => {
-                let detail = if matches!(
-                    error,
-                    russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed)
-                ) && !session.handle.is_closed()
-                {
+                let detail = if is_session_channel_refusal(&error) && !session.handle.is_closed() {
                     format!("{CHANNEL_REFUSED_MARKER}，可能已达 sshd 的 MaxSessions 上限（默认 10，可在远端 sshd_config 调大 MaxSessions 后重启 sshd）")
                 } else {
                     error.to_string()
@@ -610,7 +637,7 @@ async fn open_session_channel_once(
 
 /// 复用连接上已有的 SFTP 会话；没有或已关闭时新开一个并缓存。
 async fn open_sftp_session(
-    session: &ConnectedSession,
+    session: &Arc<ConnectedSession>,
 ) -> Result<Arc<SftpSession>, ChannelOpenError> {
     // 持锁新开：并发的首批请求只会开一个会话。
     let mut cached = session.sftp.lock().await;
@@ -633,14 +660,18 @@ async fn open_sftp_session(
         inner: channel.into_stream(),
         health: Arc::clone(&health),
     };
-    let sftp = SftpSession::new(stream)
+    let sftp = RawSftpSession::new(stream)
         .await
         .map_err(|error| ChannelOpenError {
             message: format!("初始化 SFTP 失败：{error}"),
             stale: session.handle.is_closed(),
         })?;
     sftp.set_timeout(30);
-    let sftp = Arc::new(sftp);
+    let sftp = Arc::new(SftpSession {
+        inner: sftp,
+        transport: Arc::downgrade(session),
+        windows_guard: Default::default(),
+    });
     *cached = Some(CachedSftp {
         sftp: Arc::clone(&sftp),
         health,
@@ -2351,12 +2382,22 @@ async fn open_transport(
         keepalive_window: keepalive_window(purpose),
     };
     let client_config = ssh_client_config(purpose);
+    #[cfg(test)]
+    eprintln!("SSH_TRACE {purpose:?} connect start");
+    #[cfg(not(test))]
     let result = client::connect(
         Arc::new(client_config),
         (config.host.as_str(), config.port),
         handler,
     )
     .await;
+    #[cfg(test)]
+    let result = live_acceptance::traced_connect(client_config, config, handler).await;
+    #[cfg(test)]
+    eprintln!(
+        "SSH_TRACE {purpose:?} transport finished: ok={}",
+        result.is_ok()
+    );
     let fingerprint = observed
         .lock()
         .ok()
@@ -2477,6 +2518,13 @@ async fn authenticate(
 
 #[tauri::command]
 pub async fn ssh_probe_host(config: SshConnectionConfig) -> Result<SshHostProbe, String> {
+    probe_host_with_timeout(&config, SSH_HANDSHAKE_TIMEOUT).await
+}
+
+async fn probe_host_with_timeout(
+    config: &SshConnectionConfig,
+    timeout: Duration,
+) -> Result<SshHostProbe, String> {
     let observed = Arc::new(Mutex::new(None));
     let handler = SshClient {
         expected_fingerprint: None,
@@ -2484,20 +2532,33 @@ pub async fn ssh_probe_host(config: SshConnectionConfig) -> Result<SshHostProbe,
         disconnect_reason: Arc::new(Mutex::new(None)),
         keepalive_window: keepalive_window(ConnectionPurpose::Main),
     };
-    let result = client::connect(
-        Arc::new(client::Config {
-            inactivity_timeout: Some(Duration::from_secs(15)),
-            ..Default::default()
-        }),
-        (config.host.as_str(), config.port),
-        handler,
-    )
-    .await;
-    if let Ok(handle) = result {
-        let _ = handle
-            .disconnect(Disconnect::ByApplication, "host key probe", "en")
-            .await;
-    }
+    // russh 的 inactivity_timeout 要等 banner 读取后启动 Session 才生效。
+    // TCP 已接受却不发 SSH banner 的主机必须由探测整体 deadline 收口。
+    tokio::time::timeout(timeout, async {
+        let result = client::connect(
+            Arc::new(client::Config {
+                inactivity_timeout: Some(Duration::from_secs(15)),
+                ..Default::default()
+            }),
+            (config.host.as_str(), config.port),
+            handler,
+        )
+        .await;
+        if let Ok(handle) = result {
+            let _ = handle
+                .disconnect(Disconnect::ByApplication, "host key probe", "en")
+                .await;
+        }
+    })
+    .await
+    .map_err(|_| {
+        format!(
+            "SSH 主机指纹探测超时：{}:{} 在 {} 秒内未完成握手，请检查远端 sshd 是否正常",
+            config.host,
+            config.port,
+            timeout.as_secs_f64()
+        )
+    })?;
     let fingerprint = observed
         .lock()
         .map_err(|_| "SSH 主机密钥状态不可用".to_string())?
@@ -2579,7 +2640,11 @@ async fn authenticate_session(
         tokio::time::timeout(SSH_HANDSHAKE_TIMEOUT, async {
             let (mut handle, fingerprint, disconnect_reason) =
                 open_transport(&config, expected, purpose).await?;
+            #[cfg(test)]
+            eprintln!("SSH_TRACE {purpose:?} auth start");
             authenticate(&mut handle, &config).await?;
+            #[cfg(test)]
+            eprintln!("SSH_TRACE {purpose:?} authenticated");
             Ok::<_, String>((handle, fingerprint, disconnect_reason))
         })
         .await
@@ -2736,6 +2801,9 @@ pub async fn ssh_connect(
         .canonicalize(parsed_root.path)
         .await
         .map_err(|error| abandon_fresh_auth(format!("远程项目目录不可用：{error}")))?;
+    reject_windows_sftp_links(&sftp, &canonical_root)
+        .await
+        .map_err(abandon_fresh_auth)?;
     let metadata = sftp
         .metadata(canonical_root.clone())
         .await
@@ -2927,19 +2995,13 @@ pub async fn ssh_validate_directory(
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
     let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
     let metadata = sftp
         .metadata(parsed.path.clone())
         .await
         .map_err(|error| format!("远程目录不可用：{error}"))?;
     if !metadata.is_dir() {
         return Err(format!("远程路径不是目录：{}", parsed.path));
-    }
-    let canonical = sftp
-        .canonicalize(parsed.path)
-        .await
-        .map_err(|error| format!("无法解析远程目录：{error}"))?;
-    if !remote_path_is_within(&canonical, &root.canonical_path) {
-        return Err("远程目录通过符号链接跳出了项目根目录".to_string());
     }
     Ok(())
 }
@@ -2948,6 +3010,29 @@ fn remote_path_is_within(path: &str, root: &str) -> bool {
     let path = path.trim_end_matches('/');
     let root = root.trim_end_matches('/');
     path == root || path.starts_with(&format!("{root}/"))
+}
+
+/// Windows OpenSSH 的 REALPATH 只做词法归一，不解析 NTFS reparse point。
+/// 必须从盘符根逐组件检查（包含项目根及其祖先），不能只检查最后一个文件。
+fn windows_sftp_guard_components(path: &str) -> Vec<String> {
+    let Some(native) = windows_native_path(path) else {
+        return Vec::new();
+    };
+    let posix = native.replace('\\', "/");
+    let mut current = format!("/{}/", &posix[..2]);
+    let mut components = vec![current.clone()];
+    for component in posix[2..].split('/').filter(|part| !part.is_empty()) {
+        if !current.ends_with('/') {
+            current.push('/');
+        }
+        current.push_str(component);
+        components.push(current.clone());
+    }
+    components
+}
+
+async fn reject_windows_sftp_links(sftp: &SftpSession, path: &str) -> Result<(), String> {
+    sftp.windows_guard.check(&sftp.transport, path).await
 }
 
 async fn ensure_existing_path_within(
@@ -2962,6 +3047,7 @@ async fn ensure_existing_path_within(
     if !remote_path_is_within(&canonical, &root.canonical_path) {
         return Err("远程路径通过符号链接跳出了项目根目录".to_string());
     }
+    reject_windows_sftp_links(sftp, &canonical).await?;
     Ok(canonical)
 }
 
@@ -3131,13 +3217,7 @@ pub async fn ssh_scan_directory(
     manager: State<'_, SshManager>,
 ) -> Result<Vec<RemoteFileNode>, String> {
     let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
-    let canonical = sftp
-        .canonicalize(parsed.path.clone())
-        .await
-        .map_err(|error| format!("无法解析远程目录：{error}"))?;
-    if !remote_path_is_within(&canonical, &root.canonical_path) {
-        return Err("远程目录通过符号链接跳出了项目根目录".to_string());
-    }
+    let canonical = ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
 
     let root_posix = if let Some(ref ws_root) = workspace_root {
         if let Ok(p) = parse_remote_uri(ws_root) {
@@ -3514,13 +3594,7 @@ pub async fn ssh_check_symlink_write(
     } else {
         remote_parent_path(&parsed.path)?.to_string()
     };
-    let canonical = sftp
-        .canonicalize(probe)
-        .await
-        .map_err(|error| format!("无法解析远程符号链接目标：{error}"))?;
-    if !remote_path_is_within(&canonical, &root.canonical_path) {
-        return Err("远程路径通过符号链接跳出了项目根目录，已拒绝写入".to_string());
-    }
+    let canonical = ensure_existing_path_within(&sftp, &probe, &root).await?;
     Ok(RemoteSymlinkWriteCheck {
         needs_confirm: false,
         resolved_path: Some(canonical),
@@ -3588,6 +3662,28 @@ pub async fn ssh_rename_path(
 }
 
 async fn remove_remote_tree(sftp: &SftpSession, path: String) -> Result<(), String> {
+    if let Some(native) = windows_native_path(&path) {
+        if let Some(component) = sftp
+            .windows_guard
+            .first_reparse_component(&sftp.transport, &path)
+            .await?
+        {
+            if !native
+                .trim_end_matches('\\')
+                .eq_ignore_ascii_case(component.trim_end_matches('\\'))
+            {
+                return Err(format!("拒绝通过 Windows 链接删除项目外路径：{component}"));
+            }
+            // Only this entry is a reparse point: remove the link, not its target.
+            if sftp.remove_file(path.clone()).await.is_ok() {
+                return Ok(());
+            }
+            return sftp
+                .remove_dir(path)
+                .await
+                .map_err(|e| format!("删除远程目录链接失败：{e}"));
+        }
+    }
     let metadata = sftp
         .symlink_metadata(path.clone())
         .await
@@ -3604,9 +3700,16 @@ async fn remove_remote_tree(sftp: &SftpSession, path: String) -> Result<(), Stri
             .await
             .map_err(|error| format!("删除远程目录失败：{error}"))
     } else {
-        sftp.remove_file(path)
-            .await
-            .map_err(|error| format!("删除远程文件失败：{error}"))
+        match sftp.remove_file(path.clone()).await {
+            Ok(()) => Ok(()),
+            Err(_) if metadata.is_symlink() && windows_native_path(&path).is_some() => {
+                // Windows 目录 symlink/Junction 需要 RMDIR；只移除链接自身，绝不递归目标。
+                sftp.remove_dir(path)
+                    .await
+                    .map_err(|error| format!("删除远程目录链接失败：{error}"))
+            }
+            Err(error) => Err(format!("删除远程文件失败：{error}")),
+        }
     }
 }
 
@@ -3676,7 +3779,14 @@ async fn copy_remote_file(sftp: &SftpSession, src: String, dest: String) -> Resu
     Ok(())
 }
 
-async fn copy_remote_tree(sftp: &SftpSession, src: String, dest: String) -> Result<(), String> {
+async fn copy_remote_tree(
+    sftp: &SftpSession,
+    src: String,
+    dest: String,
+    source_root: &RegisteredRoot,
+) -> Result<(), String> {
+    // 顶层目录在根内不代表它的子项也安全：逐节点拒绝指向根外的文件链接。
+    ensure_existing_path_within(sftp, &src, source_root).await?;
     let metadata = sftp
         .symlink_metadata(src.clone())
         .await
@@ -3695,7 +3805,13 @@ async fn copy_remote_tree(sftp: &SftpSession, src: String, dest: String) -> Resu
                 continue;
             }
             let child_dest = format!("{}/{}", dest.trim_end_matches('/'), name);
-            Box::pin(copy_remote_tree(sftp, entry.path().to_string(), child_dest)).await?;
+            Box::pin(copy_remote_tree(
+                sftp,
+                entry.path().to_string(),
+                child_dest,
+                source_root,
+            ))
+            .await?;
         }
         Ok(())
     } else {
@@ -3825,7 +3941,13 @@ pub async fn ssh_copy_path_into(
         remove_remote_tree(&dest_sftp, final_dest_path.clone()).await?;
     }
 
-    copy_remote_tree(&dest_sftp, source_parsed.path, final_dest_path).await?;
+    copy_remote_tree(
+        &dest_sftp,
+        source_parsed.path,
+        final_dest_path,
+        &source_root,
+    )
+    .await?;
 
     Ok(join_remote_uri(&dest_dir, &final_name))
 }
@@ -3860,6 +3982,7 @@ pub async fn ssh_directory_delete_stats(
     let mut queue = vec![parsed.path];
 
     while let Some(dir) = queue.pop() {
+        ensure_existing_path_within(&sftp, &dir, &root).await?;
         let entries = match sftp.read_dir(dir).await {
             Ok(e) => e,
             Err(_) => continue,
@@ -5542,6 +5665,312 @@ async fn kill_detached_terminals_best_effort(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn windows_sftp_guard_includes_project_ancestors_and_file_components() {
+        let components = super::windows_sftp_guard_components("/C:/Users/dev/project/file.txt");
+        assert_eq!(
+            components,
+            vec![
+                "/C:/",
+                "/C:/Users",
+                "/C:/Users/dev",
+                "/C:/Users/dev/project",
+                "/C:/Users/dev/project/file.txt"
+            ]
+        );
+        assert_eq!(
+            components,
+            super::windows_sftp_guard_components(r"\\?\C:\Users\dev\project\file.txt")
+        );
+        assert!(super::windows_sftp_guard_components("/home/dev/project").is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires authorized QC_LIVE_* Windows SSH target and verified fingerprint"]
+    async fn live_windows_sftp_reparse_points_cannot_escape_project() {
+        use super::*;
+
+        let required = |name: &str| std::env::var(name).expect(name);
+        let config = SshConnectionConfig {
+            id: format!("pathguard-{}", uuid::Uuid::new_v4()),
+            host: required("QC_LIVE_HOST"),
+            port: required("QC_LIVE_PORT").parse().unwrap(),
+            username: required("QC_LIVE_USER"),
+            auth_kind: "password".into(),
+            password: Some(required("QC_LIVE_PASSWORD")),
+            private_key_path: None,
+            passphrase: None,
+            host_key_fingerprint: Some(required("QC_LIVE_FINGERPRINT")),
+            mode: Some(RemoteMode::Server),
+        };
+        let manager = SshManager::new();
+        let transport = if let Ok(seconds) = std::env::var("QC_LIVE_DIAGNOSTIC_HANDSHAKE_SECS") {
+            let seconds: u64 = seconds.parse().unwrap();
+            assert!((20..=90).contains(&seconds));
+            // Diagnostic connection acquisition only; production retains its 20s deadline.
+            println!("LIVE_WINDOWS_DIAGNOSTIC_HANDSHAKE_SECONDS {seconds}");
+            let (handle, disconnect_reason) =
+                tokio::time::timeout(Duration::from_secs(seconds), async {
+                    let (mut handle, _, disconnect_reason) = open_transport(
+                        &config,
+                        config.host_key_fingerprint.clone(),
+                        ConnectionPurpose::Main,
+                    )
+                    .await?;
+                    authenticate(&mut handle, &config).await?;
+                    Ok::<_, String>((handle, disconnect_reason))
+                })
+                .await
+                .expect("diagnostic SSH handshake exceeded its deadline")
+                .unwrap();
+            let transport = Arc::new(ConnectedSession {
+                handle,
+                config: Mutex::new(config.clone()),
+                sftp: tokio::sync::Mutex::new(None),
+                disconnect_reason,
+            });
+            manager
+                .sessions
+                .write()
+                .unwrap()
+                .insert(config.id.clone(), Arc::clone(&transport));
+            transport
+        } else {
+            store_authenticated_session(&manager, config.clone())
+                .await
+                .unwrap()
+                .0
+        };
+        let sftp = manager.open_sftp(&config.id).await.unwrap();
+        let base = join_remote_path(
+            &required("QC_LIVE_PARENT"),
+            &format!("qingcode-pathguard-{}", uuid::Uuid::new_v4()),
+        );
+        let project = join_remote_path(&base, "project");
+        let outside = join_remote_path(&base, "outside");
+        let link = join_remote_path(&project, "escape");
+        let junction = join_remote_path(&project, "junction");
+        let sentinel = join_remote_path(&outside, "sentinel.txt");
+        let owned_marker = b"qingcode-owned-pathguard-sentinel";
+        sftp.create_dir(base.clone()).await.unwrap();
+        sftp.create_dir(project.clone()).await.unwrap();
+        sftp.create_dir(outside.clone()).await.unwrap();
+        write_remote_file_contents(&sftp, sentinel.clone(), owned_marker, true)
+            .await
+            .unwrap();
+        let canonical_root = sftp.canonicalize(project.clone()).await.unwrap();
+        let uri = format!("ssh://{}{canonical_root}", config.id);
+        let root = RegisteredRoot {
+            uri: uri.clone(),
+            canonical_path: canonical_root,
+            trusted: true,
+        };
+        manager
+            .roots
+            .write()
+            .unwrap()
+            .insert(uri.clone(), root.clone());
+
+        let result = async {
+            let normal = join_remote_path(&project, "ordinary-中文[1].txt");
+            write_remote_file_contents(&sftp, normal.clone(), b"ordinary", true).await?;
+            let cold_started = Instant::now();
+            ensure_existing_path_within(&sftp, &project, &root).await?;
+            let cold_ms = cold_started.elapsed().as_secs_f64() * 1000.0;
+            let mut warm_ms = Vec::new();
+            for _ in 0..20 {
+                let started = Instant::now();
+                ensure_existing_path_within(&sftp, &normal, &root).await?;
+                if sftp.read(normal.clone()).await.map_err(|e| e.to_string())? != b"ordinary" { return Err("ordinary read failed".into()); }
+                ensure_parent_path_within(&sftp, &normal, &root).await?;
+                write_remote_file_contents(&sftp, normal.clone(), b"ordinary", false).await?;
+                warm_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+            }
+            warm_ms.sort_by(f64::total_cmp);
+            println!("LIVE_WINDOWS_GUARD_PERFORMANCE {}", serde_json::json!({
+                "cold_path_check_ms": cold_ms, "warm_guarded_read_write_iterations": warm_ms.len(),
+                "warm_guarded_read_write_p50_ms": warm_ms[warm_ms.len()/2],
+                "warm_guarded_read_write_p95_ms": warm_ms[(warm_ms.len()*95).div_ceil(100)-1],
+                "warm_guarded_read_write_max_ms": warm_ms[warm_ms.len()-1],
+                "warm_guarded_read_write_ms": warm_ms,
+                "worker_starts": sftp.windows_guard.worker_starts(),
+            }));
+            sftp.symlink(outside.clone(), link.clone()).await.map_err(|e| e.to_string())?;
+            let actual_link = sftp.canonicalize(link.clone()).await.map_err(|e| e.to_string())?;
+            let link_metadata = sftp.symlink_metadata(link.clone()).await.map_err(|e| e.to_string())?;
+            let link_target = sftp.read_link(link.clone()).await;
+            let guard = ensure_existing_path_within(&sftp, &link, &root).await;
+            let child_guard = ensure_existing_path_within(&sftp, &join_remote_path(&link, "sentinel.txt"), &root).await;
+            let write_guard = ensure_parent_path_within(&sftp, &join_remote_path(&link, "rejected.txt"), &root).await;
+            let raw_read = sftp.read(join_remote_path(&link, "sentinel.txt")).await.map_err(|e| e.to_string())?;
+            assert_eq!(raw_read, owned_marker);
+            println!("LIVE_WINDOWS_SYMLINK {}", serde_json::json!({
+                "root": root.canonical_path, "link": link, "realpath": actual_link,
+                "lstat_symlink": link_metadata.is_symlink(), "lstat_dir": link_metadata.is_dir(),
+                "readlink": format!("{link_target:?}"), "own_outside_sentinel_reachable_via_raw_sftp": true,
+                "guard_rejected": guard.is_err(), "child_guard_rejected": child_guard.is_err(),
+                "write_guard_rejected": write_guard.is_err(),
+            }));
+            let native_link = windows_native_path(&link).ok_or("not a Windows fixture")?;
+            let attributes = manager.exec_remote_shell(&uri, "false", &format!(
+                "Get-Item -LiteralPath '{}' -Force | Select-Object FullName,Attributes,LinkType,Target | ConvertTo-Json -Compress",
+                powershell_literal(&native_link)
+            ), true, Duration::from_secs(10)).await?;
+            println!("LIVE_WINDOWS_NTFS {}", attributes.stdout);
+            let native_junction = windows_native_path(&junction).ok_or("invalid junction fixture")?;
+            let native_outside = windows_native_path(&outside).ok_or("invalid outside fixture")?;
+            let made = manager.exec_remote_shell(&uri, "false", &format!(
+                "$ErrorActionPreference = 'Stop'; New-Item -ItemType Junction -Path '{}' -Target '{}' | Out-Null",
+                powershell_literal(&native_junction), powershell_literal(&native_outside)
+            ), true, Duration::from_secs(10)).await?;
+            if made.exit_code != 0 { return Err(format!("junction creation failed: {}", made.stderr)); }
+            let junction_metadata = sftp.symlink_metadata(junction.clone()).await.map_err(|e| e.to_string())?;
+            let junction_target = sftp.read_link(junction.clone()).await;
+            let junction_guard = ensure_existing_path_within(&sftp, &junction, &root).await;
+            let junction_child_guard = ensure_existing_path_within(&sftp, &join_remote_path(&junction, "sentinel.txt"), &root).await;
+            let junction_write_guard = ensure_parent_path_within(&sftp, &join_remote_path(&junction, "rejected.txt"), &root).await;
+            let linked_root = RegisteredRoot { uri: uri.clone(), canonical_path: junction.clone(), trusted: true };
+            let linked_root_guard = ensure_existing_path_within(&sftp, &join_remote_path(&junction, "sentinel.txt"), &linked_root).await;
+            let junction_raw_read = sftp.read(join_remote_path(&junction, "sentinel.txt")).await.map_err(|e| e.to_string())?;
+            if junction_raw_read != owned_marker { return Err("junction fixture did not reach owned sentinel".into()); }
+            let copied = join_remote_path(&base, "copy");
+            let copy_guard = copy_remote_tree(&sftp, project.clone(), copied.clone(), &root).await;
+            let copied_outside = sftp.try_exists(join_remote_path(&copied, "escape/sentinel.txt")).await.map_err(|e| e.to_string())?;
+            // Ordinary files and directories must keep working through the strengthened guard.
+            ensure_existing_path_within(&sftp, &normal, &root).await?;
+            ensure_parent_path_within(&sftp, &join_remote_path(&project, "new.txt"), &root).await?;
+            let nested_delete = remove_remote_tree(&sftp, join_remote_path(&junction, "sentinel.txt")).await;
+            remove_remote_tree(&sftp, link.clone()).await?;
+            remove_remote_tree(&sftp, junction.clone()).await?;
+            let target_preserved = sftp.read(sentinel.clone()).await.map_err(|e| e.to_string())? == owned_marker;
+            let links_removed = !sftp.try_exists(link.clone()).await.map_err(|e| e.to_string())?
+                && !sftp.try_exists(junction.clone()).await.map_err(|e| e.to_string())?;
+            println!("LIVE_WINDOWS_JUNCTION {}", serde_json::json!({
+                "lstat_symlink": junction_metadata.is_symlink(),
+                "readlink": format!("{junction_target:?}"),
+                "guard_rejected": junction_guard.is_err(), "child_guard_rejected": junction_child_guard.is_err(),
+                "write_guard_rejected": junction_write_guard.is_err(), "root_ancestor_link_rejected": linked_root_guard.is_err(),
+                "ordinary_file_allowed": true, "recursive_copy_rejected": copy_guard.is_err(),
+                "outside_sentinel_not_copied": !copied_outside,
+                "one_metadata_worker_reused": sftp.windows_guard.worker_starts() == 1,
+                "nested_delete_rejected": nested_delete.is_err(), "link_delete_target_preserved": target_preserved,
+                "links_removed_without_recursion": links_removed,
+            }));
+            Ok::<_, String>(guard.is_err() && child_guard.is_err() && write_guard.is_err()
+                && junction_guard.is_err() && junction_child_guard.is_err() && junction_write_guard.is_err()
+                && linked_root_guard.is_err() && copy_guard.is_err() && !copied_outside
+                && sftp.windows_guard.worker_starts() == 1 && nested_delete.is_err()
+                && target_preserved && links_removed)
+        }.await;
+
+        if let Err(error) = &result {
+            eprintln!("LIVE_WINDOWS_GUARD_FIRST_ERROR {error}");
+        }
+
+        // Remove the link itself before the dedicated base; never recurse through it.
+        for reparse in [link, junction] {
+            if sftp.remove_file(reparse.clone()).await.is_err() {
+                let _ = sftp.remove_dir(reparse).await;
+            }
+        }
+        let cleanup = remove_remote_tree(&sftp, base.clone()).await;
+        if let Ok(previous) = std::env::var("QC_LIVE_CLEANUP_ROOT") {
+            let parent = required("QC_LIVE_PARENT");
+            assert_eq!(remote_parent_path(&previous).unwrap(), parent);
+            let name = previous.rsplit('/').next().unwrap();
+            uuid::Uuid::parse_str(
+                name.strip_prefix("qingcode-live-")
+                    .expect("not a live fixture"),
+            )
+            .unwrap();
+            if sftp.try_exists(previous.clone()).await.unwrap() {
+                remove_remote_tree(&sftp, previous).await.unwrap();
+            }
+            println!("LIVE_WINDOWS_PREVIOUS_FIXTURE_REMOVED true");
+        }
+        let worker_pid = sftp.windows_guard.worker_pid();
+        let cached = transport.sftp.lock().await.take();
+        drop(cached);
+        let mut owned_sftp = match Arc::try_unwrap(sftp) {
+            Ok(owned) => owned,
+            Err(_) => panic!("test retained another SFTP wrapper reference"),
+        };
+        let guard = std::mem::take(&mut owned_sftp.windows_guard);
+        std::thread::spawn(move || drop(guard))
+            .join()
+            .expect("guard Drop panicked without entered runtime");
+        drop(owned_sftp);
+        let worker_exit = if worker_pid > 0 {
+            manager.exec_remote_shell(&uri, "false", &format!(
+                "$p = Get-Process -Id {worker_pid} -ErrorAction SilentlyContinue; if ($p -and -not $p.WaitForExit(5000)) {{ [Console]::Write('alive') }} else {{ [Console]::Write('gone') }}"
+            ), true, Duration::from_secs(10)).await
+                .map(|output| output.exit_code == 0 && output.stdout == "gone")
+        } else {
+            Ok(false)
+        };
+        close_terminal_transport(&transport).await;
+        println!(
+            "LIVE_WINDOWS_GUARD_TEARDOWN {}",
+            serde_json::json!({
+                "drop_without_runtime_did_not_panic": true, "worker_pid": worker_pid,
+                "worker_exited": worker_exit.as_ref().copied().unwrap_or(false),
+            })
+        );
+        if let Err(error) = &cleanup {
+            eprintln!("LIVE_WINDOWS_GUARD_CLEANUP_ERROR {error}");
+        }
+        cleanup.unwrap();
+        assert!(
+            result.unwrap(),
+            "Windows SFTP reparse point escaped registered project root"
+        );
+        assert!(
+            worker_exit.unwrap(),
+            "metadata worker remained after guard teardown"
+        );
+    }
+
+    #[tokio::test]
+    async fn host_fingerprint_probe_times_out_on_silent_tcp_server_and_closes_socket() {
+        use std::time::Duration;
+        use tokio::io::AsyncReadExt;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                .await
+                .expect("probe never connected to test server")
+                .unwrap();
+            // Deliberately withhold the server banner. Cancellation must close
+            // the actual accepted socket, rather than leave a detached probe.
+            let mut client_banner = Vec::new();
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                stream.read_to_end(&mut client_banner),
+            )
+            .await
+            .expect("probe timeout did not close its TCP socket")
+            .unwrap();
+            assert!(client_banner.starts_with(b"SSH-2.0-"));
+        });
+        let mut config = sample_config(None);
+        config.host = address.ip().to_string();
+        config.port = address.port();
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            super::probe_host_with_timeout(&config, Duration::from_millis(50)),
+        )
+        .await
+        .expect("fingerprint probe exceeded its overall deadline");
+        let error = result.unwrap_err();
+        assert!(error.contains("SSH 主机指纹探测超时"), "{error}");
+        assert!(error.contains(&address.to_string()), "{error}");
+        server.await.unwrap();
+    }
+
+    #[test]
     fn connection_mode_deserializes_lowercase_and_defaults_to_none() {
         let with_mode: super::SshConnectionConfig = serde_json::from_value(serde_json::json!({
             "id": "c1", "host": "h", "username": "u", "mode": "ssh"
@@ -6310,6 +6739,20 @@ mod tests {
             russh::ChannelOpenFailure::AdministrativelyProhibited
         )));
         assert!(!is_stale_russh_error(&russh::Error::WrongChannel));
+    }
+
+    #[test]
+    fn linux_session_capacity_refusal_retries_without_treating_transport_as_stale() {
+        let capacity =
+            russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::AdministrativelyProhibited);
+        assert!(is_session_channel_refusal(&capacity));
+        assert!(!is_stale_russh_error(&capacity));
+        assert!(is_session_channel_refusal(
+            &russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::ConnectFailed,)
+        ));
+        assert!(!is_session_channel_refusal(
+            &russh::Error::ChannelOpenFailure(russh::ChannelOpenFailure::UnknownChannelType,)
+        ));
     }
 
     #[test]

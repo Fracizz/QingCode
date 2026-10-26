@@ -57,7 +57,7 @@ describe('SshServerSettingsSection', () => {
   beforeEach(() => {
     invoke.mockReset().mockResolvedValue(undefined)
     let globalSettings = settingsWith({
-      'ssh.agent.enabled': true,
+      'ssh.agent.enabled': false,
       'ssh.agent.autoDownload': false,
     })
     loadGlobalSettings.mockReset().mockImplementation(async () => globalSettings)
@@ -70,41 +70,45 @@ describe('SshServerSettingsSection', () => {
     useProjectStore.setState({ pushToast })
   })
 
-  it('saves the default mode globally, drops legacy keys, and never stops the remote server', async () => {
+  it('keeps only deployment controls and preserves the legacy mode when changing downloads', async () => {
     render(<SshServerSettingsSection scope="user" project={sshProject} settingsRevision={0} />)
 
-    const toggle = screen.getByLabelText('新建连接的默认模式') as HTMLSelectElement
-    expect(toggle.value).toBe('server')
-    fireEvent.change(toggle, { target: { value: 'ssh' } })
+    expect(screen.queryByLabelText('新建连接的默认模式')).toBeNull()
+    const toggle = screen.getByLabelText('SSH › 服务: 缺失时自动下载') as HTMLSelectElement
+    await waitFor(() => expect(toggle.value).toBe('off'))
+    fireEvent.change(toggle, { target: { value: 'on' } })
 
     await waitFor(() => expect(saveGlobalSettings).toHaveBeenCalledTimes(1))
     const saved = saveGlobalSettings.mock.calls[0][0] as Record<string, unknown>
     expect(saved['ssh.server.enabled']).toBe(false)
+    expect(saved['ssh.server.autoDownload']).toBe(true)
     expect('ssh.agent.enabled' in saved).toBe(false)
     expect('ssh.agent.autoDownload' in saved).toBe(false)
 
-    // 关闭开关只影响新建连接的默认值，不再停止已有连接的远端服务。
+    // 下载策略不改变既有连接，也不停止服务。
     expect(invoke).not.toHaveBeenCalledWith('停止远端服务', 'ssh_server_stop', expect.anything())
     expect(pushToast).not.toHaveBeenCalled()
   })
 
-  it('hides the default-mode toggle in workspace scope', async () => {
+  it('keeps deployment controls in workspace scope without a mode toggle', async () => {
     render(<SshServerSettingsSection scope="workspace" project={sshProject} settingsRevision={0} />)
 
     expect(screen.queryByLabelText('新建连接的默认模式')).toBeNull()
     expect(await screen.findByLabelText('SSH › 服务: 缺失时自动下载')).toBeTruthy()
   })
 
-  it('reports save failures with the dedicated message', async () => {
+  it('reports download setting save failures', async () => {
     saveGlobalSettings.mockRejectedValue(new Error('disk full'))
     render(<SshServerSettingsSection scope="user" project={sshProject} settingsRevision={0} />)
 
-    fireEvent.change(screen.getByLabelText('新建连接的默认模式'), {
-      target: { value: 'ssh' },
+    const toggle = screen.getByLabelText('SSH › 服务: 缺失时自动下载') as HTMLSelectElement
+    await waitFor(() => expect(toggle.value).toBe('off'))
+    fireEvent.change(toggle, {
+      target: { value: 'on' },
     })
 
     await waitFor(() => {
-      expect(pushToast).toHaveBeenCalledWith('error', '保存默认连接模式失败: Error: disk full')
+      expect(pushToast).toHaveBeenCalledWith('error', '保存自动下载设置失败: Error: disk full')
     })
     expect(invoke).not.toHaveBeenCalledWith('停止远端服务', 'ssh_server_stop', expect.anything())
   })

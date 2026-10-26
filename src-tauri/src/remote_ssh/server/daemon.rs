@@ -18,7 +18,7 @@ use qingcode_server::proto::{
     Response, StreamChunk, StreamEnd, WindowCredit, CONTROL_STREAM, PROTOCOL_VERSION, WINDOW_BYTES,
 };
 use qingcode_server::SERVER_VERSION;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 
 /// daemon 握手应答时限：`connect --ensure-daemon` 可能在通道内现拉 daemon
 /// （代理内部启动等待上限 10s），给足余量再判失败。
@@ -40,6 +40,11 @@ const AGENT_DAEMON_SCAN_TIMEOUT: Duration = Duration::from_secs(15);
 /// 才会重新探测 daemon，避免每次操作都对着一个已知失败的 daemon 空转。
 const AGENT_DAEMON_RETRY_AFTER_DOWNGRADE: Duration = Duration::from_secs(5 * 60);
 const DAEMON_SESSION_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+/// 慢终端消费者最多积压 2MB 编码后的事件，且最多 256 条（限制小帧元数据开销）。
+/// 普通 PTY 块为 8KB。溢出时关闭当前通道，以 next_seq + attach 恢复；不能在读循环
+/// 等待消费者，否则同一通道的 RPC 应答、PONG 也会被堵住。
+const SESSION_EVENT_QUEUE_BYTES: usize = 2 * 1024 * 1024;
+const SESSION_EVENT_QUEUE_DEPTH: usize = 256;
 
 /// 单请求 exec 通道上的请求 id。通道不做多路复用（见 [`DaemonChannel`]），
 /// 一条通道同时只有一个在途请求。
@@ -146,10 +151,56 @@ enum SessionOutbound {
     Shutdown,
 }
 
+struct QueuedSessionEvent {
+    event: Event,
+    _budget: OwnedSemaphorePermit,
+}
+
+struct SessionEventSender {
+    sender: mpsc::Sender<QueuedSessionEvent>,
+    budget: Arc<Semaphore>,
+}
+
+pub(super) struct SessionEventReceiver {
+    receiver: mpsc::Receiver<QueuedSessionEvent>,
+}
+
+impl SessionEventReceiver {
+    pub(super) async fn recv(&mut self) -> Option<Event> {
+        self.receiver.recv().await.map(|queued| queued.event)
+    }
+}
+
+fn session_event_channel() -> (SessionEventSender, SessionEventReceiver) {
+    let (sender, receiver) = mpsc::channel(SESSION_EVENT_QUEUE_DEPTH);
+    (
+        SessionEventSender {
+            sender,
+            budget: Arc::new(Semaphore::new(SESSION_EVENT_QUEUE_BYTES)),
+        },
+        SessionEventReceiver { receiver },
+    )
+}
+
+impl SessionEventSender {
+    fn try_send(&self, event: Event, encoded_bytes: usize) -> Result<(), ()> {
+        let size = u32::try_from(encoded_bytes).map_err(|_| ())?;
+        let budget = Arc::clone(&self.budget)
+            .try_acquire_many_owned(size)
+            .map_err(|_| ())?;
+        self.sender
+            .try_send(QueuedSessionEvent {
+                event,
+                _budget: budget,
+            })
+            .map_err(|_| ())
+    }
+}
+
 struct SessionState {
     pending: Mutex<HashMap<u32, oneshot::Sender<Result<serde_json::Value, String>>>>,
     streams: Mutex<HashMap<u32, mpsc::UnboundedSender<SessionInbound>>>,
-    events: mpsc::UnboundedSender<Event>,
+    events: SessionEventSender,
     next_stream_id: AtomicU32,
     closed: AtomicBool,
     closed_reason: Mutex<Option<String>>,
@@ -158,6 +209,16 @@ struct SessionState {
 }
 
 impl SessionState {
+    async fn wait_closed(&self) {
+        loop {
+            let notified = self.closed_notify.notified();
+            if self.closed.load(Ordering::Acquire) {
+                return;
+            }
+            notified.await;
+        }
+    }
+
     fn mark_closed(&self, reason: &str) {
         if self.closed.swap(true, Ordering::AcqRel) {
             return;
@@ -203,7 +264,7 @@ impl SessionState {
 pub(super) struct DaemonSession {
     outbound: mpsc::Sender<SessionOutbound>,
     state: Arc<SessionState>,
-    events: Option<mpsc::UnboundedReceiver<Event>>,
+    events: Option<SessionEventReceiver>,
 }
 
 pub(super) struct DaemonAttachResult {
@@ -242,7 +303,7 @@ impl DaemonSession {
         let (mut reader, writer) = channel.channel.split();
         let stderr_notes = channel.stderr_notes;
         let (outbound_tx, mut outbound_rx) = mpsc::channel::<SessionOutbound>(64);
-        let (events_tx, events_rx) = mpsc::unbounded_channel::<Event>();
+        let (events_tx, events_rx) = session_event_channel();
         let state = Arc::new(SessionState {
             pending: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
@@ -256,25 +317,38 @@ impl DaemonSession {
 
         let writer_state = Arc::clone(&state);
         tauri::async_runtime::spawn(async move {
-            while let Some(outbound) = outbound_rx.recv().await {
+            loop {
+                let outbound = tokio::select! {
+                    biased;
+                    _ = writer_state.wait_closed() => break,
+                    outbound = outbound_rx.recv() => match outbound {
+                        Some(outbound) => outbound,
+                        None => break,
+                    },
+                };
                 match outbound {
                     SessionOutbound::Frame(frame) => {
                         let Ok(bytes) = frame.encode() else {
                             writer_state.mark_closed("编码 daemon 帧失败");
-                            return;
+                            break;
                         };
-                        if let Err(error) = writer.data(&bytes[..]).await {
+                        let sent = tokio::select! {
+                            biased;
+                            _ = writer_state.wait_closed() => break,
+                            sent = writer.data(&bytes[..]) => sent,
+                        };
+                        if let Err(error) = sent {
                             writer_state.mark_closed(&format!("发送 daemon 帧失败：{error}"));
-                            return;
+                            break;
                         }
                     }
-                    SessionOutbound::Shutdown => {
-                        let _ = tokio::time::timeout(Duration::from_secs(1), writer.eof()).await;
-                        let _ = tokio::time::timeout(Duration::from_secs(1), writer.close()).await;
-                        return;
-                    }
+                    SessionOutbound::Shutdown => break,
                 }
             }
+            writer_state.mark_closed("daemon 写入通道已关闭");
+            // 关闭不依赖发送队列有空位；输出积压或 SSH 窗口停滞时也能回收代理会话。
+            let _ = tokio::time::timeout(Duration::from_secs(1), writer.eof()).await;
+            let _ = tokio::time::timeout(Duration::from_secs(1), writer.close()).await;
         });
 
         let reader_state = Arc::clone(&state);
@@ -283,7 +357,15 @@ impl DaemonSession {
         tauri::async_runtime::spawn(async move {
             let mut buffer = Vec::new();
             let mut stderr_notes = reader_notes;
-            while let Some(message) = reader.wait().await {
+            loop {
+                let message = tokio::select! {
+                    biased;
+                    _ = reader_state.wait_closed() => return,
+                    message = reader.wait() => match message {
+                        Some(message) => message,
+                        None => break,
+                    },
+                };
                 match message {
                     ChannelMsg::Data { data } => {
                         buffer.extend_from_slice(&data);
@@ -298,6 +380,9 @@ impl DaemonSession {
                                         ));
                                     } else {
                                         route_session_frame(&reader_state, frame);
+                                        if reader_state.closed.load(Ordering::Acquire) {
+                                            return;
+                                        }
                                     }
                                 }
                                 Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => {
@@ -532,10 +617,6 @@ impl DaemonSession {
             .unwrap_or(Duration::MAX)
     }
 
-    pub(super) fn is_closed(&self) -> bool {
-        self.state.closed.load(Ordering::Acquire)
-    }
-
     pub(super) fn closed_reason(&self) -> Option<String> {
         self.state
             .closed_reason
@@ -545,19 +626,10 @@ impl DaemonSession {
     }
 
     pub(super) async fn wait_closed(&self) {
-        loop {
-            let notified = self.state.closed_notify.notified();
-            if self.is_closed() {
-                return;
-            }
-            notified.await;
-            if self.is_closed() {
-                return;
-            }
-        }
+        self.state.wait_closed().await;
     }
 
-    pub(super) fn take_events(&mut self) -> Option<mpsc::UnboundedReceiver<Event>> {
+    pub(super) fn take_events(&mut self) -> Option<SessionEventReceiver> {
         self.events.take()
     }
 
@@ -571,7 +643,13 @@ fn route_session_frame(state: &SessionState, frame: Frame) {
     match frame.kind {
         Kind::Event => {
             if let Ok(event) = proto::decode_value::<Event>(&frame.payload) {
-                let _ = state.events.send(event);
+                if state
+                    .events
+                    .try_send(event, frame.payload.len() + proto::FRAME_HEADER_BYTES)
+                    .is_err()
+                {
+                    state.mark_closed("终端输出积压已达上限，重新接回以恢复输出");
+                }
             }
         }
         Kind::Res => {
@@ -1459,9 +1537,8 @@ mod tests {
         assert!(validate_daemon_hello_with(&persistent, HelloPolicy::TERMINAL).is_ok());
     }
 
-    #[tokio::test]
-    async fn session_routes_concurrent_replies_and_events_by_stream_id() {
-        let (events_tx, mut events_rx) = mpsc::unbounded_channel();
+    fn test_session_state() -> (SessionState, SessionEventReceiver) {
+        let (events_tx, events_rx) = session_event_channel();
         let state = SessionState {
             pending: Mutex::new(HashMap::new()),
             streams: Mutex::new(HashMap::new()),
@@ -1472,6 +1549,310 @@ mod tests {
             closed_notify: tokio::sync::Notify::new(),
             last_frame: Mutex::new(Instant::now()),
         };
+        (state, events_rx)
+    }
+
+    fn route_test_pty_data(state: &SessionState, seq: u64, bytes: usize) {
+        let event = Event::PtyData {
+            id: "pty".to_string(),
+            seq,
+            offset: 0,
+            data: vec![b'x'; bytes],
+        };
+        route_session_frame(
+            state,
+            Frame::new(Kind::Event, CONTROL_STREAM, proto::encode(&event).unwrap()),
+        );
+    }
+
+    #[tokio::test]
+    async fn session_slow_event_consumer_is_byte_bounded_and_fails_pending_rpc() {
+        let (state, mut events) = test_session_state();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        state.pending.lock().unwrap().insert(1, reply_tx);
+        let (stream_tx, mut stream_rx) = mpsc::unbounded_channel();
+        state.streams.lock().unwrap().insert(2, stream_tx);
+
+        // 实际编码/路由大帧，模拟 PTY 持续输出但终端消费端正等 input RPC。
+        let mut sent = 0;
+        while !state.closed.load(Ordering::Acquire) && sent < 100 {
+            route_test_pty_data(&state, sent, 64 * 1024);
+            sent += 1;
+        }
+        assert!(state.closed.load(Ordering::Acquire));
+        assert!(sent < 100, "慢消费者不能导致无界事件积压");
+        assert!(state.events.budget.available_permits() < SESSION_EVENT_QUEUE_BYTES);
+        let error = tokio::time::timeout(Duration::from_millis(100), reply_rx)
+            .await
+            .expect("队列溢出必须立即释放等待 RPC 的消费端")
+            .unwrap()
+            .unwrap_err();
+        assert!(error.contains("输出积压"));
+        assert!(matches!(
+            stream_rx.recv().await,
+            Some(SessionInbound::Error(_))
+        ));
+        tokio::time::timeout(Duration::from_millis(100), state.wait_closed())
+            .await
+            .expect("写端应立即收到关闭通知，不依赖发送队列空位");
+
+        // 已接受的输出仍按序保留；丢失的末帧不推进终端 next_seq，重连可从缺口补发。
+        for seq in 0..sent - 1 {
+            match events.recv().await.unwrap() {
+                Event::PtyData { seq: actual, .. } => assert_eq!(actual, seq),
+                _ => panic!("unexpected event"),
+            }
+        }
+        assert!(events.receiver.is_empty());
+        assert_eq!(
+            state.events.budget.available_permits(),
+            SESSION_EVENT_QUEUE_BYTES
+        );
+    }
+
+    #[tokio::test]
+    async fn session_tiny_event_flood_is_count_bounded() {
+        let (state, _events) = test_session_state();
+        for seq in 0..SESSION_EVENT_QUEUE_DEPTH as u64 {
+            route_test_pty_data(&state, seq, 1);
+        }
+        assert!(!state.closed.load(Ordering::Acquire));
+        assert!(state.events.budget.available_permits() > SESSION_EVENT_QUEUE_BYTES / 2);
+        route_test_pty_data(&state, SESSION_EVENT_QUEUE_DEPTH as u64, 1);
+        assert!(state.closed.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn session_slow_event_consumer_does_not_block_rpc_and_consumption_restores_budget() {
+        let (state, mut events) = test_session_state();
+        for seq in 0..16 {
+            route_test_pty_data(&state, seq, 64 * 1024);
+        }
+        let budget_before = state.events.budget.available_permits();
+        let (reply_tx, reply_rx) = oneshot::channel();
+        state.pending.lock().unwrap().insert(99, reply_tx);
+        let response = Response {
+            id: 99,
+            result: serde_json::json!({ "ok": true }),
+        };
+        route_session_frame(
+            &state,
+            Frame::new(Kind::Res, 99, proto::encode(&response).unwrap()),
+        );
+        let result = tokio::time::timeout(Duration::from_millis(100), reply_rx)
+            .await
+            .expect("事件积压不能阻塞控制请求应答")
+            .unwrap()
+            .unwrap();
+        assert_eq!(result["ok"], true);
+        assert!(!state.closed.load(Ordering::Acquire));
+        assert!(matches!(
+            events.recv().await,
+            Some(Event::PtyData { seq: 0, .. })
+        ));
+        assert!(state.events.budget.available_permits() > budget_before);
+        route_test_pty_data(&state, 16, 64 * 1024);
+        assert_eq!(state.events.budget.available_permits(), budget_before);
+    }
+
+    /// 隔离 Linux daemon 的 opt-in 真机回归：客户端使用生产 russh/HELLO/session，
+    /// 不启动或关闭 daemon，只清理本次 UUID client 创建的 PTY。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore = "requires authorized QC_LIVE_* Linux SSH target and isolated daemon"]
+    async fn live_daemon_backpressure_reconnects_and_accepts_input() {
+        let required = |name: &str| std::env::var(name).expect(name);
+        let config = SshConnectionConfig {
+            id: format!("backpressure-{}", uuid::Uuid::new_v4()),
+            host: required("QC_LIVE_HOST"),
+            port: required("QC_LIVE_PORT").parse().unwrap(),
+            username: required("QC_LIVE_USER"),
+            auth_kind: "password".into(),
+            password: Some(required("QC_LIVE_PASSWORD")),
+            private_key_path: None,
+            passphrase: None,
+            host_key_fingerprint: Some(required("QC_LIVE_FINGERPRINT")),
+            mode: Some(RemoteMode::Server),
+        };
+        let bin = required("QC_LIVE_SERVER_BIN");
+        let run_dir = required("QC_LIVE_SERVER_RUN");
+        let token = required("QC_LIVE_SERVER_TOKEN");
+        let cwd = required("QC_LIVE_ROOT");
+        assert!(bin.starts_with('/') && run_dir.starts_with('/') && cwd.starts_with('/'));
+        let daemon = DaemonAccess { bin, token };
+        let client_id = config.id.clone();
+        let (transport, _) = authenticate_session(config, ConnectionPurpose::Terminal)
+            .await
+            .unwrap();
+        let mut session = live_isolated_daemon_session(&transport, &client_id, &daemon, &run_dir)
+            .await
+            .unwrap();
+        let info = session
+            .request("server.info", &serde_json::json!({}))
+            .await
+            .unwrap();
+        let created = session
+            .request(
+                "pty.create",
+                &serde_json::json!({
+                    "cwd": cwd, "shell": "/bin/sh", "cols": 100, "rows": 30,
+                }),
+            )
+            .await
+            .unwrap();
+        let pty_id = created["id"].as_str().unwrap().to_string();
+        let _unconsumed_events = session.take_events().unwrap();
+        let started = Instant::now();
+        let result = async {
+            // stdout 经真实 SSH 通道进入客户端，消费端刻意不读取。
+            let command =
+                b"head -c 4194304 /dev/zero | tr '\\000' x; printf '\\nQC_FLOOD_DONE\\n'\n";
+            let _ = session
+                .request(
+                    "pty.input",
+                    &serde_json::json!({
+                        "id": pty_id, "seq": 0, "data": command.as_slice(),
+                    }),
+                )
+                .await;
+            tokio::time::timeout(Duration::from_secs(10), session.wait_closed())
+                .await
+                .map_err(|_| "real output did not trigger bounded backpressure".to_string())?;
+            if !session
+                .closed_reason()
+                .unwrap_or_default()
+                .contains("输出积压")
+            {
+                return Err(format!(
+                    "unexpected disconnect: {:?}",
+                    session.closed_reason()
+                ));
+            }
+            let overflow_ms = started.elapsed().as_secs_f64() * 1000.0;
+            tokio::time::sleep(Duration::from_millis(500)).await;
+
+            let mut resumed =
+                live_isolated_daemon_session(&transport, &client_id, &daemon, &run_dir).await?;
+            let after = resumed
+                .request("server.info", &serde_json::json!({}))
+                .await?;
+            if after["pid"] != info["pid"] {
+                return Err("daemon PID changed during backpressure recovery".to_string());
+            }
+            let attach = resumed.attach(&pty_id, 0).await?;
+            if attach
+                .response
+                .get("exited")
+                .is_some_and(|value| !value.is_null())
+            {
+                return Err("PTY exited during backpressure recovery".to_string());
+            }
+            let restored = attach.response["screen"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string()
+                + &attach
+                    .chunks
+                    .iter()
+                    .map(|chunk| String::from_utf8_lossy(&chunk.data))
+                    .collect::<String>();
+            if !restored.contains("QC_FLOOD_DONE") {
+                return Err("attach did not restore final flood output".to_string());
+            }
+            let seq = attach.response["nextInputSeq"]
+                .as_u64()
+                .ok_or("missing input sequence")?;
+            let mut events = resumed.take_events().ok_or("missing resumed events")?;
+            resumed
+                .request(
+                    "pty.input",
+                    &serde_json::json!({
+                        "id": pty_id, "seq": seq,
+                        "data": b"printf '\\nQC_AFTER_BACKPRESSURE\\n'\n".as_slice(),
+                    }),
+                )
+                .await?;
+            let mut output = Vec::new();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while let Some(event) = events.recv().await {
+                    if let Event::PtyData { data, .. } = event {
+                        output.extend_from_slice(&data);
+                        if String::from_utf8_lossy(&output)
+                            .contains("\r\nQC_AFTER_BACKPRESSURE\r\n")
+                        {
+                            return;
+                        }
+                    }
+                }
+            })
+            .await
+            .map_err(|_| "input did not work after attach".to_string())?;
+            resumed
+                .request("pty.kill", &serde_json::json!({"id": pty_id}))
+                .await?;
+            resumed.shutdown();
+            println!(
+                "LIVE_BACKPRESSURE_METRICS {}",
+                serde_json::json!({
+                    "overflow_ms": overflow_ms, "encoded_event_budget": SESSION_EVENT_QUEUE_BYTES,
+                    "same_daemon_pid": true, "restored_output": true, "input_after_attach": true,
+                })
+            );
+            Ok::<_, String>(())
+        }
+        .await;
+
+        session.shutdown();
+        if let Ok(cleanup) =
+            live_isolated_daemon_session(&transport, &client_id, &daemon, &run_dir).await
+        {
+            let _ = cleanup
+                .request("pty.kill", &serde_json::json!({"id": pty_id}))
+                .await;
+            cleanup.shutdown();
+        }
+        close_terminal_transport(&transport).await;
+        result.unwrap();
+    }
+
+    async fn live_isolated_daemon_session(
+        transport: &ConnectedSession,
+        client_id: &str,
+        daemon: &DaemonAccess,
+        run_dir: &str,
+    ) -> Result<DaemonSession, String> {
+        let channel = open_session_channel_once(transport, "isolated daemon acceptance")
+            .await
+            .map_err(|error| error.message)?;
+        channel
+            .exec(
+                true,
+                format!(
+                    "{} connect --stdio --state-dir {}",
+                    shell_quote(&daemon.bin),
+                    shell_quote(run_dir)
+                ),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut channel = DaemonChannel {
+            channel,
+            buffer: Vec::new(),
+            stderr_notes: Vec::new(),
+        };
+        daemon_hello(
+            &mut channel,
+            client_id,
+            daemon,
+            HelloPolicy::TERMINAL,
+            Instant::now() + Duration::from_secs(20),
+        )
+        .await?;
+        Ok(DaemonSession::from_channel(channel))
+    }
+
+    #[tokio::test]
+    async fn session_routes_concurrent_replies_and_events_by_stream_id() {
+        let (state, mut events_rx) = test_session_state();
         let mut replies = Vec::new();
         for stream_id in 1..=10 {
             let (tx, rx) = oneshot::channel();

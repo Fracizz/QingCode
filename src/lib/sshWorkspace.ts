@@ -40,7 +40,8 @@ const workspaceConnectQueues = new Map<string, Promise<void>>()
 const connectionModeQueues = new Map<string, Promise<void>>()
 
 /**
- * 旧库行 `mode` 为空时按全局默认（ssh.server.enabled）解析；非法值同理。
+ * 旧库行 `mode` 为空时按旧全局值（ssh.server.enabled）解析；非法值同理。
+ * 仅兼容已有连接，不用于新建连接的默认值；新建连接始终默认 Server。
  * 只用于连接前/切换前的一次性解析，不改变持久化行。
  */
 export function resolveSshConnectionMode(

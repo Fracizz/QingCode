@@ -1,6 +1,6 @@
 # SSH 工作区
 
-QingCode 的 SSH 工作区直接在 Tauri 后端建立 SSH/SFTP 连接，默认会尝试在远端部署轻量服务 `qingcode-server`（可一键关闭，关闭后回到零足迹直连），但不强制要求：服务不可用时所有功能自动回退纯 SSH 路径。
+QingCode 的远程工作区通过 SSH 连接主机，新建连接统一使用 Server 模式：信任项目后自动部署轻量服务 `qingcode-server`。服务不可用时保留当前模式，提供重试与日志入口，不自动切到直连。仅对无法运行远端服务的主机，在连接的「高级」中提供显式启用的「兼容模式（SSH 直连）」。已有连接保留原模式。
 
 ## 使用方式
 
@@ -46,17 +46,17 @@ Linux / POSIX SSH 项目（已信任、所在连接为 Server 模式）会在连
   - 远程文件树自动刷新（server 递归 inotify → 后端复用本地 `fs-change` 事件管线：树刷新、脏标签冲突提示、Git 状态刷新全链路生效）；
   - 内嵌内容搜索（ripgrep 引擎编译进服务，**不再要求远端安装 rg**，支持 ignore 文件与 glob 过滤，与远端 rg 结果语义一致）；
   - 目录扫描单往返（替代多次 SFTP round trip，高延迟链路下文件树展开更快），`done.files_scanned` 上报真实条目数；
-  - 目录扫描与内容搜索**不等待部署**：只用已就绪的端点，发现/部署尚无结论时立即走直连，并在后台拉起一轮部署（watch 监督任务已在部署时不重复排队）。首次进入项目的文件树只需一次 SFTP 往返，不再被下载、上传、等就绪、daemon 握手卡住；部署完成后的展开、刷新与搜索自动切到 server；
+  - Server 模式的目录扫描与内容搜索等待服务就绪，失败时报告部署或连接原因，不自动切到直连。未信任项目仍通过 SFTP 只读浏览，兼容模式的扫描与搜索走直连；
   - 状态栏芯片只显示简洁状态：`Server`（绿点）/ `Server…`（黄点闪动，连接中）/ `直连`（灰点），版本等细节收进悬停摘要（`Server v版本` 等 + 「点击查看详情」）。**点击直接打开详情弹窗**（标准 modal，头部含重启与日志入口），右键菜单提供查看详情、重启 Server、查看日志（daemon 日志 + 项目 serve 日志两段拼接，各取末尾 200 行）。查询失败时芯片以 `!` 错误态显示「Server 状态未知」，不再伪装成直连；重启成功与失败均有明确 toast。意外断线（保活超时、远端断开）时芯片显示 `已断开`（红点），详情里给出断开原因，后台自动重连成功后恢复；用户主动断开不显示。详情弹窗的「耗时」以分阶段条形图给出最近一次发现/部署的耗时：顶部是就绪用时（合计），各阶段按时长画条、最慢的前台阶段高亮，daemon 等后台阶段单独分组且不计入就绪用时；摘要格式无法识别时原样显示文本（后端摘要形如 `状态目录 0.3s · 安装目录 0.9s · 发现 1.2s · 合计 2.6s · daemon 1.8s（后台）`），用于对照远端往返开销。
   - **就绪路径提速**：serve ping 通即发布 `Server` 就绪，daemon 探测（读 token → 握手，失败才启动 daemon）转入后台，通过后 watch 自动从 serve 切到 daemon；家目录与用户私有安装目录按连接缓存（部署失败或断开时丢弃），并按「用户名@主机:端口#已校验主机指纹」持久化到本地应用数据目录 `ssh-server-installs.json`，应用重启后首次连接免去「读家目录 + 建目录」那次远端 shell——命中时仍 canonicalize 复核安装目录位于家目录内且与缓存逐字一致，不符即删除条目走完整准备；指纹变化即换键失效，部署失败同样删除；旧版项目内安装只在文件确实存在时才做进程清理（此前每次发现都要两轮远端进程枚举，Windows 上是 `Win32_Process` 全量查询）；上传前已比对一致时不重复计算 sha256；读家目录与建用户私有安装目录合并为一次远端往返，两次 canonicalize 并发；发现阶段已比对一致的摘要（serve 已退出、需重新启动时）直接复用，不再二次比对；chmod、self-check 与启动 serve 合并为一次远端往返（自检失败以退出码 41 中止，不会启动未通过校验的二进制）——Windows 远端每次往返都要冷启动 PowerShell，这几项合计省下 3～4 次往返；daemon 探测整轮 30 秒封顶、单步 exec 15 秒；
   - **watch 断线恢复**：主连接断开时 watch 监督任务主动重连（首次立即重连，失败后按 5、5、10、10、10、10、10 秒、此后每 30 秒重试，不再连续 3 次失败就永久退出），断线期间保留 serve/daemon 端点与 daemon 标记，重连后直接复用，不重新部署；daemon watch 会话中途断开不再把 daemon 降级 5 分钟。
-- **Server / SSH 模式**：参考 VS Code Remote-SSH（remote authority 在窗口打开时解析）与 Zed（`RemoteClient` 持有一个 `RemoteConnection`），模式是**连接级属性**，两种模式互不回退。
+- **Server 与高级兼容模式**：正常远程开发入口统一使用 Server，SSH 始终是连接、部署和传输通道。兼容模式仅在「远程连接 → 高级 → 兼容模式（SSH 直连）」中按连接启用，不再与 Server 并列选择；已有兼容连接自动展开高级设置并显示「兼容模式已启用」。模式仍是**连接级属性**，两种模式互不回退。
   - 模式存在每个 SSH 连接配置里（SQLite `ssh_connections.mode`，`server` / `ssh`），在「远程连接」管理页设置；`ssh_connect` 时随配置传给后端并固定在会话里，会话期间不可变。同一连接下的所有项目共用一个模式，不同连接可以各用各的模式同时打开。后端不再有全局模式开关（`ssh_set_server_enabled` 已删除），所有分支按会话模式判断；会话不存在或尚未定下模式时一律按非 Server 处理。
   - 改模式 = 保存连接配置 + 断开重连（等同 VS Code 的 Reload Window）。从 Server 切到 SSH 时先对该连接已注册的根尽力调用 `ssh_server_stop`。已注册项目根的会话收到不同模式的 `ssh_connect` 会报「连接模式已变更」，必须先断开。
-  - 全局设置 `ssh.server.enabled` 只表示「新建连接的默认模式」，也用于给升级前没有模式字段的旧连接补值（首次连接时写回数据库）；不再支持项目级覆盖。
-  - Server 模式：交互式终端、运行任务（含 sh / 脚本 / 命令类一次性任务，由 daemon 以 `/bin/sh -l -c` 执行）、目录扫描、内容搜索（含子目录搜索，经 daemon）、文件监听只走 server。首次使用会等待发现/部署（最长 180 秒）与 daemon 探测（最长 45 秒）完成；server 或 daemon 不可用时直接报错，错误以「Server 模式：」开头，提示里提供「切到 SSH 模式」一键切换（改当前连接的模式并重连），状态栏芯片菜单同样提供。
-  - SSH 模式：不部署也不调用 server，终端、运行任务、扫描、搜索全部直连，终端断线即结束进程。`ssh_server_restart` / `ssh_server_logs` 直接拒绝，列出与清理 detached 终端返回空，接回 daemon 终端报错后由前端新建普通终端；状态芯片显示 `SSH`，`SshServerState.connectionMode` 为 `ssh`。
-  - 两种模式下文件读写、stat、Git、上传下载都走主连接（SFTP / 远程命令），server 没有对应接口。
+  - 新建连接固定使用 `server`，不受旧全局 `ssh.server.enabled=false` 影响。常规设置不再提供默认模式选择；该旧键仅用于给升级前没有模式字段的旧连接补值（首次连接时写回数据库），保存下载或离线目录设置时也会保留旧值的迁移语义。显式保存的 `mode` 始终优先，不静默改变已有连接。
+  - Server 模式：交互式终端、运行任务（含 sh / 脚本 / 命令类一次性任务，由 daemon 以 `/bin/sh -l -c` 执行）、目录扫描、内容搜索（含子目录搜索，经 daemon）、文件监听只走 server。首次使用会等待发现/部署（最长 180 秒）与 daemon 探测（最长 45 秒）完成；server 或 daemon 不可用时直接报错，错误以「Server 模式：」开头，提示提供「重启远端服务」，操作固定针对报错项目，不改变连接模式。重启会先确认对托管终端及同远端用户其他项目的影响，取消不执行。状态详情和右键菜单提供重启与日志，状态查询失败可点击重查；详情与连接管理页的「服务安装设置」可直达自动下载和离线目录设置。
+  - 兼容模式（内部仍保存为 `ssh`）：不部署也不调用 server，终端、运行任务、扫描、搜索全部直连；不支持文件树自动刷新与终端断线恢复。`ssh_server_restart` / `ssh_server_logs` 直接拒绝，列出与清理 detached 终端返回空，接回 daemon 终端报错后由前端新建普通终端；状态芯片显示 `SSH 兼容模式`，`SshServerState.connectionMode` 为 `ssh`，可显式切回 Server。
+  - 两种模式下文件读写、stat、Git、上传下载都走主连接（SFTP / 远程命令），server 没有对应接口。收敛产品入口不删除这些底层能力；兼容模式退役需以目标平台的真实客户端与桌面验收为前提。
   - 未受信任项目不部署 server，浏览仍走 SFTP；终端与运行任务需要信任。
   - 原 `ssh.server.persistentTerminals` 已删除：Server 模式下终端必然由 daemon 托管。
 - **持久化终端（P2/P3）**：Server 模式下项目已信任、daemon 端点可用且 HELLO 声明 `pty.persist` 时，交互式终端由 daemon 的 PTY 宿主托管。SSH 断开后 daemon 将终端标为 detached，进程继续运行并继续缓冲输出；重连优先按输出序号补发，缓冲已被淘汰时改用屏幕快照恢复。daemon 不可用或缺少能力时新建直接报错，不回退直连。应用重启后，带 `ptyId` / `connectionId` 的持久化标签会优先接回原 PTY，接回失败再新建普通终端；连接就绪后还会汇总属于本安装且没有本地标签的 detached 终端，提示接回或全部结束。上述能力仍需 WP-G 的 G21/G22 真机验收。
@@ -220,6 +220,10 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 
 路径形如 `ssh://<id>/D:/code/app`。可用：SFTP 文件操作、交互式 PowerShell / CMD 终端、Git、与本机之间的上传下载。部署 Windows 版 `qingcode-server` 后，目录扫描、内容搜索和文件树刷新走服务，daemon 传输经命名管道（`\\.\pipe\qingcode-server-daemon-<hash>`，DACL 仅当前用户）接入，支持 `fs.scan` / `search.content` / `watch.subscribe` 与 PTY 宿主；`connect --stdio` 代理用 tokio overlapped 客户端，读写可同时进行。交互式终端的 daemon 持久化已接入，断开后能否保住进程取决于 Windows daemon 是否成功脱离 sshd 的 Job Object；该平台行为待 WP-G 真机验收；Server 模式下 daemon 不可用时报错，可切到 SSH 模式直连。`ps1`/`bat` 运行任务尚未接入 daemon。不可用：任意远程命令、文件名搜索、格式化、运行任务。这是平台限制，不是 Linux SSH 的对照表所能概括的。
 
+Windows OpenSSH 的 SFTP `REALPATH` 不解析 NTFS 链接，不能用它证明文件仍在项目内。因此 Windows SSH 工作区暂时拒绝经过符号链接或 Junction 的读取、写入和目录访问（包括项目根自身或祖先为链接的情况），并显示具体拒绝的组件。请选择真实目录作为项目根；链接自身可以删除，删除不会递归目标。Linux 仍按实际链接目标校验项目边界。递归复制也逐项校验来源，遇到指向项目外的子项会拒绝复制。
+
+Windows 路径保护通过同一条已认证 SSH 连接懒启动一个只读 PowerShell 元数据通道，按组件检查 NTFS `ReparsePoint`，不依赖 SFTP 的 `lstat` 对 Junction 的标识。该通道随 SFTP 缓存复用；主连接的常规容量占用为 SFTP 1 条 + 元数据校验 1 条 + 最多 6 条命令，另需为 watch / scan 留空间。请求按序号匹配，整体限时 15 秒、每行最多 64KB；取消、错配、超时或 EOF 都会丢弃旧通道，拒绝访问后再重建，避免错误使用迟到的「允许」应答。无需安装远端服务或额外开放端口。
+
 ### 补齐进展与后续建议
 
 已于 2026-10-24 补齐：
@@ -320,7 +324,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 26. 把 `content_search`、`file_encoding`/`exclude`、`git_status`/`git_command`、`format`、`path_guard`、`git`、`file_watcher`、`terminal` 与 Tauri 解耦为共用 crate，使本地与远端语义天然一致。
 
 **G. 设置（§10）**
-27. `remote.server.mode`（auto/always/never 及连接级覆盖）、`remote.server.installDir`、`remote.server.detachedTerminalTtl`、`remote.server.terminalScrollbackBytes`、`remote.server.watch`（当前有连接级模式 `ssh_connections.mode`、新建连接默认模式 `ssh.server.enabled`、`ssh.server.autoDownload`，以及手动离线目录 `ssh.server.offlineDir`；旧 `ssh.agent.*` 读取兼容、保存时迁移清理）。
+27. `remote.server.installDir`、`remote.server.detachedTerminalTtl`、`remote.server.terminalScrollbackBytes`、`remote.server.watch`（当前有连接级兼容选项 `ssh_connections.mode`、`ssh.server.autoDownload`，以及手动离线目录 `ssh.server.offlineDir`；新建连接固定 Server，旧 `ssh.server.enabled` 仅用于无 mode 旧连接迁移；旧 `ssh.agent.*` 读取兼容、保存时迁移清理）。
 
 ### 已知问题与瑕疵
 
@@ -333,6 +337,27 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 - Windows 远端升级时不能只替换文件：新版系统上「删除 + rename」可能成功（POSIX delete 语义），但旧 daemon 仍在跑旧代码并占着单实例锁，新 daemon 起不来，客户端会继续连旧实例。现在摘要不一致时会先按 `ExecutablePath` 精确结束占用用户私有安装路径的 serve/daemon，再提交新文件；不会执行未通过 sha256 校验的目标文件。新旧版本并存仍依赖服务端 PTY 客户端接线。
 
 ### 真机验收
+
+2026-10-26 稳定性加固（可复用入口见 `scripts/e2e-ssh-server/README.md`）：
+
+- 持久化终端的客户端事件积压按每会话 2MB / 256 条双重限制。读循环不等待慢消费者；
+  达到限制时主动断开该通道并快速失败待处理 RPC，通过既有 seq/attach 补发或屏幕快照恢复。
+- 离线期间终端已正常退出时，接回先恢复最终输出并返回原退出码，不再向已退出的 PTY
+  发送 resize 或积压输入，避免将正常退出误报为 daemon 重启。
+- 每个 daemon 最多接受 80 条连接（含未完成 HELLO 的连接）：64 个终端通道之外给
+  扫描、搜索、监视和控制留出余量；PTY 数量上限仍为 64。
+- `server.shutdown` 先关闭各连接并等待取消搜索/监视，再结束 PTY，避免日志已经写
+  “daemon 退出”而阻塞式文件监视线程仍持有进程/单实例锁。普通连接断开也会标记关闭，
+  迟到的监视订阅直接取消，迟到的 PTY 创建拒绝执行。
+- Linux OpenSSH 的 `MaxSessions` 打满可能返回 `AdministrativelyProhibited`。
+  与 `ConnectFailed` 一样对开通道作有限退避，并供终端连接池修正容量；该拒绝本身不
+  表示整条主连接失效，不因此重建主连接。
+- 首次主机指纹探测的 20 秒截止覆盖 TCP 连接与 SSH banner/密钥握手；
+  `inactivity_timeout` 在 russh 读取 banner 后才开始生效，不能用它代替整个探测的时限。
+
+本轮协议脚本、真实客户端后端与桌面界面是三类验收：Linux 实机覆盖真实 SSH；
+Windows `--local` 仅覆盖本机命名管道/ConPTY。主机 SSH 握手不可用或桌面锁屏时，
+对应远端或界面路径应记录为未完成，不能用本机协议通过代替。
 
 - 目标主机 AlmaLinux 10.2 x86_64（SELinux Enforcing、**未安装 rg**）：`serve` 子集 56/56 断言通过（含符号链接逃逸双向拦截、3MB 单行截断、断会话存活、单实例 rc=3、状态文件 0600）；`daemon` 协议冒烟 15/15 通过（HELLO 协商、`fs.scan`、绝对路径拒绝、`pty.create/input` 实时回显、**SIGKILL 代理后 daemon 存活并重连补发历史输出**、`server.shutdown` 零残留）。本轮改名与部署加固另附 Rust / 前端单测（部署退避、下载临时文件命名、`files_scanned` 计数、旧设置键迁移等）。
 - 目标主机 Windows 11 28000（OpenSSH，Git Bash 默认 shell）：Windows daemon 冒烟 24/24 通过（`self-check`、`daemon --detach`、token/`run/pipe`、进程唯一、HELLO/server.info、`fs.scan` 原生 `C:/` 与 POSIX `/C:/` 两种根、越界拒绝、`pty.create/input` 回显、**杀掉本地代理后 daemon PID 不变**、`pty.list/attach` 含历史补发、错误 token 拒绝、重复启动不改 PID、`server.shutdown` 零残留）。本机另有跨进程集成测试 `tests/connect_stdio.rs` 覆盖代理 ↔ daemon 双向帧流。

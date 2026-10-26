@@ -41,7 +41,9 @@ import {
   readSshServerAutoDownload,
   readSshServerEnabled,
   readSshServerOfflineDir,
+  saveScopedSshServerAutoDownload,
   saveScopedSshServerEnabled,
+  saveScopedSshServerOfflineDir,
   LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY,
   LEGACY_SSH_AGENT_ENABLED_KEY,
   LEGACY_SSH_AGENT_OFFLINE_DIR_KEY,
@@ -142,7 +144,7 @@ describe('sshServerSettings legacy ssh.agent.* keys', () => {
         [LEGACY_SSH_AGENT_OFFLINE_DIR_KEY]: 'D:/legacy',
       }),
     )
-    // 模式不再支持项目作用域：工作区覆盖 enabled 也不影响新建连接的默认模式。
+    // 旧模式兼容值不支持项目作用域。
     loadProjectSettings.mockResolvedValue(settingsWith({ [SSH_SERVER_ENABLED_KEY]: false }))
 
     await expect(loadEffectiveSshServerEnabled(project)).resolves.toBe(true)
@@ -166,12 +168,37 @@ describe('sshServerSettings legacy ssh.agent.* keys', () => {
     expect(LEGACY_SSH_AGENT_ENABLED_KEY in saved).toBe(false)
     expect(LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY in saved).toBe(false)
     expect(LEGACY_SSH_AGENT_OFFLINE_DIR_KEY in saved).toBe(false)
+    expect(saved[SSH_SERVER_AUTO_DOWNLOAD_KEY]).toBe(false)
+    expect(saved[SSH_SERVER_OFFLINE_DIR_KEY]).toBe('D:/legacy')
     // 持久化终端开关已移除，推送时不得再调用旧命令。
     expect(safeInvoke).not.toHaveBeenCalledWith(
       '配置 SSH 持久化终端',
       'ssh_set_persistent_terminals_enabled',
       expect.anything(),
     )
+  })
+
+  it.each(['downloads', 'offline directory'])('preserves legacy connection mode when saving %s', async setting => {
+    loadGlobalSettings.mockResolvedValue(
+      settingsWith({
+        [LEGACY_SSH_AGENT_ENABLED_KEY]: false,
+        [LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY]: false,
+        [LEGACY_SSH_AGENT_OFFLINE_DIR_KEY]: 'D:/legacy',
+      }),
+    )
+
+    if (setting === 'downloads') {
+      await saveScopedSshServerAutoDownload('global', true, null)
+    } else {
+      await saveScopedSshServerOfflineDir('global', 'D:/servers', null)
+    }
+
+    const saved = saveGlobalSettings.mock.calls[0][0] as Record<string, unknown>
+    expect(saved[SSH_SERVER_ENABLED_KEY]).toBe(false)
+    expect(readSshServerEnabled(saved)).toBe(false)
+    expect(saved[SSH_SERVER_AUTO_DOWNLOAD_KEY]).toBe(setting === 'downloads')
+    expect(saved[SSH_SERVER_OFFLINE_DIR_KEY]).toBe(setting === 'downloads' ? 'D:/legacy' : 'D:/servers')
+    expect(LEGACY_SSH_AGENT_ENABLED_KEY in saved).toBe(false)
   })
 
   it('ignores the project scope when saving the default mode', async () => {

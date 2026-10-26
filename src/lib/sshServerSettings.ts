@@ -10,8 +10,8 @@ import { mergeSettings } from '@/lib/autoSaveSettings'
 import { isTauri, safeInvoke } from '@/lib/tauri'
 
 /**
- * ssh.server.enabled：新建 SSH 连接的默认模式（true=Server，false=SSH）。
- * 已有的连接在「远程连接」管理页单独设置；修改后需要重新连接才生效。
+ * ssh.server.enabled：仅用于解析尚未保存 mode 的旧连接（true=Server，false=SSH）。
+ * 新建连接固定默认 Server；直连兼容选项在每个连接的高级设置中提供。
  */
 export const SSH_SERVER_ENABLED_KEY = 'ssh.server.enabled'
 
@@ -79,11 +79,18 @@ export function readSshServerOfflineDir(settings: Record<string, unknown>): stri
   )
 }
 
-/** 保存前把旧键清掉，避免新旧键并存时语义漂移。 */
+/** 先保留旧值再清旧键，避免保存下载设置时改变旧连接的模式。 */
 function dropLegacyKeys(settings: Record<string, unknown>): void {
-  delete settings[LEGACY_SSH_AGENT_ENABLED_KEY]
-  delete settings[LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY]
-  delete settings[LEGACY_SSH_AGENT_OFFLINE_DIR_KEY]
+  for (const [key, legacyKey] of [
+    [SSH_SERVER_ENABLED_KEY, LEGACY_SSH_AGENT_ENABLED_KEY],
+    [SSH_SERVER_AUTO_DOWNLOAD_KEY, LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY],
+    [SSH_SERVER_OFFLINE_DIR_KEY, LEGACY_SSH_AGENT_OFFLINE_DIR_KEY],
+  ]) {
+    if (settings[key] === undefined && settings[legacyKey] !== undefined) {
+      settings[key] = settings[legacyKey]
+    }
+    delete settings[legacyKey]
+  }
 }
 
 let cachedSshServerEnabled = parseSshServerEnabled(DEFAULT_GLOBAL_SETTINGS[SSH_SERVER_ENABLED_KEY])
@@ -115,7 +122,7 @@ export async function loadEffectiveSshServerEnabled(
   const global = await loadGlobalSettings()
   const workspace = project ? await loadProjectSettings(project) : null
   const merged = mergeSettings(global, workspace)
-  // 模式不再支持项目作用域：enabled 只读全局，作为新建连接的默认值。
+  // 模式不支持项目作用域：enabled 只读全局，仅兼容尚未保存 mode 的旧连接。
   const next = readSshServerEnabled(global)
   cachedSshServerAutoDownload = readSshServerAutoDownload(merged)
   cachedSshServerOfflineDir = readSshServerOfflineDir(merged)

@@ -2,6 +2,8 @@
 
 状态：部分实现（2026-10-25）。本文同时保留目标架构与实施设计，不能把后文的“目标 / 结果”列直接当成当前能力；用户可见行为和限制以 [`ssh-workspaces.md`](ssh-workspaces.md) 为准。
 
+2026-10-26 产品入口调整：新连接统一使用 Server，直连仅作为每连接「高级 → 兼容模式」保留；已有连接不静默迁移。Server 故障提供重试、日志与离线安装设置，不自动回退或通过错误提示切到 SSH。下文历史回退链与旧设置描述不代表当前产品行为，具体以 `ssh-workspaces.md` 的「Server 与高级兼容模式」为准。
+
 ## 0. 当前实现边界（2026-10-25）
 
 当前远端服务名为 `qingcode-server`，已有实现与设计目标要分开阅读。
@@ -10,8 +12,8 @@
 
 - `serve`、`daemon`、`connect --stdio` 三种运行入口，daemon 走协议 v1，Windows 使用带当前用户 DACL 的命名管道。
 - `fs.scan`、`search.content`、`watch.subscribe` 及 daemon 侧的 PTY 宿主、屏幕快照和环形缓冲。
-- 客户端 daemon → serve → 直连的回退链，Server 状态芯片、重启、停止和日志查看。
-- **[P2 已实现]** 前端交互式终端接入 daemon PTY：项目已信任、`ssh.server.enabled` 与 `ssh.server.persistentTerminals` 开启、daemon 可用且声明 `pty.persist` 时由 daemon 托管；SSH 断开后按 seq 补发或快照恢复，重连期间输入由后端缓冲。daemon 不可用、能力缺失、创建失败或设置关闭时自动回退直连。远端真机验收待 WP-G。
+- Server 连接的扫描、搜索和文件监听由 daemon / serve 提供，不自动切到直连；直连仅在高级兼容模式或未信任项目的只读浏览中使用。提供 Server 状态芯片、重启、停止和日志查看。
+- **[P2 已实现]** 前端交互式终端接入 daemon PTY：项目已信任、连接为 Server 模式、daemon 可用且声明 `pty.persist` 时由 daemon 托管；SSH 断开后按 seq 补发或快照恢复，重连期间输入由后端缓冲。daemon 不可用、能力缺失或创建失败时报告错误，不自动回退直连。远端完整客户端验收待 WP-G。
 - **[P3 已实现]** 应用重启后按持久化标签中的 `ptyId` / `connectionId` 优先接回 daemon PTY，失败回退普通新建；连接就绪后查询本安装的 detached 终端，对没有本地标签的孤儿终端提示接回或全部结束。远端真机验收待 WP-G 的 G21/G22。
 - 二进制安装到用户私有 `~/.qingcode/server/<version>/`（Windows 为 `%USERPROFILE%\.qingcode\server\<version>\`）；发现和启动前必须将远端文件 SHA-256 与本地可信文件或已验证下载结果匹配。
 - 旧版写在项目 `.qingcode/server/` 的二进制只按路径清理，绝不执行；daemon 降级后的重试同样重新执行本地文件与用户私有安装路径的摘要校验。
@@ -53,7 +55,7 @@
    - 搜索、Git、格式化、编码检测和本地共用同一份代码；
    - Windows 远端补齐搜索、格式化和运行任务；
    - 传输支持断点续传。
-3. **可回退**：远端装不上 Server 或运行不了时，自动回到直连模式，用户不需要做任何处理。
+3. **显式兼容**：远端装不上 Server 或运行不了时，提供诊断、重启与离线安装设置。无法运行服务的主机由用户在连接的高级设置中显式启用兼容模式，不自动改变终端和功能语义。
 4. **不降低安全性**：主机指纹、工作区信任、项目根边界、拒绝符号链接逃逸，这些规则全部保留，并在 Server 内再做一层校验。
 
 非目标：

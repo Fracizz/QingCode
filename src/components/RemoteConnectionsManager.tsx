@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
+  ChevronDown,
+  ChevronRight,
   CircleHelp,
   FileText,
   FolderOpen,
@@ -96,9 +98,8 @@ export default function RemoteConnectionsManager() {
     creatingForProject ? NEW_SSH_CONNECTION_ID : null
   )
   const [form, setForm] = useState<SshConnectionForm>(emptyConnectionForm())
-  const [mode, setMode] = useState<SshConnectionMode>(() =>
-    getSshServerEnabled() ? 'server' : 'ssh'
-  )
+  const [mode, setMode] = useState<SshConnectionMode>('server')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
   /** 测试连接后确认的新指纹；保存时覆盖存档值。 */
@@ -149,13 +150,10 @@ export default function RemoteConnectionsManager() {
         ? useProjectStore.getState().sshConnections.find(item => item.id === selectedId)
         : null
     setForm(conn ? formFromConnection(conn) : emptyConnectionForm())
-    setMode(
-      conn
-        ? resolveSshConnectionMode(conn, getSshServerEnabled())
-        : getSshServerEnabled()
-          ? 'server'
-          : 'ssh'
-    )
+    // 新连接统一使用 Server；旧连接仍按已存模式或旧设置解析，避免静默迁移。
+    const nextMode = conn ? resolveSshConnectionMode(conn, getSshServerEnabled()) : 'server'
+    setMode(nextMode)
+    setAdvancedOpen(nextMode === 'ssh')
     setPassword('')
     setPassphrase('')
     setFingerprintOverride(null)
@@ -327,8 +325,8 @@ export default function RemoteConnectionsManager() {
     const reconnectNeeded = modeChanged && alive
     if (reconnectNeeded && selected) {
       const accepted = await confirmDialog({
-        title: t('切换连接模式'),
-        message: t('将断开并重新连接 {name}；SSH 模式下终端断线即结束进程。', {
+        title: t('更改兼容模式'),
+        message: t('将断开并重新连接 {name}。当前终端可能被关闭；兼容模式不支持终端断线恢复。', {
           name: sshConnectionLabel(selected),
         }),
         kind: 'warning',
@@ -455,6 +453,14 @@ export default function RemoteConnectionsManager() {
     if (busyRoot) return
     setBusyRoot(rootUri)
     try {
+      const accepted = await confirmDialog({
+        title: t('重启远端服务'),
+        message: t('重启会结束此远端服务托管的终端，可能影响同一远端用户下的其他项目。'),
+        kind: 'warning',
+        confirmLabel: t('重启'),
+        cancelLabel: t('取消'),
+      })
+      if (!accepted) return
       const value = await safeInvoke<unknown>('重启远端服务', 'ssh_server_restart', { rootUri })
       const next = parseSshServerState(value)
       if (next && sshServerIsDirect(next)) {
@@ -583,43 +589,46 @@ export default function RemoteConnectionsManager() {
           </div>
         </label>
       ) : null}
-      <div className={`col-span-2 ${labelClass}`}>
-        {t('连接模式')}
-        <div className="mt-1 flex flex-col gap-1.5">
-          <label className="flex items-start gap-2 text-ui text-fg">
-            <input
-              type="radio"
-              name="ssh-connection-mode"
-              value="server"
-              checked={mode === 'server'}
-              onChange={() => setMode('server')}
-              className="mt-0.5"
-            />
-            <span>
-              {t('Server 模式')}
-              <span className="ml-1 text-fg-muted">
-                — {t('部署 qingcode-server，终端断线不丢')}
-              </span>
-            </span>
-          </label>
-          <label className="flex items-start gap-2 text-ui text-fg">
-            <input
-              type="radio"
-              name="ssh-connection-mode"
-              value="ssh"
-              checked={mode === 'ssh'}
-              onChange={() => setMode('ssh')}
-              className="mt-0.5"
-            />
-            <span>
-              {t('SSH 模式')}
-              <span className="ml-1 text-fg-muted">— {t('零足迹直连')}</span>
-            </span>
-          </label>
-        </div>
-        <p className={`${helpClass} mt-1`}>
-          {t('每个连接的模式单独保存；修改已有连接的模式后需要重新连接才生效。')}
+      <div className="col-span-2 space-y-2">
+        <p className={helpClass}>
+          {t('远程开发通过 SSH 连接，信任项目后自动部署远端服务，提供文件监听、内容搜索与持久终端。')}
         </p>
+        <div className="rounded border border-border-strong">
+          <button
+            type="button"
+            aria-expanded={advancedOpen}
+            aria-controls="ssh-connection-advanced"
+            onClick={() => setAdvancedOpen(open => !open)}
+            className="flex w-full items-center gap-1.5 rounded px-2.5 py-2 text-ui text-fg-muted hover:bg-bg-hover hover:text-fg"
+          >
+            {advancedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            {t('高级')}
+            {mode === 'ssh' ? (
+              <span className="ml-auto text-ui-xs text-warn">{t('兼容模式已启用')}</span>
+            ) : null}
+          </button>
+          {advancedOpen ? (
+            <div id="ssh-connection-advanced" className="space-y-2 border-t border-border px-3 py-2.5">
+              <label className="flex items-start gap-2 text-ui text-fg">
+                <span className="inline-flex h-[var(--ui-line-height)] flex-shrink-0 items-center">
+                  <input
+                    type="checkbox"
+                    checked={mode === 'ssh'}
+                    onChange={event => setMode(event.target.checked ? 'ssh' : 'server')}
+                    className="m-0 h-3.5 w-3.5 accent-accent"
+                  />
+                </span>
+                <span className="min-w-0">{t('兼容模式（SSH 直连）')}</span>
+              </label>
+              <p className={helpClass}>
+                {t('仅用于无法运行远端服务的主机。不部署服务，文件树不会自动刷新，终端不支持断线恢复。')}
+              </p>
+              <p className={helpClass}>
+                {t('兼容模式按连接保存；修改已有连接后需保存并重新连接。')}
+              </p>
+            </div>
+          ) : null}
+        </div>
       </div>
       <label className={`col-span-2 ${labelClass}`}>
         {isNew ? t('密码（测试连接用，不会保存）') : t('密码（仅测试连接用，不会保存）')}
@@ -897,11 +906,11 @@ export default function RemoteConnectionsManager() {
                       </div>
 
                       <div>
-                        <p className={`${sectionTitleClass} mb-2`}>
+                        <div className={`${sectionTitleClass} mb-2`}>
                           {t('远端服务模式')}
                           <Tooltip
                             label={t(
-                              '远端服务是叠加在 SSH 上的增强层。连接模式为“SSH + 远端服务”时提供文件树自动刷新、内容搜索与持久终端，不可用时直接报错而不回退；为“SSH 直连”时不部署服务。模式在上方「连接模式」中按连接设置，修改后重新连接生效。两种模式都只通过 SSH 访问，不开放公网端口。'
+                              '远程开发默认使用远端服务，通过 SSH 提供文件树自动刷新、内容搜索与持久终端，不开放公网端口。服务不可用时可重试、查看日志或在设置中配置离线安装包。无法运行服务的主机可在「高级」中启用兼容模式。'
                             )}
                             side="top"
                           >
@@ -913,7 +922,17 @@ export default function RemoteConnectionsManager() {
                               <CircleHelp size={13} aria-hidden />
                             </button>
                           </Tooltip>
-                        </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              closeRemoteConnections()
+                              useUIStore.getState().requestSettings('ssh.server')
+                            }}
+                            className="ml-auto rounded px-2 py-1 text-ui-xs font-normal text-fg-muted hover:bg-bg-hover hover:text-fg"
+                          >
+                            {t('服务安装设置')}
+                          </button>
+                        </div>
                         {detailLoading ? (
                           <p className={helpClass}>{t('正在读取…')}</p>
                         ) : serverStates.length === 0 ? (
@@ -955,7 +974,7 @@ export default function RemoteConnectionsManager() {
                                     </span>
                                   </Tooltip>
                                 ) : null}
-                                {/* SSH 模式的连接没有远端服务：不提供重启与日志，改模式走上方「连接模式」。 */}
+                                {/* 兼容模式没有远端服务；在上方「高级」里关闭后保存并重连。 */}
                                 {state.connectionMode === 'ssh' ? null : (
                                   <>
                                   <Tooltip

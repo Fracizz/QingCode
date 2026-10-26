@@ -6,14 +6,11 @@ import { DEFAULT_GLOBAL_SETTINGS } from '../../lib/projectSettings'
 import {
   SSH_SERVER_AUTO_DOWNLOAD_KEY,
   getSshServerAutoDownload,
-  getSshServerEnabled,
   getSshServerOfflineDir,
   loadScopedSshServerAutoDownload,
-  loadScopedSshServerEnabled,
   loadScopedSshServerOfflineDir,
   parseSshServerAutoDownload,
   saveScopedSshServerAutoDownload,
-  saveScopedSshServerEnabled,
   saveScopedSshServerOfflineDir,
 } from '../../lib/sshServerSettings'
 import { useProjectStore } from '../../store/projectStore'
@@ -24,39 +21,28 @@ import Tooltip from '../Tooltip'
 type Props = {
   /** 设置页当前作用域：user=全局默认，workspace=当前项目。 */
   scope: 'user' | 'workspace'
-  /** 当前激活项目；workspace 作用域必填，user 作用域用于判断是否停远端服务。 */
+  /** 当前激活项目；workspace 作用域必填。 */
   project: Project | null
   /** 设置导入等外部变更的刷新信号。 */
   settingsRevision: number
 }
 
 /**
- * SSH 远端服务（qingcode-server）设置分区：总开关、自动下载、离线目录。
- * 从 SettingsEditor 迁出，行为保持不变。
+ * SSH 远端服务（qingcode-server）设置分区：自动下载、离线目录。
+ * 新建连接统一使用 Server；直连兼容选项仅在连接的高级设置中提供。
  */
 export default function SshServerSettingsSection({ scope, project, settingsRevision }: Props) {
   const { t } = useI18n()
   const pushToast = useProjectStore(s => s.pushToast)
-  const [enabled, setEnabled] = useState(getSshServerEnabled)
   const [autoDownload, setAutoDownload] = useState(getSshServerAutoDownload)
   const [offlineDir, setOfflineDir] = useState(getSshServerOfflineDir)
   const [offlineBusy, setOfflineBusy] = useState(false)
 
   useEffect(() => {
     const settingsScope = scope === 'workspace' ? 'project' : 'global'
-    void loadScopedSshServerEnabled(settingsScope, project).then(setEnabled)
     void loadScopedSshServerAutoDownload(settingsScope, project).then(setAutoDownload)
     void loadScopedSshServerOfflineDir(settingsScope, project).then(setOfflineDir)
   }, [scope, project, settingsRevision])
-
-  const updateEnabled = async (value: boolean) => {
-    setEnabled(value)
-    try {
-      await saveScopedSshServerEnabled('global', value, project)
-    } catch (error) {
-      pushToast('error', t('保存默认连接模式失败: {error}', { error: String(error) }))
-    }
-  }
 
   const updateAutoDownload = async (value: boolean) => {
     const settingsScope = scope === 'workspace' ? 'project' : 'global'
@@ -120,25 +106,6 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
 
   return (
     <>
-      {scope !== 'workspace' && (
-        <SettingItem
-          title={t('新建连接的默认模式')}
-          description={t(
-            '新建 SSH 连接时默认使用“SSH + 远端服务”（部署 qingcode-server，终端断线不丢）还是“SSH 直连”（远端零足迹）。远端服务是叠加在 SSH 上的增强层，不是另一种连接协议。每个连接的模式在「远程连接」管理页单独设置；修改已有连接的模式后需要重新连接才生效。',
-          )}
-          modified={!enabled}
-        >
-          <select
-            value={enabled ? 'server' : 'ssh'}
-            onChange={e => void updateEnabled(e.target.value === 'server')}
-            className="setting-control setting-select"
-            aria-label={t('新建连接的默认模式')}
-          >
-            <option value="server">{t('SSH + 远端服务')}</option>
-            <option value="ssh">{t('SSH 直连')}</option>
-          </select>
-        </SettingItem>
-      )}
       <SettingItem
         title={t('SSH › 服务: 缺失时自动下载')}
         description={t(

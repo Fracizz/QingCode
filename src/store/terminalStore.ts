@@ -1923,6 +1923,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const tab = get().terminals.find(terminal => terminal.id === id)
     if (!tab?.ptySpawnPending) return
     if (ptySpawnInFlight.has(id)) return
+    // 请求失败时用户可能已经切换项目；恢复动作必须固定到该终端所属的原项目根。
+    const projectState = useProjectStore.getState()
+    const owner = projectState.projects.find(project => project.id === tab.projectId) ??
+      (projectState.currentProject?.id === tab.projectId ? projectState.currentProject : null)
+    const serverModeRootUri = owner?.path ?? ''
     ptySpawnInFlight.add(id)
     clearPtySpawnFallback(id)
     const size = normalizePtySize(cols, rows)
@@ -2028,7 +2033,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }))
       useProjectStore
         .getState()
-        .pushToast('error', `新建终端失败: ${String(e)}`, undefined, serverModeErrorAction(e))
+        .pushToast('error', `新建终端失败: ${String(e)}`, undefined, serverModeErrorAction(e, serverModeRootUri))
     } finally {
       ptySpawnInFlight.delete(id)
     }
