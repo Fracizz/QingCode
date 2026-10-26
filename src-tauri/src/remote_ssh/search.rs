@@ -592,6 +592,11 @@ async fn server_search_file_contents(
                     per_file_truncated,
                 )));
             }
+            // daemon 应答的业务错误（无效正则、目录不存在）换 serve 也一样失败，
+            // 直接返回，不降级 daemon。
+            Err(error) if !error.is_transport() => {
+                return Err(format!("搜索失败：{error}"));
+            }
             Err(error) => {
                 server::downgrade_server_daemon(manager, &key);
                 server_status::publish_root_state(app, manager, &registered);

@@ -848,8 +848,9 @@ pub(crate) async fn ready_server_endpoint(
 
 /// Server 模式下等待发现/部署整体的上限；首次部署含下载、上传与启动。
 const SERVER_MODE_DEPLOY_WAIT: Duration = Duration::from_secs(180);
-/// 端点就绪后等待后台 daemon 探测结束的上限。
-const SERVER_MODE_DAEMON_WAIT: Duration = Duration::from_secs(30);
+/// 端点就绪后等待后台 daemon 探测结束的上限；须大于探测自身的 30 秒预算加上
+/// 重新校验安装的耗时，否则强制重探的失败原因会被「等待超时」盖掉。
+const SERVER_MODE_DAEMON_WAIT: Duration = Duration::from_secs(45);
 const SERVER_MODE_DAEMON_POLL: Duration = Duration::from_millis(200);
 
 /// Server 模式的错误前缀；前端据此在提示里给出「切到 SSH 模式」。
@@ -895,7 +896,9 @@ pub(crate) async fn require_server_endpoint(
     if !need_daemon || endpoint.daemon.is_some() {
         return Ok(endpoint);
     }
-    // serve 就绪后 daemon 在后台探测；终端与运行任务必须等它有结论。
+    // serve 就绪后 daemon 在后台探测；终端与运行任务必须等它有结论。之前失败
+    // 过（降级冷却中）也立即重探一轮：用户主动新建终端，不该被 5 分钟冷却挡住。
+    spawn_daemon_probe(app, root, &key, None, true);
     let deadline = Instant::now() + SERVER_MODE_DAEMON_WAIT;
     loop {
         let slot = manager.server_slot(&key).unwrap_or_default();
@@ -906,9 +909,13 @@ pub(crate) async fn require_server_endpoint(
                 return Err(server_mode_error("等待远端 daemon 就绪超时"));
             }
             Some(_) => {
-                return Err(server_mode_error(
-                    "远端 daemon 不可用（server 只能以 serve 方式运行，终端与运行任务需要 daemon），可在状态栏重启 server",
-                ));
+                let detail = slot
+                    .daemon_failure
+                    .map(|reason| format!("：{reason}"))
+                    .unwrap_or_default();
+                return Err(server_mode_error(format!(
+                    "远端 daemon 不可用{detail}（终端与运行任务需要 daemon），可在状态栏重启 server"
+                )));
             }
             None => {
                 let reason = slot
@@ -1022,8 +1029,8 @@ async fn ensure_server_endpoint_inner(
             )
         {
             match app {
-                Some(app) => spawn_daemon_probe(app, root, &key, None),
-                None => probe_daemon_for_slot(manager, root, &key, None).await,
+                Some(app) => spawn_daemon_probe(app, root, &key, None, false),
+                None => probe_daemon_for_slot(manager, root, &key, None, false).await,
             }
         }
         manager.set_server_activity(&key, None);
@@ -1058,6 +1065,7 @@ async fn ensure_server_endpoint_inner(
             // 部署成功：退避计数清零，下一次失败重新从 1 数起。
             slot.deploy_failures = 0;
             slot.daemon_downgraded_at = None;
+            slot.daemon_failure = None;
             slot.last_timings = Some(timer.summary());
             manager.set_server_slot(&key, slot);
             // serve 已可用就先发布就绪；daemon 在后台探测，通过后再把传输升级为
@@ -1065,8 +1073,8 @@ async fn ensure_server_endpoint_inner(
             publish_server_if_watched(app, manager, root);
             drop(guard);
             match app {
-                Some(app) => spawn_daemon_probe(app, root, &key, Some(remote_bin)),
-                None => probe_daemon_for_slot(manager, root, &key, Some(remote_bin)).await,
+                Some(app) => spawn_daemon_probe(app, root, &key, Some(remote_bin), false),
+                None => probe_daemon_for_slot(manager, root, &key, Some(remote_bin), false).await,
             }
             Ok(Some(endpoint))
         }
@@ -1104,17 +1112,25 @@ async fn ensure_server_endpoint_inner(
 
 /// 在后台为已就绪的 serve 端点补探 daemon 传输，完成后发布新状态。
 /// `daemon_probe_pending` 去重：发现成功与冷却重试不会同时各跑一轮。
+/// `force` 跳过降级冷却（用户主动新建终端时）。
 fn spawn_daemon_probe(
     app: &tauri::AppHandle,
     root: &RegisteredRoot,
     key: &str,
     remote_bin: Option<String>,
+    force: bool,
 ) {
     let manager = app.state::<SshManager>();
     let Some(mut slot) = manager.server_slot(key) else {
         return;
     };
-    if slot.daemon_probe_pending {
+    // 已有 daemon 或探测进行中都不必再起一轮。
+    if slot.daemon_probe_pending
+        || slot
+            .endpoint
+            .as_ref()
+            .is_some_and(|endpoint| endpoint.daemon.is_some())
+    {
         return;
     }
     slot.daemon_probe_pending = true;
@@ -1124,7 +1140,7 @@ fn spawn_daemon_probe(
     let key = key.to_string();
     tauri::async_runtime::spawn(async move {
         let manager = app.state::<SshManager>();
-        probe_daemon_for_slot(&manager, &root, &key, remote_bin).await;
+        probe_daemon_for_slot(&manager, &root, &key, remote_bin, force).await;
         server_status::publish_root_state(&app, &manager, &root);
     });
 }
@@ -1135,54 +1151,59 @@ fn spawn_daemon_probe(
 ///
 /// `remote_bin` 是本轮部署刚校验过的二进制；`None`（冷却重试）时重新走
 /// 「本地文件 + 用户私有安装路径 + 远端 sha256」校验，不可能解析到项目内二进制。
+/// `force` 时忽略降级冷却。
 async fn probe_daemon_for_slot(
     manager: &SshManager,
     root: &RegisteredRoot,
     key: &str,
     remote_bin: Option<String>,
+    force: bool,
 ) {
-    let finish = |access: Option<DaemonAccess>, token: Option<&str>, elapsed: Option<Duration>| {
-        let Some(mut slot) = manager.server_slot(key) else {
-            return;
+    let finish =
+        |access: Result<DaemonAccess, String>, token: Option<&str>, elapsed: Option<Duration>| {
+            let Some(mut slot) = manager.server_slot(key) else {
+                return;
+            };
+            slot.daemon_probe_pending = false;
+            let current = slot
+                .endpoint
+                .as_ref()
+                .is_some_and(|endpoint| Some(endpoint.token.as_str()) == token);
+            if current {
+                slot.daemon_downgraded_at = access.is_err().then(Instant::now);
+                slot.daemon_failure = access.as_ref().err().cloned();
+                if let Some(endpoint) = slot.endpoint.as_mut() {
+                    endpoint.daemon = access.ok();
+                }
+                if let Some(elapsed) = elapsed {
+                    slot.last_timings = Some(append_stage_timing(
+                        slot.last_timings.as_deref(),
+                        "daemon",
+                        elapsed,
+                    ));
+                }
+            }
+            manager.set_server_slot(key, slot);
         };
-        slot.daemon_probe_pending = false;
-        let current = slot
-            .endpoint
-            .as_ref()
-            .is_some_and(|endpoint| Some(endpoint.token.as_str()) == token);
-        if current {
-            slot.daemon_downgraded_at = access.is_none().then(Instant::now);
-            if let Some(endpoint) = slot.endpoint.as_mut() {
-                endpoint.daemon = access;
-            }
-            if let Some(elapsed) = elapsed {
-                slot.last_timings = Some(append_stage_timing(
-                    slot.last_timings.as_deref(),
-                    "daemon",
-                    elapsed,
-                ));
-            }
-        }
-        manager.set_server_slot(key, slot);
-    };
     let (Ok(parsed), Ok(gate)) = (parse_remote_uri(&root.uri), manager.server_gate(key)) else {
-        finish(None, None, None);
+        finish(Err(String::new()), None, None);
         return;
     };
     let _guard = gate.lock().await;
     let Some(slot) = manager.server_slot(key) else {
         return;
     };
-    let waiting_cooldown = slot
-        .daemon_downgraded_at
-        .is_some_and(|at| !daemon_downgrade_retry_ready(Some(at), Instant::now()));
+    let waiting_cooldown = !force
+        && slot
+            .daemon_downgraded_at
+            .is_some_and(|at| !daemon_downgrade_retry_ready(Some(at), Instant::now()));
     let token = slot
         .endpoint
         .as_ref()
         .filter(|endpoint| endpoint.daemon.is_none())
         .map(|endpoint| endpoint.token.clone());
     let Some(token) = token.filter(|_| !waiting_cooldown) else {
-        finish(None, None, None);
+        finish(Err(String::new()), None, None);
         return;
     };
     let started = Instant::now();
@@ -1192,7 +1213,7 @@ async fn probe_daemon_for_slot(
     };
     let access = match remote_bin {
         Some(bin) => ensure_remote_daemon(manager, &parsed.connection_id, root, &bin).await,
-        None => None,
+        None => Err("未找到已校验的远端 server 二进制".to_string()),
     };
     finish(access, Some(&token), Some(started.elapsed()));
 }

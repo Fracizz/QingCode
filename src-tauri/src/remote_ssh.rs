@@ -1489,6 +1489,7 @@ impl SshManager {
                 slot.activity = None;
                 slot.last_failure = None;
                 slot.daemon_downgraded_at = None;
+                slot.daemon_failure = None;
                 slot.deploy_failures = 0;
             }
         }
@@ -3056,7 +3057,8 @@ async fn server_scan_entries(
     let endpoint = server::require_server_endpoint(app, manager, root, false).await?;
     let relative = remote_relative_to_root(canonical, &root.canonical_path);
     // daemon 传输优先：一次 RPC 往返，目录树刷新与 watch 事件同源。传输失败
-    // 只降级 daemon 标记（保留 serve 端点），继续走 serve 请求。
+    // 只降级 daemon 标记（保留 serve 端点），继续走 serve 请求；daemon 应答的
+    // 业务错误（目录已删除、无权限）直接返回，daemon 与 serve 端点都不受牵连。
     if let Some(daemon) = endpoint.daemon.as_ref() {
         match server::daemon_scan_entries(
             manager,
@@ -3068,6 +3070,9 @@ async fn server_scan_entries(
         .await
         {
             Ok(entries) => return Ok(entries),
+            Err(error) if !error.is_transport() => {
+                return Err(format!("读取远程目录失败：{error}"));
+            }
             Err(_) => {
                 server::downgrade_server_daemon(manager, &key);
                 // 传输从 daemon 降到 serve，状态芯片要跟着变。

@@ -107,8 +107,18 @@ impl IpcEndpoint {
     /// FILE_NOT_FOUND / PIPE_BUSY 失败（真机 252.107 实测为间歇性）。25ms
     /// 间隔重试至多 2 秒，把这个窗口跨过去。
     pub fn blocking_connect(&self) -> io::Result<BlockingIpcPair> {
+        self.blocking_connect_within(Duration::from_secs(2))
+    }
+
+    /// 同 [`IpcEndpoint::blocking_connect`]，Windows 瞬态重试上限由调用方给定。
+    ///
+    /// 「daemon 是否存活」的探测用短上限：daemon 被强杀后标记文件还在，管道却
+    /// 已不存在，按 2 秒重试会让每次拉起前白等 2 秒（真机 252.45 实测）；跨过
+    /// acceptor 补建实例的空窗只需几十毫秒。
+    pub fn blocking_connect_within(&self, retry: Duration) -> io::Result<BlockingIpcPair> {
         #[cfg(unix)]
         {
+            let _ = retry;
             let stream = std::os::unix::net::UnixStream::connect(self.socket_path())?;
             let read = stream
                 .try_clone()
@@ -120,7 +130,7 @@ impl IpcEndpoint {
         }
         #[cfg(windows)]
         {
-            let deadline = std::time::Instant::now() + Duration::from_secs(2);
+            let deadline = std::time::Instant::now() + retry;
             let file = loop {
                 match windows::open_pipe_sync(&self.pipe_name()) {
                     Ok(file) => break file,

@@ -96,6 +96,8 @@ pub(crate) struct ServerSlot {
     pub(crate) last_timings: Option<String>,
     /// 后台 daemon 探测正在进行：避免发现成功与冷却重试同时各拉一轮。
     pub(crate) daemon_probe_pending: bool,
+    /// 最近一次 daemon 探测的失败原因，Server 模式终端报错时展示；探测成功即清掉。
+    pub(crate) daemon_failure: Option<String>,
 }
 
 pub(crate) fn server_slot_key(connection_id: &str, canonical_root: &str) -> String {

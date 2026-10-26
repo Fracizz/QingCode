@@ -54,7 +54,7 @@ Linux / POSIX SSH 项目（已信任、所在连接为 Server 模式）会在连
   - 模式存在每个 SSH 连接配置里（SQLite `ssh_connections.mode`，`server` / `ssh`），在「远程连接」管理页设置；`ssh_connect` 时随配置传给后端并固定在会话里，会话期间不可变。同一连接下的所有项目共用一个模式，不同连接可以各用各的模式同时打开。后端不再有全局模式开关（`ssh_set_server_enabled` 已删除），所有分支按会话模式判断；会话不存在或尚未定下模式时一律按非 Server 处理。
   - 改模式 = 保存连接配置 + 断开重连（等同 VS Code 的 Reload Window）。从 Server 切到 SSH 时先对该连接已注册的根尽力调用 `ssh_server_stop`。已注册项目根的会话收到不同模式的 `ssh_connect` 会报「连接模式已变更」，必须先断开。
   - 全局设置 `ssh.server.enabled` 只表示「新建连接的默认模式」，也用于给升级前没有模式字段的旧连接补值（首次连接时写回数据库）；不再支持项目级覆盖。
-  - Server 模式：交互式终端、运行任务（含 sh / 脚本 / 命令类一次性任务，由 daemon 以 `/bin/sh -l -c` 执行）、目录扫描、内容搜索（含子目录搜索，经 daemon）、文件监听只走 server。首次使用会等待发现/部署（最长 180 秒）与 daemon 探测（最长 30 秒）完成；server 或 daemon 不可用时直接报错，错误以「Server 模式：」开头，提示里提供「切到 SSH 模式」一键切换（改当前连接的模式并重连），状态栏芯片菜单同样提供。
+  - Server 模式：交互式终端、运行任务（含 sh / 脚本 / 命令类一次性任务，由 daemon 以 `/bin/sh -l -c` 执行）、目录扫描、内容搜索（含子目录搜索，经 daemon）、文件监听只走 server。首次使用会等待发现/部署（最长 180 秒）与 daemon 探测（最长 45 秒）完成；server 或 daemon 不可用时直接报错，错误以「Server 模式：」开头，提示里提供「切到 SSH 模式」一键切换（改当前连接的模式并重连），状态栏芯片菜单同样提供。
   - SSH 模式：不部署也不调用 server，终端、运行任务、扫描、搜索全部直连，终端断线即结束进程。`ssh_server_restart` / `ssh_server_logs` 直接拒绝，列出与清理 detached 终端返回空，接回 daemon 终端报错后由前端新建普通终端；状态芯片显示 `SSH`，`SshServerState.connectionMode` 为 `ssh`。
   - 两种模式下文件读写、stat、Git、上传下载都走主连接（SFTP / 远程命令），server 没有对应接口。
   - 未受信任项目不部署 server，浏览仍走 SFTP；终端与运行任务需要信任。

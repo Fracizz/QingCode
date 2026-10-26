@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use super::paths::windows_host_path;
 use super::scripts::{
     connect_daemon_command, connect_daemon_command_existing, daemon_token_command,
-    start_daemon_command, windows_connect_daemon_command, windows_connect_daemon_command_existing,
-    windows_daemon_start_script, windows_daemon_token_script,
+    windows_connect_daemon_command, windows_connect_daemon_command_existing,
+    windows_daemon_token_command,
 };
 use super::*;
 use qingcode_server::proto::{
@@ -832,22 +832,22 @@ async fn daemon_hello(
 }
 
 /// serve server 就绪后尽力补一步 daemon 传输探测（后台执行，见 deploy 的
-/// `spawn_daemon_probe`）。先用现有 token 直连已有实例，失败才走下面的启动流程：
-/// 1. 幂等启动 daemon（unix 靠 `flock`、Windows 靠命名管道首实例锁，重复
-///    执行都按「已有实例」退出，无副作用）；
-/// 2. 轮询读取 `run/token`（daemon 启动到 token 落盘有亚秒级延迟；旧 daemon
-///    残留的 token 会被下一步的真实握手淘汰）；
-/// 3. 用一次真实握手验证 token、版本与能力，通过才标记 daemon 可用。
+/// `spawn_daemon_probe`）。每轮两次 exec：
+/// 1. `daemon-token --ensure-daemon`：二进制自己确保 daemon 在跑（缺席即脱离
+///    会话拉起并等就绪）后输出 token。此前是「读 token → 拉起 → 再读 token」
+///    三次 exec，Windows 上每次都是一次 PowerShell 冷启动（真机约 2.5s/次）；
+/// 2. 用一次真实握手验证 token、版本与能力，通过才标记 daemon 可用。
 ///    远端 daemon 版本落后时（升级后旧 daemon 仍持锁），凭有效 token 发
-///    `server.shutdown` 淘汰旧实例，再拉起新版并复验一次。
+///    `server.shutdown` 淘汰旧实例，下一轮由 `daemon-token` 拉起新版并复验。
 ///
-/// 任一步失败都返回 `None`：仅表示本轮无 daemon，不影响 serve 模式。
+/// 任一步失败都返回最后一次失败原因：仅表示本轮无 daemon，不影响 serve 模式；
+/// 原因留给 Server 模式的终端报错展示，否则用户只能看到笼统的「不可用」。
 pub(super) async fn ensure_remote_daemon(
     manager: &SshManager,
     connection_id: &str,
     root: &RegisteredRoot,
     remote_bin: &str,
-) -> Option<DaemonAccess> {
+) -> Result<DaemonAccess, String> {
     let windows = windows_native_path(&root.canonical_path).is_some();
     // 这里只接受调用方已经通过可信 SHA-256 校验的路径。此前 `None` 会按
     // 项目根重新解析 `<项目>/.qingcode/server/...`，构成项目内代码执行路径；
@@ -855,47 +855,40 @@ pub(super) async fn ensure_remote_daemon(
     let bin = remote_bin.to_string();
     if windows {
         // Windows 二进制路径无法换算成本机路径时不做任何远端调用。
-        windows_host_path(&bin)?;
+        windows_host_path(&bin).ok_or("Windows server 路径无效")?;
     }
-    // 总截止从第一步开始计：启动、轮询、握手、淘汰旧版本都扣同一份预算。
+    // 总截止从第一步开始计：拉起、握手、淘汰旧版本都扣同一份预算。
     let deadline = Instant::now() + AGENT_DAEMON_ENSURE_TIMEOUT;
-    // 先连已有实例：重连、多项目、冷却重试时 daemon 通常早就在跑，直接读 token
-    // 握手即可，省掉一次启动 exec（Windows 上是一次 PowerShell 冷启动）。
-    // 读不到 token 或握手失败才幂等启动（unix `nohup setsid`；Windows
-    // `daemon --detach` 自脱离）。
-    let mut started = false;
-    let mut restarted_for_stale_version = false;
+    let mut shut_down_stale = false;
     loop {
-        let token = read_daemon_token(manager, root, windows, deadline).await;
-        if let Some(token) = token.filter(|token| !token.is_empty()) {
-            let access = DaemonAccess {
-                bin: bin.clone(),
-                token,
-            };
-            match probe_daemon_versioned(manager, connection_id, &access, deadline).await {
-                ProbeOutcome::Ready => return Some(access),
-                ProbeOutcome::StaleVersion if !restarted_for_stale_version => {
-                    // 旧版 daemon 还持着单实例锁：拿它自己的 token 请求
-                    // 退出，再按新二进制拉起一轮。只做一次，避免循环。
-                    restarted_for_stale_version = true;
-                    shutdown_remote_daemon_until(manager, connection_id, &access, deadline).await;
-                    start_daemon(manager, root, &bin, windows, deadline).await;
-                    started = true;
-                    continue;
+        let last_error = match ensure_daemon_token(manager, root, &bin, windows, deadline).await {
+            Ok(token) => {
+                let access = DaemonAccess {
+                    bin: bin.clone(),
+                    token,
+                };
+                match probe_daemon_versioned(manager, connection_id, &access, deadline).await {
+                    ProbeOutcome::Ready => return Ok(access),
+                    ProbeOutcome::StaleVersion(reason) if !shut_down_stale => {
+                        // 旧版 daemon 还持着单实例锁：拿它自己的 token 请求退出，
+                        // 下一轮 daemon-token 按新二进制拉起。只做一次，避免循环。
+                        shut_down_stale = true;
+                        shutdown_remote_daemon_until(manager, connection_id, &access, deadline)
+                            .await;
+                        reason
+                    }
+                    ProbeOutcome::StaleVersion(reason) | ProbeOutcome::Unavailable(reason) => {
+                        reason
+                    }
                 }
-                _ => {}
             }
-        }
-        // 首轮没有可用实例（无 token / 握手失败）：拉起后立即重读，不先睡。
-        if !started {
-            start_daemon(manager, root, &bin, windows, deadline).await;
-            started = true;
-            continue;
-        }
+            Err(reason) => reason,
+        };
         if Instant::now() >= deadline {
-            return None;
+            return Err(last_error);
         }
-        tokio::time::sleep(Duration::from_millis(500).min(deadline - Instant::now())).await;
+        // 旧实例退出、管道/socket 释放有短暂空窗，稍等再试。
+        tokio::time::sleep(Duration::from_millis(300).min(deadline - Instant::now())).await;
     }
 }
 
@@ -908,8 +901,8 @@ fn daemon_step_budget(deadline: Instant, now: Instant, cap: Duration) -> Option<
 /// 探测结果区分「连不上」与「版本过期」：后者值得淘汰旧实例后重试一轮。
 enum ProbeOutcome {
     Ready,
-    StaleVersion,
-    Unavailable,
+    StaleVersion(String),
+    Unavailable(String),
 }
 
 async fn probe_daemon_versioned(
@@ -920,7 +913,7 @@ async fn probe_daemon_versioned(
 ) -> ProbeOutcome {
     let Some(budget) = daemon_step_budget(deadline, Instant::now(), AGENT_DAEMON_HELLO_TIMEOUT)
     else {
-        return ProbeOutcome::Unavailable;
+        return ProbeOutcome::Unavailable("daemon 探测超时".to_string());
     };
     match open_daemon_channel_with(
         manager,
@@ -936,56 +929,42 @@ async fn probe_daemon_versioned(
             channel.shutdown().await;
             ProbeOutcome::Ready
         }
-        Err(reason) if reason.contains("daemon 版本不匹配") => ProbeOutcome::StaleVersion,
-        Err(_) => ProbeOutcome::Unavailable,
+        Err(reason) if reason.contains("daemon 版本不匹配") => {
+            ProbeOutcome::StaleVersion(reason)
+        }
+        Err(reason) => ProbeOutcome::Unavailable(reason),
     }
 }
 
-/// 按平台幂等拉起 daemon（首次启动与版本淘汰后的第二次拉起共用）。
-/// 结果只尽力而为：失败或超时都交给随后的 token 轮询判定。
-async fn start_daemon(
+/// 一次 exec 确保 daemon 在跑并取回 token（见 [`daemon_token_command`]）。
+/// 直接 exec 二进制本体，Windows 上不经 PowerShell 包装。
+async fn ensure_daemon_token(
     manager: &SshManager,
     root: &RegisteredRoot,
     bin: &str,
     windows: bool,
     deadline: Instant,
-) {
-    let Some(timeout) = daemon_step_budget(deadline, Instant::now(), AGENT_DAEMON_STEP_TIMEOUT)
-    else {
-        return;
-    };
-    if windows {
-        if let Some(native_bin) = windows_host_path(bin) {
-            let script = windows_daemon_start_script(&native_bin);
-            let _ = manager
-                .exec_remote_shell(&root.uri, "", &script, true, timeout)
-                .await;
-        }
+) -> Result<String, String> {
+    let timeout = daemon_step_budget(deadline, Instant::now(), AGENT_DAEMON_STEP_TIMEOUT)
+        .ok_or("daemon 探测超时")?;
+    let command = if windows {
+        windows_daemon_token_command(bin)
     } else {
-        let _ = manager
-            .exec_command(&root.uri, &start_daemon_command(bin), None, true, timeout)
-            .await;
+        daemon_token_command(bin)
+    };
+    let result = manager
+        .exec_command(&root.uri, &command, None, true, timeout)
+        .await?;
+    let token = result.stdout.trim();
+    if result.exit_code != 0 || token.is_empty() {
+        let detail = result.stderr.trim();
+        return Err(if detail.is_empty() {
+            format!("启动 daemon 失败（退出码 {}）", result.exit_code)
+        } else {
+            format!("启动 daemon 失败：{detail}")
+        });
     }
-}
-
-/// 读取 daemon 会话 token：unix shell 命令 / Windows PowerShell 脚本。
-async fn read_daemon_token(
-    manager: &SshManager,
-    root: &RegisteredRoot,
-    windows: bool,
-    deadline: Instant,
-) -> Option<String> {
-    let timeout = daemon_step_budget(deadline, Instant::now(), AGENT_DAEMON_STEP_TIMEOUT)?;
-    let result = if windows {
-        manager
-            .exec_remote_shell(&root.uri, "", &windows_daemon_token_script(), true, timeout)
-            .await
-    } else {
-        manager
-            .exec_command(&root.uri, &daemon_token_command(), None, true, timeout)
-            .await
-    };
-    result.ok().map(|result| result.stdout.trim().to_string())
+    Ok(token.to_string())
 }
 
 /// 记录「daemon 传输暂不可用」：保留 serve 端点，只清 daemon 标记并记下降级
@@ -1085,13 +1064,52 @@ async fn shutdown_remote_daemon_with(
     result.is_ok()
 }
 
+/// daemon 调用失败的两类：daemon 正常应答了错误，与传输层故障。
+///
+/// 只有传输故障说明 daemon 不可用、值得降级。业务错误（目录已删除、无权限、
+/// 正则无效）是请求本身的问题：此前一并降级，文件树刷新一个刚删掉的目录就让
+/// daemon 冷却 5 分钟，期间 Server 模式新建终端全部报「daemon 不可用」。
+#[derive(Debug)]
+pub(crate) enum DaemonCallError {
+    /// daemon 回了 ERR 帧或以失败结束流：daemon 本身工作正常。
+    Remote(String),
+    /// 握手、收发帧、超时、解析失败等传输问题。
+    Transport(String),
+}
+
+impl DaemonCallError {
+    pub(crate) fn is_transport(&self) -> bool {
+        matches!(self, Self::Transport(_))
+    }
+}
+
+impl From<String> for DaemonCallError {
+    fn from(message: String) -> Self {
+        Self::Transport(message)
+    }
+}
+
+impl From<DaemonCallError> for String {
+    fn from(error: DaemonCallError) -> Self {
+        error.to_string()
+    }
+}
+
+impl std::fmt::Display for DaemonCallError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Remote(message) | Self::Transport(message) => f.write_str(message),
+        }
+    }
+}
+
 /// daemon 通道上的单请求 RPC：发 REQ、等 RES 或 ERR，返回 RES 的 result。
 pub(super) async fn daemon_rpc(
     channel: &mut DaemonChannel,
     method: &str,
     params: &serde_json::Value,
     deadline: Instant,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, DaemonCallError> {
     let request = Request::with_params(DAEMON_REQUEST_ID, method, params)
         .map_err(|error| format!("编码 daemon 请求失败：{error}"))?;
     let payload =
@@ -1110,10 +1128,10 @@ pub(super) async fn daemon_rpc(
             Kind::Err if frame.stream_id == DAEMON_REQUEST_ID => {
                 let body: ErrorBody = proto::decode_value(&frame.payload)
                     .map_err(|error| format!("解析 daemon 错误帧失败：{error}"))?;
-                return Err(format!(
+                return Err(DaemonCallError::Remote(format!(
                     "daemon {method} 失败（{}）：{}",
                     body.code, body.message
-                ));
+                )));
             }
             _ => {}
         }
@@ -1128,7 +1146,7 @@ pub(crate) async fn daemon_scan_entries(
     daemon: &DaemonAccess,
     canonical_root: &str,
     relative: &str,
-) -> Result<Vec<(String, bool)>, String> {
+) -> Result<Vec<(String, bool)>, DaemonCallError> {
     let mut channel = open_daemon_channel(manager, connection_id, daemon).await?;
     let result = async {
         let params = serde_json::json!({ "root": canonical_root, "path": relative });
@@ -1142,7 +1160,7 @@ pub(crate) async fn daemon_scan_entries(
         let entries = value
             .get("entries")
             .and_then(|entries| entries.as_array())
-            .ok_or_else(|| "daemon scan 应答缺少 entries".to_string())?;
+            .ok_or_else(|| DaemonCallError::from("daemon scan 应答缺少 entries".to_string()))?;
         let mut parsed = Vec::with_capacity(entries.len());
         for entry in entries {
             let Some(name) = entry.get("name").and_then(|value| value.as_str()) else {
@@ -1203,7 +1221,7 @@ pub(crate) async fn daemon_search_content_call(
     deadline: Instant,
     cancelled: impl Fn() -> bool,
     mut on_record: impl FnMut(&serde_json::Value) -> bool,
-) -> Result<ServerStreamOutcome, String> {
+) -> Result<ServerStreamOutcome, DaemonCallError> {
     let mut channel = open_daemon_channel(manager, connection_id, daemon).await?;
     let result = async {
         let request = Request::with_params(
@@ -1246,7 +1264,7 @@ pub(crate) async fn daemon_search_content_call(
                     // CANCEL 已发但远端迟迟不收尾：放弃等待，通道随关闭收尾。
                     return Ok(ServerStreamOutcome::Stopped);
                 }
-                return Err("server 操作超时".to_string());
+                return Err("server 操作超时".to_string().into());
             }
             let frame = channel.next_frame(deadline).await?;
             match frame.kind {
@@ -1281,7 +1299,9 @@ pub(crate) async fn daemon_search_content_call(
                         return Ok(ServerStreamOutcome::Stopped);
                     }
                     if !end.ok {
-                        return Err(end.error.unwrap_or_else(|| "daemon 搜索失败".to_string()));
+                        return Err(DaemonCallError::Remote(
+                            end.error.unwrap_or_else(|| "daemon 搜索失败".to_string()),
+                        ));
                     }
                     return Ok(ServerStreamOutcome::Done {
                         truncated: end
@@ -1299,10 +1319,10 @@ pub(crate) async fn daemon_search_content_call(
                 Kind::Err if frame.stream_id == DAEMON_REQUEST_ID => {
                     let body: ErrorBody = proto::decode_value(&frame.payload)
                         .map_err(|error| format!("解析 daemon 错误帧失败：{error}"))?;
-                    return Err(format!(
+                    return Err(DaemonCallError::Remote(format!(
                         "daemon 搜索失败（{}）：{}",
                         body.code, body.message
-                    ));
+                    )));
                 }
                 _ => {}
             }
@@ -1572,6 +1592,20 @@ mod tests {
         assert!(assembler
             .push(&empty)
             .is_some_and(|record| record.is_empty()));
+    }
+
+    #[test]
+    fn daemon_call_error_only_treats_transport_failures_as_downgrade_worthy() {
+        // 传输层错误（String 经 `?` 转换）才需要降级 daemon。
+        let transport: DaemonCallError = "daemon 响应超时".to_string().into();
+        assert!(transport.is_transport());
+        // daemon 应答的业务错误（真机：扫描已删除目录返回 code=io）不降级。
+        let remote = DaemonCallError::Remote("daemon fs.scan 失败（io）：无法访问目录".to_string());
+        assert!(!remote.is_transport());
+        assert_eq!(
+            String::from(remote),
+            "daemon fs.scan 失败（io）：无法访问目录"
+        );
     }
 
     #[test]

@@ -26,6 +26,7 @@ const USAGE: &str = "\
   qingcode-server daemon [--state-dir <目录>] [--detach] [--max-ptys <数量>] [--scrollback-bytes <字节>]
                         [--detached-ttl-secs <秒>] [--idle-exit-secs <秒>]
   qingcode-server connect --stdio [--ensure-daemon] [--state-dir <目录>]
+  qingcode-server daemon-token [--ensure-daemon] [--state-dir <目录>]
   qingcode-server self-check [--expect-sha256 <hex>]";
 
 /// 已有同 root 实例在运行时的退出码。调用方据此判定「无需再起」，而不是启动失败。
@@ -91,6 +92,7 @@ fn main() -> ExitCode {
         "self-check" => run_self_check(rest),
         "daemon" => run_daemon(rest),
         "connect" => run_connect(rest),
+        "daemon-token" => run_daemon_token(rest),
         other => {
             eprintln!("未知子命令: {other}\n{USAGE}");
             ExitCode::from(2)
@@ -454,7 +456,7 @@ fn run_daemon(args: &[String]) -> ExitCode {
 
 /// `connect --stdio`：代理退出即代表本次 SSH 会话结束，不触碰 daemon。
 fn run_connect(args: &[String]) -> ExitCode {
-    let options = match parse_connect_args(args) {
+    let options = match parse_connect_args(args, true) {
         Ok(options) => options,
         Err(message) => {
             eprintln!("{message}\n{USAGE}");
@@ -512,7 +514,35 @@ fn parse_daemon_args(
     Ok((options, detach))
 }
 
-fn parse_connect_args(args: &[String]) -> Result<qingcode_server::connect::ConnectOptions, String> {
+/// `daemon-token`：确保 daemon 在跑并把 token 输出到 stdout（只有 token 一行）。
+fn run_daemon_token(args: &[String]) -> ExitCode {
+    let options = match parse_connect_args(args, false) {
+        Ok(options) => options,
+        Err(message) => {
+            eprintln!(
+                "{message}
+{USAGE}"
+            );
+            return ExitCode::from(2);
+        }
+    };
+    match qingcode_server::connect::ensure_daemon_token(&options) {
+        Ok(token) => {
+            println!("{token}");
+            ExitCode::SUCCESS
+        }
+        Err(message) => {
+            eprintln!("{message}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// `connect` 与 `daemon-token` 共用的参数解析；`require_stdio` 只对 connect 生效。
+fn parse_connect_args(
+    args: &[String],
+    require_stdio: bool,
+) -> Result<qingcode_server::connect::ConnectOptions, String> {
     use qingcode_server::connect::ConnectOptions;
 
     let mut options = ConnectOptions::default();
@@ -548,7 +578,7 @@ fn parse_connect_args(args: &[String]) -> Result<qingcode_server::connect::Conne
             }
         }
     }
-    if !stdio {
+    if require_stdio && !stdio {
         return Err("connect 需要 --stdio（本期只支持 stdio 代理模式）".to_string());
     }
     Ok(options)
@@ -782,18 +812,28 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn connect_args_require_stdio() {
-        assert!(parse_connect_args(&["--ensure-daemon".to_string()]).is_err());
-        let options = parse_connect_args(&[
-            "--stdio".to_string(),
-            "--ensure-daemon".to_string(),
-            "--state-dir".to_string(),
-            "/tmp/run".to_string(),
-        ])
+        assert!(parse_connect_args(&["--ensure-daemon".to_string()], true).is_err());
+        let options = parse_connect_args(
+            &[
+                "--stdio".to_string(),
+                "--ensure-daemon".to_string(),
+                "--state-dir".to_string(),
+                "/tmp/run".to_string(),
+            ],
+            true,
+        )
         .unwrap();
         assert!(options.ensure_daemon);
         assert_eq!(options.state_dir, Some(PathBuf::from("/tmp/run")));
         assert_eq!(options.start_timeout, std::time::Duration::from_secs(10));
-        assert!(parse_connect_args(&["--stdio".to_string(), "--nope".to_string()]).is_err());
+        assert!(parse_connect_args(&["--stdio".to_string(), "--nope".to_string()], true).is_err());
+    }
+
+    #[test]
+    fn daemon_token_args_do_not_require_stdio() {
+        let options = parse_connect_args(&["--ensure-daemon".to_string()], false).unwrap();
+        assert!(options.ensure_daemon);
+        assert!(parse_connect_args(&["--nope".to_string()], false).is_err());
     }
 
     #[test]

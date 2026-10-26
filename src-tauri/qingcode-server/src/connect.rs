@@ -69,6 +69,28 @@ pub fn run_stdio(options: ConnectOptions) -> Result<(), String> {
     }
 }
 
+/// `daemon-token`：确保 daemon 在跑（`ensure_daemon` 时缺席即拉起），返回会话 token。
+///
+/// 客户端探测 daemon 只需这一次 exec：此前要分别「读 token → 拉起 daemon →
+/// 再读 token」，Windows 上每步都是一次 PowerShell 冷启动（真机约 2.5s/次）。
+/// 这里由二进制自己完成，不经任何 shell 包装。token 仍由客户端在 HELLO 里
+/// 提交、daemon 校验，返回的值是否属于存活实例由随后的真实握手确认。
+pub fn ensure_daemon_token(options: &ConnectOptions) -> Result<String, String> {
+    let run_dir = RunDir::resolve(options.state_dir.as_deref())?;
+    let endpoint = IpcEndpoint::new(run_dir.dir());
+    if !endpoint_is_ready(&endpoint, &run_dir) {
+        if !options.ensure_daemon {
+            return Err(format!(
+                "daemon 未运行（{}），未指定 --ensure-daemon",
+                endpoint.describe()
+            ));
+        }
+        let mut child = spawn_daemon(options.state_dir.as_deref())?;
+        wait_ready(&endpoint, &run_dir, options.start_timeout, &mut child)?;
+    }
+    run_dir.read_token()
+}
+
 /// 先直连一次，失败且允许时拉起 daemon 再连（Unix：socket 阻塞客户端）。
 #[cfg(unix)]
 fn connect_blocking_or_spawn(
@@ -430,7 +452,9 @@ fn endpoint_is_ready(endpoint: &IpcEndpoint, run_dir: &RunDir) -> bool {
     if !run_dir.ready_marker().exists() || run_dir.read_token().is_err() {
         return false;
     }
-    match endpoint.blocking_connect() {
+    // 只判断存活，不必按 2 秒跨 acceptor 空窗：判不活的代价只是多拉起一个
+    // 抢不到锁、立即退出的 daemon，而 wait_ready 会继续轮询。
+    match endpoint.blocking_connect_within(Duration::from_millis(250)) {
         Ok(pair) => {
             drop(pair);
             true

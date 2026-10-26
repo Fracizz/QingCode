@@ -179,12 +179,6 @@ pub(crate) fn deploy_server_command(bin: &str, root: &str, state: &str, log: &st
     )
 }
 
-/// 幂等启动远端 daemon：`nohup setsid` 脱离本次 SSH 会话，输出丢弃；
-/// 已有实例时新进程因抢不到 `flock` 直接退出 0，重复执行无副作用。
-pub(crate) fn start_daemon_command(bin: &str) -> String {
-    format!("nohup setsid {} daemon >/dev/null 2>&1 &", shell_quote(bin))
-}
-
 /// 连接代理命令：在 exec 通道内运行，随通道生灭。`--ensure-daemon` 让代理
 /// 在 daemon 缺席时自行拉起（`flock` 保证单实例）。
 pub(crate) fn connect_daemon_command(bin: &str) -> String {
@@ -197,49 +191,55 @@ pub(crate) fn connect_daemon_command_existing(bin: &str) -> String {
     format!("{} connect --stdio", shell_quote(bin))
 }
 
-/// 读取 daemon 会话 token 的命令。token 由 daemon 启动时写入
-/// `$HOME/.qingcode/server/run/token`（权限 `0600`），仅同一 SSH 用户可读。
-pub(crate) fn daemon_token_command() -> String {
-    "cat \"$HOME/.qingcode/server/run/token\" 2>/dev/null".to_string()
+/// 确保 daemon 在跑并输出会话 token：一次 exec 完成「读 token / 缺席即拉起 /
+/// 等就绪」。直接 exec 二进制本体，Windows 上不经 PowerShell（真机每次冷启动
+/// 约 2.5s）；daemon 由二进制自己脱离会话拉起（unix `setsid`，Windows
+/// `CREATE_BREAKAWAY_FROM_JOB`）。token 只出现在 stdout，不进命令行。
+pub(crate) fn daemon_token_command(bin: &str) -> String {
+    format!("{} daemon-token --ensure-daemon", shell_quote(bin))
 }
 
-/// Windows：daemon 幂等启动脚本（经 exec_remote_shell 的 PowerShell 包装）。
-/// `daemon --detach` 由 server 自身再拉起脱离副本（`CREATE_NO_WINDOW |
-/// CREATE_BREAKAWAY_FROM_JOB`，与 serve `--detach` 同机制），启动器立即退出；
-/// 已有实例时新 daemon 抢不到首实例锁，按成功退出，重复执行无副作用。
-pub(crate) fn windows_daemon_start_script(native_bin: &str) -> String {
+/// Windows 版 [`daemon_token_command`]，程序路径写法同 connect 代理。
+pub(crate) fn windows_daemon_token_command(remote_bin: &str) -> String {
     format!(
-        "$ErrorActionPreference = 'Stop'
-& '{bin}' daemon --detach
-if ($LASTEXITCODE -ne 0) {{ exit 1 }}",
-        bin = powershell_literal(native_bin),
+        "{} daemon-token --ensure-daemon",
+        windows_exec_program(remote_bin)
     )
-}
-
-/// Windows：读取 daemon 会话 token 的脚本。token 路径由 daemon 侧
-/// `%USERPROFILE%\.qingcode\server\run\token` 决定，这里用同一环境变量拼出。
-pub(crate) fn windows_daemon_token_script() -> String {
-    "$token = Join-Path $env:USERPROFILE '.qingcode\\server\\run\\token'
-Get-Content -LiteralPath $token -ErrorAction SilentlyContinue"
-        .to_string()
 }
 
 /// Windows：connect 代理的 exec 命令——**不经过 PowerShell 包装**，直接 exec
 /// 二进制本体。PS 的启动噪声（`#< CLIXML`、模块加载进度流）会混进 stdout
-/// 破坏二进制帧流；远端默认 shell（cmd / Git Bash）对原生进程是句柄直通，
-/// 帧流原样可达。反斜杠转正斜格并去 POSIX 前导斜杠：`/D:/x/y.exe` →
-/// `D:/x/y.exe`，bash 与 cmd 都能直接执行。
+/// 破坏二进制帧流；远端默认 shell 对原生进程是句柄直通，帧流原样可达。
 pub(crate) fn windows_connect_daemon_command(remote_bin: &str) -> String {
-    let trimmed = remote_bin.trim_start_matches('/');
-    let forward = trimmed.replace('\\', "/");
-    format!("\"{forward}\" connect --stdio --ensure-daemon")
+    format!(
+        "{} connect --stdio --ensure-daemon",
+        windows_exec_program(remote_bin)
+    )
 }
 
 /// 只连已有 daemon 的 Windows 代理命令（不会拉起新实例），用于升级前淘汰旧实例。
 pub(crate) fn windows_connect_daemon_command_existing(remote_bin: &str) -> String {
-    let trimmed = remote_bin.trim_start_matches('/');
-    let forward = trimmed.replace('\\', "/");
-    format!("\"{forward}\" connect --stdio")
+    format!("{} connect --stdio", windows_exec_program(remote_bin))
+}
+
+/// exec 命令里的程序路径，要同时适配 OpenSSH 的三种默认 shell。
+///
+/// 反斜杠转正斜杠并去 POSIX 前导斜杠：`/D:/x/y.exe` → `D:/x/y.exe`，Git Bash
+/// 不会把反斜杠当转义。路径只含安全字符时**不加引号**：默认 shell 是
+/// PowerShell 时，`"D:/x/y.exe" connect` 是「字符串表达式 + 多余参数」，直接
+/// 报语法错误，daemon 永远连不上；裸路径则 cmd / PowerShell / Git Bash 都按
+/// 程序执行。含空格等字符时只能加引号（cmd / Git Bash 可用）。
+fn windows_exec_program(remote_bin: &str) -> String {
+    let forward = remote_bin.trim_start_matches('/').replace('\\', "/");
+    let bare = !forward.is_empty()
+        && forward
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/:._-".contains(&byte));
+    if bare {
+        forward
+    } else {
+        format!("\"{forward}\"")
+    }
 }
 
 /// 生成清理旧 server 的命令：先校验 `/proc/<pid>/cmdline` 的进程身份再 kill。
@@ -523,18 +523,17 @@ mod tests {
     #[test]
     fn daemon_commands_are_quoted_and_side_effect_free() {
         let bin = "/srv/app/.qingcode/server/qingcode-server-x86_64";
-        let start = start_daemon_command(bin);
-        // 后台 + 静默：命令立即返回，且不往通道输出任何东西。
-        assert!(start.starts_with("nohup setsid '"));
-        assert!(start.contains("' daemon >/dev/null 2>&1 &"));
-        assert!(start.ends_with('&'));
         let connect = connect_daemon_command(bin);
         assert!(connect.starts_with("'"));
         assert!(connect.ends_with(" connect --stdio --ensure-daemon"));
-        // token 读取限定在运行目录内，失败静默（文件不存在时返回空输出）。
+        // token 由二进制自己确保 daemon 后输出：一次 exec，不经 shell 脚本。
         assert_eq!(
-            daemon_token_command(),
-            "cat \"$HOME/.qingcode/server/run/token\" 2>/dev/null"
+            daemon_token_command(bin),
+            format!("'{bin}' daemon-token --ensure-daemon")
+        );
+        assert_eq!(
+            windows_daemon_token_command("/C:/Users/dev/bin.exe"),
+            "C:/Users/dev/bin.exe daemon-token --ensure-daemon"
         );
     }
 
@@ -640,8 +639,29 @@ mod tests {
         assert!(unix.ends_with(" connect --stdio"));
         assert!(!unix.contains("--ensure-daemon"));
         let windows = windows_connect_daemon_command_existing("/D:/app/qingcode-server.exe");
-        assert_eq!(windows, "\"D:/app/qingcode-server.exe\" connect --stdio");
+        assert_eq!(windows, "D:/app/qingcode-server.exe connect --stdio");
         assert!(!windows.contains("--ensure-daemon"));
+    }
+
+    #[test]
+    fn windows_connect_command_runs_under_powershell_default_shell() {
+        // 常规安装路径不加引号：PowerShell 把带引号的首词当字符串表达式，后接参数即语法错误。
+        assert_eq!(
+            windows_connect_daemon_command(
+                "/C:/Users/dev/.qingcode/server/0.1.13/qingcode-server-windows-x86_64.exe"
+            ),
+            "C:/Users/dev/.qingcode/server/0.1.13/qingcode-server-windows-x86_64.exe connect --stdio --ensure-daemon"
+        );
+        // 反斜杠统一转正斜杠，Git Bash 不会当转义吃掉。
+        assert_eq!(
+            windows_connect_daemon_command(r"C:\Users\dev\bin.exe"),
+            "C:/Users/dev/bin.exe connect --stdio --ensure-daemon"
+        );
+        // 含空格只能加引号，cmd / Git Bash 下仍可执行。
+        assert_eq!(
+            windows_connect_daemon_command("/C:/Users/John Doe/bin.exe"),
+            "\"C:/Users/John Doe/bin.exe\" connect --stdio --ensure-daemon"
+        );
     }
 
     #[test]
