@@ -3027,6 +3027,26 @@ pub fn ssh_connection_status(
 }
 
 #[tauri::command]
+pub async fn ssh_prepare_workspace(
+    root_uri: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    let parsed = parse_remote_uri(&root_uri)?;
+    if !manager.connection_is_open(&parsed.connection_id) {
+        return Err("SSH 连接未建立".to_string());
+    }
+    let root = manager.registered_root(&root_uri)?;
+    // A registered root is not a usable Server workspace yet. Files need the
+    // service and terminals need its daemon; reuse their bounded preparation.
+    // Restricted workspaces and explicit SSH mode retain their SFTP-only path.
+    if root.trusted && manager.root_server_mode(&root) {
+        server::require_server_endpoint(&app, &manager, &root, true).await?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub fn ssh_workspace_status(
     root_uri: String,
     manager: State<'_, SshManager>,

@@ -844,6 +844,7 @@ pub fn run() {
             remote_ssh::ssh_disconnect,
             remote_ssh::ssh_connection_status,
             remote_ssh::ssh_workspace_status,
+            remote_ssh::ssh_prepare_workspace,
             remote_ssh::ssh_workspace_roots,
             remote_ssh::ssh_server_states,
             remote_ssh::ssh_set_workspace_trust,

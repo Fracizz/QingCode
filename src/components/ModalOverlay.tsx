@@ -122,7 +122,7 @@ export default function ModalOverlay({
     <div
       ref={overlayRef}
       data-modal-overlay=""
-      className={`window-no-drag-region fixed inset-0 ${zIndex} flex ${align === 'start' ? 'items-start' : 'items-center'} justify-center p-4 ${className}`}
+      className={`window-no-drag-region fixed inset-0 isolate ${zIndex} flex ${align === 'start' ? 'items-start' : 'items-center'} justify-center p-4 ${className}`}
       role="presentation"
       tabIndex={-1}
       onPointerDown={stopWindowChromeBubble}
@@ -130,7 +130,7 @@ export default function ModalOverlay({
       onDoubleClick={stopWindowChromeBubble}
     >
       <div
-        className="modal-overlay-enter absolute inset-0 bg-black/55 backdrop-blur-[3px] transition-all duration-150"
+        className="modal-overlay-enter absolute inset-0 -z-10 bg-black/55 backdrop-blur-[3px] transition-all duration-150"
         aria-hidden
         onMouseDown={onDismiss}
       />

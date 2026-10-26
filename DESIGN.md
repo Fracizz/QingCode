@@ -358,6 +358,8 @@ exe 冷启动耗时主要来自 WebView2 初始化与首包 JS 解析；Editor /
 
 **所有模态对话框必须在视口水平、垂直居中（center）。**
 
+共享 `ModalOverlay` 创建独立层叠上下文，遮罩固定在内容下方，不能依赖面板的入场动画 transform 临时建立层级。远程项目打开期间使用 `SshOpeningDialog` 显示连接、服务与终端准备、首次文件读取进度；确认可访问后才切换当前项目，失败保留诊断与重试/远程连接入口，等待可取消。
+
 | 项 | 约定 |
 |----|------|
 | 外壳 | 统一使用 `ModalOverlay`（`src/components/ModalOverlay.tsx`） |

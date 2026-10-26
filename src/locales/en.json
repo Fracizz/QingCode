@@ -685,7 +685,6 @@
     "每个项目最多可创建 {count} 个终端": "Each project can have at most {count} terminals",
     "已接回 {count} 个远端终端": "Reattached {count} remote terminal(s)",
     "受终端数量上限限制，还有 {count} 个远端终端未接回": "{count} remote terminal(s) were not reattached because the terminal limit was reached",
-    "正在连接 SSH 项目 {name}…": "Connecting to SSH project {name}…",
     "会话输出已恢复；进程将按原配置重新启动": "Session output restored; the process will restart with its previous configuration",
     "会话输出已恢复；可从终端标签重启进程": "Session output restored; restart the process from the terminal tab",
     "见 JSON 注释 / 帮助文档": "See JSON comments / help docs",
@@ -1403,6 +1402,16 @@
     "准备完成后会自动更新状态，无需重复操作。": "The status updates automatically when ready. No further action is needed.",
     "请查看诊断信息，检查服务安装设置后重试。": "Review the diagnostics and service installation settings, then try again.",
     "连接耗时": "Connection timings",
-    "重试远端服务": "Retry remote service"
+    "重试远端服务": "Retry remote service",
+    "连接 SSH": "Connect to SSH",
+    "准备远端服务和终端": "Prepare remote service and terminals",
+    "读取项目文件": "Read project files",
+    "正在准备远程终端…": "Preparing remote terminals…",
+    "无法打开远程项目": "Unable to open remote project",
+    "正在打开远程项目": "Opening remote project",
+    "请检查连接或远端服务后重试。": "Check the connection or remote service, then retry.",
+    "首次连接可能需要下载、上传和启动远端服务。准备完成后将自动打开项目。": "The first connection may need to download, upload, and start the remote service. The project will open automatically when ready.",
+    "取消打开": "Cancel opening",
+    "打开远程项目超时，请检查连接或远端服务后重试。": "Opening the remote project timed out. Check the connection or remote service, then retry."
   }
 }

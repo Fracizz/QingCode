@@ -254,6 +254,41 @@ export async function isSshWorkspaceReady(rootUri: string): Promise<boolean> {
   }
 }
 
+/** Registration only proves SSH/SFTP is connected. Wait for the service and
+ * daemon needed by files and terminals before activating a Server workspace. */
+export async function prepareSshWorkspace(
+  rootUri: string,
+  signal: AbortSignal,
+  onState: (state: SshServerState) => void
+): Promise<void> {
+  let stopped = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const stop = () => {
+    stopped = true
+    clearTimeout(timer)
+  }
+  const poll = async () => {
+    try {
+      const value = await safeInvoke('读取 SSH Agent 状态', 'ssh_server_info', { rootUri })
+      const state = parseSshServerState(value)
+      if (!stopped && state?.rootUri === rootUri) onState(state)
+    } catch {
+      // Preparation owns the authoritative result; a missed snapshot is harmless.
+    }
+    if (!stopped) timer = setTimeout(() => void poll(), 1000)
+  }
+  signal.throwIfAborted()
+  signal.addEventListener('abort', stop, { once: true })
+  void poll()
+  try {
+    await safeInvoke('准备 SSH 项目', 'ssh_prepare_workspace', { rootUri })
+    signal.throwIfAborted()
+  } finally {
+    stop()
+    signal.removeEventListener('abort', stop)
+  }
+}
+
 export interface SshWorkspaceRoot {
   rootUri: string
   trusted: boolean
