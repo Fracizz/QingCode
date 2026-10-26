@@ -234,14 +234,13 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                       ) : (
                         <ProjectKindIcon
                           project={project}
-                          connections={sshConnections}
                           size={13}
                           className="text-accent"
                         />
                       )}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-ui">{project.name}</span>
-                    <ProjectKindBadge project={project} connections={sshConnections} />
+                    <ProjectKindBadge project={project} />
                     {project.hidden ? (
                       <span className="flex-shrink-0 text-ui-2xs text-fg-dim">
                         {t('已隐藏')}

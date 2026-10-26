@@ -194,7 +194,9 @@ function App() {
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
   const [projectsReady, setProjectsReady] = useState(false)
   const terminalPosition = terminalPositionForTemplate(panelLayout)
-  const sideEditorSlotVisible = panelLayout !== 'sideTerminal' || sideEditorVisible
+  // 编辑器已隐藏时再收起侧边终端，若不回显编辑器，网格只剩 auto 轨道会被拉伸导致布局错乱
+  const sideEditorSlotVisible =
+    panelLayout !== 'sideTerminal' || sideEditorVisible || !terminalOpen
   const sideDualActive = panelLayout === 'sideTerminal' && sideDualTerminal && !sideQuadTerminal
   const sideQuadActive = panelLayout === 'sideTerminal' && sideQuadTerminal
   const sidebarSlotVisible =

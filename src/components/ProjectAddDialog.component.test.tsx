@@ -93,7 +93,7 @@ describe('ProjectAddDialog', () => {
     ).toHaveTextContent('SSH')
   })
 
-  it('marks WSL projects with cloud icon and WSL badge in the picker list', () => {
+  it('marks SSH projects on a connection named WSL with an SSH badge', () => {
     useProjectStore.setState({
       projects: [
         first,
@@ -127,7 +127,8 @@ describe('ProjectAddDialog', () => {
     const wslOption = screen.getByRole('option', {
       name: 'QingCode — franciz@localhost:/home/code/QingCode',
     })
-    expect(wslOption).toHaveTextContent('WSL')
+    expect(wslOption).toHaveTextContent('SSH')
+    expect(wslOption).not.toHaveTextContent('WSL')
     expect(document.querySelector('.lucide-cloud')).toBeInTheDocument()
   })
 

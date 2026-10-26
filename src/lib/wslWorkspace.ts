@@ -1,5 +1,4 @@
-import type { Project, SshConnection } from '../types'
-import { sshConnectionIdFromUri } from './sshWorkspace'
+import type { Project } from '../types'
 
 /** 本机 WSL 发行版的 UNC 根目录，用作文件夹选择器的初始位置。 */
 export const WSL_ROOT_PATH = '\\\\wsl.localhost\\'
@@ -30,36 +29,17 @@ export function isWslPath(path: string | null | undefined): boolean {
 }
 
 /**
- * Checks whether a project is a WSL project.
+ * Checks whether a project is a local WSL project.
  *
- * A project is considered WSL if:
- * - `project.kind === 'wsl'`, or
- * - `project.path` matches a WSL path, or
- * - it is an SSH project whose connection name is 'WSL' (case-insensitive) or connection_id is 'wsl'.
+ * Only the explicit `kind` and the project path decide. SSH connection names are
+ * user-defined labels, so an SSH project named "WSL" must stay an SSH project.
  */
 export function isWslProject(
-  project:
-    | (Pick<Project, 'kind' | 'path'> & Partial<Pick<Project, 'connection_id'>>)
-    | null
-    | undefined,
-  connections?: ReadonlyArray<Pick<SshConnection, 'id' | 'name'>>
+  project: Pick<Project, 'kind' | 'path'> | null | undefined
 ): boolean {
   if (!project) return false
   if (project.kind === 'wsl') return true
-  if (isWslPath(project.path)) return true
-
-  const connectionId = project.connection_id || (project.path ? sshConnectionIdFromUri(project.path) : undefined)
-  if (connectionId) {
-    if (connectionId.toLowerCase() === 'wsl') return true
-    if (connections) {
-      const conn = connections.find(c => c.id === connectionId)
-      if (conn && conn.name.trim().toLowerCase() === 'wsl') {
-        return true
-      }
-    }
-  }
-
-  return false
+  return isWslPath(project.path)
 }
 
 /**

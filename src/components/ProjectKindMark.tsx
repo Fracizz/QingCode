@@ -3,22 +3,20 @@ import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { isSshProject } from '../lib/sshWorkspace'
 import { isWslProject } from '../lib/wslWorkspace'
-import type { Project, SshConnection } from '../types'
+import type { Project } from '../types'
 
 export function ProjectKindIcon({
   project,
-  connections,
   size = 13,
   className,
   open = false,
 }: {
-  project: Pick<Project, 'kind' | 'path'> & Partial<Pick<Project, 'connection_id'>>
-  connections?: ReadonlyArray<Pick<SshConnection, 'id' | 'name'>>
+  project: Pick<Project, 'kind' | 'path'>
   size?: number
   className?: string
   open?: boolean
 }) {
-  if (isWslProject(project, connections) || isSshProject(project)) {
+  if (isWslProject(project) || isSshProject(project)) {
     return <Cloud size={size} className={className} />
   }
   const Icon = open ? FolderOpen : Folder
@@ -49,18 +47,10 @@ export function SshKindBadge() {
 
 export function ProjectKindBadge({
   project,
-  connections,
 }: {
-  project: Pick<Project, 'kind' | 'path'> & Partial<Pick<Project, 'connection_id'>>
-  connections?: ReadonlyArray<Pick<SshConnection, 'id' | 'name'>>
+  project: Pick<Project, 'kind' | 'path'>
 }) {
-  if (isWslProject(project, connections)) {
-    return <WslKindBadge />
-  }
-  if (isSshProject(project)) {
-    return <SshKindBadge />
-  }
+  if (isWslProject(project)) return <WslKindBadge />
+  if (isSshProject(project)) return <SshKindBadge />
   return null
 }
-
-

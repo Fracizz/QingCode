@@ -51,39 +51,15 @@ describe('wslWorkspace', () => {
       expect(isWslProject({ path: 'wsl://Ubuntu/home/code/QingCode' })).toBe(true)
     })
 
-    it('returns true for SSH project when connection name is WSL', () => {
-      expect(
-        isWslProject(
-          { kind: 'ssh', path: 'ssh://conn-wsl/home/code', connection_id: 'conn-wsl' },
-          [{ id: 'conn-wsl', name: 'WSL' }]
-        )
-      ).toBe(true)
-      expect(
-        isWslProject(
-          { kind: 'ssh', path: 'ssh://conn-wsl/home/code', connection_id: 'conn-wsl' },
-          [{ id: 'conn-wsl', name: 'wsl' }]
-        )
-      ).toBe(true)
+    it('returns false for SSH projects even when the connection is named WSL', () => {
+      expect(isWslProject({ kind: 'ssh', path: 'ssh://conn-wsl/home/code' })).toBe(false)
+      expect(isWslProject({ kind: 'ssh', path: 'ssh://wsl/home/code' })).toBe(false)
+      expect(isWslProject({ path: 'ssh://wsl/home/code' })).toBe(false)
     })
 
-    it('returns true when connection_id or URI host is wsl', () => {
-      expect(
-        isWslProject({ kind: 'ssh', path: 'ssh://wsl/home/code', connection_id: 'wsl' })
-      ).toBe(true)
-      expect(
-        isWslProject({ path: 'ssh://wsl/home/code' })
-      ).toBe(true)
-    })
-
-    it('returns false for SSH projects unless explicitly kind wsl or connection is WSL', () => {
+    it('returns false for SSH projects on other hosts', () => {
       expect(isWslProject({ kind: 'ssh', path: 'ssh://c1/root' })).toBe(false)
       expect(isWslProject({ path: 'ssh://c1/root' })).toBe(false)
-      expect(
-        isWslProject(
-          { kind: 'ssh', path: 'ssh://c1/root', connection_id: 'c1' },
-          [{ id: 'c1', name: 'Dev VM' }]
-        )
-      ).toBe(false)
     })
 
     it('returns false for regular local projects', () => {

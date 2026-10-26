@@ -373,8 +373,9 @@ impl PtyHost {
         let shell = resolve_shell(opts.shell.as_deref())?;
         let cols = clamp_cols(opts.cols);
         let rows = clamp_rows(opts.rows);
-        if !opts.cwd.is_dir() {
-            return Err(format!("终端工作目录不存在：{}", opts.cwd.display()));
+        let cwd = pty_working_directory(&opts.cwd);
+        if !cwd.is_dir() {
+            return Err(format!("终端工作目录不存在：{}", cwd.display()));
         }
 
         let mut inner = lock(&self.inner);
@@ -399,7 +400,7 @@ impl PtyHost {
             cmd.arg("-l");
         }
         cmd.args(&opts.args);
-        cmd.cwd(&opts.cwd);
+        cmd.cwd(&cwd);
         for (key, value) in &opts.env {
             cmd.env(key, value);
         }
@@ -438,7 +439,7 @@ impl PtyHost {
         let term = Arc::new(PtyTerm {
             id: id.clone(),
             name: opts.name.clone(),
-            cwd: opts.cwd.to_string_lossy().into_owned(),
+            cwd: cwd.to_string_lossy().into_owned(),
             created: self.created_counter.fetch_add(1, Ordering::Relaxed),
             master: Mutex::new(Some(pair.master)),
             writer: Mutex::new(writer),
@@ -519,7 +520,7 @@ impl PtyHost {
             name: opts.name,
             next_input_seq: 0,
             owner: Some(opts.client_id),
-            cwd: Some(opts.cwd.to_string_lossy().into_owned()),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
             seq: 0,
             cols,
             rows,
@@ -1198,6 +1199,31 @@ struct ShellLaunch {
     login: bool,
 }
 
+/// Windows 的 `canonicalize` 总会带上 verbatim 前缀（`\\?\D:\code\app`）。PTY 的
+/// 当前目录会原样交给子进程：PowerShell 会把提示符显示成
+/// `Microsoft.PowerShell.Core\FileSystem::\\?\D:\...`，`cmd.exe` 与批处理工具还会
+/// 拒绝该目录并回落到 `C:\Windows`。交互 shell 只接受普通原生路径。
+fn pty_working_directory(cwd: &Path) -> PathBuf {
+    #[cfg(windows)]
+    if let Some(plain) = plain_windows_path(cwd) {
+        return plain;
+    }
+    cwd.to_path_buf()
+}
+
+/// 只还原盘符与 UNC 两种 verbatim 形态；`\\?\Volume{...}` 等设备路径原样保留。
+#[cfg(windows)]
+fn plain_windows_path(path: &Path) -> Option<PathBuf> {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return (!rest.is_empty()).then(|| PathBuf::from(format!(r"\\{rest}")));
+    }
+    let rest = text.strip_prefix(r"\\?\")?;
+    let bytes = rest.as_bytes();
+    (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+        .then(|| PathBuf::from(rest))
+}
+
 fn validate_create_options(opts: &PtyCreateOptions) -> Result<(), String> {
     if opts.args.iter().any(|arg| arg.contains('\0')) {
         return Err("终端参数包含无效字符".to_string());
@@ -1607,6 +1633,31 @@ mod tests {
         assert_eq!(parser_scrollback_lines(2 * 1024 * 1024, 80), 1000);
         assert_eq!(parser_scrollback_lines(800, 80), 10);
         assert_eq!(parser_scrollback_lines(0, 80), 0);
+    }
+
+    #[test]
+    fn pty_working_directory_keeps_plain_paths() {
+        let path = PathBuf::from(r"D:\code\app");
+        assert_eq!(pty_working_directory(&path), path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pty_working_directory_strips_verbatim_prefix() {
+        assert_eq!(
+            pty_working_directory(Path::new(r"\\?\D:\code\app")),
+            PathBuf::from(r"D:\code\app")
+        );
+        assert_eq!(
+            pty_working_directory(Path::new(r"\\?\UNC\server\share\app")),
+            PathBuf::from(r"\\server\share\app")
+        );
+        let volume = Path::new(r"\\?\Volume{1f2e3d4c}\app");
+        assert_eq!(
+            pty_working_directory(volume),
+            volume,
+            "设备路径不能剥掉 verbatim 前缀"
+        );
     }
 
     #[test]
@@ -2337,6 +2388,13 @@ mod tests {
                 .unwrap_or(0)
         ));
         std::fs::create_dir_all(&cwd).unwrap();
+        // 远端真实调用会先 canonicalize（Windows 上带 `\\?\` 前缀），PTY 必须
+        // 用去掉前缀的普通路径，否则 PowerShell 提示符与 cmd 都会异常。
+        let cwd = std::fs::canonicalize(&cwd).unwrap();
+        assert!(
+            cwd.to_string_lossy().starts_with(r"\\?\"),
+            "前置条件：canonicalize 应返回 verbatim 路径"
+        );
         let info = host
             .create(PtyCreateOptions {
                 cwd: cwd.clone(),
@@ -2355,6 +2413,11 @@ mod tests {
             })
             .expect("ConPTY 创建失败");
 
+        assert_eq!(
+            info.cwd.as_deref(),
+            Some(cwd.to_string_lossy().trim_start_matches(r"\\?\")),
+            "PTY 工作目录不能带 verbatim 前缀"
+        );
         wait_for_text(&mut rx, &info.id, "ok").await;
         assert_eq!(wait_for_exit(&mut rx, &info.id).await, Some(0));
         let _ = std::fs::remove_dir_all(cwd);

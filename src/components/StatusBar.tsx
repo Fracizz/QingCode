@@ -62,7 +62,6 @@ const STATUS_SECONDARY = 'text-fg/85'
 export default function StatusBar() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
-  const sshConnections = useProjectStore(s => s.sshConnections)
   const projects = useProjectStore(s => s.projects)
   const addProject = useProjectStore(s => s.addProject)
   const switchProject = useProjectStore(s => s.switchProject)
@@ -427,7 +426,6 @@ export default function StatusBar() {
               {currentProject ? (
                 <ProjectKindIcon
                   project={currentProject}
-                  connections={sshConnections}
                   size={13}
                   className="flex-shrink-0 text-brand"
                 />
@@ -437,10 +435,10 @@ export default function StatusBar() {
               <span className="min-w-0 max-w-[45%] truncate">
                 {currentProject ? currentProject.name : t('未选择项目')}
               </span>
-              {currentProject && (isWslProject(currentProject, sshConnections) || isSshProject(currentProject)) ? (
+              {currentProject && (isWslProject(currentProject) || isSshProject(currentProject)) ? (
                 <>
                   <span className="flex-shrink-0 text-ui-2xs text-fg-muted">
-                    {isWslProject(currentProject, sshConnections) ? t('WSL') : t('SSH')}
+                    {isWslProject(currentProject) ? t('WSL') : t('SSH')}
                   </span>
                   {/* 经 SSH 接入的 WSL 同样走远端 server，状态芯片不能因 WSL 徽标被隐藏 */}
                   {isSshProject(currentProject) ? <SshServerStatusChip rootUri={currentProject.path} /> : null}

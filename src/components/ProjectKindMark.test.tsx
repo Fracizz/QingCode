@@ -34,11 +34,10 @@ describe('ProjectKindMark', () => {
       expect(svg).toHaveClass('lucide-cloud')
     })
 
-    it('renders a cloud icon for SSH project when connection name is WSL', () => {
+    it('renders a cloud icon for SSH project whose connection is named WSL', () => {
       const { container } = render(
         <ProjectKindIcon
-          project={{ kind: 'ssh', path: 'ssh://c1/home/code/QingCode', connection_id: 'c1' }}
-          connections={[{ id: 'c1', name: 'WSL' }]}
+          project={{ kind: 'ssh', path: 'ssh://c1/home/code/QingCode' }}
         />
       )
       const svg = container.querySelector('svg')
@@ -58,9 +57,7 @@ describe('ProjectKindMark', () => {
           project={{
             kind: 'ssh',
             path: 'ssh://c1/D:/code/nem-panel',
-            connection_id: 'c1',
           }}
-          connections={[{ id: 'c1', name: 'WinDev' }]}
         />
       )
       expect(windowsProject.container.querySelector('svg')).toHaveClass('lucide-cloud')
@@ -113,15 +110,14 @@ describe('ProjectKindMark', () => {
       expect(screen.getByText('WSL')).toBeInTheDocument()
     })
 
-    it('renders WslKindBadge for SSH project when connection name is WSL', () => {
+    it('renders SshKindBadge for SSH project whose connection is named WSL', () => {
       render(
         <ProjectKindBadge
-          project={{ kind: 'ssh', path: 'ssh://wsl-conn/home/code', connection_id: 'wsl-conn' }}
-          connections={[{ id: 'wsl-conn', name: 'WSL' }]}
+          project={{ kind: 'ssh', path: 'ssh://wsl-conn/home/code' }}
         />
       )
-      expect(screen.getByText('WSL')).toBeInTheDocument()
-      expect(screen.queryByText('SSH')).not.toBeInTheDocument()
+      expect(screen.getByText('SSH')).toBeInTheDocument()
+      expect(screen.queryByText('WSL')).not.toBeInTheDocument()
     })
 
     it('renders SshKindBadge for SSH project', () => {

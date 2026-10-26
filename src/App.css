@@ -203,12 +203,6 @@ body {
     'activity sidebar editor terminal';
 }
 
-.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='visible'][data-editor-slot='collapsed'][data-terminal-slot='collapsed'] {
-  grid-template-columns: auto auto 0px;
-  grid-template-areas:
-    'activity sidebar terminal';
-}
-
 .workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'] {
   grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -237,12 +231,6 @@ body {
   grid-template-columns: auto minmax(0, 1fr) 0px;
   grid-template-areas:
     'activity editor terminal';
-}
-
-.workspace-grid[data-panel-layout='sideTerminal'][data-sidebar-slot='hidden'][data-editor-slot='collapsed'][data-terminal-slot='collapsed'] {
-  grid-template-columns: auto 0px;
-  grid-template-areas:
-    'activity terminal';
 }
 
 .workspace-grid[data-panel-layout='sideTerminal'][data-editor-slot='collapsed'] .workspace-grid-editor {

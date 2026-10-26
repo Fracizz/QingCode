@@ -496,7 +496,6 @@ export default function ProjectManager() {
                           ) : (
                             <ProjectKindIcon
                               project={project}
-                              connections={sshConnections}
                               size={13}
                               className="text-accent flex-shrink-0"
                             />
@@ -528,7 +527,7 @@ export default function ProjectManager() {
                               )}
                             </button>
                           </Tooltip>
-                          <ProjectKindBadge project={project} connections={sshConnections} />
+                          <ProjectKindBadge project={project} />
                         </div>
                       </td>
                       <td className="px-3 py-2 align-middle">

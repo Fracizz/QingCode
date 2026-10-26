@@ -652,7 +652,6 @@ export default function ProjectPicker() {
                       ) : (
                         <ProjectKindIcon
                           project={project}
-                          connections={sshConnections}
                           size={14}
                           className="text-accent"
                         />
@@ -665,7 +664,7 @@ export default function ProjectPicker() {
                     >
                       <span className="truncate">{project.name}</span>
                     </Tooltip>
-                    <ProjectKindBadge project={project} connections={sshConnections} />
+                    <ProjectKindBadge project={project} />
                     <ProjectIndicatorMarks
                       project={project}
                       indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
@@ -887,7 +886,6 @@ function Chip({
         <span className="inline-flex items-center justify-center w-4 h-4 flex-shrink-0">
           <ProjectKindIcon
             project={project}
-            connections={sshConnections}
             size={12}
             className={isCurrent ? 'text-brand' : 'text-accent'}
           />
@@ -896,7 +894,7 @@ function Chip({
       <Tooltip
         label={projectChipTooltipLabel(project, sshConnections, t)}
         side="bottom"
-        onlyWhenOverflow={!isSshProject(project) && !isWslProject(project, sshConnections)}
+        onlyWhenOverflow={!isSshProject(project) && !isWslProject(project)}
         wrapperClassName="min-w-0 max-w-[140px]"
       >
         <span className="block truncate">{project.name}</span>

@@ -1760,7 +1760,6 @@ export default function Sidebar() {
                     ) : (
                       <ProjectKindIcon
                         project={currentProject}
-                        connections={sshConnections}
                         size={15}
                         open
                         className={EXPLORER_HEADING_ICON}
