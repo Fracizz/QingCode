@@ -4,6 +4,7 @@ import {
   parseTerminalExitEvent,
   planTerminalConnectionEvent,
   restoredExitRecovery,
+  shouldCancelReconnectOnInput,
   shouldKeepShellAfterExit,
   sshTerminalReconnectDelay,
   terminalDisconnectNotice,
@@ -222,5 +223,23 @@ describe('parseTerminalExitEvent', () => {
       reason: null,
     })
     expect(parseTerminalExitEvent({ id: 't1', exit_code: '1' })).toBeNull()
+  })
+})
+
+describe('shouldCancelReconnectOnInput', () => {
+  it('cancels a server-mode reconnect on a lone Ctrl+C', () => {
+    expect(shouldCancelReconnectOnInput({ status: 'reconnecting' }, false, '')).toBe(true)
+  })
+
+  it('cancels a direct SSH backoff only while recovering', () => {
+    expect(shouldCancelReconnectOnInput({ status: 'starting' }, true, '')).toBe(true)
+    expect(shouldCancelReconnectOnInput({ status: 'starting' }, false, '')).toBe(false)
+  })
+
+  it('leaves other keys and connected terminals alone', () => {
+    expect(shouldCancelReconnectOnInput({ status: 'reconnecting' }, false, 'a')).toBe(false)
+    expect(shouldCancelReconnectOnInput({ status: 'reconnecting' }, false, '')).toBe(false)
+    expect(shouldCancelReconnectOnInput({ status: 'running' }, false, '')).toBe(false)
+    expect(shouldCancelReconnectOnInput({ status: 'exited' }, true, '')).toBe(false)
   })
 })

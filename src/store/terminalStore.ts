@@ -55,6 +55,7 @@ import {
 import {
   parseTerminalExitEvent,
   planTerminalConnectionEvent,
+  shouldCancelReconnectOnInput,
   shouldKeepShellAfterExit,
   sshTerminalReconnectDelay,
   terminalDisconnectNotice,
@@ -101,6 +102,8 @@ const intentionalPtyKills = new Set<string>()
 const reportedShellFallbacks = new Set<string>()
 /** SSH 断线后正在退避重连的终端；期间丢弃键入，避免逐键弹“终端不存在”。 */
 const sshRecoveryInFlight = new Set<string>()
+/** 用户在重连期间按 Ctrl+C、正在放弃重连的终端；期间忽略其余键入。 */
+const reconnectCancelInFlight = new Set<string>()
 /** 已由 store 写过断线说明的已退出终端；视图不再追加“进程未启动”。 */
 const disconnectNoticeShown = new Set<string>()
 /** One detached-terminal query per project/connection during this app session. */
@@ -403,6 +406,12 @@ async function restartTerminalAfterDisconnect(id: string, rawReason: unknown): P
           rows: size.rows,
           shell: tab.shell ?? null,
         })
+        // 等待期间用户已按 Ctrl+C 放弃或关闭标签：刚建好的会话直接收回。
+        const latest = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+        if (!latest || latest.status !== 'starting') {
+          await killTerminal(id).catch(() => undefined)
+          return
+        }
         applyTerminalSpawnResult(id, result)
         useTerminalStore.setState(s => ({
           terminals: s.terminals.map(terminal =>
@@ -432,6 +441,35 @@ async function restartTerminalAfterDisconnect(id: string, rawReason: unknown): P
       )
   } finally {
     sshRecoveryInFlight.delete(id)
+  }
+}
+
+/**
+ * 重连期间按 Ctrl+C：放弃重连并结束该终端，标签停在已退出，可从标签重启。
+ * server 模式会话要等后端关闭（会尽力结束远端进程）后再标记退出，
+ * 否则视图查询会话仍开着，会把标签又翻回运行中。
+ */
+async function cancelTerminalReconnect(id: string): Promise<void> {
+  if (reconnectCancelInFlight.has(id)) return
+  const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+  if (!tab) return
+  reconnectCancelInFlight.add(id)
+  publishTerminalNotice(id, translate('已取消重新连接，正在结束终端…'))
+  try {
+    if (tab.status === 'reconnecting') {
+      try {
+        await killTerminal(id)
+      } catch (error) {
+        console.warn(`cancel reconnect kill ${id} failed:`, error)
+      }
+    }
+    const latest = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+    if (!latest || latest.status === 'exited') return
+    publishTerminalNotice(id, translate('已退出，可从终端标签重启'))
+    // 直连 SSH 的退避循环看到状态不再是 starting 就会自行停止。
+    markDisconnectedExit(id)
+  } finally {
+    reconnectCancelInFlight.delete(id)
   }
 }
 
@@ -1871,6 +1909,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   writeToTerminal: async (id: string, data: string) => {
+    if (reconnectCancelInFlight.has(id)) return
+    const tab = get().terminals.find(terminal => terminal.id === id)
+    if (tab && shouldCancelReconnectOnInput(tab, sshRecoveryInFlight.has(id), data)) {
+      await cancelTerminalReconnect(id)
+      return
+    }
     if (sshRecoveryInFlight.has(id)) return
     recordTypedInput(id, data)
     try {

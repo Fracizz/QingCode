@@ -677,6 +677,8 @@
     "已重新连接": "Reconnected",
     "已重新连接（已从屏幕快照恢复，部分历史输出不可用）": "Reconnected (restored from a screen snapshot; some earlier output is unavailable)",
     "SSH 重新连接失败，可从终端标签重启": "SSH reconnect failed; restart from the terminal tab",
+    "已取消重新连接，正在结束终端…": "Reconnect cancelled; closing the terminal…",
+    "已退出，可从终端标签重启": "Exited; restart from the terminal tab",
     "「{name}」SSH 重新连接失败": "SSH reconnect failed for “{name}”",
     "正在重新连接，远端进程仍在运行": "Reconnecting; the remote process is still running",
     "此终端断线会结束远端进程": "If this terminal disconnects, the remote process will end",
