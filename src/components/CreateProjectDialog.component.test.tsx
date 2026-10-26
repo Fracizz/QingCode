@@ -99,6 +99,7 @@ describe('CreateProjectDialog', () => {
   it('lists saved hosts under remote devices in the source menu', () => {
     render(<CreateProjectDialog open onClose={vi.fn()} onCreated={vi.fn()} />)
     const menu = openSourceMenu()
+    expect(menu.parentElement).toBe(document.body)
     expect(menu).toHaveTextContent('此电脑')
     expect(menu).toHaveTextContent('远程设备')
     expect(screen.getByRole('menuitemradio', { name: /dev-box/ })).toBeInTheDocument()

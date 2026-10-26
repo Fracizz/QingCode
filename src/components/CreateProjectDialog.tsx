@@ -1,4 +1,12 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react'
+import { createPortal } from 'react-dom'
 import {
   ArrowUp,
   Check,
@@ -16,6 +24,7 @@ import {
 import { open } from '@tauri-apps/plugin-dialog'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
+import { getContextMenuStylePosition } from './contextMenuPosition'
 import { useI18n } from '../lib/i18n'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -45,6 +54,9 @@ interface Props {
 export type ProjectSource = { kind: 'local' } | { kind: 'wsl' } | { kind: 'ssh'; connectionId: string }
 
 type SshPhase = 'auth' | 'connecting' | 'browse'
+
+const SOURCE_MENU_WIDTH = 256
+const SOURCE_MENU_GAP = 6
 
 const fieldClass =
   'w-full rounded border border-border-strong bg-bg px-2.5 py-1.5 text-ui text-fg outline-none focus:border-accent'
@@ -79,7 +91,14 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
   const [browsing, setBrowsing] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
-  const menuRef = useRef<HTMLDivElement>(null)
+  const [sourceMenuStyle, setSourceMenuStyle] = useState<CSSProperties>({
+    left: 0,
+    top: 0,
+    width: SOURCE_MENU_WIDTH,
+    visibility: 'hidden',
+  })
+  const sourceTriggerRef = useRef<HTMLDivElement>(null)
+  const sourceMenuRef = useRef<HTMLDivElement>(null)
   const nameRef = useRef<HTMLInputElement>(null)
   const secretsRef = useRef<SshSessionSecrets>({})
   /** 每次切换来源 / 关闭递增，丢弃过期的连接与浏览结果。 */
@@ -148,11 +167,60 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
   useEffect(() => {
     if (!menuOpen) return
     const onPointerDown = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false)
+      const target = event.target as Node
+      if (sourceTriggerRef.current?.contains(target) || sourceMenuRef.current?.contains(target)) {
+        return
+      }
+      setMenuOpen(false)
+    }
+    const closeOnViewportChange = () => setMenuOpen(false)
+    const onScroll = (event: Event) => {
+      if (sourceMenuRef.current?.contains(event.target as Node)) return
+      setMenuOpen(false)
     }
     window.addEventListener('pointerdown', onPointerDown, true)
-    return () => window.removeEventListener('pointerdown', onPointerDown, true)
+    window.addEventListener('resize', closeOnViewportChange)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      window.removeEventListener('pointerdown', onPointerDown, true)
+      window.removeEventListener('resize', closeOnViewportChange)
+      window.removeEventListener('scroll', onScroll, true)
+    }
   }, [menuOpen])
+
+  useLayoutEffect(() => {
+    if (!menuOpen) return
+    const trigger = sourceTriggerRef.current
+    const menu = sourceMenuRef.current
+    if (!trigger || !menu) return
+
+    const triggerRect = trigger.getBoundingClientRect()
+    const zoom = Number.parseFloat(getComputedStyle(menu).zoom) || 1
+    const width = Math.min(SOURCE_MENU_WIDTH, Math.max(1, (window.innerWidth - 16) / zoom))
+    menu.style.width = `${width}px`
+
+    const naturalHeight = menu.scrollHeight * zoom
+    const spaceBelow = window.innerHeight - 8 - (triggerRect.bottom + SOURCE_MENU_GAP)
+    const spaceAbove = triggerRect.top - SOURCE_MENU_GAP - 8
+    const preferAbove = naturalHeight > spaceBelow && spaceAbove > spaceBelow
+    const anchorY = preferAbove ? triggerRect.top : triggerRect.bottom + SOURCE_MENU_GAP
+    const placed = getContextMenuStylePosition(
+      triggerRect.right - width * zoom,
+      anchorY,
+      { width, height: menu.scrollHeight },
+      { width: window.innerWidth, height: window.innerHeight },
+      preferAbove,
+      zoom,
+      { arrowGap: SOURCE_MENU_GAP }
+    )
+    setSourceMenuStyle({
+      left: placed.x,
+      top: placed.y,
+      width,
+      maxHeight: placed.maxHeight,
+      visibility: 'visible',
+    })
+  }, [menuOpen, sshConnections])
 
   useEffect(() => {
     if (!visible) return
@@ -317,66 +385,71 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
         ? baseName(localPath)
         : t('项目名称')
 
-  const sourceMenu = menuOpen ? (
-    <div
-      role="menu"
-      aria-label={t('源文件夹位置')}
-      className="menu-enter absolute top-full left-1/2 z-10 mt-1.5 w-64 -translate-x-1/2 rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
-    >
-      <MenuItem
-        icon={<Laptop size={14} />}
-        label={t('此电脑')}
-        checked={source.kind === 'local'}
-        onSelect={() => void pickLocalFolder('local')}
-      />
-      <p className="px-2 pt-2 pb-1 text-ui-sm text-fg-dim">{t('远程设备')}</p>
-      {showWsl ? (
-        <MenuItem
-          icon={<SquareTerminal size={14} />}
-          label="WSL"
-          checked={source.kind === 'wsl'}
-          onSelect={() => void pickLocalFolder('wsl')}
-        />
-      ) : null}
-      {sshConnections.map(item => (
-        <MenuItem
-          key={item.id}
-          icon={<Cloud size={14} />}
-          label={item.name}
-          detail={sshConnectionTarget(item)}
-          checked={source.kind === 'ssh' && source.connectionId === item.id}
-          onSelect={() => void chooseSsh(item)}
-        />
-      ))}
-      <MenuItem icon={<Plus size={14} />} label={t('添加远程主机')} onSelect={addRemoteHost} />
-      {sshConnections.length > 0 ? (
-        <>
-          <div className="my-1 border-t border-border-strong/80" />
+  const sourceMenu = menuOpen
+    ? createPortal(
+        <div
+          ref={sourceMenuRef}
+          role="menu"
+          aria-label={t('源文件夹位置')}
+          className="menu-enter ui-font-scaled fixed z-[130] overflow-y-auto rounded-lg border border-border-strong bg-bg-elevated p-1 shadow-2xl shadow-black/50"
+          style={sourceMenuStyle}
+        >
           <MenuItem
-            icon={<Settings2 size={14} />}
-            label={t('管理远程连接…')}
-            onSelect={() => {
-              setMenuOpen(false)
-              openRemoteConnections()
-            }}
+            icon={<Laptop size={14} />}
+            label={t('此电脑')}
+            checked={source.kind === 'local'}
+            onSelect={() => void pickLocalFolder('local')}
           />
-        </>
-      ) : null}
-    </div>
-  ) : null
+          <p className="px-2 pt-2 pb-1 text-ui-sm text-fg-dim">{t('远程设备')}</p>
+          {showWsl ? (
+            <MenuItem
+              icon={<SquareTerminal size={14} />}
+              label="WSL"
+              checked={source.kind === 'wsl'}
+              onSelect={() => void pickLocalFolder('wsl')}
+            />
+          ) : null}
+          {sshConnections.map(item => (
+            <MenuItem
+              key={item.id}
+              icon={<Cloud size={14} />}
+              label={item.name}
+              detail={sshConnectionTarget(item)}
+              checked={source.kind === 'ssh' && source.connectionId === item.id}
+              onSelect={() => void chooseSsh(item)}
+            />
+          ))}
+          <MenuItem icon={<Plus size={14} />} label={t('添加远程主机')} onSelect={addRemoteHost} />
+          {sshConnections.length > 0 ? (
+            <>
+              <div className="my-1 border-t border-border-strong/80" />
+              <MenuItem
+                icon={<Settings2 size={14} />}
+                label={t('管理远程连接…')}
+                onSelect={() => {
+                  setMenuOpen(false)
+                  openRemoteConnections()
+                }}
+              />
+            </>
+          ) : null}
+        </div>,
+        document.body
+      )
+    : null
 
   const sourceTrigger = (
-    <div ref={menuRef} className="relative inline-flex">
+    <div ref={sourceTriggerRef} className="relative inline-flex min-w-0">
       <button
         type="button"
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         onClick={() => setMenuOpen(value => !value)}
-        className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-ui text-fg-muted hover:bg-bg-hover hover:text-fg"
+        className="inline-flex min-w-0 items-center gap-1 rounded px-1.5 py-0.5 text-ui text-fg-muted hover:bg-bg-hover hover:text-fg"
       >
         {sourceIcon}
         <span className="max-w-[220px] truncate font-semibold text-fg">{sourceLabel}</span>
-        <ChevronDown size={14} />
+        <ChevronDown size={14} className="flex-shrink-0" />
       </button>
       {sourceMenu}
     </div>
@@ -384,7 +457,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
 
   const renderLocalBody = () =>
     localPath ? (
-      <div className="flex items-center gap-2 px-3 py-3">
+      <div className="flex min-w-0 items-center gap-2 px-3 py-3">
         <FolderOpen size={16} className="flex-shrink-0 text-fg-dim" />
         <span className="min-w-0 flex-1 truncate font-mono text-ui text-fg">{localPath}</span>
         <button
@@ -396,16 +469,20 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
         </button>
       </div>
     ) : (
-      <div className="flex min-h-[120px] flex-col items-center justify-center gap-1 px-3 py-6">
+      <div className="flex min-h-[120px] min-w-0 flex-col items-center justify-center gap-1 px-3 py-6">
         <button
           type="button"
           onClick={() => void pickLocalFolder(source.kind === 'wsl' ? 'wsl' : 'local')}
-          className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-ui-lg text-fg hover:bg-bg-hover"
+          className="inline-flex max-w-full items-center gap-1.5 truncate rounded px-2 py-1 text-ui-lg text-fg hover:bg-bg-hover"
         >
-          <Plus size={15} className="text-fg-muted" />
-          {source.kind === 'wsl' ? t('在 WSL 中选择文件夹') : t('在此电脑上选择文件夹')}
+          <Plus size={15} className="flex-shrink-0 text-fg-muted" />
+          <span className="truncate">
+            {source.kind === 'wsl' ? t('在 WSL 中选择文件夹') : t('在此电脑上选择文件夹')}
+          </span>
         </button>
-        <p className="text-ui-sm text-fg-dim">{t('点击上方来源可切换到 WSL 或远程主机')}</p>
+        <p className="max-w-full text-center text-ui-sm text-fg-dim">
+          {t('点击上方来源可切换到 WSL 或远程主机')}
+        </p>
       </div>
     )
 
@@ -555,7 +632,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
           </Tooltip>
         </div>
 
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 pb-4">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-x-hidden overflow-y-auto px-5 pb-4">
           <label className="flex items-stretch overflow-hidden rounded-md border border-border-strong bg-bg focus-within:border-accent">
             <span className="flex w-10 flex-shrink-0 items-center justify-center border-r border-border-strong text-fg-muted">
               <Folder size={15} />
