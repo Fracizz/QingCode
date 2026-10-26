@@ -23,6 +23,7 @@
 // daemon 已在全平台使用本宿主（Windows 走 ConPTY，见 daemon.rs / ipc.rs），
 // 不再需要按平台豁免 dead_code。
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -67,6 +68,30 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// 去掉 Windows canonicalize 产生的 verbatim 前缀（`\\?\D:\...`、`\\?\UNC\...`）。
+///
+/// CreateProcess 能接受该前缀，但 PowerShell 无法把它映射到盘符，提示符会显示成
+/// `PS Microsoft.PowerShell.Core\FileSystem::\\?\D:\...>`，因此交给 shell 前必须还原。
+fn strip_windows_verbatim_prefix(text: &str) -> Option<Cow<'_, str>> {
+    let rest = text.strip_prefix(r"\\?\")?;
+    if rest
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(r"UNC\"))
+    {
+        return Some(Cow::Owned(format!(r"\\{}", &rest[4..])));
+    }
+    Some(Cow::Borrowed(rest))
+}
+
+fn shell_working_directory(cwd: &Path) -> Cow<'_, Path> {
+    if let Some(text) = cwd.to_str() {
+        if let Some(stripped) = strip_windows_verbatim_prefix(text) {
+            return Cow::Owned(PathBuf::from(stripped.as_ref()));
+        }
+    }
+    Cow::Borrowed(cwd)
 }
 
 /// 创建一个 PTY 的参数。
@@ -400,7 +425,8 @@ impl PtyHost {
             cmd.arg("-l");
         }
         cmd.args(&opts.args);
-        cmd.cwd(&cwd);
+        // pty_working_directory 已还原盘符/UNC；这里再兜底剥一次，两者幂等。
+        cmd.cwd(shell_working_directory(&cwd).as_ref());
         for (key, value) in &opts.env {
             cmd.env(key, value);
         }
@@ -1562,6 +1588,30 @@ mod tests {
     #[test]
     fn host_is_send_sync() {
         assert_send_sync::<PtyHost>();
+    }
+
+    #[test]
+    fn shell_working_directory_strips_verbatim_prefixes() {
+        assert_eq!(
+            shell_working_directory(Path::new(r"\\?\D:\code\qingcode")).as_ref(),
+            Path::new(r"D:\code\qingcode")
+        );
+        assert_eq!(
+            shell_working_directory(Path::new(r"\\?\UNC\server\share\project")).as_ref(),
+            Path::new(r"\\server\share\project")
+        );
+    }
+
+    #[test]
+    fn shell_working_directory_leaves_normal_paths_untouched() {
+        assert_eq!(
+            shell_working_directory(Path::new(r"D:\code")).as_ref(),
+            Path::new(r"D:\code")
+        );
+        assert_eq!(
+            shell_working_directory(Path::new("/home/dev/code")).as_ref(),
+            Path::new("/home/dev/code")
+        );
     }
 
     #[test]

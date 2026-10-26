@@ -23,12 +23,46 @@ pub(crate) const SERVER_LOG_TAIL_COMMAND: &str =
 /// 语言变化，用固定退出码判定比解析 stderr 可靠；unix 的 tail 不会用这个码。
 const SERVER_LOG_MISSING_EXIT: u32 = 3;
 
+/// Windows 日志一律按 UTF-8 读取并直接写出 UTF-8 字节。
+///
+/// `Get-Content` 在 Windows PowerShell 5.1 中会按系统 ANSI 代码页解码文件，
+/// 再把字符串按控制台代码页重编码；qingcode-server 写的是 UTF-8，中文日志
+/// 因此会变成乱码。固定文件编码 + 标准输出原始字节可绕开两层代码页转换。
+fn windows_read_log_tail_script(log_expression: &str) -> String {
+    format!(
+        r#"$ErrorActionPreference = 'Stop'
+$log = {log_expression}
+if (-not (Test-Path -LiteralPath $log)) {{ exit {missing_exit} }}
+$utf8 = [System.Text.UTF8Encoding]::new($false)
+$share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+$stream = [System.IO.File]::Open($log, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+$reader = $null
+try {{
+  $reader = [System.IO.StreamReader]::new($stream, $utf8, $true)
+  $text = $reader.ReadToEnd()
+}} finally {{
+  if ($null -ne $reader) {{ $reader.Dispose() }} else {{ $stream.Dispose() }}
+}}
+$lines = $text -split '\r?\n'
+if ($lines.Count -gt 1 -and [string]::IsNullOrEmpty($lines[-1])) {{
+  $lines = $lines[0..($lines.Count - 2)]
+}}
+if ($lines.Count -gt {max_lines}) {{
+  $lines = $lines[($lines.Count - {max_lines})..($lines.Count - 1)]
+}}
+$bytes = $utf8.GetBytes(($lines -join "`n"))
+$stdout = [Console]::OpenStandardOutput()
+$stdout.Write($bytes, 0, $bytes.Length)
+$stdout.Flush()"#,
+        max_lines = SERVER_LOG_MAX_LINES,
+        missing_exit = SERVER_LOG_MISSING_EXIT,
+    )
+}
+
 /// Windows daemon 日志在 `%USERPROFILE%\.qingcode\server\run\server.log`：
 /// 文件在就读末尾，不存在用 [`SERVER_LOG_MISSING_EXIT`] 告知调用方跳过该段。
 fn windows_daemon_log_script() -> String {
-    format!(
-        "$log = Join-Path $env:USERPROFILE '.qingcode\\server\\run\\server.log'\nif (Test-Path -LiteralPath $log) {{ Get-Content -LiteralPath $log -Tail {SERVER_LOG_MAX_LINES} }} else {{ exit {SERVER_LOG_MISSING_EXIT} }}"
-    )
+    windows_read_log_tail_script("Join-Path $env:USERPROFILE '.qingcode\\server\\run\\server.log'")
 }
 
 /// 项目 serve 日志的读取命令（unix）。路径来自 canonical root，必须 shell_quote。
@@ -41,10 +75,7 @@ fn windows_serve_log_script(path: &str) -> String {
     let Some(native) = server::windows_host_path(path) else {
         return String::new();
     };
-    format!(
-        "$log = '{}'\nif (Test-Path -LiteralPath $log) {{ Get-Content -LiteralPath $log -Tail {SERVER_LOG_MAX_LINES} }} else {{ exit {SERVER_LOG_MISSING_EXIT} }}",
-        powershell_literal(&native)
-    )
+    windows_read_log_tail_script(&format!("'{}'", powershell_literal(&native)))
 }
 
 const SERVER_LOG_MAX_LINES: usize = 200;
@@ -951,6 +982,12 @@ mod tests {
             "tail -n 200 \"$HOME/.qingcode/server/run/server.log\""
         );
         assert!(!SERVER_LOG_TAIL_COMMAND.contains("{"));
+        let windows_daemon = windows_daemon_log_script();
+        assert!(windows_daemon
+            .contains("Join-Path $env:USERPROFILE '.qingcode\\server\\run\\server.log'"));
+        assert!(windows_daemon.contains("[System.IO.FileShare]::ReadWrite"));
+        assert!(windows_daemon.contains("[System.IO.StreamReader]::new($stream, $utf8, $true)"));
+        assert!(!windows_daemon.contains("Get-Content"));
         // unix：tail 报 No such file → 该段跳过（None），不再占位说明文字。
         assert_eq!(
             server_log_section(1, "", "tail: cannot open: No such file or directory").unwrap(),
@@ -998,6 +1035,12 @@ mod tests {
         assert!(command.contains("'/srv/a b/.qingcode/server/serve.log'"));
         let script = windows_serve_log_script("/D:/code/app/.qingcode/server/serve.log");
         assert!(script.contains(r"$log = 'D:\code\app\.qingcode\server\serve.log'"));
+        // 日志固定按 UTF-8 解码并原样写字节，不能回退到受系统代码页影响的 Get-Content。
+        assert!(script.contains("[System.Text.UTF8Encoding]::new($false)"));
+        assert!(script.contains("[System.IO.FileShare]::ReadWrite"));
+        assert!(script.contains("[System.IO.StreamReader]::new($stream, $utf8, $true)"));
+        assert!(script.contains("[Console]::OpenStandardOutput()"));
+        assert!(!script.contains("Get-Content"));
         // 退出码标记与判定函数共用同一常量，避免两处数字漂移。
         assert!(script.contains(&format!("exit {SERVER_LOG_MISSING_EXIT}")));
     }

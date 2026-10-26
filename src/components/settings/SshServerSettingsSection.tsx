@@ -124,7 +124,7 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
         <SettingItem
           title={t('新建连接的默认模式')}
           description={t(
-            '新建 SSH 连接时默认使用 Server 模式（部署 qingcode-server，终端断线不丢）还是 SSH 模式（零足迹直连）。每个连接的模式在「远程连接」管理页单独设置；修改已有连接的模式后需要重新连接才生效。',
+            '新建 SSH 连接时默认使用“SSH + 远端服务”（部署 qingcode-server，终端断线不丢）还是“SSH 直连”（远端零足迹）。远端服务是叠加在 SSH 上的增强层，不是另一种连接协议。每个连接的模式在「远程连接」管理页单独设置；修改已有连接的模式后需要重新连接才生效。',
           )}
           modified={!enabled}
         >
@@ -134,8 +134,8 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
             className="setting-control setting-select"
             aria-label={t('新建连接的默认模式')}
           >
-            <option value="server">{t('Server')}</option>
-            <option value="ssh">{t('SSH')}</option>
+            <option value="server">{t('SSH + 远端服务')}</option>
+            <option value="ssh">{t('SSH 直连')}</option>
           </select>
         </SettingItem>
       )}
