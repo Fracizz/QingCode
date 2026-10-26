@@ -34,25 +34,21 @@ import {
   getSshServerAutoDownload,
   getSshServerEnabled,
   getSshServerOfflineDir,
-  getSshServerPersistentTerminals,
   loadEffectiveSshServerEnabled,
   parseSshServerAutoDownload,
   parseSshServerEnabled,
   parseSshServerOfflineDir,
-  parseSshServerPersistentTerminals,
   readSshServerAutoDownload,
   readSshServerEnabled,
   readSshServerOfflineDir,
-  readSshServerPersistentTerminals,
   saveScopedSshServerEnabled,
-  saveScopedSshServerPersistentTerminals,
+  switchGlobalSshServerMode,
   LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY,
   LEGACY_SSH_AGENT_ENABLED_KEY,
   LEGACY_SSH_AGENT_OFFLINE_DIR_KEY,
   SSH_SERVER_AUTO_DOWNLOAD_KEY,
   SSH_SERVER_ENABLED_KEY,
   SSH_SERVER_OFFLINE_DIR_KEY,
-  SSH_SERVER_PERSISTENT_TERMINALS_KEY,
 } from '@/lib/sshServerSettings'
 import type { SettingsFile } from '@/lib/projectSettings'
 import { DEFAULT_GLOBAL_SETTINGS } from '@/lib/projectSettings'
@@ -105,91 +101,7 @@ describe('sshServerSettings', () => {
   })
 })
 
-describe('sshServerSettings persistent terminals', () => {
-  const project = { id: 'p1', name: 'P', path: 'D:/p', created_at: 1, last_opened_at: 1 }
 
-  function settingsWith(entries: Record<string, unknown>): SettingsFile {
-    return { version: 1, custom: {}, ...entries }
-  }
-
-  beforeEach(() => {
-    loadGlobalSettings.mockReset().mockResolvedValue(settingsWith({}))
-    loadProjectSettings.mockReset().mockResolvedValue(settingsWith({}))
-    saveGlobalSettings.mockReset().mockResolvedValue(undefined)
-    saveProjectSettings.mockReset().mockResolvedValue(undefined)
-    safeInvoke.mockReset().mockResolvedValue(undefined)
-  })
-
-  it('parses non-boolean values back to the enabled default', () => {
-    expect(parseSshServerPersistentTerminals(undefined)).toBe(true)
-    expect(parseSshServerPersistentTerminals('false')).toBe(true)
-    expect(parseSshServerPersistentTerminals(false)).toBe(false)
-    expect(readSshServerPersistentTerminals({})).toBe(true)
-    expect(
-      readSshServerPersistentTerminals({
-        [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: false,
-      }),
-    ).toBe(false)
-  })
-
-  it('updates the cache from merged global and workspace settings', async () => {
-    loadGlobalSettings.mockResolvedValue(
-      settingsWith({ [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: false }),
-    )
-    loadProjectSettings.mockResolvedValue(
-      settingsWith({ [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: true }),
-    )
-
-    await loadEffectiveSshServerEnabled(project)
-
-    expect(getSshServerPersistentTerminals()).toBe(true)
-  })
-
-  it('saves the global toggle and pushes the effective value to native', async () => {
-    let global = settingsWith({
-      [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: true,
-      [LEGACY_SSH_AGENT_ENABLED_KEY]: true,
-    })
-    loadGlobalSettings.mockImplementation(async () => global)
-    saveGlobalSettings.mockImplementation(async settings => {
-      global = settings
-    })
-
-    await saveScopedSshServerPersistentTerminals('global', false, null)
-
-    expect(saveGlobalSettings).toHaveBeenCalledTimes(1)
-    expect(global[SSH_SERVER_PERSISTENT_TERMINALS_KEY]).toBe(false)
-    expect(global[LEGACY_SSH_AGENT_ENABLED_KEY]).toBe(true)
-    expect(getSshServerPersistentTerminals()).toBe(false)
-    expect(safeInvoke).toHaveBeenCalledWith(
-      '配置 SSH 持久化终端',
-      'ssh_set_persistent_terminals_enabled',
-      { enabled: false },
-    )
-  })
-
-  it('saves the workspace override without changing the global value', async () => {
-    let workspace = settingsWith({})
-    loadGlobalSettings.mockResolvedValue(
-      settingsWith({ [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: true }),
-    )
-    loadProjectSettings.mockImplementation(async () => workspace)
-    saveProjectSettings.mockImplementation(async (_project, settings) => {
-      workspace = settings
-    })
-
-    await saveScopedSshServerPersistentTerminals('project', false, project)
-
-    expect(saveProjectSettings).toHaveBeenCalledTimes(1)
-    expect(workspace[SSH_SERVER_PERSISTENT_TERMINALS_KEY]).toBe(false)
-    expect(getSshServerPersistentTerminals()).toBe(false)
-    expect(safeInvoke).toHaveBeenCalledWith(
-      '配置 SSH 持久化终端',
-      'ssh_set_persistent_terminals_enabled',
-      { enabled: false },
-    )
-  })
-})
 
 describe('sshServerSettings legacy ssh.agent.* keys', () => {
   const project = { id: 'p1', name: 'P', path: 'D:/p', created_at: 1, last_opened_at: 1 }
@@ -255,6 +167,12 @@ describe('sshServerSettings legacy ssh.agent.* keys', () => {
     expect(LEGACY_SSH_AGENT_ENABLED_KEY in saved).toBe(false)
     expect(LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY in saved).toBe(false)
     expect(LEGACY_SSH_AGENT_OFFLINE_DIR_KEY in saved).toBe(false)
+    // 持久化终端开关已移除，推送时不得再调用旧命令。
+    expect(safeInvoke).not.toHaveBeenCalledWith(
+      '配置 SSH 持久化终端',
+      'ssh_set_persistent_terminals_enabled',
+      expect.anything(),
+    )
   })
 
   it('drops legacy keys when saving the workspace toggle', async () => {
@@ -268,5 +186,30 @@ describe('sshServerSettings legacy ssh.agent.* keys', () => {
     const saved = saveProjectSettings.mock.calls[0][1] as Record<string, unknown>
     expect(saved[SSH_SERVER_ENABLED_KEY]).toBe(false)
     expect(LEGACY_SSH_AGENT_ENABLED_KEY in saved).toBe(false)
+  })
+  it('switching to SSH mode clears the project override and pushes false', async () => {
+    loadProjectSettings.mockResolvedValue(settingsWith({ [SSH_SERVER_ENABLED_KEY]: true }))
+    await switchGlobalSshServerMode(false, project)
+    const savedProject = saveProjectSettings.mock.calls[0][1] as Record<string, unknown>
+    expect(SSH_SERVER_ENABLED_KEY in savedProject).toBe(false)
+    const savedGlobal = saveGlobalSettings.mock.calls[0][0] as Record<string, unknown>
+    expect(savedGlobal[SSH_SERVER_ENABLED_KEY]).toBe(false)
+    expect(safeInvoke).toHaveBeenCalledWith('配置 SSH 远端服务', 'ssh_set_server_enabled', {
+      enabled: false,
+    })
+  })
+
+  it('switching to SSH mode leaves project settings untouched without an override', async () => {
+    await switchGlobalSshServerMode(false, project)
+    expect(saveProjectSettings).not.toHaveBeenCalled()
+    expect(saveGlobalSettings).toHaveBeenCalledTimes(1)
+  })
+  it('switching back to Server mode writes true globally', async () => {
+    await switchGlobalSshServerMode(true, project)
+    const savedGlobal = saveGlobalSettings.mock.calls[0][0] as Record<string, unknown>
+    expect(savedGlobal[SSH_SERVER_ENABLED_KEY]).toBe(true)
+    expect(safeInvoke).toHaveBeenCalledWith('配置 SSH 远端服务', 'ssh_set_server_enabled', {
+      enabled: true,
+    })
   })
 })

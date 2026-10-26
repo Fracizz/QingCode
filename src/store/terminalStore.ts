@@ -27,6 +27,7 @@ import {
   windowsSshShellLabel,
 } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
+import { serverModeErrorAction } from '../lib/serverModeError'
 import {
   getTerminalScrollback,
   scrollbackMaxChars,
@@ -2025,7 +2026,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             : terminal
         ),
       }))
-      useProjectStore.getState().pushToast('error', `新建终端失败: ${String(e)}`)
+      useProjectStore
+        .getState()
+        .pushToast('error', `新建终端失败: ${String(e)}`, undefined, serverModeErrorAction(e))
     } finally {
       ptySpawnInFlight.delete(id)
     }

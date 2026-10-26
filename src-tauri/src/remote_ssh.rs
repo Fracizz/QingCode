@@ -21,6 +21,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt
 mod search;
 mod server;
 mod server_status;
+mod sshd_limits;
 mod transfer;
 pub use search::*;
 pub use server_status::{SshServerLogs, SshServerState};
@@ -708,7 +709,10 @@ impl SshdSessionLimit {
             SshdSessionLimitSource::Default => "未读到 sshd_config，按 OpenSSH 默认 MaxSessions",
             SshdSessionLimitSource::Observed => "sshd 实际拒绝新通道时测得",
         };
-        format!("每条连接最多 {} 个终端，{source}", self.transport_capacity())
+        format!(
+            "每条连接最多 {} 个终端，{source}",
+            self.transport_capacity()
+        )
     }
 }
 
@@ -851,10 +855,9 @@ pub struct SshManager {
     servers: RwLock<HashMap<String, server::ServerSlot>>,
     /// 同一 (连接, 根) 的 server 部署串行执行。
     server_gates: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-    /// 远端 server 总开关；关闭后所有集成点静默回退直连路径。
+    /// 模式开关：开启为 Server 模式（终端、运行任务、扫描、搜索只走 server，
+    /// 失败报错不回退）；关闭为 SSH 模式（全部直连，不部署 server）。
     server_enabled: std::sync::atomic::AtomicBool,
-    /// 远端 daemon 是否托管交互式终端；关闭后新终端一律直连。
-    persistent_terminals_enabled: std::sync::atomic::AtomicBool,
     /// 本安装实例 UUID；daemon 的 clientId 为 `<uuid>:<connection_id>`。
     client_id: RwLock<String>,
     /// 本地 server 二进制查找目录（安装目录、资源目录、环境变量指定等）。
@@ -889,7 +892,6 @@ impl SshManager {
             servers: RwLock::new(HashMap::new()),
             server_gates: Mutex::new(HashMap::new()),
             server_enabled: std::sync::atomic::AtomicBool::new(true),
-            persistent_terminals_enabled: std::sync::atomic::AtomicBool::new(true),
             client_id: RwLock::new(uuid::Uuid::new_v4().to_string()),
             server_binary_dirs: RwLock::new(Vec::new()),
             server_offline_dir: RwLock::new(None),
@@ -1145,20 +1147,27 @@ impl SshManager {
             max_sessions: sshd_limits::OPENSSH_DEFAULT_MAX_SESSIONS,
             source: SshdSessionLimitSource::Default,
         };
-        let probed = self
-            .exec_remote_shell(
+        // 开通道本身在主连接卡顿时也可能等很久，时限要覆盖整个探测。
+        let probed = tokio::time::timeout(
+            SSHD_LIMITS_PROBE_TIMEOUT,
+            self.exec_remote_shell(
                 root_uri,
                 sshd_limits::SSHD_CONFIG_UNIX_COMMAND,
                 sshd_limits::SSHD_CONFIG_WINDOWS_SCRIPT,
                 true,
                 SSHD_LIMITS_PROBE_TIMEOUT,
-            )
-            .await;
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| Err("读取 sshd_config 超时".to_string()));
         match probed {
-            Ok(result) => sshd_limits::parse_sshd_max_sessions(&result.stdout).map_or(fallback, |max_sessions| SshdSessionLimit {
-                max_sessions,
-                source: SshdSessionLimitSource::Config,
-            }),
+            Ok(result) => sshd_limits::parse_sshd_max_sessions(&result.stdout).map_or(
+                fallback,
+                |max_sessions| SshdSessionLimit {
+                    max_sessions,
+                    source: SshdSessionLimitSource::Config,
+                },
+            ),
             Err(error) => {
                 eprintln!("[WARN] reading remote sshd MaxSessions failed: {error}");
                 fallback
@@ -1219,10 +1228,6 @@ impl SshManager {
             .map(|client_id| client_id.clone())
             .unwrap_or_else(|_| "unknown-install".to_string());
         format!("{installation}:{connection_id}")
-    }
-
-    pub(crate) fn persistent_terminals_enabled(&self) -> bool {
-        self.persistent_terminals_enabled.load(Ordering::SeqCst)
     }
 
     async fn kill_persistent_terminals_where(
@@ -1806,24 +1811,11 @@ pub async fn ssh_set_workspace_trust(
     Ok(())
 }
 
-/// 开关远端 server 集成；关闭后既有调用方一律走 SFTP / rg 直连路径。
+/// 切换 Server / SSH 模式；只影响之后的新操作，已由 daemon 托管的终端继续运行。
 #[tauri::command]
 pub fn ssh_set_server_enabled(enabled: bool, manager: State<'_, SshManager>) -> Result<(), String> {
     manager
         .server_enabled
-        .store(enabled, std::sync::atomic::Ordering::SeqCst);
-    Ok(())
-}
-
-/// `ssh.server.persistentTerminals`：关闭后新开的交互式终端回退直连，
-/// 已在运行的 daemon PTY 不受影响。
-#[tauri::command]
-pub fn ssh_set_persistent_terminals_enabled(
-    enabled: bool,
-    manager: State<'_, SshManager>,
-) -> Result<(), String> {
-    manager
-        .persistent_terminals_enabled
         .store(enabled, std::sync::atomic::Ordering::SeqCst);
     Ok(())
 }
@@ -2950,20 +2942,18 @@ fn remote_relative_to_root(canonical: &str, canonical_root: &str) -> String {
         .to_string()
 }
 
-/// 经远端 server 列出目录的直接子项；任何失败都清空端点缓存并返回 None，
-/// 由调用方回退 SFTP。返回 (名称, 是否目录) 交给 `collect_scan_nodes` 统一组装。
+/// Server 模式下经远端 server 列出目录的直接子项，不回退 SFTP；失败时清空端点
+/// 缓存、后台重新发现，并返回带模式前缀的错误。返回 (名称, 是否目录) 交给
+/// `collect_scan_nodes` 统一组装。
 async fn server_scan_entries(
     app: &AppHandle,
     manager: &SshManager,
     connection_id: &str,
     root: &RegisteredRoot,
     canonical: &str,
-) -> Option<Vec<(String, bool)>> {
-    if !manager.server_enabled() {
-        return None;
-    }
+) -> Result<Vec<(String, bool)>, String> {
     let key = server::server_slot_key(connection_id, &root.canonical_path);
-    let endpoint = server::ready_server_endpoint(app, manager, root).await?;
+    let endpoint = server::require_server_endpoint(app, manager, root, false).await?;
     let relative = remote_relative_to_root(canonical, &root.canonical_path);
     // daemon 传输优先：一次 RPC 往返，目录树刷新与 watch 事件同源。传输失败
     // 只降级 daemon 标记（保留 serve 端点），继续走 serve 请求。
@@ -2977,7 +2967,7 @@ async fn server_scan_entries(
         )
         .await
         {
-            Ok(entries) => return Some(entries),
+            Ok(entries) => return Ok(entries),
             Err(_) => {
                 server::downgrade_server_daemon(manager, &key);
                 // 传输从 daemon 降到 serve，状态芯片要跟着变。
@@ -3011,11 +3001,17 @@ async fn server_scan_entries(
     )
     .await;
     match outcome {
-        Ok(server::ServerStreamOutcome::Done { .. }) => Some(entries),
-        _ => {
+        Ok(server::ServerStreamOutcome::Done { .. }) => Ok(entries),
+        other => {
             // 扫描失败说明 server 可能已失联；清掉端点并在后台重新发现/部署。
             server::note_server_endpoint_lost(app, manager, root, &key);
-            None
+            let detail = match other {
+                Err(error) => error,
+                Ok(_) => "server 未完成扫描".to_string(),
+            };
+            Err(server::server_mode_error(format!(
+                "读取远程目录失败：{detail}"
+            )))
         }
     }
 }
@@ -3049,19 +3045,18 @@ pub async fn ssh_scan_directory(
     };
     let root_posix = root_posix.trim_end_matches('/').to_string();
 
-    // server 优先：减少 SFTP 往返，且目录树刷新与 watch 事件同源。任何失败静默回退。
-    if root.trusted {
-        if let Some(entries) =
-            server_scan_entries(&app, &manager, &parsed.connection_id, &root, &canonical).await
-        {
-            return Ok(collect_scan_nodes(
-                &path,
-                &parsed.path,
-                &root_posix,
-                entries,
-                exclude_patterns.as_deref(),
-            ));
-        }
+    // Server 模式只经 server 扫描，与 watch 事件同源，失败直接报错；SSH 模式与
+    // 未受信任项目（不部署 server）走 SFTP。
+    if root.trusted && manager.server_enabled() {
+        let entries =
+            server_scan_entries(&app, &manager, &parsed.connection_id, &root, &canonical).await?;
+        return Ok(collect_scan_nodes(
+            &path,
+            &parsed.path,
+            &root_posix,
+            entries,
+            exclude_patterns.as_deref(),
+        ));
     }
 
     let entries = sftp
@@ -4988,6 +4983,19 @@ fn persistent_profile_launch(
     Ok(launch)
 }
 
+/// 一次性运行任务交给 daemon：由 /bin/sh 执行与直连相同的调用串（含环境变量前缀），
+/// 工作目录由 daemon 的 cwd 设置；进程结束即终端结束。
+fn persistent_task_launch(invocation: &str, name: &str) -> server::PersistentLaunch {
+    server::PersistentLaunch {
+        shell: Some("/bin/sh".to_string()),
+        args: vec!["-c".to_string(), invocation.to_string()],
+        env: std::collections::BTreeMap::new(),
+        name: Some(name.to_string()),
+        resolved_shell: "sh".to_string(),
+        fallback_from: None,
+    }
+}
+
 fn direct_windows_profile_command(
     path: &str,
     target: &str,
@@ -5026,6 +5034,18 @@ fn direct_windows_profile_command(
     }
 }
 
+/// SSH 模式下终端直连、断线即结束进程；前端据此在标签上提示。
+const SSH_MODE_DIRECT_REASON: &str = "SSH 模式（ssh.server.enabled 已关闭），终端直连";
+
+/// Server 模式下的失败统一带上模式前缀，前端据此提供「切到 SSH 模式」。
+fn into_server_mode_error(error: String) -> String {
+    if error.contains(server::SERVER_MODE_ERROR_PREFIX) {
+        error
+    } else {
+        server::server_mode_error(error)
+    }
+}
+
 fn direct_spawn_result_fallback(
     mut result: TerminalSpawnResult,
     reason: Option<String>,
@@ -5050,43 +5070,23 @@ pub async fn ssh_create_terminal(
     let sftp = manager.open_sftp(&parsed.connection_id).await?;
     let working_directory = ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
     let spec = ssh_interactive_terminal_command(&parsed.path, shell.as_deref())?;
-    let persistent_reason = if !manager.server_enabled() {
-        Some("已关闭 ssh.server.enabled".to_string())
-    } else if !manager.persistent_terminals_enabled() {
-        Some("已关闭 ssh.server.persistentTerminals".to_string())
-    } else {
-        match persistent_shell_launch(&parsed.path, shell.as_deref()) {
-            Ok(launch) => match server::spawn_persistent_terminal(
-                id.clone(),
-                root.clone(),
-                working_directory,
-                cols.unwrap_or(80),
-                rows.unwrap_or(24),
-                launch,
-                app.clone(),
-                &manager,
-            )
-            .await
-            {
-                Ok(result) => return Ok(result),
-                Err(reason) => {
-                    // daemon 已就绪（server 模式）时失败多半是网络/握手问题，回退直连
-                    // 只会再握手一次并同样超时，还会悄悄变成非持久终端；直接报错。
-                    let daemon_ready = server::ready_server_endpoint(&app, &manager, &root)
-                        .await
-                        .is_some_and(|endpoint| endpoint.daemon.is_some());
-                    if daemon_ready {
-                        return Err(reason);
-                    }
-                    eprintln!(
-                            "[WARN] persistent terminal {id} creation failed, falling back to direct SSH: {reason}"
-                        );
-                    Some(reason)
-                }
-            },
-            Err(reason) => Some(reason),
-        }
-    };
+    // Server 模式只走 daemon，SSH 模式只走直连，两者不再互相回退。
+    if manager.server_enabled() {
+        let launch = persistent_shell_launch(&parsed.path, shell.as_deref())?;
+        return server::spawn_persistent_terminal(
+            id,
+            root,
+            working_directory,
+            cols.unwrap_or(80),
+            rows.unwrap_or(24),
+            launch,
+            app,
+            &manager,
+        )
+        .await
+        .map_err(into_server_mode_error);
+    }
+    let persistent_reason = Some(SSH_MODE_DIRECT_REASON.to_string());
     let result = spawn_ssh_terminal(
         id,
         cwd,
@@ -5168,7 +5168,8 @@ pub async fn ssh_spawn_script(
     }
     let parsed = parse_remote_uri(&cwd)?;
     let root = manager.root_for_uri(&cwd, true)?;
-    let persistent_cwd = if shell_kind == "interactive" {
+    let server_mode = manager.server_enabled();
+    let persistent_cwd = if shell_kind == "interactive" || server_mode {
         let sftp = manager.open_sftp(&parsed.connection_id).await?;
         Some(ensure_existing_path_within(&sftp, &parsed.path, &root).await?)
     } else {
@@ -5208,42 +5209,35 @@ pub async fn ssh_spawn_script(
     } else {
         format!("cd -- {} && {invocation}", shell_quote(&parsed.path))
     };
-    let mut persistent_reason = None;
-    if shell_kind == "interactive" {
-        if !manager.server_enabled() {
-            persistent_reason = Some("已关闭 ssh.server.enabled".to_string());
-        } else if !manager.persistent_terminals_enabled() {
-            persistent_reason = Some("已关闭 ssh.server.persistentTerminals".to_string());
-        } else {
-            let launch = persistent_profile_launch(
+    // Server 模式下交互式配置终端与一次性运行任务都交给 daemon；SSH 模式只走直连。
+    if server_mode {
+        let working_directory =
+            persistent_cwd.expect("server mode validates the task working directory");
+        let launch = if shell_kind == "interactive" {
+            persistent_profile_launch(
                 &parsed.path,
                 &target,
                 &env,
                 shell.as_deref(),
                 profile_terminal_name(name.as_deref(), &id),
-            )?;
-            match server::spawn_persistent_terminal(
-                id.clone(),
-                root,
-                persistent_cwd.expect("interactive terminals have a validated cwd"),
-                cols.unwrap_or(80),
-                rows.unwrap_or(24),
-                launch,
-                app.clone(),
-                &manager,
-            )
-            .await
-            {
-                Ok(result) => return Ok(result),
-                Err(reason) => {
-                    eprintln!(
-                        "[WARN] persistent profile terminal {id} creation failed, falling back to direct SSH: {reason}"
-                    );
-                    persistent_reason = Some(reason);
-                }
-            }
-        }
+            )?
+        } else {
+            persistent_task_launch(&invocation, profile_terminal_name(name.as_deref(), &id))
+        };
+        return server::spawn_persistent_terminal(
+            id,
+            root,
+            working_directory,
+            cols.unwrap_or(80),
+            rows.unwrap_or(24),
+            launch,
+            app,
+            &manager,
+        )
+        .await
+        .map_err(into_server_mode_error);
     }
+    let persistent_reason = Some(SSH_MODE_DIRECT_REASON.to_string());
     let result = spawn_ssh_terminal(id, cwd, cols, rows, app, &manager, command, None).await?;
     Ok(direct_spawn_result_fallback(result, persistent_reason))
 }
@@ -5424,6 +5418,29 @@ async fn kill_detached_terminals_best_effort(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn server_mode_errors_carry_prefix_once() {
+        let wrapped = super::into_server_mode_error("远端 daemon 尚未就绪".to_string());
+        assert!(wrapped.starts_with(super::server::SERVER_MODE_ERROR_PREFIX));
+        // 已带前缀的错误不重复包装。
+        assert_eq!(super::into_server_mode_error(wrapped.clone()), wrapped);
+    }
+
+    #[test]
+    fn server_mode_task_launch_runs_invocation_with_sh() {
+        let launch = super::persistent_task_launch("FOO='1' exec /bin/sh 'build.sh'", "构建");
+        assert_eq!(launch.shell.as_deref(), Some("/bin/sh"));
+        assert_eq!(
+            launch.args,
+            vec![
+                "-c".to_string(),
+                "FOO='1' exec /bin/sh 'build.sh'".to_string()
+            ]
+        );
+        assert_eq!(launch.name.as_deref(), Some("构建"));
+        assert_eq!(launch.resolved_shell, "sh");
+    }
+
     #[test]
     fn terminal_pool_picks_first_transport_with_room() {
         assert_eq!(super::pick_terminal_transport([(10, 10), (3, 10)]), Some(1));

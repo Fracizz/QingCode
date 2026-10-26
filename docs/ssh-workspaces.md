@@ -15,7 +15,7 @@ SSH 主机统一在「远程连接」管理页维护（活动栏云图标、项�
 
 - 通过 SFTP 浏览、读取、编辑、新建、重命名和删除远程文件。
 - 文件名搜索兼容常见 GNU/BusyBox `find`；内容搜索由远端 `rg` 执行，并固定按普通文本匹配。
-- 远程 PTY 终端。SSH 服务可用时，交互式终端默认由 `qingcode-server` daemon 托管，网络抖动或 SSH 断开不会结束远端进程；daemon 不可用或关闭 `ssh.server.persistentTerminals` 时自动回退直连。Linux 远端进入登录 shell；Windows OpenSSH 的盘符路径（`/D:/code/app`）支持根据用户配置启动 `powershell.exe -NoLogo`、`pwsh` 或 `cmd.exe`，提示符出现时直接进入项目根目录，不回显切目录命令，无版权横幅；远端 `DefaultShell` 为 cmd、PowerShell 或 Git Bash 时行为一致（启动命令整体加引号，切目录脚本走 `-EncodedCommand`）。设置 `terminal.integrated.sshUploadOnPaste`（默认开启）生效后，在 SSH 终端里粘贴或拖入本机文件会先上传到项目内 `.qingcode/terminal-paste/`，再粘贴远端路径。超过 100MB 的文件或文件夹会被拒绝。设置页和终端右键可清理该目录。
+- 远程 PTY 终端。SSH 服务可用时，Server 模式下交互式终端与运行任务都由 `qingcode-server` daemon 托管，网络抖动或 SSH 断开不会结束远端进程；SSH 模式下全部直连（见下方「Server / SSH 模式」）。Linux 远端进入登录 shell；Windows OpenSSH 的盘符路径（`/D:/code/app`）支持根据用户配置启动 `powershell.exe -NoLogo`、`pwsh` 或 `cmd.exe`，提示符出现时直接进入项目根目录，不回显切目录命令，无版权横幅；远端 `DefaultShell` 为 cmd、PowerShell 或 Git Bash 时行为一致（启动命令整体加引号，切目录脚本走 `-EncodedCommand`）。设置 `terminal.integrated.sshUploadOnPaste`（默认开启）生效后，在 SSH 终端里粘贴或拖入本机文件会先上传到项目内 `.qingcode/terminal-paste/`，再粘贴远端路径。超过 100MB 的文件或文件夹会被拒绝。设置页和终端右键可清理该目录。
 - Git 状态、历史、分支与切换、远程地址、Diff、丢弃、暂存、提交、拉取、推送和获取。
 - 使用远端项目工具格式化文件（Prettier、rustfmt、gofmt、shfmt、ruff/black）。
 - 在本地与 SSH 项目之间上传或下载文件和目录。资源管理器可右键上传，也可把本机文件或文件夹拖到 SSH 项目的文件树：文件夹接收到该目录，文件上则传到父目录，空白处和项目标题传到项目根。在 SSH 项目里粘贴（Ctrl+V 或右键「粘贴」）时，系统剪贴板中的本机文件或文件夹、以及应用内复制的本地路径都会上传到目标目录；跨域剪切按复制处理，不删除本机源文件。
@@ -50,8 +50,14 @@ Linux / POSIX SSH 项目（已信任、设置 `ssh.server.enabled` 默认开启�
   - 状态栏芯片只显示简洁状态：`Server`（绿点）/ `Server…`（黄点闪动，连接中）/ `直连`（灰点），版本等细节收进悬停摘要（`Server v版本` 等 + 「点击查看详情」）。**点击直接打开详情弹窗**（标准 modal，头部含重启与日志入口），右键菜单提供查看详情、重启 Server、查看日志（daemon 日志 + 项目 serve 日志两段拼接，各取末尾 200 行）。查询失败时芯片以 `!` 错误态显示「Server 状态未知」，不再伪装成直连；重启成功与失败均有明确 toast。意外断线（保活超时、远端断开）时芯片显示 `已断开`（红点），详情里给出断开原因，后台自动重连成功后恢复；用户主动断开不显示。详情弹窗的「耗时」以分阶段条形图给出最近一次发现/部署的耗时：顶部是就绪用时（合计），各阶段按时长画条、最慢的前台阶段高亮，daemon 等后台阶段单独分组且不计入就绪用时；摘要格式无法识别时原样显示文本（后端摘要形如 `状态目录 0.3s · 安装目录 0.9s · 发现 1.2s · 合计 2.6s · daemon 1.8s（后台）`），用于对照远端往返开销。
   - **就绪路径提速**：serve ping 通即发布 `Server` 就绪，daemon 探测（读 token → 握手，失败才启动 daemon）转入后台，通过后 watch 自动从 serve 切到 daemon；家目录与用户私有安装目录按连接缓存（部署失败或断开时丢弃），并按「用户名@主机:端口#已校验主机指纹」持久化到本地应用数据目录 `ssh-server-installs.json`，应用重启后首次连接免去「读家目录 + 建目录」那次远端 shell——命中时仍 canonicalize 复核安装目录位于家目录内且与缓存逐字一致，不符即删除条目走完整准备；指纹变化即换键失效，部署失败同样删除；旧版项目内安装只在文件确实存在时才做进程清理（此前每次发现都要两轮远端进程枚举，Windows 上是 `Win32_Process` 全量查询）；上传前已比对一致时不重复计算 sha256；读家目录与建用户私有安装目录合并为一次远端往返，两次 canonicalize 并发；发现阶段已比对一致的摘要（serve 已退出、需重新启动时）直接复用，不再二次比对；chmod、self-check 与启动 serve 合并为一次远端往返（自检失败以退出码 41 中止，不会启动未通过校验的二进制）——Windows 远端每次往返都要冷启动 PowerShell，这几项合计省下 3～4 次往返；daemon 探测整轮 30 秒封顶、单步 exec 15 秒；
   - **watch 断线恢复**：主连接断开时 watch 监督任务主动重连（首次立即重连，失败后按 5、5、10、10、10、10、10 秒、此后每 30 秒重试，不再连续 3 次失败就永久退出），断线期间保留 serve/daemon 端点与 daemon 标记，重连后直接复用，不重新部署；daemon watch 会话中途断开不再把 daemon 降级 5 分钟。
-- **持久化终端（P2/P3）**：项目已信任、`ssh.server.enabled` 与 `ssh.server.persistentTerminals` 均开启、daemon 端点可用且 HELLO 声明 `pty.persist` 时，交互式终端由 daemon 的 PTY 宿主托管。SSH 断开后 daemon 将终端标为 detached，进程继续运行并继续缓冲输出；重连优先按输出序号补发，缓冲已被淘汰时改用屏幕快照恢复。daemon 不可用、缺少能力或设置关闭时回退直连 PTY；daemon 已就绪时新建失败直接报错，不再回退直连（回退只会再握手一次并同样超时），终端标签会提示该终端断线会结束进程。应用重启后，带 `ptyId` / `connectionId` 的持久化标签会优先接回原 PTY，接回失败再新建普通终端；连接就绪后还会汇总属于本安装且没有本地标签的 detached 终端，提示接回或全部结束。上述能力仍需 WP-G 的 G21/G22 真机验收。
-- **关闭、停止与清理**：设置里关闭 `ssh.server.enabled` 后完全回退直连，并对当前激活的 SSH 工作区自动调用 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon 尽力 `server.shutdown`）；已安装二进制保留在用户目录供下次复用。命令 `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 均要求工作区已信任；「重启 Server」会同时重建 serve 与 daemon（此前只重建 serve）。迟授予信任的已连接项目会补启动文件树 watch 监督任务，不必重连。清理：删除项目内 `.qingcode/server/` 数据目录仅停止本项目的 serve；二进制需同时删除 `~/.qingcode/server/` 下对应版本目录。断开连接不终止远端服务（保活供快速重连，与 VS Code Server / Zed remote_server 生命周期策略一致）。
+- **Server / SSH 模式**：`ssh.server.enabled` 即模式开关，两种模式互不回退。
+  - Server 模式（开启）：交互式终端、运行任务（含 sh / 脚本 / 命令类一次性任务，由 daemon 以 `/bin/sh -l -c` 执行）、目录扫描、内容搜索（含子目录搜索，经 daemon）、文件监听只走 server。首次使用会等待发现/部署（最长 180 秒）与 daemon 探测（最长 30 秒）完成；server 或 daemon 不可用时直接报错，错误以「Server 模式：」开头，提示里提供「切到 SSH 模式」一键切换（写全局设置），状态栏芯片菜单同样提供。
+  - SSH 模式（关闭）：不部署也不调用 server，终端、运行任务、扫描、搜索全部直连，终端断线即结束进程。
+  - 两种模式下文件读写、stat、Git、上传下载都走主连接（SFTP / 远程命令），server 没有对应接口。
+  - 未受信任项目不部署 server，浏览仍走 SFTP；终端与运行任务需要信任。
+  - 原 `ssh.server.persistentTerminals` 已删除：Server 模式下终端必然由 daemon 托管。
+- **持久化终端（P2/P3）**：Server 模式下项目已信任、daemon 端点可用且 HELLO 声明 `pty.persist` 时，交互式终端由 daemon 的 PTY 宿主托管。SSH 断开后 daemon 将终端标为 detached，进程继续运行并继续缓冲输出；重连优先按输出序号补发，缓冲已被淘汰时改用屏幕快照恢复。daemon 不可用或缺少能力时新建直接报错，不回退直连。应用重启后，带 `ptyId` / `connectionId` 的持久化标签会优先接回原 PTY，接回失败再新建普通终端；连接就绪后还会汇总属于本安装且没有本地标签的 detached 终端，提示接回或全部结束。上述能力仍需 WP-G 的 G21/G22 真机验收。
+- **关闭、停止与清理**：设置里关闭 `ssh.server.enabled`（切到 SSH 模式）后全部直连，并对当前激活的 SSH 工作区自动调用 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon 尽力 `server.shutdown`）；已安装二进制保留在用户目录供下次复用。命令 `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 均要求工作区已信任；「重启 Server」会同时重建 serve 与 daemon（此前只重建 serve）。迟授予信任的已连接项目会补启动文件树 watch 监督任务，不必重连。清理：删除项目内 `.qingcode/server/` 数据目录仅停止本项目的 serve；二进制需同时删除 `~/.qingcode/server/` 下对应版本目录。断开连接不终止远端服务（保活供快速重连，与 VS Code Server / Zed remote_server 生命周期策略一致）。
 - **已知限制（MVP）**：
   - 关闭总开关会停止当前激活 SSH 工作区的远端服务，其他已连接 SSH 工作区的远端进程不会被逐一停止；重新打开后需重新连接项目才会恢复自动刷新。
   - 远端保存文件也会触发一次 `fs-change`（尚未做本地那样的自写抑制），表现为多一次目录树刷新与 Git 刷新。
@@ -209,7 +215,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 
 ### Windows OpenSSH
 
-路径形如 `ssh://<id>/D:/code/app`。可用：SFTP 文件操作、交互式 PowerShell / CMD 终端、Git、与本机之间的上传下载。部署 Windows 版 `qingcode-server` 后，目录扫描、内容搜索和文件树刷新走服务，daemon 传输经命名管道（`\\.\pipe\qingcode-server-daemon-<hash>`，DACL 仅当前用户）接入，支持 `fs.scan` / `search.content` / `watch.subscribe` 与 PTY 宿主；`connect --stdio` 代理用 tokio overlapped 客户端，读写可同时进行。交互式终端的 daemon 持久化已接入，断开后能否保住进程取决于 Windows daemon 是否成功脱离 sshd 的 Job Object；该平台行为待 WP-G 真机验收，失败时自动回退直连。`ps1`/`bat` 运行任务尚未接入 daemon。不可用：任意远程命令、文件名搜索、格式化、运行任务。这是平台限制，不是 Linux SSH 的对照表所能概括的。
+路径形如 `ssh://<id>/D:/code/app`。可用：SFTP 文件操作、交互式 PowerShell / CMD 终端、Git、与本机之间的上传下载。部署 Windows 版 `qingcode-server` 后，目录扫描、内容搜索和文件树刷新走服务，daemon 传输经命名管道（`\\.\pipe\qingcode-server-daemon-<hash>`，DACL 仅当前用户）接入，支持 `fs.scan` / `search.content` / `watch.subscribe` 与 PTY 宿主；`connect --stdio` 代理用 tokio overlapped 客户端，读写可同时进行。交互式终端的 daemon 持久化已接入，断开后能否保住进程取决于 Windows daemon 是否成功脱离 sshd 的 Job Object；该平台行为待 WP-G 真机验收；Server 模式下 daemon 不可用时报错，可切到 SSH 模式直连。`ps1`/`bat` 运行任务尚未接入 daemon。不可用：任意远程命令、文件名搜索、格式化、运行任务。这是平台限制，不是 Linux SSH 的对照表所能概括的。
 
 ### 补齐进展与后续建议
 
@@ -250,7 +256,7 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 | §3 daemon | 常驻进程 + `connect --stdio` 代理：`~/.qingcode/server/run`（0700）、token 0600、`SO_PEERCRED` 同 uid、`flock` 单实例、10 分钟空转退出、24h detached TTL、64 PTY/256MB 限额、`server.log` 5MB 滚动留 3 份 | `33d6eed` |
 | §6.4 Windows daemon | 命名管道 `\\.\pipe\qingcode-server-daemon-<hash>` + 仅当前用户 DACL（SDDL `D:P(A;;GA;;;<sid>)`）+ `FILE_FLAG_FIRST_PIPE_INSTANCE` 单实例；`connect --stdio` 用 tokio overlapped 客户端（Windows 同步句柄一边阻塞读时写会 `ERROR_NO_DATA(232)`）；acceptor 独立任务避免 select 取消丢实例、幽灵连接校验；服务端归一 POSIX 风格根路径 `/D:/...`；旧 daemon 用宽松握手淘汰 | 本轮 |
 | §6 PTY 宿主 | `portable-pty` + `vt100` 屏幕快照 + 环形缓冲（块级 seq）、`attach{fromSeq}` 补发或快照降级、总量硬上限淘汰（先 detached 最久）、SIGHUP/SIGKILL 生命周期、`hasChildren`（读 `/proc`） | `33d6eed` |
-| P2 终端持久化 | 交互式终端按 `ssh.server.persistentTerminals`（默认开）接入 daemon PTY；断线显示重连中，首次立即重连，之后按 5、5、10、10、10、10、10 秒、每 30 秒无限重试；按 seq 补发或快照恢复；重连期间输入有界缓冲；关闭标签或项目移除时 kill；能力缺失或设置关闭回退直连。远端验收待 WP-G | 本轮 |
+| P2 终端持久化 | Server 模式下交互式终端与运行任务接入 daemon PTY；断线显示重连中，首次立即重连，之后按 5、5、10、10、10、10、10 秒、每 30 秒无限重试；按 seq 补发或快照恢复；重连期间输入有界缓冲；关闭标签或项目移除时 kill；能力缺失时报错不回退。远端验收待 WP-G | 本轮 |
 | P3 应用重启接回 | 会话快照保存 `ptyId` / `connectionId`，恢复时优先 `ssh_attach_terminal`，失败回退新建；连接就绪后查询本安装的 detached PTY，汇总无本地标签的孤儿终端并支持接回或全部结束。远端验收待 WP-G G21/G22 | 本轮 |
 | §3/§7 传输接入 | 客户端 scan/search/watch 优先走 daemon（`fs.scan` / `search.content` 流式 / `watch.subscribe`），回退链 daemon → serve → 直连；token 轮换自愈 | `4f91c6b` |
 | §4.2/§8.3 完整性 | 安装或复用前先比对本地可信文件与用户私有安装路径的 sha256，通过后才执行 `self-check --expect-sha256` 探测 noexec；构建脚本生成 `manifest.json`（version + sha256 + size） | 本轮 |

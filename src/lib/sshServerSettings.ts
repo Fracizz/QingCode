@@ -1,11 +1,8 @@
 import type { Project } from '@/types'
 import {
   DEFAULT_GLOBAL_SETTINGS,
-  SSH_SERVER_PERSISTENT_TERMINALS_KEY as PROJECT_SSH_SERVER_PERSISTENT_TERMINALS_KEY,
   loadGlobalSettings,
   loadProjectSettings,
-  parseSshServerPersistentTerminals as parsePersistentTerminals,
-  readSshServerPersistentTerminals as readPersistentTerminals,
   saveGlobalSettings,
   saveProjectSettings,
 } from '@/lib/projectSettings'
@@ -32,12 +29,6 @@ export const SSH_SERVER_AUTO_DOWNLOAD_KEY = 'ssh.server.autoDownload'
  */
 export const SSH_SERVER_OFFLINE_DIR_KEY = 'ssh.server.offlineDir'
 
-/**
- * ssh.server.persistentTerminals：交互式 SSH 终端是否由远端 qingcode-server
- * daemon 托管。缺省或非法类型均按开启处理，只有明确的 false 才关闭。
- */
-export const SSH_SERVER_PERSISTENT_TERMINALS_KEY = PROJECT_SSH_SERVER_PERSISTENT_TERMINALS_KEY
-
 /** 旧版键名（改名 server 前写入的配置）：读取时回退，保存时清理。 */
 export const LEGACY_SSH_AGENT_ENABLED_KEY = 'ssh.agent.enabled'
 export const LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY = 'ssh.agent.autoDownload'
@@ -50,10 +41,6 @@ export function parseSshServerEnabled(value: unknown): boolean {
 export function parseSshServerAutoDownload(value: unknown): boolean {
   if (value == null) return true
   return value === true
-}
-
-export function parseSshServerPersistentTerminals(value: unknown): boolean {
-  return parsePersistentTerminals(value)
 }
 
 /** 新键缺失时回退旧键（ssh.agent.*），保证升级后旧配置仍然生效。 */
@@ -76,10 +63,6 @@ export function readSshServerAutoDownload(settings: Record<string, unknown>): bo
   return parseSshServerAutoDownload(
     readWithLegacy(settings, SSH_SERVER_AUTO_DOWNLOAD_KEY, LEGACY_SSH_AGENT_AUTO_DOWNLOAD_KEY),
   )
-}
-
-export function readSshServerPersistentTerminals(settings: Record<string, unknown>): boolean {
-  return parseSshServerPersistentTerminals(readPersistentTerminals(settings))
 }
 
 export function parseSshServerOfflineDir(value: unknown): string {
@@ -111,10 +94,6 @@ let cachedSshServerAutoDownload = parseSshServerAutoDownload(
 let cachedSshServerOfflineDir = parseSshServerOfflineDir(
   DEFAULT_GLOBAL_SETTINGS[SSH_SERVER_OFFLINE_DIR_KEY],
 )
-let cachedSshServerPersistentTerminals = parseSshServerPersistentTerminals(
-  DEFAULT_GLOBAL_SETTINGS[SSH_SERVER_PERSISTENT_TERMINALS_KEY],
-)
-
 export function getSshServerEnabled(): boolean {
   return cachedSshServerEnabled
 }
@@ -125,10 +104,6 @@ export function getSshServerAutoDownload(): boolean {
 
 export function getSshServerOfflineDir(): string {
   return cachedSshServerOfflineDir
-}
-
-export function getSshServerPersistentTerminals(): boolean {
-  return cachedSshServerPersistentTerminals
 }
 
 export function notifySshServerEnabledChanged(enabled: boolean) {
@@ -144,7 +119,6 @@ export async function loadEffectiveSshServerEnabled(
   const next = readSshServerEnabled(merged)
   cachedSshServerAutoDownload = readSshServerAutoDownload(merged)
   cachedSshServerOfflineDir = readSshServerOfflineDir(merged)
-  cachedSshServerPersistentTerminals = readSshServerPersistentTerminals(merged)
   notifySshServerEnabledChanged(next)
   return next
 }
@@ -181,32 +155,26 @@ export async function saveScopedSshServerEnabled(
   await pushSshServerSettingsToNative()
 }
 
-export async function loadScopedSshServerPersistentTerminals(
-  scope: 'global' | 'project',
-  project?: Project | null,
-): Promise<boolean> {
-  const next =
-    scope === 'project' && project
-      ? readSshServerPersistentTerminals(await loadProjectSettings(project))
-      : readSshServerPersistentTerminals(await loadGlobalSettings())
-  cachedSshServerPersistentTerminals = next
-  return next
-}
-
-export async function saveScopedSshServerPersistentTerminals(
-  scope: 'global' | 'project',
+/**
+ * 一键切换 Server / SSH 模式：写全局 `ssh.server.enabled`。当前项目若在项目设置里
+ * 单独覆盖了该键，一并移除覆盖，否则重新加载项目时会算回原来的模式。
+ */
+export async function switchGlobalSshServerMode(
   enabled: boolean,
   project?: Project | null,
 ): Promise<void> {
-  if (scope === 'project' && project) {
+  if (project) {
     const current = await loadProjectSettings(project)
-    current[SSH_SERVER_PERSISTENT_TERMINALS_KEY] = enabled === true
-    await saveProjectSettings(project, current)
-  } else {
-    const current = await loadGlobalSettings()
-    current[SSH_SERVER_PERSISTENT_TERMINALS_KEY] = enabled === true
-    await saveGlobalSettings(current)
+    if (SSH_SERVER_ENABLED_KEY in current) {
+      delete current[SSH_SERVER_ENABLED_KEY]
+      dropLegacyKeys(current)
+      await saveProjectSettings(project, current)
+    }
   }
+  const global = await loadGlobalSettings()
+  global[SSH_SERVER_ENABLED_KEY] = enabled
+  dropLegacyKeys(global)
+  await saveGlobalSettings(global)
   await loadEffectiveSshServerEnabled(project)
   await pushSshServerSettingsToNative()
 }
@@ -289,11 +257,6 @@ export async function pushSshServerSettingsToNative(): Promise<void> {
     await safeInvoke('配置 SSH 远端服务下载', 'ssh_set_server_auto_download', {
       enabled: getSshServerAutoDownload(),
     })
-    await safeInvoke(
-      '配置 SSH 持久化终端',
-      'ssh_set_persistent_terminals_enabled',
-      { enabled: getSshServerPersistentTerminals() },
-    )
     await safeInvoke('配置 SSH 离线服务目录', 'ssh_set_server_offline_dir', {
       dir: getSshServerOfflineDir(),
     })

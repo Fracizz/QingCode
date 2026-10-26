@@ -483,9 +483,8 @@ async fn open_terminal_daemon_session(
         match DaemonSession::open_on_transport(&transport, client_id, daemon).await {
             Ok(session) => return Ok((transport, session)),
             Err(error) => {
-                let retry = !retried
-                    && is_channel_refused_error(&error)
-                    && transport.mark_refused().await;
+                let retry =
+                    !retried && is_channel_refused_error(&error) && transport.mark_refused().await;
                 transport.release();
                 if !retry {
                     return Err(error);
@@ -497,7 +496,11 @@ async fn open_terminal_daemon_session(
 }
 
 /// 已有共享连接全满、新开了连接时提示用户（前端以 info toast 展示）。
-fn emit_terminal_pool_notice(app: &AppHandle, connection_id: &str, transport: &TerminalTransportLease) {
+fn emit_terminal_pool_notice(
+    app: &AppHandle,
+    connection_id: &str,
+    transport: &TerminalTransportLease,
+) {
     if let Some(message) = transport.notice() {
         let _ = app.emit(
             "ssh-terminal-pool-notice",
@@ -646,13 +649,12 @@ pub(crate) async fn attach_persistent_terminal(
         return Err("终端尺寸必须大于 0".to_string());
     }
     let parsed = parse_remote_uri(&root.uri)?;
-    let endpoint = server::ready_server_endpoint(&app, manager, &root)
-        .await
-        .ok_or_else(|| "远端 daemon 尚未就绪".to_string())?;
+    // Server 模式：等部署与 daemon 探测完成，不可用时报错，不回退直连。
+    let endpoint = server::require_server_endpoint(&app, manager, &root, true).await?;
     let daemon = endpoint
         .daemon
         .as_ref()
-        .ok_or_else(|| "远端 server 当前没有 daemon 端点".to_string())?;
+        .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
     let client_id = manager.daemon_client_id(&parsed.connection_id);
     let (transport, mut session) = open_terminal_daemon_session(
         manager,
@@ -830,13 +832,12 @@ pub(crate) async fn spawn_persistent_terminal(
     manager: &SshManager,
 ) -> Result<TerminalSpawnResult, String> {
     let parsed = parse_remote_uri(&root.uri)?;
-    let endpoint = server::ready_server_endpoint(&app, manager, &root)
-        .await
-        .ok_or_else(|| "远端 daemon 尚未就绪".to_string())?;
+    // Server 模式：等部署与 daemon 探测完成，不可用时报错，不回退直连。
+    let endpoint = server::require_server_endpoint(&app, manager, &root, true).await?;
     let daemon = endpoint
         .daemon
         .as_ref()
-        .ok_or_else(|| "远端 server 当前没有 daemon 端点".to_string())?;
+        .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
     let client_id = manager.daemon_client_id(&parsed.connection_id);
     let (transport, mut session) = open_terminal_daemon_session(
         manager,
@@ -1445,15 +1446,15 @@ async fn kill_offline(terminal: &PersistentTerminal, root: &RegisteredRoot, app:
                     )
                     .await
                     {
-                            let killed = session
-                                .request("pty.kill", &serde_json::json!({ "id": terminal.pty_id }))
-                                .await
-                                .is_ok();
-                            session.shutdown();
-                            transport.release();
-                            if killed {
-                                return;
-                            }
+                        let killed = session
+                            .request("pty.kill", &serde_json::json!({ "id": terminal.pty_id }))
+                            .await
+                            .is_ok();
+                        session.shutdown();
+                        transport.release();
+                        if killed {
+                            return;
+                        }
                     }
                 }
             }

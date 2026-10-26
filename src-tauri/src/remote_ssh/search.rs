@@ -502,7 +502,8 @@ fn append_content_record(
 }
 
 /// server 路径的内容搜索：记录格式与 rg --json 一致，直接复用 append_content_record。
-/// 返回 Ok(None) 表示不走 server（前置门不满足 / server 不可用），由调用方回退 rg。
+/// 返回 Ok(None) 仅表示 SSH 模式或项目未受信任（不部署 server），由调用方走 rg；
+/// Server 模式下 server 不可用时返回错误，不回退。
 #[allow(clippy::too_many_arguments)]
 async fn server_search_file_contents(
     app: &AppHandle,
@@ -521,19 +522,19 @@ async fn server_search_file_contents(
     started: Instant,
 ) -> Result<Option<RemoteContentResponse>, String> {
     let registered = manager.root_for_uri(root, false)?;
-    // server 只搜索自己启动时的根：搜索根不是注册根（如子目录）时不走 server，
-    // 避免把整个工作区的匹配误报给前端。
-    if !registered.trusted
-        || !manager.server_enabled()
-        || canonical_root.trim_end_matches('/') != registered.canonical_path.trim_end_matches('/')
-    {
+    if !registered.trusted || !manager.server_enabled() {
         return Ok(None);
+    }
+    // serve 端点只能搜索自己启动时的根；子目录搜索交给 daemon（root 传子目录），
+    // 子目录必须在项目根内。
+    let at_root =
+        canonical_root.trim_end_matches('/') == registered.canonical_path.trim_end_matches('/');
+    if !at_root && !remote_path_is_within(canonical_root, &registered.canonical_path) {
+        return Err("搜索目录不在项目根目录内".to_string());
     }
     let connection_id = parse_remote_uri(root)?.connection_id;
     let key = server::server_slot_key(&connection_id, &registered.canonical_path);
-    let Some(endpoint) = server::ready_server_endpoint(app, manager, &registered).await else {
-        return Ok(None);
-    };
+    let endpoint = server::require_server_endpoint(app, manager, &registered, false).await?;
     let mut files = Vec::new();
     let mut count = 0usize;
     let mut per_file_truncated = false;
@@ -541,7 +542,7 @@ async fn server_search_file_contents(
     // 任何传输失败都只降级 daemon 标记（保留 serve 端点），继续走 serve 请求。
     if let Some(daemon) = endpoint.daemon.as_ref() {
         let params = server::DaemonSearchParams {
-            root: registered.canonical_path.clone(),
+            root: canonical_root.to_string(),
             query: query.to_string(),
             ignore_case,
             include_globs: extension_filters
@@ -591,11 +592,25 @@ async fn server_search_file_contents(
                     per_file_truncated,
                 )));
             }
-            Err(_) => {
+            Err(error) => {
                 server::downgrade_server_daemon(manager, &key);
                 server_status::publish_root_state(app, manager, &registered);
+                if !at_root {
+                    return Err(server::server_mode_error(format!(
+                        "子目录搜索失败：{error}"
+                    )));
+                }
+                // daemon 中途失败时可能已收到部分记录，改走 serve 前清空，避免重复。
+                files.clear();
+                count = 0;
+                per_file_truncated = false;
             }
         }
+    }
+    if !at_root {
+        return Err(server::server_mode_error(
+            "远端 daemon 不可用，serve 方式只能搜索项目根目录，可在状态栏重启 server",
+        ));
     }
     let request = qingcode_server::ServerRequest {
         token: endpoint.token.clone(),
@@ -642,10 +657,10 @@ async fn server_search_file_contents(
     .await;
     let outcome = match outcome {
         Ok(outcome) => outcome,
-        Err(_) => {
-            // server 失联或出错：清掉端点缓存并回退 rg，不让搜索失败；后台重新发现。
+        Err(error) => {
+            // server 失联或出错：清掉端点缓存并在后台重新发现；Server 模式不回退 rg。
             server::note_server_endpoint_lost(app, manager, &registered, &key);
-            return Ok(None);
+            return Err(server::server_mode_error(format!("内容搜索失败：{error}")));
         }
     };
     Ok(Some(content_response_from_outcome(
@@ -725,7 +740,7 @@ pub async fn ssh_search_file_contents(
     let extension_filters = extensions
         .or_else(|| extension.map(|value| vec![value]))
         .unwrap_or_default();
-    // server 优先：一次往返代替逐批 rg 进程；任何失败静默回退既有 rg 实现。
+    // Server 模式只经 server 搜索、失败即报错；SSH 模式与未受信任项目走 rg。
     if !control.cancelled() {
         match server_search_file_contents(
             &app,
@@ -747,7 +762,7 @@ pub async fn ssh_search_file_contents(
         {
             Ok(Some(response)) => return Ok(response),
             Ok(None) => {}
-            Err(_) => {}
+            Err(error) => return Err(error),
         }
     }
     let mut filters = Vec::new();

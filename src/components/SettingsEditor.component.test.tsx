@@ -138,11 +138,6 @@ vi.mock('../lib/projectSettings', () => ({
   ensureSettingsFile: vi.fn().mockResolvedValue(undefined),
   loadGlobalSettings: vi.fn().mockResolvedValue({}),
   loadProjectSettings: vi.fn().mockResolvedValue({}),
-  SSH_SERVER_PERSISTENT_TERMINALS_KEY: 'ssh.server.persistentTerminals',
-  parseSshServerPersistentTerminals: (value: unknown) =>
-    typeof value === 'boolean' ? value : true,
-  readSshServerPersistentTerminals: (settings: Record<string, unknown>) =>
-    settings['ssh.server.persistentTerminals'] !== false,
   resolveGlobalSettingsPath: async () => 'D:/settings.json',
   resolveProjectSettingsPath: async () => 'D:/proj-settings.json',
   DEFAULT_GLOBAL_SETTINGS: {
@@ -150,7 +145,6 @@ vi.mock('../lib/projectSettings', () => ({
     'files.autoSave': 'off',
     'editor.minimap.enabled': true,
     'editor.guides.enabled': true,
-    'ssh.server.persistentTerminals': true,
   },
 }))
 

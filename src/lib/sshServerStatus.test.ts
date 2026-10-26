@@ -3,6 +3,7 @@ import {
   isAgentCommandUnavailable,
   parseSshServerState,
   parseSshServerTimings,
+  sshServerCanSwitchToSshMode,
   sshServerChip,
   sshServerEventMatches,
   sshServerIsDirect,
@@ -27,6 +28,8 @@ describe('sshServerStatus', () => {
     const direct: SshServerState = { ...readyServer, phase: 'readyDirect', mode: 'direct', transport: 'direct', version: null, reason: 'server 启动超时' }
     expect(sshServerIsDirect(readyServer)).toBe(false)
     expect(sshServerIsDirect(direct)).toBe(true)
+    expect(sshServerCanSwitchToSshMode(readyServer)).toBe(true)
+    expect(sshServerCanSwitchToSshMode(direct)).toBe(false)
     expect(sshServerSwitchBlocker(direct)).toBeNull()
     expect(sshServerSwitchBlocker({ ...direct, reason: null })).toBeNull()
     expect(sshServerSwitchBlocker({ ...direct, reason: '已关闭 ssh.server.enabled' })).toContain('设置')

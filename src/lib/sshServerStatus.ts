@@ -163,9 +163,19 @@ export function sshServerSwitchBlocker(state: SshServerState): string | null {
   return null
 }
 
+/** 直连是因为设置关闭了远端服务（SSH 模式）：「切换到 Server」应先开启设置。 */
+export function sshServerDisabledBySetting(state: SshServerState): boolean {
+  return (state.reason?.trim() ?? '').startsWith(REASON_SERVER_DISABLED)
+}
+
 /** 当前是否处于直连（含部署失败后的回退），用于决定是否展示「切换到 Server」。 */
 export function sshServerIsDirect(state: SshServerState): boolean {
   return state.phase === 'readyDirect' || state.mode === 'direct'
+}
+
+/** 非直连（Server 就绪、部署中或断线）才提供「切到 SSH 模式」。 */
+export function sshServerCanSwitchToSshMode(state: SshServerState): boolean {
+  return !sshServerIsDirect(state)
 }
 
 export function sshServerEventMatches(eventRootUri: string, activeRootUri: string): boolean {

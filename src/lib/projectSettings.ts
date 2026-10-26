@@ -40,9 +40,6 @@ export const PROJECT_INDICATORS_ENABLED_KEY = 'qingcode.projectIndicators.enable
 /** Background Git status polling interval start in whole minutes. */
 export const GIT_REFRESH_INTERVAL_START_MINUTES_KEY =
   'qingcode.git.refreshIntervalStartMinutes'
-/** Keep SSH interactive terminals in the remote qingcode-server daemon across disconnects. */
-export const SSH_SERVER_PERSISTENT_TERMINALS_KEY = 'ssh.server.persistentTerminals'
-
 function buildSharedDefaults(): SettingsFile {
   return {
     version: 1,
@@ -104,7 +101,6 @@ function buildSharedDefaults(): SettingsFile {
     'terminal.integrated.cursorBlinking': true,
     'terminal.integrated.sshUploadOnPaste': true,
     'ssh.server.enabled': true,
-    [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: true,
     'ssh.server.autoDownload': true,
     'ssh.server.offlineDir': '',
     custom: {},
@@ -244,11 +240,6 @@ __AUTOSAVE_SETTINGS__
   // 关闭后完全回退纯 SFTP/exec 直连（远端零足迹），但失去文件树自动刷新、
   // 内嵌内容搜索（无需远端 rg）与快速目录扫描（默认 true）
   "ssh.server.enabled": true,
-
-  // ssh.server.persistentTerminals：SSH 远程终端由远端 qingcode-server daemon 托管：
-  // 断网或 SSH 断开时终端进程继续运行，重连后接回原会话。关闭后终端直连 SSH，
-  // 断线即结束远端进程。需要 ssh.server.enabled（默认 true）
-  "ssh.server.persistentTerminals": true,
 
   // ssh.server.autoDownload：安装包不附带 server 二进制。缺失时是否从 GitHub Release
   // （server-v<版本> 标签）在线下载并做 sha256 校验。需要能访问 GitHub。
@@ -686,15 +677,6 @@ export function readProjectEntries(settings: SettingsFile): SettingsProjectEntry
 
 export function shouldSyncProjectsOnStartup(settings: SettingsFile): boolean {
   return settings[PROJECTS_SYNC_ON_STARTUP_KEY] !== false
-}
-
-/** 缺省或非法类型均回退到开启，只有明确的布尔值才改变行为。 */
-export function parseSshServerPersistentTerminals(value: unknown): boolean {
-  return typeof value === 'boolean' ? value : true
-}
-
-export function readSshServerPersistentTerminals(settings: Record<string, unknown>): boolean {
-  return parseSshServerPersistentTerminals(settings[SSH_SERVER_PERSISTENT_TERMINALS_KEY])
 }
 
 export async function resolveGlobalSettingsPath(): Promise<string> {

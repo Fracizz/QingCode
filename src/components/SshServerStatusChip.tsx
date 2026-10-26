@@ -8,7 +8,9 @@ import {
   parseSshServerState,
   parseSshServerTimings,
   sshServerChip,
+  sshServerCanSwitchToSshMode,
   sshServerEventMatches,
+  sshServerDisabledBySetting,
   sshServerIsDirect,
   sshServerSwitchBlocker,
   sshServerPhaseKey,
@@ -22,6 +24,7 @@ import StatusTip from './StatusTip'
 import ContextMenu from './ContextMenu'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
+import { switchToServerMode, switchToSshMode } from '../lib/serverModeError'
 import { RefreshCw, RotateCw, ScrollText, X } from 'lucide-react'
 
 const STATUS_ACTION = 'rounded px-1 -mx-1 text-fg hover:bg-bg-hover transition-colors'
@@ -156,13 +159,28 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
   }
 
   const direct = sshServerIsDirect(state)
-  const switchBlocker = direct ? sshServerSwitchBlocker(state) : null
+  const canSwitchToSsh = sshServerCanSwitchToSshMode(state)
+  // SSH 模式（设置关闭）下「切换到 Server」直接先开启设置，不再要求去设置页。
+  const disabledBySetting = direct && sshServerDisabledBySetting(state)
+  const switchBlocker = direct && !disabledBySetting ? sshServerSwitchBlocker(state) : null
+
+  const switchModeToSsh = () => {
+    if (busy) return
+    setBusy(true)
+    void switchToSshMode()
+      .then(() => pushToast('success', t('已切换到 SSH 模式')))
+      .catch(error => {
+        pushToast('error', t('切到 SSH 模式失败: {error}', { error: String(error) }))
+      })
+      .finally(() => setBusy(false))
+  }
 
   // 直连时同一个后端命令（清缓存 + 重新发现/部署）即「切换到 Server」。
   const restart = () => {
     if (busy) return
     setBusy(true)
-    void safeInvoke<unknown>('重启 SSH Agent', 'ssh_server_restart', { rootUri })
+    void (disabledBySetting ? switchToServerMode() : Promise.resolve())
+      .then(() => safeInvoke<unknown>('重启 SSH Agent', 'ssh_server_restart', { rootUri }))
       .then(value => {
         const next = parseSshServerState(value)
         if (next) setState(next)
@@ -215,6 +233,9 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
           items={[
             { label: t('查看 Server 详情'), action: () => setDialog('details') },
             { label: restartLabel, disabled: busy || !!switchBlocker, action: restart },
+            ...(canSwitchToSsh
+              ? [{ label: t('切到 SSH 模式'), disabled: busy, action: switchModeToSsh }]
+              : []),
             { label: t('查看 Server 日志'), action: openLogs },
           ]}
         />
@@ -297,19 +318,32 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
                 </pre>
               )}
             </div>
-            {dialog === 'details' && direct ? (
+            {dialog === 'details' ? (
               <footer className="flex flex-shrink-0 items-center justify-end gap-3 border-t border-border px-4 py-3">
-                {switchBlocker ? (
-                  <p className="min-w-0 flex-1 text-ui-xs text-fg-muted">{t(switchBlocker)}</p>
-                ) : null}
-                <button
-                  type="button"
-                  disabled={busy || !!switchBlocker}
-                  className="flex-shrink-0 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40"
-                  onClick={restart}
-                >
-                  {busy ? t('正在切换…') : t('切换到 Server')}
-                </button>
+                {direct ? (
+                  <>
+                    {switchBlocker ? (
+                      <p className="min-w-0 flex-1 text-ui-xs text-fg-muted">{t(switchBlocker)}</p>
+                    ) : null}
+                    <button
+                      type="button"
+                      disabled={busy || !!switchBlocker}
+                      className="flex-shrink-0 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40"
+                      onClick={restart}
+                    >
+                      {busy ? t('正在切换…') : t('切换到 Server')}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="flex-shrink-0 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40"
+                    onClick={switchModeToSsh}
+                  >
+                    {busy ? t('正在切换…') : t('切到 SSH 模式')}
+                  </button>
+                )}
               </footer>
             ) : null}
           </section>

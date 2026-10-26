@@ -846,6 +846,78 @@ pub(crate) async fn ready_server_endpoint(
         .flatten()
 }
 
+/// Server 模式下等待发现/部署整体的上限；首次部署含下载、上传与启动。
+const SERVER_MODE_DEPLOY_WAIT: Duration = Duration::from_secs(180);
+/// 端点就绪后等待后台 daemon 探测结束的上限。
+const SERVER_MODE_DAEMON_WAIT: Duration = Duration::from_secs(30);
+const SERVER_MODE_DAEMON_POLL: Duration = Duration::from_millis(200);
+
+/// Server 模式的错误前缀；前端据此在提示里给出「切到 SSH 模式」。
+pub(crate) const SERVER_MODE_ERROR_PREFIX: &str = "Server 模式：";
+
+pub(crate) fn server_mode_error(detail: impl std::fmt::Display) -> String {
+    format!("{SERVER_MODE_ERROR_PREFIX}{detail}")
+}
+
+/// Server 模式专用：等进行中的发现/部署（及 `need_daemon` 时的 daemon 探测）
+/// 完成后返回端点；不可用时返回带原因的错误。调用方不得据此回退直连。
+pub(crate) async fn require_server_endpoint(
+    app: &tauri::AppHandle,
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    need_daemon: bool,
+) -> Result<ServerEndpoint, String> {
+    if !manager.server_enabled() {
+        return Err("当前为 SSH 模式（ssh.server.enabled 已关闭），不使用远端 server".to_string());
+    }
+    if !root.trusted {
+        return Err(server_mode_error("项目未受信任，无法使用远端 server"));
+    }
+    let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    let key = server_slot_key(&connection_id, &root.canonical_path);
+    let ensured = tokio::time::timeout(
+        SERVER_MODE_DEPLOY_WAIT,
+        ensure_server_endpoint_inner(manager, root, Some(app), true),
+    )
+    .await
+    .map_err(|_| server_mode_error("等待远端 server 部署超时"))??;
+    let Some(endpoint) = ensured else {
+        let slot = manager.server_slot(&key).unwrap_or_default();
+        let reason = slot
+            .unavailable_reason
+            .or(slot.last_failure)
+            .unwrap_or_else(|| "原因未知".to_string());
+        return Err(server_mode_error(format!("远端 server 不可用：{reason}")));
+    };
+    if !need_daemon || endpoint.daemon.is_some() {
+        return Ok(endpoint);
+    }
+    // serve 就绪后 daemon 在后台探测；终端与运行任务必须等它有结论。
+    let deadline = Instant::now() + SERVER_MODE_DAEMON_WAIT;
+    loop {
+        let slot = manager.server_slot(&key).unwrap_or_default();
+        match slot.endpoint {
+            Some(current) if current.daemon.is_some() => return Ok(current),
+            Some(_) if slot.daemon_probe_pending && Instant::now() < deadline => {}
+            Some(_) if slot.daemon_probe_pending => {
+                return Err(server_mode_error("等待远端 daemon 就绪超时"));
+            }
+            Some(_) => {
+                return Err(server_mode_error(
+                    "远端 daemon 不可用（server 只能以 serve 方式运行，终端与运行任务需要 daemon），可在状态栏重启 server",
+                ));
+            }
+            None => {
+                let reason = slot
+                    .last_failure
+                    .unwrap_or_else(|| "端点已失效".to_string());
+                return Err(server_mode_error(format!("远端 server 不可用：{reason}")));
+            }
+        }
+        tokio::time::sleep(SERVER_MODE_DAEMON_POLL).await;
+    }
+}
+
 /// slot 还没有结论（无端点、无不可用原因）且没有部署在跑时，后台补一轮
 /// 发现/部署。状态查询与 server 调用失败后都走这里：否则 slot 停在「正在
 /// 探测」却没有任何任务在推进，状态芯片会一直卡住。

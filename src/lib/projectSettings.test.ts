@@ -10,7 +10,6 @@ import {
   PROJECT_INDICATORS_ENABLED_KEY,
   PROJECTS_SYNC_ON_STARTUP_KEY,
   SESSION_EDITOR_STATE_CACHE_SIZE_KEY,
-  SSH_SERVER_PERSISTENT_TERMINALS_KEY,
   UPDATE_CHECK_ON_STARTUP_KEY,
   defaultSettingsFor,
   formatSettings,
@@ -18,10 +17,8 @@ import {
   isSettingsJsonPath,
   parseSettings,
   parseSettingsText,
-  parseSshServerPersistentTerminals,
   projectSettingsPath,
   readProjectEntries,
-  readSshServerPersistentTerminals,
   shouldSyncProjectsOnStartup,
   stripGlobalOnlyKeys,
   validateSettings,
@@ -91,39 +88,21 @@ describe('parseSettingsText', () => {
   })
 })
 
-describe('ssh.server.persistentTerminals', () => {
-  it('defaults on for missing and non-boolean values', () => {
-    expect(parseSshServerPersistentTerminals(undefined)).toBe(true)
-    expect(parseSshServerPersistentTerminals(null)).toBe(true)
-    expect(parseSshServerPersistentTerminals('false')).toBe(true)
-    expect(parseSshServerPersistentTerminals(0)).toBe(true)
-    expect(parseSshServerPersistentTerminals({ enabled: false })).toBe(true)
-  })
-
-  it('accepts only explicit booleans', () => {
-    expect(parseSshServerPersistentTerminals(true)).toBe(true)
-    expect(parseSshServerPersistentTerminals(false)).toBe(false)
-    expect(readSshServerPersistentTerminals({})).toBe(true)
-    expect(readSshServerPersistentTerminals({ [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: 'false' })).toBe(
-      true,
-    )
-    expect(readSshServerPersistentTerminals(DEFAULT_GLOBAL_SETTINGS)).toBe(true)
-    expect(
-      readSshServerPersistentTerminals({
-        [SSH_SERVER_PERSISTENT_TERMINALS_KEY]: false,
-      }),
-    ).toBe(false)
-  })
-
-  it('is enabled in the defaults and keeps its key-specific comment', () => {
-    expect(DEFAULT_GLOBAL_SETTINGS[SSH_SERVER_PERSISTENT_TERMINALS_KEY]).toBe(true)
-    expect(DEFAULT_PROJECT_SETTINGS[SSH_SERVER_PERSISTENT_TERMINALS_KEY]).toBe(true)
-    expect(DEFAULT_GLOBAL_SETTINGS_TEXT).toContain(
-      '// ssh.server.persistentTerminals：SSH 远程终端由远端 qingcode-server daemon 托管',
-    )
-    expect(DEFAULT_GLOBAL_SETTINGS_TEXT).toContain(
-      '// 断网或 SSH 断开时终端进程继续运行，重连后接回原会话。',
-    )
+describe('removed ssh.server.persistentTerminals key', () => {
+  it('ignores a stale key left in an old settings file without throwing', () => {
+    const text = `{
+      version: 1,
+      custom: {},
+      "ssh.server.persistentTerminals": false,
+    }`
+    let parsed: ReturnType<typeof parseSettingsText> | null = null
+    expect(() => {
+      parsed = parseSettingsText(text, 'global')
+    }).not.toThrow()
+    expect(parsed?.['ssh.server.persistentTerminals']).toBe(false)
+    expect(DEFAULT_GLOBAL_SETTINGS['ssh.server.persistentTerminals']).toBeUndefined()
+    expect(DEFAULT_PROJECT_SETTINGS['ssh.server.persistentTerminals']).toBeUndefined()
+    expect(DEFAULT_GLOBAL_SETTINGS_TEXT).not.toContain('ssh.server.persistentTerminals')
   })
 })
 

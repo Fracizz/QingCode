@@ -842,7 +842,6 @@ pub fn run() {
             remote_ssh::ssh_server_states,
             remote_ssh::ssh_set_workspace_trust,
             remote_ssh::ssh_set_server_enabled,
-            remote_ssh::ssh_set_persistent_terminals_enabled,
             remote_ssh::ssh_server_info,
             remote_ssh::ssh_server_restart,
             remote_ssh::ssh_server_stop,
