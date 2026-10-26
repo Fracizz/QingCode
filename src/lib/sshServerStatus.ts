@@ -96,10 +96,31 @@ export function sshServerChip(state: SshServerState | null): SshServerChip | nul
   return { kind: 'pending' }
 }
 
+/**
+ * 面向用户的连接模式。SSH 始终是底层连接；远端服务只是叠加在 SSH 上的
+ * 增强层，不能把 Server/daemon 展示成另一种独立协议。
+ */
+export function sshServerModeKey(state: SshServerState): string {
+  if (state.phase === 'readyServer') return 'SSH + 远端服务'
+  if (state.phase === 'readyDirect') return 'SSH 直连'
+  switch (state.phase) {
+    case 'disconnected':
+      return state.reason ? 'SSH 已断开' : '未连接'
+    case 'authenticating':
+      return 'SSH 正在认证'
+    case 'probing':
+      return 'SSH 已连接 · 正在准备远端服务'
+    case 'installing':
+      return '正在安装远端服务'
+    case 'handshaking':
+      return '正在连接远端服务'
+  }
+}
+
 export function sshServerTransportKey(transport: SshServerTransport | null): string | null {
-  if (transport === 'daemon') return '常驻 daemon'
-  if (transport === 'serve') return '项目 serve'
-  if (transport === 'direct') return '直连'
+  if (transport === 'daemon') return '常驻服务'
+  if (transport === 'serve') return '按项目服务'
+  if (transport === 'direct') return '纯 SSH'
   return null
 }
 
@@ -127,21 +148,26 @@ function shortReason(reason: string): string {
   return reason.split('\n', 1)[0].trim()
 }
 
-/** 单行摘要：状态栏只给一句话，完整信息留给「查看 Server 详情」弹窗。 */
+/** 状态栏提示先说明连接模式，再给出运行方式或回退原因。 */
 export function sshServerTipLines(state: SshServerState): SshServerTipLine[] {
   if (state.phase === 'readyDirect' || state.mode === 'direct') {
-    return state.reason
-      ? [{ key: '直连：{reason}', params: { reason: shortReason(state.reason) } }]
-      : [{ key: '直连' }]
+    const lines: SshServerTipLine[] = [{ key: 'SSH 直连' }]
+    if (state.reason) {
+      lines.push({ key: '回退原因：{reason}', params: { reason: shortReason(state.reason) } })
+    }
+    return lines
   }
   if (state.phase === 'readyServer') {
-    return state.version
-      ? [{ key: 'Server v{version}', params: { version: state.version } }]
-      : [{ key: 'Server' }]
+    const lines: SshServerTipLine[] = [{ key: 'SSH + 远端服务' }]
+    const transport = sshServerTransportKey(state.transport)
+    if (transport) lines.push({ key: '运行方式：{transport}', params: { transport } })
+    if (state.version) {
+      lines.push({ key: '远端服务 v{version}', params: { version: state.version } })
+    }
+    return lines
   }
-  const lines: SshServerTipLine[] = [
-    { key: '阶段：{phase}', params: { phase: sshServerPhaseKey(state.phase) } },
-  ]
+  const lines: SshServerTipLine[] = [{ key: sshServerModeKey(state) }]
+  lines.push({ key: '阶段：{phase}', params: { phase: sshServerPhaseKey(state.phase) } })
   if (state.reason) lines.push({ key: '原因：{reason}', params: { reason: shortReason(state.reason) } })
   return lines
 }
@@ -151,7 +177,7 @@ const REASON_SERVER_DISABLED = '已关闭 ssh.server.enabled'
 const REASON_UNTRUSTED = '工作区未信任'
 
 /**
- * 直连状态下能否一键切到 Server：返回 null 表示可以直接重新部署；
+ * 直连状态下能否一键切到远端服务：返回 null 表示可以直接重新部署；
  * 总开关关闭或工作区未信任时重新部署也只会回到直连，返回需要先处理的提示 key。
  */
 export function sshServerSwitchBlocker(state: SshServerState): string | null {
@@ -159,11 +185,11 @@ export function sshServerSwitchBlocker(state: SshServerState): string | null {
   if (reason.startsWith(REASON_SERVER_DISABLED)) {
     return '远端服务已在设置中关闭，请先在 设置 › 功能 中开启「SSH › 服务: 远端服务」'
   }
-  if (reason.startsWith(REASON_UNTRUSTED)) return '请先信任该工作区，再切换到 Server'
+  if (reason.startsWith(REASON_UNTRUSTED)) return '请先信任该工作区，再切换到远端服务'
   return null
 }
 
-/** 当前是否处于直连（含部署失败后的回退），用于决定是否展示「切换到 Server」。 */
+/** 当前是否处于直连（含部署失败后的回退），用于决定是否展示「切换到远端服务」。 */
 export function sshServerIsDirect(state: SshServerState): boolean {
   return state.phase === 'readyDirect' || state.mode === 'direct'
 }

@@ -158,7 +158,7 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
       <SettingItem
         title={t('SSH › 服务: 远端服务')}
         description={t(
-          '在 SSH 工作区部署远端服务（qingcode-server），提供文件树自动刷新、内嵌内容搜索（无需远端 rg）与快速目录扫描。服务经 SSH 通道接入，只监听远端 127.0.0.1。关闭后完全回退纯 SSH 直连，远端零足迹。默认开启。',
+          '远端服务是 SSH 工作区的可选增强模式（“SSH + 远端服务”），不是另一种连接协议。开启后提供文件树自动刷新、内嵌内容搜索（无需远端 rg）与快速目录扫描；服务只监听远端 127.0.0.1。关闭后自动回退“SSH 直连”，远端零足迹。默认开启。',
         )}
         modified={!enabled}
       >

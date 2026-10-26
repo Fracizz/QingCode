@@ -9,6 +9,7 @@ import {
   sshServerChip,
   sshServerEventMatches,
   sshServerIsDirect,
+  sshServerModeKey,
   sshServerSwitchBlocker,
   sshServerPhaseKey,
   sshServerTipLines,
@@ -115,11 +116,11 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
 
   if (infoError) {
     return (
-      <StatusTip label={`${t('Server 状态未知')}\n${infoError}`}>
+      <StatusTip label={`${t('远端服务状态未知')}\n${infoError}`}>
         <button
           type="button"
           className={`inline-flex flex-shrink-0 items-center text-ui-2xs ${STATUS_ACTION}`}
-          aria-label={t('Server 状态未知')}
+          aria-label={t('远端服务状态未知')}
         >
           !
         </button>
@@ -143,7 +144,7 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
       .then(result => setLogs(result.text))
       .catch(error => {
         if (isAgentCommandUnavailable(error)) return
-        pushToast('error', t('读取 Server 日志失败: {error}', { error: String(error) }))
+        pushToast('error', t('读取远端服务日志失败: {error}', { error: String(error) }))
       })
       .finally(() => setLogsLoading(false))
   }
@@ -156,7 +157,7 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
   const direct = sshServerIsDirect(state)
   const switchBlocker = direct ? sshServerSwitchBlocker(state) : null
 
-  // 直连时同一个后端命令（清缓存 + 重新发现/部署）即「切换到 Server」。
+  // 直连时同一个后端命令（清缓存 + 重新发现/部署）即「切换到远端服务」。
   const restart = () => {
     if (busy) return
     setBusy(true)
@@ -167,9 +168,9 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
         if (!direct) {
           pushToast('success', t('已重启远端服务'))
         } else if (next?.phase === 'readyServer') {
-          pushToast('success', t('已切换到 Server'))
+          pushToast('success', t('已切换到远端服务'))
         } else if (next && sshServerIsDirect(next)) {
-          pushToast('warn', t('仍为直连'), next.reason ?? undefined)
+          pushToast('warn', t('仍使用 SSH 直连'), next.reason ?? undefined)
         } else {
           pushToast('info', t('正在部署远端服务…'))
         }
@@ -179,13 +180,13 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
         pushToast(
           'error',
           direct
-            ? t('切换到 Server 失败: {error}', { error: String(error) })
-            : t('重启 Server 失败: {error}', { error: String(error) }),
+            ? t('切换到远端服务失败: {error}', { error: String(error) })
+            : t('重启远端服务失败: {error}', { error: String(error) }),
         )
       })
       .finally(() => setBusy(false))
   }
-  const restartLabel = direct ? t('切换到 Server') : t('重启 Server')
+  const restartLabel = direct ? t('切换到远端服务') : t('重启远端服务')
 
   return (
     <>
@@ -211,9 +212,9 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
           preferAbove
           onClose={() => setMenu(null)}
           items={[
-            { label: t('查看 Server 详情'), action: () => setDialog('details') },
+            { label: t('查看远端服务详情'), action: () => setDialog('details') },
             { label: restartLabel, disabled: busy || !!switchBlocker, action: restart },
-            { label: t('查看 Server 日志'), action: openLogs },
+            { label: t('查看远端服务日志'), action: openLogs },
           ]}
         />
       )}
@@ -227,7 +228,7 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
           >
             <header className="flex h-11 flex-shrink-0 items-center justify-between gap-3 border-b border-border px-4">
               <h2 id="ssh-agent-dialog-title" className="text-ui-lg font-medium text-fg">
-                {dialog === 'logs' ? t('Server 日志') : t('Server 详情')}
+                {dialog === 'logs' ? t('远端服务日志') : t('远端服务详情')}
               </h2>
               <div className="flex items-center gap-1">
                 {dialog === 'details' ? (
@@ -243,10 +244,10 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
                         <RotateCw size={16} />
                       </button>
                     </Tooltip>
-                    <Tooltip label={t('查看 Server 日志')} side="bottom">
+                    <Tooltip label={t('查看远端服务日志')} side="bottom">
                       <button
                         type="button"
-                        aria-label={t('查看 Server 日志')}
+                        aria-label={t('查看远端服务日志')}
                         className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
                         onClick={openLogs}
                       >
@@ -283,9 +284,12 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
               {dialog === 'details' ? (
                 <dl className="space-y-2">
                   <Detail label={t('阶段')} value={phaseText(sshServerPhaseKey(state.phase), t)} />
-                  <Detail label={t('模式')} value={modeText(state.mode, t)} />
+                  <Detail label={t('模式')} value={t(sshServerModeKey(state))} />
                   <Detail label={t('版本')} value={state.version ?? t('未知')} />
-                  <Detail label={t('传输')} value={transportText(sshServerTransportKey(state.transport), t)} />
+                  <Detail
+                    label={t('运行方式')}
+                    value={transportText(sshServerTransportKey(state.transport), t)}
+                  />
                   {state.reason ? <Detail label={t('原因')} value={state.reason} /> : null}
                   {state.timings ? <Detail label={t('耗时')} value={state.timings} /> : null}
                 </dl>
@@ -306,7 +310,7 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
                   className="flex-shrink-0 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40"
                   onClick={restart}
                 >
-                  {busy ? t('正在切换…') : t('切换到 Server')}
+                  {busy ? t('正在切换…') : t('切换到远端服务')}
                 </button>
               </footer>
             ) : null}
@@ -331,10 +335,10 @@ function ChipDot({ kind }: { kind: SshServerChip['kind'] }) {
 
 function ChipText({ chip }: { chip: SshServerChip }) {
   const { t } = useI18n()
-  if (chip.kind === 'agent') return <>{t('Server')}</>
-  if (chip.kind === 'direct') return <>{t('直连')}</>
-  if (chip.kind === 'offline') return <>{t('已断开')}</>
-  return <>{t('Server…')}</>
+  if (chip.kind === 'agent') return <>{t('SSH + 服务')}</>
+  if (chip.kind === 'direct') return <>{t('SSH 直连')}</>
+  if (chip.kind === 'offline') return <>{t('SSH 已断开')}</>
+  return <>{t('SSH 服务…')}</>
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
@@ -351,14 +355,12 @@ function translateTipLine(
   t: (source: string, values?: Record<string, string | number>) => string,
 ): string {
   switch (line.key) {
-    case '直连：{reason}':
-      return t('直连：{reason}', line.params)
-    case '直连':
-      return t('直连')
-    case 'Server v{version}':
-      return t('Server v{version}', line.params)
-    case 'Server':
-      return t('Server')
+    case '运行方式：{transport}':
+      return t('运行方式：{transport}', {
+        transport: t(line.params?.transport ?? '未知'),
+      })
+    case '回退原因：{reason}':
+      return t('回退原因：{reason}', line.params)
     case '阶段：{phase}':
       return t('阶段：{phase}', { phase: phaseText(line.params?.phase, t) })
     case '原因：{reason}':
@@ -396,17 +398,8 @@ function transportText(
   key: string | null | undefined,
   t: (source: string, values?: Record<string, string | number>) => string,
 ): string {
-  if (key === '常驻 daemon') return t('常驻 daemon')
-  if (key === '项目 serve') return t('项目 serve')
-  if (key === '直连') return t('直连')
-  return t('未知')
-}
-
-function modeText(
-  mode: SshServerState['mode'],
-  t: (source: string, values?: Record<string, string | number>) => string,
-): string {
-  if (mode === 'server') return t('Server')
-  if (mode === 'direct') return t('直连')
+  if (key === '常驻服务') return t('常驻服务')
+  if (key === '按项目服务') return t('按项目服务')
+  if (key === '纯 SSH') return t('纯 SSH')
   return t('未知')
 }
