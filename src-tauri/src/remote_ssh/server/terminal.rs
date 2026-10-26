@@ -11,11 +11,12 @@ use qingcode_server::proto::{Event, StreamChunk};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Notify};
 
-const PENDING_INPUT_LIMIT: usize = 64 * 1024;
+/// 待发送输入的积压上限。在线与重连期间共用同一个有序队列；超出时拒绝本次
+/// 输入并报错，不静默丢弃（单次输入上限 1MB，见 `ssh_write_terminal`）。
+const PENDING_INPUT_LIMIT: usize = 2 * 1024 * 1024;
 const INPUT_CHUNK_BYTES: usize = 16 * 1024;
-const INPUT_CHANNEL_DEPTH: usize = 32;
 const DAEMON_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 const DAEMON_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(30);
 const OFFLINE_KILL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -45,9 +46,11 @@ pub(crate) struct PersistentTerminal {
     next_seq: AtomicU64,
     next_input_seq: AtomicU64,
     size: Mutex<(u16, u16)>,
-    /// 在线时的输入发送端；重连期间置空，所有输入进入 pending_input。
-    input: Mutex<Option<mpsc::Sender<Vec<u8>>>>,
+    /// 唯一的有序输入队列：在线时由会话循环按序取出发送，重连期间继续积压，
+    /// 接回后从队首续发。发送失败的剩余部分放回队首，保证先后顺序不变。
     pending_input: Mutex<VecDeque<Vec<u8>>>,
+    /// 有新输入入队时唤醒会话循环。
+    input_ready: Notify,
     closed: AtomicBool,
     commands: mpsc::Sender<TerminalCommand>,
 }
@@ -77,29 +80,8 @@ impl PersistentTerminal {
         if !self.is_open() {
             return Err("SSH 终端已结束".to_string());
         }
-        let sender = self
-            .input
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clone();
-        if let Some(sender) = sender {
-            match sender.try_send(data) {
-                Ok(()) => return Ok(()),
-                Err(mpsc::error::TrySendError::Full(data)) => {
-                    buffer_pending_input(self, data);
-                    return Ok(());
-                }
-                Err(mpsc::error::TrySendError::Closed(data)) => {
-                    *self
-                        .input
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
-                    buffer_pending_input(self, data);
-                    return Ok(());
-                }
-            }
-        }
-        buffer_pending_input(self, data);
+        enqueue_input(self, data)?;
+        self.input_ready.notify_one();
         Ok(())
     }
 
@@ -137,76 +119,47 @@ impl PersistentTerminal {
         Ok(())
     }
 
-    fn set_online_input(&self, sender: Option<mpsc::Sender<Vec<u8>>>) {
-        *self
-            .input
+    fn pop_pending(&self) -> Option<Vec<u8>> {
+        self.pending_input
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = sender;
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .pop_front()
     }
 
-    fn take_pending(&self) -> Vec<Vec<u8>> {
-        let mut pending = self
-            .pending_input
+    /// 发送失败的剩余输入放回队首，下次按原顺序续发。
+    fn requeue_front(&self, data: Vec<u8>) {
+        if data.is_empty() {
+            return;
+        }
+        self.pending_input
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        pending.drain(..).collect()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push_front(data);
     }
 
     fn mark_closed(&self) {
         self.closed.store(true, Ordering::Release);
-        self.set_online_input(None);
     }
 }
 
-fn push_bounded_pending_input(term: &PersistentTerminal, data: Vec<u8>) -> usize {
+/// 输入入队；积压超过上限时拒绝整笔输入（不截断、不丢弃已排队的内容）。
+fn enqueue_input(term: &PersistentTerminal, data: Vec<u8>) -> Result<(), String> {
     if data.is_empty() {
-        return 0;
-    }
-    let mut data = data;
-    let mut dropped = 0usize;
-    if data.len() > PENDING_INPUT_LIMIT {
-        dropped = data.len() - PENDING_INPUT_LIMIT;
-        data = data[data.len() - PENDING_INPUT_LIMIT..].to_vec();
+        return Ok(());
     }
     let mut pending = term
         .pending_input
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let mut total = pending.iter().map(Vec::len).sum::<usize>();
-    while total + data.len() > PENDING_INPUT_LIMIT {
-        let excess = total + data.len() - PENDING_INPUT_LIMIT;
-        let Some(oldest) = pending.front_mut() else {
-            break;
-        };
-        if oldest.len() <= excess {
-            let removed = oldest.len();
-            pending.pop_front();
-            total = total.saturating_sub(removed);
-            dropped += removed;
-        } else {
-            oldest.drain(..excess);
-            total = total.saturating_sub(excess);
-            dropped += excess;
-        }
+    let total = pending.iter().map(Vec::len).sum::<usize>();
+    if total + data.len() > PENDING_INPUT_LIMIT {
+        return Err(format!(
+            "终端输入积压已超过 {} MB（远端未及时读取或正在重连），本次输入未发送",
+            PENDING_INPUT_LIMIT / (1024 * 1024)
+        ));
     }
     pending.push_back(data);
-    dropped
-}
-
-fn buffer_pending_input(term: &PersistentTerminal, data: Vec<u8>) {
-    let dropped = push_bounded_pending_input(term, data);
-    if dropped > 0 {
-        eprintln!(
-            "[WARN] persistent terminal {} input buffer exceeded {} bytes, dropped {dropped} oldest bytes",
-            term.id, PENDING_INPUT_LIMIT
-        );
-    }
-}
-
-fn drain_input_channel(term: &PersistentTerminal, input_rx: &mut mpsc::Receiver<Vec<u8>>) {
-    while let Ok(data) = input_rx.try_recv() {
-        buffer_pending_input(term, data);
-    }
+    Ok(())
 }
 
 fn drain_kill_acks(commands: &mut mpsc::Receiver<TerminalCommand>) -> Vec<oneshot::Sender<()>> {
@@ -734,7 +687,6 @@ pub(crate) async fn attach_persistent_terminal(
         return Err("daemon 会话事件流已初始化".to_string());
     };
 
-    let (input_tx, input_rx) = mpsc::channel(INPUT_CHANNEL_DEPTH);
     let (command_tx, command_rx) = mpsc::channel(8);
     let terminal = Arc::new(PersistentTerminal {
         id: id.clone(),
@@ -744,29 +696,25 @@ pub(crate) async fn attach_persistent_terminal(
         next_seq: AtomicU64::new(0),
         next_input_seq: AtomicU64::new(next_input_seq),
         size: Mutex::new((cols, rows)),
-        input: Mutex::new(Some(input_tx.clone())),
         pending_input: Mutex::new(VecDeque::new()),
+        input_ready: Notify::new(),
         closed: AtomicBool::new(false),
         commands: command_tx,
     });
+    // 接回出错只放弃本次接回，绝不 kill：远端进程仍在运行，留作 detached 终端，
+    // 稍后可从孤儿终端提示再次接回。
     let (_, restore) = match apply_attach_restore(&terminal, &app, &attach).await {
         Ok(result) => result,
         Err(error) => {
-            let _ = session
-                .request("pty.kill", &serde_json::json!({ "id": pty_id }))
-                .await;
             session.shutdown();
             close_terminal_transport(&transport).await;
             return Err(error);
         }
     };
     if let Err(error) = resize_session(&session, &pty_id, cols, rows).await {
-        let _ = session
-            .request("pty.kill", &serde_json::json!({ "id": pty_id }))
-            .await;
-        session.shutdown();
-        close_terminal_transport(&transport).await;
-        return Err(error);
+        // 尺寸下发失败不影响接回：交给会话循环稍后重试。
+        eprintln!("[WARN] persistent terminal {id} resize after attach failed: {error}");
+        let _ = terminal.commands.try_send(TerminalCommand::Resize);
     }
 
     let inserted = {
@@ -778,9 +726,6 @@ pub(crate) async fn attach_persistent_terminal(
     let previous = match inserted {
         Ok(previous) => previous,
         Err(()) => {
-            let _ = session
-                .request("pty.kill", &serde_json::json!({ "id": pty_id }))
-                .await;
             session.shutdown();
             close_terminal_transport(&transport).await;
             return Err("SSH 终端状态不可用".to_string());
@@ -800,13 +745,11 @@ pub(crate) async fn attach_persistent_terminal(
             task_terminal,
             root,
             task_app,
-            input_tx,
             ActiveSession {
                 transport,
                 session,
                 events,
             },
-            input_rx,
             command_rx,
         )
         .await;
@@ -901,7 +844,6 @@ pub(crate) async fn spawn_persistent_terminal(
         }
     };
 
-    let (input_tx, input_rx) = mpsc::channel(INPUT_CHANNEL_DEPTH);
     let (command_tx, command_rx) = mpsc::channel(8);
     let terminal = Arc::new(PersistentTerminal {
         id: id.clone(),
@@ -911,8 +853,8 @@ pub(crate) async fn spawn_persistent_terminal(
         next_seq: AtomicU64::new(seq),
         next_input_seq: AtomicU64::new(next_input_seq),
         size: Mutex::new((cols.max(1), rows.max(1))),
-        input: Mutex::new(Some(input_tx.clone())),
         pending_input: Mutex::new(VecDeque::new()),
+        input_ready: Notify::new(),
         closed: AtomicBool::new(false),
         commands: command_tx,
     });
@@ -942,13 +884,11 @@ pub(crate) async fn spawn_persistent_terminal(
             task_terminal,
             root,
             app,
-            input_tx,
             ActiveSession {
                 transport,
                 session,
                 events,
             },
-            input_rx,
             command_rx,
         )
         .await;
@@ -968,16 +908,17 @@ async fn run_persistent_terminal(
     terminal: Arc<PersistentTerminal>,
     root: RegisteredRoot,
     app: AppHandle,
-    input_tx: mpsc::Sender<Vec<u8>>,
     mut active: ActiveSession,
-    mut input_rx: mpsc::Receiver<Vec<u8>>,
     mut command_rx: mpsc::Receiver<TerminalCommand>,
 ) {
     let manager = app.state::<SshManager>();
     loop {
-        match run_connected(&terminal, &app, &mut active, &mut input_rx, &mut command_rx).await {
+        match run_connected(&terminal, &app, &mut active, &mut command_rx).await {
             ConnectedEnd::Exited(code) => {
                 terminal.mark_closed();
+                // shell 正常退出也要释放独占的 SSH 连接与 daemon 会话。
+                active.session.shutdown();
+                close_terminal_transport(&active.transport).await;
                 emit_exit(&app, &terminal.id, code, false, None);
                 remove_persistent_terminal(&app, &terminal);
                 return;
@@ -990,8 +931,6 @@ async fn run_persistent_terminal(
                 return;
             }
             ConnectedEnd::Disconnected(reason) => {
-                terminal.set_online_input(None);
-                drain_input_channel(&terminal, &mut input_rx);
                 active.session.shutdown();
                 close_terminal_transport(&active.transport).await;
                 let mut kill_acks = Vec::new();
@@ -1042,7 +981,6 @@ async fn run_persistent_terminal(
                     match reconnect_terminal(&terminal, &root, &app, &manager).await {
                         ReconnectEnd::Connected(connected) => {
                             active = connected;
-                            terminal.set_online_input(Some(input_tx.clone()));
                             break;
                         }
                         ReconnectEnd::Terminated(reason) => {
@@ -1094,7 +1032,6 @@ async fn run_connected(
     terminal: &Arc<PersistentTerminal>,
     app: &AppHandle,
     active: &mut ActiveSession,
-    input_rx: &mut mpsc::Receiver<Vec<u8>>,
     command_rx: &mut mpsc::Receiver<TerminalCommand>,
 ) -> ConnectedEnd {
     let mut heartbeat = tokio::time::interval_at(
@@ -1129,17 +1066,9 @@ async fn run_connected(
                     }
                 }
             }
-            input = input_rx.recv() => {
-                if let Some(input) = input {
-                    if let Err((error, unsent)) =
-                        send_input(active, &terminal.pty_id, &terminal.next_input_seq, input).await
-                    {
-                        buffer_pending_input(terminal, unsent);
-                        return ConnectedEnd::Disconnected(error);
-                    }
-                    if let Err((error, _)) = flush_pending_to_session(terminal, &active.session).await {
-                        return ConnectedEnd::Disconnected(error);
-                    }
+            _ = terminal.input_ready.notified() => {
+                if let Err(error) = flush_pending_to_session(terminal, &active.session).await {
+                    return ConnectedEnd::Disconnected(error);
                 }
             }
             command = command_rx.recv() => {
@@ -1190,15 +1119,6 @@ fn session_disconnect_reason(active: &ActiveSession) -> String {
         .unwrap_or_else(|| "daemon 连接已断开".to_string())
 }
 
-async fn send_input(
-    active: &ActiveSession,
-    pty_id: &str,
-    next_input_seq: &AtomicU64,
-    input: Vec<u8>,
-) -> Result<(), InputSendFailure> {
-    send_input_to_session(&active.session, pty_id, next_input_seq, input).await
-}
-
 async fn resize_active(
     active: &ActiveSession,
     pty_id: &str,
@@ -1247,13 +1167,18 @@ async fn reconnect_terminal(
         Err(_) => return ReconnectEnd::Retry,
     };
     let client_id = manager.daemon_client_id(&parsed.connection_id);
+    // 握手失败（HELLO 超时、通道被拒、网络刚恢复时的 reset）都是瞬时故障，
+    // 不能据此断定 daemon 已重启：只有握手成功后 attach 明确返回「终端不存在」
+    // 才结束终端，否则继续重试，进程仍在 daemon 里运行。
     let mut session = match DaemonSession::open_on_transport(&transport, &client_id, daemon).await {
         Ok(session) => session,
         Err(error) => {
             close_terminal_transport(&transport).await;
-            return ReconnectEnd::Terminated(format!(
-                "远端 daemon 已重启，终端进程已结束（{error}）"
-            ));
+            eprintln!(
+                "[WARN] persistent terminal {} daemon handshake failed, will retry: {error}",
+                terminal.id
+            );
+            return ReconnectEnd::Retry;
         }
     };
     let from_seq = terminal.next_seq.load(Ordering::Acquire);
@@ -1278,9 +1203,14 @@ async fn reconnect_terminal(
     let (exited, restore) = match apply_attach_restore(terminal, app, &attach).await {
         Ok(result) => result,
         Err(error) => {
+            // 已写出的输出已推进 next_seq，下次 attach 从缺口续补。
             session.shutdown();
             close_terminal_transport(&transport).await;
-            return ReconnectEnd::Terminated(error);
+            eprintln!(
+                "[WARN] persistent terminal {} attach restore failed, will retry: {error}",
+                terminal.id
+            );
+            return ReconnectEnd::Retry;
         }
     };
     let (cols, rows) = *terminal
@@ -1295,7 +1225,7 @@ async fn reconnect_terminal(
         close_terminal_transport(&transport).await;
         return ReconnectEnd::Retry;
     }
-    if let Err((error, _)) = flush_pending_to_session(terminal, &session).await {
+    if let Err(error) = flush_pending_to_session(terminal, &session).await {
         session.shutdown();
         close_terminal_transport(&transport).await;
         eprintln!(
@@ -1390,6 +1320,7 @@ async fn apply_attach_restore(
                 if seq_is_new(*seq, next_seq) {
                     emit_data(app, &terminal.id, data);
                     next_seq = seq.wrapping_add(1);
+                    terminal.next_seq.store(next_seq, Ordering::Release);
                 }
             }
             if next_seq != seq_end {
@@ -1397,7 +1328,6 @@ async fn apply_attach_restore(
                     "pty.attach 重放结束序号不连续：期望 {seq_end}，实际 {next_seq}"
                 ));
             }
-            terminal.next_seq.store(next_seq, Ordering::Release);
         }
         RestoreKind::None => {
             let next_seq = terminal.next_seq.load(Ordering::Acquire);
@@ -1428,6 +1358,7 @@ async fn apply_attach_restore(
                 if seq_is_new(*seq, next_seq) {
                     emit_data(app, &terminal.id, data);
                     next_seq = seq.wrapping_add(1);
+                    terminal.next_seq.store(next_seq, Ordering::Release);
                 }
             }
             if next_seq != seq_end {
@@ -1435,7 +1366,6 @@ async fn apply_attach_restore(
                     "pty.attach 退出前重放结束序号不连续：期望 {seq_end}，实际 {next_seq}"
                 ));
             }
-            terminal.next_seq.store(next_seq, Ordering::Release);
         }
     }
     Ok((exited, restore))
@@ -1502,25 +1432,17 @@ async fn resize_session(
         .map(|_| ())
 }
 
+/// 按序发送队列里的全部输入；失败时把未送达部分放回队首并返回原因。
 async fn flush_pending_to_session(
     terminal: &PersistentTerminal,
     session: &DaemonSession,
-) -> Result<(), InputSendFailure> {
-    let pending = terminal.take_pending();
-    for (index, input) in pending.iter().enumerate() {
-        if let Err((error, unsent)) = send_input_to_session(
-            session,
-            &terminal.pty_id,
-            &terminal.next_input_seq,
-            input.clone(),
-        )
-        .await
+) -> Result<(), String> {
+    while let Some(input) = terminal.pop_pending() {
+        if let Err((error, unsent)) =
+            send_input_to_session(session, &terminal.pty_id, &terminal.next_input_seq, input).await
         {
-            buffer_pending_input(terminal, unsent);
-            for remaining in pending.iter().skip(index + 1) {
-                buffer_pending_input(terminal, remaining.clone());
-            }
-            return Err((error, Vec::new()));
+            terminal.requeue_front(unsent);
+            return Err(error);
         }
     }
     Ok(())
@@ -1606,10 +1528,9 @@ mod tests {
         assert!(seq_is_new(9, 8));
     }
 
-    #[test]
-    fn pending_input_is_bounded_and_flushed_in_order() {
+    fn test_terminal() -> PersistentTerminal {
         let (commands, _rx) = mpsc::channel(1);
-        let terminal = PersistentTerminal {
+        PersistentTerminal {
             id: "t".into(),
             pty_id: "p".into(),
             connection_id: "c".into(),
@@ -1617,18 +1538,33 @@ mod tests {
             next_seq: AtomicU64::new(0),
             next_input_seq: AtomicU64::new(0),
             size: Mutex::new((80, 24)),
-            input: Mutex::new(None),
             pending_input: Mutex::new(VecDeque::new()),
+            input_ready: Notify::new(),
             closed: AtomicBool::new(false),
             commands,
-        };
-        push_bounded_pending_input(&terminal, vec![b'a'; 48 * 1024]);
-        let dropped = push_bounded_pending_input(&terminal, vec![b'b'; 48 * 1024]);
-        assert_eq!(dropped, 32 * 1024);
-        let pending = terminal.take_pending();
-        assert_eq!(pending.iter().map(Vec::len).sum::<usize>(), 64 * 1024);
-        assert_eq!(pending[0].len(), 16 * 1024);
-        assert_eq!(pending[1].len(), 48 * 1024);
+        }
+    }
+
+    #[test]
+    fn pending_input_rejects_overflow_without_dropping_and_keeps_order() {
+        let terminal = test_terminal();
+        terminal.write(vec![b'a'; 1024 * 1024]).unwrap();
+        terminal.write(vec![b'b'; 1024 * 1024]).unwrap();
+        // 超过积压上限：整笔拒绝，已排队内容一字节不丢。
+        let error = terminal.write(vec![b'c'; 1]).unwrap_err();
+        assert!(error.contains("积压"));
+        // 发送失败的剩余部分放回队首，仍排在后来的输入之前。
+        let first = terminal.pop_pending().unwrap();
+        assert_eq!(first[0], b'a');
+        terminal.requeue_front(first[512 * 1024..].to_vec());
+        let resumed = terminal.pop_pending().unwrap();
+        assert_eq!(resumed.len(), 512 * 1024);
+        assert_eq!(resumed[0], b'a');
+        assert_eq!(terminal.pop_pending().unwrap()[0], b'b');
+        assert!(terminal.pop_pending().is_none());
+        // 关闭后不再接受输入。
+        terminal.mark_closed();
+        assert!(terminal.write(vec![b'x']).is_err());
     }
 
     #[test]

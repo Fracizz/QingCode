@@ -128,6 +128,53 @@ pub struct AttachResult {
     pub exited: Option<i32>,
 }
 
+/// [`PtyHost::write_input`] 的结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputOutcome {
+    Written,
+    /// 该序号此前已写入，本次未重复写。
+    Duplicate,
+}
+
+/// [`PtyHost::write_input`] 的失败。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputError {
+    /// 序号跳号：客户端漏发了中间的输入。
+    Gap {
+        expected: u64,
+    },
+    Other(String),
+}
+
+/// 带序号写入的进度：`skip` 是续写起点，每写出一段就落到终端状态里。
+#[derive(Clone, Copy)]
+struct InputProgress {
+    seq: u64,
+    skip: usize,
+}
+
+/// 记录已写偏移；整笔写完（含 flush）后推进序号并清掉进度。
+fn record_input_progress(
+    term: &PtyTerm,
+    progress: Option<InputProgress>,
+    offset: usize,
+    done: bool,
+) {
+    let Some(progress) = progress else {
+        return;
+    };
+    let mut state = lock(&term.state);
+    if state.next_input_seq != progress.seq {
+        return;
+    }
+    if done {
+        state.next_input_seq = state.next_input_seq.wrapping_add(1);
+        state.input_partial = None;
+    } else {
+        state.input_partial = Some((progress.seq, offset));
+    }
+}
+
 /// 宿主向 daemon 推送的事件。
 #[derive(Debug, Clone)]
 pub enum PtyEvent {
@@ -241,6 +288,9 @@ struct TermState {
     owner: Option<String>,
     /// 单调输入序号；客户端重连时用同一序号重发，宿主据此去重。
     next_input_seq: u64,
+    /// 当前序号已写入 PTY 的字节数 `(seq, offset)`：写到一半被取消或连接被中止时，
+    /// 重发同一序号从这里续写，不重复写已送达的前缀。
+    input_partial: Option<(u64, usize)>,
 }
 
 /// 进程控制句柄：`pid` 用于 `/proc` 查询与 `SIGHUP`，`killer` 是 portable-pty 的兜底。
@@ -254,13 +304,18 @@ struct PtyTerm {
     name: Option<String>,
     cwd: String,
     created: u64,
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    /// Windows 上子进程退出后由等待线程取走并释放（关闭 ConPTY），读线程才能拿到 EOF；
+    /// 取走后为 `None`，resize 视为无操作。
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
     writer: Mutex<Box<dyn Write + Send>>,
     /// Unix 上 writer 与 reader 共享 master 的 open file description；把该
     /// description 置为非阻塞后，reader 必须走 poll，writer 才能安全取消。
     writer_nonblocking: bool,
     proc: Mutex<ProcHandles>,
     state: Mutex<TermState>,
+    /// 带序号输入的串行闸：旧连接的写入结束（含 blocking 线程里仍在进行的写）
+    /// 之前，新连接对同一序号的重发在这里等待，再按已推进的序号判定是否重复。
+    input_gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 #[cfg(unix)]
@@ -385,7 +440,7 @@ impl PtyHost {
             name: opts.name.clone(),
             cwd: opts.cwd.to_string_lossy().into_owned(),
             created: self.created_counter.fetch_add(1, Ordering::Relaxed),
-            master: Mutex::new(pair.master),
+            master: Mutex::new(Some(pair.master)),
             writer: Mutex::new(writer),
             writer_nonblocking,
             proc: Mutex::new(ProcHandles {
@@ -404,7 +459,9 @@ impl PtyHost {
                 exited_at: None,
                 owner: Some(opts.client_id.clone()),
                 next_input_seq: 0,
+                input_partial: None,
             }),
+            input_gate: Arc::new(tokio::sync::Mutex::new(())),
         });
         // 先把终端放进表里，读线程一启动就能找到自己（否则首批输出会丢）。
         inner.terms.insert(id.clone(), Arc::clone(&term));
@@ -415,6 +472,30 @@ impl PtyHost {
         let budget = self.total_buffer_bytes;
         let thread_id = id.clone();
         let term_for_reader = Arc::clone(&term);
+        // Windows ConPTY：子进程退出后伪控制台不关闭，读端永远等不到 EOF。
+        // 单独起线程等子进程，退出后释放 master（ClosePseudoConsole），读线程随即
+        // 读到 EOF，再从这里取退出码。
+        #[cfg(windows)]
+        let exit_source = {
+            let (code_tx, code_rx) = std::sync::mpsc::channel::<Option<i32>>();
+            let term_for_waiter = Arc::clone(&term);
+            let mut child = child;
+            let waiter = std::thread::Builder::new()
+                .name(format!("pty-wait-{id}"))
+                .spawn(move || {
+                    let code = child.wait().ok().map(|status| status.exit_code() as i32);
+                    let _ = code_tx.send(code);
+                    let master = lock(&term_for_waiter.master).take();
+                    drop(master);
+                });
+            if let Err(err) = waiter {
+                remove_term_locked(&mut lock(&self.inner), &id, &term);
+                return Err(format!("无法启动终端等待线程：{err}"));
+            }
+            ExitSource::Waiter(code_rx)
+        };
+        #[cfg(not(windows))]
+        let exit_source = ExitSource::Child(child);
         let spawned = std::thread::Builder::new()
             .name(format!("pty-{thread_id}"))
             .spawn(move || {
@@ -423,7 +504,7 @@ impl PtyHost {
                     budget,
                     term_for_reader,
                     reader,
-                    child,
+                    exit_source,
                     sink,
                     reader_wakeup,
                 );
@@ -452,7 +533,7 @@ impl PtyHost {
     #[cfg(all(test, unix))]
     pub fn write(&self, id: &str, data: &[u8]) -> Result<(), String> {
         let term = self.term(id)?;
-        write_blocking(&term, data, None)
+        write_blocking(&term, data, None, None)
     }
 
     /// daemon 队列使用的可取消写入。
@@ -471,11 +552,13 @@ impl PtyHost {
             return Err("终端进程已退出".to_string());
         }
         if term.writer_nonblocking {
-            write_nonblocking(&term, &data, &cancel).await
+            write_nonblocking(&term, &data, None, &cancel).await
         } else {
-            tokio::task::spawn_blocking(move || write_blocking(&term, &data, Some(cancel.as_ref())))
-                .await
-                .map_err(|err| format!("写入终端任务异常结束：{err}"))?
+            tokio::task::spawn_blocking(move || {
+                write_blocking(&term, &data, None, Some(cancel.as_ref()))
+            })
+            .await
+            .map_err(|err| format!("写入终端任务异常结束：{err}"))?
         }
     }
 
@@ -484,9 +567,11 @@ impl PtyHost {
         let cols = clamp_cols(cols);
         let rows = clamp_rows(rows);
         let term = self.term(id)?;
-        lock(&term.master)
-            .resize(pty_size(cols, rows))
-            .map_err(|err| format!("调整终端尺寸失败：{err}"))?;
+        if let Some(master) = lock(&term.master).as_ref() {
+            master
+                .resize(pty_size(cols, rows))
+                .map_err(|err| format!("调整终端尺寸失败：{err}"))?;
+        }
         let mut state = lock(&term.state);
         state.parser.set_size(rows, cols);
         state.cols = cols;
@@ -494,28 +579,55 @@ impl PtyHost {
         Ok(())
     }
 
-    /// 客户端下一个应发送的输入序号；重连后据此续写和去重。
-    pub fn expected_input_seq(&self, id: &str) -> Result<u64, String> {
-        let term = self.term(id)?;
-        let expected = lock(&term.state).next_input_seq;
-        Ok(expected)
-    }
-
-    /// 一笔输入已经写入 PTY 后推进序号。重复序号不推进，避免迟到回执导致跳号。
-    pub fn mark_input_written(&self, id: &str, seq: u64) -> Result<(), String> {
-        let term = self.term(id)?;
-        let mut state = lock(&term.state);
-        if seq < state.next_input_seq {
-            return Ok(());
-        }
-        if seq != state.next_input_seq {
-            return Err(format!(
-                "终端输入序号不连续：期望 {}，实际 {seq}",
-                state.next_input_seq
-            ));
-        }
-        state.next_input_seq = state.next_input_seq.wrapping_add(1);
-        Ok(())
+    /// 写入一笔带序号的客户端输入，保证每个序号至多写入一次、前缀不重复。
+    ///
+    /// 检查序号、写入、推进序号在同一终端的输入闸内完成：旧连接卡在写入上时，
+    /// 新连接重发同一序号会等旧写入结束，再判定为重复；写到一半被取消的序号，
+    /// 重发时从已写偏移续写。
+    pub async fn write_input(
+        &self,
+        id: &str,
+        seq: u64,
+        data: Vec<u8>,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<InputOutcome, InputError> {
+        let term = self.term(id).map_err(InputError::Other)?;
+        let gate = Arc::clone(&term.input_gate).lock_owned().await;
+        let skip = {
+            let state = lock(&term.state);
+            if seq < state.next_input_seq {
+                return Ok(InputOutcome::Duplicate);
+            }
+            if seq != state.next_input_seq {
+                return Err(InputError::Gap {
+                    expected: state.next_input_seq,
+                });
+            }
+            if state.exited.is_some() {
+                return Err(InputError::Other("终端进程已退出".to_string()));
+            }
+            state
+                .input_partial
+                .filter(|(partial_seq, _)| *partial_seq == seq)
+                .map_or(0, |(_, offset)| offset.min(data.len()))
+        };
+        let progress = Some(InputProgress { seq, skip });
+        let written = if term.writer_nonblocking {
+            let written = write_nonblocking(&term, &data, progress, &cancel).await;
+            drop(gate);
+            written
+        } else {
+            // 闸随 blocking 写一起走：任务被中止后线程里的写入仍在进行，不能提前放行。
+            tokio::task::spawn_blocking(move || {
+                let _gate = gate;
+                write_blocking(&term, &data, progress, Some(cancel.as_ref()))
+            })
+            .await
+            .map_err(|err| InputError::Other(format!("写入终端任务异常结束：{err}")))?
+        };
+        written
+            .map(|()| InputOutcome::Written)
+            .map_err(InputError::Other)
     }
 
     /// 客户端接回终端。`from_seq` 仍被缓冲覆盖时只补缺失块，否则给屏幕快照。
@@ -757,12 +869,17 @@ fn remove_term_locked(
     Some(term)
 }
 
-fn write_blocking(term: &PtyTerm, data: &[u8], cancel: Option<&AtomicBool>) -> Result<(), String> {
+fn write_blocking(
+    term: &PtyTerm,
+    data: &[u8],
+    progress: Option<InputProgress>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), String> {
     if lock(&term.state).exited.is_some() {
         return Err("终端进程已退出".to_string());
     }
 
-    let mut offset = 0;
+    let mut offset = progress.map_or(0, |progress| progress.skip);
     while offset < data.len() {
         if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
             return Err("终端输入写入已取消".to_string());
@@ -773,7 +890,10 @@ fn write_blocking(term: &PtyTerm, data: &[u8], cancel: Option<&AtomicBool>) -> R
         };
         match written {
             Ok(0) => return Err("写入终端失败：写入长度为 0".to_string()),
-            Ok(written) => offset += written,
+            Ok(written) => {
+                offset += written;
+                record_input_progress(term, progress, offset, false);
+            }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(WRITE_RETRY_DELAY);
@@ -788,7 +908,10 @@ fn write_blocking(term: &PtyTerm, data: &[u8], cancel: Option<&AtomicBool>) -> R
             writer.flush()
         };
         match flushed {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                record_input_progress(term, progress, offset, true);
+                return Ok(());
+            }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
@@ -801,8 +924,13 @@ fn write_blocking(term: &PtyTerm, data: &[u8], cancel: Option<&AtomicBool>) -> R
     }
 }
 
-async fn write_nonblocking(term: &PtyTerm, data: &[u8], cancel: &AtomicBool) -> Result<(), String> {
-    let mut offset = 0;
+async fn write_nonblocking(
+    term: &PtyTerm,
+    data: &[u8],
+    progress: Option<InputProgress>,
+    cancel: &AtomicBool,
+) -> Result<(), String> {
+    let mut offset = progress.map_or(0, |progress| progress.skip);
     while offset < data.len() {
         if cancel.load(Ordering::SeqCst) {
             return Err("终端输入写入已取消".to_string());
@@ -815,6 +943,7 @@ async fn write_nonblocking(term: &PtyTerm, data: &[u8], cancel: &AtomicBool) -> 
             Ok(0) => return Err("写入终端失败：写入长度为 0".to_string()),
             Ok(written) => {
                 offset += written;
+                record_input_progress(term, progress, offset, false);
                 // 即使内核连续接收多段数据，也把同一连接的其他 PTY 队列
                 // 调度起来；不能让一个高速输入队列独占 current-thread runtime。
                 tokio::task::yield_now().await;
@@ -833,7 +962,10 @@ async fn write_nonblocking(term: &PtyTerm, data: &[u8], cancel: &AtomicBool) -> 
             writer.flush()
         };
         match flushed {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                record_input_progress(term, progress, offset, true);
+                return Ok(());
+            }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
                 if cancel.load(Ordering::SeqCst) {
@@ -884,6 +1016,25 @@ fn wait_readable(fd: ReaderWakeup) {
 #[cfg(not(unix))]
 fn wait_readable(_: ReaderWakeup) {}
 
+/// 读线程取退出码的来源：Unix 直接 `wait` 子进程；Windows 由等待线程转交。
+enum ExitSource {
+    #[cfg_attr(windows, allow(dead_code))]
+    Child(Box<dyn Child + Send + Sync>),
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Waiter(std::sync::mpsc::Receiver<Option<i32>>),
+}
+
+impl ExitSource {
+    fn wait(self) -> Option<i32> {
+        match self {
+            ExitSource::Child(mut child) => {
+                child.wait().ok().map(|status| status.exit_code() as i32)
+            }
+            ExitSource::Waiter(rx) => rx.recv().ok().flatten(),
+        }
+    }
+}
+
 /// 读线程主循环：把 master 的输出同时喂给解析器、环形缓冲和事件通道。
 ///
 /// 读线程是唯一往缓冲里写的线程，因此 seq 天然单调；它最后负责 `wait` 出退出码，
@@ -893,7 +1044,7 @@ fn read_loop(
     budget: usize,
     term: Arc<PtyTerm>,
     mut reader: Box<dyn Read + Send>,
-    mut child: Box<dyn Child + Send + Sync>,
+    exit_source: ExitSource,
     sink: Sender<PtyEvent>,
     reader_wakeup: ReaderWakeup,
 ) {
@@ -914,7 +1065,7 @@ fn read_loop(
             Err(_) => break,
         }
     }
-    let code = child.wait().ok().map(|status| status.exit_code() as i32);
+    let code = exit_source.wait();
     {
         let mut state = lock(&term.state);
         state.exited = Some(code.unwrap_or(-1));
@@ -1582,6 +1733,69 @@ mod tests {
             scrollback_bytes,
             client_id: client_id.to_string(),
         }
+    }
+
+    /// 交互式 shell：Unix 用 /bin/sh，Windows 用 ConPTY 下的 PowerShell。
+    fn interactive_options() -> PtyCreateOptions {
+        #[cfg(unix)]
+        {
+            sh_options(64 * 1024, "client-a")
+        }
+        #[cfg(windows)]
+        {
+            PtyCreateOptions {
+                cwd: std::env::temp_dir(),
+                shell: Some("powershell.exe".to_string()),
+                args: vec!["-NoProfile".to_string(), "-NoLogo".to_string()],
+                env: BTreeMap::new(),
+                name: None,
+                cols: 80,
+                rows: 24,
+                scrollback_bytes: 64 * 1024,
+                client_id: "client-a".to_string(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn sequenced_input_is_written_at_most_once_and_resumes_partial_writes() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let host = Arc::new(PtyHost::new(4, 4 * 1024 * 1024, tx));
+        let info = host.create(interactive_options()).unwrap();
+        let cancel = || Arc::new(AtomicBool::new(false));
+        let enter = if cfg!(windows) { "\r" } else { "\n" };
+        let line = |text: &str| format!("{text}{enter}").into_bytes();
+
+        // 同一序号并发重发（旧连接仍在写、新连接重发）：只写一次，另一笔判重复。
+        let (first, second) = tokio::join!(
+            host.write_input(&info.id, 0, line("echo one"), cancel()),
+            host.write_input(&info.id, 0, line("echo one"), cancel()),
+        );
+        let mut outcomes = [first.unwrap(), second.unwrap()];
+        outcomes.sort_by_key(|outcome| *outcome == InputOutcome::Duplicate);
+        assert_eq!(outcomes, [InputOutcome::Written, InputOutcome::Duplicate]);
+
+        // 跳号被拒绝，序号不推进。
+        assert_eq!(
+            host.write_input(&info.id, 2, b"x".to_vec(), cancel()).await,
+            Err(InputError::Gap { expected: 1 })
+        );
+
+        // 模拟上次写到一半被中止：已送达 `echo ` 前缀，重发时只续写剩余部分。
+        let term = host.term(&info.id).unwrap();
+        lock(&term.state).input_partial = Some((1, b"echo ".len()));
+        assert_eq!(
+            host.write_input(&info.id, 1, line("echo resumed-marker"), cancel())
+                .await,
+            Ok(InputOutcome::Written)
+        );
+        {
+            let state = lock(&term.state);
+            assert_eq!(state.next_input_seq, 2);
+            assert!(state.input_partial.is_none());
+        }
+        wait_for_text(&mut rx, &info.id, "resumed-marker").await;
+        host.kill(&info.id).unwrap();
     }
 
     #[cfg(unix)]

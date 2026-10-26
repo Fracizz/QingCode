@@ -351,6 +351,35 @@ describe('terminal persistent connection events', () => {
     })
   })
 
+  it('does not keep the stale PTY identity when the attach fallback is a direct terminal', async () => {
+    mocks.attachTerminal.mockRejectedValueOnce(new Error('terminal not found'))
+    mocks.createTerminal.mockResolvedValueOnce({
+      persistent: false,
+      ptyId: null,
+      connectionId: 'conn',
+      persistentFallbackReason: '远端 daemon 尚未就绪',
+    })
+    useTerminalStore.setState({
+      terminals: [
+        terminal({
+          status: 'exited',
+          persistent: true,
+          ptyId: 'pty-old',
+          connectionId: 'conn',
+          awaitingRestoreSpawn: true,
+          ptySpawnPending: true,
+        }),
+      ],
+    })
+
+    await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+
+    const tab = useTerminalStore.getState().terminals[0]
+    expect(tab.persistent).toBe(false)
+    expect(tab.ptyId).toBeUndefined()
+    expect(tab.persistentFallbackReason).toBe('远端 daemon 尚未就绪')
+  })
+
   it('summarizes unowned detached terminals and reattaches them into tabs', async () => {
     const project = {
       id: 'p-orphan-attach',

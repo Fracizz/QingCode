@@ -77,11 +77,42 @@ export function parseSshDetachedTerminal(value: unknown): SshDetachedTerminal | 
   }
 }
 
-/** Keep only unattached daemon PTYs for this connection, once per PTY id. */
+/** 比较用的 SSH URI：去掉末尾斜杠；Windows 盘符路径不区分大小写。 */
+function comparableSshUri(uri: string): string {
+  const trimmed = uri.replace(/\/+$/, '')
+  return /^ssh:\/\/[^/]+\/[A-Za-z]:(\/|$)/.test(trimmed) ? trimmed.toLowerCase() : trimmed
+}
+
+/** `cwd` 是否位于 `root` 之内（含根本身）。 */
+export function sshUriWithinRoot(cwd: string, root: string): boolean {
+  const target = comparableSshUri(cwd)
+  const base = comparableSshUri(root)
+  return target === base || target.startsWith(`${base}/`)
+}
+
+/**
+ * 只保留归属当前项目的孤儿终端：同一连接下有多个项目时，终端归给包含其
+ * 工作目录的最深项目根，避免把项目 B 的终端接回或结束到项目 A。
+ */
+function belongsToProject(
+  cwd: string,
+  projectRoot: string,
+  connectionRoots: readonly string[]
+): boolean {
+  if (!sshUriWithinRoot(cwd, projectRoot)) return false
+  const depth = comparableSshUri(projectRoot).length
+  return !connectionRoots.some(
+    root => comparableSshUri(root).length > depth && sshUriWithinRoot(cwd, root)
+  )
+}
+
+/** Keep only unattached daemon PTYs for this project, once per PTY id. */
 export function filterUnownedDetachedTerminals(
   detached: readonly SshDetachedTerminal[],
   localTerminals: readonly Pick<TerminalTab, 'ptyId' | 'connectionId'>[],
-  connectionId: string
+  connectionId: string,
+  projectRoot: string,
+  connectionRoots: readonly string[] = []
 ): SshDetachedTerminal[] {
   const owned = new Set(
     localTerminals.flatMap(terminal => {
@@ -92,6 +123,7 @@ export function filterUnownedDetachedTerminals(
   const seen = new Set<string>()
   return detached.filter(terminal => {
     if (terminal.connectionId !== connectionId) return false
+    if (!belongsToProject(terminal.cwd, projectRoot, connectionRoots)) return false
     if (owned.has(terminal.ptyId) || seen.has(terminal.ptyId)) return false
     seen.add(terminal.ptyId)
     return true

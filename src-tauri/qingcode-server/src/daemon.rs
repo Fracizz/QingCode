@@ -38,7 +38,7 @@ use crate::proto::{
     Request, Response, SenderWindow, StreamEnd, WindowCredit, CONTROL_STREAM, HEARTBEAT_INTERVAL,
     HEARTBEAT_TIMEOUT, PROTOCOL_MIN, PROTOCOL_VERSION, WINDOW_BYTES,
 };
-use crate::pty::{PtyCreateOptions, PtyEvent, PtyHost};
+use crate::pty::{InputError, InputOutcome, PtyCreateOptions, PtyEvent, PtyHost};
 use crate::{ops, proto, watch, SERVER_VERSION};
 
 /// 每个 daemon 的 PTY 数量上限（设计 §6.3）。
@@ -933,19 +933,35 @@ async fn pty_input_loop(
             data,
             ..
         } = input;
-        if let Some(seq) = seq {
-            let expected = match pty.expected_input_seq(&pty_id) {
-                Ok(expected) => expected,
+        let Some(seq) = seq else {
+            let written = pty
+                .write_interruptible(&pty_id, data, Arc::clone(&cancel))
+                .await;
+            if cancel.load(Ordering::SeqCst) {
+                break;
+            }
+            match written {
+                Ok(()) => conn.respond(request_id, json!({ "ok": true })),
                 Err(message) => {
                     conn.fail(request_id, "pty", message);
+                    conn.inputs.cancel(&pty_id);
                     break;
                 }
-            };
-            if seq < expected {
-                conn.respond(request_id, json!({ "ok": true, "duplicate": true }));
-                continue;
             }
-            if seq != expected {
+            continue;
+        };
+        let written = pty
+            .write_input(&pty_id, seq, data, Arc::clone(&cancel))
+            .await;
+        if cancel.load(Ordering::SeqCst) {
+            break;
+        }
+        match written {
+            Ok(InputOutcome::Written) => conn.respond(request_id, json!({ "ok": true })),
+            Ok(InputOutcome::Duplicate) => {
+                conn.respond(request_id, json!({ "ok": true, "duplicate": true }));
+            }
+            Err(InputError::Gap { expected }) => {
                 conn.fail(
                     request_id,
                     "ptyInputSequence",
@@ -954,25 +970,7 @@ async fn pty_input_loop(
                 conn.inputs.cancel(&pty_id);
                 break;
             }
-        }
-        let written = pty
-            .write_interruptible(&pty_id, data, Arc::clone(&cancel))
-            .await;
-        if cancel.load(Ordering::SeqCst) {
-            break;
-        }
-        match written {
-            Ok(()) => {
-                if let Some(seq) = seq {
-                    if let Err(message) = pty.mark_input_written(&pty_id, seq) {
-                        conn.fail(request_id, "pty", message);
-                        conn.inputs.cancel(&pty_id);
-                        break;
-                    }
-                }
-                conn.respond(request_id, json!({ "ok": true }));
-            }
-            Err(message) => {
+            Err(InputError::Other(message)) => {
                 conn.fail(request_id, "pty", message);
                 conn.inputs.cancel(&pty_id);
                 break;

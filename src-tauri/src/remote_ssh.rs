@@ -1490,23 +1490,10 @@ pub async fn ssh_set_workspace_trust(
 ) -> Result<(), String> {
     parse_remote_uri(&root_uri)?;
     if !trusted {
+        // 安全闸优先：撤销信任在任何连接状态下都必须生效，远端清理只尽力而为。
         manager.kill_persistent_terminals_for_root(&root_uri).await;
         if let Ok(root) = manager.registered_root(&root_uri) {
-            if let Ok(parsed) = parse_remote_uri(&root.uri) {
-                if let Err(error) = server::kill_detached_terminals(
-                    &parsed.connection_id,
-                    &app,
-                    &manager,
-                    Some(&root.canonical_path),
-                )
-                .await
-                {
-                    return Err(format!(
-                        "无法确认远端终端已结束，暂未撤销信任（{}）：{error}",
-                        root.uri
-                    ));
-                }
-            }
+            kill_detached_terminals_best_effort(&app, &manager, &root).await;
         }
     }
     manager.set_root_trust(&root_uri, trusted)?;
@@ -4679,6 +4666,13 @@ fn persistent_shell_launch(
     })
 }
 
+/// 配置文件终端交给 daemon 的名称：优先用前端标签名，缺省才退回终端 id。
+fn profile_terminal_name<'a>(name: Option<&'a str>, id: &'a str) -> &'a str {
+    name.map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(id)
+}
+
 fn persistent_profile_launch(
     path: &str,
     target: &str,
@@ -4875,6 +4869,7 @@ pub async fn ssh_spawn_script(
     cols: Option<u16>,
     rows: Option<u16>,
     shell: Option<String>,
+    name: Option<String>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
@@ -4930,8 +4925,13 @@ pub async fn ssh_spawn_script(
         } else if !manager.persistent_terminals_enabled() {
             persistent_reason = Some("已关闭 ssh.server.persistentTerminals".to_string());
         } else {
-            let launch =
-                persistent_profile_launch(&parsed.path, &target, &env, shell.as_deref(), &id)?;
+            let launch = persistent_profile_launch(
+                &parsed.path,
+                &target,
+                &env,
+                shell.as_deref(),
+                profile_terminal_name(name.as_deref(), &id),
+            )?;
             match server::spawn_persistent_terminal(
                 id.clone(),
                 root,
@@ -5088,21 +5088,10 @@ pub async fn ssh_forget_workspace_root(
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
     let normalized = normalize_remote_uri(&root_uri);
-    let root = manager.registered_root(&root_uri)?;
-    let parsed = parse_remote_uri(&root.uri)?;
-    manager.kill_persistent_terminals_for_root(&root.uri).await;
-    if let Err(error) = server::kill_detached_terminals(
-        &parsed.connection_id,
-        &app,
-        &manager,
-        Some(&root.canonical_path),
-    )
-    .await
-    {
-        return Err(format!(
-            "无法确认远端终端已结束，暂未移除项目（{}）：{error}",
-            root.uri
-        ));
+    // 本次会话未注册（重启后未连接就移除）时没有可清理的连接状态，直接放行。
+    if let Ok(root) = manager.registered_root(&root_uri) {
+        manager.kill_persistent_terminals_for_root(&root.uri).await;
+        kill_detached_terminals_best_effort(&app, &manager, &root).await;
     }
     manager
         .roots
@@ -5112,9 +5101,50 @@ pub async fn ssh_forget_workspace_root(
     Ok(())
 }
 
+/// 尽力结束该根下本安装留在 daemon 里的 detached 终端。离线、daemon 未就绪或
+/// 关闭 server 时无法触达远端，只记日志：这些终端在根未受信任时不会被列出或
+/// 接回（接回要求可信根），由 daemon 的 detached TTL（24 小时）回收。
+async fn kill_detached_terminals_best_effort(
+    app: &AppHandle,
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) {
+    let Ok(parsed) = parse_remote_uri(&root.uri) else {
+        return;
+    };
+    // 限时：离线时不能让撤销信任或移除项目卡在重连、部署上。
+    let killed = tokio::time::timeout(
+        Duration::from_secs(5),
+        server::kill_detached_terminals(
+            &parsed.connection_id,
+            app,
+            manager,
+            Some(&root.canonical_path),
+        ),
+    )
+    .await
+    .unwrap_or_else(|_| Err("5 秒内未能连上远端 daemon".to_string()));
+    if let Err(error) = killed {
+        eprintln!(
+            "[WARN] 未能结束 {} 下的远端 detached 终端，交由 daemon 超时回收：{error}",
+            root.uri
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_terminal_name_prefers_tab_name_over_terminal_id() {
+        assert_eq!(
+            profile_terminal_name(Some(" OpenCode "), "uuid-1"),
+            "OpenCode"
+        );
+        assert_eq!(profile_terminal_name(Some("  "), "uuid-1"), "uuid-1");
+        assert_eq!(profile_terminal_name(None, "uuid-1"), "uuid-1");
+    }
 
     #[test]
     fn image_read_limit_stays_at_64mb_like_the_local_viewer() {

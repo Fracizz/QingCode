@@ -1518,10 +1518,22 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return
     }
 
+    // 同一连接下其他 SSH 项目的根：终端归给最深的包含根，不跨项目接回或结束。
+    const connectionRoots = useProjectStore
+      .getState()
+      .projects.filter(
+        candidate =>
+          candidate.id !== project.id &&
+          isSshProject(candidate) &&
+          (candidate.connection_id ?? sshConnectionIdFromUri(candidate.path)) === connectionId
+      )
+      .map(candidate => candidate.path)
     const orphans = filterUnownedDetachedTerminals(
       detached,
       get().terminals,
       connectionId,
+      project.path,
+      connectionRoots,
     )
     if (orphans.length === 0) return
 
@@ -1944,6 +1956,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             cols: size.cols,
             rows: size.rows,
             shell: tab.shell ?? null,
+            name: tab.name,
           })
         } else {
           spawnResult = await createTerminal({
@@ -1959,14 +1972,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         await killTerminal(id)
         return
       }
-      if (restorePlan.mode === 'attach') {
-        spawnResult = {
-          ...spawnResult,
-          persistent: true,
-          ptyId: spawnResult.ptyId ?? restorePlan.ptyId,
-          connectionId: spawnResult.connectionId ?? restorePlan.connectionId,
-        }
-      }
+      // 以后端结果为准：接回失败回退新建时可能是直连终端（persistent=false），
+      // 不能沿用旧 ptyId，否则断线提示消失、下次重启又去接回已失效的 PTY。
       applyTerminalSpawnResult(id, spawnResult)
       set(s => ({
         terminals: s.terminals.map(terminal =>

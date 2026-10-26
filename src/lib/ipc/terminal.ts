@@ -58,6 +58,8 @@ export function createTerminal(args: {
   cols: number
   rows: number
   shell?: string | null
+  /** 标签名；SSH 持久化终端交给 daemon 保存，接回孤儿终端时用作标签名。 */
+  name?: string | null
 }): Promise<TerminalSpawnResult> {
   if (isSshResource(args.cwd)) {
     sshTerminalIds.add(args.id)
@@ -111,6 +113,8 @@ export function spawnTerminalScript(args: {
   cols: number
   rows: number
   shell?: string | null
+  /** 标签名；SSH 持久化终端交给 daemon 保存，接回孤儿终端时用作标签名。 */
+  name?: string | null
 }): Promise<TerminalSpawnResult> {
   if (isSshResource(args.cwd)) {
     sshTerminalIds.add(args.id)

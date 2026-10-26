@@ -75,9 +75,37 @@ describe('detached terminal filtering', () => {
           detached({ ptyId: 'other', connectionId: 'conn-2' }),
         ],
         [{ ptyId: 'owned', connectionId: 'conn' }],
-        'conn'
+        'conn',
+        'ssh://conn/home/app'
       ).map(terminal => terminal.ptyId)
     ).toEqual(['orphan'])
+  })
+
+  it('keeps orphans inside the current project root and leaves nested or sibling projects alone', () => {
+    expect(
+      filterUnownedDetachedTerminals(
+        [
+          detached({ ptyId: 'root', cwd: 'ssh://conn/srv/a' }),
+          detached({ ptyId: 'child', cwd: 'ssh://conn/srv/a/src' }),
+          detached({ ptyId: 'sibling', cwd: 'ssh://conn/srv/b' }),
+          detached({ ptyId: 'prefix', cwd: 'ssh://conn/srv/ab' }),
+          detached({ ptyId: 'nested', cwd: 'ssh://conn/srv/a/sub/x' }),
+        ],
+        [],
+        'conn',
+        'ssh://conn/srv/a/',
+        ['ssh://conn/srv/b', 'ssh://conn/srv/a/sub']
+      ).map(terminal => terminal.ptyId)
+    ).toEqual(['root', 'child'])
+    // Windows 盘符路径不区分大小写。
+    expect(
+      filterUnownedDetachedTerminals(
+        [detached({ ptyId: 'win', cwd: 'ssh://conn/d:/Code/App' })],
+        [],
+        'conn',
+        'ssh://conn/D:/code/app'
+      ).map(terminal => terminal.ptyId)
+    ).toEqual(['win'])
   })
 
   it('rejects malformed list entries and preserves valid metadata', () => {
