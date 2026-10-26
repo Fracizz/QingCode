@@ -175,7 +175,18 @@ describe('SshServerStatusChip', () => {
     })
     render(<SshServerStatusChip rootUri={rootUri} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' }))
-    expect(await screen.findByText('发现 1.2s · 合计 1.5s')).toBeTruthy()
+    expect(await screen.findByText('就绪用时 1.5s')).toBeTruthy()
+    expect(screen.getByRole('list', { name: '分阶段耗时' }).textContent).toContain('发现1.2s')
+  })
+
+  it('falls back to raw timing text when the summary format is unknown', async () => {
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') return { ...ready, timings: '未知格式' }
+      throw new Error(`unexpected ${command}`)
+    })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Server v0.1.13 点击查看详情' }))
+    expect(await screen.findByText('未知格式')).toBeTruthy()
   })
 
   it('shows a disconnected chip with the reason and recovers on the next state event', async () => {

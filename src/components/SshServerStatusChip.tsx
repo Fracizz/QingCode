@@ -6,6 +6,7 @@ import { useProjectStore } from '../store/projectStore'
 import {
   isAgentCommandUnavailable,
   parseSshServerState,
+  parseSshServerTimings,
   sshServerChip,
   sshServerEventMatches,
   sshServerIsDirect,
@@ -15,6 +16,7 @@ import {
   sshServerTransportKey,
   type SshServerChip,
   type SshServerState,
+  type SshServerTimingStage,
 } from '../lib/sshServerStatus'
 import StatusTip from './StatusTip'
 import ContextMenu from './ContextMenu'
@@ -287,7 +289,7 @@ export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
                   <Detail label={t('版本')} value={state.version ?? t('未知')} />
                   <Detail label={t('传输')} value={transportText(sshServerTransportKey(state.transport), t)} />
                   {state.reason ? <Detail label={t('原因')} value={state.reason} /> : null}
-                  {state.timings ? <Detail label={t('耗时')} value={state.timings} /> : null}
+                  {state.timings ? <TimingsDetail summary={state.timings} /> : null}
                 </dl>
               ) : (
                 <pre className="whitespace-pre-wrap font-mono text-ui-2xs text-fg">
@@ -342,6 +344,55 @@ function Detail({ label, value }: { label: string; value: string }) {
     <div className="flex gap-3">
       <dt className="w-16 flex-shrink-0 text-fg-muted">{label}</dt>
       <dd className="min-w-0 break-all">{value}</dd>
+    </div>
+  )
+}
+
+/** 耗时拆成分阶段条形图：最慢的前台阶段高亮，后台阶段（不计入合计）另起一组。 */
+function TimingsDetail({ summary }: { summary: string }) {
+  const { t } = useI18n()
+  const timings = parseSshServerTimings(summary)
+  if (!timings) return <Detail label={t('耗时')} value={summary} />
+  const foreground = timings.stages.filter(stage => !stage.background)
+  const background = timings.stages.filter(stage => stage.background)
+  const max = Math.max(0.1, ...timings.stages.map(stage => stage.seconds))
+  const slowest = foreground.reduce<SshServerTimingStage | null>(
+    (worst, stage) => (worst && worst.seconds >= stage.seconds ? worst : stage),
+    null,
+  )
+  const row = (stage: SshServerTimingStage) => (
+    <li key={`${stage.label}-${stage.background}`} className="grid grid-cols-[6.5rem_1fr_3rem] items-center gap-2">
+      <span className={`truncate ${stage.seconds < 0.05 ? 'text-fg-muted' : ''}`}>{stage.label}</span>
+      <span className="h-1.5 overflow-hidden rounded-full bg-bg-hover">
+        <span
+          className={`block h-full rounded-full ${
+            stage.background ? 'bg-fg-muted' : stage === slowest ? 'bg-warn' : 'bg-accent'
+          }`}
+          style={{ width: `${Math.max(2, (stage.seconds / max) * 100)}%` }}
+        />
+      </span>
+      <span className="text-right tabular-nums text-fg-dim">{stage.seconds.toFixed(1)}s</span>
+    </li>
+  )
+  return (
+    <div className="flex gap-3">
+      <dt className="w-16 flex-shrink-0 text-fg-muted">{t('耗时')}</dt>
+      <dd className="min-w-0 flex-1 space-y-1.5 text-ui-xs">
+        {timings.total !== null ? (
+          <p className="text-ui text-fg">
+            {t('就绪用时 {seconds}s', { seconds: timings.total.toFixed(1) })}
+          </p>
+        ) : null}
+        <ul className="space-y-1" aria-label={t('分阶段耗时')}>
+          {foreground.map(row)}
+        </ul>
+        {background.length > 0 ? (
+          <>
+            <p className="pt-1 text-fg-muted">{t('后台（不计入就绪用时）')}</p>
+            <ul className="space-y-1">{background.map(row)}</ul>
+          </>
+        ) : null}
+      </dd>
     </div>
   )
 }

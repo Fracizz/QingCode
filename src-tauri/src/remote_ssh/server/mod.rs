@@ -23,6 +23,7 @@ use super::*;
 mod daemon;
 mod deploy;
 mod download;
+mod install_cache;
 mod paths;
 mod scripts;
 mod serve;

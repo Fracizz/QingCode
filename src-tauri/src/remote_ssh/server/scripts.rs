@@ -8,43 +8,42 @@ use super::*;
 /// 1MB 就先删掉重建，日志才是有界的，长期开着的仓库不会把它堆成巨文件。
 pub(crate) const SERVE_LOG_TRUNCATE_BYTES: u64 = 1024 * 1024;
 
-/// Unix 用户私有 server 目录：用调用方的 umask 与显式 chmod 保证父目录和
-/// 版本目录都是 0700。目录列表由调用方按 `.qingcode` → `server` → 版本目录
-/// 传入。
-pub(crate) fn private_server_dirs_command(dirs: &[String]) -> String {
-    let quoted = dirs
-        .iter()
-        .map(|dir| shell_quote(dir))
-        .collect::<Vec<_>>()
-        .join(" ");
-    format!("umask 077; mkdir -p -- {quoted} && chmod 700 -- {quoted}")
-}
+/// 家目录不可用（为空、不是绝对路径或是根目录）时准备脚本的退出码。
+pub(crate) const PREPARE_HOME_INVALID_EXIT: u32 = 3;
 
-/// Windows 用户私有 server 目录：`%USERPROFILE%` 默认只允许当前用户访问，
-/// 创建时沿用该 ACL。
-///
-/// 走 .NET 的 `CreateDirectory` 而不是 `New-Item`：`New-Item` 没有
-/// `-LiteralPath` 参数（只有 `-Path`），而 `-Path` 会把 `[` / `]` 当通配符。
-pub(crate) fn windows_create_server_dirs_script(native_dirs: &[String]) -> String {
-    let entries = native_dirs
-        .iter()
-        .map(|dir| format!("'{}'", powershell_literal(dir)))
-        .collect::<Vec<_>>()
-        .join(", ");
+/// Unix：一次往返完成「读家目录 + 创建 `~/.qingcode/server/<version>`」，
+/// 最后输出家目录。每一级用 umask 与显式 chmod 收紧到 0700。家目录为空、
+/// 非绝对路径或是 `/` 时不建任何目录，直接以 [`PREPARE_HOME_INVALID_EXIT`] 退出；
+/// 调用方仍会校验输出并 canonicalize 安装目录。
+pub(crate) fn prepare_private_server_dirs_command(version: &str) -> String {
     format!(
-        "$ErrorActionPreference = 'Stop'
-@({entries}) | ForEach-Object {{ [System.IO.Directory]::CreateDirectory($_) | Out-Null }}"
+        "h=\"$HOME\"; case \"$h\" in /?*) ;; *) exit {invalid};; esac; \
+         umask 077; d=\"$h/.qingcode\"; v={version}; \
+         mkdir -p -- \"$d\" \"$d/server\" \"$d/server/$v\" \
+         && chmod 700 -- \"$d\" \"$d/server\" \"$d/server/$v\" || exit 4; \
+         printf '%s\\n' \"$h\"",
+        invalid = PREPARE_HOME_INVALID_EXIT,
+        version = shell_quote(version),
     )
 }
 
-/// 读取远端用户家目录。Unix 走登录 shell；Windows 由 PowerShell 读取
-/// `%USERPROFILE%`，调用方再转成 SFTP 的 `/C:/...` 形态。
-pub(crate) fn remote_home_command() -> &'static str {
-    "printf '%s\\n' \"$HOME\""
-}
-
-pub(crate) fn windows_remote_home_script() -> &'static str {
-    "$env:USERPROFILE"
+/// Windows：一次往返完成「读 `%USERPROFILE%` + 创建 server 版本目录」，最后
+/// 输出家目录。`%USERPROFILE%` 默认只允许当前用户访问，创建时沿用该 ACL；
+/// 只接受盘符路径，UNC / 相对路径直接以 [`PREPARE_HOME_INVALID_EXIT`] 退出。
+///
+/// 走 .NET 的 `CreateDirectory` 而不是 `New-Item`：`New-Item` 没有
+/// `-LiteralPath` 参数（只有 `-Path`），而 `-Path` 会把 `[` / `]` 当通配符。
+pub(crate) fn windows_prepare_server_dirs_script(version: &str) -> String {
+    format!(
+        r"$ErrorActionPreference = 'Stop'
+$h = $env:USERPROFILE
+if (-not $h -or $h -notmatch '^[A-Za-z]:\\.') {{ exit {invalid} }}
+$d = Join-Path $h '.qingcode'
+@($d, (Join-Path $d 'server'), (Join-Path $d 'server\{version}')) | ForEach-Object {{ [System.IO.Directory]::CreateDirectory($_) | Out-Null }}
+$h",
+        invalid = PREPARE_HOME_INVALID_EXIT,
+        version = powershell_literal(version),
+    )
 }
 
 /// Windows 部署脚本：只负责日志截断 + 以简单参数调用 `serve --detach`。
@@ -262,6 +261,9 @@ pub(crate) fn kill_server_command(pid: u32, state_path: &str) -> String {
     )
 }
 
+/// self-check 未通过时组合脚本的退出码，与启动 serve 阶段的失败区分开。
+pub(crate) const SELF_CHECK_FAILED_EXIT: u32 = 41;
+
 /// 远端 self-check 命令（unix）：上传后立刻 exec 校验，确认落盘二进制与
 /// 本地逐字节一致，顺带探测部署目录是否挂了 noexec（exec 失败即暴露）。
 pub(crate) fn self_check_command(bin: &str, expected_sha256: &str) -> String {
@@ -278,9 +280,38 @@ pub(crate) fn windows_self_check_script(bin: &str, expected_sha256: &str) -> Str
     format!(
         "$ErrorActionPreference = 'Stop'
 & '{bin}' self-check --expect-sha256 '{sha}'
-if ($LASTEXITCODE -ne 0) {{ exit 1 }}",
+if ($LASTEXITCODE -ne 0) {{ exit {failed} }}",
         bin = powershell_literal(bin),
         sha = powershell_literal(expected_sha256),
+        failed = SELF_CHECK_FAILED_EXIT,
+    )
+}
+
+/// Unix：一次往返完成「收紧权限 → self-check → 启动 serve」。self-check
+/// 失败以 [`SELF_CHECK_FAILED_EXIT`] 退出，绝不会继续启动未通过校验的二进制。
+pub(crate) fn self_check_then_deploy_command(
+    bin: &str,
+    expected_sha256: &str,
+    deploy: &str,
+) -> String {
+    format!(
+        "chmod 700 -- {bin} 2>/dev/null; {check} || exit {failed}; {deploy}",
+        bin = shell_quote(bin),
+        check = self_check_command(bin, expected_sha256),
+        failed = SELF_CHECK_FAILED_EXIT,
+    )
+}
+
+/// Windows：self-check 脚本与部署脚本拼成一次 PowerShell 往返；self-check
+/// 失败时脚本在部署前以 [`SELF_CHECK_FAILED_EXIT`] 退出。
+pub(crate) fn windows_self_check_then_deploy_script(
+    bin: &str,
+    expected_sha256: &str,
+    deploy: &str,
+) -> String {
+    format!(
+        "{}\n{deploy}",
+        windows_self_check_script(bin, expected_sha256)
     )
 }
 
@@ -542,8 +573,38 @@ mod tests {
             &"a".repeat(64),
         );
         // 外部 exe 的退出码必须显式转成 PowerShell 脚本退出码，否则失败被吞。
-        assert!(script.contains("if ($LASTEXITCODE -ne 0) { exit 1 }"));
+        assert!(script.contains("if ($LASTEXITCODE -ne 0) { exit 41 }"));
         assert!(script.contains(r"& 'D:\app\qingcode-server-windows-x86_64.exe'"));
+    }
+
+    #[test]
+    fn self_check_then_deploy_stops_before_starting_unverified_binary() {
+        let sha = "a".repeat(64);
+        let deploy = deploy_server_command(
+            "/home/dev/.qingcode/server/v/qingcode-server-x86_64",
+            "/srv/app",
+            "/srv/app/.qingcode/server/server.json",
+            "/srv/app/.qingcode/server/serve.log",
+        );
+        let command = self_check_then_deploy_command(
+            "/home/dev/.qingcode/server/v/qingcode-server-x86_64",
+            &sha,
+            &deploy,
+        );
+        // 顺序：收紧权限 → 自检（失败即退出 41）→ 启动 serve。
+        let check_at = command.find(" self-check ").unwrap();
+        let exit_at = command.find("|| exit 41;").unwrap();
+        let serve_at = command.find(" serve --root ").unwrap();
+        assert!(command.starts_with("chmod 700 -- '"));
+        assert!(check_at < exit_at && exit_at < serve_at);
+
+        let script = windows_self_check_then_deploy_script(
+            r"C:\Users\dev\.qingcode\server\v\qingcode-server-windows-x86_64.exe",
+            &sha,
+            "& $bin serve --detach",
+        );
+        let exit_at = script.find("{ exit 41 }").unwrap();
+        assert!(exit_at < script.find("serve --detach").unwrap());
     }
 
     #[test]
@@ -585,26 +646,25 @@ mod tests {
 
     #[test]
     fn private_server_directory_commands_quote_and_tighten_every_component() {
-        let dirs = vec![
-            "/home/dev/.qingcode".to_string(),
-            "/home/dev/.qingcode/server".to_string(),
-            "/home/dev/.qingcode/server/0.1.13".to_string(),
-        ];
-        let command = private_server_dirs_command(&dirs);
-        assert!(command.starts_with("umask 077; mkdir -p --"));
-        assert!(command.contains("chmod 700 --"));
-        assert!(command.contains("'/home/dev/.qingcode/server/0.1.13'"));
+        let command = prepare_private_server_dirs_command("0.1.13");
+        // 家目录为空、相对路径或 `/` 时不建目录直接退出。
+        assert!(command.contains("case \"$h\" in /?*) ;; *) exit 3;; esac;"));
+        assert!(command.contains("umask 077;"));
+        assert!(command.contains("v='0.1.13';"));
+        assert!(command.contains(
+            "mkdir -p -- \"$d\" \"$d/server\" \"$d/server/$v\" && chmod 700 -- \"$d\" \"$d/server\" \"$d/server/$v\""
+        ));
+        // 家目录在最后输出，供调用方解析。
+        assert!(command.ends_with("printf '%s\\n' \"$h\""));
 
-        let script = windows_create_server_dirs_script(&[
-            r"C:\Users\dev\.qingcode".to_string(),
-            r"C:\Users\dev\.qingcode\server".to_string(),
-            r"C:\Users\dev\.qingcode\server\0.1.13".to_string(),
-        ]);
+        let script = windows_prepare_server_dirs_script("0.1.13");
         // New-Item 不接受 -LiteralPath；误用它会让脚本在远端以 exit 1 失败。
         assert!(!script.contains("New-Item"));
         assert!(!script.contains("-LiteralPath"));
         assert!(script.contains("[System.IO.Directory]::CreateDirectory($_)"));
-        assert!(script.contains(r"'C:\Users\dev\.qingcode\server\0.1.13'"));
+        assert!(script.contains(r"(Join-Path $d 'server\0.1.13')"));
+        assert!(script.contains(r"$h -notmatch '^[A-Za-z]:\\.') { exit 3 }"));
+        assert!(script.ends_with("\n$h"));
     }
 
     #[test]

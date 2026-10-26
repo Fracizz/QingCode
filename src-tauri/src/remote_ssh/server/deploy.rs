@@ -3,18 +3,20 @@
 
 use super::daemon::{daemon_downgrade_retry_ready, ensure_remote_daemon};
 use super::download::{locate_local_server_binary, locate_local_server_binary_with};
+use super::install_cache;
 use super::paths::{
     can_reuse_discovered_server, legacy_agent_state_path, legacy_project_agent_binary_path,
     legacy_project_server_binary_path, parse_server_state, project_server_dir_path,
     remote_roots_equivalent, server_binary_file_name, server_gitignore_path, server_install_dir,
-    server_serve_log_path, server_state_path, user_server_root, windows_remote_path,
+    server_serve_log_path, server_state_path, windows_remote_path,
 };
 use super::scripts::{
-    deploy_server_command, kill_processes_by_executable_command, private_server_dirs_command,
-    remote_home_command, remote_sha256_command, remote_sha256_matches, self_check_command,
-    sha256_of_file_cached, windows_create_server_dirs_script, windows_deploy_for,
-    windows_remote_home_script, windows_remote_sha256_script, windows_remove_for,
-    windows_self_check_script, windows_stop_for,
+    deploy_server_command, kill_processes_by_executable_command,
+    prepare_private_server_dirs_command, remote_sha256_command, remote_sha256_matches,
+    self_check_then_deploy_command, sha256_of_file_cached, windows_deploy_for,
+    windows_prepare_server_dirs_script, windows_remote_sha256_script, windows_remove_for,
+    windows_self_check_then_deploy_script, windows_stop_for, PREPARE_HOME_INVALID_EXIT,
+    SELF_CHECK_FAILED_EXIT,
 };
 use super::serve::ping_server;
 use super::*;
@@ -98,10 +100,52 @@ async fn resolve_install_location(
     if let Some(cached) = manager.cached_server_install(connection_id) {
         return Ok(cached);
     }
-    let home = resolve_server_home(manager, root).await?;
-    let install_dir = prepare_server_install_dir(manager, sftp, root, &home).await?;
+    // 跨应用重启的持久缓存：只省掉「读家目录 + 建目录」那次远端 shell，
+    // 符号链接 / 家目录边界校验照做，且结果必须与缓存的安装目录逐字一致，
+    // 否则丢弃条目走完整准备流程。命中时跳过了目录的 0700 收紧，二进制
+    // 本身仍在自检前 chmod 700。
+    let identity = persisted_install_identity(manager, connection_id);
+    if let Some(key) = identity.as_deref() {
+        if let Some((home, install_dir)) = install_cache::load(key, SERVER_VERSION) {
+            match verify_server_install_dir(sftp, &home).await {
+                Ok(resolved) if home != "/" && resolved == install_dir => {
+                    manager.remember_server_install(connection_id, &home, &resolved);
+                    return Ok((home, resolved));
+                }
+                _ => {
+                    let _ = install_cache::remove(key);
+                }
+            }
+        }
+    }
+    let home = prepare_server_home(manager, root).await?;
+    let install_dir = verify_server_install_dir(sftp, &home).await?;
     manager.remember_server_install(connection_id, &home, &install_dir);
+    if let Some(key) = identity.as_deref() {
+        let _ = install_cache::store(key, SERVER_VERSION, &home, &install_dir);
+    }
     Ok((home, install_dir))
+}
+
+/// 持久缓存的身份键：用户名、主机、端口与本次连接已校验通过的主机指纹
+/// （握手时指纹不符会直接拒绝连接）。指纹变化即换键，旧条目自然失效。
+fn persisted_install_identity(manager: &SshManager, connection_id: &str) -> Option<String> {
+    let session = manager.session(connection_id).ok()?;
+    let config = session.config.lock().ok()?;
+    install_cache::identity_key(
+        &config.username,
+        &config.host,
+        config.port,
+        config.host_key_fingerprint.as_deref(),
+    )
+}
+
+/// 部署失败时同时丢弃内存与持久缓存：安装目录可能已被远端删除或权限被改。
+fn forget_install_location(manager: &SshManager, connection_id: &str) {
+    if let Some(key) = persisted_install_identity(manager, connection_id) {
+        let _ = install_cache::remove(&key);
+    }
+    manager.forget_server_install(connection_id);
 }
 
 /// 确保项目状态目录存在，并在任何读写前确认真实路径仍位于项目根内。
@@ -200,23 +244,27 @@ fn gitignore_excludes_directory(bytes: &[u8]) -> bool {
 ///
 /// `local_sha256 = None` 时直接拒绝发现，绝不能仅凭项目内 `server.json`
 /// 的版本号去连接或执行 `<项目>/.qingcode/server/` 中的文件。
+///
+/// 第二个返回值表示本轮是否已确认远端二进制摘要与本地一致：发现失败
+/// （典型如远端重启后 serve 已退出）转入部署时据此跳过重复比对。
 async fn try_discover_server(
     manager: &SshManager,
     connection_id: &str,
     sftp: &SftpSession,
     root: &RegisteredRoot,
     app: Option<&tauri::AppHandle>,
-    local_sha256: Option<&str>,
+    local_sha256: &str,
     remote_bin: &str,
-) -> Option<ServerEndpoint> {
-    let local_sha256 = local_sha256?;
+) -> (Option<ServerEndpoint>, bool) {
     let state_path = server_state_path(&root.canonical_path);
-    let metadata = sftp.metadata(state_path.clone()).await.ok()?;
-    if metadata.is_dir() {
-        return None;
-    }
-    let bytes = sftp.read(state_path.clone()).await.ok()?;
-    let state = parse_server_state(&bytes).ok()?;
+    let state = match sftp.read(state_path).await {
+        Ok(bytes) => parse_server_state(&bytes).ok(),
+        // 状态文件不存在（或是目录）：没有可复用的 serve，摘要留给部署阶段比对。
+        Err(_) => return (None, false),
+    };
+    let Some(state) = state else {
+        return (None, false);
+    };
     let windows = windows_native_path(&root.canonical_path).is_some();
     let remote_matches = remote_binary_sha_matches(manager, root, remote_bin, local_sha256).await;
     if !can_reuse_discovered_server(
@@ -227,7 +275,7 @@ async fn try_discover_server(
         Some(local_sha256),
         remote_matches,
     ) {
-        return None;
+        return (None, remote_matches);
     }
     let endpoint = ServerEndpoint {
         port: state.port,
@@ -242,13 +290,15 @@ async fn try_discover_server(
         connection_id,
         server_status::ServerPhase::Handshaking,
     );
-    ping_server(manager, connection_id, &endpoint).await.ok()?;
-    Some(endpoint)
+    let alive = ping_server(manager, connection_id, &endpoint).await.is_ok();
+    (alive.then_some(endpoint), remote_matches)
 }
 
-/// 解析远端用户家目录并统一成 SFTP 路径。Windows 只接受盘符路径，
-/// UNC / 相对路径直接拒绝，避免把共享目录当成用户私有安装位置。
-async fn resolve_server_home(
+/// 一次远端往返完成「读家目录 + 创建用户私有版本目录」，再把家目录统一成
+/// SFTP 路径。此前读家目录与建目录各起一次远端 shell，Windows 上每次都要
+/// 冷启动 PowerShell（实测各 2~3 秒）。Windows 只接受盘符路径，UNC / 相对
+/// 路径在脚本里就拒绝，避免把共享目录当成用户私有安装位置。
+async fn prepare_server_home(
     manager: &SshManager,
     root: &RegisteredRoot,
 ) -> Result<String, ServerDeployError> {
@@ -256,18 +306,33 @@ async fn resolve_server_home(
     let result = exec_on_root(
         manager,
         root,
-        remote_home_command(),
-        windows_remote_home_script(),
+        &prepare_private_server_dirs_command(SERVER_VERSION),
+        &windows_prepare_server_dirs_script(SERVER_VERSION),
     )
     .await
-    .map_err(|error| ServerDeployError::permanent(format!("无法读取远端用户家目录：{error}")))?;
+    .map_err(|error| {
+        ServerDeployError::permanent(format!("准备用户私有 server 目录失败：{error}"))
+    })?;
+    if result.exit_code == PREPARE_HOME_INVALID_EXIT {
+        return Err(ServerDeployError::permanent(if windows {
+            "Windows 远端 USERPROFILE 不是受支持的盘符路径"
+        } else {
+            "远端家目录无效：必须是根目录以外的绝对路径"
+        }));
+    }
     if result.exit_code != 0 {
         return Err(ServerDeployError::permanent(format!(
-            "无法读取远端用户家目录（退出码 {}）",
+            "创建或收紧用户私有 server 目录失败（退出码 {}）",
             result.exit_code
         )));
     }
-    let raw = result.stdout.trim();
+    // PowerShell 可能在前面夹带空行，家目录是最后一个非空行。
+    let raw = result
+        .stdout
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .unwrap_or_default();
     if raw.is_empty() {
         return Err(ServerDeployError::permanent("远端用户家目录为空"));
     }
@@ -288,68 +353,21 @@ async fn resolve_server_home(
     Ok(home)
 }
 
-/// 创建并验证 `~/.qingcode/server/<version>`。Unix 上每一级都收紧到 0700；
-/// Windows 依赖 `%USERPROFILE%` 的用户私有 ACL。canonicalize 后仍必须位于
-/// 家目录内，拒绝通过符号链接把安装目录重定向到外部位置。
-async fn prepare_server_install_dir(
-    manager: &SshManager,
+/// 验证 [`prepare_server_home`] 建好的 `~/.qingcode/server/<version>`：
+/// canonicalize 后仍必须位于家目录内，拒绝通过符号链接把安装目录重定向到
+/// 外部位置。两次 canonicalize 互不依赖，并发发出省一个 SFTP 往返。
+async fn verify_server_install_dir(
     sftp: &SftpSession,
-    root: &RegisteredRoot,
     home: &str,
 ) -> Result<String, ServerDeployError> {
-    let windows = windows_native_path(&root.canonical_path).is_some();
-    let qingcode_dir = format!("{}/.qingcode", home.trim_end_matches('/'));
-    let server_root = user_server_root(home);
     let install_dir = server_install_dir(home, SERVER_VERSION);
-    let dirs = vec![
-        qingcode_dir.clone(),
-        server_root.clone(),
-        install_dir.clone(),
-    ];
-    if windows {
-        let native_dirs = dirs
-            .iter()
-            .map(|dir| {
-                windows_host_path(dir)
-                    .ok_or_else(|| ServerDeployError::permanent("Windows server 安装路径无效"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let result = exec_on_root(
-            manager,
-            root,
-            "",
-            &windows_create_server_dirs_script(&native_dirs),
-        )
-        .await
-        .map_err(|error| {
-            ServerDeployError::permanent(format!("创建 Windows server 安装目录失败：{error}"))
-        })?;
-        if result.exit_code != 0 {
-            return Err(ServerDeployError::permanent(format!(
-                "创建 Windows server 安装目录失败（退出码 {}）",
-                result.exit_code
-            )));
-        }
-    } else {
-        let result = exec_on_root(manager, root, &private_server_dirs_command(&dirs), "")
-            .await
-            .map_err(|error| {
-                ServerDeployError::permanent(format!("创建用户私有 server 目录失败：{error}"))
-            })?;
-        if result.exit_code != 0 {
-            return Err(ServerDeployError::permanent(format!(
-                "创建或收紧用户私有 server 目录失败（退出码 {}）",
-                result.exit_code
-            )));
-        }
-    }
-    let resolved_home = sftp
-        .canonicalize(home.to_string())
-        .await
+    let (resolved_home, resolved_install) = tokio::join!(
+        sftp.canonicalize(home.to_string()),
+        sftp.canonicalize(install_dir)
+    );
+    let resolved_home = resolved_home
         .map_err(|error| ServerDeployError::permanent(format!("远端家目录不可用：{error}")))?;
-    let resolved_install = sftp
-        .canonicalize(install_dir)
-        .await
+    let resolved_install = resolved_install
         .map_err(|error| ServerDeployError::permanent(format!("server 安装目录不可用：{error}")))?;
     if resolved_install == resolved_home
         || !remote_path_is_within(&resolved_install, &resolved_home)
@@ -375,14 +393,18 @@ struct ServerInstallTarget<'a> {
 /// 之前每次部署失败重试都是全量 SFTP 上传（ping 打不通时变成热循环：上传
 /// 几十 MB → 新 serve 因旧实例 rc=3 退出 → 15s 轮询超时 → 再来一遍）。
 /// sha256 逐字节一致则版本必然一致；远端算不出摘要或对不上时照常全量上传。
+/// `sha_known_match` 为真表示本轮发现阶段刚比对过且一致，不再重算。
 async fn upload_server_binary(
     manager: &SshManager,
     sftp: &SftpSession,
     root: &RegisteredRoot,
     local: &Path,
     target: &ServerInstallTarget<'_>,
+    sha_known_match: bool,
 ) -> Result<bool, String> {
-    if remote_binary_sha_matches(manager, root, target.remote_bin, target.local_sha256).await {
+    if sha_known_match
+        || remote_binary_sha_matches(manager, root, target.remote_bin, target.local_sha256).await
+    {
         return Ok(false);
     }
     // 上传前再确认目录仍在家目录内（防止 root 被符号链接重定向）。
@@ -519,56 +541,54 @@ async fn remote_binary_sha_matches(
     remote_sha256_matches(&result.stdout, local_sha256)
 }
 
-/// 先在不执行目标文件的前提下用远端 `sha256sum` / `Get-FileHash` 比对本地
-/// 摘要，只有一致后才 exec `self-check` 探测 noexec。这样损坏、被替换或
-/// 来源不明的文件永远不会进入执行阶段。失败按 permanent 处理。
-async fn verify_remote_binary(
+/// 调用方必须已在不执行目标文件的前提下用远端 `sha256sum` / `Get-FileHash`
+/// 比对过本地摘要；这里在同一次远端往返里 exec `self-check`（二进制自校验
+/// 摘要并探测 noexec），自检通过才启动 serve。这样损坏、被替换或来源不明的
+/// 文件永远不会进入执行阶段。自检失败按 permanent 处理，往返失败按部署
+/// 阶段失败处理。此前 chmod、自检、启动各起一次远端 shell。
+async fn self_check_and_start_server(
     manager: &SshManager,
     root: &RegisteredRoot,
     remote_bin: &str,
     local_sha256: &str,
-    sha_verified: bool,
 ) -> Result<(), ServerDeployError> {
-    // 上传前已比对一致而跳过上传时，摘要刚刚校验过，不必再算一遍；
-    // 真正上传了新文件则必须重新校验落盘结果。
-    if !sha_verified && !remote_binary_sha_matches(manager, root, remote_bin, local_sha256).await {
-        return Err(ServerDeployError::permanent(
-            "远端 server 二进制 SHA-256 与本地可信文件不一致，已拒绝执行",
-        ));
-    }
-    // 用户目录与文件都只允许当前用户访问；跳过上传的旧文件也可能权限被改动。
-    if windows_native_path(&root.canonical_path).is_none() {
-        let _ = manager
-            .exec_command(
-                &root.uri,
-                &format!("chmod 700 -- {}", shell_quote(remote_bin)),
-                None,
-                true,
-                REMOTE_EXEC_TIMEOUT,
-            )
-            .await;
-    }
-    let windows_script = windows_host_path(remote_bin)
-        .map(|path| windows_self_check_script(&path, local_sha256))
-        .unwrap_or_default();
+    let state_path = server_state_path(&root.canonical_path);
+    let serve_log = server_serve_log_path(&root.canonical_path);
+    // 用户目录与文件都只允许当前用户访问；跳过上传的旧文件也可能权限被改动，
+    // 组合命令开头先 chmod 700。
+    let command = self_check_then_deploy_command(
+        remote_bin,
+        local_sha256,
+        &deploy_server_command(remote_bin, &root.canonical_path, &state_path, &serve_log),
+    );
+    let windows_script = match windows_host_path(remote_bin) {
+        Some(path) => windows_self_check_then_deploy_script(
+            &path,
+            local_sha256,
+            &windows_deploy_for(remote_bin, &root.canonical_path, &state_path, &serve_log)
+                .map_err(ServerDeployError::from)?,
+        ),
+        None => String::new(),
+    };
     let result = manager
         .exec_remote_shell(
             &root.uri,
-            &self_check_command(remote_bin, local_sha256),
+            &command,
             &windows_script,
             true,
             REMOTE_EXEC_TIMEOUT,
         )
         .await
         .map_err(|error| {
-            ServerDeployError::permanent(format!("远端 server 自检执行失败：{error}"))
+            ServerDeployError::deploy_stage(format!("启动远端 server 失败：{error}"))
         })?;
-    if result.exit_code != 0 {
+    if result.exit_code == SELF_CHECK_FAILED_EXIT {
         let detail = self_check_failure_detail(&result.stderr, result.exit_code);
         return Err(ServerDeployError::permanent(format!(
             "远端服务程序自检未通过（{detail}）：用户私有安装目录可能不允许执行，或文件在摘要校验后被替换。请重新连接以重新部署"
         )));
     }
+    // 启动脚本本身的退出码不作结论：serve 是否可用由随后的就绪轮询判定。
     Ok(())
 }
 
@@ -692,6 +712,8 @@ async fn discover_or_deploy_server(
         .ok();
     let windows = windows_native_path(&root.canonical_path).is_some();
 
+    // 发现阶段已确认远端摘要一致时，部署阶段跳过重复比对。
+    let mut sha_known_match = false;
     if let Some((arch, local_binary)) = local_candidate.as_ref() {
         let (_, install_dir) =
             resolve_install_location(manager, &sftp, root, connection_id).await?;
@@ -700,13 +722,13 @@ async fn discover_or_deploy_server(
         let local_sha256 = sha256_of_file_cached(local_binary)
             .await
             .map_err(ServerDeployError::from)?;
-        let discovered = try_discover_server(
+        let (discovered, remote_matches) = try_discover_server(
             manager,
             connection_id,
             &sftp,
             root,
             app,
-            Some(&local_sha256),
+            &local_sha256,
             &remote_bin,
         )
         .await;
@@ -716,6 +738,7 @@ async fn discover_or_deploy_server(
             timer.mark("旧版清理");
             return Ok((endpoint, remote_bin));
         }
+        sha_known_match = remote_matches;
     }
 
     let (arch, local_binary) = match local_candidate {
@@ -743,38 +766,34 @@ async fn discover_or_deploy_server(
         remote_bin: &remote_bin,
         local_sha256: &local_sha256,
     };
-    let uploaded = upload_server_binary(manager, &sftp, root, &local_binary, &target)
-        .await
-        .map_err(ServerDeployError::deploy_stage)?;
-    timer.mark(if uploaded {
-        "上传"
-    } else {
-        "比对(免上传)"
-    });
-    // 先做无执行的 sha256 校验，再 self-check（同时探测 noexec）。
-    verify_remote_binary(manager, root, &remote_bin, &local_sha256, !uploaded).await?;
-    timer.mark("自检");
-    // 新版本已可信后才清理旧项目目录；清理过程不会执行旧二进制。
+    let uploaded = upload_server_binary(
+        manager,
+        &sftp,
+        root,
+        &local_binary,
+        &target,
+        sha_known_match,
+    )
+    .await
+    .map_err(ServerDeployError::deploy_stage)?;
+    if uploaded {
+        // 真正上传了新文件必须重新校验落盘结果（不执行目标文件）；跳过上传时
+        // 摘要刚刚比对过，不必再算一遍。
+        if !remote_binary_sha_matches(manager, root, &remote_bin, &local_sha256).await {
+            return Err(ServerDeployError::permanent(
+                "远端 server 二进制 SHA-256 与本地可信文件不一致，已拒绝执行",
+            ));
+        }
+        timer.mark("上传");
+    } else if !sha_known_match {
+        timer.mark("比对(免上传)");
+    }
+    // 新版本摘要可信后才清理旧项目目录；清理过程不会执行旧二进制。放在启动
+    // 之前，避免旧 serve 与新 serve 争用状态文件。
     cleanup_legacy_project_install(manager, &sftp, root, &arch).await;
-    let state_path = server_state_path(&root.canonical_path);
-    let serve_log = server_serve_log_path(&root.canonical_path);
-    let command = deploy_server_command(&remote_bin, &root.canonical_path, &state_path, &serve_log);
-    let windows_script =
-        windows_deploy_for(&remote_bin, &root.canonical_path, &state_path, &serve_log)
-            .map_err(ServerDeployError::from)?;
-    manager
-        .exec_remote_shell(
-            &root.uri,
-            &command,
-            &windows_script,
-            true,
-            REMOTE_EXEC_TIMEOUT,
-        )
-        .await
-        .map_err(|error| {
-            ServerDeployError::deploy_stage(format!("启动远端 server 失败：{error}"))
-        })?;
-    timer.mark("启动 serve");
+    // 同一次远端往返里 self-check（同时探测 noexec）并启动 serve。
+    self_check_and_start_server(manager, root, &remote_bin, &local_sha256).await?;
+    timer.mark("自检+启动");
     // serve ping 之前进入握手。
     server_status::note_server_activity(
         manager,
@@ -978,7 +997,7 @@ async fn ensure_server_endpoint_inner(
         }
         Err(error) => {
             // 安装目录可能已被远端删除或权限被改：下次重新创建并校验。
-            manager.forget_server_install(&connection_id);
+            forget_install_location(manager, &connection_id);
             let mut slot = manager.server_slot(&key).unwrap_or_default();
             slot.endpoint = None;
             slot.activity = None;

@@ -189,3 +189,38 @@ function nullableTransport(value: unknown): SshServerTransport | null | undefine
     ? (value as SshServerTransport)
     : undefined
 }
+
+export interface SshServerTimingStage {
+  label: string
+  seconds: number
+  /** 后台阶段（如 daemon 探测）不计入「合计」，展示时单独标注。 */
+  background: boolean
+}
+
+export interface SshServerTimings {
+  stages: SshServerTimingStage[]
+  /** 到 serve 就绪的等待时长；摘要里缺少「合计」时为 null。 */
+  total: number | null
+}
+
+const TIMING_SEGMENT = /^(.+?)\s+(\d+(?:\.\d+)?)s(（后台）)?$/
+
+/**
+ * 解析后端耗时摘要「状态目录 0.3s · 启动 serve 2.7s · 合计 3.0s · daemon 1.8s（后台）」。
+ * 任一段格式不符就返回 null，调用方原样显示文本。
+ */
+export function parseSshServerTimings(summary: string): SshServerTimings | null {
+  const stages: SshServerTimingStage[] = []
+  let total: number | null = null
+  for (const segment of summary.split(' · ')) {
+    const match = TIMING_SEGMENT.exec(segment.trim())
+    if (!match) return null
+    const [, label, seconds, background] = match
+    if (label === '合计' && !background) {
+      total = Number(seconds)
+    } else {
+      stages.push({ label, seconds: Number(seconds), background: Boolean(background) })
+    }
+  }
+  return stages.length > 0 || total !== null ? { stages, total } : null
+}

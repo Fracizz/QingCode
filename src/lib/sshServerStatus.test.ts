@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isAgentCommandUnavailable,
   parseSshServerState,
+  parseSshServerTimings,
   sshServerChip,
   sshServerEventMatches,
   sshServerIsDirect,
@@ -110,5 +111,29 @@ describe('sshServerStatus', () => {
     expect(isAgentCommandUnavailable(Object.assign(new Error('command ssh_server_info not found'), { name: 'Error' }))).toBe(true)
     expect(isAgentCommandUnavailable(Object.assign(new Error('browser'), { name: 'NotInTauriError' }))).toBe(true)
     expect(isAgentCommandUnavailable(new Error('连接已断开'))).toBe(false)
+  })
+})
+
+describe('parseSshServerTimings', () => {
+  it('splits stages, total and background stages', () => {
+    expect(
+      parseSshServerTimings('状态目录 0.0s · 启动 serve 2.7s · 合计 17.5s · daemon 7.4s（后台）'),
+    ).toEqual({
+      stages: [
+        { label: '状态目录', seconds: 0, background: false },
+        { label: '启动 serve', seconds: 2.7, background: false },
+        { label: 'daemon', seconds: 7.4, background: true },
+      ],
+      total: 17.5,
+    })
+    expect(parseSshServerTimings('daemon 0.9s（后台）')).toEqual({
+      stages: [{ label: 'daemon', seconds: 0.9, background: true }],
+      total: null,
+    })
+  })
+
+  it('rejects summaries it does not understand', () => {
+    expect(parseSshServerTimings('')).toBeNull()
+    expect(parseSshServerTimings('发现 1.2s · 奇怪的段')).toBeNull()
   })
 })
