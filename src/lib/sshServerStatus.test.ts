@@ -5,6 +5,7 @@ import {
   sshServerChip,
   sshServerEventMatches,
   sshServerIsDirect,
+  sshServerModeKey,
   sshServerSwitchBlocker,
   sshServerTipLines,
   type SshServerState,
@@ -72,33 +73,65 @@ describe('sshServerStatus', () => {
   })
 
   it('builds concise one-line tips', () => {
-    expect(sshServerTipLines({
-      ...readyServer,
-      phase: 'readyDirect',
-      mode: 'direct',
-      transport: 'direct',
-      version: null,
-      reason: '工作区未信任',
-    })).toEqual([{ key: '直连：{reason}', params: { reason: '工作区未信任' } }])
-    // 多行原因（如部署诊断输出）在 tooltip 里只保留首行，完整内容进详情弹窗。
-    expect(sshServerTipLines({
-      ...readyServer,
-      phase: 'readyDirect',
-      mode: 'direct',
-      transport: 'direct',
-      version: null,
-      reason: '远端服务程序校验未通过：文件可能损坏。\n用法: qingcode-agent (--version | serve)\n',
-    })).toEqual([{
-      key: '直连：{reason}',
-      params: { reason: '远端服务程序校验未通过：文件可能损坏。' },
-    }])
-    expect(sshServerTipLines(readyServer)).toEqual([
-      { key: 'Server v{version}', params: { version: '0.1.13' } },
+    expect(
+      sshServerTipLines({
+        ...readyServer,
+        phase: 'readyDirect',
+        mode: 'direct',
+        transport: 'direct',
+        version: null,
+        reason: '工作区未信任',
+      })
+    ).toEqual([
+      { key: 'SSH 直连' },
+      { key: '回退原因：{reason}', params: { reason: '工作区未信任' } },
     ])
-    expect(sshServerTipLines({ ...readyServer, version: null })).toEqual([{ key: 'Server' }])
+    // 多行原因（如部署诊断输出）在 tooltip 里只保留首行，完整内容进详情弹窗。
+    expect(
+      sshServerTipLines({
+        ...readyServer,
+        phase: 'readyDirect',
+        mode: 'direct',
+        transport: 'direct',
+        version: null,
+        reason:
+          '远端服务程序校验未通过：文件可能损坏。\n用法: qingcode-agent (--version | serve)\n',
+      })
+    ).toEqual([
+      { key: 'SSH 直连' },
+      {
+        key: '回退原因：{reason}',
+        params: { reason: '远端服务程序校验未通过：文件可能损坏。' },
+      },
+    ])
+    expect(sshServerTipLines(readyServer)).toEqual([
+      { key: 'SSH + 远端服务' },
+      { key: '运行方式：{transport}', params: { transport: '常驻服务' } },
+      { key: '远端服务 v{version}', params: { version: '0.1.13' } },
+    ])
+    expect(sshServerTipLines({ ...readyServer, version: null })).toEqual([
+      { key: 'SSH + 远端服务' },
+      { key: '运行方式：{transport}', params: { transport: '常驻服务' } },
+    ])
     expect(sshServerTipLines({ ...readyServer, phase: 'installing' })).toEqual([
+      { key: '正在安装远端服务' },
       { key: '阶段：{phase}', params: { phase: '正在安装' } },
     ])
+  })
+
+  it('labels the user-facing mode separately from the internal transport', () => {
+    expect(sshServerModeKey(readyServer)).toBe('SSH + 远端服务')
+    expect(
+      sshServerModeKey({
+        ...readyServer,
+        phase: 'readyDirect',
+        mode: 'direct',
+        transport: 'direct',
+      })
+    ).toBe('SSH 直连')
+    expect(sshServerModeKey({ ...readyServer, phase: 'probing', mode: 'unknown' })).toBe(
+      'SSH 已连接 · 正在准备远端服务'
+    )
   })
 
   it('ignores events for a different project', () => {

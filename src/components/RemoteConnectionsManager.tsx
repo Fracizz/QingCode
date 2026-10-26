@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
+  CircleHelp,
   FileText,
   FolderOpen,
   Globe,
@@ -42,7 +43,9 @@ import {
 import {
   isAgentCommandUnavailable,
   parseSshServerState,
-  sshServerPhaseKey,
+  sshServerIsDirect,
+  sshServerModeKey,
+  sshServerSwitchBlocker,
   sshServerTransportKey,
   type SshServerState,
 } from '../lib/sshServerStatus'
@@ -401,15 +404,27 @@ export default function RemoteConnectionsManager() {
     }
   }
 
-  const restartServer = async (rootUri: string) => {
+  const restartServer = async (rootUri: string, direct: boolean) => {
     if (busyRoot) return
     setBusyRoot(rootUri)
     try {
-      await safeInvoke('重启远端服务', 'ssh_server_restart', { rootUri })
-      pushToast('success', t('已重启远端服务'))
+      const value = await safeInvoke<unknown>('重启远端服务', 'ssh_server_restart', { rootUri })
+      const next = parseSshServerState(value)
+      if (next && sshServerIsDirect(next)) {
+        pushToast('warn', t('仍使用 SSH 直连'), next.reason ?? undefined)
+      } else if (next?.phase === 'readyServer') {
+        pushToast('success', t(direct ? '已切换到远端服务' : '已重启远端服务'))
+      } else {
+        pushToast('info', t('正在部署远端服务…'))
+      }
     } catch (reason) {
       if (!isAgentCommandUnavailable(reason)) {
-        pushToast('error', t('重启远端服务失败: {error}', { error: String(reason) }))
+        pushToast(
+          'error',
+          t(direct ? '切换到远端服务失败: {error}' : '重启远端服务失败: {error}', {
+            error: String(reason),
+          })
+        )
       }
     } finally {
       setBusyRoot(null)
@@ -798,9 +813,11 @@ export default function RemoteConnectionsManager() {
 
                       <div>
                         <p className={`${sectionTitleClass} mb-2`}>
-                          {t('远端服务')}
+                          {t('远端服务模式')}
                           <Tooltip
-                            label={t('qingcode-server 经 SSH 通道接入；全局开关与离线目录在设置中配置。')}
+                            label={t(
+                              '远端服务是叠加在 SSH 上的增强模式。开启时为“SSH + 远端服务”，提供文件树自动刷新、内容搜索与持久终端；关闭或不可用时自动回退为“SSH 直连”。两种模式都只通过 SSH 访问，不开放公网端口。'
+                            )}
                             side="top"
                           >
                             <button
@@ -808,12 +825,7 @@ export default function RemoteConnectionsManager() {
                               className="rounded p-0.5 text-fg-dim hover:text-fg"
                               aria-label={t('关于远端服务')}
                             >
-                              <span
-                                aria-hidden
-                                className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full border border-current text-[9px] leading-none"
-                              >
-                                ?
-                              </span>
+                              <CircleHelp size={13} aria-hidden />
                             </button>
                           </Tooltip>
                         </p>
@@ -834,13 +846,22 @@ export default function RemoteConnectionsManager() {
                                 <span className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-fg">
                                   {remoteShort(state.rootUri)}
                                 </span>
-                                <span className="flex-shrink-0 text-ui-2xs text-fg-muted">
-                                  {t(sshServerPhaseKey(state.phase))}
+                                <span
+                                  className={`flex-shrink-0 text-ui-2xs ${
+                                    state.phase === 'readyServer' ? 'text-accent' : 'text-fg-muted'
+                                  }`}
+                                >
+                                  {t(sshServerModeKey(state))}
                                 </span>
                                 {sshServerTransportKey(state.transport) ? (
-                                  <span className="flex-shrink-0 rounded bg-bg-active px-1.5 py-0.5 text-ui-2xs text-fg-muted">
-                                    {t(sshServerTransportKey(state.transport)!)}
-                                  </span>
+                                  <Tooltip
+                                    label={t(transportTooltipKey(state.transport) ?? '未知')}
+                                    side="top"
+                                  >
+                                    <span className="flex-shrink-0 rounded bg-bg-active px-1.5 py-0.5 text-ui-2xs text-fg-muted">
+                                      {t(sshServerTransportKey(state.transport)!)}
+                                    </span>
+                                  </Tooltip>
                                 ) : null}
                                 {state.reason ? (
                                   <Tooltip label={state.reason} side="left">
@@ -849,23 +870,35 @@ export default function RemoteConnectionsManager() {
                                     </span>
                                   </Tooltip>
                                 ) : null}
-                                <Tooltip label={t('重启远端服务')} side="top">
+                                <Tooltip
+                                  label={t(
+                                    sshServerIsDirect(state) ? '切换到远端服务' : '重启远端服务'
+                                  )}
+                                  side="top"
+                                >
                                   <button
                                     type="button"
-                                    disabled={busyRoot === state.rootUri}
-                                    onClick={() => void restartServer(state.rootUri)}
+                                    disabled={
+                                      busyRoot === state.rootUri ||
+                                      (sshServerIsDirect(state) && !!sshServerSwitchBlocker(state))
+                                    }
+                                    onClick={() =>
+                                      void restartServer(state.rootUri, sshServerIsDirect(state))
+                                    }
                                     className="flex-shrink-0 rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
-                                    aria-label={t('重启远端服务')}
+                                    aria-label={t(
+                                      sshServerIsDirect(state) ? '切换到远端服务' : '重启远端服务'
+                                    )}
                                   >
                                     <RefreshCw size={12} />
                                   </button>
                                 </Tooltip>
-                                <Tooltip label={t('查看日志')} side="left">
+                                <Tooltip label={t('查看远端服务日志')} side="left">
                                   <button
                                     type="button"
                                     onClick={() => void showLogs(state.rootUri)}
                                     className="flex-shrink-0 rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
-                                    aria-label={t('查看日志')}
+                                    aria-label={t('查看远端服务日志')}
                                   >
                                     <ScrollText size={12} />
                                   </button>
@@ -942,4 +975,11 @@ export default function RemoteConnectionsManager() {
       )}
     </>
   )
+}
+
+function transportTooltipKey(transport: SshServerState['transport']): string | null {
+  if (transport === 'daemon') return '远端服务常驻运行；SSH 断线重连后可继续接回已持久化的终端。'
+  if (transport === 'serve') return '远端服务按项目启动，在当前 SSH 会话中提供增强功能。'
+  if (transport === 'direct') return '当前不运行远端服务，仅使用 SSH / SFTP 直连。'
+  return null
 }

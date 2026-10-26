@@ -1783,6 +1783,16 @@ fn windows_encoded_powershell(launcher: &str, script: &str, quote: bool) -> Stri
     }
 }
 
+/// Windows 远端 PowerShell 的 UTF-8 启动设置。
+///
+/// Windows PowerShell 5.1 的 `Get-Content`（`cat` / `type`）默认按系统 ANSI
+/// 代码页解码文件，读 UTF-8 文本时中文会显示成 `ä¸­æ–‡`。控制台读写与文件
+/// 读取统一固定为 UTF-8，不再依赖远端系统区域设置。
+const WINDOWS_POWERSHELL_UTF8_SETUP: &str = "try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); [Console]::InputEncoding = [Console]::OutputEncoding } catch { }; $OutputEncoding = [Console]::OutputEncoding; $PSDefaultParameterValues['Get-Content:Encoding'] = 'utf8'";
+
+/// cmd.exe 的对应设置：`type` 按控制台代码页解码文件。
+const WINDOWS_CMD_UTF8_SETUP: &str = "chcp 65001>nul";
+
 /// 启动交互式 PowerShell / pwsh，并在提示符出现前进入项目目录。
 ///
 /// 不能等 PTY 出字后再注入 `Set-Location; Clear-Host`。Windows OpenSSH 的
@@ -1794,7 +1804,10 @@ fn windows_powershell_terminal(
     resolved_shell: &str,
     fallback_from: Option<String>,
 ) -> ResolvedSshTerminal {
-    let script = format!("Set-Location -LiteralPath '{}'", powershell_literal(native));
+    let script = format!(
+        "{WINDOWS_POWERSHELL_UTF8_SETUP}; Set-Location -LiteralPath '{}'",
+        powershell_literal(native)
+    );
     ResolvedSshTerminal {
         command: windows_encoded_powershell(
             &format!("{executable} -NoLogo -NoExit"),
@@ -1813,8 +1826,9 @@ fn windows_powershell_terminal(
 /// 反斜杠会被 bash 先解释掉；走编码脚本则与默认 shell 无关。
 fn windows_cmd_terminal(native: &str) -> ResolvedSshTerminal {
     let script = format!(
-        "$ProgressPreference = 'SilentlyContinue'; Set-Location -LiteralPath '{}'; & cmd.exe /K rem; exit $LASTEXITCODE",
-        powershell_literal(native)
+        "$ProgressPreference = 'SilentlyContinue'; Set-Location -LiteralPath '{}'; & cmd.exe /K '{}'; exit $LASTEXITCODE",
+        powershell_literal(native),
+        WINDOWS_CMD_UTF8_SETUP
     );
     ResolvedSshTerminal {
         command: windows_encoded_powershell(
@@ -4651,14 +4665,29 @@ fn persistent_shell_launch(
 ) -> Result<server::PersistentLaunch, String> {
     let resolved = ssh_interactive_terminal_command(path, shell)?;
     let resolved_shell = resolved.resolved_shell;
-    let shell = if windows_native_path(path).is_some() {
+    let windows = windows_native_path(path).is_some();
+    let shell = if windows {
         Some(resolved_shell.clone())
     } else {
         matches!(resolved_shell.as_str(), "bash" | "zsh" | "sh").then(|| resolved_shell.clone())
     };
+    // daemon 直接启动 shell（不经 OpenSSH 的 -EncodedCommand），启动参数要在这里
+    // 补齐，否则远端 PowerShell 5.1 仍会按 ANSI 代码页解码 `cat` 的输出。
+    let args = if !windows {
+        Vec::new()
+    } else if resolved_shell == "cmd" {
+        vec!["/K".to_string(), WINDOWS_CMD_UTF8_SETUP.to_string()]
+    } else {
+        vec![
+            "-NoLogo".to_string(),
+            "-NoExit".to_string(),
+            "-Command".to_string(),
+            WINDOWS_POWERSHELL_UTF8_SETUP.to_string(),
+        ]
+    };
     Ok(server::PersistentLaunch {
         shell,
-        args: Vec::new(),
+        args,
         env: std::collections::BTreeMap::new(),
         name: None,
         resolved_shell,
@@ -4688,13 +4717,16 @@ fn persistent_profile_launch(
         .collect();
     if windows_native_path(path).is_some() {
         launch.args = if launch.resolved_shell == "cmd" {
-            vec!["/K".to_string(), target.to_string()]
+            vec![
+                "/K".to_string(),
+                format!("{WINDOWS_CMD_UTF8_SETUP} & {target}"),
+            ]
         } else {
             vec![
                 "-NoLogo".to_string(),
                 "-NoExit".to_string(),
                 "-Command".to_string(),
-                target.to_string(),
+                format!("{WINDOWS_POWERSHELL_UTF8_SETUP}; {target}"),
             ]
         };
     } else {
@@ -4723,7 +4755,7 @@ fn direct_windows_profile_command(
         script.push_str(&format!(
             "$ProgressPreference = 'SilentlyContinue'; Set-Location -LiteralPath '{}'; & cmd.exe /K '{}'; exit $LASTEXITCODE",
             powershell_literal(&native),
-            powershell_literal(target)
+            powershell_literal(&format!("{WINDOWS_CMD_UTF8_SETUP} & {target}"))
         ));
         Ok(windows_encoded_powershell(
             "powershell.exe -NoLogo -NoProfile -NonInteractive",
@@ -4737,7 +4769,7 @@ fn direct_windows_profile_command(
             "powershell.exe -NoLogo -NoExit"
         };
         script.push_str(&format!(
-            "Set-Location -LiteralPath '{}'; {target}",
+            "{WINDOWS_POWERSHELL_UTF8_SETUP}; Set-Location -LiteralPath '{}'; {target}",
             powershell_literal(&native)
         ));
         Ok(windows_encoded_powershell(launcher, &script, true))
@@ -5568,7 +5600,10 @@ mod tests {
         let quoted = ssh_interactive_terminal_command("/D:/code/it's", Some("powershell")).unwrap();
         assert_eq!(
             decoded_script(&quoted.command, "powershell.exe -NoLogo -NoExit"),
-            r"Set-Location -LiteralPath 'D:\code\it''s'"
+            format!(
+                "{}; Set-Location -LiteralPath 'D:\\code\\it''s'",
+                WINDOWS_POWERSHELL_UTF8_SETUP
+            )
         );
         assert!(quoted.command.starts_with('"') && quoted.command.ends_with('"'));
         assert!(quoted.enter_directory.is_none());
@@ -5576,7 +5611,10 @@ mod tests {
         let command = ssh_interactive_terminal_command("/D:/code/nem-panel", None).unwrap();
         assert_eq!(
             decoded_script(&command.command, "powershell.exe -NoLogo -NoExit"),
-            "Set-Location -LiteralPath 'D:\\code\\nem-panel'",
+            format!(
+                "{}; Set-Location -LiteralPath 'D:\\code\\nem-panel'",
+                WINDOWS_POWERSHELL_UTF8_SETUP
+            ),
         );
         assert!(command.enter_directory.is_none());
         assert_eq!(command.resolved_shell, "powershell");
@@ -5587,7 +5625,7 @@ mod tests {
             ssh_interactive_terminal_command("/D:/code/my project", Some("cmd")).unwrap();
         assert_eq!(
             decoded_script(&cmd_target.command, cmd_launcher),
-            r"$ProgressPreference = 'SilentlyContinue'; Set-Location -LiteralPath 'D:\code\my project'; & cmd.exe /K rem; exit $LASTEXITCODE"
+            r"$ProgressPreference = 'SilentlyContinue'; Set-Location -LiteralPath 'D:\code\my project'; & cmd.exe /K 'chcp 65001>nul'; exit $LASTEXITCODE"
         );
         assert!(cmd_target.enter_directory.is_none());
         assert_eq!(cmd_target.resolved_shell, "cmd");
@@ -5601,7 +5639,10 @@ mod tests {
             ssh_interactive_terminal_command("/D:/code/nem-panel", Some("pwsh")).unwrap();
         assert_eq!(
             decoded_script(&pwsh_target.command, "pwsh.exe -NoLogo -NoExit"),
-            "Set-Location -LiteralPath 'D:\\code\\nem-panel'",
+            format!(
+                "{}; Set-Location -LiteralPath 'D:\\code\\nem-panel'",
+                WINDOWS_POWERSHELL_UTF8_SETUP
+            ),
         );
         assert!(pwsh_target.enter_directory.is_none());
         assert_eq!(pwsh_target.resolved_shell, "pwsh");
@@ -5610,7 +5651,10 @@ mod tests {
             ssh_interactive_terminal_command("/D:/code/nem-panel", Some("bash")).unwrap();
         assert_eq!(
             decoded_script(&fallback.command, "powershell.exe -NoLogo -NoExit"),
-            "Set-Location -LiteralPath 'D:\\code\\nem-panel'",
+            format!(
+                "{}; Set-Location -LiteralPath 'D:\\code\\nem-panel'",
+                WINDOWS_POWERSHELL_UTF8_SETUP
+            ),
         );
         assert!(fallback.enter_directory.is_none());
         assert_eq!(fallback.resolved_shell, "powershell");
@@ -5618,6 +5662,47 @@ mod tests {
 
         assert!(ssh_interactive_terminal_command("/D:/code/a\nb", None).is_err());
         assert!(reject_windows_remote_command("/D:/code/nem-panel").is_err());
+    }
+
+    #[test]
+    fn persistent_windows_shell_forces_utf8_console_and_file_reading() {
+        // `cat` 是 Get-Content 的别名；只设置控制台编码不够，必须固定文件读取编码。
+        assert!(WINDOWS_POWERSHELL_UTF8_SETUP.contains("Get-Content:Encoding"));
+        assert!(WINDOWS_CMD_UTF8_SETUP.contains("65001"));
+
+        let powershell = persistent_shell_launch("/D:/code/app", None).unwrap();
+        assert_eq!(powershell.shell.as_deref(), Some("powershell"));
+        assert_eq!(
+            powershell.args,
+            vec![
+                "-NoLogo".to_string(),
+                "-NoExit".to_string(),
+                "-Command".to_string(),
+                WINDOWS_POWERSHELL_UTF8_SETUP.to_string(),
+            ]
+        );
+
+        let cmd = persistent_shell_launch("/D:/code/app", Some("cmd")).unwrap();
+        assert_eq!(cmd.shell.as_deref(), Some("cmd"));
+        assert_eq!(
+            cmd.args,
+            vec!["/K".to_string(), WINDOWS_CMD_UTF8_SETUP.to_string()]
+        );
+
+        let profile = persistent_profile_launch(
+            "/D:/code/app",
+            "opencode",
+            &HashMap::new(),
+            Some("powershell"),
+            "OpenCode",
+        )
+        .unwrap();
+        assert_eq!(profile.name.as_deref(), Some("OpenCode"));
+        assert!(profile.args[3].starts_with(WINDOWS_POWERSHELL_UTF8_SETUP));
+        assert!(profile.args[3].ends_with("; opencode"));
+
+        let unix = persistent_shell_launch("/srv/app", Some("bash")).unwrap();
+        assert!(unix.args.is_empty());
     }
 
     #[test]
@@ -5631,6 +5716,7 @@ mod tests {
         )
         .unwrap();
         let script = decoded_script(&powershell, "powershell.exe -NoLogo -NoExit");
+        assert!(script.contains(WINDOWS_POWERSHELL_UTF8_SETUP));
         assert!(script.contains(r"$env:OPENCODE_MODE = 'dev'"));
         assert!(script.contains(r"Set-Location -LiteralPath 'D:\code\my project'"));
         assert!(script.ends_with("opencode --watch"));
@@ -5643,7 +5729,7 @@ mod tests {
         )
         .unwrap();
         let script = decoded_script(&cmd, "powershell.exe -NoLogo -NoProfile -NonInteractive");
-        assert!(script.contains(r"& cmd.exe /K 'opencode --watch'"));
+        assert!(script.contains(r"& cmd.exe /K 'chcp 65001>nul & opencode --watch'"));
     }
 
     #[test]
