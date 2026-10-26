@@ -11,7 +11,7 @@
 //! QC_STAB_LONG_SECS   长连接阶段时长（默认 300）
 //! QC_STAB_CONNS       并发连接数（默认 3）
 //! QC_STAB_TERMS       每个连接的并发终端数（默认 8）
-//! QC_STAB_PHASES      逗号分隔的阶段子集（默认全部：func,flood,reattach,long,multi）
+//! QC_STAB_PHASES      逗号分隔的阶段子集（默认全部：hs,fallback,func,ctrlc,flood,reattach,long,multi）
 //! cargo test --lib real_host_stability -- --ignored --nocapture
 //! ```
 
@@ -333,6 +333,37 @@ impl Term {
     }
 }
 
+/// 新开一条连接（只到认证完成）检验远端 sshd 是否仍接受新连接。
+async fn probe_new_connection(manager: &SshManager, connection_id: &str, label: &str) {
+    let Ok(session) = manager.live_session(connection_id).await else {
+        return;
+    };
+    let Ok(config) = session.config.lock().map(|config| config.clone()) else {
+        return;
+    };
+    probe_new_connection_with(config, label).await;
+}
+
+async fn probe_new_connection_with(config: SshConnectionConfig, label: &str) {
+    let at = Instant::now();
+    let result = tokio::time::timeout(
+        Duration::from_secs(10),
+        authenticate_session(config, ConnectionPurpose::Terminal),
+    )
+    .await;
+    match result {
+        Ok(Ok((session, _))) => {
+            let _ = session
+                .handle
+                .disconnect(Disconnect::ByApplication, "", "")
+                .await;
+            println!("[stab][probe] {label} 之后新连接 OK {}", ms(at.elapsed()));
+        }
+        Ok(Err(error)) => println!("[stab][probe] {label} 之后新连接失败：{error}"),
+        Err(_) => println!("[stab][probe] {label} 之后新连接 10s 未完成握手"),
+    }
+}
+
 async fn connect(
     host: &str,
     connection_id: &str,
@@ -355,10 +386,35 @@ async fn connect(
     manager.set_client_id(format!("qc-stab-{}", std::process::id()));
     manager.set_server_binary_dirs(vec![PathBuf::from(server_dir)]);
     let mut config = config;
-    config.host_key_fingerprint = Some(ssh_probe_host(config.clone()).await?.fingerprint);
-    store_authenticated_session(&manager, config).await?;
-
-    let sftp = manager.open_sftp(connection_id).await?;
+    // 每步加时限并打点，卡住时能看出停在哪一步。
+    let step = Instant::now();
+    let probe = tokio::time::timeout(Duration::from_secs(60), ssh_probe_host(config.clone()))
+        .await
+        .map_err(|_| "指纹探测超时".to_string())??;
+    config.host_key_fingerprint = Some(probe.fingerprint);
+    println!("[stab] {connection_id} 指纹探测 {}", ms(step.elapsed()));
+    if env("QC_STAB_BISECT").is_some() {
+        probe_new_connection_with(config.clone(), "指纹探测").await;
+    }
+    let step = Instant::now();
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        store_authenticated_session(&manager, config),
+    )
+    .await
+    .map_err(|_| "认证超时".to_string())??;
+    println!("[stab] {connection_id} 认证 {}", ms(step.elapsed()));
+    if env("QC_STAB_BISECT").is_some() {
+        probe_new_connection(&manager, connection_id, "认证").await;
+    }
+    let step = Instant::now();
+    let sftp = tokio::time::timeout(Duration::from_secs(60), manager.open_sftp(connection_id))
+        .await
+        .map_err(|_| "打开 SFTP 超时".to_string())??;
+    println!("[stab] {connection_id} 打开 SFTP {}", ms(step.elapsed()));
+    if env("QC_STAB_BISECT").is_some() {
+        probe_new_connection(&manager, connection_id, "打开 SFTP").await;
+    }
     if let Err(error) = sftp.create_dir(root_path.to_string()).await {
         println!("[stab] 创建项目根 {root_path}：{error}");
     }
@@ -378,6 +434,9 @@ async fn connect(
         .map_err(|_| "工作区状态不可用")?
         .insert(root.uri.clone(), root.clone());
     let windows = windows_native_path(&canonical_path).is_some();
+    if env("QC_STAB_BISECT").is_some() {
+        probe_new_connection(&manager, connection_id, "认证+SFTP+canonicalize").await;
+    }
 
     // 发现 / 部署，再等后台 daemon 探测完成。
     let started = Instant::now();
@@ -385,7 +444,21 @@ async fn connect(
     let mut daemon = None;
     while started.elapsed() < Duration::from_secs(120) {
         let round = Instant::now();
-        let ensured = ensure_server_endpoint_with_app(&manager, &root, None).await?;
+        let ensured = tokio::time::timeout(
+            Duration::from_secs(90),
+            ensure_server_endpoint_with_app(&manager, &root, None),
+        )
+        .await
+        .map_err(|_| {
+            format!(
+                "ensure 单轮超过 90s，slot={:?}",
+                manager.server_slot(&key).map(|slot| (
+                    slot.activity,
+                    slot.daemon_probe_pending,
+                    slot.last_timings
+                ))
+            )
+        })??;
         let slot = manager.server_slot(&key).unwrap_or_default();
         println!(
             "[stab] {connection_id} ensure 一轮 {}：端点={} daemon={} 不可用={:?} 失败={:?} daemon失败={:?} 降级={:?} 分段=[{}]",
@@ -440,7 +513,100 @@ async fn remote_exec(ctx: &Ctx, unix: &str, windows: &str) -> Result<String, Str
         .manager
         .exec_remote_shell(&ctx.root.uri, unix, windows, true, Duration::from_secs(120))
         .await?;
-    Ok(format!("{}{}", result.stdout, result.stderr))
+    // 只取 stdout：Windows PowerShell 的 stderr 是 CLIXML 进度噪声。
+    Ok(result.stdout)
+}
+
+fn terminal_pool(ctx: &Ctx) -> Result<TerminalTransportPool, String> {
+    Ok(Arc::clone(
+        ctx.manager
+            .terminal_transport_pools
+            .lock()
+            .map_err(|_| "终端连接池不可用")?
+            .entry(ctx.connection_id.clone())
+            .or_default(),
+    ))
+}
+
+/// 回退：模拟专用终端连接握手刚失败（如远端 PerSourcePenalties 罚时），
+/// 新终端应借主连接通道照常可用，超出上限时报带排查提示的错误，归还后计数清零，
+/// 期间主连接的 SFTP 不受影响。
+async fn phase_fallback(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String> {
+    let pool = terminal_pool(ctx)?;
+    // 先清空空闲的共享连接，确保新终端必须走握手（进而走回退）。
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    {
+        let mut state = pool.lock().await;
+        if state.entries.iter().any(|entry| entry.leased > 0) {
+            return Err("仍有终端占用共享连接，无法验证回退".to_string());
+        }
+        state.entries.clear();
+        state.handshake_failure = Some((Instant::now(), "模拟握手失败".to_string()));
+    }
+    let mut terms = Vec::new();
+    for index in 0..TERMINAL_MAIN_FALLBACK_LIMIT {
+        let at = Instant::now();
+        let mut term = Term::open(ctx, 100, 30)
+            .await
+            .map_err(|error| format!("回退终端#{index} 打开失败：{error}"))?;
+        let opened = at.elapsed();
+        if !term.transport.main_fallback {
+            failures.push(format!("fallback：终端#{index} 没有走主连接"));
+        }
+        if term.transport.notice().is_some() {
+            failures.push("fallback：冷却期内的回退不应重复提示".to_string());
+        }
+        term.pump_until(Instant::now() + Duration::from_secs(1))
+            .await?;
+        let latency = term.echo_probe(ctx.windows, "B").await?;
+        println!(
+            "[stab][fallback] 终端#{index} 走主连接：打开 {}，回显 {}",
+            ms(opened),
+            ms(latency)
+        );
+        terms.push(term);
+    }
+    let in_use = pool.lock().await.main_fallback;
+    if in_use != TERMINAL_MAIN_FALLBACK_LIMIT {
+        failures.push(format!(
+            "fallback：借用计数 {in_use}，期望 {TERMINAL_MAIN_FALLBACK_LIMIT}"
+        ));
+    }
+    match Term::open(ctx, 100, 30).await {
+        Ok(term) => {
+            failures.push("fallback：超出主连接借用上限仍打开了终端".to_string());
+            term.kill().await;
+        }
+        Err(error) if error.contains("PerSourcePenalties") => {
+            println!("[stab][fallback] 超出上限按预期报错：{error}");
+        }
+        Err(error) => failures.push(format!("fallback：超限错误缺少排查提示：{error}")),
+    }
+    let sftp = ctx.manager.open_sftp(&ctx.connection_id).await?;
+    let at = Instant::now();
+    sftp.canonicalize(ctx.root.canonical_path.clone())
+        .await
+        .map_err(|error| format!("回退期间主连接 SFTP 失败：{error}"))?;
+    println!(
+        "[stab][fallback] 回退期间主连接 SFTP 往返 {}",
+        ms(at.elapsed())
+    );
+    for term in terms {
+        term.kill().await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let mut state = pool.lock().await;
+    if state.main_fallback != 0 {
+        failures.push(format!(
+            "fallback：归还后借用计数仍为 {}",
+            state.main_fallback
+        ));
+    }
+    if ctx.manager.session(&ctx.connection_id)?.handle.is_closed() {
+        failures.push("fallback：归还终端时误断开了主连接".to_string());
+    }
+    state.handshake_failure = None;
+    Ok(())
 }
 
 /// 功能：回显、resize、pty.list、退出码。
@@ -492,6 +658,36 @@ async fn phase_func(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String>
     }
     if term.seq_gaps > 0 {
         failures.push(format!("func：输出序号缺口 {}", term.seq_gaps));
+    }
+    term.kill().await;
+    Ok(())
+}
+
+/// Ctrl+C：前台循环运行中按 Ctrl+C 应中断并回到提示符（TUI / 长命令的基本操作）。
+async fn phase_ctrlc(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String> {
+    let mut term = Term::open(ctx, 100, 30).await?;
+    term.pump_until(Instant::now() + Duration::from_secs(3))
+        .await?;
+    term.send(if ctx.windows {
+        "while($true){ 'TICK' + [DateTime]::Now.Ticks; Start-Sleep -Milliseconds 200 }\r"
+    } else {
+        "while :; do echo TICK$(date +%s%N); sleep 0.2; done\r"
+    })
+    .await?;
+    term.wait_for("TICK", Duration::from_secs(15)).await?;
+    // 命令回显本身含 TICK：再等 2s，确保循环已在前台运行后才按 Ctrl+C。
+    term.pump_until(Instant::now() + Duration::from_secs(2))
+        .await?;
+    term.send("\u{3}").await?;
+    // PowerShell 处理 Ctrl+C 时会清空输入缓冲，等提示符出来再输入。
+    term.pump_until(Instant::now() + Duration::from_millis(1500))
+        .await?;
+    match term.echo_probe(ctx.windows, "C").await {
+        Ok(latency) => println!(
+            "[stab][ctrlc] Ctrl+C 中断循环后输入可用，回显 {}",
+            ms(latency)
+        ),
+        Err(error) => failures.push(format!("ctrlc：Ctrl+C 未能中断前台循环：{error}")),
     }
     term.kill().await;
     Ok(())
@@ -588,8 +784,15 @@ async fn phase_reattach(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), Str
         &client_id,
         &ctx.daemon,
     )
-    .await?;
-    let attach = session.attach(&pty_id, next_seq).await?;
+    .await
+    .map_err(|error| format!("重开 daemon 会话失败（{}）：{error}", ms(started.elapsed())))?;
+    let attach = session.attach(&pty_id, next_seq).await.map_err(|error| {
+        format!(
+            "pty.attach 失败（主连接回退={}，{}）：{error}",
+            transport.main_fallback,
+            ms(started.elapsed())
+        )
+    })?;
     let first_seq = attach.chunks.first().and_then(|chunk| chunk.seq);
     let replay_bytes: usize = attach.chunks.iter().map(|chunk| chunk.data.len()).sum();
     let replay_text = strip_ansi(
@@ -655,6 +858,9 @@ async fn phase_reattach(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), Str
         println!("[stab][reattach] 接回后实时输出正常（3s 收到 {live} 个 TICK）");
     }
     term.send("\u{3}").await?;
+    // PowerShell 处理 Ctrl+C 时会清空输入缓冲，等提示符出来再输入。
+    term.pump_until(Instant::now() + Duration::from_millis(1500))
+        .await?;
     match term.echo_probe(ctx.windows, "R").await {
         Ok(latency) => println!("[stab][reattach] Ctrl+C 后输入可用，回显 {}", ms(latency)),
         Err(error) => failures.push(format!("reattach/接回后输入：{error}")),
@@ -932,6 +1138,62 @@ async fn phase_multi(
     Ok(())
 }
 
+/// 握手：连续新建 SSH 连接计时，并记录远端 sshd 进程数，定位握手偶发卡顿。
+async fn phase_handshake(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String> {
+    let config = ctx
+        .manager
+        .live_session(&ctx.connection_id)
+        .await?
+        .config
+        .lock()
+        .map_err(|_| "SSH 连接状态不可用".to_string())?
+        .clone();
+    let sshd = remote_exec(
+        ctx,
+        "pgrep -c sshd",
+        "(Get-Process sshd -ErrorAction SilentlyContinue).Count",
+    )
+    .await
+    .unwrap_or_default();
+    println!("[stab][hs] 远端 sshd 进程数 {}", sshd.trim());
+    let mut stats = Stats::default();
+    let mut slow = 0;
+    for round in 0..6 {
+        let at = Instant::now();
+        // 交替两种用途，区分「用途配置」与「并发第二条连接」两类原因。
+        let purpose = if round % 2 == 0 {
+            ConnectionPurpose::Terminal
+        } else {
+            ConnectionPurpose::Main
+        };
+        println!("[stab][hs] 第 {round} 次 {purpose:?} 握手开始");
+        match authenticate_session(config.clone(), purpose).await {
+            Ok((session, _)) => {
+                stats.push(at.elapsed());
+                if at.elapsed() > Duration::from_secs(3) {
+                    slow += 1;
+                    println!("[stab][hs] 第 {round} 次握手慢：{}", ms(at.elapsed()));
+                }
+                let _ = session
+                    .handle
+                    .disconnect(Disconnect::ByApplication, "", "")
+                    .await;
+            }
+            Err(error) => {
+                failures.push(format!(
+                    "hs/第 {round} 次握手失败（{}）：{error}",
+                    ms(at.elapsed())
+                ));
+            }
+        }
+    }
+    println!(
+        "[stab][hs] 终端用途握手 {}（慢 {slow} 次）",
+        stats.summary()
+    );
+    Ok(())
+}
+
 async fn seed_project(ctx: &Ctx) -> Result<(), String> {
     let started = Instant::now();
     // exec_remote_shell 在用户 home 执行，必须先进入项目根。
@@ -1014,15 +1276,25 @@ async fn run() -> Result<Vec<String>, String> {
     let host = env("QC_STAB_HOST").ok_or("缺少 QC_STAB_HOST")?;
     let root_path = env("QC_STAB_ROOT").ok_or("缺少 QC_STAB_ROOT")?;
     let server_dir = env("QC_STAB_SERVER_DIR").ok_or("缺少 QC_STAB_SERVER_DIR")?;
-    let phases =
-        env("QC_STAB_PHASES").unwrap_or_else(|| "func,flood,reattach,long,multi".to_string());
+    let phases = env("QC_STAB_PHASES")
+        .unwrap_or_else(|| "hs,fallback,func,ctrlc,flood,reattach,long,multi".to_string());
     let enabled = |name: &str| phases.split(',').any(|phase| phase.trim() == name);
     let mut failures = Vec::new();
 
     let ctx = connect(&host, "stab-main", &server_dir, &root_path).await?;
+    let bisect = env("QC_STAB_BISECT").is_some();
+    if bisect {
+        probe_new_connection(&ctx.manager, &ctx.connection_id, "ensure+daemon 就绪").await;
+    }
     seed_project(&ctx).await?;
+    if bisect {
+        probe_new_connection(&ctx.manager, &ctx.connection_id, "seed exec").await;
+    }
     if let Err(error) = phase_efficiency(&ctx).await {
         failures.push(format!("eff：{error}"));
+    }
+    if bisect {
+        probe_new_connection(&ctx.manager, &ctx.connection_id, "eff scan/search").await;
     }
     type Phase = for<'a> fn(
         &'a Ctx,
@@ -1030,8 +1302,17 @@ async fn run() -> Result<Vec<String>, String> {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>,
     >;
-    let phases_list: [(&str, Phase); 4] = [
+    let phases_list: [(&str, Phase); 7] = [
+        ("hs", |ctx, failures| {
+            Box::pin(phase_handshake(ctx, failures))
+        }),
+        ("fallback", |ctx, failures| {
+            Box::pin(phase_fallback(ctx, failures))
+        }),
         ("func", |ctx, failures| Box::pin(phase_func(ctx, failures))),
+        ("ctrlc", |ctx, failures| {
+            Box::pin(phase_ctrlc(ctx, failures))
+        }),
         ("flood", |ctx, failures| {
             Box::pin(phase_flood(ctx, failures))
         }),

@@ -743,7 +743,26 @@ struct TerminalTransportPoolState {
     entries: Vec<PooledTerminalTransport>,
     /// 该连接的 sshd 会话上限；`None` 表示还没探测过。
     limit: Option<SshdSessionLimit>,
+    /// 借用主连接通道的终端数（专用连接握手失败时的回退），受
+    /// [`TERMINAL_MAIN_FALLBACK_LIMIT`] 限制。
+    main_fallback: usize,
+    /// 最近一次专用终端连接握手失败的时间与原因：冷却期内直接走主连接回退，
+    /// 不再每开一个终端都白等握手超时（失败的握手还会让远端继续追加罚时）。
+    handshake_failure: Option<(Instant, String)>,
 }
+
+/// 主连接上最多借给终端的 daemon 通道数：主连接还要承载 SFTP、命令与
+/// scan/search/watch，sshd 的 MaxSessions（默认 10）不能都给终端。
+const TERMINAL_MAIN_FALLBACK_LIMIT: usize = 4;
+/// 专用终端连接握手失败后，多久内不再尝试新握手、直接回退主连接。
+const TERMINAL_HANDSHAKE_FAILURE_COOLDOWN: Duration = Duration::from_secs(120);
+
+/// 专用终端连接握手失败时附带的排查提示。
+///
+/// OpenSSH 9.8+（含 Windows 版 9.8p2）默认开启 PerSourcePenalties：连接异常结束、
+/// 认证前断开等都会给来源 IP 记罚时，罚时内该 IP 的新连接一律被拒（远端回
+/// `Not allowed at this time` 或握手无响应），已建立的连接不受影响。
+const TERMINAL_HANDSHAKE_PENALTY_HINT: &str = "若远端为 OpenSSH 9.8 及以上（含 Windows 版），可能是 PerSourcePenalties 正对本机 IP 罚时拒绝新连接，可在远端 sshd_config 加入 PerSourcePenaltyExemptList <本机 IP> 或 PerSourcePenalties no 后重启 sshd";
 
 /// 同一 SSH 连接配置下，server 模式终端共用的连接；锁同时串行化探测与新连接握手。
 type TerminalTransportPool = Arc<tokio::sync::Mutex<TerminalTransportPoolState>>;
@@ -778,6 +797,8 @@ struct TerminalTransportLease {
     transport: Arc<ConnectedSession>,
     released: AtomicBool,
     pool: TerminalTransportPool,
+    /// 借用的是主连接（专用连接握手失败时的回退）：归还时只减计数，绝不断开。
+    main_fallback: bool,
     /// 已有共享连接全满、本次新开了连接时给用户的提示。
     notice: Option<String>,
 }
@@ -801,9 +822,14 @@ impl TerminalTransportLease {
         }
         let transport = Arc::clone(&self.transport);
         let pool = Arc::clone(&self.pool);
+        let main_fallback = self.main_fallback;
         tauri::async_runtime::spawn(async move {
             // 名额只在池锁内增减，这里持锁判断空闲不会与新租约竞争。
             let mut state = pool.lock().await;
+            if main_fallback {
+                state.main_fallback = state.main_fallback.saturating_sub(1);
+                return;
+            }
             let Some(index) = state
                 .entries
                 .iter()
@@ -1129,23 +1155,51 @@ impl SshManager {
                 transport: Arc::clone(&entry.transport),
                 released: AtomicBool::new(false),
                 pool: Arc::clone(&pool),
+                main_fallback: false,
                 notice: None,
             });
         }
         let full = state.entries.len();
-        let transport = self
-            .handshake_terminal_transport(connection_id)
-            .await
-            .map_err(|error| {
-                if full == 0 {
-                    format!("{error}（终端共享 SSH 连接握手失败，可检查远端 sshd 状态与 MaxStartups）")
+        // 刚失败过的握手在冷却期内不再重试：直接回退主连接，避免每个终端都等满
+        // 握手超时，也避免失败握手让远端 sshd 继续给本机 IP 追加罚时。
+        let cooling = state
+            .handshake_failure
+            .as_ref()
+            .filter(|(at, _)| at.elapsed() < TERMINAL_HANDSHAKE_FAILURE_COOLDOWN)
+            .map(|(_, error)| error.clone());
+        let fresh_failure = cooling.is_none();
+        let handshake = match cooling {
+            Some(error) => Err(error),
+            None => self.handshake_terminal_transport(connection_id).await,
+        };
+        let transport = match handshake {
+            Ok(transport) => {
+                state.handshake_failure = None;
+                transport
+            }
+            Err(error) => {
+                if fresh_failure {
+                    eprintln!(
+                        "[WARN] terminal transport handshake failed for {connection_id}: {error}"
+                    );
+                    state.handshake_failure = Some((Instant::now(), error.clone()));
+                }
+                if let Some(lease) = self
+                    .lease_main_fallback(connection_id, &pool, &mut state, &error, fresh_failure)
+                    .await
+                {
+                    return Ok(lease);
+                }
+                return Err(if full == 0 {
+                    format!("{error}（终端共享 SSH 连接握手失败，可检查远端 sshd 状态与 MaxStartups；{TERMINAL_HANDSHAKE_PENALTY_HINT}）")
                 } else {
                     format!(
                         "{error}（已有 {full} 条终端共享连接均已占满，{}；可在远端 sshd_config 调大 MaxSessions 后重启 sshd）",
                         limit.describe()
                     )
-                }
-            })?;
+                });
+            }
+        };
         state.entries.push(PooledTerminalTransport {
             transport: Arc::clone(&transport),
             leased: 1,
@@ -1155,7 +1209,42 @@ impl SshManager {
             transport,
             released: AtomicBool::new(false),
             pool: Arc::clone(&pool),
+            main_fallback: false,
             notice: (full > 0).then(|| terminal_pool_full_notice(full, limit)),
+        })
+    }
+
+    /// 专用终端连接握手失败时，向已认证的主连接借一个 daemon 通道。
+    ///
+    /// 只用现有主连接、不触发重连（重连同样要新握手）；主连接无响应或借用数已达
+    /// [`TERMINAL_MAIN_FALLBACK_LIMIT`] 时返回 `None`，由调用方按原错误报错。
+    /// `announce` 为真时附带提示（只在刚失败那一次提示，冷却期内静默借用）。
+    async fn lease_main_fallback(
+        &self,
+        connection_id: &str,
+        pool: &TerminalTransportPool,
+        state: &mut TerminalTransportPoolState,
+        error: &str,
+        announce: bool,
+    ) -> Option<TerminalTransportLease> {
+        if state.main_fallback >= TERMINAL_MAIN_FALLBACK_LIMIT {
+            return None;
+        }
+        let main = self.session(connection_id).ok()?;
+        if !connection_responds(&main.handle).await {
+            return None;
+        }
+        state.main_fallback += 1;
+        Some(TerminalTransportLease {
+            transport: main,
+            released: AtomicBool::new(false),
+            pool: Arc::clone(pool),
+            main_fallback: true,
+            notice: announce.then(|| {
+                format!(
+                    "终端专用 SSH 连接握手失败（{error}），已改用主连接承载终端（最多 {TERMINAL_MAIN_FALLBACK_LIMIT} 个）；{TERMINAL_HANDSHAKE_PENALTY_HINT}"
+                )
+            }),
         })
     }
 

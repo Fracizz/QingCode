@@ -220,6 +220,8 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 
 路径形如 `ssh://<id>/D:/code/app`。可用：SFTP 文件操作、交互式 PowerShell / CMD 终端、Git、与本机之间的上传下载。部署 Windows 版 `qingcode-server` 后，目录扫描、内容搜索和文件树刷新走服务，daemon 传输经命名管道（`\\.\pipe\qingcode-server-daemon-<hash>`，DACL 仅当前用户）接入，支持 `fs.scan` / `search.content` / `watch.subscribe` 与 PTY 宿主；`connect --stdio` 代理用 tokio overlapped 客户端，读写可同时进行。交互式终端的 daemon 持久化已接入，断开后能否保住进程取决于 Windows daemon 是否成功脱离 sshd 的 Job Object；该平台行为待 WP-G 真机验收；Server 模式下 daemon 不可用时报错，可切到 SSH 模式直连。`ps1`/`bat` 运行任务尚未接入 daemon。不可用：任意远程命令、文件名搜索、格式化、运行任务。这是平台限制，不是 Linux SSH 的对照表所能概括的。
 
+**OpenSSH 9.8+ 的 PerSourcePenalties**（Windows 版 9.8p2 默认开启，真机 252.45 实测）：连接异常结束、认证前断开、握手超时等都会给来源 IP 记罚时（`crash:90 … max:600 min:15`），罚时内该 IP 的**所有新连接**被拒（远端回 `Not allowed at this time` 或握手无响应），已建立的连接不受影响；同一出口 IP 的其他客户端也会被一起拒绝，失败的重试还会继续追加罚时。Server 模式新建终端时若专用终端连接握手失败，会改为借用已认证主连接的 daemon 通道（最多 4 个，2 分钟内不再重试握手并弹提示），终端照常可用；超出上限时报错并附排查提示。根治需在远端 `sshd_config` 加入 `PerSourcePenaltyExemptList <客户端 IP>` 或 `PerSourcePenalties no` 后重启 sshd。
+
 ### 补齐进展与后续建议
 
 已于 2026-10-24 补齐：
