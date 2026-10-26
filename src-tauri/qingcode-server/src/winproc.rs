@@ -62,6 +62,19 @@ impl Drop for WindowsChild {
     }
 }
 
+/// 让之后创建的子进程正常响应 Ctrl+C。
+///
+/// 「忽略 Ctrl+C」是进程属性，会被子进程继承：daemon 经 sshd 的 exec 会话拉起，
+/// 这个属性一路继承下来，ConPTY 里的 PowerShell / cmd 就收不到 Ctrl+C，前台命令
+/// 和 TUI 都无法中断（真机 252.45 实测）。`SetConsoleCtrlHandler(NULL, FALSE)`
+/// 清掉本进程的忽略标记，之后创建的 PTY 子进程随之恢复默认处理；幂等，
+/// 不影响已注册的处理函数（如 tokio 的 ctrl_c）。
+pub fn restore_ctrl_c_for_children() {
+    use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+    // SAFETY: 处理函数为 NULL 时只修改本进程的 Ctrl+C 忽略标记。
+    unsafe { SetConsoleCtrlHandler(None, 0) };
+}
+
 /// 通用脱离 spawn：CREATE_NO_WINDOW + CREATE_BREAKAWAY_FROM_JOB，失败时去掉
 /// BREAKAWAY 重试一次（sshd 的 Job 对象可能禁止 breakaway）。
 ///

@@ -57,6 +57,8 @@ windows-sys = { version = "0.60", features = [
   # daemon named pipe 的「仅当前用户」DACL：SID → SDDL 字符串 → 安全描述符。
   "Win32_Security_Authorization",
   "Win32_Storage_FileSystem",
+  # ConPTY 子进程恢复 Ctrl+C 处理（SetConsoleCtrlHandler）。
+  "Win32_System_Console",
   "Win32_System_Pipes",
   "Win32_System_Threading",
 ] }

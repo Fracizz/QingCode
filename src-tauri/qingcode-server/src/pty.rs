@@ -433,6 +433,9 @@ impl PtyHost {
         // 固定值最后写入，确保基础环境或调用方环境都不能改变 TUI 的色彩能力探测。
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
+        // 继承自 sshd 会话的「忽略 Ctrl+C」会传给 shell，创建前先清掉。
+        #[cfg(windows)]
+        crate::winproc::restore_ctrl_c_for_children();
         let child = pair
             .slave
             .spawn_command(cmd)
@@ -557,7 +560,7 @@ impl PtyHost {
 
     /// 把客户端输入写进 PTY。写入可能因为内核缓冲满而阻塞，
     /// 期间不持有宿主锁（只持有该终端自己的写句柄）。
-    #[cfg(all(test, unix))]
+    #[cfg(test)]
     pub fn write(&self, id: &str, data: &[u8]) -> Result<(), String> {
         let term = self.term(id)?;
         write_blocking(&term, data, None, None)
@@ -2471,5 +2474,38 @@ mod tests {
         wait_for_text(&mut rx, &info.id, "ok").await;
         assert_eq!(wait_for_exit(&mut rx, &info.id).await, Some(0));
         let _ = std::fs::remove_dir_all(cwd);
+    }
+
+    /// daemon 经 sshd exec 拉起时继承了「忽略 Ctrl+C」：这里先让测试进程进入同样
+    /// 状态，再确认 ConPTY 里的前台循环仍能被 Ctrl+C 中断。
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_conpty_ctrl_c_interrupts_even_if_parent_ignores_it() {
+        use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+        // SAFETY: 处理函数为 NULL 时只设置本进程的 Ctrl+C 忽略标记。
+        unsafe { SetConsoleCtrlHandler(None, 1) };
+        let (tx, mut rx) = tokio::sync::mpsc::channel(256);
+        let host = PtyHost::new(2, 4 * 1024 * 1024, tx);
+        let info = host
+            .create(PtyCreateOptions {
+                cwd: std::env::temp_dir(),
+                shell: Some("powershell.exe".to_string()),
+                args: vec![
+                    "-NoProfile".to_string(),
+                    "-Command".to_string(),
+                    "while ($true) { 'TICK'; Start-Sleep -Milliseconds 200 }".to_string(),
+                ],
+                env: BTreeMap::new(),
+                name: Some("windows-ctrl-c".to_string()),
+                cols: 80,
+                rows: 24,
+                scrollback_bytes: 1024 * 1024,
+                client_id: "windows-test".to_string(),
+            })
+            .expect("ConPTY 创建失败");
+        wait_for_text(&mut rx, &info.id, "TICK").await;
+        host.write(&info.id, b"\x03").unwrap();
+        // 忽略 Ctrl+C 时循环永不结束，wait_for_exit 会超时失败。
+        wait_for_exit(&mut rx, &info.id).await;
     }
 }
