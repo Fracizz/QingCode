@@ -66,6 +66,7 @@ pub(crate) struct DaemonChannel {
     /// 代理/中间 shell 落在 stderr 的输出。不参与帧流，只在通道关闭时
     /// 并入错误信息（Windows 的 shell 启动噪声会到这里，不能当失败）。
     stderr_notes: Vec<String>,
+    capabilities: Vec<String>,
 }
 
 impl DaemonChannel {
@@ -85,10 +86,24 @@ impl DaemonChannel {
     /// deadline 前收不到完整帧返回 Err。`channel.wait()` 是 cancel-safe 的，
     /// 超时不会丢已到达的字节；但调用方此后应丢弃整条通道（回退 serve）。
     pub(super) async fn next_frame(&mut self, deadline: Instant) -> Result<Frame, String> {
+        self.next_frame_with_policy(FrameDeadline::fixed(deadline))
+            .await
+    }
+
+    pub(super) async fn next_watch_frame(&mut self, idle: Duration) -> Result<Frame, String> {
+        self.next_frame_with_policy(FrameDeadline::idle(Instant::now(), idle))
+            .await
+    }
+
+    async fn next_frame_with_policy(
+        &mut self,
+        mut timeout: FrameDeadline,
+    ) -> Result<Frame, String> {
         loop {
             match proto::decode(&self.buffer) {
                 Ok((frame, used)) => {
                     self.buffer.drain(..used);
+                    timeout.note_frame(Instant::now());
                     if frame.kind == Kind::Ping {
                         let _ = self.send(&Frame::empty(Kind::Pong, frame.stream_id)).await;
                         continue;
@@ -100,10 +115,10 @@ impl DaemonChannel {
                 Err(error) => return Err(format!("daemon 帧解析失败：{error}")),
             }
             let now = Instant::now();
-            if now >= deadline {
+            if now >= timeout.deadline {
                 return Err("daemon 响应超时".to_string());
             }
-            match tokio::time::timeout(deadline - now, self.channel.wait()).await {
+            match tokio::time::timeout(timeout.deadline - now, self.channel.wait()).await {
                 // 代理进程退出（daemon 拒绝连接 / 已下线 / 会话结束）。
                 Ok(None) => return Err("daemon 连接代理已退出".to_string()),
                 Ok(Some(ChannelMsg::Data { data })) => self.buffer.extend_from_slice(&data),
@@ -136,6 +151,33 @@ impl DaemonChannel {
         // 不必等 sshd 回收 exec 进程（Windows OpenSSH 上可能拖到心跳超时）。
         let _ = tokio::time::timeout(Duration::from_secs(1), self.channel.eof()).await;
         let _ = tokio::time::timeout(Duration::from_secs(1), self.channel.close()).await;
+    }
+}
+
+struct FrameDeadline {
+    deadline: Instant,
+    idle: Option<Duration>,
+}
+
+impl FrameDeadline {
+    fn fixed(deadline: Instant) -> Self {
+        Self {
+            deadline,
+            idle: None,
+        }
+    }
+
+    fn idle(now: Instant, idle: Duration) -> Self {
+        Self {
+            deadline: now + idle,
+            idle: Some(idle),
+        }
+    }
+
+    fn note_frame(&mut self, now: Instant) {
+        if let Some(idle) = self.idle {
+            self.deadline = now + idle;
+        }
     }
 }
 
@@ -866,6 +908,7 @@ async fn open_daemon_channel_on_opened_channel(
         channel,
         buffer: Vec::new(),
         stderr_notes: Vec::new(),
+        capabilities: Vec::new(),
     };
     // 握手失败也要关通道：直接丢弃 exec 通道不会发 CLOSE，会一直占着会话名额。
     match daemon_hello(&mut channel, client_id, daemon, policy, hello_deadline).await {
@@ -906,7 +949,9 @@ async fn daemon_hello(
     let hello: HelloResponse = proto::decode_value(&response.payload)
         .map_err(|error| format!("解析 daemon HELLO 失败：{error}"))?;
     // 协议版本无条件校验；版本与能力按策略放宽（只有淘汰旧 daemon 的路径放宽）。
-    validate_daemon_hello_with(&hello, policy)
+    validate_daemon_hello_with(&hello, policy)?;
+    channel.capabilities = hello.capabilities;
+    Ok(())
 }
 
 /// serve server 就绪后尽力补一步 daemon 传输探测（后台执行，见 deploy 的
@@ -1258,34 +1303,67 @@ pub(crate) async fn daemon_scan_entries(
 ) -> Result<Vec<(String, bool)>, DaemonCallError> {
     let mut channel = open_daemon_channel(manager, connection_id, daemon).await?;
     let result = async {
-        let params = serde_json::json!({ "root": canonical_root, "path": relative });
-        let value = daemon_rpc(
-            &mut channel,
-            "fs.scan",
-            &params,
-            Instant::now() + AGENT_DAEMON_SCAN_TIMEOUT,
-        )
-        .await?;
-        let entries = value
-            .get("entries")
-            .and_then(|entries| entries.as_array())
-            .ok_or_else(|| DaemonCallError::from("daemon scan 应答缺少 entries".to_string()))?;
-        let mut parsed = Vec::with_capacity(entries.len());
-        for entry in entries {
-            let Some(name) = entry.get("name").and_then(|value| value.as_str()) else {
-                continue;
-            };
-            let is_dir = entry
-                .get("isDir")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false);
-            parsed.push((name.to_string(), is_dir));
+        let paged = channel.capabilities.iter().any(|cap| cap == "fs.scanPaged");
+        let deadline = Instant::now() + AGENT_DAEMON_SCAN_TIMEOUT;
+        let mut offset = 0usize;
+        let mut parsed = Vec::new();
+        loop {
+            let mut params = serde_json::json!({ "root": canonical_root, "path": relative });
+            if paged {
+                params["offset"] = serde_json::json!(offset);
+                params["limit"] = serde_json::json!(256);
+            }
+            let value = daemon_rpc(&mut channel, "fs.scan", &params, deadline).await?;
+            let next = append_scan_page(&value, offset, &mut parsed)?;
+            match next.filter(|_| paged) {
+                Some(next) => offset = next,
+                None => break,
+            }
         }
         Ok(parsed)
     }
     .await;
     channel.shutdown().await;
     result
+}
+
+fn append_scan_page(
+    value: &serde_json::Value,
+    offset: usize,
+    parsed: &mut Vec<(String, bool)>,
+) -> Result<Option<usize>, DaemonCallError> {
+    let entries = value
+        .get("entries")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| DaemonCallError::from("daemon scan 应答缺少 entries".to_string()))?;
+    if value.get("truncated").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Err(DaemonCallError::from(
+            "daemon scan 目录结果不完整".to_string(),
+        ));
+    }
+    let next = match value.get("nextOffset") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(next) => {
+            let next = next
+                .as_u64()
+                .and_then(|value| usize::try_from(value).ok())
+                .filter(|next| *next > offset && *next == offset.saturating_add(entries.len()))
+                .ok_or_else(|| DaemonCallError::from("daemon scan 分页偏移无效".to_string()))?;
+            Some(next)
+        }
+    };
+    for entry in entries {
+        let name = entry
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| DaemonCallError::from("daemon scan 条目缺少名称".to_string()))?;
+        let is_dir = entry
+            .get("isDir")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        parsed.push((name.to_string(), is_dir));
+    }
+    Ok(next)
 }
 
 /// daemon 通道的内容搜索参数，与 daemon 的 `search.content` 方法一一对应。
@@ -1450,6 +1528,55 @@ pub(super) fn daemon_downgrade_retry_ready(downgraded_at: Option<Instant>, now: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn watch_heartbeats_extend_idle_deadline_but_not_rpc_deadline() {
+        let start = Instant::now();
+        let period = Duration::from_secs(45);
+        let mut watch = FrameDeadline::idle(start, period);
+        let mut rpc = FrameDeadline::fixed(start + period);
+        for second in [15, 30, 45, 60, 75] {
+            let received = start + Duration::from_secs(second);
+            watch.note_frame(received);
+            rpc.note_frame(received);
+            assert_eq!(watch.deadline, received + period);
+            assert_eq!(rpc.deadline, start + period);
+        }
+        assert_eq!(watch.deadline, start + Duration::from_secs(120));
+    }
+
+    #[test]
+    fn scan_pages_accumulate_all_entries_and_reject_truncated_or_looping_pages() {
+        let mut entries = Vec::new();
+        let count = 6000;
+        let mut offset = 0;
+        while offset < count {
+            let end = (offset + 256).min(count);
+            let page = serde_json::json!({
+                "entries": (offset..end).map(|n| serde_json::json!({
+                    "name": format!("{n:05}-{}", "long-name".repeat(20)), "isDir": n % 2 == 0,
+                })).collect::<Vec<_>>(),
+                "nextOffset": (end < count).then_some(end), "truncated": false,
+            });
+            let next = append_scan_page(&page, offset, &mut entries).unwrap();
+            assert_eq!(next, (end < count).then_some(end));
+            offset = end;
+        }
+        assert_eq!(entries.len(), count);
+        assert!(entries[5999].0.starts_with("05999-"));
+        assert!(!entries[5999].1);
+        for invalid in [
+            serde_json::json!({"entries": [], "nextOffset": 0}),
+            serde_json::json!({"entries": [], "nextOffset": 1}),
+            serde_json::json!({"entries": [], "truncated": true}),
+        ] {
+            assert!(append_scan_page(&invalid, 0, &mut Vec::new()).is_err());
+        }
+        let legacy = serde_json::json!({"entries": [{"name": "legacy", "isDir": true}]});
+        assert!(append_scan_page(&legacy, 0, &mut Vec::new())
+            .unwrap()
+            .is_none());
+    }
 
     fn sample_daemon_access() -> DaemonAccess {
         DaemonAccess {
@@ -1869,6 +1996,7 @@ mod tests {
             channel,
             buffer: Vec::new(),
             stderr_notes: Vec::new(),
+            capabilities: Vec::new(),
         };
         daemon_hello(
             &mut channel,

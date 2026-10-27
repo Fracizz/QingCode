@@ -73,7 +73,7 @@ pub(super) async fn locate_local_server_binary_with(
             .map(|path| (arch, path));
     }
     Err(ServerDeployError::permanent(format!(
-        "本地未找到 QingCode server 二进制（{binary_name}）。在线请打开「缺失时自动下载」；离线可在设置里选择 servers 目录，或把它放到 QingCode.exe 旁边。已回退直连"
+        "本地未找到 QingCode server 二进制（{binary_name}）。在线请打开「缺失时自动下载」；离线可在设置里选择 servers 目录，或把它放到 QingCode.exe 旁边。远端服务尚未就绪，请完成设置后重试"
     )))
 }
 

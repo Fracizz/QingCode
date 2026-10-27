@@ -20,8 +20,8 @@ use crate::{escape_regex_literal, path_is_within, resolve_within_root};
 
 /// 单条记录（一行匹配文本）的字节上限，与客户端
 /// `src-tauri/src/remote_ssh/search.rs` 的 `MAX_RECORD_BYTES` 对齐。
-/// 超限行必须截断：否则整帧会超过 `MAX_FRAME_BYTES`，`write_frame` 报错、
-/// 连接直接中断且客户端收不到 done/error 帧。
+/// 超限行必须截断以限制内存；serve 传输还须按最终 JSON 大小约束
+/// 转义文本与 submatches，不能只用原始行长推断帧大小。
 const MAX_RECORD_BYTES: usize = 2 * 1024 * 1024;
 
 /// 把一行原始字节裁到 [`MAX_RECORD_BYTES`] 以内，返回（切片, 是否截断）。
@@ -121,7 +121,7 @@ impl<M: Matcher> Sink for SearchSession<'_, M> {
         self.per_file_count += 1;
         self.total_matches += 1;
         // 整行原文（含换行）；非法 UTF-8 按 lossy 处理，与客户端展示一致。
-        // 超限行先按字节安全截断，保证后续帧一定不超过 MAX_FRAME_BYTES。
+        // 超限行先按字节安全截断；最终帧大小由各传输实现另外约束。
         let (line_bytes, line_truncated) = truncate_line_bytes(mat.bytes());
         let line = String::from_utf8_lossy(line_bytes).into_owned();
         // 与 rg 一致：对整行重新跑一遍 matcher，取全部命中区间作为 submatches。

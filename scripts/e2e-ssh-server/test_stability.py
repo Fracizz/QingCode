@@ -11,10 +11,40 @@ import time
 import unittest
 from unittest import mock
 
-from stability import Session, mp, mp_decode
+from stability import LinuxSuite, Session, mp, mp_decode
 
 
 class StabilityClientTests(unittest.TestCase):
+    def test_tui_completion_waits_before_sending_shell_typeahead(self):
+        class Terminal:
+            pending_exit = False
+            output_bytes = b"old TOP-EXIT-READY\n"
+
+            def request(self, method, params):
+                if method != "pty.input":
+                    return
+                if params["data"] == b"q":
+                    self.pending_exit = True
+                elif self.pending_exit:
+                    raise AssertionError("shell input raced with terminal restoration")
+                else:
+                    self.output_bytes += b"top-tui-FINAL-OK\n"
+
+            def output(self, pty_id):
+                return self.output_bytes
+
+            def wait_output(self, pty_id, marker, after=0):
+                if marker == b"TOP-EXIT-READY":
+                    # A historical marker is not proof this top has exited.
+                    self.output_bytes += marker + b"\n"
+                    self.pending_exit = False
+                if marker not in self.output_bytes[after:]:
+                    raise AssertionError("completion marker was not observed")
+
+        terminal = Terminal()
+        LinuxSuite.finish_terminal(terminal, "test-pty", "top-tui")
+        self.assertFalse(terminal.pending_exit)
+
     def test_codec_preserves_large_unicode_binary_and_64_bit_sequences(self):
         original = {"seq": 2**60, "negative": -129, "name": "中文" * 200,
                     "data": bytes(range(256)) * 1025,

@@ -1,15 +1,16 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RemoteConnectionsManager from './RemoteConnectionsManager'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
+import { isProjectRestricted, isProjectTrusted, pushTrustedRootsToNative, trustProject } from '../lib/workspaceTrust'
 import type { SshConnection } from '../types'
 
 const {
-  alive, confirmDialog, getSshServerEnabled, invoke, listServerStates, loadConnections,
-  openSession, probeHost, saveConnection, switchMode,
+  alive, confirmDialog, getSshServerEnabled, invoke, listServerStates, loadConnections, listRoots,
+  testConnection, probeHost, saveConnection, switchMode, reconnect,
 } = vi.hoisted(() => ({
   alive: vi.fn(),
   confirmDialog: vi.fn(),
@@ -17,21 +18,25 @@ const {
   invoke: vi.fn(),
   listServerStates: vi.fn(),
   loadConnections: vi.fn(),
-  openSession: vi.fn(),
+  testConnection: vi.fn(),
+  listRoots: vi.fn(),
   probeHost: vi.fn(),
   saveConnection: vi.fn(),
   switchMode: vi.fn(),
+  reconnect: vi.fn(),
 }))
 
 vi.mock('../lib/sshWorkspace', async () => ({
   ...await vi.importActual<typeof import('../lib/sshWorkspace')>('../lib/sshWorkspace'),
   isSshConnectionAlive: alive,
-  listSshWorkspaceRoots: vi.fn(async () => []),
+  listSshWorkspaceRoots: listRoots,
   listSshServerStates: listServerStates,
-  openSshSession: openSession,
+  testSshConnection: testConnection,
+  openSshSession: vi.fn(),
   probeSshHost: probeHost,
   disconnectSshSession: vi.fn(async () => {}),
   switchSshConnectionMode: switchMode,
+  reconnectSshConnection: reconnect,
 }))
 vi.mock('../lib/sshServerSettings', () => ({ getSshServerEnabled }))
 vi.mock('../lib/tauri', async () => ({
@@ -41,6 +46,8 @@ vi.mock('../lib/tauri', async () => ({
 }))
 vi.mock('../store/confirmStore', () => ({ confirmDialog }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
+vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }))
+vi.mock('../lib/runtimeCapabilities', () => ({ hasBackend: () => true }))
 
 const connection = (mode?: SshConnection['mode']): SshConnection => ({
   id: 'c1',
@@ -63,11 +70,14 @@ describe('remote connection compatibility settings', () => {
     getSshServerEnabled.mockReturnValue(false)
     loadConnections.mockResolvedValue(undefined)
     listServerStates.mockResolvedValue([])
+    listRoots.mockResolvedValue([])
+    localStorage.clear()
     invoke.mockResolvedValue(undefined)
-    openSession.mockResolvedValue(undefined)
+    testConnection.mockReset().mockResolvedValue({fingerprint:'SHA256:known',homePath:'/home/dev'})
     probeHost.mockResolvedValue('SHA256:known')
     saveConnection.mockResolvedValue(undefined)
     switchMode.mockResolvedValue(undefined)
+    reconnect.mockReset().mockResolvedValue(undefined)
     useProjectStore.setState({
       sshConnections: [],
       projects: [],
@@ -82,7 +92,7 @@ describe('remote connection compatibility settings', () => {
     fireEvent.change(screen.getByLabelText('主机'), { target: { value: 'example.test' } })
     fireEvent.change(screen.getByLabelText('用户名'), { target: { value: 'dev' } })
     fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
-    await waitFor(() => expect(openSession).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(screen.getByRole('button', { name: '测试连接' })).not.toBeDisabled())
   }
 
@@ -93,7 +103,7 @@ describe('remote connection compatibility settings', () => {
     expect(screen.queryByRole('checkbox', { name: '兼容模式（SSH 直连）' })).toBeNull()
 
     await testNewConnection()
-    expect(openSession).toHaveBeenCalledWith(expect.objectContaining({ mode: 'server' }))
+    expect(testConnection).toHaveBeenCalledWith(expect.objectContaining({ mode: 'server' }))
     expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: '确认 SSH 主机指纹' }))
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({ mode: 'server' })))
@@ -105,7 +115,7 @@ describe('remote connection compatibility settings', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: '兼容模式（SSH 直连）' }))
     expect(screen.getByText('兼容模式已启用')).toBeTruthy()
     await testNewConnection()
-    expect(openSession).toHaveBeenCalledWith(expect.objectContaining({ mode: 'ssh' }))
+    expect(testConnection).toHaveBeenCalledWith(expect.objectContaining({ mode: 'ssh' }))
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({ mode: 'ssh' })))
   })
@@ -176,4 +186,165 @@ describe('remote connection compatibility settings', () => {
     })))
     expect(invoke).not.toHaveBeenCalled()
   })
+  it('persists revocation as restricted so subsequent trust synchronization cannot regrant it', async () => {
+    const project = {id:'p1',name:'app',path:'ssh://c1/home/app',kind:'ssh' as const,created_at:1,last_opened_at:1}
+    trustProject(project)
+    useProjectStore.setState({sshConnections:[connection('server')],projects:[project]})
+    useUIStore.setState({remoteConnectionsCreating:false})
+    listRoots.mockResolvedValue([{rootUri:project.path,trusted:true}])
+    render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button',{name:'撤销信任'}))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('撤销 SSH 工作区信任','ssh_set_workspace_trust',{rootUri:project.path,trusted:false}))
+    expect(isProjectTrusted(project)).toBe(false)
+    expect(isProjectRestricted(project)).toBe(true)
+    await pushTrustedRootsToNative([project])
+    expect(invoke).toHaveBeenCalledWith('同步 SSH 项目信任状态','ssh_set_workspace_trust',{rootUri:project.path,trusted:false})
+  })
+
+  it('saves a tested username change when the host fingerprint remains the same, without opening a workspace session', async () => {
+    const {openSshSession} = await import('../lib/sshWorkspace')
+    useProjectStore.setState({sshConnections:[connection('server')]})
+    useUIStore.setState({remoteConnectionsCreating:false})
+    render(<RemoteConnectionsManager />)
+    await screen.findByDisplayValue('example.test')
+    fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'newuser'}})
+    fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.getByRole('button',{name:'测试连接'})).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({username:'newuser',host_key_fingerprint:'SHA256:known'})))
+    expect(testConnection).toHaveBeenCalledWith(expect.objectContaining({username:'newuser',id:expect.not.stringMatching(/^c1$/)}))
+    expect(openSshSession).not.toHaveBeenCalled()
+  })
+
+  it.each(['主机','端口','用户名','私钥文件（可选）'])('invalidates a new connection verification when %s changes', async label => {
+    render(<RemoteConnectionsManager />)
+    await testNewConnection()
+    const value = label === '端口' ? '2222' : 'changed'
+    fireEvent.change(screen.getByLabelText(label),{target:{value}})
+    fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    expect(screen.getByText('请先「测试连接」确认主机指纹后再保存。')).toBeTruthy()
+    expect(saveConnection).not.toHaveBeenCalled()
+  })
+
+  it('keeps verified authentication valid when only its display name changes', async () => {
+    render(<RemoteConnectionsManager />)
+    await testNewConnection()
+    fireEvent.change(screen.getByLabelText('连接名称'),{target:{value:'Renamed'}})
+    fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({name:'Renamed'})))
+  })
+
+  it('does not require a connection test to rename an existing saved connection', async () => {
+    useProjectStore.setState({sshConnections:[connection('server')]})
+    useUIStore.setState({remoteConnectionsCreating:false})
+    render(<RemoteConnectionsManager />)
+    await screen.findByDisplayValue('example.test')
+    fireEvent.change(screen.getByLabelText('连接名称'),{target:{value:'Renamed'}})
+    fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({name:'Renamed'})))
+    expect(testConnection).not.toHaveBeenCalled()
+  })
+
+  it('ignores a completed test after its target was edited, including an edit back to the original value', async () => {
+    let finish!: (value: {fingerprint:string,homePath:string}) => void
+    testConnection.mockImplementationOnce(() => new Promise(resolve => {finish=resolve}))
+    render(<RemoteConnectionsManager />)
+    fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
+    fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'dev'}})
+    fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(1))
+    fireEvent.change(screen.getByLabelText('主机'),{target:{value:'other.test'}})
+    fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
+    await act(async () => finish({fingerprint:'SHA256:known',homePath:'/home/dev'}))
+    fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    expect(saveConnection).not.toHaveBeenCalled()
+    expect(screen.getByText('请先「测试连接」确认主机指纹后再保存。')).toBeTruthy()
+  })
+
+  it('does not confirm or authenticate a probe that finished after switching connections', async () => {
+    let finish!: (fingerprint:string) => void
+    probeHost.mockImplementationOnce(() => new Promise(resolve => {finish=resolve}))
+    useProjectStore.setState({sshConnections:[connection('server'),{...connection('server'),id:'c2',name:'Other',host:'other.test'}]})
+    useUIStore.setState({remoteConnectionsCreating:false})
+    render(<RemoteConnectionsManager />)
+    await screen.findByDisplayValue('example.test')
+    fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
+    await waitFor(() => expect(probeHost).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('button',{name:/Other/}))
+    await screen.findByDisplayValue('other.test')
+    await act(async () => finish('SHA256:changed'))
+    expect(confirmDialog).not.toHaveBeenCalled()
+    expect(testConnection).not.toHaveBeenCalled()
+  })
+
+  it('applies a verified live configuration only after reconnect confirmation and saving', async () => {
+    useProjectStore.setState({sshConnections:[connection('server')]})
+    useUIStore.setState({remoteConnectionsCreating:false})
+    alive.mockResolvedValue(true)
+    render(<RemoteConnectionsManager />)
+    await screen.findByDisplayValue('example.test')
+    await screen.findByRole('button',{name:'断开连接'})
+    fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'newuser'}})
+    fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(screen.getByRole('button',{name:'测试连接'})).not.toBeDisabled())
+    confirmDialog.mockResolvedValue(false)
+    fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({title:'保存并重新连接'})))
+    expect(saveConnection).not.toHaveBeenCalled()
+    expect(reconnect).not.toHaveBeenCalled()
+    confirmDialog.mockResolvedValue(true)
+    fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    await waitFor(() => expect(reconnect).toHaveBeenCalledWith('c1'))
+    expect(saveConnection.mock.invocationCallOrder[0]).toBeLessThan(reconnect.mock.invocationCallOrder[0])
+    expect(switchMode).not.toHaveBeenCalled()
+  })
+
+  it('does not allow a confirmed fingerprint to authorize saving after authentication fails', async () => {
+    testConnection.mockRejectedValueOnce(new Error('authentication failed'))
+    render(<RemoteConnectionsManager />)
+    fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
+    fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'dev'}})
+    fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
+    await screen.findByText('Error: authentication failed')
+    fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    expect(saveConnection).not.toHaveBeenCalled()
+  })
+
+  it.each(['认证方式','密码（测试连接用，不会保存）','私钥口令（如有，仅本次会话）','兼容模式（SSH 直连）'])('invalidates verified configuration after editing %s', async label => {
+    render(<RemoteConnectionsManager />)
+    await testNewConnection()
+    if (label === '兼容模式（SSH 直连）') {
+      fireEvent.click(screen.getByRole('button',{name:'高级'}))
+      fireEvent.click(screen.getByLabelText(label))
+    } else {
+      fireEvent.change(screen.getByLabelText(label),{target:{value:label === '认证方式' ? 'password' : 'new-secret'}})
+    }
+    fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    expect(saveConnection).not.toHaveBeenCalled()
+    expect(screen.getByText('请先「测试连接」确认主机指纹后再保存。')).toBeTruthy()
+  })
+
+  it('keeps a newer test busy when an older invalidated test fails', async () => {
+    let failOld!: (reason:Error) => void
+    let finishNew!: (value:{fingerprint:string,homePath:string}) => void
+    testConnection.mockImplementationOnce(() => new Promise((_resolve,reject) => {failOld=reject}))
+      .mockImplementationOnce(() => new Promise(resolve => {finishNew=resolve}))
+    render(<RemoteConnectionsManager />)
+    fireEvent.change(screen.getByLabelText('主机'),{target:{value:'example.test'}})
+    fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'dev'}})
+    fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(1))
+    fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'newuser'}})
+    fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(2))
+    await act(async () => failOld(new Error('old failure')))
+    expect(screen.queryByText('Error: old failure')).toBeNull()
+    expect(screen.getByRole('button',{name:'正在连接…'})).toBeDisabled()
+    await act(async () => finishNew({fingerprint:'SHA256:known',homePath:'/home/newuser'}))
+    fireEvent.click(screen.getByRole('button',{name:'保存'}))
+    await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({username:'newuser'})))
+  })
+
 })

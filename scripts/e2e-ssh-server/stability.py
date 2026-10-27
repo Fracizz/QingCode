@@ -400,7 +400,12 @@ class LinuxSuite:
                 session.request("pty.input", {"id": pty_id, "data": b"export QC_ALIVE=$$; printf '%s%s\\n' 'START-' 'ALIVE'\n"})
                 session.wait_output(pty_id, b"START-ALIVE")
             elif name == "top-tui":
-                session.request("pty.input", {"id": pty_id, "data": b"top -d 5\n"})
+                # The shell emits an unambiguous completion marker after top
+                # restores the terminal. Sending a shell command immediately
+                # after q races with TUI exit: queued typeahead may be consumed
+                # or flushed before the shell resumes.
+                session.request("pty.input", {"id": pty_id, "data":
+                                b"top -d 5; printf '%s%s\\n' 'TOP-EXIT-' 'READY'\n"})
                 session.wait_output(pty_id, b"load average")
         self.log("soak_started", pid=self.pid, duration=self.args.duration,
                  ptys=[{"id": p, "name": n} for _, p, n in self.ptys], sha256=sha)
@@ -518,6 +523,19 @@ class LinuxSuite:
                                "failure": s.failure} for s in self.sessions if s.proc.poll() is None],
                  completed={k: len(v) for k, v in self.timings.items()})
 
+    @staticmethod
+    def finish_terminal(session, pty_id, name):
+        if name == "top-tui":
+            session.request("pty.resize", {"id": pty_id, "cols": 120, "rows": 40})
+            offset = len(session.output(pty_id))
+            session.request("pty.input", {"id": pty_id, "data": b"q"})
+            session.wait_output(pty_id, b"TOP-EXIT-READY", after=offset)
+        marker = (name + "-FINAL-OK").encode()
+        command = "printf '%s%s\\n' '" + name + "-FINAL-' 'OK'\n"
+        offset = len(session.output(pty_id))
+        session.request("pty.input", {"id": pty_id, "data": command.encode()})
+        session.wait_output(pty_id, marker, after=offset)
+
     def run(self):
         try:
             self.setup()
@@ -537,14 +555,7 @@ class LinuxSuite:
                            and session.failure is None and elapsed >= self.args.duration,
                            {"elapsed": elapsed, "lastFrameAge": time.monotonic() - session.last_frame,
                             "daemonPings": session.pings})
-                if name == "top-tui":
-                    session.request("pty.resize", {"id": pty_id, "cols": 120, "rows": 40})
-                    session.request("pty.input", {"id": pty_id, "data": b"q"})
-                marker = (name + "-FINAL-OK").encode()
-                command = "printf '%s%s\\n' '" + name + "-FINAL-' 'OK'\n"
-                offset = len(session.output(pty_id))
-                session.request("pty.input", {"id": pty_id, "data": command.encode()})
-                session.wait_output(pty_id, marker, after=offset)
+                self.finish_terminal(session, pty_id, name)
                 self.check(name + " interactive after soak", True)
             active, pty_id, _ = self.ptys[0]
             active.request("pty.input", {"id": pty_id, "data": b"test \"$QC_ALIVE\" = \"$$\" && printf '%s%s\\n' 'SAME-' 'PROCESS'\n"})

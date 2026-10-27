@@ -568,8 +568,7 @@ pub(crate) async fn ssh_server_restart(
     state_for_root(&manager, &root)
 }
 
-/// 停止某根的远端 server（不重新拉起）：serve 按状态文件 pid 结束，
-/// daemon 尽力发 `server.shutdown`，随后清空槽位缓存并发布直连前状态。
+/// 停止本项目绑定。用户级 daemon 可能正承载其他连接的终端，不能随项目停止。
 pub(crate) async fn ssh_server_stop(
     root_uri: String,
     app: AppHandle,
@@ -579,17 +578,17 @@ pub(crate) async fn ssh_server_stop(
     let parsed = parse_remote_uri(&root.uri)?;
     manager.session(&parsed.connection_id)?;
     let key = server::server_slot_key(&parsed.connection_id, &root.canonical_path);
-    if let Some(daemon) = manager
-        .server_slot(&key)
-        .and_then(|slot| slot.endpoint)
-        .and_then(|endpoint| endpoint.daemon)
-    {
-        // daemon 退出失败容忍：serve 已停，daemon 至多空转到自身 idle 退出。
-        server::shutdown_remote_daemon(&manager, &parsed.connection_id, &daemon).await;
+    manager.pause_project_server(&key);
+    // Project serve state belongs to a path, rather than a saved connection ID.
+    // Conservatively leave it running if another registered root uses that path.
+    let used_elsewhere = manager.roots.read().is_ok_and(|roots| {
+        roots
+            .values()
+            .any(|other| other.canonical_path == root.canonical_path && other.uri != root.uri)
+    });
+    if !used_elsewhere {
+        stop_recorded_serve_server(&manager, &root).await;
     }
-    server::invalidate_shared_daemon(&manager, &parsed.connection_id);
-    stop_recorded_serve_server(&manager, &root).await;
-    manager.clear_server_endpoint(&key);
     publish_root_state(&app, &manager, &root);
     Ok(())
 }

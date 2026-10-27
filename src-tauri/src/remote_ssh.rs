@@ -25,6 +25,8 @@ mod search;
 mod server;
 mod server_status;
 mod sshd_limits;
+#[cfg(test)]
+mod test_connection;
 mod transfer;
 mod windows_path_guard;
 mod windows_sshd_repair;
@@ -953,6 +955,7 @@ pub struct SshManager {
     server_auto_download: std::sync::atomic::AtomicBool,
     /// watch 监督任务句柄，key 同 server slot；连接断开或重连时替换。
     watch_supervisors: Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
+    watch_cancellations: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// 已发给前端的 `ssh-server-state`，按规范化 root URI 去重。
     server_snapshots: Mutex<HashMap<String, server_status::SshServerState>>,
     /// 已解析并校验过的用户私有安装位置（家目录, 安装目录），按连接 id 缓存。
@@ -981,6 +984,7 @@ impl SshManager {
             server_cache_dir: RwLock::new(None),
             server_auto_download: std::sync::atomic::AtomicBool::new(true),
             watch_supervisors: Mutex::new(HashMap::new()),
+            watch_cancellations: Mutex::new(HashMap::new()),
             server_snapshots: Mutex::new(HashMap::new()),
             server_installs: Mutex::new(HashMap::new()),
             host_daemons: server::HostDaemonCache::default(),
@@ -1032,13 +1036,21 @@ impl SshManager {
     fn remember_config(
         &self,
         connection_id: &str,
-        config: SshConnectionConfig,
+        mut config: SshConnectionConfig,
     ) -> Result<(), String> {
         let session = self.session(connection_id)?;
         let mut stored = session
             .config
             .lock()
             .map_err(|_| "SSH 连接状态不可用".to_string())?;
+        require_matching_session_config(&stored, &config)?;
+        // Browsing a saved live connection need not re-send its session secrets.
+        if config.password.is_none() {
+            config.password = stored.password.clone();
+        }
+        if config.passphrase.is_none() {
+            config.passphrase = stored.passphrase.clone();
+        }
         *stored = merge_remembered_config(stored.mode, config);
         Ok(())
     }
@@ -1660,6 +1672,17 @@ impl SshManager {
         }
     }
 
+    fn pause_project_server(&self, key: &str) {
+        self.stop_watch_supervisor(key);
+        self.set_server_slot(
+            key,
+            server::ServerSlot {
+                unavailable_reason: Some("项目远端服务已停止，请重启服务或重新连接".into()),
+                ..Default::default()
+            },
+        );
+    }
+
     /// 记录发现/部署中的阶段。`None` 清掉瞬时阶段；没有 slot 时不新建空槽。
     pub(crate) fn set_server_activity(
         &self,
@@ -1744,9 +1767,9 @@ impl SshManager {
     /// 替换某个 (连接, 根) 的 watch 监督任务；重复连接同一根时先终止旧任务。
     fn replace_watch_supervisor(&self, key: &str, handle: tauri::async_runtime::JoinHandle<()>) {
         if let Ok(mut supervisors) = self.watch_supervisors.lock() {
-            if let Some(previous) = supervisors.insert(key.to_string(), handle) {
-                previous.abort();
-            }
+            // Starting a new incarnation already cancelled the previous one.
+            // Detach its task so its watch loop can send EOF/CLOSE gracefully.
+            supervisors.insert(key.to_string(), handle);
         }
     }
 
@@ -1761,6 +1784,27 @@ impl SshManager {
                     .get(key)
                     .is_some_and(|handle| !handle.inner().is_finished())
             })
+    }
+
+    fn stop_watch_supervisor(&self, key: &str) {
+        if let Ok(mut cancellations) = self.watch_cancellations.lock() {
+            if let Some(cancelled) = cancellations.remove(key) {
+                cancelled.store(true, Ordering::Release);
+            }
+        }
+        if let Ok(mut supervisors) = self.watch_supervisors.lock() {
+            supervisors.remove(key);
+        }
+    }
+
+    fn begin_watch_supervisor(&self, key: &str) -> Arc<AtomicBool> {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        if let Ok(mut cancellations) = self.watch_cancellations.lock() {
+            if let Some(previous) = cancellations.insert(key.into(), Arc::clone(&cancelled)) {
+                previous.store(true, Ordering::Release);
+            }
+        }
+        cancelled
     }
 
     fn set_root_trust(&self, uri: &str, trusted: bool) -> Result<(), String> {
@@ -1975,6 +2019,12 @@ pub async fn ssh_set_workspace_trust(
 ) -> Result<(), String> {
     parse_remote_uri(&root_uri)?;
     if !trusted {
+        manager.set_root_trust(&root_uri, false)?;
+        if let Ok(root) = manager.registered_root(&root_uri) {
+            if let Some(id) = remote_uri_connection_id(&root.uri) {
+                manager.stop_watch_supervisor(&server::server_slot_key(id, &root.canonical_path));
+            }
+        }
         // 安全闸优先：撤销信任在任何连接状态下都必须生效，远端清理只尽力而为。
         manager.kill_persistent_terminals_for_root(&root_uri).await;
         if let Ok(root) = manager.registered_root(&root_uri) {
@@ -2037,8 +2087,7 @@ pub async fn ssh_server_restart(
     server_status::ssh_server_restart(root_uri, app, manager).await
 }
 
-/// 停掉某根的远端 server：serve 按状态文件 pid 结束，daemon 尽力发
-/// `server.shutdown`。与 restart 的区别是不做后续 ensure，纯停止。
+/// 停掉某根的项目绑定与未共享的 serve，保留其他项目使用的用户级 daemon。
 #[tauri::command]
 pub async fn ssh_server_stop(
     root_uri: String,
@@ -2698,6 +2747,34 @@ fn existing_session(manager: &SshManager, connection_id: &str) -> Option<Arc<Con
         .filter(|session| !session.handle.is_closed())
 }
 
+/// An authenticated transport cannot adopt an edited identity or credentials.
+/// Otherwise file operations would keep using the old host while reconnect and
+/// terminal transports authenticate against the newly remembered configuration.
+fn require_matching_session_config(
+    authenticated: &SshConnectionConfig,
+    requested: &SshConnectionConfig,
+) -> Result<(), String> {
+    if authenticated.host.eq_ignore_ascii_case(&requested.host)
+        && authenticated.port == requested.port
+        && authenticated.username == requested.username
+        && authenticated.auth_kind == requested.auth_kind
+        && authenticated.private_key_path == requested.private_key_path
+        && requested
+            .password
+            .as_ref()
+            .is_none_or(|password| authenticated.password.as_ref() == Some(password))
+        && requested
+            .passphrase
+            .as_ref()
+            .is_none_or(|passphrase| authenticated.passphrase.as_ref() == Some(passphrase))
+        && authenticated.host_key_fingerprint == requested.host_key_fingerprint
+    {
+        Ok(())
+    } else {
+        Err("SSH 连接配置已变更，请先断开现有连接再重连；测试连接不会更新在用会话".into())
+    }
+}
+
 /// 不带模式的调用（浏览目录的 ssh_open_session）不能抹掉会话已定下的模式。
 fn merge_remembered_config(
     stored_mode: Option<RemoteMode>,
@@ -2794,6 +2871,42 @@ async fn store_authenticated_session(
         .map_err(|_| "SSH 连接状态不可用".to_string())?
         .insert(id, Arc::clone(&connected));
     Ok((connected, fingerprint))
+}
+
+#[tauri::command]
+pub async fn ssh_test_connection(
+    config: SshConnectionConfig,
+) -> Result<SshSessionOpenResult, String> {
+    if config
+        .host_key_fingerprint
+        .as_deref()
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return Err("连接前必须确认 SSH 主机指纹".into());
+    }
+    // Deliberately has no SshManager: testing never registers or changes an
+    // application's live session, root, credentials, or shared daemon cache.
+    let username = config.username.clone();
+    let (connected, fingerprint) = authenticate_session(config, ConnectionPurpose::Main).await?;
+    let connected = Arc::new(connected);
+    let result = async {
+        let sftp = open_sftp_session(&connected)
+            .await
+            .map_err(|error| error.message)?;
+        Ok(SshSessionOpenResult {
+            fingerprint,
+            home_path: resolve_remote_home(&sftp, &username).await,
+        })
+    }
+    .await;
+    let _ = tokio::time::timeout(
+        Duration::from_secs(2),
+        connected
+            .handle
+            .disconnect(Disconnect::ByApplication, "connection test complete", "en"),
+    )
+    .await;
+    result
 }
 
 #[tauri::command]
@@ -3005,20 +3118,21 @@ pub async fn ssh_disconnect(
         .write()
         .map_err(|_| "SSH 工作区状态不可用".to_string())?
         .retain(|_, root| remote_uri_connection_id(&root.uri) != Some(connection_id.as_str()));
-    // 停掉该连接的所有 server watch 监督任务；监督任务自己也会因会话消失而退出，
-    // 这里主动 abort 避免任务在会话移除后还空转一轮。
-    if let Ok(mut supervisors) = manager.watch_supervisors.lock() {
-        let prefix = format!("{connection_id}|");
-        let stale: Vec<String> = supervisors
-            .keys()
-            .filter(|key| key.starts_with(&prefix))
-            .cloned()
-            .collect();
-        for key in stale {
-            if let Some(handle) = supervisors.remove(&key) {
-                handle.abort();
-            }
-        }
+    // 取消该连接的所有 watch 代次，让读循环有机会发 EOF/CLOSE 后正常收尾。
+    let prefix = format!("{connection_id}|");
+    let stale = manager
+        .watch_cancellations
+        .lock()
+        .map(|cancellations| {
+            cancellations
+                .keys()
+                .filter(|key| key.starts_with(&prefix))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for key in stale {
+        manager.stop_watch_supervisor(&key);
     }
     // server 的端口 / token 跟着远端进程走，重连后必须重新发现，缓存一律丢弃。
     manager.purge_server_state(&connection_id);
@@ -5835,6 +5949,9 @@ pub async fn ssh_forget_workspace_root(
     let normalized = normalize_remote_uri(&root_uri);
     // 本次会话未注册（重启后未连接就移除）时没有可清理的连接状态，直接放行。
     if let Ok(root) = manager.registered_root(&root_uri) {
+        if let Some(id) = remote_uri_connection_id(&root.uri) {
+            manager.stop_watch_supervisor(&server::server_slot_key(id, &root.canonical_path));
+        }
         manager.kill_persistent_terminals_for_root(&root.uri).await;
         kill_detached_terminals_best_effort(&app, &manager, &root).await;
     }
@@ -6539,6 +6656,72 @@ mod tests {
             host_key_fingerprint: None,
             mode: None,
         }
+    }
+
+    #[test]
+    fn live_session_config_rejects_identity_and_credential_changes() {
+        let original = sample_config(Some("/keys/one"));
+        let mut requested = original.clone();
+        requested.host = "LOCALHOST".into();
+        assert!(require_matching_session_config(&original, &requested).is_err());
+        requested = original.clone();
+        requested.password = Some("wrong-password".into());
+        assert!(require_matching_session_config(&original, &requested).is_err());
+        requested = original.clone();
+        requested.host_key_fingerprint = Some("SHA256:other-host".into());
+        assert!(require_matching_session_config(&original, &requested).is_err());
+        requested = original.clone();
+        requested.mode = Some(RemoteMode::Server);
+        assert!(require_matching_session_config(&original, &requested).is_ok());
+        assert_eq!(original.host, "127.0.0.1");
+        assert!(original.password.is_none());
+    }
+
+    #[test]
+    fn pausing_one_project_preserves_other_shared_daemon_bindings() {
+        let manager = SshManager::new();
+        let daemon = server::DaemonAccess {
+            bin: "/home/u/server".into(),
+            token: "shared".into(),
+        };
+        for key in ["one|/srv/a", "two|/srv/b"] {
+            manager.set_server_slot(
+                key,
+                server::ServerSlot {
+                    endpoint: Some(server::ServerEndpoint {
+                        serve: None,
+                        daemon: Some(daemon.clone()),
+                    }),
+                    ..Default::default()
+                },
+            );
+        }
+        manager.pause_project_server("one|/srv/a");
+        let stopped = manager.server_slot("one|/srv/a").unwrap();
+        assert!(stopped.endpoint.is_none());
+        assert!(stopped.unavailable_reason.is_some());
+        let other = manager.server_slot("two|/srv/b").unwrap().endpoint.unwrap();
+        assert!(other.daemon.as_ref() == Some(&daemon));
+        manager.clear_server_endpoint("one|/srv/a");
+        assert!(manager
+            .server_slot("one|/srv/a")
+            .unwrap()
+            .unavailable_reason
+            .is_none());
+    }
+
+    #[test]
+    fn cancelling_a_watch_incarnation_cannot_revive_when_its_root_is_retrusted() {
+        let manager = SshManager::new();
+        let old = manager.begin_watch_supervisor("one|/srv/a");
+        manager.stop_watch_supervisor("one|/srv/a");
+        assert!(old.load(Ordering::Acquire));
+        let replacement = manager.begin_watch_supervisor("one|/srv/a");
+        assert!(old.load(Ordering::Acquire));
+        assert!(!replacement.load(Ordering::Acquire));
+        let third = manager.begin_watch_supervisor("one|/srv/a");
+        assert!(replacement.load(Ordering::Acquire));
+        assert!(!third.load(Ordering::Acquire));
     }
 
     #[test]

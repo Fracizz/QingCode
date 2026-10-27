@@ -41,6 +41,10 @@ import {
   sshRemotePathFromUri,
   sshRootUri,
   switchSshConnectionMode,
+  reconnectSshConnection,
+  rememberSshSessionSecrets,
+  forgetSshSessionSecrets,
+  testSshConnection,
 } from './sshWorkspace'
 import type { Project, SshConnection } from '../types'
 
@@ -492,5 +496,57 @@ describe('switchSshConnectionMode', () => {
     expect(
       mocks.safeInvoke.mock.calls.filter(call => call[1] === 'ssh_disconnect')
     ).toHaveLength(1)
+  })
+})
+
+
+describe('isolated connection testing and reconnecting saved configurations', () => {
+  const project: Project = {id:'p1',name:'Remote',path:'ssh://reconnect-test/home/app',connection_id:'reconnect-test',kind:'ssh',created_at:1,last_opened_at:1}
+  const connection: SshConnection = {id:'reconnect-test',name:'Remote',host:'new.example.test',port:2222,username:'newuser',auth_kind:'password',host_key_fingerprint:'SHA256:tested',created_at:1,mode:'server'}
+
+  beforeEach(() => forgetSshSessionSecrets(connection.id))
+
+  it('routes tests through the isolated native command without connecting a workspace', async () => {
+    const config = {id:'test-only',host:connection.host,port:22,username:'newuser',authKind:'password' as const,password:'tested-password',hostKeyFingerprint:'SHA256:tested'}
+    mocks.safeInvoke.mockResolvedValue({fingerprint:'SHA256:tested',homePath:'/home/newuser'})
+    await expect(testSshConnection(config)).resolves.toEqual({fingerprint:'SHA256:tested',homePath:'/home/newuser'})
+    expect(mocks.safeInvoke).toHaveBeenCalledTimes(1)
+    expect(mocks.safeInvoke).toHaveBeenCalledWith('测试 SSH 连接','ssh_test_connection',{config})
+  })
+
+  it('disconnects the old transport before reconnecting the active root with newly saved credentials', async () => {
+    mocks.currentProject = project
+    mocks.getSshConnection.mockResolvedValue(connection)
+    rememberSshSessionSecrets(connection.id,{password:'tested-password'})
+    mocks.safeInvoke.mockImplementation(async (_label:string,command:string) => {
+      if (command === 'ssh_disconnect') return undefined
+      if (command === 'ssh_workspace_status' || command === 'ssh_connection_status') return false
+      if (command === 'ssh_connect') return {fingerprint:'SHA256:tested'}
+      throw new Error(command)
+    })
+    await reconnectSshConnection(connection.id)
+    expect(mocks.safeInvoke.mock.calls[0][1]).toBe('ssh_disconnect')
+    expect(mocks.safeInvoke).toHaveBeenCalledWith('连接 SSH 项目','ssh_connect',expect.objectContaining({config:expect.objectContaining({host:'new.example.test',port:2222,username:'newuser',password:'tested-password'})}))
+    expect(mocks.refreshProjectTree).toHaveBeenCalledWith(project)
+  })
+
+  it('requests the normal authentication dialog when reconnecting requires an unavailable password', async () => {
+    mocks.currentProject = project
+    mocks.getSshConnection.mockResolvedValue(connection)
+    mocks.safeInvoke.mockImplementation(async (_label:string,command:string) => {
+      if (command === 'ssh_disconnect') return undefined
+      if (command === 'ssh_workspace_status' || command === 'ssh_connection_status') return false
+      throw new Error(command)
+    })
+    const dispatch = vi.fn()
+    vi.stubGlobal('window',{dispatchEvent:dispatch})
+    try {
+      await reconnectSshConnection(connection.id)
+      expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({type:'qingcode:ssh-reconnect-request',detail:project}))
+      expect(mocks.safeInvoke.mock.calls.some(call => call[1] === 'ssh_connect')).toBe(false)
+      expect(mocks.refreshProjectTree).not.toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })

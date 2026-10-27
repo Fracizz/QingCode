@@ -1083,11 +1083,26 @@ async fn ensure_server_endpoint_inner(
         publish_server_if_watched(app, manager, root);
         return Ok(None);
     }
+    // Explicitly stopped and permanently unavailable project bindings must not
+    // silently reacquire the shared daemon on status queries or file operations.
+    if manager
+        .server_slot(&key)
+        .is_some_and(|slot| slot.unavailable_reason.is_some())
+    {
+        publish_server_if_watched(app, manager, root);
+        return Ok(None);
+    }
     if wait_for_deploy {
         let reused = super::host_runtime::shared_server_ready(manager, &connection_id);
         let started = Instant::now();
         match super::host_runtime::ensure_shared_daemon(manager, root, app).await {
             Ok(daemon) => {
+                if manager
+                    .server_slot(&key)
+                    .is_some_and(|slot| slot.unavailable_reason.is_some())
+                {
+                    return Ok(None);
+                }
                 let mut slot = manager.server_slot(&key).unwrap_or_default();
                 let serve = slot.endpoint.and_then(|endpoint| endpoint.serve);
                 let endpoint = ServerEndpoint {
@@ -1160,6 +1175,12 @@ async fn ensure_server_endpoint_inner(
     let mut timer = StageTimer::new();
     match discover_or_deploy_server(manager, &connection_id, root, app, &mut timer).await {
         Ok((endpoint, remote_bin)) => {
+            if manager
+                .server_slot(&key)
+                .is_some_and(|slot| slot.unavailable_reason.is_some())
+            {
+                return Ok(None);
+            }
             let mut slot = manager.server_slot(&key).unwrap_or_default();
             slot.endpoint = Some(endpoint.clone());
             slot.unavailable_reason = None;

@@ -1401,6 +1401,7 @@
     "兼容模式按连接保存；修改已有连接后需保存并重新连接。": "Compatibility mode is saved per connection. Save and reconnect for changes to an existing connection to take effect.",
     "兼容模式已启用": "Compatibility mode enabled",
     "将断开并重新连接 {name}。当前终端可能被关闭；兼容模式不支持终端断线恢复。": "This disconnects and reconnects {name}. Existing terminals may close; compatibility mode does not support terminal recovery after disconnects.",
+    "将断开并重新连接 {name}，以应用新的连接配置。当前终端可能被关闭。": "This disconnects and reconnects {name} to apply the new connection settings. Existing terminals may close.",
     "将断开并重新连接 {name}，并部署远端服务。当前直连终端将被关闭。": "This disconnects and reconnects {name} and deploys the remote service. Current direct SSH terminals will close.",
     "仅用于无法运行远端服务的主机。不部署服务，文件树不会自动刷新，终端不支持断线恢复。": "Only for hosts that cannot run the remote service. No service is deployed, the file tree does not refresh automatically, and terminals cannot recover after disconnects.",
     "远程开发默认使用远端服务，通过 SSH 提供文件树自动刷新、内容搜索与持久终端，不开放公网端口。服务不可用时可重试、查看日志或在设置中配置离线安装包。无法运行服务的主机可在「高级」中启用兼容模式。": "Remote development uses the remote service over SSH for live file-tree updates, content search, and persistent terminals, with no public ports. If unavailable, retry, view logs, or configure an offline installation in Settings. Enable compatibility mode under Advanced for hosts that cannot run the service.",

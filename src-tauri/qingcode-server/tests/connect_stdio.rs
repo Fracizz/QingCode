@@ -262,3 +262,125 @@ fn daemon_shutdown_exits_with_multiple_active_watchers() {
     drop(daemon);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A real process must stay alive until the HUP -> KILL watchdog has finished.
+/// An in-process daemon test leaves the watchdog thread alive and misses this bug.
+#[cfg(target_os = "linux")]
+#[test]
+fn daemon_shutdown_reaps_terminal_ignoring_hangup_before_process_exit() {
+    struct ChildGuard(Child);
+    impl Drop for ChildGuard {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    struct PtyGuard(u32);
+    impl Drop for PtyGuard {
+        fn drop(&mut self) {
+            // SAFETY: this pid belongs to the disposable shell created below.
+            unsafe { libc::kill(-(self.0 as libc::pid_t), libc::SIGKILL) };
+        }
+    }
+    fn send(stream: &mut impl Write, kind: Kind, id: u32, payload: Vec<u8>) {
+        stream
+            .write_all(&Frame::new(kind, id, payload).encode().unwrap())
+            .unwrap();
+    }
+    for kill_first in [false, true] {
+        let dir = temp_dir("shutdown-stubborn-pty");
+        let run_dir = RunDir::resolve(Some(&dir)).unwrap();
+        let mut daemon = ChildGuard(
+            Command::new(env!("CARGO_BIN_EXE_qingcode-server"))
+                .args(["daemon", "--state-dir"])
+                .arg(&dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        wait_daemon_ready(&run_dir, &mut daemon.0);
+        let mut stream = std::os::unix::net::UnixStream::connect(run_dir.socket()).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        send(
+            &mut stream,
+            Kind::Hello,
+            0,
+            proto::encode(&HelloRequest {
+                client_id: "shutdown-stubborn".into(),
+                protocol_min: PROTOCOL_VERSION,
+                protocol_max: PROTOCOL_VERSION,
+                token: run_dir.read_token().unwrap(),
+                resume_token: None,
+            })
+            .unwrap(),
+        );
+        assert_eq!(read_frame(&mut stream).unwrap().kind, Kind::Hello);
+        let pid_file = dir.join("terminal.pid");
+        let request = proto::Request::with_params(
+        1,
+        "pty.create",
+        &serde_json::json!({
+            "cwd": dir,
+            "shell": "/bin/sh",
+            "args": ["-c", "trap '' HUP; printf '%s' \"$$\" > \"$QINGCODE_SHUTDOWN_PID\"; while :; do sleep 1; done"],
+            "env": { "QINGCODE_SHUTDOWN_PID": pid_file },
+        }),
+    )
+    .unwrap();
+        send(&mut stream, Kind::Req, 1, proto::encode(&request).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pid_file.exists() {
+            assert!(Instant::now() < deadline, "PTY did not initialize");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let pid = std::fs::read_to_string(&pid_file)
+            .unwrap()
+            .parse::<u32>()
+            .unwrap();
+        let terminal = PtyGuard(pid);
+        let created: proto::Response = loop {
+            let frame = read_frame(&mut stream).unwrap();
+            if frame.kind == Kind::Res && frame.stream_id == 1 {
+                break proto::decode_value(&frame.payload).unwrap();
+            }
+        };
+        if kill_first {
+            let kill = proto::Request::with_params(
+                2,
+                "pty.kill",
+                &serde_json::json!({ "id": created.result["id"] }),
+            )
+            .unwrap();
+            send(&mut stream, Kind::Req, 2, proto::encode(&kill).unwrap());
+            loop {
+                let frame = read_frame(&mut stream).unwrap();
+                if frame.kind == Kind::Res && frame.stream_id == 2 {
+                    break;
+                }
+            }
+        }
+        let request = proto::Request::empty(3, "server.shutdown");
+        send(&mut stream, Kind::Req, 3, proto::encode(&request).unwrap());
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            if let Some(status) = daemon.0.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            assert!(Instant::now() < deadline, "daemon shutdown timed out");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "terminal shell survived daemon exit"
+        );
+        drop(terminal);
+        drop(stream);
+        drop(daemon);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

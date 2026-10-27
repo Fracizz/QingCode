@@ -351,6 +351,8 @@ type ReaderWakeup = ();
 
 struct HostInner {
     terms: HashMap<String, Arc<PtyTerm>>,
+    /// 普通 kill/reap 已释放槽位，但回收线程仍可能等待强杀；关服也要等它们。
+    retiring: Vec<std::sync::Weak<PtyTerm>>,
     /// 所有终端环形缓冲的字节总和。只在持有宿主锁时读写，
     /// 保证「总缓冲 ≤ `total_buffer_bytes`」是硬约束而不是近似值。
     total_bytes: usize,
@@ -381,6 +383,7 @@ impl PtyHost {
         Self {
             inner: Arc::new(Mutex::new(HostInner {
                 terms: HashMap::new(),
+                retiring: Vec::new(),
                 total_bytes: 0,
             })),
             max_ptys,
@@ -739,6 +742,45 @@ impl PtyHost {
         terminated
     }
 
+    /// 进程退出前等 PTY 完成回收。普通 kill 保持异步，但 daemon 不能先于
+    /// 一秒强杀看门狗退出，否则忽略 HUP 的 shell 会变成无人管理的进程。
+    pub async fn shutdown(&self) {
+        let terms: Vec<_> = {
+            let inner = lock(&self.inner);
+            inner
+                .terms
+                .values()
+                .cloned()
+                .chain(inner.retiring.iter().filter_map(std::sync::Weak::upgrade))
+                .collect()
+        };
+        for term in &terms {
+            let _ = terminate(term);
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if terms.iter().all(|term| lock(&term.state).exited.is_some()) {
+                return;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // 不能只依靠后台线程：退出路径在返回之前同步完成最终强杀。
+        for term in &terms {
+            if lock(&term.state).exited.is_none() {
+                force_kill(term);
+            }
+        }
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while terms.iter().any(|term| lock(&term.state).exited.is_none())
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
     pub fn list(&self) -> Vec<PtyInfo> {
         let mut items: Vec<(u64, PtyInfo)> = {
             let inner = lock(&self.inner);
@@ -894,7 +936,13 @@ fn remove_term_locked(
         return None;
     }
     let term = host.terms.remove(id)?;
-    let freed = lock(&term.state).ring.bytes();
+    let state = lock(&term.state);
+    let freed = state.ring.bytes();
+    if state.exited.is_none() {
+        host.retiring.retain(|term| term.strong_count() > 0);
+        host.retiring.push(Arc::downgrade(&term));
+    }
+    drop(state);
     host.total_bytes = host.total_bytes.saturating_sub(freed);
     Some(term)
 }

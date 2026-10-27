@@ -6,6 +6,7 @@ use super::serve::open_server_channel;
 use super::*;
 use qingcode_server::proto::{self, Event, Kind};
 use qingcode_server::{read_frame, write_frame, ServerOp, ServerRequest, ServerResponse};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// watch 通道异常断开后重启前的间隔。
 const AGENT_WATCH_RESTART_DELAY: Duration = Duration::from_secs(2);
@@ -57,6 +58,18 @@ pub(crate) fn normalize_watch_event_path(path: &str, windows: bool) -> String {
 
 fn watch_event_paths_are_windows(canonical_root: &str) -> bool {
     windows_native_path(canonical_root).is_some()
+}
+
+fn watch_root_is_active(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    cancelled: &AtomicBool,
+) -> bool {
+    !cancelled.load(Ordering::Acquire)
+        && manager.root_server_mode(root)
+        && manager
+            .registered_root(&root.uri)
+            .is_ok_and(|current| current.trusted && current.canonical_path == root.canonical_path)
 }
 
 /// watch 事件过滤：跳过 server 自身部署目录、终端粘贴临时目录与自写临时文件，
@@ -146,6 +159,7 @@ pub(crate) async fn daemon_watch_session(
     root: &RegisteredRoot,
     canonical_root: &str,
     daemon: &DaemonAccess,
+    cancelled: &AtomicBool,
 ) -> Result<(), DaemonCallError> {
     let mut channel = open_daemon_channel(manager, connection_id, daemon).await?;
     let result = async {
@@ -169,13 +183,21 @@ pub(crate) async fn daemon_watch_session(
         // RES 只表示订阅受理；空闲时 daemon 每 15s 发一次 PING，
         // `next_frame` 自动回 PONG，使连接在无变更的仓库上也能保活。
         loop {
-            if !manager.server_mode(connection_id) {
+            if !watch_root_is_active(manager, root, cancelled) {
                 return Ok(());
             }
-            let deadline = Instant::now() + AGENT_WATCH_FRAME_TIMEOUT;
-            let Ok(frame) = channel.next_frame(deadline).await else {
-                return Ok(());
+            let mut next = Box::pin(channel.next_watch_frame(AGENT_WATCH_FRAME_TIMEOUT));
+            let frame = loop {
+                if !watch_root_is_active(manager, root, cancelled) {
+                    return Ok(());
+                }
+                match tokio::time::timeout(AGENT_WATCH_IDLE_POLL, &mut next).await {
+                    Err(_) => continue,
+                    Ok(Ok(frame)) => break frame,
+                    Ok(Err(_)) => return Ok(()),
+                }
             };
+            drop(next);
             match frame.kind {
                 Kind::Event => {
                     let Ok(event) = proto::decode_value::<Event>(&frame.payload) else {
@@ -235,9 +257,14 @@ pub(crate) fn spawn_server_watch_supervisor(
     root_uri: String,
     canonical_root: String,
 ) -> tauri::async_runtime::JoinHandle<()> {
+    let key = server_slot_key(&connection_id, &canonical_root);
+    let cancelled = app.state::<SshManager>().begin_watch_supervisor(&key);
     tauri::async_runtime::spawn(async move {
         let mut consecutive_failures = 0u32;
         loop {
+            if cancelled.load(Ordering::Acquire) {
+                break;
+            }
             let manager = app.state::<SshManager>();
             if manager.session(&connection_id).is_err()
                 || !manager.root_is_registered(&root_uri).unwrap_or(false)
@@ -305,6 +332,7 @@ pub(crate) fn spawn_server_watch_supervisor(
                     &root,
                     &canonical_root,
                     &daemon,
+                    &cancelled,
                 )
                 .await
                 {
@@ -377,7 +405,7 @@ pub(crate) fn spawn_server_watch_supervisor(
                 // 每个帧重新计时：从"上一帧到达"起算 AGENT_WATCH_FRAME_TIMEOUT。
                 let deadline = Instant::now() + AGENT_WATCH_FRAME_TIMEOUT;
                 let bytes = loop {
-                    if !manager.server_mode(&connection_id) {
+                    if !watch_root_is_active(&manager, &root, &cancelled) {
                         break 'watch;
                     }
                     if Instant::now() >= deadline {

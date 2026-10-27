@@ -31,14 +31,16 @@ import { safeInvoke } from '../lib/tauri'
 import { useI18n } from '../lib/i18n'
 import {
   disconnectSshSession,
-  hasSshSessionSecrets,
+  forgetSshSessionSecrets,
   isSshConnectionAlive,
   isSshProject,
   listSshServerStates,
   listSshWorkspaceRoots,
   NEW_SSH_CONNECTION_ID,
-  openSshSession,
+  testSshConnection,
   probeSshHost,
+  reconnectSshConnection,
+  rememberSshSessionSecrets,
   resolveSshConnectionMode,
   sshConnectionIdFromUri,
   sshConnectionLabel,
@@ -49,6 +51,7 @@ import {
   type SshWorkspaceRoot,
 } from '../lib/sshWorkspace'
 import { getSshServerEnabled } from '../lib/sshServerSettings'
+import { normalizeProjectPath, restrictProject } from '../lib/workspaceTrust'
 import {
   isAgentCommandUnavailable,
   parseSshServerState,
@@ -106,8 +109,8 @@ export default function RemoteConnectionsManager() {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
-  /** 测试连接后确认的新指纹；保存时覆盖存档值。 */
-  const [fingerprintOverride, setFingerprintOverride] = useState<string | null>(null)
+  /** Only a successful authentication of this exact configuration authorizes saving it. */
+  const [verification, setVerification] = useState<{ key: string; fingerprint: string } | null>(null)
   const [aliveMap, setAliveMap] = useState<Record<string, boolean>>({})
   const [roots, setRoots] = useState<SshWorkspaceRoot[]>([])
   const [serverStates, setServerStates] = useState<SshServerState[]>([])
@@ -119,8 +122,20 @@ export default function RemoteConnectionsManager() {
   const [busyRoot, setBusyRoot] = useState<string | null>(null)
   const [logView, setLogView] = useState<LogView | null>(null)
   const detailRequestRef = useRef(0)
-  /** 新建连接里测试成功产生的临时会话 id；保存转正或放弃表单时清理。 */
-  const pendingTestIdRef = useRef<string | null>(null)
+  const testRequestRef = useRef(0)
+  const testControllerRef = useRef<AbortController | null>(null)
+
+  const invalidateVerification = () => {
+    testRequestRef.current += 1
+    testControllerRef.current?.abort()
+    setVerification(null)
+    setTesting(false)
+  }
+
+  const updateForm = (change: Partial<SshConnectionForm>) => {
+    if (Object.keys(change).some(key => key !== 'name')) invalidateVerification()
+    setForm(prev => ({ ...prev, ...change }))
+  }
 
   const isNew = selectedId === NEW_SSH_CONNECTION_ID
   const selected = connections.find(item => item.id === selectedId) ?? null
@@ -150,6 +165,9 @@ export default function RemoteConnectionsManager() {
 
   // 切换选中连接：填充表单并拉取详情。
   useEffect(() => {
+    testRequestRef.current += 1
+    testControllerRef.current?.abort()
+    detailRequestRef.current += 1
     const conn =
       selectedId && selectedId !== NEW_SSH_CONNECTION_ID
         ? useProjectStore.getState().sshConnections.find(item => item.id === selectedId)
@@ -161,27 +179,19 @@ export default function RemoteConnectionsManager() {
     setAdvancedOpen(nextMode === 'ssh')
     setPassword('')
     setPassphrase('')
-    setFingerprintOverride(null)
+    setVerification(null)
+    setTesting(false)
     setError('')
     setRoots([])
     setServerStates([])
     if (conn) void refreshDetail(conn.id)
   }, [selectedId])
 
-  // 离开未保存的新建表单：断开测试连接时产生的临时会话（已保存转正的不算）。
-  useEffect(() => {
-    if (selectedId === NEW_SSH_CONNECTION_ID) return
-    const pending = pendingTestIdRef.current
-    if (!pending) return
-    pendingTestIdRef.current = null
-    void disconnectSshSession(pending).catch(() => {})
-  }, [selectedId])
-
-  // 关闭管理页时同样清理未转正的临时会话。
   useEffect(() => {
     return () => {
-      const pending = pendingTestIdRef.current
-      if (pending) void disconnectSshSession(pending).catch(() => {})
+      testRequestRef.current += 1
+      testControllerRef.current?.abort()
+      detailRequestRef.current += 1
     }
   }, [])
 
@@ -243,7 +253,18 @@ export default function RemoteConnectionsManager() {
       )
     : []
 
-  const effectiveFingerprint = fingerprintOverride || selected?.host_key_fingerprint || null
+  const verificationKey = JSON.stringify([
+    selectedId, form.host.trim(), Number.parseInt(form.port, 10), form.username.trim(),
+    form.authKind, form.privateKeyPath.trim(), mode, password, passphrase,
+  ])
+  const verified = verification?.key === verificationKey ? verification : null
+  const fingerprintOverride = verified && verified.fingerprint !== selected?.host_key_fingerprint
+    ? verified.fingerprint : null
+  const effectiveFingerprint = verified?.fingerprint || selected?.host_key_fingerprint || null
+  const authenticationChanged = selected && (
+    form.authKind !== selected.auth_kind ||
+    form.privateKeyPath.trim() !== (selected.private_key_path ?? '').trim()
+  )
   const dirty = selected
     ? !formEqualsConnection(form, selected) ||
       mode !== resolveSshConnectionMode(selected, getSshServerEnabled())
@@ -257,20 +278,27 @@ export default function RemoteConnectionsManager() {
       setError(t(invalid))
       return
     }
-    const id = isNew ? (pendingTestIdRef.current ?? crypto.randomUUID()) : selectedId!
+    const id = crypto.randomUUID()
     const secrets: SshSessionSecrets = {
       password: password || undefined,
       passphrase: passphrase || undefined,
     }
-    if (form.authKind === 'password' && !secrets.password && !hasSshSessionSecrets(id)) {
+    if (form.authKind === 'password' && !secrets.password) {
       setError(t('请输入 SSH 密码以测试连接。'))
       return
     }
     setTesting(true)
+    setVerification(null)
     setError('')
+    const request = ++testRequestRef.current
+    testControllerRef.current?.abort()
+    const controller = new AbortController()
+    testControllerRef.current = controller
+    const isCurrent = () => request === testRequestRef.current
     try {
       const runtimeConfig = { ...runtimeConfigFromForm(form, id, secrets), mode }
       const probed = await probeSshHost(runtimeConfig)
+      if (!isCurrent()) return
       const status = fingerprintStatus(selected?.host_key_fingerprint, probed)
       if (status !== 'match') {
         const accepted = await confirmDialog({
@@ -289,23 +317,21 @@ export default function RemoteConnectionsManager() {
           kind: 'warning',
           confirmLabel: status === 'new' ? t('信任此主机') : t('接受新指纹'),
           cancelLabel: t('取消'),
+          signal: controller.signal,
         })
-        if (!accepted) return
-        setFingerprintOverride(probed)
-      } else {
-        setFingerprintOverride(null)
+        if (!isCurrent() || !accepted) return
       }
-      await openSshSession({
+      await testSshConnection({
         ...runtimeConfig,
         hostKeyFingerprint: probed,
       })
-      if (isNew) pendingTestIdRef.current = id
+      if (!isCurrent()) return
+      setVerification({ key: verificationKey, fingerprint: probed })
       pushToast('success', t('SSH 连接成功'))
-      await refreshDetail(id)
     } catch (reason) {
-      setError(String(reason))
+      if (isCurrent()) setError(String(reason))
     } finally {
-      setTesting(false)
+      if (isCurrent()) setTesting(false)
     }
   }
 
@@ -316,24 +342,32 @@ export default function RemoteConnectionsManager() {
       setError(t(invalid))
       return
     }
-    if (selected && targetChanged(form, selected) && !fingerprintOverride) {
+    if (selected && (targetChanged(form, selected) || authenticationChanged || password || passphrase) && !verified) {
       setError(t('主机目标已变化，请先「测试连接」确认新的主机指纹。'))
       return
     }
-    if (!effectiveFingerprint) {
+    if (!effectiveFingerprint || (isNew && !verified)) {
       setError(t('请先「测试连接」确认主机指纹后再保存。'))
       return
     }
     const modeChanged = Boolean(
       selected && mode !== resolveSshConnectionMode(selected, getSshServerEnabled())
     )
-    const reconnectNeeded = modeChanged && alive
+    const configChanged = Boolean(selected && (
+      targetChanged(form, selected) || authenticationChanged || password || passphrase ||
+      effectiveFingerprint !== selected.host_key_fingerprint
+    ))
+    const reconnectNeeded = (modeChanged || configChanged) && alive
     if (reconnectNeeded && selected) {
       const accepted = await confirmDialog({
-        title: t('更改兼容模式'),
-        message: t('将断开并重新连接 {name}。当前终端可能被关闭；兼容模式不支持终端断线恢复。', {
-          name: sshConnectionLabel(selected),
-        }),
+        title: modeChanged ? t('更改兼容模式') : t('保存并重新连接'),
+        message: modeChanged
+          ? t('将断开并重新连接 {name}。当前终端可能被关闭；兼容模式不支持终端断线恢复。', {
+              name: sshConnectionLabel(selected),
+            })
+          : t('将断开并重新连接 {name}，以应用新的连接配置。当前终端可能被关闭。', {
+              name: sshConnectionLabel(selected),
+            }),
         kind: 'warning',
         confirmLabel: t('保存并重新连接'),
         cancelLabel: t('取消'),
@@ -343,25 +377,35 @@ export default function RemoteConnectionsManager() {
     setSaving(true)
     setError('')
     try {
-      // 新建连接沿用测试时的会话 id，保存后会话直接归属该连接，不再遗留临时会话。
       const base = selected ?? {
-        id: pendingTestIdRef.current ?? crypto.randomUUID(),
+        id: crypto.randomUUID(),
         created_at: Date.now(),
       }
       const saved = connectionFromForm(form, base, effectiveFingerprint)
-      if (reconnectNeeded && selected) {
+      if (reconnectNeeded && selected && modeChanged) {
         // 先保存其他字段并保留旧模式，再由切换逻辑写新模式并断开重连。
         await saveSshConnection({
           ...saved,
           mode: selected.mode ?? resolveSshConnectionMode(selected, getSshServerEnabled()),
         })
-        await switchSshConnectionMode(selected.id, mode)
       } else {
         await saveSshConnection({ ...saved, mode })
       }
-      pendingTestIdRef.current = null
+      if (configChanged && selected) {
+        forgetSshSessionSecrets(selected.id)
+        rememberSshSessionSecrets(selected.id, {
+          password: password || undefined,
+          passphrase: passphrase || undefined,
+        })
+      }
+      if (reconnectNeeded && selected) {
+        if (modeChanged) await switchSshConnectionMode(selected.id, mode)
+        else await reconnectSshConnection(selected.id)
+      }
       pushToast('success', t('已保存 SSH 连接'))
-      setFingerprintOverride(null)
+      setVerification(null)
+      setPassword('')
+      setPassphrase('')
       if (isNew && creatingForProject) {
         closeRemoteConnections()
         return
@@ -443,6 +487,11 @@ export default function RemoteConnectionsManager() {
     })
     if (!accepted) return
     try {
+      const matching = projects.filter(project =>
+        normalizeProjectPath(project.path) === normalizeProjectPath(rootUri)
+      )
+      for (const project of matching) restrictProject(project)
+      if (matching.length === 0) restrictProject({ id: rootUri, path: rootUri })
       await safeInvoke('撤销 SSH 工作区信任', 'ssh_set_workspace_trust', {
         rootUri,
         trusted: false,
@@ -510,7 +559,7 @@ export default function RemoteConnectionsManager() {
       title: '选择 SSH 私钥',
     })
     if (typeof selectedPath === 'string') {
-      setForm(prev => ({ ...prev, privateKeyPath: selectedPath }))
+      updateForm({ privateKeyPath: selectedPath })
     }
   }
 
@@ -524,7 +573,7 @@ export default function RemoteConnectionsManager() {
           {t('连接名称')}
           <input
             value={form.name}
-            onChange={event => setForm(prev => ({ ...prev, name: event.target.value }))}
+            onChange={event => updateForm({ name: event.target.value })}
             placeholder={t('默认使用主机名')}
             className={`${fieldClass} mt-1`}
           />
@@ -533,7 +582,7 @@ export default function RemoteConnectionsManager() {
           {t('主机')}
           <input
             value={form.host}
-            onChange={event => setForm(prev => ({ ...prev, host: event.target.value }))}
+            onChange={event => updateForm({ host: event.target.value })}
             placeholder="192.168.1.10"
             className={`${fieldClass} mt-1`}
           />
@@ -542,7 +591,7 @@ export default function RemoteConnectionsManager() {
           {t('端口')}
           <input
             value={form.port}
-            onChange={event => setForm(prev => ({ ...prev, port: event.target.value }))}
+            onChange={event => updateForm({ port: event.target.value })}
             inputMode="numeric"
             className={`${fieldClass} mt-1`}
           />
@@ -551,7 +600,7 @@ export default function RemoteConnectionsManager() {
           {t('用户名')}
           <input
             value={form.username}
-            onChange={event => setForm(prev => ({ ...prev, username: event.target.value }))}
+            onChange={event => updateForm({ username: event.target.value })}
             placeholder="root"
             className={`${fieldClass} mt-1`}
           />
@@ -564,10 +613,9 @@ export default function RemoteConnectionsManager() {
           <select
             value={form.authKind}
             onChange={event =>
-              setForm(prev => ({
-                ...prev,
+              updateForm({
                 authKind: event.target.value as SshConnectionForm['authKind'],
-              }))
+              })
             }
             className={`${fieldClass} mt-1`}
           >
@@ -582,7 +630,7 @@ export default function RemoteConnectionsManager() {
               <input
                 value={form.privateKeyPath}
                 onChange={event =>
-                  setForm(prev => ({ ...prev, privateKeyPath: event.target.value }))
+                  updateForm({ privateKeyPath: event.target.value })
                 }
                 placeholder={t('留空则使用 ~/.ssh/id_ed25519 等默认密钥')}
                 className={`${fieldClass} font-mono`}
@@ -603,7 +651,7 @@ export default function RemoteConnectionsManager() {
           <input
             type="password"
             value={password}
-            onChange={event => setPassword(event.target.value)}
+            onChange={event => { invalidateVerification(); setPassword(event.target.value) }}
             className={`${fieldClass} mt-1`}
           />
         </label>
@@ -613,7 +661,7 @@ export default function RemoteConnectionsManager() {
             <input
               type="password"
               value={passphrase}
-              onChange={event => setPassphrase(event.target.value)}
+              onChange={event => { invalidateVerification(); setPassphrase(event.target.value) }}
               className={`${fieldClass} mt-1`}
             />
           </label>
@@ -665,7 +713,7 @@ export default function RemoteConnectionsManager() {
                   <input
                     type="checkbox"
                     checked={mode === 'ssh'}
-                    onChange={event => setMode(event.target.checked ? 'ssh' : 'server')}
+                    onChange={event => { invalidateVerification(); setMode(event.target.checked ? 'ssh' : 'server') }}
                     className="m-0 h-3.5 w-3.5 accent-accent"
                   />
                 </span>
@@ -1059,7 +1107,7 @@ export default function RemoteConnectionsManager() {
                   <div className="flex items-center justify-end gap-2">
                     <button
                       type="button"
-                      disabled={testing}
+                      disabled={testing || saving}
                       onClick={() => void testConnection()}
                       className={secondaryButtonClass}
                     >
@@ -1067,7 +1115,7 @@ export default function RemoteConnectionsManager() {
                     </button>
                     <button
                       type="button"
-                      disabled={saving || (selected ? !dirty && !fingerprintOverride : false)}
+                      disabled={saving || testing || (selected ? !dirty && !verified : false)}
                       onClick={() => void saveConnection()}
                       className={primaryButtonClass}
                     >

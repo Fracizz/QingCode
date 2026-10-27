@@ -52,8 +52,8 @@ use tokio::net::TcpStream;
 /// 能否互通；协议向后兼容/降级协商策略由客户端负责，代理侧本期不实现。
 pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// 单帧上限。内容搜索单条记录（一行匹配文本）按客户端约定不超过 2MB，
-/// 这里放宽到 4MB 兼容超长行的 lossy 截断。
+/// 单帧上限。内容搜索原始行不超过 2MB；serve 另按最终 JSON 字节数
+/// 限制转义文本与高亮区间，保证完整记录和结束帧均可发送。
 pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 
 /// watch 心跳间隔：无事件时每 15s 推一个空记录帧。客户端侧空闲轮询为 5s、
@@ -386,6 +386,79 @@ async fn handle_scan<W: AsyncWrite + Unpin>(ctx: &ServerCtx, writer: &mut W, rel
     }
 }
 
+/// Limit only the legacy JSON transport. Daemon streams keep the full record.
+/// Raw line length alone is insufficient: escaping and dense submatches can
+/// expand a small line beyond the frame limit. Preserve a visible prefix and
+/// report truncation through Done rather than silently closing the connection.
+fn encode_serve_search_record(record: serde_json::Value) -> io::Result<(Vec<u8>, bool)> {
+    let mut response = ServerResponse::Records { data: vec![record] };
+    let payload = serde_json::to_vec(&response)?;
+    if payload.len() <= MAX_FRAME_BYTES {
+        return Ok((payload, false));
+    }
+    let ServerResponse::Records { data } = &mut response else {
+        unreachable!()
+    };
+    let record = &mut data[0];
+    let submatches = record["data"]["submatches"]
+        .as_array_mut()
+        .map(std::mem::take)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "搜索记录缺少匹配区间"))?;
+    let text = record["data"]["lines"]["text"]
+        .take()
+        .as_str()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "搜索记录缺少行文本"))?
+        .to_owned();
+    record["data"]["lines"]["text"] = serde_json::Value::String(String::new());
+    let empty_size = serde_json::to_vec(&response)?.len();
+    let available = MAX_FRAME_BYTES
+        .checked_sub(empty_size)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "搜索记录元数据超过帧上限"))?;
+    // Reserve half for highlight ranges so a very heavily escaped line cannot
+    // consume the entire budget and hide all of its matches.
+    let text_budget = available / 2;
+    let mut encoded_len = 0usize;
+    let mut text_end = 0usize;
+    for (offset, ch) in text.char_indices() {
+        let bytes = match ch {
+            '"' | '\\' | '\u{8}' | '\u{9}' | '\u{a}' | '\u{c}' | '\u{d}' => 2,
+            '\u{0}'..='\u{1f}' => 6,
+            _ => ch.len_utf8(),
+        };
+        if encoded_len + bytes > text_budget {
+            break;
+        }
+        encoded_len += bytes;
+        text_end = offset + ch.len_utf8();
+    }
+    let ServerResponse::Records { data } = &mut response else {
+        unreachable!()
+    };
+    data[0]["data"]["lines"]["text"] = serde_json::Value::String(text[..text_end].into());
+    let mut remaining = MAX_FRAME_BYTES - serde_json::to_vec(&response)?.len();
+    let mut kept = Vec::new();
+    for submatch in submatches {
+        if submatch["end"]
+            .as_u64()
+            .is_none_or(|end| end > text_end as u64)
+        {
+            continue;
+        }
+        let size = serde_json::to_vec(&submatch)?.len() + usize::from(!kept.is_empty());
+        if size > remaining {
+            break;
+        }
+        remaining -= size;
+        kept.push(submatch);
+    }
+    let ServerResponse::Records { data } = &mut response else {
+        unreachable!()
+    };
+    data[0]["data"]["submatches"] = serde_json::Value::Array(kept);
+    let payload = serde_json::to_vec(&response)?;
+    Ok((payload, true))
+}
+
 async fn handle_search_content<W: AsyncWrite + Unpin>(
     ctx: &ServerCtx,
     writer: &mut W,
@@ -401,11 +474,26 @@ async fn handle_search_content<W: AsyncWrite + Unpin>(
 
     // 客户端断开（写失败）时置位取消标记，阻塞中的 walker 会在文件间隙退出。
     let mut write_error = false;
+    let mut response_truncated = false;
     while let Some(record) = rx.recv().await {
-        if write_response(writer, &ServerResponse::Records { data: vec![record] })
-            .await
-            .is_err()
-        {
+        let payload = match encode_serve_search_record(record) {
+            Ok((payload, truncated)) => {
+                response_truncated |= truncated;
+                payload
+            }
+            Err(error) => {
+                cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+                let _ = write_response(
+                    writer,
+                    &ServerResponse::Error {
+                        message: format!("编码搜索记录失败：{error}"),
+                    },
+                )
+                .await;
+                return;
+            }
+        };
+        if write_frame(writer, &payload).await.is_err() {
             write_error = true;
             break;
         }
@@ -419,7 +507,7 @@ async fn handle_search_content<W: AsyncWrite + Unpin>(
             let _ = write_response(
                 writer,
                 &ServerResponse::Done {
-                    truncated: summary.truncated,
+                    truncated: summary.truncated || response_truncated,
                     files_scanned: summary.files_scanned,
                 },
             )
@@ -690,5 +778,76 @@ mod tests {
             other => panic!("期望 Done 响应，实际 {other:?}"),
         }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn serve_search_dense_matches_and_escaped_text_finish_with_truncation() {
+        for (tag, content) in [
+            ("dense", "a".repeat(300_000)),
+            ("escaped", format!("a{}中文", "\u{1}".repeat(800_000))),
+        ] {
+            let root = temp_root(tag);
+            std::fs::write(root.join("a.txt"), format!("{content}\n")).unwrap();
+            // A truncated highlight record must not hide later files.
+            std::fs::write(root.join("z.txt"), "a later file\n").unwrap();
+            let ctx = ServerCtx {
+                root: root.clone(),
+                token: "test-token".into(),
+            };
+            let (mut writer, mut reader) = tokio::io::duplex(8192);
+            let task = tokio::spawn(async move {
+                handle_search_content(
+                    &ctx,
+                    &mut writer,
+                    ops::ContentSearchParams {
+                        query: "a".into(),
+                        ignore_case: false,
+                        include_globs: Vec::new(),
+                        exclude_globs: Vec::new(),
+                        no_ignore: true,
+                        max_matches: 100,
+                        max_per_file: 100,
+                        max_files: 100,
+                    },
+                )
+                .await;
+            });
+            let mut found = std::collections::HashSet::new();
+            tokio::time::timeout(std::time::Duration::from_secs(15), async {
+                loop {
+                    let payload = read_frame(&mut reader).await.unwrap();
+                    assert!(payload.len() <= MAX_FRAME_BYTES);
+                    match serde_json::from_slice::<ServerResponse>(&payload).unwrap() {
+                        ServerResponse::Records { data } => {
+                            for record in data {
+                                let path = record["data"]["path"]["text"].as_str().unwrap();
+                                found.insert(path.to_owned());
+                                let text = record["data"]["lines"]["text"].as_str().unwrap();
+                                let matches = record["data"]["submatches"].as_array().unwrap();
+                                assert!(!matches.is_empty(), "first match must remain visible");
+                                for matched in matches {
+                                    assert!(matched["end"].as_u64().unwrap() <= text.len() as u64);
+                                }
+                            }
+                        }
+                        ServerResponse::Done {
+                            truncated,
+                            files_scanned,
+                        } => {
+                            assert!(truncated);
+                            assert_eq!(files_scanned, 2);
+                            break;
+                        }
+                        other => panic!("search must return records and Done: {other:?}"),
+                    }
+                }
+            })
+            .await
+            .expect("oversized search record must not prevent completion");
+            task.await.unwrap();
+            assert!(found.contains("./a.txt"));
+            assert!(found.contains("./z.txt"));
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 }

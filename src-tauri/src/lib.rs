@@ -865,6 +865,7 @@ pub fn run() {
             remote_ssh::ssh_probe_host,
             remote_ssh::ssh_import_candidates,
             remote_ssh::ssh_open_session,
+            remote_ssh::ssh_test_connection,
             remote_ssh::ssh_browse_directory,
             remote_ssh::ssh_connect,
             remote_ssh::ssh_disconnect,

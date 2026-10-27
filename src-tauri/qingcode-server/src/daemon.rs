@@ -77,6 +77,7 @@ const ROUTE_PENDING_MAX_BYTES: usize = 2 * 1024 * 1024;
 /// 能力列表：客户端按它开关功能，不写死平台规则。
 pub const CAPABILITIES: &[&str] = &[
     "fs.scan",
+    "fs.scanPaged",
     "search.content",
     "watch.subscribe",
     "pty.persist",
@@ -481,10 +482,8 @@ async fn serve(
         connections.abort_all();
         while connections.join_next().await.is_some() {}
     }
-    // 退出前给所有终端发 SIGHUP（kill 内部先 SIGHUP 再降级）。
-    for info in daemon.pty.list() {
-        let _ = daemon.pty.kill(&info.id);
-    }
+    // 等待所有终端的 SIGHUP/强杀回收完成，不能先退出而丢失后台看门狗。
+    daemon.pty.shutdown().await;
     pty_task.abort();
     daemon.log.info("daemon 退出");
     Ok(())
@@ -1097,6 +1096,10 @@ impl ConnCtx {
             id,
             encode(&Response { id, result }).unwrap_or_default(),
         );
+        if frame.payload.len() + proto::BODY_HEADER_BYTES > proto::MAX_FRAME_BYTES {
+            self.fail(id, "responseTooLarge", "响应超过协议帧上限，请使用分页扫描");
+            return;
+        }
         self.send(Priority::Control, frame);
     }
 
@@ -1122,11 +1125,11 @@ impl ConnCtx {
         // dispatch 任务可能晚于连接收尾才开始；这种订阅一开始就必须取消。
         // 在同一把锁内读取 closing 并登记，避免关服在两步之间漏掉新标记。
         let mut cancels = self.cancels.lock().unwrap();
-        let flag = Arc::new(AtomicBool::new(
-            self.outbound.closing.load(Ordering::SeqCst),
-        ));
-        cancels.insert(id, Arc::clone(&flag));
-        flag
+        Arc::clone(cancels.entry(id).or_insert_with(|| {
+            Arc::new(AtomicBool::new(
+                self.outbound.closing.load(Ordering::SeqCst),
+            ))
+        }))
     }
 
     /// 发一块流数据，但每 200ms 复查一次取消标记。
@@ -1339,9 +1342,25 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
                             if request.method == "pty.input" {
                                 enqueue_pty_input(&ctx, Arc::clone(&daemon.pty), request);
                             } else {
+                                // 登记必须与读帧同序完成；紧随 REQ 的 CANCEL 不能
+                                // 等待异步 dispatch 获得调度后才找到取消标记。
+                                let cancellable = matches!(
+                                    request.method.as_str(),
+                                    "search.content" | "watch.subscribe" | "pty.attach"
+                                );
+                                if cancellable {
+                                    ctx.cancel_flag(request.id);
+                                }
                                 let daemon = Arc::clone(&daemon);
                                 let ctx = ctx.clone();
-                                tokio::spawn(dispatch(daemon, ctx, request));
+                                tokio::spawn(async move {
+                                    let id = request.id;
+                                    dispatch(daemon, ctx.clone(), request).await;
+                                    if cancellable {
+                                        // 参数校验失败也释放预登记项。
+                                        ctx.clear_cancel(id);
+                                    }
+                                });
                             }
                         }
                         Err(e) => ctx.fail(frame.stream_id, "badRequest", e.to_string()),
@@ -1581,6 +1600,10 @@ async fn dispatch(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 root: String,
                 #[serde(default)]
                 path: String,
+                #[serde(default)]
+                offset: usize,
+                #[serde(default)]
+                limit: Option<usize>,
             }
             let Ok(params) = params::<ScanParams>(&request) else {
                 conn.fail(id, "badRequest", "fs.scan 需要 root/path");
@@ -1594,14 +1617,35 @@ async fn dispatch(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 }
             };
             let relative = params.path;
-            let result = tokio::task::spawn_blocking(move || ops::scan_dir(&root, &relative)).await;
+            let result = tokio::task::spawn_blocking(move || {
+                let mut entries = ops::scan_dir(&root, &relative)?;
+                // read_dir 顺序不稳定；分页必须采用相同的确定排序。
+                entries.sort_by(|left, right| left.name.cmp(&right.name));
+                Ok::<_, String>(entries)
+            })
+            .await;
             match result {
                 Ok(Ok(entries)) => {
+                    let total = entries.len();
+                    let start = params.offset.min(total);
+                    let end = params.limit.map_or(total, |limit| {
+                        start.saturating_add(limit.clamp(1, 256)).min(total)
+                    });
                     let entries: Vec<Value> = entries
                         .iter()
+                        .skip(start)
+                        .take(end - start)
                         .map(|entry| json!({ "name": entry.name, "isDir": entry.is_dir }))
                         .collect();
-                    conn.respond(id, json!({ "entries": entries, "truncated": false }));
+                    let next_offset = (end < total).then_some(end);
+                    conn.respond(
+                        id,
+                        json!({
+                            "entries": entries,
+                            "truncated": false,
+                            "nextOffset": next_offset,
+                        }),
+                    );
                 }
                 Ok(Err(message)) => conn.fail(id, "io", message),
                 Err(_) => conn.fail(id, "internal", "扫描任务异常结束"),
@@ -2748,6 +2792,100 @@ mod tests {
         };
         ctx.outbound.abort();
         assert!(ctx.cancel_flag(1).load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn immediate_cancel_ends_all_subscriptions_before_dispatch_runs() {
+        use tokio::io::AsyncWriteExt;
+
+        let (run_dir, handle) = start_daemon("immediate-cancel").await;
+        let token = run_dir.read_token().unwrap();
+        let mut client = TestClient::connect(&run_dir, &token).await;
+        let root = temp_dir("immediate-cancel-root");
+        // 一次写入相邻的 REQ/CANCEL，不能靠等待 RES 避开登记竞态。
+        let mut batch = Vec::new();
+        for id in 1..=8 {
+            let request =
+                Request::with_params(id, "watch.subscribe", &json!({ "root": root })).unwrap();
+            batch.extend(
+                Frame::new(Kind::Req, id, encode(&request).unwrap())
+                    .encode()
+                    .unwrap(),
+            );
+            batch.extend(Frame::empty(Kind::Cancel, id).encode().unwrap());
+        }
+        client.stream.write_all(&batch).await.unwrap();
+        let mut ended = std::collections::HashSet::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while ended.len() < 8 {
+                let frame = client.next_frame().await;
+                if frame.kind == Kind::StreamEnd {
+                    ended.insert(frame.stream_id);
+                }
+            }
+        })
+        .await
+        .expect("提前 CANCEL 被丢弃，订阅仍在运行");
+        assert_eq!(ended, (1..=8).collect());
+        client.next_id = 9;
+        let id = client.request("server.shutdown", &json!({})).await;
+        client.wait_response(id).await;
+        handle.await.unwrap().unwrap();
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    #[tokio::test]
+    async fn large_scan_pages_are_complete_and_legacy_overflow_keeps_connection_alive() {
+        let (run_dir, handle) = start_daemon("paged-scan").await;
+        let token = run_dir.read_token().unwrap();
+        let mut client = TestClient::connect(&run_dir, &token).await;
+        let root = temp_dir("paged-scan-root");
+        let expected: Vec<_> = (0..6000)
+            .map(|index| format!("{index:05}{}", "x".repeat(215)))
+            .collect();
+        for name in &expected {
+            std::fs::write(root.join(name), []).unwrap();
+        }
+        let id = client.request("fs.scan", &json!({ "root": root })).await;
+        assert_eq!(client.wait_error(id).await.code, "responseTooLarge");
+        let mut offset = 0;
+        let mut names = Vec::new();
+        loop {
+            let id = client
+                .request(
+                    "fs.scan",
+                    &json!({ "root": root, "offset": offset, "limit": 256 }),
+                )
+                .await;
+            let response = client.wait_response(id).await;
+            let entries = response["entries"].as_array().unwrap();
+            assert!(entries.len() <= 256);
+            names.extend(
+                entries
+                    .iter()
+                    .map(|entry| entry["name"].as_str().unwrap().to_string()),
+            );
+            match response["nextOffset"].as_u64() {
+                Some(next) => {
+                    assert!(next as usize > offset);
+                    offset = next as usize;
+                }
+                None => break,
+            }
+        }
+        assert_eq!(names, expected, "分页不能遗漏或重复目录项");
+        let id = client.request("server.info", &json!({})).await;
+        let info = client.wait_response(id).await;
+        assert!(info["capabilities"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("fs.scanPaged")));
+        let id = client.request("server.shutdown", &json!({})).await;
+        client.wait_response(id).await;
+        handle.await.unwrap().unwrap();
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(run_dir.dir());
     }
 
     #[test]

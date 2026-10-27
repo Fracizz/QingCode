@@ -44,7 +44,10 @@ jobs:
           # musl 目标自带 self-contained crt1.o/libc.a，链接器用工具链自带的
           # rust-lld 即可，无需 musl-gcc（与本机 scripts/build-server.ps1 的兜底一致）。
           LLD="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld"
-          echo "CARGO_TARGET_${{ matrix.target }}_LINKER=$LLD" >> "$GITHUB_ENV"
+          TARGET='${{ matrix.target }}'
+          LINKER_KEY="CARGO_TARGET_${TARGET^^}_LINKER"
+          LINKER_KEY="${LINKER_KEY//-/_}"
+          echo "$LINKER_KEY=$LLD" >> "$GITHUB_ENV"
 
       - name: Build
         shell: bash

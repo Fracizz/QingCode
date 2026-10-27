@@ -81,6 +81,10 @@ export function hasSshSessionSecrets(id: string): boolean {
   return Boolean(cached?.password || cached?.passphrase)
 }
 
+export function forgetSshSessionSecrets(id: string): void {
+  sessionSecrets.delete(id)
+}
+
 export interface SshBrowseEntry {
   name: string
   path: string
@@ -222,6 +226,11 @@ export async function probeSshHost(
 
 export async function openSshSession(config: SshRuntimeConfig): Promise<SshSessionOpenResult> {
   return safeInvoke<SshSessionOpenResult>('打开 SSH 会话', 'ssh_open_session', { config })
+}
+
+/** Authenticate independently without registering or changing a workspace session. */
+export async function testSshConnection(config: SshRuntimeConfig): Promise<SshSessionOpenResult> {
+  return safeInvoke<SshSessionOpenResult>('测试 SSH 连接', 'ssh_test_connection', { config })
 }
 
 export async function browseSshDirectory(
@@ -385,14 +394,7 @@ export async function switchSshConnectionMode(
         }
       }
 
-      await disconnectSshSession(connectionId)
-
-      // 动态导入避免与 projectStore 形成模块环；其他打开的项目在激活时按新模式连接。
-      const { useProjectStore } = await import('../store/projectStore')
-      const project = useProjectStore.getState().currentProject
-      if (!project || !projectUsesSshConnection(project, connectionId)) return
-      await ensureSshWorkspaceConnected(project)
-      await useProjectStore.getState().refreshProjectTree(project)
+      await reconnectSshConnection(connectionId)
     })
   connectionModeQueues.set(connectionId, current)
 
@@ -403,6 +405,24 @@ export async function switchSshConnectionMode(
       connectionModeQueues.delete(connectionId)
     }
   }
+}
+
+/** Reconnect the active root; other roots register again when next activated. */
+export async function reconnectSshConnection(connectionId: string): Promise<void> {
+  await disconnectSshSession(connectionId)
+  const { useProjectStore } = await import('../store/projectStore')
+  const project = useProjectStore.getState().currentProject
+  if (!project || !projectUsesSshConnection(project, connectionId)) return
+  try {
+    await ensureSshWorkspaceConnected(project)
+  } catch (error) {
+    if (String(error).includes('SSH 密码未保存在本机')) {
+      requestSshReconnect(project)
+      return
+    }
+    throw error
+  }
+  await useProjectStore.getState().refreshProjectTree(project)
 }
 
 export async function ensureSshWorkspaceConnected(project: Project): Promise<void> {
