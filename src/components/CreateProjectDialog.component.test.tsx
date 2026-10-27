@@ -10,9 +10,13 @@ import {
   browseSshDirectory,
   isSshConnectionAlive,
   openSshSession,
+  probeSshHost,
   SSH_CONNECTIONS_CHANGED_EVENT,
 } from '../lib/sshWorkspace'
 import type { SshConnection } from '../types'
+import { confirmDialog } from '../store/confirmStore'
+
+vi.mock('../store/confirmStore', () => ({ confirmDialog: vi.fn() }))
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
 
@@ -21,6 +25,7 @@ vi.mock('../lib/sshWorkspace', async importOriginal => {
   return {
     ...actual,
     openSshSession: vi.fn(),
+    probeSshHost: vi.fn(),
     isSshConnectionAlive: vi.fn(),
     browseSshDirectory: vi.fn(),
   }
@@ -56,6 +61,8 @@ function openSourceMenu() {
 describe('CreateProjectDialog', () => {
   beforeEach(() => {
     vi.mocked(open).mockReset()
+    vi.mocked(confirmDialog).mockReset().mockResolvedValue(true)
+    vi.mocked(probeSshHost).mockReset().mockResolvedValue('SHA256:imported')
     vi.mocked(openSshSession).mockReset().mockResolvedValue({
       fingerprint: 'SHA256:key',
       homePath: '/root',
@@ -70,6 +77,7 @@ describe('CreateProjectDialog', () => {
       loadSshConnections: vi.fn().mockResolvedValue(undefined),
       addProject: vi.fn().mockResolvedValue(true),
       addSshProject: vi.fn().mockResolvedValue(true),
+      saveSshConnection: vi.fn().mockResolvedValue(undefined),
     })
   })
 
@@ -77,6 +85,22 @@ describe('CreateProjectDialog', () => {
     vi.restoreAllMocks()
     useProjectStore.setState(initialProjectState, true)
     useUIStore.setState(initialUIState, true)
+  })
+
+  it.each([true, false])('asks for host trust before opening an imported connection (accepted: %s)', async accepted => {
+    useProjectStore.setState({ sshConnections: [{ ...keyHost, host_key_fingerprint: '' }] })
+    vi.mocked(confirmDialog).mockResolvedValue(accepted)
+    vi.mocked(openSshSession).mockResolvedValue({ fingerprint: 'SHA256:imported', homePath: '/root' })
+    render(<CreateProjectDialog open onClose={vi.fn()} onCreated={vi.fn()} />)
+    fireEvent.click(within(openSourceMenu()).getByRole('menuitemradio', { name: /dev-box/ }))
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ detail: 'SHA256:imported' })))
+    if (accepted) {
+      await waitFor(() => expect(useProjectStore.getState().saveSshConnection).toHaveBeenCalledWith(expect.objectContaining({ host_key_fingerprint: 'SHA256:imported' })))
+      expect(openSshSession).toHaveBeenCalledWith(expect.objectContaining({ hostKeyFingerprint: 'SHA256:imported' }))
+    } else {
+      expect(openSshSession).not.toHaveBeenCalled()
+      expect(useProjectStore.getState().saveSshConnection).not.toHaveBeenCalled()
+    }
   })
 
   it('creates a local project from the chosen folder with a custom name', async () => {

@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   CircleHelp,
+  Download,
   FileText,
   FolderOpen,
   Globe,
@@ -21,6 +22,7 @@ import {
 } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
+import SshImportDialog from './SshImportDialog'
 import { confirmDialog } from '../store/confirmStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -111,6 +113,7 @@ export default function RemoteConnectionsManager() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
   const [error, setError] = useState('')
   const [busyRoot, setBusyRoot] = useState<string | null>(null)
   const [logView, setLogView] = useState<LogView | null>(null)
@@ -239,7 +242,7 @@ export default function RemoteConnectionsManager() {
       )
     : []
 
-  const effectiveFingerprint = fingerprintOverride ?? selected?.host_key_fingerprint ?? null
+  const effectiveFingerprint = fingerprintOverride || selected?.host_key_fingerprint || null
   const dirty = selected
     ? !formEqualsConnection(form, selected) ||
       mode !== resolveSshConnectionMode(selected, getSshServerEnabled())
@@ -720,7 +723,7 @@ export default function RemoteConnectionsManager() {
 
           <div className="flex min-h-0 flex-1">
             <aside className="flex w-44 flex-shrink-0 flex-col border-r border-dialog-separator bg-dialog-sidebar sm:w-60">
-              <div className="p-2">
+              <div className="space-y-2 p-2">
                 <button
                   type="button"
                   onClick={() => setSelectedId(NEW_SSH_CONNECTION_ID)}
@@ -732,6 +735,14 @@ export default function RemoteConnectionsManager() {
                 >
                   <Plus size={14} />
                   {t('新建连接')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImportOpen(true)}
+                  className="flex w-full items-center justify-center gap-1.5 rounded border border-dialog-border px-2 py-1.5 text-ui text-fg hover:bg-bg-hover"
+                >
+                  <Download size={14} />
+                  {t('导入已有连接')}
                 </button>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto pb-2">
@@ -1074,6 +1085,10 @@ export default function RemoteConnectionsManager() {
           </div>
         </div>
       </ModalOverlay>
+
+      {importOpen && (
+        <SshImportDialog onClose={() => setImportOpen(false)} onImported={setSelectedId} />
+      )}
 
       {logView && (
         <ModalOverlay onDismiss={() => setLogView(null)} zIndex="z-[135]">

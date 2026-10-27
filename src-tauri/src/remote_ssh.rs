@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
+mod config_import;
 #[cfg(test)]
 mod live_acceptance;
 mod search;
@@ -26,6 +27,7 @@ mod server_status;
 mod sshd_limits;
 mod transfer;
 mod windows_path_guard;
+pub use config_import::*;
 pub use search::*;
 pub use server_status::{SshServerLogs, SshServerState};
 pub use transfer::*;

@@ -27,6 +27,7 @@ import { getContextMenuStylePosition } from './contextMenuPosition'
 import { useI18n } from '../lib/i18n'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
+import { confirmDialog } from '../store/confirmStore'
 import {
   browseSshDirectory,
   hasSshSessionSecrets,
@@ -34,6 +35,7 @@ import {
   normalizeRemotePath,
   openSshSession,
   parentRemotePath,
+  probeSshHost,
   resolveSshConnectionMode,
   SSH_CONNECTIONS_CHANGED_EVENT,
   sshConnectionTarget,
@@ -290,10 +292,43 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
     setSshPhase('connecting')
     setError('')
     try {
-      const opened = await openSshSession(
-        sshRuntimeConfig(target, secrets, resolveSshConnectionMode(target, getSshServerEnabled()))
+      const config = sshRuntimeConfig(
+        target,
+        secrets,
+        resolveSshConnectionMode(target, getSshServerEnabled())
       )
+      if (!config.hostKeyFingerprint) {
+        const fingerprint = await probeSshHost(config)
+        if (epoch !== epochRef.current) return
+        const accepted = await confirmDialog({
+          title: t('确认 SSH 主机指纹'),
+          message: t('首次连接 {target}，请确认主机指纹。', {
+            target: sshConnectionTarget(target),
+          }),
+          detail: fingerprint,
+          kind: 'warning',
+          confirmLabel: t('信任此主机'),
+          cancelLabel: t('取消'),
+        })
+        if (epoch !== epochRef.current) return
+        if (!accepted) {
+          setSshPhase('auth')
+          return
+        }
+        config.hostKeyFingerprint = fingerprint
+      }
+      const opened = await openSshSession(config)
       if (epoch !== epochRef.current) return
+      if (!target.host_key_fingerprint) {
+        await useProjectStore
+          .getState()
+          .saveSshConnection({
+            ...target,
+            host_key_fingerprint: opened.fingerprint,
+            updated_at: Date.now(),
+          })
+        if (epoch !== epochRef.current) return
+      }
       secretsRef.current = secrets
       setSshPhase('browse')
       await loadDirectory(target.id, opened.homePath)

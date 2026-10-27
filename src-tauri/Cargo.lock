@@ -4144,6 +4144,7 @@ dependencies = [
  "arboard",
  "dirs",
  "encoding_rs",
+ "glob",
  "grep-matcher",
  "grep-regex",
  "grep-searcher",

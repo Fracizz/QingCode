@@ -867,6 +867,7 @@ pub fn run() {
             file_watcher::file_mtime,
             file_watcher::file_ctime,
             remote_ssh::ssh_probe_host,
+            remote_ssh::ssh_import_candidates,
             remote_ssh::ssh_open_session,
             remote_ssh::ssh_browse_directory,
             remote_ssh::ssh_connect,

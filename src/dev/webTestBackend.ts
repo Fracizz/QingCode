@@ -318,6 +318,16 @@ export class WebTestBackend {
         return []
       case 'ssh_probe_host':
         return { fingerprint: TEST_FINGERPRINT }
+      case 'ssh_import_candidates':
+        return {
+          path: '/home/demo/.ssh/config',
+          candidates: [
+            { name: 'Web Test SSH', host: 'web-test.invalid', port: 22, username: 'tester', authKind: 'privateKey', privateKeyPath: null, issue: null },
+            { name: 'Development', host: 'dev.example.test', port: 2222, username: 'dev', authKind: 'privateKey', privateKeyPath: '/home/demo/.ssh/id_ed25519', issue: null },
+            { name: 'Staging', host: 'staging.example.test', port: 22, username: 'deploy', authKind: 'password', privateKeyPath: null, issue: null },
+            { name: 'Jump host', host: 'internal.example.test', port: 22, username: 'dev', authKind: 'privateKey', privateKeyPath: null, issue: '暂不支持代理、证书或自定义认证代理，请手动新建连接' },
+          ],
+        }
       case 'ssh_open_session': {
         const config = args.config as { id: string; mode?: string; hostKeyFingerprint?: string }
         if (config.id !== 'web-test') throw new Error('Only the web-test SSH fixture is supported')
