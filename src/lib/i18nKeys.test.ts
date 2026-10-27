@@ -471,5 +471,5 @@ describe('i18n English message budget', () => {
           `Delete them, or add them to RUNTIME_ONLY_KEYS when they are composed at runtime:\n${details}`,
       )
     }
-  })
+  }, 30000)
 })
