@@ -8,7 +8,7 @@ const selectors = {
   dialog: '[role="dialog"][aria-labelledby="project-manager-title"]',
   search: 'input[aria-label="搜索项目名称、路径或来源"]',
   source: 'select[aria-label="筛选项目来源"]',
-  pageSize: 'select[aria-label="每页显示"]',
+  pageSize: '[role="dialog"] label select',
   sort: 'select[aria-label="项目排序"]',
 }
 
@@ -21,7 +21,10 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
   const tabInfo = (await task.tabs()).find(tab => tab.label === page.label)
   const browserWindow = await task.cdp('Browser.getWindowForTarget', { targetId: tabInfo.targetId })
   if (browserWindow.bounds.windowState === 'minimized') {
-    await task.cdp('Browser.setWindowBounds', { windowId: browserWindow.windowId, bounds: { windowState: 'normal' } })
+    await task.cdp('Browser.setWindowBounds', {
+      windowId: browserWindow.windowId,
+      bounds: { windowState: 'normal' },
+    })
   }
   console.log({ spaceId: task.spaceId, url, output })
   const results = []
@@ -39,7 +42,9 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
     }
   }
   const click = name =>
-    page.click(`loc=role:${name === '全选当前页' ? 'checkbox' : 'button'}[name="${name}"]`, { label: 'verify project manager action' })
+    page.click(`loc=role:${name === '全选当前页' ? 'checkbox' : 'button'}[name="${name}"]`, {
+      label: 'verify project manager action',
+    })
   const tab = name =>
     page.click(`loc=role:tab[name="${name}"]`, { label: 'filter project visibility' })
   const source = value => page.selectOption(selectors.source, { value })
@@ -320,7 +325,11 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
     failure = error
     console.error(String(error))
     console.log(await page.snapshot())
-    try { await shot('failure') } catch (screenshotError) { console.error(String(screenshotError)) }
+    try {
+      await shot('failure')
+    } catch (screenshotError) {
+      console.error(String(screenshotError))
+    }
   }
   const report = {
     status: failure ? 'failed' : 'passed',
