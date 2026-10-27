@@ -20,6 +20,7 @@ import {
   FONT_SIZE_OPTIONS,
   INTERFACE_FONT_OPTIONS,
   MONO_FONT_OPTIONS,
+  TERMINAL_FONT_OPTIONS,
   loadFontSettings,
   saveFontSettings,
   type FontSettings,
@@ -619,7 +620,7 @@ export default function SettingsEditor() {
           '小地图',
           'minimap',
         )
-      if (cat.id === 'terminal') return match('终端', '默认启动配置', '终端字号', '默认 Shell', 'pwsh', 'WSL', 'Zsh')
+      if (cat.id === 'terminal') return match('终端', '终端字体', '终端 › 集成: 字体族', '默认启动配置', '终端字号', '默认 Shell', 'pwsh', 'WSL', 'Zsh')
       if (cat.id === 'ai') {
         return match('AI', 'CLI', 'skills', 'Agent', 'qingcode-cli', 'AI CLI skills')
       }
@@ -984,7 +985,7 @@ export default function SettingsEditor() {
                 </SettingItem>
                 <SettingItem
                   title={t('编辑器: 字体族')}
-                  description={t('控制编辑器字体族。终端默认共用同一等宽字体。可选择本机已安装字体。')}
+                  description={t('控制编辑器字体族。可选择本机已安装字体。')}
                   modified={fonts.monoFont !== DEFAULT_FONT_SETTINGS.monoFont}
                   locked={workspaceLocked}
                   lockHint={t('此设置仅在用户作用域中可用')}
@@ -1023,6 +1024,8 @@ export default function SettingsEditor() {
 
             {match(
               '终端',
+              '终端字体',
+              '终端 › 集成: 字体族',
               '默认启动配置',
               '终端字号',
               '默认 Shell',
@@ -1041,6 +1044,22 @@ export default function SettingsEditor() {
                 onSectionRef={onSectionRef}
                 onVisible={setCategory}
               >
+                <SettingItem
+                  title={t('终端 › 集成: 字体族')}
+                  description={t('独立设置终端字体族，默认使用系统等宽字体。可选择本机已安装的等宽字体，修改后立即生效。')}
+                  modified={fonts.terminalFont !== DEFAULT_FONT_SETTINGS.terminalFont}
+                  locked={workspaceLocked}
+                  lockHint={t('此设置仅在用户作用域中可用')}
+                >
+                  <FontFamilySelect
+                    value={fonts.terminalFont}
+                    presets={TERMINAL_FONT_OPTIONS}
+                    kind="terminal"
+                    disabled={workspaceLocked}
+                    aria-label={t('终端 › 集成: 字体族')}
+                    onChange={value => updateFonts('terminalFont', value)}
+                  />
+                </SettingItem>
                 <SettingItem
                   title={t('终端 › 集成: 字号')}
                   description={t('控制终端的字号（像素）。')}

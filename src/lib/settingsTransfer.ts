@@ -114,6 +114,7 @@ export function parseSettingsTransfer(text: string, scope: SettingsScope): Setti
         !record(fonts) ||
         typeof fonts.interfaceFont !== 'string' ||
         typeof fonts.monoFont !== 'string' ||
+        (fonts.terminalFont !== undefined && typeof fonts.terminalFont !== 'string') ||
         ['interfaceFontSize', 'editorFontSize', 'terminalFontSize'].some(
           key => typeof fonts[key] !== 'number' || Number(fonts[key]) < 6 || Number(fonts[key]) > 72
         )
@@ -370,7 +371,8 @@ export async function importSettings(
   const preferences = transfer.preferences
   if (preferences) {
     if (preferences.theme) saveTheme(preferences.theme)
-    if (preferences.fonts) applyStoredFontSettings(preferences.fonts)
+    if (preferences.fonts)
+      applyStoredFontSettings({ ...DEFAULT_FONT_SETTINGS, ...preferences.fonts })
     if (preferences.terminal) saveTerminalProfileSettings(preferences.terminal)
     if (preferences.shortcuts)
       for (const [key, value] of Object.entries(preferences.shortcuts))

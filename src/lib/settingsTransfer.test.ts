@@ -152,6 +152,29 @@ describe('restore defaults', () => {
 })
 
 describe('configuration validation', () => {
+  it('round-trips the terminal font and migrates backups without the new preference', async () => {
+    mocks.disk.set(globalPath, '{}')
+    const fonts = { ...DEFAULT_FONT_SETTINGS, terminalFont: '"Fira Code", monospace' }
+    const backup = (value: unknown) => JSON.stringify({
+      format: 'qingcode-settings', version: 1, scope: 'global', settings: {},
+      preferences: { fonts: value },
+    })
+    await importSettings(backup(fonts), 'global')
+    expect(loadFontSettings().terminalFont).toBe(fonts.terminalFont)
+    expect((await exportSettings('global')).preferences?.fonts?.terminalFont).toBe(fonts.terminalFont)
+
+    const legacyFonts: Partial<typeof fonts> = { ...fonts }
+    delete legacyFonts.terminalFont
+    await importSettings(backup(legacyFonts), 'global')
+    expect(loadFontSettings().terminalFont).toBe(DEFAULT_FONT_SETTINGS.terminalFont)
+
+    await importSettings(backup({ ...fonts, terminalFont: '' }), 'global')
+    expect(loadFontSettings().terminalFont).toBe(DEFAULT_FONT_SETTINGS.terminalFont)
+
+    expect(() => parseSettingsTransfer(backup({ ...fonts, terminalFont: 123 }), 'global'))
+      .toThrow('字体')
+  })
+
   it('accepts JSON5 and BOM and retains only workspace keys', () => {
     const result = parseSettingsTransfer(
       '\uFEFF{ // config\n "editor.tabSize": 2, "qingcode.projects": [], "qingcode.projectIndicators.enabled": false, }',

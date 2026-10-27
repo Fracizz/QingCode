@@ -69,11 +69,19 @@ export const MONO_FONT_OPTIONS: FontOption[] = [
   { label: 'Consolas', value: 'Consolas, "Courier New", monospace' },
 ]
 
+export const TERMINAL_FONT_OPTIONS: FontOption[] = [
+  { label: '系统默认', value: TERMINAL_MONO_FONT },
+  { label: 'JetBrains Mono', value: JETBRAINS_MONO_FONT },
+  { label: 'Cascadia Code', value: '"Cascadia Code", Consolas, monospace' },
+  { label: 'Consolas', value: 'Consolas, "Courier New", monospace' },
+]
+
 export const FONT_SIZE_OPTIONS = [12, 13, 14, 15, 16, 18, 20] as const
 
 export type FontSettings = {
   interfaceFont: string
   monoFont: string
+  terminalFont: string
   interfaceFontSize: number
   editorFontSize: number
   terminalFontSize: number
@@ -82,10 +90,16 @@ export type FontSettings = {
 export const DEFAULT_FONT_SETTINGS: FontSettings = {
   interfaceFont: SYSTEM_INTERFACE_FONT,
   monoFont: SYSTEM_MONO_FONT,
+  terminalFont: TERMINAL_MONO_FONT,
   interfaceFontSize: 13,
   /** Keep in sync with DEFAULT_GLOBAL_SETTINGS['editor.fontSize']. */
   editorFontSize: 14,
   terminalFontSize: 13,
+}
+
+/** Missing or empty values from older preferences now use the terminal default. */
+function normalizeTerminalFont(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value : TERMINAL_MONO_FONT
 }
 
 type StoredFontSettings = Partial<FontSettings & { monoFontSize?: number }>
@@ -110,6 +124,7 @@ export function loadFontSettings(): FontSettings {
     return {
       ...DEFAULT_FONT_SETTINGS,
       ...raw,
+      terminalFont: normalizeTerminalFont(raw.terminalFont),
       editorFontSize: raw.editorFontSize ?? legacyMono ?? DEFAULT_FONT_SETTINGS.editorFontSize,
       terminalFontSize: raw.terminalFontSize ?? legacyMono ?? DEFAULT_FONT_SETTINGS.terminalFontSize,
     }
@@ -122,6 +137,7 @@ export function applyFontSettings(settings: FontSettings) {
   const metrics = interfaceMetrics(settings.interfaceFontSize)
   document.documentElement.style.setProperty('--font-sans', settings.interfaceFont)
   document.documentElement.style.setProperty('--font-mono', settings.monoFont)
+  document.documentElement.style.setProperty('--terminal-font-family', normalizeTerminalFont(settings.terminalFont))
   const sizes: Record<string, number> = {
     '--ui-font-size': metrics.fontSize,
     '--ui-font-size-sm': metrics.smallFontSize,
@@ -186,8 +202,10 @@ function isUsableTerminalFontPart(part: string): boolean {
  * which corrupts TUI UIs (block art, progress bars). Prefer concrete mono fonts.
  */
 export function getResolvedTerminalFont(): string {
-  const mono = getResolvedMonoFont()
-  const parts = mono
+  const font = typeof document === 'undefined'
+    ? ''
+    : getComputedStyle(document.documentElement).getPropertyValue('--terminal-font-family').trim()
+  const parts = (font || TERMINAL_MONO_FONT)
     .split(',')
     .map(part => part.trim())
     .filter(Boolean)
@@ -289,8 +307,9 @@ export type SaveFontSettingsOptions = {
 
 /** Apply font CSS + localStorage without writing settings JSON. */
 export function applyStoredFontSettings(settings: FontSettings) {
-  localStorage.setItem(FONT_SETTINGS_KEY, JSON.stringify(settings))
-  applyFontSettings(settings)
+  const normalized = { ...settings, terminalFont: normalizeTerminalFont(settings.terminalFont) }
+  localStorage.setItem(FONT_SETTINGS_KEY, JSON.stringify(normalized))
+  applyFontSettings(normalized)
 }
 
 /**
@@ -362,16 +381,16 @@ export function withCurrentFontOption(options: FontOption[], value: string): Fon
   return [{ label, value }, ...options]
 }
 
-export type FontKind = 'sans' | 'mono'
+export type FontKind = 'sans' | 'mono' | 'terminal'
 
 /** Build a CSS font-family stack from an OS font family name. */
 export function fontStackFromFamily(family: string, kind: FontKind): string {
   const trimmed = family.trim()
   if (!trimmed) {
-    return kind === 'mono' ? SYSTEM_MONO_FONT : SYSTEM_INTERFACE_FONT
+    return kind === 'sans' ? SYSTEM_INTERFACE_FONT : SYSTEM_MONO_FONT
   }
   const quoted = `"${trimmed.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
-  return kind === 'mono' ? `${quoted}, ${SYSTEM_MONO_FONT}` : `${quoted}, ${SYSTEM_INTERFACE_FONT}`
+  return kind === 'sans' ? `${quoted}, ${SYSTEM_INTERFACE_FONT}` : `${quoted}, ${SYSTEM_MONO_FONT}`
 }
 
 /** Turn installed family names into selectable options, skipping preset labels. */
@@ -385,6 +404,7 @@ export function systemFontOptions(
   )
   return expandSystemFontFamilies(families)
     .filter(family => family && !skip.has(family.toLowerCase()))
+    .filter(family => kind !== 'terminal' || isUsableTerminalFontPart(family))
     .map(family => ({
       label: family,
       value: fontStackFromFamily(family, kind),

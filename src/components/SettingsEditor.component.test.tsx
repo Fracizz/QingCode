@@ -156,12 +156,16 @@ vi.mock('../lib/themeSettings', () => ({
 }))
 
 vi.mock('../lib/fontSettings', () => ({
-  DEFAULT_FONT_SETTINGS: { interfaceFont: 'sans', monoFont: 'mono', interfaceFontSize: 13, monoFontSize: 13 },
+  DEFAULT_FONT_SETTINGS: { interfaceFont: 'sans', monoFont: 'mono', terminalFont: 'terminal-mono', interfaceFontSize: 13, editorFontSize: 14, terminalFontSize: 13 },
   FONT_SETTINGS_EVENT: 'qingcode:font-settings-changed',
   FONT_SIZE_OPTIONS: [],
   INTERFACE_FONT_OPTIONS: [],
   MONO_FONT_OPTIONS: [],
-  loadFontSettings: () => ({ interfaceFont: 'sans', monoFont: 'mono', interfaceFontSize: 13, monoFontSize: 13 }),
+  TERMINAL_FONT_OPTIONS: [
+    { label: '系统默认', value: 'terminal-mono' },
+    { label: 'Consolas', value: 'Consolas, monospace' },
+  ],
+  loadFontSettings: () => ({ interfaceFont: 'sans', monoFont: 'mono', terminalFont: 'terminal-mono', interfaceFontSize: 13, editorFontSize: 14, terminalFontSize: 13 }),
   saveFontSettings: mocks.saveFontSettings,
   loadSystemFontFamilies: async () => [],
   systemFontOptions: () => [],
@@ -221,6 +225,31 @@ describe('SettingsEditor', () => {
     expect(screen.getByRole('button', { name: '文本编辑器' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '终端' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '打开设置 JSON' })).toBeInTheDocument()
+  })
+
+  it('saves an independent terminal font and restores the terminal system default', () => {
+    render(<SettingsEditor />)
+    fireEvent.change(screen.getByPlaceholderText('搜索设置'), { target: { value: '终端字体' } })
+    const font = screen.getByLabelText('终端 › 集成: 字体族')
+    expect(font).toHaveValue('terminal-mono')
+    expect(screen.queryByRole('option', { name: '跟随编辑器字体' })).not.toBeInTheDocument()
+    fireEvent.change(font, { target: { value: 'Consolas, monospace' } })
+    expect(mocks.saveFontSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      terminalFont: 'Consolas, monospace', monoFont: 'mono', terminalFontSize: 13,
+    }))
+    fireEvent.change(font, { target: { value: 'terminal-mono' } })
+    expect(mocks.saveFontSettings).toHaveBeenLastCalledWith(expect.objectContaining({
+      terminalFont: 'terminal-mono', monoFont: 'mono',
+    }))
+  })
+
+  it('disables the terminal font setting in workspace scope', () => {
+    useProjectStore.setState({ currentProject: {
+      id: 'w', name: 'Workspace', path: 'D:/workspace', created_at: 1, last_opened_at: 1,
+    } })
+    render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
+    expect(screen.getByLabelText('终端 › 集成: 字体族')).toBeDisabled()
   })
 
   it('restores user defaults after confirming the scope and preserves project records', async () => {
