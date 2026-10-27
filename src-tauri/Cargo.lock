@@ -4139,7 +4139,7 @@ dependencies = [
 
 [[package]]
 name = "qingcode"
-version = "0.1.14-beta.6"
+version = "0.1.14-beta.7"
 dependencies = [
  "arboard",
  "dirs",
@@ -4174,7 +4174,7 @@ dependencies = [
 
 [[package]]
 name = "qingcode-server"
-version = "0.1.14-beta.6"
+version = "0.1.14-beta.7"
 dependencies = [
  "getrandom 0.4.3",
  "grep-matcher",
