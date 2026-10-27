@@ -154,7 +154,7 @@ export function useFileWatcher() {
       useGitStatusStore.getState().clear()
       return
     }
-    void useGitStatusStore.getState().refresh(currentProject.path)
+    void useGitStatusStore.getState().refresh(currentProject.path, { reuseInFlight: true })
     // SSH 每次刷新都是一次远程往返，本地是一次全量 status：都不该被 Alt-Tab 连刷拉起。
     const focusCooldownMs = isSshResource(currentProject.path)
       ? SSH_GIT_FOCUS_COOLDOWN_MS

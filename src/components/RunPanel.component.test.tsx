@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const runtimeMocks = vi.hoisted(() => ({
   runConfig: vi.fn(),
   stopConfig: vi.fn(),
-  removeRunConfig: vi.fn(),
+  removeRunConfigs: vi.fn(),
 }))
 
 vi.mock('../lib/runConfigRuntime', async importOriginal => {
@@ -100,7 +100,7 @@ describe('RunPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '删除', exact: true }))
     await waitFor(() =>
-      expect(runtimeMocks.removeRunConfig).toHaveBeenCalledWith(project, config.id)
+      expect(runtimeMocks.removeRunConfigs).toHaveBeenCalledWith(project, [config.id])
     )
   })
 

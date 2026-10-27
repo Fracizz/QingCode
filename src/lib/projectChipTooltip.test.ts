@@ -69,13 +69,13 @@ describe('projectChipTooltipLabel', () => {
     )
   })
 
-  it('keeps local project tooltips concise', () => {
+  it('includes the local path to distinguish same-name local projects', () => {
     expect(
       projectChipTooltipLabel(
         { ...sshProject, name: '本地项目', path: 'D:/code/local', kind: 'local' },
         [sshConnection],
         t
       )
-    ).toBe('本地项目')
+    ).toBe('本地项目\n路径：D:/code/local')
   })
 })

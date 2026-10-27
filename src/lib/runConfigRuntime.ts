@@ -216,9 +216,14 @@ export async function stopConfig(config: Pick<RunConfig, 'id'>): Promise<void> {
 }
 
 export async function removeRunConfig(project: Project, configId: string): Promise<void> {
-  const target = useRunConfigStore
-    .getState()
-    .configsByProject[project.id]?.find(config => config.id === configId)
-  if (target) await stopConfig(target)
-  await useRunConfigStore.getState().removeConfig(project, configId)
+  await removeRunConfigs(project, [configId])
+}
+
+export async function removeRunConfigs(project: Project, configIds: string[]): Promise<void> {
+  const ids = new Set(configIds)
+  const targets = (useRunConfigStore.getState().configsByProject[project.id] ?? []).filter(config =>
+    ids.has(config.id)
+  )
+  await Promise.all(targets.map(config => stopConfig(config)))
+  await useRunConfigStore.getState().removeConfigs(project, configIds)
 }

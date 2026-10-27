@@ -86,10 +86,8 @@ import {
   getGitCommitFileContents,
   getGitCommitFiles,
   getGitFileContents,
-  getGitHead,
   getGitLog,
   getGitRemotes,
-  getGitStatus,
   pullGit,
   pushGit,
   switchGitBranch,
@@ -645,7 +643,7 @@ export default function SourceControlPanel() {
   const projectPath = currentProject?.path ?? null
 
   const status = useGitStatusStore(state =>
-    projectPath && state.panelPath === projectPath ? state.panelStatus : null
+    projectPath ? state.peekPanelStatus(projectPath) : null
   )
   const setStatus = useCallback((next: GitStatus | null) => {
     const path = useProjectStore.getState().currentProject?.path
@@ -872,7 +870,7 @@ export default function SourceControlPanel() {
   }, [loadMoreCommits])
 
   const refresh = useCallback(
-    async (opts?: { soft?: boolean }) => {
+    async (opts?: { soft?: boolean; reuseInFlight?: boolean }) => {
       const sequence = ++refreshSequenceRef.current
       const soft = opts?.soft ?? false
       const project = useProjectStore.getState().currentProject
@@ -918,19 +916,8 @@ export default function SourceControlPanel() {
         // Soft path reuses the shared workdir refresh (coalesced with badge/tree).
         // Hard refresh uses full git_status so branch + rename paths stay accurate.
         if (soft) {
-          await useGitStatusStore.getState().refresh(path)
-          let next = seedSourceControlStatus(path)
-          if (next?.is_repository && !next.branch) {
-            try {
-              const head = await getGitHead(path)
-              if (head?.name) {
-                next = { ...next, branch: head.name }
-                useGitStatusStore.getState().setPanelStatus(path, next)
-              }
-            } catch {
-              /* keep null branch; hard refresh can recover */
-            }
-          }
+          await useGitStatusStore.getState().refresh(path, { reuseInFlight: opts?.reuseInFlight })
+          const next = seedSourceControlStatus(path)
           if (next && isCurrentRequest()) {
             setStatus(next)
             setError(null)
@@ -938,12 +925,13 @@ export default function SourceControlPanel() {
           return
         }
 
-        const next = await getGitStatus(path)
+        await useGitStatusStore.getState().refresh(path, { full: true, reuseInFlight: opts?.reuseInFlight })
+        const next = seedSourceControlStatus(path)
+        if (!next) return
         if (useProjectStore.getState().currentProject?.path !== path) return
         if (isCurrentRequest()) {
           setStatus(next)
           setError(null)
-          useGitStatusStore.getState().applyFromGitStatus(path, next)
           setSelectedKeys(new Set())
           setInlineDiff(null)
           setInlineDiffLoading(false)
@@ -965,7 +953,7 @@ export default function SourceControlPanel() {
         }
       } catch (reason) {
         if (!isCurrentRequest()) return
-        if (!soft || !seedSourceControlStatus(path)) {
+        if (!seedSourceControlStatus(path)) {
           setStatus(null)
         }
         setError(String(reason))
@@ -1024,7 +1012,7 @@ export default function SourceControlPanel() {
         // 软刷新只取 workdir 快照，不会自己拉历史 / 远程；硬刷新会。
         // 之前两条都发，同一次打开会跑两遍 git_log。
         const soft = !gitStatusNeedsTrackingMetadata(seeded)
-        void refresh({ soft })
+        void refresh({ soft, reuseInFlight: true })
         if (!seeded.is_repository) {
           setRemotes([])
         } else if (soft) {

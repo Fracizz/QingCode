@@ -16,6 +16,7 @@ import {
   isActiveRunTerminal,
   rehydrateRunTerminals,
   removeRunConfig,
+  removeRunConfigs,
   resolveRunTaskCwd,
   runConfig,
   runTaskTerminalName,
@@ -358,5 +359,41 @@ describe('run config runtime helpers', () => {
 
     await undoToast?.action?.onAction()
     expect(useRunConfigStore.getState().configsByProject.p1).toEqual(sampleConfigs)
+  })
+
+  it('stops only selected configs before persisting a batch deletion once', async () => {
+    const project = {
+      id: 'p1',
+      name: 'project',
+      path: 'D:/project',
+      created_at: 1,
+      last_opened_at: 1,
+    }
+    const configs: RunConfig[] = ['a', 'b', 'c'].map(id => ({ id, name: id, tasks: [] }))
+    const events: string[] = []
+    const closeTerminal = vi.fn(async (id: string) => {
+      events.push(id)
+      useTerminalStore.setState(state => ({
+        terminals: state.terminals.filter(terminal => terminal.id !== id),
+      }))
+    })
+    const saveConfigs = vi.fn(async (_project, next: RunConfig[]) => {
+      events.push('save')
+      useRunConfigStore.setState({ configsByProject: { p1: next } })
+    })
+    useRunConfigStore.setState({ configsByProject: { p1: configs }, saveConfigs })
+    useProjectStore.setState({ toasts: [] })
+    useTerminalStore.setState({
+      closeTerminal,
+      terminals: ['a', 'b', 'c'].map(id => baseTab({ id, name: id, runConfigId: id })),
+    })
+
+    await removeRunConfigs(project, ['a', 'c', 'a', 'missing'])
+
+    expect(closeTerminal).toHaveBeenCalledTimes(2)
+    expect(events).toEqual(['a', 'c', 'save'])
+    expect(useTerminalStore.getState().terminals.map(terminal => terminal.id)).toEqual(['b'])
+    expect(saveConfigs).toHaveBeenCalledExactlyOnceWith(project, [configs[1]])
+    expect(useProjectStore.getState().toasts).toHaveLength(1)
   })
 })

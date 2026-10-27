@@ -30,7 +30,7 @@ export function projectChipTooltipLabel(
     return [title, pathLine].join('\n')
   }
 
-  if (!isSshProject(project)) return project.name
+  if (!isSshProject(project)) return [project.name, t('路径：{path}', { path: project.path })].join('\n')
 
   const connectionId = project.connection_id || sshConnectionIdFromUri(project.path)
   const connection = connections.find(item => item.id === connectionId)

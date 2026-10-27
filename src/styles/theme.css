@@ -12,6 +12,16 @@
   --color-border: #2a2c33;
   --color-border-strong: #3e424d;
 
+  /* Layered dialog surfaces: neutral graphite, independent of editor colors. */
+  --color-dialog: #202124;
+  --color-dialog-chrome: #28292d;
+  --color-dialog-sidebar: #1b1c1f;
+  --color-dialog-input: #16171a;
+  --color-dialog-active: #30343b;
+  --color-dialog-border: #3d4048;
+  --color-dialog-separator: #303238;
+  --color-dialog-label: #c9cbd1;
+
   --color-fg: #f3f3f5;
   --color-fg-muted: #a1a1aa;
   --color-fg-dim: #a0a0a0;
@@ -91,6 +101,15 @@ html[data-theme="light"] {
   --color-border: #dedfe2;
   --color-border-strong: #b5bac1;
 
+  --color-dialog: var(--color-bg);
+  --color-dialog-chrome: var(--color-bg-chrome);
+  --color-dialog-sidebar: var(--color-bg-sidebar);
+  --color-dialog-input: var(--color-bg-input);
+  --color-dialog-active: var(--color-bg-active);
+  --color-dialog-border: var(--color-border-strong);
+  --color-dialog-separator: var(--color-border);
+  --color-dialog-label: #374151;
+
   --color-fg: #111827;
   --color-fg-muted: #4b5563;
   --color-fg-dim: #626872;
@@ -158,6 +177,15 @@ html[data-theme="olive"], html[data-theme="forest"] {
   --color-bg-active: #2b3f34;
   --color-border: #23332a;
   --color-border-strong: #334a3d;
+
+  --color-dialog: var(--color-bg);
+  --color-dialog-chrome: var(--color-bg-elevated);
+  --color-dialog-sidebar: var(--color-bg-sidebar);
+  --color-dialog-input: var(--color-bg-deep);
+  --color-dialog-active: var(--color-bg-active);
+  --color-dialog-border: var(--color-border-strong);
+  --color-dialog-separator: var(--color-border);
+  --color-dialog-label: #c2cfc6;
 
   --color-fg: #dce5df;
   --color-fg-muted: #a6bba8;

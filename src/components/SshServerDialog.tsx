@@ -71,9 +71,9 @@ export default function SshServerDialog({
         aria-modal="true"
         aria-labelledby={`${id}-title`}
         aria-describedby={`${id}-connection`}
-        className="modal-content-enter relative flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3"
+        className="modal-content-enter relative flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
       >
-        <header className="flex flex-shrink-0 items-start gap-3 px-5 pb-4 pt-5">
+        <header className="flex flex-shrink-0 items-start gap-3 bg-dialog-chrome px-5 pb-4 pt-5">
           <Server size={20} className="mt-0.5 flex-shrink-0 text-fg-muted" aria-hidden />
           <div className="min-w-0 flex-1">
             <h2 id={`${id}-title`} className="text-ui-lg font-semibold text-fg">
@@ -102,7 +102,7 @@ export default function SshServerDialog({
         <div
           role="tablist"
           aria-label={t('连接详情')}
-          className="flex flex-shrink-0 gap-5 border-b border-border px-5"
+          className="flex flex-shrink-0 gap-5 border-b border-dialog-separator bg-dialog-chrome px-5"
         >
           {views.map(item => (
             <button
@@ -148,9 +148,9 @@ export default function SshServerDialog({
           className="min-h-0 flex-1 overflow-auto p-5 text-ui text-fg"
         >
           {overview ? (
-            <div className="space-y-5">
+            <div className="space-y-4">
               <ConnectionSummary state={state} pending={pending} />
-              <dl className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+              <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                 <Detail label={t('连接模式')}>
                   {compatibility ? t('SSH 兼容模式') : t('SSH + 远端服务')}
                 </Detail>
@@ -165,7 +165,7 @@ export default function SshServerDialog({
                     </Detail>
                     {state.version && (
                       <Detail label={t('服务版本')}>
-                        <span className="font-mono">v{state.version}</span>
+                        <span className="font-mono text-ui-sm">v{state.version}</span>
                       </Detail>
                     )}
                   </>
@@ -177,7 +177,7 @@ export default function SshServerDialog({
                 </div>
               </dl>
               {state.reason && !compatibility && (
-                <div className="rounded-md border border-border bg-bg-sidebar p-3">
+                <div className="rounded-md border border-dialog-border bg-dialog-sidebar p-3">
                   <h3 className="text-ui-sm font-medium text-fg">{t('诊断信息')}</h3>
                   <p className="mt-2 whitespace-pre-wrap break-words font-mono text-ui-sm text-fg-muted [overflow-wrap:anywhere]">
                     {state.reason}
@@ -201,7 +201,7 @@ export default function SshServerDialog({
                   type="button"
                   aria-label={t('刷新日志')}
                   disabled={logsLoading}
-                  className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-border-strong px-2.5 py-1 text-ui-sm hover:bg-bg-hover disabled:opacity-40"
+                  className="inline-flex flex-shrink-0 items-center gap-1.5 rounded border border-dialog-border px-2.5 py-1 text-ui-sm hover:bg-bg-hover disabled:opacity-40"
                   onClick={onRefreshLogs}
                 >
                   <RefreshCw size={13} className={logsLoading ? 'animate-spin' : ''} aria-hidden />
@@ -222,7 +222,7 @@ export default function SshServerDialog({
               <pre
                 aria-busy={logsLoading}
                 aria-label={t('服务日志')}
-                className="min-h-48 whitespace-pre-wrap break-words rounded-md border border-border bg-bg-deep p-3 font-mono text-ui-sm leading-relaxed [overflow-wrap:anywhere]"
+                className="min-h-48 whitespace-pre-wrap break-words rounded-md border border-dialog-border bg-dialog-input p-3 font-mono text-ui-sm leading-relaxed [overflow-wrap:anywhere]"
               >
                 {logs ||
                   (logsLoading
@@ -235,10 +235,10 @@ export default function SshServerDialog({
           )}
         </div>
 
-        <footer className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3">
+        <footer className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
           <button
             type="button"
-            className="inline-flex items-center gap-1.5 rounded py-1.5 text-ui-sm text-fg-muted hover:text-fg"
+            className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-ui-sm text-fg hover:bg-bg-hover"
             onClick={onSettings}
           >
             <Settings2 size={14} aria-hidden />
@@ -258,7 +258,7 @@ export default function SshServerDialog({
               type="button"
               disabled={busy || !!blocker || pending}
               onClick={onRestart}
-              className="inline-flex items-center gap-1.5 rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded border border-dialog-border px-3 py-1.5 text-ui text-fg hover:bg-bg-hover disabled:opacity-40"
             >
               {busy ? (
                 <LoaderCircle size={14} className="animate-spin" aria-hidden />
@@ -311,7 +311,7 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
   return (
     <div
       role="status"
-      className="flex items-start gap-3 rounded-md border border-border bg-bg-sidebar p-4"
+      className={`flex items-start gap-3 rounded-md border p-3 ${ready ? 'border-ok/30 bg-ok/5' : offline ? 'border-danger/30 bg-danger/5' : 'border-dialog-border bg-dialog-sidebar'}`}
     >
       <Icon
         size={18}
@@ -319,7 +319,9 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
         className={`mt-0.5 flex-shrink-0 ${pending ? 'animate-spin text-accent' : offline ? 'text-danger' : ready ? 'text-ok' : compatibility ? 'text-fg-muted' : 'text-warn'}`}
       />
       <div className="min-w-0">
-        <h3 className="font-medium">{title}</h3>
+        <h3 className={`font-semibold ${ready ? 'text-ok' : offline ? 'text-danger' : 'text-fg'}`}>
+          {title}
+        </h3>
         <p className="mt-1 text-ui-sm leading-relaxed text-fg-muted">{description}</p>
       </div>
     </div>
@@ -329,7 +331,7 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
 function Detail({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
-      <dt className="mb-1 text-ui-sm text-fg-muted">{label}</dt>
+      <dt className="mb-1 text-ui-sm text-dialog-label">{label}</dt>
       <dd className="break-words [overflow-wrap:anywhere]">{children}</dd>
     </div>
   )
@@ -367,7 +369,7 @@ function TimingsDetail({ summary }: { summary: string }) {
     </li>
   )
   return (
-    <details className="border-t border-border pt-3">
+    <details className="border-t border-dialog-separator pt-3">
       <summary className="cursor-pointer text-ui-sm text-fg-muted hover:text-fg">
         {timings.total !== null
           ? t('就绪用时 {seconds}s', { seconds: timings.total.toFixed(1) })

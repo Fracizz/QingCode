@@ -59,6 +59,9 @@ import {
 } from '../hooks/useProjectIndicators'
 import { ProjectIndicatorMarks, useProjectIndicatorsVisible } from './ProjectIndicatorMarks'
 import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import type { ProjectLabel } from '../lib/projectLabels'
 import { isSshProject, sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
 import { isWslProject } from '../lib/wslWorkspace'
 import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
@@ -76,6 +79,7 @@ export default function ProjectPicker() {
   const projects = useMemo(() => sortVisibleProjects(allProjects), [allProjects])
   const currentProject = useProjectStore(s => s.currentProject)
   const sshConnections = useProjectStore(s => s.sshConnections)
+  const projectLabels = useProjectLabels()
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const hideProject = useProjectStore(s => s.hideProject)
@@ -144,7 +148,7 @@ export default function ProjectPicker() {
     ro.observe(container)
     measure.querySelectorAll<HTMLElement>('[data-chip-id]').forEach(el => ro.observe(el))
     return () => ro.disconnect()
-  }, [projects, currentProject?.id, fontSize])
+  }, [projects, currentProject?.id, fontSize, projectLabels])
 
   const closeDropdown = () => setOverflowOpen(false)
 
@@ -174,7 +178,7 @@ export default function ProjectPicker() {
   const positionDropdown = () => {
     const rect = overflowBtnRef.current?.getBoundingClientRect()
     if (!rect) return
-    const width = 240
+    const width = Math.min(420, window.innerWidth - 16)
     setDropdownStyle({
       left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
       top: rect.bottom + 4,
@@ -505,6 +509,7 @@ export default function ProjectPicker() {
               key={project.id}
               chipIndex={index}
               project={project}
+              label={projectLabels.get(project.id)}
               sshConnections={sshConnections}
               indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
               isCurrent={currentProject?.id === project.id}
@@ -594,6 +599,7 @@ export default function ProjectPicker() {
           <Chip
             key={project.id}
             project={project}
+            label={projectLabels.get(project.id)}
             sshConnections={sshConnections}
             indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
             isCurrent={currentProject?.id === project.id}
@@ -632,6 +638,7 @@ export default function ProjectPicker() {
                     key={project.id}
                     data-qingcode-copy-path={project.path}
                     role="menuitem"
+                    aria-label={projectLabels.get(project.id)?.text ?? project.name}
                     tabIndex={unavailable ? -1 : 0}
                     onClick={() => !unavailable && handleSwitch(project)}
                     onContextMenu={event => openProjectContextMenu(event, project)}
@@ -658,11 +665,16 @@ export default function ProjectPicker() {
                       )}
                     </span>
                     <Tooltip
-                      label={sshProjectDisplayPath(project, null, sshConnections)}
+                      label={projectChipTooltipLabel(project, sshConnections, t)}
                       side="right"
-                      wrapperClassName="truncate min-w-0 flex-1"
+                      wrapperClassName="min-w-0 flex-1"
                     >
-                      <span className="truncate">{project.name}</span>
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <ProjectName name={project.name} label={projectLabels.get(project.id)} />
+                        <span className="block truncate text-ui-2xs text-fg-dim">
+                          {sshProjectDisplayPath(project, null, sshConnections)}
+                        </span>
+                      </span>
                     </Tooltip>
                     <ProjectKindBadge project={project} />
                     <ProjectIndicatorMarks
@@ -793,6 +805,7 @@ export default function ProjectPicker() {
 
 function Chip({
   project,
+  label,
   sshConnections,
   indicators,
   chipIndex,
@@ -808,6 +821,7 @@ function Chip({
   onPointerDown,
 }: {
   project: Project
+  label?: ProjectLabel
   sshConnections: ReadonlyArray<SshConnection>
   indicators: ProjectIndicators
   chipIndex?: number
@@ -825,7 +839,7 @@ function Chip({
   const { t } = useI18n()
   const showIndicators = useProjectIndicatorsVisible()
   const statusLabel = [
-    project.name,
+    label?.text ?? project.name,
     showIndicators && indicators.running > 0
       ? t('运行中的终端 {count}', { count: indicators.running })
       : '',
@@ -894,10 +908,10 @@ function Chip({
       <Tooltip
         label={projectChipTooltipLabel(project, sshConnections, t)}
         side="bottom"
-        onlyWhenOverflow={!isSshProject(project) && !isWslProject(project)}
-        wrapperClassName="min-w-0 max-w-[140px]"
+        onlyWhenOverflow={!label?.source && !isSshProject(project) && !isWslProject(project)}
+        wrapperClassName="min-w-0 flex items-center"
       >
-        <span className="block truncate">{project.name}</span>
+        <ProjectName name={project.name} label={label} compact />
       </Tooltip>
       <ProjectIndicatorMarks project={project} indicators={indicators} isCurrent={isCurrent} />
       {project.ephemeral && !unavailable && project.kind !== 'ssh' && (

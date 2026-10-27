@@ -27,7 +27,6 @@ interface RunConfigFile {
   configs: RunConfig[]
 }
 
-
 function projectConfigDir(project: Project): string {
   const sep = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
   return `${project.path}${sep}.qingcode`
@@ -144,6 +143,7 @@ interface RunConfigState {
   saveConfigs: (project: Project, configs: RunConfig[]) => Promise<void>
   upsertConfig: (project: Project, config: RunConfig) => Promise<void>
   removeConfig: (project: Project, configId: string) => Promise<void>
+  removeConfigs: (project: Project, configIds: string[]) => Promise<void>
 }
 
 export const useRunConfigStore = create<RunConfigState>((set, get) => ({
@@ -218,34 +218,49 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
   },
 
   removeConfig: async (project: Project, configId: string) => {
-    const current = get().configsByProject[project.id] ?? []
-    const target = current.find(c => c.id === configId)
-    const next = current.filter(c => c.id !== configId)
-    await get().saveConfigs(project, next)
-    if (!target) return
+    await get().removeConfigs(project, [configId])
+  },
 
-    useProjectStore
-      .getState()
-      .pushToast(
-        'success',
-        translate('已删除运行配置「{name}」', { name: target.name }),
-        undefined,
-        {
-          label: translate('撤销'),
-          onAction: async () => {
-            const latest = get().configsByProject[project.id] ?? []
-            if (latest.some(config => config.id === target.id)) return
-            try {
-              await get().saveConfigs(project, [...latest, target])
-              useProjectStore
-                .getState()
-                .pushToast('success', translate('已恢复运行配置「{name}」', { name: target.name }))
-            } catch {
-              // saveConfigs has already shown the actionable error toast.
-            }
-          },
+  removeConfigs: async (project: Project, configIds: string[]) => {
+    const current = get().configsByProject[project.id] ?? []
+    const ids = new Set(configIds)
+    const targets = current.flatMap((config, index) =>
+      ids.has(config.id) ? [{ config, index }] : []
+    )
+    if (targets.length === 0) return
+    const next = current.filter(c => !ids.has(c.id))
+    await get().saveConfigs(project, next)
+    const removedMessage =
+      targets.length === 1
+        ? translate('已删除运行配置「{name}」', { name: targets[0].config.name })
+        : translate('已删除 {count} 个运行配置', { count: targets.length })
+
+    useProjectStore.getState().pushToast('success', removedMessage, undefined, {
+      label: translate('撤销'),
+      onAction: async () => {
+        const latest = get().configsByProject[project.id] ?? []
+        const restored = [...latest]
+        for (const { config, index } of targets) {
+          if (!restored.some(item => item.id === config.id)) {
+            restored.splice(Math.min(index, restored.length), 0, config)
+          }
         }
-      )
+        if (restored.length === latest.length) return
+        try {
+          await get().saveConfigs(project, restored)
+          useProjectStore
+            .getState()
+            .pushToast(
+              'success',
+              targets.length === 1
+                ? translate('已恢复运行配置「{name}」', { name: targets[0].config.name })
+                : translate('已恢复 {count} 个运行配置', { count: restored.length - latest.length })
+            )
+        } catch {
+          // saveConfigs has already shown the actionable error toast.
+        }
+      },
+    })
   },
 }))
 

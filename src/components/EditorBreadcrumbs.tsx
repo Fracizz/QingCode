@@ -8,6 +8,9 @@ import Tooltip from './Tooltip'
 import { isExternalFileWindow } from '../lib/windowSession'
 import { openPath, revealItemInDir } from '@tauri-apps/plugin-opener'
 import { isSshResource } from '../lib/tauri'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
 
 function projectRelativePath(projectPath: string, filePath: string) {
   const root = normalizePath(projectPath)
@@ -31,6 +34,8 @@ function pathAtRelativeDepth(filePath: string, segmentCount: number, totalSegmen
 export default function EditorBreadcrumbs() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
+  const sshConnections = useProjectStore(s => s.sshConnections)
+  const projectLabels = useProjectLabels()
   const activeTabId = useEditorStore(s => s.activeTabId)
   const tabs = useEditorStore(s => s.tabs)
   const setView = useUIStore(s => s.setView)
@@ -80,14 +85,14 @@ export default function EditorBreadcrumbs() {
   return (
     <div className="ui-font-scaled flex h-[calc(var(--ui-line-height)+2px)] flex-shrink-0 items-center gap-0.5 overflow-x-auto border-b border-border bg-bg-deep pl-0 pr-3 text-ui-xs text-fg-muted select-none">
       {currentProject && (
-        <Tooltip label={currentProject.path} side="bottom" wrapperClassName="max-w-[140px] shrink-0">
+        <Tooltip label={projectChipTooltipLabel(currentProject, sshConnections, t)} side="bottom" wrapperClassName="max-w-[280px] shrink-0">
           <button
             type="button"
-            className="max-w-[140px] cursor-pointer truncate rounded px-1.5 bg-bg-hover/80 text-fg hover:bg-bg-active"
+            className="flex max-w-full cursor-pointer rounded px-1.5 bg-bg-hover/80 text-fg hover:bg-bg-active"
             aria-label={t('在资源管理器中定位')}
             onClick={() => revealInExplorer(currentProject.path)}
           >
-            {currentProject.name}
+            <ProjectName name={currentProject.name} label={projectLabels.get(currentProject.id)} compact />
           </button>
         </Tooltip>
       )}

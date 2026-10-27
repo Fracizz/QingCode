@@ -29,6 +29,9 @@ import {
 } from './statusBarRowContext'
 import { isExternalFileWindow } from '../lib/windowSession'
 import { ProjectKindIcon } from './ProjectKindMark'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
 import { isSshProject } from '../lib/sshWorkspace'
 import { isWslProject } from '../lib/wslWorkspace'
 import SshServerStatusChip from './SshServerStatusChip'
@@ -62,6 +65,8 @@ const STATUS_SECONDARY = 'text-fg/85'
 export default function StatusBar() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
+  const projectLabels = useProjectLabels()
+  const sshConnections = useProjectStore(s => s.sshConnections)
   const projects = useProjectStore(s => s.projects)
   const addProject = useProjectStore(s => s.addProject)
   const switchProject = useProjectStore(s => s.switchProject)
@@ -249,9 +254,10 @@ export default function StatusBar() {
         if (info) {
           applyHead(info)
           // Keep SCM panel branch in sync when soft refresh left it empty.
-          if (cached?.is_repository && !cached.branch) {
+          const latest = useGitStatusStore.getState().peekPanelStatus(projectPath)
+          if (latest?.is_repository && !latest.branch) {
             useGitStatusStore.getState().setPanelStatus(projectPath, {
-              ...cached,
+              ...latest,
               branch: info.name,
             })
           }
@@ -432,9 +438,14 @@ export default function StatusBar() {
               ) : (
                 <Folder size={13} className="flex-shrink-0 text-brand" />
               )}
-              <span className="min-w-0 max-w-[45%] truncate">
-                {currentProject ? currentProject.name : t('未选择项目')}
-              </span>
+              {currentProject ? (
+                <StatusTip
+                  label={projectChipTooltipLabel(currentProject, sshConnections, t)}
+                  wrapperClassName="min-w-0 max-w-[45%] shrink!"
+                >
+                  <ProjectName name={currentProject.name} label={projectLabels.get(currentProject.id)} />
+                </StatusTip>
+              ) : <span className="truncate">{t('未选择项目')}</span>}
               {currentProject && (isWslProject(currentProject) || isSshProject(currentProject)) ? (
                 <>
                   <span className="flex-shrink-0 text-ui-2xs text-fg-muted">

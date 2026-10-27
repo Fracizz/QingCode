@@ -9,6 +9,9 @@ import { relocateProjectWithDialog } from '../utils/projectActions'
 import type { Project } from '../types'
 import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
 import { sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
 
 function sortProjects(projects: Project[]): Project[] {
   return [...projects].sort((a, b) => {
@@ -32,6 +35,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
   const { t } = useI18n()
   const allProjects = useProjectStore(s => s.projects)
   const sshConnections = useProjectStore(s => s.sshConnections)
+  const projectLabels = useProjectLabels()
   const currentProject = useProjectStore(s => s.currentProject)
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
@@ -53,9 +57,11 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
     const q = query.trim().toLowerCase()
     if (!q) return projects
     return projects.filter(
-      p => p.name.toLowerCase().includes(q) || p.path.toLowerCase().includes(q)
+      p => (projectLabels.get(p.id)?.text ?? p.name).toLowerCase().includes(q)
+        || sshProjectDisplayPath(p, null, sshConnections).toLowerCase().includes(q)
+        || p.path.toLowerCase().includes(q)
     )
-  }, [projects, query])
+  }, [projects, query, projectLabels, sshConnections])
 
   useEffect(() => {
     if (!open) return
@@ -211,14 +217,14 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
               return (
                 <Tooltip
                   key={project.id}
-                  label={location}
+                  label={projectChipTooltipLabel(project, sshConnections, t)}
                   side="right"
                   wrapperClassName="block w-full"
                 >
                   <button
                     type="button"
                     role="option"
-                    aria-label={`${project.name} — ${location}`}
+                    aria-label={`${projectLabels.get(project.id)?.text ?? project.name} — ${location}`}
                     aria-selected={active || isCurrent}
                     data-project-index={index}
                     onMouseEnter={() => setActiveIndex(index)}
@@ -239,7 +245,10 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                         />
                       )}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-ui">{project.name}</span>
+                    <span className="min-w-0 flex-1 text-ui">
+                      <ProjectName name={project.name} label={projectLabels.get(project.id)} />
+                      <span className="block truncate text-ui-2xs text-fg-dim">{location}</span>
+                    </span>
                     <ProjectKindBadge project={project} />
                     {project.hidden ? (
                       <span className="flex-shrink-0 text-ui-2xs text-fg-dim">

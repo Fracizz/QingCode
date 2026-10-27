@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Project } from '../types'
 import ProjectAddDialog from './ProjectAddDialog'
@@ -140,6 +140,33 @@ describe('ProjectAddDialog', () => {
 
     expect(onClose).toHaveBeenCalledOnce()
     expect(useUIStore.getState().createProjectOpen).toBe(true)
+  })
+
+  it('keeps hidden duplicates distinguishable after searching and switches the selected record', async () => {
+    const visible = { ...first, name: 'nem-panel', path: 'D:/work/nem-panel' }
+    const hidden = { ...second, name: 'nem-panel', path: 'D:/backup/nem-panel', hidden: 1 }
+    const switchProject = vi.fn().mockResolvedValue(true)
+    const unhideProject = vi.fn().mockResolvedValue(undefined)
+    useProjectStore.setState({ projects: [visible, hidden], switchProject, unhideProject })
+    render(<ProjectAddDialog open onClose={vi.fn()} />)
+
+    expect(screen.getByRole('option', { name: 'nem-panel [本机 · work] — D:/work/nem-panel' })).toBeInTheDocument()
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'backup' } })
+    const option = screen.getByRole('option', { name: 'nem-panel [本机 · backup] — D:/backup/nem-panel' })
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    expect(option).toHaveTextContent('D:/backup/nem-panel')
+    fireEvent.click(option)
+    await waitFor(() => expect(switchProject).toHaveBeenCalledWith(hidden))
+    expect(unhideProject).toHaveBeenCalledWith(hidden.id)
+  })
+
+  it('removes automatic source labels when a manual rename resolves the collision', () => {
+    useProjectStore.setState({ projects: [first, { ...second, name: first.name }] })
+    render(<ProjectAddDialog open onClose={vi.fn()} />)
+    expect(document.querySelectorAll('[data-project-source]')).toHaveLength(2)
+    act(() => useProjectStore.setState({ projects: [first, { ...second, name: '手动命名' }] }))
+    expect(document.querySelectorAll('[data-project-source]')).toHaveLength(0)
+    expect(screen.getByRole('option', { name: '手动命名 — D:/projects/b' })).toBeInTheDocument()
   })
 
   it('opens the remote connections manager from the footer', () => {

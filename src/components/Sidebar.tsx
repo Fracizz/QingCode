@@ -43,7 +43,9 @@ import {
 } from 'lucide-react'
 import Tooltip from './Tooltip'
 import { ProjectKindIcon } from './ProjectKindMark'
-import { sshProjectDisplayPath } from '../lib/sshWorkspace'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
 import { useProjectStore, type FileNode } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
@@ -158,6 +160,7 @@ function resolveExplorerDropFromPoint(
 
 export default function Sidebar() {
   const metrics = useInterfaceMetrics()
+  const projectLabels = useProjectLabels()
   const { t } = useI18n()
   const {
     projects,
@@ -1766,12 +1769,12 @@ export default function Sidebar() {
                       />
                     )}
                     <Tooltip
-                      label={sshProjectDisplayPath(currentProject, null, sshConnections)}
+                      label={projectChipTooltipLabel(currentProject, sshConnections, t)}
                       side="bottom"
                       wrapperClassName="flex min-w-0 items-center"
                     >
-                      <span className={`${EXPLORER_HEADING_LABEL} font-medium`}>
-                        {currentProject.name}
+                      <span className="flex min-w-0 flex-1 font-medium">
+                        <ProjectName name={currentProject.name} label={projectLabels.get(currentProject.id)} />
                       </span>
                     </Tooltip>
                   </span>

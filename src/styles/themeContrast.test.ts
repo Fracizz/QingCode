@@ -11,9 +11,11 @@ function themeBlock(selector: string): string {
 }
 
 function themeColor(block: string, token: string): string {
-  const match = block.match(new RegExp(`--color-${token}:\\s*(#[0-9a-fA-F]{6})`))
+  const match = block.match(
+    new RegExp(`--color-${token}:\\s*(#[0-9a-fA-F]{6}|var\\(--color-([\\w-]+)\\))`),
+  )
   if (!match) throw new Error(`Theme color not found: ${token}`)
-  return match[1]
+  return match[2] ? themeColor(block, match[2]) : match[1]
 }
 
 function luminance(hex: string): number {
@@ -51,6 +53,20 @@ describe('theme contrast', () => {
       const block = themeBlock(selector)
       for (const foreground of ['fg-muted', 'fg-dim', 'tree-fg']) {
         for (const background of backgroundTokens) {
+          expect(
+            contrast(themeColor(block, foreground), themeColor(block, background)),
+            `${foreground} on ${background}`,
+          ).toBeGreaterThanOrEqual(4.5)
+        }
+      }
+    })
+
+    it(`${name} keeps dialog labels and helper text readable across dialog surfaces`, () => {
+      const block = themeBlock(selector)
+      for (const foreground of ['fg', 'dialog-label', 'fg-muted', 'fg-dim']) {
+        for (const background of [
+          'dialog', 'dialog-chrome', 'dialog-sidebar', 'dialog-input', 'dialog-active',
+        ]) {
           expect(
             contrast(themeColor(block, foreground), themeColor(block, background)),
             `${foreground} on ${background}`,

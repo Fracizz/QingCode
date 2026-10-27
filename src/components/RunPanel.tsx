@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Play,
   Square,
@@ -22,7 +22,7 @@ import {
 import {
   activeTerminalsForConfig,
   rehydrateRunTerminals,
-  removeRunConfig,
+  removeRunConfigs,
   runConfig,
   stopConfig,
 } from '../lib/runConfigRuntime'
@@ -62,6 +62,12 @@ function taskOverview(tasks: RunTask[], t: (source: string) => string): string {
 }
 
 export default function RunPanel() {
+  const projectId = useProjectStore(s => s.currentProject?.id)
+  // Selection and editor state belong to the visible project only.
+  return <RunPanelContent key={projectId} />
+}
+
+function RunPanelContent() {
   const { t } = useI18n()
   const currentProject = useProjectStore(s => s.currentProject)
   const configsByProject = useRunConfigStore(s => s.configsByProject)
@@ -74,6 +80,9 @@ export default function RunPanel() {
   const [creating, setCreating] = useState(false)
   const [projectTrusted, setProjectTrusted] = useState(false)
   const [projectRestricted, setProjectRestricted] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [removing, setRemoving] = useState(false)
+  const removingRef = useRef(false)
 
   useEffect(() => {
     if (!currentProject) return
@@ -102,20 +111,53 @@ export default function RunPanel() {
     [configsByProject, currentProject]
   )
 
-  const requestRemove = async (config: RunConfig) => {
-    if (!currentProject) return
-    const confirmed = await confirmDialog({
-      title: t('删除运行配置？'),
-      message: t('将删除「{name}」及其任务定义。', { name: config.name }),
-      detail:
-        activeTerminalsForConfig(config.id, terminals).length > 0
-          ? t('该配置仍在运行。删除会先停止关联终端；随后可在短时间内撤销。')
-          : t('删除后可在短时间内撤销。'),
-      kind: 'danger',
-      confirmLabel: t('删除'),
+  const selectedConfigs = configs.filter(config => selectedIds.has(config.id))
+  const allSelected = configs.length > 0 && selectedConfigs.length === configs.length
+
+  const toggleSelection = (id: string) => {
+    setSelectedIds(previous => {
+      const next = new Set(previous)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
     })
-    if (!confirmed) return
-    await removeRunConfig(currentProject, config.id)
+  }
+
+  const requestRemove = async (targets: RunConfig[]) => {
+    if (!currentProject || targets.length === 0 || removingRef.current) return
+    removingRef.current = true
+    setRemoving(true)
+    try {
+      const running = targets.some(
+        config => activeTerminalsForConfig(config.id, terminals).length > 0
+      )
+      const confirmed = await confirmDialog({
+        title: t('删除运行配置？'),
+        message:
+          targets.length === 1
+            ? t('将删除「{name}」及其任务定义。', { name: targets[0].name })
+            : t('将删除选中的 {count} 个运行配置及其任务定义。', { count: targets.length }),
+        detail: [
+          ...(targets.length > 1 ? [targets.map(config => config.name).join('\n')] : []),
+          running
+            ? targets.length === 1
+              ? t('该配置仍在运行。删除会先停止关联终端；随后可在短时间内撤销。')
+              : t('所选配置仍在运行。删除会先停止关联终端；随后可在短时间内撤销。')
+            : t('删除后可在短时间内撤销。'),
+        ].join('\n\n'),
+        kind: 'danger',
+        confirmLabel: t('删除'),
+      })
+      if (!confirmed) return
+      const ids = targets.map(config => config.id)
+      await removeRunConfigs(currentProject, ids)
+      setSelectedIds(previous => new Set([...previous].filter(id => !ids.includes(id))))
+    } catch {
+      // saveConfigs already reports the error; keep the selection for retry.
+    } finally {
+      removingRef.current = false
+      setRemoving(false)
+    }
   }
 
   const runningTerminalsByConfig = useMemo(() => {
@@ -178,6 +220,49 @@ export default function RunPanel() {
         )}
       </div>
 
+      {configs.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-2 text-ui-sm flex-shrink-0">
+          <label className="inline-flex items-center gap-1.5 text-fg-muted">
+            <input
+              type="checkbox"
+              aria-label={t('全选运行配置')}
+              checked={allSelected}
+              ref={node => {
+                if (node) node.indeterminate = selectedConfigs.length > 0 && !allSelected
+              }}
+              disabled={removing}
+              onChange={() => setSelectedIds(new Set(allSelected ? [] : configs.map(c => c.id)))}
+              className="h-3.5 w-3.5 accent-accent"
+            />
+            {t('全选')}
+          </label>
+          <span className="text-fg-dim" aria-live="polite">
+            {t('已选 {count} 项', { count: selectedConfigs.length })}
+          </span>
+          {selectedConfigs.length > 0 && (
+            <>
+              <button
+                type="button"
+                disabled={removing}
+                onClick={() => void requestRemove(selectedConfigs)}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-danger hover:bg-bg-hover disabled:opacity-50"
+              >
+                <Trash2 size={13} />
+                {t('批量删除')}
+              </button>
+              <button
+                type="button"
+                disabled={removing}
+                onClick={() => setSelectedIds(new Set())}
+                className="rounded px-1.5 py-1 text-fg-muted hover:text-fg hover:bg-bg-hover disabled:opacity-50"
+              >
+                {t('取消选择')}
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex-1 overflow-auto pb-3">
         {configs.length === 0 ? (
           <div className="px-4 py-6 text-center">
@@ -197,9 +282,21 @@ export default function RunPanel() {
             return (
               <div
                 key={config.id}
-                className="group mx-2 my-1 rounded-md border border-border hover:border-border-strong bg-bg/40 hover:bg-bg-hover/40 transition-colors"
+                className={`group mx-2 my-1 rounded-md border transition-colors ${
+                  selectedIds.has(config.id)
+                    ? 'border-accent bg-bg-active'
+                    : 'border-border hover:border-border-strong bg-bg/40 hover:bg-bg-hover/40'
+                }`}
               >
                 <div className="flex items-center gap-2 px-2 py-2">
+                  <input
+                    type="checkbox"
+                    aria-label={t('选择运行配置「{name}」', { name: config.name })}
+                    checked={selectedIds.has(config.id)}
+                    disabled={removing}
+                    onChange={() => toggleSelection(config.id)}
+                    className="h-3.5 w-3.5 flex-shrink-0 accent-accent"
+                  />
                   <Tooltip label={running ? t('停止') : t('运行')} side="bottom">
                     <button
                       type="button"
@@ -256,8 +353,9 @@ export default function RunPanel() {
                       <button
                         type="button"
                         aria-label={t('删除运行配置「{name}」', { name: config.name })}
-                        className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover"
-                        onClick={() => void requestRemove(config)}
+                        disabled={removing}
+                        className="p-1 rounded text-fg-dim hover:text-danger hover:bg-bg-hover disabled:opacity-50"
+                        onClick={() => void requestRemove([config])}
                       >
                         <Trash2 size={13} />
                       </button>

@@ -48,6 +48,9 @@ import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
 import { ProjectKindIcon, ProjectKindBadge } from './ProjectKindMark'
 import { sshProjectDisplayPath, requestSshReconnect } from '../lib/sshWorkspace'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
 
 type SortKey = 'name' | 'path' | 'last_opened_at' | 'created_at'
 type SortDir = 'asc' | 'desc'
@@ -80,6 +83,7 @@ export default function ProjectManager() {
   const projects = useMemo(() => allProjects.filter(p => !p.ephemeral), [allProjects])
   const currentProject = useProjectStore(s => s.currentProject)
   const sshConnections = useProjectStore(s => s.sshConnections)
+  const projectLabels = useProjectLabels()
   const unavailableProjectIds = useProjectStore(s => s.unavailableProjectIds)
   const switchProject = useProjectStore(s => s.switchProject)
   const hideProject = useProjectStore(s => s.hideProject)
@@ -484,7 +488,7 @@ export default function ProjectManager() {
                         <Checkbox
                           checked={checked}
                           onChange={() => toggleOne(project.id)}
-                          ariaLabel={t('选择 {name}', { name: project.name })}
+                          ariaLabel={t('选择 {name}', { name: projectLabels.get(project.id)?.text ?? project.name })}
                         />
                       </td>
                       <td className="px-3 py-2 align-middle">
@@ -501,16 +505,16 @@ export default function ProjectManager() {
                             />
                           )}
                           <Tooltip
-                            label={unavailable ? t('目录不可用，请重新定位') : project.name}
+                            label={unavailable ? t('目录不可用，请重新定位') : projectChipTooltipLabel(project, sshConnections, t)}
                             side="bottom"
-                            onlyWhenOverflow={!unavailable}
-                            wrapperClassName="min-w-0"
+                            wrapperClassName="min-w-0 flex-1"
                           >
                             <button
                               type="button"
                               onClick={() => void handleActivate(project)}
                               disabled={unavailable}
-                              className={`block max-w-full truncate text-left ${
+                              aria-label={projectLabels.get(project.id)?.text ?? project.name}
+                              className={`flex w-full min-w-0 items-center text-left ${
                                 unavailable
                                   ? 'text-fg-dim cursor-default'
                                   : isCurrent
@@ -518,11 +522,11 @@ export default function ProjectManager() {
                                     : 'text-fg hover:text-accent'
                               }`}
                             >
-                              {project.name}
+                              <ProjectName name={project.name} label={projectLabels.get(project.id)} />
                               {isCurrent && (
                                 <Check
                                   size={11}
-                                  className="inline-block ml-1 text-accent align-middle"
+                                  className="ml-1 shrink-0 text-accent"
                                 />
                               )}
                             </button>

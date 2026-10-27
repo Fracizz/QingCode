@@ -9,11 +9,15 @@ import { useUIStore } from '../store/uiStore'
 import { useI18n } from '../lib/i18n'
 import { isExternalFileWindow } from '../lib/windowSession'
 import { openFileFromDialog } from '../lib/openFileDialog'
-import { sshFileDisplayPath, sshProjectDisplayPath, sshRemotePathFromUri } from '../lib/sshWorkspace'
+import { sshFileDisplayPath, sshRemotePathFromUri } from '../lib/sshWorkspace'
+import ProjectName from './ProjectName'
+import { useProjectLabels } from '../hooks/useProjectLabels'
+import { projectChipTooltipLabel } from '../lib/projectChipTooltip'
 
 /** Lightweight empty editor so CodeMirror is not downloaded until a file is opened. */
 export default function EmptyEditor() {
   const { t } = useI18n()
+  const projectLabels = useProjectLabels()
   const recentFiles = useProjectStore(s => s.recentFiles)
   const projects = useProjectStore(s => s.projects)
   const sshConnections = useProjectStore(s => s.sshConnections)
@@ -131,16 +135,17 @@ export default function EmptyEditor() {
             {recentProjects.map(project => (
               <Tooltip
                 key={project.id}
-                label={sshProjectDisplayPath(project, null, sshConnections)}
+                label={projectChipTooltipLabel(project, sshConnections, t)}
                 side="bottom"
                 wrapperClassName="max-w-[180px]"
               >
                 <button
                   type="button"
+                  aria-label={projectLabels.get(project.id)?.text ?? project.name}
                   onClick={() => void switchProject(project)}
                   className="max-w-[180px] truncate rounded-full border border-border px-3 py-1 text-ui-sm text-fg-muted transition-all duration-150 hover:border-brand/60 hover:bg-bg-hover hover:text-fg hover:shadow-sm"
                 >
-                  {project.name}
+                  <ProjectName name={project.name} label={projectLabels.get(project.id)} />
                 </button>
               </Tooltip>
             ))}

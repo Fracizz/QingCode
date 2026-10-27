@@ -4,15 +4,12 @@ import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { useProjectStore } from '../store/projectStore'
-import { getGitWorkdirStatus } from '../lib/ipc/git'
 import { isSshResource, isTauri } from '../lib/tauri'
 import {
   countDirtyTabsByProject,
   countRunningTerminalsByProject,
-  GIT_DIRTY_COUNT_EVENT,
-  gitDirtyCountForProject,
-  type GitDirtyCountDetail,
   projectGitRefreshDelay,
+  normalizedProjectPath,
   projectPathsMatch,
 } from '../lib/projectIndicators'
 import {
@@ -48,9 +45,7 @@ export function useProjectIndicators(
   const projectSessions = useEditorStore(state => state.projectSessions)
   const terminals = useTerminalStore(state => state.terminals)
   const currentProject = useProjectStore(state => state.currentProject)
-  const storeProjectPath = useGitStatusStore(state => state.projectPath)
-  const storeDirtyCount = useGitStatusStore(state => state.dirtyCount)
-  const [gitChangesByProject, setGitChangesByProject] = useState<Record<string, number>>({})
+  const snapshots = useGitStatusStore(state => state.snapshots)
   const [indicatorsEnabled, setIndicatorsEnabled] = useState(isProjectIndicatorsEnabled)
   const [gitRefreshIntervalStartMinutes, setGitRefreshIntervalStartMinutes] = useState(
     getGitRefreshIntervalStartMinutes
@@ -76,28 +71,7 @@ export function useProjectIndicators(
   )
 
   useEffect(() => {
-    if (!indicatorsEnabled) return
-
-    const onDirtyCount = (event: Event) => {
-      const detail = (event as CustomEvent<GitDirtyCountDetail>).detail
-      if (!detail?.projectPath) return
-      const project = projects.find(p => projectPathsMatch(p.path, detail.projectPath))
-      if (!project || unavailableProjectIds.includes(project.id)) return
-      setGitChangesByProject(previous => {
-        if (previous[project.id] === detail.dirtyCount) return previous
-        return { ...previous, [project.id]: detail.dirtyCount }
-      })
-    }
-
-    window.addEventListener(GIT_DIRTY_COUNT_EVENT, onDirtyCount)
-    return () => window.removeEventListener(GIT_DIRTY_COUNT_EVENT, onDirtyCount)
-  }, [indicatorsEnabled, projects, unavailableProjectIds])
-
-  useEffect(() => {
-    if (!isTauri() || !indicatorsEnabled) {
-      queueMicrotask(() => setGitChangesByProject({}))
-      return
-    }
+    if (!isTauri() || !indicatorsEnabled) return
 
     const eligibleProjects = projects.filter(
       project =>
@@ -120,12 +94,9 @@ export function useProjectIndicators(
       // 窗口不可见时不打 Git：角标没人看，也避免和构建/终端抢磁盘。
       if (typeof document !== 'undefined' && document.hidden) return
       try {
-        const status = await getGitWorkdirStatus(project.path)
-        if (cancelled) return
-        const dirtyCount = status?.dirty_count ?? 0
-        setGitChangesByProject(previous => {
-          if (previous[project.id] === dirtyCount) return previous
-          return { ...previous, [project.id]: dirtyCount }
+        await useGitStatusStore.getState().refresh(project.path, {
+          background: true,
+          reuseInFlight: true,
         })
       } catch {
         // Keep the previous badge when a best-effort refresh fails.
@@ -228,12 +199,7 @@ export function useProjectIndicators(
   return useMemo(() => {
     return Object.fromEntries(
       projects.map(project => {
-        const fromCache = gitChangesByProject[project.id] ?? 0
-        // 当前项目用状态库的实时值，但只在快照确实属于它时才采用（否则会串到上一个项目）。
-        const gitChanges =
-          currentProject && project.id === currentProject.id
-            ? gitDirtyCountForProject(currentProject.path, storeProjectPath, storeDirtyCount)
-            : fromCache
+        const gitChanges = snapshots.get(normalizedProjectPath(project.path))?.dirtyCount ?? 0
         return [
           project.id,
           {
@@ -245,12 +211,9 @@ export function useProjectIndicators(
       })
     )
   }, [
-    currentProject,
     dirtyEditorsByProject,
-    gitChangesByProject,
     projects,
     runningByProject,
-    storeDirtyCount,
-    storeProjectPath,
+    snapshots,
   ])
 }
