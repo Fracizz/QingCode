@@ -6,6 +6,18 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.14-beta.4] - 2026-10-27
+
+### Added
+
+- SSH Server mode, persistent terminal recovery, and bulk import from local SSH configuration
+- Remote file uploads, image viewing and Windows SSH Git, plus WSL project identification and cross-platform run configurations
+
+### Changed
+
+- Improved multi-project management, idle editor and batch run operations
+- Hardened remote trust, connection tests, server deployment, paged directory scanning and terminal cleanup
+
 ### Changed
 
 - Fewer background Git reads: refreshes that arrive while a read of the same project is running now coalesce into one trailing read (changes saved meanwhile are not lost), window-focus refresh on local projects has a 2-second cooldown, and project badges stop polling while the window is hidden

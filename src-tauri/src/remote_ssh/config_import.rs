@@ -354,8 +354,12 @@ mod tests {
         assert_eq!(result[0].port, 2222);
         assert_eq!(result[1].port, 22);
         assert_eq!(
-            result[0].private_key_path.as_deref(),
-            Some("/home/local/.ssh/key with space")
+            result[0].private_key_path.as_deref().map(Path::new),
+            Some(
+                Path::new("/home/local")
+                    .join(".ssh/key with space")
+                    .as_path()
+            )
         );
         assert!(result[0].issue.is_none());
     }

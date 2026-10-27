@@ -114,6 +114,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Check (tsc, vitest, rustfmt, clippy, cargo test)
+        env:
+          # Clipboard integration tests share Windows' process-wide clipboard.
+          RUST_TEST_THREADS: '1'
         run: pnpm check
 
   build-windows-x64:
