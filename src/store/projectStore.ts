@@ -69,6 +69,7 @@ import {
   findSshProject,
   isSshProject,
   isSshSharedServerReady,
+  isSshWorkspaceReady,
   prepareSshWorkspace,
   requestSshReconnect,
   sshRootUri,
@@ -201,6 +202,19 @@ function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
       throw new SshPreparationError(String(error))
     }
   })
+}
+
+/**
+ * 模式已是连接配置属性，不再随项目推送；但 autoDownload / offlineDir 仍可被项目设置
+ * 覆盖，连接（可能触发部署/下载）前按当前项目重算并推给后端。
+ */
+async function syncSshServerSettingsForProject(project: Project): Promise<void> {
+  try {
+    await loadEffectiveSshServerEnabled(project)
+    await pushSshServerSettingsToNative()
+  } catch (e) {
+    console.warn('sync ssh server setting failed:', e)
+  }
 }
 
 async function syncAllowlistRoots(projects: Project[]): Promise<void> {
@@ -853,17 +867,28 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const known = get().projects
       const forTrustSync = known.some(p => p.id === project.id) ? known : [...known, project]
       await pushTrustedRootsToNative(forTrustSync)
-      // 模式已是连接配置属性，不再随项目推送；但 autoDownload / offlineDir 仍可被项目设置
-      // 覆盖，连接（可能触发部署/下载）前按当前项目重算并推给后端。
-      try {
-        await loadEffectiveSshServerEnabled(project)
-        await pushSshServerSettingsToNative()
-      } catch (e) {
-        console.warn('sync ssh server setting failed:', e)
+      // 本会话已成功打开过、连接仍在的远程项目：直接用缓存目录树切换，
+      // 不再弹打开对话框、不阻塞在远端设置读取与整棵树重扫上，校验与刷新转后台。
+      const cachedSshTree = isSshProject(project) ? get().projectTrees[project.id] : undefined
+      if (cachedSshTree && await isSshWorkspaceReady(project.path)) {
+        const recentFiles = await touchAndLoadRecentFiles(project.id)
+        const previousId = currentProject?.id ?? null
+        set(s => ({
+          currentProject: project,
+          recentFiles,
+          fileTree: cachedSshTree,
+          unavailableProjectIds: s.unavailableProjectIds.filter(id => id !== project.id),
+          expandedProjects: { ...s.expandedProjects, [project.id]: true },
+        }))
+        activateProjectSession(previousId, project.id)
+        void syncSshServerSettingsForProject(project).then(() => get().refreshProjectTree(project))
+        return true
       }
 
+      await syncSshServerSettingsForProject(project)
+
       sshConnectionAttempted = true
-      const prepared = isSshProject(project) ? await prepareRemoteProject(project) : null
+      const prepared = isSshProject(project) ? await prepareRemoteProject(project, cachedSshTree) : null
       sshWorkspaceConnected = true
 
       // Ephemeral/empty projects use a scratch temp directory; do not block

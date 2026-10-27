@@ -18,6 +18,7 @@ import CommandPalette from './components/CommandPalette'
 import SymbolPicker from './components/SymbolPicker'
 import FileCompareDialog from './components/FileCompareDialog'
 import EmptyEditor from './components/EmptyEditor'
+import ProjectIdleEditor from './components/ProjectIdleEditor'
 import { useTerminalStore } from './store/terminalStore'
 import { useProjectStore } from './store/projectStore'
 import { useEditorStore } from './store/editorStore'
@@ -481,6 +482,8 @@ function App() {
                   </Suspense>
                 ) : editorBody === 'welcome' ? (
                   <EmptyEditor />
+                ) : editorBody === 'projectIdle' ? (
+                  <ProjectIdleEditor />
                 ) : (
                   <div className="min-h-0 flex-1 bg-bg" />
                 )}

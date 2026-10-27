@@ -24,6 +24,12 @@
   font-size: max(9px, calc(var(--ui-font-size) - 3px));
   line-height: var(--ui-line-height);
 }
+/* 带边框的小徽标：裁掉字体上下留白，让文字在边框内真正垂直居中（上下间距交给 padding） */
+@utility text-ui-badge {
+  font-size: max(9px, calc(var(--ui-font-size) - 3px));
+  line-height: 1;
+  text-box: trim-both cap alphabetic;
+}
 @utility text-ui-lg {
   font-size: calc(var(--ui-font-size) + 1px);
   line-height: calc(var(--ui-line-height) + 2px);
