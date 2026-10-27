@@ -9,13 +9,22 @@ vi.mock('../tauri', () => ({
   safeInvoke: (...args: unknown[]) => mocks.safeInvoke(...args),
 }))
 
-import { attachTerminal, killTerminal, listDetachedTerminals } from './terminal'
+import { attachTerminal, killDetachedTerminal, killTerminal, listDetachedTerminals } from './terminal'
 
 beforeEach(() => {
   mocks.safeInvoke.mockReset()
 })
 
 describe('SSH detached terminal IPC contract', () => {
+  it('ends a detached PTY without creating an attached local session', async () => {
+    mocks.safeInvoke.mockResolvedValueOnce(undefined)
+    const args = { ptyId: 'idle-pty', cwd: 'ssh://conn/home/app' }
+    await killDetachedTerminal(args)
+    expect(mocks.safeInvoke).toHaveBeenCalledExactlyOnceWith(
+      '结束远端终端', 'ssh_kill_detached_terminal', args,
+    )
+  })
+
   it('retains SSH routing after a failed stop so retries reach the same remote task', async () => {
     mocks.safeInvoke.mockResolvedValueOnce({
       persistent: true,

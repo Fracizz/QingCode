@@ -681,6 +681,74 @@ pub(crate) async fn kill_detached_terminals(
     result
 }
 
+fn validate_detached_terminal_for_kill(
+    info: &PtyInfoWire,
+    client_id: &str,
+    root: &RegisteredRoot,
+) -> Result<(), String> {
+    if info.owner.as_deref() != Some(client_id) {
+        return Err("PTY 不属于当前客户端".to_string());
+    }
+    if !info.detached {
+        return Err("PTY 已被接回，无法按遗留终端结束".to_string());
+    }
+    let cwd = info
+        .cwd
+        .as_deref()
+        .ok_or_else(|| "PTY 缺少工作目录，无法安全结束".to_string())?;
+    if !root.trusted || !daemon_path_is_within(cwd, &root.canonical_path) {
+        return Err("PTY 工作目录不在当前可信项目根内".to_string());
+    }
+    Ok(())
+}
+
+pub(crate) async fn kill_detached_terminal(
+    pty_id: &str,
+    root: &RegisteredRoot,
+    app: &AppHandle,
+    manager: &SshManager,
+) -> Result<(), String> {
+    let parsed = parse_remote_uri(&root.uri)?;
+    let endpoint = server::require_server_endpoint(app, manager, root, true).await?;
+    let daemon = endpoint
+        .daemon
+        .as_ref()
+        .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
+    let client_id = manager.daemon_client_id(&parsed.connection_id);
+    let (transport, session) = open_terminal_daemon_session(
+        manager,
+        &parsed.connection_id,
+        &root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    let result = async {
+        // 不传 clientId：孤儿列表会过滤已退出/已接回的 PTY，无法据此区分
+        // 「确实已回收」与「仍在但不能按遗留终端处理」。完整元数据留在后端校验。
+        let response = session.request("pty.list", &serde_json::json!({})).await?;
+        let response: PtyListResponse = serde_json::from_value(response)
+            .map_err(|error| format!("解析 pty.list 应答失败：{error}"))?;
+        // 已回收的终端视为关闭成功；仍在的终端必须重新校验归属与可信根。
+        let Some(info) = response.ptys.iter().find(|info| info.id == pty_id) else {
+            return Ok(());
+        };
+        let current_root = manager.root_for_uri(&root.uri, true)?;
+        if current_root.canonical_path != root.canonical_path {
+            return Err("项目根已变化，无法安全结束遗留终端".to_string());
+        }
+        validate_detached_terminal_for_kill(info, &client_id, &current_root)?;
+        session
+            .request("pty.kill", &serde_json::json!({ "id": pty_id }))
+            .await?;
+        Ok(())
+    }
+    .await;
+    session.shutdown();
+    transport.release();
+    result
+}
+
 pub(crate) async fn attach_persistent_terminal(
     id: String,
     pty_id: String,
@@ -1810,6 +1878,35 @@ mod tests {
     }
 
     #[test]
+    fn detached_terminal_kill_requires_owner_detached_state_and_trusted_root() {
+        let mut root = RegisteredRoot {
+            uri: "ssh://remote-a/home/dev/app".into(),
+            canonical_path: "/home/dev/app".into(),
+            trusted: true,
+        };
+        let client_id = "install:remote-a";
+        let mut info = pty_info("idle-pty", Some(client_id), "/home/dev/app");
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_ok());
+        // 已退出但尚未回收的 PTY 也应能直接清理，无须接回失败后再遗留。
+        info.exited = Some(0);
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_ok());
+        assert!(validate_detached_terminal_for_kill(&info, "other-install", &root).is_err());
+        info.owner = None;
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+        info.owner = Some(client_id.into());
+        info.detached = false;
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+        info.detached = true;
+        info.cwd = Some("/home/dev/app-sibling".into());
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+        info.cwd = None;
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+        info.cwd = Some("/home/dev/app/subdir".into());
+        root.trusted = false;
+        assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+    }
+
+    #[test]
     fn detached_terminal_maps_owned_pty_cwd_to_ssh_uri() {
         let roots = vec![RegisteredRoot {
             uri: "ssh://remote-a/home/dev/app".into(),
@@ -2068,6 +2165,16 @@ mod tests {
         let created = client.wait_response(create_id).await;
         let pty_id = created["id"].as_str().unwrap().to_string();
 
+        // 默认 shell 从不发送输入；断开后直接关闭，不依赖 attach/replay。
+        let idle_create_id = client
+            .request(
+                "pty.create",
+                &serde_json::json!({ "cwd": root, "cols": 80, "rows": 24 }),
+            )
+            .await;
+        let idle = client.wait_response(idle_create_id).await;
+        let idle_pty_id = idle["id"].as_str().unwrap().to_string();
+
         #[derive(Serialize)]
         struct Input<'a> {
             id: &'a str,
@@ -2128,6 +2235,26 @@ mod tests {
             .cloned()
             .expect("daemon dropped the persistent PTY");
         assert_eq!(entry["detached"], true);
+
+        let idle_entry = listed["ptys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == idle_pty_id)
+            .expect("daemon dropped the idle PTY");
+        assert_eq!(idle_entry["detached"], true);
+        assert_eq!(idle_entry["nextInputSeq"], 0);
+        let kill_id = client
+            .request("pty.kill", &serde_json::json!({ "id": idle_pty_id }))
+            .await;
+        client.wait_response(kill_id).await;
+        let list_id = client.request("pty.list", &serde_json::json!({})).await;
+        let remaining = client.wait_response(list_id).await;
+        assert!(remaining["ptys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["id"] != idle_pty_id));
 
         let attach_id = client
             .request(

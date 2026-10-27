@@ -5778,6 +5778,21 @@ pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Re
     Ok(())
 }
 
+/// 直接结束当前可信项目内、本安装遗留的 PTY，不接回或重放终端输出。
+#[tauri::command]
+pub async fn ssh_kill_detached_terminal(
+    pty_id: String,
+    cwd: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    if pty_id.trim().is_empty() {
+        return Err("ptyId 不能为空".to_string());
+    }
+    let root = manager.root_for_uri(&cwd, true)?;
+    server::kill_detached_terminal(&pty_id, &root, &app, &manager).await
+}
+
 /// 查询当前 QingCode 安装在该 SSH 连接下遗留的持久化终端。
 #[tauri::command]
 pub async fn ssh_list_detached_terminals(

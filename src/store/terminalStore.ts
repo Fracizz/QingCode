@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
   attachTerminal,
   createTerminal,
+  killDetachedTerminal,
   killTerminal,
   listDetachedTerminals,
   resizeTerminal,
@@ -395,27 +396,9 @@ function markDisconnectedExit(id: string) {
   }))
 }
 
-async function killRestoredPersistentTerminalBeforeAttach(tab: TerminalTab): Promise<void> {
-  if (!tab.persistent || !tab.ptyId || !tab.connectionId) return
-  const temporaryId = crypto.randomUUID()
-  const size = lastPtySize.get(tab.id) ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS }
-  try {
-    await attachTerminal({
-      id: temporaryId,
-      ptyId: tab.ptyId,
-      cwd: tab.cwd,
-      cols: size.cols,
-      rows: size.rows,
-    })
-    await killTerminal(temporaryId)
-  } catch (error) {
-    console.warn(`kill restored terminal ${tab.ptyId} failed:`, error)
-  }
-}
-
 async function killTerminalForClose(tab: TerminalTab, spawnInFlight: boolean): Promise<void> {
   if (tab.awaitingRestoreSpawn && tab.persistent && tab.ptyId && !spawnInFlight) {
-    await killRestoredPersistentTerminalBeforeAttach(tab)
+    await killDetachedTerminal({ ptyId: tab.ptyId, cwd: tab.cwd })
   } else if (!tab.awaitingRestoreSpawn) {
     await killTerminal(tab.id)
   }
@@ -1679,16 +1662,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (action === 'kill') {
         const failures: string[] = []
         for (const terminal of orphans) {
-          const id = crypto.randomUUID()
           try {
-            await attachTerminal({
-              id,
+            await killDetachedTerminal({
               ptyId: terminal.ptyId,
               cwd: terminal.cwd,
-              cols: terminal.cols,
-              rows: terminal.rows,
             })
-            await killTerminal(id)
           } catch (error) {
             failures.push(
               `${terminal.name || terminal.ptyId}: ${String(error)}`,

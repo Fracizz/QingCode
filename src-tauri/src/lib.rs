@@ -930,6 +930,7 @@ pub fn run() {
             remote_ssh::ssh_write_terminal,
             remote_ssh::ssh_resize_terminal,
             remote_ssh::ssh_kill_terminal,
+            remote_ssh::ssh_kill_detached_terminal,
             remote_ssh::ssh_list_detached_terminals,
             remote_ssh::ssh_attach_terminal,
             remote_ssh::ssh_forget_workspace_root,

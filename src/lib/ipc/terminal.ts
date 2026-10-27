@@ -85,6 +85,11 @@ export function attachTerminal(args: TerminalAttachArgs): Promise<TerminalSpawnR
   )
 }
 
+/** End a detached daemon PTY without attaching or replaying its output. */
+export function killDetachedTerminal(args: { ptyId: string; cwd: string }): Promise<void> {
+  return safeInvoke('结束远端终端', 'ssh_kill_detached_terminal', args)
+}
+
 /** List detached daemon PTYs owned by this QingCode installation. */
 export async function listDetachedTerminals(connectionId: string): Promise<SshDetachedTerminal[]> {
   const result = await safeInvoke<unknown[]>('查询远端终端', 'ssh_list_detached_terminals', {

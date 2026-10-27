@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   listeners: new Map<string, Set<(event: { payload: unknown }) => void>>(),
   attachTerminal: vi.fn(),
   createTerminal: vi.fn(),
+  killDetachedTerminal: vi.fn(async () => undefined),
   killTerminal: vi.fn(async () => undefined),
   listDetachedTerminals: vi.fn(),
   resizeTerminal: vi.fn(async () => undefined),
@@ -40,6 +41,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('../lib/ipc/terminal', () => ({
   attachTerminal: (...args: unknown[]) => mocks.attachTerminal(...args),
   createTerminal: (...args: unknown[]) => mocks.createTerminal(...args),
+  killDetachedTerminal: (...args: unknown[]) => mocks.killDetachedTerminal(...args),
   killTerminal: (...args: unknown[]) => mocks.killTerminal(...args),
   listDetachedTerminals: (...args: unknown[]) => mocks.listDetachedTerminals(...args),
   resizeTerminal: (...args: unknown[]) => mocks.resizeTerminal(...args),
@@ -108,6 +110,7 @@ describe('terminal persistent connection events', () => {
     mocks.listeners.clear()
     mocks.attachTerminal.mockReset()
     mocks.createTerminal.mockReset()
+    mocks.killDetachedTerminal.mockReset().mockResolvedValue(undefined)
     mocks.killTerminal.mockClear()
     mocks.writeTerminal.mockClear()
     mocks.spawnTerminalScript.mockReset()
@@ -270,11 +273,6 @@ describe('terminal persistent connection events', () => {
   })
 
   it('kills a restored daemon PTY when its tab closes before the first attach', async () => {
-    mocks.attachTerminal.mockResolvedValueOnce({
-      persistent: true,
-      ptyId: 'pty-restored',
-      connectionId: 'conn',
-    })
     useTerminalStore.setState({
       terminals: [
         terminal({
@@ -291,20 +289,14 @@ describe('terminal persistent connection events', () => {
 
     await useTerminalStore.getState().closeTerminal('restored-close')
 
-    const temporaryId = mocks.attachTerminal.mock.calls[0][0].id
-    expect(mocks.attachTerminal).toHaveBeenCalledWith(
-      expect.objectContaining({ ptyId: 'pty-restored', cwd: 'ssh://conn/home/app' }),
-    )
-    expect(mocks.killTerminal).toHaveBeenCalledWith(temporaryId)
+    expect(mocks.killDetachedTerminal).toHaveBeenCalledWith({
+      ptyId: 'pty-restored', cwd: 'ssh://conn/home/app',
+    })
+    expect(mocks.attachTerminal).not.toHaveBeenCalled()
     expect(useTerminalStore.getState().terminals).toHaveLength(0)
   })
 
   it('kills restored PTYs when closing every terminal in a project', async () => {
-    mocks.attachTerminal.mockResolvedValueOnce({
-      persistent: true,
-      ptyId: 'pty-project',
-      connectionId: 'conn',
-    })
     useTerminalStore.setState({
       terminals: [
         terminal({
@@ -321,9 +313,26 @@ describe('terminal persistent connection events', () => {
 
     await useTerminalStore.getState().closeAllProjectTerminals('p1')
 
-    const temporaryId = mocks.attachTerminal.mock.calls[0][0].id
-    expect(mocks.killTerminal).toHaveBeenCalledWith(temporaryId)
+    expect(mocks.killDetachedTerminal).toHaveBeenCalledWith({
+      ptyId: 'pty-project', cwd: 'ssh://conn/home/app',
+    })
+    expect(mocks.attachTerminal).not.toHaveBeenCalled()
     expect(mocks.killTerminal).toHaveBeenCalledWith('direct-project')
+    expect(useTerminalStore.getState().terminals).toHaveLength(0)
+  })
+
+  it('keeps a restored tab available for retry when the direct stop fails', async () => {
+    mocks.killDetachedTerminal.mockRejectedValueOnce(new Error('offline'))
+    useTerminalStore.setState({ terminals: [terminal({
+      id: 'retry-close', persistent: true, ptyId: 'pty-offline', awaitingRestoreSpawn: true,
+    })] })
+
+    await useTerminalStore.getState().closeTerminal('retry-close')
+
+    expect(useTerminalStore.getState().terminals).toHaveLength(1)
+    expect(mocks.pushToast).toHaveBeenCalledWith('error', '关闭终端失败: Error: offline')
+    expect(mocks.attachTerminal).not.toHaveBeenCalled()
+    await useTerminalStore.getState().closeTerminal('retry-close')
     expect(useTerminalStore.getState().terminals).toHaveLength(0)
   })
 
@@ -490,7 +499,7 @@ describe('terminal persistent connection events', () => {
     ).toHaveLength(2)
   })
 
-  it('ends all detached terminals through attach/kill after confirmation', async () => {
+  it('ends an untouched default detached terminal even when replay would fail', async () => {
     const project = {
       id: 'p-orphan-kill',
       name: 'remote',
@@ -510,11 +519,7 @@ describe('terminal persistent connection events', () => {
       },
     ])
     mocks.choiceDialog.mockResolvedValueOnce('kill')
-    mocks.attachTerminal.mockResolvedValueOnce({
-      persistent: true,
-      ptyId: 'pty-kill',
-      connectionId: 'conn-kill',
-    })
+    mocks.attachTerminal.mockRejectedValueOnce(new Error('pty.attach 重放失败'))
     useTerminalStore.setState({ terminals: [] })
 
     await useTerminalStore.getState().syncDetachedTerminals(project.id)
@@ -523,11 +528,11 @@ describe('terminal persistent connection events', () => {
     }
     await action.onAction()
 
-    expect(mocks.attachTerminal).toHaveBeenCalledWith(
-      expect.objectContaining({ ptyId: 'pty-kill', cwd: project.path }),
-    )
-    const tempId = mocks.attachTerminal.mock.calls[0][0].id
-    expect(mocks.killTerminal).toHaveBeenCalledWith(tempId)
+    expect(mocks.killDetachedTerminal).toHaveBeenCalledWith({
+      ptyId: 'pty-kill', cwd: project.path,
+    })
+    expect(mocks.attachTerminal).not.toHaveBeenCalled()
+    expect(mocks.killTerminal).not.toHaveBeenCalled()
     expect(mocks.pushToast).toHaveBeenCalledWith('success', '已结束 1 个远端终端')
   })
 
