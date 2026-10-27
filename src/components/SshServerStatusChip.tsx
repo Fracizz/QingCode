@@ -20,6 +20,7 @@ import StatusTip from './StatusTip'
 import ContextMenu from './ContextMenu'
 import SshServerDialog from './SshServerDialog'
 import { confirmDialog } from '../store/confirmStore'
+import { confirmSshServerRestart } from '../lib/sshWindowsRepair'
 import { switchSshConnectionMode, sshConnectionLabel, sshRemotePathFromUri } from '../lib/sshWorkspace'
 
 const STATUS_ACTION =
@@ -205,13 +206,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
     if (busy) return
     setBusy(true)
     try {
-      const accepted = await confirmDialog({
-        title: t('重启远端服务'),
-        message: t('重启会结束此远端服务托管的终端，可能影响同一远端用户下的其他项目。'),
-        kind: 'warning',
-        confirmLabel: t('重启'),
-        cancelLabel: t('取消'),
-      })
+      const accepted = await confirmSshServerRestart(rootUri, t)
       if (!accepted) return
       const value = await safeInvoke<unknown>('重启 SSH Agent', 'ssh_server_restart', { rootUri })
       const next = parseSshServerState(value)

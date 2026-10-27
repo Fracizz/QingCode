@@ -3,6 +3,7 @@ import {
   editorSurface,
   isProjectWelcomePending,
   noteProjectEditorOpened,
+  recentFileParentLabel,
   resetEditorWelcomeSession,
 } from './editorSurface'
 
@@ -56,13 +57,25 @@ describe('editorSurface', () => {
     ).toBe('welcome')
   })
 
-  it('stays blank once the project has already opened a file', () => {
+  it('shows the project idle view once the project has already opened a file', () => {
     expect(
       editorSurface({
         activeTabId: null,
         hasProject: true,
         projectsReady: true,
         editorVisible: true,
+        projectWelcome: false,
+      })
+    ).toBe('projectIdle')
+  })
+
+  it('hides the project idle view when the editor column is hidden', () => {
+    expect(
+      editorSurface({
+        activeTabId: null,
+        hasProject: true,
+        projectsReady: true,
+        editorVisible: false,
         projectWelcome: false,
       })
     ).toBe('blank')
@@ -112,5 +125,24 @@ describe('project welcome session', () => {
     noteProjectEditorOpened('proj-1')
     expect(isProjectWelcomePending('proj-1')).toBe(false)
     expect(isProjectWelcomePending('proj-2')).toBe(true)
+  })
+})
+
+describe('recentFileParentLabel', () => {
+  it('returns the parent relative to a Windows project root', () => {
+    expect(recentFileParentLabel('D:\\code\\qingcode', 'D:\\code\\qingcode\\src\\lib\\a.ts')).toBe('src/lib')
+    expect(recentFileParentLabel('d:\\code\\qingcode\\', 'D:\\code\\qingcode\\src\\a.ts')).toBe('src')
+  })
+
+  it('returns an empty label for files at the project root', () => {
+    expect(recentFileParentLabel('D:\\code\\qingcode', 'D:\\code\\qingcode\\DESIGN.md')).toBe('')
+  })
+
+  it('handles ssh resource paths', () => {
+    expect(recentFileParentLabel('ssh://c1/home/u/app', 'ssh://c1/home/u/app/src/main.py')).toBe('src')
+  })
+
+  it('does not treat a sibling folder sharing a prefix as inside the project', () => {
+    expect(recentFileParentLabel('D:\\code\\app', 'D:\\code\\app2\\x.ts')).toBe('D:/code/app2')
   })
 })

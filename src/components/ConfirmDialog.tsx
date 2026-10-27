@@ -28,6 +28,8 @@ export default function ConfirmDialog() {
   const { t } = useI18n()
   const request = useConfirmStore(s => s.request)
   const answer = useConfirmStore(s => s.answer)
+  const checked = useConfirmStore(s => s.checkboxChecked)
+  const setChecked = useConfirmStore(s => s.setCheckboxChecked)
   if (!request) return null
 
   const kind = request.kind ?? 'warning'
@@ -74,6 +76,25 @@ export default function ConfirmDialog() {
               >
                 {detailText}
               </p>
+            )}
+            {request.checkbox && (
+              <div className="mt-3 rounded-md border border-border bg-bg-deep/30 p-3">
+                <label className="flex cursor-pointer items-start gap-2 text-ui text-fg">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={event => setChecked(event.target.checked)}
+                    className="mt-0.5 accent-accent"
+                    aria-describedby={request.checkbox.detail ? 'confirm-checkbox-detail' : undefined}
+                  />
+                  <span>{t(request.checkbox.label)}</span>
+                </label>
+                {request.checkbox.detail && (
+                  <p id="confirm-checkbox-detail" className="mt-2 text-ui-sm leading-relaxed text-fg-muted">
+                    {t(request.checkbox.detail)}
+                  </p>
+                )}
+              </div>
             )}
           </div>
         </div>

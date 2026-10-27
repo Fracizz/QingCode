@@ -25,7 +25,7 @@ export default function ProjectName({
       </span>
       <span
         data-project-source
-        className="min-w-0 max-w-[160px] truncate rounded border border-border-strong px-1 text-ui-2xs font-normal leading-tight text-fg-muted"
+        className="min-w-0 max-w-[160px] truncate rounded border border-border-strong px-1 py-[3px] text-ui-badge font-normal text-fg-muted"
       >
         {label.source}
       </span>

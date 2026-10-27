@@ -511,6 +511,31 @@ async fn open_terminal_daemon_session(
     }
 }
 
+pub(super) async fn open_reconnect_daemon_session(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&AppHandle>,
+) -> Result<(TerminalTransportLease, DaemonSession), String> {
+    let current_root = manager.registered_root(&root.uri)?;
+    if !current_root.trusted {
+        return Err("未信任的 SSH 项目不能恢复终端".into());
+    }
+    if current_root.canonical_path != root.canonical_path {
+        return Err("项目根已变化，不能接回原终端".into());
+    }
+    let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    let daemon = super::host_runtime::ensure_shared_daemon(manager, &current_root, app).await?;
+    let client_id = manager.daemon_client_id(&connection_id);
+    let result =
+        open_terminal_daemon_session(manager, &connection_id, &root.uri, &client_id, &daemon).await;
+    if result.is_err() {
+        // A sibling may already have refreshed the runtime. Discard only the
+        // failed incarnation; never shut down the shared daemon or its PTYs.
+        super::host_runtime::invalidate_failed_daemon(manager, &connection_id, &daemon);
+    }
+    result
+}
+
 /// 已有共享连接全满、新开了连接时提示用户（前端以 info toast 展示）。
 fn emit_terminal_pool_notice(
     app: &AppHandle,
@@ -535,7 +560,7 @@ enum ReconnectEnd {
     Connected(ActiveSession),
     Exited(u32),
     Terminated(String),
-    Retry,
+    Retry(String),
     Closed,
 }
 
@@ -1001,6 +1026,7 @@ async fn run_persistent_terminal(
                 return;
             }
             ConnectedEnd::Disconnected(reason) => {
+                let mut reason = reason;
                 active.session.shutdown();
                 active.transport.release();
                 let mut kill_acks = Vec::new();
@@ -1071,7 +1097,8 @@ async fn run_persistent_terminal(
                             remove_persistent_terminal(&app, &terminal);
                             return;
                         }
-                        ReconnectEnd::Retry => {
+                        ReconnectEnd::Retry(error) => {
+                            reason = error;
                             if terminal.closed.load(Ordering::Acquire) {
                                 kill_acks.extend(drain_kill_acks(&mut command_rx));
                                 break;
@@ -1218,42 +1245,25 @@ async fn reconnect_terminal(
     if terminal.closed.load(Ordering::Acquire) {
         return ReconnectEnd::Closed;
     }
-    if manager
-        .ensure_connection_alive(&parsed.connection_id)
-        .await
-        .is_err()
-    {
-        return ReconnectEnd::Retry;
+    if let Err(error) = manager.ensure_connection_alive(&parsed.connection_id).await {
+        return ReconnectEnd::Retry(error);
     }
-    let endpoint = match server::ready_server_endpoint(app, manager, root).await {
-        Some(endpoint) => endpoint,
-        None => return ReconnectEnd::Retry,
-    };
-    let Some(daemon) = endpoint.daemon.as_ref() else {
-        return ReconnectEnd::Retry;
-    };
-    let client_id = manager.daemon_client_id(&parsed.connection_id);
+    // A project slot may still contain the token from a previous daemon. Unlike
+    // the file-operation fast path, reconnect must acquire a healthy host runtime.
     // 握手失败（HELLO 超时、通道被拒、网络刚恢复时的 reset）都是瞬时故障，
     // 不能据此断定 daemon 已重启：只有握手成功后 attach 明确返回「终端不存在」
     // 才结束终端，否则继续重试，进程仍在 daemon 里运行。
-    let (transport, mut session) = match open_terminal_daemon_session(
-        manager,
-        &parsed.connection_id,
-        &root.uri,
-        &client_id,
-        daemon,
-    )
-    .await
-    {
-        Ok(opened) => opened,
-        Err(error) => {
-            eprintln!(
-                "[WARN] persistent terminal {} daemon handshake failed, will retry: {error}",
-                terminal.id
-            );
-            return ReconnectEnd::Retry;
-        }
-    };
+    let (transport, mut session) =
+        match open_reconnect_daemon_session(manager, root, Some(app)).await {
+            Ok(opened) => opened,
+            Err(error) => {
+                eprintln!(
+                    "[WARN] persistent terminal {} daemon handshake failed, will retry: {error}",
+                    terminal.id
+                );
+                return ReconnectEnd::Retry(error);
+            }
+        };
     let from_seq = terminal.next_seq.load(Ordering::Acquire);
     let attach = match session.attach(&terminal.pty_id, from_seq).await {
         Ok(attach) => attach,
@@ -1262,16 +1272,16 @@ async fn reconnect_terminal(
             transport.release();
             return ReconnectEnd::Terminated("远端 daemon 已重启，终端进程已结束".to_string());
         }
-        Err(_) => {
+        Err(error) => {
             session.shutdown();
             transport.release();
-            return ReconnectEnd::Retry;
+            return ReconnectEnd::Retry(error);
         }
     };
     let Some(events) = session.take_events() else {
         session.shutdown();
         transport.release();
-        return ReconnectEnd::Retry;
+        return ReconnectEnd::Retry("daemon 终端事件通道不可用".into());
     };
     let (exited, restore) = match apply_attach_restore(terminal, app, &attach).await {
         Ok(result) => result,
@@ -1283,7 +1293,7 @@ async fn reconnect_terminal(
                 "[WARN] persistent terminal {} attach restore failed, will retry: {error}",
                 terminal.id
             );
-            return ReconnectEnd::Retry;
+            return ReconnectEnd::Retry(error);
         }
     };
     match prepare_reconnected_terminal(exited, async {
@@ -1309,7 +1319,7 @@ async fn reconnect_terminal(
                 "[WARN] persistent terminal {} could not prepare live session after attach: {error}",
                 terminal.id
             );
-            return ReconnectEnd::Retry;
+            return ReconnectEnd::Retry(error);
         }
     }
     let restore_name = match restore {

@@ -561,38 +561,34 @@ fn spawn_script(
     allowlist: tauri::State<'_, PathAllowlist>,
 ) -> Result<TerminalSpawnResult, String> {
     allowlist.ensure_executable(&cwd)?;
-    if let Some(root) = project_root.as_deref() {
-        allowlist.ensure_executable(root)?;
-        let canonical_root =
-            std::fs::canonicalize(root).map_err(|e| format!("项目目录不可用: {e}"))?;
-        let canonical_cwd =
-            std::fs::canonicalize(&cwd).map_err(|e| format!("工作目录不可用: {e}"))?;
-        if !canonical_cwd.starts_with(&canonical_root) {
-            return Err("任务工作目录必须位于当前项目根目录内".into());
+    let kind = shell_kind.as_str();
+    // 运行任务必须绑定所属项目根；缺失时拒绝，而不是静默跳过边界校验。
+    // `interactive`（终端配置）不属于项目任务，不受此限制。
+    let project_root = match project_root.as_deref() {
+        Some(root) if !root.trim().is_empty() => Some(root),
+        _ if kind != "interactive" => return Err("运行任务缺少所属项目根目录，已拒绝启动".into()),
+        _ => None,
+    };
+    let canonical_root = match project_root {
+        Some(root) => {
+            allowlist.ensure_executable(root)?;
+            let canonical_root = std::fs::canonicalize(run_environment::to_host_path(root))
+                .map_err(|e| format!("项目目录不可用: {e}"))?;
+            let canonical_cwd = std::fs::canonicalize(run_environment::to_host_path(&cwd))
+                .map_err(|e| format!("工作目录不可用: {e}"))?;
+            if !canonical_cwd.starts_with(&canonical_root) {
+                return Err("任务工作目录必须位于当前项目根目录内".into());
+            }
+            Some(canonical_root)
         }
-    }
+        None => None,
+    };
     // Script file targets must stay inside the sandbox. Inline `command` /
     // `interactive` strings are unrestricted once the cwd is trusted (UI confirms).
-    let kind = shell_kind.as_str();
     if kind != "command" && kind != "interactive" {
-        let target_path = {
-            let p = Path::new(&target);
-            if target.starts_with('/') && run_environment::parse_wsl_path(&cwd).is_some() {
-                let wsl = run_environment::parse_wsl_path(&cwd).unwrap();
-                format!(
-                    "\\\\wsl.localhost\\{}{}",
-                    wsl.distro,
-                    target.replace('/', "\\")
-                )
-            } else if p.is_absolute() {
-                target.clone()
-            } else {
-                Path::new(&cwd).join(p).to_string_lossy().into_owned()
-            }
-        };
+        let target_path = run_environment::resolve_task_target(&cwd, &target);
         allowlist.ensure_allowed(&target_path)?;
-        if let Some(root) = project_root.as_deref() {
-            let root = std::fs::canonicalize(root).map_err(|e| e.to_string())?;
+        if let Some(root) = canonical_root.as_ref() {
             let target =
                 std::fs::canonicalize(&target_path).map_err(|e| format!("脚本不可用: {e}"))?;
             if !target.starts_with(root) {
@@ -607,7 +603,7 @@ fn spawn_script(
         &target,
         env,
         shell.as_deref(),
-        project_root.as_deref(),
+        project_root,
         cols.unwrap_or(80),
         rows.unwrap_or(24),
         app,
@@ -881,6 +877,8 @@ pub fn run() {
             remote_ssh::ssh_set_workspace_trust,
             remote_ssh::ssh_server_info,
             remote_ssh::ssh_server_restart,
+            remote_ssh::ssh_windows_repair_plan,
+            remote_ssh::ssh_windows_repair,
             remote_ssh::ssh_server_stop,
             remote_ssh::ssh_server_logs,
             remote_ssh::ssh_set_server_auto_download,

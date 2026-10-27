@@ -89,6 +89,119 @@ async fn endpoint(manager: &SshManager, root: &RegisteredRoot) -> Result<DaemonA
     endpoint.daemon.ok_or("shared daemon unavailable".into())
 }
 
+async fn hold_project_terminals(
+    manager: &SshManager,
+    id: &str,
+    roots: &[RegisteredRoot],
+    daemon: &DaemonAccess,
+    seconds: u64,
+) -> Result<(), String> {
+    use super::super::daemon::DaemonSession;
+    let mut terminals = Vec::new();
+    let result = async {
+        let count = std::env::var("QC_LIVE_TERMINALS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+        for index in 0..count {
+            let root = &roots[index % roots.len()];
+            let transport = manager.lease_daemon_terminal_transport(id, &root.uri).await?;
+            let session = DaemonSession::open_on_transport(&transport, &manager.daemon_client_id(id), daemon).await?;
+            let created = session.request("pty.create", &serde_json::json!({
+                "cwd": root.canonical_path, "cols": 100, "rows": 30,
+                "name": "multi-project-live", "shell": "cmd.exe", "args": ["/d", "/q"],
+            })).await?;
+            let pty_id = created["id"].as_str().ok_or("missing PTY id")?.to_string();
+            terminals.push((transport, session, pty_id));
+        }
+        let started = Instant::now();
+        let mut switches = 0;
+        while started.elapsed() < Duration::from_secs(seconds) {
+            let root = &roots[switches % roots.len()];
+            let current = endpoint(manager, root).await?;
+            if &current != daemon { return Err("daemon changed while switching roots".into()); }
+            super::super::daemon::daemon_scan_entries(manager, id, &current, &root.canonical_path, ".").await.map_err(|e| e.to_string())?;
+            for (_, session, pty_id) in &terminals {
+                session.request("pty.resize", &serde_json::json!({"id":pty_id,"cols":100 + switches % 3,"rows":30})).await?;
+                session.send_ping();
+            }
+            switches += 1;
+            println!("MULTI_PROJECT_TERMINAL_PROGRESS elapsed={} switches={switches} terminals={}", started.elapsed().as_secs(), terminals.len());
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+        println!("MULTI_PROJECT_TERMINAL_ACCEPTANCE seconds={} switches={switches} terminals={}", started.elapsed().as_secs(), terminals.len());
+        let reconnect_started = Instant::now();
+        close_terminal_transport(&terminals[0].0.transport).await;
+        let mut event_receivers = Vec::new();
+        for (index, (transport, session, pty_id)) in terminals.iter_mut().enumerate() {
+            let root = &roots[index % roots.len()];
+            let (resumed_transport, mut resumed) = super::super::terminal::open_reconnect_daemon_session(manager, root, None).await?;
+            let mut events = resumed.take_events().ok_or("missing resumed event receiver")?;
+            let attached = resumed.attach(pty_id, 0).await;
+            session.shutdown();
+            transport.release();
+            *transport = resumed_transport;
+            *session = resumed;
+            attached?;
+            session.request("pty.input", &serde_json::json!({
+                "id": pty_id, "data": b"set /a QC_LIVE=314159+1\r\necho QC_RECONNECTED_%QC_LIVE%\r\n".as_slice(),
+            })).await?;
+            tokio::time::timeout(Duration::from_secs(10), async {
+                let mut output = Vec::new();
+                while let Some(event) = events.recv().await {
+                    if let qingcode_server::proto::Event::PtyData { data, .. } = event {
+                        output.extend(data);
+                        if output.windows(b"QC_RECONNECTED_314160".len()).any(|part| part == b"QC_RECONNECTED_314160") {
+                            return Ok::<_, String>(());
+                        }
+                    }
+                }
+                Err("resumed terminal output closed".into())
+            }).await.map_err(|_| "resumed terminal did not execute input")??;
+            event_receivers.push(events);
+        }
+        println!("MULTI_PROJECT_TRANSPORT_RECOVERY terminals={} same_ptys=true input_echo=true elapsed_ms={}", terminals.len(), reconnect_started.elapsed().as_millis());
+        // Simulate a stale client credential without restarting the user's
+        // daemon: the first HELLO must fail, invalidate the cache, then refresh.
+        let identity = identity_for_connection(manager, id).ok_or("missing host identity")?;
+        let entry = manager.host_daemons.entry(&identity);
+        {
+            let mut ready = entry.ready.lock().unwrap();
+            let ready = ready.as_mut().ok_or("missing cached daemon")?;
+            ready.prepared.access.token = "deliberately-stale-live-test-token".into();
+            ready.verified = Instant::now();
+        }
+        let recovery_started = Instant::now();
+        match super::super::terminal::open_reconnect_daemon_session(manager, &roots[0], None).await {
+            Err(_) => {}
+            Ok((transport, session)) => {
+                session.shutdown();
+                transport.release();
+                return Err("stale token was unexpectedly accepted".into());
+            }
+        }
+        if entry.ready.lock().unwrap().is_some() {
+            return Err("failed reconnect retained stale token".into());
+        }
+        let (transport, session) = super::super::terminal::open_reconnect_daemon_session(manager, &roots[0], None).await?;
+        let restored = session.attach(&terminals[0].2, 0).await;
+        let alive = match restored {
+            Ok(_) => session.request("pty.resize", &serde_json::json!({"id":terminals[0].2,"cols":101,"rows":30})).await.map(|_| ()),
+            Err(error) => Err(error),
+        };
+        session.shutdown();
+        transport.release();
+        alive?;
+        println!("MULTI_PROJECT_RECONNECT_ACCEPTANCE stale_token_refreshed=true same_pty=true elapsed_ms={}", recovery_started.elapsed().as_millis());
+        Ok(())
+    }.await;
+    for (transport, session, pty_id) in terminals {
+        let _ = session
+            .request("pty.kill", &serde_json::json!({"id":pty_id}))
+            .await;
+        session.shutdown();
+        transport.release();
+    }
+    result
+}
+
 async fn acceptance(
     config: SshConnectionConfig,
     parent: &str,
@@ -110,7 +223,11 @@ async fn acceptance(
         parent.trim_end_matches('/'),
         uuid::Uuid::new_v4()
     );
-    let paths = [format!("{base}/a"), format!("{base}/b")];
+    let paths = [
+        format!("{base}/a"),
+        format!("{base}/b"),
+        format!("{base}/c"),
+    ];
     sftp.create_dir(&base).await.map_err(|e| e.to_string())?;
     let result: Result<(), String> = tokio::time::timeout(Duration::from_secs(210), async {
         for (index, path) in paths.iter().enumerate() {
@@ -144,6 +261,10 @@ async fn acceptance(
             }
         }
         verify_project_services(&manager, &config.id, &b, &first).await?;
+        if let Ok(seconds) = std::env::var("QC_LIVE_TERMINAL_SECS") {
+            let c = register_root(&manager, &config.id, &paths[2]).await?;
+            hold_project_terminals(&manager, &config.id, &[a.clone(), b.clone(), c], &first, seconds.parse().map_err(|_| "invalid terminal duration")?).await?;
+        }
         // Simulate loss of client readiness, not a crash of a user's daemon.
         invalidate_failed_daemon(&manager, &config.id, &first);
         for root in [&a, &b] {

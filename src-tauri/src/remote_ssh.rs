@@ -27,10 +27,12 @@ mod server_status;
 mod sshd_limits;
 mod transfer;
 mod windows_path_guard;
+mod windows_sshd_repair;
 pub use config_import::*;
 pub use search::*;
 pub use server_status::{SshServerLogs, SshServerState};
 pub use transfer::*;
+pub use windows_sshd_repair::*;
 
 const SSH_URI_PREFIX: &str = "ssh://";
 const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;

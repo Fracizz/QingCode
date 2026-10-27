@@ -100,7 +100,7 @@ describe('planTerminalConnectionEvent', () => {
       reason: 'keepalive timeout',
       attempt: 1,
       notice: {
-        key: 'SSH 连接已断开（{reason}），正在重新连接，远端进程仍在运行…',
+        key: 'SSH 连接已断开（{reason}），正在重新连接…',
         values: { reason: 'keepalive timeout' },
       },
     })
@@ -111,6 +111,22 @@ describe('planTerminalConnectionEvent', () => {
       attempt: 2,
     })
     expect(repeated).toMatchObject({ status: 'reconnecting', notice: null, attempt: 2 })
+  })
+
+  it('reports prolonged retries with the latest failure without claiming the process is alive', () => {
+    for (const attempt of [3, 5, 10]) {
+      expect(planTerminalConnectionEvent(tab('reconnecting'), {
+        id: 't1', state: 'reconnecting', attempt, reason: 'daemon 握手失败',
+      })).toMatchObject({
+        notice: {
+          key: 'SSH 终端正在第 {attempt} 次重连（{reason}）…',
+          values: { attempt, reason: 'daemon 握手失败' },
+        },
+      })
+    }
+    expect(planTerminalConnectionEvent(tab('reconnecting'), {
+      id: 't1', state: 'reconnecting', attempt: 4,
+    })?.notice).toBeNull()
   })
 
   it.each([

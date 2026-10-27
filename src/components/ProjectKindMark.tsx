@@ -27,7 +27,7 @@ export function WslKindBadge({ label = 'WSL' }: { label?: string } = {}) {
   const { t } = useI18n()
   return (
     <Tooltip label={t('WSL 项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0">
-      <span className="inline-flex items-center rounded border border-border-strong px-1 py-px text-ui-2xs leading-none text-fg-muted">
+      <span className="inline-flex items-center rounded border border-border-strong px-1 py-[3px] text-ui-badge text-fg-muted">
         {label}
       </span>
     </Tooltip>
@@ -38,7 +38,7 @@ export function SshKindBadge() {
   const { t } = useI18n()
   return (
     <Tooltip label={t('SSH 远程项目')} side="bottom" wrapperClassName="inline-flex flex-shrink-0">
-      <span className="inline-flex items-center rounded border border-border-strong px-1 py-px text-ui-2xs leading-none text-fg-muted">
+      <span className="inline-flex items-center rounded border border-border-strong px-1 py-[3px] text-ui-badge text-fg-muted">
         {t('SSH')}
       </span>
     </Tooltip>

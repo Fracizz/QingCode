@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   ensureSshWorkspaceConnected: vi.fn(),
   prepareSshWorkspace: vi.fn(),
   isSshSharedServerReady: vi.fn(),
+  isSshWorkspaceReady: vi.fn(),
   requestSshReconnect: vi.fn(),
   safeInvoke: vi.fn(),
   loadProjectsFromDb: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('../lib/sshWorkspace', async importOriginal => ({
   ensureSshWorkspaceConnected: mocks.ensureSshWorkspaceConnected,
   prepareSshWorkspace: mocks.prepareSshWorkspace,
   isSshSharedServerReady: mocks.isSshSharedServerReady,
+  isSshWorkspaceReady: mocks.isSshWorkspaceReady,
   requestSshReconnect: mocks.requestSshReconnect,
 }))
 vi.mock('../lib/fileTreeCache', async importOriginal => ({
@@ -86,6 +88,7 @@ beforeEach(() => {
   mocks.ensureSshWorkspaceConnected.mockResolvedValue(undefined)
   mocks.prepareSshWorkspace.mockResolvedValue(undefined)
   mocks.isSshSharedServerReady.mockResolvedValue(false)
+  mocks.isSshWorkspaceReady.mockResolvedValue(false)
   cancelSshOpening()
   mocks.loadProjectRootTree.mockResolvedValue([])
   useProjectStore.setState({
@@ -218,6 +221,30 @@ describe('SSH project availability', () => {
     expect(useProjectStore.getState().currentProject).toEqual(local)
     expect(mocks.prepareSshWorkspace).not.toHaveBeenCalled()
     expect(mocks.requestSshReconnect).not.toHaveBeenCalled()
+  })
+
+  it('switches back to a connected remote project instantly from its cached tree and refreshes in background', async () => {
+    const cached = [{ path: `${remote.path}/src`, name: 'src', is_dir: true, loaded: true, children: [] }]
+    mocks.isSshWorkspaceReady.mockResolvedValue(true)
+    useProjectStore.setState({ currentProject: local, projectTrees: { [remote.id]: cached } })
+
+    expect(await useProjectStore.getState().switchProject(remote)).toBe(true)
+    expect(useProjectStore.getState().currentProject).toEqual(remote)
+    expect(useProjectStore.getState().fileTree).toBe(cached)
+    expect(useProjectStore.getState().projectTrees[remote.id]).toBe(cached)
+    expect(useSshOpeningStore.getState().attempt).toBeNull()
+    expect(mocks.ensureSshWorkspaceConnected).not.toHaveBeenCalled()
+    expect(mocks.prepareSshWorkspace).not.toHaveBeenCalled()
+    await vi.waitFor(() =>
+      expect(useProjectStore.getState().refreshProjectTree).toHaveBeenCalledWith(remote)
+    )
+  })
+
+  it('falls back to full preparation when the cached remote project is no longer connected', async () => {
+    useProjectStore.setState({ currentProject: local, projectTrees: { [remote.id]: [] } })
+    expect(await useProjectStore.getState().switchProject(remote)).toBe(true)
+    expect(mocks.ensureSshWorkspaceConnected).toHaveBeenCalledWith(remote)
+    expect(mocks.prepareSshWorkspace).toHaveBeenCalledTimes(1)
   })
 
   it('shows daemon preparation failures without asking for SSH credentials', async () => {

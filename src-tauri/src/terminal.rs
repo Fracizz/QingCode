@@ -5,7 +5,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use std::time::{Duration, Instant};
+use sysinfo::{Pid, ProcessStatus, ProcessesToUpdate, Signal, System};
 use tauri::{AppHandle, Emitter};
 mod wsl;
 
@@ -441,9 +442,24 @@ impl TerminalManager {
                     return Err(error);
                 }
             }
-            if let Some(pid) = session.shell_pid.filter(|_| session.wsl_task.is_none()) {
-                kill_descendants(pid);
+            let owned = session
+                .shell_pid
+                .filter(|_| session.wsl_task.is_none())
+                .map(snapshot_descendants)
+                .unwrap_or_default();
+            if request_graceful_stop(&session, &owned) {
+                // 宽限期放到后台线程：同步 Tauri 命令运行在主线程，不能阻塞 UI。
+                // 会话已从表中移除，同 id 的新终端不受影响；shell 可能已随 Ctrl+C 自行退出，
+                // 因此这里的 kill 失败不再回滚。
+                std::thread::spawn(move || {
+                    force_stop_after(&owned, Instant::now() + GRACEFUL_STOP_TIMEOUT);
+                    if let Some(k) = session.killer.as_mut() {
+                        let _ = k.kill();
+                    }
+                });
+                return Ok(());
             }
+            force_stop_after(&owned, Instant::now());
             if let Some(k) = session.killer.as_mut() {
                 if let Err(error) = k.kill() {
                     self.sessions
@@ -494,15 +510,25 @@ impl TerminalManager {
 
     pub fn kill_all(&self) {
         let sessions = std::mem::take(&mut *self.sessions.lock().unwrap());
+        let mut stopping = Vec::new();
         for (_, mut session) in sessions {
             session.output_gate.set_paused(false);
-            let is_wsl = session.wsl_task.is_some();
-            if let Some(task) = session.wsl_task.take() {
+            let owned = if let Some(task) = session.wsl_task.take() {
                 let _ = task.stop();
-            }
-            if let Some(pid) = session.shell_pid.filter(|_| !is_wsl) {
-                kill_descendants(pid);
-            }
+                Vec::new()
+            } else {
+                session
+                    .shell_pid
+                    .map(snapshot_descendants)
+                    .unwrap_or_default()
+            };
+            request_graceful_stop(&session, &owned);
+            stopping.push((session, owned));
+        }
+        // 所有终端共享同一个宽限期，退出应用最多额外等待一次。
+        let deadline = Instant::now() + GRACEFUL_STOP_TIMEOUT;
+        for (mut session, owned) in stopping {
+            force_stop_after(&owned, deadline);
             if let Some(mut killer) = session.killer.take() {
                 let _ = killer.kill();
             }
@@ -1022,24 +1048,99 @@ fn process_exists(pid: u32) -> bool {
     system.process(Pid::from_u32(pid)).is_some()
 }
 
-/// Stop only descendants of this owned PTY; task launchers often leave reload/worker children.
-fn kill_descendants(pid: u32) {
+/// 关闭终端时留给前台程序自行退出的宽限期，超时后强制结束。
+const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// Descendant of an owned PTY. Start time guards against PID reuse during the grace period.
+struct OwnedProcess {
+    pid: Pid,
+    start_time: u64,
+    /// Console hosts exit with their shell; they are force-stopped but never waited on.
+    noise: bool,
+}
+
+/// Snapshot descendants of this owned PTY; task launchers often leave reload/worker children.
+fn snapshot_descendants(root: u32) -> Vec<OwnedProcess> {
     let mut system = System::new();
     system.refresh_processes(ProcessesToUpdate::All, true);
-    fn collect(system: &System, parent: Pid, result: &mut Vec<Pid>) {
-        for (pid, process) in system.processes() {
-            if process.parent() == Some(parent) {
-                collect(system, *pid, result);
-                result.push(*pid);
-            }
+    let mut children: HashMap<Pid, Vec<Pid>> = HashMap::new();
+    for (pid, process) in system.processes() {
+        if let Some(parent) = process.parent() {
+            children.entry(parent).or_default().push(*pid);
         }
     }
-    let mut descendants = Vec::new();
-    collect(&system, Pid::from_u32(pid), &mut descendants);
-    for pid in descendants {
-        if let Some(process) = system.process(pid) {
-            process.kill();
+    let mut stack = children
+        .get(&Pid::from_u32(root))
+        .cloned()
+        .unwrap_or_default();
+    // Windows keeps stale parent PIDs, so reused PIDs can form cycles.
+    let mut seen = HashSet::new();
+    let mut owned = Vec::new();
+    while let Some(pid) = stack.pop() {
+        if !seen.insert(pid) {
+            continue;
         }
+        if let Some(process) = system.process(pid) {
+            owned.push(OwnedProcess {
+                pid,
+                start_time: process.start_time(),
+                noise: is_console_noise_process(&process.name().to_string_lossy()),
+            });
+        }
+        if let Some(kids) = children.get(&pid) {
+            stack.extend(kids.iter().copied());
+        }
+    }
+    owned
+}
+
+fn refresh_owned(processes: &[OwnedProcess]) -> System {
+    let pids: Vec<Pid> = processes.iter().map(|owned| owned.pid).collect();
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::Some(&pids), true);
+    system
+}
+
+/// The snapshot entry is still the same live process (not exited, reaped-pending or reused).
+fn live_owned<'a>(system: &'a System, owned: &OwnedProcess) -> Option<&'a sysinfo::Process> {
+    system.process(owned.pid).filter(|process| {
+        process.start_time() == owned.start_time && process.status() != ProcessStatus::Zombie
+    })
+}
+
+/// 先礼：向 PTY 写入 Ctrl+C（前台程序收到 SIGINT / CTRL_C_EVENT），POSIX 上再补发 SIGTERM。
+/// 返回是否存在需要等待的前台程序；空闲 shell 无需宽限期。
+fn request_graceful_stop(session: &TerminalSession, processes: &[OwnedProcess]) -> bool {
+    if processes.iter().all(|owned| owned.noise) {
+        return false;
+    }
+    let _ = session.writer.try_send(b"\x03".to_vec());
+    let system = refresh_owned(processes);
+    for owned in processes.iter().filter(|owned| !owned.noise) {
+        if let Some(process) = live_owned(&system, owned) {
+            // Windows 不支持 SIGTERM，返回 None，仅依赖上面的 Ctrl+C。
+            let _ = process.kill_with(Signal::Term);
+        }
+    }
+    true
+}
+
+/// 后兵：等待前台程序退出，到期后强制结束快照中仍存活的进程。
+fn force_stop_after(processes: &[OwnedProcess], deadline: Instant) {
+    loop {
+        let system = refresh_owned(processes);
+        let pending = processes
+            .iter()
+            .any(|owned| !owned.noise && live_owned(&system, owned).is_some());
+        if !pending || Instant::now() >= deadline {
+            for owned in processes {
+                if let Some(process) = live_owned(&system, owned) {
+                    process.kill();
+                }
+            }
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 
@@ -1112,6 +1213,68 @@ fn count_meaningful_child_processes(parent_pid: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
+    /// 父进程（shell）下挂一个长时间运行的子进程，模拟终端里的前台程序。
+    fn spawn_shell_with_worker() -> std::process::Child {
+        #[cfg(windows)]
+        let child = std::process::Command::new("cmd")
+            .args(["/c", "ping -n 30 127.0.0.1 >nul"])
+            .spawn();
+        #[cfg(not(windows))]
+        let child = std::process::Command::new("/bin/sh")
+            .args(["-c", "sleep 30; :"])
+            .spawn();
+        child.unwrap()
+    }
+
+    fn wait_for_descendants(root: u32) -> Vec<OwnedProcess> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let owned = snapshot_descendants(root);
+            if owned.iter().any(|process| !process.noise) || Instant::now() >= deadline {
+                return owned;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    #[test]
+    fn force_stop_kills_snapshot_descendants_after_deadline() {
+        let mut shell = spawn_shell_with_worker();
+        let owned = wait_for_descendants(shell.id());
+        assert!(
+            owned.iter().any(|process| !process.noise),
+            "worker not found"
+        );
+        force_stop_after(&owned, Instant::now());
+        let system = refresh_owned(&owned);
+        assert!(owned
+            .iter()
+            .all(|process| live_owned(&system, process).is_none()));
+        let _ = shell.kill();
+        let _ = shell.wait();
+    }
+
+    #[test]
+    fn force_stop_skips_reused_pids() {
+        let mut worker = spawn_shell_with_worker();
+        let pid = Pid::from_u32(worker.id());
+        let stale = [OwnedProcess {
+            pid,
+            start_time: 0,
+            noise: false,
+        }];
+        // 启动时间不匹配 = PID 已被复用，绝不能误杀，也不应等待。
+        let started = Instant::now();
+        force_stop_after(&stale, Instant::now() + Duration::from_secs(5));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(
+            worker.try_wait().unwrap().is_none(),
+            "reused pid was killed"
+        );
+        worker.kill().unwrap();
+        worker.wait().unwrap();
+    }
+
     #[test]
     fn encode_terminal_data_uses_standard_base64() {
         assert_eq!(super::encode_terminal_data(b"hello"), "aGVsbG8=");

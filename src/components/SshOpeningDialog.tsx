@@ -1,5 +1,5 @@
 import { AlertTriangle, Check, LoaderCircle, Server } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
 import { sshServerPhaseKey } from '../lib/sshServerStatus'
 import { sshProjectDisplayPath } from '../lib/sshWorkspace'
@@ -7,13 +7,18 @@ import { useProjectStore } from '../store/projectStore'
 import { cancelSshOpening, useSshOpeningStore } from '../store/sshOpeningStore'
 import { useUIStore } from '../store/uiStore'
 import ModalOverlay from './ModalOverlay'
+import { confirmSshServerRestart, isWindowsSshRoot } from '../lib/sshWindowsRepair'
 
 export default function SshOpeningDialog() {
   const { t } = useI18n()
   const attempt = useSshOpeningStore(s => s.attempt)
   const connections = useProjectStore(s => s.sshConnections)
   const [visibleController, setVisibleController] = useState<AbortController | null>(null)
+  const [retryingController, setRetryingController] = useState<AbortController | null>(null)
+  const retryRef = useRef<{ opening: AbortController; controller: AbortController } | null>(null)
   const controller = attempt?.controller
+  const retryBusy = retryingController === controller
+  useEffect(() => () => retryRef.current?.controller.abort(), [])
   useEffect(() => {
     if (!controller) return
     // Cached connections usually open immediately; avoid flashing a modal.
@@ -98,8 +103,34 @@ export default function SshOpeningDialog() {
               cancelSshOpening()
               useUIStore.getState().openRemoteConnections()
             }}>{t('远程连接')}</button>
-            <button type="button" className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90" onClick={() => {
-              void useProjectStore.getState().switchProject(project)
+            <button type="button" disabled={retryBusy} className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50" onClick={async () => {
+              const opening = attempt.controller
+              if (retryRef.current?.opening === opening) return
+              retryRef.current?.controller.abort()
+              const retry = { opening, controller: new AbortController() }
+              retryRef.current = retry
+              setRetryingController(opening)
+              const isCurrent = () => !retry.controller.signal.aborted &&
+                useSshOpeningStore.getState().attempt?.controller === opening
+              const unsubscribe = useSshOpeningStore.subscribe(state => {
+                if (state.attempt?.controller !== opening) retry.controller.abort()
+              })
+              try {
+                if (isWindowsSshRoot(project.path) && /握手|handshake|SSH 连接超时/i.test(error)) {
+                  if (!(await confirmSshServerRestart(project.path, t, true, retry.controller.signal))) return
+                }
+                if (!isCurrent()) return
+                // switchProject owns the next opening attempt and its cancellation.
+                unsubscribe()
+                await useProjectStore.getState().switchProject(project)
+              } catch (reason) {
+                if (!isCurrent()) return
+                useProjectStore.getState().pushToast('error', t('修复 Windows SSH 兼容性'), String(reason))
+              } finally {
+                unsubscribe()
+                if (retryRef.current === retry) retryRef.current = null
+                setRetryingController(current => current === opening ? null : current)
+              }
             }}>{t('重试')}</button>
           </>}
         </div>

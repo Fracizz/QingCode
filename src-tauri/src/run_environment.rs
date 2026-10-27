@@ -42,6 +42,43 @@ pub fn parse_wsl_path(value: &str) -> Option<WslPath> {
     })
 }
 
+/// `wsl://` URI 不能直接交给 Windows 文件系统 API；统一转成 `\\wsl.localhost\` UNC。
+pub fn to_host_path(value: &str) -> String {
+    match parse_wsl_path(value) {
+        Some(wsl) => wsl_unc(&wsl.distro, &wsl.path),
+        None => value.to_string(),
+    }
+}
+
+fn wsl_unc(distro: &str, linux_path: &str) -> String {
+    format!(r"\\wsl.localhost\{distro}{}", linux_path.replace('/', "\\"))
+}
+
+/// 解析任务脚本在宿主上的路径：WSL 工作目录下的绝对/相对 Linux 路径都映射到 UNC。
+pub fn resolve_task_target(cwd: &str, target: &str) -> String {
+    if let Some(wsl) = parse_wsl_path(cwd) {
+        if parse_wsl_path(target).is_some() {
+            return to_host_path(target);
+        }
+        let linux = target.replace('\\', "/");
+        let path = if linux.starts_with('/') {
+            linux
+        } else {
+            format!("{}/{linux}", wsl.path.trim_end_matches('/'))
+        };
+        return wsl_unc(&wsl.distro, &path);
+    }
+    let path = std::path::Path::new(target);
+    if path.is_absolute() {
+        target.to_string()
+    } else {
+        std::path::Path::new(cwd)
+            .join(path)
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
 pub fn unix_os(output: &str) -> Result<&'static str, String> {
     match output.trim() {
         "Linux" => Ok("linux"),
@@ -103,6 +140,26 @@ mod tests {
         assert!(parse_wsl_path("ssh://wsl/home/app").is_none());
         assert!(parse_wsl_path("D:/app").is_none());
         assert!(parse_wsl_path("wsl://--help/app").is_none());
+    }
+
+    #[test]
+    fn task_target_maps_wsl_uri_and_relative_paths_to_unc() {
+        let unc = r"\\wsl.localhost\Ubuntu\home\app\run.sh";
+        assert_eq!(resolve_task_target("wsl://Ubuntu/home/app", "run.sh"), unc);
+        assert_eq!(resolve_task_target("wsl://Ubuntu/home/app/", "run.sh"), unc);
+        assert_eq!(
+            resolve_task_target(r"\\wsl$\Ubuntu\home\app", "/home/app/run.sh"),
+            unc
+        );
+        assert_eq!(
+            resolve_task_target("wsl://Ubuntu/home", "wsl://Ubuntu/home/app/run.sh"),
+            unc
+        );
+        assert_eq!(
+            to_host_path("wsl://Ubuntu/home/app"),
+            r"\\wsl.localhost\Ubuntu\home\app"
+        );
+        assert_eq!(to_host_path("D:/app"), "D:/app");
     }
 
     #[test]
