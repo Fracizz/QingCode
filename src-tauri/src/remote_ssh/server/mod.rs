@@ -6,8 +6,9 @@
 //! - **serve 传输**（回退）：每操作一条 `direct-tcpip` 通道连远端 `127.0.0.1:<port>`，
 //!   JSON 帧（`ServerRequest` / `ServerResponse`）。
 //!
-//! 所有集成点都遵循同一策略：server 任何一级失败都静默回退到下一级
-//! （daemon → serve → 直连 SFTP / rg / 独立 PTY 终端），绝不影响既有功能。
+//! Server 模式优先按已认证的主机/用户/指纹共享 daemon。项目只挂载各自的
+//! 规范化根；文件操作在 daemon 传输失败时惰性启动该项目的 serve，终端必须
+//! 使用 daemon。SSH 兼容模式与受限项目走原有 SFTP/直连路径。
 //!
 //! 子模块按职责划分：
 //! - [`paths`]：远端部署路径 / 二进制命名 / 状态文件解析；
@@ -15,6 +16,7 @@
 //! - [`download`]：本地二进制定位与 GitHub Release 下载；
 //! - [`serve`]：serve 传输通道（direct-tcpip + JSON 帧）；
 //! - [`deploy`]：发现 / 部署编排与 slot 缓存；
+//! - [`host_runtime`]：跨项目共享 daemon 与连接健康校验；
 //! - [`daemon`]：daemon 传输通道（协议 v1 帧流）；
 //! - [`watch`]：watch 监督任务与事件转发。
 
@@ -23,6 +25,7 @@ use super::*;
 mod daemon;
 mod deploy;
 mod download;
+mod host_runtime;
 mod install_cache;
 mod paths;
 mod scripts;
@@ -36,9 +39,11 @@ pub(crate) use daemon::{
 };
 pub(crate) use deploy::{
     ensure_server_endpoint_with_app, kick_server_discovery, note_server_endpoint_lost,
-    ready_server_endpoint, require_server_endpoint, server_mode_error, SERVER_MODE_ERROR_PREFIX,
+    ready_server_endpoint, require_serve_endpoint, require_server_endpoint, server_mode_error,
+    SERVER_MODE_ERROR_PREFIX,
 };
 pub(crate) use download::resolve_offline_server_dir;
+pub(crate) use host_runtime::{invalidate_shared_daemon, shared_server_known, HostDaemonCache};
 pub(crate) use paths::{
     parse_server_state, server_serve_log_path, server_state_path, windows_host_path,
 };
@@ -56,24 +61,29 @@ const AGENT_PING_TIMEOUT: Duration = Duration::from_secs(10);
 /// 一个已就绪的远端 server 端点。
 #[derive(Clone)]
 pub(crate) struct ServerEndpoint {
+    pub(crate) serve: Option<ServeEndpoint>,
+    /// A daemon-only endpoint has no project serve process. Create serve lazily
+    /// if the shared daemon transport fails.
+    pub(crate) daemon: Option<DaemonAccess>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ServeEndpoint {
     pub(crate) port: u16,
     pub(crate) token: String,
-    /// daemon 传输接入信息；`Some` 表示部署/发现后已通过真实握手探针验证。
-    /// 操作失败时只会清掉这个标记（降级 serve），不会废弃整个端点。
-    pub(crate) daemon: Option<DaemonAccess>,
 }
 
 /// daemon 传输的接入信息：远端二进制路径与会话 token。
 ///
 /// token 由 daemon 启动时生成并写入 `~/.qingcode/server/run/token`（`0600`），
 /// 每次 daemon 重启都会轮换；校验失败时连接会被 daemon 直接断开。
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct DaemonAccess {
     pub(crate) bin: String,
     pub(crate) token: String,
 }
 
-/// 每个连接 + 项目根的 server 状态缓存：就绪端点或不可用原因。
+/// 每个连接 + 项目根的挂载状态：共享 daemon 绑定、可选 serve 或不可用原因。
 /// 原因只记录「本次连接内不可能恢复」的情形（架构不支持、本地缺二进制），
 /// 避免每次目录扫描都重复探测部署；瞬时失败不写原因，下次调用会再试。
 #[derive(Default, Clone)]

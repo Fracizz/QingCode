@@ -16,6 +16,19 @@ const project: Project = { id: 'remote', name: 'demo', path: 'ssh://c/home/demo'
 afterEach(() => cancelSshOpening())
 
 describe('SshOpeningDialog', () => {
+  it('keeps the workspace usable when mounting a project on a ready shared daemon', async () => {
+    const opening = runSshOpening(project, async (_signal, report) => {
+      report('mounting')
+      report('service')
+      return new Promise(() => {})
+    }).catch(error => error)
+    render(<SshOpeningDialog />)
+    expect(await screen.findByRole('status')).toHaveTextContent('正在打开项目 demo')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-modal-overlay]')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取消打开' }))
+    expect((await opening).name).toBe('AbortError')
+  })
   it('shows the terminal preparation stage and allows cancelling without activating a project', async () => {
     const opening = runSshOpening(project, async (_signal, report) => {
       report('service', { rootUri: project.path, connectionId: 'c', connectionMode: 'server', phase: 'readyServer', mode: 'server', transport: 'serve', reason: null, version: '1' })

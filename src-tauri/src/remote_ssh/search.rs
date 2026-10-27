@@ -534,7 +534,7 @@ async fn server_search_file_contents(
     }
     let connection_id = parse_remote_uri(root)?.connection_id;
     let key = server::server_slot_key(&connection_id, &registered.canonical_path);
-    let endpoint = server::require_server_endpoint(app, manager, &registered, false).await?;
+    let mut endpoint = server::require_server_endpoint(app, manager, &registered, false).await?;
     let mut files = Vec::new();
     let mut count = 0usize;
     let mut per_file_truncated = false;
@@ -598,7 +598,7 @@ async fn server_search_file_contents(
                 return Err(format!("搜索失败：{error}"));
             }
             Err(error) => {
-                server::downgrade_server_daemon(manager, &key);
+                server::downgrade_server_daemon(manager, &key, daemon);
                 server_status::publish_root_state(app, manager, &registered);
                 if !at_root {
                     return Err(server::server_mode_error(format!(
@@ -617,8 +617,16 @@ async fn server_search_file_contents(
             "远端 daemon 不可用，serve 方式只能搜索项目根目录，可在状态栏重启 server",
         ));
     }
+    if endpoint.serve.is_none() {
+        endpoint = server::require_serve_endpoint(app, manager, &registered).await?;
+    }
     let request = qingcode_server::ServerRequest {
-        token: endpoint.token.clone(),
+        token: endpoint
+            .serve
+            .as_ref()
+            .ok_or("项目 serve 尚未启动")?
+            .token
+            .clone(),
         op: qingcode_server::ServerOp::SearchContent {
             query: query.to_string(),
             ignore_case,

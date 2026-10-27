@@ -22,6 +22,7 @@
     "test:packaging": "node --test scripts/nsis-hooks.test.mjs scripts/register-open-with.test.mjs scripts/canonical-release-assets.test.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "test:web": "vite --config vite.web-test.config.ts --mode web-test",
     "skill:sync": "node --experimental-strip-types scripts/sync-qingcode-cli-skill.mjs",
     "smoke:start": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/smoke-start.ps1",
     "tauri": "tauri",

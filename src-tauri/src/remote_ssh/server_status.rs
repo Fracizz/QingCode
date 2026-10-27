@@ -559,6 +559,7 @@ pub(crate) async fn ssh_server_restart(
     {
         server::shutdown_remote_daemon(&manager, &parsed.connection_id, &daemon).await;
     }
+    server::invalidate_shared_daemon(&manager, &parsed.connection_id);
     // 先停已记录的 serve 进程，再清 slot，避免 ensure 立刻复用刚要重启的端点。
     stop_recorded_serve_server(&manager, &root).await;
     manager.clear_server_endpoint(&key);
@@ -586,6 +587,7 @@ pub(crate) async fn ssh_server_stop(
         // daemon 退出失败容忍：serve 已停，daemon 至多空转到自身 idle 退出。
         server::shutdown_remote_daemon(&manager, &parsed.connection_id, &daemon).await;
     }
+    server::invalidate_shared_daemon(&manager, &parsed.connection_id);
     stop_recorded_serve_server(&manager, &root).await;
     manager.clear_server_endpoint(&key);
     publish_root_state(&app, &manager, &root);

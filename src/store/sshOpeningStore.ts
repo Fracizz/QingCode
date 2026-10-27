@@ -3,7 +3,7 @@ import type { Project } from '../types'
 import type { SshServerState } from '../lib/sshServerStatus'
 import { translate } from '../lib/i18n'
 
-export type SshOpeningStage = 'connecting' | 'service' | 'files'
+export type SshOpeningStage = 'connecting' | 'service' | 'files' | 'mounting'
 
 interface SshOpeningAttempt {
   project: Project
@@ -11,6 +11,7 @@ interface SshOpeningAttempt {
   server: SshServerState | null
   error: string | null
   controller: AbortController
+  reusingServer: boolean
 }
 
 export const useSshOpeningStore = create<{ attempt: SshOpeningAttempt | null }>(() => ({
@@ -38,13 +39,16 @@ export async function runSshOpening<T>(
   const controller = new AbortController()
   const { signal } = controller
   const attempt: SshOpeningAttempt = {
-    project, stage: 'connecting', server: null, error: null, controller,
+    project, stage: 'connecting', server: null, error: null, controller, reusingServer: false,
   }
   useSshOpeningStore.setState({ attempt })
   const report = (stage: SshOpeningStage, server?: SshServerState) => {
     if (signal.aborted || useSshOpeningStore.getState().attempt?.controller !== controller) return
     useSshOpeningStore.setState(state => ({
-      attempt: state.attempt && { ...state.attempt, stage, server: server ?? state.attempt.server },
+      attempt: state.attempt && {
+        ...state.attempt, stage, server: server ?? state.attempt.server,
+        reusingServer: server?.phase === 'installing' ? false : stage === 'mounting' || state.attempt.reusingServer,
+      },
     }))
   }
   let onAbort: () => void = () => {}

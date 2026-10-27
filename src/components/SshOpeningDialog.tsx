@@ -23,6 +23,19 @@ export default function SshOpeningDialog() {
   if (!attempt || (!attempt.error && visibleController !== controller)) return null
 
   const { project, stage, server, error } = attempt
+  if (attempt.reusingServer && !error) {
+    return (
+      <div className="fixed bottom-9 right-4 z-[110] flex max-w-[min(420px,90vw)] items-center gap-3 rounded-lg border border-border-strong bg-bg-elevated px-3 py-2 text-ui shadow-elevation-3">
+        <div role="status" className="flex min-w-0 items-center gap-2 text-fg">
+          <LoaderCircle size={14} className="shrink-0 animate-spin text-accent" aria-hidden />
+          <span className="truncate">{t('正在打开项目 {name}…', { name: project.name })}</span>
+        </div>
+        <button type="button" onClick={cancelSshOpening} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">
+          {t('取消打开')}
+        </button>
+      </div>
+    )
+  }
   const steps = [t('连接 SSH'), t('准备远端服务和终端'), t('读取项目文件')]
   const activeStep = stage === 'connecting' ? 0 : stage === 'service' ? 1 : 2
   const phase = server?.phase === 'readyServer' && server.transport === 'serve'

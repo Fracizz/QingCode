@@ -22,6 +22,71 @@ use super::serve::ping_server;
 use super::*;
 use qingcode_server::SERVER_VERSION;
 
+/// Install/verify only the user-private binary, then attach to the host daemon.
+/// No project state directory, project serve process, or legacy cleanup is
+/// needed on the shared-service path.
+pub(super) async fn prepare_shared_daemon(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&AppHandle>,
+) -> Result<super::host_runtime::PreparedDaemon, String> {
+    let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    let (arch, local_binary) = locate_local_server_binary(manager, root)
+        .await
+        .map_err(|e| e.reason)?;
+    let sha256 = sha256_of_file_cached(&local_binary).await?;
+    let sftp = manager.open_sftp(&connection_id).await?;
+    let (home, install_dir) = resolve_install_location(manager, &sftp, root, &connection_id)
+        .await
+        .map_err(|e| e.reason)?;
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, &arch));
+    let matches = remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await;
+    if !matches {
+        server_status::note_server_activity(
+            manager,
+            app,
+            root,
+            &connection_id,
+            server_status::ServerPhase::Installing,
+        );
+        let target = ServerInstallTarget {
+            home: &home,
+            install_dir: &install_dir,
+            remote_bin: &remote_bin,
+            local_sha256: &sha256,
+        };
+        upload_server_binary(manager, &sftp, root, &local_binary, &target, false).await?;
+        if !remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await {
+            return Err("远端 server 二进制 SHA-256 与本地可信文件不一致，已拒绝执行".into());
+        }
+        let command = self_check_then_deploy_command(&remote_bin, &sha256, "true");
+        let script = windows_host_path(&remote_bin)
+            .map(|path| windows_self_check_then_deploy_script(&path, &sha256, ""))
+            .unwrap_or_default();
+        let checked = exec_on_root(manager, root, &command, &script).await?;
+        if checked.exit_code != 0 {
+            return Err(format!(
+                "远端服务程序自检未通过：{}",
+                self_check_failure_detail(&checked.stderr, checked.exit_code)
+            ));
+        }
+    }
+    server_status::note_server_activity(
+        manager,
+        app,
+        root,
+        &connection_id,
+        server_status::ServerPhase::Handshaking,
+    );
+    let access = ensure_remote_daemon(manager, &connection_id, root, &remote_bin).await?;
+    Ok(super::host_runtime::PreparedDaemon {
+        access,
+        local_binary,
+        sha256,
+    })
+}
+
 /// 等待 server 启动就绪（状态文件出现且 ping 通过）的总时限。
 const AGENT_READY_TIMEOUT: Duration = Duration::from_secs(15);
 /// server 启动就绪轮询间隔。
@@ -278,8 +343,10 @@ async fn try_discover_server(
         return (None, remote_matches);
     }
     let endpoint = ServerEndpoint {
-        port: state.port,
-        token: state.token,
+        serve: Some(ServeEndpoint {
+            port: state.port,
+            token: state.token,
+        }),
         daemon: None,
     };
     // ping 之前进入握手；失败则调用方继续安装。
@@ -667,8 +734,10 @@ async fn wait_server_ready(
             });
             if let Some(state) = state {
                 let endpoint = ServerEndpoint {
-                    port: state.port,
-                    token: state.token,
+                    serve: Some(ServeEndpoint {
+                        port: state.port,
+                        token: state.token,
+                    }),
                     daemon: None,
                 };
                 if ping_server(manager, connection_id, &endpoint).await.is_ok() {
@@ -1014,6 +1083,40 @@ async fn ensure_server_endpoint_inner(
         publish_server_if_watched(app, manager, root);
         return Ok(None);
     }
+    if wait_for_deploy {
+        let reused = super::host_runtime::shared_server_ready(manager, &connection_id);
+        let started = Instant::now();
+        match super::host_runtime::ensure_shared_daemon(manager, root, app).await {
+            Ok(daemon) => {
+                let mut slot = manager.server_slot(&key).unwrap_or_default();
+                let serve = slot.endpoint.and_then(|endpoint| endpoint.serve);
+                let endpoint = ServerEndpoint {
+                    serve,
+                    daemon: Some(daemon),
+                };
+                slot.endpoint = Some(endpoint.clone());
+                slot.activity = None;
+                slot.unavailable_reason = None;
+                slot.last_failure = None;
+                slot.daemon_failure = None;
+                slot.daemon_downgraded_at = None;
+                slot.last_timings = Some(format!(
+                    "{} {:.1}s · 合计 {:.1}s",
+                    if reused {
+                        "复用共享服务"
+                    } else {
+                        "接入共享服务"
+                    },
+                    started.elapsed().as_secs_f64(),
+                    started.elapsed().as_secs_f64()
+                ));
+                manager.set_server_slot(&key, slot);
+                publish_server_if_watched(app, manager, root);
+                return Ok(Some(endpoint));
+            }
+            Err(_) => super::host_runtime::discard_shared_bindings(manager, &connection_id),
+        }
+    }
     if let Some(cached) = cached_server_slot(manager, &key) {
         // daemon 降级满冷却期后补一次探测：降级只清 daemon 标记，若不重试，
         // daemon 崩溃后这条连接永远回不去 daemon 传输，直到端点整体重建。
@@ -1156,7 +1259,7 @@ async fn probe_daemon_for_slot(
     manager: &SshManager,
     root: &RegisteredRoot,
     key: &str,
-    remote_bin: Option<String>,
+    _remote_bin: Option<String>,
     force: bool,
 ) {
     let finish =
@@ -1168,7 +1271,8 @@ async fn probe_daemon_for_slot(
             let current = slot
                 .endpoint
                 .as_ref()
-                .is_some_and(|endpoint| Some(endpoint.token.as_str()) == token);
+                .and_then(|endpoint| endpoint.serve.as_ref())
+                .is_some_and(|serve| Some(serve.token.as_str()) == token);
             if current {
                 slot.daemon_downgraded_at = access.is_err().then(Instant::now);
                 slot.daemon_failure = access.as_ref().err().cloned();
@@ -1185,7 +1289,7 @@ async fn probe_daemon_for_slot(
             }
             manager.set_server_slot(key, slot);
         };
-    let (Ok(parsed), Ok(gate)) = (parse_remote_uri(&root.uri), manager.server_gate(key)) else {
+    let (Ok(_parsed), Ok(gate)) = (parse_remote_uri(&root.uri), manager.server_gate(key)) else {
         finish(Err(String::new()), None, None);
         return;
     };
@@ -1201,21 +1305,52 @@ async fn probe_daemon_for_slot(
         .endpoint
         .as_ref()
         .filter(|endpoint| endpoint.daemon.is_none())
-        .map(|endpoint| endpoint.token.clone());
+        .and_then(|endpoint| endpoint.serve.as_ref())
+        .map(|serve| serve.token.clone());
     let Some(token) = token.filter(|_| !waiting_cooldown) else {
         finish(Err(String::new()), None, None);
         return;
     };
     let started = Instant::now();
-    let remote_bin = match remote_bin {
-        Some(bin) => Some(bin),
-        None => find_verified_installed_binary(manager, root).await,
-    };
-    let access = match remote_bin {
-        Some(bin) => ensure_remote_daemon(manager, &parsed.connection_id, root, &bin).await,
-        None => Err("未找到已校验的远端 server 二进制".to_string()),
-    };
+    let access = super::host_runtime::ensure_shared_daemon(manager, root, None).await;
     finish(access, Some(&token), Some(started.elapsed()));
+}
+
+/// Lazy per-project fallback. A healthy shared daemon never starts serve.
+pub(crate) async fn require_serve_endpoint(
+    app: &AppHandle,
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) -> Result<ServerEndpoint, String> {
+    let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    if !root.trusted || !manager.server_mode(&connection_id) {
+        return Err(server_mode_error("项目不允许使用远端服务"));
+    }
+    let key = server_slot_key(&connection_id, &root.canonical_path);
+    let gate = manager.server_gate(&key)?;
+    let _guard = gate.lock().await;
+    if let Some(endpoint) = manager
+        .server_slot(&key)
+        .and_then(|slot| slot.endpoint)
+        .filter(|endpoint| endpoint.serve.is_some())
+    {
+        return Ok(endpoint);
+    }
+    let mut timer = StageTimer::new();
+    let (endpoint, _) = tokio::time::timeout(
+        SERVER_MODE_DEPLOY_WAIT,
+        discover_or_deploy_server(manager, &connection_id, root, Some(app), &mut timer),
+    )
+    .await
+    .map_err(|_| server_mode_error("等待项目回退服务超时"))?
+    .map_err(|e| server_mode_error(e.reason))?;
+    let mut slot = manager.server_slot(&key).unwrap_or_default();
+    slot.endpoint = Some(endpoint.clone());
+    slot.activity = None;
+    slot.last_timings = Some(timer.summary());
+    manager.set_server_slot(&key, slot);
+    publish_server_if_watched(Some(app), manager, root);
+    Ok(endpoint)
 }
 
 /// 把后台阶段（如 daemon 探测）追加到耗时摘要末尾并标注「后台」。摘要里的
@@ -1230,28 +1365,6 @@ pub(super) fn append_stage_timing(
         Some(existing) if !existing.is_empty() => format!("{existing} · {stage}"),
         _ => stage,
     }
-}
-
-/// 降级重试时重新定位可信安装：本地二进制的 SHA-256 必须与用户私有版本
-/// 目录中的远端文件一致。任一步失败都返回 `None`，调用方继续走 serve。
-async fn find_verified_installed_binary(
-    manager: &SshManager,
-    root: &RegisteredRoot,
-) -> Option<String> {
-    let (arch, local_binary) = locate_local_server_binary_with(manager, root, false)
-        .await
-        .ok()?;
-    let connection_id = parse_remote_uri(&root.uri).ok()?.connection_id;
-    let sftp = manager.open_sftp(&connection_id).await.ok()?;
-    let (_, install_dir) = resolve_install_location(manager, &sftp, root, &connection_id)
-        .await
-        .ok()?;
-    let windows = windows_native_path(&root.canonical_path).is_some();
-    let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, &arch));
-    let local_sha256 = sha256_of_file_cached(&local_binary).await.ok()?;
-    remote_binary_sha_matches(manager, root, &remote_bin, &local_sha256)
-        .await
-        .then_some(remote_bin)
 }
 
 #[cfg(test)]
@@ -1298,15 +1411,18 @@ mod tests {
             &key,
             ServerSlot {
                 endpoint: Some(ServerEndpoint {
-                    port: 4000,
-                    token: "t".to_string(),
+                    serve: Some(ServeEndpoint {
+                        port: 4000,
+                        token: "t".to_string(),
+                    }),
                     daemon: None,
                 }),
                 ..Default::default()
             },
         );
         assert_eq!(
-            cached_server_slot(&manager, &key).map(|cached| cached.map(|endpoint| endpoint.port)),
+            cached_server_slot(&manager, &key)
+                .map(|cached| cached.and_then(|endpoint| endpoint.serve.map(|serve| serve.port))),
             Some(Some(4000))
         );
 

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   ensureWorkspaceTrust: vi.fn(() => 'trusted'),
   ensureSshWorkspaceConnected: vi.fn(),
   prepareSshWorkspace: vi.fn(),
+  isSshSharedServerReady: vi.fn(),
   requestSshReconnect: vi.fn(),
   safeInvoke: vi.fn(),
   loadProjectsFromDb: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock('../lib/sshWorkspace', async importOriginal => ({
   ...(await importOriginal<typeof import('../lib/sshWorkspace')>()),
   ensureSshWorkspaceConnected: mocks.ensureSshWorkspaceConnected,
   prepareSshWorkspace: mocks.prepareSshWorkspace,
+  isSshSharedServerReady: mocks.isSshSharedServerReady,
   requestSshReconnect: mocks.requestSshReconnect,
 }))
 vi.mock('../lib/fileTreeCache', async importOriginal => ({
@@ -83,6 +85,7 @@ beforeEach(() => {
   mocks.safeInvoke.mockResolvedValue(undefined)
   mocks.ensureSshWorkspaceConnected.mockResolvedValue(undefined)
   mocks.prepareSshWorkspace.mockResolvedValue(undefined)
+  mocks.isSshSharedServerReady.mockResolvedValue(false)
   cancelSshOpening()
   mocks.loadProjectRootTree.mockResolvedValue([])
   useProjectStore.setState({
@@ -97,6 +100,18 @@ beforeEach(() => {
 })
 
 describe('SSH project availability', () => {
+  it('uses a lightweight hint for a shared service while keeping project activation gated on preparation', async () => {
+    mocks.isSshSharedServerReady.mockResolvedValueOnce(true)
+    let finish!: () => void
+    mocks.prepareSshWorkspace.mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve }))
+    const opening = useProjectStore.getState().switchProject(remote)
+    await vi.waitFor(() => expect(mocks.prepareSshWorkspace).toHaveBeenCalled())
+    expect(useSshOpeningStore.getState().attempt?.reusingServer).toBe(true)
+    expect(useProjectStore.getState().currentProject).toBeNull()
+    finish()
+    expect(await opening).toBe(true)
+    expect(mocks.loadProjectRootTree).toHaveBeenCalledWith(remote)
+  })
   it('reloads explicitly imported projects without activating a project or opening a trust prompt', async () => {
     mocks.restoreWorkspace = true
     mocks.loadProjectsFromDb.mockResolvedValue({ migrated: false, projects: [local], importedFromSettings: 1 })

@@ -2,7 +2,7 @@
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Project } from '../types'
+import type { Project, SshConnection } from '../types'
 import ProjectManager from './ProjectManager'
 import { useProjectStore } from '../store/projectStore'
 import { saveSelectedProjectsAsWorkspace } from '../lib/namedWorkspaceActions'
@@ -68,11 +68,73 @@ function makeProjects(count = 17): Project[] {
   }))
 }
 
+function sourceFixtures() {
+  const connections: SshConnection[] = [
+    {
+      id: 'wsl',
+      name: 'WSL',
+      host: 'localhost',
+      port: 22,
+      username: 'root',
+      auth_kind: 'privateKey',
+      host_key_fingerprint: 'fp',
+      created_at: 1,
+      updated_at: 1,
+    },
+    {
+      id: 'win',
+      name: 'WinDev',
+      host: '192.168.252.107',
+      port: 28822,
+      username: 'administrator',
+      auth_kind: 'privateKey',
+      host_key_fingerprint: 'fp',
+      created_at: 1,
+      updated_at: 1,
+    },
+  ]
+  const projects: Project[] = [
+    visibleProject,
+    {
+      ...visibleProject,
+      id: 'ubuntu',
+      name: 'Ubuntu app',
+      path: String.raw`\\wsl$\Ubuntu\home\code\app`,
+    },
+    {
+      ...hiddenProject,
+      id: 'debian',
+      name: 'Debian app',
+      path: 'wsl://Debian/home/code/app',
+      kind: 'wsl',
+    },
+    {
+      ...visibleProject,
+      id: 'ssh-wsl',
+      name: 'Remote app',
+      kind: 'ssh',
+      path: 'ssh://wsl/home/code/remote',
+      root_path: '/home/code/remote',
+    },
+    {
+      ...hiddenProject,
+      id: 'ssh-win',
+      name: 'Windows app',
+      kind: 'ssh',
+      connection_id: 'win',
+      path: 'ssh://win/D:/code/app',
+      root_path: '/D:/code/app',
+    },
+  ]
+  return { projects, sshConnections: connections }
+}
+
 describe('ProjectManager', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     useProjectStore.setState({
       projects: [visibleProject, hiddenProject],
+      sshConnections: [],
       currentProject: visibleProject,
       unavailableProjectIds: [],
       toasts: [],
@@ -178,7 +240,7 @@ describe('ProjectManager', () => {
       currentProject: visibleProject,
     })
     render(<ProjectManager />)
-    expect(screen.getByText('WSL')).toBeInTheDocument()
+    expect(screen.getByText('WSL', { selector: 'span' })).toBeInTheDocument()
     expect(document.querySelector('.lucide-cloud')).toBeInTheDocument()
   })
 
@@ -244,7 +306,7 @@ describe('ProjectManager', () => {
     expect(screen.getByRole('button', { name: 'Project 17' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Project 05' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
-    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'created_at' } })
+    fireEvent.change(screen.getByLabelText('项目排序'), { target: { value: 'created_at' } })
     expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
     fireEvent.click(screen.getByRole('button', { name: '切换排序方向' }))
@@ -315,7 +377,7 @@ describe('ProjectManager', () => {
       projects: [visibleProject, hiddenProject, remoteProject],
     })
     render(<ProjectManager />)
-    const search = screen.getByRole('textbox', { name: '搜索项目名称' })
+    const search = screen.getByRole('textbox', { name: '搜索项目名称、路径或来源' })
     fireEvent.change(search, { target: { value: '  aLPHa  ' } })
     expect(screen.getByRole('button', { name: 'Alpha' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Alpha-远程项目' })).toBeInTheDocument()
@@ -324,6 +386,9 @@ describe('ProjectManager', () => {
     fireEvent.change(search, { target: { value: '远程' } })
     expect(screen.getByRole('status')).toHaveTextContent('显示 1-1 项，共 1 项')
     fireEvent.change(search, { target: { value: '/home/code' } })
+    expect(screen.getByRole('button', { name: 'Alpha-远程项目' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-1 项，共 1 项')
+    fireEvent.change(search, { target: { value: 'no-such-project' } })
     expect(screen.getByText('没有匹配的项目')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('显示 0-0 项，共 0 项')
     expect(screen.getByRole('button', { name: '下一页' })).toBeDisabled()
@@ -338,7 +403,7 @@ describe('ProjectManager', () => {
     useProjectStore.setState({ projects: makeProjects() })
     render(<ProjectManager />)
     fireEvent.click(screen.getByRole('button', { name: '下一页' }))
-    const search = screen.getByRole('textbox', { name: '搜索项目名称' })
+    const search = screen.getByRole('textbox', { name: '搜索项目名称、路径或来源' })
     fireEvent.change(search, { target: { value: 'project' } })
     expect(screen.getByRole('status')).toHaveTextContent('显示 1-10 项，共 17 项')
     expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
@@ -360,11 +425,80 @@ describe('ProjectManager', () => {
     useProjectStore.setState({ projects: makeProjects() })
     render(<ProjectManager />)
     fireEvent.click(screen.getByRole('checkbox', { name: '全选当前页' }))
-    fireEvent.change(screen.getByRole('textbox', { name: '搜索项目名称' }), {
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索项目名称、路径或来源' }), {
       target: { value: 'project 01' },
     })
     await waitFor(() => expect(screen.getByText('已选 1 项')).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '保存选中为多项目工作区' }))
     expect(saveSelectedProjectsAsWorkspace).toHaveBeenCalledWith(['project-1'])
+  })
+
+  it('searches paths, distributions, and connection metadata even for unique project names', () => {
+    useProjectStore.setState(sourceFixtures())
+    render(<ProjectManager />)
+    const search = screen.getByRole('textbox', { name: '搜索项目名称、路径或来源' })
+    for (const [query, expected] of [
+      ['  WINDEV  ', 'Windows app'],
+      ['192.168.252.107:28822', 'Windows app'],
+      ['administrator', 'Windows app'],
+      ['root@localhost', 'Remote app'],
+      ['/home/code/remote', 'Remote app'],
+      ['Ubuntu', 'Ubuntu app'],
+      ['本机', 'Alpha'],
+    ]) {
+      fireEvent.change(search, { target: { value: query } })
+      expect(screen.getByRole('button', { name: expected })).toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent('显示 1-1 项，共 1 项')
+    }
+    fireEvent.change(search, { target: { value: '/home/code/app' } })
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-2 项，共 2 项')
+    fireEvent.change(search, { target: { value: 'WSL' } })
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-3 项，共 3 项')
+  })
+
+  it('filters native WSL separately from SSH connections named WSL and combines conditions', () => {
+    useProjectStore.setState(sourceFixtures())
+    render(<ProjectManager />)
+    const source = screen.getByLabelText('筛选项目来源')
+    fireEvent.change(source, { target: { value: 'wsl' } })
+    expect(screen.getByRole('button', { name: 'Ubuntu app' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Debian app' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remote app' })).not.toBeInTheDocument()
+    fireEvent.change(source, { target: { value: 'wsl:Ubuntu' } })
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-1 项，共 1 项')
+    fireEvent.change(source, { target: { value: 'ssh' } })
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-2 项，共 2 项')
+    fireEvent.change(source, { target: { value: 'ssh:wsl' } })
+    expect(screen.getByRole('button', { name: 'Remote app' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-1 项，共 1 项')
+    fireEvent.change(source, { target: { value: 'ssh:win' } })
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '/D:/code' } })
+    fireEvent.click(screen.getByRole('tab', { name: '已隐藏' }))
+    expect(screen.getByRole('button', { name: 'Windows app' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: '已显示' }))
+    expect(screen.getByText('没有匹配的项目')).toBeInTheDocument()
+    fireEvent.change(source, { target: { value: 'all' } })
+    fireEvent.click(screen.getByRole('button', { name: '清除搜索' }))
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-3 项，共 3 项')
+    fireEvent.change(source, { target: { value: 'local' } })
+    expect(screen.getByRole('button', { name: 'Alpha' })).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-1 项，共 1 项')
+  })
+
+  it('resets pagination and removes selections outside the selected source', async () => {
+    const fixtures = sourceFixtures()
+    useProjectStore.setState({ ...fixtures, projects: [...makeProjects(), ...fixtures.projects] })
+    render(<ProjectManager />)
+    fireEvent.click(screen.getByRole('checkbox', { name: '全选当前页' }))
+    fireEvent.click(screen.getByRole('button', { name: '下一页' }))
+    fireEvent.change(screen.getByLabelText('筛选项目来源'), { target: { value: 'ssh' } })
+    expect(screen.getByRole('button', { name: '上一页' })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('显示 1-2 项，共 2 项')
+    await waitFor(() => expect(screen.queryByText('已选 10 项')).not.toBeInTheDocument())
+    fireEvent.click(screen.getByRole('checkbox', { name: '全选当前页' }))
+    fireEvent.change(screen.getByLabelText('筛选项目来源'), { target: { value: 'ssh:win' } })
+    await waitFor(() => expect(screen.getByText('已选 1 项')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '保存选中为多项目工作区' }))
+    expect(saveSelectedProjectsAsWorkspace).toHaveBeenCalledWith(['ssh-win'])
   })
 })

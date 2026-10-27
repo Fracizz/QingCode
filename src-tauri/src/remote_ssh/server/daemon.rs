@@ -1014,6 +1014,24 @@ async fn probe_daemon_versioned(
     }
 }
 
+pub(super) async fn probe_shared_daemon(
+    manager: &SshManager,
+    connection_id: &str,
+    access: &DaemonAccess,
+) -> Result<(), String> {
+    match probe_daemon_versioned(
+        manager,
+        connection_id,
+        access,
+        Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT,
+    )
+    .await
+    {
+        ProbeOutcome::Ready => Ok(()),
+        ProbeOutcome::StaleVersion(reason) | ProbeOutcome::Unavailable(reason) => Err(reason),
+    }
+}
+
 /// 一次 exec 确保 daemon 在跑并取回 token（见 [`daemon_token_command`]）。
 /// 直接 exec 二进制本体，Windows 上不经 PowerShell 包装。
 async fn ensure_daemon_token(
@@ -1049,14 +1067,27 @@ async fn ensure_daemon_token(
 /// 时间。该连接 + 根的后续操作直接走 serve 模式；冷却
 /// [`AGENT_DAEMON_RETRY_AFTER_DOWNGRADE`] 后 ensure 快路径会重新探测——
 /// 之前一次失败就永久清标记，daemon 崩溃后整条连接再也回不去 daemon 传输。
-pub(crate) fn downgrade_server_daemon(manager: &SshManager, key: &str) {
+pub(crate) fn downgrade_server_daemon(manager: &SshManager, key: &str, expected: &DaemonAccess) {
+    if let Some((connection_id, _)) = key.split_once('|') {
+        super::host_runtime::invalidate_failed_daemon(manager, connection_id, expected);
+    }
     let Some(mut slot) = manager.server_slot(key) else {
         return;
     };
     let Some(endpoint) = slot.endpoint.as_mut() else {
         return;
     };
+    if endpoint
+        .daemon
+        .as_ref()
+        .is_some_and(|current| current != expected)
+    {
+        return;
+    }
     endpoint.daemon = None;
+    if endpoint.serve.is_none() {
+        slot.endpoint = None;
+    }
     slot.daemon_downgraded_at = Some(Instant::now());
     manager.set_server_slot(key, slot);
 }
@@ -1994,23 +2025,25 @@ mod tests {
         let manager = SshManager::new();
         let key = server_slot_key("c1", "/srv/app");
         // 没有端点时降级是空操作，不报错。
-        downgrade_server_daemon(&manager, &key);
+        downgrade_server_daemon(&manager, &key, &sample_daemon_access());
         manager.set_server_slot(
             &key,
             ServerSlot {
                 endpoint: Some(ServerEndpoint {
-                    port: 4000,
-                    token: "t".to_string(),
+                    serve: Some(ServeEndpoint {
+                        port: 4000,
+                        token: "t".to_string(),
+                    }),
                     daemon: Some(sample_daemon_access()),
                 }),
                 ..Default::default()
             },
         );
-        downgrade_server_daemon(&manager, &key);
+        downgrade_server_daemon(&manager, &key, &sample_daemon_access());
         let slot = manager.server_slot(&key).unwrap();
         let endpoint = slot.endpoint.as_ref().unwrap();
         // serve 端点保留，仅 daemon 标记被清掉：后续操作直接走 serve。
-        assert_eq!(endpoint.port, 4000);
+        assert_eq!(endpoint.serve.as_ref().unwrap().port, 4000);
         assert!(endpoint.daemon.is_none());
         // 降级时间被记录：冷却 5 分钟后 ensure 快路径才会重新探测 daemon。
         assert!(slot.daemon_downgraded_at.is_some());

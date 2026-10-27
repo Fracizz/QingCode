@@ -289,6 +289,15 @@ export async function prepareSshWorkspace(
   }
 }
 
+/** Presentation hint only; does not authorize or skip project preparation. */
+export async function isSshSharedServerReady(rootUri: string): Promise<boolean> {
+  try {
+    return Boolean(await safeInvoke('检查共享远端服务', 'ssh_shared_server_ready', { rootUri }))
+  } catch {
+    return false
+  }
+}
+
 export interface SshWorkspaceRoot {
   rootUri: string
   trusted: boolean

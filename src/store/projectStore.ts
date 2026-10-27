@@ -67,6 +67,7 @@ import {
   ensureSshWorkspaceConnected,
   findSshProject,
   isSshProject,
+  isSshSharedServerReady,
   prepareSshWorkspace,
   requestSshReconnect,
   sshRootUri,
@@ -176,6 +177,9 @@ let projectSwitchPending = false
 
 function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
   return runSshOpening(project, async (signal, report) => {
+    const sharedReady = await isSshSharedServerReady(project.path)
+    signal.throwIfAborted()
+    if (sharedReady) report('mounting')
     await ensureSshWorkspaceConnected(project)
     signal.throwIfAborted()
     report('service')

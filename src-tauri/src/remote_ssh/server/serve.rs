@@ -75,9 +75,10 @@ pub(super) async fn ping_server(
     connection_id: &str,
     endpoint: &ServerEndpoint,
 ) -> Result<(), String> {
-    let channel = open_server_channel(manager, connection_id, endpoint.port).await?;
+    let serve = endpoint.serve.as_ref().ok_or("项目 serve 尚未启动")?;
+    let channel = open_server_channel(manager, connection_id, serve.port).await?;
     let request = ServerRequest {
-        token: endpoint.token.clone(),
+        token: serve.token.clone(),
         op: ServerOp::Ping,
     };
     match server_roundtrip(channel, &request).await? {
@@ -111,7 +112,8 @@ pub(crate) async fn server_stream_call(
     cancelled: impl Fn() -> bool,
     mut on_record: impl FnMut(&serde_json::Value) -> bool,
 ) -> Result<ServerStreamOutcome, String> {
-    let channel = open_server_channel(manager, connection_id, endpoint.port).await?;
+    let serve = endpoint.serve.as_ref().ok_or("项目 serve 尚未启动")?;
+    let channel = open_server_channel(manager, connection_id, serve.port).await?;
     let mut stream = channel.into_stream();
     let payload =
         serde_json::to_vec(&request).map_err(|error| format!("编码 server 请求失败：{error}"))?;

@@ -314,6 +314,8 @@ impl client::Handler for SshClient {
 }
 
 struct ConnectedSession {
+    /// Distinguishes authenticated SSH incarnations, including reconnects.
+    server_incarnation: Arc<()>,
     handle: client::Handle<SshClient>,
     config: Mutex<SshConnectionConfig>,
     /// 整条连接共用一个 SFTP 会话，请求在其中多路复用。每次操作都新开通道时，
@@ -952,6 +954,7 @@ pub struct SshManager {
     /// 已解析并校验过的用户私有安装位置（家目录, 安装目录），按连接 id 缓存。
     /// 同一连接内不会变化；Windows 上每次解析都要起两次 PowerShell。
     server_installs: Mutex<HashMap<String, (String, String)>>,
+    host_daemons: server::HostDaemonCache,
 }
 
 impl SshManager {
@@ -976,6 +979,7 @@ impl SshManager {
             watch_supervisors: Mutex::new(HashMap::new()),
             server_snapshots: Mutex::new(HashMap::new()),
             server_installs: Mutex::new(HashMap::new()),
+            host_daemons: server::HostDaemonCache::default(),
         }
     }
 
@@ -1557,14 +1561,36 @@ impl SshManager {
             .filter(|dir| dir.is_dir() && seen.insert(dir.clone()))
             .collect();
         if let Ok(mut slot) = self.server_binary_dirs.write() {
+            if *slot == filtered {
+                return;
+            }
             *slot = filtered;
         }
+        self.reset_shared_services();
     }
 
     pub(crate) fn set_server_offline_dir(&self, dir: Option<PathBuf>) {
         let dir = dir.filter(|path| path.is_dir());
         if let Ok(mut slot) = self.server_offline_dir.write() {
+            if *slot == dir {
+                return;
+            }
             *slot = dir;
+        }
+        self.reset_shared_services();
+    }
+
+    fn reset_shared_services(&self) {
+        self.host_daemons.invalidate_all();
+        if let Ok(mut slots) = self.servers.write() {
+            for slot in slots.values_mut() {
+                if let Some(endpoint) = slot.endpoint.as_mut() {
+                    endpoint.daemon = None;
+                    if endpoint.serve.is_none() {
+                        slot.endpoint = None;
+                    }
+                }
+            }
         }
     }
 
@@ -2741,6 +2767,7 @@ async fn authenticate_session(
         .map_err(|_| ssh_handshake_timeout_error(&config))??;
     Ok((
         ConnectedSession {
+            server_incarnation: Arc::new(()),
             handle,
             config: Mutex::new(config),
             sftp: tokio::sync::Mutex::new(None),
@@ -3027,6 +3054,15 @@ pub fn ssh_connection_status(
 }
 
 #[tauri::command]
+pub fn ssh_shared_server_ready(
+    root_uri: String,
+    manager: State<'_, SshManager>,
+) -> Result<bool, String> {
+    let parsed = parse_remote_uri(&root_uri)?;
+    Ok(server::shared_server_known(&manager, &parsed.connection_id))
+}
+
+#[tauri::command]
 pub async fn ssh_prepare_workspace(
     root_uri: String,
     app: AppHandle,
@@ -3250,7 +3286,7 @@ async fn server_scan_entries(
     canonical: &str,
 ) -> Result<Vec<(String, bool)>, String> {
     let key = server::server_slot_key(connection_id, &root.canonical_path);
-    let endpoint = server::require_server_endpoint(app, manager, root, false).await?;
+    let mut endpoint = server::require_server_endpoint(app, manager, root, false).await?;
     let relative = remote_relative_to_root(canonical, &root.canonical_path);
     // daemon 传输优先：一次 RPC 往返，目录树刷新与 watch 事件同源。传输失败
     // 只降级 daemon 标记（保留 serve 端点），继续走 serve 请求；daemon 应答的
@@ -3270,14 +3306,22 @@ async fn server_scan_entries(
                 return Err(format!("读取远程目录失败：{error}"));
             }
             Err(_) => {
-                server::downgrade_server_daemon(manager, &key);
+                server::downgrade_server_daemon(manager, &key, daemon);
                 // 传输从 daemon 降到 serve，状态芯片要跟着变。
                 server_status::publish_root_state(app, manager, root);
             }
         }
     }
+    if endpoint.serve.is_none() {
+        endpoint = server::require_serve_endpoint(app, manager, root).await?;
+    }
     let request = qingcode_server::ServerRequest {
-        token: endpoint.token.clone(),
+        token: endpoint
+            .serve
+            .as_ref()
+            .ok_or("项目 serve 尚未启动")?
+            .token
+            .clone(),
         op: qingcode_server::ServerOp::Scan { path: relative },
     };
     let mut entries = Vec::new();
@@ -5833,6 +5877,7 @@ mod tests {
                 .expect("diagnostic SSH handshake exceeded its deadline")
                 .unwrap();
             let transport = Arc::new(ConnectedSession {
+                server_incarnation: Arc::new(()),
                 handle,
                 config: Mutex::new(config.clone()),
                 sftp: tokio::sync::Mutex::new(None),

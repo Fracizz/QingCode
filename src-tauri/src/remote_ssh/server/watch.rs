@@ -1,7 +1,7 @@
 //! watch 监督任务：保活 daemon / serve 两条远端 watch 连接，把事件转成
 //! `fs-change` 发给前端；断链自动重连，退避与退出条件见各常量注释。
 
-use super::daemon::{daemon_rpc, open_daemon_channel};
+use super::daemon::{daemon_rpc, open_daemon_channel, DaemonCallError};
 use super::serve::open_server_channel;
 use super::*;
 use qingcode_server::proto::{self, Event, Kind};
@@ -146,7 +146,7 @@ pub(crate) async fn daemon_watch_session(
     root: &RegisteredRoot,
     canonical_root: &str,
     daemon: &DaemonAccess,
-) -> Result<(), String> {
+) -> Result<(), DaemonCallError> {
     let mut channel = open_daemon_channel(manager, connection_id, daemon).await?;
     let result = async {
         let params = serde_json::json!({ "root": root.canonical_path });
@@ -162,7 +162,9 @@ pub(crate) async fn daemon_watch_session(
             .and_then(serde_json::Value::as_bool)
             != Some(true)
         {
-            return Err("daemon watch 订阅未被受理".to_string());
+            return Err(DaemonCallError::Remote(
+                "daemon watch 订阅未被受理".to_string(),
+            ));
         }
         // RES 只表示订阅受理；空闲时 daemon 每 15s 发一次 PING，
         // `next_frame` 自动回 PONG，使连接在无变更的仓库上也能保活。
@@ -268,31 +270,31 @@ pub(crate) fn spawn_server_watch_supervisor(
                 }
                 server_status::publish_root_state(&app, &manager, &root);
             }
-            let endpoint = match ensure_server_endpoint_with_app(&manager, &root, Some(&app)).await
-            {
-                Ok(Some(endpoint)) => {
-                    consecutive_failures = 0;
-                    endpoint
-                }
-                Ok(None) => {
-                    // 有明确不可用原因（架构不支持 / 没有二进制）就不再空转。
-                    if manager
-                        .server_slot(&key)
-                        .and_then(|slot| slot.unavailable_reason)
-                        .is_some()
-                    {
-                        break;
+            let mut endpoint =
+                match ensure_server_endpoint_with_app(&manager, &root, Some(&app)).await {
+                    Ok(Some(endpoint)) => {
+                        consecutive_failures = 0;
+                        endpoint
                     }
-                    consecutive_failures = consecutive_failures.saturating_add(1);
-                    tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
-                    continue;
-                }
-                Err(_) => {
-                    consecutive_failures = consecutive_failures.saturating_add(1);
-                    tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
-                    continue;
-                }
-            };
+                    Ok(None) => {
+                        // 有明确不可用原因（架构不支持 / 没有二进制）就不再空转。
+                        if manager
+                            .server_slot(&key)
+                            .and_then(|slot| slot.unavailable_reason)
+                            .is_some()
+                        {
+                            break;
+                        }
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
+                        continue;
+                    }
+                    Err(_) => {
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
+                        continue;
+                    }
+                };
             // daemon 传输优先：exec 通道内订阅，RES 受理后收 EVENT 推送。
             // 订阅建立失败只降级 daemon 标记（保留 serve 端点），serve 继续兜底。
             if let Some(daemon) = endpoint.daemon.clone() {
@@ -312,18 +314,36 @@ pub(crate) fn spawn_server_watch_supervisor(
                     }
                     // 连接本身断了不是 daemon 的错：回到循环顶部重连，保留 daemon 标记。
                     Err(_) if !manager.connection_is_open(&connection_id) => continue,
+                    // Root permission/watch limits do not invalidate a healthy
+                    // user daemon shared by unrelated projects.
+                    Err(error) if !error.is_transport() => {
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
+                        continue;
+                    }
                     Err(_) => {
-                        downgrade_server_daemon(&manager, &key);
+                        downgrade_server_daemon(&manager, &key, &daemon);
                         server_status::publish_root_state(&app, &manager, &root);
+                    }
+                }
+            }
+            if endpoint.serve.is_none() {
+                match require_serve_endpoint(&app, &manager, &root).await {
+                    Ok(fallback) => endpoint = fallback,
+                    Err(_) => {
+                        consecutive_failures = consecutive_failures.saturating_add(1);
+                        tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
+                        continue;
                     }
                 }
             }
             // serve 回退：打开 watch 连接；失败休眠后重试（下一轮会重新校验退出条件）。
             let stream = async {
-                let channel = open_server_channel(&manager, &connection_id, endpoint.port).await?;
+                let serve = endpoint.serve.as_ref().ok_or("项目 serve 尚未启动")?;
+                let channel = open_server_channel(&manager, &connection_id, serve.port).await?;
                 let mut stream = channel.into_stream();
                 let request = ServerRequest {
-                    token: endpoint.token.clone(),
+                    token: serve.token.clone(),
                     op: ServerOp::Watch {
                         // "." 表示代理根（即注册的项目根）。
                         path: ".".to_string(),
