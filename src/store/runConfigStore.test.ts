@@ -4,6 +4,7 @@ vi.mock('../lib/tauri', async importOriginal => {
   const actual = await importOriginal<typeof import('../lib/tauri')>()
   return {
     ...actual,
+    isTauri: () => true,
     safeInvoke: vi.fn(),
   }
 })
@@ -22,6 +23,63 @@ const remoteProject: Project = {
   last_opened_at: 1,
   kind: 'ssh',
 }
+
+describe('cross-platform config persistence', () => {
+  const initial = useRunConfigStore.getState()
+  beforeEach(() => invoke.mockReset())
+  afterEach(() => useRunConfigStore.setState(initial, true))
+
+  it('keeps legacy tasks and every OS override through GUI load/save', async () => {
+    const configs: RunConfig[] = [
+      {
+        id: 'dev',
+        name: 'dev',
+        tasks: [
+          { id: 'legacy', type: 'command', target: 'pnpm dev' },
+          {
+            id: 'api',
+            type: 'command',
+            target: '',
+            os: {
+              windows: { target: 'python.exe app.py', env: { OS_VALUE: 'win' } },
+              linux: { target: 'python3 app.py', cwd: '' },
+              macos: { type: 'sh', target: 'dev.sh' },
+            },
+          },
+        ],
+      },
+    ]
+    let saved = ''
+    invoke.mockImplementation(async (_label, command, args) => {
+      if (command === 'read_file') return JSON.stringify({ configs })
+      if (command === 'write_file') saved = String(args?.content)
+      return undefined
+    })
+    const loaded = await useRunConfigStore.getState().loadConfigs(remoteProject)
+    await useRunConfigStore.getState().saveConfigs(remoteProject, loaded)
+    expect(JSON.parse(saved).configs[0].tasks).toEqual(configs[0].tasks)
+  })
+
+  it('reports malformed OS overrides without falling back to or overwriting a legacy file', async () => {
+    invoke.mockResolvedValue(
+      JSON.stringify({
+        configs: [
+          {
+            id: 'dev',
+            name: 'dev',
+            tasks: [{ id: 'api', target: 'echo ok', os: { win32: { target: 'bad' } } }],
+          },
+        ],
+      })
+    )
+    await expect(useRunConfigStore.getState().loadConfigs(remoteProject)).rejects.toThrow(
+      'Unsupported task.os'
+    )
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke.mock.calls[0][1]).toBe('read_file')
+    expect(useProjectStore.getState().toasts.at(-1)?.text).toContain('运行配置格式错误')
+  })
+})
 
 describe('ensureRunConfigDirectory', () => {
   beforeEach(() => invoke.mockReset())

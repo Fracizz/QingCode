@@ -1,3 +1,4 @@
+import { hasBackend } from './runtimeCapabilities'
 import type { Project } from '@/types'
 import {
   DEFAULT_GLOBAL_SETTINGS,
@@ -7,7 +8,7 @@ import {
   saveProjectSettings,
 } from '@/lib/projectSettings'
 import { mergeSettings } from '@/lib/autoSaveSettings'
-import { isTauri, safeInvoke } from '@/lib/tauri'
+import { safeInvoke } from '@/lib/tauri'
 
 /**
  * ssh.server.enabled：仅用于解析尚未保存 mode 的旧连接（true=Server，false=SSH）。
@@ -222,7 +223,7 @@ export async function saveScopedSshServerOfflineDir(
  * 返回是否全部推送成功；调用方应把失败提示给用户而不是只写 console。
  */
 export async function pushSshServerSettingsToNative(): Promise<void> {
-  if (!isTauri()) return
+  if (!hasBackend()) return
   try {
     // 模式是连接配置属性，连接时随 config 传后端；全局开关不再推送。
     await safeInvoke('配置 SSH 远端服务下载', 'ssh_set_server_auto_download', {

@@ -1,5 +1,6 @@
 import { invoke as rawInvoke, isTauri as coreIsTauri } from '@tauri-apps/api/core'
 import { recordTauriCommandDuration } from './performanceDiagnostics'
+import { isWebTest } from './webTestMode'
 
 const SSH_COMMANDS: Partial<Record<string, string>> = {
   validate_directory: 'ssh_validate_directory',
@@ -79,7 +80,7 @@ export async function safeInvoke<T = unknown>(
   cmd: string,
   args?: Record<string, unknown>
 ): Promise<T> {
-  if (!isTauri()) throw new NotInTauriError(action)
+  if (!isTauri() && !isWebTest()) throw new NotInTauriError(action)
   const started = performance.now()
   let succeeded = false
   const resolvedCommand = remoteCommand(cmd, args)

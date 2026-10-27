@@ -1,8 +1,8 @@
+import { hasBackend } from './runtimeCapabilities'
 import { open } from '@tauri-apps/plugin-dialog'
 import { translate } from './i18n'
 import { getOpenWithStatus } from './openWithSettings'
 import { authorizePaths } from './pathAllowlist'
-import { isTauri } from './tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 
@@ -19,7 +19,7 @@ async function supportedExtensions(): Promise<string[]> {
 /** Select one local file, authorize its path, and open it in the current editor session. */
 export async function openFileFromDialog(): Promise<void> {
   const pushToast = useProjectStore.getState().pushToast
-  if (!isTauri()) {
+  if (!hasBackend()) {
     pushToast('error', translate('当前环境无法打开文件'))
     return
   }

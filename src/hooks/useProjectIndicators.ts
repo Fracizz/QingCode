@@ -1,10 +1,11 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { useEffect, useMemo, useState } from 'react'
 import type { Project } from '../types'
 import { useEditorStore } from '../store/editorStore'
 import { useTerminalStore } from '../store/terminalStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
 import { useProjectStore } from '../store/projectStore'
-import { isSshResource, isTauri } from '../lib/tauri'
+import { isSshResource } from '../lib/tauri'
 import {
   countDirtyTabsByProject,
   countRunningTerminalsByProject,
@@ -71,7 +72,7 @@ export function useProjectIndicators(
   )
 
   useEffect(() => {
-    if (!isTauri() || !indicatorsEnabled) return
+    if (!hasBackend() || !indicatorsEnabled) return
 
     const eligibleProjects = projects.filter(
       project =>

@@ -18,7 +18,6 @@ import {
   Laptop,
   Plus,
   Settings2,
-  SquareTerminal,
   X,
 } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -42,7 +41,6 @@ import {
   type SshBrowseEntry,
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
-import { isWslPath, WSL_ROOT_PATH, wslSupported } from '../lib/wslWorkspace'
 import { getSshServerEnabled } from '../lib/sshServerSettings'
 import type { SshConnection } from '../types'
 
@@ -52,8 +50,8 @@ interface Props {
   onCreated: () => void
 }
 
-/** 源文件夹所在位置：此电脑、本机 WSL，或某个已保存的 SSH 连接。 */
-export type ProjectSource = { kind: 'local' } | { kind: 'wsl' } | { kind: 'ssh'; connectionId: string }
+/** 源文件夹所在位置：此电脑，或某个已保存的 SSH 连接。 */
+export type ProjectSource = { kind: 'local' } | { kind: 'ssh'; connectionId: string }
 
 type SshPhase = 'auth' | 'connecting' | 'browse'
 
@@ -69,7 +67,7 @@ function baseName(path: string): string {
   return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() ?? ''
 }
 
-/** 统一的新建项目入口：本地文件夹、WSL 与 SSH 远程主机共用一个对话框。 */
+/** 统一的新建项目入口：本地文件夹与已保存的 SSH 连接共用一个对话框。 */
 export default function CreateProjectDialog({ open: visible, onClose, onCreated }: Props) {
   const { t } = useI18n()
   const addProject = useProjectStore(s => s.addProject)
@@ -111,7 +109,6 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
 
   const connection =
     source.kind === 'ssh' ? sshConnections.find(item => item.id === source.connectionId) : undefined
-  const showWsl = wslSupported()
 
   useEffect(() => {
     if (!visible) return
@@ -251,18 +248,18 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
     setError('')
   }
 
-  const pickLocalFolder = async (kind: 'local' | 'wsl') => {
+  const pickLocalFolder = async () => {
     setMenuOpen(false)
     try {
       const selected = await open({
         directory: true,
         multiple: false,
-        defaultPath: kind === 'wsl' ? WSL_ROOT_PATH : (localPath ?? undefined),
-        title: kind === 'wsl' ? t('选择 WSL 中的文件夹') : t('选择项目文件夹'),
+        defaultPath: localPath ?? undefined,
+        title: t('选择项目文件夹'),
       })
       if (typeof selected !== 'string') return
       resetSsh()
-      setSource({ kind: isWslPath(selected) ? 'wsl' : 'local' })
+      setSource({ kind: 'local' })
       setLocalPath(selected)
     } catch (reason) {
       setError(String(reason))
@@ -369,16 +366,10 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
   }
 
   const sourceLabel =
-    source.kind === 'ssh'
-      ? (connection?.name ?? t('远程主机'))
-      : source.kind === 'wsl'
-        ? 'WSL'
-        : t('此电脑')
+    source.kind === 'ssh' ? (connection?.name ?? t('远程主机')) : t('此电脑')
   const sourceIcon =
     source.kind === 'ssh' ? (
       <Cloud size={14} />
-    ) : source.kind === 'wsl' ? (
-      <SquareTerminal size={14} />
     ) : (
       <Laptop size={14} />
     )
@@ -402,17 +393,9 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
             icon={<Laptop size={14} />}
             label={t('此电脑')}
             checked={source.kind === 'local'}
-            onSelect={() => void pickLocalFolder('local')}
+            onSelect={() => void pickLocalFolder()}
           />
           <p className="px-2 pt-2 pb-1 text-ui-sm text-fg-dim">{t('远程设备')}</p>
-          {showWsl ? (
-            <MenuItem
-              icon={<SquareTerminal size={14} />}
-              label="WSL"
-              checked={source.kind === 'wsl'}
-              onSelect={() => void pickLocalFolder('wsl')}
-            />
-          ) : null}
           {sshConnections.map(item => (
             <MenuItem
               key={item.id}
@@ -466,7 +449,7 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
         <span className="min-w-0 flex-1 truncate font-mono text-ui text-fg">{localPath}</span>
         <button
           type="button"
-          onClick={() => void pickLocalFolder(source.kind === 'wsl' ? 'wsl' : 'local')}
+          onClick={() => void pickLocalFolder()}
           className="flex-shrink-0 rounded border border-border-strong px-2.5 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg"
         >
           {t('更换')}
@@ -476,16 +459,16 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
       <div className="flex min-h-[120px] min-w-0 flex-col items-center justify-center gap-1 px-3 py-6">
         <button
           type="button"
-          onClick={() => void pickLocalFolder(source.kind === 'wsl' ? 'wsl' : 'local')}
+          onClick={() => void pickLocalFolder()}
           className="inline-flex max-w-full items-center gap-1.5 truncate rounded px-2 py-1 text-ui-lg text-fg hover:bg-bg-hover"
         >
           <Plus size={15} className="flex-shrink-0 text-fg-muted" />
           <span className="truncate">
-            {source.kind === 'wsl' ? t('在 WSL 中选择文件夹') : t('在此电脑上选择文件夹')}
+            {t('在此电脑上选择文件夹')}
           </span>
         </button>
         <p className="max-w-full text-center text-ui-sm text-fg-dim">
-          {t('点击上方来源可切换到 WSL 或远程主机')}
+          {t('点击上方来源可选择已保存的远程连接')}
         </p>
       </div>
     )

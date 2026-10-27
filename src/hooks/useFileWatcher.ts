@@ -1,6 +1,7 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { useEffect, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { isSshResource, isTauri, safeInvoke } from '../lib/tauri'
+import { isSshResource, safeInvoke } from '../lib/tauri'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
 import { useGitStatusStore } from '../store/gitStatusStore'
@@ -47,7 +48,7 @@ function normalize(path: string): string {
 }
 
 async function syncWatches(roots: string[], files: string[]) {
-  if (!isTauri()) return
+  if (!hasBackend()) return
   try {
     await safeInvoke('同步文件监视', 'sync_file_watches', { roots, files })
   } catch (e) {
@@ -141,7 +142,7 @@ export function useFileWatcher() {
 
   // Recursively watch only the active project. Inactive-project tabs are watched as files.
   useEffect(() => {
-    if (!isTauri()) return
+    if (!hasBackend()) return
     const roots = collectWatchRoots(currentProject)
     const files = collectWatchFiles(tabs, projectSessions)
     const timer = window.setTimeout(() => void syncWatches(roots, files), 100)
@@ -150,7 +151,7 @@ export function useFileWatcher() {
 
   // Lightweight git dirty snapshot for the current project.
   useEffect(() => {
-    if (!isTauri() || !currentProject || currentProject.ephemeral) {
+    if (!hasBackend() || !currentProject || currentProject.ephemeral) {
       useGitStatusStore.getState().clear()
       return
     }
@@ -184,7 +185,7 @@ export function useFileWatcher() {
 
   // Catch missed OS events: window focus / becoming visible again.
   useEffect(() => {
-    if (!isTauri()) return
+    if (!hasBackend()) return
     let focusTimer: ReturnType<typeof setTimeout> | null = null
 
     const runFocusSync = () => {
@@ -225,7 +226,7 @@ export function useFileWatcher() {
 
   // Activating a tab: cheap mtime check for that file only.
   useEffect(() => {
-    if (!isTauri() || !activeTabId) return
+    if (!hasBackend() || !activeTabId) return
     const tab = useEditorStore.getState().tabs.find(t => t.id === activeTabId)
     if (!tab || tab.kind === 'diff') return
     const deps = {
@@ -238,7 +239,7 @@ export function useFileWatcher() {
   }, [activeTabId])
 
   useEffect(() => {
-    if (!isTauri()) return
+    if (!hasBackend()) return
     let unlisten: UnlistenFn | undefined
     let cancelled = false
     const deps = depsRef.current

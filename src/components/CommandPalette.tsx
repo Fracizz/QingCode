@@ -1,3 +1,4 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react'
 import { Command, FileText, LoaderCircle } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
@@ -18,7 +19,6 @@ import {
   type QuickOpenEntry,
 } from '../lib/quickOpen'
 import { loadExcludeSettingsForProject } from '../lib/excludeSettings'
-import { isTauri } from '../lib/tauri'
 import { searchFiles } from '../lib/searchFiles'
 import { useCommandPaletteStore } from '../store/commandPaletteStore'
 import { useEditorStore } from '../store/editorStore'
@@ -149,7 +149,7 @@ export default function CommandPalette() {
       setFailedProjects([])
       setTruncated(false)
     })
-    if (!open || isCommandMode(query) || !needle || !isTauri()) return
+    if (!open || isCommandMode(query) || !needle || !hasBackend()) return
 
     const roots = projects
       .filter(project => !unavailableProjectIds.includes(project.id))

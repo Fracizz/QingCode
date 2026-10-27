@@ -93,6 +93,12 @@ function terminalSearchOptions(incremental = false): ISearchOptions {
   }
 }
 
+function writeFinishedTaskHint(term: XTerm) {
+  term.writeln(`\x1b[90m${translate(
+    '按 Ctrl+C 在当前标签进入命令行，或点标签「重启」重新运行任务。',
+  )}\x1b[0m`)
+}
+
 // Backgrounds match App.css --color-bg-deep so the caret/outline stays visible.
 const DARK_THEME = {
   background: '#181818',
@@ -560,6 +566,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
           ? translate('进程未启动')
           : translate('进程已退出，退出码 {code}', { code: String(tab.exitCode) })
       term.writeln(`\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
+      if (tab && !shouldKeepShellAfterExit(tab)) writeFinishedTaskHint(term)
     }
 
     term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
@@ -584,7 +591,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         if (event.ctrlKey) {
           event.preventDefault()
           event.stopPropagation()
-          if (!event.repeat && isTerminalWritable()) {
+          if (!event.repeat) {
             void writeToTerminal(terminalId, '\x03')
           }
           return false
@@ -699,7 +706,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       const status = useTerminalStore
         .getState()
         .terminals.find(tab => tab.id === terminalId)?.status
-      if (status !== 'exited') writeToTerminal(terminalId, data)
+      if (status !== 'exited' || data === '\x03') writeToTerminal(terminalId, data)
     })
     // 程序通过 OSC 设置窗口标题时自动更新标签名（如 opencode）；运行任务终端不跟随。
     // 直接挂在 xterm 解析器上处理，输出字节原样写入；须在 ClipboardAddon 之后注册以拦截 OSC 52。
@@ -784,6 +791,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
             ? translate('会话输出已恢复；进程将按原配置重新启动')
             : translate('会话输出已恢复；可从终端标签重启进程')
         term.writeln(`\x1b[90m[${note}]\x1b[0m`)
+        if (recovery === 'locked') writeFinishedTaskHint(term)
       })()
     }, 0)
 
@@ -990,11 +998,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
               code: String(exited.exitCode),
             })} ──\x1b[0m`,
           )
-          term.writeln(
-            `\x1b[90m${translate(
-              '由运行配置拉起，结束后不能继续输入。点标签「重启」再跑，或新开普通终端。',
-            )}\x1b[0m`,
-          )
+          writeFinishedTaskHint(term)
         } else {
           const detail = translate('进程已退出，退出码 {code}', { code: String(exited.exitCode) })
           term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)

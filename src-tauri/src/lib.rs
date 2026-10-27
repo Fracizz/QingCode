@@ -17,6 +17,7 @@ mod git_status;
 mod ipc;
 mod path_guard;
 mod remote_ssh;
+mod run_environment;
 mod terminal;
 mod update;
 mod user_locales;
@@ -440,8 +441,7 @@ fn terminal_session_open(
 
 #[tauri::command]
 fn kill_terminal(id: String, state: tauri::State<'_, TerminalManager>) -> Result<(), String> {
-    state.kill(&id);
-    Ok(())
+    state.kill(&id)
 }
 
 #[tauri::command]
@@ -555,24 +555,50 @@ fn spawn_script(
     cols: Option<u16>,
     rows: Option<u16>,
     shell: Option<String>,
+    project_root: Option<String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, TerminalManager>,
     allowlist: tauri::State<'_, PathAllowlist>,
 ) -> Result<TerminalSpawnResult, String> {
     allowlist.ensure_executable(&cwd)?;
+    if let Some(root) = project_root.as_deref() {
+        allowlist.ensure_executable(root)?;
+        let canonical_root =
+            std::fs::canonicalize(root).map_err(|e| format!("项目目录不可用: {e}"))?;
+        let canonical_cwd =
+            std::fs::canonicalize(&cwd).map_err(|e| format!("工作目录不可用: {e}"))?;
+        if !canonical_cwd.starts_with(&canonical_root) {
+            return Err("任务工作目录必须位于当前项目根目录内".into());
+        }
+    }
     // Script file targets must stay inside the sandbox. Inline `command` /
     // `interactive` strings are unrestricted once the cwd is trusted (UI confirms).
     let kind = shell_kind.as_str();
     if kind != "command" && kind != "interactive" {
         let target_path = {
             let p = Path::new(&target);
-            if p.is_absolute() {
+            if target.starts_with('/') && run_environment::parse_wsl_path(&cwd).is_some() {
+                let wsl = run_environment::parse_wsl_path(&cwd).unwrap();
+                format!(
+                    "\\\\wsl.localhost\\{}{}",
+                    wsl.distro,
+                    target.replace('/', "\\")
+                )
+            } else if p.is_absolute() {
                 target.clone()
             } else {
                 Path::new(&cwd).join(p).to_string_lossy().into_owned()
             }
         };
         allowlist.ensure_allowed(&target_path)?;
+        if let Some(root) = project_root.as_deref() {
+            let root = std::fs::canonicalize(root).map_err(|e| e.to_string())?;
+            let target =
+                std::fs::canonicalize(&target_path).map_err(|e| format!("脚本不可用: {e}"))?;
+            if !target.starts_with(root) {
+                return Err("任务脚本必须位于当前项目根目录内".into());
+            }
+        }
     }
     state.spawn_script(
         id,
@@ -581,6 +607,7 @@ fn spawn_script(
         &target,
         env,
         shell.as_deref(),
+        project_root.as_deref(),
         cols.unwrap_or(80),
         rows.unwrap_or(24),
         app,
@@ -816,6 +843,8 @@ pub fn run() {
             terminal_has_child_processes,
             get_app_memory,
             spawn_script,
+            run_environment::resolve_run_environment,
+            remote_ssh::ssh_run_environment,
             db_url,
             default_settings_path,
             app_exe_path,

@@ -9,13 +9,34 @@ vi.mock('../tauri', () => ({
   safeInvoke: (...args: unknown[]) => mocks.safeInvoke(...args),
 }))
 
-import { attachTerminal, listDetachedTerminals } from './terminal'
+import { attachTerminal, killTerminal, listDetachedTerminals } from './terminal'
 
 beforeEach(() => {
   mocks.safeInvoke.mockReset()
 })
 
 describe('SSH detached terminal IPC contract', () => {
+  it('retains SSH routing after a failed stop so retries reach the same remote task', async () => {
+    mocks.safeInvoke.mockResolvedValueOnce({
+      persistent: true,
+      ptyId: 'retry-pty',
+      connectionId: 'conn',
+    })
+    await attachTerminal({
+      id: 'retry-stop',
+      ptyId: 'retry-pty',
+      cwd: 'ssh://conn/home/app',
+      cols: 80,
+      rows: 24,
+    })
+    mocks.safeInvoke.mockRejectedValueOnce(new Error('offline'))
+    await expect(killTerminal('retry-stop')).rejects.toThrow('offline')
+    mocks.safeInvoke.mockResolvedValueOnce(undefined)
+    await killTerminal('retry-stop')
+    expect(mocks.safeInvoke).toHaveBeenLastCalledWith('关闭终端', 'ssh_kill_terminal', {
+      id: 'retry-stop',
+    })
+  })
   it('lists detached terminals by connection id and drops malformed entries', async () => {
     mocks.safeInvoke.mockResolvedValueOnce([
       {

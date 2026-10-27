@@ -4,7 +4,7 @@ import { useTerminalStore } from '../store/terminalStore'
 import { useEditorStore } from '../store/editorStore'
 import { confirmDialog } from '../store/confirmStore'
 import { promptDialog, validateEntryName } from '../store/promptStore'
-import { isTauri } from '../lib/tauri'
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { translate } from '../lib/i18n'
 import { listBusyTerminals } from '@/lib/terminal/terminalClose'
 import { requestSshReconnect } from '../lib/sshWorkspace'
@@ -15,7 +15,7 @@ export async function removeProjectWithConfirm(id: string, name: string, path: s
     useTerminalStore.getState().terminals.filter(t => t.projectId === id),
   )
   const runningCount = busy.length
-  if (isTauri()) {
+  if (hasBackend()) {
     const ok = await confirmDialog({
       title: translate('移除项目'),
       message: translate('确定从工作区移除「{name}」？', { name }),

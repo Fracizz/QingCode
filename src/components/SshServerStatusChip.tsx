@@ -1,6 +1,7 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { useEffect, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-import { isTauri, safeInvoke } from '../lib/tauri'
+import { safeInvoke } from '../lib/tauri'
 import { useI18n } from '../lib/i18n'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -52,7 +53,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
   useEffect(() => () => { logsRequest.current += 1 }, [])
 
   useEffect(() => {
-    if (!isTauri()) return
+    if (!hasBackend()) return
     let cancelled = false
     let unlisten: UnlistenFn | undefined
     let pollTimer: ReturnType<typeof setTimeout> | undefined

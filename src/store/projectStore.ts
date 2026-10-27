@@ -1,8 +1,9 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { createToastTimers, toastDuration } from '../lib/toastTimers'
 import { create } from 'zustand'
 import { open } from '@tauri-apps/plugin-dialog'
 import { tempDir } from '@tauri-apps/api/path'
-import { safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
+import { safeInvoke, NotInTauriError } from '../lib/tauri'
 import type { Project, RecentFile, SshConnection } from '../types'
 import { baseName, findNodeByPath } from '../utils/fileTreeHelpers'
 import {
@@ -478,7 +479,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   addProjectFromDialog: async () => {
     try {
-      if (!isTauri()) throw new NotInTauriError('打开目录选择器')
+      if (!hasBackend()) throw new NotInTauriError('打开目录选择器')
       const selected = await open({ directory: true, multiple: true })
       const paths = Array.isArray(selected) ? selected : selected ? [selected] : []
       if (paths.length === 0) return
@@ -492,7 +493,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   addEmptyProject: async () => {
-    if (!isTauri()) throw new NotInTauriError('新建临时项目')
+    if (!hasBackend()) throw new NotInTauriError('新建临时项目')
     try {
       const temp = await tempDir()
       const id = crypto.randomUUID()

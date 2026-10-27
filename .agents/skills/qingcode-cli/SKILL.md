@@ -84,6 +84,52 @@ Config and task `id` values are optional when creating and are auto-generated. L
 The optional `restoreWithProjectSession` field defaults to `false`; set it to `true`
 to restore and restart linked task terminals with the project session after an app restart.
 
+### Cross-platform task OS overrides
+
+Keep one config (for example, `dev`) and stable task IDs. Each task's common
+`type`, `target`, `cwd`, and `env` are defaults; optional `os.windows`, `os.linux`,
+and `os.macos` override them. Scalar fields replace the default, including an
+empty `cwd` (project root); `env` merges by variable name, with OS values winning.
+The common `target` can be omitted when at least one OS provides it. Starting on
+an OS without an effective target fails before any task is launched.
+
+```json
+{
+  "name": "dev",
+  "tasks": [{
+    "id": "backend", "type": "command", "cwd": "backend",
+    "target": ".venv/bin/python manage.py runserver",
+    "env": { "PYTHONUNBUFFERED": "1" },
+    "os": {
+      "windows": { "target": ".venv\\Scripts\\python.exe manage.py runserver" },
+      "macos": { "target": "uv run python manage.py runserver" }
+    }
+  }]
+}
+```
+
+- Local projects use the native OS. Windows WSL UNC projects use `linux` and
+  `wsl.exe` with the distribution and POSIX path taken from the project path;
+  no default-distribution guessing. SSH projects use the probed remote OS.
+- Relative `cwd` is relative to the project root, never to the GUI/CLI process.
+  Task directories and script files must stay inside the trusted project root;
+  cross-distribution, cross-connection and symlink escapes are rejected.
+- Put Windows virtualenv paths in `os.windows` and Linux paths in the common
+  defaults or `os.linux`. WSL requires Linux tools (including `setsid` from
+  util-linux); Windows drive PATH entries are excluded from WSL task lookup.
+- Existing configs without `os` and existing CLI syntax remain supported.
+  Preserve every OS override when updating. Older QingCode versions do not
+  understand `os` and may drop it when editing; use the updated app/CLI to save.
+- `run start` submits tasks asynchronously and returns the selected environment
+  and task terminal IDs in addition to the existing fields. `run status` retains
+  `running`/`terminals` and adds task status, exit code, actual target/cwd and
+  environment. Verify readiness separately; a live process does not prove an
+  HTTP service or Celery worker is ready. Do not put secrets in status output.
+- Windows SSH run tasks remain unsupported and fail explicitly. POSIX SSH
+  requires an available shell and the selected connection mode's capabilities.
+  Celery on native Windows is not officially supported; use WSL for a Linux
+  worker or a project-verified Windows development override.
+
 SSH task rules:
 
 - `cwd` omitted: remote project root. Relative `cwd`: relative to that root. An absolute POSIX
@@ -98,15 +144,11 @@ SSH task rules:
 
 ### Windows access to SSH/WSL services
 
-When QingCode runs on Windows and the project is WSL/SSH, the local browser can only
-reach services through WSL localhost forwarding.
-
-- Bind dev servers to `127.0.0.1`. Binding `0.0.0.0` / `vite --host` / `host: true`
-  makes `http://127.0.0.1:<port>` fail from Windows.
-- Use `vite --host 127.0.0.1` (or equivalent); do not bind all interfaces for LAN access.
-- After start, verify from **Windows** at `http://127.0.0.1:<actual-port>`. The WSL eth0
-  IP often does not work on the same machine.
-- Confirm the listener belongs to the current project; do not use another project's port.
+For a WSL project, verify the actual service URL from Windows; localhost forwarding
+and reachable addresses depend on the WSL networking configuration. For SSH, use
+the remote address or an explicitly configured tunnel; SSH alone does not forward ports.
+Check the listening address, port ownership and firewall before changing a working
+binding. Do not replace a project's established bind address without evidence.
 
 ### Updating a run config
 
@@ -168,7 +210,7 @@ matching ID is supplied. It is not a partial patch.
 2. Create a config, or use the full-object update flow above for an existing config.
 3. Ensure the GUI is running before execution and before any SSH run-config CRUD command.
 4. Start the config, then inspect `run status`. For SSH/WSL projects, also verify
-   `http://127.0.0.1:<port>` from Windows (the server must bind `127.0.0.1`).
+   the actual service URL from Windows or the intended client.
 5. If restricted mode blocks execution, explain it and ask for explicit approval before `trust grant`.
 
 ## Safety

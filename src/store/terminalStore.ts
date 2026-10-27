@@ -7,6 +7,7 @@ import {
   listDetachedTerminals,
   resizeTerminal,
   spawnTerminalScript,
+  terminalSessionOpen,
   writeTerminal,
   type TerminalSpawnResult,
 } from '../lib/ipc/terminal'
@@ -104,6 +105,8 @@ const reportedShellFallbacks = new Set<string>()
 const sshRecoveryInFlight = new Set<string>()
 /** 用户在重连期间按 Ctrl+C、正在放弃重连的终端；期间忽略其余键入。 */
 const reconnectCancelInFlight = new Set<string>()
+/** Ctrl+C on a finished task may only create one replacement shell. */
+const taskShellTransitions = new Set<string>()
 /** 已由 store 写过断线说明的已退出终端；视图不再追加“进程未启动”。 */
 const disconnectNoticeShown = new Set<string>()
 /** One detached-terminal query per project/connection during this app session. */
@@ -260,6 +263,81 @@ function releaseIntentionalPtyKill(id: string) {
 }
 
 type TerminalOutputListener = (data: Uint8Array) => void
+
+/** Convert a finished one-shot task into a plain terminal without replaying its command. */
+async function enterShellAfterTask(id: string): Promise<void> {
+  const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
+  if (
+    !tab ||
+    tab.status !== 'exited' ||
+    shouldKeepShellAfterExit(tab) ||
+    tab.awaitingRestoreSpawn ||
+    tab.ptySpawnPending ||
+    ptySpawnInFlight.has(id) ||
+    taskShellTransitions.has(id)
+  ) {
+    return
+  }
+
+  taskShellTransitions.add(id)
+  try {
+    // Restored/stale UI state must never replace a task that is actually still alive.
+    const sessionOpen = await terminalSessionOpen(id)
+    const state = useTerminalStore.getState()
+    if (state.terminals.find(terminal => terminal.id === id) !== tab) return
+    if (sessionOpen) {
+      useTerminalStore.setState(s => ({
+        terminals: s.terminals.map(terminal =>
+          terminal.id === id ? { ...terminal, status: 'running', exitCode: null } : terminal
+        ),
+      }))
+      return
+    }
+    const projects = useProjectStore.getState()
+    const owner =
+      projects.projects.find(project => project.id === tab.projectId) ??
+      (projects.currentProject?.id === tab.projectId ? projects.currentProject : null)
+    if (!owner || (!owner.ephemeral && !isProjectTrusted(owner))) {
+      projects.pushToast('info', translate('当前为受限模式，无法打开终端'))
+      return
+    }
+
+    // Clear task metadata before restarting: spawn, runtime status and persisted
+    // session restore must all see a plain shell, never the original task.
+    useTerminalStore.setState(s => ({
+      terminals: s.terminals.map(terminal =>
+        terminal.id === id
+          ? {
+              ...terminal,
+              name: translate('{name} · 命令行', { name: terminal.name }),
+              launchCommand: '',
+              shellKind: undefined,
+              // Use the ordinary shell preference, without a profile startup command.
+              shell: tab.shell ?? loadTerminalProfileSettings().defaultShell,
+              resolvedShell: undefined,
+              env: undefined,
+              profileId: undefined,
+              runConfigId: undefined,
+              runTaskId: undefined,
+              persistent: undefined,
+              ptyId: undefined,
+              persistentFallbackReason: undefined,
+              disconnectReason: undefined,
+              connectionAttempt: undefined,
+              allowTitleRename: true,
+            }
+          : terminal
+      ),
+    }))
+    await useTerminalStore.getState().restartTerminal(id, { preserveOutput: true })
+  } catch (error) {
+    useProjectStore.getState().pushToast('error', translate('进入命令行失败: {error}', {
+      error: String(error),
+    }))
+  } finally {
+    taskShellTransitions.delete(id)
+  }
+}
 
 /** Re-open a shell after OpenCode/TUI tore down the ConPTY; keep scrollback. */
 async function respawnShellAfterExit(id: string): Promise<void> {
@@ -1256,6 +1334,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         useProjectStore
           .getState()
           .pushToast('error', translate('关闭终端失败: {error}', { error: String(error) }))
+        releaseIntentionalPtyKill(id)
+        return
       }
     }
     set(s => {
@@ -1911,7 +1991,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   writeToTerminal: async (id: string, data: string) => {
     if (reconnectCancelInFlight.has(id)) return
     const tab = get().terminals.find(terminal => terminal.id === id)
-    if (tab && shouldCancelReconnectOnInput(tab, sshRecoveryInFlight.has(id), data)) {
+    if (!tab) return
+    if (tab.status === 'exited') {
+      if (data === '\x03') await enterShellAfterTask(id)
+      return
+    }
+    if (shouldCancelReconnectOnInput(tab, sshRecoveryInFlight.has(id), data)) {
       await cancelTerminalReconnect(id)
       return
     }
@@ -2013,6 +2098,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             shellKind: plan.shellKind,
             target: plan.target,
             env: plan.env,
+            projectRoot: owner?.path,
             cols: size.cols,
             rows: size.rows,
           })

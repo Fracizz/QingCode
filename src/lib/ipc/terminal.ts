@@ -1,8 +1,5 @@
 import { isSshResource, safeInvoke } from '../tauri'
-import {
-  parseSshDetachedTerminal,
-  type SshDetachedTerminal,
-} from '../terminal/terminalRestorePlan'
+import { parseSshDetachedTerminal, type SshDetachedTerminal } from '../terminal/terminalRestorePlan'
 
 const sshTerminalIds = new Set<string>()
 
@@ -80,25 +77,19 @@ export function createTerminal(args: {
  */
 export function attachTerminal(args: TerminalAttachArgs): Promise<TerminalSpawnResult> {
   sshTerminalIds.add(args.id)
-  return safeInvoke<TerminalSpawnResult>(
-    '接回 SSH 终端',
-    'ssh_attach_terminal',
-    args,
-  ).catch(error => {
-    sshTerminalIds.delete(args.id)
-    throw error
-  })
+  return safeInvoke<TerminalSpawnResult>('接回 SSH 终端', 'ssh_attach_terminal', args).catch(
+    error => {
+      sshTerminalIds.delete(args.id)
+      throw error
+    }
+  )
 }
 
 /** List detached daemon PTYs owned by this QingCode installation. */
-export async function listDetachedTerminals(
-  connectionId: string,
-): Promise<SshDetachedTerminal[]> {
-  const result = await safeInvoke<unknown[]>(
-    '查询远端终端',
-    'ssh_list_detached_terminals',
-    { connectionId },
-  )
+export async function listDetachedTerminals(connectionId: string): Promise<SshDetachedTerminal[]> {
+  const result = await safeInvoke<unknown[]>('查询远端终端', 'ssh_list_detached_terminals', {
+    connectionId,
+  })
   return result
     .map(parseSshDetachedTerminal)
     .filter((terminal): terminal is SshDetachedTerminal => terminal != null)
@@ -110,6 +101,7 @@ export function spawnTerminalScript(args: {
   shellKind: string
   target: string
   env: Record<string, string>
+  projectRoot?: string
   cols: number
   rows: number
   shell?: string | null
@@ -133,9 +125,13 @@ export function spawnTerminalScript(args: {
 }
 
 export function killTerminal(id: string): Promise<void> {
-  outputPauseHolders.delete(id)
-  const remote = sshTerminalIds.delete(id)
-  return safeInvoke('关闭终端', remote ? 'ssh_kill_terminal' : 'kill_terminal', { id })
+  const remote = sshTerminalIds.has(id)
+  return safeInvoke<void>('关闭终端', remote ? 'ssh_kill_terminal' : 'kill_terminal', { id }).then(
+    () => {
+      outputPauseHolders.delete(id)
+      sshTerminalIds.delete(id)
+    }
+  )
 }
 
 export function terminalSessionOpen(id: string): Promise<boolean> {

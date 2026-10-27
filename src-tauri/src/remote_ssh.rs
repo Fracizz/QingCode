@@ -5549,6 +5549,32 @@ fn remote_script_invocation(target: &str, env_prefix: &str) -> Result<String, St
 }
 
 #[tauri::command]
+pub async fn ssh_run_environment(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<crate::run_environment::RunEnvironment, String> {
+    let (sftp, parsed, root) = manager.sftp_for_uri(&path, true).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    let result = manager
+        .exec_remote_shell(
+            &path,
+            "uname -s",
+            "[Console]::Write('Windows_NT')",
+            true,
+            REMOTE_EXEC_TIMEOUT,
+        )
+        .await?;
+    if result.exit_code != 0 {
+        return Err(format!("无法识别远端执行系统：{}", result.stderr.trim()));
+    }
+    Ok(crate::run_environment::RunEnvironment {
+        os: crate::run_environment::unix_os(&result.stdout)?.into(),
+        kind: "ssh".into(),
+        distro: None,
+    })
+}
+
+#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn ssh_spawn_script(
     id: String,
@@ -5560,6 +5586,7 @@ pub async fn ssh_spawn_script(
     rows: Option<u16>,
     shell: Option<String>,
     name: Option<String>,
+    project_root: Option<String>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
@@ -5567,22 +5594,37 @@ pub async fn ssh_spawn_script(
         return Err("SSH Linux 项目暂不支持 PowerShell 或 BAT 任务".to_string());
     }
     let parsed = parse_remote_uri(&cwd)?;
-    let root = manager.root_for_uri(&cwd, true)?;
+    let root_uri = project_root.as_deref().unwrap_or(&cwd);
+    if parse_remote_uri(root_uri)?.connection_id != parsed.connection_id {
+        return Err("任务工作目录必须使用当前项目的 SSH 连接".into());
+    }
+    let root = manager.root_for_uri(root_uri, true)?;
     let server_mode = manager.server_mode(&parsed.connection_id);
-    let persistent_cwd = if shell_kind == "interactive" || server_mode {
+    let persistent_cwd = {
         let sftp = manager.open_sftp(&parsed.connection_id).await?;
         Some(ensure_existing_path_within(&sftp, &parsed.path, &root).await?)
-    } else {
-        None
     };
     if shell_kind != "interactive" {
         reject_windows_remote_command(&parsed.path)?;
     }
     let target = if target.starts_with(SSH_URI_PREFIX) {
-        parse_remote_uri(&target)?.path
+        let script = parse_remote_uri(&target)?;
+        if script.connection_id != parsed.connection_id {
+            return Err("脚本必须使用当前项目的 SSH 连接".into());
+        }
+        script.path
     } else {
         target
     };
+    if matches!(shell_kind.as_str(), "sh" | "script") {
+        let path = if target.starts_with('/') {
+            target.clone()
+        } else {
+            join_remote_path(&parsed.path, &target)
+        };
+        let sftp = manager.open_sftp(&parsed.connection_id).await?;
+        ensure_existing_path_within(&sftp, &path, &root).await?;
+    }
     let mut env_prefix = String::new();
     for (key, value) in &env {
         if key.is_empty()

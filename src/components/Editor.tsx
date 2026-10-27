@@ -364,7 +364,8 @@ function bindTabToView(
   markDirty: (id: string) => void,
   saveFile: (id: string) => Promise<void>,
   setCursor: (cursor: { line: number; col: number } | null) => void,
-  previousTabId: string | null
+  previousTabId: string | null,
+  preserveLiveBuffer = false
 ): { tabId: string; fresh: boolean } {
   if (previousTabId && previousTabId !== tab.id) {
     captureEditorScroll(previousTabId, view)
@@ -381,7 +382,7 @@ function bindTabToView(
   const fresh = !usableCache
   // Prefer live buffer when rebuilding a stale active state (keeps unsaved edits).
   const tabForState =
-    !usableCache && previousTabId === null && view.state.doc.length > 0
+    preserveLiveBuffer && !usableCache && previousTabId === null && view.state.doc.length > 0
       ? { ...tab, content: view.state.doc.toString() }
       : tab
   const priorSelection = !usableCache ? view.state.selection : null
@@ -539,6 +540,7 @@ export default function Editor() {
     } else if (epoch !== boundEpochRef.current || staleExtensions) {
       // External reload / draft restore, or stale HMR EditorState (old occurrence /
       // bracket-match plugins still bound to this tab).
+      const contentChanged = epoch !== boundEpochRef.current
       boundEpochRef.current = epoch
       unregisterEditorView(activeTab.id, view)
       const bind = bindTabToView(
@@ -550,7 +552,8 @@ export default function Editor() {
         markDirty,
         saveFile,
         setCursor,
-        null
+        null,
+        !contentChanged
       )
       boundTabIdRef.current = bind.tabId
       cancelHeavy = scheduleHeavyEditorFeatures(

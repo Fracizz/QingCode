@@ -161,6 +161,11 @@ Usage:
   qingcode.exe run stop <name|id> [--project ...]
   qingcode.exe run status [--project ...]
 
+  Task OS overrides: os.windows / os.linux / os.macos override type, target, cwd, env.
+  Common task fields are defaults; env merges by name. WSL uses linux; SSH uses remote OS.
+  Existing configs and commands remain supported. start/stop/status require the running app.
+  run start submits tasks asynchronously; inspect run status and verify service readiness.
+
   qingcode.exe settings export [--scope user|workspace] [--project ...] [--output <file>]
   qingcode.exe settings import --json <file|-> [--scope user|workspace] [--project ...]
   qingcode.exe settings reset --yes [--scope user|workspace] [--project ...]

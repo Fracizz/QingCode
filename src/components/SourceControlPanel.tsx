@@ -1,3 +1,4 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   lazy,
@@ -76,7 +77,7 @@ import {
 } from '@/lib/git/syncTimes'
 import { isScmFetchAuthError, shouldAutoFetch, type ScmAutoFetchReason } from '@/lib/git/scmSyncMeta'
 import { confirmDialog } from '../store/confirmStore'
-import { isSshResource, isTauri, safeInvoke } from '../lib/tauri'
+import { isSshResource, safeInvoke } from '../lib/tauri'
 import {
   changeGitStage,
   commitGit,
@@ -754,7 +755,7 @@ export default function SourceControlPanel() {
   )
 
   const loadRemotes = useCallback(async (path: string) => {
-    if (!isTauri()) {
+    if (!hasBackend()) {
       setRemotes([])
       setRemotesLoading(false)
       return
@@ -788,7 +789,7 @@ export default function SourceControlPanel() {
     const isCurrentRequest = () =>
       commitsSequenceRef.current === sequence &&
       useProjectStore.getState().currentProject?.path === path
-    if (!isTauri()) {
+    if (!hasBackend()) {
       if (!isCurrentRequest()) return
       setCommits([])
       commitsRef.current = []
@@ -832,7 +833,7 @@ export default function SourceControlPanel() {
 
   const loadMoreCommits = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
-    if (!project || !isTauri() || !commitsHasMoreRef.current || commitsLoadingMoreRef.current) {
+    if (!project || !hasBackend() || !commitsHasMoreRef.current || commitsLoadingMoreRef.current) {
       return
     }
     const path = project.path
@@ -887,7 +888,7 @@ export default function SourceControlPanel() {
         useGitStatusStore.getState().clearPanelStatus()
         return
       }
-      if (!isTauri()) {
+      if (!hasBackend()) {
         loadingRefreshSequenceRef.current = null
         setLoading(false)
         setError(translate('Git 功能需要 Tauri 桌面环境'))
@@ -1150,7 +1151,7 @@ export default function SourceControlPanel() {
 
   const openBranchMenu = useCallback(async () => {
     const project = useProjectStore.getState().currentProject
-    if (!project || !isTauri() || operation || loading) return
+    if (!project || !hasBackend() || operation || loading) return
     setBranchMenuOpen(true)
     try {
       const next = await getGitBranches(project.path)
@@ -1236,7 +1237,7 @@ export default function SourceControlPanel() {
   const loadCommitFiles = useCallback(async (rev: string) => {
     const sequence = ++commitFilesSequenceRef.current
     const project = useProjectStore.getState().currentProject
-    if (!project || !isTauri()) {
+    if (!project || !hasBackend()) {
       setCommitFiles([])
       return
     }
@@ -1272,7 +1273,7 @@ export default function SourceControlPanel() {
     async (rev: string, filePath: string) => {
       const sequence = ++commitFileDiffSequenceRef.current
       const project = useProjectStore.getState().currentProject
-      if (!project || !isTauri()) return
+      if (!project || !hasBackend()) return
       selectedCommitFileRef.current = filePath
       setSelectedCommitFile(filePath)
       setCommitFileDiffLoading(true)

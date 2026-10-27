@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter};
+mod wsl;
 
 #[derive(serde::Serialize, Clone)]
 pub struct TerminalDataPayload {
@@ -164,6 +165,7 @@ struct TerminalSession {
     generation: u64,
     shell_pid: Option<u32>,
     output_gate: OutputGate,
+    wsl_task: Option<wsl::WslTask>,
 }
 
 pub struct TerminalManager {
@@ -190,7 +192,7 @@ impl TerminalManager {
     ) -> Result<TerminalSpawnResult, String> {
         validate_terminal_cwd(cwd)?;
         let (cmd, resolved) = build_host_shell_command(host_shell, cwd)?;
-        self.spawn_with(id, cmd, &resolved.program, cols, rows, app)?;
+        self.spawn_with(id, cmd, &resolved.program, cols, rows, app, None)?;
         Ok(resolved.spawn_result())
     }
 
@@ -210,19 +212,38 @@ impl TerminalManager {
         target: &str,
         env: HashMap<String, String>,
         host_shell: Option<&str>,
+        project_root: Option<&str>,
         cols: u16,
         rows: u16,
         app: AppHandle,
     ) -> Result<TerminalSpawnResult, String> {
         validate_terminal_cwd(cwd)?;
+        if shell_kind != "interactive" {
+            if target.trim().is_empty() {
+                return Err("运行任务 target 不能为空".into());
+            }
+            if let Some(path) = crate::run_environment::parse_wsl_path(cwd) {
+                if !cfg!(windows) {
+                    return Err("WSL 任务仅支持 Windows 宿主".into());
+                }
+                let (cmd, task) = wsl::build(path, project_root, shell_kind, target, env)?;
+                let program = task.program().to_string();
+                self.spawn_with(id, cmd, &program, cols, rows, app, Some(task))?;
+                return Ok(TerminalSpawnResult {
+                    resolved_shell: Some("wsl".into()),
+                    ..Default::default()
+                });
+            }
+        }
         let (cmd, resolved, program) =
             build_script_command(shell_kind, target, cwd, env, host_shell)?;
-        self.spawn_with(id, cmd, &program, cols, rows, app)?;
+        self.spawn_with(id, cmd, &program, cols, rows, app, None)?;
         Ok(resolved
             .map(|shell| shell.spawn_result())
             .unwrap_or_default())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn spawn_with(
         &self,
         id: String,
@@ -231,6 +252,7 @@ impl TerminalManager {
         cols: u16,
         rows: u16,
         app: AppHandle,
+        wsl_task: Option<wsl::WslTask>,
     ) -> Result<(), String> {
         let pty_system = NativePtySystem::default();
         let pair: PtyPair = pty_system
@@ -282,6 +304,7 @@ impl TerminalManager {
             generation,
             shell_pid,
             output_gate: output_gate.clone(),
+            wsl_task,
         };
 
         let old = {
@@ -290,6 +313,9 @@ impl TerminalManager {
         };
         if let Some(mut old) = old {
             old.output_gate.set_paused(false);
+            if let Some(task) = old.wsl_task.take() {
+                let _ = task.stop();
+            }
             if let Some(mut killer) = old.killer.take() {
                 let _ = killer.kill();
             }
@@ -401,14 +427,35 @@ impl TerminalManager {
         self.sessions.lock().unwrap().contains_key(id)
     }
 
-    pub fn kill(&self, id: &str) {
+    pub fn kill(&self, id: &str) -> Result<(), String> {
         let session = self.sessions.lock().unwrap().remove(id);
         if let Some(mut session) = session {
             session.output_gate.set_paused(false);
-            if let Some(mut k) = session.killer.take() {
-                let _ = k.kill();
+            if let Some(task) = &session.wsl_task {
+                if let Err(error) = task.stop() {
+                    self.sessions
+                        .lock()
+                        .unwrap()
+                        .entry(id.into())
+                        .or_insert(session);
+                    return Err(error);
+                }
+            }
+            if let Some(pid) = session.shell_pid.filter(|_| session.wsl_task.is_none()) {
+                kill_descendants(pid);
+            }
+            if let Some(k) = session.killer.as_mut() {
+                if let Err(error) = k.kill() {
+                    self.sessions
+                        .lock()
+                        .unwrap()
+                        .entry(id.into())
+                        .or_insert(session);
+                    return Err(format!("停止终端进程失败：{error}"));
+                }
             }
         }
+        Ok(())
     }
 
     pub fn has_child_processes(&self, id: &str) -> Result<bool, String> {
@@ -449,6 +496,13 @@ impl TerminalManager {
         let sessions = std::mem::take(&mut *self.sessions.lock().unwrap());
         for (_, mut session) in sessions {
             session.output_gate.set_paused(false);
+            let is_wsl = session.wsl_task.is_some();
+            if let Some(task) = session.wsl_task.take() {
+                let _ = task.stop();
+            }
+            if let Some(pid) = session.shell_pid.filter(|_| !is_wsl) {
+                kill_descendants(pid);
+            }
             if let Some(mut killer) = session.killer.take() {
                 let _ = killer.kill();
             }
@@ -968,6 +1022,27 @@ fn process_exists(pid: u32) -> bool {
     system.process(Pid::from_u32(pid)).is_some()
 }
 
+/// Stop only descendants of this owned PTY; task launchers often leave reload/worker children.
+fn kill_descendants(pid: u32) {
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    fn collect(system: &System, parent: Pid, result: &mut Vec<Pid>) {
+        for (pid, process) in system.processes() {
+            if process.parent() == Some(parent) {
+                collect(system, *pid, result);
+                result.push(*pid);
+            }
+        }
+    }
+    let mut descendants = Vec::new();
+    collect(&system, Pid::from_u32(pid), &mut descendants);
+    for pid in descendants {
+        if let Some(process) = system.process(pid) {
+            process.kill();
+        }
+    }
+}
+
 /// Console host helpers that sit under the shell even when the prompt is idle.
 fn is_console_noise_process(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
@@ -1110,6 +1185,7 @@ mod tests {
         manager.sessions.lock().unwrap().insert(
             "blocked".to_string(),
             TerminalSession {
+                wsl_task: None,
                 master: Arc::new(Mutex::new(pair.master)),
                 writer,
                 killer: Some(Box::new(TestKiller(kill))),
@@ -1131,7 +1207,7 @@ mod tests {
             .contains("缓冲区已满"));
         let other = super::spawn_terminal_writer(Box::new(std::io::sink()), |_| {});
         other.try_send(vec![2]).unwrap();
-        manager.kill("blocked");
+        manager.kill("blocked").unwrap();
         killed
             .recv_timeout(std::time::Duration::from_secs(2))
             .unwrap();

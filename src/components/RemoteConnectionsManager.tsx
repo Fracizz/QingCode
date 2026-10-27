@@ -1,3 +1,4 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { useEffect, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -23,7 +24,7 @@ import Tooltip from './Tooltip'
 import { confirmDialog } from '../store/confirmStore'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
-import { safeInvoke, isTauri } from '../lib/tauri'
+import { safeInvoke } from '../lib/tauri'
 import { useI18n } from '../lib/i18n'
 import {
   disconnectSshSession,
@@ -206,7 +207,7 @@ export default function RemoteConnectionsManager() {
 
   // 订阅代理状态事件，管理页与状态栏芯片看到同一份阶段模型。
   useEffect(() => {
-    if (!isTauri() || !selectedId || selectedId === NEW_SSH_CONNECTION_ID) return
+    if (!hasBackend() || !selectedId || selectedId === NEW_SSH_CONNECTION_ID) return
     let cancelled = false
     let unlisten: UnlistenFn | undefined
     void listen<unknown>('ssh-server-state', event => {

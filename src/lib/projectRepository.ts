@@ -1,5 +1,6 @@
+import { hasBackend } from './runtimeCapabilities'
 import Database from '@tauri-apps/plugin-sql'
-import { safeInvoke, isTauri, NotInTauriError } from './tauri'
+import { safeInvoke, NotInTauriError } from './tauri'
 import type { Project, RecentFile, SshConnection } from '../types'
 import { baseName, normalizeProjectPath } from '../utils/fileTreeHelpers'
 import { isWslPath } from './wslWorkspace'
@@ -29,7 +30,7 @@ const LEGACY_MIGRATION_KEY = 'legacy_my_code_desktop_db_v1'
 
 /** Ensures DB access is only attempted inside Tauri; otherwise throws a friendly error. */
 export async function withDb<T>(action: string, fn: (d: Database) => Promise<T>): Promise<T> {
-  if (!isTauri()) throw new NotInTauriError(action)
+  if (!hasBackend()) throw new NotInTauriError(action)
   const d = await getDb()
   return fn(d)
 }
@@ -233,7 +234,7 @@ function toSettingsProjectEntry(project: Project): SettingsProjectEntry {
  * so a no-op CRUD does not reformat the user's file.
  */
 export async function persistProjectsToUserSettings(): Promise<void> {
-  if (!isTauri()) return
+  if (!hasBackend()) return
   try {
     await withDb('回写项目列表到设置', async d => {
       const projects = await d.select<Project[]>(
@@ -261,7 +262,7 @@ export async function loadProjectsFromDb(options?: { syncFromSettings?: boolean 
     const migrated = await migrateLegacyProjects(d)
     let projects = await listProjects(d)
     let importedFromSettings = 0
-    if (isTauri() && options?.syncFromSettings !== false) {
+    if (hasBackend() && options?.syncFromSettings !== false) {
       try {
         const synced = await syncProjectsFromUserSettings(d, projects)
         projects = synced.projects

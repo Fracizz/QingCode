@@ -1,3 +1,4 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import { interfacePixelSize } from '../lib/interfaceMetrics'
 import {
@@ -41,7 +42,7 @@ import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
 import { useFavoriteStore } from '../store/favoriteStore'
 import { favoriteRelativePath, favoriteRelativePathKey } from '../lib/favoriteItems'
-import { safeInvoke, isTauri, isSshResource, NotInTauriError } from '../lib/tauri'
+import { safeInvoke, isSshResource, NotInTauriError } from '../lib/tauri'
 import { searchFiles } from '../lib/searchFiles'
 import { copyToClipboard, findProjectForPath } from '../utils/fileReferences'
 import {
@@ -409,7 +410,7 @@ export default function SearchPanel() {
       })
       return
     }
-    if (!isTauri()) {
+    if (!hasBackend()) {
       queueMicrotask(() => {
         setProjectExts([])
         setProjectExtsLoading(false)
@@ -493,7 +494,7 @@ export default function SearchPanel() {
       return
     }
 
-    if (!isTauri()) {
+    if (!hasBackend()) {
       queueMicrotask(() => {
         setError(new NotInTauriError('文件搜索').message)
         setFilenameResults([])
@@ -658,7 +659,7 @@ export default function SearchPanel() {
       filenameAbort.abort()
       if (filenameTimer) clearTimeout(filenameTimer)
       if (contentTimer) clearTimeout(contentTimer)
-      if (contentStarted && isTauri()) {
+      if (contentStarted && hasBackend()) {
         void safeInvoke('取消内容搜索', 'cancel_content_search').catch(() => {})
       }
     }

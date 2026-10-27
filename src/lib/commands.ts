@@ -8,6 +8,7 @@ import { translate } from './i18n'
 import { panelLayoutModeLabel, resolvePanelLayoutMode } from './panelLayoutMode'
 import { ensureSettingsFile, resolveGlobalSettingsPath } from './projectSettings'
 import { isTauri } from './tauri'
+import { hasBackend } from './runtimeCapabilities'
 import { getResolvedTheme, loadTheme, saveTheme, type AppTheme } from './themeSettings'
 import type { ShortcutCommand, ShortcutMap } from './shortcuts'
 import { useEditorStore } from '../store/editorStore'
@@ -128,7 +129,7 @@ function cycleTheme() {
 
 async function openUserSettingsJson() {
   const pushToast = useProjectStore.getState().pushToast
-  if (!isTauri()) {
+  if (!hasBackend()) {
     pushToast('error', translate('当前环境无法打开设置文件'))
     return
   }

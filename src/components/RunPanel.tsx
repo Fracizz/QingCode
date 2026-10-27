@@ -86,11 +86,13 @@ function RunPanelContent() {
 
   useEffect(() => {
     if (!currentProject) return
-    void loadConfigs(currentProject).then(configs => {
-      // Recover linkage for restored task tabs (esp. pre-stamp sessions), then
-      // rebuild running maps so Stop / 「运行中」 match live terminals.
-      rehydrateRunTerminals(configs)
-    })
+    void loadConfigs(currentProject)
+      .then(configs => {
+        // Recover linkage for restored task tabs (esp. pre-stamp sessions), then
+        // rebuild running maps so Stop / 「运行中」 match live terminals.
+        rehydrateRunTerminals(configs, currentProject.id)
+      })
+      .catch(() => undefined)
   }, [currentProject?.id, loadConfigs, currentProject])
 
   useEffect(() => {
@@ -129,7 +131,7 @@ function RunPanelContent() {
     setRemoving(true)
     try {
       const running = targets.some(
-        config => activeTerminalsForConfig(config.id, terminals).length > 0
+        config => activeTerminalsForConfig(config.id, terminals, currentProject.id).length > 0
       )
       const confirmed = await confirmDialog({
         title: t('删除运行配置？'),
@@ -163,11 +165,11 @@ function RunPanelContent() {
   const runningTerminalsByConfig = useMemo(() => {
     const map = new Map<string, string[]>()
     for (const config of configs) {
-      const tids = activeTerminalsForConfig(config.id, terminals)
+      const tids = activeTerminalsForConfig(config.id, terminals, currentProject?.id)
       if (tids.length > 0) map.set(config.id, tids)
     }
     return map
-  }, [configs, terminals])
+  }, [configs, terminals, currentProject?.id])
 
   if (!currentProject) {
     return (
@@ -279,6 +281,27 @@ function RunPanelContent() {
           configs.map(config => {
             const runningTids = runningTerminalsByConfig.get(config.id) ?? []
             const running = runningTids.length > 0
+            const liveTasks = terminals.filter(terminal => runningTids.includes(terminal.id))
+            const environment = liveTasks.find(terminal => terminal.runEnvironment)?.runEnvironment
+            const environmentLabel = environment
+              ? `${environment.os === 'macos' ? 'macOS' : environment.os === 'windows' ? 'Windows' : 'Linux'}${environment.kind === 'wsl' ? ` · WSL ${environment.distro ?? ''}` : environment.kind === 'ssh' ? ' · SSH' : ''}`
+              : ''
+            const overview = taskOverview(
+              config.tasks.map(task => {
+                const terminal = liveTasks.find(candidate => candidate.runTaskId === task.id)
+                return terminal
+                  ? {
+                      ...task,
+                      type:
+                        terminal.shellKind === 'interactive'
+                          ? task.type
+                          : (terminal.shellKind ?? task.type),
+                      target: terminal.launchCommand,
+                    }
+                  : task
+              }),
+              t
+            )
             return (
               <div
                 key={config.id}
@@ -306,7 +329,9 @@ function RunPanelContent() {
                           : t('运行「{name}」', { name: config.name })
                       }
                       onClick={() =>
-                        running ? void stopConfig(config) : void runConfig(currentProject, config)
+                        running
+                          ? void stopConfig(config, currentProject.id).catch(() => undefined)
+                          : void runConfig(currentProject, config)
                       }
                       className={`w-7 h-7 flex items-center justify-center rounded-md flex-shrink-0 transition-colors
                         ${
@@ -327,15 +352,12 @@ function RunPanelContent() {
                       >
                         {running ? t('运行中 · {count}', { count: runningTids.length }) : t('空闲')}
                       </span>
+                      {environmentLabel && (
+                        <span className="text-ui-2xs text-fg-dim">{environmentLabel}</span>
+                      )}
                     </div>
-                    <Tooltip
-                      label={taskOverview(config.tasks, t)}
-                      side="bottom"
-                      wrapperClassName="block min-w-0 w-full"
-                    >
-                      <div className="text-ui-sm mt-0.5 truncate text-fg-dim">
-                        {taskOverview(config.tasks, t)}
-                      </div>
+                    <Tooltip label={overview} side="bottom" wrapperClassName="block min-w-0 w-full">
+                      <div className="text-ui-sm mt-0.5 truncate text-fg-dim">{overview}</div>
                     </Tooltip>
                   </div>
                   <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">

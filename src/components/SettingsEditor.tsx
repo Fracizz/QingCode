@@ -68,6 +68,7 @@ import {
   type AutoSaveMode,
 } from '../lib/autoSaveSettings'
 import { isTauri, safeInvoke } from '../lib/tauri'
+import { hasBackend } from '../lib/runtimeCapabilities'
 import {
   getOpenWithStatus,
   registerOpenWith,
@@ -462,7 +463,7 @@ export default function SettingsEditor() {
   }
 
   const openSettingsJson = async (writeDefaults = false) => {
-    if (!isTauri()) {
+    if (!hasBackend()) {
       pushToast('error', t('当前环境无法打开设置文件'))
       return
     }
@@ -496,7 +497,7 @@ export default function SettingsEditor() {
   }
 
   const transferSettings = async (action: 'import' | 'export') => {
-    if (!isTauri()) {
+    if (!hasBackend()) {
       pushToast('error', t('当前环境无法导入或导出配置'))
       return
     }
@@ -564,7 +565,7 @@ export default function SettingsEditor() {
   }
 
   const restoreDefaults = async () => {
-    if (!isTauri()) {
+    if (!hasBackend()) {
       pushToast('error', t('当前环境无法恢复默认设置'))
       return
     }

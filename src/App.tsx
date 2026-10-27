@@ -27,6 +27,8 @@ import { useCompareStore } from './store/compareStore'
 import { useCommandPaletteStore } from './store/commandPaletteStore'
 import { useSymbolPickerStore } from './store/symbolPickerStore'
 import { isTauri } from './lib/tauri'
+import { hasBackend } from './lib/runtimeCapabilities'
+import { isWebTest } from './lib/webTestMode'
 import {
   editorSurface,
   isProjectWelcomePending,
@@ -274,7 +276,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (!isTauri()) return
+    if (!hasBackend()) return
     let cancelled = false
     let unlisten: (() => void) | undefined
     initializeTerminalEvents().then(fn => {
@@ -315,7 +317,9 @@ function App() {
         await applyRunConfigSessionRestorePolicy(projectId, configs)
         if (cancelled || !terminalOpen) return
         await spawnRestoredTerminals(projectId)
-      })()
+      })().catch(() => {
+        // Invalid run.json is already reported; never respawn cached commands after a parse error.
+      })
     })
     return () => {
       cancelled = true
@@ -340,7 +344,12 @@ function App() {
   return (
     <div className="h-screen flex flex-col bg-bg text-fg">
       <TitleBar terminalOpen={terminalOpen} />
-      {!inTauri && (
+      {isWebTest() && (
+        <div className="flex-shrink-0 px-4 py-2 text-[12px] bg-brand/10 border-b border-border text-fg" role="status">
+          {t('Web 测试环境 · 文件：模拟 · 数据库：浏览器 SQLite · 终端：模拟 · SSH：模拟')}
+        </div>
+      )}
+      {!inTauri && !isWebTest() && (
         <div className="flex-shrink-0 px-4 py-2 text-[12px] leading-relaxed bg-warn/10 border-b border-warn/30 text-warn">
           {t('当前为浏览器预览模式，项目、文件、终端等功能不可用。请使用')}{' '}
           <code className="px-1 py-0.5 rounded bg-black/20">pnpm tauri dev</code>{' '}

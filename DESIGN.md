@@ -194,11 +194,11 @@ QingCode 是一款轻量桌面代码编辑器的设计规范。整体风格参�
 | 切换 | 点击可用 chip 调用 `switchProject` 并跳到资源管理器视图；编辑器会话（标签/草稿/光标与折叠等）按项目保留，切走不丢弃未保存缓冲 |
 | 溢出 | 默认尽可能多地把项目显示为 chip（宽度测量）；放不下的进 `ChevronDown` 溢出下拉（`createPortal`、`z-[100]`、`max-h-[70vh]`）。窗口缩放时 `ResizeObserver` 实时重算可见数量 |
 | 溢出面板行 | 图标 + 项目名（`Tooltip` 完整路径）+ 当前项 `Check`；行内：`在文件管理器中打开` / `移除`（hover），不可用 → `重新定位` + 常驻 `移除项目`；底部 `项目管理` / `多项目工作区` |
-| 添加 | chips 末尾常驻 `+` 打开居中 **modal**（`ProjectAddDialog`）：筛选框 + 项目列表（路径副行、项目类型、已隐藏标记）+ 底部 `新建项目` / `临时项目` / `远程连接` / `项目管理`；无项目时文字按钮「添加项目」打开同一对话框。`新建项目` 打开统一的 `CreateProjectDialog`（项目名称 + 源文件夹；源文件夹位置下拉：此电脑 / 远程设备（WSL、已保存 SSH 主机）/ 添加远程主机）溢出 chip 仍用下拉 |
+| 添加 | chips 末尾常驻 `+` 打开居中 **modal**（`ProjectAddDialog`）：筛选框 + 项目列表（路径副行、项目类型、已隐藏标记）+ 底部 `新建项目` / `临时项目` / `远程连接` / `项目管理`；无项目时文字按钮「添加项目」打开同一对话框。`新建项目` 打开统一的 `CreateProjectDialog`（项目名称 + 源文件夹；源文件夹位置下拉：此电脑 / 远程设备（仅已保存的 SSH 连接）/ 添加远程主机；不额外注入内置 WSL 入口）溢出 chip 仍用下拉 |
 | 测量 | 隐藏的 `measureRef` 层渲染全部 chip 取 `offsetWidth`，结合 `ResizeObserver` 在容器宽度变化时重算可见数量 |
 | 关闭 | 点击外部、`Escape`、窗口失焦/缩放关闭溢出面板 |
 | 窗口拖拽 | chips 区与溢出按钮不参与拖动；Windows WebView2 123+ 仅用原生 `app-region`，旧运行时由右侧 spacer 使用 Tauri IPC 回退 |
-| Chip 排序 | **pointer DnD**（5px 阈值；WebView2 标题栏禁用 HTML5 DnD）：拖动时按冻结宽度**实时让位**预览顺序，源 chip 半透明 + `accent` 描边，落点旁 `accent` **插入竖线**；松手 `reorderVisibleProjects` 持久化，`Escape` 取消；`pointermove` 经 `requestAnimationFrame` 合并；**禁止** `cursor: grab` / `grabbing`（见下节「指针拖拽光标」） |
+| Chip 排序 | **pointer DnD**（5px 阈值；WebView2 标题栏禁用 HTML5 DnD）：拖动时按冻结宽度**实时让位**预览顺序，源 chip 半透明 + `accent` 描边，落点旁 `accent` **插入竖线**；拖动期间暂停项目栏内全部 Tooltip 并清理显示计时，结束后恢复正常悬停提示，避免旧浮层残留叠加；松手 `reorderVisibleProjects` 持久化，`Escape` 取消；`pointermove` 经 `requestAnimationFrame` 合并；**禁止** `cursor: grab` / `grabbing`（见下节「指针拖拽光标」） |
 
 侧边栏（`src/components/Sidebar.tsx`）顶部为当前项目头（项目名 + hover 操作：新建文件/文件夹、新建终端、在文件管理器打开、移除/重新定位），右键仍提供完整项目菜单；其下为当前项目文件树。项目移除、重新定位的共享逻辑在 `src/utils/projectActions.ts`。
 
@@ -548,10 +548,17 @@ HTML5 `draggable` 的标签栏排序仍走浏览器 DnD，**同样不得**为 re
 | 溢出 | 有会话时栏右侧常驻 `List`（会话列表，非下箭头）；超出宽度时隐藏并显示数量角标；下拉列出全部终端，当前项名称后标 `●`。文案用「已隐藏」，避免与收起面板混淆 |
 | 面板操作 | 最右侧 `border-l` 分区：方向箭头收起面板（经典 `ChevronDown` / 侧栏 `ChevronRight`，与溢出列表图标、关闭 `×` 区分）+ `×` 关闭全部。溢出与面板操作按钮均为 `h-7 w-7`、图标 15px |
 
+运行配置任务退出后保留日志和退出码：有选区时 `Ctrl+C` 复制；无选区时 `Ctrl+C` 在原标签、原工作目录启动普通 Shell，标签追加「命令行」，解除运行配置关联，运行面板保持任务已结束。进入命令行不重跑原命令、不继承原任务的临时进程状态；后续重启和会话恢复按普通终端处理。任务已退出但未转为命令行时，标签「重启」仍按原配置运行。
+
+运行配置编辑器保留公共任务字段，并提供可折叠的「按系统覆盖（os）」JSON 编辑区；仅接受 `windows/linux/macos` 下的 `type/target/cwd/env`，无效输入就地显示错误并禁用保存，编辑公共字段时完整保留各系统覆盖。运行面板按项目隔离同名配置与任务 ID，运行时展示实际系统/WSL 发行版及解析后的任务命令。配置语义与执行边界见 [跨平台运行配置](docs/run-config.md)。
+
 ### 状态栏（StatusBar）
+
+开发专用 `web-test` 模式复用完整 App 与业务 Store，仅替换原生接口边界；页面顶部显示文件、数据库、终端及 SSH 的实际测试能力。桌面身份与后端能力分别判断，不能以模拟 IPC 冒充原生窗口环境。测试会话隔离设置、信任、草稿、数据库和虚拟文件；流程与边界见 `docs/web-testing.md`。
 
 文件：`src/components/StatusBar.tsx`
 
+- **远程标识**：SSH 项目仅显示一个带状态点的连接芯片（如「SSH + 服务」「SSH 兼容模式」「SSH 已断开」），不再额外显示独立的 `SSH` 类型文字；悬停查看完整说明，点击打开远程连接详情。原生 WSL 项目保留 `WSL` 类型文字，经 SSH 接入的 WSL 使用 SSH 状态芯片。
 - **可点击项**：Git 分支 → 打开源代码管理视图；终端计数 → 切换终端面板（`uiStore.toggleTerminalPanel`）；均带 hover 背景与 `StatusTip`
 - **悬停说明**：统一 `StatusTip`（见上节），禁止直接用无箭头的 `Tooltip` 以免贴住底栏
 - **内存 tip**：多行展示分项占用；悬停时约每 **5** 秒强制刷新，平时约每 **10** 秒后台轮询（可见窗口）

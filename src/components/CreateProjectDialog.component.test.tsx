@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { open } from '@tauri-apps/plugin-dialog'
 import CreateProjectDialog from './CreateProjectDialog'
@@ -74,6 +74,7 @@ describe('CreateProjectDialog', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     useProjectStore.setState(initialProjectState, true)
     useUIStore.setState(initialUIState, true)
   })
@@ -96,13 +97,21 @@ describe('CreateProjectDialog', () => {
     expect(onCreated).toHaveBeenCalledOnce()
   })
 
-  it('lists saved hosts under remote devices in the source menu', () => {
+  it('lists only saved hosts under remote devices even on Windows', () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Windows NT 10.0; Win64; x64)')
+    useProjectStore.setState({ sshConnections: [{ ...keyHost, name: 'WSL' }, passwordHost] })
     render(<CreateProjectDialog open onClose={vi.fn()} onCreated={vi.fn()} />)
     const menu = openSourceMenu()
     expect(menu.parentElement).toBe(document.body)
     expect(menu).toHaveTextContent('此电脑')
     expect(menu).toHaveTextContent('远程设备')
-    expect(screen.getByRole('menuitemradio', { name: /dev-box/ })).toBeInTheDocument()
+    expect(within(menu).getAllByRole('menuitemradio').map(item => item.textContent)).toEqual([
+      '此电脑',
+      'WSLroot@10.0.0.2',
+      'pwd-boxroot@10.0.0.3',
+      '添加远程主机',
+      '管理远程连接…',
+    ])
     expect(screen.getByRole('menuitemradio', { name: '添加远程主机' })).toBeInTheDocument()
   })
 

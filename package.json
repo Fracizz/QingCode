@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
+    "dev:web-test": "vite --mode web-test --port 38419 --strictPort",
     "dev:app": "vite --strictPort",
     "build": "pnpm typecheck && vite build",
     "typecheck": "node node_modules/@typescript/native/bin/tsc --noEmit -p tsconfig.json",
@@ -98,6 +99,7 @@
     "@types/node": "^22.15.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/sql.js": "^1.4.11",
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitejs/plugin-react": "^4.6.0",
     "@vitest/coverage-v8": "^4.1.10",
@@ -108,6 +110,7 @@
     "globals": "^17.7.0",
     "jsdom": "^26.1.0",
     "prettier": "^3.9.5",
+    "sql.js": "^1.15.1",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.64.0",
     "vite": "^7.0.4",

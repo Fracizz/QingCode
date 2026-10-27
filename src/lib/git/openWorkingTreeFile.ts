@@ -1,5 +1,6 @@
+import { hasBackend } from '../runtimeCapabilities'
 import { translate } from '../i18n'
-import { isTauri, safeInvoke } from '../tauri'
+import { safeInvoke } from '../tauri'
 import { useEditorStore } from '../../store/editorStore'
 import { useProjectStore } from '../../store/projectStore'
 import { useUIStore } from '../../store/uiStore'
@@ -14,7 +15,7 @@ export function canOpenGitPathInEditor(status: string): boolean {
 export async function probeWorkingTreePath(
   absolutePath: string
 ): Promise<'file' | 'directory' | 'missing'> {
-  if (!isTauri()) return 'missing'
+  if (!hasBackend()) return 'missing'
   try {
     const stat = await safeInvoke<{ size: number; is_dir: boolean }>('读取文件信息', 'file_stat', {
       path: absolutePath,

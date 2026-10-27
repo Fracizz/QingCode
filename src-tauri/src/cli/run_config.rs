@@ -12,13 +12,51 @@ pub struct RunTask {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default = "default_task_type")]
     pub task_type: String,
+    #[serde(default)]
     pub target: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub os: HashMap<String, RunTaskOverride>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunTaskOverride {
+    #[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+    pub task_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<HashMap<String, String>>,
+}
+
+fn validate_os(task: &RunTask) -> Result<(), String> {
+    for (os, fields) in &task.os {
+        if !["windows", "linux", "macos"].contains(&os.as_str()) {
+            return Err(format!("Unsupported task.os: {os}"));
+        }
+        if let Some(kind) = &fields.task_type {
+            if !ALLOWED_TYPES.contains(&kind.as_str()) {
+                return Err(format!("Invalid task.os.{os}.type"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn has_target(task: &RunTask) -> bool {
+    !task.target.trim().is_empty()
+        || task
+            .os
+            .values()
+            .any(|o| o.target.as_ref().is_some_and(|t| !t.trim().is_empty()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +76,10 @@ struct RunConfigFile {
 
 const ALLOWED_TYPES: &[&str] = &["ps1", "bat", "sh", "command", "script"];
 
+fn default_task_type() -> String {
+    "command".into()
+}
+
 fn load_file(path: &Path) -> Result<Vec<RunConfig>, String> {
     if !path.exists() {
         return Ok(Vec::new());
@@ -51,6 +93,11 @@ fn load_file(path: &Path) -> Result<Vec<RunConfig>, String> {
         .unwrap_or(serde_json::Value::Array(vec![]));
     let list: Vec<RunConfig> =
         serde_json::from_value(configs).map_err(|e| format!("invalid configs: {e}"))?;
+    for config in &list {
+        for task in &config.tasks {
+            validate_os(task)?;
+        }
+    }
     Ok(list
         .into_iter()
         .filter(|c| !c.id.is_empty() && !c.name.is_empty())
@@ -62,7 +109,7 @@ fn normalize_config(mut c: RunConfig) -> RunConfig {
     c.tasks = c
         .tasks
         .into_iter()
-        .filter(|t| !t.id.is_empty() && !t.target.is_empty())
+        .filter(|t| !t.id.is_empty() && has_target(t))
         .map(|mut t| {
             if !ALLOWED_TYPES.contains(&t.task_type.as_str()) {
                 t.task_type = "command".into();
@@ -76,6 +123,14 @@ fn normalize_config(mut c: RunConfig) -> RunConfig {
                 }
             }
             t.target = t.target.trim().to_string();
+            for fields in t.os.values_mut() {
+                if let Some(target) = &mut fields.target {
+                    *target = target.trim().to_string();
+                }
+                if let Some(cwd) = &mut fields.cwd {
+                    *cwd = cwd.trim().to_string();
+                }
+            }
             t
         })
         .collect();
@@ -209,8 +264,9 @@ fn parse_upsert_body(raw: &str) -> Result<RunConfig, String> {
         return Err("config.name is required".into());
     }
     for task in &config.tasks {
-        if task.target.trim().is_empty() {
-            return Err("each task.target is required".into());
+        validate_os(task)?;
+        if !has_target(task) {
+            return Err("each task.target is required (common or os override)".into());
         }
     }
     Ok(normalize_config(config))
@@ -262,7 +318,37 @@ pub fn remove(query: &str, project: Option<&str>) -> Result<serde_json::Value, S
 
 #[cfg(test)]
 mod tests {
-    use super::RunConfig;
+    use super::*;
+
+    #[test]
+    fn cli_roundtrip_retains_os_overrides_and_os_only_tasks() {
+        let config = parse_upsert_body(r#"{"name":"dev","tasks":[{"id":"api","os":{"windows":{"target":"python.exe app.py","env":{"MODE":"win"}},"linux":{"target":"python3 app.py","cwd":""},"macos":{"type":"sh","target":"dev.sh"}}}]}"#).unwrap();
+        let dir = std::env::temp_dir().join(format!("qingcode-run-json-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("run.json");
+        save_file(&path, std::slice::from_ref(&config)).unwrap();
+        let loaded = load_file(&path).unwrap();
+        assert_eq!(
+            serde_json::to_value(&loaded[0]).unwrap(),
+            serde_json::to_value(config).unwrap()
+        );
+        assert_eq!(loaded[0].tasks.len(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cli_rejects_invalid_os_instead_of_silently_losing_it() {
+        for os in [
+            r#"{"win32":{"target":"x"}}"#,
+            r#"{"linux":{"command":"x"}}"#,
+            r#"{"linux":{"type":"typo"}}"#,
+            r#"{"linux":{"env":{"PORT":3000}}}"#,
+        ] {
+            assert!(parse_upsert_body(&format!(
+                r#"{{"name":"dev","tasks":[{{"target":"echo ok","os":{os}}}]}}"#
+            ))
+            .is_err());
+        }
+    }
 
     #[test]
     fn legacy_config_defaults_to_no_project_session_restore() {

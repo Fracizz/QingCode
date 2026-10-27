@@ -27,6 +27,7 @@ import {
   STATUS_BAR_ROW_ATTR,
   StatusBarRowContext,
 } from './statusBarRowContext'
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { isExternalFileWindow } from '../lib/windowSession'
 import { ProjectKindIcon } from './ProjectKindMark'
 import ProjectName from './ProjectName'
@@ -217,7 +218,7 @@ export default function StatusBar() {
   useEffect(() => {
     const projectPath = currentProject?.path
     // Non-git / ephemeral / browser preview: hide the chip (no placeholder).
-    if (!projectPath || !isTauri() || currentProject?.ephemeral) {
+    if (!projectPath || !hasBackend() || currentProject?.ephemeral) {
       queueMicrotask(() => setGitHead(null))
       return
     }
@@ -446,14 +447,11 @@ export default function StatusBar() {
                   <ProjectName name={currentProject.name} label={projectLabels.get(currentProject.id)} />
                 </StatusTip>
               ) : <span className="truncate">{t('未选择项目')}</span>}
-              {currentProject && (isWslProject(currentProject) || isSshProject(currentProject)) ? (
-                <>
-                  <span className="flex-shrink-0 text-ui-2xs text-fg-muted">
-                    {isWslProject(currentProject) ? t('WSL') : t('SSH')}
-                  </span>
-                  {/* 经 SSH 接入的 WSL 同样走远端 server，状态芯片不能因 WSL 徽标被隐藏 */}
-                  {isSshProject(currentProject) ? <SshServerStatusChip rootUri={currentProject.path} /> : null}
-                </>
+              {currentProject && isWslProject(currentProject) ? (
+                <span className="flex-shrink-0 text-ui-2xs text-fg-muted">{t('WSL')}</span>
+              ) : null}
+              {currentProject && isSshProject(currentProject) ? (
+                <SshServerStatusChip rootUri={currentProject.path} />
               ) : null}
             </>
           )}

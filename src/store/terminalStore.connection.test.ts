@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   listDetachedTerminals: vi.fn(),
   resizeTerminal: vi.fn(async () => undefined),
   spawnTerminalScript: vi.fn(),
+  terminalSessionOpen: vi.fn(),
   writeTerminal: vi.fn(async () => undefined),
   choiceDialog: vi.fn(),
   pushToast: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock('../lib/ipc/terminal', () => ({
   listDetachedTerminals: (...args: unknown[]) => mocks.listDetachedTerminals(...args),
   resizeTerminal: (...args: unknown[]) => mocks.resizeTerminal(...args),
   spawnTerminalScript: (...args: unknown[]) => mocks.spawnTerminalScript(...args),
+  terminalSessionOpen: (...args: unknown[]) => mocks.terminalSessionOpen(...args),
   writeTerminal: (...args: unknown[]) => mocks.writeTerminal(...args),
 }))
 
@@ -71,7 +73,12 @@ vi.mock('./uiStore', () => ({
   },
 }))
 
-import { useTerminalStore } from './terminalStore'
+import { subscribeTerminalOutput, useTerminalStore } from './terminalStore'
+import { activeTerminalsForConfig, findRunLinkageForTerminal } from '@/lib/runConfigRuntime'
+import { buildWorkspaceSessionSnapshot, parseWorkspaceSession } from '@/lib/workspaceSessionPersist'
+import { terminalFromPersisted } from '@/lib/workspaceSessionRestore'
+import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
+import { planTerminalRestore } from '@/lib/terminal/terminalRestorePlan'
 
 function terminal(overrides: Partial<TerminalTab> = {}): TerminalTab {
   return {
@@ -102,6 +109,9 @@ describe('terminal persistent connection events', () => {
     mocks.attachTerminal.mockReset()
     mocks.createTerminal.mockReset()
     mocks.killTerminal.mockClear()
+    mocks.writeTerminal.mockClear()
+    mocks.spawnTerminalScript.mockReset()
+    mocks.terminalSessionOpen.mockReset().mockResolvedValue(false)
     mocks.listDetachedTerminals.mockReset()
     mocks.choiceDialog.mockReset()
     mocks.pushToast.mockReset()
@@ -545,6 +555,159 @@ describe('terminal persistent connection events', () => {
     await useTerminalStore.getState().writeToTerminal('t1', 'echo ok\r')
 
     expect(mocks.writeTerminal).toHaveBeenCalledWith('t1', 'echo ok\r')
+  })
+
+  function exitedTask(overrides: Partial<TerminalTab> = {}) {
+    const tab = terminal({
+      name: '前后端 · 后端',
+      launchCommand: 'uvicorn app:main',
+      shellKind: 'command',
+      env: { TASK_ONLY: '1' },
+      runConfigId: 'dev',
+      runTaskId: 'backend',
+      pane: 'secondary',
+      status: 'exited',
+      exitCode: 1,
+      ...overrides,
+    })
+    mocks.projectState.projects = [{ id: 'p1', path: tab.cwd, ephemeral: true }]
+    useTerminalStore.setState({ terminals: [tab] })
+    return tab
+  }
+
+  it.each([
+    ['local', '/tmp/project', false],
+    ['SSH direct', 'ssh://conn/home/app', false],
+    ['SSH daemon', 'ssh://conn/home/app', true],
+  ])('opens a plain shell after a finished %s task and restores it without rerunning the task', async (_mode, cwd, persistent) => {
+    const task = exitedTask({ cwd, persistent, ptyId: persistent ? 'old-task-pty' : undefined })
+    mocks.createTerminal.mockResolvedValue({ persistent, ptyId: persistent ? 'shell-pty' : undefined })
+    emit('terminal-data', { id: task.id, data: Array.from(new TextEncoder().encode('Address already in use\r\n')) })
+    await useTerminalStore.getState().resizeTerminal(task.id, 110, 35)
+
+    await useTerminalStore.getState().writeToTerminal(task.id, '\x03')
+    await vi.advanceTimersByTimeAsync(0)
+
+    const shell = useTerminalStore.getState().terminals[0]
+    expect(mocks.createTerminal).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      id: task.id, cwd, cols: 110, rows: 35,
+    }))
+    expect(mocks.spawnTerminalScript).not.toHaveBeenCalled()
+    expect(mocks.attachTerminal).not.toHaveBeenCalled()
+    expect(mocks.writeTerminal).not.toHaveBeenCalled()
+    expect(shell).toMatchObject({
+      id: task.id, name: '前后端 · 后端 · 命令行', cwd, pane: 'secondary',
+      status: 'running', launchCommand: '',
+    })
+    expect(shell.env).toBeUndefined()
+    expect(shell.runConfigId).toBeUndefined()
+    expect(activeTerminalsForConfig('dev', [shell])).toEqual([])
+    expect(findRunLinkageForTerminal(shell, [{
+      id: 'dev', name: '前后端', tasks: [{ id: 'backend', name: '后端', type: 'command', target: task.launchCommand }],
+    }])).toBeNull()
+    const replay: Uint8Array[] = []
+    subscribeTerminalOutput(task.id, data => replay.push(data))()
+    expect(replay.map(data => new TextDecoder().decode(data)).join('')).toContain('Address already in use')
+
+    const snapshot = buildWorkspaceSessionSnapshot({
+      editorSessions: {}, terminals: [shell], activeTerminalByProject: { p1: task.id },
+    })
+    const parsed = parseWorkspaceSession(JSON.parse(JSON.stringify(snapshot)))!
+    const restored = terminalFromPersisted('p1', parsed.projects.p1.terminals[0])
+    expect(planTerminalSpawn(restored)).toEqual({ mode: 'shell' })
+    expect(restored.runConfigId).toBeUndefined()
+    expect(planTerminalRestore(restored).mode).toBe(persistent ? 'attach' : 'create')
+    if (persistent) expect(restored.ptyId).toBe('shell-pty')
+
+    await useTerminalStore.getState().writeToTerminal(task.id, 'echo ready\r')
+    expect(mocks.writeTerminal).toHaveBeenCalledWith(task.id, 'echo ready\r')
+  })
+
+  it('coalesces repeated Ctrl+C while checking the finished session', async () => {
+    exitedTask()
+    let resolveSession!: (open: boolean) => void
+    mocks.terminalSessionOpen.mockReturnValueOnce(new Promise<boolean>(resolve => { resolveSession = resolve }))
+    const first = useTerminalStore.getState().writeToTerminal('t1', '\x03')
+    await useTerminalStore.getState().writeToTerminal('t1', '\x03')
+    resolveSession(false)
+    await first
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(mocks.terminalSessionOpen).toHaveBeenCalledTimes(1)
+    expect(mocks.createTerminal).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not replace a live task behind a stale exited view', async () => {
+    const task = exitedTask()
+    mocks.terminalSessionOpen.mockResolvedValueOnce(true)
+    await useTerminalStore.getState().writeToTerminal('t1', '\x03')
+    expect(useTerminalStore.getState().terminals[0]).toEqual({ ...task, status: 'running', exitCode: null })
+    expect(mocks.killTerminal).not.toHaveBeenCalled()
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+  })
+
+  it('does not reopen a tab closed during the session check', async () => {
+    exitedTask()
+    let resolveSession!: (open: boolean) => void
+    mocks.terminalSessionOpen.mockReturnValueOnce(new Promise<boolean>(resolve => { resolveSession = resolve }))
+    const entering = useTerminalStore.getState().writeToTerminal('t1', '\x03')
+    await useTerminalStore.getState().closeTerminal('t1')
+    resolveSession(false)
+    await entering
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(useTerminalStore.getState().terminals).toEqual([])
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+  })
+
+  it('checks current workspace trust before converting a task', async () => {
+    const task = exitedTask()
+    mocks.projectState.projects = [{ id: 'p1', path: task.cwd }]
+    await useTerminalStore.getState().writeToTerminal('t1', '\x03')
+    expect(useTerminalStore.getState().terminals[0]).toEqual(task)
+    expect(mocks.killTerminal).not.toHaveBeenCalled()
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+    expect(mocks.pushToast).toHaveBeenCalledWith('info', '当前为受限模式，无法打开终端')
+  })
+
+  it('keeps the failed task intact if the session check fails and allows retry', async () => {
+    const task = exitedTask()
+    mocks.terminalSessionOpen.mockRejectedValueOnce(new Error('connection failed'))
+    await useTerminalStore.getState().writeToTerminal('t1', '\x03')
+    expect(useTerminalStore.getState().terminals[0]).toEqual(task)
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+    await useTerminalStore.getState().writeToTerminal('t1', '\x03')
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(mocks.createTerminal).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { awaitingRestoreSpawn: true },
+    { ptySpawnPending: true },
+    { shellKind: undefined },
+  ] as Partial<TerminalTab>[])('ignores Ctrl+C on pending restore/spawn and plain exited shells: %j', async overrides => {
+    exitedTask(overrides)
+    await useTerminalStore.getState().writeToTerminal('t1', '\x03')
+    expect(mocks.terminalSessionOpen).not.toHaveBeenCalled()
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+  })
+
+  it('ignores ordinary input after exit and still sends Ctrl+C to running tasks', async () => {
+    exitedTask()
+    await useTerminalStore.getState().writeToTerminal('t1', 'echo ignored\r')
+    expect(mocks.writeTerminal).not.toHaveBeenCalled()
+    expect(mocks.terminalSessionOpen).not.toHaveBeenCalled()
+    useTerminalStore.setState({ terminals: [terminal({ shellKind: 'command' })] })
+    await useTerminalStore.getState().writeToTerminal('t1', '\x03')
+    expect(mocks.writeTerminal).toHaveBeenCalledWith('t1', '\x03')
+  })
+
+  it('keeps explicit restart on an unconverted task running its original command', async () => {
+    exitedTask()
+    await useTerminalStore.getState().restartTerminal('t1')
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(mocks.spawnTerminalScript).toHaveBeenCalledWith(expect.objectContaining({
+      shellKind: 'command', target: 'uvicorn app:main', env: { TASK_ONLY: '1' },
+    }))
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
   })
 
   it('asks the mounted xterm view to reset on terminal-reset', () => {

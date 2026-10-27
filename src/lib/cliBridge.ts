@@ -4,6 +4,7 @@ import { authorizePaths } from './pathAllowlist'
 import { normalizeProjectPath, pushTrustedRootsToNative, trustProject } from './workspaceTrust'
 import { useEditorStore } from '../store/editorStore'
 import { useProjectStore } from '../store/projectStore'
+import { useTerminalStore } from '../store/terminalStore'
 import {
   runConfigPath,
   useRunConfigStore,
@@ -19,6 +20,7 @@ import {
 import type { Project } from '../types'
 import { ensureSshWorkspaceConnected } from './sshWorkspace'
 import { exportSettings, importSettings, resetSettings } from './settingsTransfer'
+import { hasRunTaskTarget, parseRunTaskOs } from './runTaskPlatform'
 
 interface CliRequest {
   id: string
@@ -55,7 +57,9 @@ export function parseCliRunConfig(
     ? value.tasks.map((task, index) => {
         if (!task || typeof task !== 'object') throw new Error(`tasks[${index}] is invalid`)
         const target = typeof task.target === 'string' ? task.target.trim() : ''
-        if (!target) throw new Error('each task.target is required')
+        const os = parseRunTaskOs(task.os)
+        if (!hasRunTaskTarget({ target, os }))
+          throw new Error('each task.target is required (common or os override)')
         const rawType = typeof task.type === 'string' ? task.type : 'command'
         const type = CLI_RUN_TASK_TYPES.has(rawType as RunTaskType)
           ? (rawType as RunTaskType)
@@ -76,6 +80,7 @@ export function parseCliRunConfig(
           target,
           cwd: typeof task.cwd === 'string' && task.cwd.trim() ? task.cwd.trim() : undefined,
           env: env as Record<string, string> | undefined,
+          ...(os ? { os } : {}),
         }
       })
     : []
@@ -157,7 +162,8 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
   switch (req.op) {
     case 'settings.export':
     case 'settings.import': {
-      if (req.config !== 'user' && req.config !== 'workspace') throw new Error('invalid settings scope')
+      if (req.config !== 'user' && req.config !== 'workspace')
+        throw new Error('invalid settings scope')
       const scope = req.config === 'user' ? 'global' : 'project'
       const project = scope === 'project' ? resolveProject(req.project) : null
       if (project) await ensureSshWorkspaceConnected(project)
@@ -166,7 +172,8 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       return importSettings(req.content, scope, project)
     }
     case 'settings.reset': {
-      if (req.config !== 'user' && req.config !== 'workspace') throw new Error('invalid settings scope')
+      if (req.config !== 'user' && req.config !== 'workspace')
+        throw new Error('invalid settings scope')
       const scope = req.config === 'user' ? 'global' : 'project'
       const project = scope === 'project' ? resolveProject(req.project) : null
       if (project) await ensureSshWorkspaceConnected(project)
@@ -182,8 +189,8 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       if (!req.config) throw new Error('config is required')
       const project = resolveProject(req.project)
       const config = await resolveConfig(project, req.config)
-      await runConfig(project, config)
-      return { project: project.path, config: { id: config.id, name: config.name } }
+      const result = await runConfig(project, config, { throwOnError: true })
+      return { project: project.path, config: { id: config.id, name: config.name }, ...result }
     }
     case 'run.list': {
       const project = resolveProject(req.project)
@@ -231,7 +238,7 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       if (!req.config) throw new Error('config is required')
       const project = resolveProject(req.project)
       const config = await resolveConfig(project, req.config)
-      await stopConfig(config)
+      await stopConfig(config, project.id)
       return { project: project.path, config: { id: config.id, name: config.name } }
     }
     case 'run.status': {
@@ -241,8 +248,22 @@ async function handleRequest(req: CliRequest): Promise<unknown> {
       const running = configs.map(c => ({
         id: c.id,
         name: c.name,
-        running: isConfigRunning(c.id),
-        terminals: runningTaskKeysForConfig(c.id),
+        running: isConfigRunning(c.id, project.id),
+        terminals: runningTaskKeysForConfig(c.id, project.id),
+        tasks: useTerminalStore
+          .getState()
+          .terminals.filter(
+            terminal => terminal.projectId === project.id && terminal.runConfigId === c.id
+          )
+          .map(terminal => ({
+            id: terminal.runTaskId,
+            terminalId: terminal.id,
+            status: terminal.status,
+            exitCode: terminal.exitCode,
+            environment: terminal.runEnvironment,
+            target: terminal.launchCommand,
+            cwd: terminal.cwd,
+          })),
       }))
       return {
         project: { id: project.id, name: project.name, path: project.path },

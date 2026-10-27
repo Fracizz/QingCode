@@ -1,4 +1,5 @@
-import { isTauri, safeInvoke } from './tauri'
+import { hasBackend } from './runtimeCapabilities'
+import { safeInvoke } from './tauri'
 import type { FileEncoding, WritableFileEncoding } from './editorSettings'
 
 /** Encodings that can be written to disk. */
@@ -28,6 +29,6 @@ export async function resolveReadEncoding(
   configured: FileEncoding,
 ): Promise<WritableFileEncoding> {
   if (configured !== 'auto') return configured
-  if (!isTauri()) return 'utf8'
+  if (!hasBackend()) return 'utf8'
   return safeInvoke<WritableFileEncoding>('检测文件编码', 'detect_file_encoding', { path })
 }

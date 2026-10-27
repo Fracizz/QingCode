@@ -1,6 +1,6 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { create } from 'zustand'
 import type { GitStatus } from '@/lib/git/git'
-import { isTauri } from '../lib/tauri'
 import { getGitHead, getGitStatus, getGitWorkdirStatus } from '../lib/ipc/git'
 import {
   notifyGitDirtyCount,
@@ -171,7 +171,7 @@ export const useGitStatusStore = create<GitStatusState>((set, get) => {
     },
 
     refresh: async (projectPath, options = {}) => {
-      if (!projectPath || !isTauri()) {
+      if (!projectPath || !hasBackend()) {
         if (!options.background) get().clear()
         return
       }

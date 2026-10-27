@@ -41,6 +41,7 @@ import { copyPathAction } from '../lib/copyFileActions'
 import { shouldShowAppContextMenu, deferToNativeContextMenuInDev } from '../lib/devBuild'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import Tooltip from './Tooltip'
+import { TooltipSuppressionContext } from './tooltipContext'
 import WorkspaceMenu from './WorkspaceMenu'
 import ProjectAddDialog from './ProjectAddDialog'
 import type { Project, SshConnection } from '../types'
@@ -491,103 +492,105 @@ export default function ProjectPicker() {
       {/* Keep the dynamic chip strip in the client area. Marking this whole
           container as app-region: drag makes WebView2 subtract every interactive
           chip/button from the native region. The inert filler owns dragging. */}
-      <div
-        ref={containerRef}
-        className="relative flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden"
-      >
-        {insertLineX !== null && dragId !== null && (
-          <div
-            aria-hidden
-            className="pointer-events-none absolute top-0.5 bottom-0.5 w-0.5 rounded-full bg-accent z-10"
-            style={{ left: insertLineX }}
-          />
-        )}
-        {displayVisibleProjects.map((project, index) => {
-          const unavailable = unavailableProjectIds.includes(project.id)
-          return (
-            <Chip
-              key={project.id}
-              chipIndex={index}
-              project={project}
-              label={projectLabels.get(project.id)}
-              sshConnections={sshConnections}
-              indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
-              isCurrent={currentProject?.id === project.id}
-              unavailable={unavailable}
-              dragging={dragId === project.id}
-              onSwitch={() => void handleSwitch(project)}
-              onRemove={() => handleRemove(project)}
-              onRelocate={() =>
-                project.kind === 'ssh'
-                  ? requestSshReconnect(project)
-                  : handleRelocate(project.id)
-              }
-              onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
-              onContextMenu={event => openProjectContextMenu(event, project)}
-              onPointerDown={
-                unavailable ? undefined : event => handleChipPointerDown(event, project.id)
-              }
+      <TooltipSuppressionContext value={dragId !== null}>
+        <div
+          ref={containerRef}
+          className="relative flex-1 flex items-center h-full min-w-0 gap-1 overflow-hidden"
+        >
+          {insertLineX !== null && dragId !== null && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute top-0.5 bottom-0.5 w-0.5 rounded-full bg-accent z-10"
+              style={{ left: insertLineX }}
             />
-          )
-        })}
-
-        {hasOverflow && (
-          <Tooltip label={t('更多项目')} side="bottom" wrapperClassName="flex-shrink-0">
-            <button
-              ref={overflowBtnRef}
-              type="button"
-              aria-label={t('更多项目')}
-              aria-expanded={overflowOpen}
-              aria-haspopup="menu"
-              onClick={openOverflow}
-              onDoubleClick={event => event.stopPropagation()}
-              className={`flex items-center justify-center ui-chip h-6 w-7 rounded text-ui flex-shrink-0 transition-colors
-                ${overflowOpen ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
-            >
-              <ChevronDown
-                size={14}
-                className={`transition-transform ${overflowOpen ? 'rotate-180' : ''}`}
+          )}
+          {displayVisibleProjects.map((project, index) => {
+            const unavailable = unavailableProjectIds.includes(project.id)
+            return (
+              <Chip
+                key={project.id}
+                chipIndex={index}
+                project={project}
+                label={projectLabels.get(project.id)}
+                sshConnections={sshConnections}
+                indicators={projectIndicators[project.id] ?? EMPTY_PROJECT_INDICATORS}
+                isCurrent={currentProject?.id === project.id}
+                unavailable={unavailable}
+                dragging={dragId === project.id}
+                onSwitch={() => void handleSwitch(project)}
+                onRemove={() => handleRemove(project)}
+                onRelocate={() =>
+                  project.kind === 'ssh'
+                    ? requestSshReconnect(project)
+                    : handleRelocate(project.id)
+                }
+                onOpenInExplorer={() => void handleOpenInExplorer(project.path)}
+                onContextMenu={event => openProjectContextMenu(event, project)}
+                onPointerDown={
+                  unavailable ? undefined : event => handleChipPointerDown(event, project.id)
+                }
               />
+            )
+          })}
+
+          {hasOverflow && (
+            <Tooltip label={t('更多项目')} side="bottom" wrapperClassName="flex-shrink-0">
+              <button
+                ref={overflowBtnRef}
+                type="button"
+                aria-label={t('更多项目')}
+                aria-expanded={overflowOpen}
+                aria-haspopup="menu"
+                onClick={openOverflow}
+                onDoubleClick={event => event.stopPropagation()}
+                className={`flex items-center justify-center ui-chip h-6 w-7 rounded text-ui flex-shrink-0 transition-colors
+                  ${overflowOpen ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}
+              >
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${overflowOpen ? 'rotate-180' : ''}`}
+                />
+              </button>
+            </Tooltip>
+          )}
+
+          <Tooltip label={t('添加项目')} side="bottom" wrapperClassName="flex-shrink-0">
+            <button
+              type="button"
+              aria-label={t('添加项目')}
+              aria-haspopup="dialog"
+              onClick={openAddDialog}
+              onDoubleClick={event => event.stopPropagation()}
+              className="flex items-center justify-center ui-chip h-6 w-7 rounded text-ui flex-shrink-0 transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
+            >
+              <Plus size={14} />
             </button>
           </Tooltip>
-        )}
 
-        <Tooltip label={t('添加项目')} side="bottom" wrapperClassName="flex-shrink-0">
-          <button
-            type="button"
-            aria-label={t('添加项目')}
-            aria-haspopup="dialog"
-            onClick={openAddDialog}
-            onDoubleClick={event => event.stopPropagation()}
-            className="flex items-center justify-center ui-chip h-6 w-7 rounded text-ui flex-shrink-0 transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
-          >
-            <Plus size={14} />
-          </button>
-        </Tooltip>
+          {projects.length === 0 && (
+            <button
+              type="button"
+              aria-label={t('添加项目')}
+              aria-haspopup="dialog"
+              onClick={openAddDialog}
+              onDoubleClick={event => event.stopPropagation()}
+              className="flex items-center ui-chip h-6 px-2 rounded text-ui transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
+            >
+              {t('添加项目')}
+            </button>
+          )}
 
-        {projects.length === 0 && (
-          <button
-            type="button"
-            aria-label={t('添加项目')}
-            aria-haspopup="dialog"
-            onClick={openAddDialog}
-            onDoubleClick={event => event.stopPropagation()}
-            className="flex items-center ui-chip h-6 px-2 rounded text-ui transition-colors text-fg-muted hover:text-fg hover:bg-bg-hover"
-          >
-            {t('添加项目')}
-          </button>
-        )}
-
-        {/* Absorbs leftover width after chips. Keeping the native drag region on
-            this inert leaf avoids hit-testing the dynamic chip subtree.
-            `-ml-1` cancels the container gap so overflow measurement is unaffected. */}
-        <div
-          className={`flex-1 self-stretch min-w-0 -ml-1 ${
-            windowDragMode === 'native' ? 'window-drag-region' : ''
-          }`}
-          data-tauri-drag-region={windowDragMode === 'tauri-fallback' ? true : undefined}
-        />
-      </div>
+          {/* Absorbs leftover width after chips. Keeping the native drag region on
+              this inert leaf avoids hit-testing the dynamic chip subtree.
+              `-ml-1` cancels the container gap so overflow measurement is unaffected. */}
+          <div
+            className={`flex-1 self-stretch min-w-0 -ml-1 ${
+              windowDragMode === 'native' ? 'window-drag-region' : ''
+            }`}
+            data-tauri-drag-region={windowDragMode === 'tauri-fallback' ? true : undefined}
+          />
+        </div>
+      </TooltipSuppressionContext>
 
       {/* Hidden measuring layer: renders every chip at natural width so we can compute overflow. */}
       <div

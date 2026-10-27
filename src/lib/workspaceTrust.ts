@@ -1,8 +1,9 @@
+import { hasBackend } from './runtimeCapabilities'
 import type { Project } from '../types'
 import { confirmDialog } from '../store/confirmStore'
 import { translate } from './i18n'
 import { syncRootsFromProjects, syncTrustedRoots } from './pathAllowlist'
-import { isSshResource, isTauri, safeInvoke } from './tauri'
+import { isSshResource, safeInvoke } from './tauri'
 
 /** New storage; migrates once from legacy `qingcode:run-trust`. */
 export const WORKSPACE_TRUST_STORAGE_KEY = 'qingcode:workspace-trust'
@@ -184,7 +185,7 @@ export async function pushTrustedRootsToNative(
     .filter(project => project.ephemeral || isProjectTrusted(project))
     .map(project => project.path)
   await syncTrustedRoots(roots)
-  if (!isTauri()) return
+  if (!hasBackend()) return
   await Promise.all(
     projects
       .filter(project => isSshResource(project.path))

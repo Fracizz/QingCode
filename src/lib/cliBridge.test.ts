@@ -32,6 +32,18 @@ describe('parseOpenTarget', () => {
 })
 
 describe('parseCliRunConfig', () => {
+  it('preserves OS-only tasks and all platform overrides on full-object updates', () => {
+    const os = {
+      windows: { target: 'python.exe app.py', env: { MODE: 'win' } },
+      linux: { target: 'python3 app.py', cwd: '' },
+      macos: { type: 'sh', target: 'dev.sh' },
+    }
+    const source = { id: 'dev', name: 'dev', tasks: [{ id: 'api', os }] }
+    const first = parseCliRunConfig(JSON.stringify(source), [])
+    const second = parseCliRunConfig(JSON.stringify(first.config), [first.config])
+    expect(second.action).toBe('updated')
+    expect(second.config.tasks).toEqual([{ id: 'api', type: 'command', target: '', os }])
+  })
   it('creates and normalizes a bare run config', () => {
     const result = parseCliRunConfig(
       JSON.stringify({

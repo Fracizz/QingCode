@@ -1,4 +1,5 @@
-import { isTauri, NotInTauriError } from './tauri'
+import { hasBackend } from './runtimeCapabilities'
+import { NotInTauriError } from './tauri'
 import { translate } from './i18n'
 import {
   ensureWorkspaceTrust,
@@ -17,6 +18,9 @@ import {
 import { useTerminalStore, type ShellKind } from '../store/terminalStore'
 import { useUIStore } from '../store/uiStore'
 import type { Project, TerminalTab } from '../types'
+import { getRunEnvironment, type RunEnvironment } from './runEnvironment'
+import { resolveRunTask } from './runTaskPlatform'
+import { isWslPath, wslDistroNameFromPath } from './wslWorkspace'
 
 /** Terminal still counts as a live run-config instance (incl. awaiting restore spawn). */
 export function isActiveRunTerminal(
@@ -65,11 +69,12 @@ export function findRunLinkageForTerminal(
 }
 
 /** Stamp restored/legacy task terminals once configs are available. */
-export function rehydrateRunTerminals(configs?: RunConfig[]): number {
+export function rehydrateRunTerminals(configs?: RunConfig[], projectId?: string): number {
   if (!configs?.length) return 0
   const terminals = useTerminalStore.getState().terminals
   let stamped = 0
   const next = terminals.map(terminal => {
+    if (projectId && terminal.projectId !== projectId) return terminal
     if (terminal.runConfigId && terminal.runTaskId) return terminal
     const link = findRunLinkageForTerminal(terminal, configs)
     if (!link) return terminal
@@ -89,7 +94,7 @@ export async function applyRunConfigSessionRestorePolicy(
   projectId: string,
   configs: RunConfig[]
 ): Promise<number> {
-  rehydrateRunTerminals(configs)
+  rehydrateRunTerminals(configs, projectId)
   const configById = new Map(configs.map(config => [config.id, config]))
   const terminalIds = useTerminalStore
     .getState()
@@ -103,48 +108,70 @@ export async function applyRunConfigSessionRestorePolicy(
   if (terminalIds.length === 0) return 0
 
   const closeTerminal = useTerminalStore.getState().closeTerminal
-  await Promise.all(terminalIds.map(id => closeTerminal(id).catch(() => undefined)))
+  await Promise.all(terminalIds.map(id => closeTerminal(id)))
   return terminalIds.length
 }
 
 /** Active terminal ids are derived from terminal tabs; no second runtime map is maintained. */
 export function activeTerminalsForConfig(
   configId: string,
-  terminals: Array<Pick<TerminalTab, 'id' | 'runConfigId' | 'status' | 'awaitingRestoreSpawn'>>
+  terminals: Array<
+    Pick<TerminalTab, 'id' | 'runConfigId' | 'status' | 'awaitingRestoreSpawn'> &
+      Partial<Pick<TerminalTab, 'projectId'>>
+  >,
+  projectId?: string
 ): string[] {
   return terminals
-    .filter(terminal => terminal.runConfigId === configId && isActiveRunTerminal(terminal))
+    .filter(
+      terminal =>
+        terminal.runConfigId === configId &&
+        (!projectId || terminal.projectId === projectId) &&
+        isActiveRunTerminal(terminal)
+    )
     .map(terminal => terminal.id)
 }
 
-export function taskTerminalId(configId: string, taskId: string): string | undefined {
+export function taskTerminalId(
+  configId: string,
+  taskId: string,
+  projectId?: string
+): string | undefined {
   return useTerminalStore
     .getState()
     .terminals.find(
       terminal =>
         terminal.runConfigId === configId &&
         terminal.runTaskId === taskId &&
+        (!projectId || terminal.projectId === projectId) &&
         isActiveRunTerminal(terminal)
     )?.id
 }
 
-export function runningTaskKeysForConfig(configId: string): string[] {
+export function runningTaskKeysForConfig(configId: string, projectId?: string): string[] {
   return useTerminalStore
     .getState()
     .terminals.filter(
       terminal =>
-        terminal.runConfigId === configId && terminal.runTaskId && isActiveRunTerminal(terminal)
+        terminal.runConfigId === configId &&
+        (!projectId || terminal.projectId === projectId) &&
+        terminal.runTaskId &&
+        isActiveRunTerminal(terminal)
     )
     .map(terminal => `${configId}:${terminal.runTaskId}`)
 }
 
-export function isConfigRunning(configId: string): boolean {
-  return activeTerminalsForConfig(configId, useTerminalStore.getState().terminals).length > 0
+export function isConfigRunning(configId: string, projectId?: string): boolean {
+  return (
+    activeTerminalsForConfig(configId, useTerminalStore.getState().terminals, projectId).length > 0
+  )
 }
 
 export function resolveRunTaskCwd(project: Pick<Project, 'path'>, cwd?: string): string {
   const value = cwd?.trim()
   if (!value) return project.path
+  if (isWslPath(project.path) && value.startsWith('/') && !isWslPath(value)) {
+    return `\\\\wsl.localhost\\${wslDistroNameFromPath(project.path)}${value.replace(/\//g, '\\')}`
+  }
   if (project.path.startsWith('ssh://')) {
     if (value.startsWith('ssh://')) return value
     const connection = project.path.match(/^ssh:\/\/[^/]+/)?.[0]
@@ -176,43 +203,93 @@ async function ensureRunTrust(project: Project): Promise<boolean> {
   return level === 'trusted'
 }
 
-export async function runConfig(project: Project, config: RunConfig): Promise<void> {
-  if (!isTauri()) {
-    useProjectStore.getState().pushToast('error', new NotInTauriError('运行任务').message)
-    return
-  }
-  if (config.tasks.length === 0) {
-    useProjectStore
-      .getState()
-      .pushToast(
-        'error',
-        `「${config.name}」没有可运行的任务`,
-        `请检查 ${RUN_CONFIG_RELATIVE_PATH}，任务命令字段应为 target`
-      )
-    return
-  }
-  if (!(await ensureRunTrust(project))) return
-
-  const addScriptTerminal = useTerminalStore.getState().addScriptTerminal
-  for (const task of config.tasks) {
-    const cwd = resolveRunTaskCwd(project, task.cwd)
-    await addScriptTerminal(
-      project.id,
-      cwd,
-      task.type as ShellKind,
-      task.target,
-      task.env ?? {},
-      runTaskTerminalName(config, task),
-      { runConfigId: config.id, runTaskId: task.id }
-    )
-  }
-  useUIStore.getState().openTerminalPanel()
+export interface RunStartResult {
+  environment: RunEnvironment
+  tasks: Array<{ id: string; terminalId: string }>
 }
 
-export async function stopConfig(config: Pick<RunConfig, 'id'>): Promise<void> {
-  const terminalIds = activeTerminalsForConfig(config.id, useTerminalStore.getState().terminals)
+export async function runConfig(
+  project: Project,
+  config: RunConfig,
+  options?: { throwOnError?: boolean }
+): Promise<RunStartResult | undefined> {
+  try {
+    if (!hasBackend()) {
+      throw new NotInTauriError('运行任务')
+    }
+    if (config.tasks.length === 0) {
+      throw new Error(
+        `「${config.name}」没有可运行的任务，请检查 ${RUN_CONFIG_RELATIVE_PATH} 的 target`
+      )
+    }
+    if (!(await ensureRunTrust(project))) {
+      if (options?.throwOnError) throw new Error('项目未信任或运行已取消')
+      return
+    }
+
+    const environment = await getRunEnvironment(project.path)
+    if (environment.kind === 'ssh' && environment.os === 'windows') {
+      throw new Error(
+        'Windows SSH 项目暂不支持运行任务，请使用 Linux/macOS SSH 项目或本地 Windows 项目'
+      )
+    }
+    // Resolve every task before creating tabs; a missing OS command cannot start half a config.
+    const tasks = config.tasks.map(task => {
+      const resolved = resolveRunTask(task, environment.os)
+      if (environment.kind === 'ssh' && resolved.type === 'ps1') {
+        throw new Error('SSH POSIX 项目不支持 PowerShell 任务，请配置 os 覆盖')
+      }
+      return resolved
+    })
+
+    const addScriptTerminal = useTerminalStore.getState().addScriptTerminal
+    const started: RunStartResult['tasks'] = []
+    for (const task of tasks) {
+      const existing = taskTerminalId(config.id, task.id, project.id)
+      if (existing) {
+        started.push({ id: task.id, terminalId: existing })
+        continue
+      }
+      const cwd = resolveRunTaskCwd(project, task.cwd)
+      const terminalId = await addScriptTerminal(
+        project.id,
+        cwd,
+        task.type as ShellKind,
+        task.target,
+        task.env ?? {},
+        runTaskTerminalName(config, task),
+        { runConfigId: config.id, runTaskId: task.id }
+      )
+      if (!terminalId) throw new Error(`无法创建任务「${task.name ?? task.id}」的终端`)
+      useTerminalStore.setState(state => ({
+        terminals: state.terminals.map(terminal =>
+          terminal.id === terminalId ? { ...terminal, runEnvironment: environment } : terminal
+        ),
+      }))
+      started.push({ id: task.id, terminalId })
+    }
+    useUIStore.getState().openTerminalPanel()
+    return { environment, tasks: started }
+  } catch (error) {
+    useProjectStore.getState().pushToast('error', `运行配置失败: ${String(error)}`)
+    if (options?.throwOnError) throw error
+  }
+}
+
+export async function stopConfig(config: Pick<RunConfig, 'id'>, projectId?: string): Promise<void> {
+  const terminalIds = activeTerminalsForConfig(
+    config.id,
+    useTerminalStore.getState().terminals,
+    projectId
+  )
   const closeTerminal = useTerminalStore.getState().closeTerminal
-  await Promise.all(terminalIds.map(id => closeTerminal(id).catch(() => undefined)))
+  await Promise.all(terminalIds.map(id => closeTerminal(id)))
+  const remaining = activeTerminalsForConfig(
+    config.id,
+    useTerminalStore.getState().terminals,
+    projectId
+  )
+  if (remaining.length) throw new Error('部分任务未能停止，请查看终端错误后重试')
 }
 
 export async function removeRunConfig(project: Project, configId: string): Promise<void> {
@@ -224,6 +301,6 @@ export async function removeRunConfigs(project: Project, configIds: string[]): P
   const targets = (useRunConfigStore.getState().configsByProject[project.id] ?? []).filter(config =>
     ids.has(config.id)
   )
-  await Promise.all(targets.map(config => stopConfig(config)))
+  await Promise.all(targets.map(config => stopConfig(config, project.id)))
   await useRunConfigStore.getState().removeConfigs(project, configIds)
 }

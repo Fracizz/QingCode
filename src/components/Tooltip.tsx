@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -9,6 +10,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { readStatusBarRowTop } from './statusBarRowContext'
+import { TooltipSuppressionContext } from './tooltipContext'
 import {
   TipArrow,
   syncStyleTopToTipArrowClearance,
@@ -263,11 +265,12 @@ export default function Tooltip({
   liveTip = false,
   children,
 }: Props) {
+  const suppressed = useContext(TooltipSuppressionContext)
   const showDelay = delay ?? (onlyWhenOverflow ? OVERFLOW_TOOLTIP_DELAY : SHOW_DELAY)
   const triggerRef = useRef<HTMLSpanElement>(null)
   const tipRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
-  const visible = forceOpen || open
+  const visible = !suppressed && (forceOpen || open)
   const [style, setStyle] = useState<CSSProperties>({})
   const [arrowOffset, setArrowOffset] = useState<number | null>(null)
   const timerRef = useRef<number | undefined>(undefined)
@@ -286,6 +289,13 @@ export default function Tooltip({
       timerRef.current = undefined
     }
   }, [])
+
+  useLayoutEffect(() => {
+    if (!suppressed) return
+    clearTimer()
+    // Discard hover state so releasing a drag cannot revive an old tooltip.
+    setOpen(false)
+  }, [clearTimer, suppressed])
 
   const overflowElement = useCallback(() => {
     const trigger = triggerRef.current
@@ -381,6 +391,7 @@ export default function Tooltip({
 
   const scheduleShow = () => {
     clearTimer()
+    if (suppressed) return
     if (!shouldShowForOverflow()) return
     timerRef.current = window.setTimeout(() => {
       if (!shouldShowForOverflow()) return
@@ -441,7 +452,11 @@ export default function Tooltip({
       <span
         ref={triggerRef}
         className={wrapperClassName}
-        onMouseEnter={scheduleShow}
+        onMouseEnter={event => {
+          // Moving/reordering triggers can receive enter events during a drag.
+          if (event.buttons !== 0) return
+          scheduleShow()
+        }}
         onMouseLeave={forceOpen ? undefined : hide}
         onFocus={showOnFocus ? event => {
           if (event.target instanceof HTMLElement && event.target.matches(':focus-visible')) scheduleShow()

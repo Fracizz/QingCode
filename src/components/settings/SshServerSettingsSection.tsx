@@ -1,7 +1,8 @@
+import { hasBackend } from '../../lib/runtimeCapabilities'
 import { useEffect, useState } from 'react'
 import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
 import { useI18n } from '../../lib/i18n'
-import { isTauri, safeInvoke } from '../../lib/tauri'
+import { safeInvoke } from '../../lib/tauri'
 import { DEFAULT_GLOBAL_SETTINGS } from '../../lib/projectSettings'
 import {
   SSH_SERVER_AUTO_DOWNLOAD_KEY,
@@ -58,7 +59,7 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
   const chooseOfflineDir = async () => {
     const settingsScope = scope === 'workspace' ? 'project' : 'global'
     if (settingsScope === 'project' && !project) return
-    if (!isTauri()) {
+    if (!hasBackend()) {
       pushToast('error', t('当前环境无法选择离线目录'))
       return
     }

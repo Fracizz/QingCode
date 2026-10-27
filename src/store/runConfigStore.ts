@@ -1,8 +1,10 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { create } from 'zustand'
-import { isSshResource, safeInvoke, isTauri, NotInTauriError } from '../lib/tauri'
+import { isSshResource, safeInvoke, NotInTauriError } from '../lib/tauri'
 import { translate } from '../lib/i18n'
 import { useProjectStore } from './projectStore'
 import type { Project } from '../types'
+import { parseRunTaskOs, type RunTaskOs } from '../lib/runTaskPlatform'
 
 export type RunTaskType = 'ps1' | 'bat' | 'sh' | 'command' | 'script'
 
@@ -13,6 +15,7 @@ export interface RunTask {
   target: string
   cwd?: string
   env?: Record<string, string>
+  os?: RunTaskOs
 }
 
 export interface RunConfig {
@@ -26,6 +29,8 @@ export interface RunConfig {
 interface RunConfigFile {
   configs: RunConfig[]
 }
+
+class RunConfigFormatError extends Error {}
 
 function projectConfigDir(project: Project): string {
   const sep = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
@@ -88,11 +93,13 @@ function normalizeConfigs(input: unknown): RunConfig[] {
 }
 
 function normalizeTask(t: Partial<RunTask> | undefined): RunTask | null {
-  if (!t || typeof t.id !== 'string' || typeof t.target !== 'string') return null
+  if (!t || typeof t.id !== 'string') return null
+  const os = parseRunTaskOs(t.os)
+  if (typeof t.target !== 'string' && !os) return null
   const allowed: RunTaskType[] = ['ps1', 'bat', 'sh', 'command', 'script']
   const type = allowed.includes(t.type as RunTaskType) ? (t.type as RunTaskType) : 'command'
   const cwd = typeof t.cwd === 'string' ? t.cwd.trim() || undefined : undefined
-  let target = t.target.trim()
+  let target = t.target?.trim() ?? ''
   if (type === 'command' && cwd) {
     target = stripRedundantCdPrefix(target)
   }
@@ -103,6 +110,7 @@ function normalizeTask(t: Partial<RunTask> | undefined): RunTask | null {
     target,
     cwd,
     env: t.env && typeof t.env === 'object' ? (t.env as Record<string, string>) : undefined,
+    ...(os ? { os } : {}),
   }
 }
 
@@ -151,13 +159,17 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
   loadedProjects: new Set<string>(),
 
   loadConfigs: async (project: Project) => {
-    if (!isTauri()) {
+    if (!hasBackend()) {
       set(s => ({ configsByProject: { ...s.configsByProject, [project.id]: [] } }))
       return []
     }
     const readConfigs = async (path: string) => {
       const raw = await safeInvoke<string>('读取运行配置', 'read_file', { path })
-      return normalizeConfigs(JSON.parse(raw) as RunConfigFile)
+      try {
+        return normalizeConfigs(JSON.parse(raw) as RunConfigFile)
+      } catch (error) {
+        throw new RunConfigFormatError(`${path}: ${String(error)}`)
+      }
     }
     try {
       const configs = await readConfigs(runConfigPath(project))
@@ -166,7 +178,15 @@ export const useRunConfigStore = create<RunConfigState>((set, get) => ({
         loadedProjects: new Set(s.loadedProjects).add(project.id),
       }))
       return configs
-    } catch {
+    } catch (error) {
+      if (error instanceof RunConfigFormatError) {
+        useProjectStore.getState().pushToast('error', `运行配置格式错误: ${error.message}`)
+        set(s => ({
+          configsByProject: { ...s.configsByProject, [project.id]: [] },
+          loadedProjects: new Set(s.loadedProjects).add(project.id),
+        }))
+        throw error
+      }
       try {
         const legacyPath = legacyRunConfigPath(project)
         const configs = await readConfigs(legacyPath)

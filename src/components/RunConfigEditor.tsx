@@ -17,12 +17,12 @@ import { useEditorStore } from '../store/editorStore'
 import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
 import { isSshResource } from '../lib/tauri'
+import { hasRunTaskTarget, parseRunTaskOs, type RunTaskOs } from '../lib/runTaskPlatform'
 
 const TYPE_OPTIONS: RunTaskType[] = ['command', 'ps1', 'bat', 'sh', 'script']
-const SSH_TYPE_OPTIONS: RunTaskType[] = ['command', 'sh', 'script']
 
 const TYPE_LABEL: Record<RunTaskType, string> = {
-  command: '命令（CMD）',
+  command: '命令（按运行系统）',
   ps1: 'ps1 脚本',
   bat: 'bat 脚本',
   sh: 'sh 脚本',
@@ -46,15 +46,16 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
   )
   const [tasks, setTasks] = useState<RunTask[]>(initial?.tasks ?? [])
   const [saving, setSaving] = useState(false)
+  const [invalidOsTasks, setInvalidOsTasks] = useState<Set<string>>(new Set())
   const remote = isSshResource(project.path)
-  const hasUnsupportedSshTask =
-    remote && tasks.some(task => task.type === 'ps1' || task.type === 'bat')
+  const hasInvalidOs = tasks.some(task => invalidOsTasks.has(task.id))
 
   useEffect(() => {
     queueMicrotask(() => {
       setName(initial?.name ?? '')
       setRestoreWithProjectSession(initial ? runConfigFollowsProjectSession(initial) : false)
       setTasks(initial?.tasks ?? [])
+      setInvalidOsTasks(new Set())
     })
   }, [initial])
 
@@ -97,7 +98,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           env: t.env && Object.keys(t.env).length > 0 ? t.env : undefined,
         }
       })
-      .filter(t => t.target.length > 0)
+      .filter(hasRunTaskTarget)
     if (cleanTasks.length === 0) return
     const config: RunConfig = {
       id: initial?.id ?? crypto.randomUUID(),
@@ -213,6 +214,14 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
                 remote={remote}
                 onChange={patch => updateTask(task.id, patch)}
                 onRemove={() => removeTask(task.id)}
+                onOsValidityChange={valid =>
+                  setInvalidOsTasks(current => {
+                    const next = new Set(current)
+                    if (valid) next.delete(task.id)
+                    else next.add(task.id)
+                    return next
+                  })
+                }
               />
             ))
           )}
@@ -241,12 +250,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
             <button
               type="button"
               onClick={handleSave}
-              disabled={
-                saving ||
-                hasUnsupportedSshTask ||
-                !name.trim() ||
-                tasks.filter(t => t.target.trim()).length === 0
-              }
+              disabled={saving || hasInvalidOs || !name.trim() || !tasks.some(hasRunTaskTarget)}
               className="text-ui px-3 py-1.5 rounded bg-action text-on-action hover:bg-action/90 disabled:opacity-40 disabled:cursor-default"
             >
               {t('保存')}
@@ -264,12 +268,14 @@ function TaskEditor({
   remote,
   onChange,
   onRemove,
+  onOsValidityChange,
 }: {
   index: number
   task: RunTask
   remote: boolean
   onChange: (patch: Partial<RunTask>) => void
   onRemove: () => void
+  onOsValidityChange: (valid: boolean) => void
 }) {
   const { t } = useI18n()
   const envEntries = Object.entries(task.env ?? {})
@@ -284,8 +290,10 @@ function TaskEditor({
 
   const commandHelp = remote
     ? t('SSH 下使用 POSIX Shell；工作目录已填时无需再写 cd。')
-    : t('Windows 下使用 CMD，可用 && 连接命令；换行会自动转为 &&。工作目录已填时无需再写 cd。')
-  const typeOptions = remote ? SSH_TYPE_OPTIONS : TYPE_OPTIONS
+    : t(
+        '按项目运行系统选择 Shell：Windows 使用 CMD，Linux/macOS 使用 Shell，WSL 使用所属发行版的 Linux 工具链。'
+      )
+  const typeOptions = TYPE_OPTIONS
   const unsupported = remote && (task.type === 'ps1' || task.type === 'bat')
 
   return (
@@ -305,11 +313,6 @@ function TaskEditor({
           onChange={e => onChange({ type: e.target.value as RunTaskType })}
           className="max-w-[9.5rem] px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none"
         >
-          {unsupported ? (
-            <option value={task.type} disabled>
-              {t('Windows 脚本（SSH Linux 不支持）')}
-            </option>
-          ) : null}
           {typeOptions.map(taskType => (
             <option key={taskType} value={taskType}>
               {taskType === 'command' && remote ? t('命令（Shell）') : t(TYPE_LABEL[taskType])}
@@ -367,7 +370,7 @@ function TaskEditor({
           className="flex-1 min-w-0 px-2 py-0.5 text-ui-sm rounded bg-bg-deep border border-border focus:border-accent outline-none font-mono"
         />
       </div>
-      {unsupported ? (
+      {unsupported && !task.os?.linux && !task.os?.macos ? (
         <p className="pl-[4.5rem] text-ui-xs text-warn">
           {t('SSH Linux 项目不支持 PowerShell 或 BAT 任务，请改用命令、sh 或脚本。')}
         </p>
@@ -421,7 +424,60 @@ function TaskEditor({
           </div>
         ))}
       </div>
+      <TaskOsEditor
+        value={task.os}
+        onChange={os => onChange({ os })}
+        onValidityChange={onOsValidityChange}
+      />
     </div>
+  )
+}
+
+function TaskOsEditor({
+  value,
+  onChange,
+  onValidityChange,
+}: {
+  value: RunTaskOs | undefined
+  onChange: (value: RunTaskOs | undefined) => void
+  onValidityChange: (valid: boolean) => void
+}) {
+  const { t } = useI18n()
+  const [draft, setDraft] = useState(() => (value ? JSON.stringify(value, null, 2) : ''))
+  const [error, setError] = useState('')
+  return (
+    <details className="border-t border-border pt-1.5" open={!!value || !!error}>
+      <summary className="cursor-pointer text-ui-xs text-fg-muted">{t('按系统覆盖（os）')}</summary>
+      <p className="py-1 text-ui-xs text-fg-dim">
+        {t(
+          '公共字段作为默认值；windows / linux / macos 可覆盖 type、target、cwd、env。环境变量按名称合并；WSL 使用 linux，SSH 使用远端系统。'
+        )}
+      </p>
+      <CommandTextarea
+        value={draft}
+        ariaLabel={t('系统覆盖 JSON')}
+        placeholder={
+          '{ "windows": { "target": ".venv\\\\Scripts\\\\python.exe manage.py runserver" } }'
+        }
+        onChange={text => {
+          setDraft(text)
+          try {
+            const os = text.trim() ? parseRunTaskOs(JSON.parse(text)) : undefined
+            setError('')
+            onValidityChange(true)
+            onChange(os)
+          } catch (e) {
+            setError(String(e))
+            onValidityChange(false)
+          }
+        }}
+      />
+      {error && (
+        <p role="alert" className="text-ui-xs text-danger">
+          {error}
+        </p>
+      )}
+    </details>
   )
 }
 

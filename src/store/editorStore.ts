@@ -1,6 +1,7 @@
+import { hasBackend } from '../lib/runtimeCapabilities'
 import { create } from 'zustand'
 import { save } from '@tauri-apps/plugin-dialog'
-import { safeInvoke, isTauri } from '../lib/tauri'
+import { safeInvoke } from '../lib/tauri'
 import { parseOpenFileError, tabNeedsDiskContent, isNonEditableViewMode } from '../lib/openFileError'
 import { IMAGE_MAX_BYTES, isImagePath } from '../lib/imageFiles'
 import {
@@ -820,7 +821,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const tab = get().findTab(id)
     if (!tab || tab.kind === 'diff' || tab.openError || tab.loading || isNonEditableViewMode(tab))
       return
-    if (!isTauri()) {
+    if (!hasBackend()) {
       useProjectStore.getState().pushToast('error', translate('当前环境无法重新打开文件'))
       return
     }
@@ -991,7 +992,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     const content = prepareContentForSave(raw, getEditorPreferences())
     if (!(await confirmOutsideSymlinkWrite(afterFormat.path))) return
     try {
-      if (isTauri()) {
+      if (hasBackend()) {
         try {
           await safeInvoke('抑制监视', 'suppress_fs_watch', { path: afterFormat.path })
         } catch {
@@ -1074,7 +1075,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!tab || tab.kind === 'diff' || tab.openError || tab.loading) return
     const content = resolveTabContent(tab)
     if (content === undefined) return
-    if (!isTauri()) {
+    if (!hasBackend()) {
       useProjectStore.getState().pushToast('error', translate('当前环境无法另存为'))
       return
     }

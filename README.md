@@ -92,6 +92,8 @@ Linux / POSIX 远端支持 SFTP 文件操作、远程 PTY 终端、Git 工作台
 
 日常用法：打开项目 → 运行配置里点启动 → 服务进各自终端 → 再去改代码或把终端交给 AI CLI。
 
+同一个 `dev` 可通过任务内 `os.windows/linux/macos` 覆盖命令、目录和环境变量，公共字段作为默认值；WSL 自动使用所属发行版的 Linux 工具链，SSH 以远端系统为准。旧配置与 CLI 语法继续兼容，详见[跨平台运行配置](docs/run-config.md)。
+
 ### 终端配置：默认环境与 AI / 工具入口
 
 除了运行配置，还可管理**终端配置文件**（名称 + 启动命令）：
@@ -211,6 +213,8 @@ pnpm package                  # 本机 x64：NSIS 安装包（release/QingCode-s
 pnpm install
 pnpm tauri:dev    # 完整桌面应用
 ```
+
+完整应用的浏览器测试使用 `pnpm dev:web-test`（端口 38419），复用真实 App 和 Store，在原生接口边界提供有状态模拟。会话隔离、故障注入和能力边界见 [Web 测试说明](docs/web-testing.md)。
 
 前端类型检查使用固定版本的原生 TypeScript 7；`build` 和 `check:frontend` 会自动调用它。经典 TypeScript 5.8 仍保留供 ESLint 等工具使用，两套检查器使用独立增量缓存。使用以下显式命令，避免两套编译器同名 `tsc` 入口产生歧义：
 

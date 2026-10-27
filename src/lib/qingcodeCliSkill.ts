@@ -93,6 +93,52 @@ Config and task \`id\` values are optional when creating and are auto-generated.
 The optional \`restoreWithProjectSession\` field defaults to \`false\`; set it to \`true\`
 to restore and restart linked task terminals with the project session after an app restart.
 
+### Cross-platform task OS overrides
+
+Keep one config (for example, \`dev\`) and stable task IDs. Each task's common
+\`type\`, \`target\`, \`cwd\`, and \`env\` are defaults; optional \`os.windows\`, \`os.linux\`,
+and \`os.macos\` override them. Scalar fields replace the default, including an
+empty \`cwd\` (project root); \`env\` merges by variable name, with OS values winning.
+The common \`target\` can be omitted when at least one OS provides it. Starting on
+an OS without an effective target fails before any task is launched.
+
+\`\`\`json
+{
+  "name": "dev",
+  "tasks": [{
+    "id": "backend", "type": "command", "cwd": "backend",
+    "target": ".venv/bin/python manage.py runserver",
+    "env": { "PYTHONUNBUFFERED": "1" },
+    "os": {
+      "windows": { "target": ".venv\\\\Scripts\\\\python.exe manage.py runserver" },
+      "macos": { "target": "uv run python manage.py runserver" }
+    }
+  }]
+}
+\`\`\`
+
+- Local projects use the native OS. Windows WSL UNC projects use \`linux\` and
+  \`wsl.exe\` with the distribution and POSIX path taken from the project path;
+  no default-distribution guessing. SSH projects use the probed remote OS.
+- Relative \`cwd\` is relative to the project root, never to the GUI/CLI process.
+  Task directories and script files must stay inside the trusted project root;
+  cross-distribution, cross-connection and symlink escapes are rejected.
+- Put Windows virtualenv paths in \`os.windows\` and Linux paths in the common
+  defaults or \`os.linux\`. WSL requires Linux tools (including \`setsid\` from
+  util-linux); Windows drive PATH entries are excluded from WSL task lookup.
+- Existing configs without \`os\` and existing CLI syntax remain supported.
+  Preserve every OS override when updating. Older QingCode versions do not
+  understand \`os\` and may drop it when editing; use the updated app/CLI to save.
+- \`run start\` submits tasks asynchronously and returns the selected environment
+  and task terminal IDs in addition to the existing fields. \`run status\` retains
+  \`running\`/\`terminals\` and adds task status, exit code, actual target/cwd and
+  environment. Verify readiness separately; a live process does not prove an
+  HTTP service or Celery worker is ready. Do not put secrets in status output.
+- Windows SSH run tasks remain unsupported and fail explicitly. POSIX SSH
+  requires an available shell and the selected connection mode's capabilities.
+  Celery on native Windows is not officially supported; use WSL for a Linux
+  worker or a project-verified Windows development override.
+
 SSH task rules:
 
 - \`cwd\` omitted: remote project root. Relative \`cwd\`: relative to that root. An absolute POSIX
@@ -107,15 +153,11 @@ SSH task rules:
 
 ### Windows access to SSH/WSL services
 
-When QingCode runs on Windows and the project is WSL/SSH, the local browser can only
-reach services through WSL localhost forwarding.
-
-- Bind dev servers to \`127.0.0.1\`. Binding \`0.0.0.0\` / \`vite --host\` / \`host: true\`
-  makes \`http://127.0.0.1:<port>\` fail from Windows.
-- Use \`vite --host 127.0.0.1\` (or equivalent); do not bind all interfaces for LAN access.
-- After start, verify from **Windows** at \`http://127.0.0.1:<actual-port>\`. The WSL eth0
-  IP often does not work on the same machine.
-- Confirm the listener belongs to the current project; do not use another project's port.
+For a WSL project, verify the actual service URL from Windows; localhost forwarding
+and reachable addresses depend on the WSL networking configuration. For SSH, use
+the remote address or an explicitly configured tunnel; SSH alone does not forward ports.
+Check the listening address, port ownership and firewall before changing a working
+binding. Do not replace a project's established bind address without evidence.
 
 ### Updating a run config
 
@@ -177,7 +219,7 @@ ${quoted} open <file>[:line[:col]] ...
 2. Create a config, or use the full-object update flow above for an existing config.
 3. Ensure the GUI is running before execution and before any SSH run-config CRUD command.
 4. Start the config, then inspect \`run status\`. For SSH/WSL projects, also verify
-   \`http://127.0.0.1:<port>\` from Windows (the server must bind \`127.0.0.1\`).
+   the actual service URL from Windows or the intended client.
 5. If restricted mode blocks execution, explain it and ask for explicit approval before \`trust grant\`.
 
 ## Safety
@@ -274,6 +316,42 @@ CLI 会自动通过 GUI 中已认证的 SSH/SFTP 会话执行操作；绝不能�
 可选字段 \`restoreWithProjectSession\` 默认为 \`false\`；设为 \`true\` 后，应用重启并恢复
 项目会话时会重新启动关联的任务终端。
 
+### 跨平台任务 OS 覆盖
+
+保留同一个配置（例如 \`dev\`）和稳定的任务 ID。任务公共 \`type\`、\`target\`、\`cwd\`、\`env\`
+作为默认值；\`os.windows\`、\`os.linux\`、\`os.macos\` 按实际执行系统覆盖。
+普通字段直接替换，\`cwd: ""\` 表示项目根目录；\`env\` 按变量名合并，OS 同名值优先。
+至少一个 OS 提供命令时可省略公共 \`target\`；当前系统没有有效命令时，在启动任何任务前报错。
+
+\`\`\`json
+{
+  "name": "dev",
+  "tasks": [{
+    "id": "backend", "type": "command", "cwd": "backend",
+    "target": ".venv/bin/python manage.py runserver",
+    "env": { "PYTHONUNBUFFERED": "1" },
+    "os": {
+      "windows": { "target": ".venv\\\\Scripts\\\\python.exe manage.py runserver" },
+      "macos": { "target": "uv run python manage.py runserver" }
+    }
+  }]
+}
+\`\`\`
+
+- 本地项目以本机系统为准。Windows 打开的 WSL UNC 项目使用 \`linux\`，通过 \`wsl.exe\`
+  指定路径所属发行版和 Linux 路径，不猜默认发行版；SSH 以探测到的远端系统为准。
+- 相对 \`cwd\` 始终相对于项目根目录。任务目录及脚本必须位于受信任的项目根目录内，
+  拒绝跨发行版、跨 SSH 连接及符号链接越界。
+- Windows 虚拟环境路径写入 \`os.windows\`；Linux 路径放公共默认值或 \`os.linux\`。
+  WSL 使用 Linux 工具链，需要 \`setsid\`（util-linux）；任务 PATH 排除 Windows 盘符目录。
+- 新版兼容没有 \`os\` 的旧配置和现有 CLI 语法；更新完整对象时保留所有 OS 覆盖。
+  旧版 QingCode 不认识 \`os\`，编辑保存可能丢失这些字段，应使用新版应用与 CLI 保存。
+- \`run start\` 异步提交任务，原返回字段之外增加实际环境和任务终端 ID；\`run status\`
+  保留 \`running\`/\`terminals\`，增加每个任务的状态、退出码、实际命令、目录与环境。
+  进程存活不代表 HTTP 服务或 Celery 已就绪，仍需验证可访问性或执行测试任务；状态不输出环境变量值。
+- Windows SSH 运行任务仍不支持，会明确报错。POSIX SSH 需要可用 Shell 及当前连接模式支持。
+  Celery 官方不支持原生 Windows；使用 WSL Linux worker，或经过项目验证的 Windows 开发覆盖命令。
+
 SSH 任务规则：
 
 - 未填写 \`cwd\`：使用远端项目根目录。相对 \`cwd\`：相对于项目根目录。绝对 POSIX 路径
@@ -288,12 +366,9 @@ SSH 任务规则：
 
 ### Windows 访问 SSH/WSL 服务
 
-QingCode 在 Windows、项目在 WSL/SSH 时：本机浏览器只能走 WSL localhost 转发。
-
-- 开发服务必须听 \`127.0.0.1\`。绑 \`0.0.0.0\` / \`vite --host\` / \`host: true\` 时，Windows 的 \`http://127.0.0.1:端口\` 会连不上。
-- 前端用 \`vite --host 127.0.0.1\`（或等价）；不要为“局域网访问”改绑全接口。
-- 启动后在 **Windows** 验证 \`http://127.0.0.1:<实际端口>\`。WSL eth0 IP 对本机常不通。
-- 先核对监听地址和端口属于当前项目，不要拿其它项目的端口当入口。
+WSL 项目需要从 Windows 验证实际服务地址；localhost 转发与可达地址取决于 WSL 网络配置。
+SSH 项目使用远端可达地址或已明确配置的隧道，SSH 连接本身不会自动转发端口。
+先核对监听地址、端口归属与防火墙，再调整配置；没有证据时保留项目已验证的绑定地址。
 
 ### 更新运行配置
 
@@ -353,7 +428,7 @@ ${quoted} open <file>[:line[:col]] ...
    \`run list --project <id>\`。
 2. 创建配置；更新现有配置时遵循上面的完整对象更新流程。
 3. 执行任务以及操作 SSH 运行配置前，确保 GUI 正在运行。
-4. 启动配置后检查 \`run status\`；SSH/WSL 项目再在 Windows 用 \`http://127.0.0.1:<端口>\` 验证（须听 \`127.0.0.1\`）。
+4. 启动配置后检查 \`run status\`；SSH/WSL 项目再从 Windows 或实际使用端验证服务地址。
 5. 如果受限模式阻止执行，说明原因，并在执行 \`trust grant\` 前取得用户明确授权。
 
 ## 安全

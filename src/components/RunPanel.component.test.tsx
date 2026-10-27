@@ -45,6 +45,7 @@ const initialTerminalState = useTerminalStore.getState()
 describe('RunPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    runtimeMocks.stopConfig.mockResolvedValue(undefined)
     useProjectStore.setState({ currentProject: project, projects: [project], toasts: [] })
     useTerminalStore.setState({ terminals: [], activeTerminalId: null })
     useConfirmStore.getState().answer(false)
@@ -90,7 +91,7 @@ describe('RunPanel', () => {
       ],
     })
     fireEvent.click(await screen.findByRole('button', { name: '停止「开发服务」' }))
-    expect(runtimeMocks.stopConfig).toHaveBeenCalledWith(config)
+    expect(runtimeMocks.stopConfig).toHaveBeenCalledWith(config, project.id)
 
     fireEvent.click(screen.getByRole('button', { name: '删除运行配置「开发服务」' }))
     const dialog = await screen.findByRole('alertdialog')
@@ -152,8 +153,8 @@ describe('RunPanel', () => {
         expect.objectContaining({
           id: config.id,
           restoreWithProjectSession: true,
-        }),
-      ),
+        })
+      )
     )
     expect(onClose).toHaveBeenCalledOnce()
   })

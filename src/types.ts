@@ -98,6 +98,8 @@ export interface TerminalTab {
   launchCommand: string
   /** When set, spawn/restart uses `spawn_script` with this kind (run-config tasks). */
   shellKind?: 'ps1' | 'bat' | 'sh' | 'command' | 'interactive' | 'script'
+  /** OS and transport selected when this run task was started. */
+  runEnvironment?: import('./lib/runEnvironment').RunEnvironment
   env?: Record<string, string>
   /** Preferred host shell for profile terminals; `auto` resolves in the Rust backend. */
   shell?: TerminalShellId

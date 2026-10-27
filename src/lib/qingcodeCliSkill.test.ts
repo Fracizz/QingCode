@@ -18,12 +18,22 @@ describe('buildQingcodeCliSkillMarkdown', () => {
     expect(md).toContain('It is not a partial patch')
     expect(md).toContain('Never grant trust implicitly')
     expect(md).toContain('Windows access to SSH/WSL services')
-    expect(md).toContain('127.0.0.1')
+    expect(md).toContain('os.windows')
     expect(md).toContain('settings export --scope user --output')
     expect(md).toContain('settings import --scope workspace --project')
     expect(md).toContain('skippedProjects')
     expect(md).toContain('settings reset --scope user --yes')
     expect(md).toContain('Workspace reset clears overrides')
+  })
+
+  it.each(['en', 'zh-CN'])('provides valid cross-platform JSON examples in %s', language => {
+    const md = buildQingcodeCliSkillMarkdown('QingCode.exe', language)
+    const examples = [...md.matchAll(/```json\n([\s\S]*?)```/g)].map(match => JSON.parse(match[1]))
+    const crossPlatform = examples.find(example => example.name === 'dev')
+    expect(crossPlatform.tasks[0].os.windows.target).toBe(
+      '.venv\\Scripts\\python.exe manage.py runserver'
+    )
+    expect(crossPlatform.tasks[0].target).toBe('.venv/bin/python manage.py runserver')
   })
 
   it('quotes paths with spaces', () => {

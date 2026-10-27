@@ -22,7 +22,7 @@ const appVersion = (() => {
 })();
 
 // https://vite.dev/config/
-export default defineConfig(async () => ({
+export default defineConfig(async ({ mode }) => ({
   plugins: [react(), tailwindcss()],
 
   define: {
@@ -45,7 +45,8 @@ export default defineConfig(async () => ({
     port: devPort,
     strictPort: devPortLocked,
     host: host || "127.0.0.1",
-    hmr: host
+    // Tests use cold boot and explicit reload; HMR can replace live IPC subscribers.
+    hmr: mode === 'web-test' ? false : host
       ? {
           protocol: "ws",
           host,

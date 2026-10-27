@@ -8,6 +8,10 @@ vi.mock('../lib/tauri', async importOriginal => {
     safeInvoke: vi.fn(),
   }
 })
+vi.mock('../lib/runEnvironment', () => ({
+  getRunEnvironment: vi.fn(async () => ({ os: 'windows', kind: 'local' })),
+}))
+import { getRunEnvironment } from '../lib/runEnvironment'
 import {
   activeTerminalsForConfig,
   applyRunConfigSessionRestorePolicy,
@@ -56,6 +60,7 @@ function baseTab(partial: Partial<TerminalTab> & Pick<TerminalTab, 'id' | 'name'
 
 describe('run config runtime helpers', () => {
   beforeEach(() => {
+    vi.mocked(getRunEnvironment).mockResolvedValue({ os: 'windows', kind: 'local' })
     useTerminalStore.setState({
       terminals: [],
       activeTerminalId: null,
@@ -77,6 +82,65 @@ describe('run config runtime helpers', () => {
   it('keeps local task working-directory behavior', () => {
     expect(resolveRunTaskCwd({ path: 'D:\\project' }, 'frontend')).toBe('D:\\project\\frontend')
     expect(resolveRunTaskCwd({ path: '/home/owner/app' }, '/tmp/task')).toBe('/tmp/task')
+  })
+
+  it('maps Linux absolute cwd into the same WSL distribution', () => {
+    expect(
+      resolveRunTaskCwd({ path: String.raw`\\wsl$\Ubuntu\home\app` }, '/home/app/backend')
+    ).toBe(String.raw`\\wsl.localhost\Ubuntu\home\app\backend`)
+  })
+
+  it('uses Linux overrides for WSL tasks and rejects unmatched OS before creating tabs', async () => {
+    vi.mocked(getRunEnvironment).mockResolvedValue({ os: 'linux', kind: 'wsl', distro: 'Ubuntu' })
+    const add = vi.fn().mockResolvedValue('new-terminal')
+    useTerminalStore.setState({ addScriptTerminal: add })
+    const project = {
+      id: 'p1',
+      name: 'app',
+      path: String.raw`\\wsl$\Ubuntu\home\app`,
+      ephemeral: true,
+      created_at: 1,
+      last_opened_at: 1,
+    }
+    const config: RunConfig = {
+      id: 'dev',
+      name: 'dev',
+      tasks: [
+        {
+          id: 'api',
+          type: 'command',
+          target: 'windows-command',
+          env: { BASE: 'yes' },
+          os: { linux: { target: 'linux-command', cwd: 'api', env: { MODE: 'linux' } } },
+        },
+      ],
+    }
+    const result = await runConfig(project, config, { throwOnError: true })
+    expect(result?.environment).toEqual({ os: 'linux', kind: 'wsl', distro: 'Ubuntu' })
+    expect(add).toHaveBeenCalledWith(
+      'p1',
+      `${project.path}\\api`,
+      'command',
+      'linux-command',
+      { BASE: 'yes', MODE: 'linux' },
+      'dev',
+      { runConfigId: 'dev', runTaskId: 'api' }
+    )
+    add.mockClear()
+    await expect(
+      runConfig(
+        project,
+        {
+          ...config,
+          tasks: [
+            ...config.tasks,
+            { id: 'bad', type: 'command', target: '', os: { windows: { target: 'windows-only' } } },
+          ],
+        },
+        { throwOnError: true }
+      )
+    ).rejects.toThrow('linux')
+    expect(add).not.toHaveBeenCalled()
   })
 
   it('treats awaitingRestoreSpawn as active even when status is exited', () => {
@@ -110,6 +174,46 @@ describe('run config runtime helpers', () => {
   it('builds stable task tab names for spawn and legacy relink', () => {
     expect(runTaskTerminalName({ name: '前后端' }, { name: '后端' })).toBe('前后端 · 后端')
     expect(runTaskTerminalName({ name: '前后端' }, {})).toBe('前后端')
+  })
+
+  it('isolates identical dev/task IDs across projects when stopping', async () => {
+    useTerminalStore.setState({
+      terminals: [
+        baseTab({
+          id: 'local',
+          name: 'dev',
+          projectId: 'local-project',
+          runConfigId: 'dev',
+          runTaskId: 'api',
+        }),
+        baseTab({
+          id: 'wsl',
+          name: 'dev',
+          projectId: 'wsl-project',
+          runConfigId: 'dev',
+          runTaskId: 'api',
+        }),
+      ],
+      closeTerminal: vi.fn(async id => {
+        useTerminalStore.setState(state => ({
+          terminals: state.terminals.filter(t => t.id !== id),
+        }))
+      }),
+    })
+    expect(taskTerminalId('dev', 'api', 'wsl-project')).toBe('wsl')
+    await stopConfig({ id: 'dev' }, 'wsl-project')
+    expect(useTerminalStore.getState().terminals.map(t => t.id)).toEqual(['local'])
+    expect(isConfigRunning('dev', 'wsl-project')).toBe(false)
+    expect(isConfigRunning('dev', 'local-project')).toBe(true)
+  })
+
+  it('reports a stop failure if the terminal remains alive', async () => {
+    useTerminalStore.setState({
+      terminals: [baseTab({ id: 'live', name: 'dev', runConfigId: 'dev' })],
+      closeTerminal: vi.fn(async () => {}),
+    })
+    await expect(stopConfig({ id: 'dev' }, 'p1')).rejects.toThrow('未能停止')
+    expect(isConfigRunning('dev', 'p1')).toBe(true)
   })
 
   it('recovers linkage from tab name when ids were not persisted', () => {
