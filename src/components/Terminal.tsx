@@ -15,6 +15,7 @@ import {
 } from '../store/terminalStore'
 import { setTerminalOutputPaused } from '@/lib/ipc/terminal'
 import { TerminalWriteFlow } from '@/lib/terminal/terminalWriteFlow'
+import { protectTerminalSelectionMenu } from '@/lib/terminal/terminalSelectionMenu'
 import { useProjectStore } from '../store/projectStore'
 import {
   FONT_SETTINGS_EVENT,
@@ -22,7 +23,7 @@ import {
   getResolvedTerminalFontSize,
 } from '../lib/fontSettings'
 import { THEME_SETTINGS_EVENT, getResolvedTheme } from '../lib/themeSettings'
-import { shouldShowAppContextMenu } from '../lib/devBuild'
+import { deferToNativeContextMenuInDev, shouldShowAppContextMenu } from '../lib/devBuild'
 import {
   TERMINAL_SCROLLBACK_SETTINGS_EVENT,
   getTerminalScrollback,
@@ -235,10 +236,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     [terminalId],
   )
 
-  const copySelection = useCallback(async () => {
-    const term = xtermRef.current
-    if (!term?.hasSelection()) return
-    const selection = term.getSelection()
+  const copySelection = useCallback(async (selection = xtermRef.current?.getSelection()) => {
     if (!selection) return
     try {
       await navigator.clipboard.writeText(selection)
@@ -317,13 +315,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     else addon.findPrevious(query, opts)
   }
 
-  const contextMenuItems = (): ContextMenuItem[] => [
+  // Capture once: TUI output can invalidate the live selection while the menu is open.
+  const contextMenuItems = (selection: string): ContextMenuItem[] => [
     {
       label: translate('复制'),
       shortcut: 'Ctrl+C',
-      disabled: !xtermRef.current?.hasSelection(),
+      disabled: !selection,
       action: () => {
-        void copySelection()
+        void copySelection(selection)
       },
     },
     {
@@ -646,6 +645,11 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const container = containerRef.current
     container.addEventListener('paste', onPaste, true)
+    const disposeSelectionMenuGuard = protectTerminalSelectionMenu(
+      container,
+      () => term.hasSelection(),
+      () => !deferToNativeContextMenuInDev(),
+    )
     container.addEventListener('mousedown', onMouseDown)
     window.addEventListener('pointerdown', onWindowPointerDown, true)
 
@@ -875,6 +879,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       searchResultsSub.dispose()
       container.removeEventListener('paste', onPaste, true)
       container.removeEventListener('mousedown', onMouseDown)
+      disposeSelectionMenuGuard()
       window.removeEventListener('pointerdown', onWindowPointerDown, true)
       term.dispose()
       container.replaceChildren()
@@ -1050,7 +1055,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         setContextMenu({
           x: event.clientX,
           y: event.clientY,
-          items: contextMenuItems(),
+          items: contextMenuItems(xtermRef.current?.getSelection() ?? ''),
         })
       }}
     >
