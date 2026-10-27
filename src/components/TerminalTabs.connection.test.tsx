@@ -120,9 +120,9 @@ describe('TerminalTabs persistent connection status', () => {
     render(<TerminalTabs />)
 
     expect(screen.getByRole('tab')).toBeInTheDocument()
-    expect(screen.getByLabelText('正在重新连接，远端进程仍在运行')).toBeInTheDocument()
+    expect(screen.getByLabelText('正在重新连接…')).toBeInTheDocument()
     expect(
-      document.querySelector('[data-tooltip="正在重新连接，远端进程仍在运行"]'),
+      document.querySelector('[data-tooltip="正在重新连接…"]'),
     ).toBeInTheDocument()
     expect(document.querySelector('[title]')).toBeNull()
   })

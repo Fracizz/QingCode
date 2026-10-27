@@ -53,6 +53,8 @@ ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/
 以及桌面、窄窗、浅色和英文界面的 PNG 截图。可用 `run({ artifactDir: 'D:/absolute/path' })` 指定位置。
 截图用于人工视觉检查；脚本没有建立像素差异基线。
 
+Windows SSH 修复确认框的独立场景位于 <http://127.0.0.1:38439/web-tests/ssh-repair.html>，复用真实 `ConfirmDialog` 和产品复选框文案。可验证默认勾选、取消勾选后确认、取消整个弹窗以及再次打开时重置默认值。场景只回显选择结果，不建立 SSH 连接；真实配置备份、有效配置等义验证、并发修改拒绝和回滚可在 Windows 管理员 SSH 环境运行 `scripts/test-windows-sshd-repair.ps1 -ImplementationPath <windows_sshd_repair.ps1>`。该脚本使用临时配置副本与真实 sshd 校验器，服务启停由仅接受测试名称的桩替代，不重启真实服务。
+
 ## 验收边界
 
 `vite.web-test.config.ts` 仅供此测试服务器使用：通过别名将项目/界面/终端/编辑器 store、信任操作、

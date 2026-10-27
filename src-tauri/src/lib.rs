@@ -876,6 +876,8 @@ pub fn run() {
             remote_ssh::ssh_set_workspace_trust,
             remote_ssh::ssh_server_info,
             remote_ssh::ssh_server_restart,
+            remote_ssh::ssh_windows_repair_plan,
+            remote_ssh::ssh_windows_repair,
             remote_ssh::ssh_server_stop,
             remote_ssh::ssh_server_logs,
             remote_ssh::ssh_set_server_auto_download,

@@ -86,11 +86,16 @@ export function planTerminalConnectionEvent(
       notice: firstAttempt
         ? reason
           ? {
-              key: 'SSH 连接已断开（{reason}），正在重新连接，远端进程仍在运行…',
+              key: 'SSH 连接已断开（{reason}），正在重新连接…',
               values: { reason },
             }
-          : { key: 'SSH 连接已断开，正在重新连接，远端进程仍在运行…' }
-        : null,
+          : { key: 'SSH 连接已断开，正在重新连接…' }
+        : attempt !== null && (attempt === 3 || attempt % 5 === 0)
+          ? {
+              key: 'SSH 终端正在第 {attempt} 次重连（{reason}）…',
+              values: { attempt, reason: reason ?? '等待远端响应' },
+            }
+          : null,
       reason,
       attempt,
       restore,

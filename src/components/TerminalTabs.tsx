@@ -602,7 +602,7 @@ export default function TerminalTabs({
                   ? `${translate('Shell')}: ${translate(terminalShellLabelKey(t.resolvedShell))}`
                   : null,
                 t.status === 'reconnecting'
-                  ? translate('正在重新连接，远端进程仍在运行')
+                  ? translate('正在重新连接…')
                   : null,
                 persistentWarning ? translate('此终端断线会结束远端进程') : null,
                 persistentWarning && t.persistentFallbackReason
@@ -741,12 +741,12 @@ export default function TerminalTabs({
                   )}
                   {t.status === 'reconnecting' && renamingId !== t.id && (
                     <Tooltip
-                      label={translate('正在重新连接，远端进程仍在运行')}
+                      label={translate('正在重新连接…')}
                       side="top"
                     >
                       <LoaderCircle
                         size={12}
-                        aria-label={translate('正在重新连接，远端进程仍在运行')}
+                        aria-label={translate('正在重新连接…')}
                         className="flex-shrink-0 animate-spin text-warn"
                       />
                     </Tooltip>
