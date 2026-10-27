@@ -20,6 +20,7 @@ import {
   ChevronDown,
   ChevronRight,
   LoaderCircle,
+  Settings2,
 } from 'lucide-react'
 import {
   MAX_TERMINALS_PER_PROJECT,
@@ -35,7 +36,7 @@ import { formatTerminalName } from '../utils/terminalName'
 import { pickVisibleTabIndices } from '../lib/editorTabsLayout'
 
 /** Width reserved for the new-terminal control next to the last tab. */
-const TERMINAL_NEW_BTN_W = 32
+const TERMINAL_NEW_BTN_W = 52
 /** Must match the strip's `gap-1` / `px-1.5` so overflow fitting counts spacing. */
 const TERMINAL_TAB_GAP = 4
 const TERMINAL_STRIP_PAD_X = 12
@@ -102,6 +103,7 @@ export default function TerminalTabs({
   const currentProject = useProjectStore(s => s.currentProject)
   const addEmptyProject = useProjectStore(s => s.addEmptyProject)
   const switchProject = useProjectStore(s => s.switchProject)
+  const requestSettings = useUIStore(s => s.requestSettings)
   const requestToggleTerminal = useUIStore(s => s.requestToggleTerminal)
   const panelLayout = useUIStore(s => s.panelLayout)
   const collapseToSide = panelLayout === 'sideTerminal'
@@ -417,15 +419,25 @@ export default function TerminalTabs({
   const profileMenuItems = (): ContextMenuItem[] => {
     const settings = loadTerminalProfileSettings()
     const effectiveDefaultId = getEffectiveDefaultProfileId(settings)
-    return settings.profiles.map(profile => ({
-      label:
-        profile.id === effectiveDefaultId
-          ? `${profile.name.trim() || translate('未命名配置')}${translate('（默认）')}`
-          : profile.name.trim() || translate('未命名配置'),
-      icon: <Plus size={14} />,
-      disabled: atLimit,
-      action: () => handleNewTerminal(profile.id),
-    }))
+    return [
+      ...settings.profiles.map(profile => {
+        const name = profile.id === 'default'
+          ? translate('普通终端')
+          : profile.name.trim() || translate('未命名配置')
+        return {
+          label: profile.id === effectiveDefaultId ? `${name}${translate('（默认）')}` : name,
+          icon: <TerminalIcon size={14} />,
+          disabled: atLimit || creatingTerminal,
+          action: () => handleNewTerminal(profile.id),
+        }
+      }),
+      {
+        label: translate('管理终端配置'),
+        icon: <Settings2 size={14} />,
+        separatorBefore: true,
+        action: () => requestSettings('终端配置'),
+      },
+    ]
   }
 
   const overflowItems = (): ContextMenuItem[] =>
@@ -800,7 +812,7 @@ export default function TerminalTabs({
               currentProject && atLimit
                 ? translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
                 : currentProject
-                  ? translate('左键：默认配置；右键：选择终端配置')
+                  ? translate('新建终端（默认配置）')
                   : translate('新建终端（无项目时将创建临时项目）')
             }
             side="top"
@@ -817,12 +829,31 @@ export default function TerminalTabs({
               disabled={Boolean(currentProject && atLimit) || creatingTerminal}
               onClick={() => handleNewTerminal()}
               onContextMenu={event => {
-                if (!currentProject || atLimit || creatingTerminal) return
+                if (creatingTerminal) return
                 if (!shouldShowAppContextMenu(event)) return
                 setProfileMenu({ x: event.clientX, y: event.clientY })
               }}
             >
-              <Plus size={14} />
+              {creatingTerminal ? <LoaderCircle size={14} className="animate-spin" /> : <Plus size={14} />}
+            </button>
+          </Tooltip>
+          <Tooltip label={translate('选择终端配置')} side="top" wrapperClassName="inline-flex h-full shrink-0 items-center">
+            <button
+              type="button"
+              aria-label={translate('选择终端配置')}
+              aria-haspopup="menu"
+              aria-expanded={profileMenu !== null}
+              className="flex ui-chip h-6 w-4 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg"
+              onClick={event => {
+                if (profileMenu) {
+                  setProfileMenu(null)
+                  return
+                }
+                const rect = event.currentTarget.getBoundingClientRect()
+                setProfileMenu({ x: rect.left, y: rect.bottom + 4 })
+              }}
+            >
+              <ChevronDown size={12} />
             </button>
           </Tooltip>
         </div>

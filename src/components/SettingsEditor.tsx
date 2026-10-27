@@ -35,7 +35,6 @@ import {
   type AppTheme,
 } from '../lib/themeSettings'
 import {
-  DEFAULT_TERMINAL_PROFILE,
   loadTerminalProfileSettings,
   saveTerminalProfileSettings,
   type TerminalProfileSettings,
@@ -245,6 +244,7 @@ export default function SettingsEditor() {
   const [appVersion, setAppVersion] = useState<string | null>(null)
   const [aboutCopyBusy, setAboutCopyBusy] = useState<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const terminalProfilesRef = useRef<HTMLDivElement>(null)
   const sectionRefs = useRef<Partial<Record<CategoryId, HTMLElement | null>>>({})
   const onSectionRef = useCallback((id: CategoryId, node: HTMLElement | null) => {
     sectionRefs.current[id] = node
@@ -319,15 +319,19 @@ export default function SettingsEditor() {
   useEffect(() => {
     if (settingsFocusSignal === 0 || settingsFocusSignal <= appliedSettingsFocusSignal) return
     appliedSettingsFocusSignal = settingsFocusSignal
+    const targetCategory = settingsFocusQuery === '终端配置' ? 'terminal' : 'editor'
     queueMicrotask(() => {
       setScope('user')
       if (settingsFocusQuery) {
         setQuery(settingsFocusQuery)
-        setCategory('editor')
+        setCategory(targetCategory)
       }
     })
     requestAnimationFrame(() => {
-      sectionRefs.current.editor?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
+      const target = settingsFocusQuery === '终端配置'
+        ? terminalProfilesRef.current
+        : sectionRefs.current[targetCategory]
+      target?.scrollIntoView({ behavior: preferredScrollBehavior(), block: 'start' })
       searchRef.current?.focus()
     })
   }, [settingsFocusSignal, settingsFocusQuery])
@@ -1027,6 +1031,7 @@ export default function SettingsEditor() {
               '终端字体',
               '终端 › 集成: 字体族',
               '默认启动配置',
+              '终端配置',
               '终端字号',
               '默认 Shell',
               'pwsh',
@@ -1046,7 +1051,7 @@ export default function SettingsEditor() {
               >
                 <SettingItem
                   title={t('终端 › 集成: 字体族')}
-                  description={t('独立设置终端字体族，默认使用系统等宽字体。可选择本机已安装的等宽字体，修改后立即生效。')}
+                  description={t('独立设置终端字体族，默认使用系统等宽字体。可选择本机全部已安装字体，修改后立即生效。')}
                   modified={fonts.terminalFont !== DEFAULT_FONT_SETTINGS.terminalFont}
                   locked={workspaceLocked}
                   lockHint={t('此设置仅在用户作用域中可用')}
@@ -1104,35 +1109,11 @@ export default function SettingsEditor() {
                     }))}
                   />
                 </SettingItem>
-                <SettingItem
-                  title={t('终端 › 集成: 默认配置文件')}
-                  description={t('新建终端时使用的默认配置。未指定时使用内置普通终端。')}
-                  modified={terminal.defaultProfileId != null}
-                  locked={workspaceLocked}
-                  lockHint={t('此设置仅在用户作用域中可用')}
-                >
-                  <SettingSelect
-                    value={terminal.defaultProfileId ?? ''}
-                    disabled={workspaceLocked}
-                    className="setting-control-wide"
-                    aria-label={t('终端 › 集成: 默认配置文件')}
-                    onChange={next =>
-                      updateTerminal({
-                        ...terminal,
-                        defaultProfileId: next ? next : null,
-                      })
-                    }
-                    options={[
-                      { value: '', label: t('未指定（内置默认）') },
-                      ...terminal.profiles
-                        .filter(profile => profile.id !== DEFAULT_TERMINAL_PROFILE.id)
-                        .map(profile => ({
-                          value: profile.id,
-                          label: profile.name.trim() || t('未命名配置'),
-                        })),
-                    ]}
-                  />
-                </SettingItem>
+                {!workspaceLocked && (
+                  <div ref={terminalProfilesRef} className="scroll-mt-4 pl-3 border-l-2 border-transparent">
+                    <TerminalProfilesInline settings={terminal} onChange={updateTerminal} />
+                  </div>
+                )}
                 <SettingItem
                   title={t('终端 › 集成: SSH 粘贴上传')}
                   description={t(
@@ -1177,14 +1158,6 @@ export default function SettingsEditor() {
                     {t('清理')}
                   </button>
                 </SettingItem>
-                {!workspaceLocked && (
-                  <div className="pl-3 border-l-2 border-transparent">
-                    <p className="text-ui-sm mb-2 text-fg-muted">
-                      {t('终端配置文件可在下方管理（名称、Shell 与启动命令）。')}
-                    </p>
-                    <TerminalProfilesInline settings={terminal} onChange={updateTerminal} />
-                  </div>
-                )}
               </Section>
             )}
 

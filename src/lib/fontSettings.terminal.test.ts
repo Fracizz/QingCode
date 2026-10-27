@@ -26,14 +26,11 @@ afterEach(() => {
 })
 
 describe('independent terminal font', () => {
-  it('only offers installed monospace families for the terminal', () => {
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-      measureText: (text: string) => ({ width: text === 'MW' ? 24 : 8 }),
-    } as unknown as CanvasRenderingContext2D)
-    const families = ['Consolas', 'Arial', 'JetBrains Mono']
+  it('offers all installed font families, matching the interface font list', () => {
+    const families = ['Consolas', 'Arial', 'JetBrains Mono', 'Microsoft YaHei']
     expect(systemFontOptions(families, 'terminal').map(option => option.label))
-      .toEqual(['Consolas', 'JetBrains Mono'])
-    expect(systemFontOptions(families, 'sans')).toHaveLength(3)
+      .toEqual(systemFontOptions(families, 'sans').map(option => option.label))
+    expect(systemFontOptions(families, 'terminal')).toHaveLength(4)
   })
 
   it('migrates older preferences to an independent terminal default and keeps legacy sizes', () => {
@@ -87,12 +84,15 @@ describe('independent terminal font', () => {
     expect(getResolvedTerminalFont()).toMatch(/^"Cascadia Mono",/)
   })
 
-  it('rejects proportional fonts while retaining safe terminal fallbacks', () => {
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
-      measureText: (text: string) => ({ width: text === 'MW' ? 24 : 8 }),
-    } as unknown as CanvasRenderingContext2D)
-    applyFontSettings({ ...DEFAULT_FONT_SETTINGS, terminalFont: 'Arial, ui-monospace' })
-    expect(getResolvedTerminalFont()).not.toMatch(/Arial|ui-monospace/)
-    expect(getResolvedTerminalFont()).toContain('Consolas')
-  })
+  it.each(['Arial, ui-monospace', '"Microsoft YaHei", monospace', '"Custom, Family", serif'])(
+    'preserves the selected font stack (%s) without filtering', terminalFont => {
+      saveFontSettings({ ...DEFAULT_FONT_SETTINGS, terminalFont }, {
+        syncEditorFontSizeToSettings: false,
+      })
+      expect(getResolvedTerminalFont()).toBe(terminalFont)
+      applyFontSettings(loadFontSettings())
+      expect(getResolvedTerminalFont()).toBe(terminalFont)
+      expect(getResolvedMonoFont()).toBe(DEFAULT_FONT_SETTINGS.monoFont)
+    }
+  )
 })

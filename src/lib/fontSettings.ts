@@ -17,37 +17,6 @@ export const SYSTEM_MONO_FONT =
 export const TERMINAL_MONO_FONT =
   '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace'
 
-/** Families known to keep stable cell metrics for TUI / box-drawing in xterm. */
-const SAFE_TERMINAL_FONT_NAMES = new Set([
-  'cascadia mono',
-  'cascadia code',
-  'consolas',
-  'courier new',
-  'jetbrains mono',
-  'fira code',
-  'fira mono',
-  'source code pro',
-  'ibm plex mono',
-  'roboto mono',
-  'ubuntu mono',
-  'dejavu sans mono',
-  'liberation mono',
-  'noto sans mono',
-  'hack',
-  'inconsolata',
-  'menlo',
-  'monaco',
-  'sf mono',
-  'sarasa mono',
-  'sarasa mono sc',
-  'sarasa mono tc',
-  'sarasa mono hc',
-  'sarasa mono j',
-  'sarasa mono k',
-  'iosevka',
-  'iosevka term',
-])
-
 export const JETBRAINS_MONO_FONT =
   '"JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace'
 
@@ -170,57 +139,13 @@ export function getResolvedMonoFont(): string {
   )
 }
 
-function bareFontName(part: string): string {
-  return part.replace(/^["']|["']$/g, '').trim().toLowerCase()
-}
-
-/** Reject generic / proportional faces that break OpenCode-style TUIs in WebView2. */
-function isUsableTerminalFontPart(part: string): boolean {
-  const bare = bareFontName(part)
-  if (!bare || bare === 'ui-monospace' || bare === 'monospace' || bare === 'serif' || bare === 'sans-serif') {
-    return false
-  }
-  if (SAFE_TERMINAL_FONT_NAMES.has(bare)) return true
-  // Allow unknown families that still measure as monospace (W ≈ i).
-  if (typeof document === 'undefined') return false
-  try {
-    const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return false
-    ctx.font = `14px ${part}`
-    const w = ctx.measureText('MW').width
-    const n = ctx.measureText('ii').width
-    return Math.abs(w - n) < 0.75
-  } catch {
-    return false
-  }
-}
-
-/**
- * Font stack for xterm. Generic families like `ui-monospace` can resolve to a face
- * with poor box-drawing coverage while fallbacks supply glyphs at wrong widths,
- * which corrupts TUI UIs (block art, progress bars). Prefer concrete mono fonts.
- */
+/** Honor the selected font stack without filtering families or changing their order. */
 export function getResolvedTerminalFont(): string {
-  const font = typeof document === 'undefined'
-    ? ''
-    : getComputedStyle(document.documentElement).getPropertyValue('--terminal-font-family').trim()
-  const parts = (font || TERMINAL_MONO_FONT)
-    .split(',')
-    .map(part => part.trim())
-    .filter(Boolean)
-    .filter(isUsableTerminalFontPart)
-
-  const seen = new Set<string>()
-  const ordered: string[] = []
-  for (const part of [...parts, ...TERMINAL_MONO_FONT.split(',').map(p => p.trim())]) {
-    const key = bareFontName(part)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    ordered.push(part)
-  }
-  ordered.push('monospace')
-  return ordered.join(', ')
+  if (typeof document === 'undefined') return TERMINAL_MONO_FONT
+  return (
+    getComputedStyle(document.documentElement).getPropertyValue('--terminal-font-family').trim() ||
+    TERMINAL_MONO_FONT
+  )
 }
 
 export function getResolvedTerminalFontSize(): number {
@@ -404,7 +329,6 @@ export function systemFontOptions(
   )
   return expandSystemFontFamilies(families)
     .filter(family => family && !skip.has(family.toLowerCase()))
-    .filter(family => kind !== 'terminal' || isUsableTerminalFontPart(family))
     .map(family => ({
       label: family,
       value: fontStackFromFamily(family, kind),

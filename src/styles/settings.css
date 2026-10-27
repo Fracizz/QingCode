@@ -159,3 +159,82 @@ button.setting-select-trigger:hover:not(:disabled) .setting-select-trigger-chevr
   background: var(--color-bg-elevated);
   color: var(--color-fg);
 }
+
+/* Terminal profiles respond to the settings column, including side-terminal layouts. */
+.terminal-profiles {
+  container-type: inline-size;
+}
+.terminal-profile-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+}
+.terminal-profile-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px;
+  border-radius: var(--radius-sm, 4px);
+}
+.terminal-profile-toggle:hover:not(:disabled) {
+  background: var(--color-bg-hover);
+}
+.terminal-profile-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 2px;
+}
+.terminal-profile-default,
+.terminal-profile-add,
+.terminal-profile-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: var(--ui-control-height);
+  border-radius: var(--radius-sm, 4px);
+  padding: 0 6px;
+  font-size: var(--ui-font-size-sm);
+}
+.terminal-profile-add {
+  border: 1px solid var(--color-border-strong);
+}
+.terminal-profile-add:hover,
+.terminal-profile-icon:hover {
+  background: var(--color-bg-hover);
+  color: var(--color-fg);
+}
+.terminal-profile-icon {
+  width: var(--ui-control-height);
+  color: var(--color-fg-muted);
+}
+.terminal-profile-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-deep);
+}
+.terminal-profile-command {
+  grid-column: 1 / -1;
+}
+@container (max-width: 420px) {
+  .terminal-profile-summary {
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  .terminal-profile-toggle {
+    flex-basis: 100%;
+  }
+  .terminal-profile-actions {
+    margin-left: auto;
+  }
+  .terminal-profile-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { TerminalTab } from '@/types'
 
@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => {
     renameTerminal: vi.fn(),
     addTerminal: vi.fn(),
   }
-  return { state }
+  return { state, requestSettings: vi.fn() }
 })
 
 vi.mock('../store/terminalStore', () => ({
@@ -54,11 +54,13 @@ vi.mock('../store/uiStore', () => ({
     selector: (state: {
       requestToggleTerminal: () => void
       panelLayout: 'bottomTerminal'
+      requestSettings: (query: string) => void
     }) => unknown,
   ) =>
     selector({
       requestToggleTerminal: vi.fn(),
       panelLayout: 'bottomTerminal',
+      requestSettings: mocks.requestSettings,
     }),
 }))
 
@@ -101,8 +103,10 @@ function terminal(overrides: Partial<TerminalTab> = {}): TerminalTab {
   }
 }
 
-describe('TerminalTabs persistent connection status', () => {
+describe('TerminalTabs', () => {
   beforeEach(() => {
+    vi.clearAllMocks()
+    localStorage.removeItem('qingcode:terminal-profiles')
     vi.stubGlobal(
       'ResizeObserver',
       class {
@@ -143,4 +147,28 @@ describe('TerminalTabs persistent connection status', () => {
       '未能持久化：daemon unavailable',
     )
   })
+
+  it('creates a terminal from the visible profile menu', async () => {
+    mocks.state.terminals = []
+    localStorage.setItem('qingcode:terminal-profiles', JSON.stringify({
+      profiles: [{ id: 'claude', name: 'Claude', shell: 'auto', command: 'claude' }],
+    }))
+    render(<TerminalTabs />)
+    fireEvent.click(screen.getByRole('button', { name: '选择终端配置' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Claude' }))
+    await waitFor(() => expect(mocks.state.addTerminal).toHaveBeenCalledWith('/home/app', 'p1', 'claude'))
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('keeps profile management available when the project reaches the terminal limit', () => {
+    mocks.state.terminals = Array.from({ length: 10 }, (_, index) => terminal({ id: `t${index}` }))
+    render(<TerminalTabs />)
+    expect(screen.getByRole('button', { name: '新建终端' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: '选择终端配置' }))
+    expect(screen.getByRole('menuitem', { name: '普通终端（默认）' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('menuitem', { name: '管理终端配置' }))
+    expect(mocks.requestSettings).toHaveBeenCalledWith('终端配置')
+    expect(mocks.state.addTerminal).not.toHaveBeenCalled()
+  })
+
 })
