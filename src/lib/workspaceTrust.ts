@@ -147,6 +147,14 @@ export function isProjectTrusted(project: Pick<Project, 'id' | 'path'>): boolean
   return getWorkspaceTrust(project) === 'trusted'
 }
 
+/** Read storage once when selecting a large batch of background candidates. */
+export function createProjectTrustChecker(): (project: Pick<Project, 'id' | 'path'>) => boolean {
+  const store = readStore()
+  const ids = new Set(store.trustedIds)
+  const paths = new Set(store.trustedPaths)
+  return project => ids.has(project.id) || paths.has(normalizeProjectPath(project.path))
+}
+
 export function isProjectRestricted(project: Pick<Project, 'id' | 'path'>): boolean {
   return getWorkspaceTrust(project) === 'restricted'
 }

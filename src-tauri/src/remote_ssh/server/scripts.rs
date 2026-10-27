@@ -315,26 +315,40 @@ pub(crate) fn windows_self_check_then_deploy_script(
     )
 }
 
-/// 计算远端已部署二进制 sha256 的命令（unix）。`cut -c1-64` 取
-/// `sha256sum` 输出行首的摘要段，不受文件名里的空格影响。
+/// 只有明确不存在才允许按首次安装处理；读取失败不能触发替换正在运行的服务。
+pub(super) const REMOTE_BINARY_MISSING_EXIT: u32 = 44;
+
+/// 保留 sha256sum 的失败退出码；不能用管道把工具缺失/权限错误变成成功。
 pub(super) fn remote_sha256_command(remote_bin: &str) -> String {
+    let parent = remote_bin
+        .rsplit_once('/')
+        .map(|(parent, _)| parent)
+        .unwrap_or("/");
     format!(
-        "sha256sum -- {} 2>/dev/null | cut -c1-64",
-        shell_quote(remote_bin)
+        "if [ ! -e {bin} ] && [ ! -L {bin} ]; then \
+         if [ -r {parent} ] && [ -x {parent} ]; then exit {missing}; else exit 1; fi; \
+         fi; sha256sum -- {bin}",
+        bin = shell_quote(remote_bin),
+        parent = shell_quote(if parent.is_empty() { "/" } else { parent }),
+        missing = REMOTE_BINARY_MISSING_EXIT,
     )
 }
 
 /// 计算远端已部署二进制 sha256 的脚本（Windows）。
 pub(super) fn windows_remote_sha256_script(remote_bin: &str) -> String {
     format!(
-        "(Get-FileHash -LiteralPath '{}' -Algorithm SHA256 -ErrorAction SilentlyContinue).Hash.ToLower()",
-        powershell_literal(remote_bin)
+        "$ErrorActionPreference = 'Stop'\n\
+         try {{ $null = Get-Item -LiteralPath '{bin}' -Force -ErrorAction Stop }}\n\
+         catch [System.Management.Automation.ItemNotFoundException] {{ exit {missing} }}\n\
+         (Get-FileHash -LiteralPath '{bin}' -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower()",
+        bin = powershell_literal(remote_bin),
+        missing = REMOTE_BINARY_MISSING_EXIT,
     )
 }
 
 /// 解析远端 sha256 命令输出：取第一个空白分隔 token，必须是 64 位十六进制。
-/// 输出为空（文件不存在 / 工具缺失）或垃圾一律返回 None，调用方回退为重新上传。
-fn parse_remote_sha256(stdout: &str) -> Option<String> {
+/// 输出为空或格式异常时返回 None，调用方必须报告校验失败。
+pub(super) fn parse_remote_sha256(stdout: &str) -> Option<String> {
     let token = stdout.split_whitespace().next()?;
     if token.len() == 64 && token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         Some(token.to_ascii_lowercase())
@@ -344,6 +358,7 @@ fn parse_remote_sha256(stdout: &str) -> Option<String> {
 }
 
 /// 远端 sha256 输出是否与本地摘要一致（大小写归一后比较）。
+#[cfg(test)]
 pub(super) fn remote_sha256_matches(stdout: &str, expected: &str) -> bool {
     parse_remote_sha256(stdout).is_some_and(|actual| actual == expected.trim().to_ascii_lowercase())
 }
@@ -610,11 +625,13 @@ mod tests {
     fn remote_sha256_commands_reference_the_binary_only() {
         let command = remote_sha256_command("/srv/app/bin/qingcode-server-x86_64");
         assert!(command.contains("sha256sum -- '/srv/app/bin/qingcode-server-x86_64'"));
-        // 只取行首 64 个字符，不受文件名空格影响。
-        assert!(command.contains("cut -c1-64"));
+        assert!(command.contains("exit 44"));
+        assert!(!command.contains('|'));
         let script = windows_remote_sha256_script(r"D:\app\bin.exe");
         assert!(script.contains("Get-FileHash"));
         assert!(script.contains(r"'D:\app\bin.exe'"));
+        assert!(script.contains("ItemNotFoundException] { exit 44 }"));
+        assert!(!script.contains("SilentlyContinue"));
     }
 
     #[test]

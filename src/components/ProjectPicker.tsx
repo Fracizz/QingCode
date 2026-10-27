@@ -662,6 +662,7 @@ export default function ProjectPicker() {
                       ) : (
                         <ProjectKindIcon
                           project={project}
+                          preparation
                           size={14}
                           className="text-accent"
                         />
@@ -903,6 +904,7 @@ function Chip({
         <span className="inline-flex items-center justify-center w-4 h-4 flex-shrink-0">
           <ProjectKindIcon
             project={project}
+            preparation={!measure}
             size={12}
             className={isCurrent ? 'text-brand' : 'text-accent'}
           />

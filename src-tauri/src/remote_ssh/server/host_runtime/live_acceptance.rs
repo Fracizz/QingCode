@@ -250,6 +250,18 @@ async fn acceptance(
         println!("SHARED_DAEMON_STAGE second-project-ready {second_ms}ms");
         if first != second { return Err("projects did not reuse the same daemon".into()); }
         if entry.initializations.load(Ordering::SeqCst) != 1 { return Err("second root repeated preparation".into()); }
+        // The actual background read uses a single page and never subscribes
+        // watches or creates PTYs. A partial page must not become a cached tree.
+        let warm = super::super::daemon::daemon_warmup_entries(&manager, &config.id, &first, &a.canonical_path).await.map_err(|e| e.to_string())?.ok_or("small warmup root was not cached")?;
+        if !warm.iter().any(|(name, _)| name == "marker-0.txt") { return Err("warmup marker missing".into()); }
+        if !manager.watch_supervisors.lock().unwrap().is_empty() { return Err("warmup unexpectedly subscribed a watch".into()); }
+        for index in 0..257 {
+            let mut file = sftp.create(format!("{}/entry-{index}.txt", paths[2])).await.map_err(|e| e.to_string())?;
+            file.shutdown().await.map_err(|e| e.to_string())?;
+        }
+        let c = register_root(&manager, &config.id, &paths[2]).await?;
+        if super::super::daemon::daemon_warmup_entries(&manager, &config.id, &first, &c.canonical_path).await.map_err(|e| e.to_string())?.is_some() { return Err("partial warmup listing was cached as complete".into()); }
+        println!("SHARED_DAEMON_STAGE warmup-small-complete-large-deferred-no-watch");
         for (index, root) in [&a, &b].iter().enumerate() {
             let entries = super::super::daemon::daemon_scan_entries(&manager, &config.id, &first, &root.canonical_path, ".")
                 .await.map_err(|e| e.to_string())?;
@@ -323,6 +335,11 @@ async fn acceptance(
     // Only paths created above are removed; no wildcard/recursive remote deletion.
     let cleanup_sftp = manager.open_sftp(&config.id).await.unwrap_or(sftp);
     let mut cleanup_errors = Vec::new();
+    for index in 0..257 {
+        let _ = cleanup_sftp
+            .remove_file(format!("{}/entry-{index}.txt", paths[2]))
+            .await;
+    }
     for (index, path) in paths.iter().enumerate() {
         let _ = cleanup_sftp
             .remove_file(format!("{path}/marker-{index}.txt"))

@@ -1,6 +1,6 @@
 import type { Project, SshConnection, SshConnectionMode } from '../types'
 import { getSshConnection, upsertSshConnection } from './projectRepository'
-import { getSshServerEnabled } from './sshServerSettings'
+import { getSshServerEnabled, loadSshPreparationSettings } from './sshServerSettings'
 import { safeInvoke } from './tauri'
 import { parseSshServerState, type SshServerState } from './sshServerStatus'
 import { isProjectTrusted } from './workspaceTrust'
@@ -28,6 +28,7 @@ export const SSH_RECONNECT_REQUEST_EVENT = 'qingcode:ssh-reconnect-request'
 
 /** 连接被新建/编辑/删除后广播，打开中的对话框据此刷新连接列表。 */
 export const SSH_CONNECTIONS_CHANGED_EVENT = 'qingcode:ssh-connections-changed'
+export const SSH_CONNECTION_INVALIDATED_EVENT = 'qingcode:ssh-connection-invalidated'
 
 export function requestSshReconnect(project: Project): void {
   window.dispatchEvent(new CustomEvent<Project>(SSH_RECONNECT_REQUEST_EVENT, { detail: project }))
@@ -38,6 +39,16 @@ export const NEW_SSH_CONNECTION_ID = '__new__'
 const sessionSecrets = new Map<string, SshSessionSecrets>()
 const workspaceConnectQueues = new Map<string, Promise<void>>()
 const connectionModeQueues = new Map<string, Promise<void>>()
+const suspendedBackgroundConnections = new Set<string>()
+
+export function isSshBackgroundSuspended(id: string): boolean {
+  return suspendedBackgroundConnections.has(id)
+}
+
+export async function waitForSshWorkspaceConnection(project: Project): Promise<void> {
+  const id = project.connection_id || sshConnectionIdFromUri(project.path)
+  if (id) await workspaceConnectQueues.get(id)?.catch(() => undefined)
+}
 
 /**
  * 旧库行 `mode` 为空时按旧全局值（ssh.server.enabled）解析；非法值同理。
@@ -244,6 +255,13 @@ export async function browseSshDirectory(
 }
 
 export async function disconnectSshSession(connectionId: string): Promise<void> {
+  suspendedBackgroundConnections.add(connectionId)
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(SSH_CONNECTION_INVALIDATED_EVENT, { detail: connectionId }))
+  }
+  // An authentication already in flight must settle before native disconnect,
+  // otherwise its late result can resurrect the explicitly closed session.
+  await workspaceConnectQueues.get(connectionId)?.catch(() => undefined)
   await safeInvoke('断开 SSH 连接', 'ssh_disconnect', { connectionId })
 }
 
@@ -268,7 +286,8 @@ export async function isSshWorkspaceReady(rootUri: string): Promise<boolean> {
 export async function prepareSshWorkspace(
   rootUri: string,
   signal: AbortSignal,
-  onState: (state: SshServerState) => void
+  onState: (state: SshServerState) => void,
+  options?: { project: Project; background?: boolean },
 ): Promise<void> {
   let stopped = false
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -287,10 +306,14 @@ export async function prepareSshWorkspace(
     if (!stopped) timer = setTimeout(() => void poll(), 1000)
   }
   signal.throwIfAborted()
+  const settings = options ? await loadSshPreparationSettings(options.project) : undefined
+  signal.throwIfAborted()
   signal.addEventListener('abort', stop, { once: true })
-  void poll()
+  if (!options?.background) void poll()
   try {
-    await safeInvoke('准备 SSH 项目', 'ssh_prepare_workspace', { rootUri })
+    await safeInvoke('准备 SSH 项目', 'ssh_prepare_workspace', {
+      rootUri, ...(options ? { settings } : {}),
+    })
     signal.throwIfAborted()
   } finally {
     stop()
@@ -305,6 +328,10 @@ export async function isSshSharedServerReady(rootUri: string): Promise<boolean> 
   } catch {
     return false
   }
+}
+
+export async function activateSshWorkspace(rootUri: string): Promise<void> {
+  await safeInvoke('启用 SSH 项目监听', 'ssh_activate_workspace', { rootUri })
 }
 
 export interface SshWorkspaceRoot {
@@ -353,11 +380,18 @@ export async function connectSshWorkspace(
       console.warn('persist resolved ssh connection mode failed:', error)
     }
   }
+  const trusted = isProjectTrusted(project)
   await safeInvoke('连接 SSH 项目', 'ssh_connect', {
     config: sshRuntimeConfig(connection, merged, mode),
     rootUri: project.path,
-    trusted: isProjectTrusted(project),
+    trusted,
+    deferService: true,
   })
+  // Trust can be revoked while authentication is awaiting a network response.
+  // Registration was passive, so reconcile before allowing service execution.
+  if (trusted && !isProjectTrusted(project)) {
+    await safeInvoke('同步 SSH 项目信任状态', 'ssh_set_workspace_trust', { rootUri: project.path, trusted: false })
+  }
   rememberSshSessionSecrets(connection.id, merged)
 }
 
@@ -422,10 +456,15 @@ export async function reconnectSshConnection(connectionId: string): Promise<void
     }
     throw error
   }
+  await prepareSshWorkspace(project.path, new AbortController().signal, () => {}, { project })
+  await activateSshWorkspace(project.path)
   await useProjectStore.getState().refreshProjectTree(project)
 }
 
-export async function ensureSshWorkspaceConnected(project: Project): Promise<void> {
+export async function ensureSshWorkspaceConnected(
+  project: Project,
+  options?: { background: boolean; signal: AbortSignal },
+): Promise<void> {
   if (!isSshProject(project)) return
   const connectionId = project.connection_id || sshConnectionIdFromUri(project.path)
   if (!connectionId) throw new Error('SSH 项目缺少连接配置')
@@ -434,6 +473,11 @@ export async function ensureSshWorkspaceConnected(project: Project): Promise<voi
   const current = previous
     .catch(() => undefined)
     .then(async () => {
+      options?.signal.throwIfAborted()
+      if (options?.background && suspendedBackgroundConnections.has(connectionId)) {
+        throw new Error('SSH 连接已主动断开')
+      }
+      if (!options?.background) suspendedBackgroundConnections.delete(connectionId)
       // A live transport does not imply that this project's root is registered.
       // Projects sharing one connection must each register their full remote root.
       if (await isSshWorkspaceReady(project.path)) return
@@ -449,6 +493,7 @@ export async function ensureSshWorkspaceConnected(project: Project): Promise<voi
         throw new Error('SSH 密码未保存在本机，请从“打开 SSH 项目”重新连接')
       }
       await connectSshWorkspace(project, connection)
+      options?.signal.throwIfAborted()
     })
   workspaceConnectQueues.set(connectionId, current)
 

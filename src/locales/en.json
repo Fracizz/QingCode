@@ -2,6 +2,11 @@
   "locale": "en",
   "label": "English",
   "messages": {
+    "远程项目等待后台准备": "Remote project queued for background preparation",
+    "远程项目正在后台准备，点击可继续打开": "Preparing remote project in the background; click to open",
+    "远程项目已准备，可直接打开": "Remote project prepared; click to open",
+    "远程项目需要认证或确认，点击处理": "Remote project requires authentication or confirmation; click to continue",
+    "远程项目后台准备失败，点击重试": "Background preparation failed; click to retry",
     "配置位于未匹配的 Include 条件中，请手动新建连接": "This entry is inside an unmatched Include condition. Create this connection manually.",
     "导入已有连接": "Import existing connections",
     "读取本机 SSH 配置": "Read local SSH configuration",

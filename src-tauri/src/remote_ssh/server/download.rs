@@ -58,7 +58,7 @@ pub(super) async fn locate_local_server_binary_with(
     }
     let binary_name = server_binary_file_name(windows, &arch);
     let legacy_name = legacy_server_binary_file_name(windows, &arch);
-    for dir in manager.server_binary_dirs() {
+    for dir in manager.server_binary_dirs_for_root(&root.uri) {
         for name in [&binary_name, &legacy_name] {
             let candidate = dir.join(name);
             if candidate.is_file() {
@@ -67,7 +67,7 @@ pub(super) async fn locate_local_server_binary_with(
         }
     }
     // 随包未携带二进制（如便携版单文件 exe）：按设置从 GitHub Release 下载。
-    if allow_download && manager.server_auto_download() {
+    if allow_download && manager.server_auto_download_for_root(&root.uri) {
         return download_server_binary(manager, &binary_name)
             .await
             .map(|path| (arch, path));

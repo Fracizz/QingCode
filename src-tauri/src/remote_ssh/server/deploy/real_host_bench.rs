@@ -129,7 +129,7 @@ async fn run_bench() -> Result<(), String> {
         let local_sha = sha256_of_file_cached(&local).await?;
         let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, &arch));
         let started = Instant::now();
-        let matches = remote_binary_sha_matches(&manager, &root, &remote_bin, &local_sha).await;
+        let matches = remote_binary_sha_matches(&manager, &root, &remote_bin, &local_sha).await?;
         println!("[bench] 远端 SHA 比对 {}（一致={matches}）", secs(started));
         let started = Instant::now();
         let _ = tokio::join!(

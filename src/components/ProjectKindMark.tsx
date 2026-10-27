@@ -4,18 +4,24 @@ import { useI18n } from '../lib/i18n'
 import { isSshProject } from '../lib/sshWorkspace'
 import { isWslProject } from '../lib/wslWorkspace'
 import type { Project } from '../types'
+import SshPreparationIcon from './SshPreparationIcon'
 
 export function ProjectKindIcon({
   project,
   size = 13,
   className,
   open = false,
+  preparation = false,
 }: {
   project: Pick<Project, 'kind' | 'path'>
   size?: number
   className?: string
   open?: boolean
+  preparation?: boolean
 }) {
+  if (preparation && isSshProject(project)) {
+    return <SshPreparationIcon path={project.path} size={size} className={className} />
+  }
   if (isWslProject(project) || isSshProject(project)) {
     return <Cloud size={size} className={className} />
   }

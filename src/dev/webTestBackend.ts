@@ -366,7 +366,12 @@ export class WebTestBackend {
         return
       }
       case 'ssh_prepare_workspace':
+      case 'ssh_activate_workspace':
         return
+      case 'ssh_warmup_directory': {
+        const entries = this.fs.list(String(args.rootUri))
+        return entries.length <= 256 ? entries : null
+      }
       case 'ssh_workspace_status':
         return (
           this.workspaces.has(String(args.rootUri)) &&

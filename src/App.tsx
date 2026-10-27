@@ -53,6 +53,7 @@ import { useTerminalPanel } from './hooks/useTerminalPanel'
 import { clampTerminalWidth, getTerminalMaxHeight, TERMINAL_MIN_HEIGHT } from './lib/panelLayout'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
 import { useLaunchFileRequests } from './hooks/useLaunchFileRequests'
+import { useSshWarmup } from './hooks/useSshWarmup'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
 import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
 import { beginPanelResize, settlePanelResize } from './lib/panelResize'
@@ -234,6 +235,7 @@ function App() {
     openSymbolPicker,
   })
   useLaunchFileRequests(projectsReady, currentProject !== null, openPathsKey)
+  useSshWarmup(projectsReady)
 
   useEffect(() => {
     let cancelled = false

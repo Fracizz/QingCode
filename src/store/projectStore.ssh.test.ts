@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   listSshConnections: vi.fn(),
   touchAndLoadRecentFiles: vi.fn(),
   loadProjectRootTree: vi.fn(),
+  takeSshWarmup: vi.fn(),
 }))
 
 vi.mock('../lib/tauri', () => ({
@@ -46,6 +47,11 @@ vi.mock('../lib/workspaceTrust', () => ({
 }))
 vi.mock('../lib/pathAllowlist', () => ({
   syncRootsFromProjects: vi.fn(),
+}))
+vi.mock('./sshWarmupStore', () => ({
+  beginSshForeground: () => () => {},
+  takeSshWarmup: mocks.takeSshWarmup,
+  cancelSshWarmup: vi.fn(),
 }))
 vi.mock('../lib/windowSession', async importOriginal => ({
   ...(await importOriginal<typeof import('../lib/windowSession')>()),
@@ -103,6 +109,48 @@ beforeEach(() => {
 })
 
 describe('SSH project availability', () => {
+  it('does not activate native watches when directory reading finishes after cancellation', async () => {
+    let finish!: (value: []) => void
+    mocks.loadProjectRootTree.mockImplementationOnce(() => new Promise<[]>(resolve => { finish = resolve }))
+    const switching = useProjectStore.getState().switchProject(remote)
+    await vi.waitFor(() => expect(mocks.loadProjectRootTree).toHaveBeenCalled())
+    cancelSshOpening()
+    expect(await switching).toBe(false)
+    finish([])
+    await Promise.resolve()
+    expect(mocks.safeInvoke.mock.calls.some(call => call[1] === 'ssh_activate_workspace')).toBe(false)
+    expect(useProjectStore.getState().currentProject).toBeNull()
+  })
+  it('joins background preparation without activating early, then verifies and activates it once', async () => {
+    const tree = [{ name: 'remote.txt', path: `${remote.path}/remote.txt`, is_dir: false, loaded: true }]
+    let finish!: (value: typeof tree) => void
+    mocks.takeSshWarmup.mockReturnValueOnce(new Promise<typeof tree>(resolve => { finish = resolve }))
+    const switching = useProjectStore.getState().switchProject(remote)
+    await vi.waitFor(() => expect(mocks.takeSshWarmup).toHaveBeenCalled())
+    expect(useProjectStore.getState().currentProject).toBeNull()
+    expect(mocks.prepareSshWorkspace).not.toHaveBeenCalled()
+    finish(tree)
+    expect(await switching).toBe(true)
+    expect(mocks.prepareSshWorkspace).toHaveBeenCalledWith(remote.path, expect.any(AbortSignal), expect.any(Function), { project: remote })
+    expect(mocks.loadProjectRootTree).not.toHaveBeenCalled()
+    expect(useProjectStore.getState().fileTree).toEqual(tree)
+    expect(useProjectStore.getState().refreshProjectTree).toHaveBeenCalledWith(remote)
+    expect(mocks.touchAndLoadRecentFiles).toHaveBeenCalledTimes(1)
+  })
+
+  it('cancels foreground activation while a shared background task finishes later', async () => {
+    let finish!: (value: []) => void
+    mocks.takeSshWarmup.mockReturnValueOnce(new Promise<[]>(resolve => { finish = resolve }))
+    const switching = useProjectStore.getState().switchProject(remote)
+    await vi.waitFor(() => expect(mocks.takeSshWarmup).toHaveBeenCalled())
+    cancelSshOpening()
+    expect(await switching).toBe(false)
+    finish([])
+    await Promise.resolve()
+    expect(useProjectStore.getState().currentProject).toBeNull()
+    expect(mocks.prepareSshWorkspace).not.toHaveBeenCalled()
+    expect(mocks.touchAndLoadRecentFiles).not.toHaveBeenCalled()
+  })
   it('uses a lightweight hint for a shared service while keeping project activation gated on preparation', async () => {
     mocks.isSshSharedServerReady.mockResolvedValueOnce(true)
     let finish!: () => void
@@ -150,7 +198,7 @@ describe('SSH project availability', () => {
     expect(await useProjectStore.getState().switchProject(remote)).toBe(true)
     expect(useProjectStore.getState().currentProject?.id).toBe(remote.id)
     expect(mocks.prepareSshWorkspace).toHaveBeenCalledWith(
-      remote.path, expect.any(AbortSignal), expect.any(Function)
+      remote.path, expect.any(AbortSignal), expect.any(Function), { project: remote }
     )
     expect(mocks.loadProjectRootTree).toHaveBeenCalledWith(remote)
     expect(await useProjectStore.getState().switchProject(local)).toBe(true)

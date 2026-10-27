@@ -1327,6 +1327,37 @@ pub(crate) async fn daemon_scan_entries(
     result
 }
 
+/// One bounded page for background preparation. A partial listing is never
+/// presented as a complete tree; large roots are read only on explicit open.
+pub(crate) async fn daemon_warmup_entries(
+    manager: &SshManager,
+    connection_id: &str,
+    daemon: &DaemonAccess,
+    canonical_root: &str,
+) -> Result<Option<Vec<(String, bool)>>, DaemonCallError> {
+    let mut channel = open_daemon_channel(manager, connection_id, daemon).await?;
+    let result = async {
+        if !channel.capabilities.iter().any(|cap| cap == "fs.scanPaged") {
+            return Ok(None);
+        }
+        let value = daemon_rpc(
+            &mut channel,
+            "fs.scan",
+            &serde_json::json!({
+                "root": canonical_root, "path": "", "offset": 0, "limit": 256,
+            }),
+            Instant::now() + AGENT_DAEMON_SCAN_TIMEOUT,
+        )
+        .await?;
+        let mut entries = Vec::new();
+        let next = append_scan_page(&value, 0, &mut entries)?;
+        Ok((next.is_none() && entries.len() <= 256).then_some(entries))
+    }
+    .await;
+    channel.shutdown().await;
+    result
+}
+
 fn append_scan_page(
     value: &serde_json::Value,
     offset: usize,

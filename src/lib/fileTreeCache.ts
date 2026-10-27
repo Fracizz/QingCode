@@ -47,6 +47,15 @@ export async function loadProjectRootTree(project: Project | string): Promise<Fi
   })
 }
 
+/** Cache only a complete small root. The native command requests a single page. */
+export async function loadWarmupRootTree(project: Project): Promise<FileNode[] | null> {
+  const excludes = await loadExcludeSettingsForProject(project)
+  const nodes = await safeInvoke<FileNode[] | null>('预读 SSH 项目目录', 'ssh_warmup_directory', {
+    rootUri: project.path, excludePatterns: excludes.filesExclude,
+  })
+  return nodes ? withLoadedFlags(nodes) : null
+}
+
 export async function loadDirChildren(
   path: string,
   workspaceRoot: string,

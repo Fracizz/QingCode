@@ -872,6 +872,8 @@ pub fn run() {
             remote_ssh::ssh_connection_status,
             remote_ssh::ssh_workspace_status,
             remote_ssh::ssh_prepare_workspace,
+            remote_ssh::ssh_activate_workspace,
+            remote_ssh::ssh_warmup_directory,
             remote_ssh::ssh_shared_server_ready,
             remote_ssh::ssh_workspace_roots,
             remote_ssh::ssh_server_states,

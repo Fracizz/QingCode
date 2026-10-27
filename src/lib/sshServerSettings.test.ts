@@ -35,6 +35,7 @@ import {
   getSshServerEnabled,
   getSshServerOfflineDir,
   loadEffectiveSshServerEnabled,
+  loadSshPreparationSettings,
   parseSshServerAutoDownload,
   parseSshServerEnabled,
   parseSshServerOfflineDir,
@@ -55,6 +56,15 @@ import type { SettingsFile } from '@/lib/projectSettings'
 import { DEFAULT_GLOBAL_SETTINGS } from '@/lib/projectSettings'
 
 describe('sshServerSettings', () => {
+  it('loads a project preparation snapshot without changing current/global caches or pushing native settings', async () => {
+    const before = [getSshServerEnabled(), getSshServerAutoDownload(), getSshServerOfflineDir()]
+    const project = { id: 'passive', name: 'passive', path: 'ssh://c/project', created_at: 1, last_opened_at: 1 }
+    loadGlobalSettings.mockResolvedValueOnce({ version: 1, custom: {}, 'ssh.server.autoDownload': true })
+    loadProjectSettings.mockResolvedValueOnce({ version: 1, custom: {}, 'ssh.server.autoDownload': false, 'ssh.server.offlineDir': '/local/passive' })
+    expect(await loadSshPreparationSettings(project)).toEqual({ autoDownload: false, offlineDir: '/local/passive' })
+    expect([getSshServerEnabled(), getSshServerAutoDownload(), getSshServerOfflineDir()]).toEqual(before)
+    expect(safeInvoke).not.toHaveBeenCalled()
+  })
   it('defaults on when unset', () => {
     expect(parseSshServerEnabled(undefined)).toBe(true)
     expect(parseSshServerEnabled(true)).toBe(true)

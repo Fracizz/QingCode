@@ -8,7 +8,7 @@ use russh::{ChannelMsg, ChannelWriteHalf, Disconnect};
 use russh_sftp::client::SftpSession as RawSftpSession;
 use russh_sftp::protocol::OpenFlags;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -949,6 +949,10 @@ pub struct SshManager {
     server_binary_dirs: RwLock<Vec<PathBuf>>,
     /// 设置页手动选择的离线目录，查找时排在其余目录之前。
     server_offline_dir: RwLock<Option<PathBuf>>,
+    /// Request-scoped settings; passive roots must not overwrite active projects.
+    workspace_server_settings: RwLock<HashMap<String, WorkspaceServerSettings>>,
+    /// Background registration does not subscribe a watch per saved project.
+    passive_roots: RwLock<HashSet<String>>,
     /// 本地没有二进制时的下载缓存目录（`ssh.server.autoDownload` 开启时使用）。
     server_cache_dir: RwLock<Option<PathBuf>>,
     /// 本地缺失二进制时是否自动从 GitHub Release 下载（默认开：安装包不内置二进制）。
@@ -981,6 +985,8 @@ impl SshManager {
             client_id: RwLock::new(uuid::Uuid::new_v4().to_string()),
             server_binary_dirs: RwLock::new(Vec::new()),
             server_offline_dir: RwLock::new(None),
+            workspace_server_settings: RwLock::new(HashMap::new()),
+            passive_roots: RwLock::new(HashSet::new()),
             server_cache_dir: RwLock::new(None),
             server_auto_download: std::sync::atomic::AtomicBool::new(true),
             watch_supervisors: Mutex::new(HashMap::new()),
@@ -1630,6 +1636,64 @@ impl SshManager {
         dirs
     }
 
+    fn workspace_server_settings(&self, uri: &str) -> Option<WorkspaceServerSettings> {
+        self.workspace_server_settings
+            .read()
+            .ok()?
+            .get(&normalize_remote_uri(uri))
+            .cloned()
+    }
+
+    fn server_binary_dirs_for_root(&self, uri: &str) -> Vec<PathBuf> {
+        let Some(policy) = self.workspace_server_settings(uri) else {
+            return self.server_binary_dirs();
+        };
+        let mut dirs = self
+            .server_binary_dirs
+            .read()
+            .map(|dirs| dirs.clone())
+            .unwrap_or_default();
+        if let Some(offline) = policy.offline_dir {
+            dirs.retain(|dir| dir != &offline);
+            dirs.insert(0, offline);
+        }
+        dirs
+    }
+
+    fn server_auto_download_for_root(&self, uri: &str) -> bool {
+        self.workspace_server_settings(uri).map_or_else(
+            || self.server_auto_download(),
+            |policy| policy.auto_download,
+        )
+    }
+
+    fn root_is_passive(&self, uri: &str) -> bool {
+        self.passive_roots
+            .read()
+            .map(|roots| roots.contains(&normalize_remote_uri(uri)))
+            .unwrap_or(true)
+    }
+
+    fn start_workspace_watch(&self, app: AppHandle, root: &RegisteredRoot) {
+        let Some(id) = remote_uri_connection_id(&root.uri) else {
+            return;
+        };
+        if !root.trusted || !self.server_mode(id) || self.root_is_passive(&root.uri) {
+            return;
+        }
+        let key = server::server_slot_key(id, &root.canonical_path);
+        if self.has_watch_supervisor(&key) {
+            return;
+        }
+        let handle = server::spawn_server_watch_supervisor(
+            app,
+            id.to_string(),
+            normalize_remote_uri(&root.uri),
+            root.canonical_path.clone(),
+        );
+        self.replace_watch_supervisor(&key, handle);
+    }
+
     /// 离线目录变更后，让之前因缺二进制而失败的槽重新尝试部署。
     pub(crate) fn clear_unavailable_servers(&self) {
         if let Ok(mut servers) = self.servers.write() {
@@ -2039,6 +2103,7 @@ pub async fn ssh_set_workspace_trust(
         if let Ok(root) = manager.registered_root(&root_uri) {
             if let Ok(parsed) = parse_remote_uri(&root.uri) {
                 if root.trusted
+                    && !manager.root_is_passive(&root.uri)
                     && manager.server_mode(&parsed.connection_id)
                     && manager.connection_is_open(&parsed.connection_id)
                 {
@@ -2069,7 +2134,7 @@ pub fn ssh_server_info(
     let state = server_status::ssh_server_info(root_uri.clone(), manager.clone())?;
     // 「正在探测」却没有任务在推进（端点被清掉、监督任务已退出等）时，
     // 查询顺手补一轮后台发现，结果经状态事件推回芯片。
-    if state.phase == server_status::ServerPhase::Probing {
+    if state.phase == server_status::ServerPhase::Probing && !manager.root_is_passive(&root_uri) {
         if let Ok(root) = manager.registered_root(&root_uri) {
             server::kick_server_discovery(&app, &manager, &root);
         }
@@ -2989,6 +3054,7 @@ pub async fn ssh_connect(
     config: SshConnectionConfig,
     root_uri: String,
     trusted: bool,
+    defer_service: Option<bool>,
     app: tauri::AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<SshConnectResult, String> {
@@ -3004,6 +3070,10 @@ pub async fn ssh_connect(
     let mode = config
         .mode
         .ok_or_else(|| "SSH 连接缺少模式（Server / SSH）".to_string())?;
+    // Frontends have per-window queues; serialize initial authentication across
+    // windows too, and coordinate with explicit native disconnect/reconnect.
+    let auth_gate = manager.reconnect_gate(&config.id)?;
+    let mut auth_guard = auth_gate.lock().await;
     // 只有这次新建会话才发 authenticating；已有会话时第一眼就是 probing / readyDirect。
     let fresh_auth = existing_session(&manager, &config.id).is_none();
     let fingerprint = if !fresh_auth {
@@ -3021,6 +3091,8 @@ pub async fn ssh_connect(
             }
         }
     };
+    *auth_guard = None;
+    drop(auth_guard);
     let abandon_fresh_auth = |error: String| {
         if fresh_auth {
             server_status::publish_disconnected(&app, &manager, &config.id, &root_uri);
@@ -3053,6 +3125,13 @@ pub async fn ssh_connect(
             mode,
         )));
     }
+    if defer_service.unwrap_or(false) && !manager.root_is_registered(&root_uri)? {
+        manager
+            .passive_roots
+            .write()
+            .map_err(|_| "SSH 工作区状态不可用".to_string())?
+            .insert(normalize_remote_uri(&root_uri));
+    }
     manager
         .roots
         .write()
@@ -3072,7 +3151,7 @@ pub async fn ssh_connect(
     // 已信任的远端：启动 watch 监督任务（server 提供远端事件源）。
     // Windows 与 Linux 都优先 daemon（Windows 走命名管道），失败再回退 serve。
     // 重复连接同一根时先终止旧任务，避免出现两条并发的 watch 连接。
-    if trusted && mode == RemoteMode::Server {
+    if trusted && mode == RemoteMode::Server && !defer_service.unwrap_or(false) {
         let key = server::server_slot_key(&config.id, &canonical_root);
         let handle = server::spawn_server_watch_supervisor(
             app.clone(),
@@ -3136,6 +3215,12 @@ pub async fn ssh_disconnect(
     }
     // server 的端口 / token 跟着远端进程走，重连后必须重新发现，缓存一律丢弃。
     manager.purge_server_state(&connection_id);
+    if let Ok(mut policies) = manager.workspace_server_settings.write() {
+        policies.retain(|uri, _| remote_uri_connection_id(uri) != Some(connection_id.as_str()));
+    }
+    if let Ok(mut passive) = manager.passive_roots.write() {
+        passive.retain(|uri| remote_uri_connection_id(uri) != Some(connection_id.as_str()));
+    }
     // 终端各用独立连接，主连接断开不会带走它们，需要逐个断开。
     let terminal_transports = manager
         .terminals
@@ -3180,9 +3265,33 @@ pub fn ssh_shared_server_ready(
     Ok(server::shared_server_known(&manager, &parsed.connection_id))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceServerSettings {
+    auto_download: bool,
+    offline_dir: Option<PathBuf>,
+}
+
+impl WorkspaceServerSettings {
+    fn validated(mut self) -> Result<Self, String> {
+        self.offline_dir = match self.offline_dir.filter(|dir| !dir.as_os_str().is_empty()) {
+            Some(dir) => {
+                let text = dir.to_string_lossy();
+                if text.contains("://") || text.contains('\0') {
+                    return Err("离线服务目录必须是本地目录".into());
+                }
+                Some(server::resolve_offline_server_dir(&dir)?)
+            }
+            None => None,
+        };
+        Ok(self)
+    }
+}
+
 #[tauri::command]
 pub async fn ssh_prepare_workspace(
     root_uri: String,
+    settings: Option<WorkspaceServerSettings>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
@@ -3191,12 +3300,66 @@ pub async fn ssh_prepare_workspace(
         return Err("SSH 连接未建立".to_string());
     }
     let root = manager.registered_root(&root_uri)?;
+    let session = manager.session(&parsed.connection_id)?;
     // A registered root is not a usable Server workspace yet. Files need the
     // service and terminals need its daemon; reuse their bounded preparation.
     // Restricted workspaces and explicit SSH mode retain their SFTP-only path.
     if root.trusted && manager.root_server_mode(&root) {
+        if let Some(settings) = settings {
+            let settings = settings.validated()?;
+            let previous = manager
+                .workspace_server_settings
+                .write()
+                .map_err(|_| "SSH 项目设置不可用".to_string())?
+                .insert(normalize_remote_uri(&root_uri), settings.clone());
+            if previous.as_ref() != Some(&settings) {
+                let key = server::server_slot_key(&parsed.connection_id, &root.canonical_path);
+                let mut slot = manager.server_slot(&key).unwrap_or_default();
+                if slot.endpoint.is_none() {
+                    slot.unavailable_reason = None;
+                    slot.deploy_failures = 0;
+                    slot.last_failure = None;
+                    manager.set_server_slot(&key, slot);
+                }
+            }
+        }
         server::require_server_endpoint(&app, &manager, &root, true).await?;
     }
+    // Never report late success after disconnect, root removal or trust revocation.
+    let current = manager.registered_root(&root_uri)?;
+    let current_session = manager.session(&parsed.connection_id)?;
+    if current.trusted != root.trusted
+        || current_session.handle.is_closed()
+        || !Arc::ptr_eq(
+            &current_session.server_incarnation,
+            &session.server_incarnation,
+        )
+    {
+        return Err("SSH 项目状态已变化，请重新打开".into());
+    }
+    Ok(())
+}
+
+/// Called only after foreground preparation and directory reading complete.
+/// Separating this from the long deployment prevents a cancelled open from
+/// installing a watch subscription when its native deployment finishes late.
+#[tauri::command]
+pub fn ssh_activate_workspace(
+    root_uri: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    let parsed = parse_remote_uri(&root_uri)?;
+    if !manager.connection_is_open(&parsed.connection_id) {
+        return Err("SSH 连接未建立".into());
+    }
+    let root = manager.registered_root(&root_uri)?;
+    manager
+        .passive_roots
+        .write()
+        .map_err(|_| "SSH 工作区状态不可用".to_string())?
+        .remove(&normalize_remote_uri(&root_uri));
+    manager.start_workspace_watch(app, &root);
     Ok(())
 }
 
@@ -3477,6 +3640,39 @@ async fn server_scan_entries(
             )))
         }
     }
+}
+
+#[tauri::command]
+pub async fn ssh_warmup_directory(
+    root_uri: String,
+    exclude_patterns: Option<Vec<String>>,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<Option<Vec<RemoteFileNode>>, String> {
+    let (sftp, parsed, root) = manager.sftp_for_uri(&root_uri, true).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    if !manager.server_mode(&parsed.connection_id) {
+        return Ok(None);
+    }
+    let endpoint = server::require_server_endpoint(&app, &manager, &root, true).await?;
+    let daemon = endpoint.daemon.ok_or("远端服务尚未就绪")?;
+    let entries = server::daemon_warmup_entries(
+        &manager,
+        &parsed.connection_id,
+        &daemon,
+        &root.canonical_path,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    Ok(entries.map(|entries| {
+        collect_scan_nodes(
+            &root_uri,
+            &parsed.path,
+            &parsed.path,
+            entries,
+            exclude_patterns.as_deref(),
+        )
+    }))
 }
 
 #[tauri::command]
@@ -5947,6 +6143,12 @@ pub async fn ssh_forget_workspace_root(
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
     let normalized = normalize_remote_uri(&root_uri);
+    if let Ok(mut policies) = manager.workspace_server_settings.write() {
+        policies.remove(&normalized);
+    }
+    if let Ok(mut passive) = manager.passive_roots.write() {
+        passive.remove(&normalized);
+    }
     // 本次会话未注册（重启后未连接就移除）时没有可清理的连接状态，直接放行。
     if let Ok(root) = manager.registered_root(&root_uri) {
         if let Some(id) = remote_uri_connection_id(&root.uri) {
@@ -6458,6 +6660,93 @@ mod tests {
     fn image_read_limit_stays_at_64mb_like_the_local_viewer() {
         // 本地 `cmd_stat::IMAGE_MAX_BYTES` 以同值字面量独立断言；两侧一起防漂移。
         assert_eq!(IMAGE_MAX_BYTES, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn workspace_download_policies_do_not_overwrite_each_other_or_global_defaults() {
+        let manager = SshManager::new();
+        let automatic =
+            std::env::temp_dir().join(format!("qingcode-policy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&automatic).unwrap();
+        manager.set_server_binary_dirs(vec![automatic.clone()]);
+        manager.workspace_server_settings.write().unwrap().extend([
+            (
+                "ssh://c/a".into(),
+                WorkspaceServerSettings {
+                    auto_download: false,
+                    offline_dir: Some(PathBuf::from("offline-a")),
+                },
+            ),
+            (
+                "ssh://c/b".into(),
+                WorkspaceServerSettings {
+                    auto_download: true,
+                    offline_dir: None,
+                },
+            ),
+        ]);
+        assert_eq!(
+            manager.server_binary_dirs_for_root("ssh://c/a/"),
+            vec![PathBuf::from("offline-a"), automatic.clone()]
+        );
+        assert_eq!(
+            manager.server_binary_dirs_for_root("ssh://c/b"),
+            vec![automatic.clone()]
+        );
+        assert!(!manager.server_auto_download_for_root("ssh://c/a"));
+        assert!(manager.server_auto_download_for_root("ssh://c/b"));
+        assert!(manager.server_auto_download());
+        assert_eq!(manager.server_binary_dirs(), vec![automatic.clone()]);
+        std::fs::remove_dir(automatic).unwrap();
+    }
+
+    #[test]
+    fn workspace_download_policy_rejects_remote_paths_and_accepts_empty_offline_override() {
+        for path in [
+            "ssh://host/home/server",
+            "https://example.test/server",
+            "bad\0path",
+        ] {
+            assert!(WorkspaceServerSettings {
+                auto_download: false,
+                offline_dir: Some(PathBuf::from(path))
+            }
+            .validated()
+            .is_err());
+        }
+        let settings: WorkspaceServerSettings =
+            serde_json::from_value(serde_json::json!({"autoDownload":false,"offlineDir":""}))
+                .unwrap();
+        assert_eq!(
+            settings.validated().unwrap(),
+            WorkspaceServerSettings {
+                auto_download: false,
+                offline_dir: None
+            }
+        );
+    }
+
+    #[test]
+    fn passive_registration_remains_passive_across_trust_changes() {
+        let manager = SshManager::new();
+        manager
+            .passive_roots
+            .write()
+            .unwrap()
+            .insert("ssh://c/a".into());
+        manager.roots.write().unwrap().insert(
+            "ssh://c/a".into(),
+            RegisteredRoot {
+                uri: "ssh://c/a".into(),
+                canonical_path: "/a".into(),
+                trusted: true,
+            },
+        );
+        manager.set_root_trust("ssh://c/a", false).unwrap();
+        manager.set_root_trust("ssh://c/a", true).unwrap();
+        assert!(manager.root_is_passive("ssh://c/a/"));
+        assert!(!manager.root_is_passive("ssh://c/other"));
+        assert!(manager.watch_supervisors.lock().unwrap().is_empty());
     }
 
     #[test]

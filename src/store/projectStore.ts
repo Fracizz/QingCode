@@ -65,6 +65,7 @@ import { ensureWorkspaceTrust, pushTrustedRootsToNative } from '../lib/workspace
 import { pushSshServerSettingsToNative, loadEffectiveSshServerEnabled } from '../lib/sshServerSettings'
 import {
   connectSshWorkspace,
+  activateSshWorkspace,
   ensureSshWorkspaceConnected,
   findSshProject,
   isSshProject,
@@ -74,9 +75,11 @@ import {
   requestSshReconnect,
   sshRootUri,
   SSH_CONNECTIONS_CHANGED_EVENT,
+  waitForSshWorkspaceConnection,
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
 import { runSshOpening, SshPreparationError } from './sshOpeningStore'
+import { beginSshForeground, cancelSshWarmup, takeSshWarmup } from './sshWarmupStore'
 
 export type { FileNode }
 
@@ -179,6 +182,13 @@ let projectSwitchPending = false
 
 function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
   return runSshOpening(project, async (signal, report) => {
+    const pendingWarmup = takeSshWarmup(project.path)
+    let warmedTree: FileNode[] | null | undefined
+    if (pendingWarmup) {
+      report('service')
+      try { warmedTree = await pendingWarmup } catch { /* Foreground owns retry and diagnostics. */ }
+      signal.throwIfAborted()
+    }
     const sharedReady = await isSshSharedServerReady(project.path)
     signal.throwIfAborted()
     if (sharedReady) report('mounting')
@@ -186,17 +196,19 @@ function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
     signal.throwIfAborted()
     report('service')
     try {
-      await prepareSshWorkspace(project.path, signal, server => report('service', server))
+      await prepareSshWorkspace(project.path, signal, server => report('service', server), { project })
       signal.throwIfAborted()
       report('files')
       // Verify a real directory read before exposing editor/terminal actions.
-      const fresh = await loadProjectRootTree(project)
+      const fresh = warmedTree ?? await loadProjectRootTree(project)
       signal.throwIfAborted()
       const tree = previousTree ? await reloadLoadedChildren(fresh, previousTree, project.path) : fresh
       signal.throwIfAborted()
       const recentFiles = await touchAndLoadRecentFiles(project.id)
       signal.throwIfAborted()
-      return { tree, recentFiles }
+      await activateSshWorkspace(project.path)
+      signal.throwIfAborted()
+      return { tree, recentFiles, warmed: warmedTree != null }
     } catch (error) {
       signal.throwIfAborted()
       throw new SshPreparationError(String(error))
@@ -209,6 +221,8 @@ function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
  * 覆盖，连接（可能触发部署/下载）前按当前项目重算并推给后端。
  */
 async function syncSshServerSettingsForProject(project: Project): Promise<void> {
+  // Remote preparation carries its own settings snapshot after SFTP registration.
+  if (isSshProject(project)) return
   try {
     await loadEffectiveSshServerEnabled(project)
     await pushSshServerSettingsToNative()
@@ -573,6 +587,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     }
     try {
       if (target && isSshProject(target)) {
+        cancelSshWarmup(target.path)
+        await waitForSshWorkspaceConnection(target)
         await safeInvoke('注销 SSH 项目', 'ssh_forget_workspace_root', {
           rootUri: target.path,
         })
@@ -837,6 +853,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     // A second click must not enqueue another connection or steal activation.
     if (projectSwitchPending) return false
     projectSwitchPending = true
+    const endForeground = beginSshForeground()
     let sshConnectionAttempted = false
     let sshWorkspaceConnected = false
     try {
@@ -917,6 +934,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }))
       // Keep the previous project's tabs/drafts/CM state; restore the target's.
       activateProjectSession(previousId, project.id)
+      if (prepared?.warmed) void get().refreshProjectTree(project)
       // Refresh on switch — inactive durable projects have no root watcher.
       if (!prepared) {
         if (project.ephemeral) void get().ensureProjectTree(project)
@@ -953,6 +971,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       return false
     } finally {
       projectSwitchPending = false
+      endForeground()
     }
   },
 

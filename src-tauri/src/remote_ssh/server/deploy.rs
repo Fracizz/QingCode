@@ -11,11 +11,11 @@ use super::paths::{
     server_serve_log_path, server_state_path, windows_remote_path,
 };
 use super::scripts::{
-    deploy_server_command, kill_processes_by_executable_command,
-    prepare_private_server_dirs_command, remote_sha256_command, remote_sha256_matches,
-    self_check_then_deploy_command, sha256_of_file_cached, windows_deploy_for,
-    windows_prepare_server_dirs_script, windows_remote_sha256_script, windows_remove_for,
-    windows_self_check_then_deploy_script, windows_stop_for, PREPARE_HOME_INVALID_EXIT,
+    deploy_server_command, kill_processes_by_executable_command, parse_remote_sha256,
+    prepare_private_server_dirs_command, remote_sha256_command, self_check_then_deploy_command,
+    sha256_of_file_cached, windows_deploy_for, windows_prepare_server_dirs_script,
+    windows_remote_sha256_script, windows_remove_for, windows_self_check_then_deploy_script,
+    windows_stop_for, PREPARE_HOME_INVALID_EXIT, REMOTE_BINARY_MISSING_EXIT,
     SELF_CHECK_FAILED_EXIT,
 };
 use super::serve::ping_server;
@@ -41,7 +41,7 @@ pub(super) async fn prepare_shared_daemon(
         .map_err(|e| e.reason)?;
     let windows = windows_native_path(&root.canonical_path).is_some();
     let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, &arch));
-    let matches = remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await;
+    let matches = remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await?;
     if !matches {
         server_status::note_server_activity(
             manager,
@@ -57,7 +57,7 @@ pub(super) async fn prepare_shared_daemon(
             local_sha256: &sha256,
         };
         upload_server_binary(manager, &sftp, root, &local_binary, &target, false).await?;
-        if !remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await {
+        if !remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await? {
             return Err("远端 server 二进制 SHA-256 与本地可信文件不一致，已拒绝执行".into());
         }
         let command = self_check_then_deploy_command(&remote_bin, &sha256, "true");
@@ -320,18 +320,18 @@ async fn try_discover_server(
     app: Option<&tauri::AppHandle>,
     local_sha256: &str,
     remote_bin: &str,
-) -> (Option<ServerEndpoint>, bool) {
+) -> Result<(Option<ServerEndpoint>, bool), String> {
     let state_path = server_state_path(&root.canonical_path);
     let state = match sftp.read(state_path).await {
         Ok(bytes) => parse_server_state(&bytes).ok(),
         // 状态文件不存在（或是目录）：没有可复用的 serve，摘要留给部署阶段比对。
-        Err(_) => return (None, false),
+        Err(_) => return Ok((None, false)),
     };
     let Some(state) = state else {
-        return (None, false);
+        return Ok((None, false));
     };
     let windows = windows_native_path(&root.canonical_path).is_some();
-    let remote_matches = remote_binary_sha_matches(manager, root, remote_bin, local_sha256).await;
+    let remote_matches = remote_binary_sha_matches(manager, root, remote_bin, local_sha256).await?;
     if !can_reuse_discovered_server(
         &state.version,
         &state.root,
@@ -340,7 +340,7 @@ async fn try_discover_server(
         Some(local_sha256),
         remote_matches,
     ) {
-        return (None, remote_matches);
+        return Ok((None, remote_matches));
     }
     let endpoint = ServerEndpoint {
         serve: Some(ServeEndpoint {
@@ -358,7 +358,7 @@ async fn try_discover_server(
         server_status::ServerPhase::Handshaking,
     );
     let alive = ping_server(manager, connection_id, &endpoint).await.is_ok();
-    (alive.then_some(endpoint), remote_matches)
+    Ok((alive.then_some(endpoint), remote_matches))
 }
 
 /// 一次远端往返完成「读家目录 + 创建用户私有版本目录」，再把家目录统一成
@@ -459,7 +459,7 @@ struct ServerInstallTarget<'a> {
 /// 幂等优化：上传前先在远端算已存在二进制的 sha256，与本地一致就跳过上传。
 /// 之前每次部署失败重试都是全量 SFTP 上传（ping 打不通时变成热循环：上传
 /// 几十 MB → 新 serve 因旧实例 rc=3 退出 → 15s 轮询超时 → 再来一遍）。
-/// sha256 逐字节一致则版本必然一致；远端算不出摘要或对不上时照常全量上传。
+/// sha256 逐字节一致则版本必然一致；文件缺失或摘要确实不同时上传，读取失败则中止。
 /// `sha_known_match` 为真表示本轮发现阶段刚比对过且一致，不再重算。
 async fn upload_server_binary(
     manager: &SshManager,
@@ -470,7 +470,7 @@ async fn upload_server_binary(
     sha_known_match: bool,
 ) -> Result<bool, String> {
     if sha_known_match
-        || remote_binary_sha_matches(manager, root, target.remote_bin, target.local_sha256).await
+        || remote_binary_sha_matches(manager, root, target.remote_bin, target.local_sha256).await?
     {
         return Ok(false);
     }
@@ -578,14 +578,13 @@ async fn replace_remote_binary(
     ))
 }
 
-/// 远端已部署二进制与本地摘要是否一致。任何一步失败（工具缺失、输出异常）
-/// 都按「不一致」处理，调用方回退全量上传。
+/// 读取失败与确实不一致必须分开：前者不能进入会结束 daemon/PTY 的替换流程。
 async fn remote_binary_sha_matches(
     manager: &SshManager,
     root: &RegisteredRoot,
     remote_bin: &str,
     local_sha256: &str,
-) -> bool {
+) -> Result<bool, String> {
     let windows = windows_native_path(&root.canonical_path).is_some();
     let windows_script = if windows {
         windows_host_path(remote_bin)
@@ -595,17 +594,34 @@ async fn remote_binary_sha_matches(
     } else {
         String::new()
     };
-    let Ok(result) = exec_on_root(
+    let result = exec_on_root(
         manager,
         root,
         &remote_sha256_command(remote_bin),
         &windows_script,
     )
-    .await
-    else {
-        return false;
-    };
-    remote_sha256_matches(&result.stdout, local_sha256)
+    .await;
+    remote_binary_digest_matches(result, local_sha256)
+}
+
+fn remote_binary_digest_matches(
+    result: Result<RemoteExecResult, String>,
+    expected: &str,
+) -> Result<bool, String> {
+    let result =
+        result.map_err(|error| format!("读取远端服务摘要失败，已保留运行中的服务：{error}"))?;
+    if result.exit_code == REMOTE_BINARY_MISSING_EXIT && result.stdout.trim().is_empty() {
+        return Ok(false);
+    }
+    if result.exit_code != 0 {
+        return Err(format!(
+            "读取远端服务摘要失败（退出码 {}），已保留运行中的服务",
+            result.exit_code
+        ));
+    }
+    let actual = parse_remote_sha256(&result.stdout)
+        .ok_or("远端服务摘要为空或格式异常，已保留运行中的服务")?;
+    Ok(actual == expected.trim().to_ascii_lowercase())
 }
 
 /// 调用方必须已在不执行目标文件的前提下用远端 `sha256sum` / `Get-FileHash`
@@ -800,7 +816,8 @@ async fn discover_or_deploy_server(
             &local_sha256,
             &remote_bin,
         )
-        .await;
+        .await
+        .map_err(ServerDeployError::from)?;
         timer.mark("发现");
         if let Some(endpoint) = discovered {
             cleanup_legacy_project_install(manager, &sftp, root, arch).await;
@@ -848,7 +865,10 @@ async fn discover_or_deploy_server(
     if uploaded {
         // 真正上传了新文件必须重新校验落盘结果（不执行目标文件）；跳过上传时
         // 摘要刚刚比对过，不必再算一遍。
-        if !remote_binary_sha_matches(manager, root, &remote_bin, &local_sha256).await {
+        if !remote_binary_sha_matches(manager, root, &remote_bin, &local_sha256)
+            .await
+            .map_err(ServerDeployError::deploy_stage)?
+        {
             return Err(ServerDeployError::permanent(
                 "远端 server 二进制 SHA-256 与本地可信文件不一致，已拒绝执行",
             ));
@@ -1394,6 +1414,81 @@ mod real_host_bench;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn digest_result(stdout: &str, exit_code: u32) -> Result<RemoteExecResult, String> {
+        Ok(RemoteExecResult {
+            stdout: stdout.into(),
+            stderr: String::new(),
+            exit_code,
+        })
+    }
+
+    #[test]
+    fn digest_read_failures_cannot_trigger_service_replacement() {
+        let expected = "a".repeat(64);
+        for result in [
+            Err("SSH 通道提前关闭".into()),
+            digest_result("", 0),
+            digest_result("not a digest", 0),
+            digest_result(&expected, 1),
+            digest_result("", 127),
+            digest_result(&expected, REMOTE_BINARY_MISSING_EXIT),
+        ] {
+            assert!(remote_binary_digest_matches(result, &expected).is_err());
+        }
+    }
+
+    #[test]
+    fn verified_digest_or_explicit_absence_controls_installation() {
+        let expected = "a".repeat(64);
+        assert_eq!(
+            remote_binary_digest_matches(digest_result(&expected.to_uppercase(), 0), &expected),
+            Ok(true)
+        );
+        assert_eq!(
+            remote_binary_digest_matches(digest_result(&"b".repeat(64), 0), &expected),
+            Ok(false)
+        );
+        assert_eq!(
+            remote_binary_digest_matches(digest_result("", REMOTE_BINARY_MISSING_EXIT), &expected),
+            Ok(false)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn digest_command_preserves_tool_failure_and_reports_absence_separately() {
+        let dir = std::env::temp_dir().join(format!("qc-digest-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        let binary = dir.join("server with spaces");
+        std::fs::write(&binary, b"verified server").unwrap();
+        let run = |path: &Path, empty_path: bool| {
+            let mut command = std::process::Command::new("/bin/sh");
+            command
+                .arg("-c")
+                .arg(remote_sha256_command(path.to_str().unwrap()));
+            if empty_path {
+                command.env("PATH", &dir);
+            }
+            let output = command.output().unwrap();
+            RemoteExecResult {
+                stdout: String::from_utf8(output.stdout).unwrap(),
+                stderr: String::from_utf8(output.stderr).unwrap(),
+                exit_code: output.status.code().unwrap() as u32,
+            }
+        };
+        let expected = super::super::scripts::sha256_of_file(&binary).unwrap();
+        assert_eq!(
+            remote_binary_digest_matches(Ok(run(&binary, false)), &expected),
+            Ok(true)
+        );
+        assert!(remote_binary_digest_matches(Ok(run(&binary, true)), &expected).is_err());
+        assert_eq!(
+            remote_binary_digest_matches(Ok(run(&dir.join("absent"), false)), &expected),
+            Ok(false)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn stage_timings_list_each_stage_then_total() {

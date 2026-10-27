@@ -14,7 +14,10 @@ vi.mock('./projectRepository', () => ({
   getSshConnection: mocks.getSshConnection,
   upsertSshConnection: mocks.upsertSshConnection,
 }))
-vi.mock('./sshServerSettings', () => ({ getSshServerEnabled: mocks.getSshServerEnabled }))
+vi.mock('./sshServerSettings', () => ({
+  getSshServerEnabled: mocks.getSshServerEnabled,
+  loadSshPreparationSettings: vi.fn(async () => ({ autoDownload: false, offlineDir: '' })),
+}))
 vi.mock('./tauri', () => ({ safeInvoke: mocks.safeInvoke }))
 vi.mock('./workspaceTrust', () => ({ isProjectTrusted: mocks.isProjectTrusted }))
 vi.mock('../store/projectStore', () => ({
@@ -294,6 +297,8 @@ describe('connectSshWorkspace mode backfill', () => {
         if (command === 'ssh_workspace_status') return false
         if (command === 'ssh_connection_status') return true
         if (command === 'ssh_connect') return { fingerprint: 'SHA256:test' }
+        if (command === 'ssh_prepare_workspace') return undefined
+        if (command === 'ssh_activate_workspace') return undefined
         throw new Error(`Unexpected command: ${command} ${JSON.stringify(args)}`)
       }
     )
@@ -416,6 +421,8 @@ describe('switchSshConnectionMode', () => {
         if (command === 'ssh_disconnect') return undefined
         if (command === 'ssh_workspace_status') return false
         if (command === 'ssh_connect') return { fingerprint: 'SHA256:test' }
+        if (command === 'ssh_prepare_workspace') return undefined
+        if (command === 'ssh_activate_workspace') return undefined
         throw new Error(`Unexpected command: ${command}`)
       }
     )
@@ -522,6 +529,8 @@ describe('isolated connection testing and reconnecting saved configurations', ()
       if (command === 'ssh_disconnect') return undefined
       if (command === 'ssh_workspace_status' || command === 'ssh_connection_status') return false
       if (command === 'ssh_connect') return {fingerprint:'SHA256:tested'}
+      if (command === 'ssh_prepare_workspace') return undefined
+      if (command === 'ssh_activate_workspace') return undefined
       throw new Error(command)
     })
     await reconnectSshConnection(connection.id)

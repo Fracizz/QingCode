@@ -113,6 +113,16 @@ export function getSshServerOfflineDir(): string {
   return cachedSshServerOfflineDir
 }
 
+/** A request snapshot; background preparation must never mutate UI/global caches. */
+export async function loadSshPreparationSettings(project: Project): Promise<{
+  autoDownload: boolean; offlineDir: string
+}> {
+  const global = await loadGlobalSettings()
+  const workspace = await loadProjectSettings(project)
+  const merged = mergeSettings(global, workspace)
+  return { autoDownload: readSshServerAutoDownload(merged), offlineDir: readSshServerOfflineDir(merged) }
+}
+
 export function notifySshServerEnabledChanged(enabled: boolean) {
   cachedSshServerEnabled = enabled !== false
 }
