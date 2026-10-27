@@ -13,7 +13,7 @@ const selectors = {
 }
 
 /** Run inside `ego-browser nodejs`, after reading `ego-browser skill`. No Playwright dependency. */
-export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDir } = {}) {
+export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDir, captureScreenshots = true } = {}) {
   const output = artifactDir ?? resolve(repo, '.dev/web-tests', `project-manager-${Date.now()}`)
   await mkdir(output, { recursive: true })
   const task = await taskSpace(spaceId ?? 'QingCode project manager Web tests')
@@ -86,6 +86,7 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
     await tab('全部')
   }
   const shot = async name => {
+    if (!captureScreenshots) return
     const path = await page.screenshot({
       path: resolve(output, `${name}.png`).replaceAll('\\', '/'),
     })
@@ -337,6 +338,7 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
     spaceId: task.spaceId,
     results,
     screenshots,
+    screenshotStatus: captureScreenshots ? 'captured' : 'not-captured',
   }
   await writeFile(resolve(output, 'results.json'), JSON.stringify(report, null, 2))
   const escape = text =>
@@ -347,7 +349,7 @@ export async function run({ spaceId, url = 'http://127.0.0.1:38439/', artifactDi
     )
   await writeFile(
     resolve(output, 'report.html'),
-    `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>项目管理 Web 验收</title><style>body{font:16px system-ui;max-width:1100px;margin:36px auto;padding:0 20px;background:#18191d;color:#eee}li{padding:8px}img{max-width:100%;border:1px solid #555}a{color:#80c7ff}</style><h1>项目管理 Web + ego 验收：${escape(report.status)}</h1><p>真实 React 组件与样式，内存适配器。此报告不代表原生文件、SSH 或终端能力验收。</p><ul>${results.map(result => `<li>${result.status === 'passed' ? '✓' : '✕'} ${escape(result.name)}${result.error ? `<pre>${escape(result.error)}</pre>` : ''}</li>`).join('')}</ul>${screenshots.map(screenshot => `<h2>${escape(screenshot.name)}</h2><a href="${escape(screenshot.name)}.png"><img src="${escape(screenshot.name)}.png"></a>`).join('')}</html>`
+    `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>项目管理 Web 验收</title><style>body{font:16px system-ui;max-width:1100px;margin:36px auto;padding:0 20px;background:#18191d;color:#eee}li{padding:8px}img{max-width:100%;border:1px solid #555}a{color:#80c7ff}</style><h1>项目管理 Web + ego 验收：${escape(report.status)}</h1><p>真实 React 组件与样式，内存适配器。此报告不代表原生文件、SSH 或终端能力验收。</p><p>截图：${captureScreenshots ? '已保存' : '未完成，截图接口超时后使用 DOM 验收'}</p><ul>${results.map(result => `<li>${result.status === 'passed' ? '✓' : '✕'} ${escape(result.name)}${result.error ? `<pre>${escape(result.error)}</pre>` : ''}</li>`).join('')}</ul>${screenshots.map(screenshot => `<h2>${escape(screenshot.name)}</h2><a href="${escape(screenshot.name)}.png"><img src="${escape(screenshot.name)}.png"></a>`).join('')}</html>`
   )
   console.log(
     JSON.stringify(

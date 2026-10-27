@@ -152,7 +152,7 @@ export default function SshServerDialog({
               <ConnectionSummary state={state} pending={pending} />
               <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                 <Detail label={t('连接模式')}>
-                  {compatibility ? t('SSH 兼容模式') : t('SSH + 远端服务')}
+                  {compatibility ? t('SSH 直连（兼容模式）') : t('SSH + 远端服务')}
                 </Detail>
                 {!compatibility && (
                   <>
@@ -177,12 +177,12 @@ export default function SshServerDialog({
                 </div>
               </dl>
               {state.reason && !compatibility && (
-                <div className="rounded-md border border-dialog-border bg-dialog-sidebar p-3">
-                  <h3 className="text-ui-sm font-medium text-fg">{t('诊断信息')}</h3>
+                <details className="rounded-md border border-dialog-border bg-dialog-sidebar p-3">
+                  <summary className="cursor-pointer rounded text-ui-sm font-medium text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2">{t('诊断信息')}</summary>
                   <p className="mt-2 whitespace-pre-wrap break-words font-mono text-ui-sm text-fg-muted [overflow-wrap:anywhere]">
                     {state.reason}
                   </p>
-                </div>
+                </details>
               )}
               {blocker && (
                 <p role="status" className="text-ui-sm text-warn">
@@ -281,7 +281,7 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
   const ready = state.phase === 'readyServer'
   const title = offline
     ? t('SSH 连接已断开')
-    : compatibility
+    : compatibility && !pending
       ? t('已启用 SSH 兼容模式')
       : ready
         ? t('远端服务已就绪')
@@ -295,8 +295,8 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
                 ? t('正在连接远端服务')
                 : t('远端服务未就绪')
   const description = offline
-    ? t('连接中断，远端服务暂不可用。')
-    : compatibility
+    ? t('连接中断，请检查网络或主机后重新连接。')
+    : compatibility && !pending
       ? t('通过 SSH 直接访问文件和终端，不部署远端服务。文件树不会自动刷新，终端不支持断线恢复。')
       : ready
         ? t('文件监控、内容搜索等功能由远端服务提供，所有通信均通过 SSH。')

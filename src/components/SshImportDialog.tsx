@@ -219,38 +219,50 @@ export default function SshImportDialog({
               const added = existing.has(sshImportTarget(item))
               const disabled = saving || added || Boolean(item.issue)
               return (
-                <label
+                <div
                   key={item.name}
-                  className={`flex items-start gap-3 border-b border-dialog-separator px-3 py-2.5 last:border-0 ${disabled ? 'text-fg-muted' : 'hover:bg-bg-hover'}`}
+                  className={`border-b border-dialog-separator last:border-0 ${selected.has(item.name) && !disabled ? 'bg-accent/10' : ''}`}
                 >
-                  <input
-                    type="checkbox"
-                    aria-label={item.name}
-                    checked={selected.has(item.name) && !added && !item.issue}
-                    disabled={disabled}
-                    onChange={() => toggle(item.name)}
-                    className="mt-1 shrink-0"
-                  />
-                  <span className="min-w-0 flex-1 space-y-0.5">
-                    <span className="block break-all text-ui">{item.name}</span>
-                    <span className="block break-all font-mono text-ui-sm text-fg-muted">
-                      {sshConnectionTarget(item)}
+                  <label
+                    className={`flex items-start gap-3 px-3 py-2.5 ${disabled ? 'text-fg-muted' : 'hover:bg-bg-hover'}`}
+                  >
+                    <input
+                      type="checkbox"
+                      aria-label={item.name}
+                      checked={selected.has(item.name) && !added && !item.issue}
+                      disabled={disabled}
+                      onChange={() => toggle(item.name)}
+                      className="mt-1 shrink-0"
+                    />
+                    <span className="min-w-0 flex-1 space-y-0.5">
+                      <span className="block break-all text-ui">{item.name}</span>
+                      <span className="block break-all font-mono text-ui-sm text-fg-muted">
+                        {sshConnectionTarget(item)}
+                      </span>
+                      {item.issue && (
+                        <span className="block text-ui-sm text-warn">{t(item.issue)}</span>
+                      )}
                     </span>
-                    {item.privateKeyPath && (
-                      <span className="block break-all font-mono text-ui-sm text-fg-dim">
-                        {item.privateKeyPath}
+                    {added && (
+                      <span className="shrink-0 rounded bg-dialog-active px-1.5 py-0.5 text-ui-sm">
+                        {t('已添加')}
                       </span>
                     )}
-                    {item.issue && (
-                      <span className="block text-ui-sm text-warn">{t(item.issue)}</span>
-                    )}
-                  </span>
-                  {added && (
-                    <span className="shrink-0 rounded bg-dialog-active px-1.5 py-0.5 text-ui-sm">
-                      {t('已添加')}
-                    </span>
+                  </label>
+                  {item.privateKeyPath && (
+                    <details className="px-3 pb-2.5 pl-9 text-ui-sm text-fg-muted">
+                      <summary className="cursor-pointer rounded hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2">
+                        {t('身份认证详情')}
+                      </summary>
+                      <dl className="mt-2 rounded border border-dialog-border bg-dialog-input p-2">
+                        <dt>{t('私钥路径')}</dt>
+                        <dd className="mt-1 break-all font-mono text-fg select-text">
+                          {item.privateKeyPath}
+                        </dd>
+                      </dl>
+                    </details>
                   )}
-                </label>
+                </div>
               )
             })
           )}

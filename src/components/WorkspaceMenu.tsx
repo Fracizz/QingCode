@@ -199,7 +199,7 @@ export default function WorkspaceMenu() {
             <div className="flex-1 overflow-auto">
               {workspaces.length === 0 ? (
                 <div className="px-2.5 py-2 text-ui-sm text-fg-muted">
-                  {t('暂无工作区，可先保存当前顶栏项目')}
+                  {t('暂无工作区，可将顶栏项目保存为工作区')}
                 </div>
               ) : (
                 workspaces.map(workspace => {
@@ -244,7 +244,7 @@ export default function WorkspaceMenu() {
                 <span className="flex h-4 w-4 flex-shrink-0 items-center justify-center text-fg-muted">
                   <Plus size={14} />
                 </span>
-                {t('保存当前顶栏项目')}
+                {t('将顶栏项目保存为工作区')}
               </button>
               <button
                 type="button"

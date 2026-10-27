@@ -43,7 +43,7 @@ export default function ProjectIdleEditor() {
     { icon: Zap, label: t('快速打开文件'), shortcut: shortcuts.quickOpen, onClick: () => openPalette('') },
     { icon: FilePlus, label: t('新建文件'), onClick: requestNewFile },
     { icon: Search, label: t('打开搜索'), shortcut: shortcuts.searchAllProjects, onClick: () => requestGlobalSearch() },
-    { icon: TerminalIcon, label: t('切换终端'), shortcut: shortcuts.toggleTerminal, onClick: requestToggleTerminal },
+    { icon: TerminalIcon, label: t('显示或隐藏终端'), shortcut: shortcuts.toggleTerminal, onClick: requestToggleTerminal },
   ]
 
   return (

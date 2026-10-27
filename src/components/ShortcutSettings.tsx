@@ -41,7 +41,7 @@ const COMMANDS: { id: ShortcutCommand; label: string; description: string }[] = 
   },
   {
     id: 'toggleTerminal',
-    label: '切换终端',
+    label: '显示或隐藏终端',
     description: '显示或隐藏终端面板。',
   },
   {

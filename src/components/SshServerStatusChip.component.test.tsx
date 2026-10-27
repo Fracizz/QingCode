@@ -89,7 +89,7 @@ describe('SshServerStatusChip', () => {
   it('shows a concise chip whose aria-label carries the version, and ignores another project event', async () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
     expect(await screen.findByRole('button', { name: serverChipName() })).toBeTruthy()
-    expect(screen.getByRole('button', { name: serverChipName() }).textContent).toBe('SSH + 服务')
+    expect(screen.getByRole('button', { name: serverChipName() }).textContent).toBe('SSH + 远端服务')
     listeners[0]?.({ payload: { ...ready, rootUri: 'ssh://other/path', version: '9.9.9' } })
     expect(screen.getByRole('button', { name: serverChipName() })).toBeTruthy()
     listeners[0]?.({ payload: { ...ready, version: '0.2.0' } })
@@ -215,17 +215,17 @@ describe('SshServerStatusChip', () => {
     })
     render(<SshServerStatusChip rootUri={rootUri} />)
     const chip = await screen.findByRole('button', {
-      name: 'SSH 兼容模式 已启用兼容模式，不部署远端服务 点击查看详情',
+      name: 'SSH 直连（兼容模式） 已启用兼容模式，不部署远端服务 点击查看详情',
     })
-    expect(chip.textContent).toBe('SSH 兼容模式')
+    expect(chip.textContent).toBe('SSH 直连（兼容模式）')
     fireEvent.contextMenu(chip)
     // SSH 模式没有远端服务：隐藏重启与日志，只提供切回 Server。
     expect(screen.queryByText('重启远端服务')).toBeNull()
     expect(screen.queryByText('查看远端服务日志')).toBeNull()
-    fireEvent.click(screen.getByText('切换到 Server 模式'))
+    fireEvent.click(screen.getByText('启用远端服务'))
     await waitFor(() => expect(switchSshConnectionMode).toHaveBeenCalledWith('c1', 'server'))
     expect(confirmDialog).toHaveBeenCalledTimes(1)
-    expect(pushToast).toHaveBeenCalledWith('success', '已切换到 Server 模式')
+    expect(pushToast).toHaveBeenCalledWith('success', '已启用远端服务，正在重新连接')
   })
 
   it('shows an error chip instead of faking direct mode when info fails', async () => {
@@ -235,7 +235,7 @@ describe('SshServerStatusChip', () => {
     })
     render(<SshServerStatusChip rootUri={rootUri} />)
     const chip = await screen.findByRole('button', { name: '远端服务状态未知' })
-    expect(chip.textContent).toBe('!')
+    expect(chip.textContent).toBe('服务状态未知')
     expect(screen.queryByText('SSH 直连')).toBeNull()
     // A later state event clears the error and restores the normal chip.
     listeners[0]?.({ payload: ready })
@@ -305,7 +305,7 @@ describe('SshServerStatusChip', () => {
         return ready
       })
       render(<SshServerStatusChip rootUri={rootUri} />)
-      expect(await screen.findByText('SSH 服务…')).toBeTruthy()
+      expect(await screen.findByText('正在检查远端服务')).toBeTruthy()
       await act(() => vi.advanceTimersByTimeAsync(1600))
       await act(() => vi.advanceTimersByTimeAsync(1600))
       expect(await screen.findByRole('button', { name: serverChipName() })).toBeTruthy()
@@ -441,7 +441,7 @@ describe('SshServerStatusChip', () => {
     invoke.mockResolvedValue(probing)
     render(<SshServerStatusChip rootUri={rootUri} />)
     fireEvent.click(await screen.findByRole('button', { name: /正在探测/ }))
-    expect(screen.getByText('正在检查远端服务')).toBeTruthy()
+    expect(screen.getByRole('status')).toHaveTextContent('正在检查远端服务')
     const retry = screen.getByRole('button', { name: '重试远端服务' }) as HTMLButtonElement
     expect(retry.disabled).toBe(true)
     fireEvent.click(retry)

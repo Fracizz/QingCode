@@ -76,9 +76,7 @@ export function SettingItem({
 }) {
   return (
     <div
-      className={`relative pl-3 ${modified ? 'border-l-2 border-accent' : 'border-l-2 border-transparent'} ${
-        locked ? 'opacity-70' : ''
-      }`}
+      className={`relative pl-3 ${modified ? 'border-l-2 border-accent' : 'border-l-2 border-transparent'}`}
     >
       <div className="settings-item-row flex flex-col gap-2">
         <div className="settings-item-copy min-w-0 flex-1">

@@ -41,7 +41,7 @@
 }
 
 .status-bar-shell { container: status-bar / inline-size; }
-.status-branch { min-width: 0; max-width: 32ch; flex-shrink: 0; overflow: hidden; }
+.status-branch { min-width: 0; max-width: 32ch; flex-shrink: 1; overflow: hidden; }
 .status-low-priority { display: inline-flex; align-items: center; }
 .status-shortcut-hint { display: none; }
 @container status-bar (min-width: 1250px) {

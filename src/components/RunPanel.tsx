@@ -347,13 +347,13 @@ function RunPanelContent() {
                     <div className="flex items-center gap-2">
                       <span className="text-ui font-medium truncate">{config.name}</span>
                       <span
-                        className={`text-ui-2xs px-1.5 py-0.5 rounded-full flex-shrink-0
+                        className={`text-ui-sm px-1.5 py-0.5 rounded-full flex-shrink-0
                           ${running ? 'bg-ok/15 text-ok' : 'bg-bg-deep text-fg-dim'}`}
                       >
                         {running ? t('运行中 · {count}', { count: runningTids.length }) : t('空闲')}
                       </span>
                       {environmentLabel && (
-                        <span className="text-ui-2xs text-fg-dim">{environmentLabel}</span>
+                        <span className="text-ui-sm text-fg-dim">{environmentLabel}</span>
                       )}
                     </div>
                     <Tooltip label={overview} side="bottom" wrapperClassName="block min-w-0 w-full">

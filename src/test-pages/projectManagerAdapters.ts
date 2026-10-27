@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Project } from '../types'
+import type { Project, SshConnection } from '../types'
 import { projectManagerFixtures } from './projectManagerFixtures'
 
 type Operation = { action: string; ids: string[] }
@@ -15,6 +15,12 @@ export const useProjectStore = create(() => ({
   currentProject: fixtures.projects.find(project => project.id === 'wsl-nem') ?? null,
   unavailableProjectIds: [] as string[],
   toasts: [],
+  async saveSshConnection(connection: SshConnection) {
+    record('saveSshConnection', [connection.id])
+    useProjectStore.setState(state => ({
+      sshConnections: [...state.sshConnections.filter(item => item.id !== connection.id), connection],
+    }))
+  },
   async switchProject(project: Project) {
     record('switchProject', [project.id])
     useProjectStore.setState({ currentProject: project })

@@ -158,7 +158,7 @@ describe('ProjectManager', () => {
   it('describes project removal without suggesting that files will be deleted', async () => {
     render(<ProjectManager />)
     expect(screen.queryByRole('button', { name: '永久删除' })).not.toBeInTheDocument()
-    expect(screen.getByText(/「移除」只清除项目记录，不会删除磁盘文件/)).toBeInTheDocument()
+    expect(screen.getByText(/移除项目不会删除磁盘文件/)).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: '移除项目' })[0])
     expect(removeProjectWithConfirm).toHaveBeenCalledWith(
       visibleProject.id,
@@ -221,7 +221,7 @@ describe('ProjectManager', () => {
     render(<ProjectManager />)
     const path = screen.getByText('root@localhost:/root/.claude')
     expect(path.className).toMatch(/font-mono/)
-    expect(path).toHaveClass('text-ui')
+    expect(path).toHaveClass('text-ui-sm')
     expect(screen.queryByText(/ssh:\/\/c451183d/)).not.toBeInTheDocument()
   })
 

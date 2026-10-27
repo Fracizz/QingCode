@@ -47,7 +47,7 @@ describe('sshServerStatus', () => {
     expect(sshServerChip(sshState)).toEqual({ kind: 'ssh' })
     expect(sshServerSwitchBlocker(sshState)).toBeNull()
     expect(sshServerTipLines(sshState)).toEqual([
-      { key: 'SSH 兼容模式' },
+      { key: 'SSH 直连（兼容模式）' },
       { key: '已启用兼容模式，不部署远端服务' },
     ])
   })
@@ -64,6 +64,23 @@ describe('sshServerStatus', () => {
     })
     expect(legacy?.connectionMode).toBe('server')
     expect(sshServerSwitchBlocker(legacy!)).toBeNull()
+  })
+
+  it('keeps authentication and disconnect failures visible for compatibility connections', () => {
+    const authenticating: SshServerState = {
+      ...readyServer, connectionMode: 'ssh', phase: 'authenticating', mode: 'direct',
+    }
+    expect(sshServerChip(authenticating)).toEqual({ kind: 'pending' })
+    expect(sshServerModeKey(authenticating)).toBe('SSH 正在认证')
+    expect(sshServerTipLines(authenticating)[0]).toEqual({ key: 'SSH 正在认证' })
+    const disconnected: SshServerState = {
+      ...authenticating, phase: 'disconnected', reason: '保活超时',
+    }
+    expect(sshServerChip(disconnected)).toEqual({ kind: 'offline' })
+    expect(sshServerTipLines(disconnected)).toContainEqual({ key: 'SSH 已断开' })
+    expect(sshServerTipLines(disconnected)).toContainEqual({
+      key: '原因：{reason}', params: { reason: '保活超时' },
+    })
   })
 
   it('accepts the backend server mode and maps the legacy agent alias', () => {
@@ -163,7 +180,7 @@ describe('sshServerStatus', () => {
       })
     ).toBe('SSH 直连')
     expect(sshServerModeKey({ ...readyServer, phase: 'probing', mode: 'unknown' })).toBe(
-      'SSH 已连接 · 正在准备远端服务'
+      '正在检查远端服务'
     )
   })
 

@@ -130,7 +130,7 @@ function BranchMenuRowView({
           {branch.upstream && (
             <BranchMenuLabel
               name={branch.upstream}
-              className="mt-0.5 block truncate font-mono text-ui-2xs leading-tight text-fg-dim"
+              className="mt-0.5 block truncate font-mono text-ui-sm leading-tight text-fg-dim"
             />
           )}
         </div>

@@ -448,7 +448,7 @@ export default function StatusBar() {
                 </StatusTip>
               ) : <span className="truncate">{t('未选择项目')}</span>}
               {currentProject && isWslProject(currentProject) ? (
-                <span className="flex-shrink-0 text-ui-2xs text-fg-muted">{t('WSL')}</span>
+                <span className="flex-shrink-0 text-ui-sm text-fg-muted">{t('WSL')}</span>
               ) : null}
               {currentProject && isSshProject(currentProject) ? (
                 <SshServerStatusChip rootUri={currentProject.path} />

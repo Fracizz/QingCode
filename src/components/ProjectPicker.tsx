@@ -675,7 +675,7 @@ export default function ProjectPicker() {
                     >
                       <span className="flex min-w-0 flex-col gap-0.5">
                         <ProjectName name={project.name} label={projectLabels.get(project.id)} />
-                        <span className="block truncate text-ui-2xs text-fg-dim">
+                        <span className="block truncate text-ui-sm text-fg-dim">
                           {sshProjectDisplayPath(project, null, sshConnections)}
                         </span>
                       </span>

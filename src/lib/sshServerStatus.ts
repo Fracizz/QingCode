@@ -101,9 +101,8 @@ export function sshServerChip(state: SshServerState | null): SshServerChip | nul
   if (!state) return null
   // 主动断开没有原因，芯片隐藏；意外断线带原因，显示「已断开」直到自动重连成功。
   if (state.phase === 'disconnected') return state.reason ? { kind: 'offline' } : null
-  if (state.connectionMode === 'ssh') return { kind: 'ssh' }
   if (state.phase === 'readyServer') return { kind: 'agent' }
-  if (state.phase === 'readyDirect') return { kind: 'direct' }
+  if (state.phase === 'readyDirect') return { kind: state.connectionMode === 'ssh' ? 'ssh' : 'direct' }
   return { kind: 'pending' }
 }
 
@@ -113,8 +112,8 @@ export function sshServerChip(state: SshServerState | null): SshServerChip | nul
  */
 export function sshServerModeKey(state: SshServerState): string {
   // 兼容连接不部署远端服务，明确标明这是用户主动启用的兼容模式。
-  if (state.connectionMode === 'ssh' && state.phase !== 'disconnected' && state.phase !== 'authenticating') {
-    return 'SSH 兼容模式'
+  if (state.connectionMode === 'ssh' && state.phase === 'readyDirect') {
+    return 'SSH 直连（兼容模式）'
   }
   if (state.phase === 'readyServer') return 'SSH + 远端服务'
   if (state.phase === 'readyDirect') return 'SSH 直连'
@@ -124,7 +123,7 @@ export function sshServerModeKey(state: SshServerState): string {
     case 'authenticating':
       return 'SSH 正在认证'
     case 'probing':
-      return 'SSH 已连接 · 正在准备远端服务'
+      return '正在检查远端服务'
     case 'installing':
       return '正在安装远端服务'
     case 'handshaking':
@@ -165,10 +164,10 @@ function shortReason(reason: string): string {
 
 /** 状态栏提示先说明连接模式，再给出运行方式或回退原因。 */
 export function sshServerTipLines(state: SshServerState): SshServerTipLine[] {
-  if (state.connectionMode === 'ssh') {
-    return [{ key: 'SSH 兼容模式' }, { key: '已启用兼容模式，不部署远端服务' }]
+  if (state.connectionMode === 'ssh' && state.phase === 'readyDirect') {
+    return [{ key: 'SSH 直连（兼容模式）' }, { key: '已启用兼容模式，不部署远端服务' }]
   }
-  if (state.phase === 'readyDirect' || state.mode === 'direct') {
+  if (state.phase === 'readyDirect') {
     const lines: SshServerTipLine[] = [{ key: 'SSH 直连' }]
     if (state.reason) {
       lines.push({ key: '回退原因：{reason}', params: { reason: shortReason(state.reason) } })

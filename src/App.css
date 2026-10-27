@@ -60,6 +60,7 @@ body {
     input,
     textarea,
     select,
+    summary,
     [contenteditable='true'],
     [role='menuitem'],
     [role='tab'],

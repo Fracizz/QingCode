@@ -403,7 +403,7 @@ export function buildCommands(): AppCommand[] {
     },
     {
       id: 'view.toggleTerminal',
-      title: '切换终端',
+      title: '显示或隐藏终端',
       keywords: 'terminal console',
       shortcutCommand: 'toggleTerminal',
       run: () => requestToggleTerminal(),

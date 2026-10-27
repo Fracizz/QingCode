@@ -149,7 +149,7 @@ export default function WorkspaceManager() {
             onClick={() => void handleSaveCurrent()}
             className="flex items-center gap-1.5 px-2.5 py-1 text-ui-sm rounded border border-border-strong text-fg hover:bg-bg-hover transition-colors disabled:opacity-50"
           >
-            <Plus size={13} /> {t('保存当前顶栏项目')}
+            <Plus size={13} /> {t('将顶栏项目保存为工作区')}
           </button>
           <span className="text-ui-sm text-fg-muted">
             {t('将当前顶栏可见项目及其标签/终端快照打包')}

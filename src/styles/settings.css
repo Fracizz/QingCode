@@ -3,7 +3,7 @@
 .setting-input {
   min-height: var(--ui-control-height);
   border-radius: var(--radius-sm, 4px);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-strong);
   background-color: var(--color-bg-input);
   color: var(--color-fg);
   outline: none;
@@ -11,6 +11,9 @@
 }
 .setting-input::placeholder {
   color: var(--color-fg-dim);
+}
+.setting-input:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--color-fg-muted) 55%, var(--color-border-strong));
 }
 .setting-input:focus,
 .setting-input:focus-visible {

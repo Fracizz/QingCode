@@ -675,7 +675,7 @@ export default function RemoteConnectionsManager() {
                 {effectiveFingerprint ?? t('尚未确认（保存前需先测试连接）')}
               </span>
               {fingerprintOverride ? (
-                <span className="flex-shrink-0 rounded bg-warn/15 px-1.5 py-0.5 text-ui-2xs text-warn">
+                <span className="flex-shrink-0 rounded bg-warn/15 px-1.5 py-0.5 text-ui-sm text-warn">
                   {t('已确认新指纹')}
                 </span>
               ) : null}
@@ -812,7 +812,7 @@ export default function RemoteConnectionsManager() {
                         />
                         <span className="min-w-0 truncate">{connection.name}</span>
                       </span>
-                      <span className="min-w-0 truncate pl-[13px] font-mono text-ui-2xs text-fg-dim">
+                      <span className="min-w-0 truncate pl-[13px] font-mono text-ui-sm text-fg-dim">
                         {sshConnectionTarget(connection)}
                       </span>
                     </button>
@@ -833,7 +833,7 @@ export default function RemoteConnectionsManager() {
                         </h3>
                         {!isNew && (
                           <span
-                            className={`flex-shrink-0 rounded px-1.5 py-0.5 text-ui-2xs ${
+                            className={`flex-shrink-0 rounded px-1.5 py-0.5 text-ui-sm ${
                               alive ? 'bg-ok/10 text-ok' : 'bg-dialog-active text-fg-dim'
                             }`}
                           >
@@ -890,13 +890,13 @@ export default function RemoteConnectionsManager() {
                                   <span className="min-w-0 flex-1 truncate text-ui text-fg">
                                     {project.name}
                                   </span>
-                                  <span className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-fg-dim">
+                                  <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-fg-dim">
                                     {sshProjectDisplayPath(project, selected, connections)}
                                   </span>
                                   <button
                                     type="button"
                                     onClick={() => void openProject(project)}
-                                    className="flex-shrink-0 rounded px-2 py-0.5 text-ui-2xs text-accent hover:bg-accent/10"
+                                    className="flex-shrink-0 rounded px-2 py-0.5 text-ui-sm text-accent hover:bg-accent/10"
                                   >
                                     {t('打开')}
                                   </button>
@@ -926,11 +926,11 @@ export default function RemoteConnectionsManager() {
                                   ) : (
                                     <ShieldOff size={13} className="flex-shrink-0 text-warn" />
                                   )}
-                                  <span className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-fg">
+                                  <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-fg">
                                     {remoteShort(root.rootUri)}
                                   </span>
                                   <span
-                                    className={`flex-shrink-0 rounded px-1.5 py-0.5 text-ui-2xs ${
+                                    className={`flex-shrink-0 rounded px-1.5 py-0.5 text-ui-sm ${
                                       root.trusted
                                         ? 'bg-accent/15 text-accent'
                                         : 'bg-warn/15 text-warn'
@@ -942,7 +942,7 @@ export default function RemoteConnectionsManager() {
                                     <button
                                       type="button"
                                       onClick={() => void revokeTrust(root.rootUri)}
-                                      className="flex-shrink-0 rounded px-2 py-0.5 text-ui-2xs text-fg-muted hover:bg-bg-hover hover:text-fg"
+                                      className="flex-shrink-0 rounded px-2 py-0.5 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg"
                                     >
                                       {t('撤销信任')}
                                     </button>
@@ -995,11 +995,11 @@ export default function RemoteConnectionsManager() {
                                   className="flex items-center gap-2 border-b border-dialog-separator px-3 py-2 last:border-b-0"
                                 >
                                   <FileText size={13} className="flex-shrink-0 text-fg-dim" />
-                                  <span className="min-w-0 flex-1 truncate font-mono text-ui-2xs text-fg">
+                                  <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-fg">
                                     {remoteShort(state.rootUri)}
                                   </span>
                                   <span
-                                    className={`flex-shrink-0 text-ui-2xs ${
+                                    className={`flex-shrink-0 text-ui-sm ${
                                       state.phase === 'readyServer'
                                         ? 'text-accent'
                                         : 'text-fg-muted'
@@ -1012,14 +1012,14 @@ export default function RemoteConnectionsManager() {
                                       label={t(transportTooltipKey(state.transport) ?? '未知')}
                                       side="top"
                                     >
-                                      <span className="flex-shrink-0 rounded bg-dialog-active px-1.5 py-0.5 text-ui-2xs text-fg-muted">
+                                      <span className="flex-shrink-0 rounded bg-dialog-active px-1.5 py-0.5 text-ui-sm text-fg-muted">
                                         {t(sshServerTransportKey(state.transport)!)}
                                       </span>
                                     </Tooltip>
                                   ) : null}
                                   {state.reason ? (
                                     <Tooltip label={state.reason} side="left">
-                                      <span className="flex-shrink-0 text-ui-2xs text-warn">
+                                      <span className="flex-shrink-0 text-ui-sm text-warn">
                                         {t('原因')}
                                       </span>
                                     </Tooltip>

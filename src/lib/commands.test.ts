@@ -22,7 +22,7 @@ describe('filterCommands', () => {
   const commands: AppCommand[] = [
     { id: 'a', title: '格式化文档', keywords: 'format prettier', run: () => {} },
     { id: 'b', title: '打开设置', keywords: 'settings', run: () => {} },
-    { id: 'c', title: '切换终端', keywords: 'terminal', when: () => false, run: () => {} },
+    { id: 'c', title: '显示或隐藏终端', keywords: 'terminal', when: () => false, run: () => {} },
   ]
 
   it('filters by title and keywords', () => {

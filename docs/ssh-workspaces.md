@@ -84,7 +84,7 @@ Windows SSH 项目在「远端服务 → 重试／重启」时先检查 OpenSSH 
   - 改模式 = 保存连接配置 + 断开重连（等同 VS Code 的 Reload Window）。从 Server 切到 SSH 时先对该连接已注册的根尽力调用 `ssh_server_stop`。已注册项目根的会话收到不同模式的 `ssh_connect` 会报「连接模式已变更」，必须先断开。
   - 新建连接固定使用 `server`，不受旧全局 `ssh.server.enabled=false` 影响。常规设置不再提供默认模式选择；该旧键仅用于给升级前没有模式字段的旧连接补值（首次连接时写回数据库），保存下载或离线目录设置时也会保留旧值的迁移语义。显式保存的 `mode` 始终优先，不静默改变已有连接。
   - Server 模式：交互式终端、运行任务（含 sh / 脚本 / 命令类一次性任务，由 daemon 以 `/bin/sh -l -c` 执行）、目录扫描、内容搜索（含子目录搜索，经 daemon）、文件监听只走 server。首次使用会等待发现/部署（最长 180 秒）与 daemon 探测（最长 45 秒）完成；server 或 daemon 不可用时直接报错，错误以「Server 模式：」开头，提示提供「重启远端服务」，操作固定针对报错项目，不改变连接模式。重启会先确认对托管终端及同远端用户其他项目的影响，取消不执行。状态详情和右键菜单提供重启与日志，状态查询失败可点击重查；详情与连接管理页的「服务安装设置」可直达自动下载和离线目录设置。
-  - 兼容模式（内部仍保存为 `ssh`）：不部署也不调用 server，终端、运行任务、扫描、搜索全部直连；不支持文件树自动刷新与终端断线恢复。`ssh_server_restart` / `ssh_server_logs` 直接拒绝，列出与清理 detached 终端返回空，接回 daemon 终端报错后由前端新建普通终端；状态芯片显示 `SSH 兼容模式`，`SshServerState.connectionMode` 为 `ssh`，可显式切回 Server。
+  - 兼容模式（内部仍保存为 `ssh`）：不部署也不调用 server，终端、运行任务、扫描、搜索全部直连；不支持文件树自动刷新与终端断线恢复。`ssh_server_restart` / `ssh_server_logs` 直接拒绝，列出与清理 detached 终端返回空，接回 daemon 终端报错后由前端新建普通终端；状态芯片显示 `SSH 直连（兼容模式）`，`SshServerState.connectionMode` 为 `ssh`，可通过「启用远端服务」显式切回服务模式。
   - 两种模式下文件读写、stat、Git、上传下载都走主连接（SFTP / 远程命令），server 没有对应接口。收敛产品入口不删除这些底层能力；兼容模式退役需以目标平台的真实客户端与桌面验收为前提。
   - 未受信任项目不部署 server，浏览仍走 SFTP；终端与运行任务需要信任。
   - 原 `ssh.server.persistentTerminals` 已删除：Server 模式下终端必然由 daemon 托管。

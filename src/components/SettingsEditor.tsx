@@ -633,7 +633,7 @@ export default function SettingsEditor() {
           '快捷键',
           '功能',
           '打开搜索',
-          '切换终端',
+          '显示或隐藏终端',
           '切换小地图',
           '复制路径',
           '文件引用',

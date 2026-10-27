@@ -1,6 +1,7 @@
 import { hasBackend } from '../lib/runtimeCapabilities'
 import { useEffect, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { AlertCircle } from 'lucide-react'
 import { safeInvoke } from '../lib/tauri'
 import { useI18n } from '../lib/i18n'
 import { useProjectStore } from '../store/projectStore'
@@ -11,6 +12,7 @@ import {
   sshServerChip,
   sshServerEventMatches,
   sshServerIsDirect,
+  sshServerModeKey,
   sshServerSwitchBlocker,
   sshServerTipLines,
   type SshServerChip,
@@ -130,11 +132,12 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
       <StatusTip label={`${t('远端服务状态未知')}\n${infoError}\n${t('点击重试')}`}>
         <button
           type="button"
-          className={`inline-flex flex-shrink-0 items-center text-ui-2xs ${STATUS_ACTION}`}
+          className={`inline-flex flex-shrink-0 items-center gap-1.5 text-ui-sm ${STATUS_ACTION}`}
           aria-label={t('远端服务状态未知')}
           onClick={() => setRefreshKey(key => key + 1)}
         >
-          !
+          <AlertCircle size={13} className="text-warn" aria-hidden />
+          {t('服务状态未知')}
         </button>
       </StatusTip>
     )
@@ -182,19 +185,19 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
     setBusy(true)
     try {
       const accepted = await confirmDialog({
-        title: t('切换到 Server 模式'),
+        title: t('启用远端服务'),
         message: t('将断开并重新连接 {name}，并部署远端服务。当前直连终端将被关闭。', { name }),
         kind: 'warning',
-        confirmLabel: t('切换并重连'),
+        confirmLabel: t('启用并重连'),
         cancelLabel: t('取消'),
       })
       if (!accepted) return
       await switchSshConnectionMode(connectionId, 'server')
-      pushToast('success', t('已切换到 Server 模式'))
+      pushToast('success', t('已启用远端服务，正在重新连接'))
     } catch (error) {
       pushToast(
         'error',
-        t('切换 Server 模式失败: {error}', { error: String(error) }),
+        t('启用远端服务失败: {error}', { error: String(error) }),
       )
     } finally {
       setBusy(false)
@@ -233,7 +236,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
       <StatusTip label={tip}>
         <button
           type="button"
-          className={`inline-flex flex-shrink-0 items-center gap-1.5 text-ui-2xs ${STATUS_ACTION}`}
+          className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap text-ui-sm ${STATUS_ACTION}`}
           aria-label={tipLines.join(' ')}
           onClick={() => setDialog('details')}
           onContextMenu={event => {
@@ -242,7 +245,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
           }}
         >
           <ChipDot kind={chip.kind} />
-          <ChipText chip={chip} />
+          {t(sshServerModeKey(state))}
         </button>
       </StatusTip>
       {menu && (
@@ -256,7 +259,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
             ...(sshMode
               ? [
                   {
-                    label: t('切换到 Server 模式'),
+                    label: t('启用远端服务'),
                     disabled: busy,
                     action: () => void enableServerMode(),
                   },
@@ -300,22 +303,13 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
 function ChipDot({ kind }: { kind: SshServerChip['kind'] }) {
   const tone =
     kind === 'agent'
-      ? 'bg-accent'
+      ? 'bg-ok'
       : kind === 'pending'
         ? 'bg-warn animate-pulse'
         : kind === 'offline'
           ? 'bg-danger'
           : 'bg-fg-muted'
   return <span aria-hidden className={`${CHIP_DOT} ${tone}`} />
-}
-
-function ChipText({ chip }: { chip: SshServerChip }) {
-  const { t } = useI18n()
-  if (chip.kind === 'agent') return <>{t('SSH + 服务')}</>
-  if (chip.kind === 'ssh') return <>{t('SSH 兼容模式')}</>
-  if (chip.kind === 'direct') return <>{t('SSH 直连')}</>
-  if (chip.kind === 'offline') return <>{t('SSH 已断开')}</>
-  return <>{t('SSH 服务…')}</>
 }
 
 function translateTipLine(

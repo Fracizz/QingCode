@@ -530,7 +530,7 @@ export default function ProjectManager() {
                         checked
                           ? 'bg-accent/10'
                           : isCurrent
-                            ? 'bg-bg-active/40'
+                            ? 'bg-bg-active'
                             : 'hover:bg-bg-hover/60'
                       }`}
                     >
@@ -553,7 +553,7 @@ export default function ProjectManager() {
                             <ProjectKindIcon
                               project={project}
                               size={13}
-                              className="text-accent flex-shrink-0"
+                              className={`${isCurrent ? 'text-brand' : 'text-fg-muted'} flex-shrink-0`}
                             />
                           )}
                           <Tooltip
@@ -583,7 +583,7 @@ export default function ProjectManager() {
                                 label={projectLabels.get(project.id)}
                               />
                               {isCurrent && (
-                                <Check size={11} className="ml-1 shrink-0 text-accent" />
+                                <Check size={13} className="ml-1 shrink-0 text-brand" />
                               )}
                             </button>
                           </Tooltip>
@@ -597,7 +597,7 @@ export default function ProjectManager() {
                           onlyWhenOverflow
                           wrapperClassName="block min-w-0 truncate"
                         >
-                          <span className="block truncate font-mono text-ui text-fg-muted">
+                          <span className="block truncate font-mono text-ui-sm text-fg-muted">
                             {location}
                           </span>
                         </Tooltip>
@@ -731,8 +731,8 @@ export default function ProjectManager() {
 
         {/* Footer */}
         <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-t border-border-strong flex-shrink-0">
-          <span className="text-ui-sm text-fg-muted">
-            {t('顶栏 ✕ 仅隐藏显示；此处「移除」只清除项目记录，不会删除磁盘文件')}
+          <span className="min-w-0 text-ui-sm leading-relaxed text-fg-muted">
+            {t('从顶栏隐藏后，项目仍保留在列表中。移除项目不会删除磁盘文件。')}
           </span>
           <button
             type="button"

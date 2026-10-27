@@ -192,7 +192,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
             aria-controls="project-add-list"
             className="modal-search-input"
           />
-          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-ui-2xs leading-none text-fg-dim sm:inline">
+          <kbd className="hidden rounded border border-border bg-bg px-1.5 py-0.5 font-mono text-ui-sm leading-none text-fg-dim sm:inline">
             Esc
           </kbd>
         </div>
@@ -247,11 +247,11 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
                     </span>
                     <span className="min-w-0 flex-1 text-ui">
                       <ProjectName name={project.name} label={projectLabels.get(project.id)} />
-                      <span className="block truncate text-ui-2xs text-fg-dim">{location}</span>
+                      <span className="block truncate text-ui-sm text-fg-dim">{location}</span>
                     </span>
                     <ProjectKindBadge project={project} />
                     {project.hidden ? (
-                      <span className="flex-shrink-0 text-ui-2xs text-fg-dim">
+                      <span className="flex-shrink-0 text-ui-sm text-fg-dim">
                         {t('已隐藏')}
                       </span>
                     ) : null}

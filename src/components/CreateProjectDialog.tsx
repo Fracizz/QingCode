@@ -738,7 +738,7 @@ function MenuItem({
       <span className="flex-shrink-0 text-fg-muted">{icon}</span>
       <span className="min-w-0 flex-1 truncate">
         {label}
-        {detail ? <span className="ml-1.5 font-mono text-ui-2xs text-fg-dim">{detail}</span> : null}
+        {detail ? <span className="ml-1.5 font-mono text-ui-sm text-fg-dim">{detail}</span> : null}
       </span>
       {checked ? <Check size={14} className="flex-shrink-0 text-fg" /> : null}
     </button>
