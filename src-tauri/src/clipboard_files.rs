@@ -30,12 +30,68 @@ fn arboard_paths() -> Result<Vec<String>, String> {
     let mut clipboard =
         arboard::Clipboard::new().map_err(|error| format!("无法打开系统剪贴板：{error}"))?;
     match clipboard.get().file_list() {
-        Ok(paths) => Ok(normalize_paths(paths)),
-        Err(arboard::Error::ContentNotAvailable) | Err(arboard::Error::ConversionFailure) => {
+        Ok(paths) if !paths.is_empty() => return Ok(normalize_paths(paths)),
+        Ok(_) | Err(arboard::Error::ContentNotAvailable | arboard::Error::ConversionFailure) => {}
+        Err(error) => return Err(format!("读取剪贴板文件失败：{error}")),
+    }
+    match clipboard.get_image() {
+        Ok(image) => store_clipboard_image(image).map(|path| vec![path]),
+        Err(arboard::Error::ContentNotAvailable | arboard::Error::ConversionFailure) => {
             Ok(Vec::new())
         }
-        Err(error) => Err(format!("读取剪贴板文件失败：{error}")),
+        Err(error) => Err(format!("读取剪贴板图片失败：{error}")),
     }
+}
+
+#[cfg(not(windows))]
+fn store_clipboard_image(image: arboard::ImageData<'_>) -> Result<String, String> {
+    let width = u32::try_from(image.width).map_err(|_| "图片尺寸过大".to_string())?;
+    let height = u32::try_from(image.height).map_err(|_| "图片尺寸过大".to_string())?;
+    if image.bytes.len() > MAX_ATTACHMENT_BYTES {
+        return Err("附件不能超过 100MB".to_string());
+    }
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|error| error.to_string())?;
+        writer
+            .write_image_data(&image.bytes)
+            .map_err(|error| error.to_string())?;
+    }
+    store_attachment("screenshot.png", &bytes)
+}
+
+const MAX_ATTACHMENT_BYTES: usize = 100 * 1024 * 1024;
+
+/// Only creates a file inside a new private temporary directory. The webview
+/// cannot supply a destination or overwrite an existing file through this API.
+pub(crate) fn store_attachment(name: &str, bytes: &[u8]) -> Result<String, String> {
+    crate::path_guard::validate_entry_name(name)?;
+    if name
+        .chars()
+        .any(|ch| ch.is_control() || "<>:\"|?*".contains(ch))
+    {
+        return Err("附件文件名无效".to_string());
+    }
+    if bytes.len() > MAX_ATTACHMENT_BYTES {
+        return Err("附件不能超过 100MB".to_string());
+    }
+    let dir = std::env::temp_dir().join(format!("qingcode-attachment-{}", uuid::Uuid::new_v4()));
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(&dir).map_err(|error| error.to_string())?;
+    let path = dir.join(name);
+    if let Err(error) = std::fs::write(&path, bytes) {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(error.to_string());
+    }
+    Ok(normalize_path(&path))
 }
 
 fn normalize_paths(paths: impl IntoIterator<Item = PathBuf>) -> Vec<String> {
@@ -506,5 +562,66 @@ mod tests {
             assert!(!SetClipboardData(format, memory).is_null());
             CloseClipboard();
         }
+    }
+}
+
+#[cfg(test)]
+mod attachment_tests {
+    use super::*;
+
+    #[cfg(not(windows))]
+    #[test]
+    fn clipboard_rgba_image_is_saved_as_readable_png() {
+        let pixels = [255, 0, 40, 128, 0, 255, 80, 255];
+        let path = store_clipboard_image(arboard::ImageData {
+            width: 2,
+            height: 1,
+            bytes: std::borrow::Cow::Borrowed(&pixels),
+        })
+        .unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+            .read_info()
+            .unwrap();
+        let mut output = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut output).unwrap();
+        assert_eq!((info.width, info.height), (2, 1));
+        assert_eq!(&output[..info.buffer_size()], &pixels);
+        std::fs::remove_dir_all(Path::new(&path).parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn attachment_rejects_paths_and_windows_prefixes() {
+        for name in [
+            "../escape",
+            "/tmp/escape",
+            "a\\b",
+            "C:escape",
+            "a:stream",
+            "bad\0name",
+        ] {
+            assert!(store_attachment(name, b"data").is_err(), "{name:?}");
+        }
+    }
+
+    #[test]
+    fn attachment_preserves_binary_data_in_private_temporary_directory() {
+        let path = store_attachment("截图 测试.png", b"\x89PNG\0\xff").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"\x89PNG\0\xff");
+        let parent = Path::new(&path).parent().unwrap();
+        assert!(parent
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("qingcode-attachment-"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(parent).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        std::fs::remove_dir_all(parent).unwrap();
     }
 }

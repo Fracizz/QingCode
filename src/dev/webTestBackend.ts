@@ -53,6 +53,8 @@ export function initialTestEntries(): TestEntries {
 export class WebTestBackend {
   readonly fs: WebTestFileSystem
   readonly terminals = new Map<string, Terminal>()
+  /** Binary attachments are isolated in memory; never written to the host disk. */
+  readonly attachments = new Map<string, Uint8Array>()
   readonly calls: string[] = []
   readonly failures = new Map<string, string[]>()
   readonly latency = new Map<string, number>()
@@ -166,6 +168,12 @@ export class WebTestBackend {
   private terminalInput(id: string, data: string) {
     const terminal = this.terminals.get(id)
     if (!terminal || !terminal.connected) throw new Error('终端连接不可用')
+    if (data.startsWith('\x1b[200~') && data.endsWith('\x1b[201~')) {
+      const pasted = data.slice(6, -6).replace(/\r/g, '\n')
+      terminal.input += pasted
+      this.output(id, pasted.replace(/\n/g, '\r\n'))
+      return
+    }
     for (const char of data) {
       if (char === '\r' || char === '\n') {
         const command = terminal.input.trim()
@@ -237,6 +245,18 @@ export class WebTestBackend {
       return this.dispatch(command.slice(4), args)
     }
     switch (command) {
+      case 'clipboard_read_files':
+        return []
+      case 'clipboard_store_file': {
+        const name = String(args.name)
+        if (!name || /[\\/<>:"|?*\x00-\x1f]/.test(name) || name === '.' || name === '..')
+          throw new Error('附件文件名无效')
+        const bytes = Uint8Array.from(args.bytes as number[])
+        if (bytes.length > 100 * 1024 * 1024) throw new Error('附件不能超过 100MB')
+        const path = `/tmp/attachments/${this.attachments.size + 1}/${name}`
+        this.attachments.set(path, bytes)
+        return path
+      }
       case 'db_url':
         return TEST_DB
       case 'default_settings_path':
@@ -322,10 +342,42 @@ export class WebTestBackend {
         return {
           path: '/home/demo/.ssh/config',
           candidates: [
-            { name: 'Web Test SSH', host: 'web-test.invalid', port: 22, username: 'tester', authKind: 'privateKey', privateKeyPath: null, issue: null },
-            { name: 'Development', host: 'dev.example.test', port: 2222, username: 'dev', authKind: 'privateKey', privateKeyPath: '/home/demo/.ssh/id_ed25519', issue: null },
-            { name: 'Staging', host: 'staging.example.test', port: 22, username: 'deploy', authKind: 'password', privateKeyPath: null, issue: null },
-            { name: 'Jump host', host: 'internal.example.test', port: 22, username: 'dev', authKind: 'privateKey', privateKeyPath: null, issue: '暂不支持代理、证书或自定义认证代理，请手动新建连接' },
+            {
+              name: 'Web Test SSH',
+              host: 'web-test.invalid',
+              port: 22,
+              username: 'tester',
+              authKind: 'privateKey',
+              privateKeyPath: null,
+              issue: null,
+            },
+            {
+              name: 'Development',
+              host: 'dev.example.test',
+              port: 2222,
+              username: 'dev',
+              authKind: 'privateKey',
+              privateKeyPath: '/home/demo/.ssh/id_ed25519',
+              issue: null,
+            },
+            {
+              name: 'Staging',
+              host: 'staging.example.test',
+              port: 22,
+              username: 'deploy',
+              authKind: 'password',
+              privateKeyPath: null,
+              issue: null,
+            },
+            {
+              name: 'Jump host',
+              host: 'internal.example.test',
+              port: 22,
+              username: 'dev',
+              authKind: 'privateKey',
+              privateKeyPath: null,
+              issue: '暂不支持代理、证书或自定义认证代理，请手动新建连接',
+            },
           ],
         }
       case 'ssh_open_session': {

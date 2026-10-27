@@ -41,6 +41,19 @@ describe('Web native boundary contract', () => {
     vi.useRealTimers()
   })
 
+  it('stores binary terminal attachments in memory and rejects destination paths', async () => {
+    const path = (await backend.invoke('clipboard_store_file', {
+      name: '截图.png',
+      bytes: [0, 255, 128, 10],
+    })) as string
+    expect(path).toMatch(/^\/tmp\/attachments\//)
+    expect(backend.attachments.get(path)).toEqual(Uint8Array.of(0, 255, 128, 10))
+    await expect(
+      backend.invoke('clipboard_store_file', { name: '../escape', bytes: [1] })
+    ).rejects.toThrow()
+    expect(backend.attachments.size).toBe(1)
+  })
+
   it('executes production SQL and native migrations, preserves transactions, and reloads committed data', async () => {
     db.execute(
       'INSERT INTO projects (id, name, path, created_at, last_opened_at) VALUES ($1,$2,$3,$4,$5)',

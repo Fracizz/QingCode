@@ -56,7 +56,7 @@ notify-debouncer-mini = "0.7.0"
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 # sha256 for verifying downloaded remote-server binaries (see remote_ssh/server.rs).
 sha2 = "0.10"
-# OS file clipboard (CF_HDROP / NSPasteboard file URLs). No image feature.
+# OS file clipboard; Windows screenshots use the native PNG/DIB reader.
 arboard = { version = "3.6", default-features = false }
 russh = { version = "0.63.1", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "2.4.0"
@@ -70,6 +70,10 @@ tokio = { version = "1", features = ["io-util", "sync", "time"] }
 [target.'cfg(windows)'.dependencies]
 # Fonts registry + Explorer “Open with” (Windows only).
 winreg = "0.55"
+
+[target.'cfg(not(windows))'.dependencies]
+arboard = { version = "3.6", default-features = false, features = ["image-data"] }
+png = "0.18"
 
 [patch.crates-io]
 # Windows event-loop callback double-free (HEAP_FAILURE_BLOCK_NOT_BUSY).

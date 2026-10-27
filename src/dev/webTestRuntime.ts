@@ -87,6 +87,9 @@ export async function installWebTestRuntime(): Promise<void> {
       backend.latency.set(command, milliseconds)
     },
     terminalIds: () => [...backend.terminals.keys()],
+    pendingTerminalInput: (id: string) => backend.terminals.get(id)?.input,
+    attachmentFiles: () =>
+      [...backend.attachments].map(([path, bytes]) => ({ path, size: bytes.length })),
     output: (id: string, text: string) => backend.output(id, text),
     exit: (id: string, code = 0) => backend.exit(id, code),
     disconnect: () => backend.disconnect(),
@@ -118,6 +121,8 @@ export type WebTestControls = {
   failNext(command: string, message?: string): void
   setLatency(command: string, milliseconds: number): void
   terminalIds(): string[]
+  pendingTerminalInput(id: string): string | undefined
+  attachmentFiles(): Array<{ path: string; size: number }>
   output(id: string, text: string): void
   exit(id: string, code?: number): void
   disconnect(): void

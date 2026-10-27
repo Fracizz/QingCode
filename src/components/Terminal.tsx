@@ -67,16 +67,21 @@ import { registerTerminalOscHandlers } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
 import { isSshResource, isTauri } from '../lib/tauri'
-import {
-  TERMINAL_DROP_ATTR,
-  collectLocalFilesForSshPaste,
-  confirmClearSshTerminalPasteUploads,
-  pasteLocalFilesIntoSshTerminal,
-} from '../lib/sshTerminalPaste'
+import { TERMINAL_DROP_ATTR, confirmClearSshTerminalPasteUploads } from '../lib/sshTerminalPaste'
 import { getTerminalSshUploadOnPaste } from '../lib/terminal/terminalSshUploadSettings'
+import { terminalContent } from '../lib/terminal/terminalContent'
+import { exportTerminalContent } from '../lib/terminal/terminalExport'
+import {
+  isSameTerminalSession,
+  prepareTerminalAttachments,
+  storeAttachmentFiles,
+  terminalClipboardPaths,
+} from '../lib/terminal/terminalAttachments'
+import { copyToClipboard } from '../utils/fileReferences'
 import { logicalDropPoint } from '../utils/sshExplorerDrop'
 import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import TerminalSearchBar from './TerminalSearchBar'
+import TerminalComposer from './TerminalComposer'
 import '@xterm/xterm/css/xterm.css'
 
 /** Highlight + count require decorations; colors must be #RRGGBB. */
@@ -95,9 +100,9 @@ function terminalSearchOptions(incremental = false): ISearchOptions {
 }
 
 function writeFinishedTaskHint(term: XTerm) {
-  term.writeln(`\x1b[90m${translate(
-    '按 Ctrl+C 在当前标签进入命令行，或点标签「重启」重新运行任务。',
-  )}\x1b[0m`)
+  term.writeln(
+    `\x1b[90m${translate('按 Ctrl+C 在当前标签进入命令行，或点标签「重启」重新运行任务。')}\x1b[0m`
+  )
 }
 
 // Backgrounds match App.css --color-bg-deep so the caret/outline stays visible.
@@ -195,7 +200,11 @@ interface TerminalViewProps {
   isActive?: boolean
 }
 
-export default function TerminalView({ terminalId, layoutKey, isActive = false }: TerminalViewProps) {
+export default function TerminalView({
+  terminalId,
+  layoutKey,
+  isActive = false,
+}: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -217,6 +226,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     items: ContextMenuItem[]
   } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  const [composerOpen, setComposerOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchMatchIndex, setSearchMatchIndex] = useState(-1)
   const [searchMatchTotal, setSearchMatchTotal] = useState(0)
@@ -231,40 +241,83 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     isActiveRef.current = isActive
   }, [isActive])
 
-  const isTerminalWritable = useCallback(
-    () => useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.status !== 'exited',
-    [terminalId],
+  const isTerminalWritable = useCallback(() => {
+    const tab = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+    return tab?.status === 'running' && !tab.ptySpawnPending
+  }, [terminalId])
+
+  const prepareAttachmentPaths = useCallback(
+    async (paths: string[]) => {
+      const target = useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+      if (!target || !isTerminalWritable()) throw new Error(translate('目标终端已不可用'))
+      const text = await prepareTerminalAttachments(target, paths)
+      if (paths.length && !text) throw new Error(translate('附件准备失败，请重试'))
+      if (
+        !isSameTerminalSession(
+          target,
+          useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)
+        )
+      ) {
+        throw new Error(translate('目标终端已不可用'))
+      }
+      return text
+    },
+    [isTerminalWritable, terminalId]
   )
 
   const copySelection = useCallback(async (selection = xtermRef.current?.getSelection()) => {
     if (!selection) return
     try {
-      await navigator.clipboard.writeText(selection)
+      await copyToClipboard(selection)
     } catch (error) {
-      console.error('Terminal copy failed:', error)
+      useProjectStore
+        .getState()
+        .pushToast('error', translate('复制失败：{error}', { error: String(error) }))
     }
   }, [])
 
-  const pasteFromClipboard = useCallback(async (event?: ClipboardEvent) => {
-    const term = xtermRef.current
-    if (!term || !isTerminalWritable()) return
-    const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
-    try {
-      if (tab && isSshResource(tab.cwd) && getTerminalSshUploadOnPaste()) {
-        const files = await collectLocalFilesForSshPaste(event)
-        if (files.length > 0) {
-          const remote = await pasteLocalFilesIntoSshTerminal(tab.cwd, files)
-          if (remote) term.paste(remote)
-          return
+  const pasteFromClipboard = useCallback(
+    async (event?: ClipboardEvent) => {
+      const term = xtermRef.current
+      if (!term || !isTerminalWritable()) return
+      const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+      const text = event?.clipboardData?.getData('text/plain')
+      try {
+        if (tab && (!isSshResource(tab.cwd) || getTerminalSshUploadOnPaste())) {
+          const files = await terminalClipboardPaths(event)
+          if (files.length > 0) {
+            const attachment = await prepareTerminalAttachments(tab, files)
+            if (
+              attachment &&
+              xtermRef.current === term &&
+              isSameTerminalSession(
+                tab,
+                useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+              )
+            )
+              term.paste(attachment)
+            return
+          }
         }
+        const pastedText = text || (await navigator.clipboard.readText())
+        if (
+          pastedText &&
+          tab &&
+          xtermRef.current === term &&
+          isSameTerminalSession(
+            tab,
+            useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+          )
+        )
+          term.paste(pastedText)
+      } catch (error) {
+        useProjectStore
+          .getState()
+          .pushToast('error', translate('粘贴失败：{error}', { error: String(error) }))
       }
-      const text =
-        event?.clipboardData?.getData('text/plain') || (await navigator.clipboard.readText())
-      if (text) term.paste(text)
-    } catch (error) {
-      console.error('Terminal paste failed:', error)
-    }
-  }, [isTerminalWritable, terminalId])
+    },
+    [isTerminalWritable, terminalId]
+  )
 
   const selectAll = useCallback(() => {
     xtermRef.current?.selectAll()
@@ -316,7 +369,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   }
 
   // Capture once: TUI output can invalidate the live selection while the menu is open.
-  const contextMenuItems = (selection: string): ContextMenuItem[] => [
+  const contextMenuItems = (selection: string, screen: string): ContextMenuItem[] => [
     {
       label: translate('复制'),
       shortcut: 'Ctrl+C',
@@ -326,12 +379,46 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       },
     },
     {
+      label: translate('复制当前屏幕'),
+      disabled: !screen,
+      action: () => {
+        void copySelection(screen)
+      },
+    },
+    {
+      label: translate('导出终端内容…'),
+      disabled: !xtermRef.current,
+      action: () => {
+        const term = xtermRef.current
+        if (!term) return
+        // Snapshot before the asynchronous save dialog; avoid scanning history on every right-click.
+        const buffer = terminalContent(term, 'buffer')
+        const name =
+          useTerminalStore.getState().terminals.find(tab => tab.id === terminalId)?.name ??
+          'terminal'
+        void exportTerminalContent(buffer, name)
+          .then(saved => {
+            if (saved) useProjectStore.getState().pushToast('success', translate('终端内容已导出'))
+          })
+          .catch(error =>
+            useProjectStore
+              .getState()
+              .pushToast('error', translate('导出失败：{error}', { error: String(error) }))
+          )
+      },
+    },
+    {
       label: translate('粘贴'),
       shortcut: 'Ctrl+V',
       disabled: !isTerminalWritable(),
       action: () => {
         void pasteFromClipboard()
       },
+    },
+    {
+      label: translate('编辑长文本'),
+      disabled: !isTerminalWritable(),
+      action: () => setComposerOpen(true),
     },
     {
       label: translate('全选'),
@@ -350,7 +437,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       action: clearBuffer,
     },
     ...(isSshResource(
-      useTerminalStore.getState().terminals.find(item => item.id === terminalId)?.cwd ?? '',
+      useTerminalStore.getState().terminals.find(item => item.id === terminalId)?.cwd ?? ''
     )
       ? [
           {
@@ -407,16 +494,19 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     void resizeTerminal(terminalId, pending.cols, pending.rows)
   }, [clearPtyResizeTimer, resizeTerminal, terminalId])
 
-  const schedulePtyResize = useCallback((next: TerminalGridSize) => {
-    const term = xtermRef.current
-    pendingPtySizeRef.current = next
-    clearPtyResizeTimer()
-    const delay = getTerminalPtyResizeDelay(term?.buffer.active.type ?? 'normal')
-    ptyResizeTimerRef.current = window.setTimeout(() => {
-      ptyResizeTimerRef.current = null
-      flushPendingPtyResize()
-    }, delay)
-  }, [clearPtyResizeTimer, flushPendingPtyResize])
+  const schedulePtyResize = useCallback(
+    (next: TerminalGridSize) => {
+      const term = xtermRef.current
+      pendingPtySizeRef.current = next
+      clearPtyResizeTimer()
+      const delay = getTerminalPtyResizeDelay(term?.buffer.active.type ?? 'normal')
+      ptyResizeTimerRef.current = window.setTimeout(() => {
+        ptyResizeTimerRef.current = null
+        flushPendingPtyResize()
+      }, delay)
+    },
+    [clearPtyResizeTimer, flushPendingPtyResize]
+  )
 
   const flushPendingRedraw = useCallback(() => {
     const term = xtermRef.current
@@ -432,48 +522,54 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     void redrawTerminal(terminalId, term.cols, term.rows)
   }, [clearPtyResizeTimer, redrawTerminal, terminalId])
 
-  const fitNow = useCallback((refresh = false, focusAfter = false) => {
-    const container = containerRef.current
-    if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
-    const term = xtermRef.current
-    if (!term) return
-    const w = container.clientWidth
-    const h = container.clientHeight
-    if (!refresh && w === lastFitSizeRef.current.w && h === lastFitSizeRef.current.h) return
-    lastFitSizeRef.current = { w, h }
-    try {
-      const next = readProposedGridSize()
-      if (next) commitGridSize(next)
-      const pending = useTerminalStore
-        .getState()
-        .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
-      if (pending) {
-        void spawnPendingTerminal(terminalId, term.cols, term.rows)
-      }
-      flushPendingRedraw()
-      if (refresh) {
-        term.refresh(0, term.rows - 1)
-        term.scrollToBottom()
-      }
-      if (focusAfter && isActiveRef.current) term.focus()
-    } catch {}
-  }, [commitGridSize, flushPendingRedraw, readProposedGridSize, spawnPendingTerminal, terminalId])
+  const fitNow = useCallback(
+    (refresh = false, focusAfter = false) => {
+      const container = containerRef.current
+      if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+      const term = xtermRef.current
+      if (!term) return
+      const w = container.clientWidth
+      const h = container.clientHeight
+      if (!refresh && w === lastFitSizeRef.current.w && h === lastFitSizeRef.current.h) return
+      lastFitSizeRef.current = { w, h }
+      try {
+        const next = readProposedGridSize()
+        if (next) commitGridSize(next)
+        const pending = useTerminalStore
+          .getState()
+          .terminals.find(tab => tab.id === terminalId)?.ptySpawnPending
+        if (pending) {
+          void spawnPendingTerminal(terminalId, term.cols, term.rows)
+        }
+        flushPendingRedraw()
+        if (refresh) {
+          term.refresh(0, term.rows - 1)
+          term.scrollToBottom()
+        }
+        if (focusAfter && isActiveRef.current) term.focus()
+      } catch {}
+    },
+    [commitGridSize, flushPendingRedraw, readProposedGridSize, spawnPendingTerminal, terminalId]
+  )
 
-  const scheduleFit = useCallback((refresh = false, focusAfter = false) => {
-    pendingFitFlagsRef.current = {
-      refresh: pendingFitFlagsRef.current.refresh || refresh,
-      focusAfter: pendingFitFlagsRef.current.focusAfter || focusAfter,
-    }
-    // 非拖动场景每帧最多计算一次字符网格；拖动结束由 settle 统一提交。
-    if (fitRafRef.current !== 0 || isPanelResizing()) return
-    fitRafRef.current = window.requestAnimationFrame(() => {
-      fitRafRef.current = 0
-      if (isPanelResizing()) return
-      const flags = pendingFitFlagsRef.current
-      pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
-      fitNow(flags.refresh, flags.focusAfter)
-    })
-  }, [fitNow])
+  const scheduleFit = useCallback(
+    (refresh = false, focusAfter = false) => {
+      pendingFitFlagsRef.current = {
+        refresh: pendingFitFlagsRef.current.refresh || refresh,
+        focusAfter: pendingFitFlagsRef.current.focusAfter || focusAfter,
+      }
+      // 非拖动场景每帧最多计算一次字符网格；拖动结束由 settle 统一提交。
+      if (fitRafRef.current !== 0 || isPanelResizing()) return
+      fitRafRef.current = window.requestAnimationFrame(() => {
+        fitRafRef.current = 0
+        if (isPanelResizing()) return
+        const flags = pendingFitFlagsRef.current
+        pendingFitFlagsRef.current = { refresh: false, focusAfter: false }
+        fitNow(flags.refresh, flags.focusAfter)
+      })
+    },
+    [fitNow]
+  )
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -596,14 +692,10 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
           return false
         }
       }
-      if (mod && key === 'v') {
-        event.preventDefault()
-        void pasteFromClipboard()
-        return false
-      }
-      if (event.shiftKey && event.key === 'Insert') {
-        event.preventDefault()
-        void pasteFromClipboard()
+      // Let the OS deliver a paste event, including screenshot/File payloads.
+      // Handling Ctrl+V here would discard that payload and paste twice on some hosts.
+      if ((mod && !event.altKey && key === 'v') || (event.shiftKey && event.key === 'Insert')) {
+        // Skip xterm's Ctrl+V -> SYN translation while preserving the browser's paste action.
         return false
       }
       return true
@@ -611,15 +703,6 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
 
     const onPaste = (event: ClipboardEvent) => {
       if (!isTerminalWritable()) return
-      const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
-      if (tab && isSshResource(tab.cwd) && getTerminalSshUploadOnPaste()) {
-        event.preventDefault()
-        event.stopPropagation()
-        void pasteFromClipboard(event)
-        return
-      }
-      const text = event.clipboardData?.getData('text/plain') ?? ''
-      if (text) return
       event.preventDefault()
       event.stopPropagation()
       void pasteFromClipboard(event)
@@ -648,7 +731,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     const disposeSelectionMenuGuard = protectTerminalSelectionMenu(
       container,
       () => term.hasSelection(),
-      () => !deferToNativeContextMenuInDev(),
+      () => !deferToNativeContextMenuInDev()
     )
     container.addEventListener('mousedown', onMouseDown)
     window.addEventListener('pointerdown', onWindowPointerDown, true)
@@ -683,7 +766,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
     // Release builds show the window after splash; delayed refits catch final size
     // and Cascadia/Consolas loading so OpenCode gets correct cols before painting.
     const fitTimers = [50, 150, 400].map(ms =>
-      window.setTimeout(() => scheduleFit(true, false), ms),
+      window.setTimeout(() => scheduleFit(true, false), ms)
     )
     void document.fonts?.ready?.then(() => {
       term.options.fontFamily = getResolvedTerminalFont()
@@ -696,10 +779,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
       // 变化，每条 SIGWINCH 都让 TUI 整屏重排一次（Claude Code 还会把每次重排
       // 追加进 scrollback，见 anthropics/claude-code#46834）。因此只在「安静期」
       // 后的第一次变化立即提交，300ms 内的其余变化合并成一次。
-      if (
-        isPanelResizing() ||
-        !shouldSendPtyResizeNow(ptyResizeSentAtRef.current, Date.now())
-      ) {
+      if (isPanelResizing() || !shouldSendPtyResizeNow(ptyResizeSentAtRef.current, Date.now())) {
         schedulePtyResize({ cols, rows })
         return
       }
@@ -765,9 +845,7 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         if (!latest || latest.status !== 'exited') return
         if (sessionOpen === null) {
           if (latest.awaitingRestoreSpawn) {
-            term.writeln(
-              `\x1b[90m[${translate('会话输出已恢复；进程将按原配置重新启动')}]\x1b[0m`,
-            )
+            term.writeln(`\x1b[90m[${translate('会话输出已恢复；进程将按原配置重新启动')}]\x1b[0m`)
           }
           return
         }
@@ -996,12 +1074,14 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
           return
         }
         if (exited.exitCode === null) {
-          term.writeln(`\r\n\x1b[90m[${translate('进程未启动')}${translate('，可从终端标签重启')}]\x1b[0m`)
+          term.writeln(
+            `\r\n\x1b[90m[${translate('进程未启动')}${translate('，可从终端标签重启')}]\x1b[0m`
+          )
         } else if (!shouldKeepShellAfterExit(exited)) {
           term.writeln(
             `\r\n\x1b[90m── ${translate('运行配置任务已结束（退出码 {code}）', {
               code: String(exited.exitCode),
-            })} ──\x1b[0m`,
+            })} ──\x1b[0m`
           )
           writeFinishedTaskHint(term)
         } else {
@@ -1014,23 +1094,38 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
   }, [terminal, terminalId])
 
   useEffect(() => {
-    if (!isTauri() || !isSshResource(terminal?.cwd ?? '')) return
+    if (!isTauri()) return
     let unlisten: (() => void) | undefined
     let cancelled = false
     void getCurrentWebview()
       .onDragDropEvent(event => {
         if (event.payload.type !== 'drop' || !isTerminalWritable()) return
-        if (!getTerminalSshUploadOnPaste()) return
+        if (document.querySelector('[data-terminal-composer]')) return
         const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
-        if (!tab || !isSshResource(tab.cwd)) return
+        if (!tab || (isSshResource(tab.cwd) && !getTerminalSshUploadOnPaste())) return
         const point = logicalDropPoint(event.payload.position, window.devicePixelRatio)
         const host = document.elementFromPoint(point.x, point.y)?.closest(`[${TERMINAL_DROP_ATTR}]`)
         if (host?.getAttribute(TERMINAL_DROP_ATTR) !== terminalId) return
         const paths = event.payload.paths.filter(Boolean)
         if (paths.length === 0) return
-        void pasteLocalFilesIntoSshTerminal(tab.cwd, paths).then(remote => {
-          if (remote) xtermRef.current?.paste(remote)
-        })
+        const term = xtermRef.current
+        void prepareTerminalAttachments(tab, paths)
+          .then(text => {
+            if (
+              text &&
+              xtermRef.current === term &&
+              isSameTerminalSession(
+                tab,
+                useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+              )
+            )
+              term?.paste(text)
+          })
+          .catch(error =>
+            useProjectStore
+              .getState()
+              .pushToast('error', translate('粘贴失败：{error}', { error: String(error) }))
+          )
       })
       .then(stop => {
         if (cancelled) stop()
@@ -1055,7 +1150,10 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
         setContextMenu({
           x: event.clientX,
           y: event.clientY,
-          items: contextMenuItems(xtermRef.current?.getSelection() ?? ''),
+          items: contextMenuItems(
+            xtermRef.current?.getSelection() ?? '',
+            xtermRef.current ? terminalContent(xtermRef.current, 'screen') : ''
+          ),
         })
       }}
     >
@@ -1080,6 +1178,36 @@ export default function TerminalView({ terminalId, layoutKey, isActive = false }
           y={contextMenu.y}
           items={contextMenu.items}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+      {composerOpen && terminal && (
+        <TerminalComposer
+          terminalId={terminalId}
+          terminalName={terminal.name}
+          onClose={() => {
+            setComposerOpen(false)
+            if (isActiveRef.current) xtermRef.current?.focus()
+          }}
+          onFill={text => {
+            const term = xtermRef.current
+            if (
+              !term ||
+              !isTerminalWritable() ||
+              (/\r|\n/.test(text) && !term.modes.bracketedPasteMode)
+            )
+              return false
+            term.paste(text)
+            return true
+          }}
+          prepareClipboard={async event => {
+            const paths = await terminalClipboardPaths(event)
+            return prepareAttachmentPaths(paths)
+          }}
+          prepareFiles={async files => {
+            const paths = await storeAttachmentFiles(files)
+            return prepareAttachmentPaths(paths)
+          }}
+          prepareFilePaths={prepareAttachmentPaths}
         />
       )}
     </div>

@@ -137,13 +137,14 @@ export async function readClipboardFileList(): Promise<string[]> {
 export async function collectLocalFilesForSshPaste(
   event?: ClipboardEvent | null,
 ): Promise<string[]> {
+  const eventText = event?.clipboardData?.getData('text/plain')
   const fromClipboard = await readClipboardFileList()
   if (fromClipboard.length > 0) {
     await authorizePaths(fromClipboard)
     return fromClipboard
   }
   const text =
-    event?.clipboardData?.getData('text/plain') ||
+    eventText ||
     (await navigator.clipboard.readText().catch(() => ''))
   const parsed = text ? parseLocalFilePasteText(text) : null
   if (!parsed) return []

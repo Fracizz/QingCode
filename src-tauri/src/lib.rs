@@ -803,6 +803,7 @@ pub fn run() {
             commands::delete_path,
             commands::clipboard_write_files,
             commands::clipboard_read_files,
+            commands::clipboard_store_file,
             commands::clipboard_write_text,
             commands::directory_delete_stats,
             commands::directory_entry_counts,

@@ -14,6 +14,7 @@ import {
 } from '../lib/ipc/terminal'
 import { useProjectStore } from './projectStore'
 import { useUIStore } from './uiStore'
+import { useTerminalDraftStore } from './terminalDraftStore'
 import type { TerminalTab } from '../types'
 import {
   DEFAULT_TERMINAL_PROFILE,
@@ -666,6 +667,7 @@ function publishTerminalOutput(id: string, data: unknown) {
 }
 
 function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
+  useTerminalDraftStore.getState().clearDraft(id)
   terminalScrollbackRings.delete(id)
   terminalPendingOutput.delete(id)
   cancelScheduledOutputFlush(id)

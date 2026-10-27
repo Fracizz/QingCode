@@ -601,6 +601,16 @@ pub fn clipboard_read_files() -> Result<Vec<String>, String> {
     crate::clipboard_files::read_clipboard_paths()
 }
 
+/// Materialize a user-selected browser File/screenshot in private temporary storage.
+#[tauri::command]
+pub async fn clipboard_store_file(name: String, bytes: Vec<u8>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::clipboard_files::store_attachment(&name, &bytes)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// Write plain text to the OS clipboard (paths, references, etc.).
 /// Prefer this over `navigator.clipboard` in WebView — keyboard shortcuts often
 /// lack a transient user-activation grant and never reach the system clipboard.

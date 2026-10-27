@@ -2,6 +2,7 @@
   "locale": "en",
   "label": "English",
   "messages": {
+    "附件准备失败，请重试": "Attachment preparation failed. Please try again.",
     "远程项目等待后台准备": "Remote project queued for background preparation",
     "远程项目正在后台准备，点击可继续打开": "Preparing remote project in the background; click to open",
     "远程项目已准备，可直接打开": "Remote project prepared; click to open",
@@ -1480,6 +1481,28 @@
     "显示或隐藏终端": "Show or hide terminal",
     "身份认证详情": "Authentication details",
     "私钥路径": "Private key path",
-    "连接中断，请检查网络或主机后重新连接。": "Connection interrupted. Check the network or host, then reconnect."
+    "连接中断，请检查网络或主机后重新连接。": "Connection interrupted. Check the network or host, then reconnect.",
+    "附件不能超过 100MB": "Attachments must not exceed 100 MB",
+    "保存终端附件": "Save terminal attachment",
+    "编辑长文本": "Compose text",
+    "填入终端：{name}": "Target terminal: {name}",
+    "长文本内容": "Text to insert",
+    "输入多段需求，也可粘贴图片或文件…": "Write your prompt, or paste images and files…",
+    "支持粘贴图片、文件和拖入附件。填入后请在终端中检查并提交。": "Paste images or files, or drop attachments. Review and submit in the terminal after inserting.",
+    "正在准备附件…": "Preparing attachments…",
+    "添加附件": "Add attachments",
+    "选择终端附件": "Choose terminal attachments",
+    "当前终端无法安全填入多行文本，请使用复制后手动粘贴。": "This terminal cannot safely accept multiline text. Copy the draft and paste it manually.",
+    "填入终端": "Insert into terminal",
+    "复制当前屏幕": "Copy current screen",
+    "导出终端内容…": "Export terminal contents…",
+    "导出终端内容（含已保留的历史输出）": "Export terminal contents (including retained history)",
+    "导出终端内容": "Export terminal contents",
+    "终端内容已导出": "Terminal contents exported",
+    "复制失败：{error}": "Copy failed: {error}",
+    "粘贴失败：{error}": "Paste failed: {error}",
+    "导出失败：{error}": "Export failed: {error}",
+    "目标终端已不可用": "The target terminal is no longer available",
+    "文本文件": "Text files"
   }
 }
