@@ -32,7 +32,7 @@
 qingcode-server 的 daemon **已经实现了持久化 PTY 宿主**：
 
 - `src-tauri/qingcode-server/src/pty.rs`：`PtyHost` 用 portable-pty 创建 PTY（Windows 走 ConPTY），每个终端带 `vt100::Parser` 屏幕快照和按 seq 编号的环形缓冲；进程退出后结果再保留 30 分钟。
-- `src-tauri/qingcode-server/src/daemon.rs`：能力里有 `pty.persist`、`pty.attach`；方法 `pty.create{cwd?, shell?, cols, rows}`、`pty.input`、`pty.resize`、`pty.attach{id, fromSeq}`、`pty.detach`、`pty.kill`、`pty.list`、`pty.hasChildren`；事件 `PtyData{id, seq, data}`、`PtyExit{id, code}`；没有客户端的终端保留 `DETACHED_TTL = 24h`。
+- `src-tauri/qingcode-server/src/daemon.rs`：能力里有 `pty.persist`、`pty.attach`；方法 `pty.create{cwd?, shell?, cols, rows}`、`pty.input`、`pty.resize`、`pty.attach{id, fromSeq}`、`pty.detach`、`pty.kill`、`pty.list`、`pty.hasChildren`；事件 `PtyData{id, seq, data}`、`PtyExit{id, code}`；没有客户端的终端保留 `DETACHED_TTL = 3h`。
 - Windows 下 daemon 用 `CREATE_BREAKAWAY_FROM_JOB` 脱离 sshd 的 Job（`winproc.rs`），所以 SSH 会话结束时 daemon 和它托管的 ConPTY 不会被 sshd 一起结束（需要实测确认，见 §6）。
 - 客户端已经能连 daemon：`src-tauri/src/remote_ssh/server/daemon.rs` 里有 `DaemonChannel`、`open_daemon_channel`、`daemon_rpc`（单请求、单 `DAEMON_REQUEST_ID`），目前只用于 `fs.scan`、`search.content`、`watch`。
 - **缺口**：客户端从来没有调用过 `pty.*`（`ssh-agent-design.md` §0 "尚未实现：前端终端接入 daemon PTY"）。`client_id` 目前取连接 id（`daemon.rs:255`）。
@@ -269,7 +269,7 @@ struct PersistentTerminal {
 4. **写入、尺寸、结束**：
    - `ssh_write_terminal`：持久化终端写进 input；重连期间进 `pending_input`。
    - `ssh_resize_terminal`：更新 `size`，在线时发 `pty.resize`。
-   - `ssh_kill_terminal`：置 `closed`，在线时发 `pty.kill`；离线时最多等 5 秒重连去 kill，超时就放弃（daemon 24 小时后自动回收），并记日志。
+   - `ssh_kill_terminal`：置 `closed`，在线时发 `pty.kill`；离线时最多等 5 秒重连去 kill，超时就放弃（daemon 3 小时后自动回收），并记日志。
    - 关闭标签和"结束终端"语义一致，都调用 `pty.kill`。**不存在**"关闭标签但保留进程"的入口（P3 才有接回）。
 5. **项目移除、断开连接、取消信任**：遍历该连接或根下的持久化终端，置 `closed` 并尽力 `pty.kill`。取消信任时必须 kill，不能保留在后台继续运行。
 6. **`clientId`**：在 `lib.rs` 初始化时读取或生成安装 UUID（应用数据目录下的 `qingcode-client-id`），`daemon_hello` 用 `"<uuid>:<connection_id>"`。
@@ -344,7 +344,7 @@ struct PersistentTerminal {
 
   按 `AGENTS.md`，逐键写注释，不得删除注释；同步设置解析、类型和后端读取（参照 `ssh.server.enabled` 的链路）。
 - `docs/ssh-workspaces.md`：
-  - 终端一节：写明持久化终端的行为、回退条件、重连节奏、24 小时回收、"重连期间输入会被缓冲"；
+  - 终端一节：写明持久化终端的行为、回退条件、重连节奏、3 小时回收、"重连期间输入会被缓冲"；
   - 限制：一次性任务不持久化；daemon 重启（远端重启机器）后进程会结束；Windows 远端依赖 Job 脱离；
   - 保活参数按 WP-A 更新。
 - `docs/ssh-agent-design.md` §0：把"前端终端接入 daemon PTY"从"尚未实现"移到"已实现"（合并时再改），并注明应用重启后接回属于 P3。
@@ -386,7 +386,7 @@ struct PersistentTerminal {
 | G8 | 重连期间输入 | 断网时在终端里敲几个字符，再恢复网络 | 恢复后字符按序送达 |
 | G9 | 调整尺寸 | 断网期间调整窗口大小，然后恢复 | 接回后 TUI 按新尺寸重绘 |
 | G10 | 关闭终端 | 关闭标签；另开一个 SSH 会话查看远端进程 | 远端对应的 shell 和子进程被结束 |
-| G11 | 断网时关闭 | 断网后关闭标签，5 秒内恢复网络 | 恢复后进程被 kill；超时则在 24 小时内回收（记录 `pty.list`） |
+| G11 | 断网时关闭 | 断网后关闭标签，5 秒内恢复网络 | 恢复后进程被 kill；超时则在 3 小时内回收（记录 `pty.list`） |
 | G12 | daemon 重启 | 在 Server 菜单里重启 Server，或远端结束 daemon 进程 | 终端提示"远端 daemon 已重启，终端进程已结束"，并自动开出新的 shell |
 | G13 | 回退 | 关闭 `ssh.server.persistentTerminals`，重开终端后断网 | 行为与现在一致：重开 shell，提示里带原因；标签 tooltip 写明"断线会结束远端进程" |
 | G14 | 信任 | 撤销工作区信任 | 持久化终端被结束；不能新建终端 |
@@ -439,7 +439,7 @@ struct PersistentTerminal {
 | Linux `KillUserProcesses=yes` | 用户最后一个会话结束时 daemon 被结束 | G18 实测并记录；探测加降级提示，按设计 §6.4 后续实施 |
 | ConPTY 下某些 TUI 渲染异常 | opencode 或 codex 画面错乱 | G5、G6 对比直连终端；快照恢复后有问题时，让 TUI 主动重绘（resize 抖动一次：cols−1 再 +1） |
 | 快照恢复丢失历史滚动内容 | 用户看不到断线期间较早的输出 | 环形缓冲默认 2MB，长断线高输出时才会触发；提示文案说明原因 |
-| 持久化后进程被遗忘、占用资源 | 远端残留大量进程 | 24 小时 TTL 回收；P3 汇总孤儿终端；关闭标签即 kill |
+| 持久化后进程被遗忘、占用资源 | 远端残留大量进程 | 3 小时 TTL 回收；P3 汇总孤儿终端；关闭标签即 kill |
 | 终端独占连接 × N 撞上 `MaxStartups` | 断线后多个终端同时重连失败 | 握手信号量（6）沿用；重连循环加 0–1 秒随机抖动，错开同时重连 |
 | 应用层心跳 30 秒判定过于敏感 | 远端很忙时误判断开 | 误判的代价只是一次接回，进程不受影响；如果 G7 期间重连频繁，再调到 45 秒 |
 | 252.107 没有凭据 | WP-G 无法执行 | 用户提供凭据或手动连接；测试代理不得自行加入 sshctl 清单 |

@@ -199,9 +199,9 @@ A → HELLO { protocol, server_version, build, os, arch, home, shells[], tools{g
 
 ### 6.3 生命周期与回收
 
-- daemon 在以下两种情况退出：
-  - 没有任何客户端连着，也没有存活的 PTY，持续 10 分钟；
-  - 有 PTY 但一直没有客户端，超过当前的 24 小时 detached TTL。此时先向所有 PTY 发 SIGHUP，再退出。`remote.server.detachedTerminalTtl` 可配置项尚未落地。
+- 每个终端连续 detached 默认保留 3 小时，每 60 秒检查一次，到期后先发 SIGHUP，仍未退出则强制结束；已接回的终端停止计时，其他正常连接的终端不受影响。
+- 没有任何客户端连着，也没有存活的 PTY，持续 10 分钟后 daemon 退出。
+- daemon 启动参数 `--detached-ttl-secs` 可覆盖保留时长，例如 `86400` 表示 24 小时；已运行的 daemon 需重新启动才生效。`remote.server.detachedTerminalTtl` 应用设置项尚未落地。
 - 单实例：`run/daemon.lock` 用 `flock` 加锁（Windows 上用命名 mutex）。两个代理同时执行 `--ensure-daemon` 时只会启动一个 daemon。
 - 限额：
   - 每个 daemon 最多 64 个 PTY，超出返回明确错误；
@@ -304,7 +304,7 @@ Server 以 SSH 登录用户的身份运行，能做的事不会超过这个用�
 |---|---|---|
 | `remote.server.mode` | `"auto"` | `auto` 先尝试 Server，失败则用直连；`always` 只用 Server，失败就报错；`never` 只用直连。连接级别的设置可以覆盖全局设置 |
 | `remote.server.installDir` | `""` | 为空时按 §4.2 的顺序自动选择 |
-| `remote.server.detachedTerminalTtl` | `"24h"` | 没有客户端连着时，终端最多保留多久 |
+| `remote.server.detachedTerminalTtl` | `"3h"` | 规划中的应用设置，尚未落地；当前由 daemon 的 `--detached-ttl-secs` 参数覆盖每个终端连续断线的保留时长 |
 | `remote.server.terminalScrollbackBytes` | `2097152` | 每个终端的环形缓冲大小 |
 | `remote.server.watch` | `true` | 关闭后回到「聚焦时同步」 |
 

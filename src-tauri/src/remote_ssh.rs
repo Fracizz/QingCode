@@ -5965,7 +5965,7 @@ pub async fn ssh_forget_workspace_root(
 
 /// 尽力结束该根下本安装留在 daemon 里的 detached 终端。离线、daemon 未就绪或
 /// 关闭 server 时无法触达远端，只记日志：这些终端在根未受信任时不会被列出或
-/// 接回（接回要求可信根），由 daemon 的 detached TTL（24 小时）回收。
+/// 接回（接回要求可信根），由 daemon 的 detached TTL（默认 3 小时）回收。
 async fn kill_detached_terminals_best_effort(
     app: &AppHandle,
     manager: &SshManager,

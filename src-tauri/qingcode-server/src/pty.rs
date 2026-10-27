@@ -2098,6 +2098,36 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn reap_default_ttl_expires_detached_terminal_after_three_hours_only() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let host = PtyHost::new(2, 128 * 1024, tx);
+        let connected = host.create(sh_options(4096, "client-a")).unwrap();
+        let detached = host.create(sh_options(4096, "client-a")).unwrap();
+        host.detach(&detached.id, "client-a").unwrap();
+        let detached_at = lock(&host.term(&detached.id).unwrap().state)
+            .detached_at
+            .unwrap();
+        let ttl = crate::daemon::DaemonOptions::default().detached_ttl;
+        let deadline = detached_at + Duration::from_secs(3 * 60 * 60);
+
+        assert!(host
+            .reap_at(deadline - Duration::from_secs(1), ttl, EXITED_RETENTION)
+            .is_empty());
+        assert_eq!(
+            host.reap_at(deadline, ttl, EXITED_RETENTION),
+            vec![detached.id.clone()]
+        );
+        assert_eq!(host.list().len(), 1);
+        assert_eq!(host.list()[0].id, connected.id);
+        assert_eq!(host.list()[0].exited, None);
+        tokio::time::timeout(Duration::from_secs(5), wait_for_exit(&mut rx, &detached.id))
+            .await
+            .expect("到期的 detached 终端应结束进程");
+        host.shutdown().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn reap_force_kills_terminal_that_ignores_hangup() {
         let (tx, mut rx) = tokio::sync::mpsc::channel(256);
         let host = PtyHost::new(2, 1024 * 1024, tx);
