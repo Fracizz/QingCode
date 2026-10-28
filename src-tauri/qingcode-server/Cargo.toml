@@ -1,6 +1,6 @@
 [package]
 name = "qingcode-server"
-version = "0.1.14-beta.8"
+version = "0.1.14-beta.9"
 description = "QingCode SSH 工作区远端代理（部署在远程主机上，经 SSH direct-tcpip 通道接入）"
 authors = ["Franciz"]
 license = "MIT"

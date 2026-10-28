@@ -6,6 +6,12 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.14-beta.9] - 2026-10-28
+
+### Changed
+
+- Update application and remote server versions and rebuild; functionality is unchanged from beta.8.
+
 ## [0.1.14-beta.8] - 2026-10-27
 
 ### Added
