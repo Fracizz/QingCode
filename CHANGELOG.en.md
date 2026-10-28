@@ -6,7 +6,7 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
-## [0.1.14-beta.7] - 2026-10-27
+## [0.1.14-beta.8] - 2026-10-27
 
 ### Added
 

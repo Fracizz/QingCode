@@ -4,10 +4,10 @@
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-server.ps1
 # 可选参数：
 #   -Targets x86_64,aarch64   目标架构（默认两者都构建）
-#   -MuslLinker <path>        显式指定 musl 链接器（默认自动探测 cc / rust-lld）
+#   -MuslLinker <path>        显式指定 musl 链接器（Windows 默认 rust-lld）
 #
-# 链接器：cargo 的 musl 目标默认调用 `cc`，Windows 上没有 C 工具链时链接会失败
-# （error: linker `cc` not found）。本脚本在 PATH 中找不到 `cc` 时会自动改用 rustup
+# 链接器：Windows PATH 中的 cc 可能是 MinGW，无法链接 Linux musl。本脚本在 Windows
+# 上默认使用 rustup
 # 自带的 rust-lld（Rust 为 musl 目标提供自包含的 crt/libc.a，纯 Rust 依赖无需 C 交叉
 # 编译器），也可用 -MuslLinker 显式指定路径覆盖。
 #
@@ -26,7 +26,7 @@
 
 param(
     [string]$Targets = "x86_64,aarch64",
-    # 显式指定 musl 链接器（默认：PATH 有 cc 则交给 cargo，否则自动用 rust-lld）
+    # 显式指定 musl 链接器（Windows 默认使用 rust-lld）
     [string]$MuslLinker = "",
     # Windows 上默认再编一份本机 serve 用的 exe。macOS/Linux 的 pwsh 不要编 MSVC。
     [switch]$SkipWindows
@@ -76,16 +76,16 @@ try {
         rustup target add $target
         if ($LASTEXITCODE -ne 0) { throw "rustup target add $target 失败" }
 
-        # musl 链接器：显式参数 > 已有环境变量 > PATH 里的 cc > rust-lld。
+        # musl 链接器：显式参数 > 已有环境变量 > Windows 上 rust-lld > cc。
         $linkerVar = "CARGO_TARGET_" + $target.ToUpper().Replace("-", "_") + "_LINKER"
         $linker = $MuslLinker
         if (-not $linker) { $linker = [Environment]::GetEnvironmentVariable($linkerVar) }
-        if (-not $linker -and -not (Get-Command cc -ErrorAction SilentlyContinue)) {
+        if (-not $linker -and ($IsWindows -or $env:OS -eq 'Windows_NT' -or -not (Get-Command cc -ErrorAction SilentlyContinue))) {
             $linker = Resolve-RustLld
             if (-not $linker) {
                 throw "未找到 C 链接器 cc，也没有可用的 rust-lld；请安装 C 工具链或传入 -MuslLinker <path>"
             }
-            Write-Host "== PATH 中没有 cc，改用 rust-lld：$linker"
+            Write-Host "== 使用 rust-lld 链接 musl：$linker"
         }
         if ($linker) { [Environment]::SetEnvironmentVariable($linkerVar, $linker) }
 

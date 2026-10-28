@@ -79,12 +79,14 @@ pub(crate) fn store_attachment(name: &str, bytes: &[u8]) -> Result<String, Strin
         return Err("附件不能超过 100MB".to_string());
     }
     let dir = std::env::temp_dir().join(format!("qingcode-attachment-{}", uuid::Uuid::new_v4()));
-    let mut builder = std::fs::DirBuilder::new();
+    let builder = std::fs::DirBuilder::new();
     #[cfg(unix)]
-    {
+    let builder = {
         use std::os::unix::fs::DirBuilderExt;
+        let mut builder = builder;
         builder.mode(0o700);
-    }
+        builder
+    };
     builder.create(&dir).map_err(|error| error.to_string())?;
     let path = dir.join(name);
     if let Err(error) = std::fs::write(&path, bytes) {
