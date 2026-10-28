@@ -4,7 +4,7 @@ import { useI18n } from '../lib/i18n'
 import { sshServerPhaseKey } from '../lib/sshServerStatus'
 import { sshProjectDisplayPath } from '../lib/sshWorkspace'
 import { useProjectStore } from '../store/projectStore'
-import { cancelSshOpening, useSshOpeningStore } from '../store/sshOpeningStore'
+import { cancelSshOpening, setSshOpeningBackground, sshOpeningTimedStage, useSshOpeningStore, type SshOpeningTimedStage } from '../store/sshOpeningStore'
 import { useUIStore } from '../store/uiStore'
 import ModalOverlay from './ModalOverlay'
 import { confirmSshServerRestart, isWindowsSshRoot } from '../lib/sshWindowsRepair'
@@ -16,8 +16,15 @@ export default function SshOpeningDialog() {
   const [visibleController, setVisibleController] = useState<AbortController | null>(null)
   const [retryingController, setRetryingController] = useState<AbortController | null>(null)
   const retryRef = useRef<{ opening: AbortController; controller: AbortController } | null>(null)
+  const [now, setNow] = useState(Date.now)
   const controller = attempt?.controller
+  const finishedAt = attempt?.finishedAt
   const retryBusy = retryingController === controller
+  useEffect(() => {
+    if (!controller || finishedAt != null) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [controller, finishedAt])
   useEffect(() => () => retryRef.current?.controller.abort(), [])
   useEffect(() => {
     if (!controller) return
@@ -28,24 +35,41 @@ export default function SshOpeningDialog() {
   if (!attempt || (!attempt.error && visibleController !== controller)) return null
 
   const { project, stage, server, error } = attempt
-  if (attempt.reusingServer && !error) {
-    return (
-      <div className="fixed bottom-9 right-4 z-[110] flex max-w-[min(420px,90vw)] items-center gap-3 rounded-lg border border-border-strong bg-bg-elevated px-3 py-2 text-ui shadow-elevation-3">
-        <div role="status" className="flex min-w-0 items-center gap-2 text-fg">
-          <LoaderCircle size={14} className="shrink-0 animate-spin text-accent" aria-hidden />
-          <span className="truncate">{t('正在打开项目 {name}…', { name: project.name })}</span>
-        </div>
-        <button type="button" onClick={cancelSshOpening} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">
-          {t('取消打开')}
-        </button>
-      </div>
-    )
-  }
-  const steps = [t('连接 SSH'), t('准备远端服务和终端'), t('读取项目文件')]
-  const activeStep = stage === 'connecting' ? 0 : stage === 'service' ? 1 : 2
+  const elapsedMs = (start: number) => Math.max(0, (finishedAt ?? Math.max(now, attempt.startedAt)) - start)
+  const duration = t('已用时 {seconds} 秒', { seconds: Math.floor(elapsedMs(attempt.startedAt) / 1000) })
   const phase = server?.phase === 'readyServer' && server.transport === 'serve'
     ? t('正在准备远程终端…')
     : server ? t(sshServerPhaseKey(server.phase)) : t('正在检查远端服务')
+  if ((attempt.reusingServer || attempt.background) && !error) {
+    return (
+      <div className="fixed bottom-9 right-4 z-[110] flex w-[min(420px,90vw)] flex-col gap-2 rounded-lg border border-border-strong bg-bg-elevated px-3 py-2 text-ui shadow-elevation-3">
+        <div className="flex min-w-0 items-center gap-2 text-fg">
+          <LoaderCircle size={14} className="shrink-0 animate-spin text-accent" aria-hidden />
+          <div className="min-w-0">
+            <div role="status" className="truncate">{t('正在打开项目 {name}…', { name: project.name })}</div>
+            <div className="mt-1 flex flex-wrap gap-x-1 text-ui-sm text-fg-muted">
+              {stage === 'connecting' ? t('连接 SSH') : stage === 'files' ? t('读取项目文件') : phase}
+              <span aria-hidden> · </span><span role="timer" className="tabular-nums">{duration}</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end gap-1">
+          <button type="button" onClick={() => setSshOpeningBackground(false)} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">
+            {t('查看进度')}
+          </button>
+          <button type="button" onClick={cancelSshOpening} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">
+            {t('取消打开')}
+          </button>
+        </div>
+      </div>
+    )
+  }
+  const steps: Array<{ key: SshOpeningTimedStage; label: string }> = [
+    { key: 'connecting', label: t('连接 SSH') },
+    { key: 'service', label: t('准备远端服务和终端') },
+    { key: 'files', label: t('读取项目文件') },
+  ]
+  const activeStep = stage === 'connecting' ? 0 : stage === 'files' ? 2 : 1
 
   return (
     <ModalOverlay onDismiss={cancelSshOpening} zIndex="z-[130]">
@@ -71,18 +95,22 @@ export default function SshOpeningDialog() {
             </div>
           </div>
           <ol className="space-y-2 text-ui-sm">
-            {steps.map((label, index) => (
-              <li key={label} className={`flex items-center gap-2 ${index === activeStep ? 'text-fg' : 'text-fg-muted'}`}>
+            {steps.map(({ key, label }, index) => (
+              <li key={key} className={`flex flex-wrap items-center gap-2 ${index === activeStep ? 'text-fg' : 'text-fg-muted'}`}>
                 {index < activeStep ? <Check size={14} className="text-ok" aria-hidden />
                   : index === activeStep && !error ? <LoaderCircle size={14} className="animate-spin text-accent" aria-hidden />
                     : <span className="inline-flex h-3.5 w-3.5 items-center justify-center" aria-hidden>·</span>}
                 {label}
                 {index === 1 && activeStep === 1 && !error && (
-                  <span role="status" className="ml-auto text-fg-muted">{phase}</span>
+                  <span role="status" className="text-fg-muted">{phase}</span>
                 )}
+                {(index <= activeStep) && <span className="ml-auto tabular-nums text-fg-muted">
+                  {t('{seconds} 秒', { seconds: Math.floor(((attempt.stageDurations[key] ?? 0) + (sshOpeningTimedStage(stage) === key ? elapsedMs(attempt.stageStartedAt) : 0)) / 1000) })}
+                </span>}
               </li>
             ))}
           </ol>
+          <p role="timer" className="text-ui-sm tabular-nums text-fg-muted">{duration}</p>
           <p id="ssh-opening-description" className="text-ui-sm text-fg-muted">
             {error
               ? t('请检查连接或远端服务后重试。')
@@ -95,6 +123,9 @@ export default function SshOpeningDialog() {
           )}
         </div>
         <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+          {!error && <button type="button" onClick={() => setSshOpeningBackground(true)} className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover">
+            {t('后台运行')}
+          </button>}
           <button type="button" onClick={cancelSshOpening} className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover">
             {error ? t('关闭') : t('取消打开')}
           </button>

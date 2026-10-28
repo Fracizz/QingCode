@@ -269,8 +269,8 @@ export default function ProjectManager() {
   const handleActivate = async (project: Project) => {
     if (unavailableProjectIds.includes(project.id)) return
     if (project.hidden) await unhideProject(project.id)
-    await switchProject(project)
     closeProjectManager()
+    await switchProject(project)
   }
 
   const visibleCount = projects.filter(p => !p.hidden).length

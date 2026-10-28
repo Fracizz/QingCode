@@ -219,3 +219,162 @@ fn real_host_deploy_bench() {
     }
     tauri::async_runtime::block_on(run_bench()).expect("真机基准失败");
 }
+
+/// Read-only diagnosis through the application's real russh/SFTP transports.
+/// QC_BENCH_HOST/PORT/USER/ROOT, QC_BENCH_KEY, QC_BENCH_BINARY and
+/// QC_BENCH_REMOTE_BIN/TOKEN are required. Never deploys or restarts services.
+#[tokio::test]
+#[ignore = "requires an authorized SSH host and trusted local server binary"]
+async fn real_host_read_only_diagnosis() {
+    use qingcode_server::proto::{self, Frame, HelloRequest, HelloResponse, Kind};
+    use qingcode_server::{read_frame, write_frame, ServerOp, ServerRequest, ServerResponse};
+
+    let required = |name: &str| env(name).unwrap_or_else(|| panic!("missing {name}"));
+    let id = "read-only-diagnosis";
+    let mut config = SshConnectionConfig {
+        id: id.into(),
+        host: required("QC_BENCH_HOST"),
+        port: required("QC_BENCH_PORT").parse().unwrap(),
+        username: required("QC_BENCH_USER"),
+        auth_kind: "privateKey".into(),
+        password: None,
+        private_key_path: Some(required("QC_BENCH_KEY")),
+        passphrase: None,
+        host_key_fingerprint: None,
+        mode: Some(RemoteMode::Server),
+    };
+    config.host_key_fingerprint = Some(ssh_probe_host(config.clone()).await.unwrap().fingerprint);
+    let manager = SshManager::new();
+    store_authenticated_session(&manager, config).await.unwrap();
+    println!("DIAG SSH authenticated");
+    let sftp = manager.open_sftp(id).await.unwrap();
+    let path = required("QC_BENCH_ROOT");
+    let root = RegisteredRoot {
+        uri: format!("ssh://{id}{path}"),
+        canonical_path: sftp.canonicalize(&path).await.unwrap(),
+        trusted: true,
+    };
+    manager
+        .roots
+        .write()
+        .unwrap()
+        .insert(root.uri.clone(), root.clone());
+    let state = parse_server_state(
+        &sftp
+            .read(server_state_path(&root.canonical_path))
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    println!(
+        "DIAG SFTP ready; serve version={} port={}",
+        state.version, state.port
+    );
+    let channel = super::super::serve::open_server_channel(&manager, id, state.port)
+        .await
+        .unwrap();
+    let mut stream = channel.into_stream();
+    write_frame(
+        &mut stream,
+        &serde_json::to_vec(&ServerRequest {
+            token: state.token,
+            op: ServerOp::Ping,
+        })
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(10), read_frame(&mut stream))
+        .await
+        .unwrap()
+        .unwrap();
+    match serde_json::from_slice::<ServerResponse>(&response).unwrap() {
+        ServerResponse::Ok { version } => {
+            println!("DIAG SSH direct-tcpip ping ready; version={version}")
+        }
+        response => panic!("unexpected ping: {response:?}"),
+    }
+    let remote_bin = required("QC_BENCH_REMOTE_BIN");
+    let sha = sha256_of_file_cached(Path::new(&required("QC_BENCH_BINARY")))
+        .await
+        .unwrap();
+    assert!(
+        remote_binary_sha_matches(&manager, &root, &remote_bin, &sha)
+            .await
+            .unwrap()
+    );
+    let token = String::from_utf8(sftp.read(required("QC_BENCH_TOKEN")).await.unwrap()).unwrap();
+    let channel = manager
+        .open_session_channel(id, "read-only daemon diagnosis")
+        .await
+        .unwrap();
+    channel
+        .exec(
+            true,
+            super::super::scripts::windows_connect_daemon_command_existing(&remote_bin),
+        )
+        .await
+        .unwrap();
+    let mut stream = channel.into_stream();
+    proto::write_frame(
+        &mut stream,
+        &Frame::new(
+            Kind::Hello,
+            0,
+            proto::encode(&HelloRequest {
+                client_id: format!("read-only-diag-{}", uuid::Uuid::new_v4()),
+                protocol_min: proto::PROTOCOL_VERSION,
+                protocol_max: proto::PROTOCOL_VERSION,
+                token: token.trim().into(),
+                resume_token: None,
+            })
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    let frame = tokio::time::timeout(Duration::from_secs(20), proto::read_frame(&mut stream))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(frame.kind, Kind::Hello);
+    let hello: HelloResponse = proto::decode_value(&frame.payload).unwrap();
+    println!(
+        "DIAG daemon HELLO ready; version={} protocol={}",
+        hello.server_version, hello.protocol
+    );
+    let request = proto::Request::with_params(
+        1,
+        "fs.scan",
+        &serde_json::json!({"root": root.canonical_path, "path": "."}),
+    )
+    .unwrap();
+    proto::write_frame(
+        &mut stream,
+        &Frame::new(Kind::Req, 1, proto::encode(&request).unwrap()),
+    )
+    .await
+    .unwrap();
+    let frame = tokio::time::timeout(Duration::from_secs(15), proto::read_frame(&mut stream))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(frame.kind, Kind::Res);
+    println!("DIAG daemon fs.scan ready");
+    let access = DaemonAccess {
+        bin: remote_bin,
+        token: token.trim().into(),
+    };
+    match super::super::daemon::open_daemon_channel(&manager, id, &access).await {
+        Ok(mut channel) => {
+            channel.shutdown().await;
+            assert_eq!(hello.server_version, SERVER_VERSION);
+            println!("DIAG application strict HELLO ready");
+        }
+        Err(reason) => {
+            assert_ne!(hello.server_version, SERVER_VERSION);
+            assert!(reason.contains("daemon 版本不匹配"), "{reason}");
+            println!("DIAG application strict HELLO rejected: {reason}");
+        }
+    }
+}

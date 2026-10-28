@@ -842,9 +842,11 @@ async fn open_daemon_channel_with(
     ensure_daemon: bool,
     hello_deadline: Instant,
 ) -> Result<DaemonChannel, String> {
-    let channel = manager
-        .open_session_channel(connection_id, "server 守护进程 ")
-        .await?;
+    let channel = before_daemon_deadline(
+        hello_deadline,
+        manager.open_session_channel(connection_id, "server 守护进程 "),
+    )
+    .await?;
     let client_id = manager.daemon_client_id(connection_id);
     open_daemon_channel_on_opened_channel(
         channel,
@@ -869,7 +871,12 @@ async fn open_daemon_channel_on_transport(
     ensure_daemon: bool,
     hello_deadline: Instant,
 ) -> Result<DaemonChannel, String> {
-    let channel = open_session_channel_once(transport, "server 守护进程 ").await?;
+    let channel = before_daemon_deadline(hello_deadline, async {
+        open_session_channel_once(transport, "server 守护进程 ")
+            .await
+            .map_err(String::from)
+    })
+    .await?;
     open_daemon_channel_on_opened_channel(
         channel,
         client_id,
@@ -900,9 +907,16 @@ async fn open_daemon_channel_on_opened_channel(
     hello_deadline: Instant,
 ) -> Result<DaemonChannel, String> {
     let command = daemon_connect_command(daemon, ensure_daemon);
-    if let Err(error) = channel.exec(true, command).await {
+    if let Err(error) = before_daemon_deadline(hello_deadline, async {
+        channel
+            .exec(true, command)
+            .await
+            .map_err(|error| format!("启动 daemon 连接代理失败：{error}"))
+    })
+    .await
+    {
         let _ = tokio::time::timeout(Duration::from_secs(1), channel.close()).await;
-        return Err(format!("启动 daemon 连接代理失败：{error}"));
+        return Err(error);
     }
     let mut channel = DaemonChannel {
         channel,
@@ -911,13 +925,30 @@ async fn open_daemon_channel_on_opened_channel(
         capabilities: Vec::new(),
     };
     // 握手失败也要关通道：直接丢弃 exec 通道不会发 CLOSE，会一直占着会话名额。
-    match daemon_hello(&mut channel, client_id, daemon, policy, hello_deadline).await {
+    match before_daemon_deadline(
+        hello_deadline,
+        daemon_hello(&mut channel, client_id, daemon, policy, hello_deadline),
+    )
+    .await
+    {
         Ok(()) => Ok(channel),
         Err(error) => {
             channel.shutdown().await;
             Err(error)
         }
     }
+}
+
+/// Channel acquisition, exec acknowledgement and HELLO writes/reads share one
+/// deadline. Bounding only the final read allowed a stuck SSH send or channel
+/// reconnect to keep preparation at "handshaking" beyond its entire budget.
+async fn before_daemon_deadline<T>(
+    deadline: Instant,
+    work: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    tokio::time::timeout_at(deadline.into(), work)
+        .await
+        .map_err(|_| "daemon 握手超时".to_string())?
 }
 
 /// 在已打开的 daemon 通道里完成 HELLO 握手与版本/能力校验。
@@ -1011,7 +1042,11 @@ pub(super) async fn ensure_remote_daemon(
             return Err(last_error);
         }
         // 旧实例退出、管道/socket 释放有短暂空窗，稍等再试。
-        tokio::time::sleep(Duration::from_millis(300).min(deadline - Instant::now())).await;
+        if let Some(delay) =
+            daemon_step_budget(deadline, Instant::now(), Duration::from_millis(300))
+        {
+            tokio::time::sleep(delay).await;
+        }
     }
 }
 
@@ -1093,9 +1128,11 @@ async fn ensure_daemon_token(
     } else {
         daemon_token_command(bin)
     };
-    let result = manager
-        .exec_command(&root.uri, &command, None, true, timeout)
-        .await?;
+    let result = before_daemon_deadline(
+        deadline.min(Instant::now() + timeout),
+        manager.exec_command(&root.uri, &command, None, true, timeout),
+    )
+    .await?;
     let token = result.stdout.trim();
     if result.exit_code != 0 || token.is_empty() {
         let detail = result.stderr.trim();
@@ -1559,6 +1596,21 @@ pub(super) fn daemon_downgrade_retry_ready(downgraded_at: Option<Instant>, now: 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn daemon_deadline_bounds_stalled_setup_and_preserves_errors() {
+        let deadline = Instant::now() + Duration::from_millis(20);
+        let stalled = before_daemon_deadline::<()>(deadline, std::future::pending());
+        let result = tokio::time::timeout(Duration::from_secs(1), stalled)
+            .await
+            .expect("stalled channel setup must respect the handshake deadline");
+        assert_eq!(result.unwrap_err(), "daemon 握手超时");
+        let reason = before_daemon_deadline(Instant::now() + Duration::from_secs(1), async {
+            Err::<(), _>("specific SSH failure".to_string())
+        })
+        .await;
+        assert_eq!(reason.unwrap_err(), "specific SSH failure");
+    }
 
     #[test]
     fn watch_heartbeats_extend_idle_deadline_but_not_rpc_deadline() {

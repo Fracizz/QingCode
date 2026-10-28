@@ -31,14 +31,25 @@ pub(super) async fn prepare_shared_daemon(
     app: Option<&AppHandle>,
 ) -> Result<super::host_runtime::PreparedDaemon, String> {
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
-    let (arch, local_binary) = locate_local_server_binary(manager, root)
-        .await
-        .map_err(|e| e.reason)?;
-    let sha256 = sha256_of_file_cached(&local_binary).await?;
-    let sftp = manager.open_sftp(&connection_id).await?;
-    let (home, install_dir) = resolve_install_location(manager, &sftp, root, &connection_id)
-        .await
-        .map_err(|e| e.reason)?;
+    // Architecture discovery/local download and private install-dir validation
+    // are independent. Overlap their SSH/shell round trips, particularly the
+    // expensive Windows shell startup, while retaining every boundary check.
+    let binary = async {
+        let (arch, local_binary) = locate_local_server_binary(manager, root)
+            .await
+            .map_err(|e| e.reason)?;
+        let sha256 = sha256_of_file_cached(&local_binary).await?;
+        Ok::<_, String>((arch, local_binary, sha256))
+    };
+    let location = async {
+        let sftp = manager.open_sftp(&connection_id).await?;
+        let (home, install_dir) = resolve_install_location(manager, &sftp, root, &connection_id)
+            .await
+            .map_err(|e| e.reason)?;
+        Ok::<_, String>((sftp, home, install_dir))
+    };
+    let ((arch, local_binary, sha256), (sftp, home, install_dir)) =
+        tokio::try_join!(binary, location)?;
     let windows = windows_native_path(&root.canonical_path).is_some();
     let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, &arch));
     let matches = remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await?;
@@ -92,8 +103,9 @@ const AGENT_READY_TIMEOUT: Duration = Duration::from_secs(15);
 /// server 启动就绪轮询间隔。
 const AGENT_READY_POLL: Duration = Duration::from_millis(300);
 /// 部署退避阈值：同一 (连接, 根) 连续这么多次完整部署都等不到就绪，
-/// 说明不是瞬时抖动（典型如 sshd 禁了 TCP 转发），缓存成不可用等人介入。
+/// 先冷却再自动重试，避免短暂断网或休眠恢复后永久停在不可用状态。
 pub(crate) const SERVER_DEPLOY_BACKOFF_THRESHOLD: u32 = 2;
+const SERVER_DEPLOY_RETRY_DELAY: Duration = Duration::from_secs(30);
 const SERVER_STATE_GITIGNORE: &[u8] = b"*\n";
 const SERVER_STATE_GITIGNORE_MAX_BYTES: u64 = 64 * 1024;
 
@@ -730,47 +742,82 @@ async fn wait_server_ready(
     connection_id: &str,
     sftp: &SftpSession,
     root: &RegisteredRoot,
-) -> Option<ServerEndpoint> {
+) -> Result<ServerEndpoint, String> {
     let state_path = server_state_path(&root.canonical_path);
-    let deadline = Instant::now() + AGENT_READY_TIMEOUT;
+    wait_server_ready_with(AGENT_READY_TIMEOUT, AGENT_READY_POLL, || async {
+        let bytes = sftp
+            .read(state_path.clone())
+            .await
+            .map_err(|error| format!("读取服务状态失败：{error}"))?;
+        let state = parse_server_state(&bytes)?;
+        if state.version != SERVER_VERSION {
+            return Err(format!(
+                "server 版本不匹配：远端 {}，本端 {SERVER_VERSION}",
+                state.version
+            ));
+        }
+        if !remote_roots_equivalent(
+            &state.root,
+            &root.canonical_path,
+            windows_native_path(&root.canonical_path).is_some(),
+        ) {
+            return Err("服务状态的项目根与当前项目不符".to_string());
+        }
+        let endpoint = ServerEndpoint {
+            serve: Some(ServeEndpoint {
+                port: state.port,
+                token: state.token,
+            }),
+            daemon: None,
+        };
+        ping_server(manager, connection_id, &endpoint).await?;
+        Ok(endpoint)
+    })
+    .await
+}
+
+async fn wait_server_ready_with<F, Fut>(
+    timeout: Duration,
+    poll: Duration,
+    mut probe: F,
+) -> Result<ServerEndpoint, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<ServerEndpoint, String>>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut last_failure = "未收到服务就绪响应".to_string();
     loop {
-        if Instant::now() >= deadline {
-            return None;
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!("server 启动超时：{last_failure}"));
         }
-        // 先查后睡：启动脚本返回时状态文件常常已经写好，不必白等一个轮询间隔。
-        if let Ok(bytes) = sftp.read(state_path.clone()).await {
-            // 版本或根不符（旧实例的残留状态）：等新进程覆盖，落到下面的 sleep。
-            let state = parse_server_state(&bytes).ok().filter(|state| {
-                state.version == SERVER_VERSION
-                    && remote_roots_equivalent(
-                        &state.root,
-                        &root.canonical_path,
-                        windows_native_path(&root.canonical_path).is_some(),
-                    )
-            });
-            if let Some(state) = state {
-                let endpoint = ServerEndpoint {
-                    serve: Some(ServeEndpoint {
-                        port: state.port,
-                        token: state.token,
-                    }),
-                    daemon: None,
-                };
-                if ping_server(manager, connection_id, &endpoint).await.is_ok() {
-                    return Some(endpoint);
-                }
-            }
+        // 整个 SFTP + 开通道 + ping 共用截止时间，半死连接也不能拖过就绪预算。
+        match tokio::time::timeout_at(deadline, probe()).await {
+            Ok(Ok(endpoint)) => return Ok(endpoint),
+            Ok(Err(reason)) => last_failure = reason,
+            Err(_) => return Err(format!("server 启动超时：{last_failure}（就绪探测超时）")),
         }
-        tokio::time::sleep(AGENT_READY_POLL).await;
+        tokio::time::sleep_until((tokio::time::Instant::now() + poll).min(deadline)).await;
     }
 }
 
-/// 部署退避决策：连续失败次数达到阈值后给出的不可用原因（None = 继续按瞬时
-/// 处理）。抽成纯函数便于单测。
-fn deploy_backoff_reason(failures: u32) -> Option<&'static str> {
-    (failures >= SERVER_DEPLOY_BACKOFF_THRESHOLD).then_some(
-        "连续多次部署后 server 仍未就绪：请检查远端 sshd 是否允许 TCP 转发（AllowTcpForwarding）、重启远端 server 进程，或断开重连后再试",
-    )
+fn record_deploy_failure(slot: &mut ServerSlot, error: ServerDeployError, now: Instant) {
+    slot.deploy_retry_at = None;
+    if error.after_deploy {
+        slot.deploy_failures = slot.deploy_failures.saturating_add(1);
+        if !error.permanent && slot.deploy_failures >= SERVER_DEPLOY_BACKOFF_THRESHOLD {
+            slot.deploy_retry_at = Some(now + SERVER_DEPLOY_RETRY_DELAY);
+        }
+    }
+    slot.last_failure = Some(if slot.deploy_retry_at.is_some() {
+        format!(
+            "{}；部署连续失败，冷却 30 秒后自动重试，可在状态栏重启远端服务立即重试",
+            error.reason
+        )
+    } else {
+        error.reason.clone()
+    });
+    slot.unavailable_reason = error.permanent.then_some(error.reason);
 }
 
 /// 发现或部署远端 serve；不可用时返回原因，调用方回退直连。
@@ -893,7 +940,7 @@ async fn discover_or_deploy_server(
     );
     let endpoint = wait_server_ready(manager, connection_id, &sftp, root)
         .await
-        .ok_or_else(|| ServerDeployError::deploy_stage("server 启动超时".to_string()))?;
+        .map_err(ServerDeployError::deploy_stage)?;
     timer.mark("等待就绪");
     Ok((endpoint, remote_bin))
 }
@@ -909,13 +956,15 @@ fn publish_server_if_watched(
 }
 
 /// 读缓存：`Some(Some(..))` 命中端点，`Some(None)` 本次连接内已确定不可用，
-/// `None` 表示还没有结论、需要走发现/部署。
+/// `None` 表示还没有结论或冷却已到期、需要走发现/部署。
 fn cached_server_slot(manager: &SshManager, key: &str) -> Option<Option<ServerEndpoint>> {
     let slot = manager.server_slot(key)?;
     if let Some(endpoint) = slot.endpoint {
         return Some(Some(endpoint));
     }
-    slot.unavailable_reason.is_some().then_some(None)
+    (slot.unavailable_reason.is_some()
+        || slot.deploy_retry_at.is_some_and(|at| Instant::now() < at))
+    .then_some(None)
 }
 
 /// 只取已就绪的 server 端点，不等发现/部署。
@@ -1133,6 +1182,8 @@ async fn ensure_server_endpoint_inner(
                 slot.activity = None;
                 slot.unavailable_reason = None;
                 slot.last_failure = None;
+                slot.deploy_failures = 0;
+                slot.deploy_retry_at = None;
                 slot.daemon_failure = None;
                 slot.daemon_downgraded_at = None;
                 slot.last_timings = Some(format!(
@@ -1208,6 +1259,7 @@ async fn ensure_server_endpoint_inner(
             slot.last_failure = None;
             // 部署成功：退避计数清零，下一次失败重新从 1 数起。
             slot.deploy_failures = 0;
+            slot.deploy_retry_at = None;
             slot.daemon_downgraded_at = None;
             slot.daemon_failure = None;
             slot.last_timings = Some(timer.summary());
@@ -1229,24 +1281,7 @@ async fn ensure_server_endpoint_inner(
             slot.endpoint = None;
             slot.activity = None;
             slot.last_timings = Some(timer.summary());
-            let mut permanent = error.permanent;
-            let mut reason = error.reason;
-            if error.after_deploy {
-                slot.deploy_failures = slot.deploy_failures.saturating_add(1);
-                // 部署退避：连续多次完整部署都等不到就绪（典型如 sshd 禁了
-                // TCP 转发，ping 永远打不通），再重试只是热循环，缓存成
-                // 不可用并提示人介入，直到重连或 clear_unavailable_servers。
-                if let Some(backoff) = deploy_backoff_reason(slot.deploy_failures) {
-                    permanent = true;
-                    reason = backoff.to_string();
-                }
-            }
-            // 瞬时失败也把原因留在 slot 上：阶段仍是探测、之后自动重试，
-            // 但状态栏芯片能显示「原因：…」，不再是无解释的空转。确定性
-            // 失败同样记录（展示上 unavailable_reason 优先）。
-            slot.last_failure = Some(reason.clone());
-            // 只有确定性失败才占住缓存，瞬时失败留空以便下次重试。
-            slot.unavailable_reason = permanent.then_some(reason);
+            record_deploy_failure(&mut slot, error, Instant::now());
             manager.set_server_slot(&key, slot);
             publish_server_if_watched(app, manager, root);
             Ok(None)
@@ -1388,6 +1423,9 @@ pub(crate) async fn require_serve_endpoint(
     let mut slot = manager.server_slot(&key).unwrap_or_default();
     slot.endpoint = Some(endpoint.clone());
     slot.activity = None;
+    slot.last_failure = None;
+    slot.deploy_failures = 0;
+    slot.deploy_retry_at = None;
     slot.last_timings = Some(timer.summary());
     manager.set_server_slot(&key, slot);
     publish_server_if_watched(Some(app), manager, root);
@@ -1561,14 +1599,99 @@ mod tests {
     }
 
     #[test]
-    fn deploy_backoff_kicks_in_after_consecutive_failures() {
-        // 前两次失败仍按瞬时处理，给网络抖动留重试空间。
-        assert!(deploy_backoff_reason(0).is_none());
-        assert!(deploy_backoff_reason(1).is_none());
-        // 连续 2 次完整部署未就绪 → 缓存不可用并提示 AllowTcpForwarding / 重启。
-        let reason = deploy_backoff_reason(SERVER_DEPLOY_BACKOFF_THRESHOLD).unwrap();
-        assert!(reason.contains("AllowTcpForwarding"));
-        assert!(deploy_backoff_reason(3).is_some());
+    fn deploy_failures_cool_down_and_resume_without_reconnecting() {
+        let manager = SshManager::new();
+        let key = server_slot_key("c1", "/srv/app");
+        let mut slot = ServerSlot::default();
+        let now = Instant::now();
+        let failure = || ServerDeployError::deploy_stage("server 响应超时");
+        record_deploy_failure(&mut slot, failure(), now);
+        assert!(slot.deploy_retry_at.is_none());
+        record_deploy_failure(&mut slot, failure(), now);
+        assert_eq!(slot.deploy_retry_at, Some(now + SERVER_DEPLOY_RETRY_DELAY));
+        assert!(slot.unavailable_reason.is_none());
+        assert!(slot
+            .last_failure
+            .as_ref()
+            .unwrap()
+            .contains("server 响应超时"));
+        manager.set_server_slot(&key, slot.clone());
+        assert!(matches!(cached_server_slot(&manager, &key), Some(None)));
+
+        // 网络恢复后无需清缓存或重新连接，冷却到期即允许重新发现。
+        slot.deploy_retry_at = Some(now - Duration::from_secs(1));
+        manager.set_server_slot(&key, slot);
+        assert!(cached_server_slot(&manager, &key).is_none());
+        manager.clear_unavailable_servers();
+        let reset = manager.server_slot(&key).unwrap();
+        assert_eq!(reset.deploy_failures, 0);
+        assert!(reset.deploy_retry_at.is_none());
+        assert!(reset.last_failure.is_none());
+    }
+
+    #[test]
+    fn permanent_deploy_failure_stays_blocked_after_cooldown_would_expire() {
+        let manager = SshManager::new();
+        let key = server_slot_key("c1", "/srv/app");
+        let mut slot = ServerSlot::default();
+        record_deploy_failure(
+            &mut slot,
+            ServerDeployError::permanent("SHA-256 不一致"),
+            Instant::now() - SERVER_DEPLOY_RETRY_DELAY,
+        );
+        assert!(slot.deploy_retry_at.is_none());
+        manager.set_server_slot(&key, slot);
+        assert!(matches!(cached_server_slot(&manager, &key), Some(None)));
+    }
+
+    #[tokio::test]
+    async fn readiness_preserves_cause_and_bounds_a_hung_probe() {
+        let mut attempts = 0;
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            wait_server_ready_with(Duration::from_millis(50), Duration::ZERO, || {
+                attempts += 1;
+                let first = attempts == 1;
+                async move {
+                    if first {
+                        Err("server 版本不匹配：远端 old，本端 new".to_string())
+                    } else {
+                        std::future::pending().await
+                    }
+                }
+            }),
+        )
+        .await
+        .expect("a blocked SFTP or channel open must respect the readiness budget");
+        let reason = result.err().expect("probe must fail");
+        assert!(reason.contains("server 版本不匹配"));
+        assert!(reason.contains("就绪探测超时"));
+    }
+
+    #[tokio::test]
+    async fn readiness_retries_a_transient_failure_then_returns_endpoint() {
+        let mut attempts = 0;
+        let endpoint = wait_server_ready_with(Duration::from_secs(2), Duration::ZERO, || {
+            attempts += 1;
+            let first = attempts == 1;
+            async move {
+                if first {
+                    Err("状态文件尚未写入".to_string())
+                } else {
+                    Ok(ServerEndpoint {
+                        serve: Some(ServeEndpoint {
+                            port: 4000,
+                            token: "t".into(),
+                        }),
+                        daemon: None,
+                    })
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(attempts, 2);
+        assert_eq!(endpoint.serve.unwrap().port, 4000);
     }
 
     #[test]

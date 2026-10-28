@@ -19,6 +19,10 @@ SSH 主机统一在「远程连接」管理页维护（活动栏云图标、项�
 
 ## 可见项目后台准备
 
+手动打开远程项目时，总耗时与各阶段耗时每秒更新。点击「后台运行」可收起对话框，继续编辑当前工作区；右下角显示当前阶段、总用时和「查看进度 / 取消打开」。同一任务在前后台间切换不重启或重置计时，完成后自动打开目标项目并提示总用时，失败则返回诊断对话框且停止计时。此入口仍属于单次手动打开，保留取消、超时与重复点击不排队的边界。
+
+共享服务首次准备时，架构探测/本机安装包定位下载与远端私有安装目录校验并行，随后仍做远端 SHA-256 校验才启动。daemon 握手的同一截止时间覆盖开通道、启动代理、发送和接收 HELLO，避免只约束最后读取而在前置 SSH 操作卡住；失败清理通道另有短时上限。本机下载或导入、SSH/SFTP 上传的部署方式保持一致。
+
 主窗口完成启动恢复后，在空闲期准备其他未隐藏的远程项目；顶栏 `···` 中的项目也属于可见项目。新建空窗口和独立文件窗口不自动连接项目。只处理已信任、已有已确认主机指纹的项目，不自动接受新指纹，不弹出后台认证或信任窗口。需要密码、私钥口令或认证失败时，项目图标提示点击处理；后台准备不会保存凭据。
 
 - **会话预算**：按最近打开时间选择，每个窗口会话最多自动尝试 12 个不同项目、3 个不同连接，同时只运行 1 个后台任务。隐藏、切换工作区或反复重新加载列表不会补充这份预算；其余项目点击时按需打开。每个任务之间至少让出 1.5 秒，窗口隐藏时暂停新任务。
@@ -68,8 +72,9 @@ Windows SSH 项目在「远端服务 → 重试／重启」时先检查 OpenSSH 
 
 - **部署物**：单个静态 musl 二进制（约几 MB），安装到当前 SSH 用户的 `~/.qingcode/server/<version>/qingcode-server-<arch>`；Windows 为 `%USERPROFILE%\.qingcode\server\<version>\qingcode-server-windows-<arch>.exe`。目录在 Unix 收紧到 `0700`，文件为 `0700`；Windows 依赖 `%USERPROFILE%` 的用户私有 ACL。项目内 `.qingcode/server/` 只保留 serve 的 `server.json` / `serve.log` 数据文件，不再存放可执行文件。本地二进制查找顺序：设置里手动选择的离线目录（`ssh.server.offlineDir`）→ `QINGCODE_SERVER_DIR` 环境变量（历史别名兼容）→ exe 目录 `/servers`（历史 `/agents` 兼容）→ exe 目录上级 `/server`（历史 `/agent` 兼容）→ 资源目录 `/servers` → 下载缓存目录（`ssh.server.autoDownload` 开启时）。开发与打包用 `scripts/build-server.ps1` 产出并复制到 `src-tauri/target/server/`。
 - **安全校验与旧目录迁移**：没有本地可信二进制时**不做发现，也不会执行远端已有文件**；发现存活服务必须同时匹配 `server.json` 的版本、项目根，以及用户私有版本目录中二进制的 sha256。确需安装时走「临时文件 + 原子替换」，先在不执行目标文件的情况下比对 sha256，再执行 `self-check --expect-sha256` 并探测 noexec，全部通过才启动。旧版位于项目目录的二进制会按路径结束进程后删除，绝不作为回退执行；daemon 降级后的重试同样重新校验用户私有安装路径。
+- **本地服务包版本**：使用目录中的二进制前先检查同目录 `manifest.json` 的版本，不匹配的包跳过，不会上传到当前版本安装目录；没有可用本地包时仅在允许自动下载时由本机下载匹配版本，下载清单也必须与客户端版本一致。否则直接说明服务包与 QingCode 的具体版本，提示更换服务包或更新并重启应用。手工提供无清单的二进制仍保留兼容支持。
 - **部署幂等**：上传前先在远端计算已存在二进制的 sha256，与本地一致就跳过上传，避免失败重试时反复全量上传几十 MB；同版本不同构建或本地离线包变化会因摘要不同触发重装。
-- **部署失败分类与退避**：自动下载的网络类失败（断网、GitHub 不可达）按瞬时处理，不缓存为整连接不可用，下次调用自动重试；sha 不符、体积超出 manifest 声明、自检失败是确定性失败，缓存为不可用等待人工介入。同一 (连接, 根) 连续 2 次完整部署都等不到就绪（典型如 sshd 禁了 TCP 转发，ping 永远打不通）也会标记不可用并提示检查 `AllowTcpForwarding`、重启远端服务或断开重连，直到重连才解冻；切换 `ssh.server.autoDownload` 开关或修改离线目录会清空不可用缓存立即重试，无需重连。
+- **部署失败分类与退避**：自动下载的网络类失败（断网、GitHub 不可达）按瞬时处理，不缓存为整连接不可用，下次调用自动重试；sha 不符、体积超出 manifest 声明、自检失败是确定性失败，缓存为不可用等待人工介入。同一 (连接, 根) 连续 2 次完整部署仍未就绪时，冷却 30 秒后自动重新发现，watch 监督任务继续运行；短暂断网或休眠恢复后不再永久停止重试。就绪探测的 SFTP 读取、开通道与 ping 共用 15 秒总预算，错误保留实际原因（状态文件、版本、项目根、SSH 通道或 ping），不会统一改写为 TCP 转发配置提示。状态栏重启远端服务、切换 `ssh.server.autoDownload` 或修改离线目录会清除冷却及失败计数，可立即重试。
 - **运行形态（`serve` 模式）**：`setsid + nohup` 守护进程，只监听远端 `127.0.0.1` 随机端口，客户端经 SSH `direct-tcpip` 通道接入，无公网暴露；token 写在项目 `.qingcode/server/server.json`（远端权限 0600），serve 的输出重定向到 `.qingcode/server/serve.log`（启动前超过 1MB 先截断，端口占用、rc=3 退出等启动失败有迹可查）。应用重启后重连时先发现存活服务，免重新部署；版本不一致时校验进程身份后 kill 并重新部署。daemon 模式则常驻 `~/.qingcode/server/run` 下，运行目录 0700、token 0600（由 OS 随机源生成，daemon 每次启动轮换），经 `connect --stdio` 代理接入（见上表）。daemon 传输失败只降级该端点的 daemon 标记（serve 照常可用），5 分钟冷却后自动重新探测，daemon 崩溃不会永久留在 serve 模式。
 - **带来的能力**：
   - 远程文件树自动刷新（server 递归 inotify → 后端复用本地 `fs-change` 事件管线：树刷新、脏标签冲突提示、Git 状态刷新全链路生效）；
@@ -95,7 +100,7 @@ Windows SSH 项目在「远端服务 → 重试／重启」时先检查 OpenSSH 
   - 远端保存文件也会触发一次 `fs-change`（尚未做本地那样的自写抑制），表现为多一次目录树刷新与 Git 刷新。
   - 单行超过 2MB 的内容搜索命中会截断并停止（与未部署服务时的 rg 路径一致）。
   - 远端服务不做自启动注册，注销/重启远端主机后需重新连接项目才会重新部署。
-  - **发行渠道**：安装包和便携版 exe 都不内置服务二进制，安装包体积不受影响。在线：`ssh.server.autoDownload`（**默认开**）从 GitHub Release 的 `server-v<版本>` 标签下载，`manifest.json` 含 sha256 与 size，下载边流式校验 sha256、按 manifest 声明的体积设上限（旧清单缺 size 字段时兜底 256MB），校验通过才落位缓存目录；并发下载的临时文件以唯一后缀命名并在失败时清理。需要能访问 GitHub，可用 `QINGCODE_SERVER_DOWNLOAD_BASE`（旧名 `QINGCODE_AGENT_DOWNLOAD_BASE` 兼容）指向内网镜像。离线：设置 → 功能里手动选择解压后的 `servers` 目录（`ssh.server.offlineDir`，优先于自动查找，旧名 `agents` 目录同样兼容）；也可以把 `release/QingCode-servers.zip` 里的 `servers/` 放到 `QingCode.exe` 同目录，或设置 `QINGCODE_SERVER_DIR`。本地文件优先于下载。清单里有 Linux `qingcode-server-x86_64` / `aarch64`，以及 Windows `qingcode-server-windows-x86_64.exe`。
+  - **发行渠道**：安装包和便携版 exe 都不内置服务二进制，安装包体积不受影响。在线：由运行 QingCode 的本机下载，再通过 SSH/SFTP 上传，目标机器无需联网。`ssh.server.autoDownload`（**默认开**）从 GitHub Release 的 `server-v<版本>` 标签下载，`manifest.json` 含 sha256 与 size，下载边流式校验 sha256、按 manifest 声明的体积设上限（旧清单缺 size 字段时兜底 256MB），校验通过才落位缓存目录；并发下载的临时文件以唯一后缀命名并在失败时清理。需要能访问 GitHub，可用 `QINGCODE_SERVER_DOWNLOAD_BASE`（旧名 `QINGCODE_AGENT_DOWNLOAD_BASE` 兼容）指向内网镜像。离线：设置 → 功能 → SSH 服务中可直接「选择离线 ZIP」导入 `QingCode-servers.zip`。本机检查清单版本、体积和 SHA-256，解包到独立缓存目录并将该目录保存到当前设置作用域；支持 ZIP 根目录或 `servers/`、`agents/` 子目录布局，拒绝路径穿越、符号链接和重复文件，失败时清理本次导入。部署仅上传目标平台二进制并在远端再次校验，目标机不需要下载工具或解压工具。也可手动选择解压后的 `servers` 目录（`ssh.server.offlineDir`，优先于自动查找，旧名 `agents` 目录同样兼容）；也可以把 `release/QingCode-servers.zip` 中的文件解压到 `servers/` 并放到 `QingCode.exe` 同目录，或设置 `QINGCODE_SERVER_DIR`。本地文件优先于下载。清单里有 Linux `qingcode-server-x86_64` / `aarch64`，以及 Windows `qingcode-server-windows-x86_64.exe`。
 
 搜索结果会标明是否被截断；远程文件名搜索在匹配后限制结果数量，内容搜索先限制待扫描文件集合，再流式接收匹配结果。文件名搜索和内容搜索分别取消，切换查询会停止旧的后台搜索；单次远程搜索整体最长 45 秒。内容搜索的单文件匹配上限、8MB 文件清单、16MB 输出预算或单条 2MB 的输出记录上限同样会触发截断提示。搜索根目录在执行前通过 SFTP 解析真实路径，不允许从项目内的符号链接目录搜索到项目外。
 

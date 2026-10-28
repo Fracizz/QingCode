@@ -887,6 +887,7 @@ pub fn run() {
             remote_ssh::ssh_server_logs,
             remote_ssh::ssh_set_server_auto_download,
             remote_ssh::ssh_set_server_offline_dir,
+            remote_ssh::ssh_import_server_archive,
             remote_ssh::ssh_validate_directory,
             remote_ssh::ssh_scan_directory,
             remote_ssh::ssh_file_stat,

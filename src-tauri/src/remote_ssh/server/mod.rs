@@ -27,6 +27,7 @@ mod deploy;
 mod download;
 mod host_runtime;
 mod install_cache;
+mod offline_pack;
 mod paths;
 mod scripts;
 mod serve;
@@ -44,6 +45,7 @@ pub(crate) use deploy::{
 };
 pub(crate) use download::resolve_offline_server_dir;
 pub(crate) use host_runtime::{invalidate_shared_daemon, shared_server_known, HostDaemonCache};
+pub(crate) use offline_pack::import_offline_server_pack;
 pub(crate) use paths::{
     parse_server_state, server_serve_log_path, server_state_path, windows_host_path,
 };
@@ -98,6 +100,8 @@ pub(crate) struct ServerSlot {
     pub(crate) daemon_downgraded_at: Option<Instant>,
     /// 连续「完整部署后仍未就绪」的次数，达到阈值触发部署退避；成功后清零。
     pub(crate) deploy_failures: u32,
+    /// 连续部署失败后的有限冷却；到期自动重新发现，不占永久不可用缓存。
+    pub(crate) deploy_retry_at: Option<Instant>,
     /// 最近一次瞬时失败的原因，仅用于展示（阶段仍是探测/进行中，之后会自动
     /// 重试）。与 [`ServerSlot::unavailable_reason`] 的区别：这里不代表终态，
     /// 不参与端点缓存判断；成功部署或清除不可用原因时一并清掉。

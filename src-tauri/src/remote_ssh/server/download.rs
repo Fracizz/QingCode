@@ -58,10 +58,15 @@ pub(super) async fn locate_local_server_binary_with(
     }
     let binary_name = server_binary_file_name(windows, &arch);
     let legacy_name = legacy_server_binary_file_name(windows, &arch);
+    let mut local_mismatch = None;
     for dir in manager.server_binary_dirs_for_root(&root.uri) {
         for name in [&binary_name, &legacy_name] {
             let candidate = dir.join(name);
             if candidate.is_file() {
+                if let Err(reason) = validate_local_server_manifest(&dir) {
+                    local_mismatch.get_or_insert(reason);
+                    continue;
+                }
                 return Ok((arch, candidate));
             }
         }
@@ -70,11 +75,45 @@ pub(super) async fn locate_local_server_binary_with(
     if allow_download && manager.server_auto_download_for_root(&root.uri) {
         return download_server_binary(manager, &binary_name)
             .await
+            .map_err(|mut error| {
+                if let Some(reason) = local_mismatch {
+                    error.reason = format!("{reason}；下载匹配版本失败：{}", error.reason);
+                }
+                error
+            })
             .map(|path| (arch, path));
+    }
+    if let Some(reason) = local_mismatch {
+        return Err(ServerDeployError::permanent(reason));
     }
     Err(ServerDeployError::permanent(format!(
         "本地未找到 QingCode server 二进制（{binary_name}）。在线请打开「缺失时自动下载」；离线可在设置里选择 servers 目录，或把它放到 QingCode.exe 旁边。远端服务尚未就绪，请完成设置后重试"
     )))
+}
+
+/// 不执行跨平台本地二进制；有清单的服务包必须先匹配客户端版本，
+/// 避免把新版服务部署到旧版目录后不断握手、淘汰、重启。
+fn validate_local_server_manifest(dir: &Path) -> Result<(), String> {
+    let path = dir.join("manifest.json");
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("读取本地服务包清单失败：{error}")),
+    };
+    let manifest = parse_server_manifest(&bytes)?;
+    validate_server_manifest_version(&manifest)
+}
+
+fn validate_server_manifest_version(manifest: &ServerManifest) -> Result<(), String> {
+    let expected = qingcode_server::SERVER_VERSION;
+    if manifest.version == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "服务包版本 {} 与当前 QingCode {expected} 不一致，请选择匹配版本的服务包，或更新并重启 QingCode",
+            manifest.version
+        ))
+    }
 }
 
 fn dir_has_server_binary(dir: &Path) -> bool {
@@ -165,25 +204,27 @@ fn server_download_urls(base: &str, tag: &str, binary_name: &str) -> (String, St
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
-struct ServerManifestArtifact {
-    sha256: String,
+pub(super) struct ServerManifestArtifact {
+    pub(super) sha256: String,
     /// 下载体积上限：流式下载写入超过该字节数立即失败，防止被劫持的镜像
     /// 返回无限流把磁盘写满。
     #[serde(default)]
-    size: u64,
+    pub(super) size: u64,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
-struct ServerManifest {
+pub(super) struct ServerManifest {
     #[serde(default)]
-    artifacts: std::collections::HashMap<String, ServerManifestArtifact>,
+    pub(super) version: String,
+    #[serde(default)]
+    pub(super) artifacts: std::collections::HashMap<String, ServerManifestArtifact>,
 }
 
-fn parse_server_manifest(bytes: &[u8]) -> Result<ServerManifest, String> {
+pub(super) fn parse_server_manifest(bytes: &[u8]) -> Result<ServerManifest, String> {
     serde_json::from_slice(bytes).map_err(|e| format!("解析 server manifest 失败：{e}"))
 }
 
-fn verify_server_sha256(expected: &str, actual: &[u8; 32]) -> Result<(), String> {
+pub(super) fn verify_server_sha256(expected: &str, actual: &[u8; 32]) -> Result<(), String> {
     let actual_hex: String = actual.iter().map(|b| format!("{b:02x}")).collect();
     if actual_hex.eq_ignore_ascii_case(expected.trim()) {
         Ok(())
@@ -244,6 +285,7 @@ async fn download_server_binary(
             .into_string()
             .map_err(|e| transient(format!("读取 manifest 失败：{e}")))?;
         let manifest = parse_server_manifest(manifest_bytes.as_bytes()).map_err(transient)?;
+        validate_server_manifest_version(&manifest).map_err(ServerDeployError::permanent)?;
         let artifact = manifest.artifacts.get(&binary_name).ok_or_else(|| {
             ServerDeployError::permanent(format!("manifest 缺少 {binary_name} 条目"))
         })?;
@@ -316,6 +358,32 @@ async fn download_server_binary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_service_pack_must_match_client_before_remote_execution() {
+        let dir = std::env::temp_dir().join(format!("qc-pack-version-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&dir).unwrap();
+        assert!(validate_local_server_manifest(&dir).is_ok());
+        let path = dir.join("manifest.json");
+        std::fs::write(&path, br#"{"version":"wrong-version","artifacts":{}}"#).unwrap();
+        let error = validate_local_server_manifest(&dir).unwrap_err();
+        assert!(error.contains("wrong-version"));
+        assert!(error.contains(qingcode_server::SERVER_VERSION));
+        assert!(error.contains("更新并重启"));
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "version": qingcode_server::SERVER_VERSION,
+                "artifacts": {},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(validate_local_server_manifest(&dir).is_ok());
+        std::fs::write(&path, b"invalid manifest").unwrap();
+        assert!(validate_local_server_manifest(&dir).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn release_404_is_permanent_and_names_tag_and_asset() {

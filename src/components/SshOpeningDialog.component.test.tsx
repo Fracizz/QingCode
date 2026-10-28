@@ -28,9 +28,62 @@ beforeEach(() => {
   vi.clearAllMocks()
   mocks.confirm.mockReset().mockResolvedValue(true)
 })
-afterEach(() => cancelSshOpening())
+afterEach(() => {
+  cancelSshOpening()
+  vi.useRealTimers()
+})
 
 describe('SshOpeningDialog', () => {
+  it('keeps elapsed time and cancellation when moving to the background and back', async () => {
+    vi.useFakeTimers()
+    const opening = runSshOpening(project, async (_signal, report) => {
+      report('service')
+      return new Promise(() => {})
+    }).catch(error => error)
+    render(<SshOpeningDialog />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(2300) })
+    expect(screen.getByRole('timer')).toHaveTextContent('已用时 2 秒')
+    fireEvent.click(screen.getByRole('button', { name: '后台运行' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-modal-overlay]')).not.toBeInTheDocument()
+    const attempt = useSshOpeningStore.getState().attempt!
+    expect(attempt.controller.signal.aborted).toBe(false)
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect(screen.getByRole('timer')).toHaveTextContent('已用时 5 秒')
+    fireEvent.click(screen.getByRole('button', { name: '查看进度' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByRole('timer')).toHaveTextContent('已用时 5 秒')
+    expect(useSshOpeningStore.getState().attempt?.controller).toBe(attempt.controller)
+    fireEvent.click(screen.getByRole('button', { name: '取消打开' }))
+    expect((await opening).name).toBe('AbortError')
+  })
+
+  it('shows a background failure and freezes elapsed time at failure', async () => {
+    vi.useFakeTimers()
+    let fail!: (reason: Error) => void
+    const opening = runSshOpening(project, async () => new Promise((_, reject) => { fail = reject })).catch(error => error)
+    render(<SshOpeningDialog />)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1300) })
+    fireEvent.click(screen.getByRole('button', { name: '后台运行' }))
+    await act(async () => { fail(new SshPreparationError('handshake failed')); await opening })
+    expect(screen.getByRole('alert')).toHaveTextContent('handshake failed')
+    expect(screen.getByRole('timer')).toHaveTextContent('已用时 1 秒')
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.getByRole('timer')).toHaveTextContent('已用时 1 秒')
+  })
+
+  it('can expand the shared-daemon progress card', async () => {
+    const opening = runSshOpening(project, async (_signal, report) => {
+      report('mounting')
+      return new Promise(() => {})
+    }).catch(error => error)
+    render(<SshOpeningDialog />)
+    fireEvent.click(await screen.findByRole('button', { name: '查看进度' }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '取消打开' }))
+    await opening
+  })
+
   it('keeps the workspace usable when mounting a project on a ready shared daemon', async () => {
     const opening = runSshOpening(project, async (_signal, report) => {
       report('mounting')

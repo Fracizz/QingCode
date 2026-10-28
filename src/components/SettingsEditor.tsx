@@ -185,6 +185,8 @@ const SSH_SERVER_SEARCH_TERMS: string[] = [
   '远端服务',
   '自动下载',
   '离线目录',
+  '离线 ZIP',
+  'QingCode-servers.zip',
   SSH_SERVER_ENABLED_KEY,
   SSH_SERVER_AUTO_DOWNLOAD_KEY,
   SSH_SERVER_OFFLINE_DIR_KEY,

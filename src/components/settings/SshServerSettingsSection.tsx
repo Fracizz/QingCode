@@ -1,6 +1,6 @@
 import { hasBackend } from '../../lib/runtimeCapabilities'
 import { useEffect, useState } from 'react'
-import { open as openDirectoryDialog } from '@tauri-apps/plugin-dialog'
+import { open as openLocalDialog } from '@tauri-apps/plugin-dialog'
 import { useI18n } from '../../lib/i18n'
 import { safeInvoke } from '../../lib/tauri'
 import { DEFAULT_GLOBAL_SETTINGS } from '../../lib/projectSettings'
@@ -56,32 +56,30 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
     }
   }
 
-  const chooseOfflineDir = async () => {
+  const chooseOfflineDir = async (archive = false) => {
     const settingsScope = scope === 'workspace' ? 'project' : 'global'
     if (settingsScope === 'project' && !project) return
     if (!hasBackend()) {
       pushToast('error', t('当前环境无法选择离线目录'))
       return
     }
-    const selected = await openDirectoryDialog({
-      directory: true,
-      multiple: false,
-      title: t('选择离线服务目录'),
-    })
-    if (typeof selected !== 'string' || !selected) return
     setOfflineBusy(true)
     try {
-      // 目录校验与解析（如定位 servers 子目录）只在 Rust 的
-      // ssh_set_server_offline_dir 里实现：保留这一次 invoke 做即时校验并拿到
-      // 解析结果；持久化与推送统一走 saveScopedSshServerOfflineDir（内部以同一
-      // 解析结果推送），保证文件与 native 状态单一事实来源。
+      const selected = await openLocalDialog({
+        directory: !archive,
+        multiple: false,
+        title: archive ? t('选择离线 ZIP') : t('选择离线服务目录'),
+        ...(archive ? { filters: [{ name: 'ZIP', extensions: ['zip'] }] } : {}),
+      })
+      if (typeof selected !== 'string' || !selected) return
+      // Rust 校验目录或导入 ZIP，持久化与推送使用同一解析结果。
       const resolved = await safeInvoke<string>(
-        '配置 SSH 离线服务目录',
-        'ssh_set_server_offline_dir',
-        { dir: selected },
+        archive ? '导入 SSH 离线服务包' : '配置 SSH 离线服务目录',
+        archive ? 'ssh_import_server_archive' : 'ssh_set_server_offline_dir',
+        archive ? { path: selected } : { dir: selected },
       )
-      setOfflineDir(resolved)
       await saveScopedSshServerOfflineDir(settingsScope, resolved, project)
+      setOfflineDir(resolved)
       pushToast('success', t('已使用离线服务目录'))
     } catch (error) {
       pushToast('error', t('保存离线服务目录失败: {error}', { error: String(error) }))
@@ -110,7 +108,7 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
       <SettingItem
         title={t('SSH › 服务: 缺失时自动下载')}
         description={t(
-          '安装包不附带远端服务。缺失时从 GitHub Release 在线下载并做 sha256 校验。也可以在下面手动选择离线目录。默认开启。',
+          '安装包不附带远端服务。缺失时由本机从 GitHub Release 下载并校验，再通过 SSH 上传。目标机器无需联网。也可选择下面的离线 ZIP 或目录。默认开启。',
         )}
         modified={
           autoDownload !==
@@ -130,21 +128,30 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
       <SettingItem
         title={t('SSH › 服务: 离线目录')}
         description={t(
-          '手动选择解压后的 servers 目录，或包含 servers 子目录的文件夹。选中后优先于程序旁边的 servers 和在线下载。清除后恢复自动查找。',
+          '选择 QingCode-servers.zip，本机会解压并校验到缓存目录；也可选择解压后的 servers 目录。部署时通过 SSH 上传，目标机器无需联网。选中后优先于自动查找和下载。清除后恢复自动查找。',
         )}
         modified={offlineDir !== ''}
       >
-        <div className="flex items-center gap-1.5 max-w-md">
+        <div className="flex flex-wrap items-center gap-1.5 max-w-lg">
           <Tooltip
             label={offlineDir}
             onlyWhenOverflow
             side="top"
-            wrapperClassName="min-w-0 flex-1"
+            wrapperClassName="min-w-0 basis-full"
           >
             <span className="block truncate text-ui-sm opacity-80">
               {offlineDir || t('未选择离线目录')}
             </span>
           </Tooltip>
+          <button
+            type="button"
+            disabled={offlineBusy}
+            className="setting-control shrink-0 px-2.5 py-1 text-ui-sm border border-border-strong rounded hover:border-accent/60 disabled:opacity-40"
+            aria-label={t('选择离线 ZIP')}
+            onClick={() => void chooseOfflineDir(true)}
+          >
+            {t('选择离线 ZIP')}
+          </button>
           <button
             type="button"
             disabled={offlineBusy}

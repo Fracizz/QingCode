@@ -181,6 +181,7 @@ const SSH_TIMEOUT_RE = /SSH 连接超时|通道超时/
 let projectSwitchPending = false
 
 function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
+  const startedAt = Date.now()
   return runSshOpening(project, async (signal, report) => {
     const pendingWarmup = takeSshWarmup(project.path)
     let warmedTree: FileNode[] | null | undefined
@@ -208,7 +209,7 @@ function prepareRemoteProject(project: Project, previousTree?: FileNode[]) {
       signal.throwIfAborted()
       await activateSshWorkspace(project.path)
       signal.throwIfAborted()
-      return { tree, recentFiles, warmed: warmedTree != null }
+      return { tree, recentFiles, warmed: warmedTree != null, elapsedSeconds: Math.floor((Date.now() - startedAt) / 1000) }
     } catch (error) {
       signal.throwIfAborted()
       throw new SshPreparationError(String(error))
@@ -870,6 +871,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
             ) },
             projectTreeErrors: { ...s.projectTreeErrors, [project.id]: '' },
           }))
+          get().pushToast('success', translate('已打开远程项目 {name}，用时 {seconds} 秒', { name: project.name, seconds: prepared.elapsedSeconds }))
           return true
         }
         // Fast re-click: still refresh so inactive-window tree drift is visible.
@@ -934,6 +936,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       }))
       // Keep the previous project's tabs/drafts/CM state; restore the target's.
       activateProjectSession(previousId, project.id)
+      if (prepared) get().pushToast('success', translate('已打开远程项目 {name}，用时 {seconds} 秒', { name: project.name, seconds: prepared.elapsedSeconds }))
       if (prepared?.warmed) void get().refreshProjectTree(project)
       // Refresh on switch — inactive durable projects have no root watcher.
       if (!prepared) {

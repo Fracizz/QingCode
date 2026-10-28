@@ -2,6 +2,7 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { open } from '@tauri-apps/plugin-dialog'
 import SshServerSettingsSection from './SshServerSettingsSection'
 import { useProjectStore } from '../../store/projectStore'
 
@@ -55,6 +56,7 @@ describe('SshServerSettingsSection', () => {
   const pushToast = vi.fn()
 
   beforeEach(() => {
+    vi.mocked(open).mockReset().mockResolvedValue(null)
     invoke.mockReset().mockResolvedValue(undefined)
     let globalSettings = settingsWith({
       'ssh.agent.enabled': false,
@@ -111,5 +113,56 @@ describe('SshServerSettingsSection', () => {
       expect(pushToast).toHaveBeenCalledWith('error', '保存自动下载设置失败: Error: disk full')
     })
     expect(invoke).not.toHaveBeenCalledWith('停止远端服务', 'ssh_server_stop', expect.anything())
+  })
+
+  it.each(['user', 'workspace'] as const)('imports a local ZIP and saves the verified directory in %s scope', async scope => {
+    vi.mocked(open).mockResolvedValue('D:/Code/QingCode/release/QingCode-servers.zip')
+    invoke.mockImplementation(async (_action, command) =>
+      command === 'ssh_import_server_archive' ? 'D:/Cache/servers/offline-verified' : undefined)
+    render(<SshServerSettingsSection scope={scope} project={sshProject} settingsRevision={0} />)
+    await waitFor(() => expect((screen.getByLabelText('SSH › 服务: 缺失时自动下载') as HTMLSelectElement).value).toBe('off'))
+    fireEvent.click(screen.getByLabelText('选择离线 ZIP'))
+
+    await waitFor(() => expect(pushToast).toHaveBeenCalledWith('success', '已使用离线服务目录'))
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({
+      directory: false,
+      filters: [{ name: 'ZIP', extensions: ['zip'] }],
+    }))
+    expect(invoke).toHaveBeenCalledWith('导入 SSH 离线服务包', 'ssh_import_server_archive', {
+      path: 'D:/Code/QingCode/release/QingCode-servers.zip',
+    })
+    if (scope === 'user') {
+      expect(saveGlobalSettings).toHaveBeenCalledWith(expect.objectContaining({
+        'ssh.server.offlineDir': 'D:/Cache/servers/offline-verified',
+      }))
+      expect(saveProjectSettings).not.toHaveBeenCalled()
+    } else {
+      expect(saveProjectSettings).toHaveBeenCalledWith(sshProject, expect.objectContaining({
+        'ssh.server.offlineDir': 'D:/Cache/servers/offline-verified',
+      }))
+      expect(saveGlobalSettings).not.toHaveBeenCalled()
+    }
+    expect(screen.getByText('D:/Cache/servers/offline-verified')).toBeTruthy()
+  })
+
+  it('does not save a rejected ZIP and allows retrying', async () => {
+    vi.mocked(open).mockResolvedValue('D:/broken.zip')
+    invoke.mockRejectedValue(new Error('sha256 mismatch'))
+    render(<SshServerSettingsSection scope="user" project={sshProject} settingsRevision={0} />)
+    fireEvent.click(screen.getByLabelText('选择离线 ZIP'))
+    await waitFor(() => expect(pushToast).toHaveBeenCalledWith('error', expect.stringContaining('sha256 mismatch')))
+    expect(saveGlobalSettings).not.toHaveBeenCalled()
+    expect(saveProjectSettings).not.toHaveBeenCalled()
+    expect((screen.getByLabelText('选择离线 ZIP') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('cancelling ZIP selection preserves the previous setting', async () => {
+    render(<SshServerSettingsSection scope="user" project={sshProject} settingsRevision={0} />)
+    fireEvent.click(screen.getByLabelText('选择离线 ZIP'))
+    await waitFor(() => expect(open).toHaveBeenCalled())
+    await waitFor(() => expect((screen.getByLabelText('选择离线 ZIP') as HTMLButtonElement).disabled).toBe(false))
+    expect(invoke).not.toHaveBeenCalledWith(expect.anything(), 'ssh_import_server_archive', expect.anything())
+    expect(saveGlobalSettings).not.toHaveBeenCalled()
+    expect(pushToast).not.toHaveBeenCalled()
   })
 })

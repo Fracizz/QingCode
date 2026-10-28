@@ -63,7 +63,7 @@ vi.mock('./editorSessionBridge', async importOriginal => ({
 }))
 
 import { useProjectStore } from './projectStore'
-import { cancelSshOpening, useSshOpeningStore } from './sshOpeningStore'
+import { cancelSshOpening, setSshOpeningBackground, useSshOpeningStore } from './sshOpeningStore'
 
 const remote: Project = {
   id: 'remote',
@@ -269,6 +269,22 @@ describe('SSH project availability', () => {
     expect(useProjectStore.getState().currentProject).toEqual(local)
     expect(mocks.prepareSshWorkspace).not.toHaveBeenCalled()
     expect(mocks.requestSshReconnect).not.toHaveBeenCalled()
+  })
+
+  it('finishes a background opening and reports total time while preserving the current workspace during preparation', async () => {
+    let finishService!: () => void
+    mocks.prepareSshWorkspace.mockImplementationOnce(() => new Promise<void>(resolve => { finishService = resolve }))
+    useProjectStore.setState({ currentProject: local })
+    const opening = useProjectStore.getState().switchProject(remote)
+    await vi.waitFor(() => expect(mocks.prepareSshWorkspace).toHaveBeenCalledTimes(1))
+    setSshOpeningBackground(true)
+    expect(useProjectStore.getState().currentProject).toEqual(local)
+    expect(useSshOpeningStore.getState().attempt?.background).toBe(true)
+    finishService()
+    expect(await opening).toBe(true)
+    expect(useProjectStore.getState().currentProject).toEqual(remote)
+    expect(useSshOpeningStore.getState().attempt).toBeNull()
+    expect(useProjectStore.getState().toasts.at(-1)?.text).toMatch(/已打开远程项目 django，用时 \d+ 秒/)
   })
 
   it('switches back to a connected remote project instantly from its cached tree and refreshes in background', async () => {

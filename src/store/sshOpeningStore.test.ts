@@ -10,6 +10,25 @@ afterEach(() => {
 })
 
 describe('SSH opening deadline', () => {
+  it('accumulates stage time without resetting on status polls or shared-service hints', async () => {
+    vi.useFakeTimers()
+    let progress!: Parameters<Parameters<typeof runSshOpening>[1]>[1]
+    const opening = runSshOpening(project, async (_signal, report) => {
+      progress = report
+      return new Promise(() => {})
+    }).catch(error => error)
+    await vi.advanceTimersByTimeAsync(2000)
+    progress('mounting')
+    const serviceStart = useSshOpeningStore.getState().attempt?.stageStartedAt
+    await vi.advanceTimersByTimeAsync(3000)
+    progress('service')
+    expect(useSshOpeningStore.getState().attempt?.stageStartedAt).toBe(serviceStart)
+    progress('files')
+    expect(useSshOpeningStore.getState().attempt?.stageDurations).toEqual({ connecting: 2000, service: 3000 })
+    cancelSshOpening()
+    await opening
+  })
+
   it('bounds even a hung native request and ignores its late progress', async () => {
     vi.useFakeTimers()
     let reportLate!: () => void

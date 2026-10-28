@@ -4,6 +4,11 @@ import type { SshServerState } from '../lib/sshServerStatus'
 import { translate } from '../lib/i18n'
 
 export type SshOpeningStage = 'connecting' | 'service' | 'files' | 'mounting'
+export type SshOpeningTimedStage = Exclude<SshOpeningStage, 'mounting'>
+
+export function sshOpeningTimedStage(stage: SshOpeningStage): SshOpeningTimedStage {
+  return stage === 'mounting' ? 'service' : stage
+}
 
 interface SshOpeningAttempt {
   project: Project
@@ -12,6 +17,11 @@ interface SshOpeningAttempt {
   error: string | null
   controller: AbortController
   reusingServer: boolean
+  background: boolean
+  startedAt: number
+  stageStartedAt: number
+  stageDurations: Partial<Record<SshOpeningTimedStage, number>>
+  finishedAt: number | null
 }
 
 export const useSshOpeningStore = create<{ attempt: SshOpeningAttempt | null }>(() => ({
@@ -19,6 +29,12 @@ export const useSshOpeningStore = create<{ attempt: SshOpeningAttempt | null }>(
 }))
 
 export class SshPreparationError extends Error {}
+
+export function setSshOpeningBackground(background: boolean): void {
+  useSshOpeningStore.setState(state => ({
+    attempt: state.attempt && { ...state.attempt, background, reusingServer: background && state.attempt.reusingServer },
+  }))
+}
 
 export function cancelSshOpening(): void {
   const attempt = useSshOpeningStore.getState().attempt
@@ -38,18 +54,30 @@ export async function runSshOpening<T>(
   cancelSshOpening()
   const controller = new AbortController()
   const { signal } = controller
+  const startedAt = Date.now()
   const attempt: SshOpeningAttempt = {
     project, stage: 'connecting', server: null, error: null, controller, reusingServer: false,
+    background: false, startedAt, stageStartedAt: startedAt, stageDurations: {}, finishedAt: null,
   }
   useSshOpeningStore.setState({ attempt })
   const report = (stage: SshOpeningStage, server?: SshServerState) => {
     if (signal.aborted || useSshOpeningStore.getState().attempt?.controller !== controller) return
-    useSshOpeningStore.setState(state => ({
-      attempt: state.attempt && {
-        ...state.attempt, stage, server: server ?? state.attempt.server,
-        reusingServer: server?.phase === 'installing' ? false : stage === 'mounting' || state.attempt.reusingServer,
-      },
-    }))
+    useSshOpeningStore.setState(state => {
+      if (!state.attempt || state.attempt.finishedAt != null) return state
+      const previous = state.attempt
+      const previousStage = sshOpeningTimedStage(previous.stage)
+      const changed = previousStage !== sshOpeningTimedStage(stage)
+      const now = Date.now()
+      return { attempt: {
+        ...previous, stage, server: server ?? previous.server,
+        stageStartedAt: changed ? now : previous.stageStartedAt,
+        stageDurations: changed ? {
+          ...previous.stageDurations,
+          [previousStage]: (previous.stageDurations[previousStage] ?? 0) + now - previous.stageStartedAt,
+        } : previous.stageDurations,
+        reusingServer: server?.phase === 'installing' ? false : stage === 'mounting' || previous.reusingServer,
+      } }
+    })
   }
   let onAbort: () => void = () => {}
   const aborted = new Promise<never>((_resolve, reject) => {
@@ -70,7 +98,7 @@ export async function runSshOpening<T>(
     if (useSshOpeningStore.getState().attempt?.controller === controller) {
       if (error instanceof SshPreparationError) {
         useSshOpeningStore.setState(state => ({
-          attempt: state.attempt && { ...state.attempt, error: error.message },
+          attempt: state.attempt && { ...state.attempt, error: error.message, finishedAt: Date.now() },
         }))
       } else {
         useSshOpeningStore.setState({ attempt: null })

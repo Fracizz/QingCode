@@ -69,6 +69,8 @@ Windows SSH 修复确认框的独立场景位于 <http://127.0.0.1:38439/web-tes
 
 ## 验收边界
 
+远程项目手动打开的场景位于 <http://127.0.0.1:38439/web-tests/ssh-opening.html>，复用真实 `SshOpeningDialog` 与计时 store。可模拟握手、后台运行后编辑原工作区、查看进度、完成、失败与取消，支持主题和语言切换；不建立 SSH 连接。Vitest 验证阶段计时、切换展示不重启任务、失败停表、取消与重试，真实远端准备耗时仍需 Windows SSH 环境实测。
+
 `vite.web-test.config.ts` 仅供此测试服务器使用：通过别名将项目/界面/终端/编辑器 store、信任操作、
 项目操作和工作区保存替换为 `src/test-pages/projectManagerAdapters.ts` 中的内存适配器。
 外部操作只记录调用，隐藏/恢复只更新测试数据。测试页显示操作记录，供断言调用参数。

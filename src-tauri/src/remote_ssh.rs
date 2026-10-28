@@ -1702,6 +1702,8 @@ impl SshManager {
                     slot.unavailable_reason = None;
                     slot.activity = None;
                     slot.last_failure = None;
+                    slot.deploy_failures = 0;
+                    slot.deploy_retry_at = None;
                 }
             }
         }
@@ -1732,6 +1734,7 @@ impl SshManager {
                 slot.daemon_downgraded_at = None;
                 slot.daemon_failure = None;
                 slot.deploy_failures = 0;
+                slot.deploy_retry_at = None;
             }
         }
     }
@@ -2210,6 +2213,27 @@ pub fn ssh_set_server_offline_dir(
     manager.set_server_offline_dir(Some(resolved));
     manager.clear_unavailable_servers();
     Ok(text)
+}
+
+/// Import a local ZIP without network access or changing the active settings.
+/// The caller persists the verified directory in the selected settings scope.
+#[tauri::command]
+pub async fn ssh_import_server_archive(
+    path: String,
+    manager: State<'_, SshManager>,
+) -> Result<String, String> {
+    let path = path.trim();
+    if path.is_empty() || path.len() > 1024 || path.contains('\0') || path.contains("://") {
+        return Err("离线 ZIP 必须是本机文件".into());
+    }
+    let path = PathBuf::from(path);
+    let cache = manager.server_cache_dir().ok_or("离线缓存目录未配置")?;
+    tokio::task::spawn_blocking(move || {
+        server::import_offline_server_pack(&path, &cache)
+            .map(|dir| dir.to_string_lossy().into_owned())
+    })
+    .await
+    .map_err(|e| format!("导入离线 ZIP 失败：{e}"))?
 }
 
 #[derive(Debug)]
@@ -3318,6 +3342,7 @@ pub async fn ssh_prepare_workspace(
                 if slot.endpoint.is_none() {
                     slot.unavailable_reason = None;
                     slot.deploy_failures = 0;
+                    slot.deploy_retry_at = None;
                     slot.last_failure = None;
                     manager.set_server_slot(&key, slot);
                 }
