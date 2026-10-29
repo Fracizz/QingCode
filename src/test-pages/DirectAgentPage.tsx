@@ -12,12 +12,17 @@ const sshConnections: SshConnection[] = [{ id: 'web-test-ssh', name: 'WinDev', h
 export function DirectAgentAcceptancePage() {
   const [events, setEvents] = useState<string[]>([])
   const [failure, setFailure] = useState('')
+  const [provisionPending, setProvisionPending] = useState(false)
+  const finishProvision = useRef<(() => void) | null>(null)
   const failureRef = useRef('')
   const serviceRef = useRef<DirectAgentInfo>({ enabled: false, host: '192.168.252.107', port: 48763, certificateFingerprint: 'SHA256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef', tokenSaved: true, previousPorts: [49521, 51234] })
   const api = useMemo<DirectAgentApi>(() => ({
     info: async () => ({ ...serviceRef.current }),
     provision: async (_connectionId, port) => {
       setEvents(value => [...value, `provision:${port}`])
+      setProvisionPending(true)
+      await new Promise<void>(resolve => { finishProvision.current = resolve })
+      setProvisionPending(false)
       serviceRef.current = { ...serviceRef.current, port: port ?? 48763 }
       return { ...serviceRef.current }
     },
@@ -65,6 +70,7 @@ export function DirectAgentAcceptancePage() {
         useLocaleStore.getState().setLanguage(language)
       }}>切换语言</button>
     </div>
+    {provisionPending && <button className="mb-3" onClick={() => finishProvision.current?.()}>完成模拟服务准备</button>}
     <div className="max-w-[760px] rounded border border-dialog-border bg-dialog p-4">
       <DirectAgentConnectionPanel connectionId="web-test-direct" defaultHost="192.168.252.107" api={api} sshConnections={sshConnections} />
     </div>

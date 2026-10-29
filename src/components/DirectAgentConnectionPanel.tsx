@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, Copy, ShieldCheck } from 'lucide-react'
+import { ChevronDown, ChevronRight, Copy, LoaderCircle, ShieldCheck } from 'lucide-react'
 import { translate, useI18n } from '../lib/i18n'
 import { confirmDialog } from '../store/confirmStore'
 import { useProjectStore } from '../store/projectStore'
@@ -301,7 +301,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       {open && <div className="space-y-3 border-t border-dialog-separator p-3">
         <p className="text-ui-sm leading-relaxed text-fg-muted">{t(standalone ? '通过独立 TLS 端口连接远端服务，无需 SSH。请先在远端启动服务，再导入配对信息。' : '通过独立 TLS 端口连接远端服务，通信不经过 SSH。现有 SSH 配置保留，可随时切回。')}</p>
         <div className="flex flex-wrap items-center gap-2">
-          {!standalone && <button type="button" disabled={Boolean(busy)} onClick={() => void provision()} className={buttonClass}>{t(busy === 'provisioning' ? '正在准备服务…' : '通过 SSH 安装或读取服务')}</button>}
+          {!standalone && <button type="button" disabled={Boolean(busy)} onClick={() => void provision()} aria-busy={busy === 'provisioning'} className={`${buttonClass} inline-flex items-center gap-2`}>{busy === 'provisioning' && <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />}{t(busy === 'provisioning' ? '正在准备服务…' : '通过 SSH 安装或读取服务')}</button>}
           <button type="button" disabled={Boolean(busy)} onClick={() => setManualOpen(value => !value)} aria-expanded={manualOpen} className={buttonClass}>{t('导入配对信息')}</button>
         </div>
         <p className="text-ui-sm text-fg-muted">{t(standalone ? '默认端口为 48763，可以修改。端口被占用时请指定其他端口，并同步修改远端监听配置。' : '默认端口为 48763，可以修改。安装使用 SSH，日常直连不使用 SSH。端口被占用时请指定其他端口。')}</p>

@@ -99,3 +99,17 @@ cargo test --manifest-path src-tauri/qingcode-server/Cargo.toml --test direct_tr
 前端 Web 场景位于 `/web-tests/direct-agent.html`，复用真实连接面板、确认对话框与生产样式，后端仅在该页面使用内存适配器。`scripts/web-tests/direct-agent.ego.mjs` 可用于 ego 验收。本轮 ego Windows 桥接不可用时，用临时安装于仓库外的 Playwright 和现有 Linux Chromium 验证固定可编辑端口、历史与防火墙提示、取消身份确认不发送凭据、认证后启用、编辑后重新验证、端口不可达与认证错误分类，以及英文浅色窄窗布局。截图与结果保存在 `.dev/web-tests/direct-agent-playwright/`；这些 UI 结果不替代原生凭据持久化和真实网络/终端验收。
 
 SSH 防火墙授权另有 7 项真实 Chromium 检查，覆盖 Public 范围确认、取消不写入、编辑使检查失效、无管理员权限、写入成功但 Agent 不可达，以及英文窄窗布局；结果与截图在 `.dev/web-tests/direct-agent-firewall/`。252.107 已完成真实 SSH 只读预检，确认来源、接收地址、管理员身份及 Public 网络类型；PowerShell 写入、重复操作、状态变化和冲突分支通过该主机上的隔离函数模拟检查。本轮未写入真实 Windows 防火墙规则，原生桌面端到端授权写入仍待验收。
+
+
+### Windows SSH 安装路径回归（2026-10-28）
+
+Windows SFTP 返回的 `/C:/...` 不能直接交给 PowerShell 执行。准备服务时，启动与配对读取两条命令都转换为 Windows 原生绝对路径，并保留空格、单引号转义。准备按钮显示旋转 loading，完成或失败后恢复。
+
+252.107（Windows）与 252.245（Linux）已使用实际暂存程序、生产启动命令构造器和原生直连客户端完成验证：48763 启动/读取配对、TLS 指纹、认证健康检查、错误凭据拒绝、错误证书拒绝、WSS HELLO 及断开后重新连接。此次未修改防火墙规则；这项验证不覆盖新桌面安装包、桌面凭据持久化或完整 PTY 业务操作。
+
+可通过以下显式启用的测试复验。`QC_DIRECT_BIN` 是预先通过 SSH/SFTP 暂存并校验摘要的远端程序路径；Windows 应传入 SFTP `/C:/...` 形式以覆盖回归。测试会在目标默认状态目录启动或复用 48763 Agent，配对凭据仅保留在测试进程内，不写日志。
+
+```bash
+QC_SSHCTL=/path/to/sshctl QC_DIRECT_HOST=<authorized-host> QC_DIRECT_BIN=<staged-server> \
+  cargo test --manifest-path src-tauri/Cargo.toml --lib live_provision_and_native_direct_connection -- --ignored --nocapture
+```

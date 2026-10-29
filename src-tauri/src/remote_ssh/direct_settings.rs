@@ -388,6 +388,19 @@ pub async fn direct_agent_save(
     Ok(())
 }
 
+// SFTP returns /C:/... on Windows; PowerShell requires a native drive path.
+fn provision_commands(bin: &str, port: u16) -> (String, String) {
+    let unix = format!(
+        "{} direct --port {port} --detach && {} direct-info --include-secret",
+        shell_quote(bin),
+        shell_quote(bin)
+    );
+    let native = windows_native_path(bin).unwrap_or_else(|| bin.to_string());
+    let quoted = powershell_quote(&native);
+    let windows = format!("& {quoted} direct --port {port} --detach; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; & {quoted} direct-info --include-secret");
+    (unix, windows)
+}
+
 #[tauri::command]
 pub async fn direct_agent_provision(
     connection_id: String,
@@ -414,13 +427,7 @@ pub async fn direct_agent_provision(
     // Stage a separate executable; replacing the daemon binary can terminate
     // live terminals when a same-version build changes its content hash.
     let staged = server::stage_direct_gateway(&manager, &root).await?;
-    let bin = &staged;
-    let unix = format!(
-        "{} direct --port {port} --detach && {} direct-info --include-secret",
-        shell_quote(bin),
-        shell_quote(bin)
-    );
-    let windows=format!("& {} direct --port {port} --detach; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}; & {} direct-info --include-secret",powershell_quote(bin),powershell_quote(bin));
+    let (unix, windows) = provision_commands(&staged, port);
     let result = manager
         .exec_remote_shell(&root.uri, &unix, &windows, true, Duration::from_secs(40))
         .await?;
@@ -463,6 +470,104 @@ pub async fn direct_agent_provision(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn provisioning_converts_sftp_windows_paths_and_quotes_both_commands() {
+        let (_, windows) = provision_commands("/C:/Users/O'Brien/Agent Folder/server.exe", 48763);
+        assert_eq!(
+            windows
+                .matches("& 'C:\\Users\\O''Brien\\Agent Folder\\server.exe'")
+                .count(),
+            2
+        );
+        assert!(!windows.contains("/C:/"));
+        let (unix, _) = provision_commands("/home/user/Agent Folder/server", 51234);
+        assert!(
+            unix.starts_with("'/home/user/Agent Folder/server' direct --port 51234 --detach &&")
+        );
+    }
+
+    /// Opt-in deployment command + native TLS/WSS acceptance on an authorized host.
+    /// QC_DIRECT_BIN is an already staged server; secrets never leave process memory.
+    #[tokio::test]
+    #[ignore = "requires authorized QC_DIRECT_HOST, QC_DIRECT_BIN and QC_SSHCTL"]
+    async fn live_provision_and_native_direct_connection() {
+        use qingcode_server::proto::{self, Frame, HelloRequest, Kind, PROTOCOL_VERSION};
+        let host = std::env::var("QC_DIRECT_HOST").unwrap();
+        let bin = std::env::var("QC_DIRECT_BIN").unwrap();
+        let (unix, windows) = provision_commands(&bin, 48763);
+        let command = if windows_native_path(&bin).is_some() {
+            windows_encoded_powershell("powershell.exe -NoProfile -NonInteractive", &windows, false)
+        } else {
+            unix
+        };
+        let output = std::process::Command::new(std::env::var("QC_SSHCTL").unwrap())
+            .args(["--insecure", "exec", &host, "--", &command])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "remote provision command failed");
+        let info: qingcode_server::direct::DirectInfo = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .rev()
+            .find_map(|line| serde_json::from_str::<qingcode_server::direct::DirectInfo>(line).ok())
+            .expect("provision command must return pairing info");
+        let config = DirectConnectionConfig {
+            endpoint: endpoint(&host, info.port).unwrap(),
+            certificate_fingerprint: info.certificate_sha256,
+            token: info.token.expect("pairing token"),
+        };
+        assert_eq!(
+            direct::probe(&config.endpoint).await.unwrap(),
+            config.certificate_fingerprint
+        );
+        assert!(direct::test(&config).await.unwrap().healthy);
+        let wrong_token = DirectConnectionConfig {
+            token: "wrong-token".into(),
+            ..config.clone()
+        };
+        assert!(direct::test(&wrong_token)
+            .await
+            .unwrap_err()
+            .contains("[direct:auth]"));
+        let wrong_identity = DirectConnectionConfig {
+            certificate_fingerprint: "0".repeat(64),
+            ..config.clone()
+        };
+        assert!(direct::test(&wrong_identity)
+            .await
+            .unwrap_err()
+            .contains("[direct:identity]"));
+        for _ in 0..2 {
+            let mut stream = direct::open_stream_for(&config, "live-direct-acceptance")
+                .await
+                .unwrap();
+            proto::write_frame(
+                &mut stream,
+                &Frame::new(
+                    Kind::Hello,
+                    0,
+                    proto::encode(&HelloRequest {
+                        client_id: "live-direct-acceptance".into(),
+                        protocol_min: PROTOCOL_VERSION,
+                        protocol_max: PROTOCOL_VERSION,
+                        token: config.token.clone(),
+                        resume_token: None,
+                    })
+                    .unwrap(),
+                ),
+            )
+            .await
+            .unwrap();
+            let frame =
+                tokio::time::timeout(Duration::from_secs(15), proto::read_frame(&mut stream))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(frame.kind, Kind::Hello);
+            direct::close_connection(&config.endpoint, "live-direct-acceptance");
+        }
+        println!("LIVE_DIRECT_OK {host}:{} provision TLS health auth-rejection identity-rejection WSS reconnect", info.port);
+    }
+
     #[test]
     fn validates_hosts_and_ipv6_endpoints() {
         assert_eq!(endpoint("::1", 48763).unwrap(), "https://[::1]:48763");

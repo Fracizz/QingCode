@@ -16,6 +16,19 @@ export async function run({ spaceId, artifactDir, screenshots = true } = {}) {
     await page.goto('http://127.0.0.1:38439/web-tests/direct-agent.html')
     await page.click('loc=role:button[name="Agent 端口直连"]', { label: 'inspect independent Agent connection settings' })
     await page.waitForSelector('loc=role:button[name="测试直连"]')
+    await step('service preparation shows a spinner and prevents duplicate requests', async () => {
+      await page.click('loc=role:button[name="通过 SSH 安装或读取服务"]', { label: 'prepare Agent service' })
+      const pending = await page.evaluate(() => {
+        const button = document.querySelector('button[aria-busy="true"]')
+        return { text: button?.textContent, disabled: button?.disabled, animation: button ? getComputedStyle(button.querySelector('svg')).animationName : null }
+      })
+      assert.equal(pending.text, '正在准备服务…')
+      assert.equal(pending.disabled, true)
+      assert.equal(pending.animation, 'spin')
+      if (screenshots) await page.screenshot({ path: resolve(output, 'provisioning.png') })
+      await page.click('loc=role:button[name="完成模拟服务准备"]', { label: 'complete simulated preparation' })
+      await page.waitForFunction(() => !document.querySelector('button[aria-busy="true"]'))
+    })
     await step('fixed editable port and firewall instructions', async () => {
       assert.equal(await page.evaluate(() => document.querySelector('input[inputmode="numeric"]').value), '48763')
       assert.match(await page.evaluate(() => document.body.textContent), /远端需要开放 TCP 48763/)

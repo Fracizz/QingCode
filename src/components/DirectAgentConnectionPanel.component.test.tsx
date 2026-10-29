@@ -36,6 +36,21 @@ describe('direct Agent connection panel', () => {
     localStorage.clear()
   })
 
+  it('shows a spinner while provisioning and restores the button after failure', async () => {
+    const api = apiMock(null)
+    let reject!: (reason: Error) => void
+    vi.mocked(api.provision).mockReturnValue(new Promise((_, fail) => { reject = fail }))
+    await openPanel(api)
+    fireEvent.click(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' }))
+    const button = screen.getByRole('button', { name: '正在准备服务…' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('aria-busy', 'true')
+    expect(button.querySelector('svg')).toHaveClass('animate-spin')
+    await act(async () => { reject(new Error('failed')) })
+    expect(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' })).not.toBeDisabled()
+    expect(screen.getByRole('alert')).toBeVisible()
+  })
+
   it('keeps native requests lazy and uses an editable fixed default port', async () => {
     const api = apiMock(null)
     render(<DirectAgentConnectionPanel connectionId="c1" defaultHost="192.168.252.107" api={api} />)
