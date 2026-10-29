@@ -5,8 +5,8 @@
 //!
 //! 每个终端维护两份状态：
 //!
-//! - [`vt100::Parser`]：无界面终端模拟器，随时能导出当前屏幕（`contents_formatted`，
-//!   含颜色与光标），用于「缓冲已被淘汰」时的兜底；
+//! - [`vt100::Parser`]：无界面终端模拟器，随时能导出当前屏幕及输入模式，
+//!   用于「缓冲已被淘汰」时的兜底；
 //! - [`RingBuffer`]：环形输出缓冲，保存 `(seq, bytes)` 分片，供 `attach{from_seq}` 重放。
 //!
 //! **seq 语义**：缓冲按「块」编号，每个数据块（一次 `read` 的产物）占一个 seq，从 0
@@ -1289,10 +1289,17 @@ fn evict_locked(host: &mut HostInner, budget: usize) {
     host.total_bytes = total;
 }
 
-/// 屏幕快照：`contents_formatted` 带 SGR 颜色、光标位置与当前备用屏内容，
-/// 客户端打印后画面与断线前一致。非 UTF-8 字节用替换字符兜底（正常输出不会出现）。
+/// Restore the active buffer before painting, then restore mouse/keypad/paste modes.
+/// Clipboard OSC actions are deliberately absent from vt100's serialized state.
 fn render_screen(parser: &Parser) -> String {
-    String::from_utf8_lossy(&parser.screen().contents_formatted()).into_owned()
+    let screen = parser.screen();
+    let mut bytes = if screen.alternate_screen() {
+        b"\x1b[?1049h".to_vec()
+    } else {
+        b"\x1b[?1049l".to_vec()
+    };
+    bytes.extend(screen.state_formatted());
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 fn pty_size(cols: u16, rows: u16) -> PtySize {
@@ -1696,6 +1703,48 @@ fn process_is_live(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screen_snapshot_restores_tui_buffer_and_input_modes_without_clipboard_actions() {
+        let mut source = Parser::new(24, 80, 0);
+        source.process(b"\x1b[?1049h\x1b[?1002h\x1b[?1006h\x1b[?2004h\x1b[?1h\x1b=OpenCode / Claude\x1b]52;c;aGk=\x07");
+        let snapshot = render_screen(&source);
+        assert!(!snapshot.contains("\x1b]52;"));
+        let mut restored = Parser::new(24, 80, 0);
+        restored.process(snapshot.as_bytes());
+        let screen = restored.screen();
+        assert!(screen.alternate_screen());
+        assert!(screen.bracketed_paste());
+        assert!(screen.application_cursor());
+        assert!(screen.application_keypad());
+        assert_eq!(
+            screen.mouse_protocol_mode(),
+            source.screen().mouse_protocol_mode()
+        );
+        assert_eq!(
+            screen.mouse_protocol_encoding(),
+            source.screen().mouse_protocol_encoding()
+        );
+        assert_eq!(screen.contents(), source.screen().contents());
+        assert_eq!(screen.cursor_position(), source.screen().cursor_position());
+
+        // The client resets xterm before applying a snapshot, including a plain shell.
+        source.process(b"\x1b[?1049l\x1b[?1002l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b>");
+        restored = Parser::new(24, 80, 0);
+        restored.process(render_screen(&source).as_bytes());
+        assert!(!restored.screen().alternate_screen());
+        assert!(!restored.screen().bracketed_paste());
+        assert!(!restored.screen().application_cursor());
+        assert!(!restored.screen().application_keypad());
+        assert_eq!(
+            restored.screen().mouse_protocol_mode(),
+            source.screen().mouse_protocol_mode()
+        );
+        assert_eq!(
+            restored.screen().mouse_protocol_encoding(),
+            source.screen().mouse_protocol_encoding()
+        );
+    }
 
     fn assert_send_sync<T: Send + Sync>() {}
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { protectTerminalSelectionMenu } from './terminalSelectionMenu'
+import { protectTerminalSelectionMenu, shouldUseTerminalContextMenu } from './terminalSelectionMenu'
 
 const disposers: Array<() => void> = []
 afterEach(() => {
@@ -13,7 +13,7 @@ function setup(selected = true, appMenu = true) {
   const container = document.createElement('div')
   const screen = container.appendChild(document.createElement('div'))
   document.body.appendChild(container)
-  const hasSelection = vi.fn(() => selected)
+  const getSelection = vi.fn(() => (selected ? 'selected text' : ''))
   const reportDown = vi.fn()
   const reportUp = vi.fn()
   const showMenu = vi.fn()
@@ -21,26 +21,76 @@ function setup(selected = true, appMenu = true) {
   screen.addEventListener('mousedown', reportDown)
   document.addEventListener('mouseup', reportUp)
   container.addEventListener('contextmenu', showMenu)
-  const dispose = protectTerminalSelectionMenu(container, hasSelection, () => appMenu)
+  const openMenu = vi.fn()
+  const dispose = protectTerminalSelectionMenu(container, getSelection, () => appMenu, openMenu)
   disposers.push(dispose, () => document.removeEventListener('mouseup', reportUp))
   const send = (type: string, button: number, target: EventTarget = screen) =>
     target.dispatchEvent(new MouseEvent(type, { button, bubbles: true, cancelable: true }))
-  return { screen, hasSelection, reportDown, reportUp, showMenu, send, dispose }
+  return { screen, getSelection, reportDown, reportUp, showMenu, openMenu, send, dispose }
 }
 
 describe('terminal selection context menu', () => {
+  it.each(['x10', 'vt200', 'drag', 'any'])(
+    'leaves %s TUI menus alone unless selection or Shift wins',
+    mode => {
+      expect(shouldUseTerminalContextMenu(false, mode, false)).toBe(false)
+      expect(shouldUseTerminalContextMenu(true, mode, false)).toBe(true)
+      expect(shouldUseTerminalContextMenu(false, mode, true)).toBe(true)
+    }
+  )
+
+  it('keeps the ordinary shell context menu', () => {
+    expect(shouldUseTerminalContextMenu(false, 'none', false)).toBe(true)
+  })
+
+  it('protects Shift right-click even without a selection', () => {
+    const test = setup(false)
+    test.screen.dispatchEvent(
+      new MouseEvent('mousedown', { button: 2, shiftKey: true, bubbles: true })
+    )
+    test.send('mouseup', 2)
+    expect(test.reportDown).not.toHaveBeenCalled()
+    expect(test.reportUp).not.toHaveBeenCalled()
+  })
+
   it('opens the menu without reporting either half of a selected right-click to the TUI', () => {
     const test = setup()
     test.send('mousedown', 2)
     test.send('contextmenu', 2)
     // Output may clear the selection before the user releases the mouse outside the terminal.
-    test.hasSelection.mockReturnValue(false)
+    test.getSelection.mockReturnValue('')
     test.send('mouseup', 2, document.body)
     expect(test.reportDown).not.toHaveBeenCalled()
     expect(test.reportUp).not.toHaveBeenCalled()
-    expect(test.showMenu).toHaveBeenCalledOnce()
+    expect(test.showMenu).not.toHaveBeenCalled()
+    expect(test.openMenu).toHaveBeenCalledWith(expect.any(MouseEvent), 'selected text')
     test.send('mouseup', 2)
     expect(test.reportUp).toHaveBeenCalledOnce()
+  })
+
+  it.each([false, true])(
+    'keeps the press-time text when output clears selection before contextmenu (release first: %s)',
+    releaseFirst => {
+      const test = setup()
+      test.send('mousedown', 2)
+      test.getSelection.mockReturnValue('')
+      if (releaseFirst) test.send('mouseup', 2)
+      test.send('contextmenu', 2)
+      if (!releaseFirst) test.send('mouseup', 2)
+      expect(test.openMenu).toHaveBeenCalledWith(expect.any(MouseEvent), 'selected text')
+      expect(test.showMenu).not.toHaveBeenCalled()
+      expect(test.reportDown).not.toHaveBeenCalled()
+      expect(test.reportUp).not.toHaveBeenCalled()
+    }
+  )
+
+  it('captures contextmenu before a target handler can clear selection', () => {
+    const test = setup()
+    const targetMenu = vi.fn(() => test.getSelection.mockReturnValue(''))
+    test.screen.addEventListener('contextmenu', targetMenu)
+    test.send('contextmenu', 2)
+    expect(targetMenu).not.toHaveBeenCalled()
+    expect(test.openMenu).toHaveBeenCalledWith(expect.any(MouseEvent), 'selected text')
   })
 
   it.each([
@@ -56,13 +106,15 @@ describe('terminal selection context menu', () => {
     expect(test.reportUp).toHaveBeenCalledOnce()
   })
 
-  it('removes both capture listeners on dispose', () => {
+  it('removes all capture listeners on dispose', () => {
     const test = setup()
     test.send('mousedown', 2)
     test.dispose()
     test.send('mousedown', 2)
     test.send('mouseup', 2)
+    test.send('contextmenu', 2)
     expect(test.reportDown).toHaveBeenCalledOnce()
     expect(test.reportUp).toHaveBeenCalledOnce()
+    expect(test.openMenu).not.toHaveBeenCalled()
   })
 })

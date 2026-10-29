@@ -6,7 +6,6 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import {
@@ -17,7 +16,10 @@ import {
 } from '../store/terminalStore'
 import { setTerminalOutputPaused } from '@/lib/ipc/terminal'
 import { TerminalWriteFlow } from '@/lib/terminal/terminalWriteFlow'
-import { protectTerminalSelectionMenu } from '@/lib/terminal/terminalSelectionMenu'
+import {
+  protectTerminalSelectionMenu,
+  shouldUseTerminalContextMenu,
+} from '@/lib/terminal/terminalSelectionMenu'
 import { useProjectStore } from '../store/projectStore'
 import {
   FONT_SETTINGS_EVENT,
@@ -371,7 +373,7 @@ export default function TerminalView({
   }
 
   // Capture once: TUI output can invalidate the live selection while the menu is open.
-  const contextMenuItems = (selection: string, screen: string): ContextMenuItem[] => [
+  const contextMenuItems = useCallback((selection: string, screen: string): ContextMenuItem[] => [
     {
       label: translate('复制'),
       shortcut: 'Ctrl+C',
@@ -452,7 +454,7 @@ export default function TerminalView({
           },
         ]
       : []),
-  ]
+  ], [clearBuffer, copySelection, isTerminalWritable, openSearch, pasteFromClipboard, selectAll, terminalId])
 
   const clearPtyResizeTimer = useCallback(() => {
     if (ptyResizeTimerRef.current === null) return
@@ -605,12 +607,10 @@ export default function TerminalView({
         useProjectStore.getState().pushToast('error', `打开链接失败: ${String(e)}`)
       })
     })
-    const clipboardAddon = new ClipboardAddon()
     const unicode11 = new Unicode11Addon()
     term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
     term.loadAddon(linkAddon)
-    term.loadAddon(clipboardAddon)
     term.loadAddon(unicode11)
     term.unicode.activeVersion = '11'
     term.open(containerRef.current)
@@ -680,9 +680,12 @@ export default function TerminalView({
         clearBuffer()
         return false
       }
-      if (mod && !event.altKey && !event.shiftKey && key === 'c') {
-        if (term.hasSelection()) {
-          void copySelection()
+      if (mod && !event.altKey && key === 'c') {
+        if (term.hasSelection() || event.shiftKey) {
+          // Native writing owns this copy; a later browser copy must not overwrite it.
+          event.preventDefault()
+          event.stopPropagation()
+          if (term.hasSelection()) void copySelection()
           return false
         }
         if (event.ctrlKey) {
@@ -732,8 +735,13 @@ export default function TerminalView({
     container.addEventListener('paste', onPaste, true)
     const disposeSelectionMenuGuard = protectTerminalSelectionMenu(
       container,
-      () => term.hasSelection(),
-      () => !deferToNativeContextMenuInDev()
+      () => term.getSelection(),
+      () => !deferToNativeContextMenuInDev(),
+      (event, selection) => setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        items: contextMenuItems(selection, terminalContent(term, 'screen')),
+      })
     )
     container.addEventListener('mousedown', onMouseDown)
     window.addEventListener('pointerdown', onWindowPointerDown, true)
@@ -795,8 +803,17 @@ export default function TerminalView({
       if (status !== 'exited' || data === '\x03') writeToTerminal(terminalId, data)
     })
     // 程序通过 OSC 设置窗口标题时自动更新标签名（如 opencode）；运行任务终端不跟随。
-    // 直接挂在 xterm 解析器上处理，输出字节原样写入；须在 ClipboardAddon 之后注册以拦截 OSC 52。
+    // The parser gate is enabled after history has been parsed, not merely enqueued.
+    let clipboardWritesEnabled = false
     const disposeOscHandlers = registerTerminalOscHandlers(term.parser, {
+      onClipboardWrite: text => {
+        if (!clipboardWritesEnabled) return
+        void copyToClipboard(text).catch(error =>
+          useProjectStore
+            .getState()
+            .pushToast('error', translate('复制失败：{error}', { error: String(error) }))
+        )
+      },
       onTitle: title => {
         const current = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
         // Follow meaningful OSC titles; keep「终端 N」unless cwd/app renames it.
@@ -833,6 +850,9 @@ export default function TerminalView({
         })
       })
       replaying = false
+      term.write('', () => {
+        clipboardWritesEnabled = true
+      })
       const restored = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
       if (restored?.status !== 'exited' || !hadRestoredScrollback) return
       void (async () => {
@@ -966,6 +986,7 @@ export default function TerminalView({
     clearBuffer,
     clearPtyResizeTimer,
     copySelection,
+    contextMenuItems,
     fitSettledPanelGrid,
     flushPendingPtyResize,
     isTerminalWritable,
@@ -1144,6 +1165,17 @@ export default function TerminalView({
         if (isActive) xtermRef.current?.focus()
       }}
       onContextMenu={(event: ReactMouseEvent) => {
+        if (deferToNativeContextMenuInDev()) return
+        const term = xtermRef.current
+        if (
+          term &&
+          !shouldUseTerminalContextMenu(term.hasSelection(), term.modes.mouseTrackingMode, event.shiftKey)
+        ) {
+          // Prevent browser chrome while leaving the TUI's mouse press/release untouched.
+          event.preventDefault()
+          event.stopPropagation()
+          return
+        }
         if (!shouldShowAppContextMenu(event)) return
         setContextMenu({
           x: event.clientX,

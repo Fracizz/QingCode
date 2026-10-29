@@ -4,7 +4,7 @@
   top: 6px;
   right: 10px;
   z-index: 20;
-  max-width: min(100% - 16px, 360px);
+  width: min(360px, calc(100% - 20px));
   pointer-events: auto;
 }
 
@@ -13,8 +13,8 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  min-width: 280px;
-  padding: 4px 28px 4px 6px;
+  min-width: 0;
+  padding: 4px 6px;
   border: 1px solid var(--color-border-strong);
   border-radius: 6px;
   background: var(--color-bg-elevated);
@@ -26,7 +26,7 @@
   display: flex;
   align-items: center;
   flex: 1 1 160px;
-  min-width: 120px;
+  min-width: 0;
   height: var(--ui-control-height);
   border: 1px solid var(--color-border-strong);
   border-radius: 4px;
@@ -39,15 +39,19 @@
 }
 
 .terminal-search-bar__input {
+  /* The wrapper owns the focus ring, including keyboard and auto focus. */
+  appearance: none;
   flex: 1;
   min-width: 0;
   height: 100%;
   padding: 0 8px;
   border: 0;
+  border-radius: inherit;
   background: transparent;
   color: var(--color-fg);
   font-size: var(--ui-font-size);
   outline: none;
+  box-shadow: none;
 }
 
 .terminal-search-bar__input::placeholder {
@@ -108,10 +112,4 @@
 .terminal-search-bar__btn:disabled {
   opacity: 0.35;
   cursor: default;
-}
-
-.terminal-search-bar__close {
-  position: absolute;
-  top: 4px;
-  right: 4px;
 }
