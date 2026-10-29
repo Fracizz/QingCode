@@ -15,6 +15,7 @@ const projectState = vi.hoisted(() => ({
 
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }))
 vi.mock('./tauri', () => ({ safeInvoke: vi.fn() }))
+vi.mock('./transferSettings', () => ({ loadTransferConcurrency: vi.fn(async () => 4) }))
 vi.mock('../store/projectStore', () => ({ useProjectStore: { getState: () => projectState } }))
 const request: TransferRequest = { direction: 'download', paths: ['ssh://c/a', 'ssh://c/b'], destination: 'D:/out' }
 const unlisten = vi.fn()

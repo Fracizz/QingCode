@@ -2,7 +2,7 @@
 //! File handles are issued by the server and retain the opened file identity;
 //! chunks are bounded and never reopen an arbitrary client-supplied path.
 
-use super::direct::{workspace_request, DirectConnectionConfig};
+use super::direct::{DirectConnectionConfig, WorkspaceClient};
 use russh_sftp::client::error::Error;
 use russh_sftp::protocol::{FileAttributes, OpenFlags};
 use serde_json::{json, Value};
@@ -20,7 +20,7 @@ const CHUNK: usize = 128 * 1024;
 
 #[derive(Clone)]
 pub(super) struct DirectFs {
-    config: Arc<DirectConnectionConfig>,
+    client: Arc<WorkspaceClient>,
     root: Option<String>,
     trusted: bool,
 }
@@ -28,7 +28,7 @@ pub(super) struct DirectFs {
 impl DirectFs {
     pub(super) fn new(config: DirectConnectionConfig, root: Option<String>, trusted: bool) -> Self {
         Self {
-            config: Arc::new(config),
+            client: Arc::new(WorkspaceClient::new(config)),
             root,
             trusted,
         }
@@ -38,9 +38,7 @@ impl DirectFs {
         params["op"] = json!(op);
         params["root"] = json!(self.root);
         params["trusted"] = json!(self.trusted);
-        workspace_request(&self.config, &params)
-            .await
-            .map_err(Error::IO)
+        self.client.request(&params).await.map_err(Error::IO)
     }
 
     pub(super) async fn canonicalize(&self, path: String) -> Result<String> {

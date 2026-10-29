@@ -5,20 +5,28 @@ use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, UNIX_EPOCH};
+
+pub mod budget;
 
 const CHUNK: usize = 256 * 1024;
 const HANDLE_LIMIT: usize = 256;
 struct OpenFile {
-    file: File,
     root: PathBuf,
     writable: bool,
+    state: Mutex<OpenFileState>,
+}
+struct OpenFileState {
+    // Taking the file on close also invalidates operations that already cloned
+    // the handle but have not acquired its lock yet.
+    file: Option<File>,
     touched: Instant,
 }
-static FILES: OnceLock<Mutex<HashMap<String, OpenFile>>> = OnceLock::new();
+type FileHandles = Mutex<HashMap<String, Arc<OpenFile>>>;
+static FILES: OnceLock<FileHandles> = OnceLock::new();
 
-fn files() -> &'static Mutex<HashMap<String, OpenFile>> {
+fn files() -> &'static FileHandles {
     FILES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 fn field<'a>(v: &'a Value, key: &str) -> Result<&'a str, String> {
@@ -158,24 +166,43 @@ fn with_handle<T>(
         writable(v)?;
     }
     let expected = root(v)?.ok_or("文件句柄需要项目根")?;
-    let mut files = files().lock().map_err(|_| "文件句柄状态不可用")?;
-    let handle = files
-        .get_mut(field(v, "handle")?)
+    let handle = files()
+        .lock()
+        .map_err(|_| "文件句柄状态不可用")?
+        .get(field(v, "handle")?)
+        .cloned()
         .ok_or("文件句柄不存在或已过期")?;
     if handle.root != expected || (write && !handle.writable) {
         return Err("文件句柄不属于当前项目或不可写".into());
     }
-    handle.touched = Instant::now();
-    f(&mut handle.file)
+    // Never retain the registry lock while waiting for a file or doing disk
+    // I/O. Seek + read/write stay atomic for this handle only.
+    let mut state = handle.state.lock().map_err(|_| "文件句柄状态不可用")?;
+    state.touched = Instant::now();
+    f(state.file.as_mut().ok_or("文件句柄不存在或已关闭")?)
 }
 
 pub async fn handle(v: Value) -> Result<Value, String> {
+    static BUDGET: OnceLock<budget::RequestBudget> = OnceLock::new();
+    let op = field(&v, "op")?;
+    let permit = tokio::time::timeout(
+        Duration::from_secs(10),
+        BUDGET.get_or_init(Default::default).acquire(op),
+    )
+    .await
+    .map_err(|_| "工作区请求排队超时，请稍后重试")??;
     if v.get("op").and_then(Value::as_str) == Some("exec") {
+        let _permit = permit;
         return execute(v).await;
     }
-    tokio::task::spawn_blocking(move || handle_sync(v))
-        .await
-        .map_err(|_| "工作区操作失败".to_string())?
+    tokio::task::spawn_blocking(move || {
+        // A cancelled HTTP caller cannot release the budget while its disk
+        // operation is still running in the blocking pool.
+        let _permit = permit;
+        handle_sync(v)
+    })
+    .await
+    .map_err(|_| "工作区操作失败".to_string())?
 }
 fn handle_sync(v: Value) -> Result<Value, String> {
     let op = field(&v, "op")?;
@@ -238,19 +265,30 @@ fn handle_sync(v: Value) -> Result<Value, String> {
             let file = options.open(path).map_err(|e| e.to_string())?;
             let size = file.metadata().map_err(|e| e.to_string())?.len();
             let mut files = files().lock().map_err(|_| "文件句柄状态不可用")?;
-            files.retain(|_, handle| handle.touched.elapsed() < Duration::from_secs(300));
+            files.retain(|_, handle| {
+                // An in-flight or queued operation owns another Arc. Expiry
+                // must neither interrupt it nor wait for its disk operation.
+                Arc::strong_count(handle) > 1
+                    || handle
+                        .state
+                        .try_lock()
+                        .map(|state| state.touched.elapsed() < Duration::from_secs(300))
+                        .unwrap_or(true)
+            });
             if files.len() >= HANDLE_LIMIT {
                 return Err("打开文件过多，请稍后重试".into());
             }
             let handle = crate::generate_token();
             files.insert(
                 handle.clone(),
-                OpenFile {
-                    file,
+                Arc::new(OpenFile {
                     root: project,
                     writable: writing,
-                    touched: Instant::now(),
-                },
+                    state: Mutex::new(OpenFileState {
+                        file: Some(file),
+                        touched: Instant::now(),
+                    }),
+                }),
             );
             Ok(json!({"handle":handle,"size":size}))
         }
@@ -286,14 +324,24 @@ fn handle_sync(v: Value) -> Result<Value, String> {
         }),
         "close" => {
             let expected = root(&v)?.ok_or("文件句柄需要项目根")?;
-            let mut files = files().lock().map_err(|_| "文件句柄状态不可用")?;
             let id = field(&v, "handle")?;
-            if files.get(id).is_some_and(|h| h.root != expected) {
-                return Err("文件句柄不属于当前项目".into());
-            }
-            if let Some(handle) = files.remove(id) {
-                if handle.writable {
-                    handle.file.sync_all().map_err(|e| e.to_string())?;
+            let handle = {
+                let mut files = files().lock().map_err(|_| "文件句柄状态不可用")?;
+                if files.get(id).is_some_and(|h| h.root != expected) {
+                    return Err("文件句柄不属于当前项目".into());
+                }
+                files.remove(id)
+            };
+            if let Some(handle) = handle {
+                let file = handle
+                    .state
+                    .lock()
+                    .map_err(|_| "文件句柄状态不可用")?
+                    .file
+                    .take();
+                if let Some(file) = file.filter(|_| handle.writable) {
+                    // sync_all can be slow; it must not block unrelated handles.
+                    file.sync_all().map_err(|e| e.to_string())?;
                 }
             }
             Ok(Value::Null)
@@ -411,6 +459,135 @@ async fn execute(v: Value) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temporary_handles() -> (PathBuf, Value, Value) {
+        let base = std::env::temp_dir().join(format!(
+            "qingcode-handle-concurrency-{}",
+            crate::generate_token()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+        let root = display(&canonical(&base).unwrap());
+        let mut requests = Vec::new();
+        for name in ["first", "second"] {
+            let path = base.join(name);
+            std::fs::write(&path, name).unwrap();
+            let opened = handle_sync(json!({
+                "root":root,"path":display(&path),"op":"open","flags":3,"trusted":true,
+            }))
+            .unwrap();
+            requests.push(json!({"root":root,"handle":opened["handle"],"trusted":true}));
+        }
+        (base, requests.remove(0), requests.remove(0))
+    }
+
+    #[test]
+    fn slow_file_operations_do_not_block_other_handles_and_same_handle_stays_ordered() {
+        use std::sync::mpsc;
+        let (base, first, second) = temporary_handles();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first_request = first.clone();
+        let slow = std::thread::spawn(move || {
+            with_handle(&first_request, true, |file| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                file.seek(SeekFrom::Start(0)).unwrap();
+                file.write_all(b"changed").unwrap();
+                Ok(())
+            })
+            .unwrap();
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (other_tx, other_rx) = mpsc::channel();
+        let other_request = second.clone();
+        let other = std::thread::spawn(move || {
+            let result = with_handle(&other_request, false, |file| {
+                let mut bytes = String::new();
+                file.read_to_string(&mut bytes).unwrap();
+                Ok(bytes)
+            });
+            other_tx.send(result).unwrap();
+        });
+        let (same_tx, same_rx) = mpsc::channel();
+        let same_request = first.clone();
+        let same = std::thread::spawn(move || {
+            let result = with_handle(&same_request, false, |file| {
+                file.seek(SeekFrom::Start(0)).unwrap();
+                let mut bytes = String::new();
+                file.read_to_string(&mut bytes).unwrap();
+                Ok(bytes)
+            });
+            same_tx.send(result).unwrap();
+        });
+        // Release even when a regression blocks the other file, so failed
+        // tests do not strand worker threads or poison global state.
+        let independent = other_rx.recv_timeout(Duration::from_secs(2));
+        let same_blocked = same_rx.try_recv().is_err();
+        release_tx.send(()).unwrap();
+        slow.join().unwrap();
+        other.join().unwrap();
+        same.join().unwrap();
+        assert_eq!(independent.unwrap().unwrap(), "second");
+        assert!(same_blocked, "the same handle must serialize seek and I/O");
+        assert_eq!(same_rx.recv().unwrap().unwrap(), "changed");
+        for mut request in [first, second] {
+            request["op"] = json!("close");
+            handle_sync(request).unwrap();
+        }
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn close_waits_for_its_file_without_blocking_the_registry_or_other_files() {
+        use std::sync::mpsc;
+        let (base, first, second) = temporary_handles();
+        let retained = files().lock().unwrap()[first["handle"].as_str().unwrap()].clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first_request = first.clone();
+        let slow = std::thread::spawn(move || {
+            with_handle(&first_request, false, |_| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                Ok(())
+            })
+            .unwrap();
+        });
+        entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mut close_request = first.clone();
+        close_request["op"] = json!("close");
+        let closing = std::thread::spawn(move || handle_sync(close_request));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let removed = loop {
+            if files()
+                .try_lock()
+                .is_ok_and(|files| !files.contains_key(first["handle"].as_str().unwrap()))
+            {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::yield_now();
+        };
+        let other = if removed {
+            with_handle(&second, false, |file| Ok(file.metadata().unwrap().len()))
+        } else {
+            Err("close held the global registry lock".into())
+        };
+        release_tx.send(()).unwrap();
+        slow.join().unwrap();
+        closing.join().unwrap().unwrap();
+        assert!(removed);
+        assert_eq!(other.unwrap(), 6);
+        assert!(retained.state.lock().unwrap().file.is_none());
+        assert!(with_handle(&first, false, |_| Ok(())).is_err());
+        let mut close_request = second;
+        close_request["op"] = json!("close");
+        handle_sync(close_request).unwrap();
+        std::fs::remove_dir_all(base).unwrap();
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn rejects_registered_root_replaced_with_an_outside_symlink() {

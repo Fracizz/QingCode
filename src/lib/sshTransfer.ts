@@ -5,6 +5,7 @@ import { useProjectStore } from '../store/projectStore'
 import { findProjectForPath, parentPath, pathsEqual } from '../utils/fileReferences'
 import { findNodeByPath } from '../utils/fileTreeHelpers'
 import type { Project } from '../types'
+import { loadTransferConcurrency } from './transferSettings'
 
 /** How long a finished transfer card stays before it leaves on its own. */
 export const COMPLETED_LINGER_MS = 2500
@@ -30,11 +31,14 @@ export async function startSshTransfer(request: TransferRequest): Promise<Transf
           ? 'cancelling' : event.payload.status,
       })
     })
+    const projectPath = request.direction === 'upload' ? request.destination : request.paths[0]
+    const project = projectPath ? findProjectForPath(useProjectStore.getState().projects, projectPath) : undefined
+    const concurrency = await loadTransferConcurrency(project ?? undefined)
     if (useTransferStore.getState().tasks.find(task => task.taskId === taskId)?.status === 'cancelling') {
       result = { ...initial, status: 'cancelled' }
     } else {
       store.update(taskId, { status: 'running' })
-      result = await safeInvoke<TransferProgress>('传输文件', 'ssh_transfer_paths', { taskId, ...request })
+      result = await safeInvoke<TransferProgress>('传输文件', 'ssh_transfer_paths', { taskId, ...request, concurrency })
     }
   } catch (error) {
     const current = useTransferStore.getState().tasks.find(task => task.taskId === taskId)

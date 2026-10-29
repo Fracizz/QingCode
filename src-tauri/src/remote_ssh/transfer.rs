@@ -1,4 +1,6 @@
 use super::*;
+use futures_util::stream::{FuturesUnordered, StreamExt};
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -89,11 +91,40 @@ pub struct TransferProgress {
     pub error: Option<String>,
 }
 
-struct TransferContext<'a> {
-    flag: Arc<AtomicBool>,
-    app: &'a AppHandle,
+const DEFAULT_CONCURRENCY: usize = 4;
+const MAX_CONCURRENCY: usize = 8;
+
+struct ActiveFile {
+    path: String,
+    bytes: u64,
+    total: u64,
+}
+
+struct TransferState<'a> {
+    app: Option<&'a AppHandle>,
     progress: TransferProgress,
     last_emit: Instant,
+    active: BTreeMap<usize, ActiveFile>,
+}
+
+impl TransferState<'_> {
+    fn emit(&mut self, force: bool) {
+        self.progress.current_path = self.active.values().next().map(|f| f.path.clone());
+        self.progress.current_bytes = self.active.values().map(|f| f.bytes).sum();
+        self.progress.current_total_bytes = self.active.values().map(|f| f.total).sum();
+        if force || self.last_emit.elapsed() >= Duration::from_millis(100) {
+            if let Some(app) = self.app {
+                let _ = app.emit("ssh-transfer-progress", &self.progress);
+            }
+            self.last_emit = Instant::now();
+        }
+    }
+}
+
+struct TransferContext<'a> {
+    flag: Arc<AtomicBool>,
+    shared: Arc<Mutex<TransferState<'a>>>,
+    job: usize,
 }
 
 impl TransferContext<'_> {
@@ -104,27 +135,102 @@ impl TransferContext<'_> {
             Ok(())
         }
     }
-    fn emit(&mut self, force: bool) {
-        if force || self.last_emit.elapsed() >= Duration::from_millis(100) {
-            let _ = self.app.emit("ssh-transfer-progress", &self.progress);
-            self.last_emit = Instant::now();
-        }
-    }
     fn begin_file(&mut self, path: String, total: u64) {
-        self.progress.current_path = Some(path);
-        self.progress.current_bytes = 0;
-        self.progress.current_total_bytes = total;
-        self.emit(true);
+        let mut state = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+        state.active.insert(
+            self.job,
+            ActiveFile {
+                path,
+                bytes: 0,
+                total,
+            },
+        );
+        state.emit(true);
     }
     fn advance(&mut self, bytes: usize) {
-        self.progress.current_bytes += bytes as u64;
-        self.emit(false);
+        let mut state = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(file) = state.active.get_mut(&self.job) {
+            file.bytes += bytes as u64;
+        }
+        state.emit(false);
     }
     fn finish_file(&mut self) {
-        self.progress.completed_files += 1;
-        self.progress.completed_bytes += self.progress.current_bytes;
-        self.emit(true);
+        let mut state = self.shared.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(file) = state.active.remove(&self.job) {
+            state.progress.completed_files += 1;
+            state.progress.completed_bytes += file.bytes;
+        }
+        state.emit(true);
     }
+}
+
+struct QueueResult {
+    completed: Vec<bool>,
+    failure: Option<(usize, String)>,
+}
+
+// A directory is a queue item that returns children. Only this loop schedules
+// work, so deep directory trees cannot multiply the file concurrency limit.
+async fn run_queue<J, F, Fut>(
+    jobs: Vec<J>,
+    concurrency: usize,
+    flag: &AtomicBool,
+    mut execute: F,
+    mut completed: impl FnMut(&[bool]),
+) -> QueueResult
+where
+    F: FnMut(usize, J) -> Fut,
+    Fut: Future<Output = Result<Vec<J>, String>>,
+{
+    let mut result = QueueResult {
+        completed: vec![false; jobs.len()],
+        failure: None,
+    };
+    let mut remaining = vec![1usize; jobs.len()];
+    let mut queued: VecDeque<_> = jobs.into_iter().enumerate().collect();
+    let mut running = FuturesUnordered::new();
+    let mut next_id = 0;
+    loop {
+        while result.failure.is_none()
+            && !flag.load(Ordering::SeqCst)
+            && running.len() < concurrency.clamp(1, MAX_CONCURRENCY)
+        {
+            let Some((source, job)) = queued.pop_front() else {
+                break;
+            };
+            let future = execute(next_id, job);
+            next_id += 1;
+            running.push(async move { (source, future.await) });
+        }
+        let Some((source, outcome)) = running.next().await else {
+            break;
+        };
+        match outcome {
+            Ok(children) => {
+                remaining[source] = remaining[source] - 1 + children.len();
+                queued.extend(children.into_iter().map(|job| (source, job)));
+                if remaining[source] == 0 {
+                    result.completed[source] = true;
+                    completed(&result.completed);
+                }
+            }
+            Err(error) => {
+                if result.failure.is_none() {
+                    result.failure = Some((source, error));
+                    // Stop new work; poll all active futures through cleanup
+                    // and non-cancellable commits before returning a result.
+                    flag.store(true, Ordering::SeqCst);
+                }
+            }
+        }
+    }
+    if result.failure.is_none() && flag.load(Ordering::SeqCst) {
+        result.failure = Some((
+            result.completed.iter().position(|done| !done).unwrap_or(0),
+            CANCELLED.into(),
+        ));
+    }
+    result
 }
 
 async fn cancellable<T, E: std::fmt::Display>(
@@ -165,7 +271,7 @@ async fn transfer_upload(
     root: &RegisteredRoot,
     allowlist: &PathAllowlist,
     context: &mut TransferContext<'_>,
-) -> Result<(), String> {
+) -> Result<Vec<(PathBuf, String)>, String> {
     context.check()?;
     allowlist.ensure_allowed(&local.to_string_lossy())?;
     let stat_path = local.clone();
@@ -199,20 +305,20 @@ async fn transfer_upload(
                 .collect::<std::io::Result<Vec<_>>>()
         })
         .await?;
-        for path in entries {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .ok_or_else(|| "上传文件名不是有效 UTF-8".to_string())?;
-            validate_entry_name(name)?;
-            let target = format!("{}/{name}", remote.trim_end_matches('/'));
-            Box::pin(transfer_upload(
-                manager, sftp, path, target, root, allowlist, context,
-            ))
-            .await?;
-        }
-        return Ok(());
+        return entries
+            .into_iter()
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or_else(|| "上传文件名不是有效 UTF-8".to_string())?;
+                validate_entry_name(name)?;
+                let target = join_remote_path(&remote, name);
+                Ok((path, target))
+            })
+            .collect();
     }
+
     if !metadata.is_file() {
         return Err(format!("暂不上传特殊文件：{}", local.display()));
     }
@@ -301,7 +407,7 @@ async fn transfer_upload(
     }
     result?;
     context.finish_file();
-    Ok(())
+    Ok(Vec::new())
 }
 
 async fn transfer_download(
@@ -311,7 +417,7 @@ async fn transfer_download(
     root: &RegisteredRoot,
     allowlist: &PathAllowlist,
     context: &mut TransferContext<'_>,
-) -> Result<(), String> {
+) -> Result<Vec<(PathBuf, String)>, String> {
     context.check()?;
     cancellable(
         &context.flag,
@@ -337,21 +443,15 @@ async fn transfer_download(
         let directory = local.clone();
         local_io(move || std::fs::create_dir_all(directory)).await?;
         let entries = cancellable(&context.flag, sftp.read_dir(remote)).await?;
-        for entry in entries {
-            let name = entry.file_name();
-            validate_entry_name(&name)?;
-            Box::pin(transfer_download(
-                sftp,
-                entry.path(),
-                local.join(name),
-                root,
-                allowlist,
-                context,
-            ))
-            .await?;
-        }
-        return Ok(());
+        return entries
+            .map(|entry| {
+                let name = entry.file_name();
+                validate_entry_name(&name)?;
+                Ok((local.join(name), entry.path()))
+            })
+            .collect();
     }
+
     if !metadata.is_regular() {
         return Err(format!("暂不下载远程特殊文件：{remote}"));
     }
@@ -399,7 +499,7 @@ async fn transfer_download(
     }
     result?;
     context.finish_file();
-    Ok(())
+    Ok(Vec::new())
 }
 
 fn commit_download(
@@ -418,18 +518,104 @@ fn commit_download(
     std::fs::rename(source, destination)
 }
 
+struct TransferJob {
+    local: PathBuf,
+    remote: String,
+}
+
+async fn execute_job(
+    job: TransferJob,
+    upload: bool,
+    manager: &SshManager,
+    allowlist: &PathAllowlist,
+    context: &mut TransferContext<'_>,
+) -> Result<Vec<TransferJob>, String> {
+    context.check()?;
+    // Resolve again for each child so trust revocation/root changes take effect.
+    let (sftp, parsed, root) =
+        cancellable(&context.flag, manager.sftp_for_uri(&job.remote, upload)).await?;
+    let children = if upload {
+        transfer_upload(
+            manager,
+            &sftp,
+            job.local,
+            parsed.path,
+            &root,
+            allowlist,
+            context,
+        )
+        .await?
+    } else {
+        transfer_download(&sftp, parsed.path, job.local, &root, allowlist, context).await?
+    };
+    Ok(children
+        .into_iter()
+        .map(|(local, remote)| TransferJob {
+            local,
+            remote: format!("ssh://{}{remote}", parsed.connection_id),
+        })
+        .collect())
+}
+
+fn initial_jobs(
+    upload: bool,
+    paths: &[String],
+    destination: &str,
+) -> Result<Vec<TransferJob>, String> {
+    let mut targets = std::collections::HashSet::new();
+    paths
+        .iter()
+        .map(|path| {
+            let name = if upload {
+                Path::new(path).file_name().and_then(|name| name.to_str())
+            } else {
+                path.rsplit('/').next()
+            }
+            .ok_or("传输路径缺少有效文件名")?;
+            validate_entry_name(name)?;
+            let job = if upload {
+                TransferJob {
+                    local: PathBuf::from(path),
+                    remote: join_remote_uri(destination, name),
+                }
+            } else {
+                TransferJob {
+                    local: PathBuf::from(destination).join(name),
+                    remote: path.clone(),
+                }
+            };
+            let mut target = if upload {
+                job.remote.clone()
+            } else {
+                job.local.to_string_lossy().into_owned()
+            };
+            let remote_windows =
+                upload && parse_remote_uri(&job.remote)?.path.as_bytes().get(2) == Some(&b':');
+            if (!upload && cfg!(windows)) || remote_windows {
+                target = target.to_lowercase();
+            }
+            if !targets.insert(target) {
+                return Err("多个源路径具有相同的目标文件名，请分开传输".into());
+            }
+            Ok(job)
+        })
+        .collect()
+}
+
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn ssh_transfer_paths(
     task_id: String,
     direction: String,
     paths: Vec<String>,
     destination: String,
+    concurrency: Option<usize>,
     manager: State<'_, SshManager>,
     allowlist: State<'_, PathAllowlist>,
     app: AppHandle,
 ) -> Result<TransferProgress, String> {
     if direction != "upload" && direction != "download" {
-        return Err("不支持的传输方向".to_string());
+        return Err("不支持的传输方向".into());
     }
     let flag = register_task(&task_id)?;
     struct Cleanup(String);
@@ -441,13 +627,52 @@ pub async fn ssh_transfer_paths(
         }
     }
     let _cleanup = Cleanup(task_id.clone());
-    let mut context = TransferContext {
+    run_transfer(
+        TransferOptions {
+            task_id,
+            upload: direction == "upload",
+            paths,
+            destination,
+            concurrency: concurrency.unwrap_or(DEFAULT_CONCURRENCY),
+        },
+        &manager,
+        &allowlist,
+        Some(&app),
         flag,
-        app: &app,
+    )
+    .await
+}
+
+struct TransferOptions {
+    task_id: String,
+    upload: bool,
+    paths: Vec<String>,
+    destination: String,
+    concurrency: usize,
+}
+
+async fn run_transfer(
+    options: TransferOptions,
+    manager: &SshManager,
+    allowlist: &PathAllowlist,
+    app: Option<&AppHandle>,
+    flag: Arc<AtomicBool>,
+) -> Result<TransferProgress, String> {
+    let TransferOptions {
+        task_id,
+        upload,
+        paths,
+        destination,
+        concurrency,
+    } = options;
+    let jobs = initial_jobs(upload, &paths, &destination)?;
+    let shared = Arc::new(Mutex::new(TransferState {
+        app,
         last_emit: Instant::now(),
+        active: BTreeMap::new(),
         progress: TransferProgress {
             task_id,
-            status: "running".to_string(),
+            status: "running".into(),
             completed_files: 0,
             completed_bytes: 0,
             completed_paths: Vec::new(),
@@ -458,83 +683,378 @@ pub async fn ssh_transfer_paths(
             failed_path: None,
             error: None,
         },
-    };
-    context.emit(true);
-    for (index, path) in paths.iter().enumerate() {
-        let operation = async {
-            context.check()?;
-            if direction == "upload" {
-                let (sftp, parsed, root) =
-                    cancellable(&context.flag, manager.sftp_for_uri(&destination, true)).await?;
-                cancellable(
-                    &context.flag,
-                    ensure_existing_path_within(&sftp, &parsed.path, &root),
-                )
-                .await?;
-                if !cancellable(&context.flag, sftp.metadata(parsed.path.clone()))
-                    .await?
-                    .is_dir()
-                {
-                    return Err("请选择远程目录作为上传目标".to_string());
-                }
-                let local = PathBuf::from(path);
-                let name = local
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .ok_or_else(|| "上传路径缺少有效文件名".to_string())?;
-                validate_entry_name(name)?;
-                let remote = format!("{}/{name}", parsed.path.trim_end_matches('/'));
-                transfer_upload(
-                    &manager,
-                    &sftp,
-                    local,
-                    remote,
-                    &root,
-                    &allowlist,
-                    &mut context,
-                )
-                .await
-            } else {
-                allowlist.ensure_writable(&destination)?;
-                let (sftp, parsed, root) =
-                    cancellable(&context.flag, manager.sftp_for_uri(path, false)).await?;
-                let name = parsed
-                    .path
-                    .rsplit('/')
-                    .next()
-                    .ok_or_else(|| "下载路径缺少有效文件名".to_string())?;
-                validate_entry_name(name)?;
-                let local = PathBuf::from(&destination).join(name);
-                transfer_download(&sftp, parsed.path, local, &root, &allowlist, &mut context).await
+    }));
+    shared.lock().unwrap().emit(true);
+    let result = run_queue(
+        jobs,
+        concurrency,
+        &flag,
+        |job_id, job| {
+            let mut context = TransferContext {
+                flag: flag.clone(),
+                shared: shared.clone(),
+                job: job_id,
+            };
+            async move {
+                let result = execute_job(job, upload, manager, allowlist, &mut context).await;
+                let mut state = context.shared.lock().unwrap_or_else(|e| e.into_inner());
+                state.active.remove(&job_id);
+                state.emit(true);
+                result
             }
+        },
+        |completed| {
+            let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
+            state.progress.completed_paths = paths
+                .iter()
+                .zip(completed)
+                .filter(|(_, done)| **done)
+                .map(|(path, _)| path.clone())
+                .collect();
+            state.progress.pending_paths = paths
+                .iter()
+                .zip(completed)
+                .filter(|(_, done)| !**done)
+                .map(|(path, _)| path.clone())
+                .collect();
+            state.emit(true);
+        },
+    )
+    .await;
+    let mut state = shared.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((source, error)) = result.failure {
+        state.progress.status = if error == CANCELLED {
+            "cancelled"
+        } else {
+            "failed"
         }
-        .await;
-        if let Err(error) = operation {
-            context.progress.status = if context.flag.load(Ordering::SeqCst) {
-                "cancelled"
-            } else {
-                "failed"
-            }
-            .to_string();
-            context.progress.error = Some(error);
-            context.progress.failed_path = Some(path.clone());
-            context.progress.pending_paths = paths[index..].to_vec();
-            context.emit(true);
-            return Ok(context.progress);
-        }
-        context.progress.completed_paths.push(path.clone());
-        context.progress.pending_paths = paths[index + 1..].to_vec();
-        context.emit(true);
+        .into();
+        state.progress.failed_path = paths.get(source).cloned();
+        state.progress.error = Some(error);
+    } else {
+        state.progress.status = "completed".into();
     }
-    context.progress.status = "completed".to_string();
-    context.progress.current_path = None;
-    context.emit(true);
-    Ok(context.progress)
+    state.emit(true);
+    Ok(state.progress.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn concurrent_directory_roundtrip_preserves_bytes_empty_folders_and_retry_paths() {
+        let (config, gateway, directory) = super::super::direct::tests::gateway().await;
+        let remote = directory.join("remote");
+        let source = directory.join("local/source");
+        let downloaded = directory.join("downloaded");
+        std::fs::create_dir_all(&remote).unwrap();
+        std::fs::create_dir_all(source.join("nested/empty")).unwrap();
+        std::fs::create_dir_all(&downloaded).unwrap();
+        let mut total = 0;
+        for index in 0..12 {
+            let bytes: Vec<u8> = (0..(128 * 1024 + index)).map(|n| (n % 251) as u8).collect();
+            total += bytes.len() as u64;
+            std::fs::write(source.join(format!("nested/{index}.bin")), &bytes).unwrap();
+        }
+        std::fs::write(source.join("zero"), []).unwrap();
+        let canonical = std::fs::canonicalize(&remote)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let uri = if canonical.starts_with('/') {
+            format!("ssh://transfer-test{canonical}")
+        } else {
+            format!("ssh://transfer-test/{canonical}")
+        };
+        let manager = SshManager::new();
+        manager
+            .direct_connections
+            .write()
+            .unwrap()
+            .insert("transfer-test".into(), config);
+        manager
+            .direct_active
+            .write()
+            .unwrap()
+            .insert("transfer-test".into());
+        manager.roots.write().unwrap().insert(
+            uri.clone(),
+            RegisteredRoot {
+                uri: uri.clone(),
+                canonical_path: canonical,
+                trusted: true,
+            },
+        );
+        let allowlist = PathAllowlist::new();
+        allowlist.authorize_paths(vec![directory.to_string_lossy().into_owned()]);
+        let local_path = source.to_string_lossy().into_owned();
+        let upload = run_transfer(
+            TransferOptions {
+                task_id: "upload".into(),
+                upload: true,
+                paths: vec![local_path.clone()],
+                destination: uri.clone(),
+                concurrency: 4,
+            },
+            &manager,
+            &allowlist,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(upload.status, "completed", "{:?}", upload.error);
+        assert_eq!(upload.completed_paths, [local_path]);
+        assert!(upload.pending_paths.is_empty());
+        assert_eq!(upload.completed_files, 13);
+        assert_eq!(upload.completed_bytes, total);
+        assert_eq!(upload.current_bytes, 0);
+        assert!(remote.join("source/nested/empty").is_dir());
+        let remote_source = join_remote_uri(&uri, "source");
+        let download = run_transfer(
+            TransferOptions {
+                task_id: "download".into(),
+                upload: false,
+                paths: vec![remote_source.clone()],
+                destination: downloaded.to_string_lossy().into_owned(),
+                concurrency: 4,
+            },
+            &manager,
+            &allowlist,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(download.status, "completed", "{:?}", download.error);
+        assert_eq!(
+            download.completed_paths.as_slice(),
+            std::slice::from_ref(&remote_source)
+        );
+        assert_eq!(download.completed_files, 13);
+        assert_eq!(download.completed_bytes, total);
+        assert!(downloaded.join("source/nested/empty").is_dir());
+        for index in 0..12 {
+            let relative = format!("nested/{index}.bin");
+            assert_eq!(
+                std::fs::read(source.join(&relative)).unwrap(),
+                std::fs::read(downloaded.join("source").join(&relative)).unwrap()
+            );
+        }
+        assert_eq!(std::fs::read(downloaded.join("source/zero")).unwrap(), b"");
+        // Retry must include only unfinished top-level paths.
+        let missing = join_remote_uri(&uri, "missing");
+        let zero = join_remote_uri(&remote_source, "zero");
+        let failed = run_transfer(
+            TransferOptions {
+                task_id: "failed".into(),
+                upload: false,
+                paths: vec![zero.clone(), missing.clone()],
+                destination: downloaded.to_string_lossy().into_owned(),
+                concurrency: 1,
+            },
+            &manager,
+            &allowlist,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.pending_paths, [missing]);
+        assert_eq!(failed.completed_paths, [zero]);
+        assert_eq!(failed.completed_files, 1);
+        drop(manager);
+        gateway.abort();
+        let _ = gateway.await;
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn directory_children_share_one_bounded_worker_queue() {
+        use std::sync::atomic::AtomicUsize;
+        for (requested, expected) in [(4, 4), (100, 8)] {
+            let active = AtomicUsize::new(0);
+            let peak = AtomicUsize::new(0);
+            let finished = AtomicUsize::new(0);
+            let result = run_queue(
+                vec![true],
+                requested,
+                &AtomicBool::new(false),
+                |_, directory| {
+                    let (active, peak, finished) = (&active, &peak, &finished);
+                    async move {
+                        if directory {
+                            return Ok(vec![false; 16]);
+                        }
+                        let count = active.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(count, Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                        active.fetch_sub(1, Ordering::SeqCst);
+                        finished.fetch_add(1, Ordering::SeqCst);
+                        Ok(Vec::new())
+                    }
+                },
+                |completed| {
+                    assert_eq!(completed, [true]);
+                    assert_eq!(finished.load(Ordering::SeqCst), 16);
+                },
+            )
+            .await;
+            assert!(result.failure.is_none());
+            assert_eq!(result.completed, [true]);
+            assert_eq!(peak.load(Ordering::SeqCst), expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn failure_stops_new_jobs_but_waits_for_inflight_commits() {
+        let flag = AtomicBool::new(false);
+        let commit_finished = AtomicBool::new(false);
+        let result = run_queue(
+            vec![0, 1, 2],
+            2,
+            &flag,
+            |_, job| {
+                let commit_finished = &commit_finished;
+                async move {
+                    match job {
+                        0 => {
+                            // Simulates a commit that must finish even when its
+                            // sibling fails; dropping this future would lose it.
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                            commit_finished.store(true, Ordering::SeqCst);
+                            Ok(Vec::new())
+                        }
+                        1 => Err("write failed".into()),
+                        _ => panic!("a failed task must not start queued work"),
+                    }
+                }
+            },
+            |_| {},
+        )
+        .await;
+        assert!(commit_finished.load(Ordering::SeqCst));
+        assert_eq!(result.completed, [true, false, false]);
+        assert_eq!(result.failure, Some((1, "write failed".into())));
+    }
+
+    #[tokio::test]
+    async fn cancelling_active_work_drains_commits_and_does_not_start_queued_files() {
+        let flag = AtomicBool::new(false);
+        let result = run_queue(
+            vec![0, 1, 2],
+            2,
+            &flag,
+            |_, job| {
+                let flag = &flag;
+                async move {
+                    match job {
+                        0 => {
+                            tokio::task::yield_now().await;
+                            flag.store(true, Ordering::SeqCst);
+                            Err(CANCELLED.into())
+                        }
+                        1 => {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            Ok(Vec::new())
+                        }
+                        _ => panic!("cancellation must stop queued work"),
+                    }
+                }
+            },
+            |_| {},
+        )
+        .await;
+        assert_eq!(result.failure, Some((0, CANCELLED.into())));
+        assert_eq!(result.completed, [false, true, false]);
+    }
+
+    #[test]
+    fn parallel_progress_aggregates_active_bytes_without_counting_completed_bytes_twice() {
+        let shared = Arc::new(Mutex::new(TransferState {
+            app: None,
+            last_emit: Instant::now(),
+            active: BTreeMap::new(),
+            progress: TransferProgress {
+                task_id: "progress".into(),
+                status: "running".into(),
+                completed_files: 0,
+                completed_bytes: 0,
+                completed_paths: vec![],
+                pending_paths: vec![],
+                current_path: None,
+                current_bytes: 0,
+                current_total_bytes: 0,
+                failed_path: None,
+                error: None,
+            },
+        }));
+        let mut first = TransferContext {
+            flag: Arc::new(AtomicBool::new(false)),
+            shared: shared.clone(),
+            job: 1,
+        };
+        let mut second = TransferContext {
+            job: 2,
+            shared: shared.clone(),
+            flag: first.flag.clone(),
+        };
+        first.begin_file("first".into(), 10);
+        second.begin_file("second".into(), 20);
+        first.advance(5);
+        second.advance(7);
+        assert_eq!(shared.lock().unwrap().progress.current_bytes, 12);
+        assert_eq!(shared.lock().unwrap().progress.current_total_bytes, 30);
+        first.finish_file();
+        assert_eq!(shared.lock().unwrap().progress.completed_bytes, 5);
+        assert_eq!(shared.lock().unwrap().progress.current_bytes, 7);
+        second.finish_file();
+        let state = shared.lock().unwrap();
+        assert_eq!(state.progress.completed_bytes, 12);
+        assert_eq!(state.progress.completed_files, 2);
+        assert_eq!(state.progress.current_bytes, 0);
+        assert!(state.progress.current_path.is_none());
+    }
+
+    #[tokio::test]
+    async fn cancellation_before_scheduling_preserves_every_pending_path() {
+        let result = run_queue(
+            vec![1, 2],
+            4,
+            &AtomicBool::new(true),
+            |_, _| async {
+                panic!("cancelled task must not start work");
+                #[allow(unreachable_code)]
+                Ok(Vec::<usize>::new())
+            },
+            |_| {},
+        )
+        .await;
+        assert_eq!(result.completed, [false, false]);
+        assert_eq!(result.failure, Some((0, CANCELLED.into())));
+    }
+
+    #[test]
+    fn concurrent_transfers_reject_colliding_top_level_targets() {
+        assert!(
+            initial_jobs(true, &["/one/a".into(), "/two/a".into()], "ssh://c/project").is_err()
+        );
+        assert!(initial_jobs(
+            false,
+            &["ssh://one/project/a".into(), "ssh://two/project/a".into()],
+            "/out"
+        )
+        .is_err());
+        assert!(initial_jobs(
+            true,
+            &["/one/A".into(), "/two/a".into()],
+            "ssh://c/D:/project"
+        )
+        .is_err());
+    }
+
     #[test]
     fn cancel_before_register_is_not_lost() {
         let id = uuid::Uuid::new_v4().to_string();

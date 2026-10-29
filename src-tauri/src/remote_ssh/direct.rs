@@ -10,10 +10,13 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt, DuplexStream};
 use tokio::net::TcpStream;
 use tokio_rustls::{client::TlsStream, TlsConnector};
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http, Message};
+
+mod workspace_http;
+pub(super) use workspace_http::WorkspaceClient;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
@@ -262,6 +265,18 @@ fn validate_token(token: &str) -> Result<(), String> {
     Ok(())
 }
 
+async fn write_http_request<S: AsyncWrite + Unpin>(
+    stream: &mut S,
+    headers: &str,
+    body: &[u8],
+) -> std::io::Result<()> {
+    stream.write_all(headers.as_bytes()).await?;
+    stream.write_all(body).await?;
+    // TlsStream may retain ciphertext when the socket is backpressured.
+    // Reads do not flush it: finish sending before waiting for the response.
+    stream.flush().await
+}
+
 /// Discover the untrusted certificate without sending a password or token.
 pub(super) async fn probe(address: &str) -> Result<String, String> {
     let endpoint = endpoint(address)?;
@@ -281,7 +296,7 @@ pub(super) async fn test(config: &DirectConnectionConfig) -> Result<DirectHealth
             "GET /health HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nConnection: close\r\n\r\n",
             endpoint.authority, config.token
         );
-        stream.write_all(request.as_bytes()).await
+        write_http_request(&mut stream, &request, &[]).await
             .map_err(|_| "[direct:unreachable] Agent 健康检查发送失败".to_string())?;
         let mut bytes = Vec::new();
         stream.take((MAX_HEALTH_BYTES + 1) as u64).read_to_end(&mut bytes).await
@@ -313,43 +328,9 @@ pub(super) async fn workspace_request(
     config: &DirectConnectionConfig,
     request: impl std::borrow::Borrow<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-    let request = request.borrow();
-    validate_token(&config.token)?;
-    let endpoint = endpoint(&config.endpoint)?;
-    let expected = normalized_fingerprint(&config.certificate_fingerprint)?;
-    let body = serde_json::to_vec(request)
-        .map_err(|_| "[direct:protocol] 工作区请求编码失败".to_string())?;
-    let request_timeout = request
-        .get("timeoutSeconds")
-        .and_then(serde_json::Value::as_u64)
-        .unwrap_or(20)
-        .clamp(1, 120)
-        .saturating_add(10);
-    tokio::time::timeout(Duration::from_secs(request_timeout), async {
-        let (mut stream, _) = tls(&endpoint, Some(expected)).await?;
-        let headers = format!(
-            "POST /workspace HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            endpoint.authority, config.token, body.len()
-        );
-        stream.write_all(headers.as_bytes()).await.map_err(|_| "[direct:unreachable] 工作区请求发送失败".to_string())?;
-        stream.write_all(&body).await.map_err(|_| "[direct:unreachable] 工作区请求发送失败".to_string())?;
-        let mut bytes = Vec::new();
-        const LIMIT: u64 = 16 * 1024 * 1024;
-        stream.take(LIMIT + 1).read_to_end(&mut bytes).await.map_err(|_| "[direct:protocol] 工作区响应中断".to_string())?;
-        if bytes.len() as u64 > LIMIT { return Err("[direct:protocol] 工作区响应过大".into()); }
-        let split = bytes.windows(4).position(|window| window == b"\r\n\r\n")
-            .ok_or_else(|| "[direct:protocol] 工作区 HTTP 响应无效".to_string())?;
-        let status = std::str::from_utf8(&bytes[..split]).unwrap_or_default().lines().next().unwrap_or_default();
-        if status.contains(" 401 ") || status.contains(" 403 ") { return Err("[direct:auth] Agent 连接凭据错误或已失效".into()); }
-        if !status.contains(" 200 ") { return Err("[direct:protocol] 工作区请求未成功".into()); }
-        let response: serde_json::Value = serde_json::from_slice(&bytes[split + 4..])
-            .map_err(|_| "[direct:protocol] 工作区 JSON 响应无效".to_string())?;
-        if response.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
-            return Err(response.get("error").and_then(serde_json::Value::as_str)
-                .unwrap_or("Agent 工作区请求失败").to_string());
-        }
-        Ok(response.get("value").cloned().unwrap_or(serde_json::Value::Null))
-    }).await.map_err(|_| timeout_error())?
+    WorkspaceClient::new(config.clone())
+        .request(request.borrow())
+        .await
 }
 
 /// Convert binary WebSocket messages to a bounded byte stream. This adapter
@@ -430,10 +411,47 @@ pub(super) async fn open_stream_for(
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
-    async fn gateway() -> (
+    #[tokio::test]
+    async fn http_requests_flush_buffered_uploads_before_waiting_for_response() {
+        // Like rustls under socket backpressure, this writer can acknowledge
+        // plaintext while retaining bytes that reads will never flush.
+        for body in [
+            Vec::new(),
+            serde_json::to_vec(&vec![255u8; 64 * 1024]).unwrap(),
+        ] {
+            let headers = format!(
+                "POST /workspace HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            let expected = [headers.as_bytes(), &body].concat();
+            let (client, mut server) = tokio::io::duplex(64);
+            let mut client = tokio::io::BufWriter::with_capacity(expected.len() + 1, client);
+            let exchange = async {
+                tokio::join!(
+                    async {
+                        write_http_request(&mut client, &headers, &body)
+                            .await
+                            .unwrap();
+                        assert_eq!(client.read_u8().await.unwrap(), b'!');
+                    },
+                    async {
+                        let mut received = vec![0; expected.len()];
+                        server.read_exact(&mut received).await.unwrap();
+                        assert_eq!(received, expected);
+                        server.write_all(b"!").await.unwrap();
+                    }
+                );
+            };
+            tokio::time::timeout(Duration::from_secs(2), exchange)
+                .await
+                .expect("request bytes must reach the server before waiting for its response");
+        }
+    }
+
+    pub(in super::super) async fn gateway() -> (
         DirectConnectionConfig,
         tokio::task::JoinHandle<Result<(), String>>,
         std::path::PathBuf,
@@ -442,17 +460,31 @@ mod tests {
             "qingcode-direct-client-{}",
             qingcode_server::generate_token()
         ));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
-        let gateway =
-            qingcode_server::direct::Gateway::bind(qingcode_server::direct::DirectOptions {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let gateway = loop {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            drop(listener);
+            match qingcode_server::direct::Gateway::bind(qingcode_server::direct::DirectOptions {
                 hostname: "127.0.0.1".into(),
                 port,
                 state_dir: Some(directory.clone()),
             })
             .await
-            .unwrap();
+            {
+                Ok(gateway) => break gateway,
+                Err(error)
+                    if tokio::time::Instant::now() < deadline
+                        && (error.contains("Address already in use")
+                            || error.contains("已在运行")) =>
+                {
+                    // Other parallel tests may claim the chosen port or fork
+                    // while a failed bind's instance lock is being released.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(error) => panic!("temporary test gateway could not bind: {error}"),
+            }
+        };
         let info = qingcode_server::direct::info(Some(&directory), true).unwrap();
         let config = DirectConnectionConfig {
             endpoint: format!("https://127.0.0.1:{}", info.port),
@@ -577,8 +609,13 @@ mod tests {
             )
             .await
             .unwrap();
-        output.write_all(&bytes).await.unwrap();
+        // Terminal paste transfers submit 64 KiB at a time, below the direct
+        // file adapter's 128 KiB limit.
+        for chunk in bytes.chunks(64 * 1024) {
+            output.write_all(chunk).await.unwrap();
+        }
         output.close().await.unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
         assert!(fs
             .open(
                 path.clone(),

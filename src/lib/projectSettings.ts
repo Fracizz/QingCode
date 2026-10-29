@@ -103,6 +103,7 @@ function buildSharedDefaults(): SettingsFile {
     'ssh.server.enabled': true,
     'ssh.server.autoDownload': true,
     'ssh.server.offlineDir': '',
+    'ssh.transfer.concurrency': 4,
     custom: {},
   }
 }
@@ -251,6 +252,10 @@ __AUTOSAVE_SETTINGS__
   // 或包含 servers 子目录的文件夹。非空时优先于程序旁边的 servers、
   // QINGCODE_SERVER_DIR 和在线下载。留空表示不手动指定（默认 ""）
   "ssh.server.offlineDir": "",
+
+  // ssh.transfer.concurrency：SSH / Server 端口直连上传、下载的单任务文件并发数，
+  // 包含文件夹内的文件；默认 4，范围 1–8。工作区可覆盖全局设置。
+  "ssh.transfer.concurrency": 4,
 `
 
 /** Auto-save keys live only in the global template; workspace inherits unless overridden. */

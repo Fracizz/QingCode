@@ -450,70 +450,69 @@ impl Gateway {
     }
 
     async fn handle(&self, socket: TcpStream) -> Result<(), String> {
+        let _ = socket.set_nodelay(true);
         let mut tls = tokio::time::timeout(HANDSHAKE_TIMEOUT, self.acceptor.accept(socket))
             .await
             .map_err(|_| "TLS 握手超时")?
             .map_err(|_| "TLS 握手失败")?;
-        let headers = tokio::time::timeout(HANDSHAKE_TIMEOUT, read_headers(&mut tls))
-            .await
-            .map_err(|_| "HTTP 握手超时")??;
-        let request = parse_headers(&headers)?;
-        let expected = format!("Bearer {}", self.token);
-        if !secure_eq(request.authorization.as_bytes(), expected.as_bytes()) {
-            return http_response(&mut tls, 401, br#"{"error":"authenticationRequired"}"#).await;
-        }
-        match (request.method.as_str(), request.path.as_str()) {
-            ("GET", "/health") => {
-                let body = serde_json::to_vec(&serde_json::json!({ "healthy": true,
-                    "serverVersion": self.info.server_version, "protocol": self.info.protocol,
-                    "port": self.info.port, "previousPorts": self.info.previous_ports, "certificateSha256": self.info.certificate_sha256 }))
-                    .map_err(|e| e.to_string())?;
-                http_response(&mut tls, 200, &body).await
-            }
-            ("GET", "/connect") => {
-                if request.content_length != 0 {
-                    return http_response(&mut tls, 400, br#"{"error":"invalidRequest"}"#).await;
-                }
-                let stream = ReplayStream {
-                    prefix: std::io::Cursor::new(headers),
-                    inner: tls,
-                };
-                let config = tungstenite::protocol::WebSocketConfig::default()
-                    .max_message_size(Some(proto::MAX_FRAME_BYTES + 4))
-                    .max_frame_size(Some(proto::MAX_FRAME_BYTES + 4));
-                let ws = tokio::time::timeout(
-                    HANDSHAKE_TIMEOUT,
-                    tokio_tungstenite::accept_async_with_config(stream, Some(config)),
-                )
+        // Keep-alive is opt-in so older clients can still read until EOF.
+        // Bound idle sockets and the number of requests per TLS connection.
+        for index in 0..256 {
+            let headers = tokio::time::timeout(HANDSHAKE_TIMEOUT, read_headers(&mut tls))
                 .await
-                .map_err(|_| "WebSocket 握手超时")?
-                .map_err(|_| "WebSocket 握手失败")?;
-                self.bridge(ws).await
+                .map_err(|_| "HTTP 握手超时")??;
+            let request = parse_headers(&headers)?;
+            let expected = format!("Bearer {}", self.token);
+            if !secure_eq(request.authorization.as_bytes(), expected.as_bytes()) {
+                return http_response(&mut tls, 401, br#"{"error":"authenticationRequired"}"#)
+                    .await;
             }
-            ("POST", "/workspace") => {
-                if request.content_length == 0 {
-                    return http_response(&mut tls, 400, br#"{"error":"emptyBody"}"#).await;
+            let keep_alive = request.keep_alive && index < 255;
+            let body = match (request.method.as_str(), request.path.as_str()) {
+                ("GET", "/health") if request.content_length == 0 => {
+                    serde_json::to_vec(&serde_json::json!({ "healthy": true,
+                        "serverVersion": self.info.server_version, "protocol": self.info.protocol,
+                        "port": self.info.port, "previousPorts": self.info.previous_ports, "certificateSha256": self.info.certificate_sha256 }))
+                        .map_err(|e| e.to_string())?
                 }
-                let mut body = vec![0; request.content_length];
-                tokio::time::timeout(HANDSHAKE_TIMEOUT, tls.read_exact(&mut body))
-                    .await
-                    .map_err(|_| "工作区请求超时")?
-                    .map_err(|_| "工作区请求不完整")?;
-                let input = match serde_json::from_slice(&body) {
-                    Ok(value) => value,
-                    Err(_) => {
-                        return http_response(&mut tls, 400, br#"{"error":"invalidJson"}"#).await
+                ("GET", "/connect") => {
+                    if request.content_length != 0 {
+                        return http_response(&mut tls, 400, br#"{"error":"invalidRequest"}"#).await;
                     }
-                };
-                let value = match crate::workspace::handle(input).await {
-                    Ok(value) => serde_json::json!({"ok":true,"value":value}),
-                    Err(error) => serde_json::json!({"ok":false,"error":error}),
-                };
-                let body = serde_json::to_vec(&value).map_err(|e| e.to_string())?;
-                http_response(&mut tls, 200, &body).await
+                    let stream = ReplayStream { prefix: std::io::Cursor::new(headers), inner: tls };
+                    let config = tungstenite::protocol::WebSocketConfig::default()
+                        .max_message_size(Some(proto::MAX_FRAME_BYTES + 4))
+                        .max_frame_size(Some(proto::MAX_FRAME_BYTES + 4));
+                    let ws = tokio::time::timeout(HANDSHAKE_TIMEOUT,
+                        tokio_tungstenite::accept_async_with_config(stream, Some(config)))
+                        .await.map_err(|_| "WebSocket 握手超时")?.map_err(|_| "WebSocket 握手失败")?;
+                    return self.bridge(ws).await;
+                }
+                ("POST", "/workspace") => {
+                    if request.content_length == 0 {
+                        return http_response(&mut tls, 400, br#"{"error":"emptyBody"}"#).await;
+                    }
+                    let mut body = vec![0; request.content_length];
+                    tokio::time::timeout(HANDSHAKE_TIMEOUT, tls.read_exact(&mut body))
+                        .await.map_err(|_| "工作区请求超时")?.map_err(|_| "工作区请求不完整")?;
+                    let input = match serde_json::from_slice(&body) {
+                        Ok(value) => value,
+                        Err(_) => return http_response(&mut tls, 400, br#"{"error":"invalidJson"}"#).await,
+                    };
+                    let value = match crate::workspace::handle(input).await {
+                        Ok(value) => serde_json::json!({"ok":true,"value":value}),
+                        Err(error) => serde_json::json!({"ok":false,"error":error}),
+                    };
+                    serde_json::to_vec(&value).map_err(|e| e.to_string())?
+                }
+                _ => return http_response(&mut tls, 404, br#"{"error":"notFound"}"#).await,
+            };
+            http_response_connection(&mut tls, 200, &body, keep_alive).await?;
+            if !keep_alive {
+                return Ok(());
             }
-            _ => http_response(&mut tls, 404, br#"{"error":"notFound"}"#).await,
         }
+        Ok(())
     }
 
     async fn bridge<S>(&self, mut ws: tokio_tungstenite::WebSocketStream<S>) -> Result<(), String>
@@ -642,6 +641,7 @@ struct HttpRequest {
     path: String,
     authorization: String,
     content_length: usize,
+    keep_alive: bool,
 }
 
 fn parse_headers(bytes: &[u8]) -> Result<HttpRequest, String> {
@@ -655,6 +655,7 @@ fn parse_headers(bytes: &[u8]) -> Result<HttpRequest, String> {
     }
     let mut authorization = None;
     let mut content_length = None;
+    let mut keep_alive = None;
     for line in lines.filter(|line| !line.is_empty()) {
         let (name, value) = line.split_once(':').ok_or("HTTP 请求头无效")?;
         match name.to_ascii_lowercase().as_str() {
@@ -669,6 +670,14 @@ fn parse_headers(bytes: &[u8]) -> Result<HttpRequest, String> {
                     return Err("请求长度无效".into());
                 }
             }
+            "connection" => {
+                if keep_alive
+                    .replace(value.trim().eq_ignore_ascii_case("keep-alive"))
+                    .is_some()
+                {
+                    return Err("重复连接请求头".into());
+                }
+            }
             "transfer-encoding" => return Err("不支持分块请求体".into()),
             _ => {}
         }
@@ -678,6 +687,7 @@ fn parse_headers(bytes: &[u8]) -> Result<HttpRequest, String> {
         path,
         authorization: authorization.unwrap_or_default(),
         content_length: content_length.unwrap_or(0),
+        keep_alive: keep_alive.unwrap_or(false),
     })
 }
 
@@ -686,22 +696,36 @@ async fn http_response<S: AsyncWrite + Unpin>(
     status: u16,
     body: &[u8],
 ) -> Result<(), String> {
+    http_response_connection(stream, status, body, false).await
+}
+
+async fn http_response_connection<S: AsyncWrite + Unpin>(
+    stream: &mut S,
+    status: u16,
+    body: &[u8],
+    keep_alive: bool,
+) -> Result<(), String> {
+    let connection = if keep_alive { "keep-alive" } else { "close" };
     let reason = match status {
         200 => "OK",
         400 => "Bad Request",
         401 => "Unauthorized",
         _ => "Not Found",
     };
-    let head = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n", body.len());
+    let head = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: {connection}\r\n\r\n", body.len());
     stream
         .write_all(head.as_bytes())
         .await
         .map_err(|_| "HTTP 响应失败")?;
     stream.write_all(body).await.map_err(|_| "HTTP 响应失败")?;
-    stream
-        .shutdown()
-        .await
-        .map_err(|_| "HTTP 连接关闭失败".into())
+    if keep_alive {
+        stream.flush().await.map_err(|_| "HTTP 响应失败".into())
+    } else {
+        stream
+            .shutdown()
+            .await
+            .map_err(|_| "HTTP 连接关闭失败".into())
+    }
 }
 
 struct ReplayStream<S> {
@@ -843,6 +867,55 @@ mod tests {
             .contains("未自动改端口"));
         assert_eq!(info(Some(&dir), false).unwrap().port, second);
         drop(occupied);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn https_keep_alive_authenticates_every_request() {
+        async fn response(stream: &mut (impl AsyncRead + Unpin)) -> (String, Vec<u8>) {
+            let head = read_headers(stream).await.unwrap();
+            let head = String::from_utf8(head).unwrap();
+            let length = head
+                .lines()
+                .find_map(|line| line.strip_prefix("Content-Length: "))
+                .unwrap()
+                .parse::<usize>()
+                .unwrap();
+            let mut body = vec![0; length];
+            stream.read_exact(&mut body).await.unwrap();
+            (head, body)
+        }
+        let dir = temporary();
+        let gateway = Gateway::bind(options(&dir, available_port()))
+            .await
+            .unwrap();
+        let port = gateway.info.port;
+        let token = info(Some(&dir), true).unwrap().token.unwrap();
+        let running = tokio::spawn(gateway.run());
+        let mut stream = tls(&dir, port).await;
+        for credential in [token.as_str(), token.as_str(), "wrong"] {
+            stream.write_all(format!("GET /health HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {credential}\r\nConnection: keep-alive\r\n\r\n").as_bytes()).await.unwrap();
+            stream.flush().await.unwrap();
+            let (head, body) = tokio::time::timeout(Duration::from_secs(2), response(&mut stream))
+                .await
+                .unwrap();
+            if credential == "wrong" {
+                assert!(head.starts_with("HTTP/1.1 401 "));
+                assert!(head.contains("Connection: close"));
+            } else {
+                assert!(head.starts_with("HTTP/1.1 200 "));
+                assert!(head.contains("Connection: keep-alive"));
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&body).unwrap()["healthy"],
+                    true
+                );
+            }
+        }
+        let mut trailing = Vec::new();
+        stream.read_to_end(&mut trailing).await.unwrap();
+        assert!(trailing.is_empty());
+        running.abort();
+        let _ = running.await;
         std::fs::remove_dir_all(dir).unwrap();
     }
 
