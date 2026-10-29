@@ -772,7 +772,7 @@ pub fn run() {
             configure_ssh_server_binary_dirs(app.handle());
             configure_ssh_client_id(app.handle());
             if let Err(error) = remote_ssh::configure_direct_connections(app.handle()) {
-                eprintln!("[WARN] 无法加载 Agent 直连配置: {error}");
+                eprintln!("[WARN] 无法加载 Server 直连配置: {error}");
             }
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
                 let mut window_config = window_config.clone();

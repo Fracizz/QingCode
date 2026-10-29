@@ -69,7 +69,7 @@ function Invoke-QcFirewall([int]$port,[string]$expected,[bool]$apply,[string]$id
   if (-not $plan.canApply) { return [ordered]@{ok=$false;code='[direct:firewall]';message=$plan.reason} }
   $changed=-not $plan.alreadyEnabled
   if ($changed) {
-    New-NetFirewallRule -PolicyStore PersistentStore -Name $plan.ruleName -DisplayName "QingCode Agent TCP $port ($($plan.clientAddress))" -Group 'QingCode Agent' -Description "QingCode managed Agent inbound v1; TCP=$port; Source=$($plan.clientAddress); Local=$($plan.localAddress)" -Enabled True -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -RemotePort Any -RemoteAddress $plan.clientAddress -LocalAddress $plan.localAddress -Profile $plan.profiles -ErrorAction Stop | Out-Null
+    New-NetFirewallRule -PolicyStore PersistentStore -Name $plan.ruleName -DisplayName "QingCode Server TCP $port ($($plan.clientAddress))" -Group 'QingCode Agent' -Description "QingCode managed Agent inbound v1; TCP=$port; Source=$($plan.clientAddress); Local=$($plan.localAddress)" -Enabled True -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -RemotePort Any -RemoteAddress $plan.clientAddress -LocalAddress $plan.localAddress -Profile $plan.profiles -ErrorAction Stop | Out-Null
   }
   $after=Get-QcFirewallPlan $port
   if (-not $after.alreadyEnabled) { throw 'Firewall rule verification failed' }

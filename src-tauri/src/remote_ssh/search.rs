@@ -616,8 +616,9 @@ async fn server_search_file_contents(
                 return Err(format!("搜索失败：{error}"));
             }
             Err(error) => {
-                server::downgrade_server_daemon(manager, &key, daemon);
+                let fallback = server::handle_daemon_transport_error(manager, &key, daemon, &error);
                 server_status::publish_root_state(app, manager, &registered);
+                fallback?;
                 if !at_root {
                     return Err(server::server_mode_error(format!(
                         "子目录搜索失败：{error}"

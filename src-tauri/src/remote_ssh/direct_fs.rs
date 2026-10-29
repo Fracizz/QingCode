@@ -311,7 +311,7 @@ impl AsyncRead for DirectFile {
                         .map_err(io_error)?;
                     let bytes: Vec<u8> = serde_json::from_value(value).map_err(io::Error::other)?;
                     if bytes.len() > length {
-                        return Err(io::Error::other("Agent 返回文件片段超出请求大小"));
+                        return Err(io::Error::other("Server 返回文件片段超出请求大小"));
                     }
                     Ok(bytes)
                 }));
@@ -371,9 +371,9 @@ impl AsyncWrite for DirectFile {
                 let written = value
                     .as_u64()
                     .and_then(|n| usize::try_from(n).ok())
-                    .ok_or_else(|| io::Error::other("Agent 写入应答无效"))?;
+                    .ok_or_else(|| io::Error::other("Server 写入应答无效"))?;
                 if written > size {
-                    return Err(io::Error::other("Agent 写入长度超出请求大小"));
+                    return Err(io::Error::other("Server 写入长度超出请求大小"));
                 }
                 Ok(written)
             }));

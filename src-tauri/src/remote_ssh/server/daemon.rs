@@ -13,6 +13,8 @@ use super::scripts::{
     windows_daemon_token_command,
 };
 use super::*;
+#[cfg(test)]
+mod live_parity;
 use qingcode_server::proto::{
     self, ErrorBody, Event, Frame, HelloRequest, HelloResponse, Kind, ReceiverWindow, Request,
     Response, StreamChunk, StreamEnd, WindowCredit, CONTROL_STREAM, PROTOCOL_VERSION, WINDOW_BYTES,
@@ -1306,6 +1308,37 @@ pub(crate) fn downgrade_server_daemon(manager: &SshManager, key: &str, expected:
     manager.set_server_slot(key, slot);
 }
 
+/// SSH can retry via serve; a port connection must retain its actual WSS error
+/// and reconnect through the same endpoint. HTTPS file access remains usable.
+pub(crate) fn handle_daemon_transport_error(
+    manager: &SshManager,
+    key: &str,
+    expected: &DaemonAccess,
+    error: &DaemonCallError,
+) -> Result<(), String> {
+    if key
+        .split_once('|')
+        .is_some_and(|(id, _)| manager.direct_config(id).is_some())
+    {
+        let reason = format!("Server 端口直连失败：{error}");
+        let mut slot = manager.server_slot(key).unwrap_or_default();
+        if slot
+            .endpoint
+            .as_ref()
+            .and_then(|endpoint| endpoint.daemon.as_ref())
+            == Some(expected)
+        {
+            slot.endpoint = None;
+            slot.last_failure = Some(reason.clone());
+            slot.daemon_failure = Some(error.to_string());
+            manager.set_server_slot(key, slot);
+        }
+        return Err(reason);
+    }
+    downgrade_server_daemon(manager, key, expected);
+    Ok(())
+}
+
 /// 尽力让远端 daemon 退出：一次真实握手（token 校验）+ `server.shutdown` RPC。
 /// daemon 已下线、token 失效或通道失败都只返回 false——调用方（restart/stop）
 /// 把它当 best-effort，随后的 ensure 会重新拉起 daemon。
@@ -2404,6 +2437,80 @@ mod tests {
             String::from(remote),
             "daemon fs.scan 失败（io）：无法访问目录"
         );
+    }
+
+    #[test]
+    fn direct_daemon_failure_preserves_reason_without_ssh_fallback_or_blocking_https() {
+        let manager = SshManager::new();
+        manager.direct_connections.write().unwrap().insert(
+            "c1".into(),
+            super::super::super::direct::DirectConnectionConfig {
+                endpoint: "https://127.0.0.1:48763".into(),
+                certificate_fingerprint: "0".repeat(64),
+                token: "test-token".into(),
+            },
+        );
+        manager.direct_active.write().unwrap().insert("c1".into());
+        let key = server_slot_key("c1", "/srv/app");
+        let daemon = sample_daemon_access();
+        manager.set_server_slot(
+            &key,
+            ServerSlot {
+                endpoint: Some(ServerEndpoint {
+                    serve: None,
+                    daemon: Some(daemon.clone()),
+                }),
+                ..Default::default()
+            },
+        );
+        let reason = handle_daemon_transport_error(
+            &manager,
+            &key,
+            &daemon,
+            &DaemonCallError::Transport("daemon 版本不匹配：远端 old，本端 current".into()),
+        )
+        .unwrap_err();
+        assert!(reason.contains("daemon 版本不匹配"));
+        assert!(!reason.contains("检查独立端口"));
+        let slot = manager.server_slot(&key).unwrap();
+        assert!(slot.endpoint.is_none());
+        assert_eq!(slot.last_failure.as_deref(), Some(reason.as_str()));
+        assert!(slot.daemon_downgraded_at.is_none());
+        assert!(
+            manager.connection_is_open("c1"),
+            "HTTPS must remain available when WSS fails"
+        );
+        assert!(manager.sessions.read().unwrap().is_empty());
+    }
+
+    #[test]
+    fn ssh_daemon_failure_still_allows_serve_fallback() {
+        let manager = SshManager::new();
+        let key = server_slot_key("c1", "/srv/app");
+        let daemon = sample_daemon_access();
+        manager.set_server_slot(
+            &key,
+            ServerSlot {
+                endpoint: Some(ServerEndpoint {
+                    serve: Some(ServeEndpoint {
+                        port: 4000,
+                        token: "t".into(),
+                    }),
+                    daemon: Some(daemon.clone()),
+                }),
+                ..Default::default()
+            },
+        );
+        handle_daemon_transport_error(
+            &manager,
+            &key,
+            &daemon,
+            &DaemonCallError::Transport("daemon 响应超时".into()),
+        )
+        .unwrap();
+        let slot = manager.server_slot(&key).unwrap();
+        assert_eq!(slot.endpoint.unwrap().serve.unwrap().port, 4000);
+        assert!(slot.daemon_downgraded_at.is_some());
     }
 
     #[test]

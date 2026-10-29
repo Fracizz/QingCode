@@ -1212,11 +1212,11 @@ impl SshManager {
         };
         self.direct_active
             .write()
-            .map_err(|_| "Agent 状态不可用")?
+            .map_err(|_| "Server 状态不可用")?
             .remove(connection_id);
         self.direct_failures
             .write()
-            .map_err(|_| "Agent 状态不可用")?
+            .map_err(|_| "Server 状态不可用")?
             .remove(connection_id);
         direct::close_connection(&config.endpoint, connection_id);
         let roots = self.roots_for_connection(connection_id);
@@ -1407,7 +1407,7 @@ impl SshManager {
 
     async fn live_session(&self, connection_id: &str) -> Result<Arc<ConnectedSession>, String> {
         if self.direct_config(connection_id).is_some() {
-            return Err("Agent 直连不会回退到 SSH；请检查独立 TCP 端口和服务状态".into());
+            return Err("Server 直连不会回退到 SSH；请检查独立 TCP 端口和服务状态".into());
         }
         let session = self.session(connection_id)?;
         if session.handle.is_closed() {
@@ -1770,7 +1770,7 @@ impl SshManager {
                 .read()
                 .is_ok_and(|active| active.contains(connection_id))
             {
-                return Err("Agent 连接已断开，请重新连接工作区".into());
+                return Err("Server 连接已断开，请重新连接工作区".into());
             }
             let result = direct::test(&config).await.map(|_| ());
             if let Ok(mut failures) = self.direct_failures.write() {
@@ -2231,7 +2231,7 @@ impl SshManager {
         let root = self.root_for_uri(uri, require_trust)?;
         if let Some(config) = self.direct_config(&parsed.connection_id) {
             if !self.connection_is_open(&parsed.connection_id) {
-                return Err("Agent 连接已断开".into());
+                return Err("Server 连接已断开".into());
             }
             let sftp = Arc::new(SftpSession::direct(
                 config,
@@ -2364,7 +2364,7 @@ impl SshManager {
                 }),
             )
             .await?;
-            return serde_json::from_value(value).map_err(|_| "Agent 命令响应格式无效".into());
+            return serde_json::from_value(value).map_err(|_| "Server 命令响应格式无效".into());
         }
         let _slot = self
             .exec_slots(&parsed.connection_id)?
@@ -3360,13 +3360,13 @@ pub async fn ssh_open_session(
         manager
             .direct_active
             .write()
-            .map_err(|_| "Agent 状态不可用")?
+            .map_err(|_| "Server 状态不可用")?
             .insert(config.id.clone());
         return Ok(SshSessionOpenResult {
             fingerprint: config
                 .host_key_fingerprint
                 .unwrap_or(direct.certificate_fingerprint),
-            home_path: info["homePath"].as_str().ok_or("Agent 家目录无效")?.into(),
+            home_path: info["homePath"].as_str().ok_or("Server 家目录无效")?.into(),
         });
     }
     let expected = config
@@ -3651,7 +3651,7 @@ pub async fn ssh_disconnect(
         manager
             .direct_active
             .write()
-            .map_err(|_| "Agent 状态不可用")?
+            .map_err(|_| "Server 状态不可用")?
             .remove(&connection_id);
         direct::close_connection(&config.endpoint, &connection_id);
     }
@@ -3991,6 +3991,42 @@ fn remote_relative_to_root(canonical: &str, canonical_root: &str) -> String {
         .to_string()
 }
 
+fn scan_root_path(workspace_root: Option<&str>, root: &RegisteredRoot) -> String {
+    workspace_root
+        .and_then(|uri| parse_remote_uri(uri).ok())
+        .map(|parsed| parsed.path)
+        .unwrap_or_else(|| root.canonical_path.clone())
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// Agent file browsing uses the authenticated HTTPS workspace API, independently
+/// of the WSS daemon used for terminals/watch. Never enter SSH serve discovery.
+async fn direct_scan_directory(
+    manager: &SshManager,
+    path: &str,
+    workspace_root: Option<&str>,
+    exclude_patterns: Option<&[String]>,
+) -> Result<Option<Vec<RemoteFileNode>>, String> {
+    let parsed = parse_remote_uri(path)?;
+    if manager.direct_config(&parsed.connection_id).is_none() {
+        return Ok(None);
+    }
+    let (sftp, parsed, root) = manager.sftp_for_uri(path, false).await?;
+    ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
+    let entries = sftp
+        .read_dir(parsed.path.clone())
+        .await
+        .map_err(|error| format!("读取远程目录失败：{error}"))?;
+    Ok(Some(collect_scan_nodes(
+        path,
+        &parsed.path,
+        &scan_root_path(workspace_root, &root),
+        entries.map(|entry| (entry.file_name(), entry.metadata().is_dir())),
+        exclude_patterns,
+    )))
+}
+
 /// Server 模式下经远端 server 列出目录的直接子项，不回退 SFTP；失败时清空端点
 /// 缓存、后台重新发现，并返回带模式前缀的错误。返回 (名称, 是否目录) 交给
 /// `collect_scan_nodes` 统一组装。
@@ -4021,10 +4057,11 @@ async fn server_scan_entries(
             Err(error) if !error.is_transport() => {
                 return Err(format!("读取远程目录失败：{error}"));
             }
-            Err(_) => {
-                server::downgrade_server_daemon(manager, &key, daemon);
+            Err(error) => {
+                let fallback = server::handle_daemon_transport_error(manager, &key, daemon, &error);
                 // 传输从 daemon 降到 serve，状态芯片要跟着变。
                 server_status::publish_root_state(app, manager, root);
+                fallback?;
             }
         }
     }
@@ -4119,19 +4156,19 @@ pub async fn ssh_scan_directory(
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<Vec<RemoteFileNode>, String> {
+    if let Some(nodes) = direct_scan_directory(
+        &manager,
+        &path,
+        workspace_root.as_deref(),
+        exclude_patterns.as_deref(),
+    )
+    .await?
+    {
+        return Ok(nodes);
+    }
     let (sftp, parsed, root) = manager.sftp_for_uri(&path, false).await?;
     let canonical = ensure_existing_path_within(&sftp, &parsed.path, &root).await?;
-
-    let root_posix = if let Some(ref ws_root) = workspace_root {
-        if let Ok(p) = parse_remote_uri(ws_root) {
-            p.path
-        } else {
-            root.canonical_path.clone()
-        }
-    } else {
-        root.canonical_path.clone()
-    };
-    let root_posix = root_posix.trim_end_matches('/').to_string();
+    let root_posix = scan_root_path(workspace_root.as_deref(), &root);
 
     // Server 模式只经 server 扫描，与 watch 事件同源，失败直接报错；SSH 模式与
     // 未受信任项目（不部署 server）走 SFTP。
@@ -4565,7 +4602,9 @@ pub async fn ssh_rename_path(
 }
 
 async fn remove_remote_tree(sftp: &SftpSession, path: String) -> Result<(), String> {
-    if let Some(native) = windows_native_path(&path) {
+    // HTTPS workspace operations enforce native path/reparse boundaries on the
+    // Agent. Its session has no SSH transport for the PowerShell metadata guard.
+    if let Some(native) = windows_native_path(&path).filter(|_| sftp.direct.is_none()) {
         if let Some(component) = sftp
             .windows_guard
             .first_reparse_component(&sftp.transport, &path)

@@ -151,7 +151,7 @@ export function parseDirectAgentPairing(text: string): DirectAgentPairing {
 /** Only a validated integer can enter the copyable administration command. */
 export function directAgentFirewallCommand(port: number): string | null {
   if (!Number.isInteger(port) || port < 1 || port > 65535) return null
-  return `New-NetFirewallRule -DisplayName 'QingCode Agent TCP ${port}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort ${port} -Profile Private,Domain`
+  return `New-NetFirewallRule -DisplayName 'QingCode Server TCP ${port}' -Direction Inbound -Action Allow -Protocol TCP -LocalPort ${port} -Profile Private,Domain`
 }
 
 export function directAgentErrorKey(error: unknown): string {

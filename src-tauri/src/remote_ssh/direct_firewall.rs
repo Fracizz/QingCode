@@ -81,22 +81,22 @@ fn management_config(
         .direct_config(connection_id)
         .map(|c| {
             url::Url::parse(&c.endpoint)
-                .map_err(|_| "[direct:ssh-identity] Agent 地址无效")
+                .map_err(|_| "[direct:ssh-identity] Server 地址无效")
                 .and_then(|u| {
                     u.host_str()
                         .map(str::to_string)
-                        .ok_or("[direct:ssh-identity] Agent 地址无效")
+                        .ok_or("[direct:ssh-identity] Server 地址无效")
                 })
         })
         .transpose()?;
     let expected = direct_host
         .as_deref()
         .or(agent_host)
-        .ok_or("[direct:ssh-identity] 请先确定 Agent 主机地址")?;
+        .ok_or("[direct:ssh-identity] 请先确定 Server 主机地址")?;
     if normalized_host(expected) != normalized_host(&config.host)
         || agent_host.is_some_and(|host| normalized_host(host) != normalized_host(expected))
     {
-        return Err("[direct:ssh-identity] SSH 授权主机必须与当前 Agent 主机一致；不支持自动推断别名或端口映射目标".into());
+        return Err("[direct:ssh-identity] SSH 授权主机必须与当前 Server 主机一致；不支持自动推断别名或端口映射目标".into());
     }
     if config
         .host_key_fingerprint
@@ -168,7 +168,7 @@ async fn execute(
             }
         })?;
     let action = async {
-        let mut channel = open_session_channel_once(&session, "Agent 防火墙授权")
+        let mut channel = open_session_channel_once(&session, "Server 防火墙授权")
             .await
             .map_err(|error| error.message)?;
         let mut stdout = Vec::new();

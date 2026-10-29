@@ -291,7 +291,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
                 try {
                   await useProjectStore.getState().saveSshConnection({ ...connection, host: info.host, host_key_fingerprint: info.certificateFingerprint, updated_at: Date.now() })
                 } catch {
-                  throw new Error('[direct:record] Agent connection row could not be saved')
+                  throw new Error('[direct:record] Server connection row could not be saved')
                 }
               } else {
                 await useProjectStore.getState().loadSshConnections()

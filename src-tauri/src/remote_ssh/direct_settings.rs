@@ -77,16 +77,16 @@ pub(super) async fn connect_root(
     let _guard = gate.lock().await;
     let parsed = parse_remote_uri(root_uri)?;
     if parsed.connection_id != config.id {
-        return Err("项目与 Agent 连接不匹配".into());
+        return Err("项目与 Server 连接不匹配".into());
     }
     let direct = manager
         .direct_config(&config.id)
-        .ok_or("Agent 配置不存在")?;
+        .ok_or("Server 配置不存在")?;
     direct::test(&direct).await?;
     manager
         .direct_failures
         .write()
-        .map_err(|_| "Agent 状态不可用")?
+        .map_err(|_| "Server 状态不可用")?
         .remove(&config.id);
     let sftp = SftpSession::direct(direct.clone(), None, false);
     let canonical = sftp
@@ -106,7 +106,7 @@ pub(super) async fn connect_root(
             || current.certificate_fingerprint != direct.certificate_fingerprint
             || current.token != direct.token
     }) {
-        return Err("Agent 配置已变化，请重新连接".into());
+        return Err("Server 配置已变化，请重新连接".into());
     }
     let root = RegisteredRoot {
         uri: normalize_remote_uri(root_uri),
@@ -121,7 +121,7 @@ pub(super) async fn connect_root(
     manager
         .direct_active
         .write()
-        .map_err(|_| "Agent 状态不可用")?
+        .map_err(|_| "Server 状态不可用")?
         .insert(config.id.clone());
     if deferred {
         manager
@@ -162,10 +162,10 @@ fn read(app: &AppHandle) -> Result<HashMap<String, Saved>, String> {
         .file_type()
         .is_symlink()
     {
-        return Err("Agent 凭据文件不能是链接".into());
+        return Err("Server 凭据文件不能是链接".into());
     }
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    serde_json::from_slice(&bytes).map_err(|_| "Agent 凭据配置格式无效".into())
+    serde_json::from_slice(&bytes).map_err(|_| "Server 凭据配置格式无效".into())
 }
 fn write(app: &AppHandle, records: &HashMap<String, Saved>) -> Result<(), String> {
     use std::io::Write;
@@ -186,7 +186,7 @@ fn write(app: &AppHandle, records: &HashMap<String, Saved>) -> Result<(), String
     qingcode_server::direct::replace_private_file(&temporary, &path)
 }
 fn persist(app: &AppHandle, id: &str, mut saved: Saved) -> Result<Saved, String> {
-    let _guard = STORE_WRITE.lock().map_err(|_| "Agent 凭据存储不可用")?;
+    let _guard = STORE_WRITE.lock().map_err(|_| "Server 凭据存储不可用")?;
     let mut records = read(app)?;
     if let Some(previous) = records.get(id) {
         for port in previous
@@ -214,7 +214,7 @@ pub fn configure_direct_connections(app: &AppHandle) -> Result<(), String> {
     let mut configs = manager
         .direct_connections
         .write()
-        .map_err(|_| "Agent 状态不可用")?;
+        .map_err(|_| "Server 状态不可用")?;
     for (id, saved) in records {
         if saved.enabled {
             configs.insert(id, saved.config()?);
@@ -317,7 +317,7 @@ pub async fn direct_agent_save(
     } else {
         let mut old = read(&app)?
             .remove(&connection_id)
-            .ok_or("尚无 Agent 配置")?;
+            .ok_or("尚无 Server 配置")?;
         old.enabled = false;
         old
     };
@@ -327,7 +327,7 @@ pub async fn direct_agent_save(
         let mut configs = manager
             .direct_connections
             .write()
-            .map_err(|_| "Agent 状态不可用")?;
+            .map_err(|_| "Server 状态不可用")?;
         if enabled {
             configs.insert(connection_id.clone(), saved.config()?);
         } else {
@@ -341,12 +341,12 @@ pub async fn direct_agent_save(
         manager
             .direct_failures
             .write()
-            .map_err(|_| "Agent 状态不可用")?
+            .map_err(|_| "Server 状态不可用")?
             .remove(&connection_id);
         manager
             .direct_active
             .write()
-            .map_err(|_| "Agent 状态不可用")?
+            .map_err(|_| "Server 状态不可用")?
             .insert(connection_id.clone());
         // Close only the old transport. Persistent PTYs reconnect by the same id.
         let transports = manager
@@ -370,7 +370,7 @@ pub async fn direct_agent_save(
         manager
             .direct_active
             .write()
-            .map_err(|_| "Agent 状态不可用")?
+            .map_err(|_| "Server 状态不可用")?
             .remove(&connection_id);
     }
     let roots = manager.roots_for_connection(&connection_id);
@@ -423,7 +423,7 @@ pub async fn direct_agent_provision(
         .roots_for_connection(&connection_id)
         .into_iter()
         .find(|r| r.trusted)
-        .ok_or("请先连接一个已信任的 SSH 项目，或手动启动 Agent 后导入配对信息")?;
+        .ok_or("请先连接一个已信任的 SSH 项目，或手动启动 Server 后导入配对信息")?;
     // Stage a separate executable; replacing the daemon binary can terminate
     // live terminals when a same-version build changes its content hash.
     let staged = server::stage_direct_gateway(&manager, &root).await?;
@@ -439,7 +439,7 @@ pub async fn direct_agent_provision(
         .lines()
         .rev()
         .find_map(|line| serde_json::from_str(line).ok())
-        .ok_or("未取得 Agent 配对信息，请手动启动服务并导入")?;
+        .ok_or("未取得 Server 配对信息，请手动启动服务并导入")?;
     let session = manager.session(&connection_id)?;
     let host = session
         .config

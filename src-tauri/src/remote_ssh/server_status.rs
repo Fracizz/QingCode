@@ -684,7 +684,7 @@ pub(crate) async fn ssh_server_stop(
     let root = require_trusted_root(&manager, &root_uri)?;
     let parsed = parse_remote_uri(&root.uri)?;
     if manager.direct_config(&parsed.connection_id).is_some() {
-        return Err("Agent 直连的服务由远端独立管理；请断开工作区或在远端停止服务".into());
+        return Err("Server 直连的服务由远端独立管理；请断开工作区或在远端停止服务".into());
     }
     manager.session(&parsed.connection_id)?;
     let key = server::server_slot_key(&parsed.connection_id, &root.canonical_path);

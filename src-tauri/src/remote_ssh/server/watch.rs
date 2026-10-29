@@ -349,9 +349,15 @@ pub(crate) fn spawn_server_watch_supervisor(
                         tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
                         continue;
                     }
-                    Err(_) => {
-                        downgrade_server_daemon(&manager, &key, &daemon);
+                    Err(error) => {
+                        let fallback =
+                            handle_daemon_transport_error(&manager, &key, &daemon, &error);
                         server_status::publish_root_state(&app, &manager, &root);
+                        if fallback.is_err() {
+                            consecutive_failures = consecutive_failures.saturating_add(1);
+                            tokio::time::sleep(watch_retry_delay(consecutive_failures)).await;
+                            continue;
+                        }
                     }
                 }
             }

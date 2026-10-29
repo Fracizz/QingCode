@@ -94,7 +94,7 @@ struct Endpoint {
 
 fn endpoint(value: &str) -> Result<Endpoint, String> {
     let url = url::Url::parse(value)
-        .map_err(|_| "[direct:protocol] Agent 地址必须是 https://主机:端口".to_string())?;
+        .map_err(|_| "[direct:protocol] Server 地址必须是 https://主机:端口".to_string())?;
     if !matches!(url.scheme(), "https" | "wss")
         || !url.username().is_empty()
         || url.password().is_some()
@@ -103,14 +103,14 @@ fn endpoint(value: &str) -> Result<Endpoint, String> {
         || !matches!(url.path(), "" | "/")
     {
         return Err(
-            "[direct:protocol] Agent 地址只接受 HTTPS/WSS 主机与端口，不接受账号、路径或参数"
+            "[direct:protocol] Server 地址只接受 HTTPS/WSS 主机与端口，不接受账号、路径或参数"
                 .into(),
         );
     }
     let host = url
         .host_str()
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "[direct:protocol] Agent 主机不能为空".to_string())?
+        .ok_or_else(|| "[direct:protocol] Server 主机不能为空".to_string())?
         .trim_matches(['[', ']'])
         .to_string();
     let port = url.port_or_known_default().unwrap_or(443);
@@ -132,7 +132,7 @@ fn endpoint(value: &str) -> Result<Endpoint, String> {
 fn normalized_fingerprint(value: &str) -> Result<String, String> {
     let value = value.replace(':', "").to_ascii_lowercase();
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err("[direct:identity] 请先核对并确认 Agent 的 SHA-256 证书指纹".into());
+        return Err("[direct:identity] 请先核对并确认 Server 的 SHA-256 证书指纹".into());
     }
     Ok(value)
 }
@@ -163,7 +163,7 @@ impl ServerCertVerifier for PinnedCertificate {
             .is_some_and(|expected| expected != &fingerprint)
         {
             return Err(rustls::Error::General(
-                "Agent certificate fingerprint changed".into(),
+                "Server certificate fingerprint changed".into(),
             ));
         }
         // Trust is an explicit certificate pin, not a public CA/DNS assertion.
@@ -226,41 +226,41 @@ async fn tls(
         .await
         .map_err(|_| {
             format!(
-                "[direct:unreachable] 无法连接 {}，请确认 Agent 已启动且 TCP {} 已放行",
+                "[direct:unreachable] 无法连接 {}，请确认 Server 已启动且 TCP {} 已放行",
                 endpoint.authority, endpoint.port
             )
         })?;
     let _ = stream.set_nodelay(true);
     let name = ServerName::try_from(endpoint.host.clone())
-        .map_err(|_| "[direct:protocol] Agent 主机名无效".to_string())?;
+        .map_err(|_| "[direct:protocol] Server 主机名无效".to_string())?;
     let stream = TlsConnector::from(Arc::new(config))
         .connect(name, stream)
         .await
         .map_err(|_| {
             let actual = observed.lock().unwrap_or_else(|error| error.into_inner());
             if actual.is_some() {
-                "[direct:identity] Agent TLS 身份验证失败；请核对证书指纹，未发送连接凭据"
+                "[direct:identity] Server TLS 身份验证失败；请核对证书指纹，未发送连接凭据"
                     .to_string()
             } else {
-                "[direct:protocol] TLS 握手失败，请确认该端口运行 QingCode HTTPS Agent".to_string()
+                "[direct:protocol] TLS 握手失败，请确认该端口运行 QingCode HTTPS Server".to_string()
             }
         })?;
     let fingerprint = observed
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .clone()
-        .ok_or_else(|| "[direct:identity] Agent 未提供服务器证书".to_string())?;
+        .ok_or_else(|| "[direct:identity] Server 未提供服务器证书".to_string())?;
     Ok((stream, fingerprint))
 }
 
 fn timeout_error() -> String {
-    "[direct:timeout] Agent 连接超时，请检查地址、端口、防火墙和网络连通性".into()
+    "[direct:timeout] Server 连接超时，请检查地址、端口、防火墙和网络连通性".into()
 }
 
 fn validate_token(token: &str) -> Result<(), String> {
     if token.is_empty() || token.len() > 4096 || !token.bytes().all(|byte| byte.is_ascii_graphic())
     {
-        return Err("[direct:auth] Agent 连接凭据无效".into());
+        return Err("[direct:auth] Server 连接凭据无效".into());
     }
     Ok(())
 }
@@ -297,28 +297,28 @@ pub(super) async fn test(config: &DirectConnectionConfig) -> Result<DirectHealth
             endpoint.authority, config.token
         );
         write_http_request(&mut stream, &request, &[]).await
-            .map_err(|_| "[direct:unreachable] Agent 健康检查发送失败".to_string())?;
+            .map_err(|_| "[direct:unreachable] Server 健康检查发送失败".to_string())?;
         let mut bytes = Vec::new();
         stream.take((MAX_HEALTH_BYTES + 1) as u64).read_to_end(&mut bytes).await
-            .map_err(|_| "[direct:protocol] Agent 健康检查响应中断".to_string())?;
+            .map_err(|_| "[direct:protocol] Server 健康检查响应中断".to_string())?;
         if bytes.len() > MAX_HEALTH_BYTES {
-            return Err("[direct:protocol] Agent 健康检查响应过大".into());
+            return Err("[direct:protocol] Server 健康检查响应过大".into());
         }
         let split = bytes.windows(4).position(|window| window == b"\r\n\r\n")
-            .ok_or_else(|| "[direct:protocol] Agent 健康检查响应格式无效".to_string())?;
+            .ok_or_else(|| "[direct:protocol] Server 健康检查响应格式无效".to_string())?;
         let headers = std::str::from_utf8(&bytes[..split])
-            .map_err(|_| "[direct:protocol] Agent 响应头无效".to_string())?;
+            .map_err(|_| "[direct:protocol] Server 响应头无效".to_string())?;
         let status = headers.lines().next().unwrap_or_default();
         if status.contains(" 401 ") || status.contains(" 403 ") {
-            return Err("[direct:auth] Agent 连接凭据错误或已失效".into());
+            return Err("[direct:auth] Server 连接凭据错误或已失效".into());
         }
         if !status.contains(" 200 ") {
-            return Err("[direct:protocol] Agent 健康检查未成功".into());
+            return Err("[direct:protocol] Server 健康检查未成功".into());
         }
         let health: DirectHealth = serde_json::from_slice(&bytes[split + 4..])
-            .map_err(|_| "[direct:protocol] Agent 健康检查 JSON 无效".to_string())?;
+            .map_err(|_| "[direct:protocol] Server 健康检查 JSON 无效".to_string())?;
         if !health.healthy || health.protocol != qingcode_server::proto::PROTOCOL_VERSION {
-            return Err("[direct:protocol] Agent 不健康或协议版本不兼容".into());
+            return Err("[direct:protocol] Server 不健康或协议版本不兼容".into());
         }
         Ok(health)
     }).await.map_err(|_| timeout_error())?
@@ -340,7 +340,7 @@ pub(super) async fn open_stream_for(
     connection_id: &str,
 ) -> Result<DuplexStream, String> {
     if connection_id.trim().is_empty() || connection_id.len() > 256 {
-        return Err("[direct:protocol] Agent 连接标识无效".into());
+        return Err("[direct:protocol] Server 连接标识无效".into());
     }
     validate_token(&config.token)?;
     let endpoint = endpoint(&config.endpoint)?;
@@ -350,11 +350,11 @@ pub(super) async fn open_stream_for(
         let (stream, _) = tls(&endpoint, Some(expected)).await?;
         let mut request = format!("wss://{}/connect", endpoint.authority)
             .into_client_request()
-            .map_err(|_| "[direct:protocol] Agent WebSocket 地址无效".to_string())?;
+            .map_err(|_| "[direct:protocol] Server WebSocket 地址无效".to_string())?;
         request.headers_mut().insert(
             http::header::AUTHORIZATION,
             http::HeaderValue::from_str(&format!("Bearer {}", config.token))
-                .map_err(|_| "[direct:auth] Agent 连接凭据无效".to_string())?,
+                .map_err(|_| "[direct:auth] Server 连接凭据无效".to_string())?,
         );
         let websocket_config = tokio_tungstenite::tungstenite::protocol::WebSocketConfig::default()
             .max_message_size(Some(qingcode_server::proto::MAX_FRAME_BYTES + 4))
@@ -366,14 +366,14 @@ pub(super) async fn open_stream_for(
                 tokio_tungstenite::tungstenite::Error::Http(response)
                     if matches!(response.status().as_u16(), 401 | 403) =>
                 {
-                    "[direct:auth] Agent 连接凭据错误或已失效".to_string()
+                    "[direct:auth] Server 连接凭据错误或已失效".to_string()
                 }
-                _ => "[direct:protocol] Agent WebSocket 握手失败".to_string(),
+                _ => "[direct:protocol] Server WebSocket 握手失败".to_string(),
             })
     });
     let socket = tokio::select! {
         result = connect => result.map_err(|_| timeout_error())??,
-        _ = cancelled.notified() => return Err("[direct:unreachable] Agent 连接已由当前连接配置关闭".into()),
+        _ = cancelled.notified() => return Err("[direct:unreachable] Server 连接已由当前连接配置关闭".into()),
     };
     let (client, network) = tokio::io::duplex(256 * 1024);
     tauri::async_runtime::spawn(async move {
@@ -655,6 +655,137 @@ pub(super) mod tests {
                 .await
                 .is_err());
         }
+        gateway.abort();
+        let _ = gateway.await;
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn directory_scan_uses_https_without_a_daemon_or_ssh_session() {
+        use super::super::{direct_scan_directory, RegisteredRoot, SshManager};
+        let (config, gateway, directory) = gateway().await;
+        let project = directory.join("project");
+        let worktree = project.join(".claude/worktrees/report-allure-status");
+        std::fs::create_dir_all(worktree.join("src")).unwrap();
+        std::fs::write(worktree.join("src/delete-me.txt"), b"temporary").unwrap();
+        std::fs::write(worktree.join(".git"), b"gitdir: /unavailable/worktree").unwrap();
+        std::fs::write(worktree.join("readme.txt"), b"worktree").unwrap();
+        std::fs::write(worktree.join("skip.log"), b"excluded").unwrap();
+        let canonical = workspace_request(
+            &config,
+            &serde_json::json!({"op":"canonicalize","path":project.to_string_lossy()}),
+        )
+        .await
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_string();
+        let uri = format!("ssh://direct-scan{canonical}");
+        let path = format!("{uri}/.claude/worktrees/report-allure-status");
+        let manager = SshManager::new();
+        manager
+            .direct_connections
+            .write()
+            .unwrap()
+            .insert("direct-scan".into(), config.clone());
+        manager
+            .direct_active
+            .write()
+            .unwrap()
+            .insert("direct-scan".into());
+        manager.roots.write().unwrap().insert(
+            uri.clone(),
+            RegisteredRoot {
+                uri: uri.clone(),
+                canonical_path: canonical,
+                trusted: true,
+            },
+        );
+        let excludes = vec!["**/*.log".to_string()];
+        let nodes = direct_scan_directory(&manager, &path, Some(&uri), Some(&excludes))
+            .await
+            .unwrap()
+            .expect("direct mode must handle the scan without SSH serve");
+        assert_eq!(
+            nodes
+                .iter()
+                .map(|node| node.name.as_str())
+                .collect::<Vec<_>>(),
+            ["src", ".git", "readme.txt"]
+        );
+        assert!(nodes[0].is_dir);
+        assert!(!nodes[1].is_dir);
+        assert_eq!(nodes[0].path, format!("{path}/src"));
+
+        // Reads remain available without workspace trust; writes still require it.
+        manager
+            .roots
+            .write()
+            .unwrap()
+            .get_mut(&uri)
+            .unwrap()
+            .trusted = false;
+        assert!(
+            direct_scan_directory(&manager, &path, Some(&uri), Some(&excludes))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(manager
+            .sftp_for_uri(&format!("{path}/new.txt"), true)
+            .await
+            .is_err());
+        assert!(
+            direct_scan_directory(&manager, &format!("{uri}/../outside"), None, None)
+                .await
+                .is_err()
+        );
+        #[cfg(unix)]
+        {
+            let outside = directory.join("outside");
+            std::fs::create_dir_all(&outside).unwrap();
+            std::os::unix::fs::symlink(&outside, worktree.join("escape")).unwrap();
+            assert!(
+                direct_scan_directory(&manager, &format!("{path}/escape"), None, None)
+                    .await
+                    .is_err()
+            );
+        }
+        let missing = direct_scan_directory(&manager, &format!("{path}/missing"), None, None)
+            .await
+            .unwrap_err();
+        assert!(!missing.contains("不会回退到 SSH"));
+
+        manager
+            .roots
+            .write()
+            .unwrap()
+            .get_mut(&uri)
+            .unwrap()
+            .trusted = true;
+        let (fs, parsed, _) = manager
+            .sftp_for_uri(&format!("{path}/src"), true)
+            .await
+            .unwrap();
+        super::super::remove_remote_tree(&fs, parsed.path)
+            .await
+            .unwrap();
+        assert!(!worktree.join("src").exists());
+
+        // An invalid Agent identity must fail, even when a listing was cached.
+        manager.direct_connections.write().unwrap().insert(
+            "direct-scan".into(),
+            DirectConnectionConfig {
+                token: "invalid-token".into(),
+                ..config
+            },
+        );
+        assert!(direct_scan_directory(&manager, &path, None, None)
+            .await
+            .unwrap_err()
+            .contains("[direct:auth]"));
+        assert!(manager.sessions.read().unwrap().is_empty());
+        assert!(manager.servers.read().unwrap().is_empty());
         gateway.abort();
         let _ = gateway.await;
         let _ = std::fs::remove_dir_all(directory);

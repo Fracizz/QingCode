@@ -97,11 +97,11 @@ pub(crate) async fn stage_direct_gateway(
 ) -> Result<String, String> {
     let current = manager.registered_root(&root.uri)?;
     if !current.trusted || current.canonical_path != root.canonical_path {
-        return Err("请先信任当前远程项目，再安装直连 Agent".into());
+        return Err("请先信任当前远程项目，再安装直连 Server".into());
     }
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
     if manager.direct_config(&connection_id).is_some() {
-        return Err("直连模式不能通过 SSH 安装或替换服务，请在远端控制台管理 Agent".into());
+        return Err("直连模式不能通过 SSH 安装或替换服务，请在远端控制台管理 Server".into());
     }
     let (arch, local_binary) = locate_local_server_binary(manager, root)
         .await
@@ -122,27 +122,27 @@ pub(crate) async fn stage_direct_gateway(
         if !sftp
             .try_exists(directory.to_string())
             .await
-            .map_err(|error| format!("检查 Agent 安装目录失败：{error}"))?
+            .map_err(|error| format!("检查 Server 安装目录失败：{error}"))?
         {
             sftp.create_dir(directory.to_string())
                 .await
-                .map_err(|error| format!("创建 Agent 安装目录失败：{error}"))?;
+                .map_err(|error| format!("创建 Server 安装目录失败：{error}"))?;
         }
         let attributes = sftp
             .symlink_metadata(directory.to_string())
             .await
-            .map_err(|error| format!("检查 Agent 目录属性失败：{error}"))?;
+            .map_err(|error| format!("检查 Server 目录属性失败：{error}"))?;
         if !attributes.is_dir() || attributes.is_symlink() {
-            return Err("Agent 安装目录必须是用户私有真实目录".into());
+            return Err("Server 安装目录必须是用户私有真实目录".into());
         }
         let canonical = sftp
             .canonicalize(directory.to_string())
             .await
-            .map_err(|error| format!("解析 Agent 安装目录失败：{error}"))?;
+            .map_err(|error| format!("解析 Server 安装目录失败：{error}"))?;
         if !remote_path_is_within(&canonical, &resolved_home)
             || !remote_roots_equivalent(&canonical, directory, windows)
         {
-            return Err("Agent 安装目录被链接重定向，已拒绝执行".into());
+            return Err("Server 安装目录被链接重定向，已拒绝执行".into());
         }
         reject_windows_sftp_links(&sftp, &canonical).await?;
         if !windows {
@@ -154,18 +154,18 @@ pub(crate) async fn stage_direct_gateway(
                 },
             )
             .await
-            .map_err(|error| format!("收紧 Agent 目录权限失败：{error}"))?;
+            .map_err(|error| format!("收紧 Server 目录权限失败：{error}"))?;
         }
     }
     let remote_bin = format!("{content_dir}/{}", server_binary_file_name(windows, &arch));
     if sftp
         .try_exists(remote_bin.clone())
         .await
-        .map_err(|error| format!("检查 Agent 程序失败：{error}"))?
+        .map_err(|error| format!("检查 Server 程序失败：{error}"))?
     {
         if !remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await? {
             return Err(
-                "内容寻址 Agent 程序摘要不匹配，已拒绝覆盖；现有后台服务和终端未结束".into(),
+                "内容寻址 Server 程序摘要不匹配，已拒绝覆盖；现有后台服务和终端未结束".into(),
             );
         }
     } else {
@@ -176,27 +176,27 @@ pub(crate) async fn stage_direct_gateway(
         let upload: Result<(), String> = async {
             let mut input = tokio::fs::File::open(&local_binary)
                 .await
-                .map_err(|error| format!("打开本地 Agent 程序失败：{error}"))?;
+                .map_err(|error| format!("打开本地 Server 程序失败：{error}"))?;
             let mut output = sftp
                 .open_with_flags(temp.clone(), remote_write_flags(true))
                 .await
-                .map_err(|error| format!("创建远端 Agent 临时文件失败：{error}"))?;
+                .map_err(|error| format!("创建远端 Server 临时文件失败：{error}"))?;
             tokio::io::copy(&mut input, &mut output)
                 .await
-                .map_err(|error| format!("上传 Agent 程序失败：{error}"))?;
+                .map_err(|error| format!("上传 Server 程序失败：{error}"))?;
             output
                 .shutdown()
                 .await
-                .map_err(|error| format!("完成 Agent 上传失败：{error}"))?;
+                .map_err(|error| format!("完成 Server 上传失败：{error}"))?;
             drop(output);
             if !remote_binary_sha_matches(manager, root, &temp, &sha256).await? {
-                return Err("Agent 临时文件 SHA-256 校验失败，已拒绝安装".into());
+                return Err("Server 临时文件 SHA-256 校验失败，已拒绝安装".into());
             }
             // SFTP rename does not overwrite an existing destination. No
             // process termination or destination removal is permitted here.
             sftp.rename(temp.clone(), remote_bin.clone())
                 .await
-                .map_err(|error| format!("提交 Agent 程序失败（未覆盖现有程序）：{error}"))?;
+                .map_err(|error| format!("提交 Server 程序失败（未覆盖现有程序）：{error}"))?;
             Ok(())
         }
         .await;
@@ -206,7 +206,7 @@ pub(crate) async fn stage_direct_gateway(
         upload?;
     }
     if !remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await? {
-        return Err("Agent 安装后 SHA-256 校验失败，已拒绝执行".into());
+        return Err("Server 安装后 SHA-256 校验失败，已拒绝执行".into());
     }
     let command = self_check_then_deploy_command(&remote_bin, &sha256, "true");
     let script = windows_host_path(&remote_bin)
@@ -215,7 +215,7 @@ pub(crate) async fn stage_direct_gateway(
     let checked = exec_on_root(manager, root, &command, &script).await?;
     if checked.exit_code != 0 {
         return Err(format!(
-            "Agent 程序自检未通过：{}",
+            "Server 程序自检未通过：{}",
             self_check_failure_detail(&checked.stderr, checked.exit_code)
         ));
     }
@@ -1585,7 +1585,7 @@ pub(crate) async fn require_serve_endpoint(
 ) -> Result<ServerEndpoint, String> {
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
     if manager.direct_config(&connection_id).is_some() {
-        return Err("Agent 端口直连不可用，请检查独立端口；不会回退到 SSH".into());
+        return Err("Server 端口直连不可用，请检查独立端口；不会回退到 SSH".into());
     }
     if !root.trusted || !manager.server_mode(&connection_id) {
         return Err(server_mode_error("项目不允许使用远端服务"));

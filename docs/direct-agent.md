@@ -39,7 +39,7 @@ qingcode-server direct-info --include-secret
 Windows 可由管理员按实际客户端来源添加入站规则，例如：
 
 ```powershell
-New-NetFirewallRule -DisplayName 'QingCode Agent TCP 48763' -Direction Inbound -Protocol TCP -LocalPort 48763 -Action Allow -RemoteAddress <客户端IP>
+New-NetFirewallRule -DisplayName 'QingCode Server TCP 48763' -Direction Inbound -Protocol TCP -LocalPort 48763 -Action Allow -RemoteAddress <客户端IP>
 ```
 
 不要直接复制 `<客户端IP>` 占位符。界面展示当前端口及历史端口，便于核对已有规则；应用不会自动放开所有来源或删除旧规则。
@@ -109,6 +109,15 @@ x86_64、ARM64 musl release 静态产物已完成版本、摘要和认证 HTTPS 
 cargo test --manifest-path src-tauri/qingcode-server/Cargo.toml direct::tests
 cargo test --manifest-path src-tauri/qingcode-server/Cargo.toml --test direct_transport
 ```
+
+原生客户端与 SSH 服务模式的对照验收可显式运行：
+
+```bash
+QC_DIRECT_PARITY_CONFIG=/private/transport-parity.json \
+  cargo test --manifest-path src-tauri/Cargo.toml --lib live_ssh_service_and_direct_port_match_on_disposable_project -- --ignored --nocapture
+```
+
+私有 JSON 包含 `direct`（`endpoint`、`certificateFingerprint`、`token`）及 `root`（已授权的临时项目父目录）；可选 `ssh` 为原生 SSH 连接配置，并提供对应 `daemonBin`、`daemonToken`。配置含秘密，须限制文件权限且不得入库。测试只创建 UUID 临时项目及其 PTY，验证嵌套目录、内容搜索、Git、文件监听事件、终端重连与同一 daemon PID，最后递归删除临时项目；不替换或重启用户 daemon。目标缺少 Git 时可显式设置 `gitAvailable: false`，报告会将该项标记为未验证。
 
 集成测试在临时目录启动真实 daemon、通过 TLS/WebSocket 创建 PTY，关闭 WebSocket、重启网关后确认原 daemon PID 和 PTY 仍然存活。测试可在 Windows 上执行以覆盖 ConPTY；Linux 通过不替代 Windows 真机验收。
 

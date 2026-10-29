@@ -36,7 +36,7 @@ mod watch;
 
 pub(crate) use daemon::{
     daemon_scan_entries, daemon_search_content_call, daemon_warmup_entries,
-    downgrade_server_daemon, shutdown_remote_daemon, DaemonSearchParams,
+    handle_daemon_transport_error, shutdown_remote_daemon, DaemonSearchParams,
 };
 pub(crate) use deploy::{
     ensure_server_endpoint_with_app, kick_server_discovery, note_server_endpoint_lost,

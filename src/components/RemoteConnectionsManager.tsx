@@ -898,7 +898,7 @@ export default function RemoteConnectionsManager() {
                         try {
                           await saveSshConnection({ id: agentDraftId, name: info.host, host: info.host, port: 22, username: 'Agent', auth_kind: 'password', host_key_fingerprint: info.certificateFingerprint, mode: 'server', created_at: now, updated_at: now })
                         } catch {
-                          throw new Error('[direct:record] Agent connection row could not be saved')
+                          throw new Error('[direct:record] Server connection row could not be saved')
                         }
                         setDirectInfos(prev => ({ ...prev, [agentDraftId]: info }))
                         pushToast('success', t('已保存 Server 直连'))
@@ -924,7 +924,7 @@ export default function RemoteConnectionsManager() {
                               try {
                                 await saveSshConnection({ ...selected, host: info.host, host_key_fingerprint: info.certificateFingerprint, updated_at: Date.now() })
                               } catch {
-                                throw new Error('[direct:record] Agent connection row could not be saved')
+                                throw new Error('[direct:record] Server connection row could not be saved')
                               }
                             } else {
                               await loadSshConnections()

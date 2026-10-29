@@ -130,7 +130,7 @@ impl WorkspaceClient {
                 .map_err(|_| "[direct:unreachable] 工作区请求发送失败")?;
             let response = read_response(&mut stream).await?;
             if matches!(response.status, 401 | 403) {
-                return Err("[direct:auth] Agent 连接凭据错误或已失效".into());
+                return Err("[direct:auth] Server 连接凭据错误或已失效".into());
             }
             if response.status == 503 {
                 return Err("[direct:busy] 工作区请求繁忙，请稍后重试".into());
@@ -144,7 +144,7 @@ impl WorkspaceClient {
             }
             if value.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
                 return Err(value.get("error").and_then(serde_json::Value::as_str)
-                    .unwrap_or("Agent 工作区请求失败").to_string());
+                    .unwrap_or("Server 工作区请求失败").to_string());
             }
             Ok(value.get("value").cloned().unwrap_or(serde_json::Value::Null))
         }).await.map_err(|_| timeout_error())?
