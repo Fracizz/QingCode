@@ -25,7 +25,7 @@ function apiMock(saved: DirectAgentInfo | null = info): DirectAgentApi {
 
 async function openPanel(api: DirectAgentApi, sshConnections: SshConnection[] = []) {
   render(<DirectAgentConnectionPanel connectionId="c1" defaultHost="192.168.252.107" api={api} sshConnections={sshConnections} />)
-  fireEvent.click(screen.getByRole('button', { name: 'Agent 端口直连' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
   await waitFor(() => expect(screen.getByRole('button', { name: '测试直连' })).not.toBeDisabled())
 }
 
@@ -51,11 +51,51 @@ describe('direct Agent connection panel', () => {
     expect(screen.getByRole('alert')).toBeVisible()
   })
 
+  it('shows each test phase and never reports success before authentication finishes', async () => {
+    const api = apiMock()
+    let finishProbe!: (value: { certificateFingerprint: string }) => void
+    let confirmIdentity!: (value: boolean) => void
+    let finishTest!: (value: { version: string; protocol: number }) => void
+    vi.mocked(api.probe).mockReturnValue(new Promise(resolve => { finishProbe = resolve }))
+    confirm.mockReturnValue(new Promise(resolve => { confirmIdentity = resolve }))
+    vi.mocked(api.test).mockReturnValue(new Promise(resolve => { finishTest = resolve }))
+    await openPanel(api)
+    fireEvent.click(screen.getByRole('button', { name: '测试直连' }))
+    expect(screen.getByRole('status')).toHaveTextContent('正在检查 Server 端口和服务器证书…')
+    expect(screen.getByRole('button', { name: '正在测试直连…' })).toHaveAttribute('aria-busy', 'true')
+    await act(async () => { finishProbe({ certificateFingerprint: info.certificateFingerprint }) })
+    expect(screen.getByRole('status')).toHaveTextContent('等待确认服务器身份…')
+    expect(api.test).not.toHaveBeenCalled()
+    await act(async () => { confirmIdentity(true) })
+    expect(screen.getByRole('status')).toHaveTextContent('正在验证 Server 认证凭据…')
+    expect(screen.getByRole('button', { name: '保存并启用直连' })).toBeDisabled()
+    await act(async () => { finishTest({ version: '1.0', protocol: 1 }) })
+    expect(screen.getByRole('status')).toHaveTextContent('直连测试成功')
+    expect(screen.getByRole('status')).toHaveClass('sticky')
+  })
+
+  it('replaces the old success notice with saving progress until saving really completes', async () => {
+    const api = apiMock()
+    let finishSave!: () => void
+    vi.mocked(api.save).mockReturnValue(new Promise(resolve => { finishSave = resolve }))
+    await openPanel(api)
+    fireEvent.click(screen.getByRole('button', { name: '测试直连' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存并启用直连' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: '保存并启用直连' }))
+    expect(screen.getByRole('status')).toHaveTextContent('正在保存并启用 Server 直连…')
+    expect(screen.getByRole('button', { name: '正在保存并启用…' })).toBeDisabled()
+    expect(screen.queryByText('已启用 Server 端口直连。')).toBeNull()
+    await act(async () => { finishSave() })
+    expect(screen.getByRole('status')).toHaveTextContent('已启用 Server 端口直连。')
+    expect(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' })).toBeDisabled()
+    expect(screen.getByText('已启用直连，无需通过 SSH 准备服务。')).toBeVisible()
+  })
+
   it('keeps native requests lazy and uses an editable fixed default port', async () => {
     const api = apiMock(null)
     render(<DirectAgentConnectionPanel connectionId="c1" defaultHost="192.168.252.107" api={api} />)
     expect(api.info).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: 'Agent 端口直连' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
     await screen.findByDisplayValue('48763')
     expect(screen.getByRole('button', { name: '保存并启用直连' })).toBeDisabled()
     expect(screen.getByText('远端需要开放 TCP 48763')).toBeVisible()
@@ -74,6 +114,7 @@ describe('direct Agent connection panel', () => {
     expect(api.test).not.toHaveBeenCalled()
     await act(async () => { answer(false) })
     expect(api.test).not.toHaveBeenCalled()
+    expect(screen.getByRole('status')).toHaveTextContent('已取消直连测试，未发送认证凭据。')
     expect(screen.getByRole('button', { name: '保存并启用直连' })).toBeDisabled()
   })
 
@@ -94,7 +135,7 @@ describe('direct Agent connection panel', () => {
     vi.mocked(api.probe).mockReturnValue(new Promise(resolve => { finish = resolve }))
     await openPanel(api)
     fireEvent.click(screen.getByRole('button', { name: '测试直连' }))
-    fireEvent.change(screen.getByLabelText('Agent 主机'), { target: { value: 'other.test' } })
+    fireEvent.change(screen.getByLabelText('Server 主机'), { target: { value: 'other.test' } })
     await act(async () => { finish({ certificateFingerprint: 'SHA256:old-target' }) })
     expect(confirm).not.toHaveBeenCalled()
     expect(api.test).not.toHaveBeenCalled()
@@ -112,7 +153,7 @@ describe('direct Agent connection panel', () => {
     expect(confirm).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.stringContaining('SHA256:expected') }))
     expect(api.test).toHaveBeenCalledWith(expect.objectContaining({ port: 51234, token: 'transient-test-token', certificateFingerprint: 'SHA256:server' }))
     fireEvent.click(screen.getByRole('button', { name: '保存并启用直连' }))
-    await waitFor(() => expect(screen.getByLabelText('Agent 认证凭据')).toHaveValue(''))
+    await waitFor(() => expect(screen.getByLabelText('Server 认证凭据')).toHaveValue(''))
     expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, token: 'transient-test-token' }))
     expect(localStorage.length).toBe(0)
   })
@@ -143,14 +184,14 @@ describe('direct Agent connection panel', () => {
   it('keeps verification and transient credentials for retry when the local connection row cannot be saved', async () => {
     const api = apiMock()
     render(<DirectAgentConnectionPanel connectionId="c1" defaultHost="192.168.252.107" api={api} onUpdated={async () => { throw new Error('[direct:record] disk full') }} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Agent 端口直连' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '测试直连' })).not.toBeDisabled())
-    fireEvent.change(screen.getByLabelText('Agent 认证凭据'), { target: { value: 'transient-retry-token' } })
+    fireEvent.change(screen.getByLabelText('Server 认证凭据'), { target: { value: 'transient-retry-token' } })
     fireEvent.click(screen.getByRole('button', { name: '测试直连' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '保存并启用直连' })).not.toBeDisabled())
     fireEvent.click(screen.getByRole('button', { name: '保存并启用直连' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('本机连接记录保存失败')
-    expect(screen.getByLabelText('Agent 认证凭据')).toHaveValue('transient-retry-token')
+    expect(screen.getByLabelText('Server 认证凭据')).toHaveValue('transient-retry-token')
     expect(screen.getByRole('button', { name: '保存并启用直连' })).not.toBeDisabled()
     expect(localStorage.length).toBe(0)
   })
@@ -170,7 +211,7 @@ describe('direct Agent connection panel', () => {
     expect(confirm.mock.calls[0][0].detail).toContain('网络范围：Public')
     await act(async () => { answer(true) })
     await waitFor(() => expect(api.firewallApply).toHaveBeenCalledWith(expect.objectContaining({ expectedPlanSha256: 'plan-digest' })))
-    expect(await screen.findByRole('status')).toHaveTextContent('Agent 端口可达')
+    expect(await screen.findByRole('status')).toHaveTextContent('Server 端口可达')
     expect(screen.getByLabelText('SSH 密码')).toHaveValue('')
     expect(api.test).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: '保存并启用直连' })).toBeDisabled()
@@ -204,11 +245,11 @@ describe('direct Agent connection panel', () => {
     expect(api.firewallPlan).not.toHaveBeenCalled()
   })
 
-  it('clears manually entered SSH credentials when switching Agent hosts', async () => {
+  it('clears manually entered SSH credentials when switching Server hosts', async () => {
     const api = { ...apiMock(), firewallPlan: vi.fn().mockResolvedValue({ ...firewallPlan, alreadyEnabled: true }), firewallApply: vi.fn() }
     await openPanel(api, [ssh, { ...ssh, id: 'other-ssh', host: 'other.test' }])
     fireEvent.change(screen.getByLabelText('SSH 密码'), { target: { value: 'first-host-secret' } })
-    fireEvent.change(screen.getByLabelText('Agent 主机'), { target: { value: 'other.test' } })
+    fireEvent.change(screen.getByLabelText('Server 主机'), { target: { value: 'other.test' } })
     expect(screen.getByLabelText('SSH 密码')).toHaveValue('')
     fireEvent.click(screen.getByRole('button', { name: '通过 SSH 授权放行' }))
     await waitFor(() => expect(api.firewallPlan).toHaveBeenCalled())
@@ -223,9 +264,9 @@ describe('direct Agent connection panel', () => {
     fireEvent.click(screen.getByRole('button', { name: '通过 SSH 授权放行' }))
     await waitFor(() => expect(api.firewallApply).toHaveBeenCalledTimes(1))
     expect(screen.getByLabelText('TCP 端口')).toBeDisabled()
-    expect(screen.getByLabelText('Agent 主机')).toBeDisabled()
+    expect(screen.getByLabelText('Server 主机')).toBeDisabled()
     expect(screen.getByLabelText('SSH 授权连接')).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Agent 端口直连' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Server 端口直连' })).toBeDisabled()
     await act(async () => { finish({ changed: true }) })
     await waitFor(() => expect(screen.getByLabelText('TCP 端口')).not.toBeDisabled())
     api.firewallPlan.mockResolvedValue({ ...firewallPlan, alreadyEnabled: true })
@@ -248,7 +289,7 @@ describe('direct Agent connection panel', () => {
     api.firewallPlan.mockResolvedValue(firewallPlan)
     vi.mocked(api.probe).mockRejectedValue(new Error('[direct:unreachable]'))
     fireEvent.click(screen.getByRole('button', { name: '通过 SSH 授权放行' }))
-    expect(await screen.findByRole('status')).toHaveTextContent('防火墙规则已写入，但 Agent 连接尚未验证')
+    expect(await screen.findByRole('status')).toHaveTextContent('防火墙规则已写入，但 Server 连接尚未验证')
     expect(api.firewallApply).toHaveBeenCalledTimes(1)
   })
 })

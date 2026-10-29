@@ -86,6 +86,56 @@ describe('SshServerStatusChip', () => {
     })
   })
 
+  it('pairs and enables Agent directly inside the connection dialog and refreshes transport', async () => {
+    const connection = { id: 'c1', name: 'WSL', host: 'localhost', port: 22, username: 'root', auth_kind: 'password' as const, host_key_fingerprint: 'SHA256:ssh', created_at: 1, updated_at: 1 }
+    const loadSshConnections = vi.fn().mockResolvedValue(undefined)
+    useProjectStore.setState({ sshConnections: [connection], loadSshConnections })
+    const fingerprint = 'a'.repeat(64)
+    let enabled = false
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') return { ...ready, transport: enabled ? 'agent' : 'daemon' }
+      if (command === 'direct_agent_info') return null
+      if (command === 'direct_agent_provision') return { enabled: false, host: 'localhost', port: 48763, certificateFingerprint: fingerprint, tokenSaved: true, previousPorts: [] }
+      if (command === 'direct_agent_probe') return { certificateFingerprint: fingerprint }
+      if (command === 'direct_agent_test') return { version: '0.1.14', protocol: 1 }
+      if (command === 'direct_agent_save') { enabled = true; return }
+      throw new Error(`unexpected ${command}`)
+    })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: serverChipName() }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Server 端口直连' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' })).not.toBeDisabled())
+    expect(screen.queryByRole('button', { name: '重启远端服务' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' }))
+    await screen.findByText('服务已准备。请开放显示的 TCP 端口，再测试直连。')
+    fireEvent.click(screen.getByRole('button', { name: '测试直连' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存并启用直连' })).not.toBeDisabled())
+    expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: '确认 Server 服务器身份' }))
+    fireEvent.click(screen.getByRole('button', { name: '保存并启用直连' }))
+    await screen.findByText('已启用 Server 端口直连。')
+    expect(loadSshConnections).toHaveBeenCalledOnce()
+    expect(screen.getByRole('dialog')).toBeVisible()
+    fireEvent.click(screen.getByRole('tab', { name: '概览' }))
+    expect(await screen.findByText('HTTPS / WSS')).toBeVisible()
+    expect(requestSettings).not.toHaveBeenCalled()
+  })
+
+  it('does not offer SSH provisioning or fallback for an independent Agent record', async () => {
+    const fingerprint = 'a'.repeat(64)
+    useProjectStore.setState({ sshConnections: [{ id: 'c1', name: 'Agent', host: 'localhost', port: 22, username: 'Agent', auth_kind: 'password', host_key_fingerprint: fingerprint, created_at: 1, updated_at: 1 }] })
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') return { ...ready, transport: 'agent' }
+      if (command === 'direct_agent_info') return { enabled: true, host: 'localhost', port: 48763, certificateFingerprint: fingerprint, tokenSaved: true, previousPorts: [] }
+      throw new Error(`unexpected ${command}`)
+    })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Server 端口直连/ }))
+    fireEvent.click(screen.getByRole('tab', { name: 'Server 端口直连' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '测试直连' })).not.toBeDisabled())
+    expect(screen.queryByRole('button', { name: '通过 SSH 安装或读取服务' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '恢复 SSH 连接' })).toBeNull()
+  })
+
   it('shows a concise chip whose aria-label carries the version, and ignores another project event', async () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
     expect(await screen.findByRole('button', { name: serverChipName() })).toBeTruthy()
@@ -102,15 +152,15 @@ describe('SshServerStatusChip', () => {
       throw new Error(`unexpected ${command}`)
     })
     render(<SshServerStatusChip rootUri={rootUri} />)
-    fireEvent.click(await screen.findByRole('button', { name: /Agent 端口直连/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /Server 端口直连/ }))
     expect(screen.getByText('HTTPS / WSS')).toBeVisible()
     expect(screen.getByText('文件、搜索与终端通过独立 HTTPS / WSS 端口连接远端服务，不经过 SSH。')).toBeVisible()
     expect(screen.queryByRole('button', { name: '启用远端服务' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '重新连接 Agent' }))
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('重新连接 Agent', 'ssh_server_restart', { rootUri }))
+    fireEvent.click(screen.getByRole('button', { name: '重新连接 Server' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('重新连接 Server', 'ssh_server_restart', { rootUri }))
     expect(confirmDialog).not.toHaveBeenCalled()
     expect(switchSshConnectionMode).not.toHaveBeenCalled()
-    expect(pushToast).toHaveBeenCalledWith('success', '已重新连接 Agent')
+    expect(pushToast).toHaveBeenCalledWith('success', '已重新连接 Server')
   })
 
   it('subscribes before reading status and refreshes a pending snapshot', async () => {
@@ -148,7 +198,7 @@ describe('SshServerStatusChip', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: serverChipName() }))
     fireEvent.click(screen.getByText('重启远端服务'))
     await waitFor(() => {
-      expect(invoke).toHaveBeenCalledWith('重启 SSH Agent', 'ssh_server_restart', { rootUri })
+      expect(invoke).toHaveBeenCalledWith('重启 SSH Server', 'ssh_server_restart', { rootUri })
     })
     expect(await screen.findByRole('button', { name: serverChipName('0.2.0') })).toBeTruthy()
     await waitFor(() => {
@@ -183,7 +233,7 @@ describe('SshServerStatusChip', () => {
       message: '重启会结束此远端服务托管的终端，可能影响同一远端用户下的其他项目。',
       kind: 'warning', confirmLabel: '重启', cancelLabel: '取消',
     }))
-    expect(invoke).not.toHaveBeenCalledWith('重启 SSH Agent', 'ssh_server_restart', { rootUri })
+    expect(invoke).not.toHaveBeenCalledWith('重启 SSH Server', 'ssh_server_restart', { rootUri })
   })
 
   it('opens installation settings from Server details and closes the dialog', async () => {
@@ -279,7 +329,7 @@ describe('SshServerStatusChip', () => {
     fireEvent.contextMenu(await screen.findByRole('button', { name: /server 启动超时/ }))
     expect(screen.queryByText('切到 SSH 模式')).toBeNull()
     fireEvent.click(screen.getByText('重启远端服务'))
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith('重启 SSH Agent', 'ssh_server_restart', { rootUri }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('重启 SSH Server', 'ssh_server_restart', { rootUri }))
     expect(switchSshConnectionMode).not.toHaveBeenCalled()
     expect(await screen.findByRole('button', { name: serverChipName() })).toBeTruthy()
   })
@@ -293,7 +343,7 @@ describe('SshServerStatusChip', () => {
       expect((retry as HTMLButtonElement).disabled).toBe(true)
       fireEvent.click(retry)
     }
-    expect(invoke).not.toHaveBeenCalledWith('重启 SSH Agent', 'ssh_server_restart', { rootUri })
+    expect(invoke).not.toHaveBeenCalledWith('重启 SSH Server', 'ssh_server_restart', { rootUri })
   })
 
   it('subscribes to state events before reading the snapshot', async () => {

@@ -7,14 +7,14 @@ export async function run({ spaceId, artifactDir, screenshots = true } = {}) {
   const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
   const output = artifactDir ?? resolve(repo, '.dev/web-tests', `direct-agent-${Date.now()}`)
   await mkdir(output, { recursive: true })
-  const task = await taskSpace(spaceId ?? 'QingCode Agent direct connection acceptance')
+  const task = await taskSpace(spaceId ?? 'QingCode Server direct connection acceptance')
   const page = task.page('p1')
   const results = []
   const calls = () => page.evaluate(() => JSON.parse(document.querySelector('[data-testid="calls"]').textContent))
   const step = async (name, work) => { await work(); results.push({ name, status: 'passed' }) }
   try {
     await page.goto('http://127.0.0.1:38439/web-tests/direct-agent.html')
-    await page.click('loc=role:button[name="Agent 端口直连"]', { label: 'inspect independent Agent connection settings' })
+    await page.click('loc=role:button[name="Server 端口直连"]', { label: 'inspect independent Agent connection settings' })
     await page.waitForSelector('loc=role:button[name="测试直连"]')
     await step('service preparation shows a spinner and prevents duplicate requests', async () => {
       await page.click('loc=role:button[name="通过 SSH 安装或读取服务"]', { label: 'prepare Agent service' })
@@ -50,7 +50,7 @@ export async function run({ spaceId, artifactDir, screenshots = true } = {}) {
       await page.click('loc=role:button[name="通过 SSH 授权放行"]', { label: 'authorize current firewall scope' })
       await page.click('loc=role:button[name="授权放行"]', { label: 'approve displayed firewall rule' })
       await page.waitForFunction(() => document.querySelector('[data-testid="calls"]').textContent.includes('firewall-apply:48763'))
-      await page.waitForFunction(() => document.body.textContent.includes('Agent 端口可达'))
+      await page.waitForFunction(() => document.body.textContent.includes('Server 端口可达'))
       assert.equal((await calls()).some(value => value.startsWith('authenticate:')), false)
       assert.equal((await calls()).some(value => value.startsWith('save:')), false)
       assert.equal(await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === '保存并启用直连').disabled), true)

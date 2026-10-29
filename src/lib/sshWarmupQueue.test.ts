@@ -52,6 +52,41 @@ afterEach(() => {
 })
 
 describe('bounded SSH background preparation', () => {
+  it('keeps foreground-opened roots ready across repeated switches without running warmup again', async () => {
+    const { queue, run, statuses } = harness()
+    const targets = [target(1), target(2)]
+    queue.update(targets, targets[0].project.path)
+    await vi.runAllTimersAsync()
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(run).toHaveBeenCalledWith(targets[1], expect.any(AbortSignal))
+
+    for (let i = 0; i < 4; i++) {
+      queue.update(targets, targets[i % 2].project.path)
+      await vi.runAllTimersAsync()
+      expect([...statuses().values()].map(status => status.phase)).toEqual(['ready', 'ready'])
+    }
+    expect(run).toHaveBeenCalledTimes(1)
+    // Foreground activation releases the pre-open directory snapshot.
+    expect(queue.take(targets[1].project.path)).toBeUndefined()
+    expect(statuses().get(targets[1].project.path)?.phase).toBe('ready')
+  })
+
+  it('does not revive an invalidated active root on an ordinary list refresh', async () => {
+    const { queue, run, statuses } = harness()
+    const targets = [target(1)]
+    const path = targets[0].project.path
+    queue.update(targets, path)
+    queue.invalidateConnection('host')
+    queue.update(targets, path)
+    await vi.runAllTimersAsync()
+    expect(statuses().has(path)).toBe(false)
+    expect(run).not.toHaveBeenCalled()
+    queue.update(targets)
+    await vi.runAllTimersAsync()
+    expect(run).toHaveBeenCalledTimes(1)
+    expect(statuses().get(path)?.phase).toBe('ready')
+  })
+
   it('selects the most recent eligible roots from 100,000 projects without per-project IPC or timers', () => {
     const projects = Array.from({ length: 100_000 }, (_, i) => target(i).project)
     projects[99_999].hidden = 1

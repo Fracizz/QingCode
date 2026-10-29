@@ -174,7 +174,7 @@ describe('CreateProjectDialog', () => {
     })
   })
 
-  it('opens a standalone Agent host without requesting an SSH password or probing an SSH host key', async () => {
+  it('opens a standalone Server host without requesting an SSH password or probing an SSH host key', async () => {
     vi.spyOn(directAgentApi, 'info').mockResolvedValue({ enabled: true, host: '10.0.0.3', port: 48763, certificateFingerprint: 'TLS:paired', tokenSaved: true, previousPorts: [] })
     useProjectStore.setState({ sshConnections: [{ ...passwordHost, username: 'Agent', host_key_fingerprint: '' }] })
     render(<CreateProjectDialog open onClose={vi.fn()} onCreated={vi.fn()} />)

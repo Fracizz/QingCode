@@ -17,10 +17,12 @@ import {
 } from '../lib/sshServerStatus'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
+import ConnectionEndpointDetails from './ConnectionEndpointDetails'
 
-type View = 'details' | 'logs'
+type View = 'details' | 'logs' | 'agent'
 
 interface Props {
+  agentPanel?: ReactNode
   state: SshServerState
   connectionLabel: string
   projectPath: string
@@ -40,6 +42,7 @@ interface Props {
 
 export default function SshServerDialog({
   state,
+  agentPanel,
   connectionLabel,
   projectPath,
   view,
@@ -62,8 +65,8 @@ export default function SshServerDialog({
   const pending = ['authenticating', 'probing', 'installing', 'handshaking'].includes(state.phase)
   const ready = state.phase === 'readyServer'
   const overview = view === 'details'
-  const views: View[] = compatibility ? ['details'] : ['details', 'logs']
-  const restartLabel = agent ? t('重新连接 Agent') : ready ? t('重启远端服务') : t('重试远端服务')
+  const views: View[] = [...(compatibility ? ['details'] as const : ['details', 'logs'] as const), ...(agentPanel ? ['agent'] as const : [])]
+  const restartLabel = agent ? t('重新连接 Server') : ready ? t('重启远端服务') : t('重试远端服务')
 
   return (
     <ModalOverlay onDismiss={onClose} zIndex="z-[120]">
@@ -136,7 +139,7 @@ export default function SshServerDialog({
                 document.getElementById(`${id}-${next}-tab`)?.focus()
               }}
             >
-              {item === 'details' ? t('概览') : t('服务日志')}
+              {item === 'details' ? t('概览') : item === 'agent' ? t('Server 端口直连') : t('服务日志')}
             </button>
           ))}
         </div>
@@ -148,12 +151,12 @@ export default function SshServerDialog({
           tabIndex={0}
           className="min-h-0 flex-1 overflow-auto p-5 text-ui text-fg"
         >
-          {overview ? (
+          {view === 'agent' ? agentPanel : overview ? (
             <div className="space-y-4">
               <ConnectionSummary state={state} pending={pending} />
               <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                 <Detail label={t('连接模式')}>
-                  {agent ? t('Agent 端口直连') : compatibility ? t('SSH 直连（兼容模式）') : t('SSH + 远端服务')}
+                  {agent ? t('Server 端口直连') : compatibility ? t('SSH 直连（兼容模式）') : t('SSH + 远端服务')}
                 </Detail>
                 {!compatibility && (
                   <>
@@ -171,6 +174,7 @@ export default function SshServerDialog({
                     )}
                   </>
                 )}
+                <ConnectionEndpointDetails key={`${state.connectionId}:${agent}`} connectionId={state.connectionId} agent={agent} />
                 <div className="min-w-0 sm:col-span-2">
                   <Detail label={t('项目目录')}>
                     <span className="font-mono text-ui-sm">{projectPath}</span>
@@ -236,7 +240,7 @@ export default function SshServerDialog({
           )}
         </div>
 
-        <footer className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
+        {view !== 'agent' && <footer className="flex flex-shrink-0 flex-wrap items-center justify-between gap-3 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
           <button
             type="button"
             className="inline-flex items-center gap-1.5 rounded px-2 py-1.5 text-ui-sm text-fg hover:bg-bg-hover"
@@ -269,7 +273,7 @@ export default function SshServerDialog({
               {busy ? t(agent ? '正在重新连接…' : '正在重启…') : restartLabel}
             </button>
           )}
-        </footer>
+        </footer>}
       </section>
     </ModalOverlay>
   )
@@ -282,13 +286,13 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
   const offline = state.phase === 'disconnected'
   const ready = state.phase === 'readyServer'
   const title = offline
-    ? t(agent ? 'Agent 连接已断开' : 'SSH 连接已断开')
+    ? t(agent ? 'Server 连接已断开' : 'SSH 连接已断开')
     : compatibility && !pending
       ? t('已启用 SSH 兼容模式')
       : ready
         ? t('远端服务已就绪')
         : state.phase === 'authenticating'
-          ? t(agent ? '正在验证 Agent 身份' : '正在验证 SSH 身份')
+          ? t(agent ? '正在验证 Server 身份' : '正在验证 SSH 身份')
           : state.phase === 'probing'
             ? t('正在检查远端服务')
             : state.phase === 'installing'

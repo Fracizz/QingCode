@@ -29,10 +29,10 @@ export function useSshWarmup(ready: boolean) {
           state.projects,
           state.sshConnections,
           project =>
-            project.id !== state.currentProject?.id &&
             trusted(project) &&
             !isSshBackgroundSuspended(project.connection_id || project.path.split('/')[2])
-        )
+        ),
+        state.currentProject?.path
       )
     }
     const visibility = () => queue.setPaused(document.hidden)
@@ -78,10 +78,10 @@ export function useSshWarmup(ready: boolean) {
         projects,
         connections,
         project =>
-          project.id !== currentId &&
           trusted(project) &&
           !isSshBackgroundSuspended(project.connection_id || project.path.split('/')[2])
-      )
+      ),
+      projects.find(project => project.id === currentId)?.path
     )
   }, [projects, connections, currentId])
 }

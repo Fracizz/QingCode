@@ -21,6 +21,7 @@ import {
 import StatusTip from './StatusTip'
 import ContextMenu from './ContextMenu'
 import SshServerDialog from './SshServerDialog'
+import DirectAgentConnectionPanel from './DirectAgentConnectionPanel'
 import { confirmDialog } from '../store/confirmStore'
 import { confirmSshServerRestart } from '../lib/sshWindowsRepair'
 import { switchSshConnectionMode, sshConnectionLabel, sshRemotePathFromUri } from '../lib/sshWorkspace'
@@ -31,7 +32,7 @@ const CHIP_DOT = 'h-[5px] w-[5px] rounded-full ring-1 ring-white/10'
 /** 探测/安装/握手期间的补查间隔；最终状态到达后停止。 */
 const SSH_SERVER_PENDING_POLL_MS = 1500
 
-type DialogKind = 'details' | 'logs'
+type DialogKind = 'details' | 'logs' | 'agent'
 
 export default function SshServerStatusChip({ rootUri }: { rootUri: string }) {
   return <SshServerStatus key={rootUri} rootUri={rootUri} />
@@ -82,7 +83,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
       const seq = eventSeq
       let value: unknown
       try {
-        value = await safeInvoke<unknown>('读取 SSH Agent 状态', 'ssh_server_info', { rootUri })
+        value = await safeInvoke<unknown>('读取 SSH Server 状态', 'ssh_server_info', { rootUri })
       } catch (error) {
         if (cancelled || seq !== eventSeq) return
         if (isAgentCommandUnavailable(error)) {
@@ -156,7 +157,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
     const request = ++logsRequest.current
     setLogsError(null)
     setLogsLoading(true)
-    void safeInvoke<{ text: string }>('读取 SSH Agent 日志', 'ssh_server_logs', { rootUri })
+    void safeInvoke<{ text: string }>('读取 SSH Server 日志', 'ssh_server_logs', { rootUri })
       .then(result => {
         if (request === logsRequest.current) setLogs(result.text)
       })
@@ -212,11 +213,11 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
     try {
       const accepted = agent || await confirmSshServerRestart(rootUri, t)
       if (!accepted) return
-      const value = await safeInvoke<unknown>(agent ? '重新连接 Agent' : '重启 SSH Agent', 'ssh_server_restart', { rootUri })
+      const value = await safeInvoke<unknown>(agent ? '重新连接 Server' : '重启 SSH Server', 'ssh_server_restart', { rootUri })
       const next = parseSshServerState(value)
       if (next) setState(next)
       if (next?.phase === 'readyServer') {
-        pushToast('success', t(agent ? '已重新连接 Agent' : '已重启远端服务'))
+        pushToast('success', t(agent ? '已重新连接 Server' : '已重启远端服务'))
       } else if (next && sshServerIsDirect(next)) {
         pushToast('warn', t('远端服务尚未就绪'), next.reason ?? undefined)
       } else {
@@ -224,13 +225,14 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
       }
     } catch (error) {
       if (isAgentCommandUnavailable(error)) return
-      pushToast('error', t(agent ? '重新连接 Agent 失败: {error}' : '重启远端服务失败: {error}', { error: String(error) }))
+      pushToast('error', t(agent ? '重新连接 Server 失败: {error}' : '重启远端服务失败: {error}', { error: String(error) }))
     } finally {
       setBusy(false)
     }
   }
-  const restartLabel = t(agent ? '重新连接 Agent' : '重启远端服务')
+  const restartLabel = t(agent ? '重新连接 Server' : '重启远端服务')
   const connection = sshConnections.find(item => item.id === state.connectionId)
+  const standaloneAgent = Boolean(connection && connection.username === 'Agent' && connection.auth_kind === 'password' && /^[a-f\d]{64}$/i.test(connection.host_key_fingerprint))
 
   return (
     <>
@@ -277,7 +279,28 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
           state={state}
           connectionLabel={connection ? agent ? connection.name : sshConnectionLabel(connection) : t('远程项目')}
           projectPath={sshRemotePathFromUri(rootUri)}
-          view={sshMode ? 'details' : dialog}
+          view={sshMode && dialog === 'logs' ? 'details' : dialog}
+          agentPanel={connection && <DirectAgentConnectionPanel
+            key={connection.id}
+            connectionId={connection.id}
+            defaultHost={connection.host}
+            standalone={standaloneAgent}
+            initiallyOpen
+            onUpdated={async info => {
+              if (standaloneAgent) {
+                try {
+                  await useProjectStore.getState().saveSshConnection({ ...connection, host: info.host, host_key_fingerprint: info.certificateFingerprint, updated_at: Date.now() })
+                } catch {
+                  throw new Error('[direct:record] Agent connection row could not be saved')
+                }
+              } else {
+                await useProjectStore.getState().loadSshConnections()
+              }
+              setLogs('')
+              logsRequest.current += 1
+              setRefreshKey(key => key + 1)
+            }}
+          />}
           busy={busy}
           blocker={switchBlocker}
           logs={logs}
@@ -285,12 +308,16 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
           logsError={logsError}
           onViewChange={view => {
             if (view === 'logs') openLogs()
-            else setDialog('details')
+            else setDialog(view)
           }}
           onRefreshLogs={fetchLogs}
           onRestart={() => void restart()}
           onEnableServer={() => void enableServerMode()}
           onSettings={() => {
+            if (agent && connection) {
+              setDialog('agent')
+              return
+            }
             setDialog(null)
             if (agent) useUIStore.getState().openRemoteConnections()
             else useUIStore.getState().requestSettings('ssh.server')

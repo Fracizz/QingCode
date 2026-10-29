@@ -303,7 +303,7 @@ export async function prepareSshWorkspace(
   }
   const poll = async () => {
     try {
-      const value = await safeInvoke('读取 SSH Agent 状态', 'ssh_server_info', { rootUri })
+      const value = await safeInvoke('读取 SSH Server 状态', 'ssh_server_info', { rootUri })
       const state = parseSshServerState(value)
       if (!stopped && state?.rootUri === rootUri) onState(state)
     } catch {

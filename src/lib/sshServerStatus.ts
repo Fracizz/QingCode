@@ -111,10 +111,10 @@ export function sshServerChip(state: SshServerState | null): SshServerChip | nul
  */
 export function sshServerModeKey(state: SshServerState): string {
   if (state.transport === 'agent') {
-    if (state.phase === 'disconnected') return state.reason ? 'Agent 已断开' : '未连接'
-    if (state.phase === 'authenticating') return 'Agent 正在认证'
-    if (state.phase === 'handshaking') return '正在连接 Agent 服务'
-    return 'Agent 端口直连'
+    if (state.phase === 'disconnected') return state.reason ? 'Server 已断开' : '未连接'
+    if (state.phase === 'authenticating') return 'Server 正在认证'
+    if (state.phase === 'handshaking') return '正在连接 Server 服务'
+    return 'Server 端口直连'
   }
   // 兼容连接不部署远端服务，明确标明这是用户主动启用的兼容模式。
   if (state.connectionMode === 'ssh' && state.phase === 'readyDirect') {

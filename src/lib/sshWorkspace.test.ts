@@ -89,7 +89,7 @@ describe('joinSshResource', () => {
 })
 
 describe('sshConnectionLabel', () => {
-  it('shows the actual Agent host and port while retaining legacy SSH labels', () => {
+  it('shows the actual Server host and port while retaining legacy SSH labels', () => {
     const connection = { name: 'WinDev', username: 'Agent', host: 'old-ssh.test', port: 22, agentEndpoint: { host: '192.168.252.107', port: 48763 } }
     expect(sshConnectionTarget(connection)).toBe('192.168.252.107:48763')
     expect(sshConnectionLabel(connection)).toBe('WinDev（192.168.252.107:48763）')

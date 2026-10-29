@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import DirectAgentConnectionPanel from '../components/DirectAgentConnectionPanel'
 import ConfirmDialog from '../components/ConfirmDialog'
+import SshServerDialog from '../components/SshServerDialog'
 import { ensureBuiltinLocaleLoaded, useLocaleStore } from '../lib/i18n'
 import type { DirectAgentApi, DirectAgentInfo } from '../lib/directAgent'
 import type { SshConnection } from '../types'
@@ -10,6 +11,8 @@ import '../App.css'
 const sshConnections: SshConnection[] = [{ id: 'web-test-ssh', name: 'WinDev', host: '192.168.252.107', port: 22, username: 'Administrator', auth_kind: 'password', host_key_fingerprint: 'SHA256:ssh-fixture', created_at: 1, updated_at: 1 }]
 
 export function DirectAgentAcceptancePage() {
+  const [dialogView, setDialogView] = useState<'details' | 'logs' | 'agent' | null>(null)
+  const [agentEnabled, setAgentEnabled] = useState(false)
   const [events, setEvents] = useState<string[]>([])
   const [failure, setFailure] = useState('')
   const [provisionPending, setProvisionPending] = useState(false)
@@ -57,12 +60,13 @@ export function DirectAgentAcceptancePage() {
   }), [])
 
   return <main className="h-full overflow-auto bg-bg p-4 text-fg">
-    <h1 className="mb-3 text-ui-lg">Agent 独立端口直连 Web 验收</h1>
+    <h1 className="mb-3 text-ui-lg">Server 独立端口直连 Web 验收</h1>
     <p className="mb-3 text-ui-sm text-fg-muted">固定内存适配器，不建立真实网络连接、不修改防火墙。</p>
     <div className="mb-4 flex flex-wrap items-center gap-3 text-ui">
       <label>模拟连接结果<select className="ml-2 rounded border border-border bg-bg-elevated p-1" value={failure} onChange={event => { setFailure(event.target.value); failureRef.current = event.target.value }}>
         <option value="">成功</option><option value="unreachable">端口不可达</option><option value="auth">认证失败</option><option value="admin">SSH 无管理员权限</option>
       </select></label>
+      <button onClick={() => setDialogView('details')}>打开远程连接详情</button>
       <button onClick={() => { document.documentElement.dataset.theme = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light' }}>切换主题</button>
       <button onClick={async () => {
         const language = useLocaleStore.getState().language === 'en' ? 'zh-CN' : 'en'
@@ -70,11 +74,29 @@ export function DirectAgentAcceptancePage() {
         useLocaleStore.getState().setLanguage(language)
       }}>切换语言</button>
     </div>
-    {provisionPending && <button className="mb-3" onClick={() => finishProvision.current?.()}>完成模拟服务准备</button>}
+    {provisionPending && !dialogView && <button className="mb-3" onClick={() => finishProvision.current?.()}>完成模拟服务准备</button>}
     <div className="max-w-[760px] rounded border border-dialog-border bg-dialog p-4">
       <DirectAgentConnectionPanel connectionId="web-test-direct" defaultHost="192.168.252.107" api={api} sshConnections={sshConnections} />
     </div>
     <output className="mt-4 block break-all font-mono text-ui-sm" data-testid="calls">{JSON.stringify(events)}</output>
+    {dialogView && <SshServerDialog
+      state={{ connectionId: 'web-test-direct', rootUri: 'ssh://web-test-direct/project', phase: 'readyServer', mode: 'server', connectionMode: 'server', transport: agentEnabled ? 'agent' : 'daemon', version: 'fixture-1', reason: null }}
+      connectionLabel="WinDev（administrator@192.168.252.107）"
+      projectPath="C:\projects\demo"
+      view={dialogView}
+      busy={false}
+      blocker={null}
+      logs="Fixture service ready"
+      logsLoading={false}
+      logsError={null}
+      onViewChange={setDialogView}
+      onRefreshLogs={() => {}}
+      onRestart={() => {}}
+      onEnableServer={() => {}}
+      onSettings={() => {}}
+      onClose={() => setDialogView(null)}
+      agentPanel={<>{provisionPending && <button className="mb-3" onClick={() => finishProvision.current?.()}>完成模拟服务准备</button>}<DirectAgentConnectionPanel connectionId="web-test-direct" defaultHost="192.168.252.107" api={api} sshConnections={sshConnections} initiallyOpen onUpdated={info => setAgentEnabled(info.enabled)} /></>}
+    />}
     <ConfirmDialog />
   </main>
 }

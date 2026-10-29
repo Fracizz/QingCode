@@ -76,6 +76,7 @@ export class SshWarmupQueue<T> {
   private paused = false
   private timer?: ReturnType<typeof setTimeout>
   private disposed = false
+  private activePath?: string
 
   constructor(
     private options: {
@@ -85,8 +86,10 @@ export class SshWarmupQueue<T> {
     }
   ) {}
 
-  update(targets: readonly WarmupTarget[]) {
+  update(targets: readonly WarmupTarget[], activePath?: string) {
     if (this.disposed) return
+    const activated = activePath !== this.activePath
+    this.activePath = activePath
     const wanted = new Map(targets.map(target => [target.project.path, target]))
     for (const [key, entry] of this.entries) {
       if (wanted.get(key)?.version === entry.target.version) continue
@@ -95,6 +98,22 @@ export class SshWarmupQueue<T> {
     }
     for (const target of targets) {
       const key = target.project.path
+      // The active project has completed foreground opening. Keep its readiness
+      // when switching away, but discard the pre-open tree so it cannot go stale.
+      if (key === activePath) {
+        // A disconnect/configuration change must stay invalidated until the
+        // project is opened again; ordinary list refreshes do not prove readiness.
+        if (!activated) continue
+        const entry = this.entries.get(key)
+        entry?.controller.abort()
+        this.entries.set(key, {
+          target,
+          controller: new AbortController(),
+          status: entry?.status.phase === 'ready' ? entry.status : { phase: 'ready' },
+          weight: 0,
+        })
+        continue
+      }
       if (this.entries.has(key)) continue
       if (!this.admitted.has(key) && this.admitted.size >= SSH_WARMUP_PROJECT_LIMIT) continue
       if (
@@ -135,8 +154,10 @@ export class SshWarmupQueue<T> {
     const entry = this.entries.get(path)
     if (!entry || entry.controller.signal.aborted) return
     if (entry.status.phase === 'preparing') return entry.promise
-    if (entry.status.phase === 'ready' && entry.result !== undefined)
-      return Promise.resolve(entry.result)
+    if (entry.status.phase === 'ready') {
+      if (entry.result !== undefined) return Promise.resolve(entry.result)
+      return
+    }
     entry.controller.abort()
     this.entries.delete(path)
     this.publish()

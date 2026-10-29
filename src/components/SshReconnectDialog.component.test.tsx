@@ -23,10 +23,10 @@ describe('Agent workspace reconnect', () => {
     switchProject.mockResolvedValue(true)
   })
 
-  it('reconnects through stored native Agent credentials without an SSH password input', async () => {
+  it('reconnects through stored native Server credentials without an SSH password input', async () => {
     render(<SshReconnectDialog />)
     act(() => window.dispatchEvent(new CustomEvent('qingcode:ssh-reconnect-request', { detail: project })))
-    expect(await screen.findByText('重新连接 Agent 项目')).toBeVisible()
+    expect(await screen.findByText('重新连接 Server 项目')).toBeVisible()
     expect(screen.getByText('host.test:48763 · TLS')).toBeVisible()
     expect(screen.queryByLabelText('密码（仅本次会话）')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '重新连接' }))

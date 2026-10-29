@@ -132,7 +132,7 @@ export default function SshReconnectDialog() {
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Server size={17} className="text-accent" />
           <h2 id="ssh-reconnect-title" className="flex-1 text-ui-lg font-semibold text-fg">
-            {directInfo?.enabled ? t('重新连接 Agent 项目') : '重新连接 SSH 项目'}
+            {directInfo?.enabled ? t('重新连接 Server 项目') : '重新连接 SSH 项目'}
           </h2>
           <Tooltip label="关闭" side="left">
             <button
@@ -156,7 +156,7 @@ export default function SshReconnectDialog() {
             </div>
             <div className="mt-0.5 truncate font-mono">{project.root_path ?? project.path}</div>
           </div>
-          {checkingProfile ? <p className="text-ui-sm text-fg-muted">{t('正在检查连接方式…')}</p> : directInfo?.enabled ? <p className="text-ui-sm text-fg-muted">{t('使用已保存的 Agent 配对凭据连接，无需 SSH 密码。请确认远端服务正在运行，并开放 TCP {port}。', { port: directInfo.port })}</p> : connection?.auth_kind === 'password' ? (
+          {checkingProfile ? <p className="text-ui-sm text-fg-muted">{t('正在检查连接方式…')}</p> : directInfo?.enabled ? <p className="text-ui-sm text-fg-muted">{t('使用已保存的 Server 配对凭据连接，无需 SSH 密码。请确认远端服务正在运行，并开放 TCP {port}。', { port: directInfo.port })}</p> : connection?.auth_kind === 'password' ? (
             <label className="block text-ui-sm text-fg-muted">
               密码（仅本次会话）
               <input

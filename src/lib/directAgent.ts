@@ -73,13 +73,13 @@ export interface DirectAgentApi {
 }
 
 export const directAgentApi: DirectAgentApi = {
-  info: connectionId => safeInvoke('读取 Agent 直连配置', 'direct_agent_info', { connectionId }),
-  provision: (connectionId, port) => safeInvoke('安装 Agent 直连服务', 'direct_agent_provision', { connectionId, port }),
-  probe: (host, port) => safeInvoke('检查 Agent 服务器身份', 'direct_agent_probe', { host, port }),
-  test: target => safeInvoke('测试 Agent 直连', 'direct_agent_test', { ...target }),
-  save: target => safeInvoke('保存 Agent 直连配置', 'direct_agent_save', { ...target }),
+  info: connectionId => safeInvoke('读取 Server 直连配置', 'direct_agent_info', { connectionId }),
+  provision: (connectionId, port) => safeInvoke('安装 Server 直连服务', 'direct_agent_provision', { connectionId, port }),
+  probe: (host, port) => safeInvoke('检查 Server 服务器身份', 'direct_agent_probe', { host, port }),
+  test: target => safeInvoke('测试 Server 直连', 'direct_agent_test', { ...target }),
+  save: target => safeInvoke('保存 Server 直连配置', 'direct_agent_save', { ...target }),
   firewallPlan: target => safeInvoke('检查 SSH 防火墙授权', 'direct_agent_firewall_plan', { ...target }),
-  firewallApply: target => safeInvoke('通过 SSH 放行 Agent 端口', 'direct_agent_firewall_apply', { ...target }),
+  firewallApply: target => safeInvoke('通过 SSH 放行 Server 端口', 'direct_agent_firewall_apply', { ...target }),
 }
 
 /** Agent placeholders are not SSH identities. Never select a different host implicitly. */
@@ -122,7 +122,7 @@ export async function enrichDirectAgentConnections(connections: readonly SshConn
 export function validateDirectAgentTarget(host: string, port: string): string | null {
   if (!host.trim() || /[\s/@?#]/.test(host.trim())) return '请填写主机名或 IP 地址，不要包含协议或路径。'
   if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) {
-    return 'Agent 端口必须是 1–65535 之间的整数。'
+    return 'Server 端口必须是 1–65535 之间的整数。'
   }
   return null
 }
@@ -163,10 +163,10 @@ export function directAgentErrorKey(error: unknown): string {
   if (text.includes('[direct:firewall-stale]')) return '防火墙配置或连接目标已变化。请重新检查并确认放行范围。'
   if (text.includes('[direct:firewall]')) return 'SSH 防火墙操作失败。请检查远端权限、现有规则和连接状态后重试。'
   if (text.includes('[direct:record]')) return '直连已验证，但本机连接记录保存失败。请保持此窗口打开并重试保存。'
-  if (text.includes('[direct:identity]')) return 'Agent 证书指纹不匹配。请核对远端身份后重新确认。'
-  if (text.includes('[direct:auth]')) return 'Agent 认证失败。请重新导入该服务的配对信息。'
+  if (text.includes('[direct:identity]')) return 'Server 证书指纹不匹配。请核对远端身份后重新确认。'
+  if (text.includes('[direct:auth]')) return 'Server 认证失败。请重新导入该服务的配对信息。'
   if (text.includes('[direct:timeout]')) return '连接超时。请检查主机地址、TCP 端口、防火墙及网络映射。'
-  if (text.includes('[direct:unreachable]')) return '无法连接 Agent。请确认服务正在监听，并开放显示的 TCP 端口。'
-  if (text.includes('[direct:protocol]')) return 'Agent 协议版本不兼容。请更新客户端或远端服务。'
-  return 'Agent 操作失败。请检查服务状态后重试。'
+  if (text.includes('[direct:unreachable]')) return '无法连接 Server。请确认服务正在监听，并开放显示的 TCP 端口。'
+  if (text.includes('[direct:protocol]')) return 'Server 协议版本不兼容。请更新客户端或远端服务。'
+  return 'Server 操作失败。请检查服务状态后重试。'
 }
