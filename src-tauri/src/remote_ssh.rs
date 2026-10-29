@@ -19,6 +19,12 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
 mod config_import;
+mod direct;
+mod direct_firewall;
+mod direct_fs;
+mod direct_settings;
+pub use direct_firewall::*;
+pub use direct_settings::*;
 #[cfg(test)]
 mod live_acceptance;
 mod search;
@@ -143,11 +149,12 @@ pub struct RemoteSymlinkWriteCheck {
     pub resolved_path: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteExecResult {
     pub stdout: String,
     pub stderr: String,
+    #[serde(alias = "exit_code")]
     pub exit_code: u32,
 }
 
@@ -352,15 +359,222 @@ struct CachedSftp {
 /// Keep Windows physical-path metadata on the same authenticated connection.
 /// The weak reference avoids a cycle through ConnectedSession's SFTP cache.
 struct SftpSession {
-    inner: RawSftpSession,
+    inner: Option<RawSftpSession>,
+    direct: Option<direct_fs::DirectFs>,
     transport: std::sync::Weak<ConnectedSession>,
     windows_guard: windows_path_guard::WindowsPathGuard,
 }
 
-impl std::ops::Deref for SftpSession {
-    type Target = RawSftpSession;
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+impl SftpSession {
+    fn direct(config: direct::DirectConnectionConfig, root: Option<String>, trusted: bool) -> Self {
+        Self {
+            inner: None,
+            direct: Some(direct_fs::DirectFs::new(config, root, trusted)),
+            transport: std::sync::Weak::new(),
+            windows_guard: windows_path_guard::WindowsPathGuard::default(),
+        }
+    }
+
+    async fn canonicalize(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<String, russh_sftp::client::error::Error> {
+        let path = path.into();
+        if let Some(direct) = &self.direct {
+            direct.canonicalize(path).await
+        } else {
+            self.inner.as_ref().unwrap().canonicalize(path).await
+        }
+    }
+    async fn metadata(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<russh_sftp::protocol::FileAttributes, russh_sftp::client::error::Error> {
+        let path = path.into();
+        if let Some(direct) = &self.direct {
+            direct.metadata(path, false).await
+        } else {
+            self.inner.as_ref().unwrap().metadata(path).await
+        }
+    }
+    async fn symlink_metadata(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<russh_sftp::protocol::FileAttributes, russh_sftp::client::error::Error> {
+        let path = path.into();
+        if let Some(direct) = &self.direct {
+            direct.metadata(path, true).await
+        } else {
+            self.inner.as_ref().unwrap().symlink_metadata(path).await
+        }
+    }
+    async fn try_exists(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<bool, russh_sftp::client::error::Error> {
+        let path = path.into();
+        if let Some(direct) = &self.direct {
+            direct.exists(path).await
+        } else {
+            self.inner.as_ref().unwrap().try_exists(path).await
+        }
+    }
+    #[cfg(test)]
+    async fn read_link(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<String, russh_sftp::client::error::Error> {
+        let path = path.into();
+        if let Some(direct) = &self.direct {
+            direct.read_link(path).await
+        } else {
+            self.inner.as_ref().unwrap().read_link(path).await
+        }
+    }
+    async fn read_dir(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<std::vec::IntoIter<direct_fs::RemoteDirEntry>, russh_sftp::client::error::Error>
+    {
+        let path = path.into();
+        let entries = if let Some(direct) = &self.direct {
+            direct.read_dir(path).await?
+        } else {
+            self.inner
+                .as_ref()
+                .unwrap()
+                .read_dir(path)
+                .await?
+                .map(direct_fs::RemoteDirEntry::from_sftp)
+                .collect()
+        };
+        Ok(entries.into_iter())
+    }
+    async fn open(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<direct_fs::RemoteFile, russh_sftp::client::error::Error> {
+        let path = path.into();
+        self.open_with_flags(path, OpenFlags::READ).await
+    }
+    #[cfg(test)]
+    async fn create(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<direct_fs::RemoteFile, russh_sftp::client::error::Error> {
+        self.open_with_flags(
+            path,
+            OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
+        )
+        .await
+    }
+    async fn open_with_flags(
+        &self,
+        path: impl Into<String>,
+        flags: OpenFlags,
+    ) -> Result<direct_fs::RemoteFile, russh_sftp::client::error::Error> {
+        let path = path.into();
+        if let Some(direct) = &self.direct {
+            direct.open(path, flags).await
+        } else {
+            self.inner
+                .as_ref()
+                .unwrap()
+                .open_with_flags(path, flags)
+                .await
+                .map(|file| direct_fs::RemoteFile::Ssh(Box::new(file)))
+        }
+    }
+    async fn read(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<Vec<u8>, russh_sftp::client::error::Error> {
+        let path = path.into();
+        if let Some(direct) = &self.direct {
+            direct.read(path).await
+        } else {
+            self.inner.as_ref().unwrap().read(path).await
+        }
+    }
+    async fn create_dir(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<(), russh_sftp::client::error::Error> {
+        let path = path.into();
+        if let Some(direct) = &self.direct {
+            direct
+                .simple("create_dir", serde_json::json!({"path":path}))
+                .await
+        } else {
+            self.inner.as_ref().unwrap().create_dir(path).await
+        }
+    }
+    async fn remove_dir(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<(), russh_sftp::client::error::Error> {
+        let path = path.into();
+        if let Some(direct) = &self.direct {
+            direct
+                .simple("remove_dir", serde_json::json!({"path":path}))
+                .await
+        } else {
+            self.inner.as_ref().unwrap().remove_dir(path).await
+        }
+    }
+    async fn remove_file(
+        &self,
+        path: impl Into<String>,
+    ) -> Result<(), russh_sftp::client::error::Error> {
+        let path = path.into();
+        if let Some(direct) = &self.direct {
+            direct
+                .simple("remove_file", serde_json::json!({"path":path}))
+                .await
+        } else {
+            self.inner.as_ref().unwrap().remove_file(path).await
+        }
+    }
+    async fn rename(
+        &self,
+        path: String,
+        new_path: String,
+    ) -> Result<(), russh_sftp::client::error::Error> {
+        if let Some(direct) = &self.direct {
+            direct
+                .simple(
+                    "rename",
+                    serde_json::json!({"path":path,"newPath":new_path}),
+                )
+                .await
+        } else {
+            self.inner.as_ref().unwrap().rename(path, new_path).await
+        }
+    }
+    #[cfg(test)]
+    async fn symlink(
+        &self,
+        path: String,
+        target: String,
+    ) -> Result<(), russh_sftp::client::error::Error> {
+        if let Some(direct) = &self.direct {
+            direct
+                .simple("symlink", serde_json::json!({"path":target,"target":path}))
+                .await
+        } else {
+            self.inner.as_ref().unwrap().symlink(path, target).await
+        }
+    }
+    async fn set_metadata(
+        &self,
+        path: String,
+        attrs: russh_sftp::protocol::FileAttributes,
+    ) -> Result<(), russh_sftp::client::error::Error> {
+        if let Some(direct) = &self.direct {
+            direct.set_metadata(path, attrs).await
+        } else {
+            self.inner.as_ref().unwrap().set_metadata(path, attrs).await
+        }
     }
 }
 
@@ -674,7 +888,8 @@ async fn open_sftp_session(
         })?;
     sftp.set_timeout(30);
     let sftp = Arc::new(SftpSession {
-        inner: sftp,
+        inner: Some(sftp),
+        direct: None,
         transport: Arc::downgrade(session),
         windows_guard: Default::default(),
     });
@@ -721,6 +936,15 @@ fn is_terminal_end_message(message: &ChannelMsg) -> bool {
 
 /// 断开终端独占的连接；连接已关闭时忽略错误。
 async fn close_terminal_transport(transport: &ConnectedSession) {
+    qingcode_server::diagnostics::record(
+        "ssh.transport_close_requested",
+        serde_json::json!({
+        "connectionId":transport.config.lock().ok().map(|config|config.id.clone()),
+        "transportId":format!("{:p}",Arc::as_ptr(&transport.server_incarnation)),
+        "source":"lease_released_or_terminal_closed"}),
+        false,
+        false,
+    );
     let _ = transport
         .handle
         .disconnect(Disconnect::ByApplication, "QingCode terminal closed", "en")
@@ -927,6 +1151,9 @@ impl Drop for TerminalTransportLease {
 type ReconnectGate = Arc<tokio::sync::Mutex<Option<(Instant, String)>>>;
 
 pub struct SshManager {
+    direct_connections: RwLock<HashMap<String, direct::DirectConnectionConfig>>,
+    direct_active: RwLock<HashSet<String>>,
+    direct_failures: RwLock<HashMap<String, String>>,
     sessions: RwLock<HashMap<String, Arc<ConnectedSession>>>,
     roots: RwLock<HashMap<String, RegisteredRoot>>,
     terminals: RwLock<HashMap<String, Arc<RemoteTerminalSession>>>,
@@ -969,8 +1196,48 @@ pub struct SshManager {
 }
 
 impl SshManager {
+    fn direct_config(&self, connection_id: &str) -> Option<direct::DirectConnectionConfig> {
+        self.direct_connections
+            .read()
+            .ok()?
+            .get(connection_id)
+            .cloned()
+    }
+    fn detach_direct_connection(
+        &self,
+        connection_id: &str,
+    ) -> Result<Option<Vec<RegisteredRoot>>, String> {
+        let Some(config) = self.direct_config(connection_id) else {
+            return Ok(None);
+        };
+        self.direct_active
+            .write()
+            .map_err(|_| "Agent 状态不可用")?
+            .remove(connection_id);
+        self.direct_failures
+            .write()
+            .map_err(|_| "Agent 状态不可用")?
+            .remove(connection_id);
+        direct::close_connection(&config.endpoint, connection_id);
+        let roots = self.roots_for_connection(connection_id);
+        for root in &roots {
+            self.stop_watch_supervisor(&server::server_slot_key(
+                connection_id,
+                &root.canonical_path,
+            ));
+        }
+        self.roots
+            .write()
+            .map_err(|_| "工作区状态不可用")?
+            .retain(|_, root| remote_uri_connection_id(&root.uri) != Some(connection_id));
+        self.purge_server_state(connection_id);
+        Ok(Some(roots))
+    }
     pub fn new() -> Self {
         Self {
+            direct_connections: RwLock::new(HashMap::new()),
+            direct_active: RwLock::new(HashSet::new()),
+            direct_failures: RwLock::new(HashMap::new()),
             sessions: RwLock::new(HashMap::new()),
             roots: RwLock::new(HashMap::new()),
             terminals: RwLock::new(HashMap::new()),
@@ -1139,6 +1406,9 @@ impl SshManager {
     }
 
     async fn live_session(&self, connection_id: &str) -> Result<Arc<ConnectedSession>, String> {
+        if self.direct_config(connection_id).is_some() {
+            return Err("Agent 直连不会回退到 SSH；请检查独立 TCP 端口和服务状态".into());
+        }
         let session = self.session(connection_id)?;
         if session.handle.is_closed() {
             return self
@@ -1461,6 +1731,16 @@ impl SshManager {
 
     /// 会话仍在表里且传输未关闭。关闭的句柄不算已连接，状态机回到 disconnected。
     pub(crate) fn connection_is_open(&self, connection_id: &str) -> bool {
+        if self.direct_config(connection_id).is_some() {
+            return self
+                .direct_active
+                .read()
+                .is_ok_and(|active| active.contains(connection_id))
+                && self
+                    .direct_failures
+                    .read()
+                    .is_ok_and(|failures| !failures.contains_key(connection_id));
+        }
         self.session(connection_id)
             .ok()
             .is_some_and(|session| !session.handle.is_closed())
@@ -1468,6 +1748,14 @@ impl SshManager {
 
     /// 主连接已断开时记录的原因（保活超时、远端断开等）；在线或未知返回 `None`。
     pub(crate) fn connection_closed_reason(&self, connection_id: &str) -> Option<String> {
+        if self.direct_config(connection_id).is_some() {
+            return self
+                .direct_failures
+                .read()
+                .ok()?
+                .get(connection_id)
+                .cloned();
+        }
         self.session(connection_id)
             .ok()
             .and_then(|session| session.closed_reason())
@@ -1476,6 +1764,27 @@ impl SshManager {
     /// 主连接已关闭时立即重连（复用已确认的配置与指纹）；仍在线直接返回。
     /// watch 监督任务用它在断线后主动恢复，而不是等用户下一次操作。
     pub(crate) async fn ensure_connection_alive(&self, connection_id: &str) -> Result<(), String> {
+        if let Some(config) = self.direct_config(connection_id) {
+            if !self
+                .direct_active
+                .read()
+                .is_ok_and(|active| active.contains(connection_id))
+            {
+                return Err("Agent 连接已断开，请重新连接工作区".into());
+            }
+            let result = direct::test(&config).await.map(|_| ());
+            if let Ok(mut failures) = self.direct_failures.write() {
+                match &result {
+                    Ok(()) => {
+                        failures.remove(connection_id);
+                    }
+                    Err(error) => {
+                        failures.insert(connection_id.into(), error.clone());
+                    }
+                }
+            }
+            return result;
+        }
         self.live_session(connection_id).await.map(|_| ())
     }
 
@@ -1542,6 +1851,13 @@ impl SshManager {
 
     /// 会话在 `ssh_connect` 时固定的模式；会话不存在或尚未经 `ssh_connect` 定下模式时为 `None`。
     pub(crate) fn connection_mode(&self, connection_id: &str) -> Option<RemoteMode> {
+        if self.direct_config(connection_id).is_some() {
+            return self
+                .direct_active
+                .read()
+                .is_ok_and(|active| active.contains(connection_id))
+                .then_some(RemoteMode::Server);
+        }
         let session = self.session(connection_id).ok()?;
         let config = session.config.lock().ok()?;
         config.mode
@@ -1887,6 +2203,9 @@ impl SshManager {
     }
 
     async fn open_sftp(&self, connection_id: &str) -> Result<Arc<SftpSession>, String> {
+        if let Some(config) = self.direct_config(connection_id) {
+            return Ok(Arc::new(SftpSession::direct(config, None, false)));
+        }
         let session = self.live_session(connection_id).await?;
         match open_sftp_session(&session).await {
             Ok(sftp) => Ok(sftp),
@@ -1907,6 +2226,17 @@ impl SshManager {
     ) -> Result<(Arc<SftpSession>, RemoteUri, RegisteredRoot), String> {
         let parsed = parse_remote_uri(uri)?;
         let root = self.root_for_uri(uri, require_trust)?;
+        if let Some(config) = self.direct_config(&parsed.connection_id) {
+            if !self.connection_is_open(&parsed.connection_id) {
+                return Err("Agent 连接已断开".into());
+            }
+            let sftp = Arc::new(SftpSession::direct(
+                config,
+                Some(root.canonical_path.clone()),
+                root.trusted,
+            ));
+            return Ok((sftp, parsed, root));
+        }
         let sftp = self.open_sftp(&parsed.connection_id).await?;
         Ok((sftp, parsed, root))
     }
@@ -2020,7 +2350,19 @@ impl SshManager {
         timeout: Duration,
     ) -> Result<RemoteExecResult, String> {
         let parsed = parse_remote_uri(uri)?;
-        self.root_for_uri(uri, require_trust)?;
+        let root = self.root_for_uri(uri, require_trust)?;
+        if let Some(config) = self.direct_config(&parsed.connection_id) {
+            let value = direct::workspace_request(
+                &config,
+                &serde_json::json!({
+                    "op":"exec","root":root.canonical_path,"trusted":root.trusted,
+                    "path":parsed.path,"command":command,"input":input.unwrap_or_default(),
+                    "timeoutSeconds":timeout.as_secs()
+                }),
+            )
+            .await?;
+            return serde_json::from_value(value).map_err(|_| "Agent 命令响应格式无效".into());
+        }
         let _slot = self
             .exec_slots(&parsed.connection_id)?
             .acquire_owned()
@@ -2979,6 +3321,21 @@ pub async fn ssh_open_session(
     config: SshConnectionConfig,
     manager: State<'_, SshManager>,
 ) -> Result<SshSessionOpenResult, String> {
+    if let Some(direct) = manager.direct_config(&config.id) {
+        direct::test(&direct).await?;
+        let info = direct::workspace_request(&direct, &serde_json::json!({"op":"info"})).await?;
+        manager
+            .direct_active
+            .write()
+            .map_err(|_| "Agent 状态不可用")?
+            .insert(config.id.clone());
+        return Ok(SshSessionOpenResult {
+            fingerprint: config
+                .host_key_fingerprint
+                .unwrap_or(direct.certificate_fingerprint),
+            home_path: info["homePath"].as_str().ok_or("Agent 家目录无效")?.into(),
+        });
+    }
     let expected = config
         .host_key_fingerprint
         .clone()
@@ -3058,6 +3415,17 @@ pub async fn ssh_connect(
     app: tauri::AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<SshConnectResult, String> {
+    if manager.direct_config(&config.id).is_some() {
+        return direct_settings::connect_root(
+            &manager,
+            &app,
+            &config,
+            &root_uri,
+            trusted,
+            defer_service.unwrap_or(false),
+        )
+        .await;
+    }
     let expected = config
         .host_key_fingerprint
         .clone()
@@ -3173,6 +3541,12 @@ pub async fn ssh_disconnect(
     app: tauri::AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<(), String> {
+    if let Some(roots) = manager.detach_direct_connection(&connection_id)? {
+        for root in roots {
+            server_status::publish_disconnected(&app, &manager, &connection_id, &root.uri);
+        }
+        return Ok(());
+    }
     if let Err(error) = server::kill_detached_terminals(&connection_id, &app, &manager, None).await
     {
         eprintln!("[WARN] 断开连接时清理远端终端失败（{connection_id}）：{error}");
@@ -3240,6 +3614,14 @@ pub async fn ssh_disconnect(
             .await
             .map_err(|error| format!("断开 SSH 连接失败：{error}"))?;
     }
+    if let Some(config) = manager.direct_config(&connection_id) {
+        manager
+            .direct_active
+            .write()
+            .map_err(|_| "Agent 状态不可用")?
+            .remove(&connection_id);
+        direct::close_connection(&config.endpoint, &connection_id);
+    }
     Ok(())
 }
 
@@ -3248,6 +3630,9 @@ pub fn ssh_connection_status(
     connection_id: String,
     manager: State<'_, SshManager>,
 ) -> Result<bool, String> {
+    if manager.direct_config(&connection_id).is_some() {
+        return Ok(manager.connection_is_open(&connection_id));
+    }
     Ok(manager
         .sessions
         .read()
@@ -3300,6 +3685,15 @@ pub async fn ssh_prepare_workspace(
         return Err("SSH 连接未建立".to_string());
     }
     let root = manager.registered_root(&root_uri)?;
+    if manager.direct_config(&parsed.connection_id).is_some() {
+        manager
+            .ensure_connection_alive(&parsed.connection_id)
+            .await?;
+        if !manager.root_is_passive(&root_uri) {
+            manager.start_workspace_watch(app, &root);
+        }
+        return Ok(());
+    }
     let session = manager.session(&parsed.connection_id)?;
     // A registered root is not a usable Server workspace yet. Files need the
     // service and terminals need its daemon; reuse their bounded preparation.
@@ -3369,6 +3763,10 @@ pub fn ssh_workspace_status(
     manager: State<'_, SshManager>,
 ) -> Result<bool, String> {
     let parsed = parse_remote_uri(&root_uri)?;
+    if manager.direct_config(&parsed.connection_id).is_some() {
+        return Ok(manager.connection_is_open(&parsed.connection_id)
+            && manager.root_is_registered(&root_uri)?);
+    }
     let connection_alive = manager
         .sessions
         .read()
@@ -3459,6 +3857,10 @@ fn windows_sftp_guard_components(path: &str) -> Vec<String> {
 }
 
 async fn reject_windows_sftp_links(sftp: &SftpSession, path: &str) -> Result<(), String> {
+    if sftp.direct.is_some() {
+        // The native Agent enforces real-path boundaries before every request.
+        return Ok(());
+    }
     sftp.windows_guard.check(&sftp.transport, path).await
 }
 
@@ -5550,6 +5952,15 @@ async fn spawn_ssh_terminal(
                     started_at.elapsed().as_secs_f64()
                 );
             }
+            qingcode_server::diagnostics::record(
+                "terminal.direct_exit",
+                serde_json::json!({
+                "terminalId":terminal_id,"connectionId":connection_id,"exitCode":exit_code,
+                "disconnected":disconnected,"reason":reason.as_deref().map(qingcode_server::diagnostics::error_summary),
+                "lifetimeMs":started_at.elapsed().as_millis()}),
+                true,
+                true,
+            );
             let _ = app_clone.emit(
                 "terminal-exit",
                 TerminalExitPayload {
@@ -6063,15 +6474,50 @@ pub async fn ssh_resize_terminal(
 }
 
 #[tauri::command]
-pub async fn ssh_kill_terminal(id: String, manager: State<'_, SshManager>) -> Result<(), String> {
+pub async fn ssh_terminal_diagnostic_log(
+    root_uri: String,
+    manager: State<'_, SshManager>,
+) -> Result<String, String> {
+    tokio::time::timeout(
+        Duration::from_secs(15),
+        server_status::terminal_diagnostic_log(root_uri, &manager),
+    )
+    .await
+    .map_err(|_| "读取远端终端诊断超时，本机日志仍可导出".to_string())?
+}
+
+#[tauri::command]
+pub async fn ssh_kill_terminal(
+    id: String,
+    source: Option<String>,
+    operation_id: Option<String>,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    let source = qingcode_server::diagnostics::termination_source(source.as_deref());
+    let operation_id = operation_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    qingcode_server::diagnostics::record(
+        "terminal.kill_requested",
+        serde_json::json!({
+        "terminalId":id,"source":source,"operationId":operation_id}),
+        true,
+        false,
+    );
     let persistent = manager
         .persistent_terminals
         .write()
         .map_err(|_| "SSH 终端状态不可用".to_string())?
         .remove(&id);
     if let Some(terminal) = persistent {
-        terminal.kill().await?;
-        return Ok(());
+        terminal.set_kill_context(source, &operation_id);
+        let result = terminal.kill().await;
+        qingcode_server::diagnostics::record(
+            "terminal.kill_completed",
+            serde_json::json!({
+            "terminalId":id,"operationId":operation_id,"ok":result.is_ok()}),
+            true,
+            false,
+        );
+        return result;
     }
     let session = manager
         .terminals

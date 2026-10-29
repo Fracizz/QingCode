@@ -1,3 +1,4 @@
+import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
 import { useInterfaceMetrics } from '../hooks/useInterfaceMetrics'
 import {
   useEffect,
@@ -510,10 +511,20 @@ export default function TerminalTabs({
       },
     },
     {
-      label: translate('重新加载'),
+      label: terminal.restoreUnavailable ? translate('重试接回') : translate('重新加载'),
       icon: <RotateCcw size={14} />,
       action: () => {
-        void restartTerminal(terminal.id)
+        void (terminal.status === 'exited' && shouldKeepShellAfterExit(terminal)
+          ? useTerminalStore.getState().reopenTerminalShell(terminal.id)
+          : restartTerminal(terminal.id))
+      },
+    },
+    {
+      label: translate('导出终端诊断'),
+      action: async () => {
+        const root = useProjectStore.getState().projects.find(project => project.id === terminal.projectId)?.path
+        try { await exportTerminalDiagnostics(terminal, root) }
+        catch (error) { useProjectStore.getState().pushToast('error', String(error)) }
       },
     },
     {
@@ -792,7 +803,8 @@ export default function TerminalTabs({
                         className="flex items-center justify-center w-5 ui-chip h-6 rounded hover:bg-bg-active"
                         onClick={e => {
                           e.stopPropagation()
-                          restartTerminal(t.id)
+                          if (shouldKeepShellAfterExit(t)) void useTerminalStore.getState().reopenTerminalShell(t.id)
+                          else void restartTerminal(t.id)
                         }}
                         onDoubleClick={e => {
                           e.preventDefault()

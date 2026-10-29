@@ -36,18 +36,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: Install C cross compilers for TLS
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y musl-tools gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+
+      - name: Install Rust toolchain and configure musl build
         shell: bash
         run: |
           set -euo pipefail
           rustup target add ${{ matrix.target }}
-          # musl 目标自带 self-contained crt1.o/libc.a，链接器用工具链自带的
-          # rust-lld 即可，无需 musl-gcc（与本机 scripts/build-server.ps1 的兜底一致）。
+          # Rust supplies self-contained musl crt/libc; rust-lld links the final
+          # static ELF. TLS/ring also builds C sources, requiring target CC/AR.
           LLD="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld"
           TARGET='${{ matrix.target }}'
           LINKER_KEY="CARGO_TARGET_${TARGET^^}_LINKER"
           LINKER_KEY="${LINKER_KEY//-/_}"
           echo "$LINKER_KEY=$LLD" >> "$GITHUB_ENV"
+          if [ "$TARGET" = x86_64-unknown-linux-musl ]; then
+            echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
+            echo "AR_x86_64_unknown_linux_musl=ar" >> "$GITHUB_ENV"
+          else
+            # Compile ring against GCC's freestanding headers. No glibc
+            # headers/libraries enter the final Rust musl-linked binary.
+            echo "CC_aarch64_unknown_linux_musl=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+            echo "AR_aarch64_unknown_linux_musl=aarch64-linux-gnu-ar" >> "$GITHUB_ENV"
+            echo "CFLAGS_aarch64_unknown_linux_musl=-ffreestanding -DRING_CORE_NOSTDLIBINC=1" >> "$GITHUB_ENV"
+          fi
 
       - name: Build
         shell: bash
@@ -55,6 +72,12 @@ jobs:
           set -euo pipefail
           cargo build --manifest-path src-tauri/Cargo.toml \
             -p qingcode-server --release --target ${{ matrix.target }}
+          # Reject an accidental dynamically linked/glibc artifact.
+          readelf -l "src-tauri/target/${{ matrix.target }}/release/qingcode-server" > "$RUNNER_TEMP/server-elf-layout.txt"
+          if grep -q INTERP "$RUNNER_TEMP/server-elf-layout.txt"; then
+            echo "server must be static (unexpected ELF interpreter)" >&2
+            exit 1
+          fi
           mkdir -p dist
           cp "src-tauri/target/${{ matrix.target }}/release/qingcode-server" \
              "dist/qingcode-server-${{ matrix.arch }}"

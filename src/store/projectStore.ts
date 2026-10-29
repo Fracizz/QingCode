@@ -12,6 +12,7 @@ import {
   renameEditorPaths,
 } from './editorSessionBridge'
 import { translate } from '../lib/i18n'
+import { enrichDirectAgentConnections } from '../lib/directAgent'
 import {
   formatExpandDirErrorToast,
   formatReadDirErrorToast,
@@ -412,7 +413,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   loadSshConnections: async () => {
     try {
-      set({ sshConnections: await listSshConnections() })
+      set({ sshConnections: await enrichDirectAgentConnections(await listSshConnections()) })
     } catch (error) {
       if (error instanceof NotInTauriError) {
         set({ sshConnections: [] })

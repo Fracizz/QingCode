@@ -1,8 +1,9 @@
 //! QingCode SSH 工作区远端代理：协议定义、路径安全与服务器骨架。
 //!
 //! 客户端（qingcode 主程序）与本 crate 共用帧编解码和消息类型，避免两端协议漂移。
-//! 代理只监听 `127.0.0.1`，由客户端经 SSH `direct-tcpip` 通道接入，不存在公网暴露；
-//! 所有操作都限制在启动参数 `--root` 指定的项目根内，越界请求一律拒绝。
+//! 旧 `serve` 只监听 `127.0.0.1`，由客户端经 SSH `direct-tcpip` 通道接入。
+//! `direct` 提供独立 HTTPS/WSS 入口，使用证书固定与配对凭据；daemon 仍只监听本地 IPC。
+//! 文件操作分别限制在启动参数或已登记请求的项目根内，越界请求一律拒绝。
 //!
 //! 连接模型：每条 TCP 连接承载一次操作。首帧是带 token 的请求，随后服务端
 //! 按操作回 `records`（流式记录）/ `done`（结束）/ `error`；`watch` 连接会持续
@@ -16,8 +17,11 @@ mod watch;
 // 协议 v1 + daemon/connect：与上面的 `serve` 契约并存，互不影响。
 pub mod connect;
 pub mod daemon;
+pub mod diagnostics;
+pub mod direct;
 pub mod ipc;
 pub mod proto;
+pub mod workspace;
 // Windows 脱离进程创建（CreateProcessW + HANDLE_LIST），serve 与 connect 共用。
 pub mod winproc;
 

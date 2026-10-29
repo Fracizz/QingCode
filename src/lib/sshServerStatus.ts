@@ -12,7 +12,7 @@ export type SshServerPhase =
 /** 与后端 `ServerMode`（serde camelCase）一致：`server` / `direct` / `unknown`。 */
 export type SshServerMode = 'server' | 'direct' | 'unknown'
 
-export type SshServerTransport = 'daemon' | 'serve' | 'direct'
+export type SshServerTransport = 'daemon' | 'serve' | 'direct' | 'agent'
 
 export type SshServerState = {
   connectionId: string
@@ -48,7 +48,7 @@ function normalizeMode(mode: unknown): SshServerMode | null {
   if (mode === 'agent') return 'server'
   return typeof mode === 'string' && MODES.has(mode as SshServerMode) ? (mode as SshServerMode) : null
 }
-const TRANSPORTS = new Set<SshServerTransport>(['daemon', 'serve', 'direct'])
+const TRANSPORTS = new Set<SshServerTransport>(['daemon', 'serve', 'direct', 'agent'])
 
 export type SshServerChip =
   | { kind: 'agent' }
@@ -107,10 +107,15 @@ export function sshServerChip(state: SshServerState | null): SshServerChip | nul
 }
 
 /**
- * 面向用户的连接模式。SSH 始终是底层连接；远端服务只是叠加在 SSH 上的
- * 增强层，不能把 Server/daemon 展示成另一种独立协议。
+ * 面向用户的连接模式。区分 SSH 上的增强服务与独立 HTTPS/WSS Agent。
  */
 export function sshServerModeKey(state: SshServerState): string {
+  if (state.transport === 'agent') {
+    if (state.phase === 'disconnected') return state.reason ? 'Agent 已断开' : '未连接'
+    if (state.phase === 'authenticating') return 'Agent 正在认证'
+    if (state.phase === 'handshaking') return '正在连接 Agent 服务'
+    return 'Agent 端口直连'
+  }
   // 兼容连接不部署远端服务，明确标明这是用户主动启用的兼容模式。
   if (state.connectionMode === 'ssh' && state.phase === 'readyDirect') {
     return 'SSH 直连（兼容模式）'
@@ -132,6 +137,7 @@ export function sshServerModeKey(state: SshServerState): string {
 }
 
 export function sshServerTransportKey(transport: SshServerTransport | null): string | null {
+  if (transport === 'agent') return 'HTTPS / WSS'
   if (transport === 'daemon') return '常驻服务'
   if (transport === 'serve') return '按项目服务'
   if (transport === 'direct') return '纯 SSH'
@@ -175,7 +181,7 @@ export function sshServerTipLines(state: SshServerState): SshServerTipLine[] {
     return lines
   }
   if (state.phase === 'readyServer') {
-    const lines: SshServerTipLine[] = [{ key: 'SSH + 远端服务' }]
+    const lines: SshServerTipLine[] = [{ key: sshServerModeKey(state) }]
     const transport = sshServerTransportKey(state.transport)
     if (transport) lines.push({ key: '运行方式：{transport}', params: { transport } })
     if (state.version) {

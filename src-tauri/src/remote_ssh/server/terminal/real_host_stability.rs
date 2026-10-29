@@ -175,7 +175,7 @@ impl Term {
             .unwrap_or(0);
         let events = session.take_events().ok_or("事件流已被取走")?;
         Ok(Self {
-            transport,
+            transport: transport.into_ssh()?,
             session,
             events,
             pty_id,
@@ -786,6 +786,7 @@ async fn phase_reattach(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), Str
     )
     .await
     .map_err(|error| format!("重开 daemon 会话失败（{}）：{error}", ms(started.elapsed())))?;
+    let transport = transport.into_ssh()?;
     let attach = session.attach(&pty_id, next_seq).await.map_err(|error| {
         format!(
             "pty.attach 失败（主连接回退={}，{}）：{error}",

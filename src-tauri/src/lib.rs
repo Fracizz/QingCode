@@ -19,6 +19,7 @@ mod path_guard;
 mod remote_ssh;
 mod run_environment;
 mod terminal;
+mod terminal_diagnostics;
 mod update;
 mod user_locales;
 
@@ -440,8 +441,28 @@ fn terminal_session_open(
 }
 
 #[tauri::command]
-fn kill_terminal(id: String, state: tauri::State<'_, TerminalManager>) -> Result<(), String> {
-    state.kill(&id)
+fn kill_terminal(
+    id: String,
+    source: Option<String>,
+    operation_id: Option<String>,
+    state: tauri::State<'_, TerminalManager>,
+) -> Result<(), String> {
+    qingcode_server::diagnostics::record(
+        "terminal.kill_requested",
+        serde_json::json!({
+        "terminalId":id,"source":qingcode_server::diagnostics::termination_source(source.as_deref()),
+        "operationId":qingcode_server::diagnostics::identifier(operation_id.as_deref())}),
+        true,
+        false,
+    );
+    let result = state.kill(&id);
+    qingcode_server::diagnostics::record(
+        "terminal.kill_completed",
+        serde_json::json!({"terminalId":id,"ok":result.is_ok()}),
+        true,
+        false,
+    );
+    result
 }
 
 #[tauri::command]
@@ -699,6 +720,12 @@ pub fn run() {
         std::process::exit(code);
     }
 
+    qingcode_server::diagnostics::initialize(
+        app_paths::app_data_dir()
+            .join("diagnostics")
+            .join("terminal"),
+        "desktop",
+    );
     let launch_files = file_associations::collect_cli_file_paths(std::env::args());
     let launch_as_external = !launch_files.is_empty();
     // Explorer/NSIS shortcuts can provide an arbitrary $OUTDIR. Keep relative
@@ -742,6 +769,9 @@ pub fn run() {
             ipc::start_server(app.handle().clone());
             configure_ssh_server_binary_dirs(app.handle());
             configure_ssh_client_id(app.handle());
+            if let Err(error) = remote_ssh::configure_direct_connections(app.handle()) {
+                eprintln!("[WARN] 无法加载 Agent 直连配置: {error}");
+            }
             for window_config in app.config().app.windows.iter().filter(|w| !w.create) {
                 let mut window_config = window_config.clone();
                 if launch_as_external && window_config.label == MAIN_WINDOW_LABEL {
@@ -835,6 +865,8 @@ pub fn run() {
             write_terminal,
             set_terminal_output_paused,
             kill_terminal,
+            terminal_diagnostics::terminal_diagnostic_event,
+            terminal_diagnostics::terminal_diagnostic_log,
             terminal_session_open,
             resize_terminal,
             terminal_has_child_processes,
@@ -864,6 +896,13 @@ pub fn run() {
             file_watcher::file_mtime,
             file_watcher::file_ctime,
             remote_ssh::ssh_probe_host,
+            remote_ssh::direct_agent_info,
+            remote_ssh::direct_agent_probe,
+            remote_ssh::direct_agent_test,
+            remote_ssh::direct_agent_save,
+            remote_ssh::direct_agent_provision,
+            remote_ssh::direct_agent_firewall_plan,
+            remote_ssh::direct_agent_firewall_apply,
             remote_ssh::ssh_import_candidates,
             remote_ssh::ssh_open_session,
             remote_ssh::ssh_test_connection,
@@ -934,6 +973,7 @@ pub fn run() {
             remote_ssh::ssh_write_terminal,
             remote_ssh::ssh_resize_terminal,
             remote_ssh::ssh_kill_terminal,
+            remote_ssh::ssh_terminal_diagnostic_log,
             remote_ssh::ssh_kill_detached_terminal,
             remote_ssh::ssh_list_detached_terminals,
             remote_ssh::ssh_attach_terminal,

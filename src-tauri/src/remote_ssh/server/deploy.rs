@@ -87,6 +87,140 @@ pub(super) async fn prepare_shared_daemon(
     })
 }
 
+/// Stage a content-addressed gateway binary without replacing the executable
+/// used by a running daemon. In particular this path must never call the normal
+/// same-version upgrade helper, which stops processes to release Windows locks.
+pub(crate) async fn stage_direct_gateway(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) -> Result<String, String> {
+    let current = manager.registered_root(&root.uri)?;
+    if !current.trusted || current.canonical_path != root.canonical_path {
+        return Err("请先信任当前远程项目，再安装直连 Agent".into());
+    }
+    let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    if manager.direct_config(&connection_id).is_some() {
+        return Err("直连模式不能通过 SSH 安装或替换服务，请在远端控制台管理 Agent".into());
+    }
+    let (arch, local_binary) = locate_local_server_binary(manager, root)
+        .await
+        .map_err(|error| error.reason)?;
+    let sha256 = sha256_of_file_cached(&local_binary).await?;
+    let sftp = manager.open_sftp(&connection_id).await?;
+    let (home, install_dir) = resolve_install_location(manager, &sftp, root, &connection_id)
+        .await
+        .map_err(|error| error.reason)?;
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let gateway_dir = format!("{install_dir}/direct-gateway");
+    let content_dir = format!("{gateway_dir}/{sha256}");
+    let resolved_home = sftp
+        .canonicalize(home)
+        .await
+        .map_err(|error| format!("远端家目录不可用：{error}"))?;
+    for directory in [&gateway_dir, &content_dir] {
+        if !sftp
+            .try_exists(directory.to_string())
+            .await
+            .map_err(|error| format!("检查 Agent 安装目录失败：{error}"))?
+        {
+            sftp.create_dir(directory.to_string())
+                .await
+                .map_err(|error| format!("创建 Agent 安装目录失败：{error}"))?;
+        }
+        let attributes = sftp
+            .symlink_metadata(directory.to_string())
+            .await
+            .map_err(|error| format!("检查 Agent 目录属性失败：{error}"))?;
+        if !attributes.is_dir() || attributes.is_symlink() {
+            return Err("Agent 安装目录必须是用户私有真实目录".into());
+        }
+        let canonical = sftp
+            .canonicalize(directory.to_string())
+            .await
+            .map_err(|error| format!("解析 Agent 安装目录失败：{error}"))?;
+        if !remote_path_is_within(&canonical, &resolved_home)
+            || !remote_roots_equivalent(&canonical, directory, windows)
+        {
+            return Err("Agent 安装目录被链接重定向，已拒绝执行".into());
+        }
+        reject_windows_sftp_links(&sftp, &canonical).await?;
+        if !windows {
+            sftp.set_metadata(
+                canonical,
+                russh_sftp::protocol::FileAttributes {
+                    permissions: Some(0o700),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|error| format!("收紧 Agent 目录权限失败：{error}"))?;
+        }
+    }
+    let remote_bin = format!("{content_dir}/{}", server_binary_file_name(windows, &arch));
+    if sftp
+        .try_exists(remote_bin.clone())
+        .await
+        .map_err(|error| format!("检查 Agent 程序失败：{error}"))?
+    {
+        if !remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await? {
+            return Err(
+                "内容寻址 Agent 程序摘要不匹配，已拒绝覆盖；现有后台服务和终端未结束".into(),
+            );
+        }
+    } else {
+        let temp = format!(
+            "{content_dir}/gateway-upload-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+        let upload: Result<(), String> = async {
+            let mut input = tokio::fs::File::open(&local_binary)
+                .await
+                .map_err(|error| format!("打开本地 Agent 程序失败：{error}"))?;
+            let mut output = sftp
+                .open_with_flags(temp.clone(), remote_write_flags(true))
+                .await
+                .map_err(|error| format!("创建远端 Agent 临时文件失败：{error}"))?;
+            tokio::io::copy(&mut input, &mut output)
+                .await
+                .map_err(|error| format!("上传 Agent 程序失败：{error}"))?;
+            output
+                .shutdown()
+                .await
+                .map_err(|error| format!("完成 Agent 上传失败：{error}"))?;
+            drop(output);
+            if !remote_binary_sha_matches(manager, root, &temp, &sha256).await? {
+                return Err("Agent 临时文件 SHA-256 校验失败，已拒绝安装".into());
+            }
+            // SFTP rename does not overwrite an existing destination. No
+            // process termination or destination removal is permitted here.
+            sftp.rename(temp.clone(), remote_bin.clone())
+                .await
+                .map_err(|error| format!("提交 Agent 程序失败（未覆盖现有程序）：{error}"))?;
+            Ok(())
+        }
+        .await;
+        if upload.is_err() {
+            let _ = tokio::time::timeout(Duration::from_secs(2), sftp.remove_file(temp)).await;
+        }
+        upload?;
+    }
+    if !remote_binary_sha_matches(manager, root, &remote_bin, &sha256).await? {
+        return Err("Agent 安装后 SHA-256 校验失败，已拒绝执行".into());
+    }
+    let command = self_check_then_deploy_command(&remote_bin, &sha256, "true");
+    let script = windows_host_path(&remote_bin)
+        .map(|path| windows_self_check_then_deploy_script(&path, &sha256, ""))
+        .unwrap_or_default();
+    let checked = exec_on_root(manager, root, &command, &script).await?;
+    if checked.exit_code != 0 {
+        return Err(format!(
+            "Agent 程序自检未通过：{}",
+            self_check_failure_detail(&checked.stderr, checked.exit_code)
+        ));
+    }
+    Ok(remote_bin)
+}
+
 /// 等待 server 启动就绪（状态文件出现且 ping 通过）的总时限。
 const AGENT_READY_TIMEOUT: Duration = Duration::from_secs(15);
 /// server 启动就绪轮询间隔。
@@ -1097,6 +1231,37 @@ async fn ensure_server_endpoint_inner(
     wait_for_deploy: bool,
 ) -> Result<Option<ServerEndpoint>, String> {
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    if let Some(config) = manager.direct_config(&connection_id) {
+        if !root.trusted {
+            return Ok(None);
+        }
+        let key = server_slot_key(&connection_id, &root.canonical_path);
+        if let Err(error) = manager.ensure_connection_alive(&connection_id).await {
+            let slot = ServerSlot {
+                last_failure: Some(error.clone()),
+                ..Default::default()
+            };
+            manager.set_server_slot(&key, slot);
+            publish_server_if_watched(app, manager, root);
+            return Err(error);
+        }
+        let endpoint = ServerEndpoint {
+            serve: None,
+            daemon: Some(DaemonAccess {
+                bin: "direct".into(),
+                token: config.token,
+            }),
+        };
+        manager.set_server_slot(
+            &key,
+            ServerSlot {
+                endpoint: Some(endpoint.clone()),
+                ..Default::default()
+            },
+        );
+        publish_server_if_watched(app, manager, root);
+        return Ok(Some(endpoint));
+    }
     let key = server_slot_key(&connection_id, &root.canonical_path);
     // 未信任项目、SSH 模式连接：不部署，直接公布直连原因。Windows 远端走 serve。
     if !manager.server_mode(&connection_id) || !root.trusted {
@@ -1364,6 +1529,9 @@ pub(crate) async fn require_serve_endpoint(
     root: &RegisteredRoot,
 ) -> Result<ServerEndpoint, String> {
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    if manager.direct_config(&connection_id).is_some() {
+        return Err("Agent 端口直连不可用，请检查独立端口；不会回退到 SSH".into());
+    }
     if !root.trusted || !manager.server_mode(&connection_id) {
         return Err(server_mode_error("项目不允许使用远端服务"));
     }

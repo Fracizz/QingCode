@@ -395,7 +395,12 @@ fn spawn_daemon(state_dir: Option<&Path>) -> Result<SpawnedDaemon, String> {
             .arg("daemon")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(Stdio::from(
+                crate::diagnostics::stderr_file(
+                    &RunDir::resolve(state_dir)?.dir().join("daemon.stderr.log"),
+                )
+                .map_err(|error| format!("打开 daemon stderr 日志失败: {error}"))?,
+            ));
         if let Some(dir) = state_dir {
             command.arg("--state-dir").arg(dir);
         }
@@ -450,6 +455,10 @@ fn wait_ready(
 
 fn endpoint_is_ready(endpoint: &IpcEndpoint, run_dir: &RunDir) -> bool {
     if !run_dir.ready_marker().exists() || run_dir.read_token().is_err() {
+        return false;
+    }
+    #[cfg(unix)]
+    if !endpoint.daemon_lock_is_held().unwrap_or(false) {
         return false;
     }
     // 只判断存活，不必按 2 秒跨 acceptor 空窗：判不活的代价只是多拉起一个

@@ -23,6 +23,8 @@ import {
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import SshImportDialog from './SshImportDialog'
+import DirectAgentConnectionPanel from './DirectAgentConnectionPanel'
+import { directAgentApi, type DirectAgentInfo } from '../lib/directAgent'
 import { confirmDialog } from '../store/confirmStore'
 import { confirmSshServerRestart } from '../lib/sshWindowsRepair'
 import { useProjectStore } from '../store/projectStore'
@@ -87,6 +89,7 @@ const secondaryButtonClass =
   'rounded border border-dialog-border px-3 py-1.5 text-ui text-fg hover:bg-bg-hover disabled:opacity-40'
 
 type LogView = { rootUri: string; text: string; loading: boolean }
+const NEW_AGENT_CONNECTION_ID = '__new_agent__'
 
 /** 远程连接管理页：连接是跨项目资源，远程项目与远端服务都挂在连接下。 */
 export default function RemoteConnectionsManager() {
@@ -112,6 +115,8 @@ export default function RemoteConnectionsManager() {
   /** Only a successful authentication of this exact configuration authorizes saving it. */
   const [verification, setVerification] = useState<{ key: string; fingerprint: string } | null>(null)
   const [aliveMap, setAliveMap] = useState<Record<string, boolean>>({})
+  const [directInfos, setDirectInfos] = useState<Record<string, DirectAgentInfo | null>>({})
+  const [agentDraftId, setAgentDraftId] = useState(() => crypto.randomUUID())
   const [roots, setRoots] = useState<SshWorkspaceRoot[]>([])
   const [serverStates, setServerStates] = useState<SshServerState[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
@@ -137,19 +142,25 @@ export default function RemoteConnectionsManager() {
     setForm(prev => ({ ...prev, ...change }))
   }
 
-  const isNew = selectedId === NEW_SSH_CONNECTION_ID
+  const isNewAgent = selectedId === NEW_AGENT_CONNECTION_ID
+  const isNew = selectedId === NEW_SSH_CONNECTION_ID || isNewAgent
   const selected = connections.find(item => item.id === selectedId) ?? null
+  const selectedDirect = selected ? directInfos[selected.id] : null
+  const directEnabled = selectedDirect?.enabled === true
+  const standaloneAgent = Boolean(selected && selected.username === 'Agent' && selected.auth_kind === 'password' && selected.host_key_fingerprint === selectedDirect?.certificateFingerprint)
 
   const refreshDetail = async (id: string) => {
     const requestId = ++detailRequestRef.current
     setDetailLoading(true)
-    const [alive, nextRoots, nextStates] = await Promise.all([
+    const [alive, nextRoots, nextStates, directInfo] = await Promise.all([
       isSshConnectionAlive(id),
       listSshWorkspaceRoots(id),
       listSshServerStates(id),
+      directAgentApi.info(id).catch(() => null),
     ])
     if (requestId !== detailRequestRef.current) return
     setAliveMap(prev => ({ ...prev, [id]: alive }))
+    setDirectInfos(prev => ({ ...prev, [id]: directInfo ?? null }))
     setRoots(nextRoots)
     setServerStates(nextStates)
     setDetailLoading(false)
@@ -197,7 +208,7 @@ export default function RemoteConnectionsManager() {
 
   // 连接列表变化时修正失效的选中项。
   useEffect(() => {
-    if (!selectedId || selectedId === NEW_SSH_CONNECTION_ID) return
+    if (!selectedId || selectedId === NEW_SSH_CONNECTION_ID || selectedId === NEW_AGENT_CONNECTION_ID) return
     if (!connections.some(item => item.id === selectedId)) {
       setSelectedId(connections[0]?.id ?? null)
     }
@@ -458,9 +469,9 @@ export default function RemoteConnectionsManager() {
   const disconnectConnection = async () => {
     if (!selected) return
     const accepted = await confirmDialog({
-      title: t('断开 SSH 连接'),
+      title: t(directEnabled ? '断开 Agent 直连' : '断开 SSH 连接'),
       message: t(
-        '断开 {label}？打开的远程项目会失去连接，重新打开项目时可以重连（密码需重新输入）。',
+        directEnabled ? '断开 {label} 的 Agent 连接？打开的项目会失去连接，重新打开项目时可以重连。' : '断开 {label}？打开的远程项目会失去连接，重新打开项目时可以重连（密码需重新输入）。',
         { label: sshConnectionLabel(selected) }
       ),
       kind: 'warning',
@@ -503,18 +514,18 @@ export default function RemoteConnectionsManager() {
     }
   }
 
-  const restartServer = async (rootUri: string, direct: boolean) => {
+  const restartServer = async (rootUri: string, direct: boolean, agent = false) => {
     if (busyRoot) return
     setBusyRoot(rootUri)
     try {
-      const accepted = await confirmSshServerRestart(rootUri, t)
+      const accepted = agent || await confirmSshServerRestart(rootUri, t)
       if (!accepted) return
       const value = await safeInvoke<unknown>('重启远端服务', 'ssh_server_restart', { rootUri })
       const next = parseSshServerState(value)
       if (next && sshServerIsDirect(next)) {
         pushToast('warn', t('仍使用 SSH 直连'), next.reason ?? undefined)
       } else if (next?.phase === 'readyServer') {
-        pushToast('success', t(direct ? '已切换到远端服务' : '已重启远端服务'))
+        pushToast('success', t(agent ? '已重新连接 Agent' : direct ? '已切换到远端服务' : '已重启远端服务'))
       } else {
         pushToast('info', t('正在部署远端服务…'))
       }
@@ -522,7 +533,7 @@ export default function RemoteConnectionsManager() {
       if (!isAgentCommandUnavailable(reason)) {
         pushToast(
           'error',
-          t(direct ? '切换到远端服务失败: {error}' : '重启远端服务失败: {error}', {
+          t(agent ? '重新连接 Agent 失败: {error}' : direct ? '切换到远端服务失败: {error}' : '重启远端服务失败: {error}', {
             error: String(reason),
           })
         )
@@ -771,13 +782,21 @@ export default function RemoteConnectionsManager() {
                   type="button"
                   onClick={() => setSelectedId(NEW_SSH_CONNECTION_ID)}
                   className={`flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-ui transition-colors ${
-                    isNew
+                    selectedId === NEW_SSH_CONNECTION_ID
                       ? 'border-brand/60 bg-brand/10 text-brand'
                       : 'border-dialog-border text-fg hover:bg-bg-hover'
                   }`}
                 >
                   <Plus size={14} />
                   {t('新建连接')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAgentDraftId(crypto.randomUUID()); setSelectedId(NEW_AGENT_CONNECTION_ID) }}
+                  className={`flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-ui ${isNewAgent ? 'border-brand/60 bg-brand/10 text-brand' : 'border-dialog-border text-fg hover:bg-bg-hover'}`}
+                >
+                  <Plus size={14} />
+                  {t('新建 Agent 直连')}
                 </button>
                 <button
                   type="button"
@@ -813,7 +832,9 @@ export default function RemoteConnectionsManager() {
                         <span className="min-w-0 truncate">{connection.name}</span>
                       </span>
                       <span className="min-w-0 truncate pl-[13px] font-mono text-ui-sm text-fg-dim">
-                        {sshConnectionTarget(connection)}
+                        {directInfos[connection.id]?.enabled
+                          ? `${directInfos[connection.id]!.host}:${directInfos[connection.id]!.port} · TLS`
+                          : sshConnectionTarget(connection)}
                       </span>
                     </button>
                   )
@@ -829,7 +850,7 @@ export default function RemoteConnectionsManager() {
                       <div className="flex min-w-0 items-center gap-2">
                         <Server size={15} className="flex-shrink-0 text-fg-muted" />
                         <h3 className="min-w-0 truncate text-ui-lg font-semibold text-fg">
-                          {isNew ? t('新建连接') : selected!.name}
+                          {isNewAgent ? t('新建 Agent 直连') : isNew ? t('新建连接') : selected!.name}
                         </h3>
                         {!isNew && (
                           <span
@@ -840,6 +861,7 @@ export default function RemoteConnectionsManager() {
                             {alive ? t('在线') : t('离线')}
                           </span>
                         )}
+                        {directEnabled && <span className="rounded bg-dialog-active px-1.5 py-0.5 text-ui-sm font-normal text-fg-muted">{t('Agent 端口直连')}</span>}
                       </div>
                       {!isNew && selected && (
                         <div className="flex flex-shrink-0 items-center gap-2">
@@ -866,10 +888,51 @@ export default function RemoteConnectionsManager() {
                       )}
                     </div>
 
-                    <div>{renderForm()}</div>
+                    {isNewAgent ? <DirectAgentConnectionPanel
+                      key={agentDraftId}
+                      connectionId={agentDraftId}
+                      defaultHost=""
+                      standalone
+                      onUpdated={async info => {
+                        const now = Date.now()
+                        try {
+                          await saveSshConnection({ id: agentDraftId, name: info.host, host: info.host, port: 22, username: 'Agent', auth_kind: 'password', host_key_fingerprint: info.certificateFingerprint, mode: 'server', created_at: now, updated_at: now })
+                        } catch {
+                          throw new Error('[direct:record] Agent connection row could not be saved')
+                        }
+                        setDirectInfos(prev => ({ ...prev, [agentDraftId]: info }))
+                        pushToast('success', t('已保存 Agent 直连'))
+                        setSelectedId(agentDraftId)
+                        if (creatingForProject) closeRemoteConnections()
+                      }}
+                    /> : standaloneAgent ? <p className={helpClass}>{t('此连接仅配置 Agent 直连；如需 SSH，请单独新建 SSH 连接。')}</p> : directEnabled ? <details className="rounded border border-dialog-border p-3">
+                      <summary className="cursor-pointer text-ui font-medium text-fg">{t('SSH 安装与兼容配置')}</summary>
+                      <div className="mt-3">{renderForm()}</div>
+                    </details> : <div>{renderForm()}</div>}
 
                     {!isNew && selected && (
                       <>
+                        <DirectAgentConnectionPanel
+                          key={selected.id}
+                          connectionId={selected.id}
+                          defaultHost={selected.host}
+                          standalone={standaloneAgent}
+                          onUpdated={async info => {
+                            // A standalone row carries the accepted TLS identity as its
+                            // compatibility fingerprint. Keep that marker after re-pairing.
+                            if (standaloneAgent) {
+                              try {
+                                await saveSshConnection({ ...selected, host: info.host, host_key_fingerprint: info.certificateFingerprint, updated_at: Date.now() })
+                              } catch {
+                                throw new Error('[direct:record] Agent connection row could not be saved')
+                              }
+                            } else {
+                              await loadSshConnections()
+                            }
+                            setDirectInfos(prev => ({ ...prev, [selected.id]: info }))
+                            void refreshDetail(selected.id)
+                          }}
+                        />
                         <div>
                           <p className={`${sectionTitleClass} mb-2`}>
                             {t('远程项目')}
@@ -1005,9 +1068,9 @@ export default function RemoteConnectionsManager() {
                                         : 'text-fg-muted'
                                     }`}
                                   >
-                                    {t(sshServerModeKey(state))}
+                                    {t(directEnabled ? 'Agent 端口直连' : sshServerModeKey(state))}
                                   </span>
-                                  {sshServerTransportKey(state.transport) ? (
+                                  {directEnabled ? <span className="flex-shrink-0 rounded bg-dialog-active px-1.5 py-0.5 text-ui-sm text-fg-muted">TLS</span> : sshServerTransportKey(state.transport) ? (
                                     <Tooltip
                                       label={t(transportTooltipKey(state.transport) ?? '未知')}
                                       side="top"
@@ -1029,7 +1092,7 @@ export default function RemoteConnectionsManager() {
                                     <>
                                       <Tooltip
                                         label={t(
-                                          sshServerIsDirect(state)
+                                          state.transport === 'agent' || directEnabled ? '重新连接 Agent' : sshServerIsDirect(state)
                                             ? '切换到远端服务'
                                             : '重启远端服务'
                                         )}
@@ -1045,12 +1108,13 @@ export default function RemoteConnectionsManager() {
                                           onClick={() =>
                                             void restartServer(
                                               state.rootUri,
-                                              sshServerIsDirect(state)
+                                              sshServerIsDirect(state),
+                                              state.transport === 'agent' || directEnabled
                                             )
                                           }
                                           className="flex-shrink-0 rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg disabled:opacity-40"
                                           aria-label={t(
-                                            sshServerIsDirect(state)
+                                            state.transport === 'agent' || directEnabled ? '重新连接 Agent' : sshServerIsDirect(state)
                                               ? '切换到远端服务'
                                               : '重启远端服务'
                                           )}
@@ -1094,7 +1158,7 @@ export default function RemoteConnectionsManager() {
                   </div>
                 )}
               </section>
-              {(isNew || selected) && (
+              {!isNewAgent && !standaloneAgent && (isNew || selected) && (
                 <footer className="flex flex-shrink-0 flex-col gap-2 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
                   {error ? (
                     <p
@@ -1111,7 +1175,7 @@ export default function RemoteConnectionsManager() {
                       onClick={() => void testConnection()}
                       className={secondaryButtonClass}
                     >
-                      {testing ? t('正在连接…') : t('测试连接')}
+                      {testing ? t('正在连接…') : t(directEnabled ? '测试 SSH 配置' : '测试连接')}
                     </button>
                     <button
                       type="button"
@@ -1119,7 +1183,7 @@ export default function RemoteConnectionsManager() {
                       onClick={() => void saveConnection()}
                       className={primaryButtonClass}
                     >
-                      {saving ? t('正在保存…') : t('保存')}
+                      {saving ? t('正在保存…') : t(directEnabled ? '保存 SSH 配置' : '保存')}
                     </button>
                   </div>
                 </footer>

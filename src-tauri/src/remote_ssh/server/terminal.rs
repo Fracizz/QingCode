@@ -53,9 +53,28 @@ pub(crate) struct PersistentTerminal {
     input_ready: Notify,
     closed: AtomicBool,
     commands: mpsc::Sender<TerminalCommand>,
+    kill_context: Mutex<serde_json::Value>,
 }
 
 impl PersistentTerminal {
+    pub(crate) fn set_kill_context(&self, source: &str, operation_id: &str) {
+        *self.kill_context.lock().unwrap_or_else(|e| e.into_inner()) = serde_json::json!({
+            "id":self.pty_id,"terminalId":self.id,"source":source,"operationId":operation_id});
+    }
+
+    fn kill_payload(&self) -> serde_json::Value {
+        let value = self
+            .kill_context
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if value.is_null() {
+            serde_json::json!({"id":self.pty_id,"terminalId":self.id,"source":"backend_cleanup"})
+        } else {
+            value
+        }
+    }
+
     pub(crate) fn id(&self) -> &str {
         &self.id
     }
@@ -445,6 +464,14 @@ fn emit_connection(
     reason: Option<String>,
     restore: Option<&'static str>,
 ) {
+    qingcode_server::diagnostics::record(
+        "terminal.connection",
+        serde_json::json!({
+        "terminalId":id,"state":state,"attempt":attempt,"restore":restore,
+        "reason":reason.as_deref().map(qingcode_server::diagnostics::error_summary)}),
+        false,
+        false,
+    );
     let _ = app.emit(
         "terminal-connection",
         TerminalConnectionPayload {
@@ -464,6 +491,14 @@ fn emit_exit(
     disconnected: bool,
     reason: Option<String>,
 ) {
+    qingcode_server::diagnostics::record(
+        "terminal.exit",
+        serde_json::json!({
+        "terminalId":id,"exitCode":exit_code,"disconnected":disconnected,
+        "reason":reason.as_deref().map(qingcode_server::diagnostics::error_summary)}),
+        true,
+        disconnected || exit_code != 0,
+    );
     let _ = app.emit(
         "terminal-exit",
         TerminalExitPayload {
@@ -476,9 +511,46 @@ fn emit_exit(
 }
 
 struct ActiveSession {
-    transport: TerminalTransportLease,
+    transport: SessionTransport,
     session: DaemonSession,
     events: SessionEventReceiver,
+}
+
+/// A direct connection has no SSH pool lease. The DaemonSession owns its
+/// WebSocket; releasing this marker never touches any remote process.
+pub(super) enum SessionTransport {
+    Ssh(TerminalTransportLease),
+    Direct,
+}
+
+impl SessionTransport {
+    pub(super) fn release(&self) {
+        if let Self::Ssh(transport) = self {
+            transport.release();
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn into_ssh(self) -> Result<TerminalTransportLease, String> {
+        match self {
+            Self::Ssh(transport) => Ok(transport),
+            Self::Direct => Err("live SSH acceptance expected an SSH transport".into()),
+        }
+    }
+
+    fn notice(&self) -> Option<&str> {
+        match self {
+            Self::Ssh(transport) => transport.notice(),
+            Self::Direct => None,
+        }
+    }
+
+    fn closed_reason(&self) -> Option<String> {
+        match self {
+            Self::Ssh(transport) => transport.closed_reason(),
+            Self::Direct => None,
+        }
+    }
 }
 
 /// 在共享终端连接上打开 daemon 会话。
@@ -490,14 +562,18 @@ async fn open_terminal_daemon_session(
     root_uri: &str,
     client_id: &str,
     daemon: &DaemonAccess,
-) -> Result<(TerminalTransportLease, DaemonSession), String> {
+) -> Result<(SessionTransport, DaemonSession), String> {
+    if let Some(config) = manager.direct_config(connection_id) {
+        let session = DaemonSession::open_direct(&config, connection_id, client_id, daemon).await?;
+        return Ok((SessionTransport::Direct, session));
+    }
     let mut retried = false;
     loop {
         let transport = manager
             .lease_daemon_terminal_transport(connection_id, root_uri)
             .await?;
         match DaemonSession::open_on_transport(&transport, client_id, daemon).await {
-            Ok(session) => return Ok((transport, session)),
+            Ok(session) => return Ok((SessionTransport::Ssh(transport), session)),
             Err(error) => {
                 let retry =
                     !retried && is_channel_refused_error(&error) && transport.mark_refused().await;
@@ -515,7 +591,7 @@ pub(super) async fn open_reconnect_daemon_session(
     manager: &SshManager,
     root: &RegisteredRoot,
     app: Option<&AppHandle>,
-) -> Result<(TerminalTransportLease, DaemonSession), String> {
+) -> Result<(SessionTransport, DaemonSession), String> {
     let current_root = manager.registered_root(&root.uri)?;
     if !current_root.trusted {
         return Err("未信任的 SSH 项目不能恢复终端".into());
@@ -524,7 +600,14 @@ pub(super) async fn open_reconnect_daemon_session(
         return Err("项目根已变化，不能接回原终端".into());
     }
     let connection_id = parse_remote_uri(&root.uri)?.connection_id;
-    let daemon = super::host_runtime::ensure_shared_daemon(manager, &current_root, app).await?;
+    let daemon = if let Some(config) = manager.direct_config(&connection_id) {
+        DaemonAccess {
+            bin: "direct".into(),
+            token: config.token,
+        }
+    } else {
+        super::host_runtime::ensure_shared_daemon(manager, &current_root, app).await?
+    };
     let client_id = manager.daemon_client_id(&connection_id);
     let result =
         open_terminal_daemon_session(manager, &connection_id, &root.uri, &client_id, &daemon).await;
@@ -537,11 +620,7 @@ pub(super) async fn open_reconnect_daemon_session(
 }
 
 /// 已有共享连接全满、新开了连接时提示用户（前端以 info toast 展示）。
-fn emit_terminal_pool_notice(
-    app: &AppHandle,
-    connection_id: &str,
-    transport: &TerminalTransportLease,
-) {
+fn emit_terminal_pool_notice(app: &AppHandle, connection_id: &str, transport: &SessionTransport) {
     if let Some(message) = transport.notice() {
         let _ = app.emit(
             "ssh-terminal-pool-notice",
@@ -666,7 +745,10 @@ pub(crate) async fn kill_detached_terminals(
                 continue;
             }
             if session
-                .request("pty.kill", &serde_json::json!({ "id": info.id }))
+                .request(
+                    "pty.kill",
+                    &serde_json::json!({ "id": info.id,"source":"connection_removed" }),
+                )
                 .await
                 .is_ok()
             {
@@ -739,7 +821,10 @@ pub(crate) async fn kill_detached_terminal(
         }
         validate_detached_terminal_for_kill(info, &client_id, &current_root)?;
         session
-            .request("pty.kill", &serde_json::json!({ "id": pty_id }))
+            .request(
+                "pty.kill",
+                &serde_json::json!({ "id": pty_id,"source":"detached_cleanup" }),
+            )
             .await?;
         Ok(())
     }
@@ -747,6 +832,24 @@ pub(crate) async fn kill_detached_terminal(
     session.shutdown();
     transport.release();
     result
+}
+
+fn select_restore_candidate(
+    ptys: Vec<PtyInfoWire>,
+    pty_id: &str,
+    client_id: &str,
+) -> Result<PtyInfoWire, String> {
+    let info = ptys
+        .into_iter()
+        .find(|info| info.id == pty_id)
+        .ok_or_else(|| format!("QC_PTY_GONE: PTY 不存在或已回收：{pty_id}"))?;
+    if info.exited.is_some() {
+        return Err(format!("QC_PTY_GONE: PTY 已退出：{pty_id}"));
+    }
+    if info.owner.as_deref() != Some(client_id) || !info.detached {
+        return Err("PTY 已被接回或不属于当前客户端，无法安全接回".into());
+    }
+    Ok(info)
 }
 
 pub(crate) async fn attach_persistent_terminal(
@@ -782,16 +885,17 @@ pub(crate) async fn attach_persistent_terminal(
     .await?;
     emit_terminal_pool_notice(&app, &parsed.connection_id, &transport);
 
-    let owned = request_owned_detached_ptys(&session, &client_id).await;
-    let info = match owned {
-        Ok(ptys) => match ptys.into_iter().find(|info| info.id == pty_id) {
-            Some(info) => info,
-            None => {
-                session.shutdown();
-                transport.release();
-                return Err(format!("PTY 不存在、已退出或不属于当前客户端：{pty_id}"));
-            }
-        },
+    // The orphan list hides exited/attached/foreign PTYs. Query full metadata here
+    // so absence is distinguishable from an ownership or transient attach conflict.
+    let candidate = async {
+        let response = session.request("pty.list", &serde_json::json!({})).await?;
+        let response: PtyListResponse = serde_json::from_value(response)
+            .map_err(|error| format!("解析 pty.list 应答失败：{error}"))?;
+        select_restore_candidate(response.ptys, &pty_id, &client_id)
+    }
+    .await;
+    let info = match candidate {
+        Ok(info) => info,
         Err(error) => {
             session.shutdown();
             transport.release();
@@ -814,7 +918,7 @@ pub(crate) async fn attach_persistent_terminal(
         Err(error) if attach_terminal_is_gone(&error) => {
             session.shutdown();
             transport.release();
-            return Err(format!("PTY 不存在或已退出：{pty_id}"));
+            return Err(format!("QC_PTY_GONE: PTY 不存在或已退出：{pty_id}"));
         }
         Err(error) => {
             session.shutdown();
@@ -833,11 +937,14 @@ pub(crate) async fn attach_persistent_terminal(
         .unwrap_or(0);
     if exited.is_some() {
         let _ = session
-            .request("pty.kill", &serde_json::json!({ "id": pty_id }))
+            .request(
+                "pty.kill",
+                &serde_json::json!({ "id": pty_id,"source":"detached_cleanup" }),
+            )
             .await;
         session.shutdown();
         transport.release();
-        return Err(format!("PTY 已退出，无法接回：{pty_id}"));
+        return Err(format!("QC_PTY_GONE: PTY 已退出，无法接回：{pty_id}"));
     }
     let Some(events) = session.take_events() else {
         session.shutdown();
@@ -858,6 +965,7 @@ pub(crate) async fn attach_persistent_terminal(
         input_ready: Notify::new(),
         closed: AtomicBool::new(false),
         commands: command_tx,
+        kill_context: Mutex::new(serde_json::Value::Null),
     });
     // 接回出错只放弃本次接回，绝不 kill：远端进程仍在运行，留作 detached 终端，
     // 稍后可从孤儿终端提示再次接回。
@@ -890,6 +998,7 @@ pub(crate) async fn attach_persistent_terminal(
         }
     };
     if let Some(previous) = previous {
+        previous.set_kill_context("session_replaced", &uuid::Uuid::new_v4().to_string());
         previous.mark_closed();
         if previous.pty_id() != pty_id {
             let _ = previous.commands.try_send(TerminalCommand::Kill(None));
@@ -1020,6 +1129,7 @@ pub(crate) async fn spawn_persistent_terminal(
         input_ready: Notify::new(),
         closed: AtomicBool::new(false),
         commands: command_tx,
+        kill_context: Mutex::new(serde_json::Value::Null),
     });
     let previous = {
         let inserted = manager
@@ -1037,6 +1147,7 @@ pub(crate) async fn spawn_persistent_terminal(
         }
     };
     if let Some(previous) = previous {
+        previous.set_kill_context("session_replaced", &uuid::Uuid::new_v4().to_string());
         previous.mark_closed();
         let _ = previous.commands.try_send(TerminalCommand::Kill(None));
     }
@@ -1251,7 +1362,7 @@ async fn run_connected(
                         terminal.closed.store(true, Ordering::Release);
                         let _ = active.session.request(
                             "pty.kill",
-                            &serde_json::json!({ "id": terminal.pty_id }),
+                            &terminal.kill_payload(),
                         ).await;
                         if let Some(ack) = ack {
                             let _ = ack.send(());
@@ -1338,7 +1449,7 @@ async fn reconnect_terminal(
         Err(error) if attach_terminal_is_gone(&error) => {
             session.shutdown();
             transport.release();
-            return ReconnectEnd::Terminated("远端 daemon 已重启，终端进程已结束".to_string());
+            return ReconnectEnd::Terminated("远端终端已结束或被回收".to_string());
         }
         Err(error) => {
             session.shutdown();
@@ -1548,7 +1659,7 @@ async fn kill_offline(terminal: &PersistentTerminal, root: &RegisteredRoot, app:
                     .await
                     {
                         let killed = session
-                            .request("pty.kill", &serde_json::json!({ "id": terminal.pty_id }))
+                            .request("pty.kill", &terminal.kill_payload())
                             .await
                             .is_ok();
                         session.shutdown();
@@ -1682,6 +1793,31 @@ mod tests {
         assert!(seq_is_new(9, 8));
     }
 
+    #[test]
+    fn restore_distinguishes_confirmed_absence_from_live_ownership_conflicts() {
+        assert!(select_restore_candidate(vec![], "pty", "owner")
+            .unwrap_err()
+            .contains("QC_PTY_GONE:"));
+        let info = |owner: &str, detached: bool, exited: Option<i32>| {
+            serde_json::from_value::<PtyInfoWire>(
+                serde_json::json!({"id":"pty","owner":owner,"detached":detached,"exited":exited,
+                "cols":80,"rows":24,"nextInputSeq":0,"seq":0}),
+            )
+            .unwrap()
+        };
+        assert!(select_restore_candidate(vec![info("owner", true, None)], "pty", "owner").is_ok());
+        for candidate in [info("other", true, None), info("owner", false, None)] {
+            assert!(!select_restore_candidate(vec![candidate], "pty", "owner")
+                .unwrap_err()
+                .contains("QC_PTY_GONE:"));
+        }
+        assert!(
+            select_restore_candidate(vec![info("owner", true, Some(1))], "pty", "owner")
+                .unwrap_err()
+                .contains("QC_PTY_GONE:")
+        );
+    }
+
     fn test_terminal() -> PersistentTerminal {
         let (commands, _rx) = mpsc::channel(1);
         PersistentTerminal {
@@ -1696,6 +1832,7 @@ mod tests {
             input_ready: Notify::new(),
             closed: AtomicBool::new(false),
             commands,
+            kill_context: Mutex::new(serde_json::Value::Null),
         }
     }
 
@@ -2274,7 +2411,10 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
         let mut client = LoopbackClient::connect(&run_dir).await;
         let kill_id = client
-            .request("pty.kill", &serde_json::json!({ "id": pty_id }))
+            .request(
+                "pty.kill",
+                &serde_json::json!({ "id": pty_id,"source":"detached_cleanup" }),
+            )
             .await;
         client.wait_response(kill_id).await;
         let list_id = client.request("pty.list", &serde_json::json!({})).await;

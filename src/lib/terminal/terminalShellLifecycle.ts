@@ -138,8 +138,8 @@ export function terminalDisconnectNotice(
 
 /**
  * OpenCode (and similar TUIs) often tear down the whole ConPTY on exit.
- * Interactive shells / profile tabs should get a fresh prompt instead of
- * staying on「进程已退出」. One-shot run-config tasks stay exited.
+ * Classifies interactive shells for explicit reopen controls. This must never
+ * imply automatic respawn after process death. One-shot tasks retain their command.
  */
 export function shouldKeepShellAfterExit(
   tab: Pick<TerminalTab, 'shellKind' | 'launchCommand' | 'profileId'>,
@@ -151,16 +151,16 @@ export function shouldKeepShellAfterExit(
 /**
  * What to do when a restored view mounts on an exited tab.
  * A still-open session is not a disconnect. An interactive shell whose
- * process is gone is started again. Only a finished one-shot task stays locked.
+ * process is gone stays exited so its evidence and exit status remain visible.
  */
 export function restoredExitRecovery(options: {
   awaitingRestoreSpawn: boolean
   sessionOpen: boolean
   keepShell: boolean
-}): 'await-spawn' | 'reattach' | 'respawn' | 'locked' {
+}): 'await-spawn' | 'reattach' | 'exited' | 'locked' {
   if (options.awaitingRestoreSpawn) return 'await-spawn'
   if (options.sessionOpen) return 'reattach'
-  if (options.keepShell) return 'respawn'
+  if (options.keepShell) return 'exited'
   return 'locked'
 }
 

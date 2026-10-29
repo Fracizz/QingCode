@@ -173,7 +173,8 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
     fetchLogs()
   }
 
-  const sshMode = state.connectionMode === 'ssh'
+  const agent = state.transport === 'agent'
+  const sshMode = !agent && state.connectionMode === 'ssh'
   const direct = sshServerIsDirect(state)
   const switchBlocker = !sshMode && direct ? sshServerSwitchBlocker(state) : null
 
@@ -209,13 +210,13 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
     if (busy) return
     setBusy(true)
     try {
-      const accepted = await confirmSshServerRestart(rootUri, t)
+      const accepted = agent || await confirmSshServerRestart(rootUri, t)
       if (!accepted) return
-      const value = await safeInvoke<unknown>('重启 SSH Agent', 'ssh_server_restart', { rootUri })
+      const value = await safeInvoke<unknown>(agent ? '重新连接 Agent' : '重启 SSH Agent', 'ssh_server_restart', { rootUri })
       const next = parseSshServerState(value)
       if (next) setState(next)
       if (next?.phase === 'readyServer') {
-        pushToast('success', t('已重启远端服务'))
+        pushToast('success', t(agent ? '已重新连接 Agent' : '已重启远端服务'))
       } else if (next && sshServerIsDirect(next)) {
         pushToast('warn', t('远端服务尚未就绪'), next.reason ?? undefined)
       } else {
@@ -223,12 +224,12 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
       }
     } catch (error) {
       if (isAgentCommandUnavailable(error)) return
-      pushToast('error', t('重启远端服务失败: {error}', { error: String(error) }))
+      pushToast('error', t(agent ? '重新连接 Agent 失败: {error}' : '重启远端服务失败: {error}', { error: String(error) }))
     } finally {
       setBusy(false)
     }
   }
-  const restartLabel = t('重启远端服务')
+  const restartLabel = t(agent ? '重新连接 Agent' : '重启远端服务')
   const connection = sshConnections.find(item => item.id === state.connectionId)
 
   return (
@@ -274,7 +275,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
       {dialog && (
         <SshServerDialog
           state={state}
-          connectionLabel={connection ? sshConnectionLabel(connection) : t('远程项目')}
+          connectionLabel={connection ? agent ? connection.name : sshConnectionLabel(connection) : t('远程项目')}
           projectPath={sshRemotePathFromUri(rootUri)}
           view={sshMode ? 'details' : dialog}
           busy={busy}
@@ -291,7 +292,8 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
           onEnableServer={() => void enableServerMode()}
           onSettings={() => {
             setDialog(null)
-            useUIStore.getState().requestSettings('ssh.server')
+            if (agent) useUIStore.getState().openRemoteConnections()
+            else useUIStore.getState().requestSettings('ssh.server')
           }}
           onClose={() => setDialog(null)}
         />

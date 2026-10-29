@@ -49,6 +49,8 @@ export type PersistedTerminalMeta = {
   ptyId?: string
   /** SSH connection that owns the daemon PTY. */
   connectionId?: string
+  endedAt?: number
+  exitCode?: number | null
 }
 
 export type PersistedProjectSession = {
@@ -99,6 +101,8 @@ export type TerminalSnapshotInput = {
   persistent?: boolean
   ptyId?: string
   connectionId?: string
+  endedAt?: number
+  exitCode?: number | null
 }
 
 export type ProjectEditorSessionInput = {
@@ -189,6 +193,10 @@ function parseTerminal(value: unknown): PersistedTerminalMeta | null {
     terminal.runTaskId = value.runTaskId
   }
   if (typeof value.persistent === 'boolean') terminal.persistent = value.persistent
+  if (typeof value.endedAt === 'number' && Number.isFinite(value.endedAt) && value.endedAt > 0) {
+    terminal.endedAt = value.endedAt
+    terminal.exitCode = typeof value.exitCode === 'number' && Number.isFinite(value.exitCode) ? value.exitCode : null
+  }
   if (typeof value.ptyId === 'string' && value.ptyId.trim()) {
     terminal.ptyId = value.ptyId.trim()
   }
@@ -336,6 +344,7 @@ export function serializeTerminalMeta(terminal: TerminalSnapshotInput): Persiste
   if (typeof terminal.persistent === 'boolean') out.persistent = terminal.persistent
   if (terminal.ptyId) out.ptyId = terminal.ptyId
   if (terminal.connectionId) out.connectionId = terminal.connectionId
+  if (terminal.endedAt) { out.endedAt = terminal.endedAt; out.exitCode = terminal.exitCode ?? null }
   return out
 }
 

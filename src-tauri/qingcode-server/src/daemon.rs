@@ -365,6 +365,8 @@ pub async fn run_async(options: DaemonOptions) -> Result<(), String> {
     else {
         return Ok(());
     };
+    #[cfg(not(test))]
+    crate::diagnostics::initialize(run_dir.dir().to_path_buf(), "daemon");
     let token = run_dir.rotate_token()?;
     let log = Log::open(run_dir.log())?;
     log.info(&format!(
@@ -423,6 +425,7 @@ async fn serve(
         tokio::select! {
             biased;
             _ = daemon.shutdown.notified() => {
+                crate::diagnostics::record("daemon.shutdown_requested", json!({"source":"server_shutdown"}), true, false);
                 daemon.log.info("收到 server.shutdown，准备退出");
                 // 给写端一点时间把 RES 帧刷出去，再结束进程。
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -485,6 +488,7 @@ async fn serve(
     // 等待所有终端的 SIGHUP/强杀回收完成，不能先退出而丢失后台看门狗。
     daemon.pty.shutdown().await;
     pty_task.abort();
+    crate::diagnostics::record("process.exiting", json!({"role":"daemon"}), true, false);
     daemon.log.info("daemon 退出");
     Ok(())
 }
@@ -1395,6 +1399,7 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
     for flag in ctx.cancels.lock().unwrap().values() {
         flag.store(true, Ordering::SeqCst);
     }
+    let ctx_client_id = ctx.client_id.clone();
     drop(ctx);
     if !writer_done {
         match tokio::time::timeout(Duration::from_millis(500), &mut writer_task).await {
@@ -1405,6 +1410,12 @@ async fn handle_conn(daemon: Arc<Daemon>, stream: IpcStream) {
             }
         }
     }
+    crate::diagnostics::record(
+        "daemon.connection_closed",
+        json!({"connectionId":conn_id,"clientId":ctx_client_id}),
+        false,
+        false,
+    );
     daemon.log.info(&format!("连接 {conn_id} 断开"));
 }
 
@@ -2140,15 +2151,32 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
         }
         "pty.kill" => {
             #[derive(Deserialize)]
+            #[serde(rename_all = "camelCase")]
             struct KillParams {
                 id: String,
+                source: Option<String>,
+                operation_id: Option<String>,
+                terminal_id: Option<String>,
             }
             let Ok(params) = params::<KillParams>(&request) else {
                 conn.fail(id, "badRequest", "pty.kill 参数错误");
                 return;
             };
+            let context = json!({"ptyId":params.id, "clientId":conn.client_id,
+                "connectionId":conn.conn_id, "requestId":id,
+                "source":crate::diagnostics::termination_source(params.source.as_deref()),
+                "operationId":crate::diagnostics::identifier(params.operation_id.as_deref()),
+                "terminalId":crate::diagnostics::identifier(params.terminal_id.as_deref())});
+            crate::diagnostics::record("pty.kill_requested", context.clone(), true, false);
             conn.inputs.cancel(&params.id);
-            match daemon.pty.kill(&params.id) {
+            let result = daemon.pty.kill(&params.id);
+            crate::diagnostics::record(
+                "pty.kill_completed",
+                json!({"context":context,"ok":result.is_ok()}),
+                true,
+                false,
+            );
+            match result {
                 Ok(()) => conn.respond(id, json!({ "ok": true })),
                 Err(message) => conn.fail(id, "pty", message),
             }

@@ -96,6 +96,23 @@ describe('SshServerStatusChip', () => {
     expect(await screen.findByRole('button', { name: serverChipName('0.2.0') })).toBeTruthy()
   })
 
+  it('describes independent Agent transport and reconnects without a destructive daemon restart confirmation', async () => {
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info' || command === 'ssh_server_restart') return { ...ready, transport: 'agent' }
+      throw new Error(`unexpected ${command}`)
+    })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Agent 端口直连/ }))
+    expect(screen.getByText('HTTPS / WSS')).toBeVisible()
+    expect(screen.getByText('文件、搜索与终端通过独立 HTTPS / WSS 端口连接远端服务，不经过 SSH。')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '启用远端服务' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '重新连接 Agent' }))
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith('重新连接 Agent', 'ssh_server_restart', { rootUri }))
+    expect(confirmDialog).not.toHaveBeenCalled()
+    expect(switchSshConnectionMode).not.toHaveBeenCalled()
+    expect(pushToast).toHaveBeenCalledWith('success', '已重新连接 Agent')
+  })
+
   it('subscribes before reading status and refreshes a pending snapshot', async () => {
     let infoCalls = 0
     invoke.mockImplementation(async (_action: string, command: string) => {

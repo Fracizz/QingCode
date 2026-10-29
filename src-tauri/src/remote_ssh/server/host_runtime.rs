@@ -451,6 +451,9 @@ pub(crate) fn shared_server_known(manager: &SshManager, connection_id: &str) -> 
 }
 
 fn shared_server_hint(manager: &SshManager, connection_id: &str, require_fresh: bool) -> bool {
+    if manager.direct_config(connection_id).is_some() {
+        return manager.connection_is_open(connection_id);
+    }
     let Some(identity) = identity_for_connection(manager, connection_id) else {
         return false;
     };
@@ -479,6 +482,12 @@ pub(super) async fn ensure_shared_daemon(
     let parsed = parse_remote_uri(&root.uri)?;
     if !root.trusted || !manager.server_mode(&parsed.connection_id) {
         return Err("仅已信任的 Server 项目可以接入共享服务".into());
+    }
+    if let Some(config) = manager.direct_config(&parsed.connection_id) {
+        return Ok(DaemonAccess {
+            bin: "direct".into(),
+            token: config.token,
+        });
     }
     let session = manager.session(&parsed.connection_id)?;
     let identity =

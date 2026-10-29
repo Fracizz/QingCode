@@ -4,12 +4,14 @@
 #   pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-server.ps1
 # 可选参数：
 #   -Targets x86_64,aarch64   目标架构（默认两者都构建）
-#   -MuslLinker <path>        显式指定 musl 链接器（Windows 默认 rust-lld）
+#   -MuslLinker <path>        显式指定 musl 链接器（默认 rust-lld）
 #
-# 链接器：Windows PATH 中的 cc 可能是 MinGW，无法链接 Linux musl。本脚本在 Windows
-# 上默认使用 rustup
-# 自带的 rust-lld（Rust 为 musl 目标提供自包含的 crt/libc.a，纯 Rust 依赖无需 C 交叉
-# 编译器），也可用 -MuslLinker 显式指定路径覆盖。
+# 链接器：Windows PATH 中的 cc 可能是 MinGW，无法链接 Linux musl；本脚本默认
+# 使用 rustup 自带的 rust-lld（Rust 为 musl 目标提供自包含的 crt/libc.a）。
+# TLS/ring 包含 C 源码，仍需目标 C 编译器和归档器：优先保留已有 CC_<target>/AR_<target>；
+# 否则选择 musl-gcc / AArch64 GNU 交叉 GCC，或支持 Linux 目标的 clang + llvm-ar。
+# Windows 需安装 LLVM（clang、llvm-ar）；仅有 MinGW 或 rust-lld 不足以编译 Linux TLS。
+# 可用 -MuslLinker 显式指定最终链接器路径。
 #
 # 产物查找顺序（src-tauri/src/lib.rs setup）：
 #   QINGCODE_SERVER_DIR 环境变量 → exe 目录（/servers）→ exe 目录上级（/server）→ 资源目录（/servers）
@@ -26,7 +28,7 @@
 
 param(
     [string]$Targets = "x86_64,aarch64",
-    # 显式指定 musl 链接器（Windows 默认使用 rust-lld）
+    # 显式指定 musl 链接器（默认使用 rust-lld）
     [string]$MuslLinker = "",
     # Windows 上默认再编一份本机 serve 用的 exe。macOS/Linux 的 pwsh 不要编 MSVC。
     [switch]$SkipWindows
@@ -34,7 +36,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# 定位 rustup 工具链自带的 rust-lld（musl 自包含链接只需链接器驱动）。
+# 定位 rustup 工具链自带的 rust-lld（仅负责最终链接；C 编译器另行配置）。
 function Resolve-RustLld {
     $sysroot = (& rustc --print sysroot) 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $sysroot) { return $null }
@@ -46,6 +48,83 @@ function Resolve-RustLld {
         if (Test-Path $candidate) { return $candidate }
     }
     return $null
+}
+
+# cc-rs reads both CC_<triple-with-dashes> and CC_<triple_with_underscores>.
+# Do not overwrite caller-provided target compilers/archivers; generic Windows
+# CC=MinGW is not a Linux cross compiler, so auto-selection is target-specific.
+function Configure-MuslCCompiler {
+    param([string]$Target, [string]$Arch)
+    $suffix = $Target.Replace("-", "_")
+    $ccDash = "CC_$Target"
+    $ccVar = "CC_$suffix"
+    $compiler = [Environment]::GetEnvironmentVariable($ccDash)
+    if (-not $compiler) { $compiler = [Environment]::GetEnvironmentVariable($ccVar) }
+    if (-not $compiler) {
+        $candidates = if ($Arch -eq "x86_64") {
+            @("x86_64-linux-musl-gcc", "musl-gcc", "clang")
+        } elseif ($Arch -eq "aarch64") {
+            @("aarch64-linux-musl-gcc", "aarch64-linux-gnu-gcc", "clang")
+        } else { throw "不支持的 Linux 服务器架构：$Arch" }
+        foreach ($candidate in $candidates) {
+            $command = Get-Command $candidate -ErrorAction SilentlyContinue
+            if ($command) { $compiler = $command.Source; break }
+        }
+        if (-not $compiler) {
+            throw "TLS/ring 构建 $Target 需要 C 交叉编译器。Windows 请安装 LLVM（clang + llvm-ar），Linux 请安装 musl-tools / gcc-aarch64-linux-gnu，或设置 $ccVar 与 AR_$suffix。rust-lld 只能链接，不能编译 C 源码。"
+        }
+        [Environment]::SetEnvironmentVariable($ccVar, $compiler)
+    }
+    Write-Host "== TLS/ring C 编译器：$compiler ($Target)"
+
+    $resolvedCompiler = Get-Command $compiler -ErrorAction SilentlyContinue
+    $compilerPath = if ($resolvedCompiler) { $resolvedCompiler.Source } else { $compiler }
+    $compilerName = [System.IO.Path]::GetFileNameWithoutExtension($compilerPath)
+    if ($compilerName -eq "clang-cl") {
+        throw "clang-cl 使用 MSVC 驱动模式，不能作为 Linux musl 的 C 编译器；请将 CC_$suffix 设置为 clang（并配置 llvm-ar）。"
+    }
+    $isClang = $compilerName -like "clang*"
+    $extraFlags = ""
+    if ($isClang) {
+        # Clang's own stddef/stdint headers plus ring's freestanding helpers avoid
+        # accidentally including the Windows/macOS host C library headers.
+        $extraFlags = "--target=$Target -ffreestanding -nostdlibinc -DRING_CORE_NOSTDLIBINC=1"
+    } elseif ($Arch -eq "aarch64" -and $compilerName -like "*linux-gnu-gcc*") {
+        # Verified with AArch64 GNU GCC + rust-lld + Rust's musl crt/libc.
+        $extraFlags = "-ffreestanding -DRING_CORE_NOSTDLIBINC=1"
+    }
+    if ($extraFlags) {
+        $flagsVar = "CFLAGS_$suffix"
+        $flagsDash = "CFLAGS_$Target"
+        $flags = [Environment]::GetEnvironmentVariable($flagsDash)
+        if ($flags) { $flagsVar = $flagsDash } else { $flags = [Environment]::GetEnvironmentVariable($flagsVar) }
+        [Environment]::SetEnvironmentVariable($flagsVar, ("$flags $extraFlags").Trim())
+    }
+
+    $arVar = "AR_$suffix"
+    if (-not [Environment]::GetEnvironmentVariable("AR_$Target") -and -not [Environment]::GetEnvironmentVariable($arVar)) {
+        $archivers = if ($isClang) { @("llvm-ar") } elseif ($Arch -eq "aarch64") {
+            @("aarch64-linux-musl-ar", "aarch64-linux-gnu-ar", "llvm-ar")
+        } else { @("x86_64-linux-musl-ar", "ar", "llvm-ar") }
+        $archiveTool = $null
+        $compilerDirectory = Split-Path -Parent $compilerPath
+        if ($isClang -and $compilerDirectory) {
+            foreach ($name in @("llvm-ar.exe", "llvm-ar")) {
+                $sibling = Join-Path $compilerDirectory $name
+                if (Test-Path $sibling) { $archiveTool = $sibling; break }
+            }
+        }
+        if (-not $archiveTool) {
+            foreach ($candidate in $archivers) {
+                $command = Get-Command $candidate -ErrorAction SilentlyContinue
+                if ($command) { $archiveTool = $command.Source; break }
+            }
+        }
+        if (-not $archiveTool) {
+            throw "缺少 $Target 的 C 归档器；请安装 llvm-ar / 对应交叉 binutils，或设置 $arVar。"
+        }
+        [Environment]::SetEnvironmentVariable($arVar, $archiveTool)
+    }
 }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -76,18 +155,20 @@ try {
         rustup target add $target
         if ($LASTEXITCODE -ne 0) { throw "rustup target add $target 失败" }
 
-        # musl 链接器：显式参数 > 已有环境变量 > Windows 上 rust-lld > cc。
+        Configure-MuslCCompiler -Target $target -Arch $arch
+
+        # Final linking uses Rust's musl crt/libc and rust-lld on every host.
+        # C compilation is configured separately above; a GNU host linker cannot
+        # link AArch64 or Windows-hosted Linux outputs merely because cc exists.
         $linkerVar = "CARGO_TARGET_" + $target.ToUpper().Replace("-", "_") + "_LINKER"
         $linker = $MuslLinker
         if (-not $linker) { $linker = [Environment]::GetEnvironmentVariable($linkerVar) }
-        if (-not $linker -and ($IsWindows -or $env:OS -eq 'Windows_NT' -or -not (Get-Command cc -ErrorAction SilentlyContinue))) {
+        if (-not $linker) {
             $linker = Resolve-RustLld
-            if (-not $linker) {
-                throw "未找到 C 链接器 cc，也没有可用的 rust-lld；请安装 C 工具链或传入 -MuslLinker <path>"
-            }
-            Write-Host "== 使用 rust-lld 链接 musl：$linker"
+            if (-not $linker) { throw "未找到 rust-lld；请修复 Rust 工具链或传入 -MuslLinker <兼容目标的链接器>" }
         }
-        if ($linker) { [Environment]::SetEnvironmentVariable($linkerVar, $linker) }
+        Write-Host "== musl 链接器：$linker"
+        [Environment]::SetEnvironmentVariable($linkerVar, $linker)
 
         Write-Host "== cargo build -p qingcode-server --release --target $target"
         cargo build -p qingcode-server --release --target $target

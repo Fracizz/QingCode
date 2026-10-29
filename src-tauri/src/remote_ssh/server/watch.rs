@@ -266,7 +266,7 @@ pub(crate) fn spawn_server_watch_supervisor(
                 break;
             }
             let manager = app.state::<SshManager>();
-            if manager.session(&connection_id).is_err()
+            if !manager.connection_is_open(&connection_id)
                 || !manager.root_is_registered(&root_uri).unwrap_or(false)
             {
                 server_status::publish_disconnected(&app, &manager, &connection_id, &root_uri);

@@ -184,7 +184,70 @@ describe('remote connection compatibility settings', () => {
     await waitFor(() => expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({
       message: '重启会结束此远端服务托管的终端，可能影响同一远端用户下的其他项目。',
     })))
-    expect(invoke).not.toHaveBeenCalled()
+    expect(invoke.mock.calls.some(call => call[1] === 'ssh_server_restart')).toBe(false)
+  })
+
+  it('creates a standalone Agent connection through pairing without testing SSH', async () => {
+    invoke.mockImplementation(async (_action, command) => {
+      if (command === 'direct_agent_info') return null
+      if (command === 'direct_agent_probe') return { certificateFingerprint: 'SHA256:tls' }
+      if (command === 'direct_agent_test') return { version: 'test', protocol: 1 }
+      return undefined
+    })
+    render(<RemoteConnectionsManager />)
+    fireEvent.click(screen.getByRole('button', { name: '新建 Agent 直连' }))
+    expect(screen.queryByLabelText('用户名')).toBeNull()
+    await waitFor(() => expect(screen.getByRole('button', { name: '导入配对信息' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: '导入配对信息' }))
+    fireEvent.change(screen.getByLabelText('配对 JSON'), { target: { value: JSON.stringify({ host: '192.168.252.107', port: 48763, certificateFingerprint: 'SHA256:tls', token: 'transient-token' }) } })
+    fireEvent.click(screen.getByRole('button', { name: '应用配对信息' }))
+    fireEvent.click(screen.getByRole('button', { name: '测试直连' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存并启用直连' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: '保存并启用直连' }))
+    await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({ host: '192.168.252.107', username: 'Agent', auth_kind: 'password', host_key_fingerprint: 'SHA256:tls', mode: 'server' })))
+    expect(testConnection).not.toHaveBeenCalled()
+    expect(probeHost).not.toHaveBeenCalled()
+  })
+
+  it('labels a saved standalone Agent endpoint without showing SSH credential fields or a blind SSH fallback', async () => {
+    useProjectStore.setState({ sshConnections: [{ ...connection('server'), username: 'Agent', auth_kind: 'password', host_key_fingerprint: 'SHA256:tls' }] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    invoke.mockResolvedValue({ enabled: true, host: 'example.test', port: 48763, certificateFingerprint: 'SHA256:tls', tokenSaved: true, previousPorts: [] })
+    render(<RemoteConnectionsManager />)
+    expect(await screen.findByText('此连接仅配置 Agent 直连；如需 SSH，请单独新建 SSH 连接。')).toBeVisible()
+    expect(screen.getByText('example.test:48763 · TLS')).toBeVisible()
+    expect(screen.queryByLabelText('用户名')).toBeNull()
+    expect(screen.queryByRole('button', { name: '恢复 SSH 连接' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '测试 SSH 配置' })).toBeNull()
+  })
+
+  it('retains standalone identity after pairing with a changed certificate and port', async () => {
+    const saved = { ...connection('server'), username: 'Agent', auth_kind: 'password' as const, host_key_fingerprint: 'old-tls' }
+    let profile = { enabled: true, host: 'example.test', port: 48763, certificateFingerprint: 'old-tls', tokenSaved: true, previousPorts: [] as number[] }
+    useProjectStore.setState({ sshConnections: [saved] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    invoke.mockImplementation(async (_action, command, args) => {
+      if (command === 'direct_agent_info') return profile
+      if (command === 'direct_agent_probe') return { certificateFingerprint: 'new-tls' }
+      if (command === 'direct_agent_test') return { version: 'test', protocol: 1 }
+      if (command === 'direct_agent_save') profile = { ...profile, ...args, tokenSaved: true }
+      return undefined
+    })
+    saveConnection.mockImplementation(async next => { useProjectStore.setState({ sshConnections: [next] }) })
+    render(<RemoteConnectionsManager />)
+    await screen.findByText('此连接仅配置 Agent 直连；如需 SSH，请单独新建 SSH 连接。')
+    fireEvent.click(screen.getByRole('button', { name: 'Agent 端口直连' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '导入配对信息' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: '导入配对信息' }))
+    fireEvent.change(screen.getByLabelText('配对 JSON'), { target: { value: JSON.stringify({ host: 'other.test', port: 51234, certificateFingerprint: 'new-tls', token: 'new-token' }) } })
+    fireEvent.click(screen.getByRole('button', { name: '应用配对信息' }))
+    fireEvent.click(screen.getByRole('button', { name: '测试直连' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '保存并启用直连' })).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button', { name: '保存并启用直连' }))
+    await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({ host: 'other.test', host_key_fingerprint: 'new-tls', username: 'Agent' })))
+    expect(await screen.findByText('other.test:51234 · TLS')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '恢复 SSH 连接' })).toBeNull()
+    expect(screen.queryByLabelText('用户名')).toBeNull()
   })
   it('persists revocation as restricted so subsequent trust synchronization cannot regrant it', async () => {
     const project = {id:'p1',name:'app',path:'ssh://c1/home/app',kind:'ssh' as const,created_at:1,last_opened_at:1}

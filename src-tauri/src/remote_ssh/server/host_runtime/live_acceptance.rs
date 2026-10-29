@@ -137,7 +137,7 @@ async fn hold_project_terminals(
             let attached = resumed.attach(pty_id, 0).await;
             session.shutdown();
             transport.release();
-            *transport = resumed_transport;
+            *transport = resumed_transport.into_ssh()?;
             *session = resumed;
             attached?;
             session.request("pty.input", &serde_json::json!({

@@ -57,12 +57,13 @@ export default function SshServerDialog({
 }: Props) {
   const { t } = useI18n()
   const id = useId()
-  const compatibility = state.connectionMode === 'ssh'
+  const agent = state.transport === 'agent'
+  const compatibility = !agent && state.connectionMode === 'ssh'
   const pending = ['authenticating', 'probing', 'installing', 'handshaking'].includes(state.phase)
   const ready = state.phase === 'readyServer'
   const overview = view === 'details'
   const views: View[] = compatibility ? ['details'] : ['details', 'logs']
-  const restartLabel = ready ? t('重启远端服务') : t('重试远端服务')
+  const restartLabel = agent ? t('重新连接 Agent') : ready ? t('重启远端服务') : t('重试远端服务')
 
   return (
     <ModalOverlay onDismiss={onClose} zIndex="z-[120]">
@@ -152,12 +153,12 @@ export default function SshServerDialog({
               <ConnectionSummary state={state} pending={pending} />
               <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                 <Detail label={t('连接模式')}>
-                  {compatibility ? t('SSH 直连（兼容模式）') : t('SSH + 远端服务')}
+                  {agent ? t('Agent 端口直连') : compatibility ? t('SSH 直连（兼容模式）') : t('SSH + 远端服务')}
                 </Detail>
                 {!compatibility && (
                   <>
                     <Detail label={t('运行方式')}>
-                      {state.transport === 'daemon'
+                      {agent ? t('HTTPS / WSS') : state.transport === 'daemon'
                         ? t('常驻服务')
                         : state.transport === 'serve'
                           ? t('按项目服务')
@@ -242,7 +243,7 @@ export default function SshServerDialog({
             onClick={onSettings}
           >
             <Settings2 size={14} aria-hidden />
-            {t('服务安装设置')}
+            {t(agent ? '直连设置' : '服务安装设置')}
           </button>
           {compatibility ? (
             <button
@@ -265,7 +266,7 @@ export default function SshServerDialog({
               ) : (
                 <RotateCw size={14} aria-hidden />
               )}
-              {busy ? t('正在重启…') : restartLabel}
+              {busy ? t(agent ? '正在重新连接…' : '正在重启…') : restartLabel}
             </button>
           )}
         </footer>
@@ -276,17 +277,18 @@ export default function SshServerDialog({
 
 function ConnectionSummary({ state, pending }: { state: SshServerState; pending: boolean }) {
   const { t } = useI18n()
-  const compatibility = state.connectionMode === 'ssh'
+  const agent = state.transport === 'agent'
+  const compatibility = !agent && state.connectionMode === 'ssh'
   const offline = state.phase === 'disconnected'
   const ready = state.phase === 'readyServer'
   const title = offline
-    ? t('SSH 连接已断开')
+    ? t(agent ? 'Agent 连接已断开' : 'SSH 连接已断开')
     : compatibility && !pending
       ? t('已启用 SSH 兼容模式')
       : ready
         ? t('远端服务已就绪')
         : state.phase === 'authenticating'
-          ? t('正在验证 SSH 身份')
+          ? t(agent ? '正在验证 Agent 身份' : '正在验证 SSH 身份')
           : state.phase === 'probing'
             ? t('正在检查远端服务')
             : state.phase === 'installing'
@@ -299,7 +301,7 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
     : compatibility && !pending
       ? t('通过 SSH 直接访问文件和终端，不部署远端服务。文件树不会自动刷新，终端不支持断线恢复。')
       : ready
-        ? t('文件监控、内容搜索等功能由远端服务提供，所有通信均通过 SSH。')
+        ? t(agent ? '文件、搜索与终端通过独立 HTTPS / WSS 端口连接远端服务，不经过 SSH。' : '文件监控、内容搜索等功能由远端服务提供，所有通信均通过 SSH。')
         : pending
           ? t('准备完成后会自动更新状态，无需重复操作。')
           : t('请查看诊断信息，检查服务安装设置后重试。')

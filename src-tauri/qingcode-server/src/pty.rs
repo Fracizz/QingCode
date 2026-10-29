@@ -341,6 +341,7 @@ struct PtyTerm {
     /// 带序号输入的串行闸：旧连接的写入结束（含 blocking 线程里仍在进行的写）
     /// 之前，新连接对同一序号的重发在这里等待，再按已推进的序号判定是否重复。
     input_gate: Arc<tokio::sync::Mutex<()>>,
+    termination_requested: AtomicBool,
 }
 
 #[cfg(unix)]
@@ -495,7 +496,15 @@ impl PtyHost {
                 input_partial: None,
             }),
             input_gate: Arc::new(tokio::sync::Mutex::new(())),
+            termination_requested: AtomicBool::new(false),
         });
+        crate::diagnostics::record(
+            "pty.created",
+            serde_json::json!({"ptyId":id,"shellPid":pid,
+            "clientId":opts.client_id,"shell":shell.program,"cols":cols,"rows":rows}),
+            false,
+            false,
+        );
         // 先把终端放进表里，读线程一启动就能找到自己（否则首批输出会丢）。
         inner.terms.insert(id.clone(), Arc::clone(&term));
         drop(inner);
@@ -516,10 +525,18 @@ impl PtyHost {
             let waiter = std::thread::Builder::new()
                 .name(format!("pty-wait-{id}"))
                 .spawn(move || {
-                    let code = child.wait().ok().map(|status| status.exit_code() as i32);
+                    let result = child.wait();
+                    let code = result.as_ref().ok().map(|status| status.exit_code() as i32);
+                    crate::diagnostics::record("pty.process_wait_returned", serde_json::json!({
+                        "ptyId":term_for_waiter.id,"shellPid":lock(&term_for_waiter.proc).pid,
+                        "exitCode":code,"waitFailed":result.is_err(),
+                        "terminationRequested":term_for_waiter.termination_requested.load(Ordering::Acquire)
+                    }), true, code != Some(0) && !term_for_waiter.termination_requested.load(Ordering::Acquire));
                     let _ = code_tx.send(code);
+                    crate::diagnostics::record("pty.console_closing", serde_json::json!({"ptyId":term_for_waiter.id}), true, false);
                     let master = lock(&term_for_waiter.master).take();
                     drop(master);
+                    crate::diagnostics::record("pty.console_closed", serde_json::json!({"ptyId":term_for_waiter.id}), false, false);
                 });
             if let Err(err) = waiter {
                 remove_term_locked(&mut lock(&self.inner), &id, &term);
@@ -704,6 +721,12 @@ impl PtyHost {
         if state.owner.as_deref() != Some(client_id) {
             return Ok(());
         }
+        crate::diagnostics::record(
+            "pty.detached",
+            serde_json::json!({"ptyId":id,"clientId":client_id,"processPreserved":true}),
+            false,
+            false,
+        );
         state.attached = false;
         state.detached_at = Some(Instant::now());
         // 保留 owner：应用重启后要按安装 UUID + 连接 id 找回无人接着的终端。
@@ -735,7 +758,7 @@ impl PtyHost {
             remove_term_locked(&mut lock(&self.inner), id, &term);
             return Ok(());
         }
-        let terminated = terminate(&term);
+        let terminated = terminate(&term, "client_request");
         // kill 是明确终止意图：立即释放 registry 槽位与缓冲记账。读线程仍持有
         // 实例并在进程真正退出后发送 Exit，路由由 Exit 收尾。
         remove_term_locked(&mut lock(&self.inner), id, &term);
@@ -755,7 +778,7 @@ impl PtyHost {
                 .collect()
         };
         for term in &terms {
-            let _ = terminate(term);
+            let _ = terminate(term, "daemon_shutdown");
         }
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         loop {
@@ -884,7 +907,7 @@ impl PtyHost {
             if !was_running {
                 continue;
             }
-            let _ = terminate(term);
+            let _ = terminate(term, "detached_ttl");
         }
         reclaimed.into_iter().map(|(id, _, _)| id).collect()
     }
@@ -1131,7 +1154,15 @@ fn read_loop(
     loop {
         wait_readable(reader_wakeup);
         match reader.read(&mut buf) {
-            Ok(0) => break,
+            Ok(0) => {
+                crate::diagnostics::record(
+                    "pty.reader_eof",
+                    serde_json::json!({"ptyId":id}),
+                    false,
+                    false,
+                );
+                break;
+            }
             Ok(n) => {
                 if !push_output(&inner, budget, &id, &sink, &buf[..n]) {
                     break;
@@ -1140,10 +1171,27 @@ fn read_loop(
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => continue,
             // Linux 上从端全部关闭后主端返回 EIO，语义上等价 EOF。
-            Err(_) => break,
+            Err(error) => {
+                crate::diagnostics::record(
+                    "pty.reader_error",
+                    serde_json::json!({"ptyId":id,"osError":error.raw_os_error(),"kind":format!("{:?}",error.kind())}),
+                    false,
+                    false,
+                );
+                break;
+            }
         }
     }
     let code = exit_source.wait();
+    let requested = term.termination_requested.load(Ordering::Acquire);
+    crate::diagnostics::record(
+        "pty.exited",
+        serde_json::json!({"ptyId":id,
+        "shellPid":lock(&term.proc).pid,"exitCode":code,"terminationRequested":requested,
+        "cause":if requested {"requested"} else {"unknown"}}),
+        true,
+        !requested && code != Some(0) && !cfg!(windows),
+    );
     {
         let mut state = lock(&term.state);
         state.exited = Some(code.unwrap_or(-1));
@@ -1524,7 +1572,15 @@ fn hangup(pid: Option<u32>, term: &PtyTerm) {
 
 /// 终止一个仍在运行的终端：先发 HUP 给进程组，给 shell 一秒收尾时间，
 /// 到时仍未退出就强制结束。kill 与超时 reap 共用同一套看门狗。
-fn terminate(term: &Arc<PtyTerm>) -> Result<(), String> {
+fn terminate(term: &Arc<PtyTerm>, source: &str) -> Result<(), String> {
+    term.termination_requested.store(true, Ordering::Release);
+    crate::diagnostics::record(
+        "pty.termination_requested",
+        serde_json::json!({"ptyId":term.id,
+        "shellPid":lock(&term.proc).pid,"source":source}),
+        true,
+        false,
+    );
     if lock(&term.state).exited.is_some() {
         return Ok(());
     }
@@ -1549,6 +1605,13 @@ fn terminate(term: &Arc<PtyTerm>) -> Result<(), String> {
 }
 
 fn force_kill(term: &PtyTerm) {
+    crate::diagnostics::record(
+        "pty.force_kill",
+        serde_json::json!({"ptyId":term.id,
+        "shellPid":lock(&term.proc).pid}),
+        true,
+        false,
+    );
     #[cfg(unix)]
     {
         if let Some(pid) = lock(&term.proc).pid.filter(|pid| *pid > 0) {

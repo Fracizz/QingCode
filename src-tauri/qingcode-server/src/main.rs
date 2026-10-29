@@ -1,11 +1,13 @@
 //! `qingcode-server` CLI 入口。
 //!
-//! 四个子命令共用一个二进制（全平台可用；`daemon`/`connect` 在 Unix 用
+//! SSH 与独立端口入口共用一个二进制（全平台可用；`daemon`/`connect` 在 Unix 用
 //! domain socket、Windows 用 named pipe，见 `ipc.rs`）：
 //! - `serve`：旧的直连模式。`127.0.0.1` 上一条 TCP 连接承载一次操作，
 //!   由主程序现有客户端使用，行为保持不变；
 //! - `daemon`：常驻进程，持有 PTY 与监视状态，只监听本地 IPC；
 //! - `connect --stdio`：SSH exec 进程里的连接代理，把 stdio 与 IPC 对接；
+//! - `direct`：独立 HTTPS/WSS 入口，认证后桥接本地 daemon；
+//! - `direct-info`：查看监听信息；仅显式 --include-secret 才输出配对凭据；
 //! - `self-check`：安装完整性自检，打印自身二进制的 sha256（可对照期望值）。
 //!
 //! stdout 保持安静（`connect` 的 stdout 就是数据通道；`self-check` 的
@@ -27,6 +29,8 @@ const USAGE: &str = "\
                         [--detached-ttl-secs <秒>] [--idle-exit-secs <秒>]
   qingcode-server connect --stdio [--ensure-daemon] [--state-dir <目录>]
   qingcode-server daemon-token [--ensure-daemon] [--state-dir <目录>]
+  qingcode-server direct [--detach] [--hostname <IP>] [--port <端口，默认 48763，后续沿用已保存值>] [--state-dir <目录>]\n\
+  qingcode-server direct-info [--state-dir <目录>] [--include-secret]\n\
   qingcode-server self-check [--expect-sha256 <hex>]";
 
 /// 已有同 root 实例在运行时的退出码。调用方据此判定「无需再起」，而不是启动失败。
@@ -89,6 +93,8 @@ fn main() -> ExitCode {
     let rest = &args[1..];
     match command.as_str() {
         "serve" => run_serve(rest),
+        "direct" => run_direct(rest),
+        "direct-info" => run_direct_info(rest),
         "self-check" => run_self_check(rest),
         "daemon" => run_daemon(rest),
         "connect" => run_connect(rest),
@@ -898,6 +904,202 @@ mod tests {
         assert_eq!(
             parse_self_check_args(&["--expect-sha256".to_string(), "A".repeat(64)]).unwrap(),
             Some("a".repeat(64))
+        );
+    }
+}
+
+fn parse_direct_args(args: &[String]) -> Result<qingcode_server::direct::DirectOptions, String> {
+    let mut options = qingcode_server::direct::DirectOptions::default();
+    let mut index = 0;
+    while index < args.len() {
+        let flag = &args[index];
+        let value = args
+            .get(index + 1)
+            .ok_or_else(|| format!("参数 {flag} 缺少取值"))?;
+        match flag.as_str() {
+            "--hostname" => options.hostname = value.clone(),
+            "--port" => {
+                options.port = value.parse().map_err(|_| "端口必须是 1-65535 的数字")?;
+                if options.port == 0 {
+                    return Err("端口必须是 1-65535 的数字".into());
+                }
+            }
+            "--state-dir" => options.state_dir = Some(value.into()),
+            _ => return Err(format!("未知直连参数: {flag}")),
+        }
+        index += 2;
+    }
+    Ok(options)
+}
+
+fn run_direct(args: &[String]) -> ExitCode {
+    let detach = args.iter().any(|value| value == "--detach");
+    let rest = args
+        .iter()
+        .filter(|value| value.as_str() != "--detach")
+        .cloned()
+        .collect::<Vec<_>>();
+    let options = match parse_direct_args(&rest) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(2);
+        }
+    };
+    if detach {
+        return run_direct_detached(options);
+    }
+    let runtime = match tokio::runtime::Runtime::new() {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("无法启动直连运行时: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match runtime.block_on(async {
+        let gateway = qingcode_server::direct::Gateway::bind(options).await?;
+        println!(
+            "{}",
+            serde_json::to_string(&gateway.info).map_err(|e| e.to_string())?
+        );
+        gateway.run().await
+    }) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_direct_info(args: &[String]) -> ExitCode {
+    let include_secret = args.iter().any(|value| value == "--include-secret");
+    let rest = args
+        .iter()
+        .filter(|value| value.as_str() != "--include-secret")
+        .cloned()
+        .collect::<Vec<_>>();
+    if !(rest.is_empty() || (rest.len() == 2 && rest[0] == "--state-dir")) {
+        eprintln!("direct-info 只支持 --state-dir 和 --include-secret");
+        return ExitCode::from(2);
+    }
+    let options = match parse_direct_args(&rest) {
+        Ok(value) => value,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(2);
+        }
+    };
+    match qingcode_server::direct::info(options.state_dir.as_deref(), include_secret) {
+        Ok(value) => {
+            println!("{}", serde_json::to_string(&value).unwrap());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run_direct_detached(options: qingcode_server::direct::DirectOptions) -> ExitCode {
+    let result = (|| -> Result<qingcode_server::direct::DirectInfo, String> {
+        if let Ok(info) = qingcode_server::direct::info(options.state_dir.as_deref(), false) {
+            if qingcode_server::direct::process_alive(info.pid) {
+                if options.port == 0 || options.port == info.port {
+                    return Ok(info);
+                }
+                return Err(format!(
+                    "直连服务仍监听端口 {}；请先停止旧直连服务，再修改端口",
+                    info.port
+                ));
+            }
+        }
+        #[cfg(windows)]
+        let child = qingcode_server::winproc::spawn_detached_direct(
+            &options.hostname,
+            options.port,
+            options.state_dir.as_deref(),
+        )?;
+        #[cfg(unix)]
+        let mut child = {
+            use std::os::unix::process::CommandExt;
+            use std::process::{Command, Stdio};
+            let run = qingcode_server::daemon::RunDir::resolve(options.state_dir.as_deref())?;
+            let dir = run.dir().join("direct");
+            qingcode_server::direct::protect_private_directory(&dir)?;
+            let log = qingcode_server::diagnostics::stderr_file(&dir.join("gateway.log"))
+                .map_err(|e| format!("打开直连日志失败: {e}"))?;
+            let mut command = Command::new(std::env::current_exe().map_err(|e| e.to_string())?);
+            command
+                .arg("direct")
+                .arg("--hostname")
+                .arg(&options.hostname)
+                .stdin(Stdio::null())
+                .stdout(Stdio::from(log.try_clone().map_err(|e| e.to_string())?))
+                .stderr(Stdio::from(log));
+            if options.port != 0 {
+                command.arg("--port").arg(options.port.to_string());
+            }
+            if let Some(dir) = &options.state_dir {
+                command.arg("--state-dir").arg(dir);
+            }
+            // SAFETY: setsid is async-signal-safe and does not access Rust state.
+            unsafe {
+                command.pre_exec(|| {
+                    if libc::setsid() < 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+            command
+                .spawn()
+                .map_err(|e| format!("启动直连服务失败: {e}"))?
+        };
+        let pid = child.id();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if let Ok(info) = qingcode_server::direct::info(options.state_dir.as_deref(), false) {
+                if info.pid == pid {
+                    return Ok(info);
+                }
+            }
+            if child.try_wait().map_err(|e| e.to_string())?.is_some() {
+                return Err("直连服务启动失败；请检查端口占用和运行目录 direct/gateway.log".into());
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("等待直连服务监听超时；请检查 direct/gateway.log".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(40));
+        }
+    })();
+    match result {
+        Ok(info) => {
+            println!("{}", serde_json::to_string(&info).unwrap());
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod direct_cli_tests {
+    use super::*;
+    #[test]
+    fn direct_port_requires_explicit_valid_port_and_preserves_saved_default() {
+        assert_eq!(parse_direct_args(&[]).unwrap().port, 0);
+        assert_eq!(qingcode_server::direct::DEFAULT_DIRECT_PORT, 48763);
+        assert!(parse_direct_args(&["--port".into(), "0".into()]).is_err());
+        assert!(parse_direct_args(&["--port".into(), "65536".into()]).is_err());
+        assert_eq!(
+            parse_direct_args(&["--port".into(), "51234".into()])
+                .unwrap()
+                .port,
+            51234
         );
     }
 }

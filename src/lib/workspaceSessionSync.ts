@@ -289,6 +289,8 @@ export function captureWorkspaceSessionSnapshot(options?: {
         runTaskId: t.runTaskId,
         persistent: t.persistent,
         ptyId: t.ptyId,
+        endedAt: t.endedAt,
+        exitCode: t.exitCode,
         connectionId: t.connectionId,
       })),
     activeTerminalByProject: terminalState.activeTerminalByProject,

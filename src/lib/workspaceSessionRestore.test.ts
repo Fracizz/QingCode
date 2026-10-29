@@ -128,3 +128,12 @@ describe('workspace session restore journey', () => {
     ).toBe(false)
   })
 })
+
+// A confirmed exit survives a full app reload; restoring it must not rerun Claude.
+it('restores confirmed ended terminals without scheduling a process', () => {
+  const tab = terminalFromPersisted('p1', {
+    id: 'ended', name: 'Claude', cwd: 'ssh://conn/home/app', launchCommand: 'claude',
+    persistent: true, ptyId: 'dead-pty', connectionId: 'conn', endedAt: 12345, exitCode: 1,
+  })
+  expect(tab).toMatchObject({ status: 'exited', exitCode: 1, endedAt: 12345, awaitingRestoreSpawn: false })
+})

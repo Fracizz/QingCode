@@ -65,6 +65,100 @@ fn windows_daemon_log_script() -> String {
     windows_read_log_tail_script("Join-Path $env:USERPROFILE '.qingcode\\server\\run\\server.log'")
 }
 
+/// Diagnostic export uses fixed user-private paths. No project file is executed,
+/// no daemon is started or upgraded, and each section is bounded before transport.
+const DIAGNOSTIC_SECTION: &str = "__QINGCODE_DIAGNOSTIC_SECTION__:";
+
+const UNIX_DIAGNOSTIC_COMMAND: &str = r#"base="$HOME/.qingcode/server/run"
+for name in lifecycle.jsonl.3 lifecycle.jsonl.2 lifecycle.jsonl.1 lifecycle.jsonl daemon.stderr.log; do
+  printf '\n__QINGCODE_DIAGNOSTIC_SECTION__:%s\n' "$name"
+  if [ -f "$base/$name" ] && [ ! -L "$base/$name" ]; then tail -c 524288 "$base/$name"; fi
+done
+if [ -d "$base/incidents" ]; then
+  find "$base/incidents" -maxdepth 1 -type f -name '*.jsonl' | sort | tail -n 2 | while IFS= read -r file; do
+    printf '\n__QINGCODE_DIAGNOSTIC_SECTION__:incident\n'
+    tail -c 524288 "$file"
+  done
+fi"#;
+
+const WINDOWS_DIAGNOSTIC_SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
+$base = Join-Path $env:USERPROFILE '.qingcode\server\run'
+$utf8 = [System.Text.UTF8Encoding]::new($false)
+$output = [Console]::OpenStandardOutput()
+function Emit-Tail([string]$path, [string]$name) {
+  $marker = $utf8.GetBytes("`n__QINGCODE_DIAGNOSTIC_SECTION__:$name`n")
+  $output.Write($marker, 0, $marker.Length)
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return }
+  if ((Get-Item -LiteralPath $path).Attributes -band [System.IO.FileAttributes]::ReparsePoint) { return }
+  $share = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+  $stream = [System.IO.File]::Open($path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $share)
+  try {
+    $length = [int][Math]::Min(524288, $stream.Length)
+    [void]$stream.Seek(-$length, [System.IO.SeekOrigin]::End)
+    $bytes = New-Object byte[] $length
+    $offset = 0
+    while ($offset -lt $length) {
+      $count = $stream.Read($bytes, $offset, $length - $offset)
+      if ($count -eq 0) { break }
+      $offset += $count
+    }
+    $output.Write($bytes, 0, $offset)
+  } finally { $stream.Dispose() }
+}
+foreach ($name in @('lifecycle.jsonl.3','lifecycle.jsonl.2','lifecycle.jsonl.1','lifecycle.jsonl','daemon.stderr.log')) {
+  Emit-Tail (Join-Path $base $name) $name
+}
+$incidents = Join-Path $base 'incidents'
+if (Test-Path -LiteralPath $incidents) {
+  Get-ChildItem -LiteralPath $incidents -File -Filter '*.jsonl' |
+    Where-Object { $_.Name -match '^\d+-\d+-\d+\.jsonl$' } |
+    Sort-Object Name -Descending | Select-Object -First 2 |
+    ForEach-Object { Emit-Tail $_.FullName 'incident' }
+}"#;
+
+fn diagnostic_sections(text: &str) -> String {
+    let mut output = String::new();
+    let mut stderr = false;
+    for line in text.lines() {
+        if let Some(section) = line.strip_prefix(DIAGNOSTIC_SECTION) {
+            stderr = section == "daemon.stderr.log";
+            output.push_str(&format!("{}\n", serde_json::json!({"section":section})));
+        } else if stderr {
+            if !line.is_empty() {
+                output.push_str(&format!(
+                    "{}\n",
+                    serde_json::json!({"event":"daemon.stderr_tail",
+                    "summary":qingcode_server::diagnostics::error_summary(line)})
+                ));
+            }
+        } else if serde_json::from_str::<serde_json::Value>(line).is_ok() {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+    output
+}
+
+pub(crate) async fn terminal_diagnostic_log(
+    root_uri: String,
+    manager: &SshManager,
+) -> Result<String, String> {
+    let root = require_trusted_root(manager, &root_uri)?;
+    let result = manager
+        .exec_remote_shell(
+            &root.uri,
+            UNIX_DIAGNOSTIC_COMMAND,
+            WINDOWS_DIAGNOSTIC_SCRIPT,
+            true,
+            REMOTE_EXEC_TIMEOUT,
+        )
+        .await?;
+    if result.exit_code != 0 {
+        return Err("远端诊断日志读取失败".into());
+    }
+    Ok(diagnostic_sections(&result.stdout))
+}
+
 /// 项目 serve 日志的读取命令（unix）。路径来自 canonical root，必须 shell_quote。
 fn serve_log_tail_command(path: &str) -> String {
     format!("tail -n {SERVER_LOG_MAX_LINES} -- {}", shell_quote(path))
@@ -118,6 +212,7 @@ pub enum ServerTransport {
     Daemon,
     Serve,
     Direct,
+    Agent,
 }
 
 /// `ssh-server-state` 与 `ssh_server_info` / `ssh_server_restart` 的载荷。
@@ -390,6 +485,9 @@ pub(crate) fn state_for_root(
         trusted: root.trusted,
         slot: view,
     });
+    if manager.direct_config(&parsed.connection_id).is_some() {
+        state.transport = Some(ServerTransport::Agent);
+    }
     match state.phase {
         ServerPhase::ReadyServer => {
             state.timings = slot.and_then(|slot| slot.last_timings);
@@ -546,6 +644,15 @@ pub(crate) async fn ssh_server_restart(
 ) -> Result<SshServerState, String> {
     let root = require_trusted_root(&manager, &root_uri)?;
     let parsed = parse_remote_uri(&root.uri)?;
+    if let Some(config) = manager.direct_config(&parsed.connection_id) {
+        super::direct::test(&config).await?;
+        super::direct::close_connection(&config.endpoint, &parsed.connection_id);
+        let key = server::server_slot_key(&parsed.connection_id, &root.canonical_path);
+        manager.stop_watch_supervisor(&key);
+        manager.start_workspace_watch(app.clone(), &root);
+        publish_root_state(&app, &manager, &root);
+        return state_for_root(&manager, &root);
+    }
     manager.session(&parsed.connection_id)?;
     require_server_mode_connection(&manager, &parsed.connection_id)?;
     let key = server::server_slot_key(&parsed.connection_id, &root.canonical_path);
@@ -576,6 +683,9 @@ pub(crate) async fn ssh_server_stop(
 ) -> Result<(), String> {
     let root = require_trusted_root(&manager, &root_uri)?;
     let parsed = parse_remote_uri(&root.uri)?;
+    if manager.direct_config(&parsed.connection_id).is_some() {
+        return Err("Agent 直连的服务由远端独立管理；请断开工作区或在远端停止服务".into());
+    }
     manager.session(&parsed.connection_id)?;
     let key = server::server_slot_key(&parsed.connection_id, &root.canonical_path);
     manager.pause_project_server(&key);
@@ -630,6 +740,31 @@ pub(crate) async fn ssh_server_logs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_diagnostic_export_keeps_complete_json_and_masks_stderr_credentials() {
+        let output = diagnostic_sections(concat!(
+            "__QINGCODE_DIAGNOSTIC_SECTION__:lifecycle.jsonl\n",
+            "partial UTF8 / JSON record\n",
+            "{\"event\":\"pty.exited\",\"fields\":{\"exitCode\":1}}\n",
+            "__QINGCODE_DIAGNOSTIC_SECTION__:daemon.stderr.log\n",
+            "authorization: bearer sensitive-value\n",
+            "__QINGCODE_DIAGNOSTIC_SECTION__:incident\n",
+            "{\"event\":\"pty.kill_requested\"}\n",
+        ));
+        let records: Vec<serde_json::Value> = output
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert!(records.iter().any(|line| line["event"] == "pty.exited"));
+        assert!(records
+            .iter()
+            .any(|line| line["event"] == "pty.kill_requested"));
+        assert!(!output.contains("sensitive-value"));
+        assert!(!output.contains("partial UTF8"));
+        assert!(WINDOWS_DIAGNOSTIC_SCRIPT.contains("ReadWrite -bor [System.IO.FileShare]::Delete"));
+        assert!(WINDOWS_DIAGNOSTIC_SCRIPT.contains("Select-Object -First 2"));
+    }
 
     fn inputs<'a>(
         session_connected: bool,

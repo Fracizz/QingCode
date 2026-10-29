@@ -15,6 +15,7 @@ import {
 } from '../lib/sshWorkspace'
 import type { SshConnection } from '../types'
 import { confirmDialog } from '../store/confirmStore'
+import { directAgentApi } from '../lib/directAgent'
 
 vi.mock('../store/confirmStore', () => ({ confirmDialog: vi.fn() }))
 
@@ -171,6 +172,26 @@ describe('CreateProjectDialog', () => {
       id: 'c-pwd',
       password: 'secret',
     })
+  })
+
+  it('opens a standalone Agent host without requesting an SSH password or probing an SSH host key', async () => {
+    vi.spyOn(directAgentApi, 'info').mockResolvedValue({ enabled: true, host: '10.0.0.3', port: 48763, certificateFingerprint: 'TLS:paired', tokenSaved: true, previousPorts: [] })
+    useProjectStore.setState({ sshConnections: [{ ...passwordHost, username: 'Agent', host_key_fingerprint: '' }] })
+    render(<CreateProjectDialog open onClose={vi.fn()} onCreated={vi.fn()} />)
+    fireEvent.click(within(openSourceMenu()).getByRole('menuitemradio', { name: /pwd-box/ }))
+    await screen.findByRole('option', { name: 'app' })
+    expect(screen.queryByLabelText('密码（本次会话，不会保存）')).toBeNull()
+    expect(probeSshHost).not.toHaveBeenCalled()
+    expect(openSshSession).toHaveBeenCalledWith(expect.objectContaining({ id: 'c-pwd' }))
+    expect(vi.mocked(openSshSession).mock.calls[0][0]).not.toHaveProperty('password')
+  })
+
+  it('shows the active Agent port in the remote source picker instead of the compatibility SSH port', () => {
+    useProjectStore.setState({ sshConnections: [{ ...passwordHost, username: 'Agent', agentEndpoint: { host: '192.168.252.107', port: 48763 } }] })
+    render(<CreateProjectDialog open onClose={vi.fn()} onCreated={vi.fn()} />)
+    const menu = openSourceMenu()
+    expect(within(menu).getByText('192.168.252.107:48763')).toBeVisible()
+    expect(within(menu).queryByText('Agent@10.0.0.3')).toBeNull()
   })
 
   it('opens the connection manager to add a host and selects it once saved', async () => {

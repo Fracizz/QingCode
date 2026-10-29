@@ -40,7 +40,7 @@ pub(crate) use daemon::{
 pub(crate) use deploy::{
     ensure_server_endpoint_with_app, kick_server_discovery, note_server_endpoint_lost,
     ready_server_endpoint, require_serve_endpoint, require_server_endpoint, server_mode_error,
-    SERVER_MODE_ERROR_PREFIX,
+    stage_direct_gateway, SERVER_MODE_ERROR_PREFIX,
 };
 pub(crate) use download::resolve_offline_server_dir;
 pub(crate) use host_runtime::{invalidate_shared_daemon, shared_server_known, HostDaemonCache};

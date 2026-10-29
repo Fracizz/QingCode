@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { KeyRound, RefreshCw, Server, X } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
 import ModalOverlay from './ModalOverlay'
@@ -11,8 +11,11 @@ import {
   type SshSessionSecrets,
 } from '../lib/sshWorkspace'
 import { useProjectStore } from '../store/projectStore'
+import { directAgentApi, directAgentErrorKey, type DirectAgentInfo } from '../lib/directAgent'
+import { useI18n } from '../lib/i18n'
 
 export default function SshReconnectDialog() {
+  const { t } = useI18n()
   const [project, setProject] = useState<Project | null>(null)
   const [connection, setConnection] = useState<SshConnection | null>(null)
   const [password, setPassword] = useState('')
@@ -20,35 +23,58 @@ export default function SshReconnectDialog() {
   const [privateKeyPath, setPrivateKeyPath] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [directInfo, setDirectInfo] = useState<DirectAgentInfo | null>(null)
+  const [checkingProfile, setCheckingProfile] = useState(false)
+  const requestRef = useRef(0)
 
   useEffect(() => {
     const handleRequest = (event: Event) => {
       const requested = (event as CustomEvent<Project>).detail
+      const request = ++requestRef.current
       setProject(requested)
       setConnection(null)
       setPassword('')
       setPassphrase('')
       setError('')
+      setDirectInfo(null)
+      setCheckingProfile(true)
       if (!requested.connection_id) {
         setError('SSH 项目缺少连接配置。')
+        setCheckingProfile(false)
         return
       }
-      void getSshConnection(requested.connection_id)
-        .then(value => {
+      void Promise.all([
+        getSshConnection(requested.connection_id),
+        directAgentApi.info(requested.connection_id).catch(() => null),
+      ])
+        .then(([value, info]) => {
+          if (request !== requestRef.current) return
           setConnection(value)
+          setDirectInfo(info)
           setPrivateKeyPath(value?.private_key_path ?? '')
           if (!value) setError('SSH 连接配置不存在。')
         })
-        .catch(reason => setError(String(reason)))
+        .catch(reason => {
+          if (request === requestRef.current) setError(String(reason))
+        })
+        .finally(() => {
+          if (request === requestRef.current) setCheckingProfile(false)
+        })
     }
     window.addEventListener(SSH_RECONNECT_REQUEST_EVENT, handleRequest)
-    return () => window.removeEventListener(SSH_RECONNECT_REQUEST_EVENT, handleRequest)
+    return () => {
+      requestRef.current += 1
+      window.removeEventListener(SSH_RECONNECT_REQUEST_EVENT, handleRequest)
+    }
   }, [])
 
   if (!project) return null
 
   const close = () => {
-    if (!loading) setProject(null)
+    if (!loading) {
+      requestRef.current += 1
+      setProject(null)
+    }
   }
 
   const choosePrivateKey = async () => {
@@ -57,23 +83,23 @@ export default function SshReconnectDialog() {
   }
 
   const reconnect = async () => {
-    if (!connection || loading) return
-    if (connection.auth_kind === 'password' && !password) {
+    if (!connection || loading || checkingProfile) return
+    if (!directInfo?.enabled && connection.auth_kind === 'password' && !password) {
       setError('请输入 SSH 密码。')
       return
     }
-    if (connection.auth_kind === 'privateKey' && !privateKeyPath.trim()) {
+    if (!directInfo?.enabled && connection.auth_kind === 'privateKey' && !privateKeyPath.trim()) {
       setError('请选择 SSH 私钥文件。')
       return
     }
     setLoading(true)
     setError('')
-    const secrets: SshSessionSecrets = {
+    const secrets: SshSessionSecrets = directInfo?.enabled ? {} : {
       password: password || undefined,
       passphrase: passphrase || undefined,
     }
     try {
-      const nextConnection = {
+      const nextConnection = directInfo?.enabled ? connection : {
         ...connection,
         private_key_path: privateKeyPath.trim() || undefined,
         updated_at: Date.now(),
@@ -85,7 +111,7 @@ export default function SshReconnectDialog() {
       const switched = await useProjectStore.getState().switchProject(project)
       if (switched) setProject(null)
     } catch (reason) {
-      setError(String(reason))
+      setError(directInfo?.enabled ? t(directAgentErrorKey(reason)) : String(reason))
     } finally {
       setLoading(false)
     }
@@ -106,7 +132,7 @@ export default function SshReconnectDialog() {
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <Server size={17} className="text-accent" />
           <h2 id="ssh-reconnect-title" className="flex-1 text-ui-lg font-semibold text-fg">
-            重新连接 SSH 项目
+            {directInfo?.enabled ? t('重新连接 Agent 项目') : '重新连接 SSH 项目'}
           </h2>
           <Tooltip label="关闭" side="left">
             <button
@@ -124,13 +150,13 @@ export default function SshReconnectDialog() {
           <div className="rounded border border-border bg-bg px-3 py-2 text-ui-sm text-fg-muted">
             <div className="font-medium text-fg">{project.name}</div>
             <div className="mt-1 font-mono">
-              {connection
+              {directInfo?.enabled ? `${directInfo.host}:${directInfo.port} · TLS` : connection
                 ? `${connection.username}@${connection.host}:${connection.port}`
                 : '正在读取连接配置…'}
             </div>
             <div className="mt-0.5 truncate font-mono">{project.root_path ?? project.path}</div>
           </div>
-          {connection?.auth_kind === 'password' ? (
+          {checkingProfile ? <p className="text-ui-sm text-fg-muted">{t('正在检查连接方式…')}</p> : directInfo?.enabled ? <p className="text-ui-sm text-fg-muted">{t('使用已保存的 Agent 配对凭据连接，无需 SSH 密码。请确认远端服务正在运行，并开放 TCP {port}。', { port: directInfo.port })}</p> : connection?.auth_kind === 'password' ? (
             <label className="block text-ui-sm text-fg-muted">
               密码（仅本次会话）
               <input
@@ -196,7 +222,7 @@ export default function SshReconnectDialog() {
           </button>
           <button
             type="button"
-            disabled={!connection || loading}
+            disabled={!connection || loading || checkingProfile}
             onClick={() => void reconnect()}
             className="inline-flex items-center gap-1.5 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50"
           >

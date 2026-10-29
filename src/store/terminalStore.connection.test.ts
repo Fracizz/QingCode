@@ -317,7 +317,7 @@ describe('terminal persistent connection events', () => {
       ptyId: 'pty-project', cwd: 'ssh://conn/home/app',
     })
     expect(mocks.attachTerminal).not.toHaveBeenCalled()
-    expect(mocks.killTerminal).toHaveBeenCalledWith('direct-project')
+    expect(mocks.killTerminal).toHaveBeenCalledWith('direct-project', 'user_close_all', expect.any(String))
     expect(useTerminalStore.getState().terminals).toHaveLength(0)
   })
 
@@ -361,12 +361,12 @@ describe('terminal persistent connection events', () => {
     resolveSpawn?.({ persistent: true, ptyId: 'pty-race', connectionId: 'conn' })
     await spawning
 
-    expect(mocks.killTerminal).toHaveBeenCalledWith('race-create')
+    expect(mocks.killTerminal).toHaveBeenCalledWith('race-create', 'spawn_cancelled')
     expect(useTerminalStore.getState().terminals).toHaveLength(0)
   })
 
-  it('falls back to a normal shell when restored PTY attach fails', async () => {
-    mocks.attachTerminal.mockRejectedValueOnce(new Error('terminal not found'))
+  it('preserves a missing restored PTY without executing its launch command', async () => {
+    mocks.attachTerminal.mockRejectedValueOnce(new Error('QC_PTY_GONE: PTY 不存在或已退出'))
     mocks.createTerminal.mockResolvedValueOnce({
       persistent: true,
       ptyId: 'pty-new',
@@ -388,18 +388,16 @@ describe('terminal persistent connection events', () => {
     await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
 
     expect(mocks.attachTerminal).toHaveBeenCalledTimes(1)
-    expect(mocks.createTerminal).toHaveBeenCalledTimes(1)
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+    expect(mocks.spawnTerminalScript).not.toHaveBeenCalled()
     expect(useTerminalStore.getState().terminals[0]).toMatchObject({
-      status: 'running',
-      persistent: true,
-      ptyId: 'pty-new',
-      connectionId: 'conn',
-      awaitingRestoreSpawn: false,
+      status: 'exited', persistent: true, ptyId: 'pty-old', connectionId: 'conn',
+      awaitingRestoreSpawn: false, ptySpawnPending: false,
     })
   })
 
-  it('does not keep the stale PTY identity when the attach fallback is a direct terminal', async () => {
-    mocks.attachTerminal.mockRejectedValueOnce(new Error('terminal not found'))
+  it('opens an ordinary shell only after an explicit action following failed restore', async () => {
+    mocks.attachTerminal.mockRejectedValueOnce(new Error('QC_PTY_GONE: PTY 不存在或已退出'))
     mocks.createTerminal.mockResolvedValueOnce({
       persistent: false,
       ptyId: null,
@@ -421,10 +419,34 @@ describe('terminal persistent connection events', () => {
 
     await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
 
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+    await useTerminalStore.getState().reopenTerminalShell('t1')
+    await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
     const tab = useTerminalStore.getState().terminals[0]
     expect(tab.persistent).toBe(false)
     expect(tab.ptyId).toBeUndefined()
+    expect(tab.launchCommand).toBe('')
     expect(tab.persistentFallbackReason).toBe('远端 daemon 尚未就绪')
+  })
+
+  it('retries the original PTY after a transient attach failure without killing or running commands', async () => {
+    mocks.attachTerminal.mockRejectedValueOnce(new Error('daemon handshake timeout'))
+    useTerminalStore.setState({ terminals: [terminal({
+      status: 'exited', persistent: true, ptyId: 'original-pty', connectionId: 'conn',
+      awaitingRestoreSpawn: true, ptySpawnPending: true, launchCommand: 'claude', profileId: 'claude',
+    })] })
+    await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+    expect(useTerminalStore.getState().terminals[0]).toMatchObject({ restoreUnavailable: true })
+    expect(useTerminalStore.getState().terminals[0].endedAt).toBeUndefined()
+    mocks.attachTerminal.mockResolvedValueOnce({ persistent: true, ptyId: 'original-pty', connectionId: 'conn' })
+    await useTerminalStore.getState().reopenTerminalShell('t1')
+    await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+    expect(mocks.attachTerminal).toHaveBeenCalledTimes(2)
+    expect(mocks.attachTerminal).toHaveBeenLastCalledWith(expect.objectContaining({ ptyId: 'original-pty' }))
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+    expect(mocks.spawnTerminalScript).not.toHaveBeenCalled()
+    expect(mocks.killTerminal).not.toHaveBeenCalled()
+    expect(useTerminalStore.getState().terminals[0]).toMatchObject({ status: 'running', ptyId: 'original-pty', launchCommand: 'claude' })
   })
 
   it('summarizes unowned detached terminals and reattaches them into tabs', async () => {
@@ -536,7 +558,7 @@ describe('terminal persistent connection events', () => {
     expect(mocks.pushToast).toHaveBeenCalledWith('success', '已结束 1 个远端终端')
   })
 
-  it('keeps the legacy bounded restart for a non-persistent SSH terminal', async () => {
+  it('retains the ended direct SSH session without silently spawning a shell', async () => {
     useTerminalStore.setState({ terminals: [terminal({ persistent: false })] })
     emit('terminal-exit', {
       id: 't1',
@@ -544,12 +566,36 @@ describe('terminal persistent connection events', () => {
       disconnected: true,
       reason: 'remote closed',
     })
-    expect(useTerminalStore.getState().terminals[0]?.status).toBe('starting')
+    expect(useTerminalStore.getState().terminals[0]?.status).toBe('exited')
+    await vi.advanceTimersByTimeAsync(60_000)
     expect(mocks.createTerminal).not.toHaveBeenCalled()
+    expect(useTerminalStore.getState().terminals[0]?.endedAt).toBeGreaterThan(0)
+  })
 
-    await vi.advanceTimersByTimeAsync(1_000)
-    expect(mocks.createTerminal).toHaveBeenCalledTimes(1)
-    expect(useTerminalStore.getState().terminals[0]?.status).toBe('running')
+  it('preserves an unexpected exit and leaves the sibling terminal alive', async () => {
+    useTerminalStore.setState({ terminals: [
+      terminal({ persistent: true, ptyId: 'old-pty', launchCommand: 'claude', profileId: 'claude' }),
+      terminal({ id: 'sibling', persistent: true, ptyId: 'sibling-pty' }),
+    ] })
+    emit('terminal-exit', { id: 't1', exitCode: 1, disconnected: false })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(useTerminalStore.getState().terminals[0]).toMatchObject({ status: 'exited', exitCode: 1, ptyId: 'old-pty' })
+    expect(useTerminalStore.getState().terminals[1]).toMatchObject({ status: 'running', ptyId: 'sibling-pty' })
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+    expect(mocks.killTerminal).not.toHaveBeenCalled()
+    await useTerminalStore.getState().reopenTerminalShell('t1')
+    await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+    expect(mocks.spawnTerminalScript).not.toHaveBeenCalled()
+    expect(mocks.createTerminal).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: 't1' }))
+    expect(useTerminalStore.getState().terminals[0].launchCommand).toBe('')
+  })
+
+  it('does not resurrect a persistent terminal after a confirmed daemon loss', async () => {
+    emit('terminal-exit', { id: 't1', exitCode: 0, disconnected: true, reason: 'PTY not found' })
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(useTerminalStore.getState().terminals[0]).toMatchObject({ status: 'exited', disconnectReason: 'PTY not found' })
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+    expect(mocks.attachTerminal).not.toHaveBeenCalled()
   })
 
   it('keeps terminal input enabled while a persistent connection reconnects', async () => {

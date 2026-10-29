@@ -38,6 +38,8 @@ export interface SshConnection {
   updated_at: number
   /** 连接配置的模式；旧版行为 null，读取时按全局默认解析。 */
   mode?: SshConnectionMode | null
+  /** Native Agent endpoint metadata for display only; never persisted to the SSH row. */
+  agentEndpoint?: { host: string; port: number }
 }
 
 export interface RecentFile {
@@ -116,6 +118,10 @@ export interface TerminalTab {
   allowTitleRename?: boolean
   status: 'starting' | 'running' | 'reconnecting' | 'exited'
   exitCode: number | null
+  /** A confirmed ended session must never be silently resurrected on mount/reload. */
+  endedAt?: number
+  /** Restore failed without proof of process death; retry must attach, never kill/create. */
+  restoreUnavailable?: boolean
   /** SSH terminal hosted by the remote daemon; survives transport reconnects. */
   persistent?: boolean
   /** Daemon-owned PTY id used to reattach after the app restarts. */

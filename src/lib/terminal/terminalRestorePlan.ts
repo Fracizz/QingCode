@@ -21,8 +21,8 @@ export type TerminalRestorePlan =
       ptyId: string
       connectionId: string
       cwd: string
-      /** A failed attach is followed by the ordinary spawn path. */
-      fallback: 'create'
+      /** Preserve the failed session; an explicit action may create a replacement. */
+      fallback: 'stop'
     }
   | { mode: 'create' }
 
@@ -51,7 +51,7 @@ export function planTerminalRestore(tab: RestorableTerminal): TerminalRestorePla
     ptyId: tab.ptyId.trim(),
     connectionId: tab.connectionId.trim(),
     cwd: tab.cwd,
-    fallback: 'create',
+    fallback: 'stop',
   }
 }
 

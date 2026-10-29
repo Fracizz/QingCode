@@ -43,7 +43,7 @@ describe('SSH detached terminal IPC contract', () => {
     mocks.safeInvoke.mockResolvedValueOnce(undefined)
     await killTerminal('retry-stop')
     expect(mocks.safeInvoke).toHaveBeenLastCalledWith('关闭终端', 'ssh_kill_terminal', {
-      id: 'retry-stop',
+      id: 'retry-stop', source: 'user_close', operationId: expect.any(String),
     })
   })
   it('lists detached terminals by connection id and drops malformed entries', async () => {

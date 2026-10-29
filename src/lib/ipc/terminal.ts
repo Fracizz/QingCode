@@ -1,3 +1,4 @@
+import type { TerminalActionSource } from '../terminal/terminalDiagnostics'
 import { isSshResource, safeInvoke } from '../tauri'
 import { parseSshDetachedTerminal, type SshDetachedTerminal } from '../terminal/terminalRestorePlan'
 
@@ -129,9 +130,9 @@ export function spawnTerminalScript(args: {
   )
 }
 
-export function killTerminal(id: string): Promise<void> {
+export function killTerminal(id: string, source: TerminalActionSource = 'user_close', operationId = crypto.randomUUID()): Promise<void> {
   const remote = sshTerminalIds.has(id)
-  return safeInvoke<void>('关闭终端', remote ? 'ssh_kill_terminal' : 'kill_terminal', { id }).then(
+  return safeInvoke<void>('关闭终端', remote ? 'ssh_kill_terminal' : 'kill_terminal', { id, source, operationId }).then(
     () => {
       outputPauseHolders.delete(id)
       sshTerminalIds.delete(id)

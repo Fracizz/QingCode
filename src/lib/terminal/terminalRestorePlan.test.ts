@@ -32,7 +32,7 @@ describe('planTerminalRestore', () => {
       ptyId: 'pty-1',
       connectionId: 'conn',
       cwd: 'ssh://conn/home/app',
-      fallback: 'create',
+      fallback: 'stop',
     })
   })
 

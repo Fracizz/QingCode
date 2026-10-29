@@ -9,6 +9,7 @@ import {
   sshServerModeKey,
   sshServerSwitchBlocker,
   sshServerTipLines,
+  sshServerTransportKey,
   type SshServerState,
 } from './sshServerStatus'
 
@@ -25,6 +26,15 @@ const readyServer: SshServerState = {
 }
 
 describe('sshServerStatus', () => {
+  it('keeps an independent Agent distinct from the legacy SSH direct mode', () => {
+    const agent = { ...readyServer, transport: 'agent' as const }
+    expect(parseSshServerState(agent)?.transport).toBe('agent')
+    expect(sshServerIsDirect(agent)).toBe(false)
+    expect(sshServerModeKey(agent)).toBe('Agent 端口直连')
+    expect(sshServerTransportKey('agent')).toBe('HTTPS / WSS')
+    expect(sshServerTipLines(agent)[0]).toEqual({ key: 'Agent 端口直连' })
+    expect(sshServerModeKey({ ...agent, phase: 'disconnected', reason: 'connection reset' })).toBe('Agent 已断开')
+  })
   it('offers switching to Server from direct mode unless a precondition blocks it', () => {
     const direct: SshServerState = { ...readyServer, phase: 'readyDirect', mode: 'direct', transport: 'direct', version: null, reason: 'server 启动超时' }
     expect(sshServerIsDirect(readyServer)).toBe(false)

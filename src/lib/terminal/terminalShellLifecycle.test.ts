@@ -29,7 +29,7 @@ describe('shouldKeepShellAfterExit', () => {
     ).toBe(true)
   })
 
-  it('keeps a live session writable and only locks a finished one-shot task', () => {
+  it('reattaches live sessions and preserves confirmed exited shells', () => {
     expect(
       restoredExitRecovery({
         awaitingRestoreSpawn: false,
@@ -43,7 +43,7 @@ describe('shouldKeepShellAfterExit', () => {
         sessionOpen: false,
         keepShell: true,
       }),
-    ).toBe('respawn')
+    ).toBe('exited')
     expect(
       restoredExitRecovery({
         awaitingRestoreSpawn: true,

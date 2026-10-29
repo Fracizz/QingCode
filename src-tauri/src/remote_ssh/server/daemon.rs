@@ -60,13 +60,119 @@ const DAEMON_REQUEST_ID: u32 = 1;
 /// 的复杂度；真正需要 stream_id 路由和发送优先级的是 PTY 接入（下一轮），
 /// 届时再改为「一条常驻通道 + 按 stream_id 分发」。
 pub(crate) struct DaemonChannel {
-    channel: russh::Channel<client::Msg>,
+    channel: DaemonTransport,
     /// 已到达但尚未构成完整帧的字节：代理转发的是裸字节流，不保证按帧到达。
     buffer: Vec<u8>,
     /// 代理/中间 shell 落在 stderr 的输出。不参与帧流，只在通道关闭时
     /// 并入错误信息（Windows 的 shell 启动噪声会到这里，不能当失败）。
     stderr_notes: Vec<String>,
     capabilities: Vec<String>,
+}
+
+enum DaemonTransport {
+    Ssh(russh::Channel<client::Msg>),
+    Direct(tokio::io::DuplexStream),
+}
+
+enum DaemonReader {
+    Ssh(russh::ChannelReadHalf),
+    Direct(tokio::io::ReadHalf<tokio::io::DuplexStream>),
+}
+
+enum DaemonWriter {
+    Ssh(russh::ChannelWriteHalf<client::Msg>),
+    Direct(tokio::io::WriteHalf<tokio::io::DuplexStream>),
+}
+
+impl DaemonTransport {
+    async fn data(&mut self, bytes: &[u8]) -> Result<(), String> {
+        match self {
+            Self::Ssh(channel) => channel.data(bytes).await.map_err(|error| error.to_string()),
+            Self::Direct(stream) => stream
+                .write_all(bytes)
+                .await
+                .map_err(|error| error.to_string()),
+        }
+    }
+
+    async fn wait(&mut self) -> Option<ChannelMsg> {
+        match self {
+            Self::Ssh(channel) => channel.wait().await,
+            Self::Direct(stream) => read_direct_message(stream).await,
+        }
+    }
+
+    async fn eof(&mut self) -> Result<(), String> {
+        match self {
+            Self::Ssh(channel) => channel.eof().await.map_err(|error| error.to_string()),
+            Self::Direct(stream) => stream.shutdown().await.map_err(|error| error.to_string()),
+        }
+    }
+
+    async fn close(&mut self) -> Result<(), String> {
+        match self {
+            Self::Ssh(channel) => channel.close().await.map_err(|error| error.to_string()),
+            Self::Direct(stream) => stream.shutdown().await.map_err(|error| error.to_string()),
+        }
+    }
+
+    fn split(self) -> (DaemonReader, DaemonWriter) {
+        match self {
+            Self::Ssh(channel) => {
+                let (reader, writer) = channel.split();
+                (DaemonReader::Ssh(reader), DaemonWriter::Ssh(writer))
+            }
+            Self::Direct(stream) => {
+                let (reader, writer) = tokio::io::split(stream);
+                (DaemonReader::Direct(reader), DaemonWriter::Direct(writer))
+            }
+        }
+    }
+}
+
+async fn read_direct_message(reader: &mut (impl AsyncRead + Unpin)) -> Option<ChannelMsg> {
+    let mut bytes = vec![0; 64 * 1024];
+    let size = reader.read(&mut bytes).await.ok()?;
+    if size == 0 {
+        return Some(ChannelMsg::Eof);
+    }
+    bytes.truncate(size);
+    Some(ChannelMsg::Data { data: bytes.into() })
+}
+
+impl DaemonReader {
+    async fn wait(&mut self) -> Option<ChannelMsg> {
+        match self {
+            Self::Ssh(reader) => reader.wait().await,
+            Self::Direct(reader) => read_direct_message(reader).await,
+        }
+    }
+}
+
+impl DaemonWriter {
+    async fn data(&mut self, bytes: &[u8]) -> Result<(), String> {
+        match self {
+            Self::Ssh(writer) => writer.data(bytes).await.map_err(|error| error.to_string()),
+            Self::Direct(writer) => writer
+                .write_all(bytes)
+                .await
+                .map_err(|error| error.to_string()),
+        }
+    }
+
+    async fn eof(&mut self) -> Result<(), String> {
+        match self {
+            Self::Ssh(writer) => writer.eof().await.map_err(|error| error.to_string()),
+            Self::Direct(writer) => writer.shutdown().await.map_err(|error| error.to_string()),
+        }
+    }
+
+    async fn close(&mut self) -> Result<(), String> {
+        match self {
+            Self::Ssh(writer) => writer.close().await.map_err(|error| error.to_string()),
+            Self::Direct(writer) => writer.shutdown().await.map_err(|error| error.to_string()),
+        }
+    }
 }
 
 impl DaemonChannel {
@@ -316,6 +422,22 @@ pub(super) struct DaemonAttachResult {
 }
 
 impl DaemonSession {
+    pub(super) async fn open_direct(
+        config: &super::super::direct::DirectConnectionConfig,
+        connection_id: &str,
+        client_id: &str,
+        daemon: &DaemonAccess,
+    ) -> Result<Self, String> {
+        let channel = open_direct_daemon_channel(
+            config,
+            connection_id,
+            client_id,
+            daemon,
+            HelloPolicy::TERMINAL,
+        )
+        .await?;
+        Ok(Self::from_channel(channel))
+    }
     /// 在调用者明确传入的独占终端连接上建立 daemon 会话。
     ///
     /// 这个构造器刻意不接收 [`SshManager`]，避免持久化终端误把 daemon 帧
@@ -342,7 +464,7 @@ impl DaemonSession {
     }
 
     fn from_channel(channel: DaemonChannel) -> Self {
-        let (mut reader, writer) = channel.channel.split();
+        let (mut reader, mut writer) = channel.channel.split();
         let stderr_notes = channel.stderr_notes;
         let (outbound_tx, mut outbound_rx) = mpsc::channel::<SessionOutbound>(64);
         let (events_tx, events_rx) = session_event_channel();
@@ -842,6 +964,16 @@ async fn open_daemon_channel_with(
     ensure_daemon: bool,
     hello_deadline: Instant,
 ) -> Result<DaemonChannel, String> {
+    if let Some(config) = manager.direct_config(connection_id) {
+        return open_direct_daemon_channel(
+            &config,
+            connection_id,
+            &manager.daemon_client_id(connection_id),
+            daemon,
+            policy,
+        )
+        .await;
+    }
     let channel = manager
         .open_session_channel(connection_id, "server 守护进程 ")
         .await?;
@@ -855,6 +987,41 @@ async fn open_daemon_channel_with(
         hello_deadline,
     )
     .await
+}
+
+async fn open_direct_daemon_channel(
+    config: &super::super::direct::DirectConnectionConfig,
+    connection_id: &str,
+    client_id: &str,
+    daemon: &DaemonAccess,
+    policy: HelloPolicy,
+) -> Result<DaemonChannel, String> {
+    let stream = super::super::direct::open_stream_for(config, connection_id).await?;
+    let mut channel = DaemonChannel {
+        channel: DaemonTransport::Direct(stream),
+        buffer: Vec::new(),
+        stderr_notes: Vec::new(),
+        capabilities: Vec::new(),
+    };
+    let access = DaemonAccess {
+        bin: daemon.bin.clone(),
+        token: config.token.clone(),
+    };
+    match daemon_hello(
+        &mut channel,
+        client_id,
+        &access,
+        policy,
+        Instant::now() + AGENT_DAEMON_HELLO_TIMEOUT,
+    )
+    .await
+    {
+        Ok(()) => Ok(channel),
+        Err(error) => {
+            channel.shutdown().await;
+            Err(error)
+        }
+    }
 }
 
 /// 在已经由调用者选定并独占的 SSH 连接上打开 daemon 通道。
@@ -905,7 +1072,7 @@ async fn open_daemon_channel_on_opened_channel(
         return Err(format!("启动 daemon 连接代理失败：{error}"));
     }
     let mut channel = DaemonChannel {
-        channel,
+        channel: DaemonTransport::Ssh(channel),
         buffer: Vec::new(),
         stderr_notes: Vec::new(),
         capabilities: Vec::new(),
@@ -2024,7 +2191,7 @@ mod tests {
             .await
             .map_err(|error| error.to_string())?;
         let mut channel = DaemonChannel {
-            channel,
+            channel: DaemonTransport::Ssh(channel),
             buffer: Vec::new(),
             stderr_notes: Vec::new(),
             capabilities: Vec::new(),
@@ -2038,6 +2205,64 @@ mod tests {
         )
         .await?;
         Ok(DaemonSession::from_channel(channel))
+    }
+
+    #[tokio::test]
+    async fn direct_session_routes_wire_replies_events_and_shutdown() {
+        let (client, mut peer) = tokio::io::duplex(64 * 1024);
+        let mut session = DaemonSession::from_channel(DaemonChannel {
+            channel: DaemonTransport::Direct(client),
+            buffer: Vec::new(),
+            stderr_notes: Vec::new(),
+            capabilities: Vec::new(),
+        });
+        let mut events = session.take_events().unwrap();
+        let wire = tokio::spawn(async move {
+            let request = proto::read_frame(&mut peer).await.unwrap();
+            let decoded: Request = proto::decode_value(&request.payload).unwrap();
+            assert_eq!(decoded.method, "pty.create");
+            let response = Response {
+                id: request.stream_id,
+                result: serde_json::json!({"id":"original-pty"}),
+            };
+            proto::write_frame(
+                &mut peer,
+                &Frame::new(
+                    Kind::Res,
+                    request.stream_id,
+                    proto::encode(&response).unwrap(),
+                ),
+            )
+            .await
+            .unwrap();
+            let event = Event::PtyData {
+                id: "original-pty".into(),
+                seq: 0,
+                offset: 0,
+                data: b"output".to_vec(),
+            };
+            proto::write_frame(
+                &mut peer,
+                &Frame::new(Kind::Event, CONTROL_STREAM, proto::encode(&event).unwrap()),
+            )
+            .await
+            .unwrap();
+            let mut tail = Vec::new();
+            tokio::time::timeout(Duration::from_secs(3), peer.read_to_end(&mut tail))
+                .await
+                .unwrap()
+                .unwrap();
+        });
+        assert_eq!(
+            session
+                .request("pty.create", &serde_json::json!({}))
+                .await
+                .unwrap()["id"],
+            "original-pty"
+        );
+        assert!(matches!(events.recv().await,Some(Event::PtyData {data,..}) if data==b"output"));
+        session.shutdown();
+        wire.await.unwrap();
     }
 
     #[tokio::test]

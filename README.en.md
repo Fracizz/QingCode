@@ -65,7 +65,7 @@ QingCode puts weight on **project ops and the running scene**: pin many projects
 
 ### Multi-project switching
 
-Pin local folders or SSH projects in the title bar and switch with a click. Each project keeps its own file tree and terminals; leaving a project does not wipe unsaved buffers or terminal sessions. Overflow stays reachable, and you can save named multi-project workspaces.
+Pin local folders, SSH projects, or direct Agent projects in the title bar and switch with a click. Each project keeps its own file tree and terminals; leaving a project does not wipe unsaved buffers or terminal sessions. Overflow stays reachable, and you can save named multi-project workspaces.
 
 Project management supports name/path search, visible/hidden filters, and sorting. Closing a title-bar project only hides it; Remove clears its project record without deleting files, and the project can be added again later.
 
@@ -79,6 +79,25 @@ Linux / POSIX remotes support SFTP, a remote PTY, the Git workspace, formatting,
 - With `terminal.integrated.sshUploadOnPaste` enabled (off by default), pasting or dropping local files into an SSH terminal uploads them to the project's `.qingcode/terminal-paste/` and pastes the remote path. Files or folders over 100MB are rejected. Settings and the terminal context menu can clean up that directory. A successful paste upload does not leave a transfer task row.
 
 Workspace trust still gates writes, terminals, and command execution. Remote extensions, port forwarding, and SSH agent forwarding are not currently provided. See [SSH workspaces](./docs/ssh-workspaces.md) for the capability comparison and boundaries.
+
+### Direct Agent connections
+
+Connect to remote `qingcode-server` through a dedicated TLS port shared by HTTPS file operations and WSS terminals. Everyday traffic goes directly to the remote host without an SSH tunnel. Add a standalone connection from **Remote Connections → New Agent connection**, or install/import the service from an existing SSH connection's **Agent direct connection** panel.
+
+With `qingcode-server` available on the remote host, start it under your usual development account and export pairing information:
+
+```text
+qingcode-server direct --hostname 0.0.0.0 --port 48763 --detach
+qingcode-server direct-info --include-secret
+```
+
+Import the pairing JSON, enter the remote host's actual IP address or hostname, allow the TCP port, and test the connection. Verify the certificate fingerprint before saving and enabling it. The pairing JSON contains credentials; keep it private. `--detach` runs the service independently of the current terminal; after a machine restart, start it again or configure startup separately.
+
+- **Editable fixed default port**: the default is `48763`; an occupied port produces an explicit error. Port changes require matching remote listener and firewall/NAT settings. The last eight previous ports remain available for reference, without automatic fallback or deletion of old rules.
+- **Authorize firewall access over SSH**: select a connection to the same host with a confirmed SSH fingerprint. Check Windows administrator permissions, then confirm the TCP port, source IP, receiving address, and actual network profile, including Public. Authorization creates a dedicated rule and probes the port, reporting rule creation and reachability separately. A copyable command is also available; upstream firewalls and gateway mappings require separate configuration.
+- **Reconnect to existing terminals**: a surviving remote daemon retains PTYs across network disconnections and direct gateway restarts, allowing reconnection to the original session. Explicitly closing a terminal, process exit, or machine restart still ends the session. Existing SSH connections remain available.
+
+See [Direct Agent connections](./docs/direct-agent.md) (Chinese) for pairing, port changes, session boundaries, and deployment details.
 
 ### Run configurations: start project services
 
@@ -167,7 +186,7 @@ A typical pairing: start API, web, and workers in QingCode and keep the scene wh
 
 ## Typical flow
 
-1. Add several local folders or SSH projects and pin them in the title bar
+1. Add several local folders, SSH projects, or direct Agent projects and pin them in the title bar
 2. Create run configurations for common stacks (for example `dev` = API + web)  
 3. Start services in one click; use dual terminals or the 2×2 quad-terminal grid for several output streams
 4. Enter an AI CLI via a terminal profile, or copy the CLI Skill from Settings for your agent

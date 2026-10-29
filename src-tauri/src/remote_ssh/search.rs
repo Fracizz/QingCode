@@ -175,6 +175,24 @@ async fn stream_records(
     }
     let parsed = parse_remote_uri(root)?;
     manager.root_for_uri(root, false)?;
+    if manager.direct_config(&parsed.connection_id).is_some() {
+        let result = manager
+            .exec_command(root, command, None, false, REMOTE_EXEC_TIMEOUT)
+            .await?;
+        let mut stopped = false;
+        for bytes in result.stdout.as_bytes().split(|byte| *byte == delimiter) {
+            if control.cancelled() || !record(bytes) {
+                stopped = true;
+                break;
+            }
+        }
+        return Ok(StreamResult {
+            exit_code: result.exit_code,
+            stderr: result.stderr,
+            truncated: stopped && !control.cancelled(),
+            cancelled: control.cancelled(),
+        });
+    }
     let session = manager.session(&parsed.connection_id)?;
     let Some(mut channel) = search_stage(control, started, async {
         session

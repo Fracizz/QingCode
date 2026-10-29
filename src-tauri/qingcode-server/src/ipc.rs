@@ -165,6 +165,14 @@ impl IpcEndpoint {
         self.run_dir.join("daemon.lock")
     }
 
+    /// A successful connect alone is insufficient: a recently forked process can
+    /// briefly retain a listener fd after its owner dropped it, before CLOEXEC.
+    /// A real daemon holds the instance lock throughout its listener lifetime.
+    #[cfg(unix)]
+    pub(crate) fn daemon_lock_is_held(&self) -> io::Result<bool> {
+        Ok(InstanceLock::acquire(&self.lock_path())?.is_none())
+    }
+
     #[cfg(unix)]
     fn listen_unix(&self) -> io::Result<Option<IpcListener>> {
         let lock = InstanceLock::acquire(&self.lock_path())?;
@@ -272,6 +280,25 @@ impl InstanceLock {
                 return Ok(None);
             }
             return Err(error);
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        use std::os::fd::AsRawFd;
+        // A concurrently forked child may briefly inherit this open-file
+        // description before exec closes CLOEXEC descriptors. Release the
+        // owner's lock explicitly rather than waiting for that child's close.
+        loop {
+            // SAFETY: the file remains owned and open throughout this destructor.
+            if unsafe { libc::flock(self._file.as_raw_fd(), libc::LOCK_UN) } == 0 {
+                break;
+            }
+            if io::Error::last_os_error().raw_os_error() != Some(libc::EINTR) {
+                break;
+            }
         }
     }
 }
@@ -1041,5 +1068,24 @@ mod blocking_tests {
             "应答不是 HELLO: {response:02x?}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod lock_owner_tests {
+    use super::*;
+    #[test]
+    fn dropping_owner_releases_lock_even_with_an_inherited_descriptor() {
+        let path =
+            std::env::temp_dir().join(format!("qingcode-lock-owner-{}", crate::generate_token()));
+        let owner = InstanceLock::acquire(&path).unwrap().unwrap();
+        let inherited = owner._file.try_clone().unwrap();
+        assert!(InstanceLock::acquire(&path).unwrap().is_none());
+        drop(owner);
+        let next = InstanceLock::acquire(&path).unwrap();
+        assert!(next.is_some());
+        drop(next);
+        drop(inherited);
+        std::fs::remove_file(path).unwrap();
     }
 }

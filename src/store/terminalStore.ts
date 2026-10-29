@@ -1,3 +1,4 @@
+import { recordTerminalDiagnostic, type TerminalActionSource } from '@/lib/terminal/terminalDiagnostics'
 import { create } from 'zustand'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import {
@@ -60,8 +61,6 @@ import {
   planTerminalConnectionEvent,
   shouldCancelReconnectOnInput,
   shouldKeepShellAfterExit,
-  sshTerminalReconnectDelay,
-  terminalDisconnectNotice,
 } from '@/lib/terminal/terminalShellLifecycle'
 import { requestTerminalReset } from '@/lib/terminal/terminalViewBridge'
 import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
@@ -103,8 +102,6 @@ const lastPtySize = new Map<string, { cols: number; rows: number }>()
 /** Kills from close/restart — do not auto-respawn a shell for these. */
 const intentionalPtyKills = new Set<string>()
 const reportedShellFallbacks = new Set<string>()
-/** SSH 断线后正在退避重连的终端；期间丢弃键入，避免逐键弹“终端不存在”。 */
-const sshRecoveryInFlight = new Set<string>()
 /** 用户在重连期间按 Ctrl+C、正在放弃重连的终端；期间忽略其余键入。 */
 const reconnectCancelInFlight = new Set<string>()
 /** Ctrl+C on a finished task may only create one replacement shell. */
@@ -273,6 +270,7 @@ async function enterShellAfterTask(id: string): Promise<void> {
     !tab ||
     tab.status !== 'exited' ||
     shouldKeepShellAfterExit(tab) ||
+    tab.restoreUnavailable ||
     tab.awaitingRestoreSpawn ||
     tab.ptySpawnPending ||
     ptySpawnInFlight.has(id) ||
@@ -290,7 +288,7 @@ async function enterShellAfterTask(id: string): Promise<void> {
     if (sessionOpen) {
       useTerminalStore.setState(s => ({
         terminals: s.terminals.map(terminal =>
-          terminal.id === id ? { ...terminal, status: 'running', exitCode: null } : terminal
+          terminal.id === id ? { ...terminal, status: 'running', exitCode: null, endedAt: undefined } : terminal
         ),
       }))
       return
@@ -341,49 +339,6 @@ async function enterShellAfterTask(id: string): Promise<void> {
   }
 }
 
-/** Re-open a shell after OpenCode/TUI tore down the ConPTY; keep scrollback. */
-async function respawnShellAfterExit(id: string): Promise<void> {
-  const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
-  if (!tab || tab.ptySpawnPending) return
-  if (ptySpawnInFlight.has(id)) return
-  ptySpawnInFlight.add(id)
-  const size = lastPtySize.get(id) ?? {
-    cols: DEFAULT_PTY_COLS,
-    rows: DEFAULT_PTY_ROWS,
-  }
-  useTerminalStore.setState(s => ({
-    terminals: s.terminals.map(terminal =>
-      terminal.id === id
-        ? {
-            ...terminal,
-            status: 'running',
-            exitCode: null,
-            startedAt: Date.now(),
-          }
-        : terminal
-    ),
-  }))
-  try {
-    const result = await createTerminal({
-      id,
-      cwd: tab.cwd,
-      cols: size.cols,
-      rows: size.rows,
-      shell: tab.shell ?? null,
-    })
-    applyTerminalSpawnResult(id, result)
-  } catch (e) {
-    console.error('respawnShellAfterExit failed:', e)
-    useTerminalStore.setState(s => ({
-      terminals: s.terminals.map(terminal =>
-        terminal.id === id ? { ...terminal, status: 'exited', exitCode: null } : terminal
-      ),
-    }))
-  } finally {
-    ptySpawnInFlight.delete(id)
-  }
-}
-
 function publishTerminalNotice(id: string, text: string) {
   publishTerminalOutput(id, new TextEncoder().encode(`\r\n\x1b[90m[${text}]\x1b[0m\r\n`))
 }
@@ -392,117 +347,18 @@ function markDisconnectedExit(id: string) {
   disconnectNoticeShown.add(id)
   useTerminalStore.setState(s => ({
     terminals: s.terminals.map(terminal =>
-      terminal.id === id ? { ...terminal, status: 'exited', exitCode: null } : terminal
+      terminal.id === id ? { ...terminal, status: 'exited', exitCode: null, endedAt: Date.now() } : terminal
     ),
   }))
 }
 
-async function killTerminalForClose(tab: TerminalTab, spawnInFlight: boolean): Promise<void> {
+async function killTerminalForClose(tab: TerminalTab, spawnInFlight: boolean, source: TerminalActionSource = 'user_close'): Promise<void> {
+  const operationId = crypto.randomUUID()
+  recordTerminalDiagnostic('terminal.close_requested', tab, source, operationId)
   if (tab.awaitingRestoreSpawn && tab.persistent && tab.ptyId && !spawnInFlight) {
     await killDetachedTerminal({ ptyId: tab.ptyId, cwd: tab.cwd })
   } else if (!tab.awaitingRestoreSpawn) {
-    await killTerminal(tab.id)
-  }
-}
-
-const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
-
-/**
- * SSH 连接断开：交互式 Shell 按退避间隔重开（后端会先重连），一次性任务直接停下。
- * 远端进程已随连接结束，重开后明确告知，不假装会话还在。
- */
-async function restartTerminalAfterDisconnect(id: string, rawReason: unknown): Promise<void> {
-  const initial = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
-  if (!initial || sshRecoveryInFlight.has(id)) return
-  if (!shouldKeepShellAfterExit(initial)) {
-    const notice = terminalDisconnectNotice('stopped', rawReason)
-    publishTerminalNotice(id, translate(notice.key, notice.values))
-    useTerminalStore.setState(s => ({
-      terminals: s.terminals.map(terminal =>
-        terminal.id === id
-          ? {
-              ...terminal,
-              disconnectReason: notice.values?.reason
-                ? String(notice.values.reason)
-                : terminal.disconnectReason,
-            }
-          : terminal
-      ),
-    }))
-    markDisconnectedExit(id)
-    return
-  }
-  sshRecoveryInFlight.add(id)
-  const notice = terminalDisconnectNotice('reconnecting', rawReason)
-  publishTerminalNotice(id, translate(notice.key, notice.values))
-  useTerminalStore.setState(s => ({
-    terminals: s.terminals.map(terminal =>
-      terminal.id === id
-        ? {
-            ...terminal,
-            status: 'starting',
-            exitCode: null,
-            disconnectReason: notice.values?.reason
-              ? String(notice.values.reason)
-              : terminal.disconnectReason,
-          }
-        : terminal
-    ),
-  }))
-  let lastError: unknown = null
-  try {
-    for (let attempt = 0; ; attempt += 1) {
-      const delay = sshTerminalReconnectDelay(attempt)
-      if (delay === null) break
-      await sleep(delay)
-      const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
-      // 关闭、手动重启或已被其他路径接管时停止重试。
-      if (!tab || tab.status !== 'starting' || ptySpawnInFlight.has(id)) return
-      ptySpawnInFlight.add(id)
-      try {
-        const size = lastPtySize.get(id) ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS }
-        const result = await createTerminal({
-          id,
-          cwd: tab.cwd,
-          cols: size.cols,
-          rows: size.rows,
-          shell: tab.shell ?? null,
-        })
-        // 等待期间用户已按 Ctrl+C 放弃或关闭标签：刚建好的会话直接收回。
-        const latest = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
-        if (!latest || latest.status !== 'starting') {
-          await killTerminal(id).catch(() => undefined)
-          return
-        }
-        applyTerminalSpawnResult(id, result)
-        useTerminalStore.setState(s => ({
-          terminals: s.terminals.map(terminal =>
-            terminal.id === id
-              ? { ...terminal, status: 'running', exitCode: null, startedAt: Date.now() }
-              : terminal
-          ),
-        }))
-        publishTerminalNotice(id, translate('已重新连接，断线前运行的远端进程已结束'))
-        return
-      } catch (error) {
-        lastError = error
-      } finally {
-        ptySpawnInFlight.delete(id)
-      }
-    }
-    const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
-    if (!tab || tab.status !== 'starting') return
-    publishTerminalNotice(id, translate('SSH 重新连接失败，可从终端标签重启'))
-    markDisconnectedExit(id)
-    useProjectStore
-      .getState()
-      .pushToast(
-        'error',
-        translate('「{name}」SSH 重新连接失败', { name: terminalDisplayLabel(tab.name) }),
-        String(lastError ?? '')
-      )
-  } finally {
-    sshRecoveryInFlight.delete(id)
+    await killTerminal(tab.id, source, operationId)
   }
 }
 
@@ -520,7 +376,7 @@ async function cancelTerminalReconnect(id: string): Promise<void> {
   try {
     if (tab.status === 'reconnecting') {
       try {
-        await killTerminal(id)
+        await killTerminal(id, 'cancel_reconnect')
       } catch (error) {
         console.warn(`cancel reconnect kill ${id} failed:`, error)
       }
@@ -533,23 +389,6 @@ async function cancelTerminalReconnect(id: string): Promise<void> {
   } finally {
     reconnectCancelInFlight.delete(id)
   }
-}
-
-/** Direct SSH terminals still restart with the legacy bounded backoff. */
-async function recoverSshTerminalAfterDisconnect(id: string, rawReason: unknown): Promise<void> {
-  const initial = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
-  if (!initial || initial.persistent === true) return
-  await restartTerminalAfterDisconnect(id, rawReason)
-}
-
-/** A persistent terminal whose daemon disappeared must restart as a new shell. */
-async function recoverPersistentTerminalAfterDaemonRestart(
-  id: string,
-  rawReason: unknown,
-): Promise<void> {
-  const initial = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
-  if (!initial || initial.persistent !== true) return
-  await restartTerminalAfterDisconnect(id, rawReason)
 }
 
 /** Always-on ring used for persistence + restore replay. */
@@ -922,6 +761,7 @@ interface TerminalState {
   closeAllProjectTerminals: (projectId: string) => Promise<void>
   closeProjectTerminals: (projectId: string) => Promise<void>
   restartTerminal: (id: string, options?: { preserveOutput?: boolean }) => Promise<void>
+  reopenTerminalShell: (id: string) => Promise<void>
   /** Seed tabs from durable workspace session (no PTY yet). */
   hydrateTerminalSessions: (
     terminals: TerminalTab[],
@@ -1356,7 +1196,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     await Promise.all(
       otherTabs.map(tab =>
-        killTerminalForClose(tab, spawnInFlight.get(tab.id) === true).catch(() => undefined),
+        killTerminalForClose(tab, spawnInFlight.get(tab.id) === true, 'user_close_others').catch(() => undefined),
       ),
     )
     set(s => {
@@ -1383,7 +1223,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
     await Promise.all(
       tabs.map(tab =>
-        killTerminalForClose(tab, spawnInFlight.get(tab.id) === true).catch(() => undefined),
+        killTerminalForClose(tab, spawnInFlight.get(tab.id) === true, 'user_close_all').catch(() => undefined),
       ),
     )
     set(s => ({
@@ -1415,9 +1255,27 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     ids.forEach(id => clearTerminalOutput(id))
   },
 
+  reopenTerminalShell: async (id: string) => {
+    const tab = get().terminals.find(terminal => terminal.id === id)
+    if (!tab || tab.status !== 'exited' || tab.awaitingRestoreSpawn || tab.ptySpawnPending) return
+    if (tab.restoreUnavailable) {
+      set(state => ({ terminals: state.terminals.map(terminal => terminal.id === id ? {
+        ...terminal, status: 'starting', restoreUnavailable: false, endedAt: undefined,
+        awaitingRestoreSpawn: true, ptySpawnPending: true,
+      } : terminal) }))
+      return
+    }
+    set(state => ({ terminals: state.terminals.map(terminal => terminal.id === id ? {
+      ...terminal, launchCommand: '', shellKind: undefined, profileId: 'default', env: {},
+      runConfigId: undefined, runTaskId: undefined, allowTitleRename: true,
+    } : terminal) }))
+    await get().restartTerminal(id, { preserveOutput: true })
+  },
+
   restartTerminal: async (id: string, options) => {
     const tab = get().terminals.find(terminal => terminal.id === id)
     if (!tab) return
+    if (tab.restoreUnavailable) { await get().reopenTerminalShell(id); return }
     // Profile terminals store profileId + launchCommand without shellKind.
     // Run-config tasks set shellKind and are gated by ensureRunTrust instead.
     if (tab.launchCommand && tab.profileId && !tab.shellKind) {
@@ -1441,8 +1299,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     clearPtySpawnFallback(id)
     ptySpawnInFlight.delete(id)
     markIntentionalPtyKill(id)
+    const operationId = crypto.randomUUID()
+    recordTerminalDiagnostic('terminal.restart_requested', tab, 'user_restart', operationId)
     try {
-      await killTerminal(id)
+      await killTerminal(id, 'user_restart', operationId)
     } catch (error) {
       useProjectStore
         .getState()
@@ -1458,6 +1318,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           ? {
               ...terminal,
               status: 'starting',
+              endedAt: undefined,
+              restoreUnavailable: false,
               exitCode: null,
               startedAt: Date.now(),
               awaitingRestoreSpawn: false,
@@ -1976,11 +1838,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       if (data === '\x03') await enterShellAfterTask(id)
       return
     }
-    if (shouldCancelReconnectOnInput(tab, sshRecoveryInFlight.has(id), data)) {
+    if (shouldCancelReconnectOnInput(tab, false, data)) {
       await cancelTerminalReconnect(id)
       return
     }
-    if (sshRecoveryInFlight.has(id)) return
     recordTypedInput(id, data)
     try {
       await writeTerminal(id, data)
@@ -2060,13 +1921,24 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             rows: size.rows,
           })
         } catch (error) {
-          // The daemon may have exited or expired the PTY. Keep the persisted
-          // tab usable by falling back to the ordinary shell creation path.
+          // Preserve the failed restore; never rerun the saved profile or task command.
           console.warn(`ssh_attach_terminal ${restorePlan.ptyId} failed:`, error)
+          recordTerminalDiagnostic('terminal.restore_failed', tab)
+          const gone = String(error).includes('QC_PTY_GONE:')
+          set(state => ({ terminals: state.terminals.map(terminal => terminal.id === id ? {
+            ...terminal, status: 'exited', exitCode: null, endedAt: gone ? Date.now() : undefined,
+            restoreUnavailable: !gone, awaitingRestoreSpawn: false, ptySpawnPending: false,
+          } : terminal) }))
+          disconnectNoticeShown.add(id)
+          publishTerminalNotice(id, translate(gone
+            ? '终端会话已结束，输出已保留。'
+            : '暂时无法接回终端，输出已保留。'))
+          persistTerminalOutputNow()
+          return
         }
       }
       if (!get().terminals.some(terminal => terminal.id === id)) {
-        if (spawnResult) await killTerminal(id)
+        if (spawnResult) await killTerminal(id, 'spawn_cancelled')
         return
       }
       if (!spawnResult) {
@@ -2106,12 +1978,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
       }
       if (!get().terminals.some(terminal => terminal.id === id)) {
-        await killTerminal(id)
+        await killTerminal(id, 'spawn_cancelled')
         return
       }
       // 以后端结果为准：接回失败回退新建时可能是直连终端（persistent=false），
       // 不能沿用旧 ptyId，否则断线提示消失、下次重启又去接回已失效的 PTY。
       applyTerminalSpawnResult(id, spawnResult)
+    const spawnedTab = get().terminals.find(terminal => terminal.id === id)
+    if (spawnedTab) recordTerminalDiagnostic('terminal.spawned', spawnedTab)
       set(s => ({
         terminals: s.terminals.map(terminal =>
           terminal.id === id
@@ -2197,20 +2071,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           }))
           return
         }
+        recordTerminalDiagnostic('terminal.exit_received', { ...tab, exitCode: exit_code })
         if (disconnected) {
-          if (tab.persistent === true) {
-            void recoverPersistentTerminalAfterDaemonRestart(id, reason)
-          } else {
-            void recoverSshTerminalAfterDisconnect(id, reason)
-          }
+          publishTerminalNotice(id, translate('终端会话已结束，输出已保留。'))
+          markDisconnectedExit(id)
+          useTerminalStore.setState(state => ({ terminals: state.terminals.map(terminal =>
+            terminal.id === id ? { ...terminal, disconnectReason: reason ?? terminal.disconnectReason,
+              awaitingRestoreSpawn: false, ptySpawnPending: false } : terminal),
+          }))
+          persistTerminalOutputNow()
           return
         }
-        // OpenCode etc. often kill the whole ConPTY; reopen a shell so the
-        // user can keep typing instead of seeing「进程已退出」.
-        if (shouldKeepShellAfterExit(tab)) {
-          void respawnShellAfterExit(id)
-          return
-        }
+        persistTerminalOutputNow()
         const startedAt = tab.startedAt
         const quickFail =
           !!startedAt && Date.now() - startedAt < QUICK_FAIL_THRESHOLD_MS && exit_code !== 0
@@ -2221,6 +2093,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
                   ...terminal,
                   status: 'exited',
                   exitCode: exit_code,
+                  endedAt: Date.now(),
                 }
               : terminal
           ),

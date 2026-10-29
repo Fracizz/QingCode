@@ -28,6 +28,7 @@ import { useI18n } from '../lib/i18n'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 import { confirmDialog } from '../store/confirmStore'
+import { hasDirectAgentConnection } from '../lib/directAgent'
 import {
   browseSshDirectory,
   hasSshSessionSecrets,
@@ -297,7 +298,9 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
         secrets,
         resolveSshConnectionMode(target, getSshServerEnabled())
       )
-      if (!config.hostKeyFingerprint) {
+      const directEnabled = await hasDirectAgentConnection(target.id)
+      if (epoch !== epochRef.current) return
+      if (!directEnabled && !config.hostKeyFingerprint) {
         const fingerprint = await probeSshHost(config)
         if (epoch !== epochRef.current) return
         const accepted = await confirmDialog({
@@ -348,7 +351,9 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
     const epoch = epochRef.current
     const alive = await isSshConnectionAlive(target.id).catch(() => false)
     if (epoch !== epochRef.current) return
-    const needsPassword = target.auth_kind === 'password' && !hasSshSessionSecrets(target.id)
+    const directEnabled = target.auth_kind === 'password' && await hasDirectAgentConnection(target.id)
+    if (epoch !== epochRef.current) return
+    const needsPassword = target.auth_kind === 'password' && !directEnabled && !hasSshSessionSecrets(target.id)
     if (alive || !needsPassword) {
       await connectSsh(target, {})
       return
@@ -356,13 +361,16 @@ export default function CreateProjectDialog({ open: visible, onClose, onCreated 
     setSshPhase('auth')
   }
 
-  const submitAuth = () => {
+  const submitAuth = async () => {
     if (!connection) return
-    if (connection.auth_kind === 'password' && !password) {
+    const epoch = epochRef.current
+    const directEnabled = await hasDirectAgentConnection(connection.id)
+    if (epoch !== epochRef.current) return
+    if (!directEnabled && connection.auth_kind === 'password' && !password) {
       setError(t('请输入 SSH 密码。'))
       return
     }
-    void connectSsh(connection, {
+    void connectSsh(connection, directEnabled ? {} : {
       password: password || undefined,
       passphrase: passphrase || undefined,
     })

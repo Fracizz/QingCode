@@ -39,6 +39,7 @@ import {
   resolveSshConnectionMode,
   sshConnectionIdFromUri,
   sshConnectionLabel,
+  sshConnectionTarget,
   sshFileDisplayPath,
   sshProjectDisplayPath,
   sshRemotePathFromUri,
@@ -88,6 +89,13 @@ describe('joinSshResource', () => {
 })
 
 describe('sshConnectionLabel', () => {
+  it('shows the actual Agent host and port while retaining legacy SSH labels', () => {
+    const connection = { name: 'WinDev', username: 'Agent', host: 'old-ssh.test', port: 22, agentEndpoint: { host: '192.168.252.107', port: 48763 } }
+    expect(sshConnectionTarget(connection)).toBe('192.168.252.107:48763')
+    expect(sshConnectionLabel(connection)).toBe('WinDev（192.168.252.107:48763）')
+    expect(sshConnectionTarget({ ...connection, agentEndpoint: undefined })).toBe('Agent@old-ssh.test')
+    expect(sshConnectionTarget({ ...connection, agentEndpoint: { host: '::1', port: 51234 } })).toBe('[::1]:51234')
+  })
   it('keeps a custom connection name beside the SSH target', () => {
     expect(
       sshConnectionLabel({
@@ -131,6 +139,11 @@ describe('isSshProject', () => {
 })
 
 describe('sshProjectDisplayPath', () => {
+  it('uses the actual Agent endpoint for project and file display paths', () => {
+    const connection = { id: 'c1', name: 'WinDev', username: 'Agent', host: 'old-ssh.test', port: 22, agentEndpoint: { host: '192.168.252.107', port: 48763 } }
+    expect(sshProjectDisplayPath({ kind: 'ssh', path: 'ssh://c1/D:/code/app' }, connection)).toBe('192.168.252.107:48763:/D:/code/app')
+    expect(sshFileDisplayPath('ssh://c1/D:/code/app/file.ts', [connection])).toBe('WinDev（192.168.252.107:48763）:/D:/code/app/file.ts')
+  })
   it('shows host and remote root instead of the internal URI', () => {
     expect(
       sshProjectDisplayPath(
@@ -225,6 +238,20 @@ describe('ensureSshWorkspaceConnected', () => {
       last_opened_at: 1,
     }
   }
+
+  it('uses the protected Agent profile for a disconnected password-placeholder row without SSH credentials', async () => {
+    forgetSshSessionSecrets(connection.id)
+    mocks.getSshConnection.mockResolvedValue({ ...connection, username: 'Agent' })
+    mocks.safeInvoke.mockImplementation(async (_label: string, command: string) => {
+      if (command === 'ssh_workspace_status' || command === 'ssh_connection_status') return false
+      if (command === 'direct_agent_info') return { enabled: true }
+      if (command === 'ssh_connect') return { fingerprint: 'TLS:paired' }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    await expect(ensureSshWorkspaceConnected(project('agent', '/home/agent'))).resolves.toBeUndefined()
+    expect(mocks.safeInvoke).toHaveBeenCalledWith('连接 SSH 项目', 'ssh_connect', expect.objectContaining({ config: expect.objectContaining({ username: 'Agent' }) }))
+    expect(mocks.safeInvoke.mock.calls.find(call => call[1] === 'ssh_connect')?.[2].config).not.toHaveProperty('password')
+  })
 
   it('registers every full root when same-named projects share one live connection', async () => {
     const registeredRoots = new Set<string>()

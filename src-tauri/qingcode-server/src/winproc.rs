@@ -31,9 +31,15 @@ pub struct DetachedSpawn {
 /// 由 CreateProcessW 拉起的子进程句柄，只保留 hProcess 供 `try_wait` 轮询。
 pub struct WindowsChild {
     process: windows_sys::Win32::Foundation::HANDLE,
+    pid: u32,
+    used_breakaway: bool,
 }
 
 impl WindowsChild {
+    pub fn id(&self) -> u32 {
+        self.pid
+    }
+
     /// 非阻塞探测退出状态：已退出返回退出码，未退出返回 None。
     pub fn try_wait(&self) -> std::io::Result<Option<u32>> {
         use windows_sys::Win32::Foundation::{WAIT_FAILED, WAIT_OBJECT_0};
@@ -180,6 +186,13 @@ pub fn spawn_detached(spawn: DetachedSpawn) -> Result<WindowsChild, String> {
         )
     } != 0;
     if !spawned {
+        let first_error = unsafe { GetLastError() };
+        crate::diagnostics::record(
+            "process.breakaway_failed",
+            serde_json::json!({"osError":first_error}),
+            true,
+            false,
+        );
         // sshd 的 Job 对象可能不允许 breakaway：去掉该标志重试一次。
         flags &= !CREATE_BREAKAWAY_FROM_JOB;
         // SAFETY: 同上。
@@ -218,6 +231,8 @@ pub fn spawn_detached(spawn: DetachedSpawn) -> Result<WindowsChild, String> {
     unsafe { windows_sys::Win32::Foundation::CloseHandle(pi.hThread) };
     Ok(WindowsChild {
         process: pi.hProcess,
+        pid: pi.dwProcessId,
+        used_breakaway: flags & CREATE_BREAKAWAY_FROM_JOB != 0,
     })
 }
 
@@ -237,9 +252,107 @@ pub fn spawn_detached_daemon(state_dir: Option<&Path>) -> Result<WindowsChild, S
             quote_windows_arg(OsStr::new(dir))
         ));
     }
-    spawn_detached(DetachedSpawn {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+    let run = crate::daemon::RunDir::resolve(state_dir)?;
+    let log = run.dir().join("daemon.stderr.log");
+    if std::fs::metadata(&log).is_ok_and(|meta| meta.len() > 5 * 1024 * 1024) {
+        let archive = run.dir().join("daemon.stderr.log.1");
+        let _ = std::fs::remove_file(&archive);
+        let _ = std::fs::rename(&log, archive);
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .read(true)
+        .share_mode(1 | 2 | 4)
+        .open(log)
+        .map_err(|error| format!("打开 daemon stderr 日志失败: {error}"))?;
+    let handle = file.as_raw_handle();
+    // SAFETY: handle belongs to `file` and stays alive through CreateProcessW.
+    if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) } == 0 {
+        return Err(format!(
+            "设置 daemon 日志句柄失败: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let child = spawn_detached(DetachedSpawn {
         command_line: line,
-        inherit: Vec::new(),
-        stdio_handle: None,
+        inherit: vec![handle],
+        stdio_handle: Some(handle),
+    });
+    if let Ok(child) = &child {
+        use std::io::Write;
+        let _ = writeln!(
+            file,
+            "{}",
+            serde_json::json!({"event":"daemon.detached_spawn", "timestampMs":crate::diagnostics::now_ms(),
+            "daemonPid":child.pid,"breakawayUsed":child.used_breakaway})
+        );
+        let _ = file.sync_data();
+    }
+    drop(file);
+    child
+}
+
+/// Start the direct gateway without inheriting SSH stdio or console handles.
+pub fn spawn_detached_direct(
+    hostname: &str,
+    port: u16,
+    state_dir: Option<&Path>,
+) -> Result<WindowsChild, String> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{SetHandleInformation, HANDLE_FLAG_INHERIT};
+    if hostname.is_empty()
+        || !hostname
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b".:-_".contains(&c))
+    {
+        return Err("直连监听地址无效".into());
+    }
+    let exe = std::env::current_exe().map_err(|e| format!("定位直连程序失败: {e}"))?;
+    let mut command_line = format!(
+        "{} direct --hostname {}",
+        quote_windows_arg(exe.as_os_str()),
+        quote_windows_arg(OsStr::new(hostname))
+    );
+    if port != 0 {
+        command_line.push_str(&format!(" --port {port}"));
+    }
+    if let Some(dir) = state_dir {
+        command_line.push_str(&format!(
+            " --state-dir {}",
+            quote_windows_arg(dir.as_os_str())
+        ));
+    }
+    let run = crate::daemon::RunDir::resolve(state_dir)?;
+    let dir = run.dir().join("direct");
+    crate::direct::protect_private_directory(&dir)?;
+    let log = dir.join("gateway.log");
+    if std::fs::metadata(&log).is_ok_and(|m| m.len() > 5 * 1024 * 1024) {
+        let _ = std::fs::remove_file(dir.join("gateway.log.1"));
+        let _ = std::fs::rename(&log, dir.join("gateway.log.1"));
+    }
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .read(true)
+        .share_mode(1 | 2 | 4)
+        .open(log)
+        .map_err(|e| format!("打开直连日志失败: {e}"))?;
+    let handle = file.as_raw_handle();
+    // SAFETY: file retains this handle through CreateProcessW; only this log is inherited.
+    if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) } == 0 {
+        return Err(format!(
+            "设置直连日志句柄失败: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    spawn_detached(DetachedSpawn {
+        command_line,
+        inherit: vec![handle],
+        stdio_handle: Some(handle),
     })
 }

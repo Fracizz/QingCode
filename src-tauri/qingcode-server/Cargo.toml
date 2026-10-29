@@ -14,8 +14,8 @@ path = "src/lib.rs"
 name = "qingcode-server"
 path = "src/main.rs"
 
-# 依赖选择以「纯 Rust、无 C 依赖」为准，保证 x86_64/aarch64-unknown-linux-musl
-# 用 rust-lld 静态链接即可产出可直接下发的二进制。
+# 应用协议与网络层使用 Rust 实现；TLS 的 ring 加密后端需要对应目标的 C 编译器。
+# musl 静态产物仍需在发布构建中验证，不能仅凭本地 GNU 编译成功认定可部署。
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -23,7 +23,7 @@ serde_json = "1"
 # 避免 Vec<u8> 被编码成整数数组而膨胀数倍。
 rmp-serde = "1"
 serde_bytes = "0.11"
-tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "io-std", "time", "sync", "macros", "fs", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "io-std", "time", "sync", "macros", "fs", "signal", "process"] }
 ignore = "0.4.29"
 grep-searcher = "0.1.17"
 grep-regex = "0.1.14"
@@ -43,6 +43,12 @@ sha2 = "0.10"
 # 版本对齐依赖树里 tempfile（notify-debouncer-mini）已引入的 0.4，
 # 不新增传递依赖；纯 Rust、无 C 依赖，musl 静态链接不受影响。
 getrandom = "0.4"
+# Independent HTTPS/WSS endpoint; Rust TLS with ring matches the SSH client's provider.
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", features = ["sink"] }
 # flock / setsid / SIGHUP 等只有 unix 需要，Windows 目标上不会被链接。
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

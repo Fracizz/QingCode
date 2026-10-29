@@ -297,6 +297,13 @@ impl TerminalManager {
                 );
             }
         });
+        qingcode_server::diagnostics::record(
+            "terminal.created",
+            serde_json::json!({
+            "terminalId":id,"shellPid":shell_pid,"generation":generation}),
+            false,
+            false,
+        );
         let output_gate = OutputGate::default();
         let session = TerminalSession {
             master: Arc::new(Mutex::new(master)),
@@ -313,6 +320,14 @@ impl TerminalManager {
             sessions.insert(id.clone(), session)
         };
         if let Some(mut old) = old {
+            qingcode_server::diagnostics::record(
+                "terminal.replacement_kill_requested",
+                serde_json::json!({
+                "terminalId":id,"oldGeneration":old.generation,"newGeneration":generation,
+                "shellPid":old.shell_pid,"source":"session_replaced"}),
+                true,
+                false,
+            );
             old.output_gate.set_paused(false);
             if let Some(task) = old.wsl_task.take() {
                 let _ = task.stop();
@@ -348,6 +363,14 @@ impl TerminalManager {
         let sessions = Arc::clone(&self.sessions);
         std::thread::spawn(move || {
             let status = child.wait();
+            qingcode_server::diagnostics::record(
+                "terminal.process_wait_returned",
+                serde_json::json!({
+                "terminalId":id,"generation":generation,"exitCode":status.as_ref().ok().map(|s|s.exit_code()),
+                "waitFailed":status.is_err()}),
+                true,
+                false,
+            );
             // 进程已退出：放开可能被前端暂停的读线程，让它读到 EOF 后结束。
             output_gate.set_paused(false);
             let is_current = {

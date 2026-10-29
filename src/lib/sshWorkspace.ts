@@ -2,6 +2,7 @@ import type { Project, SshConnection, SshConnectionMode } from '../types'
 import { getSshConnection, upsertSshConnection } from './projectRepository'
 import { getSshServerEnabled, loadSshPreparationSettings } from './sshServerSettings'
 import { safeInvoke } from './tauri'
+import { hasDirectAgentConnection } from './directAgent'
 import { parseSshServerState, type SshServerState } from './sshServerStatus'
 import { isProjectTrusted } from './workspaceTrust'
 
@@ -129,14 +130,19 @@ export function sshRootUri(connectionId: string, rootPath: string): string {
 }
 
 export function sshConnectionTarget(
-  connection: Pick<SshConnection, 'username' | 'host' | 'port'>
+  connection: Pick<SshConnection, 'username' | 'host' | 'port' | 'agentEndpoint'>
 ): string {
+  if (connection.agentEndpoint) {
+    const { host, port } = connection.agentEndpoint
+    const address = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+    return `${address}:${port}`
+  }
   const port = connection.port === 22 ? '' : `:${connection.port}`
   return `${connection.username}@${connection.host}${port}`
 }
 
 export function sshConnectionLabel(
-  connection: Pick<SshConnection, 'name' | 'username' | 'host' | 'port'>
+  connection: Pick<SshConnection, 'name' | 'username' | 'host' | 'port' | 'agentEndpoint'>
 ): string {
   const target = sshConnectionTarget(connection)
   const name = connection.name.trim()
@@ -181,8 +187,8 @@ export function joinSshResource(root: string, ...segments: string[]): string {
 
 export function sshProjectDisplayPath(
   project: Pick<Project, 'kind' | 'path' | 'root_path' | 'connection_id'>,
-  connection?: Pick<SshConnection, 'id' | 'username' | 'host' | 'port'> | null,
-  connections: ReadonlyArray<Pick<SshConnection, 'id' | 'username' | 'host' | 'port'>> = []
+  connection?: Pick<SshConnection, 'id' | 'username' | 'host' | 'port' | 'agentEndpoint'> | null,
+  connections: ReadonlyArray<Pick<SshConnection, 'id' | 'username' | 'host' | 'port' | 'agentEndpoint'>> = []
 ): string {
   if (!isSshProject(project)) return project.path
   const remote = project.root_path || sshRemotePathFromUri(project.path)
@@ -198,7 +204,7 @@ export function sshProjectDisplayPath(
 export function sshFileDisplayPath(
   path: string,
   connections: ReadonlyArray<
-    Pick<SshConnection, 'id' | 'name' | 'username' | 'host' | 'port'>
+    Pick<SshConnection, 'id' | 'name' | 'username' | 'host' | 'port' | 'agentEndpoint'>
   > = []
 ): string {
   const connectionId = sshConnectionIdFromUri(path)
@@ -485,8 +491,12 @@ export async function ensureSshWorkspaceConnected(
       const connection = await getSshConnection(connectionId)
       if (!connection) throw new Error('SSH 连接配置不存在')
       const connectionAlive = await isSshConnectionAlive(connectionId)
+      const directEnabled = !connectionAlive && connection.auth_kind === 'password'
+        ? await hasDirectAgentConnection(connectionId)
+        : false
       if (
         !connectionAlive &&
+        !directEnabled &&
         connection.auth_kind === 'password' &&
         !sshSecretsFor(connection.id).password
       ) {

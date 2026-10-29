@@ -1,3 +1,5 @@
+import TerminalExitNotice from './TerminalExitNotice'
+import { exportTerminalDiagnostics } from '@/lib/terminal/terminalDiagnostics'
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Terminal as XTerm } from '@xterm/xterm'
@@ -851,7 +853,7 @@ export default function TerminalView({
         }
         const recovery = restoredExitRecovery({
           awaitingRestoreSpawn: latest.awaitingRestoreSpawn === true,
-          sessionOpen,
+          sessionOpen: sessionOpen && !latest.endedAt,
           keepShell: shouldKeepShellAfterExit(latest),
         })
         if (recovery === 'reattach') {
@@ -862,10 +864,6 @@ export default function TerminalView({
                 : tab
             ),
           }))
-          return
-        }
-        if (recovery === 'respawn') {
-          void useTerminalStore.getState().restartTerminal(terminalId, { preserveOutput: true })
           return
         }
         const note =
@@ -1063,7 +1061,7 @@ export default function TerminalView({
         if (!latest || latest.status !== 'exited') return
         // 断线说明已由 store 写入输出，不再追加“进程未启动”。
         if (!sessionOpen && consumeTerminalDisconnectNotice(terminalId)) return
-        if (sessionOpen) {
+        if (sessionOpen && !latest.endedAt) {
           useTerminalStore.setState(state => ({
             terminals: state.terminals.map(tab =>
               tab.id === terminalId && tab.status === 'exited'
@@ -1172,6 +1170,18 @@ export default function TerminalView({
         ) : null}
         <div ref={containerRef} className="h-full w-full min-h-0 min-w-0" />
       </div>
+      {terminal?.status === 'exited' && !terminal.awaitingRestoreSpawn && !terminal.ptySpawnPending && (
+        <TerminalExitNotice
+          exitCode={terminal.exitCode}
+          restoreUnavailable={terminal.restoreUnavailable}
+          onReopen={() => useTerminalStore.getState().reopenTerminalShell(terminalId)}
+          onExport={async () => {
+            const root = useProjectStore.getState().projects.find(project => project.id === terminal.projectId)?.path
+            try { await exportTerminalDiagnostics(terminal, root) }
+            catch (error) { useProjectStore.getState().pushToast('error', String(error)) }
+          }}
+        />
+      )}
       {contextMenu && (
         <ContextMenu
           x={contextMenu.x}

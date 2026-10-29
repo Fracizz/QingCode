@@ -63,6 +63,12 @@ russh-sftp = "2.4.0"
 # SSH 远端代理（qingcode-server）的协议契约：帧编解码与消息类型两端共用，避免漂移。
 qingcode-server = { path = "qingcode-server" }
 tokio = { version = "1", features = ["io-util", "sync", "time"] }
+# Independent Agent transport; use the same ring TLS provider as SSH.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
+futures-util = { version = "0.3", features = ["sink"] }
+url = "2"
 # 注意：tokio / futures / chrono 不作为直接依赖。
 # 源码未直接使用它们；由 tauri / portable-pty 等按需拉取所需特性即可，
 # 避免 tokio "full" 把 net/signal/process/fs 等全部模块强行编入。
