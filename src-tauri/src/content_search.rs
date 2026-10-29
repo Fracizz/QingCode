@@ -730,11 +730,11 @@ mod tests {
         let first_file_scanned = Arc::new(AtomicBool::new(false));
         let hook_cancel = Arc::clone(&cancel);
         let hook_first_file_scanned = Arc::clone(&first_file_scanned);
-        let scan_hook = Arc::new(move |scanned: usize| {
-            if scanned == 1 {
-                hook_first_file_scanned.store(true, Ordering::SeqCst);
-                hook_cancel.store(true, Ordering::SeqCst);
-            }
+        let scan_hook = Arc::new(move |_scanned: usize| {
+            // Workers can finish out of order. Cancel on the first completion,
+            // rather than waiting for the worker assigned scan number one.
+            hook_cancel.store(true, Ordering::SeqCst);
+            hook_first_file_scanned.store(true, Ordering::SeqCst);
         });
 
         let mut o = opts("needle");

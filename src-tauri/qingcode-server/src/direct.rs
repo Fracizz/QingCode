@@ -31,6 +31,9 @@ pub const DEFAULT_DIRECT_PORT: u16 = 48763;
 const MAX_HEADERS: usize = 16 * 1024;
 const MAX_BODY: usize = 16 * 1024 * 1024;
 const MAX_CONNECTIONS: usize = 96;
+// File/command HTTPS sockets include idle keep-alive connections. Bound them
+// separately so transfers cannot consume all terminal and health capacity.
+const MAX_WORKSPACE_CONNECTIONS: usize = crate::workspace::budget::MAX_REQUESTS;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone, Debug)]
@@ -346,6 +349,7 @@ pub struct Gateway {
     token: String,
     endpoint: IpcEndpoint,
     daemon_options: ConnectOptions,
+    workspace_connections: Semaphore,
     pub info: DirectInfo,
 }
 
@@ -424,6 +428,7 @@ impl Gateway {
                 ensure_daemon: true,
                 ..Default::default()
             },
+            workspace_connections: Semaphore::new(MAX_WORKSPACE_CONNECTIONS),
             info,
         })
     }
@@ -455,6 +460,7 @@ impl Gateway {
             .await
             .map_err(|_| "TLS 握手超时")?
             .map_err(|_| "TLS 握手失败")?;
+        let mut workspace_permit = None;
         // Keep-alive is opt-in so older clients can still read until EOF.
         // Bound idle sockets and the number of requests per TLS connection.
         for index in 0..256 {
@@ -467,7 +473,7 @@ impl Gateway {
                 return http_response(&mut tls, 401, br#"{"error":"authenticationRequired"}"#)
                     .await;
             }
-            let keep_alive = request.keep_alive && index < 255;
+            let keep_alive = request.keep_alive && index < 255 && request.path == "/workspace";
             let body = match (request.method.as_str(), request.path.as_str()) {
                 ("GET", "/health") if request.content_length == 0 => {
                     serde_json::to_vec(&serde_json::json!({ "healthy": true,
@@ -479,6 +485,9 @@ impl Gateway {
                     if request.content_length != 0 {
                         return http_response(&mut tls, 400, br#"{"error":"invalidRequest"}"#).await;
                     }
+                    // Upgrading a previously used HTTPS socket changes its
+                    // role; it must not retain a workspace connection slot.
+                    drop(workspace_permit.take());
                     let stream = ReplayStream { prefix: std::io::Cursor::new(headers), inner: tls };
                     let config = tungstenite::protocol::WebSocketConfig::default()
                         .max_message_size(Some(proto::MAX_FRAME_BYTES + 4))
@@ -491,6 +500,12 @@ impl Gateway {
                 ("POST", "/workspace") => {
                     if request.content_length == 0 {
                         return http_response(&mut tls, 400, br#"{"error":"emptyBody"}"#).await;
+                    }
+                    if workspace_permit.is_none() {
+                        workspace_permit = match self.workspace_connections.try_acquire() {
+                            Ok(permit) => Some(permit),
+                            Err(_) => return http_response(&mut tls, 503, br#"{"error":"workspaceBusy"}"#).await,
+                        };
                     }
                     let mut body = vec![0; request.content_length];
                     tokio::time::timeout(HANDSHAKE_TIMEOUT, tls.read_exact(&mut body))
@@ -710,6 +725,7 @@ async fn http_response_connection<S: AsyncWrite + Unpin>(
         200 => "OK",
         400 => "Bad Request",
         401 => "Unauthorized",
+        503 => "Service Unavailable",
         _ => "Not Found",
     };
     let head = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: {connection}\r\n\r\n", body.len());
@@ -870,21 +886,22 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    async fn response(stream: &mut (impl AsyncRead + Unpin)) -> (String, Vec<u8>) {
+        let head = read_headers(stream).await.unwrap();
+        let head = String::from_utf8(head).unwrap();
+        let length = head
+            .lines()
+            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        let mut body = vec![0; length];
+        stream.read_exact(&mut body).await.unwrap();
+        (head, body)
+    }
+
     #[tokio::test]
     async fn https_keep_alive_authenticates_every_request() {
-        async fn response(stream: &mut (impl AsyncRead + Unpin)) -> (String, Vec<u8>) {
-            let head = read_headers(stream).await.unwrap();
-            let head = String::from_utf8(head).unwrap();
-            let length = head
-                .lines()
-                .find_map(|line| line.strip_prefix("Content-Length: "))
-                .unwrap()
-                .parse::<usize>()
-                .unwrap();
-            let mut body = vec![0; length];
-            stream.read_exact(&mut body).await.unwrap();
-            (head, body)
-        }
         let dir = temporary();
         let gateway = Gateway::bind(options(&dir, available_port()))
             .await
@@ -893,8 +910,10 @@ mod tests {
         let token = info(Some(&dir), true).unwrap().token.unwrap();
         let running = tokio::spawn(gateway.run());
         let mut stream = tls(&dir, port).await;
+        let input = br#"{"op":"info"}"#;
         for credential in [token.as_str(), token.as_str(), "wrong"] {
-            stream.write_all(format!("GET /health HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {credential}\r\nConnection: keep-alive\r\n\r\n").as_bytes()).await.unwrap();
+            stream.write_all(format!("POST /workspace HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {credential}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n", input.len()).as_bytes()).await.unwrap();
+            stream.write_all(input).await.unwrap();
             stream.flush().await.unwrap();
             let (head, body) = tokio::time::timeout(Duration::from_secs(2), response(&mut stream))
                 .await
@@ -906,7 +925,7 @@ mod tests {
                 assert!(head.starts_with("HTTP/1.1 200 "));
                 assert!(head.contains("Connection: keep-alive"));
                 assert_eq!(
-                    serde_json::from_slice::<serde_json::Value>(&body).unwrap()["healthy"],
+                    serde_json::from_slice::<serde_json::Value>(&body).unwrap()["ok"],
                     true
                 );
             }
@@ -914,6 +933,77 @@ mod tests {
         let mut trailing = Vec::new();
         stream.read_to_end(&mut trailing).await.unwrap();
         assert!(trailing.is_empty());
+        running.abort();
+        let _ = running.await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn full_workspace_connections_leave_health_and_websocket_available() {
+        use tungstenite::client::IntoClientRequest;
+        let dir = temporary();
+        let gateway = Gateway::bind(options(&dir, available_port()))
+            .await
+            .unwrap();
+        let port = gateway.info.port;
+        let token = info(Some(&dir), true).unwrap().token.unwrap();
+        let running = tokio::spawn(gateway.run());
+        let input = br#"{"op":"info"}"#;
+        let request = format!("POST /workspace HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n", input.len());
+        let mut held = Vec::new();
+        for _ in 0..MAX_WORKSPACE_CONNECTIONS {
+            let mut stream = tls(&dir, port).await;
+            stream.write_all(request.as_bytes()).await.unwrap();
+            stream.write_all(input).await.unwrap();
+            stream.flush().await.unwrap();
+            let (head, _) = tokio::time::timeout(Duration::from_secs(2), response(&mut stream))
+                .await
+                .unwrap();
+            assert!(head.starts_with("HTTP/1.1 200 "));
+            held.push(stream);
+        }
+        let mut excess = tls(&dir, port).await;
+        excess.write_all(request.as_bytes()).await.unwrap();
+        excess.write_all(input).await.unwrap();
+        excess.flush().await.unwrap();
+        let (head, _) = tokio::time::timeout(Duration::from_secs(2), response(&mut excess))
+            .await
+            .unwrap();
+        assert!(head.starts_with("HTTP/1.1 503 "));
+        assert!(head.contains("Connection: close"));
+
+        let mut health = tls(&dir, port).await;
+        health.write_all(format!("GET /health HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nConnection: keep-alive\r\n\r\n").as_bytes()).await.unwrap();
+        health.flush().await.unwrap();
+        let (head, _) = tokio::time::timeout(Duration::from_secs(2), response(&mut health))
+            .await
+            .unwrap();
+        assert!(head.starts_with("HTTP/1.1 200 "));
+        assert!(head.contains("Connection: close"));
+
+        let mut request = format!("wss://localhost:{port}/connect")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("Authorization", format!("Bearer {token}").parse().unwrap());
+        let (mut socket, _) = tokio_tungstenite::client_async(request, tls(&dir, port).await)
+            .await
+            .unwrap();
+        socket
+            .send(Message::Ping(b"control".to_vec().into()))
+            .await
+            .unwrap();
+        let reply = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(reply, Message::Pong(bytes) if bytes.as_ref() == b"control"));
+        drop(socket);
+        drop(held);
+        drop(excess);
+        drop(health);
         running.abort();
         let _ = running.await;
         std::fs::remove_dir_all(dir).unwrap();

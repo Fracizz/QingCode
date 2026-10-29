@@ -299,6 +299,8 @@ enum SessionOutbound {
     Shutdown,
 }
 
+mod session_outbound;
+
 struct QueuedSessionEvent {
     event: Event,
     _budget: OwnedSemaphorePermit,
@@ -410,7 +412,7 @@ impl SessionState {
 /// 请求通道；PTY 事件走单独的事件队列。旧的 [`daemon_rpc`] 继续保留给
 /// scan/search/watch 的单请求通道，两者互不影响。
 pub(super) struct DaemonSession {
-    outbound: mpsc::Sender<SessionOutbound>,
+    outbound: session_outbound::SessionSender,
     state: Arc<SessionState>,
     events: Option<SessionEventReceiver>,
 }
@@ -466,7 +468,7 @@ impl DaemonSession {
     fn from_channel(channel: DaemonChannel) -> Self {
         let (mut reader, mut writer) = channel.channel.split();
         let stderr_notes = channel.stderr_notes;
-        let (outbound_tx, mut outbound_rx) = mpsc::channel::<SessionOutbound>(64);
+        let (outbound_tx, mut outbound_rx) = session_outbound::channel();
         let (events_tx, events_rx) = session_event_channel();
         let state = Arc::new(SessionState {
             pending: Mutex::new(HashMap::new()),

@@ -3,14 +3,15 @@
 use super::*;
 use std::time::Instant;
 
+mod shared_pool;
+
 const MAX_HEADERS: usize = 16 * 1024;
 const MAX_BODY: usize = 16 * 1024 * 1024;
 const MAX_IDLE: usize = 8;
 const IDLE_TTL: Duration = Duration::from_secs(5);
 
 pub(in super::super) struct WorkspaceClient {
-    config: DirectConnectionConfig,
-    idle: Mutex<Vec<(Instant, TlsStream<TcpStream>)>>,
+    shared: Arc<shared_pool::SharedPool>,
 }
 
 struct Response {
@@ -88,8 +89,7 @@ async fn read_response<S: tokio::io::AsyncRead + Unpin>(
 impl WorkspaceClient {
     pub(in super::super) fn new(config: DirectConnectionConfig) -> Self {
         Self {
-            config,
-            idle: Mutex::new(Vec::new()),
+            shared: shared_pool::SharedPool::get(config),
         }
     }
 
@@ -97,14 +97,9 @@ impl WorkspaceClient {
         &self,
         request: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        validate_token(&self.config.token)?;
-        let endpoint = endpoint(&self.config.endpoint)?;
-        let expected = normalized_fingerprint(&self.config.certificate_fingerprint)?;
-        let body =
-            serde_json::to_vec(request).map_err(|_| "[direct:protocol] 工作区请求编码失败")?;
-        if body.len() > MAX_BODY {
-            return Err("[direct:protocol] 工作区请求过大".into());
-        }
+        validate_token(&self.shared.config.token)?;
+        let endpoint = endpoint(&self.shared.config.endpoint)?;
+        let expected = normalized_fingerprint(&self.shared.config.certificate_fingerprint)?;
         let timeout = request
             .get("timeoutSeconds")
             .and_then(serde_json::Value::as_u64)
@@ -112,8 +107,14 @@ impl WorkspaceClient {
             .clamp(1, 120)
             .saturating_add(10);
         tokio::time::timeout(Duration::from_secs(timeout), async {
+            let op = request.get("op").and_then(serde_json::Value::as_str).unwrap_or_default();
+            let _permit = self.shared.budget.acquire(op).await?;
+            let body = serde_json::to_vec(request).map_err(|_| "[direct:protocol] 工作区请求编码失败")?;
+            if body.len() > MAX_BODY {
+                return Err("[direct:protocol] 工作区请求过大".into());
+            }
             let cached = {
-                let mut idle = self.idle.lock().unwrap_or_else(|e| e.into_inner());
+                let mut idle = self.shared.idle.lock().unwrap_or_else(|e| e.into_inner());
                 idle.retain(|(used, _)| used.elapsed() < IDLE_TTL);
                 idle.pop().map(|(_, stream)| stream)
             };
@@ -123,7 +124,7 @@ impl WorkspaceClient {
             };
             let headers = format!(
                 "POST /workspace HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
-                endpoint.authority, self.config.token, body.len()
+                endpoint.authority, self.shared.config.token, body.len()
             );
             write_http_request(&mut stream, &headers, &body).await
                 .map_err(|_| "[direct:unreachable] 工作区请求发送失败")?;
@@ -131,11 +132,14 @@ impl WorkspaceClient {
             if matches!(response.status, 401 | 403) {
                 return Err("[direct:auth] Agent 连接凭据错误或已失效".into());
             }
+            if response.status == 503 {
+                return Err("[direct:busy] 工作区请求繁忙，请稍后重试".into());
+            }
             if response.status != 200 { return Err("[direct:protocol] 工作区请求未成功".into()); }
             let value: serde_json::Value = serde_json::from_slice(&response.body)
                 .map_err(|_| "[direct:protocol] 工作区 JSON 响应无效")?;
             if response.reusable {
-                let mut idle = self.idle.lock().unwrap_or_else(|e| e.into_inner());
+                let mut idle = self.shared.idle.lock().unwrap_or_else(|e| e.into_inner());
                 if idle.len() < MAX_IDLE { idle.push((Instant::now(), stream)); }
             }
             if value.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
@@ -152,12 +156,104 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn short_lived_metadata_clients_share_connections_but_credentials_and_pins_do_not() {
+        let (config, gateway, directory) = super::super::tests::gateway().await;
+        let first = WorkspaceClient::new(config.clone());
+        first
+            .request(&serde_json::json!({"op":"info"}))
+            .await
+            .unwrap();
+        let address = first.shared.idle.lock().unwrap()[0]
+            .1
+            .get_ref()
+            .0
+            .local_addr()
+            .unwrap();
+        let pool = Arc::clone(&first.shared);
+        drop(first);
+        for _ in 0..3 {
+            let client = WorkspaceClient::new(config.clone());
+            assert!(Arc::ptr_eq(&pool, &client.shared));
+            client
+                .request(
+                    &serde_json::json!({"op":"canonicalize","path":directory.to_string_lossy()}),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                client.shared.idle.lock().unwrap()[0]
+                    .1
+                    .get_ref()
+                    .0
+                    .local_addr()
+                    .unwrap(),
+                address
+            );
+        }
+        let wrong_token = WorkspaceClient::new(DirectConnectionConfig {
+            token: "wrong-token".into(),
+            ..config.clone()
+        });
+        assert!(!Arc::ptr_eq(&pool, &wrong_token.shared));
+        assert!(wrong_token
+            .request(&serde_json::json!({"op":"info"}))
+            .await
+            .unwrap_err()
+            .starts_with("[direct:auth]"));
+        let wrong_pin = WorkspaceClient::new(DirectConnectionConfig {
+            certificate_fingerprint: "0".repeat(64),
+            ..config
+        });
+        assert!(!Arc::ptr_eq(&pool, &wrong_pin.shared));
+        assert!(wrong_pin
+            .request(&serde_json::json!({"op":"info"}))
+            .await
+            .unwrap_err()
+            .starts_with("[direct:identity]"));
+        pool.idle.lock().unwrap().clear();
+        gateway.abort();
+        let _ = gateway.await;
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn waiting_bulk_requests_do_not_prevent_metadata_on_another_client() {
+        let (config, gateway, directory) = super::super::tests::gateway().await;
+        let bulk = WorkspaceClient::new(config.clone());
+        let metadata = WorkspaceClient::new(config);
+        let mut held = Vec::new();
+        for _ in 0..qingcode_server::workspace::budget::MAX_BULK_REQUESTS {
+            held.push(bulk.shared.budget.acquire("write_at").await.unwrap());
+        }
+        // This invalid handle would fail immediately if it reached the wire.
+        // Timing out here proves the bulk class was admitted before sending.
+        assert!(tokio::time::timeout(
+            Duration::from_millis(20),
+            bulk.request(&serde_json::json!({"op":"read_at","handle":"not-open"}))
+        )
+        .await
+        .is_err());
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            metadata.request(&serde_json::json!({"op":"info"})),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(held);
+        metadata.shared.idle.lock().unwrap().clear();
+        gateway.abort();
+        let _ = gateway.await;
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
     async fn workspace_requests_reuse_tls_and_discard_failed_connections_without_replay() {
         let (config, gateway, directory) = super::super::tests::gateway().await;
         let client = WorkspaceClient::new(config);
         let request = serde_json::json!({"op":"info"});
         client.request(&request).await.unwrap();
-        let address = client.idle.lock().unwrap()[0]
+        let address = client.shared.idle.lock().unwrap()[0]
             .1
             .get_ref()
             .0
@@ -165,7 +261,7 @@ mod tests {
             .unwrap();
         for _ in 0..20 {
             client.request(&request).await.unwrap();
-            let idle = client.idle.lock().unwrap();
+            let idle = client.shared.idle.lock().unwrap();
             assert_eq!(idle.len(), 1);
             assert_eq!(idle[0].1.get_ref().0.local_addr().unwrap(), address);
         }
@@ -173,12 +269,12 @@ mod tests {
             client.request(&request).await.unwrap();
         }
         assert!(
-            client.idle.lock().unwrap().is_empty(),
+            client.shared.idle.lock().unwrap().is_empty(),
             "server retires a connection after 256 requests"
         );
         client.request(&request).await.unwrap();
         let previous = address;
-        let address = client.idle.lock().unwrap()[0]
+        let address = client.shared.idle.lock().unwrap()[0]
             .1
             .get_ref()
             .0
@@ -187,14 +283,19 @@ mod tests {
         assert_ne!(address, previous);
         // A failed exchange is discarded instead of silently replaying an
         // operation whose completion could be unknown.
-        let (_, mut stream) = client.idle.lock().unwrap().pop().unwrap();
+        let (_, mut stream) = client.shared.idle.lock().unwrap().pop().unwrap();
         stream.shutdown().await.unwrap();
-        client.idle.lock().unwrap().push((Instant::now(), stream));
+        client
+            .shared
+            .idle
+            .lock()
+            .unwrap()
+            .push((Instant::now(), stream));
         assert!(client.request(&request).await.is_err());
-        assert!(client.idle.lock().unwrap().is_empty());
+        assert!(client.shared.idle.lock().unwrap().is_empty());
         client.request(&request).await.unwrap();
         assert_ne!(
-            client.idle.lock().unwrap()[0]
+            client.shared.idle.lock().unwrap()[0]
                 .1
                 .get_ref()
                 .0
