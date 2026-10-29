@@ -2018,6 +2018,9 @@ impl SshManager {
                     slot.unavailable_reason = None;
                     slot.activity = None;
                     slot.last_failure = None;
+                    slot.deploy_failures = 0;
+                    slot.daemon_failure = None;
+                    slot.daemon_downgraded_at = None;
                 }
             }
         }
@@ -2552,6 +2555,36 @@ pub fn ssh_set_server_offline_dir(
     manager.set_server_offline_dir(Some(resolved));
     manager.clear_unavailable_servers();
     Ok(text)
+}
+
+#[tauri::command]
+pub async fn ssh_server_package_info(
+    root_uri: String,
+    dir: Option<String>,
+    manager: State<'_, SshManager>,
+) -> Result<server::recovery::ServerPackageInfo, String> {
+    server::recovery::package_info(&manager, &root_uri, dir.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn ssh_validate_server_offline_dir(dir: String) -> Result<String, String> {
+    server::recovery::validate_directory(&dir).await
+}
+
+#[tauri::command]
+pub async fn ssh_download_server_package(
+    root_uri: String,
+    manager: State<'_, SshManager>,
+) -> Result<server::recovery::ServerPackageInfo, String> {
+    server::recovery::download_package(&manager, &root_uri).await
+}
+
+#[tauri::command]
+pub fn ssh_reset_server_failure(
+    root_uri: String,
+    manager: State<'_, SshManager>,
+) -> Result<(), String> {
+    server::recovery::reset_failure(&manager, &root_uri)
 }
 
 #[derive(Debug)]

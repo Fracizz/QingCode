@@ -695,7 +695,9 @@ fn configure_ssh_server_binary_dirs(app: &tauri::AppHandle) {
     // 下载缓存目录：便携版等未随包携带二进制时，`ssh.server.autoDownload`
     // 开启后从 GitHub Release 下载到这里（优先级最低，不遮蔽随包产物）。
     if let Ok(cache_dir) = app.path().app_cache_dir() {
-        let dir = cache_dir.join("servers");
+        let dir = cache_dir
+            .join("servers")
+            .join(qingcode_server::SERVER_VERSION);
         let _ = std::fs::create_dir_all(&dir);
         app.state::<remote_ssh::SshManager>()
             .set_server_cache_dir(dir.clone());
@@ -926,6 +928,10 @@ pub fn run() {
             remote_ssh::ssh_server_logs,
             remote_ssh::ssh_set_server_auto_download,
             remote_ssh::ssh_set_server_offline_dir,
+            remote_ssh::ssh_server_package_info,
+            remote_ssh::ssh_validate_server_offline_dir,
+            remote_ssh::ssh_download_server_package,
+            remote_ssh::ssh_reset_server_failure,
             remote_ssh::ssh_validate_directory,
             remote_ssh::ssh_scan_directory,
             remote_ssh::ssh_file_stat,

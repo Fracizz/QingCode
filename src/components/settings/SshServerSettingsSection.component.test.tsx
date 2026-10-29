@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SshServerSettingsSection from './SshServerSettingsSection'
 import { useProjectStore } from '../../store/projectStore'
+import { open } from '@tauri-apps/plugin-dialog'
 
 const { invoke, loadGlobalSettings, loadProjectSettings, saveGlobalSettings, saveProjectSettings } =
   vi.hoisted(() => ({
@@ -111,5 +112,16 @@ describe('SshServerSettingsSection', () => {
       expect(pushToast).toHaveBeenCalledWith('error', '保存自动下载设置失败: Error: disk full')
     })
     expect(invoke).not.toHaveBeenCalledWith('停止远端服务', 'ssh_server_stop', expect.anything())
+  })
+
+  it('rejects an old selected package before changing native state or saving', async () => {
+    vi.mocked(open).mockResolvedValue('/old-package')
+    invoke.mockRejectedValue(new Error('server 包版本不匹配'))
+    render(<SshServerSettingsSection scope="user" project={sshProject} settingsRevision={0} />)
+    fireEvent.click(screen.getByRole('button', { name: '选择离线目录' }))
+    await waitFor(() => expect(pushToast).toHaveBeenCalledWith('error', expect.stringContaining('版本不匹配')))
+    expect(saveGlobalSettings).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('配置 SSH 离线服务目录', 'ssh_validate_server_offline_dir', { dir: '/old-package' })
+    expect(screen.getByText('未选择离线目录')).toBeInTheDocument()
   })
 })

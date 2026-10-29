@@ -328,10 +328,12 @@ Windows 路径保护通过同一条已认证 SSH 连接懒启动一个只读 Pow
 | §4.1 Windows serve | 安装包不内置二进制；Windows OpenSSH 可部署 serve 子集（目录扫描、内容搜索、文件树刷新） | `2a887b8` |
 | §4.1 离线目录 | `ssh.server.offlineDir` 手动选择离线 `servers` 目录（校验含 `qingcode-server` 文件） | `65b43a8` |
 | 改名与设置迁移 | qingcode-agent → qingcode-server 全面改名：设置键 `ssh.server.*`（读取兼容旧 `ssh.agent.*`，保存时迁移清理）、命令 `ssh_server_*`、事件 `ssh-server-state`、远端目录 `.qingcode/server/` 与 `$HOME/.qingcode/server/`、daemon 能力 `server.shutdown`、Release 标签 `server-v*` 与资产名、工作流 `server-release.yml`、脚本 `build-server.ps1` / `e2e-ssh-server/`、环境变量 `QINGCODE_SERVER_*`（旧名兼容）、本地目录 `servers/`（旧 `agents/` 与旧二进制名兼容读取）、离线包 `QingCode-servers.zip` | 本轮 |
-| 部署加固 | 幂等部署（上传前比对远端 sha256，一致跳过）；上传后 `self-check --expect-sha256` 成功才启动；失败分类（网络类瞬时不占缓存，sha 不符/超体积/自检失败 permanent）；连续 2 次完整部署失败退避为不可用并提示 `AllowTcpForwarding`，重连解冻；切换 autoDownload / 离线目录清不可用缓存立即重试 | 本轮 |
+| 部署加固 | 幂等部署（上传前比对远端 sha256，一致跳过）；上传后 `self-check --expect-sha256` 成功才启动；失败分类（网络类瞬时不占缓存，sha 不符/超体积/自检失败 permanent）；连续 2 次完整部署失败退避为不可用，保留最后的版本/通道等具体原因并提示排查转发，重连解冻；切换 autoDownload / 离线目录清不可用缓存立即重试 | 本轮 |
 | 停止、重启与日志 | 新命令 `ssh_server_stop`（serve 按状态文件 pid 结束 + daemon `server.shutdown`）；连接切到 SSH 模式时对该连接已注册的根调用；「重启 Server」同时重建 serve 与 daemon；serve 输出重定向 `.qingcode/server/serve.log`（>1MB 启动前截断）；「查看 Server 日志」拼接 daemon 日志与项目 serve 日志两段（各 tail 200 行） | 本轮 |
 | 信任与降级重试 | `ssh_server_restart` / `ssh_server_stop` / `ssh_server_logs` 要求工作区已信任；迟授予信任补启动文件树 watch 监督；daemon 传输降级后 5 分钟冷却重试（不再一次失败永久走 serve） | 本轮 |
 | 升级健壮性 | 发现阶段除版本号外再比远端二进制与本地可信文件的 sha256（同版本重打包也会重装）；摘要不一致时不执行目标文件，按路径结束占用用户私有安装目录的 serve/daemon 后再替换；replace 失败带退避重试并给出可操作错误 | 本轮 |
+| 本地旧包隔离 | 本地 servers 清单存在时先核对版本、大小和 SHA-256；旧包或损坏包跳过，继续搜索或按设置从客户端下载。下载清单必须匹配客户端版本，缓存按版本隔离。兼容无清单的手工二进制，但远端摘要可信后仍须用 `--version` 验证实际版本才启动服务，拒绝把旧程序当新版反复部署 | 本轮 |
+| 服务包错误恢复 | 打开项目的服务错误弹窗展示客户端所需版本、服务包版本和本机来源路径，提供「重新选择服务目录」「在线下载并重试」。重选按目标 OS/架构验证清单、版本、大小和 SHA-256；设置页选目录也在保存前校验，缺清单时要求选择完整包。失败/取消保留原设置；通过后只更新出错项目，清除部署退避与 daemon 失败缓存，再自动打开该项目。在线恢复在本机下载并为每个二进制保存清单收据，成功后将验证过的缓存作为该项目的服务来源，避免残留旧文件遮蔽。关闭或切换项目后忽略迟到结果，不自动重开；不主动结束其他项目的远端进程 | 本轮 |
 | 其他修复 | token 改 OS 随机源生成（getrandom，此前 Windows 用时间 + pid）；scan `done.files_scanned` 真实计数；并发下载临时文件唯一命名 + 失败清理 + 按 manifest size 设上限；状态芯片错误态（`!`，不伪装直连）、重启成功 toast、日志对话框加载态与刷新按钮、设置导入后立即推送后端、保存/推送失败明确 toast | 本轮 |
 
 本轮改动尚未提交，提交列为「本轮」。

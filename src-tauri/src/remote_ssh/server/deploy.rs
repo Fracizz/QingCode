@@ -72,6 +72,7 @@ pub(super) async fn prepare_shared_daemon(
             ));
         }
     }
+    verify_remote_server_version(manager, root, &remote_bin).await?;
     server_status::note_server_activity(
         manager,
         app,
@@ -758,6 +759,45 @@ fn remote_binary_digest_matches(
     Ok(actual == expected.trim().to_ascii_lowercase())
 }
 
+/// 摘要可信只表示文件来自本机，exe 旁的文件可能仍来自旧安装。
+/// 所有启动路径还必须检查实际版本，避免旧文件在新版目录中反复部署。
+async fn verify_remote_server_version(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    remote_bin: &str,
+) -> Result<(), String> {
+    let script = windows_host_path(remote_bin)
+        .map(|path| {
+            format!(
+                "& '{}' --version\nexit $LASTEXITCODE",
+                powershell_literal(&path)
+            )
+        })
+        .unwrap_or_default();
+    let result = exec_on_root(
+        manager,
+        root,
+        &format!("{} --version", shell_quote(remote_bin)),
+        &script,
+    )
+    .await?;
+    validate_remote_server_version(&result)
+}
+
+fn validate_remote_server_version(result: &RemoteExecResult) -> Result<(), String> {
+    let output = result.stdout.trim();
+    let version = output
+        .strip_prefix("qingcode-server ")
+        .or_else(|| output.strip_prefix("qingcode-agent "));
+    if result.exit_code == 0 && version == Some(SERVER_VERSION) {
+        return Ok(());
+    }
+    Err(format!(
+        "远端服务程序版本不匹配：程序版本 {}，客户端需要 {SERVER_VERSION}。请更新本地 servers 目录或开启自动下载",
+        version.filter(|version| !version.is_empty()).unwrap_or("未知"),
+    ))
+}
+
 /// 调用方必须已在不执行目标文件的前提下用远端 `sha256sum` / `Get-FileHash`
 /// 比对过本地摘要；这里在同一次远端往返里 exec `self-check`（二进制自校验
 /// 摘要并探测 noexec），自检通过才启动 serve。这样损坏、被替换或来源不明的
@@ -864,23 +904,34 @@ async fn wait_server_ready(
     connection_id: &str,
     sftp: &SftpSession,
     root: &RegisteredRoot,
-) -> Option<ServerEndpoint> {
+) -> Result<ServerEndpoint, String> {
     let state_path = server_state_path(&root.canonical_path);
     let deadline = Instant::now() + AGENT_READY_TIMEOUT;
+    let mut last_error = "尚未读到有效的服务状态文件".to_string();
     loop {
         if Instant::now() >= deadline {
-            return None;
+            return Err(format!("server 启动超时：{last_error}"));
         }
         // 先查后睡：启动脚本返回时状态文件常常已经写好，不必白等一个轮询间隔。
         if let Ok(bytes) = sftp.read(state_path.clone()).await {
             // 版本或根不符（旧实例的残留状态）：等新进程覆盖，落到下面的 sleep。
             let state = parse_server_state(&bytes).ok().filter(|state| {
-                state.version == SERVER_VERSION
-                    && remote_roots_equivalent(
-                        &state.root,
-                        &root.canonical_path,
-                        windows_native_path(&root.canonical_path).is_some(),
-                    )
+                if state.version != SERVER_VERSION {
+                    last_error = format!(
+                        "server 版本不匹配：远端 {}，本端 {SERVER_VERSION}",
+                        state.version
+                    );
+                    return false;
+                }
+                let matches = remote_roots_equivalent(
+                    &state.root,
+                    &root.canonical_path,
+                    windows_native_path(&root.canonical_path).is_some(),
+                );
+                if !matches {
+                    last_error = "服务状态文件的项目根与当前项目不匹配".into();
+                }
+                matches
             });
             if let Some(state) = state {
                 let endpoint = ServerEndpoint {
@@ -890,8 +941,9 @@ async fn wait_server_ready(
                     }),
                     daemon: None,
                 };
-                if ping_server(manager, connection_id, &endpoint).await.is_ok() {
-                    return Some(endpoint);
+                match ping_server(manager, connection_id, &endpoint).await {
+                    Ok(()) => return Ok(endpoint),
+                    Err(error) => last_error = error,
                 }
             }
         }
@@ -1011,6 +1063,9 @@ async fn discover_or_deploy_server(
     } else if !sha_known_match {
         timer.mark("比对(免上传)");
     }
+    verify_remote_server_version(manager, root, &remote_bin)
+        .await
+        .map_err(ServerDeployError::permanent)?;
     // 新版本摘要可信后才清理旧项目目录；清理过程不会执行旧二进制。放在启动
     // 之前，避免旧 serve 与新 serve 争用状态文件。
     cleanup_legacy_project_install(manager, &sftp, root, &arch).await;
@@ -1027,7 +1082,7 @@ async fn discover_or_deploy_server(
     );
     let endpoint = wait_server_ready(manager, connection_id, &sftp, root)
         .await
-        .ok_or_else(|| ServerDeployError::deploy_stage("server 启动超时".to_string()))?;
+        .map_err(ServerDeployError::deploy_stage)?;
     timer.mark("等待就绪");
     Ok((endpoint, remote_bin))
 }
@@ -1403,7 +1458,7 @@ async fn ensure_server_endpoint_inner(
                 // 不可用并提示人介入，直到重连或 clear_unavailable_servers。
                 if let Some(backoff) = deploy_backoff_reason(slot.deploy_failures) {
                     permanent = true;
-                    reason = backoff.to_string();
+                    reason = format!("{backoff}；最后失败原因：{reason}");
                 }
             }
             // 瞬时失败也把原因留在 slot 上：阶段仍是探测、之后自动重试，
@@ -1582,6 +1637,20 @@ mod real_host_bench;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trusted_binary_must_report_current_version_before_service_start() {
+        let current = digest_result(&format!("qingcode-server {SERVER_VERSION}\n"), 0).unwrap();
+        assert!(validate_remote_server_version(&current).is_ok());
+        let old = digest_result("qingcode-server 0.1.14-beta.1\n", 0).unwrap();
+        let error = validate_remote_server_version(&old).unwrap_err();
+        assert!(error.contains("0.1.14-beta.1"));
+        assert!(error.contains(SERVER_VERSION));
+        assert!(validate_remote_server_version(&digest_result("", 126).unwrap()).is_err());
+        assert!(
+            validate_remote_server_version(&digest_result(&current.stdout, 1).unwrap()).is_err()
+        );
+    }
 
     fn digest_result(stdout: &str, exit_code: u32) -> Result<RemoteExecResult, String> {
         Ok(RemoteExecResult {

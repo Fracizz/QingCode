@@ -6,6 +6,7 @@ import { translate } from '../lib/i18n'
 export type SshOpeningStage = 'connecting' | 'service' | 'files' | 'mounting'
 
 interface SshOpeningAttempt {
+  id: number
   project: Project
   stage: SshOpeningStage
   server: SshServerState | null
@@ -19,6 +20,7 @@ export const useSshOpeningStore = create<{ attempt: SshOpeningAttempt | null }>(
 }))
 
 export class SshPreparationError extends Error {}
+let openingSequence = 0
 
 export function cancelSshOpening(): void {
   const attempt = useSshOpeningStore.getState().attempt
@@ -39,7 +41,7 @@ export async function runSshOpening<T>(
   const controller = new AbortController()
   const { signal } = controller
   const attempt: SshOpeningAttempt = {
-    project, stage: 'connecting', server: null, error: null, controller, reusingServer: false,
+    id: ++openingSequence, project, stage: 'connecting', server: null, error: null, controller, reusingServer: false,
   }
   useSshOpeningStore.setState({ attempt })
   const report = (stage: SshOpeningStage, server?: SshServerState) => {

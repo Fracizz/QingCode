@@ -1,5 +1,12 @@
 # Web 测试页 + ego 验收
 
+远端服务包错误恢复场景位于 `/web-tests/ssh-server-recovery.html`，运行
+`scripts/web-tests/ssh-server-recovery.ego.mjs` 的 `run()`。复用真实打开项目弹窗、版本/来源信息、
+目录选择与在线下载按钮，覆盖选错版本、取消选择、下载失败不保存，以及校验通过后保存并自动重试。
+验证深色、英文、480px 窄窗浅色布局，并保存截图和 `results.json`。此页的文件选择、下载、设置与重试均为内存模拟；
+不替代 Windows 原生文件选择。Rust 的 `live_stale_package_reselection_restores_service_on_same_connection`
+使用明确配置的 `QC_LIVE_*` 主机、已有密钥和指纹，在 UUID 临时目录验证真实 SSH 下的旧包诊断、重选、退避清理、共享 daemon 和目录读取。
+
 终端退出提示条场景为 `/web-tests/terminal-exit.html`，运行 `scripts/web-tests/terminal-exit.ego.mjs` 的 `run()`。覆盖异常退出保持现场、显式打开普通 shell、导出不触发重启、未知退出码、中英文与窄屏浅色布局。该页面只复用提示条组件，进程和 SSH 生命周期由原生集成测试验证；`screenshots: false` 只代表 DOM 验收。
 
 项目管理提供独立的浏览器验收入口，复用 `src/components/ProjectManager.tsx` 及生产样式。

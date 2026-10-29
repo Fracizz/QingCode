@@ -28,6 +28,7 @@ mod download;
 mod host_runtime;
 mod install_cache;
 mod paths;
+pub(crate) mod recovery;
 mod scripts;
 mod serve;
 mod terminal;

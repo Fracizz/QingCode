@@ -71,17 +71,14 @@ export default function SshServerSettingsSection({ scope, project, settingsRevis
     if (typeof selected !== 'string' || !selected) return
     setOfflineBusy(true)
     try {
-      // 目录校验与解析（如定位 servers 子目录）只在 Rust 的
-      // ssh_set_server_offline_dir 里实现：保留这一次 invoke 做即时校验并拿到
-      // 解析结果；持久化与推送统一走 saveScopedSshServerOfflineDir（内部以同一
-      // 解析结果推送），保证文件与 native 状态单一事实来源。
+      // Preflight must not change native settings; reject wrong packages before saving.
       const resolved = await safeInvoke<string>(
         '配置 SSH 离线服务目录',
-        'ssh_set_server_offline_dir',
+        'ssh_validate_server_offline_dir',
         { dir: selected },
       )
-      setOfflineDir(resolved)
       await saveScopedSshServerOfflineDir(settingsScope, resolved, project)
+      setOfflineDir(resolved)
       pushToast('success', t('已使用离线服务目录'))
     } catch (error) {
       pushToast('error', t('保存离线服务目录失败: {error}', { error: String(error) }))

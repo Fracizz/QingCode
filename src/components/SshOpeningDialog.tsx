@@ -8,6 +8,7 @@ import { cancelSshOpening, useSshOpeningStore } from '../store/sshOpeningStore'
 import { useUIStore } from '../store/uiStore'
 import ModalOverlay from './ModalOverlay'
 import { confirmSshServerRestart, isWindowsSshRoot } from '../lib/sshWindowsRepair'
+import SshServerRecovery from './SshServerRecovery'
 
 export default function SshOpeningDialog() {
   const { t } = useI18n()
@@ -18,6 +19,7 @@ export default function SshOpeningDialog() {
   const retryRef = useRef<{ opening: AbortController; controller: AbortController } | null>(null)
   const controller = attempt?.controller
   const retryBusy = retryingController === controller
+  const [recoveryBusy, setRecoveryBusy] = useState(false)
   useEffect(() => () => retryRef.current?.controller.abort(), [])
   useEffect(() => {
     if (!controller) return
@@ -93,6 +95,10 @@ export default function SshOpeningDialog() {
               {error}
             </p>
           )}
+          {error && server?.transport !== 'agent' && /server|daemon|远端服务|服务包|服务程序|二进制/i.test(error) && (
+            <SshServerRecovery key={attempt.id} project={project} opening={attempt.controller} onBusyChange={setRecoveryBusy}
+              onRetry={async () => { await useProjectStore.getState().switchProject(project) }} />
+          )}
         </div>
         <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
           <button type="button" onClick={cancelSshOpening} className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover">
@@ -103,7 +109,7 @@ export default function SshOpeningDialog() {
               cancelSshOpening()
               useUIStore.getState().openRemoteConnections()
             }}>{t('远程连接')}</button>
-            <button type="button" disabled={retryBusy} className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50" onClick={async () => {
+            <button type="button" disabled={retryBusy || recoveryBusy} className="rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-50" onClick={async () => {
               const opening = attempt.controller
               if (retryRef.current?.opening === opening) return
               retryRef.current?.controller.abort()

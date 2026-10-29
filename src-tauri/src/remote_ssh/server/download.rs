@@ -30,6 +30,35 @@ pub(super) async fn locate_local_server_binary_with(
     root: &RegisteredRoot,
     allow_download: bool,
 ) -> Result<(String, PathBuf), ServerDeployError> {
+    let arch = remote_server_arch(manager, root).await?;
+    let windows = windows_native_path(&root.canonical_path).is_some();
+    let binary_name = server_binary_file_name(windows, &arch);
+    let legacy_name = legacy_server_binary_file_name(windows, &arch);
+    let local = find_local_server_binary(
+        &manager.server_binary_dirs_for_root(&root.uri),
+        &[&binary_name, &legacy_name],
+    )
+    .await;
+    if let Ok(Some(candidate)) = &local {
+        return Ok((arch, candidate.clone()));
+    }
+    if allow_download && manager.server_auto_download_for_root(&root.uri) {
+        return download_server_binary(manager, &binary_name)
+            .await
+            .map(|path| (arch, path));
+    }
+    if let Err(reason) = local {
+        return Err(ServerDeployError::permanent(reason));
+    }
+    Err(ServerDeployError::permanent(format!(
+        "本地未找到 QingCode server 二进制（{binary_name}）。在线请打开「缺失时自动下载」；离线可在设置里选择 servers 目录，或把它放到 QingCode.exe 旁边。远端服务尚未就绪，请完成设置后重试"
+    )))
+}
+
+pub(super) async fn remote_server_arch(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+) -> Result<String, ServerDeployError> {
     let windows = windows_native_path(&root.canonical_path).is_some();
     let arch = if windows {
         manager
@@ -56,25 +85,27 @@ pub(super) async fn locate_local_server_binary_with(
             "远端架构不支持（{arch}）"
         )));
     }
-    let binary_name = server_binary_file_name(windows, &arch);
-    let legacy_name = legacy_server_binary_file_name(windows, &arch);
-    for dir in manager.server_binary_dirs_for_root(&root.uri) {
-        for name in [&binary_name, &legacy_name] {
+    Ok(arch)
+}
+
+async fn find_local_server_binary(
+    dirs: &[PathBuf],
+    names: &[&str],
+) -> Result<Option<PathBuf>, String> {
+    let mut rejected = None;
+    for dir in dirs {
+        for name in names {
             let candidate = dir.join(name);
             if candidate.is_file() {
-                return Ok((arch, candidate));
+                if let Err(reason) = validate_local_server_manifest(&candidate).await {
+                    rejected.get_or_insert(reason);
+                    continue;
+                }
+                return Ok(Some(candidate));
             }
         }
     }
-    // 随包未携带二进制（如便携版单文件 exe）：按设置从 GitHub Release 下载。
-    if allow_download && manager.server_auto_download_for_root(&root.uri) {
-        return download_server_binary(manager, &binary_name)
-            .await
-            .map(|path| (arch, path));
-    }
-    Err(ServerDeployError::permanent(format!(
-        "本地未找到 QingCode server 二进制（{binary_name}）。在线请打开「缺失时自动下载」；离线可在设置里选择 servers 目录，或把它放到 QingCode.exe 旁边。远端服务尚未就绪，请完成设置后重试"
-    )))
+    rejected.map_or(Ok(None), Err)
 }
 
 fn dir_has_server_binary(dir: &Path) -> bool {
@@ -88,6 +119,7 @@ fn dir_has_server_binary(dir: &Path) -> bool {
         entry.path().is_file()
             && (name.starts_with("qingcode-server") || name.starts_with("qingcode-agent"))
             && !name.contains(".download")
+            && !name.ends_with(".json")
     })
 }
 
@@ -176,11 +208,78 @@ struct ServerManifestArtifact {
 #[derive(Debug, Clone, serde::Deserialize)]
 struct ServerManifest {
     #[serde(default)]
+    version: String,
+    #[serde(default)]
     artifacts: std::collections::HashMap<String, ServerManifestArtifact>,
 }
 
 fn parse_server_manifest(bytes: &[u8]) -> Result<ServerManifest, String> {
     serde_json::from_slice(bytes).map_err(|e| format!("解析 server manifest 失败：{e}"))
+}
+
+fn validate_server_manifest_version(manifest: &ServerManifest) -> Result<(), String> {
+    if manifest.version != qingcode_server::SERVER_VERSION {
+        return Err(format!(
+            "server 包版本不匹配：文件版本 {}，客户端需要 {}。请更新离线 servers 目录或开启自动下载",
+            if manifest.version.is_empty() { "未知" } else { &manifest.version },
+            qingcode_server::SERVER_VERSION,
+        ));
+    }
+    Ok(())
+}
+
+/// 安装器升级可能保留 exe 旁的旧 servers。先验证清单再参与发现/上传，
+/// 不能仅凭文件名把旧包部署进当前版本目录。无清单的手工二进制仍兼容，
+/// 其实际版本在远端摘要校验通过后、启动服务之前核对。
+pub(super) fn server_manifest_path(binary: &Path) -> PathBuf {
+    let receipt = binary.with_file_name(format!(
+        "{}.manifest.json",
+        binary.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    if receipt.is_file() {
+        receipt
+    } else {
+        binary.with_file_name("manifest.json")
+    }
+}
+
+pub(super) async fn validate_local_server_manifest(binary: &Path) -> Result<(), String> {
+    let manifest_path = server_manifest_path(binary);
+    let metadata = match tokio::fs::metadata(&manifest_path).await {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("读取本地 server 清单失败：{error}")),
+    };
+    if metadata.len() > 64 * 1024 {
+        return Err("本地 server 清单超过 64 KiB，请更新 servers 目录".into());
+    }
+    let bytes = tokio::fs::read(manifest_path)
+        .await
+        .map_err(|error| format!("读取本地 server 清单失败：{error}"))?;
+    let manifest = parse_server_manifest(&bytes)?;
+    validate_server_manifest_version(&manifest)?;
+    let name = binary
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("server 文件名无效")?;
+    let artifact = manifest
+        .artifacts
+        .get(name)
+        .ok_or_else(|| format!("server 清单缺少 {name}，请更新 servers 目录"))?;
+    if artifact.size != 0
+        && tokio::fs::metadata(binary)
+            .await
+            .map_err(|e| e.to_string())?
+            .len()
+            != artifact.size
+    {
+        return Err(format!("本地 server 文件大小与清单不匹配：{name}"));
+    }
+    let actual = super::scripts::sha256_of_file_cached(binary).await?;
+    if !actual.eq_ignore_ascii_case(artifact.sha256.trim()) {
+        return Err(format!("本地 server 文件 SHA-256 与清单不匹配：{name}"));
+    }
+    Ok(())
 }
 
 fn verify_server_sha256(expected: &str, actual: &[u8; 32]) -> Result<(), String> {
@@ -218,16 +317,24 @@ fn download_unique_suffix() -> u128 {
 ///
 /// 失败分类：网络/本地磁盘问题按瞬时（下次调用重试）；sha256 不一致、体积
 /// 超限、manifest 缺条目是镜像内容问题，重试也治不了，按 permanent 缓存。
-async fn download_server_binary(
+pub(super) async fn download_server_binary(
     manager: &SshManager,
     binary_name: &str,
+) -> Result<PathBuf, ServerDeployError> {
+    download_server_binary_from(manager, binary_name, &server_download_base()).await
+}
+
+async fn download_server_binary_from(
+    manager: &SshManager,
+    binary_name: &str,
+    base: &str,
 ) -> Result<PathBuf, ServerDeployError> {
     let cache_dir = manager
         .server_cache_dir()
         .ok_or_else(|| ServerDeployError::permanent("下载缓存目录未配置"))?;
     let binary_name = binary_name.to_string();
     let (manifest_url, binary_url) =
-        server_download_urls(&server_download_base(), &server_release_tag(), &binary_name);
+        server_download_urls(base, &server_release_tag(), &binary_name);
     tokio::task::spawn_blocking(move || {
         use sha2::Digest;
         let transient = |reason: String| ServerDeployError::from(reason);
@@ -244,6 +351,7 @@ async fn download_server_binary(
             .into_string()
             .map_err(|e| transient(format!("读取 manifest 失败：{e}")))?;
         let manifest = parse_server_manifest(manifest_bytes.as_bytes()).map_err(transient)?;
+        validate_server_manifest_version(&manifest).map_err(ServerDeployError::permanent)?;
         let artifact = manifest.artifacts.get(&binary_name).ok_or_else(|| {
             ServerDeployError::permanent(format!("manifest 缺少 {binary_name} 条目"))
         })?;
@@ -307,6 +415,23 @@ async fn download_server_binary(
             let _ = std::fs::remove_file(&tmp_path);
             transient(format!("落位下载产物失败：{e}"))
         })?;
+        // A per-binary receipt avoids concurrent architecture downloads overwriting
+        // each other's metadata, and lets recovery preflight verify cached files.
+        let receipt = cache_dir.join(format!(
+            "{}.manifest.json",
+            final_path.file_name().unwrap().to_string_lossy()
+        ));
+        let receipt_tmp = cache_dir.join(download_tmp_file_name(
+            "manifest.json",
+            download_unique_suffix(),
+        ));
+        std::fs::write(&receipt_tmp, &manifest_bytes)
+            .map_err(|e| transient(format!("保存 server 清单失败：{e}")))?;
+        let _ = std::fs::remove_file(&receipt);
+        std::fs::rename(&receipt_tmp, &receipt).map_err(|e| {
+            let _ = std::fs::remove_file(&receipt_tmp);
+            transient(format!("保存 server 清单失败：{e}"))
+        })?;
         Ok(final_path)
     })
     .await
@@ -316,6 +441,158 @@ async fn download_server_binary(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct PackageFixture(PathBuf);
+
+    impl PackageFixture {
+        fn new(version: &str) -> Self {
+            use sha2::Digest;
+            let dir =
+                std::env::temp_dir().join(format!("qc-server-package-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&dir).unwrap();
+            let data = b"server-package-fixture";
+            std::fs::write(dir.join("qingcode-server-x86_64"), data).unwrap();
+            let manifest = serde_json::json!({
+                "version": version,
+                "artifacts": {"qingcode-server-x86_64": {
+                    "sha256": format!("{:x}", sha2::Sha256::digest(data)), "size": data.len()
+                }}
+            });
+            std::fs::write(dir.join("manifest.json"), manifest.to_string()).unwrap();
+            Self(dir)
+        }
+    }
+
+    impl Drop for PackageFixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[tokio::test]
+    async fn installed_old_package_does_not_shadow_current_offline_package() {
+        let old = PackageFixture::new("0.1.14-beta.1");
+        let current = PackageFixture::new(qingcode_server::SERVER_VERSION);
+        let names = ["qingcode-server-x86_64"];
+        let selected = find_local_server_binary(&[old.0.clone(), current.0.clone()], &names)
+            .await
+            .unwrap();
+        assert_eq!(selected, Some(current.0.join(names[0])));
+        let error = find_local_server_binary(std::slice::from_ref(&old.0), &names)
+            .await
+            .unwrap_err();
+        assert!(error.contains("0.1.14-beta.1"));
+        assert!(error.contains(qingcode_server::SERVER_VERSION));
+    }
+
+    #[tokio::test]
+    async fn local_package_rejects_modified_binary_even_with_current_manifest_version() {
+        let current = PackageFixture::new(qingcode_server::SERVER_VERSION);
+        let binary = current.0.join("qingcode-server-x86_64");
+        // Same length: digest verification must catch changes size checks cannot.
+        std::fs::write(&binary, b"server-package-CORRUPT").unwrap();
+        assert!(validate_local_server_manifest(&binary)
+            .await
+            .unwrap_err()
+            .contains("SHA-256"));
+        std::fs::write(&binary, b"truncated").unwrap();
+        assert!(validate_local_server_manifest(&binary)
+            .await
+            .unwrap_err()
+            .contains("大小"));
+    }
+
+    #[tokio::test]
+    async fn client_download_verifies_version_and_persists_a_verifiable_receipt() {
+        use std::io::{Read, Write};
+        for version in [qingcode_server::SERVER_VERSION, "0.1.14-beta.1"] {
+            let fixture = PackageFixture::new(version);
+            let manifest = std::fs::read(fixture.0.join("manifest.json")).unwrap();
+            let binary = std::fs::read(fixture.0.join("qingcode-server-x86_64")).unwrap();
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            let requests = if version == qingcode_server::SERVER_VERSION {
+                2
+            } else {
+                1
+            };
+            let server = std::thread::spawn(move || {
+                for _ in 0..requests {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(5)))
+                        .unwrap();
+                    let mut request = Vec::new();
+                    loop {
+                        let mut byte = [0];
+                        stream.read_exact(&mut byte).unwrap();
+                        request.push(byte[0]);
+                        if request.ends_with(b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    let request = String::from_utf8(request).unwrap();
+                    let body = if request.lines().next().unwrap().contains("manifest.json") {
+                        &manifest
+                    } else {
+                        &binary
+                    };
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .unwrap();
+                    stream.write_all(body).unwrap();
+                }
+            });
+            let manager = SshManager::new();
+            let cache = fixture.0.join("cache");
+            manager.set_server_cache_dir(cache.clone());
+            let result = download_server_binary_from(
+                &manager,
+                "qingcode-server-x86_64",
+                &format!("http://{address}"),
+            )
+            .await;
+            server.join().unwrap();
+            if version == qingcode_server::SERVER_VERSION {
+                let path = result.map_err(|e| e.reason).unwrap();
+                assert!(server_manifest_path(&path).is_file());
+                assert!(validate_local_server_manifest(&path).await.is_ok());
+                assert!(
+                    super::super::recovery::validate_directory(cache.to_str().unwrap())
+                        .await
+                        .is_ok()
+                );
+            } else {
+                let error = result.err().unwrap();
+                assert!(error.permanent);
+                assert!(error.reason.contains("版本不匹配"));
+                assert!(!cache.join("qingcode-server-x86_64").exists());
+            }
+        }
+    }
+
+    #[test]
+    fn download_manifest_requires_current_version() {
+        for version in ["", "0.1.14-beta.1"] {
+            let manifest = parse_server_manifest(
+                serde_json::json!({"version":version})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert!(validate_server_manifest_version(&manifest).is_err());
+        }
+        let manifest = parse_server_manifest(
+            serde_json::json!({"version":qingcode_server::SERVER_VERSION})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert!(validate_server_manifest_version(&manifest).is_ok());
+    }
 
     #[test]
     fn release_404_is_permanent_and_names_tag_and_asset() {
