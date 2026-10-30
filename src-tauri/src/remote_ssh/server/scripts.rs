@@ -374,51 +374,12 @@ pub(super) fn sha256_of_file(path: &Path) -> Result<String, String> {
         .collect())
 }
 
-/// 本地二进制摘要缓存：路径 → (大小, 修改时间, sha256)。文件被替换（大小或
-/// 修改时间变化）时自动失效。
-type Sha256Cache = Mutex<HashMap<PathBuf, (u64, std::time::SystemTime, String)>>;
-
-fn sha256_cache() -> &'static Sha256Cache {
-    static CACHE: std::sync::OnceLock<Sha256Cache> = std::sync::OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// 本地文件的元数据指纹；任何一项取不到都视为不可缓存。
-fn file_fingerprint(path: &Path) -> Option<(u64, std::time::SystemTime)> {
-    let metadata = std::fs::metadata(path).ok()?;
-    Some((metadata.len(), metadata.modified().ok()?))
-}
-
-/// 同 [`sha256_of_file`]，但在阻塞线程池里读文件（几十 MB 的二进制不占 async
-/// 运行时线程），并按大小 + 修改时间缓存结果：每次发现/部署都要比对摘要，
-/// 不必反复整文件读取哈希。
-pub(super) async fn sha256_of_file_cached(path: &Path) -> Result<String, String> {
+/// 在阻塞线程池中重新计算摘要，避免同大小文件的快速修改被元数据缓存遗漏。
+pub(super) async fn sha256_of_file_async(path: &Path) -> Result<String, String> {
     let path = path.to_path_buf();
-    tauri::async_runtime::spawn_blocking(move || {
-        let fingerprint = file_fingerprint(&path);
-        if let Some((len, modified)) = fingerprint {
-            if let Some((cached_len, cached_modified, sha)) = sha256_cache()
-                .lock()
-                .ok()
-                .and_then(|cache| cache.get(&path).cloned())
-            {
-                if cached_len == len && cached_modified == modified {
-                    return Ok(sha);
-                }
-            }
-        }
-        let sha = sha256_of_file(&path)?;
-        // 哈希前后的指纹一致才写缓存，避免把读到一半被替换的文件摘要记下来。
-        if let Some((len, modified)) = fingerprint.filter(|fp| file_fingerprint(&path) == Some(*fp))
-        {
-            if let Ok(mut cache) = sha256_cache().lock() {
-                cache.insert(path, (len, modified, sha.clone()));
-            }
-        }
-        Ok(sha)
-    })
-    .await
-    .map_err(|error| format!("计算本地 server 摘要任务失败：{error}"))?
+    tauri::async_runtime::spawn_blocking(move || sha256_of_file(&path))
+        .await
+        .map_err(|error| format!("计算本地 server 摘要任务失败：{error}"))?
 }
 
 #[cfg(test)]
@@ -427,18 +388,18 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn cached_sha256_matches_direct_and_refreshes_after_file_change() {
+    async fn sha256_refreshes_after_same_size_file_change() {
         let dir = std::env::temp_dir().join(format!("qc-sha-{}", uuid::Uuid::new_v4().simple()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("qingcode-server-x86_64");
         std::fs::write(&file, b"first").unwrap();
-        let first = sha256_of_file_cached(&file).await.unwrap();
+        let first = sha256_of_file_async(&file).await.unwrap();
         assert_eq!(first, sha256_of_file(&file).unwrap());
-        // 命中缓存仍返回同一摘要。
-        assert_eq!(sha256_of_file_cached(&file).await.unwrap(), first);
-        // 大小变化让缓存失效（不依赖文件系统时间精度）。
-        std::fs::write(&file, b"second build").unwrap();
-        let second = sha256_of_file_cached(&file).await.unwrap();
+        // 未修改时摘要保持一致。
+        assert_eq!(sha256_of_file_async(&file).await.unwrap(), first);
+        // 同大小内容变化也必须重新计算，不能依赖文件系统时间精度。
+        std::fs::write(&file, b"other").unwrap();
+        let second = sha256_of_file_async(&file).await.unwrap();
         assert_ne!(second, first);
         assert_eq!(second, sha256_of_file(&file).unwrap());
         let _ = std::fs::remove_dir_all(&dir);

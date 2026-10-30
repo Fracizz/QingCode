@@ -1,7 +1,7 @@
 //! One authenticated user daemon per host identity, shared by project roots.
 //! Readiness is memory-only: a new SSH incarnation must complete HELLO again.
 use super::daemon::probe_shared_daemon;
-use super::scripts::sha256_of_file_cached;
+use super::scripts::sha256_of_file_async;
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Weak;
@@ -103,7 +103,7 @@ impl RuntimeEntry {
         let cached = self.ready.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if let Some(mut cached) = cached.filter(ReadyDaemon::binary_unchanged) {
             // Also check the trusted local digest; metadata only accelerates UI hints.
-            if sha256_of_file_cached(&cached.prepared.local_binary).await? == cached.prepared.sha256
+            if sha256_of_file_async(&cached.prepared.local_binary).await? == cached.prepared.sha256
             {
                 if cached.fresh_for(session) {
                     if generation != self.generation.load(Ordering::SeqCst) {
@@ -150,7 +150,7 @@ impl RuntimeEntry {
             return Err("远端服务状态已变化，请重试".into());
         }
         let stamp = binary_stamp(&prepared.local_binary).ok_or("本地 server 二进制已变化")?;
-        if sha256_of_file_cached(&prepared.local_binary).await? != prepared.sha256 {
+        if sha256_of_file_async(&prepared.local_binary).await? != prepared.sha256 {
             return Err("本地 server 二进制已变化，请重新准备".into());
         }
         let access = prepared.access.clone();
@@ -188,7 +188,7 @@ mod tests {
                     token: token.into(),
                 },
                 local_binary: self.0.clone(),
-                sha256: sha256_of_file_cached(&self.0).await.unwrap(),
+                sha256: sha256_of_file_async(&self.0).await.unwrap(),
             }
         }
     }

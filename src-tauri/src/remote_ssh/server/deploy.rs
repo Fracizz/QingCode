@@ -13,7 +13,7 @@ use super::paths::{
 use super::scripts::{
     deploy_server_command, kill_processes_by_executable_command, parse_remote_sha256,
     prepare_private_server_dirs_command, remote_sha256_command, self_check_then_deploy_command,
-    sha256_of_file_cached, windows_deploy_for, windows_prepare_server_dirs_script,
+    sha256_of_file_async, windows_deploy_for, windows_prepare_server_dirs_script,
     windows_remote_sha256_script, windows_remove_for, windows_self_check_then_deploy_script,
     windows_stop_for, PREPARE_HOME_INVALID_EXIT, REMOTE_BINARY_MISSING_EXIT,
     SELF_CHECK_FAILED_EXIT,
@@ -34,7 +34,7 @@ pub(super) async fn prepare_shared_daemon(
     let (arch, local_binary) = locate_local_server_binary(manager, root)
         .await
         .map_err(|e| e.reason)?;
-    let sha256 = sha256_of_file_cached(&local_binary).await?;
+    let sha256 = sha256_of_file_async(&local_binary).await?;
     let sftp = manager.open_sftp(&connection_id).await?;
     let (home, install_dir) = resolve_install_location(manager, &sftp, root, &connection_id)
         .await
@@ -106,7 +106,7 @@ pub(crate) async fn stage_direct_gateway(
     let (arch, local_binary) = locate_local_server_binary(manager, root)
         .await
         .map_err(|error| error.reason)?;
-    let sha256 = sha256_of_file_cached(&local_binary).await?;
+    let sha256 = sha256_of_file_async(&local_binary).await?;
     let sftp = manager.open_sftp(&connection_id).await?;
     let (home, install_dir) = resolve_install_location(manager, &sftp, root, &connection_id)
         .await
@@ -990,7 +990,7 @@ async fn discover_or_deploy_server(
             resolve_install_location(manager, &sftp, root, connection_id).await?;
         timer.mark("安装目录");
         let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, arch));
-        let local_sha256 = sha256_of_file_cached(local_binary)
+        let local_sha256 = sha256_of_file_async(local_binary)
             .await
             .map_err(ServerDeployError::from)?;
         let (discovered, remote_matches) = try_discover_server(
@@ -1029,7 +1029,7 @@ async fn discover_or_deploy_server(
     );
     timer.mark("准备安装");
     // 本地摘要一份两用：幂等跳过上传 + 远端 self-check 期望值。
-    let local_sha256 = sha256_of_file_cached(&local_binary)
+    let local_sha256 = sha256_of_file_async(&local_binary)
         .await
         .map_err(ServerDeployError::from)?;
     let target = ServerInstallTarget {

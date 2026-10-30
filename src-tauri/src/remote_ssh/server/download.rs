@@ -275,7 +275,7 @@ pub(super) async fn validate_local_server_manifest(binary: &Path) -> Result<(), 
     {
         return Err(format!("本地 server 文件大小与清单不匹配：{name}"));
     }
-    let actual = super::scripts::sha256_of_file_cached(binary).await?;
+    let actual = super::scripts::sha256_of_file_async(binary).await?;
     if !actual.eq_ignore_ascii_case(artifact.sha256.trim()) {
         return Err(format!("本地 server 文件 SHA-256 与清单不匹配：{name}"));
     }

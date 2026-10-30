@@ -6,6 +6,12 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.14-beta.14] - 2026-10-30
+
+### Fixed
+
+- Recalculate Server package digests to detect rapid changes to files of the same size.
+
 ## [0.1.14-beta.13] - 2026-10-30
 
 ### Added

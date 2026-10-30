@@ -126,7 +126,7 @@ async fn run_bench() -> Result<(), String> {
         let size = std::fs::metadata(&local)
             .map(|meta| meta.len())
             .unwrap_or(0);
-        let local_sha = sha256_of_file_cached(&local).await?;
+        let local_sha = sha256_of_file_async(&local).await?;
         let remote_bin = format!("{install_dir}/{}", server_binary_file_name(windows, &arch));
         let started = Instant::now();
         let matches = remote_binary_sha_matches(&manager, &root, &remote_bin, &local_sha).await?;
