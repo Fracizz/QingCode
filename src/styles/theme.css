@@ -60,7 +60,7 @@
   --activity-bar-width: 44px;
   --terminal-height: 260px;
   --tab-height: 32px;
-  --status-bar-height: 28px;
+  --status-bar-height: 24px;
   --title-bar-height: 34px;
   --ui-font-size: 13px;
   /* Auxiliary copy follows the UI font directly (正文 13 → 辅助 12). */

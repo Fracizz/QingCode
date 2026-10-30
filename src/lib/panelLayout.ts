@@ -16,7 +16,7 @@ type TranslateFn = (source: string, values?: Record<string, string | number>) =>
 
 export function getTerminalMaxHeight() {
   const titleBar = 32
-  const statusBar = 28
+  const statusBar = 24
   const chrome = titleBar + statusBar + 48
   return Math.max(
     TERMINAL_MIN_HEIGHT,

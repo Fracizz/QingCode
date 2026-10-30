@@ -17,7 +17,7 @@
   display: inline-flex;
   align-items: center;
   min-width: 0;
-  height: calc(var(--status-bar-height) - 6px);
+  height: calc(var(--status-bar-height) - 2px);
   padding-inline: 6px;
   border-radius: var(--radius-sm);
   color: var(--color-fg);

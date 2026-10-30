@@ -1,8 +1,13 @@
-# Used by the NSIS installer. Never kill the editor or touch another installation.
-[CmdletBinding()]
+# Used by the NSIS installer. Force requires prior user confirmation in NSIS.
+# All modes are restricted to the executable in this installation.
+[CmdletBinding(DefaultParameterSetName = 'Graceful')]
 param(
   [Parameter(Mandatory = $true)]
   [string]$ExecutablePath,
+  [Parameter(Mandatory = $true, ParameterSetName = 'Check')]
+  [switch]$CheckOnly,
+  [Parameter(Mandatory = $true, ParameterSetName = 'Force')]
+  [switch]$Force,
   [ValidateRange(1, 300)]
   [int]$TimeoutSeconds = 60
 )
@@ -14,8 +19,11 @@ try {
   # natively before enumerating, otherwise a running app looks absent.
   if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
     $nativePowerShell = Join-Path $env:SystemRoot 'Sysnative\WindowsPowerShell\v1.0\powershell.exe'
+    $modeArguments = @()
+    if ($CheckOnly) { $modeArguments += '-CheckOnly' }
+    if ($Force) { $modeArguments += '-Force' }
     & $nativePowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $PSCommandPath `
-      -ExecutablePath $ExecutablePath -TimeoutSeconds $TimeoutSeconds
+      -ExecutablePath $ExecutablePath -TimeoutSeconds $TimeoutSeconds @modeArguments
     exit $LASTEXITCODE
   }
 
@@ -46,11 +54,25 @@ try {
         $probe.Dispose()
         exit 0
       } catch [IO.IOException] {
+        if ($CheckOnly) {
+          Write-Output 'QingCode executable is locked by another process. Close it, then retry setup.'
+          exit 3
+        }
         # Wait for a transient image/scan lock, bounded by the same deadline.
       }
     }
+    if ($CheckOnly -and $running.Count -gt 0) { exit 2 }
 
     foreach ($appProcess in $running) {
+      if ($Force) {
+        try {
+          Stop-Process -InputObject $appProcess -Force
+        } catch {
+          # A process that exited between detection and termination is success.
+          if (-not $appProcess.HasExited) { throw }
+        }
+        continue
+      }
       $appProcess.Refresh()
       $windowHandle = $appProcess.MainWindowHandle.ToInt64()
       if ($windowHandle -ne 0 -and $requestedWindows.Add($windowHandle)) {

@@ -23,7 +23,7 @@ export function interfaceMetrics(size: number) {
     chipHeight: pixels(24),
     tabHeight: pixels(32),
     titleHeight: pixels(32),
-    statusHeight: pixels(28),
+    statusHeight: pixels(24),
     activityWidth: pixels(48),
     activityButtonSize: pixels(40),
     activityIconSize: pixels(22),

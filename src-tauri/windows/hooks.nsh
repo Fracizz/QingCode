@@ -47,19 +47,38 @@
   ${EndIf}
 !macroend
 
-; Close only the executable in this installation. WM_CLOSE follows QingCode's
-; normal save/close flow. Cancellation or timeout must leave app files intact.
+; Detect without closing any windows. Only force-close this installation after
+; explicit confirmation; refusal, silent mode, or failure must stop installation.
 !macro QingCloseRunningApp
   InitPluginsDir
   File "/oname=$PLUGINSDIR\close-running-app.ps1" "${QING_CLOSE_APP_SCRIPT}"
-  DetailPrint "正在关闭 QingCode，请在应用中确认退出并处理保存提示..."
-  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\close-running-app.ps1" -ExecutablePath "$INSTDIR\${MAINBINARYNAME}.exe"'
+  ; NSIS is 32-bit. Native PowerShell can read the paths of 64-bit editors;
+  ; redirected 32-bit Get-Process may return an empty Path and miss them.
+  StrCpy $2 "$SYSDIR\WindowsPowerShell\v1.0\powershell.exe"
+  ${If} ${RunningX64}
+    StrCpy $2 "$WINDIR\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+  ${EndIf}
+  nsExec::ExecToStack '"$2" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\close-running-app.ps1" -ExecutablePath "$INSTDIR\${MAINBINARYNAME}.exe" -CheckOnly'
   Pop $0
   Pop $1
+  ${If} $0 == 2
+    ${If} ${Silent}
+      SetErrorLevel 2
+      Abort "QingCode is running. Close QingCode and run setup again."
+    ${EndIf}
+    BringToFront
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$(qingConfirmForceClose)" IDYES qing_force_close
+    SetErrorLevel 2
+    Abort "$(qingCloseCancelled)"
+    qing_force_close:
+      nsExec::ExecToStack '"$2" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\close-running-app.ps1" -ExecutablePath "$INSTDIR\${MAINBINARYNAME}.exe" -Force -TimeoutSeconds 10'
+      Pop $0
+      Pop $1
+  ${EndIf}
   ${If} $0 != 0
     DetailPrint "$1"
     SetErrorLevel 2
-    Abort "QingCode could not close safely. Save your work, close QingCode, and run setup again."
+    Abort "$(qingCloseFailed)"
   ${EndIf}
 !macroend
 

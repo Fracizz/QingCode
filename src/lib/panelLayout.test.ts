@@ -76,7 +76,7 @@ describe('getDefaultSideTerminalWidth', () => {
 describe('getTerminalMaxHeight', () => {
   it('allows the terminal to use 90% of the window after reserved chrome', () => {
     expect(TERMINAL_MAX_HEIGHT_RATIO).toBe(0.9)
-    expect(getTerminalMaxHeight()).toBe(702)
+    expect(getTerminalMaxHeight()).toBe(706)
   })
 })
 

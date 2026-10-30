@@ -61,12 +61,13 @@ async function waitForFile(filename, child) {
 }
 
 const closeScenarios = [powershell, powershell32].flatMap(shell =>
-  [false, true].map(cancelClose => ({ shell, cancelClose })))
-if (!skip) closeScenarios.push({ shell: null, cancelClose: false })
-for (const { shell, cancelClose } of closeScenarios) {
-  const caller = shell === null ? '32-bit NSIS' : `${shell === powershell32 ? '32-bit' : 'native'} PowerShell`
-  test(`upgrade via ${caller} ${cancelClose ? 'stops when closing is cancelled' : 'closes the target normally'} and preserves another installation`,
-    { skip: skipClose }, async () => {
+  ['graceful', 'cancel', 'check', 'force'].map(mode => ({ shell, mode })))
+for (const mode of ['installer-yes', 'installer-no', 'installer-silent', 'installer-absent']) {
+  closeScenarios.push({ shell: powershell, mode })
+}
+for (const { shell, mode } of closeScenarios) {
+  test(`upgrade shutdown mode ${mode} via ${shell === powershell32 ? '32-bit' : 'native'} PowerShell preserves another installation`,
+    { skip: skipClose || (mode.startsWith('installer-') && skip) }, async () => {
       const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'qingcode-close-test-')))
       const children = []
       try {
@@ -75,9 +76,57 @@ for (const { shell, cancelClose } of closeScenarios) {
         writeFileSync(source, `
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 class TestApp {
+  delegate bool WindowCallback(IntPtr window, IntPtr data);
+  [DllImport("user32.dll")] static extern bool EnumWindows(WindowCallback callback, IntPtr data);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint processId);
+  [DllImport("user32.dll")] static extern IntPtr GetDlgItem(IntPtr window, int id);
+  [DllImport("user32.dll")] static extern bool IsWindowEnabled(IntPtr window);
+  [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr window, StringBuilder text, int count);
+  static void Answer(string[] args) {
+    var deadline = DateTime.UtcNow.AddSeconds(20);
+    IntPtr dialog = IntPtr.Zero;
+    while (dialog == IntPtr.Zero && DateTime.UtcNow < deadline) {
+      EnumWindows((window, data) => {
+        uint owner;
+        GetWindowThreadProcessId(window, out owner);
+        if (owner == uint.Parse(args[1]) && GetDlgItem(window, 6) != IntPtr.Zero) dialog = window;
+        return true;
+      }, IntPtr.Zero);
+      Thread.Sleep(50);
+    }
+    if (dialog == IntPtr.Zero) throw new Exception("Confirmation dialog did not appear");
+    int defaultId = SendMessage(dialog, 0x400, IntPtr.Zero, IntPtr.Zero).ToInt32() & 0xffff;
+    if (defaultId != 7) throw new Exception("No must be the default button");
+    var text = new StringBuilder(2048);
+    GetWindowText(GetDlgItem(dialog, 65535), text, text.Capacity);
+    File.WriteAllText(args[3], text.ToString());
+    SendMessage(GetDlgItem(dialog, int.Parse(args[2])), 0xf5, IntPtr.Zero, IntPtr.Zero);
+    if (args[2] == "7") {
+      bool closed = false;
+      while (!closed && DateTime.UtcNow < deadline) {
+        EnumWindows((window, data) => {
+          uint owner;
+          GetWindowThreadProcessId(window, out owner);
+          var button = GetDlgItem(window, 2);
+          if (owner == uint.Parse(args[1]) && button != IntPtr.Zero && IsWindowEnabled(window) && IsWindowEnabled(button)) {
+            SendMessage(button, 0xf5, IntPtr.Zero, IntPtr.Zero);
+            closed = true;
+          }
+          return true;
+        }, IntPtr.Zero);
+        Thread.Sleep(50);
+      }
+      if (!closed) throw new Exception("Aborted installation did not become closable");
+    }
+  }
   [STAThread] static void Main(string[] args) {
+    if (args[0] == "answer") { Answer(args); return; }
     var form = new Form();
     form.Text = "Disposable installer test";
     form.Shown += (s, e) => File.WriteAllText(args[0] + ".ready", "ready");
@@ -95,51 +144,92 @@ class TestApp {
           // Force an x64 process: AnyCPU fixtures can hide NSIS's WOW64 bug.
           execFileSync(csc, ['/nologo', '/platform:x64', '/target:winexe', '/reference:System.Windows.Forms.dll', `/out:${exe}`, source], { windowsHide: true })
           const marker = path.join(folder, 'marker')
-          const child = spawn(exe, [marker, directory === 'other' || cancelClose ? 'cancel' : 'close'], { stdio: 'ignore' })
+          if (mode === 'installer-absent' && directory === 'target') continue
+          const child = spawn(exe, [marker, directory === 'other' || mode !== 'graceful' ? 'cancel' : 'close'], { stdio: 'ignore' })
           children.push(child)
           await waitForFile(`${marker}.ready`, child)
         }
         const sentinel = path.join(root, 'target', 'user-data.json')
         writeFileSync(sentinel, '{"keep":true}')
-        let result
-        if (shell === null) {
-          const installer = path.join(root, 'upgrade.exe')
-          const installerSource = path.join(root, 'upgrade.nsi')
-          const replacement = path.join(root, 'replacement.bin')
-          writeFileSync(replacement, 'replacement executable')
-          writeFileSync(installerSource, `Unicode true
-Name "QingCode close test"
+        const args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', closeScript,
+          '-ExecutablePath', path.join(root, 'target', `${appName}.exe`), '-TimeoutSeconds', '2']
+        if (mode === 'check') args.push('-CheckOnly')
+        if (mode === 'force') args.push('-Force')
+        const staysRunning = ['cancel', 'check', 'installer-no', 'installer-silent'].includes(mode)
+        if (mode.startsWith('installer-')) {
+          const installer = path.join(root, 'setup.exe')
+          const nsi = path.join(root, 'setup.nsi')
+          const completed = path.join(root, 'completed')
+          const translations = readFileSync(templatePath, 'utf8').split(/\r?\n/)
+            .filter(line => /^LangString qing(?:ConfirmForceClose|CloseCancelled|CloseFailed) /.test(line)).join('\n')
+          writeFileSync(nsi, `Unicode true
+!include MUI2.nsh
+!include x64.nsh
+!include "${nsisString(hooksPath)}"
+!define MAINBINARYNAME "${appName}"
+Name "QingCode disposable shutdown test"
 OutFile "${nsisString(installer)}"
 InstallDir "${nsisString(path.join(root, 'target'))}"
 RequestExecutionLevel user
-SilentInstall silent
-!include LogicLib.nsh
-!define MAINBINARYNAME "${appName}"
-!include "${nsisString(hooksPath)}"
+AutoCloseWindow true
+Page instfiles "" StartTestInstall
+!insertmacro MUI_LANGUAGE "English"
+!insertmacro MUI_LANGUAGE "SimpChinese"
+${translations}
+Function .onInit
+  StrCpy $LANGUAGE 2052
+FunctionEnd
+Function StartTestInstall
+  System::Call 'user32::PostMessageW(p $HWNDPARENT, i 0x111, p 1, p 0)'
+FunctionEnd
+Function .onInstSuccess
+  Quit
+FunctionEnd
+Function .onInstFailed
+  Quit
+FunctionEnd
 Section
-  SetOutPath $INSTDIR
   !insertmacro QingCloseRunningApp
-  File "/oname=${appName}.exe" "${nsisString(replacement)}"
+  FileOpen $2 "${nsisString(completed)}" w
+  FileWrite $2 "installed"
+  FileClose $2
 SectionEnd
 `)
-          execFileSync(makeNsis, ['-INPUTCHARSET', 'UTF8', '-V2', installerSource], { windowsHide: true })
-          result = spawnSync(installer, ['/S'], { windowsHide: true, encoding: 'utf8', timeout: 30_000 })
-          assert.equal(readFileSync(path.join(root, 'target', `${appName}.exe`), 'utf8'), 'replacement executable')
+          execFileSync(makeNsis, ['-INPUTCHARSET', 'UTF8', '-V2', nsi], { windowsHide: true })
+          const setup = spawn(installer, mode === 'installer-silent' ? ['/S'] : [], { stdio: 'ignore' })
+          children.push(setup)
+          const setupExit = new Promise(resolve => setup.once('exit', resolve))
+          if (mode === 'installer-yes' || mode === 'installer-no') {
+            const dialogText = path.join(root, 'dialog.txt')
+            execFileSync(path.join(root, 'other', `${appName}.exe`),
+              ['answer', String(setup.pid), mode === 'installer-yes' ? '6' : '7', dialogText], { timeout: 30_000 })
+            assert.match(readFileSync(dialogText, 'utf8'), /是否强制关闭/)
+            assert.match(readFileSync(dialogText, 'utf8'), /未保存/)
+          }
+          const watchdog = setTimeout(() => setup.kill(), 30_000)
+          try {
+            assert.equal(await setupExit, staysRunning ? 2 : 0)
+          } finally {
+            clearTimeout(watchdog)
+          }
+          assert.equal(existsSync(completed), !staysRunning)
         } else {
-          result = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', closeScript,
-          '-ExecutablePath', path.join(root, 'target', `${appName}.exe`), '-TimeoutSeconds', '2'],
+          const result = spawnSync(shell, args,
           { windowsHide: true, encoding: 'utf8', timeout: 60_000 })
+          assert.equal(result.status, staysRunning ? 2 : 0, result.stdout + result.stderr)
         }
-        assert.equal(result.status, cancelClose ? 2 : 0, result.stdout + result.stderr)
-        assert.equal(existsSync(path.join(root, 'target', 'marker.closing')), true)
+        assert.equal(existsSync(path.join(root, 'target', 'marker.closing')), mode === 'graceful' || mode === 'cancel')
         assert.equal(existsSync(path.join(root, 'other', 'marker.closing')), false)
-        assert.equal(children[1].exitCode, null)
+        assert.equal(children[mode === 'installer-absent' ? 0 : 1].exitCode, null)
         assert.equal(readFileSync(sentinel, 'utf8'), '{"keep":true}')
-        if (cancelClose) assert.equal(children[0].exitCode, null)
+        const stillRunning = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', closeScript,
+          '-ExecutablePath', path.join(root, 'target', `${appName}.exe`), '-CheckOnly'],
+        { windowsHide: true, encoding: 'utf8', timeout: 30_000 })
+        assert.equal(stillRunning.status, staysRunning ? 2 : 0, stillRunning.stdout + stillRunning.stderr)
       } finally {
         // Only terminate the disposable processes created by this test.
         for (const child of children) {
-          if (child.exitCode === null) {
+          if (child.exitCode === null && child.signalCode === null) {
             const exited = new Promise(resolve => child.once('exit', resolve))
             child.kill()
             await exited
