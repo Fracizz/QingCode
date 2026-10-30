@@ -10,6 +10,7 @@
 !define QING_WEBVIEW2_BOOTSTRAPPER_URL "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 ; Product page (offline installers / docs) if the bootstrapper link is blocked.
 !define QING_WEBVIEW2_PAGE_URL "https://developer.microsoft.com/microsoft-edge/webview2/"
+!define QING_CLOSE_APP_SCRIPT "${__FILEDIR__}\close-running-app.ps1"
 
 !macro QingReadWebView2Version
   StrCpy $R9 ""
@@ -30,7 +31,7 @@
   Pop $0
   ${If} $0 == "success"
     DetailPrint "Installing WebView2..."
-    ExecWait '"$TEMP\MicrosoftEdgeWebview2Setup.exe" /install' $1
+    ExecWait '"$TEMP\MicrosoftEdgeWebview2Setup.exe" /silent /install' $1
     ${If} $1 = 0
       !insertmacro QingReadWebView2Version
       ${If} $R9 != ""
@@ -43,6 +44,21 @@
     ${EndIf}
   ${Else}
     DetailPrint "WebView2 download failed: $0"
+  ${EndIf}
+!macroend
+
+; Close only the executable in this installation. WM_CLOSE follows QingCode's
+; normal save/close flow. Cancellation or timeout must leave app files intact.
+!macro QingCloseRunningApp
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\close-running-app.ps1" "${QING_CLOSE_APP_SCRIPT}"
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\close-running-app.ps1" -ExecutablePath "$INSTDIR\${MAINBINARYNAME}.exe"'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    DetailPrint "$1"
+    SetErrorLevel 2
+    Abort "QingCode could not close safely. Save your work, close QingCode, and run setup again."
   ${EndIf}
 !macroend
 
@@ -91,6 +107,7 @@
       !insertmacro QingOfferWebView2Download
     ${EndIf}
   ${EndIf}
+  !insertmacro QingCloseRunningApp
   !insertmacro QingRemoveLegacyNavigationComponents
 !macroend
 

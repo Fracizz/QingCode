@@ -74,6 +74,7 @@
         "type": "skip"
       },
       "nsis": {
+        "template": "./windows/installer.nsi",
         "installMode": "currentUser",
         "languages": ["SimpChinese", "English"],
         "displayLanguageSelector": false,

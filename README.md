@@ -210,7 +210,7 @@ QingCode 专注于多项目、SSH、文件编辑和终端工作流；本地与 S
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` 或 `.zip` |
 
-- Windows：便携 exe 或 NSIS 安装包（`*-setup.exe`）；需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）。安装包会先尝试自动下载安装；失败时可点「是」跳转引导程序下载，或「否」打开产品页。安装包升级时会清理旧版导航组件文件，保留组件目录中额外存放的文件。
+- Windows：便携 exe 或 NSIS 安装包（`*-setup.exe`）；双击安装包即可自动安装或在原目录覆盖升级，无需先卸载或逐页确认。配置和项目记录保留，完成页的「运行QingCode」默认勾选，可取消。升级会先正常关闭当前安装的应用；如有未保存内容，请处理应用内的保存提示，取消关闭或超时会停止升级，不强制结束进程。`/S` 可完全静默安装，只有显式传入 `/R` 才在静默安装后启动。需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）；缺失时自动下载安装，失败时提供下载入口。升级也会清理旧版导航组件文件，保留组件目录中额外存放的文件。
 - macOS：未签名时首次请右键 → 打开；需要 Apple Developer 签名/公证后再分发可跳过该步骤  
 
 本地打包（Windows x64 本机）：

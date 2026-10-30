@@ -208,7 +208,7 @@ Download from [GitHub Releases](https://github.com/Fracizz/QingCode/releases) or
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` or `.zip` |
 
-- Windows: portable exe or NSIS installer (`*-setup.exe`); needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/). The installer tries an automatic download first; on failure, Yes opens the bootstrapper download and No opens the product page. Upgrades remove retired navigation component files while preserving any additional files stored in those directories.
+- Windows: portable exe or NSIS installer (`*-setup.exe`). Double-click setup to install or upgrade in place automatically, preserving settings and project history without an uninstall prompt or wizard. The completion page offers a checked, optional action to launch QingCode. Setup first requests a normal app close; handle any unsaved-file prompts in the app. Cancellation or timeout stops the upgrade without killing the editor. `/S` installs silently; launching afterwards requires an explicit `/R`. Needs [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/); if missing, setup tries an automatic installation and offers download links on failure. Upgrades also remove retired navigation component files while preserving additional files in those directories.
 - macOS: unsigned builds may need right-click → Open the first time  
 
 Local packaging (Windows x64 host):

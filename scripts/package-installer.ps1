@@ -190,7 +190,7 @@ try {
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "Install notes: Start Menu shortcut always; desktop shortcut checked by default on finish page." -ForegroundColor DarkGray
+  Write-Host "Install notes: automatic in-place install/upgrade; optional launch checked on finish page; /S for silent install (/R opts into launch)." -ForegroundColor DarkGray
   Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -SkipServer · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {
   Clear-ServerResourceDir -ProjectRoot $projectRoot
