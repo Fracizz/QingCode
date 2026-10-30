@@ -237,7 +237,11 @@ function Get-ServerBinaryFiles {
     if ($entry.Name -cnotmatch '^qingcode-server-(x86_64|aarch64|windows-(x86_64|aarch64)\.exe)$') {
       throw "Invalid server artifact name: $($entry.Name)"
     }
-    $file = Get-Item -LiteralPath (Join-Path $src $entry.Name) -ErrorAction Stop
+    $artifactPath = Join-Path $src $entry.Name
+    if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+      throw "Server artifact does not exist: $($entry.Name)"
+    }
+    $file = Get-Item -LiteralPath $artifactPath -ErrorAction Stop
     if ($file.PSIsContainer -or $entry.Value.size -le 0 -or $file.Length -ne $entry.Value.size) {
       throw "Server artifact size mismatch: $($entry.Name)"
     }
