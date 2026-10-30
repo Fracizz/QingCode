@@ -113,6 +113,8 @@ qingcode-server direct-info --include-secret
 
 同一个 `dev` 可通过任务内 `os.windows/linux/macos` 覆盖命令、目录和环境变量，公共字段作为默认值；WSL 自动使用所属发行版的 Linux 工具链，SSH 以远端系统为准。旧配置与 CLI 语法继续兼容，详见[跨平台运行配置](docs/run-config.md)。
 
+运行面板支持「发现运行配置」：从项目根目录和直属子目录的 `package.json scripts` 生成候选命令，勾选后导入，也可合并为多终端配置。发现过程仅读取文件，运行继续遵循工作区信任规则。
+
 ### 终端配置：默认环境与 AI / 工具入口
 
 除了运行配置，还可管理**终端配置文件**（名称 + 启动命令）：
@@ -228,7 +230,7 @@ pnpm package                  # 本机 x64：NSIS 安装包（release/QingCode-s
 
 ## 从源码运行
 
-环境：Node.js 22+、pnpm 10+、Rust stable；Windows 需 WebView2，macOS 需 Xcode CLT。
+环境：Node.js 22.12+、pnpm 11+、Rust stable；Windows 需 WebView2，macOS 需 Xcode CLT。
 
 ```bash
 pnpm install
@@ -245,6 +247,8 @@ pnpm typecheck:legacy  # 经典版对照 / 回退检查
 ```
 
 更多约定见 [AGENTS.md](./AGENTS.md)；设置与语言说明见 [帮助文档.md](./帮助文档.md)。
+
+发布性能复测见 [进程树性能基准](docs/performance-benchmarks.md)；Rust 文件接口类型生成与校验见 [IPC 类型契约](docs/ipc-contracts.md)。
 
 ## 技术栈
 

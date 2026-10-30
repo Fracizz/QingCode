@@ -26,9 +26,9 @@ export default defineConfig({
     alias: [
       {
         find: /^.*\/(?:projectStore|uiStore|terminalStore|editorStore|workspaceTrust|projectActions|namedWorkspaceActions)$/,
-        replacement: resolve(__dirname, 'src/test-pages/projectManagerAdapters.ts'),
+        replacement: resolve(import.meta.dirname, 'src/test-pages/projectManagerAdapters.ts'),
       },
-      { find: '@', replacement: resolve(__dirname, 'src') },
+      { find: '@', replacement: resolve(import.meta.dirname, 'src') },
     ],
   },
   server: {

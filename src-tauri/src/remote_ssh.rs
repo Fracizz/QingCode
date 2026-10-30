@@ -121,28 +121,7 @@ pub struct SshBrowseResult {
     pub entries: Vec<RemoteFileNode>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct RemoteFileNode {
-    pub name: String,
-    pub path: String,
-    pub is_dir: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RemoteFileStat {
-    pub size: u64,
-    pub is_dir: bool,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteFileSlice {
-    pub content: String,
-    pub offset: u64,
-    pub next_offset: u64,
-    pub file_size: u64,
-    pub eof: bool,
-}
+pub use qingcode_contracts::{RemoteFileNode, RemoteFileSlice, RemoteFileStat};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -4355,14 +4334,34 @@ pub async fn ssh_read_file_slice(
         .await
         .map_err(|error| format!("定位远程文件失败：{error}"))?;
     let requested = max_bytes.clamp(1, MAX_SLICE_BYTES).min(file_size - offset) as usize;
+    read_remote_file_slice(&mut file, offset, requested, file_size).await
+}
+
+/// SFTP reads may stop at the server's packet limit before the requested end.
+/// Fill the bounded slice before decoding, then leave a partial UTF-8 tail for
+/// the next request, using the same byte-offset rules as the local viewer.
+async fn read_remote_file_slice<R: AsyncRead + Unpin>(
+    file: &mut R,
+    offset: u64,
+    requested: usize,
+    file_size: u64,
+) -> Result<RemoteFileSlice, String> {
     let mut bytes = vec![0; requested];
-    let read = file
-        .read(&mut bytes)
-        .await
-        .map_err(|error| format!("读取远程文件片段失败：{error}"))?;
-    bytes.truncate(read);
+    let mut read_total = 0;
+    while read_total < requested {
+        let read = file
+            .read(&mut bytes[read_total..])
+            .await
+            .map_err(|error| format!("读取远程文件片段失败：{error}"))?;
+        if read == 0 {
+            break;
+        }
+        read_total += read;
+    }
+    bytes.truncate(read_total);
+    bytes.truncate(crate::commands::cmd_stat::trim_utf8_end(&bytes));
     let content = String::from_utf8_lossy(&bytes).into_owned();
-    let next_offset = offset + read as u64;
+    let next_offset = offset + bytes.len() as u64;
     Ok(RemoteFileSlice {
         content,
         offset,
@@ -5496,62 +5495,48 @@ pub async fn ssh_git_branch_list(
     path: String,
     manager: State<'_, SshManager>,
 ) -> Result<RemoteGitBranchList, String> {
-    let local_output = remote_git_command(
+    let mut output = remote_git_command(
         &manager,
         &path,
-        vec![
-            "for-each-ref".to_string(),
-            "--format=%(refname:short)%09%(HEAD)%09%(upstream:short)".to_string(),
-            "refs/heads".to_string(),
-        ],
-        false,
-    )
-    .await?;
-    if local_output.exit_code != 0 {
-        return Err(format!("读取本地分支失败：{}", local_output.stderr.trim()));
-    }
-    let local = local_output
-        .stdout
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(3, '\t');
-            let name = parts.next()?.trim();
-            if name.is_empty() {
-                return None;
-            }
-            let current = parts.next().unwrap_or_default() == "*";
-            let upstream = parts.next().unwrap_or_default().trim();
-            Some(RemoteGitBranchInfo {
-                name: name.to_string(),
-                current,
-                upstream: (!upstream.is_empty()).then(|| upstream.to_string()),
-            })
-        })
-        .collect();
-    let remote_output = remote_git_command(
-        &manager,
-        &path,
-        vec![
-            "for-each-ref".to_string(),
-            "--format=%(refname:short)".to_string(),
-            "refs/remotes".to_string(),
-        ],
-        false,
-    )
-    .await?;
-    // 与本地实现一致：远程跟踪分支读取失败时按无远程分支处理。
-    let remote_stdout = if remote_output.exit_code == 0 {
-        remote_output.stdout.as_str()
-    } else {
-        ""
-    };
-    let remote = remote_stdout
-        .lines()
-        .map(str::trim)
-        .filter(|name| !name.is_empty() && !name.ends_with("/HEAD"))
+        [
+            "for-each-ref",
+            crate::git::BRANCH_LIST_FORMAT,
+            "refs/heads",
+            "refs/remotes",
+        ]
         .map(str::to_string)
-        .collect();
-    Ok(RemoteGitBranchList { local, remote })
+        .to_vec(),
+        false,
+    )
+    .await?;
+    if output.exit_code != 0 {
+        // As before, a remote-ref failure may still return the local branches.
+        output = remote_git_command(
+            &manager,
+            &path,
+            ["for-each-ref", crate::git::BRANCH_LIST_FORMAT, "refs/heads"]
+                .map(str::to_string)
+                .to_vec(),
+            false,
+        )
+        .await?;
+        if output.exit_code != 0 {
+            return Err(format!("读取本地分支失败：{}", output.stderr.trim()));
+        }
+    }
+    let branches = crate::git::parse_branch_list(&output.stdout);
+    Ok(RemoteGitBranchList {
+        local: branches
+            .local
+            .into_iter()
+            .map(|branch| RemoteGitBranchInfo {
+                name: branch.name,
+                current: branch.current,
+                upstream: branch.upstream,
+            })
+            .collect(),
+        remote: branches.remote,
+    })
 }
 
 #[tauri::command]
@@ -6728,6 +6713,95 @@ async fn kill_detached_terminals_best_effort(
 
 #[cfg(test)]
 mod tests {
+    struct PacketReader {
+        bytes: Vec<u8>,
+        position: usize,
+        packet_size: usize,
+        fail_at: Option<usize>,
+    }
+
+    impl tokio::io::AsyncRead for PacketReader {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            if self.fail_at.is_some_and(|limit| self.position >= limit) {
+                return std::task::Poll::Ready(Err(std::io::Error::other("SFTP disconnected")));
+            }
+            let count = buf
+                .remaining()
+                .min(self.packet_size)
+                .min(self.bytes.len() - self.position);
+            buf.put_slice(&self.bytes[self.position..self.position + count]);
+            self.position += count;
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_file_slice_fills_short_sftp_packets_without_exceeding_budget() {
+        let bytes = vec![b'a'; 100 * 1024];
+        let mut reader = PacketReader {
+            bytes: bytes.clone(),
+            position: 0,
+            packet_size: 32 * 1024,
+            fail_at: None,
+        };
+        let slice = super::read_remote_file_slice(&mut reader, 0, 256 * 1024, bytes.len() as u64)
+            .await
+            .unwrap();
+        assert_eq!(slice.content.as_bytes(), bytes);
+        assert!(slice.eof);
+        assert_eq!(slice.next_offset, bytes.len() as u64);
+
+        reader.position = 0;
+        let slice = super::read_remote_file_slice(&mut reader, 0, 40 * 1024, bytes.len() as u64)
+            .await
+            .unwrap();
+        assert_eq!(reader.position, 40 * 1024);
+        assert_eq!(slice.next_offset, 40 * 1024);
+        assert!(!slice.eof);
+    }
+
+    #[tokio::test]
+    async fn remote_file_slice_retains_split_utf8_for_the_next_byte_offset() {
+        let bytes = "a你好z".as_bytes().to_vec();
+        let mut reader = PacketReader {
+            bytes,
+            position: 0,
+            packet_size: 2,
+            fail_at: None,
+        };
+        let first = super::read_remote_file_slice(&mut reader, 0, 5, 8)
+            .await
+            .unwrap();
+        assert_eq!(first.content, "a你");
+        assert_eq!(first.next_offset, 4);
+        assert!(!first.eof);
+        reader.position = first.next_offset as usize;
+        let second = super::read_remote_file_slice(&mut reader, first.next_offset, 4, 8)
+            .await
+            .unwrap();
+        assert_eq!(second.content, "好z");
+        assert_eq!(second.next_offset, 8);
+        assert!(second.eof);
+    }
+
+    #[tokio::test]
+    async fn remote_file_slice_propagates_errors_after_partial_reads() {
+        let mut reader = PacketReader {
+            bytes: vec![b'a'; 20],
+            position: 0,
+            packet_size: 2,
+            fail_at: Some(2),
+        };
+        let error = super::read_remote_file_slice(&mut reader, 0, 20, 20)
+            .await
+            .unwrap_err();
+        assert!(error.contains("SFTP disconnected"));
+    }
+
     #[test]
     fn windows_sftp_guard_includes_project_ancestors_and_file_components() {
         let components = super::windows_sftp_guard_components("/C:/Users/dev/project/file.txt");

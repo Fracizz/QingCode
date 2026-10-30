@@ -1,3 +1,4 @@
+import { getFileStat } from '../lib/fileIpc'
 import { hasBackend } from '../lib/runtimeCapabilities'
 import { create } from 'zustand'
 import { save } from '@tauri-apps/plugin-dialog'
@@ -77,8 +78,6 @@ function resolveTabContent(tab: EditorTab): string | undefined {
   return getLiveEditorContent(tab.id) ?? tab.content
 }
 
-type FileStat = { size: number; is_dir: boolean }
-
 /**
  * Stat → tier → edit (`read_file`) or view-only tab. Shared by open / retry / restore.
  */
@@ -86,7 +85,7 @@ async function populateTabFromDisk(id: string, path: string, line?: number, colu
   const get = () => useEditorStore.getState()
   const set = useEditorStore.setState
 
-  const stat = await safeInvoke<FileStat>('读取文件信息', 'file_stat', { path })
+  const stat = await getFileStat({ path })
   if (!get().findTab(id)) return
 
   if (stat.is_dir) {
@@ -582,7 +581,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       return next ?? s
     })
     try {
-      const stat = await safeInvoke<FileStat>('读取文件信息', 'file_stat', { path: tab.path })
+      const stat = await getFileStat({ path: tab.path })
       if (!get().findTab(id)) return
       if (stat.is_dir) throw new Error(`无法打开文件夹：${tabNameFromPath(tab.path)}`)
       if (fileOpenTier(stat.size) === 'reject') {
@@ -735,7 +734,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!ensureOpenTabCapacity()) return
     try {
       try {
-        const stat = await safeInvoke<FileStat>('读取文件信息', 'file_stat', { path: absolutePath })
+        const stat = await getFileStat({ path: absolutePath })
         if (stat.is_dir) {
           useProjectStore.getState().pushToast('info', translate('无法在文本编辑器中打开文件夹。'))
           return

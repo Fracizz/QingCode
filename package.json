@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@11.0.8",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "dev": "vite",
@@ -16,7 +16,7 @@
     "typecheck:legacy": "node node_modules/typescript/bin/tsc --noEmit -p tsconfig.json --tsBuildInfoFile node_modules/.tmp/tsbuildinfo-legacy.json",
     "preview": "vite preview",
     "check": "pnpm check:frontend && pnpm check:rust",
-    "check:frontend": "pnpm typecheck && vitest run --coverage && pnpm test:packaging && pnpm lint",
+    "check:frontend": "pnpm ipc:check && pnpm typecheck && vitest run --coverage && pnpm test:packaging && pnpm lint",
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --workspace",
     "lint": "eslint .",
     "test": "vitest run && pnpm test:packaging",
@@ -44,7 +44,9 @@
     "bump:version": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/bump-version.ps1 -Version",
     "release:tag": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/release-tag.ps1 -Version",
     "gitee:release": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/gitee-release.ps1 -Version",
-    "remotes:setup": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/setup-dual-remotes.ps1"
+    "remotes:setup": "pwsh -NoProfile -ExecutionPolicy Bypass -File ./scripts/setup-dual-remotes.ps1",
+    "ipc:generate": "cargo run --manifest-path src-tauri/Cargo.toml -p qingcode-contracts --features export --bin export-file-ipc",
+    "ipc:check": "pnpm ipc:generate -- --check"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
@@ -101,7 +103,7 @@
     "@types/react-dom": "^19.1.6",
     "@types/sql.js": "^1.4.11",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@vitejs/plugin-react": "^4.6.0",
+    "@vitejs/plugin-react": "^6.1.2",
     "@vitest/coverage-v8": "^4.1.10",
     "eslint": "^10.7.0",
     "eslint-plugin-react": "^7.37.5",
@@ -113,7 +115,7 @@
     "sql.js": "^1.15.1",
     "typescript": "~5.8.3",
     "typescript-eslint": "^8.64.0",
-    "vite": "^7.0.4",
+    "vite": "^8.3.5",
     "vitest": "^4.1.10"
   }
 }

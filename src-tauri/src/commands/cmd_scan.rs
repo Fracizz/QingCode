@@ -1,18 +1,9 @@
 use crate::exclude::should_skip_path;
 use crate::path_guard::PathAllowlist;
 use ignore::WalkBuilder;
-use serde::Serialize;
+pub use qingcode_contracts::FileNode;
 use std::path::Path;
 use tauri::State;
-
-#[derive(Debug, Serialize)]
-pub struct FileNode {
-    pub name: String,
-    pub path: String,
-    pub is_dir: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub children: Option<Vec<FileNode>>,
-}
 
 fn list_dir_one_level(
     current: &str,

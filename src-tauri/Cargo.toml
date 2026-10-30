@@ -7,7 +7,7 @@ license = "MIT"
 edition = "2021"
 
 [workspace]
-members = [".", "qingcode-server"]
+members = [".", "qingcode-server", "qingcode-contracts"]
 default-members = ["."]
 resolver = "2"
 
@@ -62,6 +62,7 @@ russh = { version = "0.63.1", default-features = false, features = ["ring", "rsa
 russh-sftp = "2.4.0"
 # SSH 远端代理（qingcode-server）的协议契约：帧编解码与消息类型两端共用，避免漂移。
 qingcode-server = { path = "qingcode-server" }
+qingcode-contracts = { path = "qingcode-contracts" }
 tokio = { version = "1", features = ["io-util", "sync", "time"] }
 # Independent Agent transport; use the same ring TLS provider as SSH.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

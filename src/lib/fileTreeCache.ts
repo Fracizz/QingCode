@@ -1,4 +1,5 @@
 import { safeInvoke } from './tauri'
+import { scanDirectoryEntries } from './fileIpc'
 import type { Project } from '../types'
 import { collectAncestorDirs, findProjectForPath } from '../utils/fileReferences'
 import {
@@ -26,12 +27,12 @@ export async function scanDirectory(
     excludeGitIgnore?: boolean
   },
 ): Promise<FileNode[]> {
-  const tree = await safeInvoke<FileNode[]>(options?.action ?? '读取目录', 'scan_directory', {
+  const tree = await scanDirectoryEntries({
     path,
     workspaceRoot: options?.workspaceRoot ?? path,
     excludePatterns: options?.excludePatterns ?? null,
     excludeGitIgnore: options?.excludeGitIgnore ?? false,
-  })
+  }, options?.action ?? '读取目录')
   return withLoadedFlags(tree)
 }
 

@@ -4,7 +4,7 @@ use crate::binary_ext::{
 };
 use crate::file_encoding;
 use crate::path_guard::PathAllowlist;
-use serde::Serialize;
+pub use qingcode_contracts::{FileSlice, FileStat, LineOffsetResult};
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -20,35 +20,6 @@ const MAX_EDITOR_FILE_SIZE: u64 = 100 * 1024 * 1024;
 /// 图片查看上限：超过该尺寸后浏览器（WebView2）解码会失败或内存占用过高。
 /// 远程侧 `remote_ssh::IMAGE_MAX_BYTES` 独立持有同值，两侧需同步修改。
 const IMAGE_MAX_BYTES: u64 = 64 * 1024 * 1024;
-
-#[derive(Debug, Serialize)]
-pub struct FileStat {
-    pub size: u64,
-    pub is_dir: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct FileSlice {
-    pub offset: u64,
-    pub len: u64,
-    pub text: String,
-    pub eof: bool,
-    pub file_size: u64,
-}
-
-/// Result of streaming scan for a 1-based line start offset.
-#[derive(Debug, Serialize)]
-pub struct LineOffsetResult {
-    /// Requested 1-based line number.
-    pub line: u64,
-    /// Byte offset of the start of that line (or last line when not found).
-    pub offset: u64,
-    /// True when the requested line exists.
-    pub found: bool,
-    /// Total lines counted (full file when `!found` or scan completed).
-    pub total_lines: u64,
-    pub file_size: u64,
-}
 
 fn exceeds_editor_file_size_limit(size: u64) -> bool {
     size > MAX_EDITOR_FILE_SIZE
@@ -393,7 +364,7 @@ fn find_line_offset_inner(path: String, line: u64) -> Result<LineOffsetResult, S
 }
 
 /// Truncate `buf` so it ends on a UTF-8 character boundary (may shorten by ≤3 bytes).
-fn trim_utf8_end(buf: &[u8]) -> usize {
+pub(crate) fn trim_utf8_end(buf: &[u8]) -> usize {
     if buf.is_empty() {
         return 0;
     }

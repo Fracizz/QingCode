@@ -1661,6 +1661,27 @@
     "未找到此主机的 SSH 连接。请先添加并确认 SSH 主机指纹，或在远端手动更新 Server。": "No SSH connection was found for this host. Add one and confirm its host fingerprint, or update Server manually on the remote host.",
     "正在上传、更新并验证远端服务…": "Uploading, updating, and verifying remote service…",
     "更新并重新连接": "Update and reconnect",
-    "正在更新…": "Updating…"
+    "正在更新…": "Updating…",
+    "发现运行配置": "Discover Run Configurations",
+    "关闭发现运行配置": "Close run configuration discovery",
+    "发现只读取项目根目录和直属子目录的 package.json；勾选后保存，不会执行命令。": "Discovery reads package.json in the project root and immediate child folders. Select tasks to save; no commands are executed.",
+    "正在发现运行配置…": "Discovering run configurations…",
+    "未发现可导入的 package.json scripts，请手动新建配置。": "No importable package.json scripts found. Create a configuration manually.",
+    "全选发现的任务": "Select all discovered tasks",
+    "选择发现的任务「{name}」": "Select discovered task “{name}”",
+    "已导入": "Already imported",
+    "部分文件或脚本已跳过（{count}）": "Some files or scripts were skipped ({count})",
+    "合并为一个配置（每项独立终端）": "Combine into one configuration (one terminal per task)",
+    "导入选中（{count}）": "Import selected ({count})",
+    "存在多个包管理器锁文件，请在 packageManager 中指定": "Multiple package-manager lockfiles found; set packageManager explicitly",
+    "packageManager 格式无效": "Invalid packageManager format",
+    "暂不支持此 packageManager，请手动配置命令": "Unsupported packageManager; configure the command manually",
+    "package.json 超过 256 KiB，请手动配置命令": "package.json exceeds 256 KiB; configure the command manually",
+    "package.json 未完整读取，请重试": "package.json was not read completely; retry",
+    "package.json 必须为 JSON 对象": "package.json must be a JSON object",
+    "scripts 必须为 JSON 对象": "scripts must be a JSON object",
+    "每个 package.json 最多发现 100 个脚本": "At most 100 scripts are discovered per package.json",
+    "脚本名无法安全生成跨平台命令：{name}": "Cannot safely generate a cross-platform command for script: {name}",
+    "最多扫描 32 个直属子目录；更深目录请单独作为项目打开": "Only 32 immediate child folders are scanned; open deeper folders as separate projects"
   }
 }

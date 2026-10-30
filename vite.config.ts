@@ -14,7 +14,7 @@ const devPortLocked = Boolean(process.env.VITE_DEV_PORT);
 // surfaces (e.g. `pnpm dev` Settings → 关于) can show it without the Tauri API.
 const appVersion = (() => {
   try {
-    const pkg = JSON.parse(readFileSync(resolve(__dirname, "package.json"), "utf-8"));
+    const pkg = JSON.parse(readFileSync(resolve(import.meta.dirname, "package.json"), "utf-8"));
     return typeof pkg.version === "string" ? pkg.version : "";
   } catch {
     return "";
@@ -32,7 +32,7 @@ export default defineConfig(async ({ mode }) => ({
   // `@` -> src/ alias (used by the lib/ terminal & git pilot subdirectories).
   resolve: {
     alias: {
-      "@": resolve(__dirname, "src"),
+      "@": resolve(import.meta.dirname, "src"),
     },
   },
 
@@ -64,41 +64,30 @@ export default defineConfig(async ({ mode }) => ({
     // and other heavy deps are already split. Keep the advisory threshold above
     // the remaining shared editor vendor chunk.
     chunkSizeWarningLimit: 800,
-    rollupOptions: {
+    // Keep Vite 7's browser floor; a bundler upgrade must not raise the
+    // minimum supported WebView/Safari version implicitly.
+    target: ['chrome107', 'edge107', 'firefox104', 'safari16'],
+    rolldownOptions: {
       output: {
-        manualChunks(id) {
-          if (!id.includes('node_modules')) return
-          // Keep dynamically imported language packs / WebGL / merge as their
-          // own async chunks — do not fold them into the shared vendor bundles.
-          if (
-            id.includes('@codemirror/lang-') ||
-            id.includes('@codemirror/legacy-modes') ||
-            id.includes('@codemirror/merge') ||
-            id.includes('@xterm/addon-webgl')
-          ) {
-            return
-          }
-          if (
-            id.includes('@codemirror') ||
-            id.includes('/codemirror/') ||
-            id.includes('@lezer')
-          ) {
-            return 'codemirror'
-          }
-          if (id.includes('@xterm') || id.includes('/xterm/')) {
-            return 'xterm'
-          }
-          if (id.includes('@tauri-apps')) {
-            return 'tauri'
-          }
-          if (
-            id.includes('/react-dom/') ||
-            id.includes('/react/') ||
-            id.includes('\\react-dom\\') ||
-            id.includes('\\react\\')
-          ) {
-            return 'react-vendor'
-          }
+        codeSplitting: {
+          groups: [
+            {
+              name: 'codemirror',
+              test(id) {
+                const path = id.replaceAll('\\', '/')
+                if (!path.includes('node_modules')) return false
+                // Language packs and merge remain separate async chunks.
+                if (/\/@codemirror\/(?:lang-|legacy-modes|merge)/.test(path)) return false
+                return /\/(?:@codemirror|codemirror|@lezer)\//.test(path)
+              },
+            },
+            {
+              name: 'xterm',
+              test: /node_modules[\\/](?:@xterm[\\/](?!addon-webgl)|xterm[\\/])/,
+            },
+            { name: 'tauri', test: /node_modules[\\/]@tauri-apps[\\/]/ },
+            { name: 'react-vendor', test: /node_modules[\\/](?:react|react-dom)[\\/]/ },
+          ],
         },
       },
     },

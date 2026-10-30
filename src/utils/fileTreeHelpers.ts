@@ -1,8 +1,7 @@
-/** Shared file-tree node shape used by the project store and sidebar. */
-export interface FileNode {
-  name: string
-  path: string
-  is_dir: boolean
+import type { FileNode as WireFileNode } from '../lib/generated/fileIpc'
+
+/** Wire data plus frontend-only lazy loading state. */
+export interface FileNode extends WireFileNode {
   children?: FileNode[]
   loaded?: boolean
 }

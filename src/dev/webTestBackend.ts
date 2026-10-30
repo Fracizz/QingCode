@@ -227,6 +227,7 @@ export class WebTestBackend {
         'file_mtime',
         'file_ctime',
         'read_file',
+        'read_file_slice',
         'detect_file_encoding',
         'write_file',
         'create_file',
@@ -242,7 +243,12 @@ export class WebTestBackend {
       const resource = String(args.path ?? args.parent ?? args.root ?? '')
       if (!this.connections.get(this.connectionId(resource))?.connected)
         throw new Error('SSH 连接已断开')
-      return this.dispatch(command.slice(4), args)
+      const result = this.dispatch(command.slice(4), args)
+      if (command === 'ssh_read_file_slice') {
+        const slice = result as { text: string; offset: number; len: number; file_size: number; eof: boolean }
+        return { content: slice.text, offset: slice.offset, nextOffset: slice.offset + slice.len, fileSize: slice.file_size, eof: slice.eof }
+      }
+      return result
     }
     switch (command) {
       case 'clipboard_read_files':
@@ -477,6 +483,16 @@ export class WebTestBackend {
       case 'read_file':
         this.ensurePath(path)
         return this.fs.read(path)
+      case 'read_file_slice': {
+        this.ensurePath(path)
+        const bytes = new TextEncoder().encode(this.fs.read(path))
+        const offset = Math.max(0, Number(args.offset))
+        const length = Math.min(256 * 1024, Math.max(1, Number(args.maxBytes)))
+        let end = Math.min(bytes.length, offset + length)
+        while (end > offset && end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--
+        const text = new TextDecoder().decode(bytes.slice(offset, end))
+        return { offset, len: end - offset, text, eof: end >= bytes.length, file_size: bytes.length }
+      }
       case 'file_stat': {
         this.ensurePath(path)
         const entry = this.fs.get(path)

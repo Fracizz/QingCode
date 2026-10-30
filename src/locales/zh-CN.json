@@ -16,6 +16,27 @@
     "在线下载并重试": "在线下载并重试",
     "正在本机下载、校验并准备重试…": "正在本机下载、校验并准备重试…",
     "正在校验服务目录并准备重试…": "正在校验服务目录并准备重试…",
-    "使用 Prettier、rustfmt、shfmt、ruff/black 或 gofmt 格式化当前文件（需本机已安装对应工具）。": "使用 Prettier、rustfmt、shfmt 或 gofmt 格式化当前文件（需本机已安装对应工具；Python 暂不支持）。"
+    "使用 Prettier、rustfmt、shfmt、ruff/black 或 gofmt 格式化当前文件（需本机已安装对应工具）。": "使用 Prettier、rustfmt、shfmt 或 gofmt 格式化当前文件（需本机已安装对应工具；Python 暂不支持）。",
+    "发现运行配置": "发现运行配置",
+    "关闭发现运行配置": "关闭发现运行配置",
+    "发现只读取项目根目录和直属子目录的 package.json；勾选后保存，不会执行命令。": "发现只读取项目根目录和直属子目录的 package.json；勾选后保存，不会执行命令。",
+    "正在发现运行配置…": "正在发现运行配置…",
+    "未发现可导入的 package.json scripts，请手动新建配置。": "未发现可导入的 package.json scripts，请手动新建配置。",
+    "全选发现的任务": "全选发现的任务",
+    "选择发现的任务「{name}」": "选择发现的任务「{name}」",
+    "已导入": "已导入",
+    "部分文件或脚本已跳过（{count}）": "部分文件或脚本已跳过（{count}）",
+    "合并为一个配置（每项独立终端）": "合并为一个配置（每项独立终端）",
+    "导入选中（{count}）": "导入选中（{count}）",
+    "存在多个包管理器锁文件，请在 packageManager 中指定": "存在多个包管理器锁文件，请在 packageManager 中指定",
+    "packageManager 格式无效": "packageManager 格式无效",
+    "暂不支持此 packageManager，请手动配置命令": "暂不支持此 packageManager，请手动配置命令",
+    "package.json 超过 256 KiB，请手动配置命令": "package.json 超过 256 KiB，请手动配置命令",
+    "package.json 未完整读取，请重试": "package.json 未完整读取，请重试",
+    "package.json 必须为 JSON 对象": "package.json 必须为 JSON 对象",
+    "scripts 必须为 JSON 对象": "scripts 必须为 JSON 对象",
+    "每个 package.json 最多发现 100 个脚本": "每个 package.json 最多发现 100 个脚本",
+    "脚本名无法安全生成跨平台命令：{name}": "脚本名无法安全生成跨平台命令：{name}",
+    "最多扫描 32 个直属子目录；更深目录请单独作为项目打开": "最多扫描 32 个直属子目录；更深目录请单独作为项目打开"
   }
 }

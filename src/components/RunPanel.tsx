@@ -9,6 +9,7 @@ import {
   FileCode2,
   ShieldCheck,
   ShieldOff,
+  Search,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import {
@@ -37,6 +38,7 @@ import {
   WORKSPACE_TRUST_CHANGED_EVENT,
 } from '../lib/workspaceTrust'
 import RunConfigEditor from './RunConfigEditor'
+import RunConfigDiscovery from './RunConfigDiscovery'
 import Tooltip from './Tooltip'
 import { useI18n } from '../lib/i18n'
 import { confirmDialog } from '../store/confirmStore'
@@ -78,6 +80,7 @@ function RunPanelContent() {
   const projects = useProjectStore(s => s.projects)
   const [editing, setEditing] = useState<RunConfig | null>(null)
   const [creating, setCreating] = useState(false)
+  const [discovering, setDiscovering] = useState(false)
   const [projectTrusted, setProjectTrusted] = useState(false)
   const [projectRestricted, setProjectRestricted] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -185,6 +188,7 @@ function RunPanelContent() {
       <Header
         title={`${t('运行配置')} · ${currentProject.name}`}
         onAdd={() => setCreating(true)}
+        onDiscover={() => setDiscovering(true)}
         trusted={projectTrusted}
         restricted={projectRestricted}
         onRestrict={() => {
@@ -409,6 +413,7 @@ function RunPanelContent() {
         )}
       </div>
 
+      {discovering && <RunConfigDiscovery project={currentProject} onClose={() => setDiscovering(false)} />}
       {(editing || creating) && (
         <RunConfigEditor
           project={currentProject}
@@ -426,6 +431,7 @@ function RunPanelContent() {
 function Header({
   title,
   onAdd,
+  onDiscover,
   trusted,
   restricted,
   onRestrict,
@@ -433,6 +439,7 @@ function Header({
 }: {
   title: string
   onAdd?: () => void
+  onDiscover?: () => void
   trusted?: boolean
   restricted?: boolean
   onRestrict?: () => void
@@ -446,6 +453,12 @@ function Header({
         <span className="truncate">{title}</span>
       </span>
       <span className="flex items-center gap-0.5 flex-shrink-0">
+        {onDiscover && (
+          <Tooltip label={t('发现运行配置')} side="bottom">
+            <button type="button" aria-label={t('发现运行配置')} onClick={onDiscover}
+              className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"><Search size={14} /></button>
+          </Tooltip>
+        )}
         {trusted && onRestrict && (
           <Tooltip label={t('切换为受限模式')} side="bottom">
             <button

@@ -1,5 +1,9 @@
 # 完整应用 Web 测试
 
+浏览器按当前执行环境选择：Linux（含 WSL）默认 `agent-browser`，Windows/macOS 默认 `ego-browser`。
+WSL 中已安装的 Windows Ego 桥接入口仅在显式选择 Ego 时使用，不改变 Linux 默认值。
+同一测试会话保持同一引擎；具体命令和独立场景见 [Web 浏览器验收](web-ui-testing.md)。
+
 ```bash
 pnpm install
 pnpm dev:web-test

@@ -9,7 +9,8 @@ import {
 } from 'react'
 import { Copy, ExternalLink, Eye, LocateFixed, Search } from 'lucide-react'
 import { revealItemInDir } from '@tauri-apps/plugin-opener'
-import { isSshResource, safeInvoke } from '../lib/tauri'
+import { isSshResource } from '../lib/tauri'
+import { readFileSlice, findLineOffset, type FileSlice } from '../lib/fileIpc'
 import { formatFileSize, isOversizeSlicePreview } from '../lib/fileSizePolicy'
 import { copyPathAction } from '../lib/copyFileActions'
 import { useProjectStore } from '../store/projectStore'
@@ -26,22 +27,6 @@ type LineIndex = {
   offsets: number[] // 每行的字节偏移
   totalLines: number
   fileSize: number
-}
-
-type FileSlice = {
-  offset: number
-  len: number
-  text: string
-  eof: boolean
-  file_size: number
-}
-
-type LineOffsetResult = {
-  line: number
-  offset: number
-  found: boolean
-  total_lines: number
-  file_size: number
 }
 
 interface Props {
@@ -127,7 +112,7 @@ export default function LargeFileViewer({ tab }: Props) {
       setLoading(true)
       setError(null)
       try {
-        const slice = await safeInvoke<FileSlice>('读取文件片段', 'read_file_slice', {
+        const slice = await readFileSlice({
           path: tab.path,
           offset: nextOffset,
           maxBytes: CHUNK_BYTES,
@@ -213,7 +198,7 @@ export default function LargeFileViewer({ tab }: Props) {
     setLoading(true)
     setError(null)
     try {
-      const result = await safeInvoke<LineOffsetResult>('定位行偏移', 'find_line_offset', {
+      const result = await findLineOffset({
         path: tab.path,
         line,
       })
@@ -251,7 +236,7 @@ export default function LargeFileViewer({ tab }: Props) {
       let cursorOffset = 0
       let currentEof = false
       while (!currentEof && offsets.length < 10_000_000) {
-        const slice = await safeInvoke<FileSlice>('读取文件片段', 'read_file_slice', {
+        const slice = await readFileSlice({
           path: tab.path,
           offset: cursorOffset,
           maxBytes: CHUNK_BYTES,
@@ -306,7 +291,7 @@ export default function LargeFileViewer({ tab }: Props) {
           : index.offsets.slice(0, startLine).reverse()
         for (let i = 0; i < Math.min(linesToCheck.length, MAX_SEARCH_CHUNKS * 100); i++) {
           const lineOffset = linesToCheck[i]
-          const slice = await safeInvoke<FileSlice>('读取文件片段', 'read_file_slice', {
+          const slice = await readFileSlice({
             path: tab.path,
             offset: lineOffset,
             maxBytes: CHUNK_BYTES,

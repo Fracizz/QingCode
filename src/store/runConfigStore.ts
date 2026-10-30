@@ -5,6 +5,7 @@ import { translate } from '../lib/i18n'
 import { useProjectStore } from './projectStore'
 import type { Project } from '../types'
 import { parseRunTaskOs, type RunTaskOs } from '../lib/runTaskPlatform'
+import { scanDirectoryEntries } from '../lib/fileIpc'
 
 export type RunTaskType = 'ps1' | 'bat' | 'sh' | 'command' | 'script'
 
@@ -90,6 +91,45 @@ function normalizeConfigs(input: unknown): RunConfig[] {
         ? (c.tasks.map(normalizeTask).filter(Boolean) as RunTask[])
         : [],
     }))
+}
+
+/** Import must distinguish absence from a failed read, and must never migrate/write while discovering. */
+export async function readRunConfigsForImport(project: Project): Promise<RunConfig[]> {
+  const rootEntries = await scanDirectoryEntries({ path: project.path })
+  for (const name of ['.qingcode', '.nestcode']) {
+    const entry = rootEntries.find(candidate => candidate.name === name)
+    if (!entry) continue
+    if (!entry.is_dir) throw new RunConfigFormatError(`${name}: expected a directory`)
+    const separator = project.path.includes('\\') && !project.path.includes('/') ? '\\' : '/'
+    const directory = `${project.path.replace(/[\\/]+$/, '')}${separator}${name}`
+    const entries = await scanDirectoryEntries({ path: directory, workspaceRoot: project.path })
+    if (!entries.some(candidate => candidate.name === 'run.json')) continue
+    const path = `${directory}${separator}run.json`
+    const raw = await safeInvoke<string>('读取运行配置', 'read_file', { path })
+    const parsed: unknown = JSON.parse(raw)
+    // Unlike the permissive legacy loader, import must not normalize an unknown
+    // or malformed file to [] and then silently overwrite it.
+    if (!parsed || typeof parsed !== 'object' || !('configs' in parsed) || !Array.isArray(parsed.configs)) {
+      throw new RunConfigFormatError(`${path}: configs must be an array`)
+    }
+    for (const config of parsed.configs) {
+      if (!config || typeof config.id !== 'string' || typeof config.name !== 'string' || !Array.isArray(config.tasks) ||
+        config.tasks.some((task: Partial<RunTask>) => !normalizeTask(task))) {
+        throw new RunConfigFormatError(`${path}: invalid configuration or task`)
+      }
+    }
+    return (parsed.configs as RunConfig[]).map(config => ({
+      ...config,
+      tasks: config.tasks.map(task => ({
+        ...task,
+        // Valid OS-only/legacy tasks may omit common fields. Preserve all data
+        // while keeping the in-memory RunTask invariants used by the panel.
+        type: normalizeTask(task)!.type,
+        target: task.target ?? '',
+      })),
+    }))
+  }
+  return []
 }
 
 function normalizeTask(t: Partial<RunTask> | undefined): RunTask | null {

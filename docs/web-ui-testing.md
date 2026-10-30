@@ -1,4 +1,34 @@
-# Web 测试页 + ego 验收
+# Web 测试页与浏览器验收
+
+Linux（含 WSL）默认使用 `agent-browser`，Windows/macOS 默认使用 `ego-browser`。
+以执行任务的操作系统为准；WSL 即使能调用 Windows Ego，也不会自动改选 Ego。
+用户显式指定引擎时优先遵循，同一次验收保持同一引擎，失败时不自动换浏览器。
+本文的 `*.ego.mjs` 脚本适用于 Windows/macOS 默认路径及显式选择 Ego 的场景。
+
+## Linux / WSL：Agent Browser
+
+先启动下文对应端口的 Web 测试服务，再用独立 session 打开相同的 fixture 页面：
+
+```bash
+agent-browser --version
+agent-browser --session qingcode-ui-review open http://127.0.0.1:38439/
+agent-browser --session qingcode-ui-review snapshot -i
+mkdir -p .dev/web-tests
+agent-browser --session qingcode-ui-review screenshot /home/code/QingCode/.dev/web-tests/agent-browser.png
+agent-browser --session qingcode-ui-review close
+```
+
+截图路径按实际仓库绝对路径调整；并行验收须使用不同 session 名。
+需要参数详情时读取 `agent-browser skills get core --full`。
+按各场景列出的交互和结果执行断言、保存截图与报告；上面的命令只验证页面打开和截图，
+不代表完成整套回归，也不能直接执行 Ego 专用脚本。需要桌面窗口时显式使用 `--headed`。
+
+运行配置发现场景位于 `/web-tests/run-config-discovery.html`，使用普通配置的 `pnpm dev:web-test`
+（38419），运行 `scripts/web-tests/run-config-discovery.ego.mjs` 的 `run()`。
+复用真实发现弹窗、发现算法、运行配置 store 与样式，文件接口为固定内存数据。
+覆盖取消不写入、已有任务去重、跳过坏文件和不安全名称、保存失败与重试、合并导入、保留原配置、
+再次打开防重复、英文浅色 480px 窄窗和 Escape。默认保存截图与 results.json 到 `.dev/web-tests/`。
+该场景不执行脚本，也不替代真实 Windows/WSL/SSH 文件和信任流程验收。
 
 远端服务包错误恢复场景位于 `/web-tests/ssh-server-recovery.html`，运行
 `scripts/web-tests/ssh-server-recovery.ego.mjs` 的 `run()`。复用真实打开项目弹窗、版本/来源信息、
@@ -29,7 +59,7 @@ pnpm test:web
 
 页面可重置数据、切换主题与语言；关闭项目管理后可操作测试页工具栏。
 
-## ego 自动验收
+## Windows / macOS：Ego 自动验收
 
 先阅读当前安装版本的指南：
 

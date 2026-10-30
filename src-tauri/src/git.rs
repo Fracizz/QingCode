@@ -7,6 +7,8 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use tauri::State;
 
+mod sync_cache;
+
 /// Reject paths outside the registered project / authorized sandbox before any Git I/O.
 fn ensure_git_root(path: &str, allowlist: &PathAllowlist) -> Result<(), String> {
     allowlist.ensure_allowed(path)?;
@@ -192,6 +194,9 @@ fn reflog_timestamp(text: &str, needles: &[&str]) -> Option<i64> {
 
 /// 同步时间：`FETCH_HEAD` 的 mtime + HEAD reflog（拉取）+ 上游分支 reflog（推送）。
 fn read_sync_times(root: &Path, upstream: Option<&str>) -> (Option<i64>, Option<i64>, Option<i64>) {
+    if let Some(times) = sync_cache::read(root, upstream) {
+        return times;
+    }
     let last_fetch_at = read_last_fetch_at(root);
     let last_pull_at = read_reflog_text(root, None)
         .as_deref()
@@ -926,62 +931,53 @@ fn validate_local_branch_name(branch: &str) -> Result<&str, String> {
     Ok(branch)
 }
 
-fn list_branches(root: &Path) -> Result<GitBranchList, String> {
-    let local_output = run_git(
-        root,
-        &[
-            "for-each-ref",
-            // One line per ref: name<TAB>head_marker<TAB>upstream
-            "--format=%(refname:short)%09%(HEAD)%09%(upstream:short)",
-            "refs/heads",
-        ],
-    )?;
-    if !local_output.status.success() {
-        return Err(format!(
-            "读取本地分支失败：{}",
-            git_output_text(&local_output)
-        ));
-    }
+/// Include the full ref for classification; preserve Git's short-name disambiguation.
+pub(crate) const BRANCH_LIST_FORMAT: &str =
+    "--format=%(refname)%09%(refname:short)%09%(HEAD)%09%(upstream:short)";
 
+pub(crate) fn parse_branch_list(text: &str) -> GitBranchList {
     let mut local = Vec::new();
-    for line in decode_git_text(&local_output.stdout).lines() {
-        if line.is_empty() {
-            continue;
-        }
-        let mut parts = line.splitn(3, '\t');
+    let mut remote = Vec::new();
+    for line in text.lines() {
+        let mut parts = line.splitn(4, '\t');
+        let reference = parts.next().unwrap_or("");
         let name = parts.next().unwrap_or("").trim();
+        let head = parts.next().unwrap_or("");
+        let upstream = parts.next().unwrap_or("").trim();
         if name.is_empty() {
             continue;
         }
-        let head_marker = parts.next().unwrap_or("");
-        let upstream_raw = parts.next().unwrap_or("").trim();
-        local.push(GitBranchInfo {
-            name: name.to_string(),
-            current: head_marker == "*",
-            upstream: if upstream_raw.is_empty() {
-                None
-            } else {
-                Some(upstream_raw.to_string())
-            },
-        });
-    }
-
-    let remote_output = run_git(
-        root,
-        &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
-    )?;
-    let mut remote = Vec::new();
-    if remote_output.status.success() {
-        for line in decode_git_text(&remote_output.stdout).lines() {
-            let name = line.trim();
-            if name.is_empty() || name.ends_with("/HEAD") {
-                continue;
-            }
+        if reference.starts_with("refs/heads/") {
+            local.push(GitBranchInfo {
+                name: name.to_string(),
+                current: head == "*",
+                upstream: (!upstream.is_empty()).then(|| upstream.to_string()),
+            });
+        } else if reference.starts_with("refs/remotes/") && !name.ends_with("/HEAD") {
             remote.push(name.to_string());
         }
     }
+    GitBranchList { local, remote }
+}
 
-    Ok(GitBranchList { local, remote })
+fn list_branches(root: &Path) -> Result<GitBranchList, String> {
+    let mut output = run_git(
+        root,
+        &[
+            "for-each-ref",
+            BRANCH_LIST_FORMAT,
+            "refs/heads",
+            "refs/remotes",
+        ],
+    )?;
+    if !output.status.success() {
+        // Retain local branches if only remote-ref enumeration is broken.
+        output = run_git(root, &["for-each-ref", BRANCH_LIST_FORMAT, "refs/heads"])?;
+        if !output.status.success() {
+            return Err(format!("读取本地分支失败：{}", git_output_text(&output)));
+        }
+    }
+    Ok(parse_branch_list(&decode_git_text(&output.stdout)))
 }
 
 fn switch_branch(root: &Path, branch: &str) -> Result<(), String> {
@@ -1764,6 +1760,119 @@ mod tests {
         assert!(validate_local_branch_name("../x").is_err());
         assert!(validate_local_branch_name("feature/demo").is_ok());
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn combined_branch_query_matches_git_names_sorting_and_tracking() {
+        let root = init_test_repo("combined-branches");
+        fs::write(root.join("a.txt"), "initial\n").unwrap();
+        stage_files(&root, &["a.txt".into()]).unwrap();
+        commit_staged(&root, "initial").unwrap();
+        for name in ["feature/demo", "origin/topic", "local/HEAD", "功能/中文"] {
+            git_success(&root, &["branch", name]);
+        }
+        // Disambiguated short names must match Git, even with overlapping namespaces.
+        git_success(&root, &["tag", "feature/demo"]);
+        git_success(&root, &["update-ref", "refs/remotes/origin/topic", "HEAD"]);
+        git_success(
+            &root,
+            &[
+                "symbolic-ref",
+                "refs/remotes/origin/HEAD",
+                "refs/remotes/origin/topic",
+            ],
+        );
+        git_success(
+            &root,
+            &["remote", "add", "origin", "https://example.invalid/repo"],
+        );
+        git_success(
+            &root,
+            &["branch", "--set-upstream-to=refs/remotes/origin/topic"],
+        );
+
+        let legacy_local = run_git(
+            &root,
+            &[
+                "for-each-ref",
+                "--format=%(refname:short)%09%(HEAD)%09%(upstream:short)",
+                "refs/heads",
+            ],
+        )
+        .unwrap();
+        let expected_local: Vec<_> = decode_git_text(&legacy_local.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        let legacy_remote = run_git(
+            &root,
+            &["for-each-ref", "--format=%(refname:short)", "refs/remotes"],
+        )
+        .unwrap();
+        let expected_remote: Vec<_> = decode_git_text(&legacy_remote.stdout)
+            .lines()
+            .filter(|name| !name.ends_with("/HEAD"))
+            .map(str::to_string)
+            .collect();
+        let result = list_branches(&root).unwrap();
+        let actual_local: Vec<_> = result
+            .local
+            .iter()
+            .map(|branch| {
+                format!(
+                    "{}\t{}\t{}",
+                    branch.name,
+                    if branch.current { "*" } else { " " },
+                    branch.upstream.as_deref().unwrap_or("")
+                )
+            })
+            .collect();
+        assert_eq!(actual_local, expected_local);
+        assert_eq!(result.remote, expected_remote);
+        assert!(result
+            .local
+            .iter()
+            .any(|branch| branch.name == "local/HEAD"));
+        assert_eq!(
+            result.local.iter().filter(|branch| branch.current).count(),
+            1
+        );
+
+        git_success(&root, &["checkout", "--detach", "HEAD"]);
+        assert!(list_branches(&root)
+            .unwrap()
+            .local
+            .iter()
+            .all(|branch| !branch.current));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn branch_query_handles_unborn_and_nested_worktree_roots() {
+        let root = init_test_repo("branch-worktree");
+        assert!(list_branches(&root).unwrap().local.is_empty());
+        fs::write(root.join("a.txt"), "initial\n").unwrap();
+        stage_files(&root, &["a.txt".into()]).unwrap();
+        commit_staged(&root, "initial").unwrap();
+        let linked = temp_base("branch-worktree-linked");
+        git_success(
+            &root,
+            &["worktree", "add", "-b", "linked", &linked.to_string_lossy()],
+        );
+        let nested = linked.join("nested");
+        fs::create_dir(&nested).unwrap();
+        let branches = list_branches(&nested).unwrap();
+        assert_eq!(
+            branches
+                .local
+                .iter()
+                .find(|branch| branch.current)
+                .unwrap()
+                .name,
+            "linked"
+        );
+        git_success(&root, &["worktree", "remove", &linked.to_string_lossy()]);
         fs::remove_dir_all(root).unwrap();
     }
 
