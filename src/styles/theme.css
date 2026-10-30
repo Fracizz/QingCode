@@ -7,6 +7,7 @@
   --color-bg-hover: #262830;
   --color-bg-active: #2c2f38;
   --color-bg-chrome: var(--color-bg);
+  --color-bg-status: color-mix(in srgb, var(--color-bg-elevated) 65%, var(--color-bg-sidebar));
   --color-bg-input: var(--color-bg-deep);
   --color-bg-terminal: var(--color-bg-deep);
   --color-border: #2a2c33;
@@ -59,7 +60,7 @@
   --activity-bar-width: 44px;
   --terminal-height: 260px;
   --tab-height: 32px;
-  --status-bar-height: 24px;
+  --status-bar-height: 28px;
   --title-bar-height: 34px;
   --ui-font-size: 13px;
   /* Auxiliary copy follows the UI font directly (正文 13 → 辅助 12). */
@@ -96,6 +97,7 @@ html[data-theme="light"] {
   --color-bg-hover: #eceef1;
   --color-bg-active: #e6f4f1;
   --color-bg-chrome: #f1f2f4;
+  --color-bg-status: var(--color-bg-chrome);
   --color-bg-input: #ffffff;
   --color-bg-terminal: #ffffff;
   --color-border: #dedfe2;

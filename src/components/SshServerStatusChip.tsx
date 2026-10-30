@@ -26,9 +26,8 @@ import { confirmDialog } from '../store/confirmStore'
 import { confirmSshServerRestart } from '../lib/sshWindowsRepair'
 import { switchSshConnectionMode, sshConnectionLabel, sshRemotePathFromUri } from '../lib/sshWorkspace'
 
-const STATUS_ACTION =
-  'rounded px-1 -mx-1 text-fg hover:bg-bg-hover focus-visible:bg-bg-hover focus-visible:shadow-none! transition-colors'
-const CHIP_DOT = 'h-[5px] w-[5px] rounded-full ring-1 ring-white/10'
+const STATUS_ACTION = 'status-action status-connection'
+const CHIP_DOT = 'status-connection-dot'
 /** 探测/安装/握手期间的补查间隔；最终状态到达后停止。 */
 const SSH_SERVER_PENDING_POLL_MS = 1500
 
@@ -134,11 +133,12 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
         <button
           type="button"
           className={`inline-flex flex-shrink-0 items-center gap-1.5 text-ui-sm ${STATUS_ACTION}`}
+          data-tone="pending"
           aria-label={t('远端服务状态未知')}
           onClick={() => setRefreshKey(key => key + 1)}
         >
           <AlertCircle size={13} className="text-warn" aria-hidden />
-          {t('服务状态未知')}
+          <span className="truncate">{t('服务状态未知')}</span>
         </button>
       </StatusTip>
     )
@@ -240,6 +240,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
         <button
           type="button"
           className={`inline-flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap text-ui-sm ${STATUS_ACTION}`}
+          data-tone={chip.kind}
           aria-label={tipLines.join(' ')}
           onClick={() => setDialog('details')}
           onContextMenu={event => {
@@ -248,7 +249,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
           }}
         >
           <ChipDot kind={chip.kind} />
-          {t(sshServerModeKey(state))}
+          <span className="truncate">{t(sshServerModeKey(state))}</span>
         </button>
       </StatusTip>
       {menu && (

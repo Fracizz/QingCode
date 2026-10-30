@@ -78,6 +78,12 @@ Windows SSH 修复确认框的独立场景位于 <http://127.0.0.1:38439/web-tes
 
 ## 验收边界
 
+底栏清晰度场景位于 `/web-tests/status-bar.html`，使用 `pnpm dev:web-test`（端口 **38419**）。
+复用真实 `StatusBar`、连接徽标和业务 Store，以固定内存项目、分支、光标位置和编码验证三种主题、
+连接阶段、13/20/32px 字号、窄窗、编码菜单、Git 入口及终端切换信号。可检查光标位置的快捷键提示、
+连接详情和键盘焦点。此页不建立真实连接或读写文件，也不伪造桌面身份，因此浏览器不加载原生内存与版本信息；
+这两项以及 Windows 原生缩放效果仍需桌面验收。截图和执行报告放在 `.dev/web-tests/status-bar/`。
+
 OpenCode / Claude 终端交互场景位于 `/web-tests/terminal-interaction.html`，使用 `pnpm dev:web-test`（端口 **38419**）及 `scripts/web-tests/terminal-interaction.ego.mjs` 的 `run()`。该页复用生产 `TerminalView`、xterm、终端 store 和菜单；需要普通 Vite 配置，避免 `test:web` 的项目管理终端 stub。IPC、终端输出和剪贴板均为内存模拟，不启动本机或远端进程。覆盖历史回放不复制、OSC 52 中文写入与读请求拦截、TUI 无选区右键、Claude Shift 选区与两种复制快捷键、选区右键后重绘仍复制快照、Shift 右键及普通 Shell 中断/菜单。产物位于 `.dev/web-tests/terminal-interaction-*/`，`run({ screenshots: false })` 可跳过截图；不代替 Windows 原生剪贴板及真实 SSH/OpenCode/Claude 验收。
 
 `vite.web-test.config.ts` 仅供此测试服务器使用：通过别名将项目/界面/终端/编辑器 store、信任操作、

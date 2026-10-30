@@ -55,13 +55,12 @@ const APP_MEMORY_TIP_REFRESH_MS = 5_000
 
 /** Subtle vertical rule between logical status-bar groups. */
 function StatusDivider() {
-  return <span className="mx-1.5 h-3 w-px flex-shrink-0 bg-border" aria-hidden />
+  return <span className="status-divider" aria-hidden />
 }
 
-/** Clickable status-bar chips: primary text, hover lift only — never accent fill. */
-const STATUS_ACTION = 'rounded px-1 -mx-1 text-fg hover:bg-bg-hover transition-colors'
-/** Secondary / meta copy: brighter than global fg-muted for 24px bar readability. */
-const STATUS_SECONDARY = 'text-fg/85'
+/** Shared hit area and keyboard focus for status actions and connection chips. */
+const STATUS_ACTION = 'status-action'
+const STATUS_SECONDARY = 'text-fg-muted'
 
 export default function StatusBar() {
   const { t } = useI18n()
@@ -345,11 +344,10 @@ export default function StatusBar() {
     }
   }, [currentProject?.path, currentProject?.ephemeral])
 
-  const showEditorHints = Boolean(activeTab)
   const showEncoding =
     activeTab?.kind === 'diff' ||
     Boolean(activeTab && !activeTab.openError && !isNonEditableViewMode(activeTab))
-  const showMetaGroup = showEncoding || Boolean(appVersion) || Boolean(appMemory)
+  const showMetaGroup = Boolean(appVersion) || Boolean(appMemory)
 
   const isSshActiveTab = isSshResource(activeTab?.path)
   const standaloneMenuItems = activeTab
@@ -405,10 +403,10 @@ export default function StatusBar() {
       <div
         ref={rowRef}
         {...{ [STATUS_BAR_ROW_ATTR]: '' }}
-        className="status-bar-shell ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 bg-bg-deep text-fg text-ui-sm flex items-center gap-1 overflow-hidden px-3 select-none border-t border-border"
+        className="status-bar-shell ui-font-scaled h-[var(--status-bar-height)] flex-shrink-0 text-fg text-ui flex items-center gap-2 overflow-hidden px-3 select-none"
       >
         {/* Left: folder · project · git — adjacent; project truncates, branch keeps full width. */}
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           {standaloneFiles ? (
             <StatusTip label={activeTab?.path ?? t('独立文件窗口')}>
               <button
@@ -442,13 +440,13 @@ export default function StatusBar() {
               {currentProject ? (
                 <StatusTip
                   label={projectChipTooltipLabel(currentProject, sshConnections, t)}
-                  wrapperClassName="min-w-0 max-w-[45%] shrink!"
+                  wrapperClassName="status-project-label min-w-0 max-w-[45%] shrink! font-medium"
                 >
                   <ProjectName name={currentProject.name} label={projectLabels.get(currentProject.id)} />
                 </StatusTip>
               ) : <span className="truncate">{t('未选择项目')}</span>}
               {currentProject && isWslProject(currentProject) ? (
-                <span className="flex-shrink-0 text-ui-sm text-fg-muted">{t('WSL')}</span>
+                <span className="status-source-label flex-shrink-0 text-ui-sm">{t('WSL')}</span>
               ) : null}
               {currentProject && isSshProject(currentProject) ? (
                 <SshServerStatusChip rootUri={currentProject.path} />
@@ -496,56 +494,23 @@ export default function StatusBar() {
           </StatusTip>
         )}
 
-        {/* Right: hints | session actions | meta */}
+        {/* Right: file context | terminal actions | application metadata. */}
         <div className="flex flex-shrink-0 items-center">
-          {showEditorHints && (
-            <div className="status-editor-hints inline-flex items-center">
-              <div className={`flex items-center gap-2.5 ${STATUS_SECONDARY}`}>
-                {cursor && (
-                  <span className="status-cursor">
-                    {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
-                  </span>
+          {((cursor && activeTab) || showEncoding) && (
+            <>
+              <div className="status-file-meta inline-flex items-center gap-2">
+                {cursor && activeTab && (
+                  <StatusTip
+                    wrapperClassName="status-cursor"
+                    label={t(
+                      'Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用'
+                    )}
+                  >
+                    <span className="tabular-nums whitespace-nowrap px-1">
+                      {t('行 {line}, 列 {col}', { line: cursor.line, col: cursor.col })}
+                    </span>
+                  </StatusTip>
                 )}
-                <StatusTip
-                  label={t(
-                    'Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用'
-                  )}
-                >
-                  <span className="status-shortcut-hint">
-                    {t('Ctrl+Shift+C 路径 · Alt+C 文件引用')}
-                  </span>
-                </StatusTip>
-              </div>
-              <StatusDivider />
-            </div>
-          )}
-
-          <StatusTip label={[t('切换终端面板'), appMemory ? t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) }) : '', appVersion ? `v${appVersion}` : ''].filter(Boolean).join('\n')}>
-            <button
-              type="button"
-              aria-label={t('切换终端面板')}
-              className={`flex max-w-[180px] items-center gap-1.5 px-1.5 py-px ${STATUS_ACTION}`}
-              onClick={requestToggleTerminal}
-            >
-              <TerminalIcon size={13} className="flex-shrink-0" />
-              <span className="truncate">
-                {t('{running}/{total} 运行中', {
-                  running: runningTerminals,
-                  total: projectTerminals.length,
-                })}
-                {activeTerm ? (
-                  <span
-                    className={`status-terminal-name ${STATUS_SECONDARY}`}
-                  >{` · ${formatTerminalName(activeTerm.name)}`}</span>
-                ) : null}
-              </span>
-            </button>
-          </StatusTip>
-
-          {showMetaGroup && (
-            <div className={`inline-flex items-center ${showEncoding ? '' : 'status-low-priority'}`}>
-              <StatusDivider />
-              <div className={`text-ui-sm flex items-center font-mono ${STATUS_SECONDARY}`}>
                 {activeTab?.kind === 'diff' ? (
                   <span>{t('差异对比')}</span>
                 ) : activeTab && !activeTab.openError && !isNonEditableViewMode(activeTab) ? (
@@ -572,10 +537,39 @@ export default function StatusBar() {
                     </button>
                   </StatusTip>
                 ) : null}
-                {showEncoding && (appMemory || appVersion) ? <span className="status-low-priority"><StatusDivider /></span> : null}
+              </div>
+              <span className="status-file-meta"><StatusDivider /></span>
+            </>
+          )}
+
+          <StatusTip label={[t('切换终端面板'), appMemory ? t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) }) : '', appVersion ? `v${appVersion}` : ''].filter(Boolean).join('\n')}>
+            <button
+              type="button"
+              aria-label={t('切换终端面板')}
+              className={`flex max-w-[180px] items-center gap-1.5 ${STATUS_ACTION}`}
+              onClick={requestToggleTerminal}
+            >
+              <TerminalIcon size={13} className="flex-shrink-0" />
+              <span className="truncate tabular-nums">
+                {t('{running}/{total} 运行中', {
+                  running: runningTerminals,
+                  total: projectTerminals.length,
+                })}
+                {activeTerm ? (
+                  <span
+                    className={`status-terminal-name ${STATUS_SECONDARY}`}
+                  >{` · ${formatTerminalName(activeTerm.name)}`}</span>
+                ) : null}
+              </span>
+            </button>
+          </StatusTip>
+
+          {showMetaGroup && (
+            <div className="status-app-meta inline-flex items-center">
+              <StatusDivider />
+              <div className={`text-ui-sm flex items-center gap-2 ${STATUS_SECONDARY}`}>
                 {appMemory && (
                   <StatusTip
-                    wrapperClassName="status-low-priority"
                     label={t(
                       '主进程 {main}\nWebView2 {webview} · 关联终端 {terminal}\n当前项目终端 {project}\n悬停时约每 {tipSec} 秒刷新 · 平时约每 {idleSec} 秒',
                       {
@@ -590,15 +584,14 @@ export default function StatusBar() {
                     onShow={() => setMemoryTipOpen(true)}
                     onHide={() => setMemoryTipOpen(false)}
                   >
-                    <span className="rounded px-1 -mx-1 tabular-nums">
+                    <span className="px-1 tabular-nums whitespace-nowrap">
                       {t('内存 {size}', { size: formatAppMemoryMb(appMemory.totalBytes) })}
                     </span>
                   </StatusTip>
                 )}
-                {appMemory && appVersion ? <span className="status-low-priority"><StatusDivider /></span> : null}
+
                 {appVersion && (
                   <StatusTip
-                    wrapperClassName="status-low-priority"
                     label={
                       updateBusy
                         ? t('正在检查…')

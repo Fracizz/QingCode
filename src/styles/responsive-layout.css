@@ -42,16 +42,20 @@
 
 .status-bar-shell { container: status-bar / inline-size; }
 .status-branch { min-width: 0; max-width: 32ch; flex-shrink: 1; overflow: hidden; }
-.status-low-priority { display: inline-flex; align-items: center; }
-.status-shortcut-hint { display: none; }
-@container status-bar (min-width: 1250px) {
-  .status-shortcut-hint { display: inline; }
+.status-file-meta { display: inline-flex; align-items: center; }
+/* em thresholds respond to the footer font as well as the available width. */
+@container status-bar (max-width: 80.8em) {
+  .status-app-meta { display: none; }
 }
-@container status-bar (max-width: 1050px) {
-  .status-low-priority { display: none; }
-}
-@container status-bar (max-width: 760px) {
+@container status-bar (max-width: 58.5em) {
   .status-terminal-name { display: none; }
   .status-cursor { display: none; }
-  .status-editor-hints { display: none; }
+  .status-branch { max-width: 12ch; }
+  .status-bar-shell .status-connection { max-width: 34cqi; }
+}
+
+@container status-bar (max-width: 43.1em) {
+  .status-file-meta { display: none; }
+  .status-branch { max-width: 8ch; }
+  .status-bar-shell .status-connection { max-width: 30cqi; }
 }

@@ -616,7 +616,6 @@
     "当前环境无法比较 Git 版本": "Cannot compare Git versions in this environment",
     "读取文件失败: {error}": "Could not read file: {error}",
     "Ctrl + Shift + C：复制完整文件路径；Alt + C：复制 @项目/相对路径#L行号 引用": "Ctrl + Shift + C: copy full file path; Alt + C: copy @project/relative-path#Lline reference",
-    "Ctrl+Shift+C 路径 · Alt+C 文件引用": "Ctrl+Shift+C Path · Alt+C File Reference",
     "{running}/{total} 运行中": "{running}/{total} running",
     "开发构建：项目数据在仓库 .dev/；主题字体等保存在开发服务器源下": "Dev build: project data lives in the repo .dev/ folder; theme/fonts use the Vite origin storage.",
     "正式构建：项目数据在 %APPDATA%\\com.qingcode.app\\；主题字体等与开发版不共用": "Release build: project data lives in %APPDATA%\\com.qingcode.app\\; theme/fonts are not shared with the dev build.",
