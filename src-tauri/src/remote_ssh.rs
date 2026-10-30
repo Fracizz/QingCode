@@ -2497,6 +2497,16 @@ pub async fn ssh_server_restart(
     server_status::ssh_server_restart(root_uri, app, manager).await
 }
 
+/// 安装匹配客户端的服务，并等待常驻 daemon 的版本握手完成。
+#[tauri::command]
+pub async fn ssh_server_update(
+    root_uri: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<SshServerState, String> {
+    server_status::ssh_server_update(root_uri, app, manager).await
+}
+
 /// 停掉某根的项目绑定与未共享的 serve，保留其他项目使用的用户级 daemon。
 #[tauri::command]
 pub async fn ssh_server_stop(

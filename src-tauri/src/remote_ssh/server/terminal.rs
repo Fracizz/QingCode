@@ -568,16 +568,30 @@ async fn open_terminal_daemon_session(
         return Ok((SessionTransport::Direct, session));
     }
     let mut retried = false;
+    let mut updated = false;
+    let mut daemon = daemon.clone();
     loop {
         let transport = manager
             .lease_daemon_terminal_transport(connection_id, root_uri)
             .await?;
-        match DaemonSession::open_on_transport(&transport, client_id, daemon).await {
+        match DaemonSession::open_on_transport(&transport, client_id, &daemon).await {
             Ok(session) => return Ok((SessionTransport::Ssh(transport), session)),
             Err(error) => {
                 let retry =
                     !retried && is_channel_refused_error(&error) && transport.mark_refused().await;
                 transport.release();
+                // A cached healthy endpoint can race with an older client
+                // starting its daemon. Re-run the normal offline-first,
+                // SHA-verified preparation once before surfacing the error.
+                if !updated && error.contains("daemon 版本不匹配") {
+                    updated = true;
+                    super::host_runtime::invalidate_failed_daemon(manager, connection_id, &daemon);
+                    let root = manager.registered_root(root_uri)?;
+                    daemon = super::host_runtime::ensure_shared_daemon(manager, &root, None)
+                        .await
+                        .map_err(|reason| format!("{error}；自动更新远端服务失败：{reason}"))?;
+                    continue;
+                }
                 if !retry {
                     return Err(error);
                 }

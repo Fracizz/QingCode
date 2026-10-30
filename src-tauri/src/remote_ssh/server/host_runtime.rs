@@ -309,6 +309,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stale_terminal_handshake_reprepares_even_inside_health_ttl() {
+        let binary = BinaryFixture::new();
+        let first = binary.prepared("old").await;
+        let next = binary.prepared("updated").await;
+        let entry = RuntimeEntry::default();
+        let session = Arc::new(());
+        entry
+            .acquire(
+                &session,
+                || async { Ok(first.clone()) },
+                |_| async { Ok(()) },
+            )
+            .await
+            .unwrap();
+        // A terminal HELLO observed an old daemon after the cached health
+        // check. Its failure must bypass the TTL and share one new preparation.
+        entry.invalidate_if_current(&first.access);
+        let access = entry
+            .acquire(
+                &session,
+                || async { Ok(next.clone()) },
+                |_| async { panic!("must prepare after version mismatch") },
+            )
+            .await
+            .unwrap();
+        assert_eq!(access.token, "updated");
+        assert_eq!(entry.initializations.load(Ordering::SeqCst), 2);
+        // A delayed failure from another old terminal cannot discard the update.
+        entry.invalidate_if_current(&first.access);
+        entry
+            .acquire(
+                &session,
+                || async { panic!("must reuse the verified update") },
+                |_| async { panic!("fresh update needs no probe") },
+            )
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn invalidation_during_prepare_does_not_publish_late_readiness() {
         let binary = BinaryFixture::new();
         let prepared = binary.prepared("late").await;

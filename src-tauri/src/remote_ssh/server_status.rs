@@ -637,6 +637,22 @@ fn require_server_mode_connection(manager: &SshManager, connection_id: &str) -> 
     }
 }
 
+pub(crate) async fn ssh_server_update(
+    root_uri: String,
+    app: AppHandle,
+    manager: State<'_, SshManager>,
+) -> Result<SshServerState, String> {
+    let root = require_trusted_root(&manager, &root_uri)?;
+    let parsed = parse_remote_uri(&root.uri)?;
+    if manager.direct_config(&parsed.connection_id).is_some() {
+        return Err("Server 端口直连不支持通过 SSH 更新服务，请在远端管理服务".into());
+    }
+    manager.session(&parsed.connection_id)?;
+    require_server_mode_connection(&manager, &parsed.connection_id)?;
+    server::update_server_endpoint_with_app(&manager, &root, Some(&app)).await?;
+    state_for_root(&manager, &root)
+}
+
 pub(crate) async fn ssh_server_restart(
     root_uri: String,
     app: AppHandle,

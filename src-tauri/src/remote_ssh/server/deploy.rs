@@ -1279,6 +1279,44 @@ pub(crate) async fn ensure_server_endpoint_with_app(
     ensure_server_endpoint_inner(manager, root, app, true).await
 }
 
+/// Explicit update must revalidate the installed bytes and complete the daemon
+/// HELLO. A working project serve fallback cannot make this operation succeed.
+pub(crate) async fn update_server_endpoint_with_app(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&AppHandle>,
+) -> Result<(), String> {
+    let connection_id = parse_remote_uri(&root.uri)?.connection_id;
+    let key = server_slot_key(&connection_id, &root.canonical_path);
+    super::host_runtime::invalidate_shared_daemon(manager, &connection_id);
+    forget_install_location(manager, &connection_id);
+    manager.clear_server_endpoint(&key);
+    publish_server_if_watched(app, manager, root);
+    let result = super::host_runtime::ensure_shared_daemon(manager, root, app).await;
+    let mut slot = manager.server_slot(&key).unwrap_or_default();
+    slot.activity = None;
+    match &result {
+        Ok(daemon) => {
+            slot.endpoint = Some(ServerEndpoint {
+                serve: slot.endpoint.and_then(|endpoint| endpoint.serve),
+                daemon: Some(daemon.clone()),
+            });
+            slot.unavailable_reason = None;
+            slot.last_failure = None;
+            slot.daemon_failure = None;
+            slot.daemon_downgraded_at = None;
+            slot.deploy_failures = 0;
+        }
+        Err(reason) => {
+            slot.last_failure = Some(reason.clone());
+            slot.daemon_failure = Some(reason.clone());
+        }
+    }
+    manager.set_server_slot(&key, slot);
+    publish_server_if_watched(app, manager, root);
+    result.map(|_| ())
+}
+
 async fn ensure_server_endpoint_inner(
     manager: &SshManager,
     root: &RegisteredRoot,

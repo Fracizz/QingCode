@@ -71,6 +71,42 @@ describe('serverModeErrorAction', () => {
     expect(serverModeErrorAction(new Error('断开连接'), ready.rootUri, t)).toBeUndefined()
   })
 
+  it.each(['daemon', 'server', '远端服务程序'])('updates a mismatched %s instead of restarting', async service => {
+    const action = serverModeErrorAction(new Error(
+      `新建终端失败: ${SERVER_MODE_ERROR_PREFIX}${service} 版本不匹配：远端 0.1.14-beta.9，本端 0.1.14-beta.12`,
+    ), ready.rootUri, t)!
+    expect(action.label).toBe('更新远端服务')
+    await action.onAction()
+    expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({
+      title: '更新远端服务', confirmLabel: '更新',
+      message: expect.stringContaining('更新会结束此远端服务托管的终端'),
+    }))
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('更新远端服务', 'ssh_server_update', { rootUri: ready.rootUri })
+    expect(pushToast).toHaveBeenCalledWith('success', '已更新远端服务，请重新新建终端或重试原操作')
+    expect(switchSshConnectionMode).not.toHaveBeenCalled()
+  })
+
+  it('cancels an update without invoking the backend', async () => {
+    confirmDialog.mockResolvedValue(false)
+    await serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}daemon 版本不匹配`, ready.rootUri, t)?.onAction()
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it.each(['serve', null])('does not report an update as successful with transport %s', async transport => {
+    invoke.mockResolvedValue({ ...ready, transport, reason: 'daemon 版本不匹配' })
+    await serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}daemon 版本不匹配`, ready.rootUri, t)?.onAction()
+    expect(pushToast).toHaveBeenCalledExactlyOnceWith('warn', '远端服务尚未就绪', 'daemon 版本不匹配')
+  })
+
+  it('keeps the original project and reports package/update failures', async () => {
+    invoke.mockRejectedValue(new Error('离线服务包版本不匹配'))
+    const action = serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}daemon 版本不匹配`, ready.rootUri, t)!
+    store.currentProject = { id: 'p9', name: 'other', path: 'ssh://c9/home/u/other' }
+    await action.onAction()
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('更新远端服务', 'ssh_server_update', { rootUri: ready.rootUri })
+    expect(pushToast).toHaveBeenCalledWith('error', '更新远端服务失败: Error: 离线服务包版本不匹配')
+  })
+
   it('retries the current SSH project without changing connection mode', async () => {
     const action = serverModeErrorAction(
       new Error(`新建终端失败: ${SERVER_MODE_ERROR_PREFIX}daemon 未就绪`), ready.rootUri, t,
