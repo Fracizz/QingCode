@@ -12,6 +12,7 @@ import {
 import { useI18n } from '../lib/i18n'
 import {
   parseSshServerTimings,
+  sshServerVersionMismatch,
   type SshServerState,
   type SshServerTimingStage,
 } from '../lib/sshServerStatus'
@@ -35,6 +36,7 @@ interface Props {
   onViewChange: (view: View) => void
   onRefreshLogs: () => void
   onRestart: () => void
+  onUpdate?: () => void
   onEnableServer: () => void
   onSettings: () => void
   onClose: () => void
@@ -54,6 +56,7 @@ export default function SshServerDialog({
   onViewChange,
   onRefreshLogs,
   onRestart,
+  onUpdate,
   onEnableServer,
   onSettings,
   onClose,
@@ -62,8 +65,9 @@ export default function SshServerDialog({
   const id = useId()
   const agent = state.transport === 'agent'
   const compatibility = !agent && state.connectionMode === 'ssh'
-  const pending = ['authenticating', 'probing', 'installing', 'handshaking'].includes(state.phase)
-  const ready = state.phase === 'readyServer'
+  const mismatch = sshServerVersionMismatch(state.reason)
+  const pending = !mismatch && ['authenticating', 'probing', 'installing', 'handshaking'].includes(state.phase)
+  const ready = !mismatch && state.phase === 'readyServer'
   const overview = view === 'details'
   const views: View[] = [...(compatibility ? ['details'] as const : ['details', 'logs'] as const), ...(agentPanel ? ['agent'] as const : [])]
   const restartLabel = agent ? t('重新连接 Server') : ready ? t('重启远端服务') : t('重试远端服务')
@@ -262,7 +266,7 @@ export default function SshServerDialog({
             <button
               type="button"
               disabled={busy || !!blocker || pending}
-              onClick={onRestart}
+              onClick={mismatch && onUpdate ? onUpdate : onRestart}
               className="inline-flex items-center gap-1.5 rounded border border-dialog-border px-3 py-1.5 text-ui text-fg hover:bg-bg-hover disabled:opacity-40"
             >
               {busy ? (
@@ -270,7 +274,7 @@ export default function SshServerDialog({
               ) : (
                 <RotateCw size={14} aria-hidden />
               )}
-              {busy ? t(agent ? '正在重新连接…' : '正在重启…') : restartLabel}
+              {busy ? t(agent ? '正在重新连接…' : '正在重启…') : mismatch && onUpdate ? t(agent ? '通过 SSH 更新远端服务' : '更新远端服务') : restartLabel}
             </button>
           )}
         </footer>}
@@ -284,9 +288,12 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
   const agent = state.transport === 'agent'
   const compatibility = !agent && state.connectionMode === 'ssh'
   const offline = state.phase === 'disconnected'
-  const ready = state.phase === 'readyServer'
-  const title = offline
-    ? t(agent ? 'Server 连接已断开' : 'SSH 连接已断开')
+  const mismatch = sshServerVersionMismatch(state.reason)
+  const ready = !mismatch && state.phase === 'readyServer'
+  const title = mismatch
+    ? t('远端服务版本不匹配')
+    : offline
+      ? t(agent ? 'Server 连接已断开' : 'SSH 连接已断开')
     : compatibility && !pending
       ? t('已启用 SSH 兼容模式')
       : ready
@@ -300,8 +307,10 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
               : state.phase === 'handshaking'
                 ? t('正在连接远端服务')
                 : t('远端服务未就绪')
-  const description = offline
-    ? t('连接中断，请检查网络或主机后重新连接。')
+  const description = mismatch
+    ? state.reason
+    : offline
+      ? t('连接中断，请检查网络或主机后重新连接。')
     : compatibility && !pending
       ? t('通过 SSH 直接访问文件和终端，不部署远端服务。文件树不会自动刷新，终端不支持断线恢复。')
       : ready
@@ -309,7 +318,7 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
         : pending
           ? t('准备完成后会自动更新状态，无需重复操作。')
           : t('请查看诊断信息，检查服务安装设置后重试。')
-  const Icon = pending
+  const Icon = mismatch ? AlertCircle : pending
     ? LoaderCircle
     : ready || (compatibility && !offline)
       ? CheckCircle2
@@ -317,12 +326,12 @@ function ConnectionSummary({ state, pending }: { state: SshServerState; pending:
   return (
     <div
       role="status"
-      className={`flex items-start gap-3 rounded-md border p-3 ${ready ? 'border-ok/30 bg-ok/5' : offline ? 'border-danger/30 bg-danger/5' : 'border-dialog-border bg-dialog-sidebar'}`}
+      className={`flex items-start gap-3 rounded-md border p-3 ${mismatch ? 'border-warn/40 bg-warn/5' : ready ? 'border-ok/30 bg-ok/5' : offline ? 'border-danger/30 bg-danger/5' : 'border-dialog-border bg-dialog-sidebar'}`}
     >
       <Icon
         size={18}
         aria-hidden
-        className={`mt-0.5 flex-shrink-0 ${pending ? 'animate-spin text-accent' : offline ? 'text-danger' : ready ? 'text-ok' : compatibility ? 'text-fg-muted' : 'text-warn'}`}
+        className={`mt-0.5 flex-shrink-0 ${mismatch ? 'text-warn' : pending ? 'animate-spin text-accent' : offline ? 'text-danger' : ready ? 'text-ok' : compatibility ? 'text-fg-muted' : 'text-warn'}`}
       />
       <div className="min-w-0">
         <h3 className={`font-semibold ${ready ? 'text-ok' : offline ? 'text-danger' : 'text-fg'}`}>

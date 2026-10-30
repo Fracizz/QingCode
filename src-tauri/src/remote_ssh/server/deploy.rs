@@ -1329,7 +1329,28 @@ async fn ensure_server_endpoint_inner(
             return Ok(None);
         }
         let key = server_slot_key(&connection_id, &root.canonical_path);
-        if let Err(error) = manager.ensure_connection_alive(&connection_id).await {
+        let verified = manager
+            .server_slot(&key)
+            .is_some_and(|slot| slot.endpoint.is_some());
+        let checked = async {
+            manager.ensure_connection_alive(&connection_id).await?;
+            let health = super::super::direct::test(&config).await?;
+            super::super::direct::require_current_version(&health)?;
+            if verified {
+                return Ok(());
+            }
+            super::daemon::probe_shared_daemon(
+                manager,
+                &connection_id,
+                &DaemonAccess {
+                    bin: "direct".into(),
+                    token: config.token.clone(),
+                },
+            )
+            .await
+        }
+        .await;
+        if let Err(error) = checked {
             let slot = ServerSlot {
                 last_failure: Some(error.clone()),
                 ..Default::default()

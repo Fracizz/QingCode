@@ -64,7 +64,6 @@ html[data-theme='forest'] .setting-control {
 .setting-control:focus-visible,
 .setting-number-with-unit:focus-within {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 .setting-control:disabled,

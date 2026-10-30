@@ -1654,6 +1654,13 @@
     "此主机不支持通过 SSH 自动放行。请按下方说明手动配置防火墙。": "This host does not support allowing access via SSH. Configure the firewall manually using the instructions below.",
     "防火墙配置或连接目标已变化。请重新检查并确认放行范围。": "The firewall configuration or connection target changed. Inspect it again and confirm the access scope.",
     "SSH 防火墙操作失败。请检查远端权限、现有规则和连接状态后重试。": "The SSH firewall operation failed. Check remote permissions, existing rules, and connectivity before retrying.",
-    "SSH：{username}@{host}:{sshPort}\n执行账户：{account}\n接收地址：{localAddress}\nTCP 端口：{port}\n允许来源：{source}\n网络范围：{profiles}\n网络接口：{interfaceAlias}（{networkCategory}）\n规则：{rule}": "SSH: {username}@{host}:{sshPort}\nExecuting account: {account}\nReceiving address: {localAddress}\nTCP port: {port}\nAllowed source: {source}\nNetwork profiles: {profiles}\nNetwork interface: {interfaceAlias} ({networkCategory})\nRule: {rule}"
+    "SSH：{username}@{host}:{sshPort}\n执行账户：{account}\n接收地址：{localAddress}\nTCP 端口：{port}\n允许来源：{source}\n网络范围：{profiles}\n网络接口：{interfaceAlias}（{networkCategory}）\n规则：{rule}": "SSH: {username}@{host}:{sshPort}\nExecuting account: {account}\nReceiving address: {localAddress}\nTCP port: {port}\nAllowed source: {source}\nNetwork profiles: {profiles}\nNetwork interface: {interfaceAlias} ({networkCategory})\nRule: {rule}",
+    "远端服务版本不匹配": "Remote service version mismatch",
+    "通过 SSH 更新远端服务": "Update remote service via SSH",
+    "更新通过所选 SSH 连接上传服务包，保留直连端口和配对身份。完成后仍使用 HTTPS / WSS 连接。": "The update uploads the service package through the selected SSH connection and preserves the direct port and pairing identity. HTTPS / WSS remains the connection method.",
+    "未找到此主机的 SSH 连接。请先添加并确认 SSH 主机指纹，或在远端手动更新 Server。": "No SSH connection was found for this host. Add one and confirm its host fingerprint, or update Server manually on the remote host.",
+    "正在上传、更新并验证远端服务…": "Uploading, updating, and verifying remote service…",
+    "更新并重新连接": "Update and reconnect",
+    "正在更新…": "Updating…"
   }
 }

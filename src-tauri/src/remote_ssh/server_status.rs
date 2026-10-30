@@ -581,7 +581,10 @@ fn require_registered_root(manager: &SshManager, root_uri: &str) -> Result<Regis
 
 /// restart / logs / stop 这类直接操作远端进程与文件的命令要求根已信任：
 /// 未信任的工作区不允许以我们的身份在远端执行任何命令。
-fn require_trusted_root(manager: &SshManager, root_uri: &str) -> Result<RegisteredRoot, String> {
+pub(super) fn require_trusted_root(
+    manager: &SshManager,
+    root_uri: &str,
+) -> Result<RegisteredRoot, String> {
     let root = require_registered_root(manager, root_uri)?;
     if !root.trusted {
         return Err(REASON_UNTRUSTED_COMMAND.to_string());

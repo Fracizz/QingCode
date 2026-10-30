@@ -24,6 +24,7 @@ import SshServerDialog from './SshServerDialog'
 import DirectAgentConnectionPanel from './DirectAgentConnectionPanel'
 import { confirmDialog } from '../store/confirmStore'
 import { confirmSshServerRestart } from '../lib/sshWindowsRepair'
+import { serverModeErrorAction } from '../lib/serverModeError'
 import { switchSshConnectionMode, sshConnectionLabel, sshRemotePathFromUri } from '../lib/sshWorkspace'
 
 const STATUS_ACTION = 'status-action status-connection'
@@ -313,6 +314,10 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
           }}
           onRefreshLogs={fetchLogs}
           onRestart={() => void restart()}
+          onUpdate={() => {
+            if (agent) useUIStore.setState({ serverUpdateRootUri: rootUri })
+            else void serverModeErrorAction(`Server 模式：${state.reason}`, rootUri, t)?.onAction()
+          }}
           onEnableServer={() => void enableServerMode()}
           onSettings={() => {
             if (agent && connection) {
@@ -336,6 +341,8 @@ function ChipDot({ kind }: { kind: SshServerChip['kind'] }) {
       ? 'bg-ok'
       : kind === 'pending'
         ? 'bg-warn animate-pulse'
+        : kind === 'error'
+          ? 'bg-warn'
         : kind === 'offline'
           ? 'bg-danger'
           : 'bg-fg-muted'

@@ -35,11 +35,10 @@
 
 .terminal-search-bar__input-wrap:focus-within {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 
 .terminal-search-bar__input {
-  /* The wrapper owns the focus ring, including keyboard and auto focus. */
+  /* The wrapper owns the focus border, including keyboard and auto focus. */
   appearance: none;
   flex: 1;
   min-width: 0;

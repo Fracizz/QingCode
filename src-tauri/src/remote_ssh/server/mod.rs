@@ -35,7 +35,7 @@ mod terminal;
 mod watch;
 
 pub(crate) use daemon::{
-    daemon_scan_entries, daemon_search_content_call, daemon_warmup_entries,
+    daemon_scan_entries, daemon_search_content_call, daemon_warmup_entries, ensure_remote_daemon,
     handle_daemon_transport_error, shutdown_remote_daemon, DaemonSearchParams,
 };
 pub(crate) use deploy::{
@@ -46,7 +46,8 @@ pub(crate) use deploy::{
 pub(crate) use download::resolve_offline_server_dir;
 pub(crate) use host_runtime::{invalidate_shared_daemon, shared_server_known, HostDaemonCache};
 pub(crate) use paths::{
-    parse_server_state, server_serve_log_path, server_state_path, windows_host_path,
+    parse_server_state, remote_roots_equivalent, server_serve_log_path, server_state_path,
+    windows_host_path,
 };
 pub(crate) use scripts::{kill_server_command, windows_kill_server_script};
 pub(crate) use serve::{server_stream_call, ServerStreamOutcome};

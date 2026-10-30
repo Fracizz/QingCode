@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useUIStore } from '../store/uiStore'
 
 const { invoke, switchSshConnectionMode, pushToast, store, confirmDialog } = vi.hoisted(() => ({
   invoke: vi.fn(),
@@ -81,7 +82,7 @@ describe('serverModeErrorAction', () => {
       title: '更新远端服务', confirmLabel: '更新',
       message: expect.stringContaining('更新会结束此远端服务托管的终端'),
     }))
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('更新远端服务', 'ssh_server_update', { rootUri: ready.rootUri })
+    expect(invoke).toHaveBeenCalledWith('更新远端服务', 'ssh_server_update', { rootUri: ready.rootUri })
     expect(pushToast).toHaveBeenCalledWith('success', '已更新远端服务，请重新新建终端或重试原操作')
     expect(switchSshConnectionMode).not.toHaveBeenCalled()
   })
@@ -89,7 +90,7 @@ describe('serverModeErrorAction', () => {
   it('cancels an update without invoking the backend', async () => {
     confirmDialog.mockResolvedValue(false)
     await serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}daemon 版本不匹配`, ready.rootUri, t)?.onAction()
-    expect(invoke).not.toHaveBeenCalled()
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('读取 SSH Server 状态', 'ssh_server_info', { rootUri: ready.rootUri })
   })
 
   it.each(['serve', null])('does not report an update as successful with transport %s', async transport => {
@@ -99,12 +100,24 @@ describe('serverModeErrorAction', () => {
   })
 
   it('keeps the original project and reports package/update failures', async () => {
-    invoke.mockRejectedValue(new Error('离线服务包版本不匹配'))
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') return ready
+      throw new Error('离线服务包版本不匹配')
+    })
     const action = serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}daemon 版本不匹配`, ready.rootUri, t)!
     store.currentProject = { id: 'p9', name: 'other', path: 'ssh://c9/home/u/other' }
     await action.onAction()
-    expect(invoke).toHaveBeenCalledExactlyOnceWith('更新远端服务', 'ssh_server_update', { rootUri: ready.rootUri })
+    expect(invoke).toHaveBeenCalledWith('更新远端服务', 'ssh_server_update', { rootUri: ready.rootUri })
     expect(pushToast).toHaveBeenCalledWith('error', '更新远端服务失败: Error: 离线服务包版本不匹配')
+  })
+
+  it('routes a direct gateway update to explicit SSH authorization without invoking the SSH workspace updater', async () => {
+    useUIStore.setState({ serverUpdateRootUri: null })
+    invoke.mockResolvedValue({ ...ready, transport: 'agent' })
+    await serverModeErrorAction(`${SERVER_MODE_ERROR_PREFIX}daemon 版本不匹配`, ready.rootUri, t)?.onAction()
+    expect(useUIStore.getState().serverUpdateRootUri).toBe(ready.rootUri)
+    expect(invoke).toHaveBeenCalledExactlyOnceWith('读取 SSH Server 状态', 'ssh_server_info', { rootUri: ready.rootUri })
+    expect(confirmDialog).not.toHaveBeenCalled()
   })
 
   it('retries the current SSH project without changing connection mode', async () => {

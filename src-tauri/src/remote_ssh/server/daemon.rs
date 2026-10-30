@@ -1136,7 +1136,7 @@ async fn daemon_hello(
 ///
 /// 任一步失败都返回最后一次失败原因：仅表示本轮无 daemon，不影响 serve 模式；
 /// 原因留给 Server 模式的终端报错展示，否则用户只能看到笼统的「不可用」。
-pub(super) async fn ensure_remote_daemon(
+pub(crate) async fn ensure_remote_daemon(
     manager: &SshManager,
     connection_id: &str,
     root: &RegisteredRoot,

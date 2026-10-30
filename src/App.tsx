@@ -8,6 +8,7 @@ import StatusBar from './components/StatusBar'
 import TitleBar from './components/TitleBar'
 import Toaster from './components/Toaster'
 import ConfirmDialog from './components/ConfirmDialog'
+import DirectServerUpdateDialog from './components/DirectServerUpdateDialog'
 import ChoiceDialog from './components/ChoiceDialog'
 import PromptDialog from './components/PromptDialog'
 import ExplorerConflictDialog from './components/ExplorerConflictDialog'
@@ -497,6 +498,7 @@ function App() {
 
       <StatusBar />
       <Toaster />
+      <RemoteServerUpdate />
       <ConfirmDialog />
       <ChoiceDialog />
       <PromptDialog />
@@ -536,6 +538,11 @@ function App() {
       )}
     </div>
   )
+}
+
+function RemoteServerUpdate() {
+  const rootUri = useUIStore(state => state.serverUpdateRootUri)
+  return rootUri ? <DirectServerUpdateDialog key={rootUri} rootUri={rootUri} /> : null
 }
 
 export default App

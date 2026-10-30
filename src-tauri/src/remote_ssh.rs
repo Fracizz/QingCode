@@ -23,8 +23,10 @@ mod direct;
 mod direct_firewall;
 mod direct_fs;
 mod direct_settings;
+mod direct_update;
 pub use direct_firewall::*;
 pub use direct_settings::*;
+pub use direct_update::*;
 #[cfg(test)]
 mod live_acceptance;
 mod search;

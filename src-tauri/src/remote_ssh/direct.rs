@@ -324,6 +324,17 @@ pub(super) async fn test(config: &DirectConnectionConfig) -> Result<DirectHealth
     }).await.map_err(|_| timeout_error())?
 }
 
+pub(super) fn require_current_version(health: &DirectHealth) -> Result<(), String> {
+    if health.server_version != qingcode_server::SERVER_VERSION {
+        return Err(format!(
+            "Server 版本不匹配：远端 {}，本端 {}",
+            health.server_version,
+            qingcode_server::SERVER_VERSION
+        ));
+    }
+    Ok(())
+}
+
 pub(super) async fn workspace_request(
     config: &DirectConnectionConfig,
     request: impl std::borrow::Borrow<serde_json::Value>,

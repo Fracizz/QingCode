@@ -251,7 +251,7 @@ export default function SshImportDialog({
                   </label>
                   {item.privateKeyPath && (
                     <details className="px-3 pb-2.5 pl-9 text-ui-sm text-fg-muted">
-                      <summary className="cursor-pointer rounded hover:text-fg focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2">
+                      <summary className="cursor-pointer rounded hover:text-fg">
                         {t('身份认证详情')}
                       </summary>
                       <dl className="mt-2 rounded border border-dialog-border bg-dialog-input p-2">

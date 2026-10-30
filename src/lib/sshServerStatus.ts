@@ -56,12 +56,18 @@ export type SshServerChip =
   /** 高级兼容模式：SSH 直连，不部署远端服务。 */
   | { kind: 'ssh' }
   | { kind: 'pending' }
+  | { kind: 'error' }
   /** 意外断线（保活超时、远端断开）：后台正在自动重连。 */
   | { kind: 'offline' }
 
 export type SshServerTipLine = {
   key: string
   params?: Record<string, string>
+}
+
+/** Shared by status details and recovery actions, including the HTTPS gateway. */
+export function sshServerVersionMismatch(reason: string | null | undefined): boolean {
+  return /(?:daemon|server|远端服务程序|Server)\s*版本不匹配/i.test(reason ?? '')
 }
 
 export function parseSshServerState(value: unknown): SshServerState | null {
@@ -101,6 +107,7 @@ export function sshServerChip(state: SshServerState | null): SshServerChip | nul
   if (!state) return null
   // 主动断开没有原因，芯片隐藏；意外断线带原因，显示「已断开」直到自动重连成功。
   if (state.phase === 'disconnected') return state.reason ? { kind: 'offline' } : null
+  if (sshServerVersionMismatch(state.reason)) return { kind: 'error' }
   if (state.phase === 'readyServer') return { kind: 'agent' }
   if (state.phase === 'readyDirect') return { kind: state.connectionMode === 'ssh' ? 'ssh' : 'direct' }
   return { kind: 'pending' }
@@ -110,6 +117,7 @@ export function sshServerChip(state: SshServerState | null): SshServerChip | nul
  * 面向用户的连接模式。区分 SSH 上的增强服务与独立 HTTPS/WSS Agent。
  */
 export function sshServerModeKey(state: SshServerState): string {
+  if (sshServerVersionMismatch(state.reason)) return '远端服务版本不匹配'
   if (state.transport === 'agent') {
     if (state.phase === 'disconnected') return state.reason ? 'Server 已断开' : '未连接'
     if (state.phase === 'authenticating') return 'Server 正在认证'

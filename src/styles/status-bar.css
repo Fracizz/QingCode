@@ -30,11 +30,6 @@
   background: var(--color-bg-hover);
 }
 
-/* The footer clips overflow: keep its single keyboard ring inside the hit area. */
-.status-action:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--color-accent) !important;
-}
-
 .status-app-meta .status-action {
   color: var(--color-fg-muted);
 }

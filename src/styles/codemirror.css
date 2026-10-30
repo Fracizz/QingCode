@@ -188,7 +188,6 @@
 }
 .cm-editor .cm-qing-find-input-wrap:focus-within {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
 }
 .cm-editor .cm-qing-find-input {
   flex: 1;

@@ -54,21 +54,9 @@ body {
 /* Historical surface marker; sizing now comes from typography/layout variables. */
 .ui-font-scaled { font-size: var(--ui-font-size); }
 
-/* Keyboard focus visibility — dual-layer crisp ring with 2px background safety margin */
-#root
-  :is(
-    button,
-    input,
-    textarea,
-    select,
-    summary,
-    [contenteditable='true'],
-    [role='menuitem'],
-    [role='tab'],
-    [tabindex]
-  ):focus-visible:not(.cm-content):not(.xterm-helper-textarea):not(.terminal-search-bar__input):not(.modal-search-input):not(.modal-field-input):not(.setting-input):not(.setting-control):not(.setting-number-with-unit-input) {
+/* Include dialogs/menus portaled outside #root; retain border/background feedback. */
+:focus {
   outline: none;
-  box-shadow: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-accent);
 }
 
 /* Palette-style modal search fields (CommandPalette, SymbolPicker, ProjectAddDialog). */
@@ -85,10 +73,6 @@ body {
 }
 .modal-search-input::placeholder {
   color: var(--color-fg-dim);
-}
-.modal-search-input:focus-visible {
-  outline: none !important;
-  box-shadow: inset 0 0 0 2px var(--color-accent);
 }
 
 /* Bordered text fields inside modal dialogs (PromptDialog, ExplorerConflictDialog). */
@@ -110,7 +94,6 @@ body {
 .modal-field-input:focus-visible {
   outline: none !important;
   border-color: var(--color-accent);
-  box-shadow: inset 0 0 0 1px var(--color-accent);
 }
 .modal-field-input[aria-invalid='true'],
 .modal-field-input.modal-field-input--invalid {

@@ -187,6 +187,25 @@ describe('SshServerStatusChip', () => {
     expect(infoCalls).toBe(2)
   })
 
+  it('surfaces a direct version mismatch in the overview and enables explicit SSH update while phase is probing', async () => {
+    const reason = 'daemon 版本不匹配：远端 0.1.14-beta.9，本端 0.1.14-beta.12'
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') return { ...probing, transport: 'agent', reason }
+      throw new Error(`unexpected ${command}`)
+    })
+    useUIStore.setState({ serverUpdateRootUri: null })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: /远端服务版本不匹配/ }))
+    expect(screen.getByRole('status')).toHaveTextContent(reason)
+    expect(screen.queryByText('正在检查远端服务')).toBeNull()
+    expect(screen.queryByText('准备完成后会自动更新状态，无需重复操作。')).toBeNull()
+    const update = screen.getByRole('button', { name: '通过 SSH 更新远端服务' })
+    expect(update).not.toBeDisabled()
+    fireEvent.click(update)
+    expect(useUIStore.getState().serverUpdateRootUri).toBe(rootUri)
+    expect(invoke).not.toHaveBeenCalledWith(expect.anything(), 'ssh_server_update', expect.anything())
+  })
+
   it('opens the details dialog on click and restarts from the right-click menu', async () => {
     render(<SshServerStatusChip rootUri={rootUri} />)
     const chip = await screen.findByRole('button', { name: serverChipName() })

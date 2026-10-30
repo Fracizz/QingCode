@@ -903,6 +903,7 @@ pub fn run() {
             remote_ssh::direct_agent_test,
             remote_ssh::direct_agent_save,
             remote_ssh::direct_agent_provision,
+            remote_ssh::direct_agent_update,
             remote_ssh::direct_agent_firewall_plan,
             remote_ssh::direct_agent_firewall_apply,
             remote_ssh::ssh_import_candidates,

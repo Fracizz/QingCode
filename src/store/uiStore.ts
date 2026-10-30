@@ -23,6 +23,7 @@ import { isExternalFileWindow } from '../lib/windowSession'
 export type View = 'explorer' | 'search' | 'sourceControl' | 'run' | 'settings'
 
 interface UIState {
+  serverUpdateRootUri: string | null
   view: View
   /** Whether the left sidebar panel is visible (VS Code-style toggle). */
   sidebarOpen: boolean
@@ -200,6 +201,7 @@ export const useUIStore = create<UIState>((set) => ({
   projectManagerOpen: false,
   workspaceManagerOpen: false,
   remoteConnectionsOpen: false,
+  serverUpdateRootUri: null,
   remoteConnectionsCreating: false,
   createProjectOpen: false,
   fullPageRestore: null,

@@ -59,7 +59,7 @@ fn validate_hash(hash: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn management_config(
+pub(super) fn management_config(
     manager: &SshManager,
     connection_id: &str,
     ssh_id: Option<&str>,

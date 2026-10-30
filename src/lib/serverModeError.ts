@@ -4,6 +4,8 @@ import { sshConnectionIdFromUri } from './sshWorkspace'
 import { safeInvoke } from './tauri'
 import { parseSshServerState } from './sshServerStatus'
 import { confirmDialog } from '../store/confirmStore'
+import { useUIStore } from '../store/uiStore'
+import { sshServerVersionMismatch } from './sshServerStatus'
 
 /** 后端在 Server 模式无法继续时给错误消息加的统一前缀。 */
 export const SERVER_MODE_ERROR_PREFIX = 'Server 模式：'
@@ -34,7 +36,7 @@ export function serverModeErrorAction(
   t: Translator = translate,
 ): { label: string; onAction: () => Promise<void> } | undefined {
   if (!isServerModeError(error) || !sshConnectionIdFromUri(rootUri)) return undefined
-  const update = /(?:daemon|server|远端服务程序)\s*版本不匹配/.test(errorMessage(error))
+  const update = sshServerVersionMismatch(errorMessage(error))
   const label = update ? t('更新远端服务') : t('重启远端服务')
   let pending = false
   return {
@@ -44,6 +46,13 @@ export function serverModeErrorAction(
       pending = true
       const pushToast = useProjectStore.getState().pushToast
       try {
+        if (update) {
+          const info = parseSshServerState(await safeInvoke<unknown>('读取 SSH Server 状态', 'ssh_server_info', { rootUri }))
+          if (info?.transport === 'agent') {
+            useUIStore.setState({ serverUpdateRootUri: rootUri })
+            return
+          }
+        }
         const accepted = await confirmDialog({
           title: label,
           message: update

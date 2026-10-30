@@ -52,6 +52,7 @@ function setHidden(id: string, hidden: number) {
 }
 
 export const useUIStore = create(() => ({
+  serverUpdateRootUri: null as string | null,
   projectManagerOpen: true,
   closeProjectManager() {
     useUIStore.setState({ projectManagerOpen: false })
