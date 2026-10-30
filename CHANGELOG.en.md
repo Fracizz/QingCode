@@ -6,6 +6,12 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.14-beta.11] - 2026-10-29
+
+### Fixed
+
+- Correct canonical test roots when Windows CI temporary directories use junctions, allowing publication of the responsiveness and Server direct-connection fixes from the unpublished beta.10 application build.
+
 ## [0.1.14-beta.10] - 2026-10-29
 
 ### Added

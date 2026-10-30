@@ -620,6 +620,10 @@ mod tests {
         let outside = base.join("outside");
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
+        // Hosted Windows runners can place TEMP behind a junction. Register
+        // the physical roots, as production workspace registration does.
+        let project = canonical(&project).unwrap();
+        let outside = canonical(&outside).unwrap();
         std::fs::write(project.join("file"), b"hello").unwrap();
         let request = json!({"root":display(&project),"path":display(&project.join("file")),"op":"open","flags":1});
         let opened = handle(request.clone()).await.unwrap();
