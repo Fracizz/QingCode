@@ -6,6 +6,12 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.14-beta.12] - 2026-10-29
+
+### Fixed
+
+- Automatically close the running app during Windows installation and upgrades, and complete the installer flow.
+
 ## [0.1.14-beta.11] - 2026-10-29
 
 ### Fixed

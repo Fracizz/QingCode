@@ -21,7 +21,7 @@ const closeScript = fileURLToPath(new URL('../src-tauri/windows/close-running-ap
 test('production installer uses in-place updates and a checked but optional launch action', () => {
   const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'))
   assert.equal(config.bundle.windows.nsis.template, './windows/installer.nsi')
-  const template = readFileSync(templatePath, 'utf8')
+  const template = readFileSync(templatePath, 'utf8').replaceAll('\r\n', '\n')
   const init = template.match(/Function \.onInit\n([\s\S]*?)FunctionEnd/)[1]
   assert.match(init, /StrCpy \$PassiveMode 1\s+StrCpy \$UpdateMode 1/)
   const finish = template.slice(template.indexOf('; 8. Finish page'), template.indexOf('Function RunMainBinary'))
@@ -34,7 +34,7 @@ test('production installer uses in-place updates and a checked but optional laun
   assert.doesNotMatch(install, /CheckIfAppIsRunning/)
   const success = template.match(/Function \.onInstSuccess\n([\s\S]*?)FunctionEnd/)[1]
   assert.doesNotMatch(success, /\$PassiveMode/)
-  const hooks = readFileSync(hooksPath, 'utf8')
+  const hooks = readFileSync(hooksPath, 'utf8').replaceAll('\r\n', '\n')
   const preinstall = hooks.match(/!macro NSIS_HOOK_PREINSTALL\n([\s\S]*?)!macroend/)[1]
   assert.match(preinstall, /!insertmacro QingCloseRunningApp\s+!insertmacro QingRemoveLegacyNavigationComponents/)
 })
