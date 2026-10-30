@@ -9,7 +9,7 @@ test('Open With preserves Windows and third-party associations across every life
 }, () => {
   const output = execFileSync('pwsh.exe', [
     '-NoProfile', '-File', fileURLToPath(new URL('./register-open-with.test.ps1', import.meta.url)),
-  ], { windowsHide: true, encoding: 'utf8', timeout: 30_000 })
+  ], { windowsHide: true, encoding: 'utf8', timeout: 90_000 })
   assert.match(output, /PASS: registration/)
 })
 

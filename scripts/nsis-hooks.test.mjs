@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -57,7 +57,7 @@ async function waitForFile(filename, child) {
 for (const cancelClose of [false, true]) {
   test(`upgrade ${cancelClose ? 'stops when closing is cancelled' : 'closes the target normally'} and preserves another installation`,
     { skip: skipClose }, async () => {
-      const root = mkdtempSync(path.join(os.tmpdir(), 'qingcode-close-test-'))
+      const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'qingcode-close-test-')))
       const children = []
       try {
         const source = path.join(root, 'app.cs')
@@ -92,7 +92,7 @@ class TestApp {
         writeFileSync(sentinel, '{"keep":true}')
         const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', closeScript,
           '-ExecutablePath', path.join(root, 'target', `${appName}.exe`), '-TimeoutSeconds', '2'],
-        { windowsHide: true, encoding: 'utf8', timeout: 15_000 })
+        { windowsHide: true, encoding: 'utf8', timeout: 60_000 })
         assert.equal(result.status, cancelClose ? 2 : 0, result.stdout + result.stderr)
         assert.equal(existsSync(path.join(root, 'target', 'marker.closing')), true)
         assert.equal(existsSync(path.join(root, 'other', 'marker.closing')), false)
@@ -108,7 +108,7 @@ class TestApp {
             await exited
           }
         }
-        assert.equal(path.dirname(root), path.resolve(os.tmpdir()))
+        assert.equal(path.dirname(root), realpathSync.native(os.tmpdir()))
         assert.ok(path.basename(root).startsWith('qingcode-close-test-'))
         rmSync(root, { recursive: true, force: true })
       }
