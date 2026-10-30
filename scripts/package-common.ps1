@@ -290,6 +290,7 @@ function Publish-ServerOfflinePack {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
 
   $release = Join-Path $ProjectRoot 'release'
+  # 默认覆盖项目根目录下的 release/servers，不依赖调用者当前目录或机器绝对路径。
   $destination = Join-Path $release 'servers'
   $files = @(Copy-ServerBinariesToDirectory -ProjectRoot $ProjectRoot -Destination $destination)
   if (-not (Test-Path -LiteralPath $release)) {

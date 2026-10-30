@@ -64,7 +64,7 @@ try {
 }
 
 test('publishes matching binaries and manifest to installer staging, portable directory and offline zip', options, () => {
-  withPackage(({ root, output, manifest, invoke }) => {
+  withPackage(({ root, output, manifest, saveManifest, invoke }) => {
     const stage = path.join(root, 'src-tauri', 'resources', 'servers')
     const portable = path.join(root, 'release', 'servers')
     for (const dir of [stage, portable]) {
@@ -83,6 +83,21 @@ test('publishes matching binaries and manifest to installer staging, portable di
         assert.deepEqual(readFileSync(path.join(dir, name)), readFileSync(path.join(output, name)))
       }
       assert.equal(existsSync(path.join(dir, 'qingcode-server-windows-aarch64.exe')), false)
+    }
+    // Repack the same version: both the relative directory and zip must replace
+    // existing files, even when their names and version have not changed.
+    const name = 'qingcode-server-x86_64'
+    const updated = Buffer.from('rebuilt server with the same version')
+    writeFileSync(path.join(output, name), updated)
+    manifest.artifacts[name] = {
+      sha256: createHash('sha256').update(updated).digest('hex'), size: updated.length,
+    }
+    saveManifest()
+    rmSync(path.join(root, 'unpacked'), { recursive: true })
+    invoke('publish')
+    for (const dir of [stage, portable, path.join(root, 'unpacked')]) {
+      assert.deepEqual(readFileSync(path.join(dir, name)), updated)
+      assert.deepEqual(JSON.parse(readFileSync(path.join(dir, 'manifest.json'), 'utf8')), manifest)
     }
     invoke('clear')
     for (const name of [...Object.keys(manifest.artifacts), 'manifest.json']) {
