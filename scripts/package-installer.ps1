@@ -5,7 +5,7 @@ param(
   [switch]$Force,
   [switch]$SkipFrontend,
   [switch]$SkipIcons,
-  # Skip building/bundling the SSH remote server binaries (src-tauri/target/server).
+  # Reuse existing server binaries; version and integrity checks still run before bundling.
   [switch]$SkipServer,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc).
   [string]$Target = ''
@@ -80,15 +80,11 @@ try {
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
-  # 代理二进制不进 NSIS。编完后清掉 resources/servers 里的残留，离线包写到 release/servers。
-  Write-Step 'SSH server binaries (not bundled)'
-  Clear-ServerResourceDir -ProjectRoot $projectRoot
-  if ($SkipServer) {
-    Write-Host '  skip server (-SkipServer)' -ForegroundColor Yellow
-  } else {
-    Invoke-ServerBinaryBuild -ProjectRoot $projectRoot
-    Publish-ServerOfflinePack -ProjectRoot $projectRoot
-  }
+  # 安装包和离线包使用同一份已校验产物，覆盖安装自动更新 servers/。
+  Write-Step 'SSH server binaries (bundled with installer)'
+  Invoke-ServerBinaryBuild -ProjectRoot $projectRoot -SkipServer:$SkipServer
+  $serverFiles = @(Publish-ServerBinariesToResourceDir -ProjectRoot $projectRoot)
+  Publish-ServerOfflinePack -ProjectRoot $projectRoot
 
   $frontendRebuilt = $false
   if ($SkipFrontend) {
@@ -123,19 +119,26 @@ try {
     Write-Host "  bundle dir: $bundleDir" -ForegroundColor DarkGray
   }
   $sw = [Diagnostics.Stopwatch]::StartNew()
-  # Skip beforeBuildCommand when dist is already fresh to avoid a second full frontend build.
+  # Frontend was handled above, including -Force; never build it a second time.
   $tauriArgs = @('tauri', 'build', '--bundles', 'nsis', '--ci')
   if ($Target) {
     $tauriArgs += @('--target', $Target)
   }
   # Pass override via file: PowerShell strips quotes from inline JSON in @args.
-  if (-not $Force -and -not (Test-FrontendStale -ProjectRoot $projectRoot) -and (Test-Path $distIndex)) {
+  if (Test-Path $distIndex) {
     $devDir = Join-Path $projectRoot '.dev'
     if (-not (Test-Path $devDir)) {
       New-Item -ItemType Directory -Path $devDir | Out-Null
     }
     $skipFrontendConfig = Join-Path $devDir 'tauri-package-override.json'
-    $overrideJson = (@{ build = @{ beforeBuildCommand = '' } } | ConvertTo-Json -Depth 3) + "`n"
+    $resources = @{}
+    foreach ($name in @($serverFiles.Name) + @('manifest.json')) {
+      $resources["resources/servers/$name"] = "servers/$name"
+    }
+    $overrideJson = (@{
+      build = @{ beforeBuildCommand = '' }
+      bundle = @{ resources = $resources }
+    } | ConvertTo-Json -Depth 5) + "`n"
     [System.IO.File]::WriteAllText(
       $skipFrontendConfig,
       $overrideJson,
@@ -184,13 +187,12 @@ try {
   Write-Host "OK NSIS installer written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
   Write-Host "  $latest"
-  if (-not $SkipServer) {
-    Write-Host "  $(Join-Path $outDir 'QingCode-servers.zip')  (offline server pack; not inside the installer)"
-  }
+  Write-Host "  servers/ included in installer (version $version)"
+  Write-Host "  $(Join-Path $outDir 'QingCode-servers.zip')  (standalone offline server pack)"
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "Install notes: automatic in-place install/upgrade; optional launch checked on finish page; /S for silent install (/R opts into launch)." -ForegroundColor DarkGray
+  Write-Host "Install notes: first install waits for Start Install; upgrades run in place automatically; optional launch checked on finish page; /S for silent install (/R opts into launch)." -ForegroundColor DarkGray
   Write-Host "Tips: pnpm package:exe (portable) · -SkipFrontend · -SkipServer · -Force · ARM64/macOS via CI" -ForegroundColor DarkGray
 } finally {
   Clear-ServerResourceDir -ProjectRoot $projectRoot

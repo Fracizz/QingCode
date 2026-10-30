@@ -152,7 +152,8 @@ function Invoke-ForceQingcodeEmbedRebuild {
 # 运行时查找顺序（src-tauri/src/lib.rs 的 configure_ssh_server_binary_dirs）：
 #   QINGCODE_SERVER_DIR → exe 目录/servers → exe 上级/server → resource_dir/servers
 # 因此：
-#   - 安装包和便携版 exe 都不把二进制打进程序本体。
+#   - Windows 安装包携带 servers/，覆盖安装时与客户端同步更新。
+#   - 便携版 exe 不嵌入二进制，使用同目录 servers/（含 manifest.json）。
 #   - 离线：release/servers/ 与 QingCode-servers.zip，放到 QingCode.exe 同目录的 servers/。
 #   - 在线：ssh.server.autoDownload 按 manifest sha256 从 GitHub Release 下载到缓存目录。
 # 二进制由 scripts/build-server.ps1 交叉编译（Linux musl 静态），产物在
@@ -160,8 +161,8 @@ function Invoke-ForceQingcodeEmbedRebuild {
 #
 # 资源映射语义（已实测）：bundle.resources 的相对路径按 tauri.conf.json 所在目录
 # （src-tauri/）解析，因此键 `resources/servers/` 指向 src-tauri/resources/servers/；
-# 映射目标是资源目录下的 `servers/`。空目录会被 bundler 静默跳过（不会报错），
-# 这也是“干净树上不构建 server 也能 tauri build 成功”的前提。
+# 映射目标是资源目录下的 `servers/`。安装脚本用临时配置显式映射本轮文件，
+# 不影响未准备 server 的 tauri dev / 普通 tauri build。
 
 function Resolve-ServerOutputDir {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
@@ -187,7 +188,8 @@ function Invoke-ServerBinaryBuild {
   )
 
   if ($SkipServer) {
-    Write-Host '  server: skipped (-SkipServer)' -ForegroundColor Yellow
+    Write-Host '  server: reuse existing package after validation (-SkipServer)' -ForegroundColor Yellow
+    Get-ServerBinaryFiles -ProjectRoot $ProjectRoot | Out-Null
     return
   }
 
@@ -210,11 +212,41 @@ function Get-ServerBinaryFiles {
   if (-not (Test-Path -LiteralPath $src)) {
     throw "Server output directory not found: $src (run scripts/build-server.ps1 first, or drop -SkipServer)"
   }
-  $files = @(Get-ChildItem -LiteralPath $src -File -Filter 'qingcode-server-*' -ErrorAction SilentlyContinue)
-  if ($files.Count -eq 0) {
-    throw "No qingcode-server-* binaries in $src (run scripts/build-server.ps1 first, or drop -SkipServer)"
+  $manifestPath = Join-Path $src 'manifest.json'
+  if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+    throw "Server manifest missing: $manifestPath (run scripts/build-server.ps1 first, or drop -SkipServer)"
   }
-  return $files
+  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+  $clientVersion = (Get-Content (Join-Path $ProjectRoot 'package.json') -Raw | ConvertFrom-Json).version
+  $tauriVersion = (Get-Content (Join-Path $ProjectRoot 'src-tauri/tauri.conf.json') -Raw | ConvertFrom-Json).version
+  foreach ($cargoFile in @('src-tauri/Cargo.toml', 'src-tauri/qingcode-server/Cargo.toml')) {
+    $versionLine = Select-String -LiteralPath (Join-Path $ProjectRoot $cargoFile) -Pattern '^\s*version\s*=\s*"([^"]+)"' | Select-Object -First 1
+    if (-not $versionLine -or $versionLine.Matches[0].Groups[1].Value -cne $clientVersion) {
+      throw "Server/client version mismatch in $cargoFile (expected $clientVersion)"
+    }
+  }
+  if (-not $clientVersion -or $manifest.version -cne $clientVersion -or $tauriVersion -cne $clientVersion) {
+    throw "Server/client version mismatch: manifest=$($manifest.version), client=$clientVersion, tauri=$tauriVersion (rebuild server; drop -SkipServer)"
+  }
+  $entries = @($manifest.artifacts.PSObject.Properties)
+  foreach ($required in @('qingcode-server-x86_64', 'qingcode-server-aarch64')) {
+    if ($required -cnotin $entries.Name) { throw "Server manifest missing required artifact: $required" }
+  }
+  foreach ($entry in $entries) {
+    # Only canonical filenames; manifest entries must never escape the package directory.
+    if ($entry.Name -cnotmatch '^qingcode-server-(x86_64|aarch64|windows-(x86_64|aarch64)\.exe)$') {
+      throw "Invalid server artifact name: $($entry.Name)"
+    }
+    $file = Get-Item -LiteralPath (Join-Path $src $entry.Name) -ErrorAction Stop
+    if ($file.PSIsContainer -or $entry.Value.size -le 0 -or $file.Length -ne $entry.Value.size) {
+      throw "Server artifact size mismatch: $($entry.Name)"
+    }
+    if ($entry.Value.sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+        (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $entry.Value.sha256) {
+      throw "Server artifact SHA-256 mismatch: $($entry.Name)"
+    }
+    $file
+  }
 }
 
 function Copy-ServerBinariesToDirectory {
@@ -223,13 +255,19 @@ function Copy-ServerBinariesToDirectory {
     [Parameter(Mandatory = $true)][string]$Destination
   )
 
-  $files = Get-ServerBinaryFiles -ProjectRoot $ProjectRoot
+  $files = @(Get-ServerBinaryFiles -ProjectRoot $ProjectRoot)
   if (-not (Test-Path -LiteralPath $Destination)) {
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
   }
+  # A subset build must not carry an older architecture forward into the next package.
+  Get-ChildItem -LiteralPath $Destination -File -Filter 'qingcode-server-*' |
+    Where-Object { $_.Name -cnotin $files.Name } |
+    Remove-Item -Force
   foreach ($file in $files) {
     Copy-Item -LiteralPath $file.FullName -Destination (Join-Path $Destination $file.Name) -Force
   }
+  Copy-Item -LiteralPath (Join-Path (Resolve-ServerOutputDir -ProjectRoot $ProjectRoot) 'manifest.json') `
+    -Destination (Join-Path $Destination 'manifest.json') -Force
   Write-Host ("  server: {0} -> {1}" -f (($files | ForEach-Object { $_.Name }) -join ', '), $Destination) -ForegroundColor DarkGray
   return $files
 }
@@ -237,7 +275,7 @@ function Copy-ServerBinariesToDirectory {
 function Publish-ServerBinariesToResourceDir {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
 
-  # tauri build 的 bundle.resources 会把这个目录整体映射到 resource_dir/servers。
+  # 安装脚本把清单与本轮二进制逐项映射到 resource_dir/servers。
   # 先清掉上次残留（例如构建中断留下的其它架构），保证进包内容确定。
   Clear-ServerResourceDir -ProjectRoot $ProjectRoot
   $destination = Resolve-ServerStagingDir -ProjectRoot $ProjectRoot
@@ -249,28 +287,26 @@ function Publish-ServerOfflinePack {
 
   $release = Join-Path $ProjectRoot 'release'
   $destination = Join-Path $release 'servers'
-  Copy-ServerBinariesToDirectory -ProjectRoot $ProjectRoot -Destination $destination | Out-Null
-  $manifest = Join-Path (Resolve-ServerOutputDir -ProjectRoot $ProjectRoot) 'manifest.json'
-  if (Test-Path -LiteralPath $manifest) {
-    Copy-Item -LiteralPath $manifest -Destination (Join-Path $destination 'manifest.json') -Force
-  }
+  $files = @(Copy-ServerBinariesToDirectory -ProjectRoot $ProjectRoot -Destination $destination)
   if (-not (Test-Path -LiteralPath $release)) {
     New-Item -ItemType Directory -Force -Path $release | Out-Null
   }
   $zip = Join-Path $release 'QingCode-servers.zip'
   if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
-  Compress-Archive -Path (Join-Path $destination '*') -DestinationPath $zip -Force
+  $packPaths = @($files | ForEach-Object { Join-Path $destination $_.Name }) + @((Join-Path $destination 'manifest.json'))
+  Compress-Archive -LiteralPath $packPaths -DestinationPath $zip -Force
   Write-Host "  offline server pack: $zip" -ForegroundColor DarkGray
 }
 
 function Clear-ServerResourceDir {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
 
-  # 只删除临时二进制，保留 .gitignore 占位，目录不会变成空目录。
+  # 只删除临时二进制和清单，保留 .gitignore 占位。
   $destination = Resolve-ServerStagingDir -ProjectRoot $ProjectRoot
   if (-not (Test-Path -LiteralPath $destination)) { return }
   $stale = Get-ChildItem -LiteralPath $destination -File -Filter 'qingcode-server-*' -ErrorAction SilentlyContinue
   foreach ($file in $stale) {
     Remove-Item -LiteralPath $file.FullName -Force -ErrorAction SilentlyContinue
   }
+  Remove-Item -LiteralPath (Join-Path $destination 'manifest.json') -Force -ErrorAction SilentlyContinue
 }

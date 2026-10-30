@@ -1,6 +1,6 @@
 ; QingCode custom installer, based on Tauri 2.11.4 (MIT / Apache-2.0).
 ; Upstream: https://github.com/tauri-apps/tauri/blob/tauri-v2.11.4/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi
-; QingCode changes: automatic in-place installation, graceful app shutdown,
+; QingCode changes: explicit first-install confirmation, automatic in-place upgrades, graceful app shutdown,
 ; and an optional, checked launch action on the completion page.
 ; Review this template when updating @tauri-apps/cli.
 
@@ -171,9 +171,7 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !define MUI_LANGDLL_REGISTRY_VALUENAME "Installer Language"
 
 ; Installer pages, must be ordered as they appear
-; 1. Welcome Page
-!define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
-!insertmacro MUI_PAGE_WELCOME
+; Fresh installs start at the directory page with an explicit Start Install button.
 
 ; 2. License Page (if defined)
 !if "${LICENSE}" != ""
@@ -394,6 +392,7 @@ FunctionEnd
 
 ; 5. Choose install directory page
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
+!define MUI_PAGE_CUSTOMFUNCTION_SHOW QingShowStartInstall
 !insertmacro MUI_PAGE_DIRECTORY
 
 ; 6. Start menu shortcut page
@@ -482,10 +481,40 @@ FunctionEnd
 
 LangString qingRunQingCode ${LANG_SIMPCHINESE} "运行QingCode"
 LangString qingRunQingCode ${LANG_ENGLISH} "Run QingCode"
+LangString qingStartInstall ${LANG_SIMPCHINESE} "开始安装"
+LangString qingStartInstall ${LANG_ENGLISH} "Start Install"
+
+Function QingShowStartInstall
+  GetDlgItem $0 $HWNDPARENT 1
+  SendMessage $0 ${WM_SETTEXT} 0 "STR:$(qingStartInstall)"
+FunctionEnd
+
+Function QingConfigureInstallMode
+  ; A registry entry alone can outlive an uninstall. Only a real installation
+  ; in the selected directory is eligible for an automatic upgrade.
+  ReadRegStr $R0 SHCTX "${UNINSTKEY}" "UninstallString"
+  ${If} $R0 != ""
+  ${AndIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+    ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
+    nsis_tauri_utils::SemverCompare "${VERSION}" $R0
+    Pop $R0
+    ${If} $R0 = 1
+    ${OrIf} $UpdateMode = 1
+      StrCpy $PassiveMode 1
+      StrCpy $UpdateMode 1
+    ${EndIf}
+  ${Else}
+    ; /UPDATE without an installation must not silently turn a fresh install
+    ; into an upgrade. Explicit /P and /S remain supported.
+    StrCpy $UpdateMode 0
+  ${EndIf}
+FunctionEnd
 
 Function .onInit
-  ; Double-click installs/updates without a wizard or an uninstall pass.
-  ; Tauri restores the previous install directory below. /S remains silent.
+  ; First installs and reinstalls wait for Start Install. Real upgrades may
+  ; skip the wizard after restoring and verifying the previous installation.
+  StrCpy $PassiveMode 0
+  StrCpy $UpdateMode 0
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
     StrCpy $PassiveMode 1
@@ -501,21 +530,11 @@ Function .onInit
     StrCpy $UpdateMode 1
   ${EndIf}
 
-  StrCpy $PassiveMode 1
-  StrCpy $UpdateMode 1
-
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
     !insertmacro MUI_LANGDLL_DISPLAY
   !endif
 
   !insertmacro SetContext
-
-  ; Fresh installs need the normal shortcut creation path. Only an existing
-  ; NSIS installation needs update mode to bypass the uninstall page.
-  ReadRegStr $R0 SHCTX "${UNINSTKEY}" "UninstallString"
-  ${If} $R0 == ""
-    StrCpy $UpdateMode 0
-  ${EndIf}
 
   ${If} $INSTDIR == "${PLACEHOLDER_INSTALL_DIR}"
     ; Set default install location
@@ -542,6 +561,7 @@ Function .onInit
   !if "${INSTALLMODE}" == "both"
     !insertmacro MULTIUSER_INIT
   !endif
+  Call QingConfigureInstallMode
 FunctionEnd
 
 

@@ -18,12 +18,17 @@ const componentIds = ['typescript', 'python', 'java', 'rust', 'go']
 const templatePath = new URL('../src-tauri/windows/installer.nsi', import.meta.url)
 const closeScript = fileURLToPath(new URL('../src-tauri/windows/close-running-app.ps1', import.meta.url))
 
-test('production installer uses in-place updates and a checked but optional launch action', () => {
+test('production installer confirms first installs, detects upgrades and offers a checked but optional launch action', () => {
   const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'))
   assert.equal(config.bundle.windows.nsis.template, './windows/installer.nsi')
   const template = readFileSync(templatePath, 'utf8').replaceAll('\r\n', '\n')
   const init = template.match(/Function \.onInit\n([\s\S]*?)FunctionEnd/)[1]
-  assert.match(init, /StrCpy \$PassiveMode 1\s+StrCpy \$UpdateMode 1/)
+  assert.match(init, /StrCpy \$PassiveMode 0\s+StrCpy \$UpdateMode 0/)
+  assert.doesNotMatch(init, /StrCpy \$PassiveMode 1\s+StrCpy \$UpdateMode 1/)
+  assert.match(init, /Call RestorePreviousInstallLocation[\s\S]*Call QingConfigureInstallMode/)
+  assert.match(template, /LangString qingStartInstall \$\{LANG_SIMPCHINESE\} "开始安装"/)
+  assert.match(template, /MUI_PAGE_CUSTOMFUNCTION_SHOW QingShowStartInstall\n!insertmacro MUI_PAGE_DIRECTORY/)
+  assert.doesNotMatch(template, /!insertmacro MUI_PAGE_WELCOME/)
   const finish = template.slice(template.indexOf('; 8. Finish page'), template.indexOf('Function RunMainBinary'))
   assert.match(finish, /!define MUI_FINISHPAGE_RUN_FUNCTION RunMainBinary/)
   assert.match(finish, /!define MUI_FINISHPAGE_RUN_TEXT "\$\(qingRunQingCode\)"/)
@@ -42,6 +47,7 @@ test('production installer uses in-place updates and a checked but optional laun
 const windowsDir = process.env.SystemRoot || 'C:\\Windows'
 const csc = path.join(windowsDir, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe')
 const powershell = path.join(windowsDir, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+const powershell32 = path.join(windowsDir, 'SysWOW64', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
 const skipClose = process.platform !== 'win32' || !existsSync(csc)
   ? 'Requires Windows and the .NET Framework C# compiler.' : false
 
@@ -54,8 +60,12 @@ async function waitForFile(filename, child) {
   }
 }
 
-for (const cancelClose of [false, true]) {
-  test(`upgrade ${cancelClose ? 'stops when closing is cancelled' : 'closes the target normally'} and preserves another installation`,
+const closeScenarios = [powershell, powershell32].flatMap(shell =>
+  [false, true].map(cancelClose => ({ shell, cancelClose })))
+if (!skip) closeScenarios.push({ shell: null, cancelClose: false })
+for (const { shell, cancelClose } of closeScenarios) {
+  const caller = shell === null ? '32-bit NSIS' : `${shell === powershell32 ? '32-bit' : 'native'} PowerShell`
+  test(`upgrade via ${caller} ${cancelClose ? 'stops when closing is cancelled' : 'closes the target normally'} and preserves another installation`,
     { skip: skipClose }, async () => {
       const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'qingcode-close-test-')))
       const children = []
@@ -82,7 +92,8 @@ class TestApp {
           const folder = path.join(root, directory)
           mkdirSync(folder)
           const exe = path.join(folder, `${appName}.exe`)
-          execFileSync(csc, ['/nologo', '/target:winexe', '/reference:System.Windows.Forms.dll', `/out:${exe}`, source], { windowsHide: true })
+          // Force an x64 process: AnyCPU fixtures can hide NSIS's WOW64 bug.
+          execFileSync(csc, ['/nologo', '/platform:x64', '/target:winexe', '/reference:System.Windows.Forms.dll', `/out:${exe}`, source], { windowsHide: true })
           const marker = path.join(folder, 'marker')
           const child = spawn(exe, [marker, directory === 'other' || cancelClose ? 'cancel' : 'close'], { stdio: 'ignore' })
           children.push(child)
@@ -90,9 +101,35 @@ class TestApp {
         }
         const sentinel = path.join(root, 'target', 'user-data.json')
         writeFileSync(sentinel, '{"keep":true}')
-        const result = spawnSync(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', closeScript,
+        let result
+        if (shell === null) {
+          const installer = path.join(root, 'upgrade.exe')
+          const installerSource = path.join(root, 'upgrade.nsi')
+          const replacement = path.join(root, 'replacement.bin')
+          writeFileSync(replacement, 'replacement executable')
+          writeFileSync(installerSource, `Unicode true
+Name "QingCode close test"
+OutFile "${nsisString(installer)}"
+InstallDir "${nsisString(path.join(root, 'target'))}"
+RequestExecutionLevel user
+SilentInstall silent
+!include LogicLib.nsh
+!define MAINBINARYNAME "${appName}"
+!include "${nsisString(hooksPath)}"
+Section
+  SetOutPath $INSTDIR
+  !insertmacro QingCloseRunningApp
+  File "/oname=${appName}.exe" "${nsisString(replacement)}"
+SectionEnd
+`)
+          execFileSync(makeNsis, ['-INPUTCHARSET', 'UTF8', '-V2', installerSource], { windowsHide: true })
+          result = spawnSync(installer, ['/S'], { windowsHide: true, encoding: 'utf8', timeout: 30_000 })
+          assert.equal(readFileSync(path.join(root, 'target', `${appName}.exe`), 'utf8'), 'replacement executable')
+        } else {
+          result = spawnSync(shell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', closeScript,
           '-ExecutablePath', path.join(root, 'target', `${appName}.exe`), '-TimeoutSeconds', '2'],
-        { windowsHide: true, encoding: 'utf8', timeout: 60_000 })
+          { windowsHide: true, encoding: 'utf8', timeout: 60_000 })
+        }
         assert.equal(result.status, cancelClose ? 2 : 0, result.stdout + result.stderr)
         assert.equal(existsSync(path.join(root, 'target', 'marker.closing')), true)
         assert.equal(existsSync(path.join(root, 'other', 'marker.closing')), false)
@@ -115,10 +152,106 @@ class TestApp {
     })
 }
 
+test('upgrade refuses to proceed while another process locks the executable', { skip: skipClose }, () => {
+  const root = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'qingcode-close-test-')))
+  try {
+    const exe = path.join(root, 'locked-fixture.exe')
+    writeFileSync(exe, 'keep existing executable intact')
+    const probe = path.join(root, 'lock.ps1')
+    writeFileSync(probe, `
+param([string]$ExecutablePath, [string]$CloseScript)
+$lock = [IO.File]::Open($ExecutablePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+try {
+  & '${powershell.replaceAll("'", "''")}' -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $CloseScript -ExecutablePath $ExecutablePath -TimeoutSeconds 1
+  $code = $LASTEXITCODE
+} finally { $lock.Dispose() }
+exit $code
+`)
+    const result = spawnSync(powershell32, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', probe,
+      '-ExecutablePath', exe, '-CloseScript', closeScript], { windowsHide: true, encoding: 'utf8', timeout: 30_000 })
+    assert.equal(result.status, 2, result.stdout + result.stderr)
+    assert.match(result.stdout, /executable is locked/)
+    assert.equal(readFileSync(exe, 'utf8'), 'keep existing executable intact')
+  } finally {
+    assert.equal(path.dirname(root), realpathSync.native(os.tmpdir()))
+    assert.ok(path.basename(root).startsWith('qingcode-close-test-'))
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
 function nsisString(value) {
   assert.doesNotMatch(value, /[\r\n]/)
   return value.replaceAll('$', '$$').replaceAll('"', '$\\"')
 }
+
+test('native installer mode detection requires confirmation except for real upgrades or explicit passive mode', { skip }, () => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'qingcode-install-mode-'))
+  const registryKey = `Software\\QingCodeInstallerTests\\${path.basename(root)}`
+  const uninstallKey = '${UNINSTKEY}'
+  const pluginPath = path.join(process.env.LOCALAPPDATA, 'tauri', 'NSIS', 'Plugins', 'x86-unicode', 'additional')
+  const template = readFileSync(templatePath, 'utf8').replaceAll('\r\n', '\n')
+  const configureMode = template.match(/Function QingConfigureInstallMode\n[\s\S]*?FunctionEnd/)[0]
+  const cases = [
+    { name: 'first install', installed: null, binary: false, expected: '0,0' },
+    { name: 'upgrade', installed: '1.2.3-beta.3', binary: true, expected: '1,1' },
+    { name: 'same version reinstall', installed: '1.2.3-beta.4', binary: true, expected: '0,0' },
+    { name: 'downgrade', installed: '1.2.3-beta.5', binary: true, expected: '0,0' },
+    { name: 'stale installation registry', installed: '1.2.3-beta.3', binary: false, expected: '0,0' },
+    { name: 'explicit passive install', installed: null, binary: false, passive: 1, expected: '1,0' },
+    { name: 'update flag on first install', installed: null, binary: false, update: 1, expected: '0,0' },
+    { name: 'explicit updater reinstall', installed: '1.2.3-beta.4', binary: true, update: 1, expected: '1,1' },
+  ]
+  try {
+    for (const [index, scenario] of cases.entries()) {
+      const target = path.join(root, `target-${index}`)
+      mkdirSync(target)
+      if (scenario.binary) writeFileSync(path.join(target, 'qingcode.exe'), 'installed application')
+      const resultFile = path.join(root, `result-${index}.txt`)
+      const executable = path.join(root, `mode-${index}.exe`)
+      const script = path.join(root, `mode-${index}.nsi`)
+      writeFileSync(script, `Unicode true
+Name "QingCode install mode test"
+OutFile "${nsisString(executable)}"
+RequestExecutionLevel user
+SilentInstall silent
+!include LogicLib.nsh
+!addplugindir "${nsisString(pluginPath)}"
+!define UNINSTKEY "${nsisString(registryKey)}"
+!define MAINBINARYNAME "qingcode"
+!define VERSION "1.2.3-beta.4"
+Var PassiveMode
+Var UpdateMode
+${configureMode}
+Function .onInit
+  SetShellVarContext current
+  DeleteRegKey HKCU "${uninstallKey}"
+  ${scenario.installed ? `WriteRegStr HKCU "${uninstallKey}" "UninstallString" "fixture uninstaller"\n  WriteRegStr HKCU "${uninstallKey}" "DisplayVersion" "${scenario.installed}"` : ''}
+  StrCpy $INSTDIR "${nsisString(target)}"
+  StrCpy $PassiveMode ${scenario.passive ?? 0}
+  StrCpy $UpdateMode ${scenario.update ?? 0}
+  Call QingConfigureInstallMode
+  FileOpen $0 "${nsisString(resultFile)}" w
+  FileWrite $0 "$PassiveMode,$UpdateMode"
+  FileClose $0
+  DeleteRegKey HKCU "${uninstallKey}"
+  SetErrorLevel 0
+  Quit
+FunctionEnd
+Section
+SectionEnd
+`)
+      execFileSync(makeNsis, ['-INPUTCHARSET', 'UTF8', '-V2', script], { windowsHide: true })
+      execFileSync(executable, ['/S'], { windowsHide: true, timeout: 15_000 })
+      assert.equal(readFileSync(resultFile, 'utf8'), scenario.expected, scenario.name)
+    }
+  } finally {
+    assert.ok(registryKey.startsWith('Software\\QingCodeInstallerTests\\qingcode-install-mode-'))
+    spawnSync('reg.exe', ['delete', `HKCU\\${registryKey}`, '/f', '/reg:32'], { windowsHide: true, stdio: 'ignore' })
+    assert.equal(path.dirname(root), path.resolve(os.tmpdir()))
+    assert.ok(path.basename(root).startsWith('qingcode-install-mode-'))
+    rmSync(root, { recursive: true, force: true })
+  }
+})
 
 function withCleanupInstaller(run) {
   const tempRoot = mkdtempSync(path.join(os.tmpdir(), 'qingcode-nsis-hooks-'))

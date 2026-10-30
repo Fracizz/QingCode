@@ -52,6 +52,7 @@
 !macro QingCloseRunningApp
   InitPluginsDir
   File "/oname=$PLUGINSDIR\close-running-app.ps1" "${QING_CLOSE_APP_SCRIPT}"
+  DetailPrint "正在关闭 QingCode，请在应用中确认退出并处理保存提示..."
   nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\close-running-app.ps1" -ExecutablePath "$INSTDIR\${MAINBINARYNAME}.exe"'
   Pop $0
   Pop $1

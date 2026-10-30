@@ -183,6 +183,6 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
               "${release_flags[@]}" \
               --title "qingcode-server ${TAG#server-v}" \
-              --notes "qingcode-server 远端代理独立发布。资产与 manifest.json（含 sha256）配合客户端 ssh.server.autoDownload 使用。安装包不附带这些文件。" \
+              --notes "qingcode-server 远端代理独立发布。资产与 manifest.json（含 sha256）配合客户端 ssh.server.autoDownload 使用；Windows 安装包也携带同版本服务。" \
               qingcode-server-x86_64 qingcode-server-aarch64 qingcode-server-windows-x86_64.exe manifest.json
           fi

@@ -8,7 +8,7 @@ param(
   [switch]$SkipIcons,
   # Skip copying to release/ when output already matches the build artifact.
   [switch]$SkipCopy,
-  # Skip building/copying the SSH remote server binaries (src-tauri/target/server).
+  # Reuse existing server binaries; version and integrity checks still run before publishing.
   [switch]$SkipServer,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc for Windows ARM64).
   [string]$Target = ''
@@ -173,9 +173,7 @@ try {
   }
 
   # 便携版没有安装目录，server 二进制与 exe 同目录（运行时「exe 目录/servers」）。
-  if (-not $SkipServer) {
-    Copy-ServerBinariesToDirectory -ProjectRoot $projectRoot -Destination (Join-Path $outDir 'servers') | Out-Null
-  }
+  Publish-ServerOfflinePack -ProjectRoot $projectRoot
 
   $versioned = Join-Path $outDir ("{0}_{1}{2}.exe" -f $productName, $version, $archSuffix)
   # Keep unversioned QingCode.exe for the default (host) build only.

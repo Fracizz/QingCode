@@ -1,5 +1,5 @@
-# 打包时由 scripts/package-installer.ps1 临时复制 qingcode-server-* 到这里，
-# `tauri build` 结束后立即清理。这里只保留占位文件，保证干净树上
-# bundle.resources 的目录映射依然是一个“存在的空目录”（不会报资源缺失）。
+# Windows 打包时临时复制 qingcode-server-* 与 manifest.json 到这里，
+# 安装脚本通过临时 bundle.resources 配置逐项打包，结束后立即清理。
+# 普通 tauri dev / tauri build 不依赖这些临时文件。
 *
 !.gitignore

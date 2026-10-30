@@ -156,7 +156,7 @@ jobs:
 
       - name: Build NSIS installer (x64)
         shell: pwsh
-        run: ./scripts/package-installer.ps1 -Force -SkipFrontend
+        run: ./scripts/package-installer.ps1 -SkipFrontend -SkipIcons -SkipServer
 
       - name: Smoke start
         shell: pwsh
@@ -219,7 +219,7 @@ jobs:
 
       - name: Build NSIS installer (arm64)
         shell: pwsh
-        run: ./scripts/package-installer.ps1 -Force -SkipFrontend -Target aarch64-pc-windows-msvc
+        run: ./scripts/package-installer.ps1 -SkipFrontend -SkipIcons -SkipServer -Target aarch64-pc-windows-msvc
 
       - name: Smoke start
         shell: pwsh

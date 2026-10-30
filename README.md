@@ -210,7 +210,8 @@ QingCode 专注于多项目、SSH、文件编辑和终端工作流；本地与 S
 | Windows | ARM64 | `QingCode_*-windows-arm64.exe` |
 | macOS | Apple Silicon (arm64) | `QingCode_*-macos-arm64.dmg` 或 `.zip` |
 
-- Windows：便携 exe 或 NSIS 安装包（`*-setup.exe`）；双击安装包即可自动安装或在原目录覆盖升级，无需先卸载或逐页确认。配置和项目记录保留，完成页的「运行QingCode」默认勾选，可取消。升级会先正常关闭当前安装的应用；如有未保存内容，请处理应用内的保存提示，取消关闭或超时会停止升级，不强制结束进程。`/S` 可完全静默安装，只有显式传入 `/R` 才在静默安装后启动。需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）；缺失时自动下载安装，失败时提供下载入口。升级也会清理旧版导航组件文件，保留组件目录中额外存放的文件。
+- Windows：便携 exe 或 NSIS 安装包（`*-setup.exe`）；首次安装会显示安装目录，点击「开始安装」后才执行；检测到旧版本时在原目录自动覆盖升级，无需先卸载。同版本重装默认也需确认。配置和项目记录保留，完成页的「运行QingCode」默认勾选，可取消。升级会先正常关闭当前安装的应用；如有未保存内容，请处理应用内的保存提示，取消关闭或超时会停止升级，不强制结束进程。`/S` 可完全静默安装，只有显式传入 `/R` 才在静默安装后启动。需 [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（较新系统通常已预装）；缺失时自动下载安装，失败时提供下载入口。升级也会清理旧版导航组件文件，保留组件目录中额外存放的文件。
+- Windows 安装包同时安装和更新同版本 `servers/`（Linux x64 / ARM64 及本机 Windows 服务），升级后无需另行替换服务目录。便携版需将配套 `servers/`（含 `manifest.json`）与 exe 一起更新。本地 `pnpm package` / `package:exe` 默认构建并校验服务包；`-SkipServer` 仅跳过编译，仍校验并发布当前版本产物，旧版本或损坏文件会阻止打包。
 - macOS：未签名时首次请右键 → 打开；需要 Apple Developer 签名/公证后再分发可跳过该步骤  
 
 本地打包（Windows x64 本机）：

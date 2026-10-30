@@ -17,8 +17,8 @@
 #   QINGCODE_SERVER_DIR 环境变量 → exe 目录（/servers）→ exe 目录上级（/server）→ 资源目录（/servers）
 # 开发模式下 exe 位于 src-tauri/target/{debug,release}/，因此默认把产物复制到
 # src-tauri/target/server/，`pnpm tauri:dev` 都能自动发现（无需再打包一步）。
-# 安装包不再内置这些二进制。scripts/package-installer.ps1 与 package-exe.ps1
-# 把产物放到 release/servers/（离线），客户端也可按 manifest 从 GitHub Release 在线下载。
+# Windows 安装包随包更新这些二进制；便携版配套 release/servers/ 和离线 zip。
+# 客户端也可按 manifest 从 GitHub Release 在线下载。
 #
 # 完整性清单（设计 §4.2/§8.3）：构建结束后对本轮产物逐一计算 sha256 与大小，
 # 写入 src-tauri/target/server/manifest.json。客户端部署前先 SFTP 拉取 manifest，
@@ -69,6 +69,11 @@ function Configure-MuslCCompiler {
         foreach ($candidate in $candidates) {
             $command = Get-Command $candidate -ErrorAction SilentlyContinue
             if ($command) { $compiler = $command.Source; break }
+        }
+        # 官方 LLVM Windows 安装器不一定添加 PATH；无需每次打包手工补环境变量。
+        if (-not $compiler -and $env:OS -eq 'Windows_NT' -and $env:ProgramFiles) {
+            $llvmClang = Join-Path $env:ProgramFiles 'LLVM/bin/clang.exe'
+            if (Test-Path -LiteralPath $llvmClang) { $compiler = $llvmClang }
         }
         if (-not $compiler) {
             throw "TLS/ring 构建 $Target 需要 C 交叉编译器。Windows 请安装 LLVM（clang + llvm-ar），Linux 请安装 musl-tools / gcc-aarch64-linux-gnu，或设置 $ccVar 与 AR_$suffix。rust-lld 只能链接，不能编译 C 源码。"
