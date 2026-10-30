@@ -45,6 +45,7 @@ vi.mock('../lib/gitRefreshSettings', () => ({
 vi.mock('../lib/projectIndicators', () => ({ projectGitRefreshDelay: () => 300000 }))
 
 import { useProjectStore } from '../store/projectStore'
+import { useEditorStore } from '../store/editorStore'
 import { useFileWatcher, type FsChangePayload } from './useFileWatcher'
 
 const local: Project = { id: 'local', name: 'local', path: 'D:/project', created_at: 0, last_opened_at: 0 }
@@ -52,18 +53,43 @@ let emit: (event: { payload: FsChangePayload }) => void
 beforeEach(() => {
   vi.useFakeTimers()
   vi.clearAllMocks()
+  mocks.safeInvoke.mockResolvedValue(undefined)
   mocks.skipTree.mockResolvedValue(false)
   mocks.listen.mockImplementation(async (_name, callback) => {
     emit = callback
     return vi.fn()
   })
   useProjectStore.setState({ projects: [local], currentProject: local })
+  useEditorStore.setState({ tabs: [], projectSessions: {}, activeTabId: null })
 })
 afterEach(() => vi.useRealTimers())
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
 const change = (path: string) => emit({ payload: { path, kind: 'any', isDir: false } })
 
 describe('file watcher explorer updates', () => {
+  it('only re-registers when watched paths change, not on edits or tab reordering', async () => {
+    const a = { id: 'a', path: 'D:/project/a.ts', name: 'a.ts', content: 'one', dirty: false, language: 'typescript' }
+    const b = { ...a, id: 'b', path: 'D:/project/b.ts', name: 'b.ts' }
+    useEditorStore.setState({ tabs: [a, b] })
+    renderHook(() => useFileWatcher())
+    await advance(100)
+    mocks.safeInvoke.mockClear()
+    for (let i = 0; i < 20; i++) {
+      act(() => {
+        useEditorStore.setState({ tabs: [b, { ...a, content: `edit-${i}`, dirty: true }] })
+        useProjectStore.setState({ currentProject: { ...local, name: `renamed-${i}` } })
+      })
+      await advance(400)
+    }
+    expect(mocks.safeInvoke).not.toHaveBeenCalled()
+
+    act(() => useEditorStore.setState({ tabs: [b] }))
+    await advance(100)
+    expect(mocks.safeInvoke).toHaveBeenCalledExactlyOnceWith('同步文件监视', 'sync_file_watches', {
+      roots: [local.path], files: [b.path],
+    })
+  })
+
   it('refreshes the whole loaded tree for a batch affecting more than four directories', async () => {
     renderHook(() => useFileWatcher())
     act(() => {

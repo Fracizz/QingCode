@@ -758,15 +758,18 @@ mod tests {
             std::fs::write(source.join(format!("nested/{index}.bin")), &bytes).unwrap();
         }
         std::fs::write(source.join("zero"), []).unwrap();
-        let canonical = std::fs::canonicalize(&remote)
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/");
-        let uri = if canonical.starts_with('/') {
-            format!("ssh://transfer-test{canonical}")
+        // canonicalize returns a verbatim \\?\ path on Windows, which is not
+        // the drive-path format used by SSH resource identifiers.
+        let canonical =
+            crate::path_guard::strip_verbatim_prefix(std::fs::canonicalize(&remote).unwrap())
+                .to_string_lossy()
+                .replace('\\', "/");
+        let canonical = if canonical.starts_with('/') {
+            canonical
         } else {
-            format!("ssh://transfer-test/{canonical}")
+            format!("/{canonical}")
         };
+        let uri = format!("ssh://transfer-test{canonical}");
         let manager = SshManager::new();
         manager
             .direct_connections

@@ -6,6 +6,18 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.14-beta.10] - 2026-10-29
+
+### Added
+
+- Direct connections to Server ports, with improved connection reuse and Windows connection preparation.
+
+### Fixed
+
+- Session persistence no longer republishes unchanged editor contents and repeatedly submits file watch requests while idle. Watch sets are deduplicated by path, and slow requests retain only the latest pending configuration.
+- Improved remote Server version checks, server package recovery messages and isolation of terminal control resources.
+- Fixed terminal copy, context menu and paste-upload behavior over direct connections, with improved snapshot recovery and terminal recovery diagnostics.
+
 ## [0.1.14-beta.9] - 2026-10-28
 
 ### Changed

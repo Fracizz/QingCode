@@ -775,6 +775,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   setTabContent: (id: string, content: string) => {
+    // Session persistence flushes cached/live buffers. An unchanged flush must
+    // not notify subscribers and schedule another persistence/watch cycle.
+    const tab = get().findTab(id)
+    if (!tab || tab.openError || tab.content === content) return
     set(s => {
       const next = mapTabEverywhere(s, id, t => (t.openError ? t : { ...t, content }))
       return next ?? s

@@ -22,6 +22,7 @@ import {
   GIT_REFRESH_INTERVAL_START_EVENT,
 } from '../lib/gitRefreshSettings'
 import { projectGitRefreshDelay } from '../lib/projectIndicators'
+import { createFileWatchSync, type FileWatchTargets } from '../lib/fileWatchSync'
 
 export type FsChangePayload = {
   path: string
@@ -45,15 +46,6 @@ const LOCAL_GIT_FOCUS_COOLDOWN_MS = 2_000
 
 function normalize(path: string): string {
   return path.replace(/\\/g, '/').toLowerCase()
-}
-
-async function syncWatches(roots: string[], files: string[]) {
-  if (!hasBackend()) return
-  try {
-    await safeInvoke('同步文件监视', 'sync_file_watches', { roots, files })
-  } catch (e) {
-    console.error('sync_file_watches failed:', e)
-  }
 }
 
 async function refreshTreesForPaths(paths: string[]) {
@@ -124,11 +116,18 @@ export function useFileWatcher() {
   const gitEventTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const contentTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const depsRef = useRef(createDefaultSyncOpenFileDeps())
+  const watchSyncRef = useRef<ReturnType<typeof createFileWatchSync> | null>(null)
 
   const currentProject = useProjectStore(s => s.currentProject)
   const tabs = useEditorStore(s => s.tabs)
   const projectSessions = useEditorStore(s => s.projectSessions)
   const activeTabId = useEditorStore(s => s.activeTabId)
+  // Buffer edits, tab metadata and project object replacements do not change
+  // the native watch set. Sorting also makes tab reordering a no-op.
+  const watchTargetsKey = JSON.stringify({
+    roots: collectWatchRoots(currentProject).sort(),
+    files: collectWatchFiles(tabs, projectSessions).sort(),
+  })
   const [gitRefreshIntervalStartMinutes, setGitRefreshIntervalStartMinutes] = useState(
     getGitRefreshIntervalStartMinutes
   )
@@ -143,11 +142,23 @@ export function useFileWatcher() {
   // Recursively watch only the active project. Inactive-project tabs are watched as files.
   useEffect(() => {
     if (!hasBackend()) return
-    const roots = collectWatchRoots(currentProject)
-    const files = collectWatchFiles(tabs, projectSessions)
-    const timer = window.setTimeout(() => void syncWatches(roots, files), 100)
+    const sync = createFileWatchSync(
+      ({ roots, files }) => safeInvoke('同步文件监视', 'sync_file_watches', { roots, files }),
+      error => console.error('sync_file_watches failed:', error),
+    )
+    watchSyncRef.current = sync
+    return () => {
+      sync.dispose()
+      if (watchSyncRef.current === sync) watchSyncRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!hasBackend()) return
+    const targets = JSON.parse(watchTargetsKey) as FileWatchTargets
+    const timer = window.setTimeout(() => watchSyncRef.current?.request(targets), 100)
     return () => window.clearTimeout(timer)
-  }, [currentProject, tabs, projectSessions])
+  }, [watchTargetsKey])
 
   // Lightweight git dirty snapshot for the current project.
   useEffect(() => {
@@ -202,7 +213,10 @@ export function useFileWatcher() {
         treeQueueRef.current?.enqueue(current.path)
         // Re-register in case the OS watcher missed registration or lost its root.
         const editor = useEditorStore.getState()
-        void syncWatches(collectWatchRoots(current), collectWatchFiles(editor.tabs, editor.projectSessions))
+        watchSyncRef.current?.request({
+          roots: collectWatchRoots(current).sort(),
+          files: collectWatchFiles(editor.tabs, editor.projectSessions).sort(),
+        }, true)
       }
     }
 
