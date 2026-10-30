@@ -27,7 +27,9 @@ fn main() {
         output.push('\n');
     }
     if args == ["--check"] {
-        let existing = fs::read_to_string(&path).unwrap_or_default();
+        let existing = fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         assert_eq!(
             existing, output,
             "File IPC bindings are stale. Run pnpm ipc:generate"

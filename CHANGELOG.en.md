@@ -6,6 +6,22 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.14-beta.13] - 2026-10-30
+
+### Added
+
+- Discover project run configurations for easier import and task startup.
+
+### Changed
+
+- Improve Git reads, build tooling, status bar information and focus styles.
+- Bundle validated Server packages and improve installation and same-version upgrades.
+
+### Fixed
+
+- Recover from remote Server version mismatches, with an update action and clearer offline package errors.
+- Confirm forced shutdown before installation while preserving other installations.
+
 ## [0.1.14-beta.12] - 2026-10-29
 
 ### Fixed
