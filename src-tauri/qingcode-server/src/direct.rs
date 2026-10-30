@@ -42,6 +42,8 @@ pub struct DirectOptions {
     /// Zero means use the persisted port, or DEFAULT_DIRECT_PORT on first start.
     pub port: u16,
     pub state_dir: Option<PathBuf>,
+    /// Require an independently managed daemon; never spawn one from the gateway.
+    pub require_daemon: bool,
 }
 
 impl Default for DirectOptions {
@@ -50,6 +52,7 @@ impl Default for DirectOptions {
             hostname: "0.0.0.0".into(),
             port: 0,
             state_dir: None,
+            require_daemon: false,
         }
     }
 }
@@ -425,7 +428,7 @@ impl Gateway {
             endpoint: IpcEndpoint::new(run.dir()),
             daemon_options: ConnectOptions {
                 state_dir: options.state_dir,
-                ensure_daemon: true,
+                ensure_daemon: !options.require_daemon,
                 ..Default::default()
             },
             workspace_connections: Semaphore::new(MAX_WORKSPACE_CONNECTIONS),
@@ -806,6 +809,7 @@ mod tests {
             hostname: "127.0.0.1".into(),
             port,
             state_dir: Some(dir.to_path_buf()),
+            require_daemon: false,
         }
     }
 
@@ -1091,6 +1095,60 @@ mod tests {
         assert!(
             !dir.join("token").exists(),
             "unauthorized HELLO must not start daemon"
+        );
+        drop(socket);
+        running.abort();
+        let _ = running.await;
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn managed_gateway_rejects_authenticated_hello_without_spawning_missing_daemon() {
+        use tungstenite::client::IntoClientRequest;
+        let dir = temporary();
+        let mut managed = options(&dir, available_port());
+        managed.require_daemon = true;
+        let gateway = Gateway::bind(managed).await.unwrap();
+        let port = gateway.info.port;
+        let token = info(Some(&dir), true).unwrap().token.unwrap();
+        let running = tokio::spawn(gateway.run());
+        let mut request = format!("wss://localhost:{port}/connect")
+            .into_client_request()
+            .unwrap();
+        request
+            .headers_mut()
+            .insert("Authorization", format!("Bearer {token}").parse().unwrap());
+        let (mut socket, _) = tokio_tungstenite::client_async(request, tls(&dir, port).await)
+            .await
+            .unwrap();
+        let hello = HelloRequest {
+            client_id: "managed-gateway-test".into(),
+            protocol_min: 1,
+            protocol_max: 1,
+            token,
+            resume_token: None,
+        };
+        socket
+            .send(Message::Binary(
+                proto::Frame::new(Kind::Hello, 0, proto::encode(&hello).unwrap())
+                    .encode()
+                    .unwrap()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+        let closed = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap();
+        assert!(
+            closed.is_none()
+                || closed.is_some_and(
+                    |result| result.is_err() || matches!(result, Ok(Message::Close(_)))
+                )
+        );
+        assert!(
+            !dir.join("token").exists(),
+            "managed gateway must not start a daemon after valid authentication"
         );
         drop(socket);
         running.abort();

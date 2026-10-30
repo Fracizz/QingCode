@@ -301,6 +301,7 @@ pub fn spawn_detached_direct(
     hostname: &str,
     port: u16,
     state_dir: Option<&Path>,
+    require_daemon: bool,
 ) -> Result<WindowsChild, String> {
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
@@ -320,6 +321,9 @@ pub fn spawn_detached_direct(
     );
     if port != 0 {
         command_line.push_str(&format!(" --port {port}"));
+    }
+    if require_daemon {
+        command_line.push_str(" --require-daemon");
     }
     if let Some(dir) = state_dir {
         command_line.push_str(&format!(

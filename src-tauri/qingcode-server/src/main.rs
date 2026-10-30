@@ -29,8 +29,9 @@ const USAGE: &str = "\
                         [--detached-ttl-secs <秒>] [--idle-exit-secs <秒>]
   qingcode-server connect --stdio [--ensure-daemon] [--state-dir <目录>]
   qingcode-server daemon-token [--ensure-daemon] [--state-dir <目录>]
-  qingcode-server direct [--detach] [--hostname <IP>] [--port <端口，默认 48763，后续沿用已保存值>] [--state-dir <目录>]\n\
+  qingcode-server direct [--detach] [--require-daemon] [--hostname <IP>] [--port <端口，默认 48763，后续沿用已保存值>] [--state-dir <目录>]\n\
   qingcode-server direct-info [--state-dir <目录>] [--include-secret]\n\
+  qingcode-server service <install|start|stop|restart|status|uninstall> --name <名称> [选项]\n\
   qingcode-server self-check [--expect-sha256 <hex>]";
 
 /// 已有同 root 实例在运行时的退出码。调用方据此判定「无需再起」，而不是启动失败。
@@ -95,6 +96,7 @@ fn main() -> ExitCode {
         "serve" => run_serve(rest),
         "direct" => run_direct(rest),
         "direct-info" => run_direct_info(rest),
+        "service" => qingcode_server::service::run(rest),
         "self-check" => run_self_check(rest),
         "daemon" => run_daemon(rest),
         "connect" => run_connect(rest),
@@ -913,6 +915,11 @@ fn parse_direct_args(args: &[String]) -> Result<qingcode_server::direct::DirectO
     let mut index = 0;
     while index < args.len() {
         let flag = &args[index];
+        if flag == "--require-daemon" {
+            options.require_daemon = true;
+            index += 1;
+            continue;
+        }
         let value = args
             .get(index + 1)
             .ok_or_else(|| format!("参数 {flag} 缺少取值"))?;
@@ -1020,6 +1027,7 @@ fn run_direct_detached(options: qingcode_server::direct::DirectOptions) -> ExitC
             &options.hostname,
             options.port,
             options.state_dir.as_deref(),
+            options.require_daemon,
         )?;
         #[cfg(unix)]
         let mut child = {
@@ -1043,6 +1051,9 @@ fn run_direct_detached(options: qingcode_server::direct::DirectOptions) -> ExitC
             }
             if let Some(dir) = &options.state_dir {
                 command.arg("--state-dir").arg(dir);
+            }
+            if options.require_daemon {
+                command.arg("--require-daemon");
             }
             // SAFETY: setsid is async-signal-safe and does not access Rust state.
             unsafe {
@@ -1089,6 +1100,23 @@ fn run_direct_detached(options: qingcode_server::direct::DirectOptions) -> ExitC
 #[cfg(test)]
 mod direct_cli_tests {
     use super::*;
+    #[test]
+    fn direct_requires_managed_daemon_only_when_requested() {
+        assert!(!parse_direct_args(&[]).unwrap().require_daemon);
+        let parsed = parse_direct_args(&[
+            "--require-daemon".into(),
+            "--port".into(),
+            "51234".into(),
+            "--state-dir".into(),
+            "/tmp/managed-daemon".into(),
+        ])
+        .unwrap();
+        assert!(parsed.require_daemon);
+        assert_eq!(parsed.port, 51234);
+        assert_eq!(parsed.state_dir, Some(PathBuf::from("/tmp/managed-daemon")));
+        assert!(parse_direct_args(&["--require-daemon".into(), "unexpected".into()]).is_err());
+    }
+
     #[test]
     fn direct_port_requires_explicit_valid_port_and_preserves_saved_default() {
         assert_eq!(parse_direct_args(&[]).unwrap().port, 0);

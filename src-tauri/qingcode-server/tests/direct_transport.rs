@@ -146,6 +146,7 @@ fn options(dir: &Path, port: u16) -> DirectOptions {
         hostname: "127.0.0.1".into(),
         port,
         state_dir: Some(dir.into()),
+        require_daemon: true,
     }
 }
 

@@ -480,6 +480,7 @@ pub(super) mod tests {
                 hostname: "127.0.0.1".into(),
                 port,
                 state_dir: Some(directory.clone()),
+                require_daemon: false,
             })
             .await
             {

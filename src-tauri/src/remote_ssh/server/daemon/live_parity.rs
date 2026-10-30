@@ -4,6 +4,9 @@ use super::*;
 use crate::remote_ssh::{self, direct::*, server, RegisteredRoot, SshManager};
 use qingcode_server::proto::{self, Frame, HelloRequest, HelloResponse, Kind, PROTOCOL_VERSION};
 
+#[path = "cloud_acceptance.rs"]
+mod cloud_acceptance;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Target {
