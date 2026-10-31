@@ -8,8 +8,17 @@ import test from 'node:test'
 import { fileURLToPath } from 'node:url'
 
 const source = fileURLToPath(new URL('./package-common.ps1', import.meta.url))
+const installerSource = fileURLToPath(new URL('./package-installer.ps1', import.meta.url))
 const options = { skip: process.platform !== 'win32' ? 'Requires Windows packaging tooling.' : false }
 const version = '1.2.3-beta.4'
+
+test('Windows installer keeps Server binaries in the standalone offline pack', () => {
+  const installer = readFileSync(installerSource, 'utf8')
+  assert.match(installer, /Publish-ServerOfflinePack/)
+  assert.doesNotMatch(installer, /Publish-ServerBinariesToResourceDir/)
+  assert.doesNotMatch(installer, /resources[\\/]servers/)
+  assert.match(installer, /not inside the installer/)
+})
 
 function withPackage(run) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'qingcode-server-package-'))
@@ -93,6 +102,8 @@ test('publishes matching binaries and manifest to installer staging, portable di
       sha256: createHash('sha256').update(updated).digest('hex'), size: updated.length,
     }
     saveManifest()
+    writeFileSync(path.join(portable, name), 'stale directory copy')
+    writeFileSync(path.join(portable, 'manifest.json'), '{"version":"stale"}')
     rmSync(path.join(root, 'unpacked'), { recursive: true })
     invoke('publish')
     for (const dir of [stage, portable, path.join(root, 'unpacked')]) {

@@ -5,7 +5,7 @@ param(
   [switch]$Force,
   [switch]$SkipFrontend,
   [switch]$SkipIcons,
-  # Reuse existing server binaries; version and integrity checks still run before bundling.
+  # Reuse existing server binaries; version and integrity checks still run before publishing.
   [switch]$SkipServer,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc).
   [string]$Target = ''
@@ -80,10 +80,10 @@ try {
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
-  # 安装包和离线包使用同一份已校验产物，覆盖安装自动更新 servers/。
-  Write-Step 'SSH server binaries (bundled with installer)'
+  # 安装包不内置 Server；离线包单独写入 release/servers/ 和
+  # release/QingCode-servers.zip，安装器保持轻量，运行时按本地目录或在线下载发现。
+  Write-Step 'SSH server binaries (not bundled)'
   Invoke-ServerBinaryBuild -ProjectRoot $projectRoot -SkipServer:$SkipServer
-  $serverFiles = @(Publish-ServerBinariesToResourceDir -ProjectRoot $projectRoot)
   Publish-ServerOfflinePack -ProjectRoot $projectRoot
 
   $frontendRebuilt = $false
@@ -131,13 +131,8 @@ try {
       New-Item -ItemType Directory -Path $devDir | Out-Null
     }
     $skipFrontendConfig = Join-Path $devDir 'tauri-package-override.json'
-    $resources = @{}
-    foreach ($name in @($serverFiles.Name) + @('manifest.json')) {
-      $resources["resources/servers/$name"] = "servers/$name"
-    }
     $overrideJson = (@{
       build = @{ beforeBuildCommand = '' }
-      bundle = @{ resources = $resources }
     } | ConvertTo-Json -Depth 5) + "`n"
     [System.IO.File]::WriteAllText(
       $skipFrontendConfig,
@@ -187,8 +182,7 @@ try {
   Write-Host "OK NSIS installer written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
   Write-Host "  $latest"
-  Write-Host "  servers/ included in installer (version $version)"
-  Write-Host "  $(Join-Path $outDir 'QingCode-servers.zip')  (standalone offline server pack)"
+  Write-Host "  $(Join-Path $outDir 'QingCode-servers.zip')  (standalone offline server pack; not inside the installer)"
   Write-Host "  源: $($setup.FullName)"
   Write-Host ("  total {0:N1}s" -f $totalSw.Elapsed.TotalSeconds) -ForegroundColor DarkGray
   Write-Host ""

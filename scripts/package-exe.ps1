@@ -120,7 +120,7 @@ try {
   Write-FrontendBuildPlan -ProjectRoot $projectRoot -SkipFrontend:$SkipFrontend -Force:$Force
   $iconsSynced = Sync-IconsIfNeeded
 
-  # 便携版 exe 本体不含代理。离线包在 release/servers/，使用时放到 exe 同目录。
+  # 便携版 exe 本体不含 Server。离线包在 release/servers/，使用时放到 exe 同目录。
   Write-Step 'SSH server binaries'
   Invoke-ServerBinaryBuild -ProjectRoot $projectRoot -SkipServer:$SkipServer
 

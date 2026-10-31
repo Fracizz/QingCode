@@ -152,17 +152,15 @@ function Invoke-ForceQingcodeEmbedRebuild {
 # 运行时查找顺序（src-tauri/src/lib.rs 的 configure_ssh_server_binary_dirs）：
 #   QINGCODE_SERVER_DIR → exe 目录/servers → exe 上级/server → resource_dir/servers
 # 因此：
-#   - Windows 安装包携带 servers/，覆盖安装时与客户端同步更新。
-#   - 便携版 exe 不嵌入二进制，使用同目录 servers/（含 manifest.json）。
+#   - Windows 安装包和便携版 exe 都不嵌入二进制；两者共用独立的离线包。
+#   - 安装后/便携版使用同目录 servers/（含 manifest.json），或按需在线下载。
 #   - 离线：release/servers/ 与 QingCode-servers.zip，放到 QingCode.exe 同目录的 servers/。
 #   - 在线：ssh.server.autoDownload 按 manifest sha256 从 GitHub Release 下载到缓存目录。
 # 二进制由 scripts/build-server.ps1 交叉编译（Linux musl 静态），产物在
 # src-tauri/target/server/。
 #
-# 资源映射语义（已实测）：bundle.resources 的相对路径按 tauri.conf.json 所在目录
-# （src-tauri/）解析，因此键 `resources/servers/` 指向 src-tauri/resources/servers/；
-# 映射目标是资源目录下的 `servers/`。安装脚本用临时配置显式映射本轮文件，
-# 不影响未准备 server 的 tauri dev / 普通 tauri build。
+# 开发模式仍可使用 src-tauri/target/server/；正式安装包和便携包通过
+# release/servers/ 或在线下载提供 Server，不把这些平台二进制复制进主程序。
 
 function Resolve-ServerOutputDir {
   param([Parameter(Mandatory = $true)][string]$ProjectRoot)
@@ -300,6 +298,10 @@ function Publish-ServerOfflinePack {
   if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
   $packPaths = @($files | ForEach-Object { Join-Path $destination $_.Name }) + @((Join-Path $destination 'manifest.json'))
   Compress-Archive -LiteralPath $packPaths -DestinationPath $zip -Force
+  # 让刚生成的离线包成为 release/servers 的最终覆盖源；这样本地打包
+  # 每次都会用 zip 中的二进制和 manifest 覆盖同名旧文件。
+  Expand-Archive -LiteralPath $zip -DestinationPath $destination -Force
+  Write-Host "  offline server directory refreshed from zip: $destination" -ForegroundColor DarkGray
   Write-Host "  offline server pack: $zip" -ForegroundColor DarkGray
 }
 

@@ -108,7 +108,7 @@ Windows SSH 项目在「远端服务 → 重试／重启」时先检查 OpenSSH 
   - 远端保存文件也会触发一次 `fs-change`（尚未做本地那样的自写抑制），表现为多一次目录树刷新与 Git 刷新。
   - 单行超过 2MB 的内容搜索命中会截断并停止（与未部署服务时的 rg 路径一致）。
   - 远端服务不做自启动注册，注销/重启远端主机后需重新连接项目才会重新部署。
-  - **发行渠道**：Windows 安装包携带同版本服务二进制与 manifest.json，安装或覆盖升级时同步更新安装目录的 servers/，无需手动替换。便携版 exe 与 macOS 包仍可使用配套离线服务目录或在线下载。在线：`ssh.server.autoDownload`（**默认开**）从 GitHub Release 的 `server-v<版本>` 标签下载，`manifest.json` 含 sha256 与 size，下载边流式校验 sha256、按 manifest 声明的体积设上限（旧清单缺 size 字段时兜底 256MB），校验通过才落位缓存目录；并发下载的临时文件以唯一后缀命名并在失败时清理。需要能访问 GitHub，可用 `QINGCODE_SERVER_DOWNLOAD_BASE`（旧名 `QINGCODE_AGENT_DOWNLOAD_BASE` 兼容）指向内网镜像。离线：设置 → 功能里手动选择解压后的 `servers` 目录（`ssh.server.offlineDir`，优先于自动查找，旧名 `agents` 目录同样兼容）；也可以把 `release/QingCode-servers.zip` 里的 `servers/` 放到 `QingCode.exe` 同目录，或设置 `QINGCODE_SERVER_DIR`。本地文件优先于下载。清单里有 Linux `qingcode-server-x86_64` / `aarch64`，以及 Windows `qingcode-server-windows-x86_64.exe`。
+  - **发行渠道**：Windows 安装包和便携版都不内置服务二进制，统一使用独立离线服务包或在线下载。在线：`ssh.server.autoDownload`（**默认开**）从 GitHub Release 的 `server-v<版本>` 标签下载，`manifest.json` 含 sha256 与 size，下载边流式校验 sha256、按 manifest 声明的体积设上限（旧清单缺 size 字段时兜底 256MB），校验通过才落位缓存目录；并发下载的临时文件以唯一后缀命名并在失败时清理。需要能访问 GitHub，可用 `QINGCODE_SERVER_DOWNLOAD_BASE`（旧名 `QINGCODE_AGENT_DOWNLOAD_BASE` 兼容）指向内网镜像。离线：设置 → 功能里手动选择解压后的 `servers` 目录（`ssh.server.offlineDir`，优先于自动查找，旧名 `agents` 目录同样兼容）；也可以把 `release/QingCode-servers.zip` 里的 `servers/` 放到安装目录或 `QingCode.exe` 同目录，或设置 `QINGCODE_SERVER_DIR`。本地文件优先于下载。清单里有 Linux `qingcode-server-x86_64` / `aarch64`，以及 Windows `qingcode-server-windows-x86_64.exe`。
 
 搜索结果会标明是否被截断；远程文件名搜索在匹配后限制结果数量，内容搜索先限制待扫描文件集合，再流式接收匹配结果。文件名搜索和内容搜索分别取消，切换查询会停止旧的后台搜索；单次远程搜索整体最长 45 秒。内容搜索的单文件匹配上限、8MB 文件清单、16MB 输出预算或单条 2MB 的输出记录上限同样会触发截断提示。搜索根目录在执行前通过 SFTP 解析真实路径，不允许从项目内的符号链接目录搜索到项目外。
 
@@ -329,7 +329,7 @@ Windows 路径保护通过同一条已认证 SSH 连接懒启动一个只读 Pow
 | §7 子集 | 文件监视、内嵌内容搜索（无需远端 rg）、单往返目录扫描、gitignore/ignore 过滤 | `a214803` |
 | 打包 | 安装包不内置服务。离线为 `release/QingCode-servers.zip`，在线为 `server-v*` Release；`bump-version.ps1` 同步 server 版本 | `a214803` |
 | §9 状态机/界面 | 事件 `ssh-server-state` 与命令 `ssh_server_info` / `ssh_server_restart` / `ssh_server_logs`；状态栏芯片 `Server vX` / 「直连：原因」，可查看详情、重启、看日志 | `c6b8212` |
-| §4.1 Windows serve | 安装包不内置二进制；Windows OpenSSH 可部署 serve 子集（目录扫描、内容搜索、文件树刷新） | `2a887b8` |
+| §4.1 Windows serve | 安装包和便携版不内置二进制；Windows OpenSSH 可部署 serve 子集（目录扫描、内容搜索、文件树刷新） | `2a887b8` |
 | §4.1 离线目录 | `ssh.server.offlineDir` 手动选择离线 `servers` 目录（校验含 `qingcode-server` 文件） | `65b43a8` |
 | 改名与设置迁移 | qingcode-agent → qingcode-server 全面改名：设置键 `ssh.server.*`（读取兼容旧 `ssh.agent.*`，保存时迁移清理）、命令 `ssh_server_*`、事件 `ssh-server-state`、远端目录 `.qingcode/server/` 与 `$HOME/.qingcode/server/`、daemon 能力 `server.shutdown`、Release 标签 `server-v*` 与资产名、工作流 `server-release.yml`、脚本 `build-server.ps1` / `e2e-ssh-server/`、环境变量 `QINGCODE_SERVER_*`（旧名兼容）、本地目录 `servers/`（旧 `agents/` 与旧二进制名兼容读取）、离线包 `QingCode-servers.zip` | 本轮 |
 | 部署加固 | 幂等部署（上传前比对远端 sha256，一致跳过）；上传后 `self-check --expect-sha256` 成功才启动；失败分类（网络类瞬时不占缓存，sha 不符/超体积/自检失败 permanent）；连续 2 次完整部署失败退避为不可用，保留最后的版本/通道等具体原因并提示排查转发，重连解冻；切换 autoDownload / 离线目录清不可用缓存立即重试 | 本轮 |
@@ -373,7 +373,7 @@ Windows 路径保护通过同一条已认证 SSH 连接懒启动一个只读 Pow
 20. 清理策略：删除未使用且非最近两个版本的安装目录；
 21. 版本共存：有存活终端时新旧 daemon 并存（依赖 A-5）；
 22. `PROTOCOL_VERSION` 向后兼容策略与 capabilities 分流（当前只声明 [1,1]）；
-23. zstd 压缩 + 目标清单管理（当前是裸二进制；Windows 安装包随包携带服务，便携版和 macOS 可按需下载/使用离线包）；armv7 / macOS 目标未提供（Windows serve 目标已提供）。
+23. zstd 压缩 + 目标清单管理（当前是裸二进制；Windows 安装包、便携版和 macOS 统一按需下载/使用离线包）；armv7 / macOS 目标未提供（Windows serve 目标已提供）。
 
 **E. 平台（§6.4）**
 24. ~~Windows daemon：命名管道 + DACL~~ 已落地：命名管道 + 仅当前用户 DACL + `FILE_FLAG_FIRST_PIPE_INSTANCE` 单实例；`connect --stdio` 用 tokio overlapped 客户端解决同步句柄并发读写限制；ConPTY 宿主与 P2 交互式终端持久化已接入。仍缺：Windows Job Object 脱离的真机验证，以及失败时由 `pty.persist` 能力缺失自动回退；macOS：`setsid` + FSEvents 验证；

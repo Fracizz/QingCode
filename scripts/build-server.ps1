@@ -17,7 +17,7 @@
 #   QINGCODE_SERVER_DIR 环境变量 → exe 目录（/servers）→ exe 目录上级（/server）→ 资源目录（/servers）
 # 开发模式下 exe 位于 src-tauri/target/{debug,release}/，因此默认把产物复制到
 # src-tauri/target/server/，`pnpm tauri:dev` 都能自动发现（无需再打包一步）。
-# Windows 安装包随包更新这些二进制；便携版配套 release/servers/ 和离线 zip。
+# Windows 安装包和便携版都使用配套的 release/servers/ 和离线 zip；安装包本身不内置二进制。
 # 客户端也可按 manifest 从 GitHub Release 在线下载。
 #
 # 完整性清单（设计 §4.2/§8.3）：构建结束后对本轮产物逐一计算 sha256 与大小，
