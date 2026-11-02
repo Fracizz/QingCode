@@ -242,7 +242,7 @@ async fn tls(
                 "[direct:identity] Server TLS 身份验证失败；请核对证书指纹，未发送连接凭据"
                     .to_string()
             } else {
-                "[direct:protocol] TLS 握手失败，请确认该端口运行 QingCode HTTPS Server".to_string()
+                "[direct:tls] TLS 握手失败，请确认该端口运行 QingCode HTTPS Server".to_string()
             }
         })?;
     let fingerprint = observed
@@ -318,7 +318,7 @@ pub(super) async fn test(config: &DirectConnectionConfig) -> Result<DirectHealth
         let health: DirectHealth = serde_json::from_slice(&bytes[split + 4..])
             .map_err(|_| "[direct:protocol] Server 健康检查 JSON 无效".to_string())?;
         if !health.healthy || health.protocol != qingcode_server::proto::PROTOCOL_VERSION {
-            return Err("[direct:protocol] Server 不健康或协议版本不兼容".into());
+            return Err("[direct:version] Server 不健康或协议版本不兼容".into());
         }
         Ok(health)
     }).await.map_err(|_| timeout_error())?

@@ -22,6 +22,7 @@ pub mod direct;
 pub mod ipc;
 pub mod proto;
 pub mod service;
+pub mod startup;
 pub mod workspace;
 // Windows 脱离进程创建（CreateProcessW + HANDLE_LIST），serve 与 connect 共用。
 pub mod winproc;

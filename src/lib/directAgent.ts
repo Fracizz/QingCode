@@ -10,6 +10,7 @@ export interface DirectAgentInfo {
   certificateFingerprint: string
   tokenSaved: boolean
   previousPorts: number[]
+  autoStart?: boolean | null
 }
 
 export interface DirectAgentTarget {
@@ -64,7 +65,8 @@ export interface DirectAgentFirewallResult {
 
 export interface DirectAgentApi {
   info(connectionId: string): Promise<DirectAgentInfo | null>
-  provision(connectionId: string, port?: number): Promise<DirectAgentInfo>
+  provision(connectionId: string, port?: number, autoStart?: boolean): Promise<DirectAgentInfo>
+  manage?(target: DirectAgentFirewallTarget & { autoStart: boolean; start: boolean }): Promise<DirectAgentInfo>
   probe(host: string, port: number): Promise<{ certificateFingerprint: string }>
   test(target: DirectAgentTarget): Promise<{ version: string; protocol: number }>
   save(target: DirectAgentTarget & { enabled: boolean }): Promise<void>
@@ -74,7 +76,8 @@ export interface DirectAgentApi {
 
 export const directAgentApi: DirectAgentApi = {
   info: connectionId => safeInvoke('读取 Server 直连配置', 'direct_agent_info', { connectionId }),
-  provision: (connectionId, port) => safeInvoke('安装 Server 直连服务', 'direct_agent_provision', { connectionId, port }),
+  provision: (connectionId, port, autoStart = true) => safeInvoke('安装 Server 直连服务', 'direct_agent_provision', { connectionId, port, autoStart }),
+  manage: target => safeInvoke('通过 SSH 管理 Server', 'direct_agent_manage', { ...target }),
   probe: (host, port) => safeInvoke('检查 Server 服务器身份', 'direct_agent_probe', { host, port }),
   test: target => safeInvoke('测试 Server 直连', 'direct_agent_test', { ...target }),
   save: target => safeInvoke('保存 Server 直连配置', 'direct_agent_save', { ...target }),
@@ -167,6 +170,9 @@ export function directAgentErrorKey(error: unknown): string {
   if (text.includes('[direct:auth]')) return 'Server 认证失败。请重新导入该服务的配对信息。'
   if (text.includes('[direct:timeout]')) return '连接超时。请检查主机地址、TCP 端口、防火墙及网络映射。'
   if (text.includes('[direct:unreachable]')) return '无法连接 Server。请确认服务正在监听，并开放显示的 TCP 端口。'
-  if (text.includes('[direct:protocol]')) return 'Server 协议版本不兼容。请更新客户端或远端服务。'
+  if (text.includes('[direct:tls]') || (text.includes('[direct:protocol]') && text.includes('TLS 握手失败'))) return 'Server TLS 握手失败。请检查服务是否已启动，以及目标端口是否运行 QingCode HTTPS Server。'
+  if (text.includes('[direct:version]')) return 'Server 协议版本不兼容。请更新客户端或远端服务。'
+  if (text.includes('[direct:startup]')) return '开机自启配置失败。请检查远端管理员权限，或关闭自启后重试启动。'
+  if (text.includes('[direct:protocol]')) return 'Server 响应无效。请检查目标端口的服务和协议。'
   return 'Server 操作失败。请检查服务状态后重试。'
 }

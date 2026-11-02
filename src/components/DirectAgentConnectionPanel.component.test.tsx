@@ -36,6 +36,15 @@ describe('direct Agent connection panel', () => {
     localStorage.clear()
   })
 
+  it('passes the default-on startup preference to installation and lets users turn it off', async () => {
+    const api = apiMock(null)
+    await openPanel(api)
+    expect(screen.getByRole('switch')).toBeChecked()
+    fireEvent.click(screen.getByRole('switch'))
+    fireEvent.click(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' }))
+    await waitFor(() => expect(api.provision).toHaveBeenCalledWith('c1', 48763, false))
+  })
+
   it('shows a spinner while provisioning and restores the button after failure', async () => {
     const api = apiMock(null)
     let reject!: (reason: Error) => void
@@ -88,7 +97,7 @@ describe('direct Agent connection panel', () => {
     await act(async () => { finishSave() })
     expect(screen.getByRole('status')).toHaveTextContent('已启用 Server 端口直连。')
     expect(screen.getByRole('button', { name: '通过 SSH 安装或读取服务' })).toBeDisabled()
-    expect(screen.getByText('已启用直连，无需通过 SSH 准备服务。')).toBeVisible()
+    expect(screen.getByRole('switch', { name: '开机自启 Server' })).toBeChecked()
   })
 
   it('keeps native requests lazy and uses an editable fixed default port', async () => {

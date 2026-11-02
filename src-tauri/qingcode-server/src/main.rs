@@ -32,6 +32,7 @@ const USAGE: &str = "\
   qingcode-server direct [--detach] [--require-daemon] [--hostname <IP>] [--port <端口，默认 48763，后续沿用已保存值>] [--state-dir <目录>]\n\
   qingcode-server direct-info [--state-dir <目录>] [--include-secret]\n\
   qingcode-server service <install|start|stop|restart|status|uninstall> --name <名称> [选项]\n\
+  qingcode-server startup <enable|disable|status> [--state-dir <目录>]\n\
   qingcode-server self-check [--expect-sha256 <hex>]";
 
 /// 已有同 root 实例在运行时的退出码。调用方据此判定「无需再起」，而不是启动失败。
@@ -97,6 +98,7 @@ fn main() -> ExitCode {
         "direct" => run_direct(rest),
         "direct-info" => run_direct_info(rest),
         "service" => qingcode_server::service::run(rest),
+        "startup" => qingcode_server::startup::run(rest),
         "self-check" => run_self_check(rest),
         "daemon" => run_daemon(rest),
         "connect" => run_connect(rest),

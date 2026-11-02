@@ -58,6 +58,7 @@ libc = "0.2"
 # 的 stdout 管道——复制给子进程，导致 exec 通道永远等不到 EOF）。版本对齐
 # notify 依赖树里的 windows-sys 0.60；linux musl 构建不编译此依赖。
 [target.'cfg(windows)'.dependencies]
+base64 = "0.22"
 windows-sys = { version = "0.60", features = [
   "Win32_Foundation",
   "Win32_Security",

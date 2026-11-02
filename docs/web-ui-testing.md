@@ -133,3 +133,13 @@ OpenCode / Claude 终端交互场景位于 `/web-tests/terminal-interaction.html
 
 Web 验收证明 React 界面、布局和交互行为；真实文件读写、SQLite 持久化、SSH、PTY、原生窗口和系统对话框
 仍需各自的集成测试。内存操作通过不等于真实原生能力通过。
+
+Server 启动与自启恢复复用 `/web-tests/direct-agent.html` 的「打开启动与自启」入口。
+使用真实 `DirectServerRecoveryPanel`，断言开关默认开启、关闭后仅应用自启设置、显式 SSH 启动后自动重连、
+权限失败不重连、无同主机 SSH 时显示配置入口及手动命令；覆盖英文浅色与窄屏，产物放入 `.dev/web-tests/server-startup/`。
+页面的操作均为内存适配器，不注册真实计划任务。真实 Windows 验收另需核对 S4U/当前用户/Limited/开机触发器、
+从计划任务启动 HTTPS 服务、关闭自启不终止服务及重启后的服务恢复。
+
+Windows 管理员真机可运行 `powershell -File scripts/test-server-startup.ps1 -ServerBinary <qingcode-server.exe>`，
+用独立程序、随机本地端口、临时状态目录和任务验证注册、取消及计划任务拉起，结束后清理；不重启主机。
+Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser.mjs`。

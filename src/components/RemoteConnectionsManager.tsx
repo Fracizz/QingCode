@@ -26,6 +26,7 @@ import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import SshImportDialog from './SshImportDialog'
 import DirectAgentConnectionPanel from './DirectAgentConnectionPanel'
+import DirectServerRecoveryPanel from './DirectServerRecoveryPanel'
 import { directAgentApi, type DirectAgentInfo } from '../lib/directAgent'
 import { confirmDialog } from '../store/confirmStore'
 import { confirmSshServerRestart } from '../lib/sshWindowsRepair'
@@ -967,6 +968,10 @@ export default function RemoteConnectionsManager() {
                       </div>
                     )}
 
+                    {!isNew && !editing && selected && selectedDirect?.enabled && <details className="rounded border border-dialog-border p-3">
+                      <summary className="cursor-pointer text-ui font-medium text-fg">{t('启动 Server 与开机自启')}</summary>
+                      <div className="mt-3"><DirectServerRecoveryPanel key={selected.id} connectionId={selected.id} info={selectedDirect} connections={connections} onStarted={() => refreshDetail(selected.id)} onUpdated={info => setDirectInfos(prev => ({ ...prev, [selected.id]: info }))} /></div>
+                    </details>}
                     {(isNew || editing) && (isNewAgent ? <DirectAgentConnectionPanel
                       key={agentDraftId}
                       connectionId={agentDraftId}

@@ -14,6 +14,8 @@ struct Saved {
     token: String,
     #[serde(default)]
     previous_ports: Vec<u16>,
+    #[serde(default)]
+    auto_start: Option<bool>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +26,8 @@ pub struct DirectAgentInfo {
     certificate_fingerprint: String,
     token_saved: bool,
     previous_ports: Vec<u16>,
+    #[serde(default)]
+    auto_start: Option<bool>,
 }
 impl Saved {
     fn info(&self) -> DirectAgentInfo {
@@ -34,6 +38,7 @@ impl Saved {
             certificate_fingerprint: self.certificate_fingerprint.clone(),
             token_saved: !self.token.is_empty(),
             previous_ports: self.previous_ports.clone(),
+            auto_start: self.auto_start,
         }
     }
     fn config(&self) -> Result<DirectConnectionConfig, String> {
@@ -267,6 +272,7 @@ fn target(
         certificate_fingerprint: fingerprint,
         token,
         previous_ports: previous,
+        auto_start: old.and_then(|r| r.auto_start),
     })
 }
 #[tauri::command]
@@ -388,8 +394,51 @@ pub async fn direct_agent_save(
     Ok(())
 }
 
+pub(super) fn startup_enabled(app: &AppHandle, id: &str) -> Result<bool, String> {
+    Ok(read(app)?
+        .get(id)
+        .and_then(|s| s.auto_start)
+        .unwrap_or(false))
+}
+
+pub(super) fn paired_config(app: &AppHandle, id: &str) -> Result<DirectConnectionConfig, String> {
+    read(app)?
+        .get(id)
+        .ok_or("[direct:auth] 尚未保存 Server 配对信息")?
+        .config()
+}
+
+pub(super) fn record_startup(
+    app: &AppHandle,
+    id: &str,
+    enabled: bool,
+) -> Result<DirectAgentInfo, String> {
+    let _guard = STORE_WRITE
+        .lock()
+        .map_err(|_| "[direct:record] Server 凭据存储不可用")?;
+    let mut records = read(app)?;
+    let saved = records
+        .get_mut(id)
+        .ok_or("[direct:record] Server 配对信息已移除")?;
+    saved.auto_start = Some(enabled);
+    let info = saved.info();
+    write(app, &records).map_err(|_| "[direct:record] 自启已配置，但本机记录保存失败")?;
+    Ok(info)
+}
+
+pub(super) fn startup_commands(bin: &str, action: &str) -> (String, String) {
+    let native = windows_native_path(bin).unwrap_or_else(|| bin.into());
+    (
+        format!("{} startup {action}", shell_quote(bin)),
+        format!(
+            "& {} startup {action}; if ($LASTEXITCODE -ne 0) {{ exit $LASTEXITCODE }}",
+            powershell_quote(&native)
+        ),
+    )
+}
+
 // SFTP returns /C:/... on Windows; PowerShell requires a native drive path.
-fn provision_commands(bin: &str, port: u16) -> (String, String) {
+pub(super) fn provision_commands(bin: &str, port: u16) -> (String, String) {
     let unix = format!(
         "{} direct --port {port} --detach && {} direct-info --include-secret",
         shell_quote(bin),
@@ -405,6 +454,7 @@ fn provision_commands(bin: &str, port: u16) -> (String, String) {
 pub async fn direct_agent_provision(
     connection_id: String,
     port: Option<u16>,
+    auto_start: Option<bool>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<DirectAgentInfo, String> {
@@ -427,11 +477,23 @@ pub async fn direct_agent_provision(
     // Stage a separate executable; replacing the daemon binary can terminate
     // live terminals when a same-version build changes its content hash.
     let staged = server::stage_direct_gateway(&manager, &root).await?;
-    let (unix, windows) = provision_commands(&staged, port);
+    let (mut unix, mut windows) = provision_commands(&staged, port);
+    let startup = if auto_start.unwrap_or(true) {
+        "enable"
+    } else {
+        "disable"
+    };
+    // Configure after startup has produced its descriptor, then return pairing info.
+    let (start_unix, start_windows) = startup_commands(&staged, startup);
+    unix = unix.replace(" && ", &format!(" && {start_unix} && "));
+    windows = windows.replace("; & ", &format!("; {start_windows}; & "));
     let result = manager
         .exec_remote_shell(&root.uri, &unix, &windows, true, Duration::from_secs(40))
         .await?;
     if result.exit_code != 0 {
+        if result.stderr.contains("[direct:startup]") {
+            return Err("[direct:startup] 开机自启配置失败，请检查远端管理员权限".into());
+        }
         return Err("启动直连服务失败，请查看远端 direct 日志或检查监听端口是否被占用".into());
     }
     let descriptor: qingcode_server::direct::DirectInfo = result
@@ -463,6 +525,7 @@ pub async fn direct_agent_provision(
         certificate_fingerprint: descriptor.certificate_sha256,
         token: descriptor.token.ok_or("配对信息没有凭据")?,
         previous_ports: previous,
+        auto_start: Some(auto_start.unwrap_or(true)),
     };
     Ok(persist(&app, &connection_id, saved)?.info())
 }

@@ -111,7 +111,10 @@ Windows SSH 项目在「远端服务 → 重试／重启」时先检查 OpenSSH 
   - 切到 SSH 模式只停止该连接当时已注册的根上的远端服务；同一远端用户下其他连接部署的服务不受影响。
   - 远端保存文件也会触发一次 `fs-change`（尚未做本地那样的自写抑制），表现为多一次目录树刷新与 Git 刷新。
   - 单行超过 2MB 的内容搜索命中会截断并停止（与未部署服务时的 rg 路径一致）。
-  - 远端服务不做自启动注册，注销/重启远端主机后需重新连接项目才会重新部署。
+  - SSH 的按项目服务仍在连接时准备。独立 Server 端口直连支持开机自启：安装及恢复入口提供默认开启的「开机自启 Server」开关，关闭仅取消启动注册，不结束正在运行的 gateway、daemon 或终端。
+  - Server 重连弹窗及连接管理概览提供「通过 SSH 启动 Server」和「应用自启设置」。这是用户显式发起的管理操作：使用同主机、已确认指纹的 SSH 配置与临时凭据，独立会话核对原用户的证书、配对 token 和监听端口后才启动，不切换直连模式、不重新配对、不授予项目信任。服务启动后用原凭据验证 HTTPS 并自动重连；无 SSH 配置时提供配置入口及远端手动命令。连接失败、TLS 握手失败和协议版本不兼容分别显示。
+  - Windows 使用当前安装账户的计划任务，开机延迟 15 秒、S4U 无密码登录、Limited 权限、无运行时长限制；创建开机任务需要管理员 SSH 账户，权限不足会明确失败，不退化成登录后启动。S4U 的 Windows 限制包括不能访问网络共享及 EFS 加密文件（[Microsoft 说明](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskfolder-registertask)）。关闭只删除匹配账户 SID 和状态目录的 QingCode 任务。Linux 使用 systemd：root 使用系统单元，普通用户使用用户单元并开启 linger（需要系统许可和可用的用户 manager）；不支持的系统明确报错。关闭不会撤销用户已有的 linger。
+  - 手动管理：`qingcode-server direct --port 48763 --detach`，再执行 `qingcode-server startup enable` / `disable` / `status`；自定义运行目录时两条命令均传 `--state-dir <绝对目录>`。启动注册沿用当前证书、token、监听地址及端口。客户端仅在远端配置成功后记录自启状态；该记录是最近一次操作结果，不代替实时任务检查。已开启自启的直连服务通过 SSH 更新时同步刷新启动程序路径。
   - **发行渠道**：Windows 安装包和便携版都不内置服务二进制，统一使用独立离线服务包或在线下载。在线：`ssh.server.autoDownload`（**默认开**）从 GitHub Release 的 `server-v<版本>` 标签下载，`manifest.json` 含 sha256 与 size，下载边流式校验 sha256、按 manifest 声明的体积设上限（旧清单缺 size 字段时兜底 256MB），校验通过才落位缓存目录；并发下载的临时文件以唯一后缀命名并在失败时清理。需要能访问 GitHub，可用 `QINGCODE_SERVER_DOWNLOAD_BASE`（旧名 `QINGCODE_AGENT_DOWNLOAD_BASE` 兼容）指向内网镜像。离线：设置 → 功能里手动选择解压后的 `servers` 目录（`ssh.server.offlineDir`，优先于自动查找，旧名 `agents` 目录同样兼容）；也可以把 `release/QingCode-servers.zip` 里的 `servers/` 放到安装目录或 `QingCode.exe` 同目录，或设置 `QINGCODE_SERVER_DIR`。本地文件优先于下载。清单里有 Linux `qingcode-server-x86_64` / `aarch64`，以及 Windows `qingcode-server-windows-x86_64.exe`。
 
 搜索结果会标明是否被截断；远程文件名搜索在匹配后限制结果数量，内容搜索先限制待扫描文件集合，再流式接收匹配结果。文件名搜索和内容搜索分别取消，切换查询会停止旧的后台搜索；单次远程搜索整体最长 45 秒。内容搜索的单文件匹配上限、8MB 文件清单、16MB 输出预算或单条 2MB 的输出记录上限同样会触发截断提示。搜索根目录在执行前通过 SFTP 解析真实路径，不允许从项目内的符号链接目录搜索到项目外。

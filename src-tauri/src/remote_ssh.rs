@@ -22,9 +22,11 @@ mod config_import;
 mod direct;
 mod direct_firewall;
 mod direct_fs;
+mod direct_lifecycle;
 mod direct_settings;
 mod direct_update;
 pub use direct_firewall::*;
+pub use direct_lifecycle::*;
 pub use direct_settings::*;
 pub use direct_update::*;
 #[cfg(test)]

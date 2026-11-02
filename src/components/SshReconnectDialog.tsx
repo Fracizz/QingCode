@@ -3,6 +3,7 @@ import { KeyRound, RefreshCw, Server, X } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-dialog'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
+import DirectServerRecoveryPanel from './DirectServerRecoveryPanel'
 import type { Project, SshConnection } from '../types'
 import { getSshConnection, upsertSshConnection } from '../lib/projectRepository'
 import {
@@ -82,8 +83,8 @@ export default function SshReconnectDialog() {
     if (typeof selected === 'string') setPrivateKeyPath(selected)
   }
 
-  const reconnect = async () => {
-    if (!connection || loading || checkingProfile) return
+  const reconnect = async (afterStart = false) => {
+    if (!connection || (loading && !afterStart) || checkingProfile) return
     if (!directInfo?.enabled && connection.auth_kind === 'password' && !password) {
       setError('请输入 SSH 密码。')
       return
@@ -126,7 +127,7 @@ export default function SshReconnectDialog() {
         role="dialog"
         aria-modal="true"
         aria-labelledby="ssh-reconnect-title"
-        className="ui-font-scaled modal-content-enter w-full max-w-[480px] overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="ui-font-scaled modal-content-enter w-full max-w-[560px] max-h-[90vh] flex flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={event => event.stopPropagation()}
       >
         <div className="flex items-center gap-2 border-b border-border px-4 py-3">
@@ -146,7 +147,7 @@ export default function SshReconnectDialog() {
             </button>
           </Tooltip>
         </div>
-        <div className="space-y-3 px-4 py-4">
+        <div className="min-h-0 overflow-y-auto space-y-3 px-4 py-4">
           <div className="rounded border border-border bg-bg px-3 py-2 text-ui-sm text-fg-muted">
             <div className="font-medium text-fg">{project.name}</div>
             <div className="mt-1 font-mono">
@@ -205,6 +206,16 @@ export default function SshReconnectDialog() {
               </label>
             </>
           ) : null}
+          {directInfo?.enabled && <DirectServerRecoveryPanel
+            key={project.id}
+            connectionId={project.connection_id!}
+            info={directInfo}
+            fallbackConnection={connection ?? undefined}
+            onStarted={() => reconnect(true)}
+            onUpdated={setDirectInfo}
+            onBusyChange={setLoading}
+            onConfigure={close}
+          />}
           {error ? (
             <p className="rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui-sm whitespace-pre-wrap text-danger">
               {error}

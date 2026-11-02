@@ -4,6 +4,8 @@ import { translate, useI18n } from '../lib/i18n'
 import { confirmDialog } from '../store/confirmStore'
 import { useProjectStore } from '../store/projectStore'
 import { sshRuntimeConfig, sshSecretsFor } from '../lib/sshWorkspace'
+import ServerAutoStartSwitch from './ServerAutoStartSwitch'
+import DirectServerRecoveryPanel from './DirectServerRecoveryPanel'
 import type { SshConnection } from '../types'
 import {
   directAgentApi,
@@ -41,6 +43,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const [token, setToken] = useState('')
   const [pairing, setPairing] = useState('')
   const [manualOpen, setManualOpen] = useState(false)
+  const [autoStart, setAutoStart] = useState(true)
   const [busy, setBusy] = useState<'loading' | 'provisioning' | 'testing' | 'saving' | 'firewallPlan' | 'firewallConfirm' | 'firewallApply' | 'firewallProbe' | null>(standalone || initiallyOpen ? 'loading' : null)
   const [sshConnectionId, setSshConnectionId] = useState('')
   const [sshSecretsConnectionId, setSshSecretsConnectionId] = useState('')
@@ -61,6 +64,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
 
   const fill = (value: DirectAgentInfo) => {
     setInfo(value)
+    setAutoStart(value.autoStart ?? true)
     setHost(value.host || defaultHost)
     setPort(value.port > 0 ? String(value.port) : '48763')
     setFingerprint(value.certificateFingerprint || '')
@@ -78,6 +82,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       if (request !== requestRef.current) return
       if (value) {
         setInfo(value)
+        setAutoStart(value.autoStart ?? true)
         setHost(value.host || defaultHost)
         setPort(value.port > 0 ? String(value.port) : '48763')
         setFingerprint(value.certificateFingerprint || '')
@@ -128,7 +133,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
     setError('')
     setNotice('')
     try {
-      const result = await api.provision(connectionId, Number(port))
+      const result = await api.provision(connectionId, Number(port), autoStart)
       if (request !== requestRef.current) return
       fill(result)
       setNotice(t('服务已准备。请开放显示的 TCP 端口，再测试直连。'))
@@ -220,7 +225,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       await api.save(target)
       if (request !== requestRef.current) return
       const previousPorts = [...new Set([...(info?.previousPorts ?? []), ...(info?.port && info.port !== target.port ? [info.port] : [])])].filter(value => value !== target.port)
-      const saved = { ...target, tokenSaved: enabled ? true : info!.tokenSaved, previousPorts }
+      const saved = { ...target, autoStart: info?.autoStart, tokenSaved: enabled ? true : info!.tokenSaved, previousPorts }
       await onUpdated?.(saved)
       if (request !== requestRef.current) return
       fill(saved)
@@ -319,11 +324,13 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       </button>
       {open && <div className="space-y-3 border-t border-dialog-separator p-3">
         <p className="text-ui-sm leading-relaxed text-fg-muted">{t(standalone ? '通过独立 TLS 端口连接远端服务，无需 SSH。请先在远端启动服务，再导入配对信息。' : '通过独立 TLS 端口连接远端服务，通信不经过 SSH。现有 SSH 配置保留，可随时切回。')}</p>
+        {!info?.enabled && <ServerAutoStartSwitch checked={autoStart} disabled={Boolean(busy)} onChange={setAutoStart} />}
+        {info?.enabled && <DirectServerRecoveryPanel key={`${connectionId}:${info.host}:${info.port}`} connectionId={connectionId} info={info} connections={sshConnections} api={api} onUpdated={async value => { setInfo(value); await onUpdated?.(value) }} />}
         <div className="flex flex-wrap items-center gap-2">
           {!standalone && <button type="button" disabled={Boolean(busy) || info?.enabled === true} onClick={() => void provision()} aria-busy={busy === 'provisioning'} className={`${buttonClass} inline-flex items-center gap-2`}>{busy === 'provisioning' && <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />}{t(busy === 'provisioning' ? '正在准备服务…' : '通过 SSH 安装或读取服务')}</button>}
           <button type="button" disabled={Boolean(busy)} onClick={() => setManualOpen(value => !value)} aria-expanded={manualOpen} className={buttonClass}>{t('导入配对信息')}</button>
         </div>
-        {info?.enabled && !standalone && <p className="text-ui-sm text-fg-muted">{t('已启用直连，无需通过 SSH 准备服务。')}</p>}
+
         {feedback && <div role={error && !busy ? 'alert' : 'status'} aria-live={error && !busy ? 'assertive' : 'polite'} aria-atomic="true" className={`sticky top-0 z-10 flex items-start gap-2 rounded border p-3 text-ui-sm shadow-sm ${busy ? 'border-accent/40 bg-dialog text-fg' : error ? 'border-danger/40 bg-dialog text-danger' : 'border-ok/40 bg-dialog text-fg'}`}>
           {busy ? <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin motion-reduce:animate-none text-accent" aria-hidden="true" /> : error ? <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" /> : <CircleCheck size={16} className="mt-0.5 shrink-0 text-ok" aria-hidden="true" />}
           <span className="min-w-0 break-words">{feedback}</span>
@@ -331,7 +338,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
         <p className="text-ui-sm text-fg-muted">{t(standalone ? '默认端口为 48763，可以修改。端口被占用时请指定其他端口，并同步修改远端监听配置。' : '默认端口为 48763，可以修改。安装使用 SSH，日常直连不使用 SSH。端口被占用时请指定其他端口。')}</p>
         {manualOpen && <div className="space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-3">
           <p className="text-ui-sm text-fg-muted">{t('也可在远端手动启动服务，将 direct-info --include-secret 输出的配对 JSON 粘贴到此处。配对信息包含凭据，请勿分享。')}</p>
-          <code className="block break-all rounded bg-dialog-input p-2 font-mono text-ui-sm text-fg">qingcode-server direct --hostname 0.0.0.0 --port {directAgentFirewallCommand(Number(port)) ? Number(port) : 48763}<br />qingcode-server direct-info --include-secret</code>
+          <code className="block break-all rounded bg-dialog-input p-2 font-mono text-ui-sm text-fg">qingcode-server direct --hostname 0.0.0.0 --port {directAgentFirewallCommand(Number(port)) ? Number(port) : 48763}<br />qingcode-server startup {autoStart ? 'enable' : 'disable'}<br />qingcode-server direct-info --include-secret</code>
           <label className="block text-ui-sm text-dialog-label">{t('配对 JSON')}<textarea value={pairing} onChange={event => setPairing(event.target.value)} spellCheck={false} autoComplete="off" rows={3} className={`${fieldClass} font-mono`} /></label>
           <button type="button" disabled={Boolean(busy) || !pairing.trim()} onClick={importPairing} className={buttonClass}>{t('应用配对信息')}</button>
         </div>}

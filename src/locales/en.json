@@ -44,7 +44,6 @@
     "正在通过 SSH 准备 Server 服务，请稍候…": "Preparing the Server service via SSH. Please wait…",
     "正在保存并启用 Server 直连…": "Saving and enabling the Server connection…",
     "正在恢复 SSH 连接…": "Restoring the SSH connection…",
-    "已启用直连，无需通过 SSH 准备服务。": "The direct connection is enabled. SSH service preparation is not needed.",
     "正在保存并启用…": "Saving and enabling…",
     "直连已验证，但本机连接记录保存失败。请保持此窗口打开并重试保存。": "The direct connection is verified, but the local connection record could not be saved. Keep this window open and try saving again.",
     "通过独立 TLS 端口连接远端服务，无需 SSH。请先在远端启动服务，再导入配对信息。": "Connect to the remote service through a separate TLS port without SSH. Start the remote service, then import its pairing details.",
@@ -1696,6 +1695,23 @@
     "scripts 必须为 JSON 对象": "scripts must be a JSON object",
     "每个 package.json 最多发现 100 个脚本": "At most 100 scripts are discovered per package.json",
     "脚本名无法安全生成跨平台命令：{name}": "Cannot safely generate a cross-platform command for script: {name}",
-    "最多扫描 32 个直属子目录；更深目录请单独作为项目打开": "Only 32 immediate child folders are scanned; open deeper folders as separate projects"
+    "最多扫描 32 个直属子目录；更深目录请单独作为项目打开": "Only 32 immediate child folders are scanned; open deeper folders as separate projects",
+    "开机自启 Server": "Start Server at boot",
+    "启动与开机自启": "Startup and boot settings",
+    "默认开启。通过 SSH 应用设置；关闭只取消开机自启，不停止当前服务。": "Enabled by default. Apply via SSH; turning it off only removes boot startup and keeps the current service running.",
+    "此操作通过 SSH 启动已配对的 Server，随后使用原配对凭据直连。": "Start the paired Server via SSH, then reconnect directly using the existing pairing.",
+    "通过 SSH 启动 Server": "Start Server via SSH",
+    "应用自启设置": "Apply boot setting",
+    "开机自启设置已应用。": "Boot setting applied.",
+    "Server 已启动，正在重新连接…": "Server started. Reconnecting…",
+    "正在通过 SSH 管理 Server…": "Managing Server via SSH…",
+    "未找到此主机的 SSH 连接。可配置 SSH 后启动，或在远端手动运行以下命令。": "No SSH connection found for this host. Configure SSH to start Server, or run these commands on the remote host.",
+    "配置 SSH 连接": "Configure SSH connection",
+    "远端手动启动命令": "Manual remote startup commands",
+    "使用原安装账户和原 Server 程序运行，保留配对信息。Windows 自启需管理员权限，Linux 需 systemd。": "Use the original installation account and Server executable to preserve pairing. Windows boot registration requires an administrator; Linux requires systemd.",
+    "启动 Server 与开机自启": "Start Server and configure boot startup",
+    "Server TLS 握手失败。请检查服务是否已启动，以及目标端口是否运行 QingCode HTTPS Server。": "Server TLS handshake failed. Check that Server is running and the target port serves QingCode HTTPS Server.",
+    "开机自启配置失败。请检查远端管理员权限，或关闭自启后重试启动。": "Boot registration failed. Check remote administrator permissions, or turn off boot startup and try starting again.",
+    "Server 响应无效。请检查目标端口的服务和协议。": "Invalid Server response. Check the service and protocol on the target port."
   }
 }

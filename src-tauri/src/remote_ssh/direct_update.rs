@@ -81,6 +81,7 @@ async fn update_over_ssh(
     root: &RegisteredRoot,
     config: SshConnectionConfig,
     direct: &DirectConnectionConfig,
+    auto_start: bool,
 ) -> Result<(), String> {
     if windows_native_path(&root.canonical_path).is_none() {
         return Err("通过 SSH 更新直连服务目前仅支持 Windows；请在远端手动更新 Server".into());
@@ -161,7 +162,12 @@ async fn update_over_ssh(
                 &format!("& {} direct-info --include-secret", quote(&native)),
             )
             .await?;
-            check_identity(&descriptor(&read)?, direct)
+            check_identity(&descriptor(&read)?, direct)?;
+            if auto_start {
+                let (_, windows) = direct_settings::startup_commands(&native, "enable");
+                execute(&maintenance, &management_root, &windows).await?;
+            }
+            Ok(())
         }
         .await;
         if let Err(reason) = &replaced {
@@ -211,10 +217,11 @@ pub async fn direct_agent_update(
         Some(config),
         None,
     )?;
+    let auto_start = direct_settings::startup_enabled(&app, &id)?;
     for bound in manager.roots_for_connection(&id) {
         manager.stop_watch_supervisor(&server::server_slot_key(&id, &bound.canonical_path));
     }
-    let result = update_over_ssh(&manager, &root, config, &direct).await;
+    let result = update_over_ssh(&manager, &root, config, &direct, auto_start).await;
     direct::close_connection(&direct.endpoint, &id);
     for bound in manager.roots_for_connection(&id) {
         manager.clear_server_endpoint(&server::server_slot_key(&id, &bound.canonical_path));

@@ -130,7 +130,7 @@ async fn live_windows_gateway_version_update() {
             qingcode_server::SERVER_VERSION
         );
     }
-    update_over_ssh(&source, &root, config.clone(), &direct)
+    update_over_ssh(&source, &root, config.clone(), &direct, false)
         .await
         .unwrap();
     direct::close_connection(&direct.endpoint, &config.id);
