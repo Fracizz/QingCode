@@ -1,5 +1,5 @@
 import { hasBackend } from '../lib/runtimeCapabilities'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { open } from '@tauri-apps/plugin-dialog'
 import {
@@ -11,9 +11,11 @@ import {
   FolderOpen,
   Globe,
   KeyRound,
+  Pencil,
   Plus,
   RefreshCw,
   ScrollText,
+  Search,
   Server,
   ShieldCheck,
   ShieldOff,
@@ -35,7 +37,6 @@ import {
   disconnectSshSession,
   forgetSshSessionSecrets,
   isSshConnectionAlive,
-  isSshProject,
   listSshServerStates,
   listSshWorkspaceRoots,
   NEW_SSH_CONNECTION_ID,
@@ -53,6 +54,7 @@ import {
   type SshWorkspaceRoot,
 } from '../lib/sshWorkspace'
 import { getSshServerEnabled } from '../lib/sshServerSettings'
+import { connectionStatus, matchesConnection, groupConnectionProjects } from '../lib/remoteConnectionOverview'
 import { normalizeProjectPath, restrictProject } from '../lib/workspaceTrust'
 import {
   isAgentCommandUnavailable,
@@ -108,17 +110,22 @@ export default function RemoteConnectionsManager() {
     creatingForProject ? NEW_SSH_CONNECTION_ID : null
   )
   const [form, setForm] = useState<SshConnectionForm>(emptyConnectionForm())
+  const [editing, setEditing] = useState(false)
+  const [search, setSearch] = useState('')
+  const [attentionOnly, setAttentionOnly] = useState(false)
+  const [allProjects, setAllProjects] = useState(false)
   const [mode, setMode] = useState<SshConnectionMode>('server')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [password, setPassword] = useState('')
   const [passphrase, setPassphrase] = useState('')
   /** Only a successful authentication of this exact configuration authorizes saving it. */
   const [verification, setVerification] = useState<{ key: string; fingerprint: string } | null>(null)
-  const [aliveMap, setAliveMap] = useState<Record<string, boolean>>({})
+  const [aliveMap, setAliveMap] = useState<Record<string, boolean | null>>({})
+  const [statusErrors, setStatusErrors] = useState<Record<string, string>>({})
   const [directInfos, setDirectInfos] = useState<Record<string, DirectAgentInfo | null>>({})
   const [agentDraftId, setAgentDraftId] = useState(() => crypto.randomUUID())
   const [roots, setRoots] = useState<SshWorkspaceRoot[]>([])
-  const [serverStates, setServerStates] = useState<SshServerState[]>([])
+  const [statesByConnection, setStatesByConnection] = useState<Record<string, SshServerState[]>>({})
   const [detailLoading, setDetailLoading] = useState(false)
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -127,6 +134,9 @@ export default function RemoteConnectionsManager() {
   const [busyRoot, setBusyRoot] = useState<string | null>(null)
   const [logView, setLogView] = useState<LogView | null>(null)
   const detailRequestRef = useRef(0)
+  const statusRevisionRef = useRef<Record<string, number>>({})
+  const statusRequestRef = useRef<Record<string, number>>({})
+  const mountedRef = useRef(true)
   const testRequestRef = useRef(0)
   const testControllerRef = useRef<AbortController | null>(null)
 
@@ -146,25 +156,51 @@ export default function RemoteConnectionsManager() {
   const isNew = selectedId === NEW_SSH_CONNECTION_ID || isNewAgent
   const selected = connections.find(item => item.id === selectedId) ?? null
   const selectedDirect = selected ? directInfos[selected.id] : null
-  const directEnabled = selectedDirect?.enabled === true
-  const standaloneAgent = Boolean(selected && selected.username === 'Agent' && selected.auth_kind === 'password' && selected.host_key_fingerprint === selectedDirect?.certificateFingerprint)
+  const standaloneAgent = Boolean(selected && selected.username === 'Agent' && selected.auth_kind === 'password' && (selected.agentEndpoint || selected.host_key_fingerprint === selectedDirect?.certificateFingerprint))
+  const directEndpoint = selectedDirect && (selectedDirect.enabled || standaloneAgent) ? selectedDirect : selected?.agentEndpoint
+  const directEnabled = selectedDirect ? selectedDirect.enabled : Boolean(selected?.agentEndpoint)
+  const connectionModeLabel = directEnabled || standaloneAgent || selected?.agentEndpoint ? 'Server 端口直连'
+    : selected && resolveSshConnectionMode(selected, getSshServerEnabled()) === 'ssh' ? 'SSH 直连（兼容模式）' : 'SSH + 远端服务'
+  const serverStates = selected ? statesByConnection[selected.id] ?? [] : []
+  const groupedProjects = useMemo(() => groupConnectionProjects(projects), [projects])
+  const status = connectionStatus(selected ? aliveMap[selected.id] : null, serverStates, selected ? statusErrors[selected.id] : undefined)
+  const statusReason = (selected ? statusErrors[selected.id] : '') || serverStates.find(state => state.reason)?.reason
+  const filteredConnections = connections.filter(connection => {
+    const summary = connectionStatus(aliveMap[connection.id], statesByConnection[connection.id] ?? [], statusErrors[connection.id])
+    const info = directInfos[connection.id]
+    return (!attentionOnly || summary.attention) && matchesConnection(info?.enabled ? { ...connection, agentEndpoint: info } : connection, groupedProjects.get(connection.id) ?? [], search)
+  })
+  const attentionCount = connections.filter(connection => connectionStatus(aliveMap[connection.id], statesByConnection[connection.id] ?? [], statusErrors[connection.id]).attention).length
 
-  const refreshDetail = async (id: string) => {
+  const refreshStatus = useCallback(async (id: string) => {
+    const revision = statusRevisionRef.current[id] ?? 0
+    const request = (statusRequestRef.current[id] ?? 0) + 1
+    statusRequestRef.current[id] = request
+    const [aliveResult, statesResult, directResult] = await Promise.allSettled([
+      isSshConnectionAlive(id, true),
+      listSshServerStates(id, true),
+      directAgentApi.info(id),
+    ])
+    if (!mountedRef.current || statusRequestRef.current[id] !== request) return
+    if (directResult.status === 'fulfilled') setDirectInfos(prev => ({ ...prev, [id]: directResult.value ?? null }))
+    // A state event received during the snapshot is newer than its result.
+    if ((statusRevisionRef.current[id] ?? 0) !== revision) return
+    setAliveMap(prev => ({ ...prev, [id]: aliveResult.status === 'fulfilled' ? aliveResult.value : null }))
+    setStatusErrors(prev => ({ ...prev, [id]: aliveResult.status === 'rejected' ? String(aliveResult.reason) : statesResult.status === 'rejected' ? String(statesResult.reason) : directResult.status === 'rejected' ? String(directResult.reason) : '' }))
+    if (statesResult.status === 'fulfilled') setStatesByConnection(prev => ({ ...prev, [id]: statesResult.value }))
+  }, [])
+
+  const refreshDetail = useCallback(async (id: string, includeStatus = true) => {
     const requestId = ++detailRequestRef.current
     setDetailLoading(true)
-    const [alive, nextRoots, nextStates, directInfo] = await Promise.all([
-      isSshConnectionAlive(id),
+    const [nextRoots] = await Promise.all([
       listSshWorkspaceRoots(id),
-      listSshServerStates(id),
-      directAgentApi.info(id).catch(() => null),
+      includeStatus ? refreshStatus(id) : Promise.resolve(),
     ])
     if (requestId !== detailRequestRef.current) return
-    setAliveMap(prev => ({ ...prev, [id]: alive }))
-    setDirectInfos(prev => ({ ...prev, [id]: directInfo ?? null }))
     setRoots(nextRoots)
-    setServerStates(nextStates)
     setDetailLoading(false)
-  }
+  }, [refreshStatus])
 
   // 初次打开：加载连接并默认选中第一个。
   useEffect(() => {
@@ -193,13 +229,15 @@ export default function RemoteConnectionsManager() {
     setVerification(null)
     setTesting(false)
     setError('')
+    setAllProjects(false)
     setRoots([])
-    setServerStates([])
-    if (conn) void refreshDetail(conn.id)
-  }, [selectedId])
+    if (conn) void refreshDetail(conn.id, false)
+  }, [selectedId, refreshDetail])
 
   useEffect(() => {
+    mountedRef.current = true
     return () => {
+      mountedRef.current = false
       testRequestRef.current += 1
       testControllerRef.current?.abort()
       detailRequestRef.current += 1
@@ -210,6 +248,7 @@ export default function RemoteConnectionsManager() {
   useEffect(() => {
     if (!selectedId || selectedId === NEW_SSH_CONNECTION_ID || selectedId === NEW_AGENT_CONNECTION_ID) return
     if (!connections.some(item => item.id === selectedId)) {
+      setEditing(false)
       setSelectedId(connections[0]?.id ?? null)
     }
   }, [connections, selectedId])
@@ -219,32 +258,36 @@ export default function RemoteConnectionsManager() {
     let cancelled = false
     void (async () => {
       const ids = connections.map(item => item.id)
-      const entries = await Promise.all(
-        ids.map(async id => [id, await isSshConnectionAlive(id)] as const)
-      )
-      if (cancelled) return
-      setAliveMap(prev => ({ ...prev, ...Object.fromEntries(entries) }))
+      // Limit simultaneous native requests for large saved connection lists.
+      for (let offset = 0; offset < ids.length && !cancelled; offset += 4) {
+        await Promise.all(ids.slice(offset, offset + 4).map(refreshStatus))
+      }
     })()
     return () => {
       cancelled = true
     }
-  }, [connections])
+  }, [connections, refreshStatus])
 
   // 订阅代理状态事件，管理页与状态栏芯片看到同一份阶段模型。
   useEffect(() => {
-    if (!hasBackend() || !selectedId || selectedId === NEW_SSH_CONNECTION_ID) return
+    if (!hasBackend()) return
     let cancelled = false
     let unlisten: UnlistenFn | undefined
     void listen<unknown>('ssh-server-state', event => {
       const next = parseSshServerState(event.payload)
-      if (!next || cancelled || next.connectionId !== selectedId) return
-      setServerStates(prev => {
-        const index = prev.findIndex(item => item.rootUri === next.rootUri)
-        if (index === -1) return [...prev, next]
-        const copy = [...prev]
+      if (!next || cancelled) return
+      statusRevisionRef.current[next.connectionId] = (statusRevisionRef.current[next.connectionId] ?? 0) + 1
+      setStatesByConnection(prev => {
+        const current = prev[next.connectionId] ?? []
+        const index = current.findIndex(item => item.rootUri === next.rootUri)
+        if (index === -1) return { ...prev, [next.connectionId]: [...current, next] }
+        const copy = [...current]
         copy[index] = next
-        return copy
+        return { ...prev, [next.connectionId]: copy }
       })
+      if (next.phase !== 'disconnected') setAliveMap(prev => ({ ...prev, [next.connectionId]: true }))
+      else void refreshStatus(next.connectionId)
+      setStatusErrors(prev => ({ ...prev, [next.connectionId]: '' }))
     }).then(stop => {
       if (cancelled) stop()
       else unlisten = stop
@@ -253,16 +296,10 @@ export default function RemoteConnectionsManager() {
       cancelled = true
       unlisten?.()
     }
-  }, [selectedId])
+  }, [refreshStatus])
 
-  const connectionProjects = selected
-    ? projects.filter(
-        project =>
-          isSshProject(project) &&
-          (project.connection_id === selected.id ||
-            sshConnectionIdFromUri(project.path) === selected.id)
-      )
-    : []
+  const connectionProjects = selected ? groupedProjects.get(selected.id) ?? [] : []
+  const visibleProjects = allProjects ? connectionProjects : connectionProjects.slice(0, 5)
 
   const verificationKey = JSON.stringify([
     selectedId, form.host.trim(), Number.parseInt(form.port, 10), form.username.trim(),
@@ -422,6 +459,7 @@ export default function RemoteConnectionsManager() {
         return
       }
       setSelectedId(base.id)
+      setEditing(false)
       if (selected) await refreshDetail(selected.id)
     } catch (reason) {
       setError(String(reason))
@@ -471,7 +509,7 @@ export default function RemoteConnectionsManager() {
     const accepted = await confirmDialog({
       title: t(directEnabled ? '断开 Server 直连' : '断开 SSH 连接'),
       message: t(
-        directEnabled ? '断开 {label} 的 Server 连接？打开的项目会失去连接，重新打开项目时可以重连。' : '断开 {label}？打开的远程项目会失去连接，重新打开项目时可以重连（密码需重新输入）。',
+        directEnabled ? '断开 {label} 的 Server 连接？打开的项目会失去连接，重新打开项目时可以重连。' : '断开 {label}？将结束此连接的远端终端及其中运行的任务，打开的远程项目会失去连接。重新打开项目时可以重连（密码需重新输入）。',
         { label: sshConnectionLabel(selected) }
       ),
       kind: 'warning',
@@ -561,6 +599,23 @@ export default function RemoteConnectionsManager() {
   const openProject = async (project: Project) => {
     closeRemoteConnections()
     await switchProject(project)
+  }
+
+  const leaveEditor = async () => {
+    if (!selected || testing || saving) return
+    if ((dirty || password || passphrase) && !await confirmDialog({
+      title: t('放弃连接修改'), message: t('返回概览将放弃尚未保存的连接修改。'),
+      kind: 'warning', confirmLabel: t('放弃修改'), cancelLabel: t('取消'),
+    })) return
+    invalidateVerification()
+    setForm(formFromConnection(selected))
+    const savedMode = resolveSshConnectionMode(selected, getSshServerEnabled())
+    setMode(savedMode)
+    setAdvancedOpen(savedMode === 'ssh')
+    setPassword('')
+    setPassphrase('')
+    setError('')
+    setEditing(false)
   }
 
   const choosePrivateKey = async () => {
@@ -752,14 +807,14 @@ export default function RemoteConnectionsManager() {
           role="dialog"
           aria-modal="true"
           aria-labelledby="remote-connections-title"
-          className="ui-font-scaled modal-content-enter relative flex w-[94vw] max-w-[1100px] max-h-[85vh] flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
+          className="ui-font-scaled modal-content-enter relative flex h-[80vh] w-[94vw] max-w-[1100px] max-h-[85vh] flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
           onPointerDown={event => event.stopPropagation()}
         >
           <div className="flex min-h-12 flex-shrink-0 items-center justify-between gap-3 border-b border-dialog-separator bg-dialog-chrome px-4 py-2">
             <div className="flex items-center gap-2 text-ui-lg font-semibold text-fg">
               <Globe size={16} className="text-fg-muted" />
               <h2 id="remote-connections-title">{t('远程连接')}</h2>
-              <span className="text-ui-sm font-normal text-fg-muted">
+              <span className="hidden text-ui-sm font-normal text-fg-muted sm:inline">
                 {t('连接 · 项目 · 远端服务')}
               </span>
             </div>
@@ -776,8 +831,15 @@ export default function RemoteConnectionsManager() {
           </div>
 
           <div className="flex min-h-0 flex-1">
-            <aside className="flex w-44 flex-shrink-0 flex-col border-r border-dialog-separator bg-dialog-sidebar sm:w-60">
+            <aside className="flex w-36 flex-shrink-0 flex-col border-r border-dialog-separator bg-dialog-sidebar sm:w-60">
               <div className="space-y-2 p-2">
+                <label className="flex items-center gap-1 rounded border border-dialog-border bg-dialog-input px-2">
+                  <Search size={13} className="shrink-0 text-fg-dim" aria-hidden />
+                  <input className="min-w-0 w-full bg-transparent py-1.5 text-ui-sm text-fg outline-none" aria-label={t('搜索连接或项目')} placeholder={t('搜索连接或项目')} value={search} onChange={event => setSearch(event.target.value)} />
+                </label>
+                <button type="button" aria-pressed={attentionOnly} onClick={() => setAttentionOnly(value => !value)} className={`w-full rounded px-2 py-1 text-left text-ui-sm ${attentionOnly ? 'bg-dialog-active text-warn' : 'text-fg-muted hover:bg-bg-hover'}`}>
+                  {t('需要处理')} · {attentionCount}
+                </button>
                 <button
                   type="button"
                   onClick={() => setSelectedId(NEW_SSH_CONNECTION_ID)}
@@ -808,14 +870,19 @@ export default function RemoteConnectionsManager() {
                 </button>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto pb-2">
-                {connections.map(connection => {
+                {filteredConnections.length === 0 && <p className="px-3 py-4 text-ui-sm text-fg-muted">{t(connections.length ? '没有匹配的连接' : '暂无连接')}</p>}
+                {filteredConnections.map(connection => {
                   const active = connection.id === selectedId
-                  const online = aliveMap[connection.id] ?? false
+                  const summary = connectionStatus(aliveMap[connection.id], statesByConnection[connection.id] ?? [], statusErrors[connection.id])
+                  const info = directInfos[connection.id]
+                  const standalone = connection.username === 'Agent' && connection.auth_kind === 'password' && connection.host_key_fingerprint === info?.certificateFingerprint
+                  const endpoint = info && (info.enabled || standalone) ? info : connection.agentEndpoint
                   return (
                     <button
                       key={connection.id}
+                      aria-current={active ? 'true' : undefined}
                       type="button"
-                      onClick={() => setSelectedId(connection.id)}
+                      onClick={() => { setEditing(false); setSelectedId(connection.id) }}
                       className={`flex w-full flex-col gap-0.5 border-l-2 px-3 py-2 text-left transition-colors ${
                         active
                           ? 'border-brand bg-dialog-active text-fg'
@@ -826,16 +893,15 @@ export default function RemoteConnectionsManager() {
                         <span
                           aria-hidden
                           className={`h-[6px] w-[6px] flex-shrink-0 rounded-full ${
-                            online ? 'bg-ok' : 'bg-fg-dim'
+                            summary.tone === 'ok' ? 'bg-ok' : summary.tone === 'warn' ? 'bg-warn' : 'bg-fg-dim'
                           }`}
                         />
                         <span className="min-w-0 truncate">{connection.name}</span>
                       </span>
                       <span className="min-w-0 truncate pl-[13px] font-mono text-ui-sm text-fg-dim">
-                        {directInfos[connection.id]?.enabled
-                          ? `${directInfos[connection.id]!.host}:${directInfos[connection.id]!.port} · TLS`
-                          : sshConnectionTarget(connection)}
+                        {endpoint ? `${endpoint.host}:${endpoint.port} · TLS` : sshConnectionTarget(connection)}
                       </span>
+                      <span className={`pl-[13px] text-ui-sm ${summary.tone === 'warn' ? 'text-warn' : 'text-fg-muted'}`}>{t(summary.label)} · {t('{count} 个项目', { count: groupedProjects.get(connection.id)?.length ?? 0 })}</span>
                     </button>
                   )
                 })}
@@ -846,7 +912,7 @@ export default function RemoteConnectionsManager() {
               <section className="@container min-h-0 flex-1 overflow-y-auto px-5 py-4">
                 {isNew || selected ? (
                   <div className="flex flex-col gap-5">
-                    <div className="flex items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-2">
                         <Server size={15} className="flex-shrink-0 text-fg-muted" />
                         <h3 className="min-w-0 truncate text-ui-lg font-semibold text-fg">
@@ -855,16 +921,18 @@ export default function RemoteConnectionsManager() {
                         {!isNew && (
                           <span
                             className={`flex-shrink-0 rounded px-1.5 py-0.5 text-ui-sm ${
-                              alive ? 'bg-ok/10 text-ok' : 'bg-dialog-active text-fg-dim'
+                              status.tone === 'ok' ? 'bg-ok/10 text-ok' : status.tone === 'warn' ? 'bg-warn/10 text-warn' : 'bg-dialog-active text-fg-muted'
                             }`}
                           >
-                            {alive ? t('在线') : t('离线')}
+                            {t(status.label)}
                           </span>
                         )}
                         {directEnabled && <span className="rounded bg-dialog-active px-1.5 py-0.5 text-ui-sm font-normal text-fg-muted">{t('Server 端口直连')}</span>}
                       </div>
                       {!isNew && selected && (
-                        <div className="flex flex-shrink-0 items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {!editing && <button type="button" onClick={() => setEditing(true)} className={`${secondaryButtonClass} inline-flex items-center gap-1`}><Pencil size={13} />{t('编辑连接')}</button>}
+                          <button type="button" disabled={detailLoading} onClick={() => void refreshDetail(selected.id)} className={secondaryButtonClass}>{t('刷新状态')}</button>
                           {alive && (
                             <button
                               type="button"
@@ -888,7 +956,18 @@ export default function RemoteConnectionsManager() {
                       )}
                     </div>
 
-                    {isNewAgent ? <DirectAgentConnectionPanel
+                    {error && !isNew && !editing && <p role="alert" className="whitespace-pre-wrap rounded border border-danger/30 bg-danger/10 px-3 py-2 text-ui text-danger">{error}</p>}
+
+                    {!isNew && selected && !editing && (
+                      <div className="space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-3">
+                        <p className="break-all font-mono text-ui-sm text-fg">{directEndpoint ? `${directEndpoint.host}:${directEndpoint.port}` : sshConnectionTarget(selected)}</p>
+                        <p className={helpClass}>{t(connectionModeLabel)}</p>
+                        <p className={helpClass}>{t('选择下方项目以打开或重新连接；需要认证时会提示输入凭据。')}</p>
+                        {statusReason && <p role="status" className="max-h-28 overflow-auto whitespace-pre-wrap break-words text-ui-sm text-warn">{statusReason}</p>}
+                      </div>
+                    )}
+
+                    {(isNew || editing) && (isNewAgent ? <DirectAgentConnectionPanel
                       key={agentDraftId}
                       connectionId={agentDraftId}
                       defaultHost=""
@@ -902,17 +981,18 @@ export default function RemoteConnectionsManager() {
                         }
                         setDirectInfos(prev => ({ ...prev, [agentDraftId]: info }))
                         pushToast('success', t('已保存 Server 直连'))
+                        setEditing(false)
                         setSelectedId(agentDraftId)
                         if (creatingForProject) closeRemoteConnections()
                       }}
                     /> : standaloneAgent ? <p className={helpClass}>{t('此连接仅配置 Server 直连；如需 SSH，请单独新建 SSH 连接。')}</p> : directEnabled ? <details className="rounded border border-dialog-border p-3">
                       <summary className="cursor-pointer text-ui font-medium text-fg">{t('SSH 安装与兼容配置')}</summary>
                       <div className="mt-3">{renderForm()}</div>
-                    </details> : <div>{renderForm()}</div>}
+                    </details> : <div>{renderForm()}</div>)}
 
                     {!isNew && selected && (
                       <>
-                        <DirectAgentConnectionPanel
+                        {editing && <DirectAgentConnectionPanel
                           key={selected.id}
                           connectionId={selected.id}
                           defaultHost={selected.host}
@@ -932,34 +1012,34 @@ export default function RemoteConnectionsManager() {
                             setDirectInfos(prev => ({ ...prev, [selected.id]: info }))
                             void refreshDetail(selected.id)
                           }}
-                        />
+                        />}
+                        {!editing && <>
                         <div>
                           <p className={`${sectionTitleClass} mb-2`}>
-                            {t('远程项目')}
+                            {t(allProjects ? '远程项目' : '最近项目')}
                             <span className="ml-1 text-ui-sm font-normal text-fg-dim">
                               {connectionProjects.length}
                             </span>
+                            <button type="button" className="ml-auto rounded px-2 py-1 text-ui-sm font-normal text-fg-muted hover:bg-bg-hover" onClick={() => { closeRemoteConnections(); useUIStore.getState().openCreateProject() }}>{t('添加项目')}</button>
                           </p>
                           {connectionProjects.length === 0 ? (
                             <p className={helpClass}>{t('暂无使用此连接的远程项目。')}</p>
                           ) : (
                             <ul className="overflow-hidden rounded border border-dialog-border">
-                              {connectionProjects.map(project => (
+                              {visibleProjects.map(project => (
                                 <li
                                   key={project.id}
-                                  className="flex items-center gap-2 border-b border-dialog-separator px-3 py-2 last:border-b-0"
+                                  className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 border-b border-dialog-separator px-3 py-2 last:border-b-0 @lg:grid-cols-[auto_minmax(0,1fr)_minmax(0,1.5fr)_auto]"
                                 >
                                   <FolderOpen size={13} className="flex-shrink-0 text-fg-dim" />
-                                  <span className="min-w-0 flex-1 truncate text-ui text-fg">
+                                  <span className="col-start-2 row-start-1 min-w-0 text-ui text-fg [overflow-wrap:anywhere]">
                                     {project.name}
                                   </span>
-                                  <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-fg-dim">
-                                    {sshProjectDisplayPath(project, selected, connections)}
-                                  </span>
+                                  <Tooltip label={sshProjectDisplayPath(project, selected, connections)} side="top" wrapperClassName="col-start-2 row-start-2 min-w-0 @lg:col-start-3 @lg:row-start-1"><span className="block min-w-0 truncate font-mono text-ui-sm text-fg-muted">{sshProjectDisplayPath(project, selected, connections)}</span></Tooltip>
                                   <button
                                     type="button"
                                     onClick={() => void openProject(project)}
-                                    className="flex-shrink-0 rounded px-2 py-0.5 text-ui-sm text-accent hover:bg-accent/10"
+                                    className="col-start-3 row-start-1 rounded px-2 py-0.5 text-ui-sm text-accent hover:bg-accent/10 @lg:col-start-4"
                                   >
                                     {t('打开')}
                                   </button>
@@ -967,6 +1047,7 @@ export default function RemoteConnectionsManager() {
                               ))}
                             </ul>
                           )}
+                          {connectionProjects.length > 5 && <button type="button" aria-expanded={allProjects} onClick={() => setAllProjects(value => !value)} className="mt-2 rounded px-2 py-1 text-ui-sm text-accent hover:bg-bg-hover">{t(allProjects ? '收起项目' : '查看全部项目')}</button>}
                         </div>
 
                         <div>
@@ -982,7 +1063,7 @@ export default function RemoteConnectionsManager() {
                               {roots.map(root => (
                                 <li
                                   key={root.rootUri}
-                                  className="flex items-center gap-2 border-b border-dialog-separator px-3 py-2 last:border-b-0"
+                                  className="flex flex-wrap items-center gap-2 border-b border-dialog-separator px-3 py-2 last:border-b-0"
                                 >
                                   {root.trusted ? (
                                     <ShieldCheck size={13} className="flex-shrink-0 text-accent" />
@@ -1055,7 +1136,7 @@ export default function RemoteConnectionsManager() {
                               {serverStates.map(state => (
                                 <li
                                   key={state.rootUri}
-                                  className="flex items-center gap-2 border-b border-dialog-separator px-3 py-2 last:border-b-0"
+                                  className="flex flex-wrap items-center gap-2 border-b border-dialog-separator px-3 py-2 last:border-b-0"
                                 >
                                   <FileText size={13} className="flex-shrink-0 text-fg-dim" />
                                   <span className="min-w-0 flex-1 truncate font-mono text-ui-sm text-fg">
@@ -1064,12 +1145,13 @@ export default function RemoteConnectionsManager() {
                                   <span
                                     className={`flex-shrink-0 text-ui-sm ${
                                       state.phase === 'readyServer'
-                                        ? 'text-accent'
+                                        ? 'text-ok'
                                         : 'text-fg-muted'
                                     }`}
                                   >
                                     {t(directEnabled ? 'Server 端口直连' : sshServerModeKey(state))}
                                   </span>
+                                  {state.version && <span className="font-mono text-ui-sm text-fg-muted">v{state.version}</span>}
                                   {directEnabled ? <span className="flex-shrink-0 rounded bg-dialog-active px-1.5 py-0.5 text-ui-sm text-fg-muted">TLS</span> : sshServerTransportKey(state.transport) ? (
                                     <Tooltip
                                       label={t(transportTooltipKey(state.transport) ?? '未知')}
@@ -1139,6 +1221,7 @@ export default function RemoteConnectionsManager() {
                             </ul>
                           )}
                         </div>
+                        </>}
                       </>
                     )}
                   </div>
@@ -1158,17 +1241,12 @@ export default function RemoteConnectionsManager() {
                   </div>
                 )}
               </section>
-              {!isNewAgent && !standaloneAgent && (isNew || selected) && (
+              {(isNew || editing) && (isNew || selected) && (
                 <footer className="flex flex-shrink-0 flex-col gap-2 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
-                  {error ? (
-                    <p
-                      role="alert"
-                      className="max-h-24 overflow-auto whitespace-pre-wrap rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui text-danger"
-                    >
-                      {error}
-                    </p>
-                  ) : null}
-                  <div className="flex items-center justify-end gap-2">
+                  {error && <p role="alert" className="max-h-24 overflow-auto whitespace-pre-wrap rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui text-danger">{error}</p>}
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    {!isNew && <button type="button" disabled={testing || saving} onClick={() => void leaveEditor()} className={`${secondaryButtonClass} mr-auto`}>{t('返回概览')}</button>}
+                    {!isNewAgent && !standaloneAgent && <>
                     <button
                       type="button"
                       disabled={testing || saving}
@@ -1185,6 +1263,7 @@ export default function RemoteConnectionsManager() {
                     >
                       {saving ? t('正在保存…') : t(directEnabled ? '保存 SSH 配置' : '保存')}
                     </button>
+                    </>}
                   </div>
                 </footer>
               )}
@@ -1194,7 +1273,7 @@ export default function RemoteConnectionsManager() {
       </ModalOverlay>
 
       {importOpen && (
-        <SshImportDialog onClose={() => setImportOpen(false)} onImported={setSelectedId} />
+        <SshImportDialog onClose={() => setImportOpen(false)} onImported={id => { setEditing(false); setSelectedId(id) }} />
       )}
 
       {logView && (

@@ -104,9 +104,16 @@ ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/
 
 Windows SSH 修复确认框的独立场景位于 <http://127.0.0.1:38439/web-tests/ssh-repair.html>，复用真实 `ConfirmDialog` 和产品复选框文案。可验证默认勾选、取消勾选后确认、取消整个弹窗以及再次打开时重置默认值。场景只回显选择结果，不建立 SSH 连接；真实配置备份、有效配置等义验证、并发修改拒绝和回滚可在 Windows 管理员 SSH 环境运行 `scripts/test-windows-sshd-repair.ps1 -ImplementationPath <windows_sshd_repair.ps1>`。该脚本使用临时配置副本与真实 sshd 校验器，服务启停由仅接受测试名称的桩替代，不重启真实服务。
 
-远程项目后台准备的状态图标场景位于 <http://127.0.0.1:38439/web-tests/ssh-warmup.html>，复用生产项目图标、Tooltip 和状态 store。运行 `scripts/web-tests/ssh-warmup.ego.mjs` 的 `run()` 可验证五种状态的提示与点击、浅色、英文和窄窗；默认保存截图与 `results.json`。若环境的 `Page.captureScreenshot` 超时，可传 `screenshots: false` 继续 DOM 交互验收，报告会明确记录截图未完成。该场景不建立 SSH；队列的 10 万项目选择、会话预算、前后台复用与取消由 Vitest 覆盖，原生连接、信任、SFTP 与服务仍需 Rust 和真实 SSH 验收。
+远程项目后台准备的状态图标场景位于 <http://127.0.0.1:38439/web-tests/ssh-warmup.html>，复用生产项目图标、Tooltip 和状态 store。运行 `scripts/web-tests/ssh-warmup.ego.mjs` 的 `run()` 可验证准备完成后恢复普通云图标且无成功提示，其余四种状态的提示与点击、浅色、英文和窄窗；默认保存截图与 `results.json`。若环境的 `Page.captureScreenshot` 超时，可传 `screenshots: false` 继续 DOM 交互验收，报告会明确记录截图未完成。该场景不建立 SSH；队列的 10 万项目选择、会话预算、前后台复用与取消由 Vitest 覆盖，原生连接、信任、SFTP 与服务仍需 Rust 和真实 SSH 验收。
 
 ## 验收边界
+
+远程连接概览场景位于 `/web-tests/remote-connections.html`，使用 `pnpm test:web` 和
+`node scripts/web-tests/remote-connections.agent-browser.mjs`（Linux 默认 agent-browser）。
+复用生产管理页与样式，通过内存适配器提供 SSH、状态检查失败与 Server 端口直连数据；
+覆盖概览与编辑切换、隐藏项目搜索、最近项目展开、需要处理筛选、按需日志、800px 窄窗、
+英文及浅色主题。截图、JSON 与 HTML 报告保存在 `.dev/web-tests/remote-connections/`。
+不建立真实 SSH 连接，不验证终端生命周期、SQLite、系统凭据与原生对话框。
 
 底栏清晰度场景位于 `/web-tests/status-bar.html`，使用 `pnpm dev:web-test`（端口 **38419**）。
 复用真实 `StatusBar`、连接徽标和业务 Store，以固定内存项目、分支、光标位置和编码验证三种主题、

@@ -24,18 +24,35 @@ export async function run({ spaceId, artifactDir, screenshots = true } = {}) {
     screenshots ? page.screenshot({ path: resolve(output, `${name}.png`) }) : undefined
   try {
     await page.goto('http://127.0.0.1:38439/web-tests/ssh-warmup.html')
-    await step('five production status icons without a blocking dialog', async () => {
-      await page.waitForSelector('[data-phase="ready"] [role="img"]')
+    await step('ready uses the normal cloud while pending and error states remain visible', async () => {
+      await page.waitForSelector('[data-phase="preparing"] [role="img"]')
       assert.equal(
         await page.evaluate(() => document.querySelectorAll('[data-phase] [role="img"]').length),
-        5
+        4
+      )
+      assert.equal(
+        await page.evaluate(() => {
+          const ready = document.querySelector('[data-phase="ready"]')
+          return Boolean(ready.querySelector('svg.lucide-cloud')) &&
+            !ready.querySelector('[role="img"], .text-ok')
+        }),
+        true
       )
       assert.equal(
         await page.evaluate(() => document.querySelectorAll('[role="dialog"]').length),
         0
       )
     })
-    for (const phase of ['queued', 'preparing', 'ready', 'attention', 'failed']) {
+    await step('ready has no preparation tooltip and still opens on click', async () => {
+      await page.hover('[data-phase="ready"] svg', { label: 'inspect normal remote project icon' })
+      await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 750)))
+      assert.equal(await page.evaluate(() => document.querySelector('[role="tooltip"]')), null)
+      await page.click('[data-phase="ready"]', { label: 'open prepared remote project' })
+      await page.waitForFunction(
+        () => document.querySelector('[role="status"]')?.textContent === '已点击 ready'
+      )
+    })
+    for (const phase of ['queued', 'preparing', 'attention', 'failed']) {
       await step(`${phase} tooltip and activation remain accessible`, async () => {
         await page.hover(`[data-phase="${phase}"] [role="img"]`, {
           label: 'inspect remote preparation status',
@@ -64,9 +81,9 @@ export async function run({ spaceId, artifactDir, screenshots = true } = {}) {
       })
       await page.waitForFunction(() =>
         document
-          .querySelector('[data-phase="ready"] [role="img"]')
+          .querySelector('[data-phase="preparing"] [role="img"]')
           ?.getAttribute('aria-label')
-          ?.startsWith('Remote project prepared')
+          ?.startsWith('Preparing remote project')
       )
       await shot('english')
     })

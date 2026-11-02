@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { listen } from '@tauri-apps/api/event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RemoteConnectionsManager from './RemoteConnectionsManager'
 import { useProjectStore } from '../store/projectStore'
@@ -96,6 +97,82 @@ describe('remote connection compatibility settings', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '测试连接' })).not.toBeDisabled())
   }
 
+  it('opens an overview with recent projects and searches hidden project paths across saved connections', async () => {
+    const other = { ...connection('server'), id: 'c2', name: 'Other', host: 'other.test' }
+    const projects = Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, name: `app-${i}`, path: `ssh://c1/home/app-${i}`, hidden: 1, created_at: 1, last_opened_at: i }))
+    useProjectStore.setState({ sshConnections: [connection('server'), other], projects })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    render(<RemoteConnectionsManager />)
+    await screen.findByRole('button', { name: '编辑连接' })
+    expect(screen.queryByLabelText('主机')).toBeNull()
+    expect(screen.queryByRole('button', { name: '保存' })).toBeNull()
+    expect(screen.getAllByRole('button', { name: '打开' })).toHaveLength(5)
+    expect(screen.queryByText('app-0')).toBeNull()
+    const rows = screen.getByText('app-5').closest('ul')!
+    expect(within(rows).getAllByRole('listitem')[0]).toHaveTextContent('app-5')
+    fireEvent.click(screen.getByRole('button', { name: '查看全部项目' }))
+    expect(screen.getAllByRole('button', { name: '打开' })).toHaveLength(6)
+    fireEvent.change(screen.getByRole('textbox', { name: '搜索连接或项目' }), { target: { value: '/HOME/APP-0' } })
+    expect(screen.queryByRole('button', { name: /Other other.test/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Remote dev@example.test/ })).toBeVisible()
+  })
+
+  it('keeps failed status checks actionable and allows refreshing without treating them as offline', async () => {
+    useProjectStore.setState({ sshConnections: [connection('server')] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    alive.mockRejectedValue(new Error('IPC unavailable'))
+    render(<RemoteConnectionsManager />)
+    await screen.findByText('Error: IPC unavailable')
+    expect(screen.getByRole('button', { name: /需要处理 · 1/ })).toBeVisible()
+    expect(screen.getAllByText('检查失败').length).toBeGreaterThan(0)
+    alive.mockResolvedValue(false)
+    fireEvent.click(screen.getByRole('button', { name: '刷新状态' }))
+    await waitFor(() => expect(screen.queryByText('Error: IPC unavailable')).toBeNull())
+    expect(screen.getByRole('button', { name: /需要处理 · 0/ })).toBeVisible()
+  })
+
+  it('does not let a late snapshot overwrite a newer event for an unselected connection', async () => {
+    let finish!: (states: unknown[]) => void
+    listServerStates.mockImplementation(async id => id === 'c2' ? new Promise(resolve => { finish = resolve }) : [])
+    useProjectStore.setState({ sshConnections: [connection('server'), { ...connection('server'), id: 'c2', name: 'Other' }] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    render(<RemoteConnectionsManager />)
+    await waitFor(() => expect(finish).toBeDefined())
+    const callback = vi.mocked(listen).mock.calls.find(call => call[0] === 'ssh-server-state')![1]
+    await act(async () => callback({ event: 'ssh-server-state', id: 1, payload: {
+      connectionId: 'c2', rootUri: 'ssh://c2/home/app', phase: 'readyServer', mode: 'server', connectionMode: 'server', transport: 'daemon', version: '1', reason: null,
+    } }))
+    expect(screen.getByRole('button', { name: /Other.*服务已就绪/ })).toBeVisible()
+    await act(async () => finish([]))
+    expect(screen.getByRole('button', { name: /Other.*服务已就绪/ })).toBeVisible()
+  })
+
+  it('confirms discarding unsaved edits before returning to the overview', async () => {
+    useProjectStore.setState({ sshConnections: [connection('server')] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
+    fireEvent.change(screen.getByLabelText('连接名称'), { target: { value: 'Unsaved' } })
+    confirmDialog.mockResolvedValue(false)
+    fireEvent.click(screen.getByRole('button', { name: '返回概览' }))
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ title: '放弃连接修改' })))
+    expect(screen.getByDisplayValue('Unsaved')).toBeVisible()
+    confirmDialog.mockResolvedValue(true)
+    fireEvent.click(screen.getByRole('button', { name: '返回概览' }))
+    await screen.findByRole('button', { name: '编辑连接' })
+    fireEvent.click(screen.getByRole('button', { name: '编辑连接' }))
+    expect(screen.getByLabelText('连接名称')).toHaveValue('Remote')
+  })
+
+  it('explains that an explicit SSH disconnect ends its remote terminals and tasks', async () => {
+    useProjectStore.setState({ sshConnections: [connection('server')] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    alive.mockResolvedValue(true)
+    render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '断开连接' }))
+    expect(confirmDialog).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('将结束此连接的远端终端及其中运行的任务') }))
+  })
+
   it('creates a Server connection despite a legacy global SSH default, keeping compatibility collapsed', async () => {
     render(<RemoteConnectionsManager />)
     expect(screen.queryByRole('radio')).toBeNull()
@@ -124,6 +201,7 @@ describe('remote connection compatibility settings', () => {
     useProjectStore.setState({ sshConnections: [connection(mode)] })
     useUIStore.setState({ remoteConnectionsCreating: false })
     render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     await screen.findByDisplayValue('example.test')
     expect(screen.getByRole('checkbox', { name: '兼容模式（SSH 直连）' })).toBeChecked()
     expect(screen.getByRole('button', { name: '保存' })).toBeDisabled()
@@ -135,6 +213,7 @@ describe('remote connection compatibility settings', () => {
     useProjectStore.setState({ sshConnections: [connection('server')] })
     useUIStore.setState({ remoteConnectionsCreating: false })
     render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     await screen.findByDisplayValue('example.test')
     expect(screen.getByRole('button', { name: '高级' })).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(screen.getByRole('button', { name: '高级' }))
@@ -148,6 +227,7 @@ describe('remote connection compatibility settings', () => {
     alive.mockResolvedValue(true)
     confirmDialog.mockResolvedValue(false)
     render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     await screen.findByDisplayValue('example.test')
     await screen.findByRole('button', { name: '断开连接' })
     fireEvent.click(screen.getByRole('checkbox', { name: '兼容模式（SSH 直连）' }))
@@ -214,6 +294,7 @@ describe('remote connection compatibility settings', () => {
     useUIStore.setState({ remoteConnectionsCreating: false })
     invoke.mockResolvedValue({ enabled: true, host: 'example.test', port: 48763, certificateFingerprint: 'SHA256:tls', tokenSaved: true, previousPorts: [] })
     render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     expect(await screen.findByText('此连接仅配置 Server 直连；如需 SSH，请单独新建 SSH 连接。')).toBeVisible()
     expect(screen.getByText('example.test:48763 · TLS')).toBeVisible()
     expect(screen.queryByLabelText('用户名')).toBeNull()
@@ -235,8 +316,8 @@ describe('remote connection compatibility settings', () => {
     })
     saveConnection.mockImplementation(async next => { useProjectStore.setState({ sshConnections: [next] }) })
     render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     await screen.findByText('此连接仅配置 Server 直连；如需 SSH，请单独新建 SSH 连接。')
-    fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '导入配对信息' })).not.toBeDisabled())
     fireEvent.click(screen.getByRole('button', { name: '导入配对信息' }))
     fireEvent.change(screen.getByLabelText('配对 JSON'), { target: { value: JSON.stringify({ host: 'other.test', port: 51234, certificateFingerprint: 'new-tls', token: 'new-token' }) } })
@@ -247,6 +328,18 @@ describe('remote connection compatibility settings', () => {
     await waitFor(() => expect(saveConnection).toHaveBeenCalledWith(expect.objectContaining({ host: 'other.test', host_key_fingerprint: 'new-tls', username: 'Agent' })))
     expect(await screen.findByText('other.test:51234 · TLS')).toBeVisible()
     expect(screen.queryByRole('button', { name: '恢复 SSH 连接' })).toBeNull()
+    expect(screen.queryByLabelText('用户名')).toBeNull()
+  })
+
+  it('keeps a disabled standalone Server endpoint distinct from an SSH connection', async () => {
+    useProjectStore.setState({ sshConnections: [{ ...connection('server'), username: 'Agent', auth_kind: 'password', host_key_fingerprint: 'SHA256:tls' }] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    invoke.mockResolvedValue({ enabled: false, host: 'example.test', port: 48763, certificateFingerprint: 'SHA256:tls', tokenSaved: true, previousPorts: [] })
+    render(<RemoteConnectionsManager />)
+    expect(await screen.findByText('example.test:48763')).toBeVisible()
+    expect(screen.getByText('Server 端口直连')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '编辑连接' }))
+    expect(await screen.findByText('此连接仅配置 Server 直连；如需 SSH，请单独新建 SSH 连接。')).toBeVisible()
     expect(screen.queryByLabelText('用户名')).toBeNull()
   })
   it('persists revocation as restricted so subsequent trust synchronization cannot regrant it', async () => {
@@ -269,6 +362,7 @@ describe('remote connection compatibility settings', () => {
     useProjectStore.setState({sshConnections:[connection('server')]})
     useUIStore.setState({remoteConnectionsCreating:false})
     render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     await screen.findByDisplayValue('example.test')
     fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'newuser'}})
     fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
@@ -302,6 +396,7 @@ describe('remote connection compatibility settings', () => {
     useProjectStore.setState({sshConnections:[connection('server')]})
     useUIStore.setState({remoteConnectionsCreating:false})
     render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     await screen.findByDisplayValue('example.test')
     fireEvent.change(screen.getByLabelText('连接名称'),{target:{value:'Renamed'}})
     fireEvent.click(screen.getByRole('button',{name:'保存'}))
@@ -331,10 +426,12 @@ describe('remote connection compatibility settings', () => {
     useProjectStore.setState({sshConnections:[connection('server'),{...connection('server'),id:'c2',name:'Other',host:'other.test'}]})
     useUIStore.setState({remoteConnectionsCreating:false})
     render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     await screen.findByDisplayValue('example.test')
     fireEvent.click(screen.getByRole('button',{name:'测试连接'}))
     await waitFor(() => expect(probeHost).toHaveBeenCalledTimes(1))
     fireEvent.click(screen.getByRole('button',{name:/Other/}))
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     await screen.findByDisplayValue('other.test')
     await act(async () => finish('SHA256:changed'))
     expect(confirmDialog).not.toHaveBeenCalled()
@@ -346,6 +443,7 @@ describe('remote connection compatibility settings', () => {
     useUIStore.setState({remoteConnectionsCreating:false})
     alive.mockResolvedValue(true)
     render(<RemoteConnectionsManager />)
+    fireEvent.click(await screen.findByRole('button', { name: '编辑连接' }))
     await screen.findByDisplayValue('example.test')
     await screen.findByRole('button',{name:'断开连接'})
     fireEvent.change(screen.getByLabelText('用户名'),{target:{value:'newuser'}})

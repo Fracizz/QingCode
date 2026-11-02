@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { mockIPC } from '@tauri-apps/api/mocks'
 import { emit } from '@tauri-apps/api/event'
 import ProjectName from '../components/ProjectName'
+import { ProjectKindIcon } from '../components/ProjectKindMark'
 import SshImportDialog from '../components/SshImportDialog'
 import SshServerStatusChip from '../components/SshServerStatusChip'
 import { SettingItem } from '../components/SettingsLayout'
@@ -123,11 +124,26 @@ export default function UiClarityPage() {
             <option value="13">13px</option>
             <option value="16">16px</option>
             <option value="20">20px</option>
+            <option value="32">32px</option>
           </select>
         </label>
       </div>
 
       <div className="max-w-3xl space-y-6">
+        <div className="flex" data-testid="compact-project-label">
+          <div className="relative inline-flex ui-chip items-center gap-0.5 rounded bg-bg-active px-0.5 text-ui">
+            <ProjectKindIcon
+              project={{ kind: 'ssh', path: 'ssh://fixture/home/demo/qingcode' }}
+              className="shrink-0 text-brand"
+            />
+            <ProjectName
+              name="qingcode"
+              label={{ name: 'qingcode', source: 'WinDev', text: 'qingcode [WinDev]' }}
+              compact
+            />
+            <span className="pointer-events-none absolute inset-x-1 bottom-0 h-[2px] rounded bg-brand" aria-hidden />
+          </div>
+        </div>
         <div
           className="flex max-w-sm items-center gap-2 rounded border border-border-strong p-3"
           data-testid="project-label"

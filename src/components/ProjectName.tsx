@@ -16,7 +16,7 @@ export default function ProjectName({
     )
   }
   return (
-    <span className="flex min-w-0 flex-1 items-center gap-1">
+    <span className="flex min-w-0 flex-1 items-center gap-1.5">
       <span
         className={`block min-w-0 truncate ${compact ? 'max-w-[140px]' : ''}`}
         style={{ flexShrink: 1000 }}
@@ -25,7 +25,7 @@ export default function ProjectName({
       </span>
       <span
         data-project-source
-        className="min-w-0 max-w-[160px] truncate rounded border border-border-strong px-1 py-[3px] text-ui-badge font-normal text-fg-muted"
+        className="project-source-badge min-w-0 max-w-[160px] truncate rounded border border-border-strong/60 bg-fg/5 px-[5px] py-px font-normal text-fg-muted"
       >
         {label.source}
       </span>

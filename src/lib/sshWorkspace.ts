@@ -271,10 +271,12 @@ export async function disconnectSshSession(connectionId: string): Promise<void> 
   await safeInvoke('断开 SSH 连接', 'ssh_disconnect', { connectionId })
 }
 
-export async function isSshConnectionAlive(connectionId: string): Promise<boolean> {
+/** Overview checks propagate failures; workspace fast paths retain a false fallback. */
+export async function isSshConnectionAlive(connectionId: string, strict = false): Promise<boolean> {
   try {
     return await safeInvoke<boolean>('检查 SSH 连接', 'ssh_connection_status', { connectionId })
-  } catch {
+  } catch (error) {
+    if (strict) throw error
     return false
   }
 }
@@ -356,8 +358,8 @@ export async function listSshWorkspaceRoots(connectionId: string): Promise<SshWo
   }
 }
 
-/** 连接管理页：该连接下全部已注册根的代理状态聚合。 */
-export async function listSshServerStates(connectionId: string): Promise<SshServerState[]> {
+/** 连接管理页：该连接下全部已注册根的代理状态聚合。strict 保留查询失败供概览展示。 */
+export async function listSshServerStates(connectionId: string, strict = false): Promise<SshServerState[]> {
   try {
     const states = await safeInvoke<SshServerState[]>('查询远端服务状态', 'ssh_server_states', {
       connectionId,
@@ -366,7 +368,8 @@ export async function listSshServerStates(connectionId: string): Promise<SshServ
       const parsed = parseSshServerState(state)
       return parsed ? [parsed] : []
     })
-  } catch {
+  } catch (error) {
+    if (strict) throw error
     return []
   }
 }

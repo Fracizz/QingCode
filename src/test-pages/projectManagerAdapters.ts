@@ -15,6 +15,11 @@ export const useProjectStore = create(() => ({
   currentProject: fixtures.projects.find(project => project.id === 'wsl-nem') ?? null,
   unavailableProjectIds: [] as string[],
   toasts: [],
+  async loadSshConnections() { /* Fixed in-memory fixture. */ },
+  async deleteSshConnection(id: string) {
+    record('deleteSshConnection', [id])
+    useProjectStore.setState(state => ({ sshConnections: state.sshConnections.filter(connection => connection.id !== id) }))
+  },
   async saveSshConnection(connection: SshConnection) {
     record('saveSshConnection', [connection.id])
     useProjectStore.setState(state => ({
@@ -54,6 +59,10 @@ function setHidden(id: string, hidden: number) {
 export const useUIStore = create(() => ({
   serverUpdateRootUri: null as string | null,
   projectManagerOpen: true,
+  remoteConnectionsOpen: true,
+  remoteConnectionsCreating: false,
+  closeRemoteConnections() { useUIStore.setState({ remoteConnectionsOpen: false }) },
+  requestSettings(query: string) { record('requestSettings', [query]) },
   closeProjectManager() {
     useUIStore.setState({ projectManagerOpen: false })
   },
@@ -83,6 +92,10 @@ export const useEditorStore = create(() => ({
 }))
 
 export const WORKSPACE_TRUST_CHANGED_EVENT = 'qingcode:web-test-trust-changed'
+export function normalizeProjectPath(path: string) {
+  const value = path.trim().replace(/[/\\]+$/, '').replace(/\\/g, '/')
+  return value.startsWith('ssh://') ? value : value.toLowerCase()
+}
 const trust = new Map<string, 'trusted' | 'restricted'>()
 export function getWorkspaceTrust(project: Project) {
   return trust.get(project.id) ?? 'undecided'
