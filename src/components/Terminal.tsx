@@ -63,7 +63,9 @@ import {
 } from '../lib/panelResize'
 import {
   getTerminalPtyResizeDelay,
+  getTerminalRedrawRevealMaxMs,
   isValidTerminalGridSize,
+  shouldRevealTerminalAfterRedraw,
   shouldSendPtyResizeNow,
   terminalGridSizeChanged,
   type TerminalGridSize,
@@ -199,11 +201,6 @@ function windowsPtyOptions(): { backend: 'conpty'; buildNumber: number } | undef
   // Win10 2004+ / Win11 ConPTY builds; high enough to enable modern wrap/reflow.
   return { backend: 'conpty', buildNumber: 22621 }
 }
-
-/** TUI 重绘输出安静这么久即认为整屏已画完。 */
-const TERMINAL_REDRAW_QUIET_MS = 60
-/** 程序不响应 SIGWINCH 时的兜底揭开时间。 */
-const TERMINAL_REDRAW_REVEAL_MAX_MS = 600
 
 interface TerminalViewProps {
   terminalId: string
@@ -537,24 +534,39 @@ export default function TerminalView({
     container.style.opacity = masked ? '0' : ''
   }, [])
 
-  const revealAfterOutputSettles = useCallback(() => {
-    const term = xtermRef.current
-    if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current)
-    const startedAt = Date.now()
-    const tick = () => {
+  const revealAfterRedraw = useCallback(
+    (startedAt: number, redrawSent: boolean) => {
+      const term = xtermRef.current
+      if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current)
       revealTimerRef.current = null
       if (!term || xtermRef.current !== term) return
-      const now = Date.now()
-      const quiet = now - lastOutputParsedAtRef.current >= TERMINAL_REDRAW_QUIET_MS
-      if ((quiet && now - startedAt >= TERMINAL_REDRAW_QUIET_MS) ||
-        now - startedAt >= TERMINAL_REDRAW_REVEAL_MAX_MS) {
+      // 没有真正发出 SIGWINCH 就不会有回包，直接揭开。
+      if (!redrawSent) {
         setReplayMasked(false)
         return
       }
-      revealTimerRef.current = window.setTimeout(tick, 16)
-    }
-    revealTimerRef.current = window.setTimeout(tick, 16)
-  }, [setReplayMasked])
+      const tab = useTerminalStore.getState().terminals.find(item => item.id === terminalId)
+      const maxMs = getTerminalRedrawRevealMaxMs(isSshResource(tab?.cwd ?? ''))
+      const tick = () => {
+        revealTimerRef.current = null
+        if (xtermRef.current !== term) return
+        if (
+          shouldRevealTerminalAfterRedraw({
+            startedAt,
+            lastOutputAt: lastOutputParsedAtRef.current,
+            now: Date.now(),
+            maxMs,
+          })
+        ) {
+          setReplayMasked(false)
+          return
+        }
+        revealTimerRef.current = window.setTimeout(tick, 16)
+      }
+      tick()
+    },
+    [setReplayMasked, terminalId]
+  )
 
   const flushPendingRedraw = useCallback(() => {
     const term = xtermRef.current
@@ -567,9 +579,12 @@ export default function TerminalView({
     // TUI 收不到 SIGWINCH 就不会重绘，画面一直错位（切换项目后常见）。
     clearPtyResizeTimer()
     pendingPtySizeRef.current = null
-    ptyResizeSentAtRef.current = Date.now()
-    void redrawTerminal(terminalId, term.cols, term.rows).finally(revealAfterOutputSettles)
-  }, [clearPtyResizeTimer, redrawTerminal, revealAfterOutputSettles, terminalId])
+    const startedAt = Date.now()
+    ptyResizeSentAtRef.current = startedAt
+    void redrawTerminal(terminalId, term.cols, term.rows)
+      .catch(() => false)
+      .then(sent => revealAfterRedraw(startedAt, sent))
+  }, [clearPtyResizeTimer, redrawTerminal, revealAfterRedraw, terminalId])
 
   const fitNow = useCallback(
     (refresh = false, focusAfter = false) => {

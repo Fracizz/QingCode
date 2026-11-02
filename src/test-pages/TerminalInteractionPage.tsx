@@ -26,7 +26,7 @@ async function start() {
     terminals: [{ id, name: 'fixture', projectId: 'fixture', cwd: '/fixture', launchCommand: '', status: 'running', exitCode: null }],
     writeToTerminal: async (_id, data) => { state.input.push(data) },
     resizeTerminal: async (_id, cols, rows) => { state.cols = cols; state.rows = rows },
-    redrawTerminal: async () => {},
+    redrawTerminal: async () => false,
   })
   // A remounted terminal must not copy old OSC 52 actions from its output history.
   seedTerminalOutputFromPersist(id, '\x1b]52;c;b2xkLWNsaXBib2FyZA==\x07history\r\n', [])

@@ -49,3 +49,42 @@ export function shouldSendPtyResizeNow(
   if (!Number.isFinite(now)) return true
   return now - lastSentAt >= gapMs
 }
+
+/** TUI 重绘输出安静这么久即认为整屏已画完。 */
+export const TERMINAL_REDRAW_QUIET_MS = 60
+/** 本地 PTY 不响应 SIGWINCH 时的兜底揭开时间。 */
+export const TERMINAL_REDRAW_REVEAL_MAX_LOCAL_MS = 600
+/** SSH / Server 终端要多走一次网络往返，兜底时间放宽，避免先揭开旧帧再重绘。 */
+export const TERMINAL_REDRAW_REVEAL_MAX_REMOTE_MS = 1500
+
+export function getTerminalRedrawRevealMaxMs(remote: boolean): number {
+  return remote ? TERMINAL_REDRAW_REVEAL_MAX_REMOTE_MS : TERMINAL_REDRAW_REVEAL_MAX_LOCAL_MS
+}
+
+export interface TerminalRedrawRevealState {
+  /** 开始发送重绘 SIGWINCH 的时间。 */
+  startedAt: number
+  /** 最近一次 PTY 输出解析完成的时间。 */
+  lastOutputAt: number
+  now: number
+  maxMs: number
+  quietMs?: number
+}
+
+/**
+ * 重挂后的重绘遮罩何时揭开。
+ *
+ * 必须先收到重绘开始之后的输出（即 TUI 对 SIGWINCH 的回包），再等输出安静；
+ * 仅凭「安静」判断时，回包慢于安静窗口（SSH 常见）会把旧帧先揭开再整屏重画。
+ * 程序始终不回包时按 maxMs 兜底。
+ */
+export function shouldRevealTerminalAfterRedraw({
+  startedAt,
+  lastOutputAt,
+  now,
+  maxMs,
+  quietMs = TERMINAL_REDRAW_QUIET_MS,
+}: TerminalRedrawRevealState): boolean {
+  if (now - startedAt >= maxMs) return true
+  return lastOutputAt >= startedAt && now - lastOutputAt >= quietMs
+}

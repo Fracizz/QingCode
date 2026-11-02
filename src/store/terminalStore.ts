@@ -881,7 +881,8 @@ interface TerminalState {
    * 让全屏 TUI 按当前行列整屏重绘：先缩一行再恢复，强制产生两次 SIGWINCH。
    * 用于视图重挂后回放的旧字节与当前网格不一致（尺寸未变时 resize 会被去重）。
    */
-  redrawTerminal: (id: string, cols: number, rows: number) => Promise<void>
+  /** 返回是否真的发出了重绘 SIGWINCH；未发出时调用方不必等待回包。 */
+  redrawTerminal: (id: string, cols: number, rows: number) => Promise<boolean>
   /**
    * Create the PTY after xterm has fitted. Idempotent while `ptySpawnPending`.
    * Pass measured cols/rows so TUIs (e.g. OpenCode) start on the real grid.
@@ -1936,17 +1937,19 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   redrawTerminal: async (id: string, cols: number, rows: number) => {
     const tab = get().terminals.find(terminal => terminal.id === id)
-    if (!tab || tab.status === 'exited' || tab.ptySpawnPending) return
+    if (!tab || tab.status === 'exited' || tab.ptySpawnPending) return false
     const size = normalizePtySize(cols, rows)
-    if (size.rows < 2) return
+    if (size.rows < 2) return false
     try {
       await resizeTerminal(id, size.cols, size.rows - 1)
       await resizeTerminal(id, size.cols, size.rows)
       rememberPtySize(id, size.cols, size.rows)
+      return true
     } catch (error) {
       // 中途失败时 PTY 尺寸未知，清掉记录让下一次 resize 一定下发。
       lastPtySize.delete(id)
       console.warn('redraw_terminal failed:', error)
+      return false
     }
   },
 
