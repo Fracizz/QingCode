@@ -50,3 +50,28 @@ Use `git push origin <branch>` to publish to both. Fetch either side with `git f
 ## Commit & Pull Request Guidelines
 
 Recent history uses Conventional Commit-style messages, commonly `feat: <concise Chinese summary>`; use the appropriate type (`feat`, `fix`, `docs`, or `refactor`) and keep each commit focused. Pull requests should explain user-visible behavior, list validation commands, link the relevant issue when available, and include screenshots or a short recording for UI changes. Do not commit local `.dev` state, generated `dist/` or `release/` output, or application data. Treat capability and CSP changes as security-sensitive and explain why they are required.
+
+## 252.107 dependency downloads via the local PC proxy
+
+Verified on 2026-11-02 for this checkout at `D:\code\qingcode` on `192.168.252.107`:
+
+- The local PC's v2rayN/sing-box HTTP proxy is reachable at `http://192.168.10.127:7999` after LAN access is enabled. A proxied download of `sql.js-1.15.1.tgz` (13,645,330 bytes) succeeded in about 2.8 seconds. Recheck connectivity before relying on this dated result.
+- For future dependency installation, run in PowerShell on **252.107** (the environment variables apply only to the current terminal/process and its children):
+
+```powershell
+Set-Location -LiteralPath 'D:\code\qingcode'
+$env:HTTP_PROXY = 'http://192.168.10.127:7999'
+$env:HTTPS_PROXY = $env:HTTP_PROXY
+pnpm.cmd install --frozen-lockfile
+```
+
+- For Git Bash on the same remote machine:
+
+```bash
+cd /d/code/qingcode
+HTTP_PROXY=http://192.168.10.127:7999 HTTPS_PROXY=http://192.168.10.127:7999 pnpm install --frozen-lockfile
+```
+
+- Keep the local PC and proxy running with LAN access enabled. If the local PC's IP or proxy port changes, update the address above. Remote `127.0.0.1` refers to 252.107 itself, not the local PC. Use `pnpm.cmd` in PowerShell when execution policy blocks `pnpm.ps1`.
+- Do not persist this host-specific proxy in the repository's `.npmrc` or change the lockfile/registry just to resolve a download timeout.
+- If the proxy is unavailable, the fallback is to download the exact locked package tarballs on the local PC, transfer with sshctl, and let pnpm install them with lockfile integrity validation. Once the remote pnpm cache is complete, `pnpm.cmd install --frozen-lockfile --offline` works. Delete task-created downloads, archives, and temporary cache on the local PC after successful transfer, as requested by the user; retain the remote dependency cache.
