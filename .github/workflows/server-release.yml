@@ -71,15 +71,15 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --manifest-path src-tauri/Cargo.toml \
-            -p qingcode-server --release --target ${{ matrix.target }}
+            -p qingcode-server --profile server-release --target ${{ matrix.target }}
           # Reject an accidental dynamically linked/glibc artifact.
-          readelf -l "src-tauri/target/${{ matrix.target }}/release/qingcode-server" > "$RUNNER_TEMP/server-elf-layout.txt"
+          readelf -l "src-tauri/target/${{ matrix.target }}/server-release/qingcode-server" > "$RUNNER_TEMP/server-elf-layout.txt"
           if grep -q INTERP "$RUNNER_TEMP/server-elf-layout.txt"; then
             echo "server must be static (unexpected ELF interpreter)" >&2
             exit 1
           fi
           mkdir -p dist
-          cp "src-tauri/target/${{ matrix.target }}/release/qingcode-server" \
+          cp "src-tauri/target/${{ matrix.target }}/server-release/qingcode-server" \
              "dist/qingcode-server-${{ matrix.arch }}"
 
       - name: Upload artifact
@@ -101,10 +101,10 @@ jobs:
       - name: Build Windows serve binary
         shell: pwsh
         run: |
-          cargo build --manifest-path src-tauri/Cargo.toml -p qingcode-server --release
+          cargo build --manifest-path src-tauri/Cargo.toml -p qingcode-server --profile server-release
           if ($LASTEXITCODE -ne 0) { throw "windows server build failed: $LASTEXITCODE" }
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item src-tauri/target/release/qingcode-server.exe dist/qingcode-server-windows-x86_64.exe
+          Copy-Item src-tauri/target/server-release/qingcode-server.exe dist/qingcode-server-windows-x86_64.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

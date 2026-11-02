@@ -189,11 +189,11 @@ git -C /mnt/d/Code/QingCode archive HEAD | tar -x -C /mnt/d/Code/_e2e_head
 $env:CARGO_TARGET_DIR='D:\Code\_e2e_head\target'
 $env:CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="$env:USERPROFILE\.rustup\toolchains\stable-x86_64-pc-windows-msvc\lib\rustlib\x86_64-pc-windows-msvc\bin\rust-lld.exe"
 Set-Location 'D:\Code\_e2e_head\src-tauri'
-cargo build -p qingcode-server --release --target x86_64-unknown-linux-musl
+cargo build -p qingcode-server --profile server-release --target x86_64-unknown-linux-musl
 ```
 
 ```bash
-QC_E2E_BINARY=/mnt/d/Code/_e2e_head/target/x86_64-unknown-linux-musl/release/qingcode-server \
+QC_E2E_BINARY=/mnt/d/Code/_e2e_head/target/x86_64-unknown-linux-musl/server-release/qingcode-server \
   wsl -d Ubuntu -- env QC_E2E_HOST=... QC_E2E_USER=root QC_E2E_PASSWORD='...' \
   bash /mnt/d/Code/QingCode/scripts/e2e-ssh-server/run.sh
 ```

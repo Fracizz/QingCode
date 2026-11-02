@@ -22,7 +22,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::de::DeserializeOwned;
@@ -263,11 +263,24 @@ impl Log {
         self.write("WARN", message);
     }
 
-    fn write(&self, level: &str, message: &str) {
-        let line = format!("[{}] {level} {message}\n", timestamp());
-        let Ok(mut inner) = self.inner.lock() else {
+    /// panic hook 专用：日志锁被占用（可能正是 panic 的线程自己持有）时直接放弃，
+    /// 不能在 hook 里阻塞等锁。
+    fn panic_note(&self, message: &str) {
+        let Ok(inner) = self.inner.try_lock() else {
             return;
         };
+        self.write_locked(inner, "ERROR", message);
+    }
+
+    fn write(&self, level: &str, message: &str) {
+        let Ok(inner) = self.inner.lock() else {
+            return;
+        };
+        self.write_locked(inner, level, message);
+    }
+
+    fn write_locked(&self, mut inner: MutexGuard<'_, LogInner>, level: &str, message: &str) {
+        let line = format!("[{}] {level} {message}\n", timestamp());
         if inner.size + line.len() as u64 > LOG_MAX_BYTES {
             self.rotate(&mut inner);
         }
@@ -340,8 +353,48 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 // 进程入口
 // ---------------------------------------------------------------------------
 
+/// panic hook 写入的日志；`serve` 打开日志后设置。
+static PANIC_LOG: OnceLock<Arc<Log>> = OnceLock::new();
+
+/// daemon 进程的 panic hook：先把 panic 位置与消息写进 `server.log`（stderr 已被
+/// 丢弃，否则崩溃无从定位），再决定是否继续运行。
+///
+/// 只有 vt100 解析器内的 panic（见 [`crate::pty::panicking_in_screen_guard`]）可以恢复：
+/// 那里由 `catch_unwind` 拦下并重建解析器。其余 panic 可能留下中毒的锁或半更新的
+/// 路由表，继续运行比崩溃更难排查，所以照旧 abort（与 panic=abort 构建一致）。
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let recoverable = crate::pty::panicking_in_screen_guard();
+        if let Some(log) = PANIC_LOG.get() {
+            let location = info
+                .location()
+                .map(|location| format!("{}:{}", location.file(), location.line()))
+                .unwrap_or_else(|| "未知位置".to_string());
+            let payload = info
+                .payload()
+                .downcast_ref::<&str>()
+                .map(|message| (*message).to_string())
+                .or_else(|| info.payload().downcast_ref::<String>().cloned())
+                .unwrap_or_default();
+            let outcome = if recoverable {
+                "终端屏幕解析器已重建，daemon 继续运行"
+            } else {
+                "daemon 即将退出"
+            };
+            log.panic_note(&format!("panic（{location}）：{payload}；{outcome}"));
+        }
+        previous(info);
+        if !recoverable {
+            std::process::abort();
+        }
+    }));
+}
+
 /// 阻塞入口（`main.rs` 调用）。
 pub fn run(options: DaemonOptions) -> Result<(), String> {
+    // 只在真实进程入口安装：测试直接调用 `run_async`，不能让测试断言失败触发 abort。
+    install_panic_hook();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -389,6 +442,7 @@ async fn serve(
     listener: IpcListener,
 ) -> Result<(), String> {
     let log = Arc::new(log);
+    let _ = PANIC_LOG.set(Arc::clone(&log));
     let (pty_tx, pty_rx) = mpsc::channel::<PtyEvent>(PTY_EVENT_QUEUE_DEPTH);
     let pty = Arc::new(PtyHost::new(
         options.max_ptys,

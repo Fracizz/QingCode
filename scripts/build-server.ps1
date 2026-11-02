@@ -175,11 +175,11 @@ try {
         Write-Host "== musl 链接器：$linker"
         [Environment]::SetEnvironmentVariable($linkerVar, $linker)
 
-        Write-Host "== cargo build -p qingcode-server --release --target $target"
-        cargo build -p qingcode-server --release --target $target
+        Write-Host "== cargo build -p qingcode-server --profile server-release --target $target"
+        cargo build -p qingcode-server --profile server-release --target $target
         if ($LASTEXITCODE -ne 0) { throw "构建 $target 失败" }
 
-        $bin = Join-Path $cargoTargetDir "$target\release\qingcode-server"
+        $bin = Join-Path $cargoTargetDir "$target\server-release\qingcode-server"
         if (-not (Test-Path $bin)) { throw "未找到构建产物：$bin" }
         $dest = Join-Path $outDir "qingcode-server-$arch"
         Copy-Item -Force $bin $dest
@@ -194,10 +194,10 @@ try {
     }
 
     if (-not $SkipWindows -and $env:OS -eq "Windows_NT") {
-        Write-Host "== cargo build -p qingcode-server --release (windows serve)"
-        cargo build -p qingcode-server --release
+        Write-Host "== cargo build -p qingcode-server --profile server-release (windows serve)"
+        cargo build -p qingcode-server --profile server-release
         if ($LASTEXITCODE -ne 0) { throw "构建 Windows server 失败" }
-        $winBin = Join-Path $cargoTargetDir "release\qingcode-server.exe"
+        $winBin = Join-Path $cargoTargetDir "server-release\qingcode-server.exe"
         if (-not (Test-Path $winBin)) { throw "未找到 Windows 产物：$winBin" }
         $hostLine = (& rustc -vV) | Where-Object { $_ -like "host:*" }
         $hostTriple = if ($hostLine) { $hostLine.Substring(5).Trim() } else { "" }

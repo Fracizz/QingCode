@@ -24,8 +24,11 @@
 // 不再需要按平台豁免 dead_code。
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{Read, Write};
+use std::num::NonZeroU16;
+use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -299,9 +302,88 @@ impl RingBuffer {
     }
 }
 
+thread_local! {
+    /// 当前线程正处于 [`TermScreen`] 的解析器调用内。daemon 的 panic hook 据此区分
+    /// 「可恢复的解析器 panic」与「其余必须 abort 的 panic」。
+    static IN_SCREEN_GUARD: Cell<bool> = const { Cell::new(false) };
+}
+
+/// 当前线程的 panic 是否发生在 [`TermScreen`] 的解析器调用内（供 panic hook 使用）。
+pub fn panicking_in_screen_guard() -> bool {
+    IN_SCREEN_GUARD.with(Cell::get)
+}
+
+/// 在解析器调用外包一层 `catch_unwind`：panic 时返回 `None`。
+///
+/// 只在 unwind 构建（`server-release` profile、测试）下生效；panic=abort 时
+/// panic 会直接终止进程，这里无从拦截。
+fn screen_guarded<R>(f: impl FnOnce() -> R) -> Option<R> {
+    let previous = IN_SCREEN_GUARD.with(|guard| guard.replace(true));
+    let result = panic::catch_unwind(AssertUnwindSafe(f));
+    IN_SCREEN_GUARD.with(|guard| guard.set(previous));
+    result.ok()
+}
+
+fn nonzero(value: u16) -> NonZeroU16 {
+    NonZeroU16::new(value).unwrap_or(NonZeroU16::MIN)
+}
+
+/// `vt100` 解析器外壳。第三方解析器的 panic 不能拖垮 daemon（它承载全部终端）：
+/// 任一调用 panic 后解析器状态不可信，按当前尺寸重建一个空白解析器继续用。
+/// 屏幕快照因此丢失断线前的画面，但进程、环形缓冲和其他终端都不受影响。
+struct TermScreen {
+    parser: Parser,
+    rows: u16,
+    cols: u16,
+    scrollback: usize,
+}
+
+impl TermScreen {
+    fn new(rows: u16, cols: u16, scrollback: usize) -> Self {
+        Self {
+            parser: Parser::new(nonzero(rows), nonzero(cols), scrollback),
+            rows,
+            cols,
+            scrollback,
+        }
+    }
+
+    fn rebuild(&mut self) {
+        self.parser = Parser::new(nonzero(self.rows), nonzero(self.cols), self.scrollback);
+    }
+
+    fn process(&mut self, data: &[u8]) {
+        let parser = &mut self.parser;
+        if screen_guarded(|| parser.process(data)).is_none() {
+            self.rebuild();
+        }
+    }
+
+    fn set_size(&mut self, rows: u16, cols: u16) {
+        self.rows = rows;
+        self.cols = cols;
+        let parser = &mut self.parser;
+        if screen_guarded(|| parser.screen_mut().set_size(nonzero(rows), nonzero(cols))).is_none() {
+            self.rebuild();
+        }
+    }
+
+    /// 屏幕快照（见 [`render_screen`]）。导出 panic 时重建解析器并返回空快照。
+    fn render(&mut self) -> String {
+        let parser = &self.parser;
+        match screen_guarded(|| render_screen(parser)) {
+            Some(screen) => screen,
+            None => {
+                self.rebuild();
+                String::new()
+            }
+        }
+    }
+}
+
 /// 终端数据态（解析器 + 缓冲 + 接入情况），与 PTY 句柄分开加锁。
 struct TermState {
-    parser: Parser,
+    parser: TermScreen,
     ring: RingBuffer,
     cols: u16,
     rows: u16,
@@ -482,7 +564,7 @@ impl PtyHost {
                 killer: Some(killer),
             }),
             state: Mutex::new(TermState {
-                parser: Parser::new(rows, cols, parser_scrollback_lines(ring_capacity, cols)),
+                parser: TermScreen::new(rows, cols, parser_scrollback_lines(ring_capacity, cols)),
                 ring: RingBuffer::new(ring_capacity),
                 cols,
                 rows,
@@ -699,7 +781,7 @@ impl PtyHost {
         let (screen, replay) = if state.ring.can_replay(from_seq) {
             (None, state.ring.replay(from_seq))
         } else {
-            (Some(render_screen(&state.parser)), Vec::new())
+            (Some(state.parser.render()), Vec::new())
         };
         Ok(AttachResult {
             screen,
@@ -1293,13 +1375,13 @@ fn evict_locked(host: &mut HostInner, budget: usize) {
 /// Clipboard OSC actions are deliberately absent from vt100's serialized state.
 fn render_screen(parser: &Parser) -> String {
     let screen = parser.screen();
-    let mut bytes = if screen.alternate_screen() {
-        b"\x1b[?1049h".to_vec()
+    let mut contents = if screen.alternate_screen() {
+        "\x1b[?1049h".to_string()
     } else {
-        b"\x1b[?1049l".to_vec()
+        "\x1b[?1049l".to_string()
     };
-    bytes.extend(screen.state_formatted());
-    String::from_utf8_lossy(&bytes).into_owned()
+    contents.push_str(&screen.state_formatted());
+    contents
 }
 
 fn pty_size(cols: u16, rows: u16) -> PtySize {
@@ -1706,11 +1788,11 @@ mod tests {
 
     #[test]
     fn screen_snapshot_restores_tui_buffer_and_input_modes_without_clipboard_actions() {
-        let mut source = Parser::new(24, 80, 0);
+        let mut source = Parser::new(nonzero(24), nonzero(80), 0);
         source.process(b"\x1b[?1049h\x1b[?1002h\x1b[?1006h\x1b[?2004h\x1b[?1h\x1b=OpenCode / Claude\x1b]52;c;aGk=\x07");
         let snapshot = render_screen(&source);
         assert!(!snapshot.contains("\x1b]52;"));
-        let mut restored = Parser::new(24, 80, 0);
+        let mut restored = Parser::new(nonzero(24), nonzero(80), 0);
         restored.process(snapshot.as_bytes());
         let screen = restored.screen();
         assert!(screen.alternate_screen());
@@ -1730,7 +1812,7 @@ mod tests {
 
         // The client resets xterm before applying a snapshot, including a plain shell.
         source.process(b"\x1b[?1049l\x1b[?1002l\x1b[?1006l\x1b[?2004l\x1b[?1l\x1b>");
-        restored = Parser::new(24, 80, 0);
+        restored = Parser::new(nonzero(24), nonzero(80), 0);
         restored.process(render_screen(&source).as_bytes());
         assert!(!restored.screen().alternate_screen());
         assert!(!restored.screen().bracketed_paste());
@@ -1839,6 +1921,96 @@ mod tests {
         assert_eq!(ring.bytes(), 0);
         assert!(!ring.can_replay(0));
         assert!(ring.replay(0).is_empty());
+    }
+
+    /// 回归：vt100 0.15 在 resize 后处理滚动区、宽字符、超界光标等常见序列时
+    /// 会 unwrap panic，release 下直接让 daemon 崩溃（Windows 上 0xc0000409）。
+    /// 固定种子穿插 resize 与 TUI 常见输出，解析器不得 panic。
+    #[test]
+    fn screen_survives_resize_interleaved_with_tui_output() {
+        const PIECES: &[&str] = &[
+            "校准进度盒",
+            "a",
+            "b\r\n",
+            "\x1b[2J",
+            "\x1b[H",
+            "\x1b[?1049h",
+            "\x1b[?1049l",
+            "\x1b[5;20r",
+            "\x1b[r",
+            "\x1b[999;999H",
+            "\x1b[999C",
+            "\x1b[K",
+            "\x1b[1L",
+            "\x1b[3M",
+            "\x1b[2@",
+            "\x1b[4P",
+            "\x1bM",
+            "\x1bD",
+            "\x1b[S",
+            "\x1b[T",
+            "\x1b7",
+            "\x1b8",
+            "中",
+            "\x1b[3X",
+            "\t",
+            "\x08",
+            "\x1b[1;1H中文",
+            "\x1b[?6h",
+            "\x1b[?6l",
+            "\x1b[200b",
+            "\x1b[s",
+            "\x1b[u",
+            "\x1b[999d",
+            "\x1b[999G中",
+        ];
+        fn next(state: &mut u64) -> u64 {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            *state
+        }
+        for seed in 1..3000u64 {
+            let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+            let mut parser = Parser::new(nonzero(24), nonzero(80), 1000);
+            let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+                for _ in 0..60 {
+                    if next(&mut state).is_multiple_of(6) {
+                        let rows = (next(&mut state) % 60 + 1) as u16;
+                        let cols = (next(&mut state) % 200 + 1) as u16;
+                        parser.screen_mut().set_size(nonzero(rows), nonzero(cols));
+                    } else {
+                        let piece = PIECES[(next(&mut state) as usize) % PIECES.len()];
+                        parser.process(piece.as_bytes());
+                    }
+                }
+                let _ = parser.screen().contents_formatted();
+            }));
+            assert!(outcome.is_ok(), "种子 {seed} 触发 vt100 panic");
+        }
+    }
+
+    #[test]
+    fn screen_guard_catches_panic_and_marks_thread() {
+        assert!(!panicking_in_screen_guard());
+        let caught = screen_guarded(|| {
+            assert!(panicking_in_screen_guard(), "守卫内应标记当前线程");
+            panic!("模拟解析器 panic");
+        });
+        assert!(caught.is_none());
+        assert!(!panicking_in_screen_guard(), "守卫结束后应清除标记");
+        assert_eq!(screen_guarded(|| 7), Some(7));
+    }
+
+    #[test]
+    fn term_screen_keeps_size_and_renders_after_resize() {
+        let mut screen = TermScreen::new(24, 80, 100);
+        screen.process("\x1b[5;20r中文\x1b[999;999H".as_bytes());
+        screen.set_size(10, 3);
+        screen.process("校准进度盒\r\n".as_bytes());
+        assert_eq!((screen.rows, screen.cols), (10, 3));
+        assert_eq!(screen.parser.screen().size(), (nonzero(10), nonzero(3)));
+        let _ = screen.render();
     }
 
     #[test]

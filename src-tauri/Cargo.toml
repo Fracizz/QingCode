@@ -102,3 +102,12 @@ panic = "abort"
 debug = false
 # 开启 release 增量编译：仅改少量 Rust 文件时 package:exe 明显更快（体积略增，运行时几乎无感）
 incremental = true
+
+# 远端代理 qingcode-server 专用：同 release，但 panic 走 unwind。
+# daemon 是常驻进程、承载全部远端终端，panic=abort 时任一终端的 vt100 解析 panic
+# 都会整进程崩溃、所有终端进程随之丢失。unwind 下 pty.rs 用 catch_unwind 只重建
+# 该终端的解析器；其余位置的 panic 仍由 daemon 的 panic hook 记日志后 abort。
+# Cargo 不允许按包覆盖 panic，所以单独成 profile：`cargo build -p qingcode-server --profile server-release`。
+[profile.server-release]
+inherits = "release"
+panic = "unwind"

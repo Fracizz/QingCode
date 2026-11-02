@@ -32,9 +32,10 @@ regex-syntax = "0.8"
 notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
 # PTY 宿主（pty.rs）：portable-pty 在 Linux/macOS 走 openpty、Windows 走 ConPTY；
-# vt100 提供无界面终端模拟器，用于断线后的屏幕快照。
+# vt100 提供无界面终端模拟器，用于断线后的屏幕快照。0.15 在 resize 后解析
+# 滚动区/宽字符等常见序列会 unwrap panic（release 下直接让 daemon 崩溃），必须 ≥0.18。
 portable-pty = "0.8"
-vt100 = "0.15"
+vt100 = "0.18"
 # self-check 子命令计算自身二进制的 sha256（安装完整性校验，设计 §4.2/§8.3）。
 # 纯 Rust、无 C 依赖，musl 静态链接不受影响。
 sha2 = "0.10"
