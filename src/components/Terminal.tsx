@@ -5,12 +5,14 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
+import { SerializeAddon } from '@xterm/addon-serialize'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import {
   consumeTerminalDisconnectNotice,
   hasTerminalScrollback,
+  saveTerminalViewSnapshot,
   subscribeTerminalOutput,
   useTerminalStore,
 } from '../store/terminalStore'
@@ -198,6 +200,11 @@ function windowsPtyOptions(): { backend: 'conpty'; buildNumber: number } | undef
   return { backend: 'conpty', buildNumber: 22621 }
 }
 
+/** TUI 重绘输出安静这么久即认为整屏已画完。 */
+const TERMINAL_REDRAW_QUIET_MS = 60
+/** 程序不响应 SIGWINCH 时的兜底揭开时间。 */
+const TERMINAL_REDRAW_REVEAL_MAX_MS = 600
+
 interface TerminalViewProps {
   terminalId: string
   layoutKey?: string
@@ -222,6 +229,9 @@ export default function TerminalView({
   const lastFitSizeRef = useRef({ w: 0, h: 0 })
   /** 重挂回放后停在全屏 TUI 上，等网格就绪后让程序整屏重绘一次。 */
   const redrawPendingRef = useRef(false)
+  /** 最近一次 PTY 输出解析完成的时间，用于判断 TUI 重绘是否已经停下来。 */
+  const lastOutputParsedAtRef = useRef(0)
+  const revealTimerRef = useRef<number | null>(null)
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
   const [contextMenu, setContextMenu] = useState<{
@@ -512,10 +522,45 @@ export default function TerminalView({
     [clearPtyResizeTimer, flushPendingPtyResize]
   )
 
+  /**
+   * 重挂回放的是旧网格下的原始字节，全屏 TUI 在重绘前会先显示一帧错位画面；
+   * 重绘过程中 rows-1 → rows 的两次 SIGWINCH 也各自整屏输出一次。
+   * 这段时间先把画面透明化（保留焦点能力，不用 visibility），等输出安静后再揭开。
+   */
+  const setReplayMasked = useCallback((masked: boolean) => {
+    const container = containerRef.current
+    if (!container) return
+    if (!masked && revealTimerRef.current !== null) {
+      window.clearTimeout(revealTimerRef.current)
+      revealTimerRef.current = null
+    }
+    container.style.opacity = masked ? '0' : ''
+  }, [])
+
+  const revealAfterOutputSettles = useCallback(() => {
+    const term = xtermRef.current
+    if (revealTimerRef.current !== null) window.clearTimeout(revealTimerRef.current)
+    const startedAt = Date.now()
+    const tick = () => {
+      revealTimerRef.current = null
+      if (!term || xtermRef.current !== term) return
+      const now = Date.now()
+      const quiet = now - lastOutputParsedAtRef.current >= TERMINAL_REDRAW_QUIET_MS
+      if ((quiet && now - startedAt >= TERMINAL_REDRAW_QUIET_MS) ||
+        now - startedAt >= TERMINAL_REDRAW_REVEAL_MAX_MS) {
+        setReplayMasked(false)
+        return
+      }
+      revealTimerRef.current = window.setTimeout(tick, 16)
+    }
+    revealTimerRef.current = window.setTimeout(tick, 16)
+  }, [setReplayMasked])
+
   const flushPendingRedraw = useCallback(() => {
     const term = xtermRef.current
     const container = containerRef.current
-    if (!redrawPendingRef.current || !term || !isActiveRef.current) return
+    // 不要求激活：单窗格里不可见的标签也有真实尺寸，后台重绘好切回来即是最终画面。
+    if (!redrawPendingRef.current || !term) return
     if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
     redrawPendingRef.current = false
     // 回放的旧字节按旧网格排版，而当前尺寸与 PTY 相同时 resize 会被去重，
@@ -523,8 +568,8 @@ export default function TerminalView({
     clearPtyResizeTimer()
     pendingPtySizeRef.current = null
     ptyResizeSentAtRef.current = Date.now()
-    void redrawTerminal(terminalId, term.cols, term.rows)
-  }, [clearPtyResizeTimer, redrawTerminal, terminalId])
+    void redrawTerminal(terminalId, term.cols, term.rows).finally(revealAfterOutputSettles)
+  }, [clearPtyResizeTimer, redrawTerminal, revealAfterOutputSettles, terminalId])
 
   const fitNow = useCallback(
     (refresh = false, focusAfter = false) => {
@@ -601,6 +646,7 @@ export default function TerminalView({
 
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
+    const serializeAddon = new SerializeAddon()
     const linkAddon = new WebLinksAddon((_event, uri) => {
       // Ctrl/Cmd + 点击链接：用系统默认浏览器打开（Tauri opener 插件）。
       void openUrl(uri).catch(e => {
@@ -610,6 +656,7 @@ export default function TerminalView({
     const unicode11 = new Unicode11Addon()
     term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
+    term.loadAddon(serializeAddon)
     term.loadAddon(linkAddon)
     term.loadAddon(unicode11)
     term.unicode.activeVersion = '11'
@@ -831,20 +878,39 @@ export default function TerminalView({
       setTerminalOutputPaused(terminalId, flowHolder, paused)
     )
     let unsubscribeOutput: (() => void) | undefined
+    /** 已交给 xterm、尚未解析进缓冲区的输出；卸载存快照时要补进 tail。 */
+    const unparsedOutput: Uint8Array[] = []
     const subscribeTimer = window.setTimeout(() => {
       // 回放前先按容器定好行列：否则历史字节会写进默认 80x20 网格，
       // 之后再 fit 也无法还原（切换项目回来时终端视图是重新挂载的）。
       resizeGridFromContainer()
+      setReplayMasked(true)
       let replaying = true
+      let restoredFromSnapshot = false
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
         const size = data.length
         const isReplay = replaying
         writeFlow.written(size)
+        unparsedOutput.push(data)
         term.write(data, () => {
+          unparsedOutput.shift()
           writeFlow.parsed(size)
-          if (!isReplay || xtermRef.current !== term) return
+          lastOutputParsedAtRef.current = Date.now()
+          // 快照本身就是排好的屏幕，接在后面的 tail 是同一网格下的输出，无需补重绘。
+          if (!isReplay || restoredFromSnapshot || xtermRef.current !== term) return
           // 只对全屏 TUI（备用缓冲区）补一次重绘；普通 Shell 的回放本身就是最终画面。
           if (term.buffer.active.type !== 'alternate') return
+          redrawPendingRef.current = true
+          scheduleFit(true, false)
+        })
+      }, snapshot => {
+        restoredFromSnapshot = true
+        // 快照按卸载时的网格序列化。网格不同就先按原网格写入，再由 fit 正常 resize，
+        // 让 TUI 按新尺寸重画（期间由回放遮罩盖住）。
+        const fitsGrid = term.cols === snapshot.cols && term.rows === snapshot.rows
+        if (!fitsGrid) term.resize(snapshot.cols, snapshot.rows)
+        term.write(snapshot.data, () => {
+          if (fitsGrid || xtermRef.current !== term) return
           redrawPendingRef.current = true
           scheduleFit(true, false)
         })
@@ -852,6 +918,8 @@ export default function TerminalView({
       replaying = false
       term.write('', () => {
         clipboardWritesEnabled = true
+        // 普通 Shell 的回放就是最终画面；全屏 TUI 等 flushPendingRedraw 重绘后再揭开。
+        if (!redrawPendingRef.current && xtermRef.current === term) setReplayMasked(false)
       })
       const restored = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
       if (restored?.status !== 'exited' || !hadRestoredScrollback) return
@@ -896,7 +964,9 @@ export default function TerminalView({
     }, 0)
 
     const ro = new ResizeObserver(() => {
-      if (!isActiveRef.current) return
+      // 单窗格下未激活的标签只是 invisible，仍有真实尺寸：同样跟随布局 fit，
+      // 让后台 TUI 提前按新网格重排，切回来时就不会先显示一帧旧网格画面。
+      // 隐藏（display:none）的标签宽高为 0，fitNow 会自动跳过。
       // 【终端防闪烁关键逻辑，请勿移除】拖动期间严禁在 ResizeObserver/rAF 中
       // 调用 fit/term.resize。WebGL canvas 会立刻清空，而内容下一帧才重绘，
       // WebView2 因此会显示空白帧。拖动的最终网格只能由下面的 settle 提交。
@@ -909,7 +979,11 @@ export default function TerminalView({
       if (isActiveRef.current) term.options.cursorBlink = false
     }
     const onPanelResizeSettle = (event: Event) => {
-      if (!isActiveRef.current) return
+      if (!isActiveRef.current) {
+        // 不可见的标签无需等待 WebGL 换帧屏障，直接按最终尺寸 fit。
+        scheduleFit()
+        return
+      }
       if (fitRafRef.current !== 0) {
         window.cancelAnimationFrame(fitRafRef.current)
         fitRafRef.current = 0
@@ -960,7 +1034,28 @@ export default function TerminalView({
         fitRafRef.current = 0
       }
       clearPtyResizeTimer()
+      if (revealTimerRef.current !== null) {
+        window.clearTimeout(revealTimerRef.current)
+        revealTimerRef.current = null
+      }
       pendingPtySizeRef.current = null
+      // 仍在运行的全屏 TUI（切换项目等）保存屏幕快照，重挂时直接恢复排好的画面；
+      // 普通缓冲区的 ring 回放本身就是正确画面，关闭的标签也无需保存。
+      if (
+        unsubscribeOutput &&
+        term.buffer.active.type === 'alternate' &&
+        useTerminalStore.getState().terminals.some(tab => tab.id === terminalId)
+      ) {
+        try {
+          saveTerminalViewSnapshot(
+            terminalId,
+            { data: serializeAddon.serialize(), cols: term.cols, rows: term.rows },
+            unparsedOutput
+          )
+        } catch {
+          // 序列化失败时退回 ring 回放。
+        }
+      }
       unsubscribeOutput?.()
       writeFlow.dispose()
       disposeOscHandlers()
@@ -996,6 +1091,7 @@ export default function TerminalView({
     resizeTerminal,
     scheduleFit,
     schedulePtyResize,
+    setReplayMasked,
     spawnPendingTerminal,
     terminalId,
     writeToTerminal,

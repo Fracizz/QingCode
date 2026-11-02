@@ -401,6 +401,21 @@ const terminalPendingOutput = new Map<string, Uint8Array[]>()
 const terminalOutputFlushTimers = new Map<string, number>()
 const terminalOutputFlushRafIds = new Set<string>()
 
+/**
+ * 终端视图卸载（切换项目等）时留下的屏幕快照，做法同 VS Code 的 SerializeAddon 恢复：
+ * 全屏 TUI 的原始字节按当时的网格排版，重新回放会先显示错位画面；快照则是卸载时
+ * 已排好的屏幕。`tail` 收集快照之后到达（及卸载时尚未解析）的字节，重挂时接在快照后写入。
+ */
+export interface TerminalViewSnapshot {
+  data: string
+  cols: number
+  rows: number
+}
+const terminalViewSnapshots = new Map<
+  string,
+  TerminalViewSnapshot & { tail: Uint8Array[]; tailBytes: number }
+>()
+
 /** ring 每次变化递增；持久化时只重新解码版本变化的终端。 */
 const terminalRingVersions = new Map<string, number>()
 const terminalScrollbackTextCache = new Map<string, { version: number; text: string }>()
@@ -498,6 +513,7 @@ function publishTerminalOutput(id: string, data: unknown) {
   if (!bytes) return
   recordPerformanceThroughput('terminalBytes', bytes.length)
   touchRing(id, bytes)
+  appendTerminalViewSnapshotTail(id, bytes)
 
   const listeners = terminalOutputListeners.get(id)
   if (listeners?.size) {
@@ -505,8 +521,37 @@ function publishTerminalOutput(id: string, data: unknown) {
   }
 }
 
+function appendTerminalViewSnapshotTail(id: string, bytes: Uint8Array) {
+  const snapshot = terminalViewSnapshots.get(id)
+  if (!snapshot) return
+  snapshot.tail.push(bytes)
+  snapshot.tailBytes += bytes.length
+  // 卸载期间输出太多时快照已不划算，退回 ring 回放。
+  if (snapshot.tailBytes > maxBufferedBytes()) terminalViewSnapshots.delete(id)
+}
+
+/**
+ * 视图卸载前保存屏幕快照。`unparsed` 是已交给 xterm 但还没解析进缓冲区的字节；
+ * 已排队但还没派发给视图的输出也一并并入 tail，保证重挂后不丢不重。
+ */
+export function saveTerminalViewSnapshot(
+  id: string,
+  snapshot: TerminalViewSnapshot,
+  unparsed: readonly Uint8Array[] = []
+) {
+  const tail = [...unparsed, ...(terminalPendingOutput.get(id) ?? [])]
+  terminalPendingOutput.delete(id)
+  cancelScheduledOutputFlush(id)
+  terminalViewSnapshots.set(id, {
+    ...snapshot,
+    tail,
+    tailBytes: tail.reduce((total, chunk) => total + chunk.length, 0),
+  })
+}
+
 function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   useTerminalDraftStore.getState().clearDraft(id)
+  terminalViewSnapshots.delete(id)
   terminalScrollbackRings.delete(id)
   terminalPendingOutput.delete(id)
   cancelScheduledOutputFlush(id)
@@ -521,6 +566,7 @@ function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
 
 /** Discard queued/previous replay bytes before a fresh daemon screen snapshot. */
 function prepareTerminalOutputForSnapshot(id: string) {
+  terminalViewSnapshots.delete(id)
   terminalPendingOutput.delete(id)
   cancelScheduledOutputFlush(id)
   terminalScrollbackRings.delete(id)
@@ -564,7 +610,15 @@ export function hydrateTerminalOutputForTabs(terminalIds: Iterable<string>) {
 }
 
 
-export function subscribeTerminalOutput(id: string, listener: TerminalOutputListener) {
+/**
+ * 订阅终端输出。新视图先拿到一次完整恢复：传入 `onSnapshot` 且存在卸载快照时，
+ * 先回调快照、再派发快照之后的 tail；否则回放整个 ring。
+ */
+export function subscribeTerminalOutput(
+  id: string,
+  listener: TerminalOutputListener,
+  onSnapshot?: (snapshot: TerminalViewSnapshot) => void
+) {
   // Deliver already-batched live bytes to existing views before a new view replays the ring.
   // This avoids both missing history and duplicating the pending tail in the new xterm.
   if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
@@ -573,8 +627,15 @@ export function subscribeTerminalOutput(id: string, listener: TerminalOutputList
   terminalOutputListeners.set(id, listeners)
 
   // A newly mounted xterm needs one complete replay. Live output is batched below.
-  const ring = terminalByteRingToBytes(terminalScrollbackRings.get(id))
-  if (ring.length) listener(ring)
+  const snapshot = terminalViewSnapshots.get(id)
+  terminalViewSnapshots.delete(id)
+  if (snapshot && onSnapshot) {
+    onSnapshot({ data: snapshot.data, cols: snapshot.cols, rows: snapshot.rows })
+    if (snapshot.tail.length) listener(combineOutputChunks(snapshot.tail))
+  } else {
+    const ring = terminalByteRingToBytes(terminalScrollbackRings.get(id))
+    if (ring.length) listener(ring)
+  }
 
   return () => {
     listeners.delete(listener)
@@ -2054,6 +2115,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         if (!parsed) return
         const { id, exitCode: exit_code, disconnected, reason } = parsed
         clearTerminalCommandActivity(id)
+        // 进程结束后屏幕可能被替换（重启/新 Shell），恢复时改用 ring 回放。
+        terminalViewSnapshots.delete(id)
         const tab = get().terminals.find(t => t.id === id)
         if (!tab) {
           consumeIntentionalPtyKill(id)

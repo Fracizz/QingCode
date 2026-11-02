@@ -75,7 +75,7 @@ vi.mock('./uiStore', () => ({
   },
 }))
 
-import { subscribeTerminalOutput, useTerminalStore } from './terminalStore'
+import { saveTerminalViewSnapshot, subscribeTerminalOutput, useTerminalStore } from './terminalStore'
 import { activeTerminalsForConfig, findRunLinkageForTerminal } from '@/lib/runConfigRuntime'
 import { buildWorkspaceSessionSnapshot, parseWorkspaceSession } from '@/lib/workspaceSessionPersist'
 import { terminalFromPersisted } from '@/lib/workspaceSessionRestore'
@@ -773,5 +773,61 @@ describe('terminal persistent connection events', () => {
 
     expect(resets).toEqual(['t1'])
     window.removeEventListener(TERMINAL_RESET_EVENT, onReset)
+  })
+})
+
+describe('terminal view snapshots', () => {
+  let unlisten: (() => void) | undefined
+  const decode = (chunks: Uint8Array[]) => chunks.map(data => new TextDecoder().decode(data)).join('')
+  const output = (id: string, text: string) =>
+    emit('terminal-data', { id, data: Array.from(new TextEncoder().encode(text)) })
+
+  beforeEach(async () => {
+    vi.useFakeTimers()
+    mocks.listeners.clear()
+    useTerminalStore.setState({
+      terminals: [terminal({ id: 'snap', cwd: '/tmp/project' })],
+      activeTerminalId: 'snap',
+      activeTerminalByProject: { p1: 'snap' },
+    })
+    unlisten = await useTerminalStore.getState().initializeTerminalEvents()
+  })
+
+  afterEach(() => {
+    unlisten?.()
+    vi.useRealTimers()
+  })
+
+  it('restores a remounted view from the snapshot plus output that arrived after it', () => {
+    output('snap', 'old-grid-bytes')
+    saveTerminalViewSnapshot('snap', { data: 'SCREEN', cols: 100, rows: 30 }, [
+      new TextEncoder().encode('unparsed|'),
+    ])
+    output('snap', 'after-unmount')
+
+    const snapshots: unknown[] = []
+    const replay: Uint8Array[] = []
+    subscribeTerminalOutput('snap', data => replay.push(data), snapshot => snapshots.push(snapshot))()
+
+    expect(snapshots).toEqual([{ data: 'SCREEN', cols: 100, rows: 30 }])
+    expect(decode(replay)).toBe('unparsed|after-unmount')
+
+    // 快照只用一次；下一次挂载回到完整 ring 回放。
+    const ringReplay: Uint8Array[] = []
+    subscribeTerminalOutput('snap', data => ringReplay.push(data), snapshot => snapshots.push(snapshot))()
+    expect(snapshots).toHaveLength(1)
+    expect(decode(ringReplay)).toBe('old-grid-bytesafter-unmount')
+  })
+
+  it('falls back to ring replay after the process exits', () => {
+    output('snap', 'ring')
+    saveTerminalViewSnapshot('snap', { data: 'SCREEN', cols: 80, rows: 24 })
+    emit('terminal-exit', { id: 'snap', exitCode: 0 })
+
+    const snapshots: unknown[] = []
+    const replay: Uint8Array[] = []
+    subscribeTerminalOutput('snap', data => replay.push(data), snapshot => snapshots.push(snapshot))()
+    expect(snapshots).toEqual([])
+    expect(decode(replay)).toContain('ring')
   })
 })
