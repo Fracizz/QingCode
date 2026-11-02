@@ -55,22 +55,10 @@
 
 .status-connection {
   max-width: 32ch;
-  border: 1px solid color-mix(in srgb, var(--color-fg) 16%, transparent);
-  background: color-mix(in srgb, var(--color-fg) 5%, var(--color-bg-status));
 }
 
 .status-bar-shell .status-connection {
   font-size: var(--ui-font-size);
-}
-
-.status-connection[data-tone="pending"] {
-  border-color: color-mix(in srgb, var(--color-warn) 40%, transparent);
-  background: color-mix(in srgb, var(--color-warn) 12%, var(--color-bg-status));
-}
-
-.status-connection[data-tone="offline"] {
-  border-color: color-mix(in srgb, var(--color-danger) 45%, transparent);
-  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-bg-status));
 }
 
 .status-connection-dot {
@@ -78,10 +66,4 @@
   height: 6px;
   flex-shrink: 0;
   border-radius: 50%;
-}
-
-/* Keep state tint on hover while making the interactive boundary visible. */
-.status-connection:hover,
-.status-connection:focus-visible {
-  border-color: var(--color-fg-muted);
 }
