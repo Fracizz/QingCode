@@ -36,11 +36,6 @@ import {
   getTerminalScrollback,
   scrollbackMaxChars,
 } from '@/lib/terminal/terminalScrollbackSettings'
-// 只引类型：headless xterm 由懒加载的终端视图创建，不进主包。
-import type {
-  TerminalBackgroundScreenHandle,
-  TerminalViewSnapshot,
-} from '@/lib/terminal/terminalBackgroundScreen'
 import {
   absorbInputForHistory,
   appendTerminalByteRing,
@@ -407,20 +402,52 @@ const terminalOutputFlushTimers = new Map<string, number>()
 const terminalOutputFlushRafIds = new Set<string>()
 
 /**
- * 终端视图卸载（切换项目等）后继续维护的后台屏幕，做法同 VS Code 的 SerializeAddon 恢复：
- * 全屏 TUI 的原始字节按当时的网格排版，重新回放会先显示错位画面；后台屏幕则一直按
- * PTY 网格解析输出，重挂时直接导出已排好的当前屏幕。
+ * 带网格的屏幕快照，对应 VS Code pty host 接回时下发的 ReplayEntry（cols/rows/data）：
+ * 快照按产生时的网格排版，接收方必须先按该网格写入，再 resize 到自身尺寸。
  */
-const terminalBackgroundScreens = new Map<string, TerminalBackgroundScreenHandle>()
-/** 正在从后台屏幕异步导出快照的终端；期间视图卸载时要把屏幕放回去。 */
-const terminalScreenRestoresInFlight = new Set<string>()
-/** 终端被清空、重置或退出时递增，作废进行中的快照导出。 */
-const terminalScreenGenerations = new Map<string, number>()
+export interface TerminalViewSnapshot {
+  data: string
+  cols: number
+  rows: number
+}
+type TerminalScreenListener = (snapshot: TerminalViewSnapshot) => void
+/** 已挂载视图接收屏幕快照的回调（daemon 接回时下发，见 applyTerminalScreen）。 */
+const terminalScreenListeners = new Map<string, Set<TerminalScreenListener>>()
 
-function discardTerminalBackgroundScreen(id: string) {
-  terminalScreenGenerations.set(id, (terminalScreenGenerations.get(id) ?? 0) + 1)
-  terminalBackgroundScreens.get(id)?.dispose()
-  terminalBackgroundScreens.delete(id)
+function addTerminalScreenListener(id: string, listener: TerminalScreenListener) {
+  const listeners = terminalScreenListeners.get(id) ?? new Set<TerminalScreenListener>()
+  listeners.add(listener)
+  terminalScreenListeners.set(id, listeners)
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0 && terminalScreenListeners.get(id) === listeners) {
+      terminalScreenListeners.delete(id)
+    }
+  }
+}
+
+/**
+ * daemon 接回时下发的屏幕快照。直接当普通输出写进尺寸不同的 xterm 会逐行错位，
+ * 所以交给视图按快照网格写入后再 fit 重绘（同 VS Code 处理 replay 事件）。ring 也追加
+ * 快照字节，供持久化与尚未挂载的视图回放（回放后由重绘兜底）。
+ */
+function applyTerminalScreen(id: string, snapshot: TerminalViewSnapshot) {
+  // 先把批处理中的输出交给视图，保证快照排在它们之后。
+  if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
+  touchRing(id, new TextEncoder().encode(snapshot.data))
+  terminalScreenListeners.get(id)?.forEach(listener => listener(snapshot))
+}
+
+function parseTerminalScreenPayload(
+  payload: unknown
+): ({ id: string } & TerminalViewSnapshot) | null {
+  if (!payload || typeof payload !== 'object') return null
+  const record = payload as Record<string, unknown>
+  const isSize = (value: unknown): value is number =>
+    typeof value === 'number' && Number.isInteger(value) && value > 0
+  if (typeof record.id !== 'string' || typeof record.data !== 'string') return null
+  if (!isSize(record.cols) || !isSize(record.rows)) return null
+  return { id: record.id, data: record.data, cols: record.cols, rows: record.rows }
 }
 
 /** ring 每次变化递增；持久化时只重新解码版本变化的终端。 */
@@ -520,7 +547,6 @@ function publishTerminalOutput(id: string, data: unknown) {
   if (!bytes) return
   recordPerformanceThroughput('terminalBytes', bytes.length)
   touchRing(id, bytes)
-  terminalBackgroundScreens.get(id)?.write(bytes)
 
   const listeners = terminalOutputListeners.get(id)
   if (listeners?.size) {
@@ -528,30 +554,8 @@ function publishTerminalOutput(id: string, data: unknown) {
   }
 }
 
-/**
- * 视图卸载前把屏幕交给后台继续维护。`createScreen` 用视图当前屏幕建一个后台屏幕；
- * `unparsed` 是已交给 xterm 但还没解析进缓冲区的字节；已排队但还没派发给视图的输出
- * 也一并写入，保证重挂后不丢不重。
- */
-export function saveTerminalBackgroundScreen(
-  id: string,
-  createScreen: () => TerminalBackgroundScreenHandle,
-  unparsed: readonly Uint8Array[] = []
-) {
-  // 视图还在等后台屏幕导出时就被卸载：它画的不是最终屏幕，后台屏幕由订阅取消时放回。
-  if (terminalScreenRestoresInFlight.has(id)) return
-  discardTerminalBackgroundScreen(id)
-  const screen = createScreen()
-  for (const chunk of unparsed) screen.write(chunk)
-  for (const chunk of terminalPendingOutput.get(id) ?? []) screen.write(chunk)
-  terminalPendingOutput.delete(id)
-  cancelScheduledOutputFlush(id)
-  terminalBackgroundScreens.set(id, screen)
-}
-
 function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   useTerminalDraftStore.getState().clearDraft(id)
-  discardTerminalBackgroundScreen(id)
   terminalScrollbackRings.delete(id)
   terminalPendingOutput.delete(id)
   cancelScheduledOutputFlush(id)
@@ -566,7 +570,6 @@ function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
 
 /** Discard queued/previous replay bytes before a fresh daemon screen snapshot. */
 function prepareTerminalOutputForSnapshot(id: string) {
-  discardTerminalBackgroundScreen(id)
   terminalPendingOutput.delete(id)
   cancelScheduledOutputFlush(id)
   terminalScrollbackRings.delete(id)
@@ -610,98 +613,35 @@ export function hydrateTerminalOutputForTabs(terminalIds: Iterable<string>) {
 }
 
 
-function replayTerminalRing(id: string, listener: TerminalOutputListener) {
-  const ring = terminalByteRingToBytes(terminalScrollbackRings.get(id))
-  if (ring.length) listener(ring)
-}
-
-function unsubscribeTerminalListener(
-  id: string,
-  listeners: Set<TerminalOutputListener>,
-  listener: TerminalOutputListener
-) {
-  listeners.delete(listener)
-  if (listeners.size === 0) {
-    terminalOutputListeners.delete(id)
-    terminalPendingOutput.delete(id)
-    cancelScheduledOutputFlush(id)
-  }
-}
-
 /**
- * 订阅终端输出。新视图先拿到一次完整恢复：传入 `onSnapshot` 且有后台屏幕时，异步导出
- * 屏幕后回调快照、再派发导出期间到达的输出；否则（或程序已退出全屏）回放整个 ring。
- * 恢复内容全部派发后调用 `onRestored`（ring 回放时同步调用；订阅已取消则不调用）。
+ * 订阅终端输出。新视图先拿到一次完整的 ring 回放；传入 `onScreen` 时还会收到 daemon
+ * 下发的带网格屏幕快照（见 applyTerminalScreen）。
  */
 export function subscribeTerminalOutput(
   id: string,
   listener: TerminalOutputListener,
-  onSnapshot?: (snapshot: TerminalViewSnapshot) => void,
-  onRestored?: () => void
+  onScreen?: TerminalScreenListener
 ) {
   // Deliver already-batched live bytes to existing views before a new view replays the ring.
   // This avoids both missing history and duplicating the pending tail in the new xterm.
   if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
   const listeners = terminalOutputListeners.get(id) ?? new Set<TerminalOutputListener>()
-  const screen = onSnapshot ? terminalBackgroundScreens.get(id) : undefined
-
-  if (!screen || !onSnapshot) {
-    listeners.add(listener)
-    terminalOutputListeners.set(id, listeners)
-    // A newly mounted xterm needs one complete replay. Live output is batched below.
-    replayTerminalRing(id, listener)
-    onRestored?.()
-    return () => unsubscribeTerminalListener(id, listeners, listener)
-  }
-
-  // 导出期间新输出先排队（不再写进后台屏幕），快照交付后接着派发。
-  terminalBackgroundScreens.delete(id)
-  terminalScreenRestoresInFlight.add(id)
-  const generation = terminalScreenGenerations.get(id) ?? 0
-  let queued: Uint8Array[] | null = []
-  let subscribed = true
-  const gated: TerminalOutputListener = data => {
-    if (queued) queued.push(data)
-    else listener(data)
-  }
-  listeners.add(gated)
+  listeners.add(listener)
   terminalOutputListeners.set(id, listeners)
+  const removeScreenListener = onScreen ? addTerminalScreenListener(id, onScreen) : undefined
 
-  void screen.capture().then(snapshot => {
-    if (!subscribed) return
-    terminalScreenRestoresInFlight.delete(id)
-    screen.dispose()
-    // 已到达但还在批处理里的输出先并入队列，再决定恢复方式，避免与 ring 重复。
-    if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
-    const pending = queued ?? []
-    queued = null
-    if (snapshot && (terminalScreenGenerations.get(id) ?? 0) === generation) {
-      onSnapshot(snapshot)
-      if (pending.length) listener(combineOutputChunks(pending))
-    } else {
-      // ring 已包含排队期间的全部输出，回放 ring 即可。
-      replayTerminalRing(id, listener)
-    }
-    onRestored?.()
-  })
+  // A newly mounted xterm needs one complete replay. Live output is batched below.
+  const ring = terminalByteRingToBytes(terminalScrollbackRings.get(id))
+  if (ring.length) listener(ring)
 
   return () => {
-    if (subscribed && queued) {
-      // 快照还没导出就卸载：排队的输出补写回后台屏幕，屏幕原样放回供下次重挂。
-      terminalScreenRestoresInFlight.delete(id)
-      if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
-      if (
-        (terminalScreenGenerations.get(id) ?? 0) === generation &&
-        !terminalBackgroundScreens.has(id)
-      ) {
-        for (const chunk of queued) screen.write(chunk)
-        terminalBackgroundScreens.set(id, screen)
-      } else {
-        screen.dispose()
-      }
+    removeScreenListener?.()
+    listeners.delete(listener)
+    if (listeners.size === 0) {
+      terminalOutputListeners.delete(id)
+      terminalPendingOutput.delete(id)
+      cancelScheduledOutputFlush(id)
     }
-    subscribed = false
-    unsubscribeTerminalListener(id, listeners, gated)
   }
 }
 
@@ -2157,6 +2097,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       unlistenExit,
       unlistenConnection,
       unlistenReset,
+      unlistenScreen,
       unlistenPoolNotice,
     ] = await Promise.all([
       listen<{ id: string; data: unknown }>('terminal-data', event => {
@@ -2177,7 +2118,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         const { id, exitCode: exit_code, disconnected, reason } = parsed
         clearTerminalCommandActivity(id)
         // 进程结束后屏幕可能被替换（重启/新 Shell），恢复时改用 ring 回放。
-        discardTerminalBackgroundScreen(id)
         const tab = get().terminals.find(t => t.id === id)
         if (!tab) {
           consumeIntentionalPtyKill(id)
@@ -2267,6 +2207,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         prepareTerminalOutputForSnapshot(id)
         requestTerminalReset(id)
       }),
+      listen('terminal-screen', event => {
+        const screen = parseTerminalScreenPayload(event.payload)
+        if (!screen || !get().terminals.some(terminal => terminal.id === screen.id)) return
+        applyTerminalScreen(screen.id, { data: screen.data, cols: screen.cols, rows: screen.rows })
+      }),
       // server 模式终端共用 SSH 连接；已有连接按 sshd MaxSessions 占满、新开连接时提示。
       listen<{ message?: unknown }>('ssh-terminal-pool-notice', event => {
         const message = event.payload?.message
@@ -2281,6 +2226,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       unlistenInputError()
       unlistenConnection()
       unlistenReset()
+      unlistenScreen()
       unlistenPoolNotice()
     }
   },

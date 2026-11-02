@@ -313,6 +313,22 @@ struct TerminalResetPayload {
     id: String,
 }
 
+/// daemon 的 vt100 屏幕快照。快照按 daemon 网格排版（被标记为折行的行依赖终端自动
+/// 折行衔接），前端必须先按 `cols`×`rows` 写入，再 fit 到自身尺寸并让程序重绘；
+/// 直接写进尺寸不同的 xterm 会逐行错位。
+#[derive(Clone, Serialize)]
+struct TerminalScreenPayload {
+    id: String,
+    data: String,
+    cols: u16,
+    rows: u16,
+}
+
+/// 冷接回（应用重启后首次接回）请求的起始序号：超出 daemon 的 `seq_end`，
+/// daemon 因此直接给屏幕快照而不是从头重放。原始历史是在多种 PTY 尺寸下产生的，
+/// 按当前尺寸整段重放会把全屏 TUI 画花；快照则是 daemon 当前排好的屏幕。
+const COLD_ATTACH_FROM_SEQ: u64 = u64::MAX;
+
 /// `pty.list` 中 P3 需要的字段；owner/cwd 对旧 daemon 可缺省。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -444,6 +460,18 @@ async fn request_owned_detached_ptys(
     let response: PtyListResponse = serde_json::from_value(response)
         .map_err(|error| format!("解析 pty.list 应答失败：{error}"))?;
     Ok(owned_detached_ptys(response.ptys, client_id))
+}
+
+fn emit_screen(app: &AppHandle, id: &str, screen: &str, cols: u16, rows: u16) {
+    let _ = app.emit(
+        "terminal-screen",
+        TerminalScreenPayload {
+            id: id.to_string(),
+            data: screen.to_string(),
+            cols: cols.max(1),
+            rows: rows.max(1),
+        },
+    );
 }
 
 fn emit_data(app: &AppHandle, id: &str, data: &[u8]) {
@@ -927,7 +955,7 @@ pub(crate) async fn attach_persistent_terminal(
         return Err("PTY 工作目录不在当前可信项目根内".to_string());
     }
 
-    let attach = match session.attach(&pty_id, 0).await {
+    let attach = match session.attach(&pty_id, COLD_ATTACH_FROM_SEQ).await {
         Ok(attach) => attach,
         Err(error) if attach_terminal_is_gone(&error) => {
             session.shutdown();
@@ -983,7 +1011,8 @@ pub(crate) async fn attach_persistent_terminal(
     });
     // 接回出错只放弃本次接回，绝不 kill：远端进程仍在运行，留作 detached 终端，
     // 稍后可从孤儿终端提示再次接回。
-    let (_, restore) = match apply_attach_restore(&terminal, &app, &attach).await {
+    // 冷接回：前端已有重启前持久化的输出，快照直接盖在上面，不清空历史。
+    let (_, restore) = match apply_attach_restore(&terminal, &app, &attach, false).await {
         Ok(result) => result,
         Err(error) => {
             session.shutdown();
@@ -1476,7 +1505,7 @@ async fn reconnect_terminal(
         transport.release();
         return ReconnectEnd::Retry("daemon 终端事件通道不可用".into());
     };
-    let (exited, restore) = match apply_attach_restore(terminal, app, &attach).await {
+    let (exited, restore) = match apply_attach_restore(terminal, app, &attach, true).await {
         Ok(result) => result,
         Err(error) => {
             // 已写出的输出已推进 next_seq，下次 attach 从缺口续补。
@@ -1528,15 +1557,23 @@ async fn reconnect_terminal(
     })
 }
 
+/// `reset_before_screen`：断线重连拿到快照时前端缓冲里是断线前的半截输出，需先清空；
+/// 冷接回时前端缓冲是重启前的持久化历史，快照（自带清屏）直接盖在上面即可保留历史。
 async fn apply_attach_restore(
     terminal: &PersistentTerminal,
     app: &AppHandle,
     attach: &DaemonAttachResult,
+    reset_before_screen: bool,
 ) -> Result<(Option<i32>, RestoreKind), String> {
     let screen = attach
         .response
         .get("screen")
         .and_then(serde_json::Value::as_str);
+    let local_size = *terminal
+        .size
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (screen_cols, screen_rows) = attach_screen_size(&attach.response, local_size);
     let seq_end = attach
         .response
         .get("seqEnd")
@@ -1574,14 +1611,11 @@ async fn apply_attach_restore(
         attach_result_maps_to_restore_kind(screen.is_some(), replay.len(), exited.is_some());
     match restore {
         RestoreKind::Snapshot => {
-            let _ = app.emit(
-                "terminal-reset",
-                TerminalResetPayload {
-                    id: terminal.id.clone(),
-                },
-            );
+            if reset_before_screen {
+                emit_reset(app, &terminal.id);
+            }
             if let Some(screen) = screen {
-                emit_data(app, &terminal.id, screen.as_bytes());
+                emit_screen(app, &terminal.id, screen, screen_cols, screen_rows);
             }
             terminal.next_seq.store(seq_end, Ordering::Release);
         }
@@ -1615,13 +1649,10 @@ async fn apply_attach_restore(
     }
     if restore == RestoreKind::Exit {
         if let Some(screen) = screen {
-            let _ = app.emit(
-                "terminal-reset",
-                TerminalResetPayload {
-                    id: terminal.id.clone(),
-                },
-            );
-            emit_data(app, &terminal.id, screen.as_bytes());
+            if reset_before_screen {
+                emit_reset(app, &terminal.id);
+            }
+            emit_screen(app, &terminal.id, screen, screen_cols, screen_rows);
             terminal.next_seq.store(seq_end, Ordering::Release);
         } else {
             let mut next_seq = terminal.next_seq.load(Ordering::Acquire);
@@ -1645,6 +1676,28 @@ async fn apply_attach_restore(
         }
     }
     Ok((exited, restore))
+}
+
+fn emit_reset(app: &AppHandle, id: &str) {
+    let _ = app.emit(
+        "terminal-reset",
+        TerminalResetPayload { id: id.to_string() },
+    );
+}
+
+/// 快照所在的 daemon 网格；旧 daemon 未返回尺寸时退回本端记录的 PTY 尺寸。
+fn attach_screen_size(response: &serde_json::Value, fallback: (u16, u16)) -> (u16, u16) {
+    let read = |key: &str| {
+        response
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok())
+            .filter(|value| *value > 0)
+    };
+    (
+        read("cols").unwrap_or(fallback.0),
+        read("rows").unwrap_or(fallback.1),
+    )
 }
 
 async fn kill_offline(terminal: &PersistentTerminal, root: &RegisteredRoot, app: &AppHandle) {
@@ -1905,6 +1958,24 @@ mod tests {
         // 关闭后不再接受输入。
         terminal.mark_closed();
         assert!(terminal.write(vec![b'x']).is_err());
+    }
+
+    #[test]
+    fn attach_screen_size_prefers_daemon_grid_and_falls_back_to_local_size() {
+        let daemon = serde_json::json!({ "cols": 120, "rows": 40 });
+        assert_eq!(attach_screen_size(&daemon, (80, 24)), (120, 40));
+        let legacy = serde_json::json!({ "cols": 0, "rows": 99999 });
+        assert_eq!(attach_screen_size(&legacy, (80, 24)), (80, 24));
+        assert_eq!(
+            attach_screen_size(&serde_json::json!({}), (80, 24)),
+            (80, 24)
+        );
+    }
+
+    #[test]
+    fn cold_attach_requests_a_screen_instead_of_raw_history() {
+        // 冷接回的起始序号必须超出任何真实 seq_end，daemon 才会给快照而不是从头重放。
+        assert_eq!(COLD_ATTACH_FROM_SEQ, u64::MAX);
     }
 
     #[test]

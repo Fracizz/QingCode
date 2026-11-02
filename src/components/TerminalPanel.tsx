@@ -1,6 +1,4 @@
 import {
-  lazy,
-  Suspense,
   useEffect,
   useRef,
   useState,
@@ -11,6 +9,7 @@ import { Terminal as TerminalIcon } from 'lucide-react'
 import PanelResizer from './PanelResizer'
 import TerminalTabs from './TerminalTabs'
 import EmptyState from './EmptyState'
+import { TerminalHosts, TerminalSlot, type TerminalHostEntry } from './TerminalHost'
 import {
   TERMINAL_FOCUS_PANES,
   useTerminalStore,
@@ -29,8 +28,6 @@ import {
 import { beginPanelResize, settlePanelResize } from '../lib/panelResize'
 import { parseTerminalPaneRatio } from '../lib/terminalPaneRatio'
 
-const TerminalView = lazy(() => import('./Terminal'))
-
 const DUAL_RATIO_KEY = 'qingcode:dual-terminal-ratio'
 const QUAD_RATIO_KEY = 'qingcode:quad-terminal-ratio'
 /** Either dual pane may grow up to 90% of the dual band. */
@@ -40,10 +37,6 @@ const DUAL_RATIO_MAX = 0.9
 const DUAL_RESIZER_PX = 8
 
 type QuadRatios = { col: number; row: number }
-
-function LazyFallback({ className = 'flex-1 bg-bg' }: { className?: string }) {
-  return <div className={className} aria-hidden="true" />
-}
 
 function clampRatio(value: number): number {
   return Math.min(DUAL_RATIO_MAX, Math.max(DUAL_RATIO_MIN, value))
@@ -149,6 +142,18 @@ export default function TerminalPanel({
   const ensureQuadTerminals = useTerminalStore(s => s.ensureQuadTerminals)
   const currentProject = useProjectStore(s => s.currentProject)
   const projectTerminals = terminals.filter(term => term.projectId === currentProject?.id)
+  // 打开过的项目的终端视图一直常驻（见 TerminalHost），切回来不重建 xterm；
+  // 没打开过的项目不提前创建，保持原来的按需挂载。
+  const [visitedTerminalIds, setVisitedTerminalIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  )
+  if (projectTerminals.some(term => !visitedTerminalIds.has(term.id))) {
+    setVisitedTerminalIds(previous => {
+      const next = new Set(previous)
+      for (const term of projectTerminals) next.add(term.id)
+      return next
+    })
+  }
   const isSide = position === 'side'
   const [dualRatio, setDualRatio] = useState(loadDualRatio)
   const [quadRatios, setQuadRatios] = useState(loadQuadRatios)
@@ -382,21 +387,22 @@ export default function TerminalPanel({
     multiPaneList.map(paneId).filter((id): id is string => Boolean(id)),
   )
 
-  /** Keep every project terminal mounted; park ones not shown in a visible pane. */
-  const parkedTerminalViews = projectTerminals
-    .filter(term => !visiblePaneIds.has(term.id))
-    .map(term => (
-      <div key={term.id} className="hidden" aria-hidden="true">
-        <Suspense fallback={<LazyFallback className="h-full bg-bg-terminal" />}>
-          <TerminalView terminalId={term.id} isActive={false} layoutKey={layoutKey} />
-        </Suspense>
-      </div>
-    ))
+  const focusedTerminalId = multiPane
+    ? visiblePaneIds.has(paneId(terminalFocusPane) ?? '')
+      ? paneId(terminalFocusPane)
+      : null
+    : activeTerminalId
+  const hostEntries: TerminalHostEntry[] = terminals
+    .filter(term => term.projectId === currentProject?.id || visitedTerminalIds.has(term.id))
+    .map(term => ({
+      terminalId: term.id,
+      isActive: term.id === focusedTerminalId && term.projectId === currentProject?.id,
+    }))
+  const terminalHosts = <TerminalHosts entries={hostEntries} layoutKey={layoutKey} />
 
   const renderPaneTerminal = (pane: TerminalFocusPane) => {
     const termId = paneId(pane)
     const term = termId ? projectTerminals.find(t => t.id === termId) : undefined
-    const focused = !multiPane || terminalFocusPane === pane
     if (!term) {
       return (
         <EmptyState
@@ -407,9 +413,7 @@ export default function TerminalPanel({
       )
     }
     return (
-      <Suspense fallback={<LazyFallback className="h-full bg-bg-terminal" />}>
-        <TerminalView terminalId={term.id} isActive={focused} layoutKey={layoutKey} />
-      </Suspense>
+      <TerminalSlot terminalId={term.id} onPointerDown={() => setTerminalFocusPane(pane)} />
     )
   }
 
@@ -452,9 +456,7 @@ export default function TerminalPanel({
           pane === 'primary' ? 'z-10 visible' : 'invisible pointer-events-none z-0'
         }`}
       >
-        <Suspense fallback={<LazyFallback className="h-full bg-bg-terminal" />}>
-          <TerminalView terminalId={term.id} isActive={isFocused} layoutKey={layoutKey} />
-        </Suspense>
+        <TerminalSlot terminalId={term.id} />
       </div>
     )
   })
@@ -488,7 +490,6 @@ export default function TerminalPanel({
         </div>
         {paneShell('secondary', { showPanelActions: true })}
       </div>
-      {parkedTerminalViews}
     </>
   )
 
@@ -551,7 +552,6 @@ export default function TerminalPanel({
           />
         </div>
       </div>
-      {parkedTerminalViews}
     </>
   )
 
@@ -577,8 +577,11 @@ export default function TerminalPanel({
     </>
   )
 
+  // 宿主固定在片段首位：侧边/底部切换只换外层 div，常驻终端视图不受影响。
   if (isSide) {
     return (
+      <>
+      {terminalHosts}
       <div
         ref={terminalPanelRef}
         data-terminal-panel
@@ -614,10 +617,13 @@ export default function TerminalPanel({
           {body}
         </div>
       </div>
+      </>
     )
   }
 
   return (
+    <>
+    {terminalHosts}
     <div
       ref={terminalPanelRef}
       data-terminal-panel
@@ -647,5 +653,6 @@ export default function TerminalPanel({
         {body}
       </div>
     </div>
+    </>
   )
 }

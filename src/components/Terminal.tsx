@@ -5,14 +5,12 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search'
-import { SerializeAddon } from '@xterm/addon-serialize'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { openUrl } from '@tauri-apps/plugin-opener'
 import {
   consumeTerminalDisconnectNotice,
   hasTerminalScrollback,
-  saveTerminalBackgroundScreen,
   subscribeTerminalOutput,
   useTerminalStore,
 } from '../store/terminalStore'
@@ -71,7 +69,6 @@ import {
   type TerminalGridSize,
 } from '@/lib/terminal/terminalResizePolicy'
 import { waitForTerminalRender } from '@/lib/terminal/terminalRenderBarrier'
-import { TerminalBackgroundScreen } from '@/lib/terminal/terminalBackgroundScreen'
 import {
   acquireTerminalWebglSlot,
   releaseTerminalWebglSlot,
@@ -675,7 +672,6 @@ export default function TerminalView({
 
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
-    const serializeAddon = new SerializeAddon()
     const linkAddon = new WebLinksAddon((_event, uri) => {
       // Ctrl/Cmd + 点击链接：用系统默认浏览器打开（Tauri opener 插件）。
       void openUrl(uri).catch(e => {
@@ -685,7 +681,6 @@ export default function TerminalView({
     const unicode11 = new Unicode11Addon()
     term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
-    term.loadAddon(serializeAddon)
     term.loadAddon(linkAddon)
     term.loadAddon(unicode11)
     term.unicode.activeVersion = '11'
@@ -946,50 +941,45 @@ export default function TerminalView({
       setTerminalOutputPaused(terminalId, flowHolder, paused)
     )
     let unsubscribeOutput: (() => void) | undefined
-    /** 已交给 xterm、尚未解析进缓冲区的输出；卸载存快照时要补进 tail。 */
-    const unparsedOutput: Uint8Array[] = []
     const subscribeTimer = window.setTimeout(() => {
-      // 回放前先按容器定好行列：否则历史字节会写进默认 80x20 网格，
-      // 之后再 fit 也无法还原（切换项目回来时终端视图是重新挂载的）。
+      // 回放前先按容器定好行列：否则历史字节会写进默认 80x20 网格，之后再 fit 也无法还原。
+      // 视图由 TerminalHost 常驻，只有应用启动或新建标签时才走这里的回放。
       resizeGridFromContainer()
       setReplayMasked(true)
       let replaying = true
-      let restoredFromSnapshot = false
       unsubscribeOutput = subscribeTerminalOutput(terminalId, data => {
         const size = data.length
         const isReplay = replaying
         writeFlow.written(size)
-        unparsedOutput.push(data)
         term.write(data, () => {
-          unparsedOutput.shift()
           writeFlow.parsed(size)
           lastOutputParsedAtRef.current = Date.now()
-          // 快照本身就是排好的屏幕，接在后面的 tail 是同一网格下的输出，无需补重绘。
-          if (!isReplay || restoredFromSnapshot || xtermRef.current !== term) return
+          if (!isReplay || xtermRef.current !== term) return
           // 只对全屏 TUI（备用缓冲区）补一次重绘；普通 Shell 的回放本身就是最终画面。
           if (term.buffer.active.type !== 'alternate') return
           redrawPendingRef.current = true
           scheduleFit(true, false)
         })
       }, snapshot => {
-        restoredFromSnapshot = true
-        // 快照按卸载时的网格序列化。网格不同就先按原网格写入，再由 fit 正常 resize，
-        // 让 TUI 按新尺寸重画（期间由回放遮罩盖住）。
+        // daemon 接回下发的屏幕快照按 daemon 网格排版（同 VS Code 的 replay 事件）：
+        // 网格不同就先按原网格写入，再由 fit 正常 resize，让 TUI 按新尺寸重画；
+        // 期间用遮罩盖住，揭开由 flushPendingRedraw 等重绘回包后负责。
         const fitsGrid = term.cols === snapshot.cols && term.rows === snapshot.rows
-        if (!fitsGrid) term.resize(snapshot.cols, snapshot.rows)
+        if (!fitsGrid) {
+          setReplayMasked(true)
+          term.resize(snapshot.cols, snapshot.rows)
+        }
         term.write(snapshot.data, () => {
           if (fitsGrid || xtermRef.current !== term) return
           redrawPendingRef.current = true
           scheduleFit(true, false)
         })
-      }, () => {
-        // 后台屏幕导出是异步的，恢复内容全部写入后才结束回放阶段。
-        replaying = false
-        term.write('', () => {
-          clipboardWritesEnabled = true
-          // 普通 Shell 的回放就是最终画面；全屏 TUI 等 flushPendingRedraw 重绘后再揭开。
-          if (!redrawPendingRef.current && xtermRef.current === term) setReplayMasked(false)
-        })
+      })
+      replaying = false
+      term.write('', () => {
+        clipboardWritesEnabled = true
+        // 普通 Shell 的回放就是最终画面；全屏 TUI 等 flushPendingRedraw 重绘后再揭开。
+        if (!redrawPendingRef.current && xtermRef.current === term) setReplayMasked(false)
       })
       const restored = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
       if (restored?.status !== 'exited' || !hadRestoredScrollback) return
@@ -1114,27 +1104,6 @@ export default function TerminalView({
         revealTimerRef.current = null
       }
       pendingPtySizeRef.current = null
-      // 仍在运行的全屏 TUI（切换项目等）把当前屏幕交给后台 headless 终端继续维护，
-      // 重挂时直接导出排好的画面；普通缓冲区的 ring 回放本身就是正确画面，关闭的标签也无需保存。
-      if (
-        unsubscribeOutput &&
-        term.buffer.active.type === 'alternate' &&
-        useTerminalStore.getState().terminals.some(tab => tab.id === terminalId)
-      ) {
-        try {
-          saveTerminalBackgroundScreen(
-            terminalId,
-            () =>
-              new TerminalBackgroundScreen(
-                { data: serializeAddon.serialize(), cols: term.cols, rows: term.rows },
-                getTerminalScrollback()
-              ),
-            unparsedOutput
-          )
-        } catch {
-          // 序列化失败时退回 ring 回放。
-        }
-      }
       unsubscribeOutput?.()
       writeFlow.dispose()
       disposeOscHandlers()
