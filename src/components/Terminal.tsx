@@ -12,7 +12,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import {
   consumeTerminalDisconnectNotice,
   hasTerminalScrollback,
-  saveTerminalViewSnapshot,
+  saveTerminalBackgroundScreen,
   subscribeTerminalOutput,
   useTerminalStore,
 } from '../store/terminalStore'
@@ -71,6 +71,12 @@ import {
   type TerminalGridSize,
 } from '@/lib/terminal/terminalResizePolicy'
 import { waitForTerminalRender } from '@/lib/terminal/terminalRenderBarrier'
+import { TerminalBackgroundScreen } from '@/lib/terminal/terminalBackgroundScreen'
+import {
+  acquireTerminalWebglSlot,
+  releaseTerminalWebglSlot,
+  touchTerminalWebglSlot,
+} from '@/lib/terminal/terminalWebglBudget'
 import { registerTerminalOscHandlers } from '../utils/terminalOsc'
 import { shouldApplyOscTabTitle } from '../utils/terminalName'
 import { translate } from '../lib/i18n'
@@ -202,6 +208,12 @@ function windowsPtyOptions(): { backend: 'conpty'; buildNumber: number } | undef
   return { backend: 'conpty', buildNumber: 22621 }
 }
 
+/** 单个终端 WebGL 上下文连续丢失这么多次后不再尝试，保持 DOM 渲染。 */
+const TERMINAL_WEBGL_MAX_CONTEXT_LOSSES = 3
+const TERMINAL_WEBGL_RETRY_MS = 1000
+/** 区分同一终端的多次挂载（StrictMode / 快速重挂），避免互相归还对方的预算槽位。 */
+let terminalWebglMountSeq = 0
+
 interface TerminalViewProps {
   terminalId: string
   layoutKey?: string
@@ -229,6 +241,8 @@ export default function TerminalView({
   /** 最近一次 PTY 输出解析完成的时间，用于判断 TUI 重绘是否已经停下来。 */
   const lastOutputParsedAtRef = useRef(0)
   const revealTimerRef = useRef<number | null>(null)
+  /** 申请或刷新 WebGL 渲染（预算见 terminalWebglBudget）；挂载时由主 effect 赋值。 */
+  const ensureWebglRef = useRef<() => void>(() => {})
   const isActiveRef = useRef(isActive)
   const previousStatusRef = useRef<string | undefined>(undefined)
   const [contextMenu, setContextMenu] = useState<{
@@ -682,30 +696,69 @@ export default function TerminalView({
       setSearchMatchTotal(event.resultCount)
     })
 
-    // Prefer WebGL so customGlyphs apply; fall back silently to canvas.
+    // Prefer WebGL so customGlyphs apply; fall back silently to the DOM renderer.
     // Dynamic import keeps the heavy addon out of the initial xterm chunk.
+    // WebGL 上下文有全局上限，按 terminalWebglBudget 预算申请：超额时回收不可见终端，
+    // 被回收或上下文丢失的终端在重新可见时再申请。
     let webglCancelled = false
-    void import('@xterm/addon-webgl')
-      .then(({ WebglAddon }) => {
-        if (webglCancelled || xtermRef.current !== term) return
-        try {
-          // 【终端防闪烁关键配置，请勿改回 false】拖动开始时 panelResize.ts 要把
-          // 当前 WebGL canvas 复制成静态快照；preserveDrawingBuffer=false 时浏览器
-          // 合成后允许丢弃像素，快照会随机变成空白。修改前必须替换整套快照方案。
-          const webgl = new WebglAddon(true)
-          webgl.onContextLoss(() => {
-            try {
-              webgl.dispose()
-            } catch {}
-          })
-          term.loadAddon(webgl)
-        } catch {
-          // Canvas renderer remains active.
-        }
-      })
-      .catch(() => {
-        // Canvas renderer remains active.
-      })
+    let webgl: { dispose(): void } | null = null
+    let webglLoading = false
+    let webglLosses = 0
+    const webglSlotKey = `${terminalId}#${++terminalWebglMountSeq}`
+    const isTerminalVisible = () => {
+      const el = containerRef.current
+      return Boolean(
+        el && el.offsetParent !== null && window.getComputedStyle(el).visibility !== 'hidden'
+      )
+    }
+    const releaseWebgl = () => {
+      const addon = webgl
+      webgl = null
+      releaseTerminalWebglSlot(webglSlotKey)
+      try {
+        addon?.dispose()
+      } catch {}
+    }
+    const ensureWebgl = () => {
+      if (webglCancelled) return
+      if (webgl) {
+        touchTerminalWebglSlot(webglSlotKey)
+        return
+      }
+      if (webglLoading || webglLosses >= TERMINAL_WEBGL_MAX_CONTEXT_LOSSES) return
+      webglLoading = true
+      void import('@xterm/addon-webgl')
+        .then(({ WebglAddon }) => {
+          webglLoading = false
+          if (webglCancelled || webgl) return
+          if (!acquireTerminalWebglSlot(webglSlotKey, isTerminalVisible, releaseWebgl)) return
+          try {
+            // 【终端防闪烁关键配置，请勿改回 false】拖动开始时 panelResize.ts 要把
+            // 当前 WebGL canvas 复制成静态快照；preserveDrawingBuffer=false 时浏览器
+            // 合成后允许丢弃像素，快照会随机变成空白。修改前必须替换整套快照方案。
+            const addon = new WebglAddon(true)
+            addon.onContextLoss(() => {
+              webglLosses += 1
+              releaseWebgl()
+              // GPU 重置后稍等再申请；不可见的终端等下次激活或可见时再申请。
+              window.setTimeout(() => {
+                if (isTerminalVisible()) ensureWebgl()
+              }, TERMINAL_WEBGL_RETRY_MS)
+            })
+            term.loadAddon(addon)
+            webgl = addon
+          } catch {
+            // DOM renderer remains active.
+            releaseTerminalWebglSlot(webglSlotKey)
+          }
+        })
+        .catch(() => {
+          // DOM renderer remains active.
+          webglLoading = false
+        })
+    }
+    ensureWebglRef.current = ensureWebgl
+    ensureWebgl()
 
     xtermRef.current = term
     fitAddonRef.current = fitAddon
@@ -929,12 +982,14 @@ export default function TerminalView({
           redrawPendingRef.current = true
           scheduleFit(true, false)
         })
-      })
-      replaying = false
-      term.write('', () => {
-        clipboardWritesEnabled = true
-        // 普通 Shell 的回放就是最终画面；全屏 TUI 等 flushPendingRedraw 重绘后再揭开。
-        if (!redrawPendingRef.current && xtermRef.current === term) setReplayMasked(false)
+      }, () => {
+        // 后台屏幕导出是异步的，恢复内容全部写入后才结束回放阶段。
+        replaying = false
+        term.write('', () => {
+          clipboardWritesEnabled = true
+          // 普通 Shell 的回放就是最终画面；全屏 TUI 等 flushPendingRedraw 重绘后再揭开。
+          if (!redrawPendingRef.current && xtermRef.current === term) setReplayMasked(false)
+        })
       })
       const restored = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
       if (restored?.status !== 'exited' || !hadRestoredScrollback) return
@@ -987,6 +1042,8 @@ export default function TerminalView({
       // WebView2 因此会显示空白帧。拖动的最终网格只能由下面的 settle 提交。
       if (isPanelResizing()) return
       scheduleFit()
+      // 从隐藏变为可见（如多窗格切换）时，被回收的 WebGL 在这里重新申请。
+      if (isTerminalVisible()) ensureWebgl()
     })
     if (containerRef.current) ro.observe(containerRef.current)
 
@@ -1042,6 +1099,9 @@ export default function TerminalView({
 
     return () => {
       webglCancelled = true
+      ensureWebglRef.current = () => {}
+      // addon 随 term.dispose() 一起释放，这里只归还预算槽位。
+      releaseTerminalWebglSlot(webglSlotKey)
       window.clearTimeout(subscribeTimer)
       for (const id of fitTimers) window.clearTimeout(id)
       if (fitRafRef.current !== 0) {
@@ -1054,17 +1114,21 @@ export default function TerminalView({
         revealTimerRef.current = null
       }
       pendingPtySizeRef.current = null
-      // 仍在运行的全屏 TUI（切换项目等）保存屏幕快照，重挂时直接恢复排好的画面；
-      // 普通缓冲区的 ring 回放本身就是正确画面，关闭的标签也无需保存。
+      // 仍在运行的全屏 TUI（切换项目等）把当前屏幕交给后台 headless 终端继续维护，
+      // 重挂时直接导出排好的画面；普通缓冲区的 ring 回放本身就是正确画面，关闭的标签也无需保存。
       if (
         unsubscribeOutput &&
         term.buffer.active.type === 'alternate' &&
         useTerminalStore.getState().terminals.some(tab => tab.id === terminalId)
       ) {
         try {
-          saveTerminalViewSnapshot(
+          saveTerminalBackgroundScreen(
             terminalId,
-            { data: serializeAddon.serialize(), cols: term.cols, rows: term.rows },
+            () =>
+              new TerminalBackgroundScreen(
+                { data: serializeAddon.serialize(), cols: term.cols, rows: term.rows },
+                getTerminalScrollback()
+              ),
             unparsedOutput
           )
         } catch {
@@ -1121,6 +1185,7 @@ export default function TerminalView({
   useEffect(() => {
     if (!isActive) return
     scheduleFit(true, true)
+    ensureWebglRef.current()
   }, [isActive, scheduleFit])
 
   // Restart / deferred create: fit again as soon as a PTY is requested.

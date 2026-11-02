@@ -75,7 +75,8 @@ vi.mock('./uiStore', () => ({
   },
 }))
 
-import { saveTerminalViewSnapshot, subscribeTerminalOutput, useTerminalStore } from './terminalStore'
+import { saveTerminalBackgroundScreen, subscribeTerminalOutput, useTerminalStore } from './terminalStore'
+import { TerminalBackgroundScreen } from '@/lib/terminal/terminalBackgroundScreen'
 import { activeTerminalsForConfig, findRunLinkageForTerminal } from '@/lib/runConfigRuntime'
 import { buildWorkspaceSessionSnapshot, parseWorkspaceSession } from '@/lib/workspaceSessionPersist'
 import { terminalFromPersisted } from '@/lib/workspaceSessionRestore'
@@ -798,35 +799,111 @@ describe('terminal view snapshots', () => {
     vi.useRealTimers()
   })
 
-  it('restores a remounted view from the snapshot plus output that arrived after it', () => {
+  const ALT_SCREEN = '\x1b[?1049h\x1b[2J\x1b[H'
+  type Snapshot = { data: string; cols: number; rows: number }
+  const saveTerminalViewSnapshot = (id: string, snapshot: Snapshot, unparsed: Uint8Array[] = []) =>
+    saveTerminalBackgroundScreen(id, () => new TerminalBackgroundScreen(snapshot, 1000), unparsed)
+
+  it('restores a remounted view from the background screen that kept parsing output', async () => {
     output('snap', 'old-grid-bytes')
-    saveTerminalViewSnapshot('snap', { data: 'SCREEN', cols: 100, rows: 30 }, [
-      new TextEncoder().encode('unparsed|'),
+    saveTerminalViewSnapshot('snap', { data: `${ALT_SCREEN}SCREEN`, cols: 40, rows: 5 }, [
+      new TextEncoder().encode('|unparsed'),
     ])
-    output('snap', 'after-unmount')
+    output('snap', '|after')
 
-    const snapshots: unknown[] = []
+    const snapshots: Snapshot[] = []
     const replay: Uint8Array[] = []
-    subscribeTerminalOutput('snap', data => replay.push(data), snapshot => snapshots.push(snapshot))()
+    const unsubscribe = subscribeTerminalOutput(
+      'snap',
+      data => replay.push(data),
+      snapshot => snapshots.push(snapshot)
+    )
+    await vi.runAllTimersAsync()
+    unsubscribe()
 
-    expect(snapshots).toEqual([{ data: 'SCREEN', cols: 100, rows: 30 }])
-    expect(decode(replay)).toBe('unparsed|after-unmount')
+    expect(snapshots).toHaveLength(1)
+    expect(snapshots[0]).toMatchObject({ cols: 40, rows: 5 })
+    expect(snapshots[0].data).toContain('SCREEN|unparsed|after')
+    expect(replay).toEqual([])
 
-    // 快照只用一次；下一次挂载回到完整 ring 回放。
+    // 后台屏幕只用一次；下一次挂载回到完整 ring 回放。
     const ringReplay: Uint8Array[] = []
     subscribeTerminalOutput('snap', data => ringReplay.push(data), snapshot => snapshots.push(snapshot))()
     expect(snapshots).toHaveLength(1)
-    expect(decode(ringReplay)).toBe('old-grid-bytesafter-unmount')
+    expect(decode(ringReplay)).toBe('old-grid-bytes|after')
   })
 
-  it('falls back to ring replay after the process exits', () => {
+  it('delivers output that arrives while exporting after the snapshot', async () => {
+    saveTerminalViewSnapshot('snap', { data: `${ALT_SCREEN}SCREEN`, cols: 40, rows: 5 })
+    const events: string[] = []
+    const unsubscribe = subscribeTerminalOutput(
+      'snap',
+      data => events.push(`data:${new TextDecoder().decode(data)}`),
+      () => events.push('snapshot'),
+      () => events.push('restored')
+    )
+    output('snap', 'LIVE')
+    expect(events).toEqual([])
+    await vi.runAllTimersAsync()
+    output('snap', 'NEXT')
+    await vi.runAllTimersAsync()
+    unsubscribe()
+
+    expect(events).toEqual(['snapshot', 'data:LIVE', 'restored', 'data:NEXT'])
+  })
+
+  it('falls back to ring replay when the program left the alternate screen', async () => {
     output('snap', 'ring')
-    saveTerminalViewSnapshot('snap', { data: 'SCREEN', cols: 80, rows: 24 })
+    saveTerminalViewSnapshot('snap', { data: `${ALT_SCREEN}SCREEN`, cols: 40, rows: 5 })
+    output('snap', '\x1b[?1049lshell')
+
+    const snapshots: Snapshot[] = []
+    const replay: Uint8Array[] = []
+    const unsubscribe = subscribeTerminalOutput(
+      'snap',
+      data => replay.push(data),
+      snapshot => snapshots.push(snapshot)
+    )
+    await vi.runAllTimersAsync()
+    unsubscribe()
+
+    expect(snapshots).toEqual([])
+    // ring 跨用例共用同一个终端 id，只断言末尾是本用例的输出。
+    expect(decode(replay).endsWith('ring\x1b[?1049lshell')).toBe(true)
+  })
+
+  it('puts the background screen back when the view unmounts before export finishes', async () => {
+    saveTerminalViewSnapshot('snap', { data: `${ALT_SCREEN}SCREEN`, cols: 40, rows: 5 })
+    const first = subscribeTerminalOutput('snap', () => {}, () => {})
+    output('snap', '|queued')
+    // 视图还在等导出时被卸载，它此时保存的画面不能覆盖后台屏幕。
+    saveTerminalViewSnapshot('snap', { data: 'BLANK', cols: 40, rows: 5 })
+    first()
+    output('snap', '|later')
+
+    const snapshots: Snapshot[] = []
+    const unsubscribe = subscribeTerminalOutput('snap', () => {}, snapshot => snapshots.push(snapshot))
+    await vi.runAllTimersAsync()
+    unsubscribe()
+
+    expect(snapshots).toHaveLength(1)
+    expect(snapshots[0].data).toContain('SCREEN|queued|later')
+  })
+
+  it('falls back to ring replay after the process exits', async () => {
+    output('snap', 'ring')
+    saveTerminalViewSnapshot('snap', { data: `${ALT_SCREEN}SCREEN`, cols: 80, rows: 24 })
     emit('terminal-exit', { id: 'snap', exitCode: 0 })
 
     const snapshots: unknown[] = []
     const replay: Uint8Array[] = []
-    subscribeTerminalOutput('snap', data => replay.push(data), snapshot => snapshots.push(snapshot))()
+    const unsubscribe = subscribeTerminalOutput(
+      'snap',
+      data => replay.push(data),
+      snapshot => snapshots.push(snapshot)
+    )
+    await vi.runAllTimersAsync()
+    unsubscribe()
     expect(snapshots).toEqual([])
     expect(decode(replay)).toContain('ring')
   })
