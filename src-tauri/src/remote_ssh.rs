@@ -3756,9 +3756,7 @@ pub async fn ssh_prepare_workspace(
     }
     let root = manager.registered_root(&root_uri)?;
     if manager.direct_config(&parsed.connection_id).is_some() {
-        manager
-            .ensure_connection_alive(&parsed.connection_id)
-            .await?;
+        direct_settings::prepare_root(&manager, &root, Some(&app)).await?;
         if !manager.root_is_passive(&root_uri) {
             manager.start_workspace_watch(app, &root);
         }

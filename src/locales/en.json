@@ -859,6 +859,7 @@
     "已接回 {count} 个远端终端": "Reattached {count} remote terminal(s)",
     "受终端数量上限限制，还有 {count} 个远端终端未接回": "{count} remote terminal(s) were not reattached because the terminal limit was reached",
     "会话输出已恢复；进程将按原配置重新启动": "Session output restored; the process will restart with its previous configuration",
+    "会话输出已恢复；正在接回原终端…": "Session output restored; reattaching to the original terminal…",
     "会话输出已恢复；可从终端标签重启进程": "Session output restored; restart the process from the terminal tab",
     "见 JSON 注释 / 帮助文档": "See JSON comments / help docs",
     "qingcode.projects 必须是数组": "qingcode.projects must be an array",

@@ -17,6 +17,7 @@ import {
 } from '../store/terminalStore'
 import { setTerminalOutputPaused } from '@/lib/ipc/terminal'
 import { TerminalWriteFlow } from '@/lib/terminal/terminalWriteFlow'
+import { terminalRestoreNotices } from '@/lib/terminal/terminalRestorePlan'
 import {
   protectTerminalSelectionMenu,
   shouldUseTerminalContextMenu,
@@ -1029,9 +1030,10 @@ export default function TerminalView({
         if (xtermRef.current !== term) return
         const latest = useTerminalStore.getState().terminals.find(t => t.id === terminalId)
         if (!latest || latest.status !== 'exited') return
+        const pendingRestoreNote = translate(terminalRestoreNotices(latest).history)
         if (sessionOpen === null) {
           if (latest.awaitingRestoreSpawn) {
-            term.writeln(`\x1b[90m[${translate('会话输出已恢复；进程将按原配置重新启动')}]\x1b[0m`)
+            term.writeln(`\r\n\x1b[90m[${pendingRestoreNote}]\x1b[0m`)
           }
           return
         }
@@ -1052,9 +1054,9 @@ export default function TerminalView({
         }
         const note =
           recovery === 'await-spawn'
-            ? translate('会话输出已恢复；进程将按原配置重新启动')
+            ? pendingRestoreNote
             : translate('会话输出已恢复；可从终端标签重启进程')
-        term.writeln(`\x1b[90m[${note}]\x1b[0m`)
+        term.writeln(`\r\n\x1b[90m[${note}]\x1b[0m`)
         if (recovery === 'locked') writeFinishedTaskHint(term)
       })()
     }, 0)
@@ -1244,11 +1246,15 @@ export default function TerminalView({
     if (!term || !terminal) return
     const previous = previousStatusRef.current
     if (terminal.status === 'starting' && previous === 'exited') {
-      if (terminal.restorePreservedOutput) {
-        term.writeln(`\x1b[90m\r\n── ${translate('正在重启终端…')} ──\x1b[0m`)
-      } else {
-        term.reset()
-        term.writeln(`\x1b[90m${translate('正在重启终端…')}\x1b[0m`)
+      const notice = terminalRestoreNotices(terminal).starting
+      // Reconnection keeps both the process and screen; only a new PTY is a restart.
+      if (notice) {
+        if (terminal.restorePreservedOutput) {
+          term.writeln(`\x1b[90m\r\n── ${translate(notice)} ──\x1b[0m`)
+        } else {
+          term.reset()
+          term.writeln(`\x1b[90m${translate(notice)}\x1b[0m`)
+        }
       }
     } else if (terminal.status === 'exited' && previous !== 'exited') {
       const exited = terminal

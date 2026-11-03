@@ -164,6 +164,9 @@ Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser
 只对版本不匹配且本机离线包合规的服务自动更新，不弹出更新/认证对话框，不自动下载。
 复用生产启动 hook、连接准备、自动更新、进度卡片和完成通知；IPC、SQLite 与设置均为内存模拟。
 覆盖无需点击即更新、成功提示、旧包/缺包、已是当前版本、未受信任和更新失败，产物在 `.dev/web-tests/startup-server-updates/`。
+原生启动准备另由 `cargo test --lib startup_preparation` 覆盖：使用真实本地 HTTPS gateway，
+验证健康但版本过旧的服务（包括已缓存端点）仍返回版本不匹配，受限项目不触发服务准备，
+当前版本与认证失败分别处理。Web 夹具模拟版本响应，不能替代这组原生分支检查。
 目录选择、下载与远端更新均为内存模拟，不替代原生目录选择和真实断网主机的 SSH 更新验收。
 
 安装与更新进度卡片场景位于 `/web-tests/server-operation.html`，Linux 运行

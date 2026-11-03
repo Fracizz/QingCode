@@ -507,12 +507,22 @@ pub(super) mod tests {
         tokio::task::JoinHandle<Result<(), String>>,
         std::path::PathBuf,
     ) {
+        gateway_with_version(qingcode_server::SERVER_VERSION).await
+    }
+
+    async fn gateway_with_version(
+        version: &str,
+    ) -> (
+        DirectConnectionConfig,
+        tokio::task::JoinHandle<Result<(), String>>,
+        std::path::PathBuf,
+    ) {
         let directory = std::env::temp_dir().join(format!(
             "qingcode-direct-client-{}",
             qingcode_server::generate_token()
         ));
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
-        let gateway = loop {
+        let mut gateway = loop {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let port = listener.local_addr().unwrap().port();
             drop(listener);
@@ -537,6 +547,7 @@ pub(super) mod tests {
                 Err(error) => panic!("temporary test gateway could not bind: {error}"),
             }
         };
+        gateway.info.server_version = version.into();
         let info = qingcode_server::direct::info(Some(&directory), true).unwrap();
         let config = DirectConnectionConfig {
             endpoint: format!("https://127.0.0.1:{}", info.port),
@@ -545,6 +556,133 @@ pub(super) mod tests {
         };
         let task = tokio::spawn(gateway.run());
         (config, task, directory)
+    }
+
+    #[tokio::test]
+    async fn startup_preparation_rejects_a_healthy_old_gateway_even_with_a_cached_endpoint() {
+        use super::super::server::{server_slot_key, DaemonAccess, ServerSlot};
+        use super::super::{direct_settings, server, RegisteredRoot, SshManager};
+        let (config, gateway, directory) = gateway_with_version("0.0.0-stale").await;
+        let manager = SshManager::new();
+        let id = "startup-old-version";
+        manager
+            .direct_connections
+            .write()
+            .unwrap()
+            .insert(id.into(), config.clone());
+        manager.direct_active.write().unwrap().insert(id.into());
+        let root = RegisteredRoot {
+            uri: format!("ssh://{id}/project"),
+            canonical_path: "/project".into(),
+            trusted: true,
+        };
+        let key = server_slot_key(id, &root.canonical_path);
+        manager.set_server_slot(
+            &key,
+            ServerSlot {
+                endpoint: Some(server::ServerEndpoint {
+                    serve: None,
+                    daemon: Some(DaemonAccess {
+                        bin: "direct".into(),
+                        token: config.token,
+                    }),
+                }),
+                ..Default::default()
+            },
+        );
+        // This was the previous startup path: it accepts the stale version.
+        manager.ensure_connection_alive(id).await.unwrap();
+        let error = direct_settings::prepare_root(&manager, &root, None)
+            .await
+            .unwrap_err();
+        assert!(error.contains("Server 版本不匹配"), "{error}");
+        assert!(error.contains("0.0.0-stale"), "{error}");
+        assert!(error.contains(qingcode_server::SERVER_VERSION), "{error}");
+        assert!(manager.server_slot(&key).unwrap().endpoint.is_none());
+        assert!(manager.sessions.read().unwrap().is_empty());
+        gateway.abort();
+        let _ = gateway.await;
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn startup_preparation_keeps_restricted_old_gateways_read_only() {
+        use super::super::{direct_settings, RegisteredRoot, SshManager};
+        let (config, gateway, directory) = gateway_with_version("0.0.0-stale").await;
+        let manager = SshManager::new();
+        let id = "startup-restricted";
+        manager
+            .direct_connections
+            .write()
+            .unwrap()
+            .insert(id.into(), config);
+        manager.direct_active.write().unwrap().insert(id.into());
+        let root = RegisteredRoot {
+            uri: format!("ssh://{id}/project"),
+            canonical_path: "/project".into(),
+            trusted: false,
+        };
+        direct_settings::prepare_root(&manager, &root, None)
+            .await
+            .unwrap();
+        assert!(manager.servers.read().unwrap().is_empty());
+        assert!(manager.sessions.read().unwrap().is_empty());
+        gateway.abort();
+        let _ = gateway.await;
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn startup_preparation_preserves_a_current_ready_gateway_and_checks_authentication() {
+        use super::super::server::{server_slot_key, DaemonAccess, ServerSlot};
+        use super::super::{direct_settings, server, RegisteredRoot, SshManager};
+        let (config, gateway, directory) = gateway().await;
+        let manager = SshManager::new();
+        let id = "startup-current";
+        manager
+            .direct_connections
+            .write()
+            .unwrap()
+            .insert(id.into(), config.clone());
+        manager.direct_active.write().unwrap().insert(id.into());
+        let root = RegisteredRoot {
+            uri: format!("ssh://{id}/project"),
+            canonical_path: "/project".into(),
+            trusted: true,
+        };
+        let key = server_slot_key(id, &root.canonical_path);
+        manager.set_server_slot(
+            &key,
+            ServerSlot {
+                endpoint: Some(server::ServerEndpoint {
+                    serve: None,
+                    daemon: Some(DaemonAccess {
+                        bin: "direct".into(),
+                        token: config.token.clone(),
+                    }),
+                }),
+                ..Default::default()
+            },
+        );
+        direct_settings::prepare_root(&manager, &root, None)
+            .await
+            .unwrap();
+        assert!(manager.server_slot(&key).unwrap().endpoint.is_some());
+        manager.direct_connections.write().unwrap().insert(
+            id.into(),
+            DirectConnectionConfig {
+                token: "invalid-token".into(),
+                ..config
+            },
+        );
+        let error = direct_settings::prepare_root(&manager, &root, None)
+            .await
+            .unwrap_err();
+        assert!(error.contains("[direct:auth]"), "{error}");
+        assert!(!error.contains("版本不匹配"), "{error}");
+        gateway.abort();
+        let _ = gateway.await;
+        let _ = std::fs::remove_dir_all(directory);
     }
 
     #[tokio::test]

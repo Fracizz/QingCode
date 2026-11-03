@@ -215,6 +215,18 @@ Linux SSH 要求远端有 `git`。Windows OpenSSH 要求远端 `git.exe` 在 PAT
 
 ### 终端与运行配置
 
+Linux、Windows、macOS 使用同一套恢复决策，参考 [VS Code 的 Persistent sessions](https://code.visualstudio.com/docs/terminal/advanced#persistent-sessions) 区分进程接回与进程重建：
+
+| 场景 | 三端统一行为 |
+|------|--------------|
+| Server 持久终端接回 | 使用原 PTY ID，不结束或重跑原任务，不清屏；历史提示为「会话输出已恢复；正在接回原终端…」，成功后显示一次「已重新连接」 |
+| 断线重连 | 继续使用原 PTY，补发缺失输出或恢复快照；快照回退保留「部分输出未能补回」提示，重复成功事件不重复打印 |
+| 暂时无法接回 | 保留原身份与输出，「重试接回」仍连接原进程，不新建任务 |
+| 已确认原会话结束 | 保留输出，等待用户显式操作，不自动重跑原命令 |
+| 本地历史恢复或显式重启 | 实际创建新进程时显示重启提示，不宣称接回原进程 |
+
+这里统一的是恢复语义，不把本地终端或 SSH 直连（兼容模式）标为持久终端；持久接回要求 Server daemon 保留原 PTY。平台路径矩阵与 Web 内存 fixture 只验证共用逻辑和显示，不代表三个操作系统的原生 PTY、SSH、WSS 都已实机验收。
+
 终端已有文字选区时，右键由 QingCode 的复制菜单接管，不向 Claude 等启用鼠标跟踪的 TUI 发送该次右键按下与释放；菜单保存打开时的选中文字，后续输出刷新后仍可复制。TUI 启用鼠标跟踪且没有终端选区时，右键完全交给程序，不再弹 QingCode 菜单覆盖 OpenCode 的 Message Actions。Windows/Linux 按住 Shift 拖动可强制建立终端选区，Shift + 右键也可打开 QingCode 菜单；普通 Shell 仍显示 QingCode 菜单。有选区时 Ctrl+C / Ctrl+Shift+C 复制到客户端剪贴板，Ctrl+C 无选区仍发送中断。
 
 Claude 内部绘制的鼠标选区与 xterm 终端选区不同：内部拖选后的右键复制交给 Claude 处理，其发出的 OSC 52 文本复制会写入 **QingCode 客户端** 剪贴板，走原生写入接口，失败显示错误。OpenCode 等程序同样适用。只接受 clipboard/select（`c` / `s` / 空选择器）、合法 Base64 和最多 1 MiB 的 UTF-8 文本；仍拒绝 OSC 52 读取请求，不向远端回传本机剪贴板。挂载终端时的历史回放不执行复制副作用。xterm 选区在右键按下时保存，菜单在捕获阶段打开，避免打开过程中的输出或 xterm 隐藏输入框处理导致「复制」置灰。剪贴板图片/文件粘贴继续沿用上传后粘贴远端路径的流程。
@@ -332,7 +344,7 @@ Windows 路径保护通过同一条已认证 SSH 连接懒启动一个只读 Pow
 | §6.4 Windows daemon | 命名管道 `\\.\pipe\qingcode-server-daemon-<hash>` + 仅当前用户 DACL（SDDL `D:P(A;;GA;;;<sid>)`）+ `FILE_FLAG_FIRST_PIPE_INSTANCE` 单实例；`connect --stdio` 用 tokio overlapped 客户端（Windows 同步句柄一边阻塞读时写会 `ERROR_NO_DATA(232)`）；acceptor 独立任务避免 select 取消丢实例、幽灵连接校验；服务端归一 POSIX 风格根路径 `/D:/...`；旧 daemon 用宽松握手淘汰 | 本轮 |
 | §6 PTY 宿主 | `portable-pty` + `vt100` 屏幕快照 + 环形缓冲（块级 seq）、`attach{fromSeq}` 补发或快照降级、总量硬上限淘汰（先 detached 最久）、SIGHUP/SIGKILL 生命周期、`hasChildren`（读 `/proc`） | `33d6eed` |
 | P2 终端持久化 | Server 模式下交互式终端与运行任务接入 daemon PTY；断线显示重连中，首次立即重连，之后按 5、5、10、10、10、10、10 秒、每 30 秒无限重试；按 seq 补发或快照恢复；重连期间输入有界缓冲；关闭标签或项目移除时 kill；能力缺失时报错不回退。远端验收待 WP-G | 本轮 |
-| P3 应用重启接回 | 会话快照保存 `ptyId` / `connectionId`，恢复时优先 `ssh_attach_terminal`，失败回退新建；连接就绪后查询本安装的 detached PTY，汇总无本地标签的孤儿终端并支持接回或全部结束。远端验收待 WP-G G21/G22 | 本轮 |
+| P3 应用重启接回 | 会话快照保存 `ptyId` / `connectionId`，恢复时调用 `ssh_attach_terminal`，失败保留原身份与输出，不回退新建；连接就绪后查询本安装的 detached PTY，汇总无本地标签的孤儿终端并支持接回或全部结束。远端验收待 WP-G G21/G22 | 本轮 |
 | §3/§7 传输接入 | 客户端 scan/search/watch 优先走 daemon（`fs.scan` / `search.content` 流式 / `watch.subscribe`），回退链 daemon → serve → 直连；token 轮换自愈 | `4f91c6b` |
 | §4.2/§8.3 完整性 | 安装或复用前先比对本地可信文件与用户私有安装路径的 sha256，通过后才执行 `self-check --expect-sha256` 探测 noexec；构建脚本生成 `manifest.json`（version + sha256 + size） | 本轮 |
 | §4.1 发布 | `.github/workflows/server-release.yml`（原 `agent-release.yml`）：独立流水线（push `server-v*` 标签或手动触发），ubuntu runner 双架构 musl + rust-lld，发布到 `server-v<版本>` 标签 Release，资产 `qingcode-server-<arch>` / `qingcode-server-windows-x86_64.exe` / `manifest.json` | `9c4081f` |

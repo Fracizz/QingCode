@@ -70,6 +70,21 @@ fn powershell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+pub(super) async fn prepare_root(
+    manager: &SshManager,
+    root: &RegisteredRoot,
+    app: Option<&AppHandle>,
+) -> Result<(), String> {
+    let id = parse_remote_uri(&root.uri)?.connection_id;
+    manager.ensure_connection_alive(&id).await?;
+    if root.trusted {
+        // Health accepts older service versions; workspace preparation must
+        // apply the same version and daemon gate as file/terminal operations.
+        server::ensure_server_endpoint_with_app(manager, root, app).await?;
+    }
+    Ok(())
+}
+
 pub(super) async fn connect_root(
     manager: &SshManager,
     app: &AppHandle,

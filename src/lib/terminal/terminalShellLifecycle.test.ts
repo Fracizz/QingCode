@@ -166,6 +166,15 @@ describe('planTerminalConnectionEvent', () => {
       }),
     ).toBeNull()
   })
+
+  it('announces a cold attach once and announces the next disconnect cycle again', () => {
+    const event = { id: 't1', state: 'attached', restore: 'replay' }
+    const first = planTerminalConnectionEvent(tab('starting'), event)!
+    expect(first.notice?.key).toBe('已重新连接')
+    expect(planTerminalConnectionEvent(tab(first.status), event)?.notice).toBeNull()
+    expect(planTerminalConnectionEvent(tab('reconnecting'), event)?.notice?.key).toBe('已重新连接')
+    expect(planTerminalConnectionEvent(tab('exited'), event)).toBeNull()
+  })
 })
 
 describe('terminalDisconnectNotice', () => {

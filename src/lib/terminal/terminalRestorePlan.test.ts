@@ -3,6 +3,7 @@ import {
   filterUnownedDetachedTerminals,
   parseSshDetachedTerminal,
   planTerminalRestore,
+  terminalRestoreNotices,
   type SshDetachedTerminal,
 } from './terminalRestorePlan'
 
@@ -18,7 +19,7 @@ function detached(overrides: Partial<SshDetachedTerminal> = {}): SshDetachedTerm
 }
 
 describe('planTerminalRestore', () => {
-  it('attaches a restored persistent terminal before falling back to create', () => {
+  it('attaches a restored persistent terminal without falling back to create', () => {
     expect(
       planTerminalRestore({
         persistent: true,
@@ -61,6 +62,36 @@ describe('planTerminalRestore', () => {
         awaitingRestoreSpawn: true,
       })
     ).toEqual({ mode: 'create' })
+  })
+})
+
+describe.each([
+  ['Linux', '/home/dev/app'],
+  ['Windows', 'D:/app'],
+  ['macOS', '/Users/dev/app'],
+])('%s terminal restore presentation', (_platform, path) => {
+  const restored = {
+    persistent: true, ptyId: 'original-pty', connectionId: 'conn',
+    cwd: `ssh://conn/${path.replace(/^\/+/, '')}`, awaitingRestoreSpawn: true,
+  }
+
+  it('reattaches the original process without a restart banner or screen reset', () => {
+    expect(planTerminalRestore(restored).mode).toBe('attach')
+    expect(terminalRestoreNotices(restored)).toEqual({
+      history: '会话输出已恢复；正在接回原终端…', starting: null,
+    })
+  })
+
+  it('distinguishes local history revival and explicit restart from reattachment', () => {
+    for (const tab of [
+      { ...restored, persistent: false, cwd: path },
+      { ...restored, awaitingRestoreSpawn: false },
+    ]) {
+      expect(planTerminalRestore(tab).mode).toBe('create')
+      expect(terminalRestoreNotices(tab)).toEqual({
+        history: '会话输出已恢复；进程将按原配置重新启动', starting: '正在重启终端…',
+      })
+    }
   })
 })
 

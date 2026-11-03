@@ -105,7 +105,9 @@ export function planTerminalConnectionEvent(
   return {
     status: 'running',
     notice:
-      restore === 'snapshot'
+      tab.status === 'running'
+        ? null
+        : restore === 'snapshot'
         ? { key: '已重新连接（断线期间部分输出未能补回）' }
         : { key: '已重新连接' },
     reason,

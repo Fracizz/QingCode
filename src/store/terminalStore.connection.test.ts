@@ -101,6 +101,8 @@ function emit(name: string, payload: unknown) {
   }
 }
 
+const remotePlatformPaths = ['ssh://conn/home/app', 'ssh://conn/D:/app', 'ssh://conn/Users/dev/app']
+
 describe('terminal persistent connection events', () => {
   let unlisten: (() => void) | undefined
 
@@ -376,31 +378,46 @@ describe('terminal persistent connection events', () => {
     )
   })
 
-  it('does not kill the daemon PTY before the first restored attach', async () => {
-    mocks.attachTerminal.mockResolvedValueOnce({
-      persistent: true,
-      ptyId: 'pty-restored',
-      connectionId: 'conn',
-    })
-    useTerminalStore.setState({
-      terminals: [
-        terminal({
-          status: 'exited',
-          persistent: true,
-          ptyId: 'pty-restored',
-          connectionId: 'conn',
-          awaitingRestoreSpawn: true,
-        }),
-      ],
-    })
+  it.each(remotePlatformPaths)(
+    'restores a run task without killing or rerunning its command at %s',
+    async cwd => {
+      mocks.attachTerminal.mockResolvedValueOnce({
+        persistent: true,
+        ptyId: 'pty-restored',
+        connectionId: 'conn',
+      })
+      useTerminalStore.setState({
+        terminals: [
+          terminal({
+            status: 'exited',
+            cwd,
+            shellKind: 'command',
+            launchCommand: 'python manage.py runserver',
+            runConfigId: 'dev',
+            persistent: true,
+            ptyId: 'pty-restored',
+            connectionId: 'conn',
+            awaitingRestoreSpawn: true,
+          }),
+        ],
+      })
 
-    await useTerminalStore.getState().spawnRestoredTerminals('p1')
+      await useTerminalStore.getState().spawnRestoredTerminals('p1')
 
-    expect(mocks.attachTerminal).toHaveBeenCalledWith(
-      expect.objectContaining({ ptyId: 'pty-restored' }),
-    )
-    expect(mocks.killTerminal).not.toHaveBeenCalled()
-  })
+      expect(mocks.attachTerminal).toHaveBeenCalledWith(
+        expect.objectContaining({ ptyId: 'pty-restored' }),
+      )
+      expect(mocks.killTerminal).not.toHaveBeenCalled()
+      expect(mocks.createTerminal).not.toHaveBeenCalled()
+      expect(mocks.spawnTerminalScript).not.toHaveBeenCalled()
+      expect(useTerminalStore.getState().terminals[0]).toMatchObject({
+        status: 'running',
+        ptyId: 'pty-restored',
+        runConfigId: 'dev',
+        awaitingRestoreSpawn: false,
+      })
+    }
+  )
 
   it('attaches a restored PTY with the mounted view grid instead of the 80x24 default', async () => {
     mocks.attachTerminal.mockResolvedValue({ persistent: true, ptyId: 'pty-restored', connectionId: 'conn' })
@@ -527,7 +544,7 @@ describe('terminal persistent connection events', () => {
     expect(useTerminalStore.getState().terminals).toHaveLength(0)
   })
 
-  it('preserves a missing restored PTY without executing its launch command', async () => {
+  it.each(remotePlatformPaths)('preserves a missing restored PTY without rerunning its task at %s', async cwd => {
     mocks.attachTerminal.mockRejectedValueOnce(new Error('QC_PTY_GONE: PTY 不存在或已退出'))
     mocks.createTerminal.mockResolvedValueOnce({
       persistent: true,
@@ -541,6 +558,9 @@ describe('terminal persistent connection events', () => {
           persistent: true,
           ptyId: 'pty-old',
           connectionId: 'conn',
+          cwd,
+          shellKind: 'command',
+          launchCommand: 'python manage.py runserver',
           awaitingRestoreSpawn: true,
           ptySpawnPending: true,
         }),
@@ -591,10 +611,11 @@ describe('terminal persistent connection events', () => {
     expect(tab.persistentFallbackReason).toBe('远端 daemon 尚未就绪')
   })
 
-  it('retries the original PTY after a transient attach failure without killing or running commands', async () => {
+  it.each(remotePlatformPaths)('retries the original PTY after a transient attach failure at %s', async cwd => {
     mocks.attachTerminal.mockRejectedValueOnce(new Error('daemon handshake timeout'))
     useTerminalStore.setState({ terminals: [terminal({
       status: 'exited', persistent: true, ptyId: 'original-pty', connectionId: 'conn',
+      cwd,
       awaitingRestoreSpawn: true, ptySpawnPending: true, launchCommand: 'claude', profileId: 'claude',
     })] })
     await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
@@ -916,14 +937,15 @@ describe('terminal persistent connection events', () => {
     expect(mocks.writeTerminal).toHaveBeenCalledWith('t1', '\x03')
   })
 
-  it('keeps explicit restart on an unconverted task running its original command', async () => {
-    exitedTask()
+  it.each(remotePlatformPaths)('keeps explicit restart on a task running its original command at %s', async cwd => {
+    exitedTask({ cwd, persistent: true, ptyId: 'old-task-pty', connectionId: 'conn' })
     await useTerminalStore.getState().restartTerminal('t1')
     await vi.advanceTimersByTimeAsync(2500)
     expect(mocks.spawnTerminalScript).toHaveBeenCalledWith(expect.objectContaining({
       shellKind: 'command', target: 'uvicorn app:main', env: { TASK_ONLY: '1' },
     }))
     expect(mocks.createTerminal).not.toHaveBeenCalled()
+    expect(mocks.attachTerminal).not.toHaveBeenCalled()
   })
 
 })

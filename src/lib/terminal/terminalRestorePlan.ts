@@ -55,6 +55,20 @@ export function planTerminalRestore(tab: RestorableTerminal): TerminalRestorePla
   }
 }
 
+/** Match the spawn decision on every client/remote OS, never infer it from a path or shell. */
+export function terminalRestoreNotices(tab: RestorableTerminal): {
+  history: string
+  starting: string | null
+} {
+  if (planTerminalRestore(tab).mode === 'attach') {
+    return { history: '会话输出已恢复；正在接回原终端…', starting: null }
+  }
+  return {
+    history: '会话输出已恢复；进程将按原配置重新启动',
+    starting: '正在重启终端…',
+  }
+}
+
 function isPositiveSize(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
