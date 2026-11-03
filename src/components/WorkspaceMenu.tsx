@@ -42,6 +42,7 @@ export default function WorkspaceMenu() {
 
   const anchorRef = useRef<HTMLDivElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const openAtEnd = useRef(false)
 
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -89,6 +90,8 @@ export default function WorkspaceMenu() {
   useLayoutEffect(() => {
     if (!open) return
     positionDropdown()
+    const items = dropdownRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')
+    ;(openAtEnd.current ? items?.[items.length - 1] : items?.[0])?.focus()
   }, [open])
 
   useEffect(() => {
@@ -101,7 +104,20 @@ export default function WorkspaceMenu() {
       close()
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
+      if (event.isComposing) return
+      const items = [...(dropdownRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
+      if (event.key === 'Escape' || event.key === 'Tab') {
+        event.preventDefault()
+        close()
+        anchorRef.current?.querySelector('button')?.focus()
+      } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault()
+        const current = items.indexOf(document.activeElement as HTMLButtonElement)
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+          : event.key === 'ArrowDown' ? (current + 1) % items.length
+            : (current - 1 + items.length) % items.length
+        items[next]?.focus()
+      }
     }
     const onReposition = () => positionDropdown()
     window.addEventListener('pointerdown', onPointerDown)
@@ -166,6 +182,12 @@ export default function WorkspaceMenu() {
             aria-haspopup="menu"
             disabled={busy}
             onClick={toggle}
+            onKeyDown={event => {
+              if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+              event.preventDefault()
+              openAtEnd.current = event.key === 'ArrowUp'
+              setOpen(true)
+            }}
             onDoubleClick={event => event.stopPropagation()}
             className={`flex max-w-[120px] items-center gap-1 h-6 rounded px-1.5 text-ui-sm flex-shrink-0 transition-colors disabled:opacity-50
               ${open ? 'bg-bg-active text-fg' : 'text-fg-muted hover:text-fg hover:bg-bg-hover'}`}

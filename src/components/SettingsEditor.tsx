@@ -2,7 +2,6 @@ import { preferredScrollBehavior } from '../lib/motionPreferences'
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -11,6 +10,7 @@ import {
   Search,
   Settings2,
   X,
+  MoreHorizontal,
 } from 'lucide-react'
 import { useI18n } from '../lib/i18n'
 import { revealItemInDir, openUrl } from '@tauri-apps/plugin-opener'
@@ -51,6 +51,8 @@ import ShortcutSettings from './ShortcutSettings'
 import HelpDialog from './HelpDialog'
 import SegmentedControl from './SegmentedControl'
 import Tooltip from './Tooltip'
+import ContextMenu from './ContextMenu'
+import { matchesSettingsCategory, matchesSettingsTerms } from '../lib/settingsSearch'
 import { useProjectStore } from '../store/projectStore'
 import { useEditorStore } from '../store/editorStore'
 import { useUIStore } from '../store/uiStore'
@@ -209,6 +211,8 @@ export default function SettingsEditor() {
   const [terminal, setTerminal] = useState<TerminalProfileSettings>(loadTerminalProfileSettings)
   const [openingJson, setOpeningJson] = useState(false)
   const [transferBusy, setTransferBusy] = useState(false)
+  const [managementMenu, setManagementMenu] = useState<{ x: number; y: number } | null>(null)
+  const [scopeDetails, setScopeDetails] = useState(false)
   const [settingsRevision, setSettingsRevision] = useState(0)
   const [autoSaveMode, setAutoSaveMode] = useState<AutoSaveMode>('off')
   const [autoSaveDelay, setAutoSaveDelay] = useState<number>(
@@ -359,12 +363,10 @@ export default function SettingsEditor() {
   const q = query.trim().toLowerCase()
 
   const match = useCallback(
-    (...texts: string[]) => {
-      if (!q) return true
-      return texts.some(text => t(text).toLowerCase().includes(q) || text.toLowerCase().includes(q))
-    },
-    [q, t],
+    (...texts: string[]) => matchesSettingsTerms(q, texts, workspaceLocked, t),
+    [q, workspaceLocked, t],
   )
+  const categoryMatches = (id: CategoryId) => matchesSettingsCategory(id, q, workspaceLocked, t)
 
   const updateTheme = (value: AppTheme) => {
     setThemeState(value)
@@ -598,77 +600,7 @@ export default function SettingsEditor() {
     }
   }
 
-  const visibleCategories = useMemo(() => {
-    if (!q) return CATEGORIES
-    return CATEGORIES.filter(cat => {
-      if (cat.id === 'json') {
-        return match(
-          '打开设置 JSON',
-          'settings.json',
-          '自定义设置',
-          'files.exclude',
-          'search.exclude',
-          '不计划',
-        )
-      }
-      if (cat.id === 'common') {
-        return match('颜色主题', '界面字号', '常用设置', '外观', '深色', '浅色')
-      }
-      if (cat.id === 'editor')
-        return match(
-          '界面字体',
-          '代码字体',
-          '编辑器字号',
-          '文本编辑器',
-          '自动保存',
-          '小地图',
-          'minimap',
-        )
-      if (cat.id === 'terminal') return match('终端', '终端字体', '终端 › 集成: 字体族', '默认启动配置', '终端字号', '默认 Shell', 'pwsh', 'WSL', 'Zsh')
-      if (cat.id === 'ai') {
-        return match('AI', 'CLI', 'skills', 'Agent', 'qingcode-cli', 'AI CLI skills')
-      }
-      if (cat.id === 'features') {
-        return match(
-          '快捷键',
-          '功能',
-          '打开搜索',
-          '显示或隐藏终端',
-          '切换小地图',
-          '复制路径',
-          '文件引用',
-          '打开方式',
-          'Open with',
-          'Windows',
-          '检查更新',
-          '自动检查更新',
-          '项目会话 LRU',
-          '编辑器状态缓存',
-          '项目角标',
-          '顶栏项目角标',
-          'Git 随机刷新周期起始值',
-          'Git 刷新周期起始值',
-          '分钟',
-          'Alt+C',
-          'Ctrl+Shift+C',
-          'Ctrl+Shift+G',
-          'Ctrl+Shift+O',
-          'Shift+Alt+F',
-          '格式化',
-          '转到编辑器中的符号',
-          '符号',
-          ...SSH_SERVER_SEARCH_TERMS,
-        )
-      }
-      if (cat.id === 'language') {
-        return match('语言', '简体中文', 'English', '语言包', '自定义语言')
-      }
-      if (cat.id === 'about') {
-        return match('关于', '版本', 'git', 'Git', '仓库', 'Gitee', 'GitHub', '开源', 'License', 'MIT')
-      }
-      return true
-    })
-  }, [match, q])
+  const visibleCategories = CATEGORIES.filter(cat => categoryMatches(cat.id))
 
   return (
     <div className="settings-shell ui-font-scaled h-full flex flex-col bg-bg text-fg min-w-0">
@@ -688,7 +620,7 @@ export default function SettingsEditor() {
             ariaLabel={t('设置范围')}
             options={[
               { value: 'user', label: t('用户'), disabled: transferBusy },
-              { value: 'workspace', label: t('工作区'), disabled: transferBusy || !currentProject },
+              { value: 'workspace', label: t('当前项目'), disabled: transferBusy || !currentProject },
             ]}
             value={scope}
             onChange={value => {
@@ -696,31 +628,15 @@ export default function SettingsEditor() {
               setScope(value)
             }}
           />
-          <div className="flex-1" />
-          <button
-            type="button"
-            disabled={transferBusy || openingJson}
-            onClick={() => void transferSettings('import')}
-            className="rounded border border-border-strong px-2.5 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
-          >
-            {t('导入配置 JSON')}
-          </button>
-          <button
-            type="button"
-            disabled={transferBusy || openingJson}
-            onClick={() => void transferSettings('export')}
-            className="rounded border border-border-strong px-2.5 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
-          >
-            {t('导出配置 JSON')}
-          </button>
-          <button
-            type="button"
-            disabled={transferBusy || openingJson}
-            onClick={() => void restoreDefaults()}
-            className="rounded border border-border-strong px-2.5 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg disabled:opacity-50"
-          >
-            {t('恢复默认设置')}
-          </button>
+          <div className="min-w-0 flex-1" />
+          <Tooltip label={t('管理设置')} side="bottom">
+            <button type="button" aria-label={t('管理设置')} aria-haspopup="menu" aria-expanded={Boolean(managementMenu)}
+              disabled={transferBusy || openingJson}
+              onClick={event => { event.currentTarget.focus(); const rect = event.currentTarget.getBoundingClientRect(); setManagementMenu({ x: rect.right - 200, y: rect.bottom + 4 }) }}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-bg-hover hover:text-fg">
+              <MoreHorizontal size={16} />
+            </button>
+          </Tooltip>
           <Tooltip label={t('帮助文档')} side="bottom">
             <button
               type="button"
@@ -750,7 +666,7 @@ export default function SettingsEditor() {
                 <button
                   type="button"
                   aria-label={t('清除搜索')}
-                  onClick={() => setQuery('')}
+                  onClick={() => { setQuery(''); searchRef.current?.focus() }}
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-fg-dim hover:text-fg"
                 >
                   <X size={14} />
@@ -758,19 +674,14 @@ export default function SettingsEditor() {
               )}
             </div>
 
-            <p className="text-ui-sm mt-2 max-w-[800px] text-fg-muted">
-              {scope === 'user'
-                ? t('导出用户设置、界面偏好和本地项目列表；导入按键合并，保留已有项目，不导入信任授权。')
-                : t('导出当前工作区的设置覆盖项；导入按键合并，未设置的选项继续继承用户设置。')}
-            </p>
+            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-ui-sm text-fg-muted">
+              <span className="min-w-0 break-words">{scope === 'user' ? t('作用于所有项目') : t('当前项目：{name}', { name: currentProject?.name ?? '' })}</span>
+              <button type="button" aria-expanded={scopeDetails} onClick={() => setScopeDetails(value => !value)} className="rounded px-1 text-accent hover:bg-bg-hover">{t(scopeDetails ? '收起说明' : '范围说明')}</button>
+            </div>
+            {scopeDetails && <p className="mt-1 text-ui-sm text-fg-muted break-words">{scope === 'user'
+              ? t('导出用户设置、界面偏好和本地项目列表；导入按键合并，保留已有项目，不导入信任授权。')
+              : t('当前项目设置覆盖用户设置；未设置的选项继续继承。多项目工作区仅用于组织项目和保存会话。')}</p>}
 
-            {scope === 'workspace' && (
-              <p className="text-ui-sm mt-2 max-w-[800px] text-fg-muted">
-                {t('工作区设置作用于当前项目「{name}」。多数界面设置仅用户作用域可用；工作区主要用于 project-settings.json。', {
-                  name: currentProject?.name ?? '',
-                })}
-              </p>
-            )}
           </div>
         </div>
       </div>
@@ -803,7 +714,12 @@ export default function SettingsEditor() {
         {/* Content */}
         <div className="settings-content-padding flex-1 min-h-0 min-w-0 overflow-auto px-6 py-4">
           <div className="max-w-[800px] flex flex-col gap-6">
-            {match('常用设置', '颜色主题', '界面字号', '外观', '深色', '浅色') && (
+            {visibleCategories.length === 0 && <div role="status" className="py-8 text-ui text-fg-muted">
+              <p>{t('没有匹配的设置：{query}', { query })}</p>
+              <button type="button" className="mt-3 rounded px-2 py-1 text-accent hover:bg-bg-hover" onClick={() => { setQuery(''); searchRef.current?.focus() }}>{t('清除搜索')}</button>
+            </div>}
+
+            {categoryMatches('common') && (
               <Section
                 id="common"
                 title={t('常用设置')}
@@ -853,19 +769,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match(
-              '文本编辑器',
-              '界面字体',
-              '代码字体',
-              '编辑器字号',
-              '终端字号',
-              '自动保存',
-              '小地图',
-              'minimap',
-              '参考线',
-              '缩进线',
-              'editor.guides.enabled',
-            ) && (
+            {categoryMatches('editor') && (
               <Section
                 id="editor"
                 title={t('文本编辑器')}
@@ -1026,23 +930,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match(
-              '终端',
-              '终端字体',
-              '终端 › 集成: 字体族',
-              '默认启动配置',
-              '终端配置',
-              '终端字号',
-              '默认 Shell',
-              'pwsh',
-              'WSL',
-              'Zsh',
-              'SSH',
-              '粘贴',
-              '上传',
-              'terminal-paste',
-              'sshUploadOnPaste',
-            ) && (
+            {categoryMatches('terminal') && (
               <Section
                 id="terminal"
                 title={t('终端')}
@@ -1161,8 +1049,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('AI', 'CLI', 'skills', 'Agent', 'qingcode-cli', 'AI CLI skills') &&
-              !workspaceLocked && (
+            {categoryMatches('ai') && (
               <Section
                 id="ai"
                 title={t('AI')}
@@ -1211,24 +1098,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {((!workspaceLocked && match(
-              '功能',
-              '快捷键',
-              '打开方式',
-              'Open with',
-              '检查更新',
-              '自动检查更新',
-              '会话状态',
-              '会话状态保存',
-              '项目会话 LRU',
-              '编辑器状态缓存',
-              '项目角标',
-              '顶栏项目角标',
-              'Git 随机刷新周期起始值',
-              'Git 刷新周期起始值',
-              '分钟',
-              ...SSH_SERVER_SEARCH_TERMS,
-            )) || match(...SSH_SERVER_SEARCH_TERMS)) && (
+            {categoryMatches('features') && (
               <Section
                 id="features"
                 title={t('功能')}
@@ -1637,7 +1507,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('语言', '简体中文', 'English', '语言包', '自定义语言') && (
+            {categoryMatches('language') && (
               <Section
                 id="language"
                 title={t('语言')}
@@ -1726,8 +1596,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match('关于', '版本', 'git', 'Git', '仓库', 'Gitee', 'GitHub', '开源', 'License', 'MIT') &&
-              !workspaceLocked && (
+            {categoryMatches('about') && (
               <Section
                 id="about"
                 title={t('关于')}
@@ -1839,14 +1708,7 @@ export default function SettingsEditor() {
               </Section>
             )}
 
-            {match(
-              '打开设置 JSON',
-              'settings.json',
-              '自定义设置',
-              'files.exclude',
-              'search.exclude',
-              '不计划',
-            ) && (
+            {categoryMatches('json') && (
               <Section
                 id="json"
                 title={t('打开设置 JSON')}
@@ -1902,6 +1764,11 @@ export default function SettingsEditor() {
         </div>
       </div>
 
+      {managementMenu && <ContextMenu x={managementMenu.x} y={managementMenu.y} onClose={() => setManagementMenu(null)} items={[
+        { label: t('导入配置 JSON'), action: () => transferSettings('import') },
+        { label: t('导出配置 JSON'), action: () => transferSettings('export') },
+        { label: t('恢复默认设置'), separatorBefore: true, action: restoreDefaults },
+      ]} />}
       {helpOpen && <HelpDialog onClose={() => setHelpOpen(false)} />}
     </div>
   )

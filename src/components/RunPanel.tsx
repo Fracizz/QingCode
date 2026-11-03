@@ -416,6 +416,7 @@ function RunPanelContent() {
       {discovering && <RunConfigDiscovery project={currentProject} onClose={() => setDiscovering(false)} />}
       {(editing || creating) && (
         <RunConfigEditor
+          key={editing?.id ?? "new"}
           project={currentProject}
           initial={editing}
           onClose={() => {

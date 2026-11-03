@@ -825,7 +825,7 @@ export default function TerminalTabs({
                 ? translate('已达到每个项目 {count} 个终端的上限', { count: MAX_TERMINALS_PER_PROJECT })
                 : currentProject
                   ? translate('新建终端（默认配置）')
-                  : translate('新建终端（无项目时将创建临时项目）')
+                  : translate('新建终端（无项目时将创建草稿项目）')
             }
             side="top"
             wrapperClassName="inline-flex h-full shrink-0 items-center"

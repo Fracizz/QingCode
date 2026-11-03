@@ -20,6 +20,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Search,
+  MoreHorizontal,
 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
@@ -42,6 +43,7 @@ import {
 } from '../utils/projectActions'
 import { saveSelectedProjectsAsWorkspace } from '../lib/namedWorkspaceActions'
 import ModalOverlay from './ModalOverlay'
+import ContextMenu, { type ContextMenuItem } from './ContextMenu'
 import SegmentedControl from './SegmentedControl'
 import Tooltip from './Tooltip'
 import type { Project } from '../types'
@@ -105,6 +107,7 @@ export default function ProjectManager() {
   const listRef = useRef<HTMLDivElement>(null)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [trustTick, setTrustTick] = useState(0)
+  const [actionMenu, setActionMenu] = useState<{ projectId: string; x: number; y: number } | null>(null)
   const localLabel = t('本机')
   const filterData = useMemo(
     () => buildProjectFilterData(projects, sshConnections, projectLabels, localLabel),
@@ -231,13 +234,6 @@ export default function ProjectManager() {
     setSelectedIds(new Set())
   }
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeProjectManager()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [closeProjectManager])
 
   const cycleSort = (key: SortKey) => {
     setPage(1)
@@ -275,6 +271,22 @@ export default function ProjectManager() {
 
   const visibleCount = projects.filter(p => !p.hidden).length
   const hiddenCount = projects.length - visibleCount
+  const menuProject = projects.find(project => project.id === actionMenu?.projectId)
+  const projectActions = (project: Project): ContextMenuItem[] => {
+    const level = getWorkspaceTrust(project)
+    const changeTrust = (change: () => void) => {
+      change()
+      void pushTrustedRootsToNative(allProjects)
+    }
+    return [
+      { label: t(project.hidden ? '恢复显示' : '从顶栏隐藏'), action: () => project.hidden ? unhideProject(project.id) : hideProject(project.id) },
+      ...(level === 'trusted' ? [{ label: t('切换为受限模式'), action: () => changeTrust(() => restrictProject(project)) }] : [{ label: t('信任此项目'), action: () => changeTrust(() => trustProject(project)) }]),
+      ...(level === 'trusted' || level === 'restricted' ? [{ label: t('清除信任决定'), action: () => changeTrust(() => untrustProject(project)) }] : []),
+      { label: t('重命名'), action: () => handleRename(project) },
+      { label: t(project.kind === 'ssh' ? '重新连接' : '重新定位'), action: () => handleRelocate(project) },
+      { label: t('移除项目'), danger: true, separatorBefore: true, action: () => handleRemove(project) },
+    ]
+  }
 
   return (
     <ModalOverlay onDismiss={closeProjectManager}>
@@ -283,7 +295,7 @@ export default function ProjectManager() {
         aria-modal="true"
         aria-labelledby="project-manager-title"
         aria-describedby="project-manager-description"
-        className="ui-font-scaled modal-content-enter relative w-[75vw] max-w-[1200px] max-h-[80vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
+        className="project-manager ui-font-scaled modal-content-enter relative w-[94vw] max-w-[1200px] max-h-[85vh] flex flex-col rounded-lg border border-border-strong bg-bg-elevated shadow-2xl shadow-black/50"
         onPointerDown={e => e.stopPropagation()}
       >
         {/* Header */}
@@ -479,7 +491,7 @@ export default function ProjectManager() {
               {t(projects.length === 0 ? '暂无项目。点击上方按钮添加。' : '没有匹配的项目')}
             </div>
           ) : (
-            <table className="w-full min-w-[720px] table-fixed text-ui">
+            <table className="project-manager-table w-full min-w-[720px] table-fixed text-ui">
               <colgroup>
                 <col className="w-10" />
                 <col className="w-[28%]" />
@@ -534,7 +546,7 @@ export default function ProjectManager() {
                             : 'hover:bg-bg-hover/60'
                       }`}
                     >
-                      <td className="px-3 py-2 align-middle">
+                      <td className="project-selection-cell px-3 py-2 align-middle">
                         <Checkbox
                           checked={checked}
                           onChange={() => toggleOne(project.id)}
@@ -543,7 +555,7 @@ export default function ProjectManager() {
                           })}
                         />
                       </td>
-                      <td className="px-3 py-2 align-middle">
+                      <td className="project-name-cell px-3 py-2 align-middle">
                         <div className="flex min-w-0 items-center gap-1.5">
                           {unavailable ? (
                             <AlertTriangle size={13} className="text-warn flex-shrink-0" />
@@ -590,7 +602,7 @@ export default function ProjectManager() {
                           <ProjectKindBadge project={project} />
                         </div>
                       </td>
-                      <td className="px-3 py-2 align-middle">
+                      <td className="project-path-cell px-3 py-2 align-middle">
                         <Tooltip
                           label={location}
                           side="bottom"
@@ -602,11 +614,23 @@ export default function ProjectManager() {
                           </span>
                         </Tooltip>
                       </td>
-                      <td className="px-3 py-2 align-middle whitespace-nowrap text-fg-muted text-ui-sm">
+                      <td className="project-time-cell px-3 py-2 align-middle whitespace-nowrap text-fg-muted text-ui-sm">
                         {timeAgo(project.last_opened_at, t)}
                       </td>
-                      <td className="px-3 py-2 align-middle">
-                        <div className="flex items-center justify-end gap-0.5">
+                      <td className="project-actions-cell px-3 py-2 align-middle">
+                        <button
+                          type="button"
+                          aria-label={t('项目操作：{name}', { name: projectLabels.get(project.id)?.text ?? project.name })}
+                          aria-haspopup="menu"
+                          aria-expanded={actionMenu?.projectId === project.id}
+                          className="project-overflow-action rounded p-1.5 text-fg-muted hover:bg-bg-hover hover:text-fg focus:bg-bg-hover"
+                          onClick={event => {
+                            event.currentTarget.focus()
+                            const rect = event.currentTarget.getBoundingClientRect()
+                            setActionMenu({ projectId: project.id, x: rect.right - 180, y: rect.bottom + 4 })
+                          }}
+                        ><MoreHorizontal size={16} /></button>
+                        <div className="project-inline-actions flex items-center justify-end gap-0.5">
                           {project.hidden ? (
                             <ActBtn
                               label={t('恢复显示')}
@@ -743,6 +767,7 @@ export default function ProjectManager() {
           </button>
         </div>
       </div>
+      {actionMenu && menuProject && <ContextMenu x={actionMenu.x} y={actionMenu.y} items={projectActions(menuProject)} onClose={() => setActionMenu(null)} />}
     </ModalOverlay>
   )
 }

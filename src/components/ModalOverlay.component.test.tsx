@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { useState } from 'react'
+import { StrictMode, useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import ModalOverlay from './ModalOverlay'
+import ContextMenu from './ContextMenu'
 
 function DialogHarness() {
   const [open, setOpen] = useState(false)
@@ -119,4 +120,37 @@ describe('ModalOverlay', () => {
     )
     await waitFor(() => expect(childOpener).toHaveFocus())
   })
+  it('lets a portaled menu handle Escape before dismissing its parent dialog', () => {
+    const dismiss = vi.fn()
+    const closeMenu = vi.fn()
+    render(<ModalOverlay onDismiss={dismiss}><div role="dialog"><button>Open</button>
+      <ContextMenu x={10} y={10} items={[{ label: 'Action', action: vi.fn() }]} onClose={closeMenu} />
+    </div></ModalOverlay>)
+    const item = screen.getByRole('menuitem', { name: 'Action' })
+    item.focus()
+    fireEvent.keyDown(item, { key: 'Escape' })
+    expect(closeMenu).toHaveBeenCalledOnce()
+    expect(dismiss).not.toHaveBeenCalled()
+  })
+
+  it('preserves the original opener when Strict Mode replays focus effects', async () => {
+    render(<StrictMode><DialogHarness /></StrictMode>)
+    const opener = screen.getByRole('button', { name: '打开对话框' })
+    opener.focus()
+    fireEvent.click(opener)
+    fireEvent.keyDown(screen.getByRole('button', { name: '第一个操作' }), { key: 'Escape' })
+    await waitFor(() => expect(opener).toHaveFocus())
+  })
+
+  it('does not steal focus from a new action after a nested dialog closes', async () => {
+    render(<NestedDialogHarness />)
+    fireEvent.click(screen.getByRole('button', { name: '打开父对话框' }))
+    fireEvent.click(screen.getByRole('button', { name: '打开子对话框' }))
+    fireEvent.keyDown(screen.getByRole('button', { name: '子操作' }), { key: 'Escape' })
+    const next = screen.getByRole('button', { name: '父操作' })
+    next.focus()
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(next).toHaveFocus()
+  })
+
 })

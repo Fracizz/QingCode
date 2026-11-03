@@ -934,6 +934,7 @@ fn validate_local_branch_name(branch: &str) -> Result<&str, String> {
 /// Include the full ref for classification; preserve Git's short-name disambiguation.
 pub(crate) const BRANCH_LIST_FORMAT: &str =
     "--format=%(refname)%09%(refname:short)%09%(HEAD)%09%(upstream:short)";
+pub(crate) const BRANCH_LIST_SORT: &str = "--sort=-committerdate";
 
 pub(crate) fn parse_branch_list(text: &str) -> GitBranchList {
     let mut local = Vec::new();
@@ -966,13 +967,22 @@ fn list_branches(root: &Path) -> Result<GitBranchList, String> {
         &[
             "for-each-ref",
             BRANCH_LIST_FORMAT,
+            BRANCH_LIST_SORT,
             "refs/heads",
             "refs/remotes",
         ],
     )?;
     if !output.status.success() {
         // Retain local branches if only remote-ref enumeration is broken.
-        output = run_git(root, &["for-each-ref", BRANCH_LIST_FORMAT, "refs/heads"])?;
+        output = run_git(
+            root,
+            &[
+                "for-each-ref",
+                BRANCH_LIST_FORMAT,
+                BRANCH_LIST_SORT,
+                "refs/heads",
+            ],
+        )?;
         if !output.status.success() {
             return Err(format!("读取本地分支失败：{}", git_output_text(&output)));
         }
@@ -1760,6 +1770,55 @@ mod tests {
         assert!(validate_local_branch_name("../x").is_err());
         assert!(validate_local_branch_name("feature/demo").is_ok());
 
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn branch_query_orders_local_and_remote_by_latest_commit_without_truncating() {
+        let root = init_test_repo("branch-recency");
+        for (name, date) in [
+            ("a-old", "2020-01-01T00:00:00+00:00"),
+            ("z-new", "2022-01-01T00:00:00+00:00"),
+            ("m-middle", "2021-01-01T00:00:00+00:00"),
+        ] {
+            let output = Command::new("git")
+                .current_dir(&root)
+                .env("GIT_COMMITTER_DATE", date)
+                .env("GIT_AUTHOR_DATE", date)
+                .args([
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--allow-empty",
+                    "-m",
+                    name,
+                ])
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "{}", git_output_text(&output));
+            git_success(&root, &["branch", name]);
+            git_success(
+                &root,
+                &["update-ref", &format!("refs/remotes/origin/{name}"), "HEAD"],
+            );
+        }
+        // Enough branches to exceed the menu's ten-branch viewport.
+        for index in 0..15 {
+            git_success(&root, &["branch", &format!("extra-{index:02}"), "a-old"]);
+        }
+        let result = list_branches(&root).unwrap();
+        let selected: Vec<_> = result
+            .local
+            .iter()
+            .filter(|branch| matches!(branch.name.as_str(), "a-old" | "z-new" | "m-middle"))
+            .map(|branch| branch.name.as_str())
+            .collect();
+        assert_eq!(selected, ["z-new", "m-middle", "a-old"]);
+        assert_eq!(result.local.len(), 19);
+        assert_eq!(
+            result.remote,
+            ["origin/z-new", "origin/m-middle", "origin/a-old"]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1,4 +1,5 @@
 import type { GitBranchInfo, GitBranchList } from './git'
+import { interfacePixelSize } from '../interfaceMetrics'
 
 export type BranchMenuRow =
   | { type: 'header'; key: string; label: string; count: number }
@@ -7,6 +8,19 @@ export type BranchMenuRow =
   | { type: 'empty'; key: string; label: string }
 
 export const BRANCH_MENU_VIRTUALIZE_THRESHOLD = 20
+const BRANCH_MENU_VISIBLE_BRANCHES = 10
+
+/** Size the viewport, keeping the remaining branches available to scroll/search. */
+export function branchMenuViewportHeight(rows: BranchMenuRow[], fontSize: number): number {
+  let branches = 0
+  let height = 0
+  for (const row of rows) {
+    if (branches === BRANCH_MENU_VISIBLE_BRANCHES) break
+    height += interfacePixelSize(branchMenuRowHeight(row), fontSize)
+    if (row.type === 'local' || row.type === 'remote') branches += 1
+  }
+  return height
+}
 
 export function filterGitBranches(list: GitBranchList, query: string): GitBranchList {
   const normalized = query.trim().toLowerCase()

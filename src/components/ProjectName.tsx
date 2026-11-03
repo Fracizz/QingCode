@@ -1,6 +1,6 @@
 import type { ProjectLabel } from '../lib/projectLabels'
 
-/** Let the name shrink first; keep the source legible in narrow chips and list rows. */
+/** Keep the project name readable; lists can move its source to a second line. */
 export default function ProjectName({
   name,
   label,
@@ -16,16 +16,15 @@ export default function ProjectName({
     )
   }
   return (
-    <span className="flex min-w-0 flex-1 items-center gap-1.5">
+    <span className="project-name-label flex min-w-0 flex-1 items-center gap-1.5">
       <span
-        className={`block min-w-0 truncate ${compact ? 'max-w-[140px]' : ''}`}
-        style={{ flexShrink: 1000 }}
+        className={`project-name-value block min-w-0 flex-1 truncate ${compact ? 'max-w-[140px]' : ''}`}
       >
         {name}
       </span>
       <span
         data-project-source
-        className="project-source-badge min-w-0 max-w-[160px] truncate rounded border border-border-strong/60 bg-fg/5 px-[5px] py-px font-normal text-fg-muted"
+        className="project-source-badge min-w-0 max-w-[45%] truncate rounded border border-border-strong/60 bg-fg/5 px-[5px] py-px font-normal text-fg-muted"
       >
         {label.source}
       </span>

@@ -37,6 +37,7 @@ export default function ContextMenu({
   arrow,
   /** Viewport X of the trigger center (caret tip aims here). */
   arrowAnchorX,
+  zIndex = 'z-[120]',
 }: {
   x: number
   y: number
@@ -45,11 +46,14 @@ export default function ContextMenu({
   preferAbove?: boolean
   arrow?: ContextMenuArrow
   arrowAnchorX?: number
+  zIndex?: string
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   useLayoutEffect(() => {
-    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    // Strict Mode replays layout effects after we have focused the first menu item.
+    // Keep the original opener rather than replacing it with that item.
+    returnFocusRef.current ??= document.activeElement instanceof HTMLElement ? document.activeElement : null
     return () => {
       const previous = returnFocusRef.current
       queueMicrotask(() => {
@@ -194,7 +198,7 @@ export default function ContextMenu({
     <div
       ref={shellRef}
       data-qingcode-context-menu
-      className="menu-enter ui-font-scaled fixed z-[120]"
+      className={`menu-enter ui-font-scaled fixed ${zIndex}`}
       style={{
         left: position.x,
         top: position.y,

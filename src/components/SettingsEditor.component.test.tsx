@@ -248,14 +248,15 @@ describe('SettingsEditor', () => {
       id: 'w', name: 'Workspace', path: 'D:/workspace', created_at: 1, last_opened_at: 1,
     } })
     render(<SettingsEditor />)
-    fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
+    fireEvent.click(screen.getByRole('tab', { name: '当前项目' }))
     expect(screen.getByLabelText('终端 › 集成: 字体族')).toBeDisabled()
   })
 
   it('restores user defaults after confirming the scope and preserves project records', async () => {
     mocks.tauri = true
     render(<SettingsEditor />)
-    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '管理设置' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '恢复默认设置' }))
     await waitFor(() => expect(mocks.resetSettings).toHaveBeenCalledWith('global', null))
     expect(mocks.confirm).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining('保留项目列表'), kind: 'warning',
@@ -266,7 +267,8 @@ describe('SettingsEditor', () => {
     mocks.tauri = true
     mocks.confirm.mockResolvedValue(false)
     render(<SettingsEditor />)
-    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }))
+    fireEvent.click(screen.getByRole('button', { name: '管理设置' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '恢复默认设置' }))
     await waitFor(() => expect(mocks.confirm).toHaveBeenCalled())
     expect(mocks.resetSettings).not.toHaveBeenCalled()
   })
@@ -276,8 +278,9 @@ describe('SettingsEditor', () => {
     const project = { id: 'w', name: 'Workspace', path: 'D:/workspace', created_at: 1, last_opened_at: 1 }
     useProjectStore.setState({ currentProject: project })
     render(<SettingsEditor />)
-    fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
-    fireEvent.click(screen.getByRole('button', { name: '恢复默认设置' }))
+    fireEvent.click(screen.getByRole('tab', { name: '当前项目' }))
+    fireEvent.click(screen.getByRole('button', { name: '管理设置' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '恢复默认设置' }))
     await waitFor(() => expect(mocks.resetSettings).toHaveBeenCalledWith('project', project))
     expect(mocks.confirm).toHaveBeenCalledWith(expect.objectContaining({ message: expect.stringContaining('Workspace') }))
   })
@@ -287,7 +290,8 @@ describe('SettingsEditor', () => {
     mocks.exportSettings.mockResolvedValue({ format: 'qingcode-settings', scope: 'global', settings: {} })
     mocks.saveDialog.mockResolvedValue('D:/backup.json')
     render(<SettingsEditor />)
-    fireEvent.click(screen.getByRole('button', { name: '导出配置 JSON' }))
+    fireEvent.click(screen.getByRole('button', { name: '管理设置' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '导出配置 JSON' }))
     await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith('导出配置', 'write_file', {
       path: 'D:/backup.json', content: expect.stringContaining('qingcode-settings'),
     }))
@@ -302,8 +306,9 @@ describe('SettingsEditor', () => {
     mocks.invoke.mockResolvedValue('{"editor.tabSize":2}')
     mocks.importSettings.mockResolvedValue({ skippedProjects: ['D:/missing'] })
     render(<SettingsEditor />)
-    fireEvent.click(screen.getByRole('tab', { name: '工作区' }))
-    fireEvent.click(screen.getByRole('button', { name: '导入配置 JSON' }))
+    fireEvent.click(screen.getByRole('tab', { name: '当前项目' }))
+    fireEvent.click(screen.getByRole('button', { name: '管理设置' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '导入配置 JSON' }))
     await waitFor(() => expect(mocks.importSettings).toHaveBeenCalledWith('{"editor.tabSize":2}', 'project', project))
     expect(useProjectStore.getState().pushToast).toHaveBeenCalledWith('info', '配置已导入，1 个项目路径不可用', 'D:/missing')
   })
@@ -312,7 +317,8 @@ describe('SettingsEditor', () => {
     mocks.tauri = true
     mocks.openDialog.mockResolvedValue(null)
     render(<SettingsEditor />)
-    fireEvent.click(screen.getByRole('button', { name: '导入配置 JSON' }))
+    fireEvent.click(screen.getByRole('button', { name: '管理设置' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '导入配置 JSON' }))
     await waitFor(() => expect(mocks.openDialog).toHaveBeenCalled())
     expect(mocks.importSettings).not.toHaveBeenCalled()
   })
@@ -358,4 +364,26 @@ describe('SettingsEditor', () => {
       expect(mocks.saveGitRefreshIntervalStartMinutes).toHaveBeenCalledWith(9),
     )
   })
+  it('finds configuration keys and clears an empty search back into the focused input', () => {
+    render(<SettingsEditor />)
+    const search = screen.getByPlaceholderText('搜索设置')
+    fireEvent.change(search, { target: { value: 'editor.minimap.enabled' } })
+    expect(screen.getByLabelText('编辑器: 小地图')).toBeVisible()
+    expect(screen.getByRole('button', { name: '文本编辑器' })).toBeVisible()
+    fireEvent.change(search, { target: { value: 'no-such-setting' } })
+    expect(screen.getByRole('status')).toHaveTextContent('没有匹配的设置')
+    fireEvent.click(screen.getAllByRole('button', { name: '清除搜索' })[0])
+    expect(search).toHaveFocus()
+    expect(screen.getByLabelText('编辑器: 小地图')).toBeVisible()
+  })
+
+  it('keeps the project scope navigation consistent with the rendered sections', () => {
+    useProjectStore.setState({ currentProject: { id: 'p', name: 'Demo', path: '/demo', created_at: 1, last_opened_at: 1 } })
+    render(<SettingsEditor />)
+    fireEvent.click(screen.getByRole('tab', { name: '当前项目' }))
+    expect(screen.queryByRole('button', { name: 'AI', exact: true })).toBeNull()
+    expect(screen.queryByRole('button', { name: '关于', exact: true })).toBeNull()
+    expect(screen.getByText('当前项目：Demo')).toBeVisible()
+  })
+
 })

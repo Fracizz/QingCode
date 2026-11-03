@@ -522,7 +522,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   addEmptyProject: async () => {
-    if (!hasBackend()) throw new NotInTauriError('新建临时项目')
+    if (!hasBackend()) throw new NotInTauriError('新建草稿项目')
     try {
       const temp = await tempDir()
       const id = crypto.randomUUID()
@@ -530,7 +530,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const separator = temp.includes('\\') && !temp.includes('/') ? '\\' : '/'
       const intended = `${temp.replace(/[\\/]+$/, '')}${separator}${dirName}`
       await authorizePaths([intended, temp])
-      const path = await safeInvoke<string>('创建临时项目目录', 'create_directory', {
+      const path = await safeInvoke<string>('创建草稿项目目录', 'create_directory', {
         parent: temp,
         name: dirName,
       })
@@ -554,12 +554,12 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       void get().ensureProjectTree(project)
       get().pushToast(
         'success',
-        `已新建临时项目: ${name}（退出后将从列表移除；文件保留在系统临时目录）`
+        `已新建草稿项目: ${name}（退出后将从列表移除；文件保留在系统临时目录）`
       )
       return true
     } catch (e) {
       console.error('addEmptyProject failed:', e)
-      get().pushToast('error', `新建临时项目失败: ${String(e)}`)
+      get().pushToast('error', `新建草稿项目失败: ${String(e)}`)
       return false
     }
   },
@@ -583,7 +583,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         }
       })
       void syncAllowlistRoots(get().projects)
-      get().pushToast('info', '已从列表移除临时项目；文件保留在系统临时目录')
+      get().pushToast('info', '已从列表移除草稿项目；文件保留在系统临时目录')
       return
     }
     try {

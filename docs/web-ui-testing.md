@@ -108,6 +108,12 @@ Windows SSH 修复确认框的独立场景位于 <http://127.0.0.1:38439/web-tes
 
 ## 验收边界
 
+SCM 分支菜单场景位于 `/web-tests/scm-branches.html`，使用 `pnpm test:web` 和
+`node scripts/web-tests/scm-branches.agent-browser.mjs`。复用真实分支菜单，验证大量分支默认最多十项高度、
+向下滚动到远程分支、全量筛选、键盘跨虚拟行选择、少量/空列表、加载状态和窄窗口布局。
+截图及结果保存在 `.dev/web-tests/scm-branches/`；分支数据和切换回调均为内存数据，
+真实 Git 时间排序由 Rust 测试验证，SSH 分支读取与原生切换仍需真实连接验收。
+
 远程连接概览场景位于 `/web-tests/remote-connections.html`，使用 `pnpm test:web` 和
 `node scripts/web-tests/remote-connections.agent-browser.mjs`（Linux 默认 agent-browser）。
 复用生产管理页与样式，通过内存适配器提供 SSH、状态检查失败与 Server 端口直连数据；
@@ -178,3 +184,10 @@ Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser
 退出应用场景位于 `/web-tests/app-close.html`，执行 `node scripts/web-tests/app-close.agent-browser.mjs`。
 复用真实退出决策与 `ChoiceDialog`，只替换窗口、文件保存和终端接口；覆盖保留、结束、未确认后的重试/仍然退出、取消文件确认、Escape、仅本地终端以及英文浅色 480px 布局。
 截图与结果保存在 `.dev/web-tests/app-close/`。页面不建立远程连接，不能替代原生退出和真实远程终端验收。
+
+
+界面交互优化回归使用 `node scripts/web-tests/ui-interactions.agent-browser.mjs`。
+同时启动 `pnpm dev:web-test`（38419）和 `pnpm test:web`（38439）；Linux 使用独立 headed agent-browser 会话，需要可用的显示环境。
+脚本在新的内存会话中添加项目，验证保存失败保留文件、保存后关闭、运行配置与远程连接的离开保护、
+设置键搜索与空结果、当前项目分类、分屏无横向溢出、菜单键盘及焦点返回，以及三种主题和英文窄窗的项目行操作。
+结果、浏览器异常、PNG 截图与 HTML 报告在 `.dev/web-tests/ui-interactions/`；不建立真实远程连接或执行项目命令。

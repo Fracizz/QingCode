@@ -5545,6 +5545,7 @@ pub async fn ssh_git_branch_list(
         [
             "for-each-ref",
             crate::git::BRANCH_LIST_FORMAT,
+            crate::git::BRANCH_LIST_SORT,
             "refs/heads",
             "refs/remotes",
         ]
@@ -5558,9 +5559,14 @@ pub async fn ssh_git_branch_list(
         output = remote_git_command(
             &manager,
             &path,
-            ["for-each-ref", crate::git::BRANCH_LIST_FORMAT, "refs/heads"]
-                .map(str::to_string)
-                .to_vec(),
+            [
+                "for-each-ref",
+                crate::git::BRANCH_LIST_FORMAT,
+                crate::git::BRANCH_LIST_SORT,
+                "refs/heads",
+            ]
+            .map(str::to_string)
+            .to_vec(),
             false,
         )
         .await?;

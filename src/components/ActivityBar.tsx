@@ -100,7 +100,7 @@ export default function ActivityBar({
           aria-label={t('向左收起活动栏')}
           aria-expanded={true}
           onClick={() => setActivityBarHidden(true)}
-          className="my-1 flex h-5 w-10 items-center justify-center rounded text-fg-dim hover:text-fg transition-colors"
+          className="my-2 flex h-5 w-10 items-center justify-center rounded border-y border-border/70 text-fg-dim hover:text-fg transition-colors"
         >
           <span className="relative flex w-6 items-center justify-center">
             <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-border" aria-hidden />
@@ -114,7 +114,7 @@ export default function ActivityBar({
       <Item icon={<Cloud size={22} />} label={t('远程连接')} onClick={openRemoteConnections} />
       <Item
         icon={<Terminal size={22} />}
-        label={t('终端')}
+        label={t('显示或隐藏终端')}
         active={terminalOpen}
         onClick={onToggleTerminal}
       />

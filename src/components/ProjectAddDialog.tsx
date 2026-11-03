@@ -268,7 +268,7 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
             <span className="whitespace-nowrap">{t('新建项目')}</span>
           </button>
           <Tooltip
-            label={t('退出后从列表移除')}
+            label={t('退出后从项目列表移除；文件保留在系统临时目录')}
             side="top"
             wrapperClassName="flex w-full min-w-0"
           >
@@ -276,11 +276,11 @@ export default function ProjectAddDialog({ open, onClose }: Props) {
               type="button"
               disabled={addingEmpty}
               onClick={() => void handleAddEmpty()}
-              aria-label={`${t('临时项目')} — ${t('退出后从列表移除')}`}
+              aria-label={`${t('草稿项目')} — ${t('退出后从项目列表移除；文件保留在系统临时目录')}`}
               className={footerActionClass}
             >
               <FilePlus2 size={14} />
-              <span className="whitespace-nowrap">{t('临时项目')}</span>
+              <span className="whitespace-nowrap">{t('草稿项目')}</span>
             </button>
           </Tooltip>
           <button type="button" onClick={handleRemote} className={footerActionClass}>

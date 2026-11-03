@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { X, Plus, Trash2, Wand2, CircleHelp } from 'lucide-react'
 import Tooltip from './Tooltip'
 import ModalOverlay from './ModalOverlay'
@@ -18,6 +18,7 @@ import type { Project } from '../types'
 import { useI18n } from '../lib/i18n'
 import { isSshResource } from '../lib/tauri'
 import { hasRunTaskTarget, parseRunTaskOs, type RunTaskOs } from '../lib/runTaskPlatform'
+import { confirmDialog } from '../store/confirmStore'
 
 const TYPE_OPTIONS: RunTaskType[] = ['command', 'ps1', 'bat', 'sh', 'script']
 
@@ -46,18 +47,33 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
   )
   const [tasks, setTasks] = useState<RunTask[]>(initial?.tasks ?? [])
   const [saving, setSaving] = useState(false)
+  const dismissPending = useRef(false)
   const [invalidOsTasks, setInvalidOsTasks] = useState<Set<string>>(new Set())
   const remote = isSshResource(project.path)
   const hasInvalidOs = tasks.some(task => invalidOsTasks.has(task.id))
+  const dirty = name !== (initial?.name ?? '') ||
+    restoreWithProjectSession !== (initial ? runConfigFollowsProjectSession(initial) : false) ||
+    JSON.stringify(tasks) !== JSON.stringify(initial?.tasks ?? [])
+  const saveHint = !name.trim() ? t('请填写配置名称')
+    : hasInvalidOs ? t('请修正任务的系统覆盖配置')
+      : !tasks.some(hasRunTaskTarget) ? t('请至少填写一个任务的命令或脚本路径') : ''
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      setName(initial?.name ?? '')
-      setRestoreWithProjectSession(initial ? runConfigFollowsProjectSession(initial) : false)
-      setTasks(initial?.tasks ?? [])
-      setInvalidOsTasks(new Set())
-    })
-  }, [initial])
+  const requestClose = async () => {
+    if (saving || dismissPending.current) return
+    dismissPending.current = true
+    try {
+      if (!dirty || await confirmDialog({
+        title: t('放弃运行配置修改？'),
+        message: t('尚未保存的名称和任务将丢失。'),
+        confirmLabel: t('放弃修改'),
+        cancelLabel: t('继续编辑'),
+        kind: 'warning',
+      })) onClose()
+    } finally {
+      dismissPending.current = false
+    }
+  }
+
 
   const addTask = () => {
     setTasks(ts => [
@@ -74,7 +90,13 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
     setTasks(ts => ts.filter(t => t.id !== id))
   }
 
-  const loadTemplate = () => {
+  const loadTemplate = async () => {
+    if (saving || dismissPending.current) return
+    if (dirty && !await confirmDialog({
+      title: t('替换为模板？'),
+      message: t('模板将替换当前名称、会话恢复选项和全部任务。'),
+      confirmLabel: t('替换'), cancelLabel: t('保留当前内容'), kind: 'warning',
+    })) return
     const tpl = defaultConfigs()[0]
     setName(tpl.name)
     setRestoreWithProjectSession(runConfigFollowsProjectSession(tpl))
@@ -110,13 +132,15 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
     try {
       await upsertConfig(project, config)
       onClose()
+    } catch {
+      // The store reports the write failure; keep the form for retry.
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <ModalOverlay onDismiss={onClose}>
+    <ModalOverlay onDismiss={() => void requestClose()}>
       <div
         className="modal-content-enter relative w-full max-w-[640px] max-h-[85vh] flex flex-col bg-bg-sidebar border border-border-strong rounded-lg shadow-2xl shadow-black/50"
         onClick={e => e.stopPropagation()}
@@ -134,23 +158,25 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           <button
             type="button"
             aria-label={t('关闭运行配置编辑器')}
-            onClick={onClose}
+            onClick={() => void requestClose()}
+            disabled={saving}
             className="text-fg-dim hover:text-fg p-1 rounded hover:bg-bg-hover"
           >
             <X size={16} />
           </button>
         </div>
 
-        <div className="flex-1 overflow-auto px-4 py-2 flex flex-col gap-2">
+        <fieldset disabled={saving} className="min-w-0 flex-1 overflow-auto border-0 px-4 py-2 flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <label
               htmlFor="run-config-name"
               className="text-ui-sm text-fg-muted w-16 flex-shrink-0"
             >
-              {t('名称')}
+              {t('名称')} <span className="text-warn" aria-hidden>*</span>
             </label>
             <input
               id="run-config-name"
+              aria-label={t('名称')}
               data-modal-autofocus
               value={name}
               onChange={e => setName(e.target.value)}
@@ -160,7 +186,8 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
             <Tooltip label={t('从常见模板填充（Python 后端 + 前端）')} side="bottom">
               <button
                 type="button"
-                onClick={loadTemplate}
+                onClick={() => void loadTemplate()}
+                disabled={saving}
                 className="inline-flex items-center gap-1 text-ui-sm px-2 py-1 rounded bg-bg-elevated hover:bg-bg-active border border-border text-fg-muted hover:text-fg"
               >
                 <Wand2 size={13} /> {t('模板')}
@@ -225,9 +252,10 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               />
             ))
           )}
-        </div>
+        </fieldset>
 
-        <div className="flex items-center justify-between gap-3 px-4 h-11 border-t border-border flex-shrink-0">
+        {saveHint && <p role="status" className="px-4 py-2 text-ui-sm text-fg-muted">{saveHint}</p>}
+        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2 border-t border-border flex-shrink-0">
           <p id={descriptionId} className="text-ui-sm truncate text-fg-dim">
             {t('保存至')}{' '}
             <button
@@ -242,7 +270,8 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => void requestClose()}
+              disabled={saving}
               className="text-ui px-3 py-1.5 rounded text-fg-muted hover:text-fg hover:bg-bg-hover"
             >
               {t('取消')}
@@ -253,7 +282,7 @@ export default function RunConfigEditor({ project, initial, onClose }: Props) {
               disabled={saving || hasInvalidOs || !name.trim() || !tasks.some(hasRunTaskTarget)}
               className="text-ui px-3 py-1.5 rounded bg-action text-on-action hover:bg-action/90 disabled:opacity-40 disabled:cursor-default"
             >
-              {t('保存')}
+              {saving ? t('正在保存…') : t('保存')}
             </button>
           </div>
         </div>
@@ -333,7 +362,7 @@ function TaskEditor({
       {task.type === 'command' ? (
         <div className="flex items-start gap-2">
           <div className="flex items-center gap-0.5 w-16 flex-shrink-0 pt-1">
-            <label className="text-ui-xs text-fg-muted">{t('命令')}</label>
+            <label className="text-ui-sm text-fg-muted">{t('命令')} *</label>
             <Tooltip label={commandHelp} side="bottom" wrapperClassName="inline-flex">
               <span className="text-fg-dim hover:text-fg-muted cursor-default" aria-hidden>
                 <CircleHelp size={11} />
@@ -343,14 +372,14 @@ function TaskEditor({
           <CommandTextarea
             value={task.target}
             onChange={value => onChange({ target: value })}
-            placeholder="python manage.py runserver"
+            placeholder={task.name === '前端' ? 'pnpm dev' : task.name === '后端' ? 'python manage.py runserver' : t('例如：pnpm dev 或 python main.py')}
             ariaLabel={t('命令')}
             className="flex-1 min-w-0"
           />
         </div>
       ) : (
         <div className="flex items-center gap-2">
-          <label className="text-ui-xs text-fg-muted w-16 flex-shrink-0">{t('脚本路径')}</label>
+          <label className="text-ui-sm text-fg-muted w-16 flex-shrink-0">{t('脚本路径')} *</label>
           <input
             aria-label={t('脚本路径')}
             value={task.target}

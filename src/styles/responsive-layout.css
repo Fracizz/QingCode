@@ -1,6 +1,29 @@
 /* Layout follows each editor column, including font changes and terminal splits. */
 .settings-shell { container: settings / inline-size; }
 .empty-editor { container: empty-editor / inline-size; }
+.project-manager { container: project-manager / inline-size; }
+.project-overflow-action { display: none; }
+
+@container project-manager (max-width: 880px) {
+  .project-manager-table { min-width: 0; }
+  .project-manager-table colgroup { display: none; }
+  .project-manager-table thead { display: block; }
+  .project-manager-table thead tr { display: grid; grid-template-columns: 40px minmax(0, 1fr); }
+  .project-manager-table th:not(:first-child):not(:nth-child(2)) { display: none; }
+  .project-manager-table tbody { display: block; }
+  .project-manager-table tbody tr { display: grid; grid-template-columns: 40px minmax(0, 1fr) 44px; align-items: center; padding-block: 4px; }
+  .project-manager-table td { min-width: 0; padding-block: 4px; }
+  .project-selection-cell { grid-column: 1; grid-row: 1; }
+  .project-name-cell { grid-column: 2; grid-row: 1; }
+  .project-name-cell .project-name-label { flex-direction: column; align-items: flex-start; gap: 2px; }
+  .project-name-cell .project-name-value { flex: initial; max-width: 100%; }
+  .project-name-cell .project-source-badge { max-width: 100%; }
+  .project-path-cell { grid-column: 2; grid-row: 2; }
+  .project-time-cell { display: none; }
+  .project-actions-cell { grid-column: 3; grid-row: 1 / span 2; padding-inline: 4px !important; }
+  .project-inline-actions { display: none; }
+  .project-overflow-action { display: inline-flex; }
+}
 
 @container settings (min-width: 760px) {
   .settings-item-row { flex-direction: row; align-items: flex-start; gap: 24px; }
@@ -23,6 +46,11 @@
     overflow-wrap: anywhere;
   }
   .settings-content-padding { padding-left: 16px; padding-right: 16px; }
+  .settings-item-control .setting-control { min-width: 0; width: 100%; }
+  .settings-item-control .setting-input { min-width: 0; max-width: 100%; }
+  .settings-item-control button { white-space: normal; height: auto; min-height: var(--ui-control-height); overflow-wrap: anywhere; }
+  .settings-item-control > div { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+  .settings-content-padding .font-mono { overflow-wrap: anywhere; }
 }
 
 @container empty-editor (max-width: 540px) {

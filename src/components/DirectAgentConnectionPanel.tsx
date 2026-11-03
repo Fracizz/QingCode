@@ -25,6 +25,7 @@ interface Props {
   connectionId: string
   defaultHost: string
   onUpdated?: (info: DirectAgentInfo) => void | Promise<void>
+  onDraftStateChange?: (state: { dirty: boolean; busy: boolean }) => void
   initiallyOpen?: boolean
   standalone?: boolean
   sshConnections?: readonly SshConnection[]
@@ -32,7 +33,7 @@ interface Props {
   api?: DirectAgentApi
 }
 
-export default function DirectAgentConnectionPanel({ connectionId, defaultHost, onUpdated, standalone = false, initiallyOpen = false, sshConnections, api = directAgentApi }: Props) {
+export default function DirectAgentConnectionPanel({ connectionId, defaultHost, onUpdated, onDraftStateChange, standalone = false, initiallyOpen = false, sshConnections, api = directAgentApi }: Props) {
   const { t } = useI18n()
   const storedConnections = useProjectStore(state => state.sshConnections)
   const [open, setOpen] = useState(standalone || initiallyOpen)
@@ -54,6 +55,14 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const [activity, setActivity] = useState('')
   const [savingEnabled, setSavingEnabled] = useState(true)
   const [verified, setVerified] = useState<string | null>(null)
+  useEffect(() => {
+    onDraftStateChange?.({
+      dirty: host !== (info?.host || defaultHost) || port !== String(info?.port || 48763) ||
+        fingerprint !== (info?.certificateFingerprint || '') || Boolean(token || pairing || sshPassword || sshPassphrase) || autoStart !== (info?.autoStart ?? true),
+      // Reads and connection tests can be abandoned; protect remote writes in flight.
+      busy: busy === 'saving' || busy === 'provisioning' || busy === 'firewallApply',
+    })
+  }, [onDraftStateChange, host, port, fingerprint, token, pairing, sshPassword, sshPassphrase, autoStart, info, defaultHost, busy])
   const requestRef = useRef(0)
   const confirmationRef = useRef<AbortController | null>(null)
   const verificationKey = JSON.stringify([host.trim(), port, fingerprint, token])
@@ -322,7 +331,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
         {t('Server 端口直连')}
         {info?.enabled && <span className="ml-auto text-ui-sm font-normal text-ok">{t('已启用')}</span>}
       </button>
-      {open && <div className="space-y-3 border-t border-dialog-separator p-3">
+      {open && <fieldset disabled={busy === 'saving'} className="min-w-0 space-y-3 border-0 border-t border-dialog-separator p-3">
         <p className="text-ui-sm leading-relaxed text-fg-muted">{t(standalone ? '通过独立 TLS 端口连接远端服务，无需 SSH。请先在远端启动服务，再导入配对信息。' : '通过独立 TLS 端口连接远端服务，通信不经过 SSH。现有 SSH 配置保留，可随时切回。')}</p>
         {feedback && <div role={error && !busy ? 'alert' : 'status'} aria-live={error && !busy ? 'assertive' : 'polite'} aria-atomic="true" className={`sticky top-0 z-10 flex items-start gap-2 rounded border p-3 text-ui-sm shadow-sm ${busy ? 'border-accent/40 bg-dialog text-fg' : error ? 'border-danger/40 bg-dialog text-danger' : 'border-ok/40 bg-dialog text-fg'}`}>
           {busy ? <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin motion-reduce:animate-none text-accent" aria-hidden="true" /> : error ? <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" /> : <CircleCheck size={16} className="mt-0.5 shrink-0 text-ok" aria-hidden="true" />}
@@ -385,7 +394,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
           <button type="button" disabled={Boolean(busy) || verified !== verificationKey} onClick={() => void save(true)} aria-busy={busy === 'saving' && savingEnabled} className="inline-flex items-center gap-2 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40">{busy === 'saving' && savingEnabled && <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />}{t(busy === 'saving' && savingEnabled ? '正在保存并启用…' : '保存并启用直连')}</button>
           {!standalone && info?.enabled && <button type="button" disabled={Boolean(busy)} onClick={() => void save(false)} aria-busy={busy === 'saving' && !savingEnabled} className={`${buttonClass} inline-flex items-center gap-2`}>{busy === 'saving' && !savingEnabled && <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />}{t(busy === 'saving' && !savingEnabled ? '正在恢复 SSH 连接…' : '恢复 SSH 连接')}</button>}
         </div>
-      </div>}
+      </fieldset>}
     </section>
   )
 }

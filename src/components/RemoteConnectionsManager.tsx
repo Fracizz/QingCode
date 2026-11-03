@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Globe,
   KeyRound,
+  MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
@@ -19,11 +20,11 @@ import {
   Server,
   ShieldCheck,
   ShieldOff,
-  Trash2,
   X,
 } from 'lucide-react'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
+import ContextMenu from './ContextMenu'
 import SshImportDialog from './SshImportDialog'
 import DirectAgentConnectionPanel from './DirectAgentConnectionPanel'
 import DirectServerRecoveryPanel from './DirectServerRecoveryPanel'
@@ -134,6 +135,10 @@ export default function RemoteConnectionsManager() {
   const [detailLoading, setDetailLoading] = useState(false)
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [directDraft, setDirectDraft] = useState({ dirty: false, busy: false })
+  const updateDirectDraft = useCallback((value: { dirty: boolean; busy: boolean }) => setDirectDraft(value), [])
+  const [actionMenu, setActionMenu] = useState<{ x: number; y: number } | null>(null)
+  const navigationPending = useRef(false)
   const [importOpen, setImportOpen] = useState(false)
   const [error, setError] = useState('')
   const [busyRoot, setBusyRoot] = useState<string | null>(null)
@@ -353,6 +358,31 @@ export default function RemoteConnectionsManager() {
     ? !formEqualsConnection(form, selected) ||
       mode !== resolveSshConnectionMode(selected, getSshServerEnabled())
     : true
+  const requestNavigation = async (navigate: () => void) => {
+    if (saving || directDraft.busy || navigationPending.current) return
+    navigationPending.current = true
+    try {
+      const sshChanged = selected ? dirty : JSON.stringify(form) !== JSON.stringify(emptyConnectionForm()) || mode !== 'server'
+      const hasChanges = ((editing || isNew) && (sshChanged || password || passphrase)) || directDraft.dirty
+      if (hasChanges && !await confirmDialog({
+        title: t('放弃连接修改'), message: t('离开当前连接将放弃尚未保存的修改。'),
+        kind: 'warning', confirmLabel: t('放弃修改'), cancelLabel: t('继续编辑'),
+      })) return
+      if (!mountedRef.current) return
+      invalidateVerification()
+      setDirectDraft({ dirty: false, busy: false })
+      if (selected) {
+        setForm(formFromConnection(selected))
+        setMode(resolveSshConnectionMode(selected, getSshServerEnabled()))
+      }
+      setPassword('')
+      setPassphrase('')
+      setActionMenu(null)
+      navigate()
+    } finally {
+      navigationPending.current = false
+    }
+  }
   const alive = selected ? aliveMap[selected.id] ?? false : false
 
   const testConnection = async () => {
@@ -638,12 +668,8 @@ export default function RemoteConnectionsManager() {
   }
 
   const leaveEditor = async () => {
-    if (!selected || testing || saving) return
-    if ((dirty || password || passphrase) && !await confirmDialog({
-      title: t('放弃连接修改'), message: t('返回概览将放弃尚未保存的连接修改。'),
-      kind: 'warning', confirmLabel: t('放弃修改'), cancelLabel: t('取消'),
-    })) return
-    invalidateVerification()
+    if (!selected) return
+    await requestNavigation(() => {
     setForm(formFromConnection(selected))
     const savedMode = resolveSshConnectionMode(selected, getSshServerEnabled())
     setMode(savedMode)
@@ -652,6 +678,7 @@ export default function RemoteConnectionsManager() {
     setPassphrase('')
     setError('')
     setEditing(false)
+    })
   }
 
   const choosePrivateKey = async () => {
@@ -668,7 +695,7 @@ export default function RemoteConnectionsManager() {
   const remoteShort = (rootUri: string) => rootUri.replace(/^ssh:\/\/[^/]+/, '') || '/'
 
   const renderForm = () => (
-    <div className="space-y-5">
+    <fieldset disabled={saving} className="min-w-0 space-y-5 border-0 p-0">
       <fieldset className="grid min-w-0 grid-cols-1 gap-x-3 gap-y-3 @md:grid-cols-[minmax(0,1fr)_7rem]">
         <legend className={`${sectionTitleClass} mb-3`}>{t('基本信息')}</legend>
         <label className={`col-span-full ${labelClass}`}>
@@ -833,12 +860,12 @@ export default function RemoteConnectionsManager() {
           ) : null}
         </div>
       </div>
-    </div>
+    </fieldset>
   )
 
   return (
     <>
-      <ModalOverlay onDismiss={closeRemoteConnections} zIndex="z-[130]">
+      <ModalOverlay onDismiss={() => void requestNavigation(closeRemoteConnections)} zIndex="z-[130]">
         <div
           role="dialog"
           aria-modal="true"
@@ -857,7 +884,8 @@ export default function RemoteConnectionsManager() {
             <Tooltip label={t('关闭')} side="left">
               <button
                 type="button"
-                onClick={closeRemoteConnections}
+                disabled={saving || directDraft.busy}
+                  onClick={() => void requestNavigation(closeRemoteConnections)}
                 className="rounded p-1 text-fg-dim hover:bg-bg-hover hover:text-fg"
                 aria-label={t('关闭')}
               >
@@ -878,7 +906,8 @@ export default function RemoteConnectionsManager() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSelectedId(NEW_SSH_CONNECTION_ID)}
+                  disabled={saving || directDraft.busy}
+                  onClick={() => void requestNavigation(() => { setEditing(false); setSelectedId(NEW_SSH_CONNECTION_ID) })}
                   className={`flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-ui transition-colors ${
                     selectedId === NEW_SSH_CONNECTION_ID
                       ? 'border-brand/60 bg-brand/10 text-brand'
@@ -890,7 +919,8 @@ export default function RemoteConnectionsManager() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => { setAgentDraftId(crypto.randomUUID()); setSelectedId(NEW_AGENT_CONNECTION_ID) }}
+                  disabled={saving || directDraft.busy}
+                  onClick={() => void requestNavigation(() => { setAgentDraftId(crypto.randomUUID()); setEditing(false); setSelectedId(NEW_AGENT_CONNECTION_ID) })}
                   className={`flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-ui ${isNewAgent ? 'border-brand/60 bg-brand/10 text-brand' : 'border-dialog-border text-fg hover:bg-bg-hover'}`}
                 >
                   <Plus size={14} />
@@ -898,8 +928,9 @@ export default function RemoteConnectionsManager() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => setImportOpen(true)}
-                  className="flex w-full items-center justify-center gap-1.5 rounded border border-dialog-border px-2 py-1.5 text-ui text-fg hover:bg-bg-hover"
+                  disabled={saving || directDraft.busy}
+                  onClick={() => void requestNavigation(() => setImportOpen(true))}
+                  className="flex w-full items-center justify-center gap-1.5 rounded px-2 py-1.5 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg"
                 >
                   <Download size={14} />
                   {t('导入已有连接')}
@@ -918,7 +949,8 @@ export default function RemoteConnectionsManager() {
                       key={connection.id}
                       aria-current={active ? 'true' : undefined}
                       type="button"
-                      onClick={() => { setEditing(false); setSelectedId(connection.id) }}
+                      disabled={saving || directDraft.busy}
+                  onClick={() => { if (connection.id !== selectedId) void requestNavigation(() => { setEditing(false); setSelectedId(connection.id) }) }}
                       className={`flex w-full flex-col gap-0.5 border-l-2 px-3 py-2 text-left transition-colors ${
                         active
                           ? 'border-brand bg-dialog-active text-fg'
@@ -967,25 +999,18 @@ export default function RemoteConnectionsManager() {
                       </div>
                       {!isNew && selected && (
                         <div className="flex flex-wrap items-center gap-2">
-                          {!editing && <button type="button" onClick={() => setEditing(true)} className={`${secondaryButtonClass} inline-flex items-center gap-1`}><Pencil size={13} />{t('编辑连接')}</button>}
+                          {!editing && <button type="button" onClick={() => setEditing(true)} className={`${primaryButtonClass} inline-flex items-center gap-1`}><Pencil size={13} />{t('编辑连接')}</button>}
                           <button type="button" disabled={detailLoading} onClick={() => void refreshDetail(selected.id)} className={secondaryButtonClass}>{t('刷新状态')}</button>
-                          {alive && (
+                          <Tooltip label={t('更多连接操作')} side="left">
                             <button
                               type="button"
-                              onClick={() => void disconnectConnection()}
-                              className={secondaryButtonClass}
+                              aria-haspopup="menu"
+                              aria-expanded={Boolean(actionMenu)}
+                              onClick={event => { event.currentTarget.focus(); const rect = event.currentTarget.getBoundingClientRect(); setActionMenu({ x: rect.right - 180, y: rect.bottom + 4 }) }}
+                              className="rounded p-1.5 text-fg-muted hover:bg-bg-hover hover:text-fg"
+                              aria-label={t('更多连接操作')}
                             >
-                              {t('断开连接')}
-                            </button>
-                          )}
-                          <Tooltip label={t('删除连接')} side="left">
-                            <button
-                              type="button"
-                              onClick={() => void removeConnection()}
-                              className="rounded border border-dialog-border p-1.5 text-fg-dim hover:border-danger/50 hover:text-danger disabled:opacity-40"
-                              aria-label={t('删除连接')}
-                            >
-                              <Trash2 size={14} />
+                              <MoreHorizontal size={16} />
                             </button>
                           </Tooltip>
                         </div>
@@ -1014,6 +1039,7 @@ export default function RemoteConnectionsManager() {
                       await refreshDetail(selected.id)
                     }} />}
                     {(isNew || editing) && (isNewAgent ? <DirectAgentConnectionPanel
+                      onDraftStateChange={updateDirectDraft}
                       key={agentDraftId}
                       connectionId={agentDraftId}
                       defaultHost=""
@@ -1039,6 +1065,7 @@ export default function RemoteConnectionsManager() {
                     {!isNew && selected && (
                       <>
                         {editing && <DirectAgentConnectionPanel
+                          onDraftStateChange={updateDirectDraft}
                           key={selected.id}
                           connectionId={selected.id}
                           defaultHost={selected.host}
@@ -1317,6 +1344,10 @@ export default function RemoteConnectionsManager() {
           </div>
         </div>
       </ModalOverlay>
+      {actionMenu && selected && <ContextMenu x={actionMenu.x} y={actionMenu.y} zIndex="z-[135]" onClose={() => setActionMenu(null)} items={[
+        ...(alive ? [{ label: t('断开连接'), action: () => requestNavigation(() => { void disconnectConnection() }) }] : []),
+        { label: t('删除连接'), danger: true, separatorBefore: alive, action: () => requestNavigation(() => { void removeConnection() }) },
+      ]} />}
 
       {importOpen && (
         <SshImportDialog onClose={() => setImportOpen(false)} onImported={id => { setEditing(false); setSelectedId(id) }} />
