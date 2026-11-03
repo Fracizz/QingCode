@@ -18,13 +18,31 @@ const setScenario = value => evaluate(`(() => { const select = document.querySel
 const setSource = value => evaluate(`(() => { const select = [...document.querySelectorAll('select')].find(el => el.closest('label')?.textContent.includes('服务包来源')); select.value = ${JSON.stringify(value)}; select.dispatchEvent(new Event('change', { bubbles: true })) })()`)
 const fixtureClick = name => evaluate(`[...document.querySelectorAll('main button')].find(button => button.textContent.trim() === ${JSON.stringify(name)}).click()`)
 const updateDisabled = `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === '更新并重新连接').disabled`
+const updateLayoutFits = `(() => {
+  const dialog = document.querySelector('[role="dialog"][aria-busy="true"]');
+  const rect = dialog.getBoundingClientRect();
+  const footer = dialog.querySelector('footer').getBoundingClientRect();
+  const progress = dialog.querySelector('[role="status"]').getBoundingClientRect();
+  return rect.height <= innerHeight * .85 + 1 && rect.top >= 0 && rect.bottom <= innerHeight
+    && footer.bottom <= rect.bottom && progress.bottom <= footer.top && progress.top > rect.top
+    && rect.left >= 0 && rect.right <= innerWidth && dialog.scrollWidth <= dialog.clientWidth
+    && document.documentElement.scrollWidth <= innerWidth;
+})()`
 try {
   run('set', 'viewport', '1200', '1000')
   run('open', 'http://127.0.0.1:38439/web-tests/server-version-update.html')
   click('远端服务版本不匹配 阶段：正在探测 原因：daemon 版本不匹配：远端 0.1.14-beta.9，本端 0.1.14-beta.12 点击查看详情')
   click('通过 SSH 更新远端服务')
-  check('opening the dialog never starts an update', `${updateDisabled} && document.querySelector('[data-testid="update-calls"]').textContent === '0'`)
+  check('opening prepares automatically once and waits for explicit update', `!(${updateDisabled}) && document.querySelector('[data-testid="prepare-calls"]').textContent === '1' && document.querySelector('[data-testid="update-calls"]').textContent === '0'`)
+  check('desktop dialog stays compact and keeps the impact warning visible', `(() => { const d = [...document.querySelectorAll('[role="dialog"]')].at(-1); return d.getBoundingClientRect().height < 600 && !d.querySelector('details').open && d.querySelector('[id$="-impact"]').getBoundingClientRect().height > 0 })()`)
+  evaluate(`[...document.querySelectorAll('[role="dialog"]')].at(-1).querySelector('summary').click()`)
+  check('supplementary update details can be expanded', `[...document.querySelectorAll('[role="dialog"]')].at(-1).querySelector('details[open]')?.textContent.includes('HTTPS / WSS')`)
+  evaluate(`[...document.querySelectorAll('[role="dialog"]')].at(-1).querySelector('summary').click()`)
+  check('expanding details never repeats automatic preparation', `document.querySelector('[data-testid="prepare-calls"]').textContent === '1'`)
   capture('automatic')
+  click('取消')
+  click('通过 SSH 更新远端服务')
+  check('reopening prepares exactly once again', `!(${updateDisabled}) && document.querySelector('[data-testid="prepare-calls"]').textContent === '2' && document.querySelector('[data-testid="update-calls"]').textContent === '0'`)
   setSource('offline')
   check('offline mode explains the network boundary and requires a directory', `document.body.textContent.includes('本次更新不联网下载') && [...document.querySelectorAll('button')].find(b => b.textContent === '检查并准备服务包').disabled`)
   setScenario('cancel')
@@ -56,6 +74,14 @@ try {
   fixtureClick('切换更新失败')
   click('更新并重新连接')
   check('update reports upload separately and blocks dismissal', `document.querySelector('[role="dialog"][aria-busy="true"]').textContent.includes('正在通过 SSH 上传并校验服务包') && [...document.querySelectorAll('button')].find(b => b.textContent === '取消').disabled`)
+  capture('updating')
+  run('set', 'viewport', '1366', '600')
+  check('progress and footer remain visible in a short window', updateLayoutFits)
+  evaluate(`document.documentElement.style.setProperty('--ui-font-size', '20px'); document.documentElement.style.setProperty('--ui-font-size-sm', '19px')`)
+  check('large text keeps progress and actions visible', updateLayoutFits)
+  capture('updating-large-text-short')
+  evaluate(`document.documentElement.style.removeProperty('--ui-font-size'); document.documentElement.style.removeProperty('--ui-font-size-sm')`)
+  run('set', 'viewport', '1200', '1000')
   fixtureClick('完成更新')
   check('failed update remains actionable and requires preparation again', `${updateDisabled} && document.querySelector('[role="alert"]').textContent.includes('update refused')`)
   setScenario('cached')
@@ -67,6 +93,9 @@ try {
   check('English light dialog and footer fit a narrow viewport', `(() => { const d = [...document.querySelectorAll('[role="dialog"]')].at(-1); const r = d.getBoundingClientRect(); const f = d.querySelector('footer').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && f.bottom <= innerHeight && document.documentElement.scrollWidth <= innerWidth && d.textContent.includes('Automatic (default)') })()`)
   capture('light-english-narrow')
   click('Update and reconnect')
+  run('set', 'viewport', '480', '600')
+  check('English narrow short window keeps progress and footer visible', updateLayoutFits)
+  capture('updating-light-narrow-short')
   fixtureClick('完成更新')
   check('success closes only the update dialog and submits exactly once per attempt', `!document.querySelector('[role="dialog"] select') || (!document.body.textContent.includes('Automatic (default)') && document.querySelector('[data-testid="update-calls"]').textContent === '2')`)
   console.log(`Passed ${results.length} browser checks. Artifacts: ${artifactDir}`)

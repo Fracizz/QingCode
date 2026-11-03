@@ -2,6 +2,7 @@
   "locale": "en",
   "label": "English",
   "messages": {
+    "更新说明": "Update details",
     "放弃修改": "Discard changes",
     "检查失败": "Check failed",
     "尚未检查": "Not checked",

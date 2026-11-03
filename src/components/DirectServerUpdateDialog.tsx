@@ -15,7 +15,7 @@ import { useUIStore } from '../store/uiStore'
 import ModalOverlay from './ModalOverlay'
 import ServerOperationProgress from './ServerOperationProgress'
 
-const field = 'mt-1 w-full rounded border border-dialog-border bg-dialog-input px-3 py-2 text-fg'
+const field = 'mt-1 w-full min-w-0 rounded border border-dialog-border bg-dialog-input px-3 py-1.5 text-fg'
 
 type Props = { rootUri: string; api?: DirectServerUpdateApi }
 
@@ -45,6 +45,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
   const [phase, setPhase] = useState<UpdatePhase>('connecting')
   const [startedAt, setStartedAt] = useState(0)
   const pending = useRef(false)
+  const automaticallyPrepared = useRef(false)
   const generation = useRef(0)
   useEffect(
     () => () => {
@@ -121,6 +122,18 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
       if (request === generation.current) setWorking(null)
     }
   }
+  useEffect(() => {
+    if (automaticallyPrepared.current || !ssh || mode !== 'automatic') return
+    let cancelled = false
+    // Defer past StrictMode's effect replay so it cannot invalidate an in-flight request.
+    queueMicrotask(() => {
+      if (cancelled || automaticallyPrepared.current || pending.current) return
+      automaticallyPrepared.current = true
+      setStartedAt(Date.now())
+      void prepare()
+    })
+    return () => { cancelled = true }
+  })
   const update = async () => {
     if (pending.current || !ssh || !info?.directory || info.problem) return
     pending.current = true
@@ -159,81 +172,96 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
         aria-labelledby={`${id}-title`}
         aria-describedby={`${id}-impact`}
         aria-busy={busy}
-        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-ui text-fg shadow-elevation-3"
+        className="flex max-h-[min(85dvh,48rem)] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-ui text-fg shadow-elevation-3"
       >
         <h2
           id={`${id}-title`}
-          className="shrink-0 bg-dialog-chrome px-5 py-4 text-ui-lg font-semibold"
+          className="shrink-0 bg-dialog-chrome px-5 py-3 text-ui-lg font-semibold"
         >
           {t('通过 SSH 更新远端服务')}
         </h2>
-        <div className="min-h-0 space-y-4 overflow-y-auto p-5">
-          <p id={`${id}-impact`} className="text-warn">
+        <div className="min-h-0 space-y-3 overflow-y-auto px-5 py-4">
+          <p className="break-all font-medium">
+            {direct?.name} · {direct?.agentEndpoint?.host ?? direct?.host}
+          </p>
+          <p id={`${id}-impact`} className="text-ui-sm text-warn">
             {t(
               '将安装与当前客户端匹配的远端服务并替换旧版本。更新会结束此远端服务托管的终端，可能影响同一远端用户下的其他项目。'
             )}
           </p>
-          <p className="text-fg-muted">
-            {t(
-              '服务包由本机准备，通过所选 SSH 连接上传，远端无需访问互联网。更新保留直连端口和配对身份，完成后仍使用 HTTPS / WSS 连接。'
-            )}
-          </p>
-          <p className="break-all">
-            {direct?.name} · {direct?.agentEndpoint?.host ?? direct?.host}
-          </p>
+          <details className="text-ui-sm text-fg-muted">
+            <summary className="cursor-pointer text-fg">{t('更新说明')}</summary>
+            <p className="mt-2">
+              {t(
+                '服务包由本机准备，通过所选 SSH 连接上传，远端无需访问互联网。更新保留直连端口和配对身份，完成后仍使用 HTTPS / WSS 连接。'
+              )}
+            </p>
+          </details>
           {ssh ? (
             <>
-              <label className="block">
-                {t('SSH 授权连接')}
-                <select
-                  data-modal-autofocus
-                  disabled={busy}
-                  value={ssh.id}
-                  onChange={event => {
-                    setSshId(event.target.value)
-                    setSecret('')
-                    invalidate()
-                  }}
-                  className={field}
-                >
-                  {candidates.map(connection => (
-                    <option key={connection.id} value={connection.id}>
-                      {connection.name} · {connection.username}@{connection.host}:{connection.port}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                {t(ssh.auth_kind === 'password' ? 'SSH 密码' : 'SSH 私钥口令（可选）')}
-                <input
-                  disabled={busy}
-                  type="password"
-                  value={secret}
-                  onChange={event => {
-                    setSecret(event.target.value)
-                    invalidate()
-                  }}
-                  autoComplete="new-password"
-                  placeholder={t('留空使用当前会话中已有的 SSH 凭据')}
-                  className={field}
-                />
-              </label>
-              <div className="space-y-3 rounded border border-dialog-border p-3">
-                <label className="block">
-                  {t('服务包来源')}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <label className="block min-w-0">
+                  {t('SSH 授权连接')}
                   <select
+                    data-modal-autofocus
                     disabled={busy}
-                    value={mode}
-                    className={field}
+                    value={ssh.id}
                     onChange={event => {
-                      setMode(event.target.value as typeof mode)
+                      setSshId(event.target.value)
+                      setSecret('')
                       invalidate()
                     }}
+                    className={field}
                   >
-                    <option value="automatic">{t('自动获取（默认）')}</option>
-                    <option value="offline">{t('使用本机离线包')}</option>
+                    {candidates.map(connection => (
+                      <option key={connection.id} value={connection.id}>
+                        {connection.name} · {connection.username}@{connection.host}:{connection.port}
+                      </option>
+                    ))}
                   </select>
                 </label>
+                <label className="block min-w-0">
+                  {t(ssh.auth_kind === 'password' ? 'SSH 密码' : 'SSH 私钥口令（可选）')}
+                  <input
+                    disabled={busy}
+                    type="password"
+                    value={secret}
+                    onChange={event => {
+                      setSecret(event.target.value)
+                      invalidate()
+                    }}
+                    autoComplete="new-password"
+                    placeholder={t('留空使用当前会话中已有的 SSH 凭据')}
+                    className={field}
+                  />
+                </label>
+              </div>
+              <div className="space-y-2.5 rounded-lg border border-dialog-border p-3">
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="block min-w-0 flex-1 basis-64">
+                    {t('服务包来源')}
+                    <select
+                      disabled={busy}
+                      value={mode}
+                      className={field}
+                      onChange={event => {
+                        setMode(event.target.value as typeof mode)
+                        invalidate()
+                      }}
+                    >
+                      <option value="automatic">{t('自动获取（默认）')}</option>
+                      <option value="offline">{t('使用本机离线包')}</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    disabled={busy || (mode === 'offline' && !directory)}
+                    onClick={() => { setStartedAt(Date.now()); void prepare() }}
+                    className="rounded border border-dialog-border px-3 py-1.5 disabled:opacity-40"
+                  >
+                    {t('检查并准备服务包')}
+                  </button>
+                </div>
                 <p className="text-ui-sm text-fg-muted">
                   {t(
                     mode === 'automatic'
@@ -242,8 +270,8 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
                   )}
                 </p>
                 {mode === 'offline' && (
-                  <div className="space-y-2">
-                    <p className="select-text break-all text-ui-sm text-fg-muted">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="min-w-0 flex-1 basis-64 select-text break-all text-ui-sm text-fg-muted">
                       {directory || t('未选择离线目录')}
                     </p>
                     <button
@@ -256,27 +284,19 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
                     </button>
                   </div>
                 )}
-                <button
-                  type="button"
-                  disabled={busy || (mode === 'offline' && !directory)}
-                  onClick={() => { setStartedAt(Date.now()); void prepare() }}
-                  className="rounded border border-dialog-border px-3 py-1.5 disabled:opacity-40"
-                >
-                  {t('检查并准备服务包')}
-                </button>
                 {info && (
-                  <dl className="space-y-1 text-ui-sm text-fg-muted">
-                    <div>
+                  <dl className="grid grid-cols-1 gap-x-4 gap-y-1 text-ui-sm text-fg-muted sm:grid-cols-2">
+                    <div className="min-w-0 break-words">
                       <dt className="inline">{t('客户端需要的版本')}：</dt>
                       <dd className="inline select-text text-fg">{info.expectedVersion}</dd>
                     </div>
-                    <div>
+                    <div className="min-w-0 break-words">
                       <dt className="inline">{t('服务包版本')}：</dt>
                       <dd className="inline select-text text-fg">
                         {info.packageVersion || t('未知')}
                       </dd>
                     </div>
-                    <div>
+                    <div className="min-w-0 sm:col-span-2">
                       <dt className="inline">{t('服务包来源')}：</dt>
                       <dd className="inline select-text break-all text-fg">
                         {info.sourcePath || t('未找到服务包')}
@@ -300,9 +320,10 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
             </p>
           )}
         </div>
-        <div className="shrink-0 px-5">
-          {busy && working !== 'choose' && (
+        {busy && working !== 'choose' && (
+          <div className="shrink-0 px-5 pb-3">
             <ServerOperationProgress
+              compact
               name={direct?.name ?? ssh?.name ?? 'Server'}
               status={working === 'prepare' ? '准备中' : '更新中'}
               label={updatePhaseLabels[phase]}
@@ -317,8 +338,8 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
                       : 3
               }
             />
-          )}
-        </div>
+          </div>
+        )}
         <footer className="flex shrink-0 justify-end gap-3 border-t border-dialog-separator bg-dialog-chrome px-5 py-3">
           <button
             type="button"

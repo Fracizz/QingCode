@@ -24,6 +24,7 @@ let state: SshServerState = {
 }
 let pending: (() => void) | null = null
 let calls = 0
+let prepareCalls = 0
 let failure = false
 let packageScenario = 'cached'
 let finishPrepare: (() => void) | null = null
@@ -77,6 +78,7 @@ export default function Page() {
         切换语言主题
       </button>
       <output data-testid="update-calls">{calls}</output>
+      <output data-testid="prepare-calls">{prepareCalls}</output>
       <SshServerStatusChip rootUri={rootUri} />
       {updateRoot && <DirectServerUpdateDialog rootUri={updateRoot} />}
     </main>
@@ -108,6 +110,8 @@ if (import.meta.env.MODE === 'web-test') {
       if (command === 'plugin:dialog|open')
         return packageScenario === 'cancel' ? null : '/fixture/offline/servers'
       if (command === 'direct_agent_prepare_update') {
+        prepareCalls += 1
+        document.querySelector('[data-testid="prepare-calls"]')!.textContent = String(prepareCalls)
         const progress = args?.onProgress as Channel<UpdatePhase>
         const source = args?.packageSource as { mode: string; directory?: string }
         progress.onmessage('checkingPackage')

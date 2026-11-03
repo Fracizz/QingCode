@@ -155,6 +155,7 @@ Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser
 `node scripts/web-tests/direct-update-source.agent-browser.mjs`。复用真实更新弹窗，验证自动获取、
 本机离线目录、取消重选、旧包/缺平台文件阻止更新、下载与上传的阶段反馈、失败后重新准备，
 以及英文浅色 480px 窄窗。截图、JSON 结果和浏览器错误保存到 `.dev/web-tests/direct-update-source/`。
+打开更新弹窗后自动准备一次服务包，重新打开时再次准备；展开说明不重复准备，实际更新仍需点击确认。
 目录选择、下载与远端更新均为内存模拟，不替代原生目录选择和真实断网主机的 SSH 更新验收。
 
 安装与更新进度卡片场景位于 `/web-tests/server-operation.html`，Linux 运行
