@@ -4211,7 +4211,7 @@ checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
 
 [[package]]
 name = "qingcode"
-version = "0.1.14-beta.17"
+version = "0.1.14-beta.18"
 dependencies = [
  "arboard",
  "dirs",
@@ -4262,7 +4262,7 @@ dependencies = [
 
 [[package]]
 name = "qingcode-server"
-version = "0.1.14-beta.17"
+version = "0.1.14-beta.18"
 dependencies = [
  "base64 0.22.1",
  "futures-util",
