@@ -121,6 +121,12 @@ const restoreSpawnInFlight = new Set<string>()
 const ptySpawnFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>()
 /** Last fitted size per tab — used when restarting before the next fit. */
 const lastPtySize = new Map<string, { cols: number; rows: number }>()
+/**
+ * 新建/接回请求在途时后端还没登记该终端，期间的 resize 与重绘都下发不到
+ * （SSH 报「终端不存在」），而之后同尺寸的 resize 又会被去重，PTY 停在请求时的尺寸、
+ * 全屏 TUI 的残留画面也没人重画。先记下，请求完成后补发（见 flushDeferredPtySync）。
+ */
+const deferredPtySync = new Map<string, { size?: { cols: number; rows: number }; redraw?: boolean }>()
 /** Kills from close/restart — do not auto-respawn a shell for these. */
 const intentionalPtyKills = new Set<string>()
 const reportedShellFallbacks = new Set<string>()
@@ -255,6 +261,31 @@ function clearPtySpawnFallback(id: string) {
 
 function rememberPtySize(id: string, cols: number, rows: number) {
   lastPtySize.set(id, normalizePtySize(cols, rows))
+}
+
+function deferPtySync(id: string, update: { size?: { cols: number; rows: number }; redraw?: boolean }) {
+  const current = deferredPtySync.get(id) ?? {}
+  deferredPtySync.set(id, {
+    size: update.size ?? current.size,
+    redraw: current.redraw || update.redraw,
+  })
+}
+
+/**
+ * 请求在途期间被推迟的同步：尺寸变了就补一次真实 resize（ConPTY/TUI 会随之整屏重绘），
+ * 否则只在接回时补一次重绘。
+ */
+export function planDeferredPtySync(
+  spawned: { cols: number; rows: number },
+  deferred: { size?: { cols: number; rows: number }; redraw?: boolean } | undefined,
+  attached: boolean
+): { action: 'resize' | 'redraw'; cols: number; rows: number } | null {
+  if (!deferred) return null
+  const size = deferred.size ?? spawned
+  if (size.cols !== spawned.cols || size.rows !== spawned.rows) {
+    return { action: 'resize', ...size }
+  }
+  return deferred.redraw && attached ? { action: 'redraw', ...size } : null
 }
 
 function schedulePtySpawnFallback(id: string, spawn: () => void) {
@@ -1273,6 +1304,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     clearPtySpawnFallback(id)
     ptySpawnInFlight.delete(id)
     lastPtySize.delete(id)
+    deferredPtySync.delete(id)
     markIntentionalPtyKill(id)
     const terminal = get().terminals.find(candidate => candidate.id === id)
     // Restored metadata has no PTY until its first spawn. Removing an opted-out
@@ -1987,6 +2019,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   resizeTerminal: async (id: string, cols: number, rows: number) => {
     const size = normalizePtySize(cols, rows)
+    if (ptySpawnInFlight.has(id)) {
+      deferPtySync(id, { size })
+      return
+    }
     const previous = lastPtySize.get(id)
     // 行列没变就不要碰 PTY：ConPTY 每次 resize 都会整屏重绘，TUI 会跟着重排，
     // 而 Claude Code 会把每次重排追加进 scrollback（上游 #46834）。
@@ -2008,8 +2044,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   redrawTerminal: async (id: string, cols: number, rows: number) => {
     const tab = get().terminals.find(terminal => terminal.id === id)
-    if (!tab || tab.status === 'exited' || tab.ptySpawnPending) return false
     const size = normalizePtySize(cols, rows)
+    if (tab && ptySpawnInFlight.has(id)) {
+      // 接回在途：快照可能先于登记到达，重绘留到接回完成后补发。
+      deferPtySync(id, { size, redraw: true })
+      return false
+    }
+    if (!tab || tab.status === 'exited' || tab.ptySpawnPending) return false
     if (size.rows < 2) return false
     try {
       await resizeTerminal(id, size.cols, size.rows - 1)
@@ -2035,6 +2076,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       (projectState.currentProject?.id === tab.projectId ? projectState.currentProject : null)
     const serverModeRootUri = owner?.path ?? ''
     ptySpawnInFlight.add(id)
+    deferredPtySync.delete(id)
     clearPtySpawnFallback(id)
     const size = normalizePtySize(cols, rows)
     rememberPtySize(id, size.cols, size.rows)
@@ -2046,6 +2088,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }))
     try {
       let spawnResult: TerminalSpawnResult | undefined
+      let attached = false
       const restorePlan = planTerminalRestore(tab)
       if (restorePlan.mode === 'attach') {
         try {
@@ -2057,6 +2100,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             rows: size.rows,
             fromSeq: terminalResumeSeqs.get(id) ?? null,
           })
+          attached = true
         } catch (error) {
           // Preserve the failed restore; never rerun the saved profile or task command.
           console.warn(`ssh_attach_terminal ${restorePlan.ptyId} failed:`, error)
@@ -2138,6 +2182,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             : terminal
         ),
       }))
+      // 先解除在途标记，补发的 resize/重绘才会真正下发。
+      ptySpawnInFlight.delete(id)
+      const deferred = planDeferredPtySync(size, deferredPtySync.get(id), attached)
+      deferredPtySync.delete(id)
+      if (deferred?.action === 'resize') {
+        void get().resizeTerminal(id, deferred.cols, deferred.rows)
+      } else if (deferred?.action === 'redraw') {
+        void get().redrawTerminal(id, deferred.cols, deferred.rows)
+      }
     } catch (e) {
       console.error('spawnPendingTerminal failed:', e)
       set(s => ({
@@ -2159,6 +2212,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         .pushToast('error', `新建终端失败: ${String(e)}`, undefined, serverModeErrorAction(e, serverModeRootUri))
     } finally {
       ptySpawnInFlight.delete(id)
+      deferredPtySync.delete(id)
     }
   },
 

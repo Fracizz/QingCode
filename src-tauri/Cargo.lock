@@ -4248,6 +4248,7 @@ dependencies = [
  "ureq",
  "url",
  "uuid",
+ "vt100",
  "winreg 0.55.0",
 ]
 

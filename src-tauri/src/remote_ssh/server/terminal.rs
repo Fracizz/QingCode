@@ -34,7 +34,9 @@ pub(crate) struct PersistentLaunch {
 }
 
 enum TerminalCommand {
-    Resize,
+    /// 携带本次请求的尺寸：前端补重绘会连发 rows-1 与 rows 两次，若只在处理时读最新尺寸，
+    /// 两条命令排队时 rows-1 一步被吞掉，TUI 收不到尺寸变化也就不会重绘。
+    Resize(u16, u16),
     Kill(Option<oneshot::Sender<()>>),
 }
 
@@ -115,9 +117,12 @@ impl PersistentTerminal {
             .size
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = (cols, rows);
-        self.commands
-            .try_send(TerminalCommand::Resize)
-            .map_err(|_| "SSH 终端已结束".to_string())
+        match self.commands.try_send(TerminalCommand::Resize(cols, rows)) {
+            Ok(()) => Ok(()),
+            // 队列满说明前面还有 Resize 待处理：处理时会补到上面记下的最新尺寸。
+            Err(mpsc::error::TrySendError::Full(_)) => Ok(()),
+            Err(mpsc::error::TrySendError::Closed(_)) => Err("SSH 终端已结束".to_string()),
+        }
     }
 
     /// Stop this proxy without sending pty.kill or affecting other sessions.
@@ -1069,6 +1074,7 @@ pub(crate) async fn attach_persistent_terminal(
     // 没有序号或已被淘汰时 daemon 给快照。停在全屏 TUI 时总要快照：重启后网格可能变了，
     // 原样补发 TUI 的增量会错位。
     let from_seq = from_seq.unwrap_or(COLD_ATTACH_FROM_SEQ);
+    let presized = presize_before_attach(&session, &id, &pty_id, (cols, rows)).await;
     let attach = match session.attach(&pty_id, from_seq, true).await {
         Ok(attach) => attach,
         Err(error) if attach_terminal_is_gone(&error) => {
@@ -1142,10 +1148,15 @@ pub(crate) async fn attach_persistent_terminal(
             return Err(error);
         }
     };
-    if let Err(error) = resize_session(&session, &pty_id, cols, rows).await {
-        // 尺寸下发失败不影响接回：交给会话循环稍后重试。
-        eprintln!("[WARN] persistent terminal {id} resize after attach failed: {error}");
-        let _ = terminal.commands.try_send(TerminalCommand::Resize);
+    // attach 前已按本网格 resize 的不再重复下发，免得 ConPTY 再整屏重绘一次。
+    if !presized {
+        if let Err(error) = resize_session(&session, &pty_id, cols, rows).await {
+            // 尺寸下发失败不影响接回：交给会话循环稍后重试。
+            eprintln!("[WARN] persistent terminal {id} resize after attach failed: {error}");
+            let _ = terminal
+                .commands
+                .try_send(TerminalCommand::Resize(cols, rows));
+        }
     }
 
     let inserted = {
@@ -1426,7 +1437,7 @@ async fn run_persistent_terminal_inner(
                                                 kill_acks.push(ack);
                                             }
                                         }
-                                        Some(TerminalCommand::Resize) | None => {}
+                                        Some(TerminalCommand::Resize(..)) | None => {}
                                     }
                                 }
                             }
@@ -1502,6 +1513,8 @@ async fn run_connected(
         DAEMON_HEARTBEAT_INTERVAL,
     );
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // 本次连接已下发给 daemon 的尺寸；接回时下发的尺寸不确定，从未知开始。
+    let mut sent_size: Option<(u16, u16)> = None;
     loop {
         tokio::select! {
             event = active.events.recv() => {
@@ -1536,13 +1549,24 @@ async fn run_connected(
             }
             command = command_rx.recv() => {
                 match command {
-                    Some(TerminalCommand::Resize) => {
-                        let (cols, rows) = *terminal
+                    Some(TerminalCommand::Resize(cols, rows)) => {
+                        // 先按命令自带的尺寸下发（保住重绘的 rows-1 一步）；期间前端又改过
+                        // 尺寸（例如队列满时只记下了最新尺寸）就再补到最新尺寸。
+                        // 与上一次已下发的尺寸相同则跳过：ConPTY 同尺寸 resize 也可能整屏重绘。
+                        let latest = *terminal
                             .size
                             .lock()
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        if let Err(error) = resize_active(active, &terminal.pty_id, cols, rows).await {
-                            return ConnectedEnd::Disconnected(error);
+                        for size in [(cols, rows), latest] {
+                            if sent_size == Some(size) {
+                                continue;
+                            }
+                            if let Err(error) =
+                                resize_active(active, &terminal.pty_id, size.0, size.1).await
+                            {
+                                return ConnectedEnd::Disconnected(error);
+                            }
+                            sent_size = Some(size);
                         }
                     }
                     Some(TerminalCommand::Kill(ack)) => {
@@ -1641,6 +1665,18 @@ async fn reconnect_terminal(
         events,
     };
     let from_seq = terminal.next_seq.load(Ordering::Acquire);
+    // 缓冲已淘汰时 daemon 给快照，同样要先对齐网格；终端已结束的情况交给 attach 判定。
+    let presized_size = *terminal
+        .size
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let presized = presize_before_attach(
+        &active.session,
+        &terminal.id,
+        &terminal.pty_id,
+        presized_size,
+    )
+    .await;
     let attach = match active
         .session
         .attach(&terminal.pty_id, from_seq, false)
@@ -1676,7 +1712,10 @@ async fn reconnect_terminal(
             .size
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        resize_session(&active.session, &terminal.pty_id, cols, rows).await?;
+        // 接回期间前端改过尺寸，或 attach 前没对齐成功，才需要再下发。
+        if !presized || (cols, rows) != presized_size {
+            resize_session(&active.session, &terminal.pty_id, cols, rows).await?;
+        }
         flush_pending_to_session(terminal, &active.session).await
     })
     .await
@@ -1896,6 +1935,30 @@ async fn resize_session(
         .map(|_| ())
 }
 
+/// attach 前先把 daemon 网格改成客户端网格，返回是否成功。
+///
+/// 否则快照按断线期间的旧网格渲染，前端得先把 xterm 改成旧网格写快照；而接回后的
+/// resize 让 ConPTY 立刻按新宽度整屏重绘，这段输出排在快照后、仍按旧网格解析，
+/// 全屏 TUI 逐行错位成阶梯。此时终端还没登记，前端补的重绘也下发不到。
+/// 先 resize 后，快照与之后的输出都按客户端网格排版（daemon 先改解析器再改 PTY，
+/// 重绘输出不论落在快照前后都按新网格解析）。失败不影响接回，调用方退回接回后再 resize。
+async fn presize_before_attach(
+    session: &DaemonSession,
+    terminal_id: &str,
+    pty_id: &str,
+    (cols, rows): (u16, u16),
+) -> bool {
+    match resize_session(session, pty_id, cols, rows).await {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!(
+                "[WARN] persistent terminal {terminal_id} resize before attach failed: {error}"
+            );
+            false
+        }
+    }
+}
+
 /// 按序发送队列里的全部输入；失败时把未送达部分放回队首并返回原因。
 async fn flush_pending_to_session(
     terminal: &PersistentTerminal,
@@ -2039,6 +2102,31 @@ mod tests {
             commands,
             kill_context: Mutex::new(serde_json::Value::Null),
         }
+    }
+
+    #[test]
+    fn queued_resizes_keep_each_requested_size_and_full_queue_keeps_latest() {
+        let (commands, mut rx) = mpsc::channel(2);
+        let terminal = PersistentTerminal {
+            commands,
+            ..test_terminal()
+        };
+        // 补重绘连发 rows-1 与 rows：排队后两步都要保留，不能都读成最新尺寸。
+        terminal.resize(100, 29).unwrap();
+        terminal.resize(100, 30).unwrap();
+        // 队列满不算失败：最新尺寸已记下，处理排队命令时会补到它。
+        terminal.resize(120, 40).unwrap();
+        let mut received = Vec::new();
+        while let Ok(TerminalCommand::Resize(cols, rows)) = rx.try_recv() {
+            received.push((cols, rows));
+        }
+        assert_eq!(received, vec![(100, 29), (100, 30)]);
+        assert_eq!(*terminal.size.lock().unwrap(), (120, 40));
+        drop(rx);
+        assert!(
+            terminal.resize(80, 24).is_err(),
+            "会话循环结束后应报告终端已结束"
+        );
     }
 
     #[tokio::test]

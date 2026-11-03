@@ -275,6 +275,45 @@ describe('terminal persistent connection events', () => {
     })
   })
 
+  it('replays resize and redraw requested while a restored attach is in flight', async () => {
+    let complete!: (result: TerminalSpawnResult) => void
+    mocks.attachTerminal.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    mocks.resizeTerminal.mockClear()
+    const restoring = terminal({
+      status: 'exited',
+      persistent: true,
+      ptyId: 'pty-1',
+      connectionId: 'conn',
+      awaitingRestoreSpawn: true,
+      ptySpawnPending: true,
+    })
+    useTerminalStore.setState({ terminals: [restoring] })
+    const spawning = useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+    // 后端尚未登记终端：重绘与 resize 都不能下发，否则失败后被去重吞掉。
+    expect(await useTerminalStore.getState().redrawTerminal('t1', 100, 30)).toBe(false)
+    expect(mocks.resizeTerminal).not.toHaveBeenCalled()
+    complete({ persistent: true, ptyId: 'pty-1', connectionId: 'conn' })
+    await spawning
+    await vi.advanceTimersByTimeAsync(0)
+    expect(mocks.resizeTerminal.mock.calls).toEqual([
+      ['t1', 100, 29],
+      ['t1', 100, 30],
+    ])
+
+    // 在途期间网格变了：补一次真实 resize（ConPTY 会随之整屏重绘），不再额外重绘。
+    mocks.resizeTerminal.mockClear()
+    mocks.attachTerminal.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    useTerminalStore.setState({ terminals: [restoring] })
+    const again = useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+    await useTerminalStore.getState().redrawTerminal('t1', 100, 30)
+    await useTerminalStore.getState().resizeTerminal('t1', 120, 40)
+    expect(mocks.resizeTerminal).not.toHaveBeenCalled()
+    complete({ persistent: true, ptyId: 'pty-1', connectionId: 'conn' })
+    await again
+    await vi.advanceTimersByTimeAsync(0)
+    expect(mocks.resizeTerminal.mock.calls).toEqual([['t1', 120, 40]])
+  })
+
   it('resumes a restored daemon PTY from the last output sequence it received', async () => {
     const restoring = terminal({
       id: 'resume',

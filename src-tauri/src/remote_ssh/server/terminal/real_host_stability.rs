@@ -11,7 +11,7 @@
 //! QC_STAB_LONG_SECS   长连接阶段时长（默认 300）
 //! QC_STAB_CONNS       并发连接数（默认 3）
 //! QC_STAB_TERMS       每个连接的并发终端数（默认 8）
-//! QC_STAB_PHASES      逗号分隔的阶段子集（默认全部：hs,fallback,func,ctrlc,flood,reattach,long,multi）
+//! QC_STAB_PHASES      逗号分隔的阶段子集（默认全部：hs,fallback,func,ctrlc,flood,reattach,tui,long,multi）
 //! cargo test --lib real_host_stability -- --ignored --nocapture
 //! ```
 
@@ -476,6 +476,20 @@ async fn connect(
                 daemon = Some(access);
                 break;
             }
+        } else {
+            // ensure 只返回空端点、不带原因；直接接入共享服务拿到失败原因。
+            match super::super::host_runtime::ensure_shared_daemon(&manager, &root, None).await {
+                Ok(access) => {
+                    daemon = Some(access);
+                    break;
+                }
+                Err(error) => println!(
+                    "[stab] {connection_id} 接入共享服务失败：{error}（模式={:?} 信任={} uri={}）",
+                    manager.connection_mode(connection_id),
+                    root.trusted,
+                    root.uri
+                ),
+            }
         }
         if let Some(access) = manager
             .server_slot(&key)
@@ -870,6 +884,259 @@ async fn phase_reattach(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), Str
         Err(error) => failures.push(format!("reattach/接回后输入：{error}")),
     }
     term.kill().await;
+    Ok(())
+}
+
+/// 全屏 TUI：铺满边框并在正中写 `SIZE=列x行`，尺寸变化时按新尺寸整屏重画。
+/// 每行都用绝对定位，按错误网格解析时边框会折行/截断，与 daemon 快照比对即可发现。
+const TUI_SH: &str = r#"#!/bin/bash
+draw() {
+  local r c line i t
+  read r c < <(stty size)
+  line=$(printf '%*s' "$((c-2))" '' | tr ' ' '-')
+  printf '\033[H\033[2J\033[1;1H+%s+' "$line"
+  for ((i=2;i<r;i++)); do printf '\033[%d;1H|\033[%d;%dH|' "$i" "$i" "$c"; done
+  printf '\033[%d;1H+%s+' "$r" "$line"
+  t="SIZE=${c}x${r}"
+  printf '\033[%d;%dH%s' "$((r/2))" "$(((c-${#t})/2))" "$t"
+}
+printf '\033[?1049h'
+trap draw WINCH
+draw
+while :; do sleep 0.1; done
+"#;
+
+const TUI_PS1: &str = r#"$e = [char]27
+function Draw {
+  $s = $Host.UI.RawUI.WindowSize; $c = $s.Width; $r = $s.Height
+  $b = New-Object System.Text.StringBuilder
+  $line = '-' * ($c - 2)
+  [void]$b.Append("${e}[H${e}[2J${e}[1;1H+$line+")
+  for ($i = 2; $i -lt $r; $i++) { [void]$b.Append("${e}[$i;1H|${e}[$i;${c}H|") }
+  [void]$b.Append("${e}[$r;1H+$line+")
+  $t = "SIZE=${c}x${r}"
+  $row = [math]::Floor($r / 2); $col = [math]::Floor(($c - $t.Length) / 2)
+  [void]$b.Append("${e}[$row;${col}H$t")
+  [Console]::Write($b.ToString())
+  return "$c,$r"
+}
+[Console]::Write("${e}[?1049h")
+$last = Draw
+while ($true) {
+  Start-Sleep -Milliseconds 100
+  $s = $Host.UI.RawUI.WindowSize
+  if ("$($s.Width),$($s.Height)" -ne $last) { $last = Draw }
+}
+"#;
+
+fn nz(value: u16) -> std::num::NonZeroU16 {
+    std::num::NonZeroU16::new(value).unwrap_or(std::num::NonZeroU16::MIN)
+}
+
+/// 接回停在全屏 TUI 的终端时，前端看到的画面（vt100 代替 xterm）。
+///
+/// 前端收到快照先按快照网格写入，之后再 fit 到自身网格。`fit_before_output`
+/// 为假时模拟竞态的坏分支：TUI 的重绘先于 fit 到达，按快照网格解析。
+fn client_view(
+    screen: &str,
+    (snap_cols, snap_rows): (u16, u16),
+    client: (u16, u16),
+    output: &[u8],
+    fit_before_output: bool,
+) -> vt100::Parser {
+    let mut parser = vt100::Parser::new(nz(snap_rows), nz(snap_cols), 0);
+    parser.process(screen.as_bytes());
+    if fit_before_output {
+        parser.screen_mut().set_size(nz(client.1), nz(client.0));
+        parser.process(output);
+    } else {
+        parser.process(output);
+        parser.screen_mut().set_size(nz(client.1), nz(client.0));
+    }
+    parser
+}
+
+/// 一次接回的结果：快照、快照网格、接回后 2s 内的输出，以及仍打开的会话。
+struct TuiAttach {
+    screen: String,
+    grid: (u16, u16),
+    output: Vec<u8>,
+    transport: TerminalTransportLease,
+    session: DaemonSession,
+}
+
+impl TuiAttach {
+    async fn close(self, kill_pty: Option<&str>) {
+        if let Some(pty_id) = kill_pty {
+            let _ = self
+                .session
+                .request("pty.kill", &serde_json::json!({ "id": pty_id }))
+                .await;
+        }
+        self.session.shutdown();
+        self.transport.release();
+    }
+}
+
+/// 打开一条新的 daemon 会话，按 `presize` 决定先 resize 再接回（修复后），
+/// 还是先接回再 resize（修复前）。
+async fn tui_attach(
+    ctx: &Ctx,
+    pty_id: &str,
+    client: (u16, u16),
+    presize: bool,
+) -> Result<TuiAttach, String> {
+    let client_id = ctx.manager.daemon_client_id(&ctx.connection_id);
+    let (transport, mut session) = open_terminal_daemon_session(
+        &ctx.manager,
+        &ctx.connection_id,
+        &ctx.root.uri,
+        &client_id,
+        &ctx.daemon,
+    )
+    .await?;
+    let transport = transport.into_ssh()?;
+    // 修复后的顺序直接走产品里接回前对齐网格的同一函数。
+    if presize && !presize_before_attach(&session, "qc-stab-tui", pty_id, client).await {
+        return Err("接回前对齐网格失败".to_string());
+    }
+    let attach = session.attach(pty_id, COLD_ATTACH_FROM_SEQ, true).await?;
+    let screen = attach
+        .response
+        .get("screen")
+        .and_then(serde_json::Value::as_str)
+        .ok_or("停在全屏 TUI 的终端接回时没有给快照")?
+        .to_string();
+    let grid = attach_screen_size(&attach.response, client);
+    let seq_end = attach
+        .response
+        .get("seqEnd")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let mut events = session.take_events().ok_or("事件流已被取走")?;
+    if !presize {
+        resize_session(&session, pty_id, client.0, client.1).await?;
+    }
+    let mut output = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while let Ok(Some(event)) = tokio::time::timeout_at(deadline, events.recv()).await {
+        if let Event::PtyData { id, seq, data, .. } = event {
+            if id == pty_id && seq >= seq_end {
+                output.extend_from_slice(&data);
+            }
+        }
+    }
+    Ok(TuiAttach {
+        screen,
+        grid,
+        output,
+        transport,
+        session,
+    })
+}
+
+/// 应用重启后接回停在全屏 TUI 的终端（断开前 90x24，重启后 140x40）：
+/// 前端画面必须与 daemon 按新网格解析出的画面一致，且 TUI 已按新网格重画。
+async fn phase_tui(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+    let script = if ctx.windows {
+        "qc-tui.ps1"
+    } else {
+        "qc-tui.sh"
+    };
+    let sftp = ctx.manager.open_sftp(&ctx.connection_id).await?;
+    let mut file = sftp
+        .create(format!("{}/{script}", ctx.root.canonical_path))
+        .await
+        .map_err(|error| format!("写入 {script} 失败：{error}"))?;
+    let body = if ctx.windows { TUI_PS1 } else { TUI_SH };
+    file.write_all(body.as_bytes())
+        .await
+        .map_err(|error| error.to_string())?;
+    file.shutdown().await.map_err(|error| error.to_string())?;
+    let old = (90u16, 24u16);
+    let client = (140u16, 40u16);
+    let marker = format!("SIZE={}x{}", client.0, client.1);
+
+    for presize in [false, true] {
+        let label = if presize {
+            "先 resize 再接回"
+        } else {
+            "先接回再 resize"
+        };
+        let mut term = Term::open(ctx, old.0, old.1).await?;
+        term.pump_until(Instant::now() + Duration::from_secs(2))
+            .await?;
+        // QC_STAB_TUI_CMD 可换成真实 TUI（如 opencode），QC_STAB_TUI_READY 为其就绪标记。
+        let custom = env("QC_STAB_TUI_CMD");
+        let run = match &custom {
+            Some(command) => format!("{command}\r"),
+            None if ctx.windows => {
+                format!("powershell -NoProfile -ExecutionPolicy Bypass -File .\\{script}\r")
+            }
+            None => format!("bash ./{script}\r"),
+        };
+        let ready = match &custom {
+            Some(_) => {
+                env("QC_STAB_TUI_READY").ok_or("设置 QC_STAB_TUI_CMD 时需要 QC_STAB_TUI_READY")?
+            }
+            None => format!("SIZE={}x{}", old.0, old.1),
+        };
+        term.send(&run).await?;
+        term.wait_for(&ready, Duration::from_secs(60)).await?;
+        // 真实 TUI 等启动动画与异步加载停下来，再模拟关闭应用。
+        let settle = if custom.is_some() { 8 } else { 1 };
+        term.pump_until(Instant::now() + Duration::from_secs(settle))
+            .await?;
+        let (pty_id, _) = term.detach();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        let attached = tui_attach(ctx, &pty_id, client, presize).await?;
+        let (screen, grid) = (attached.screen.clone(), attached.grid);
+        let output = attached.output.clone();
+        attached.close(None).await;
+        // 输出停下后 daemon 的解析结果即 TUI 在新网格上的真实画面。
+        let truth_attach = tui_attach(ctx, &pty_id, client, true).await?;
+        let mut truth = vt100::Parser::new(nz(truth_attach.grid.1), nz(truth_attach.grid.0), 0);
+        truth.process(truth_attach.screen.as_bytes());
+        let truth_text = truth.screen().contents();
+        truth_attach.close(Some(&pty_id)).await;
+
+        if custom.is_none() && !truth_text.contains(&marker) {
+            failures.push(format!(
+                "tui/{label}：TUI 未按新网格重画（真实画面缺少 {marker}）"
+            ));
+            continue;
+        }
+        let mut wrong = Vec::new();
+        for fit_before_output in [true, false] {
+            let view = client_view(&screen, grid, client, &output, fit_before_output);
+            if view.screen().contents() != truth_text {
+                wrong.push(if fit_before_output {
+                    "fit 先于重绘"
+                } else {
+                    "重绘先于 fit"
+                });
+            }
+        }
+        println!(
+            "[stab][tui] {label}：快照网格 {}x{}，接回后输出 {} 字节，画面错位的时序：{}",
+            grid.0,
+            grid.1,
+            output.len(),
+            if wrong.is_empty() {
+                "无".to_string()
+            } else {
+                wrong.join("、")
+            }
+        );
+        // 修复前的顺序只用来对照复现；修复后的顺序在任何时序下都必须正确。
+        if presize && (!wrong.is_empty() || grid != client) {
+            failures.push(format!(
+                "tui/{label}：快照网格 {grid:?}（期望 {client:?}），错位时序 {wrong:?}"
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1281,7 +1548,7 @@ async fn run() -> Result<Vec<String>, String> {
     let root_path = env("QC_STAB_ROOT").ok_or("缺少 QC_STAB_ROOT")?;
     let server_dir = env("QC_STAB_SERVER_DIR").ok_or("缺少 QC_STAB_SERVER_DIR")?;
     let phases = env("QC_STAB_PHASES")
-        .unwrap_or_else(|| "hs,fallback,func,ctrlc,flood,reattach,long,multi".to_string());
+        .unwrap_or_else(|| "hs,fallback,func,ctrlc,flood,reattach,tui,long,multi".to_string());
     let enabled = |name: &str| phases.split(',').any(|phase| phase.trim() == name);
     let mut failures = Vec::new();
 
@@ -1306,7 +1573,7 @@ async fn run() -> Result<Vec<String>, String> {
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>,
     >;
-    let phases_list: [(&str, Phase); 7] = [
+    let phases_list: [(&str, Phase); 8] = [
         ("hs", |ctx, failures| {
             Box::pin(phase_handshake(ctx, failures))
         }),
@@ -1323,6 +1590,7 @@ async fn run() -> Result<Vec<String>, String> {
         ("reattach", |ctx, failures| {
             Box::pin(phase_reattach(ctx, failures))
         }),
+        ("tui", |ctx, failures| Box::pin(phase_tui(ctx, failures))),
         ("long", |ctx, failures| Box::pin(phase_long(ctx, failures))),
     ];
     for (name, phase) in phases_list {

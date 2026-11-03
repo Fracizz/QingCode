@@ -74,6 +74,10 @@ url = "2"
 # 源码未直接使用它们；由 tauri / portable-pty 等按需拉取所需特性即可，
 # 避免 tokio "full" 把 net/signal/process/fs 等全部模块强行编入。
 
+[dev-dependencies]
+# 真机终端接回验收用无界面终端模拟前端 xterm（与 qingcode-server 的快照解析器同版本）。
+vt100 = "0.18"
+
 [target.'cfg(windows)'.dependencies]
 # Fonts registry + Explorer “Open with” (Windows only).
 winreg = "0.55"
