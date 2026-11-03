@@ -1,5 +1,7 @@
 # SSH 工作区
 
+Android 移动连接的远端项目和终端由配对的 Windows QingCode 转发，沿用桌面已有的 SSH 或 Server 连接、工作区信任和路径校验。手机端提供项目选择和手机会话管理，操作范围见 [QingCode Android](../mobile/README.md)。
+
 独立端口模式见 [Server 端口直连](direct-agent.md)：在「远程连接」中新建 Server 连接，或为已有 SSH 连接启用直连。HTTPS 文件操作与 WSS 终端共用默认 TCP 48763，可修改并保留历史端口提示；日常通信不经过 SSH。以下 SSH 说明只适用于 SSH 连接类型。
 
 端口模式的工作区请求采用 16 个总名额、8 个文件分块/关闭名额和 4 个命令名额；HTTPS 工作区连接最多 16 条，终端及心跳另走 WSS。完整预算、连接池复用和限制见 [通信并发与资源隔离](direct-agent.md#通信并发与资源隔离)。

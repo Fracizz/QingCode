@@ -7,6 +7,7 @@ import { isTransferActive, useTransferStore } from '../store/transferStore'
 import { closeTerminalOnExit, finishRemoteTerminalOnExit } from './ipc/terminal'
 import { runAppClose } from './appCloseFlow'
 import { flushWorkspaceSessionPersist } from './workspaceSessionSync'
+import { safeInvoke } from './tauri'
 
 let closing: Promise<void> | undefined
 
@@ -36,7 +37,11 @@ export function requestAppClose(): Promise<void> {
         : current,
     ) })),
     flush: flushWorkspaceSessionPersist,
-    destroy: () => getCurrentWindow().destroy(),
+    destroy: async () => {
+      const window = getCurrentWindow()
+      if (window.label === 'main') await safeInvoke('关闭移动连接', 'mobile_stop')
+      await window.destroy()
+    },
   }).finally(() => { closing = undefined })
   return closing
 }

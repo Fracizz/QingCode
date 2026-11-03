@@ -54,6 +54,7 @@ import { useTerminalPanel } from './hooks/useTerminalPanel'
 import { clampTerminalWidth, getTerminalMaxHeight, TERMINAL_MIN_HEIGHT } from './lib/panelLayout'
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
 import { useLaunchFileRequests } from './hooks/useLaunchFileRequests'
+import { listenForMobileRequests } from './lib/mobileBridge'
 import { useSshWarmup } from './hooks/useSshWarmup'
 import { useStartupServerUpdates } from './hooks/useStartupServerUpdates'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
@@ -237,6 +238,13 @@ function App() {
     openSymbolPicker,
   })
   useLaunchFileRequests(projectsReady, currentProject !== null, openPathsKey)
+  useEffect(() => {
+    if (!projectsReady) return
+    const listener = listenForMobileRequests().catch(error => {
+      console.warn('Mobile bridge listener failed', error)
+    })
+    return () => { void listener.then(unlisten => unlisten?.()) }
+  }, [projectsReady])
   useSshWarmup(projectsReady)
   useStartupServerUpdates(projectsReady)
 

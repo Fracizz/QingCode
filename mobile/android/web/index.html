@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <title>QingCode</title>
+  <link rel="stylesheet" href="xterm.css">
+  <link rel="stylesheet" href="app.css">
+  <script src="xterm.js" defer></script>
+  <script src="fit.js" defer></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main>
+    <section id="pair-screen">
+      <header class="brand"><span class="logo" aria-hidden="true">›_</span>QingCode</header>
+      <form id="pair-form">
+        <h1>连接 Windows</h1>
+        <p>在 Windows QingCode 的「设置 → 功能 → Android 移动连接」生成验证码。</p>
+        <label for="pair-code">连接验证码</label>
+        <textarea id="pair-code" rows="3" maxlength="180" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="粘贴以 QC1: 开头的验证码" required></textarea>
+        <button class="primary" type="submit">连接</button>
+        <p id="pair-error" class="error" role="alert" hidden></p>
+      </form>
+    </section>
+    <section id="project-screen" hidden>
+      <header class="project-head">
+        <div><span class="eyebrow">QINGCODE</span><h1>项目</h1></div>
+        <details id="connection-menu">
+          <summary id="connection-label">Windows</summary>
+          <div class="popup">
+            <button id="refresh" type="button">刷新项目</button>
+            <button id="forget" type="button">清除本机配对</button>
+          </div>
+        </details>
+      </header>
+      <nav id="hosts" aria-label="项目环境">
+        <button type="button" data-kind="local" aria-pressed="true">本机</button>
+        <button type="button" data-kind="wsl" aria-pressed="false">WSL</button>
+        <button type="button" data-kind="ssh" aria-pressed="false">远端</button>
+      </nav>
+      <input id="search" type="search" placeholder="搜索项目" aria-label="搜索当前环境的项目" autocomplete="off">
+      <p id="project-error" class="error" role="alert" hidden></p>
+      <p id="list-label" role="status"></p>
+      <div id="project-list"></div>
+    </section>
+    <section id="terminal-screen" hidden>
+      <header class="terminal-head">
+        <button id="back" type="button" aria-label="返回项目">←</button>
+        <div><h1 id="terminal-name"></h1><p id="terminal-host"></p></div>
+        <details id="session-menu">
+          <summary id="session-count" aria-label="管理终端会话">终端</summary>
+          <div class="popup">
+            <div id="sessions"></div>
+            <button id="new-session" type="button">＋ 新建终端</button>
+            <button id="end-session" type="button" class="danger">结束当前会话</button>
+          </div>
+        </details>
+      </header>
+      <p id="terminal-status" role="status"></p>
+      <div id="viewport"></div>
+      <div id="special-keys" aria-label="终端快捷键">
+        <button type="button" data-key="esc">Esc</button>
+        <button type="button" data-key="tab">Tab</button>
+        <button type="button" data-key="ctrl" aria-pressed="false">Ctrl</button>
+        <button type="button" data-key="up" aria-label="向上">↑</button>
+        <button type="button" data-key="down" aria-label="向下">↓</button>
+        <button type="button" data-key="enter" aria-label="回车">↵</button>
+        <button type="button" id="keyboard" aria-label="打开软键盘">⌨</button>
+      </div>
+      <form id="compose-form">
+        <input id="compose" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="输入终端文本" placeholder="输入命令或中文文本">
+        <button type="submit" aria-label="发送并回车">发送</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

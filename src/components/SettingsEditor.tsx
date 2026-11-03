@@ -99,6 +99,7 @@ import {
 } from '../lib/sshServerSettings'
 import { isSshProject } from '../lib/sshWorkspace'
 import SshServerSettingsSection from './settings/SshServerSettingsSection'
+import MobileConnectionSettings from './settings/MobileConnectionSettings'
 import {
   loadScopedEditorGuidesEnabled,
   saveScopedEditorGuidesEnabled,
@@ -1125,6 +1126,9 @@ export default function SettingsEditor() {
                     project={currentProject}
                     settingsRevision={settingsRevision}
                   />
+                )}
+                {!workspaceLocked && /Windows/i.test(navigator.userAgent) && match('Android', '安卓', '移动连接', '验证码') && (
+                  <MobileConnectionSettings />
                 )}
                 {!workspaceLocked && (
                 <>

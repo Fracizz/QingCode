@@ -32,6 +32,7 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 use tauri_plugin_sql::{Migration, MigrationKind};
 use terminal::{TerminalManager, TerminalSpawnResult};
+mod mobile;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 
@@ -762,6 +763,7 @@ pub fn run() {
                 .build(),
         )
         .manage(TerminalManager::new())
+        .manage(mobile::MobileState::default())
         .manage(FileWatcherManager::new())
         .manage(PathAllowlist::new())
         .manage(remote_ssh::SshManager::new())
@@ -769,6 +771,7 @@ pub fn run() {
         .setup(move |app| {
             migrate_legacy_database();
             ipc::start_server(app.handle().clone());
+            mobile::listen(app.handle());
             configure_ssh_server_binary_dirs(app.handle());
             configure_ssh_client_id(app.handle());
             if let Err(error) = remote_ssh::configure_direct_connections(app.handle()) {
@@ -813,6 +816,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            mobile::mobile_status,
+            mobile::mobile_suggest_address,
+            mobile::mobile_start,
+            mobile::mobile_stop,
+            mobile::mobile_bridge_reply,
             commands::scan_directory,
             commands::validate_directory,
             commands::file_stat,

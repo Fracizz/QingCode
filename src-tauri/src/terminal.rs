@@ -10,6 +10,57 @@ use sysinfo::{Pid, ProcessStatus, ProcessesToUpdate, Signal, System};
 use tauri::{AppHandle, Emitter};
 mod wsl;
 
+#[cfg(windows)]
+#[derive(Debug)]
+struct WindowsPtyKiller(std::os::windows::io::OwnedHandle);
+
+#[cfg(windows)]
+impl WindowsPtyKiller {
+    fn new(child: &dyn portable_pty::Child) -> std::io::Result<Self> {
+        use std::os::windows::io::BorrowedHandle;
+
+        let raw = child.as_raw_handle().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "missing PTY process handle",
+            )
+        })?;
+        // SAFETY: the borrowed handle is used only while child still owns it.
+        unsafe { BorrowedHandle::borrow_raw(raw) }
+            .try_clone_to_owned()
+            .map(Self)
+    }
+}
+
+#[cfg(windows)]
+impl ChildKiller for WindowsPtyKiller {
+    fn kill(&mut self) -> std::io::Result<()> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
+        use windows_sys::Win32::System::Threading::{TerminateProcess, WaitForSingleObject};
+
+        // portable-pty 0.8 interprets TerminateProcess's BOOL backwards.
+        let handle = self.0.as_raw_handle();
+        // SAFETY: handle refers to the process owned by self.
+        if unsafe { TerminateProcess(handle, 1) } != 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        // The process may have exited normally just before the termination request.
+        if unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0 {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+
+    fn clone_killer(&self) -> Box<dyn ChildKiller + Send + Sync> {
+        Box::new(Self(
+            self.0.try_clone().expect("duplicate PTY process handle"),
+        ))
+    }
+}
+
 #[derive(serde::Serialize, Clone)]
 pub struct TerminalDataPayload {
     pub id: String,
@@ -197,6 +248,37 @@ impl TerminalManager {
         Ok(resolved.spawn_result())
     }
 
+    pub(crate) fn spawn_mobile_wsl(
+        &self,
+        id: String,
+        cwd: &str,
+        cols: u16,
+        rows: u16,
+        app: AppHandle,
+    ) -> Result<TerminalSpawnResult, String> {
+        let path = crate::run_environment::parse_wsl_path(cwd).ok_or("无效的 WSL 项目目录")?;
+        let program = locate_program("wsl.exe").ok_or("未找到 wsl.exe，请启用 WSL")?;
+        let mut command = CommandBuilder::new(&program);
+        command.args([
+            "--distribution",
+            &path.distro,
+            "--cd",
+            &path.path,
+            "--exec",
+            "/bin/sh",
+            "-c",
+            r#"exec "${SHELL:-/bin/sh}" -l"#,
+        ]);
+        self.spawn_with(id, command, &program, cols, rows, app, None)?;
+        Ok(ResolvedHostShell {
+            id: "wsl".into(),
+            program,
+            args: Vec::new(),
+            fallback_from: None,
+        }
+        .spawn_result())
+    }
+
     /// Spawn a pty running a user-configured script/command. `shell_kind` is one
     /// of "ps1" | "bat" | "sh" | "command" | "interactive" | "script".
     /// `interactive` runs the command inside a login shell that stays open after
@@ -265,6 +347,9 @@ impl TerminalManager {
             format!("无法启动终端程序「{program}」: {detail}")
         })?;
         let shell_pid = child.process_id();
+        #[cfg(windows)]
+        let killer = Box::new(WindowsPtyKiller::new(&*child).map_err(|error| error.to_string())?);
+        #[cfg(not(windows))]
         let killer = child.clone_killer();
         drop(pair.slave);
 
@@ -1236,6 +1321,21 @@ fn count_meaningful_child_processes(parent_pid: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn windows_pty_killer_reports_success_for_terminated_child() {
+        let pair = portable_pty::native_pty_system()
+            .openpty(super::clamp_pty_size(80, 24))
+            .unwrap();
+        let mut child = pair
+            .slave
+            .spawn_command(portable_pty::CommandBuilder::new("cmd.exe"))
+            .unwrap();
+        let mut killer = super::WindowsPtyKiller::new(&*child).unwrap();
+        portable_pty::ChildKiller::kill(&mut killer).unwrap();
+        assert_eq!(child.wait().unwrap().exit_code(), 1);
+    }
+
     /// 父进程（shell）下挂一个长时间运行的子进程，模拟终端里的前台程序。
     fn spawn_shell_with_worker() -> std::process::Child {
         #[cfg(windows)]
