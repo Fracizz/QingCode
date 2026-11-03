@@ -147,6 +147,23 @@ describe('remote connection compatibility settings', () => {
     expect(screen.getByRole('button', { name: /Other.*服务已就绪/ })).toBeVisible()
   })
 
+  it('clears ready status on disconnect and discards an older in-flight status response', async () => {
+    useProjectStore.setState({ sshConnections: [connection('server')] })
+    useUIStore.setState({ remoteConnectionsCreating: false })
+    alive.mockResolvedValue(true)
+    listServerStates.mockResolvedValue([{ connectionId: 'c1', rootUri: 'ssh://c1/home/app', phase: 'readyServer', mode: 'server', connectionMode: 'server', transport: 'agent', version: '1', reason: null }])
+    render(<RemoteConnectionsManager />)
+    await screen.findAllByText('服务已就绪')
+    let finish!: (value: boolean) => void
+    alive.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    fireEvent.click(screen.getByRole('button', { name: '刷新状态' }))
+    await waitFor(() => expect(finish).toBeDefined())
+    act(() => window.dispatchEvent(new CustomEvent('qingcode:ssh-connection-invalidated', { detail: 'c1' })))
+    await act(async () => finish(true))
+    expect(screen.queryByText('服务已就绪')).toBeNull()
+    expect(screen.queryByRole('button', { name: '断开连接' })).toBeNull()
+  })
+
   it('confirms discarding unsaved edits before returning to the overview', async () => {
     useProjectStore.setState({ sshConnections: [connection('server')] })
     useUIStore.setState({ remoteConnectionsCreating: false })

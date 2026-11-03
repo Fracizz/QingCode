@@ -1712,6 +1712,14 @@
     "启动 Server 与开机自启": "Start Server and configure boot startup",
     "Server TLS 握手失败。请检查服务是否已启动，以及目标端口是否运行 QingCode HTTPS Server。": "Server TLS handshake failed. Check that Server is running and the target port serves QingCode HTTPS Server.",
     "开机自启配置失败。请检查远端管理员权限，或关闭自启后重试启动。": "Boot registration failed. Check remote administrator permissions, or turn off boot startup and try starting again.",
-    "Server 响应无效。请检查目标端口的服务和协议。": "Invalid Server response. Check the service and protocol on the target port."
+    "Server 响应无效。请检查目标端口的服务和协议。": "Invalid Server response. Check the service and protocol on the target port.",
+    "切换连接方式": "Switch connection method",
+    "端口不可用？改用 SSH": "Port unavailable? Use SSH",
+    "此连接仅保存 Server 配对信息。请先配置 SSH 地址与身份，再通过 SSH 打开项目。": "This connection only stores Server pairing. Configure an SSH address and identity, then open the project via SSH.",
+    "新建 SSH 连接": "New SSH connection",
+    "SSH 连接方式": "SSH connection method",
+    "切换到 SSH": "Switch to SSH",
+    "切换后通过 SSH 连接；需要认证时会提示输入凭据。": "Connect via SSH after switching. You will be prompted for credentials when needed.",
+    "将断开当前 Server 数据连接，并使用已保存的 SSH 地址与身份。终端连接会中断；Server 配对信息保留，可稍后重新启用。": "Disconnect the current Server transport and use the saved SSH address and identity. Terminal connections will be interrupted. Server pairing is retained for later use."
   }
 }

@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import DirectServerRecoveryPanel from './DirectServerRecoveryPanel'
+import DirectSshFallback from './DirectSshFallback'
 import type { Project, SshConnection } from '../types'
 import { getSshConnection, upsertSshConnection } from '../lib/projectRepository'
 import {
@@ -216,6 +217,11 @@ export default function SshReconnectDialog() {
             onBusyChange={setLoading}
             onConfigure={close}
           />}
+          {directInfo?.enabled && connection && <DirectSshFallback connection={connection} info={directInfo} disabled={loading} onBusyChange={setLoading} onConfigure={close} onSwitched={async info => {
+            setDirectInfo(info)
+            setConnection(await getSshConnection(connection.id))
+            setError('')
+          }} />}
           {error ? (
             <p className="rounded border border-danger/30 bg-danger/10 px-2.5 py-2 text-ui-sm whitespace-pre-wrap text-danger">
               {error}

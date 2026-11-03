@@ -316,7 +316,7 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
   const feedback = busyLabel || error || notice
 
   return (
-    <section className="rounded border border-dialog-border" aria-label={t('Server 端口直连')}>
+    <section className="@container/direct-agent rounded border border-dialog-border" aria-label={t('Server 端口直连')}>
       <button type="button" disabled={firewallApplying} onClick={toggle} aria-expanded={open} className="flex w-full items-center gap-2 px-3 py-2 text-left text-ui font-medium text-fg hover:bg-bg-hover disabled:opacity-40">
         {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         {t('Server 端口直连')}
@@ -324,54 +324,62 @@ export default function DirectAgentConnectionPanel({ connectionId, defaultHost, 
       </button>
       {open && <div className="space-y-3 border-t border-dialog-separator p-3">
         <p className="text-ui-sm leading-relaxed text-fg-muted">{t(standalone ? '通过独立 TLS 端口连接远端服务，无需 SSH。请先在远端启动服务，再导入配对信息。' : '通过独立 TLS 端口连接远端服务，通信不经过 SSH。现有 SSH 配置保留，可随时切回。')}</p>
-        {!info?.enabled && <ServerAutoStartSwitch checked={autoStart} disabled={Boolean(busy)} onChange={setAutoStart} />}
-        {info?.enabled && <DirectServerRecoveryPanel key={`${connectionId}:${info.host}:${info.port}`} connectionId={connectionId} info={info} connections={sshConnections} api={api} onUpdated={async value => { setInfo(value); await onUpdated?.(value) }} />}
-        <div className="flex flex-wrap items-center gap-2">
-          {!standalone && <button type="button" disabled={Boolean(busy) || info?.enabled === true} onClick={() => void provision()} aria-busy={busy === 'provisioning'} className={`${buttonClass} inline-flex items-center gap-2`}>{busy === 'provisioning' && <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />}{t(busy === 'provisioning' ? '正在准备服务…' : '通过 SSH 安装或读取服务')}</button>}
-          <button type="button" disabled={Boolean(busy)} onClick={() => setManualOpen(value => !value)} aria-expanded={manualOpen} className={buttonClass}>{t('导入配对信息')}</button>
-        </div>
-
         {feedback && <div role={error && !busy ? 'alert' : 'status'} aria-live={error && !busy ? 'assertive' : 'polite'} aria-atomic="true" className={`sticky top-0 z-10 flex items-start gap-2 rounded border p-3 text-ui-sm shadow-sm ${busy ? 'border-accent/40 bg-dialog text-fg' : error ? 'border-danger/40 bg-dialog text-danger' : 'border-ok/40 bg-dialog text-fg'}`}>
           {busy ? <LoaderCircle size={16} className="mt-0.5 shrink-0 animate-spin motion-reduce:animate-none text-accent" aria-hidden="true" /> : error ? <CircleAlert size={16} className="mt-0.5 shrink-0" aria-hidden="true" /> : <CircleCheck size={16} className="mt-0.5 shrink-0 text-ok" aria-hidden="true" />}
           <span className="min-w-0 break-words">{feedback}</span>
         </div>}
-        <p className="text-ui-sm text-fg-muted">{t(standalone ? '默认端口为 48763，可以修改。端口被占用时请指定其他端口，并同步修改远端监听配置。' : '默认端口为 48763，可以修改。安装使用 SSH，日常直连不使用 SSH。端口被占用时请指定其他端口。')}</p>
-        {manualOpen && <div className="space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-3">
-          <p className="text-ui-sm text-fg-muted">{t('也可在远端手动启动服务，将 direct-info --include-secret 输出的配对 JSON 粘贴到此处。配对信息包含凭据，请勿分享。')}</p>
-          <code className="block break-all rounded bg-dialog-input p-2 font-mono text-ui-sm text-fg">qingcode-server direct --hostname 0.0.0.0 --port {directAgentFirewallCommand(Number(port)) ? Number(port) : 48763}<br />qingcode-server startup {autoStart ? 'enable' : 'disable'}<br />qingcode-server direct-info --include-secret</code>
-          <label className="block text-ui-sm text-dialog-label">{t('配对 JSON')}<textarea value={pairing} onChange={event => setPairing(event.target.value)} spellCheck={false} autoComplete="off" rows={3} className={`${fieldClass} font-mono`} /></label>
-          <button type="button" disabled={Boolean(busy) || !pairing.trim()} onClick={importPairing} className={buttonClass}>{t('应用配对信息')}</button>
-        </div>}
-        <div className="grid grid-cols-[minmax(0,1fr)_7rem] gap-3">
-          <label className="text-ui-sm text-dialog-label">{t('Server 主机')}<input disabled={firewallApplying} value={host} onChange={event => { invalidate(); setHost(event.target.value); setSshPassword(''); setSshPassphrase('') }} autoComplete="off" className={fieldClass} /></label>
-          <label className="text-ui-sm text-dialog-label">{t('TCP 端口')}<input disabled={firewallApplying} value={port} onChange={event => { invalidate(); setPort(event.target.value) }} inputMode="numeric" className={fieldClass} /></label>
+        <div className={`grid grid-cols-1 items-start gap-3 ${info?.enabled ? '@min-[48rem]/direct-agent:grid-cols-2' : ''}`}>
+          <div className="min-w-0 space-y-3">
+            {!info?.enabled && <ServerAutoStartSwitch checked={autoStart} disabled={Boolean(busy)} onChange={setAutoStart} />}
+            <div className="flex flex-wrap items-center gap-2">
+              {!standalone && <button type="button" disabled={Boolean(busy) || info?.enabled === true} onClick={() => void provision()} aria-busy={busy === 'provisioning'} className={`${buttonClass} inline-flex items-center gap-2`}>{busy === 'provisioning' && <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />}{t(busy === 'provisioning' ? '正在准备服务…' : '通过 SSH 安装或读取服务')}</button>}
+              <button type="button" disabled={Boolean(busy)} onClick={() => setManualOpen(value => !value)} aria-expanded={manualOpen} className={buttonClass}>{t('导入配对信息')}</button>
+            </div>
+
+            <p className="text-ui-sm text-fg-muted">{t(standalone ? '默认端口为 48763，可以修改。端口被占用时请指定其他端口，并同步修改远端监听配置。' : '默认端口为 48763，可以修改。安装使用 SSH，日常直连不使用 SSH。端口被占用时请指定其他端口。')}</p>
+            {manualOpen && <div className="space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-3">
+              <p className="text-ui-sm text-fg-muted">{t('也可在远端手动启动服务，将 direct-info --include-secret 输出的配对 JSON 粘贴到此处。配对信息包含凭据，请勿分享。')}</p>
+              <code className="block break-all rounded bg-dialog-input p-2 font-mono text-ui-sm text-fg">qingcode-server direct --hostname 0.0.0.0 --port {directAgentFirewallCommand(Number(port)) ? Number(port) : 48763}<br />qingcode-server startup {autoStart ? 'enable' : 'disable'}<br />qingcode-server direct-info --include-secret</code>
+              <label className="block text-ui-sm text-dialog-label">{t('配对 JSON')}<textarea value={pairing} onChange={event => setPairing(event.target.value)} spellCheck={false} autoComplete="off" rows={3} className={`${fieldClass} font-mono`} /></label>
+              <button type="button" disabled={Boolean(busy) || !pairing.trim()} onClick={importPairing} className={buttonClass}>{t('应用配对信息')}</button>
+            </div>}
+            <div className="grid grid-cols-[minmax(0,1fr)_7rem] gap-3">
+              <label className="text-ui-sm text-dialog-label">{t('Server 主机')}<input disabled={firewallApplying} value={host} onChange={event => { invalidate(); setHost(event.target.value); setSshPassword(''); setSshPassphrase('') }} autoComplete="off" className={fieldClass} /></label>
+              <label className="text-ui-sm text-dialog-label">{t('TCP 端口')}<input disabled={firewallApplying} value={port} onChange={event => { invalidate(); setPort(event.target.value) }} inputMode="numeric" className={fieldClass} /></label>
+            </div>
+            <p className="text-ui-sm text-fg-muted">{t('此处填写客户端连接的目标端口。修改已有服务的端口时，须同步修改远端监听配置并重新开放对应端口。')}</p>
+            {Boolean(info?.previousPorts?.length) && <div className="rounded border border-dialog-border bg-dialog-sidebar p-2 text-ui-sm text-fg-muted">
+              <p>{t('历史端口：{ports}', { ports: info!.previousPorts.join('、') })}</p>
+              <p className="mt-1">{t('历史端口仅供核对，不会自动回退。确认旧端口不再使用后，请清理对应的防火墙规则。')}</p>
+            </div>}
+            <label className="block text-ui-sm text-dialog-label">{t('Server 认证凭据')}<input disabled={firewallApplying} type="password" value={token} onChange={event => { invalidate(); setToken(event.target.value) }} autoComplete="new-password" placeholder={info?.tokenSaved ? t('已安全保存，留空继续使用') : t('从配对信息导入或填写')} className={fieldClass} /></label>
+            {fingerprint && <div className="rounded border border-dialog-border bg-dialog-input p-2 text-ui-sm"><p className="mb-1 flex items-center gap-1 text-fg-muted"><ShieldCheck size={13} />{t('服务器证书指纹')}</p><p className="break-all font-mono text-fg">{fingerprint}</p></div>}
+          </div>
+          {info?.enabled && <DirectServerRecoveryPanel key={`${connectionId}:${info.host}:${info.port}`} connectionId={connectionId} info={info} connections={sshConnections} api={api} onUpdated={async value => { setInfo(value); await onUpdated?.(value) }} />}
         </div>
-        <p className="text-ui-sm text-fg-muted">{t('此处填写客户端连接的目标端口。修改已有服务的端口时，须同步修改远端监听配置并重新开放对应端口。')}</p>
-        {Boolean(info?.previousPorts?.length) && <div className="rounded border border-dialog-border bg-dialog-sidebar p-2 text-ui-sm text-fg-muted">
-          <p>{t('历史端口：{ports}', { ports: info!.previousPorts.join('、') })}</p>
-          <p className="mt-1">{t('历史端口仅供核对，不会自动回退。确认旧端口不再使用后，请清理对应的防火墙规则。')}</p>
-        </div>}
-        <label className="block text-ui-sm text-dialog-label">{t('Server 认证凭据')}<input disabled={firewallApplying} type="password" value={token} onChange={event => { invalidate(); setToken(event.target.value) }} autoComplete="new-password" placeholder={info?.tokenSaved ? t('已安全保存，留空继续使用') : t('从配对信息导入或填写')} className={fieldClass} /></label>
-        {fingerprint && <div className="rounded border border-dialog-border bg-dialog-input p-2 text-ui-sm"><p className="mb-1 flex items-center gap-1 text-fg-muted"><ShieldCheck size={13} />{t('服务器证书指纹')}</p><p className="break-all font-mono text-fg">{fingerprint}</p></div>}
-        {firewallCommand && <div className="space-y-2 rounded border border-warn/40 bg-warn/5 p-3 text-ui-sm">
-          <p className="font-medium text-warn">{t('远端需要开放 TCP {port}', { port })}</p>
-          <p className="text-fg-muted">{t('可通过 SSH 检查并授权放行此端口；执行前会显示允许来源和网络范围。跨网络时还需配置网关或端口映射。')}</p>
-          {api.firewallPlan && api.firewallApply && <div className="space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-2.5">
-            {sshConnection ? <>
-              <label className="block text-dialog-label">{t('SSH 授权连接')}<select disabled={firewallApplying} value={sshConnection.id} onChange={event => { invalidateFirewall(); setSshConnectionId(event.target.value); setSshPassword(''); setSshPassphrase('') }} className={fieldClass}>
-                {candidates.map(connection => <option key={connection.id} value={connection.id}>{connection.name} · {connection.username}@{connection.host}:{connection.port}</option>)}
-              </select></label>
-              <p className="break-all text-fg-muted">{t('SSH 授权仅用于配置远端防火墙，日常 Server 通信继续使用独立端口。')}</p>
-              {sshConnection.auth_kind === 'password'
-                ? <label className="block text-dialog-label">{t('SSH 密码')}<input disabled={firewallApplying} type="password" value={sshSecretsConnectionId === sshConnection.id ? sshPassword : ''} onChange={event => { invalidateFirewall(); setSshSecretsConnectionId(sshConnection.id); setSshPassword(event.target.value) }} autoComplete="new-password" placeholder={t('留空使用当前会话中已有的 SSH 凭据')} className={fieldClass} /></label>
-                : <label className="block text-dialog-label">{t('SSH 私钥口令（可选）')}<input disabled={firewallApplying} type="password" value={sshSecretsConnectionId === sshConnection.id ? sshPassphrase : ''} onChange={event => { invalidateFirewall(); setSshSecretsConnectionId(sshConnection.id); setSshPassphrase(event.target.value) }} autoComplete="new-password" placeholder={t('留空使用当前会话中已有的 SSH 凭据')} className={fieldClass} /></label>}
-              <button type="button" disabled={Boolean(busy)} onClick={() => void authorizeFirewall()} className={`${buttonClass} inline-flex items-center gap-1`}>{busy?.startsWith('firewall') ? <LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ShieldCheck size={13} />}{firewallButtonLabel}</button>
-            </> : <p className="text-fg-muted">{t('未找到此主机的 SSH 连接。请先在远程连接中添加并确认 SSH 主机指纹，或使用下方命令手动放行。')}</p>}
-          </div>}
-          <p className="text-fg-muted">{t('Windows：在远端以管理员身份运行以下命令，放行专用和域网络。其他网络配置请由管理员调整。')}</p>
-          <code className="block break-all rounded bg-dialog-input p-2 font-mono text-fg">{firewallCommand}</code>
-          <button type="button" onClick={() => void navigator.clipboard.writeText(firewallCommand).then(() => setNotice(t('已复制防火墙命令'))).catch(() => setError(t('复制失败，请手动复制命令。')))} className={`${buttonClass} inline-flex items-center gap-1`}><Copy size={13} />{t('复制防火墙命令')}</button>
-        </div>}
+        {firewallCommand && <details className="rounded border border-warn/40 bg-warn/5 text-ui-sm">
+          <summary className="cursor-pointer px-3 py-2 font-medium text-warn">{t('远端需要开放 TCP {port}', { port })}</summary>
+          <div className="grid grid-cols-1 items-start gap-3 border-t border-warn/20 p-3 @min-[48rem]/direct-agent:grid-cols-2">
+            <div className="min-w-0 space-y-2">
+              <p className="text-fg-muted">{t('可通过 SSH 检查并授权放行此端口；执行前会显示允许来源和网络范围。跨网络时还需配置网关或端口映射。')}</p>
+              <p className="text-fg-muted">{t('Windows：在远端以管理员身份运行以下命令，放行专用和域网络。其他网络配置请由管理员调整。')}</p>
+              <code className="block break-all rounded bg-dialog-input p-2 font-mono text-fg">{firewallCommand}</code>
+              <button type="button" onClick={() => void navigator.clipboard.writeText(firewallCommand).then(() => setNotice(t('已复制防火墙命令'))).catch(() => setError(t('复制失败，请手动复制命令。')))} className={`${buttonClass} inline-flex items-center gap-1`}><Copy size={13} />{t('复制防火墙命令')}</button>
+            </div>
+            {api.firewallPlan && api.firewallApply && <div className="min-w-0 space-y-2 rounded border border-dialog-border bg-dialog-sidebar p-2.5">
+              {sshConnection ? <>
+                <label className="block text-dialog-label">{t('SSH 授权连接')}<select disabled={firewallApplying} value={sshConnection.id} onChange={event => { invalidateFirewall(); setSshConnectionId(event.target.value); setSshPassword(''); setSshPassphrase('') }} className={fieldClass}>
+                  {candidates.map(connection => <option key={connection.id} value={connection.id}>{connection.name} · {connection.username}@{connection.host}:{connection.port}</option>)}
+                </select></label>
+                <p className="break-all text-fg-muted">{t('SSH 授权仅用于配置远端防火墙，日常 Server 通信继续使用独立端口。')}</p>
+                {sshConnection.auth_kind === 'password'
+                  ? <label className="block text-dialog-label">{t('SSH 密码')}<input disabled={firewallApplying} type="password" value={sshSecretsConnectionId === sshConnection.id ? sshPassword : ''} onChange={event => { invalidateFirewall(); setSshSecretsConnectionId(sshConnection.id); setSshPassword(event.target.value) }} autoComplete="new-password" placeholder={t('留空使用当前会话中已有的 SSH 凭据')} className={fieldClass} /></label>
+                  : <label className="block text-dialog-label">{t('SSH 私钥口令（可选）')}<input disabled={firewallApplying} type="password" value={sshSecretsConnectionId === sshConnection.id ? sshPassphrase : ''} onChange={event => { invalidateFirewall(); setSshSecretsConnectionId(sshConnection.id); setSshPassphrase(event.target.value) }} autoComplete="new-password" placeholder={t('留空使用当前会话中已有的 SSH 凭据')} className={fieldClass} /></label>}
+                <button type="button" disabled={Boolean(busy)} onClick={() => void authorizeFirewall()} className={`${buttonClass} inline-flex items-center gap-1`}>{busy?.startsWith('firewall') ? <LoaderCircle size={13} className="animate-spin motion-reduce:animate-none" aria-hidden="true" /> : <ShieldCheck size={13} />}{firewallButtonLabel}</button>
+              </> : <p className="text-fg-muted">{t('未找到此主机的 SSH 连接。请先在远程连接中添加并确认 SSH 主机指纹，或使用下方命令手动放行。')}</p>}
+            </div>}
+          </div>
+        </details>}
         <div className="sticky bottom-0 z-10 flex flex-wrap gap-2 border-t border-dialog-separator bg-dialog py-3">
           <button type="button" disabled={Boolean(busy)} onClick={() => void test()} aria-busy={busy === 'testing'} className={`${buttonClass} inline-flex items-center gap-2`}>{busy === 'testing' && <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />}{t(busy === 'testing' ? '正在测试直连…' : '测试直连')}</button>
           <button type="button" disabled={Boolean(busy) || verified !== verificationKey} onClick={() => void save(true)} aria-busy={busy === 'saving' && savingEnabled} className="inline-flex items-center gap-2 rounded bg-action px-3 py-1.5 text-ui text-on-action hover:bg-action/90 disabled:opacity-40">{busy === 'saving' && savingEnabled && <LoaderCircle size={14} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />}{t(busy === 'saving' && savingEnabled ? '正在保存并启用…' : '保存并启用直连')}</button>

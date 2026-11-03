@@ -22,14 +22,16 @@ import StatusTip from './StatusTip'
 import ContextMenu from './ContextMenu'
 import SshServerDialog from './SshServerDialog'
 import DirectAgentConnectionPanel from './DirectAgentConnectionPanel'
+import DirectSshFallback from './DirectSshFallback'
+import { directAgentApi, type DirectAgentInfo } from '../lib/directAgent'
 import { confirmDialog } from '../store/confirmStore'
 import { confirmSshServerRestart } from '../lib/sshWindowsRepair'
 import { serverModeErrorAction } from '../lib/serverModeError'
-import { switchSshConnectionMode, sshConnectionLabel, sshRemotePathFromUri } from '../lib/sshWorkspace'
+import { switchSshConnectionMode, sshConnectionLabel, sshRemotePathFromUri, SSH_CONNECTION_INVALIDATED_EVENT, SSH_CONNECTION_DISCONNECTED_EVENT, isSshBackgroundSuspended, reconnectSshConnection } from '../lib/sshWorkspace'
 
 const STATUS_ACTION = 'status-action status-connection'
 const CHIP_DOT = 'status-connection-dot'
-/** 探测/安装/握手期间的补查间隔；最终状态到达后停止。 */
+/** Preparation needs faster checks; settled connections still refresh every 5 seconds. */
 const SSH_SERVER_PENDING_POLL_MS = 1500
 
 type DialogKind = 'details' | 'logs' | 'agent'
@@ -53,6 +55,15 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
   const logsRequest = useRef(0)
   const [busy, setBusy] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [fallbackInfo, setFallbackInfo] = useState<DirectAgentInfo | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    if (dialog && state?.transport === 'agent') {
+      void directAgentApi.info(state.connectionId).then(info => { if (!cancelled) setFallbackInfo(info) }).catch(() => {})
+    }
+    return () => { cancelled = true }
+  }, [dialog, state?.connectionId, state?.transport, refreshKey])
 
   useEffect(() => () => { logsRequest.current += 1 }, [])
 
@@ -64,6 +75,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
     // 每收到一条状态事件递增。查询发出后若有事件到达，查询结果即为旧快照，
     // 必须丢弃，否则晚到的「正在探测」会覆盖已收到的「已就绪」。
     let eventSeq = 0
+    let querySeq = 0
     const parse = (value: unknown) => {
       const next = parseSshServerState(value)
       return next && sshServerEventMatches(next.rootUri, rootUri) ? next : null
@@ -75,17 +87,30 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
       // 中间阶段补查：最终状态事件一旦漏掉，后端按快照去重不会再发。
       clearTimeout(pollTimer)
       pollTimer = undefined
-      if (sshServerChip(next)?.kind === 'pending') {
-        pollTimer = setTimeout(() => void query(), SSH_SERVER_PENDING_POLL_MS)
-      }
+      pollTimer = setTimeout(() => void query(), sshServerChip(next)?.kind === 'pending' ? SSH_SERVER_PENDING_POLL_MS : 5000)
+    }
+    const invalidate = (event: Event) => {
+      if ((event as CustomEvent<string>).detail !== rootUri.split('/')[2]) return
+      eventSeq += 1
+      clearTimeout(pollTimer)
+      setHidden(false)
+      setInfoError(null)
+      setState(previous => ({ connectionId: rootUri.split('/')[2], rootUri, connectionMode: 'server', transport: useProjectStore.getState().sshConnections.find(c => c.id === rootUri.split('/')[2])?.agentEndpoint ? 'agent' : null, ...previous, phase: 'disconnected', mode: 'unknown', version: null, reason: null, timings: null }))
     }
     const query = async () => {
+      if (isSshBackgroundSuspended(rootUri.split('/')[2])) return
+      if (document.visibilityState === 'hidden') {
+        clearTimeout(pollTimer)
+        pollTimer = setTimeout(() => void query(), 5000)
+        return
+      }
       const seq = eventSeq
+      const request = ++querySeq
       let value: unknown
       try {
         value = await safeInvoke<unknown>('读取 SSH Server 状态', 'ssh_server_info', { rootUri })
       } catch (error) {
-        if (cancelled || seq !== eventSeq) return
+        if (cancelled || seq !== eventSeq || request !== querySeq) return
         if (isAgentCommandUnavailable(error)) {
           setHidden(true)
           setState(null)
@@ -94,9 +119,11 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
         // 查询失败时不能伪装成直连：以独立错误态展示，等状态事件恢复。
         setState(null)
         setInfoError(String(error))
+        clearTimeout(pollTimer)
+        pollTimer = setTimeout(() => void query(), 5000)
         return
       }
-      if (cancelled || seq !== eventSeq) return
+      if (cancelled || seq !== eventSeq || request !== querySeq) return
       const next = parse(value)
       if (next) accept(next)
     }
@@ -106,6 +133,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
         const stop = await listen<unknown>('ssh-server-state', event => {
           const next = parse(event.payload)
           if (!next || cancelled) return
+          if (next.phase !== 'disconnected' && isSshBackgroundSuspended(next.connectionId)) return
           eventSeq += 1
           accept(next)
         })
@@ -117,12 +145,24 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
       } catch {
         // 订阅失败仍靠查询 + 中间阶段补查收口。
       }
-      if (!cancelled) await query()
+      if (!cancelled) {
+        if (isSshBackgroundSuspended(rootUri.split('/')[2])) invalidate(new CustomEvent(SSH_CONNECTION_INVALIDATED_EVENT, { detail: rootUri.split('/')[2] }))
+        else await query()
+      }
     })()
+    const refresh = () => { if (document.visibilityState !== 'hidden') void query() }
+    window.addEventListener(SSH_CONNECTION_INVALIDATED_EVENT, invalidate)
+    window.addEventListener(SSH_CONNECTION_DISCONNECTED_EVENT, refresh)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
     return () => {
       cancelled = true
       clearTimeout(pollTimer)
       unlisten?.()
+      window.removeEventListener(SSH_CONNECTION_INVALIDATED_EVENT, invalidate)
+      window.removeEventListener(SSH_CONNECTION_DISCONNECTED_EVENT, refresh)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
     }
   }, [rootUri, refreshKey])
 
@@ -212,6 +252,11 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
     if (busy) return
     setBusy(true)
     try {
+      if (agent && state.phase === 'disconnected') {
+        await reconnectSshConnection(state.connectionId)
+        setRefreshKey(key => key + 1)
+        return
+      }
       const accepted = agent || await confirmSshServerRestart(rootUri, t)
       if (!accepted) return
       const value = await safeInvoke<unknown>(agent ? '重新连接 Server' : '重启 SSH Server', 'ssh_server_restart', { rootUri })
@@ -303,6 +348,12 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
               setRefreshKey(key => key + 1)
             }}
           />}
+          fallbackPanel={agent && connection && fallbackInfo?.enabled && <DirectSshFallback connection={connection} info={fallbackInfo} disabled={busy} onConfigure={() => setDialog(null)} onSwitched={async info => {
+            setFallbackInfo(info)
+            await useProjectStore.getState().loadSshConnections()
+            await reconnectSshConnection(connection.id)
+            setRefreshKey(key => key + 1)
+          }} />}
           busy={busy}
           blocker={switchBlocker}
           logs={logs}

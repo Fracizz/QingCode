@@ -426,6 +426,46 @@ pub(super) mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn status_probe_detects_closed_port_and_never_reactivates_a_detached_connection() {
+        use super::super::{server_status, RegisteredRoot, SshManager};
+        let (config, gateway, directory) = gateway().await;
+        let manager = SshManager::new();
+        let id = "status-probe";
+        let uri = "ssh://status-probe/project";
+        manager
+            .direct_connections
+            .write()
+            .unwrap()
+            .insert(id.into(), config);
+        manager.direct_active.write().unwrap().insert(id.into());
+        manager.roots.write().unwrap().insert(
+            uri.into(),
+            RegisteredRoot {
+                uri: uri.into(),
+                canonical_path: "/project".into(),
+                trusted: true,
+            },
+        );
+        manager.refresh_direct_status(id).await.unwrap();
+        assert!(manager.connection_is_open(id));
+        gateway.abort();
+        let _ = gateway.await;
+        manager.refresh_direct_status(id).await.unwrap();
+        assert!(!manager.connection_is_open(id));
+        let state = server_status::state_for_uri(&manager, uri).unwrap();
+        assert_eq!(state.phase, server_status::ServerPhase::Disconnected);
+        assert_eq!(state.transport, Some(server_status::ServerTransport::Agent));
+        assert!(state.reason.is_some());
+        manager.detach_direct_connection(id).unwrap();
+        manager.refresh_direct_status(id).await.unwrap();
+        let detached = server_status::state_for_uri(&manager, uri).unwrap();
+        assert_eq!(detached.phase, server_status::ServerPhase::Disconnected);
+        assert!(detached.reason.is_none());
+        assert!(!manager.connection_is_open(id));
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
     async fn http_requests_flush_buffered_uploads_before_waiting_for_response() {
         // Like rustls under socket backpressure, this writer can acknowledge
         // plaintext while retaining bytes that reads will never flush.

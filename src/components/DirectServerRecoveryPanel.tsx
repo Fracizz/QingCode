@@ -64,16 +64,18 @@ export default function DirectServerRecoveryPanel({ connectionId, info, fallback
   const field = 'mt-1 w-full rounded border border-dialog-border bg-dialog-input px-2.5 py-1.5 text-ui text-fg'
   const button = 'rounded border border-dialog-border px-3 py-1.5 text-ui text-fg hover:bg-bg-hover disabled:opacity-40'
 
-  return <section aria-label={t('启动与开机自启')} className="space-y-3 rounded border border-dialog-border bg-dialog-sidebar p-3">
+  return <section aria-label={t('启动与开机自启')} className="@container/recovery min-w-0 space-y-2.5 rounded border border-dialog-border bg-dialog-sidebar p-3">
     <ServerAutoStartSwitch checked={autoStart} disabled={busy} onChange={setAutoStart} />
     <p className="text-ui-sm text-fg-muted">{t('默认开启。通过 SSH 应用设置；关闭只取消开机自启，不停止当前服务。')}</p>
     {ssh ? <>
       <p className="text-ui-sm text-fg-muted">{t('此操作通过 SSH 启动已配对的 Server，随后使用原配对凭据直连。')}</p>
-      <label className="block text-ui-sm text-fg-muted">{t('SSH 授权连接')}<select disabled={busy} value={ssh.id} onChange={event => { setSshId(event.target.value); setPassword(''); setPassphrase(''); setError('') }} className={field}>
-        {candidates.map(c => <option key={c.id} value={c.id}>{c.name} · {c.username}@{c.host}:{c.port}</option>)}
-      </select></label>
-      {ssh.auth_kind === 'password' ? <label className="block text-ui-sm text-fg-muted">{t('SSH 密码')}<input type="password" disabled={busy} value={password} onChange={event => setPassword(event.target.value)} autoComplete="new-password" placeholder={t('留空使用当前会话中已有的 SSH 凭据')} className={field} /></label>
-        : <label className="block text-ui-sm text-fg-muted">{t('SSH 私钥口令（可选）')}<input type="password" disabled={busy} value={passphrase} onChange={event => setPassphrase(event.target.value)} autoComplete="new-password" className={field} /></label>}
+      <div className="grid min-w-0 grid-cols-1 gap-2.5 @min-[32rem]/recovery:grid-cols-2">
+        <label className="min-w-0 text-ui-sm text-fg-muted">{t('SSH 授权连接')}<select disabled={busy} value={ssh.id} onChange={event => { setSshId(event.target.value); setPassword(''); setPassphrase(''); setError('') }} className={field}>
+          {candidates.map(c => <option key={c.id} value={c.id}>{c.name} · {c.username}@{c.host}:{c.port}</option>)}
+        </select></label>
+        {ssh.auth_kind === 'password' ? <label className="min-w-0 text-ui-sm text-fg-muted">{t('SSH 密码')}<input type="password" disabled={busy} value={password} onChange={event => setPassword(event.target.value)} autoComplete="new-password" placeholder={t('留空使用当前会话中已有的 SSH 凭据')} className={field} /></label>
+          : <label className="min-w-0 text-ui-sm text-fg-muted">{t('SSH 私钥口令（可选）')}<input type="password" disabled={busy} value={passphrase} onChange={event => setPassphrase(event.target.value)} autoComplete="new-password" className={field} /></label>}
+      </div>
       <div className="flex flex-wrap gap-2">
         <button type="button" disabled={busy} onClick={() => void manage(true)} className={`${button} inline-flex items-center gap-1.5`}>{busy ? <LoaderCircle size={13} className="animate-spin" /> : <Play size={13} />}{t(busy ? '正在通过 SSH 管理 Server…' : '通过 SSH 启动 Server')}</button>
         <button type="button" disabled={busy} onClick={() => void manage(false)} className={button}>{t('应用自启设置')}</button>

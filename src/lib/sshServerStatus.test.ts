@@ -100,7 +100,7 @@ describe('sshServerStatus', () => {
     expect(parseSshServerState({ ...readyServer, mode: 'proxy' })).toBeNull()
   })
 
-  it('parses optional timings and shows an offline chip only for unexpected disconnects', () => {
+  it('parses optional timings and keeps intentional disconnects visible', () => {
     expect(parseSshServerState(readyServer)?.timings).toBeNull()
     expect(parseSshServerState({ ...readyServer, timings: '发现 1.2s · 合计 1.5s' })?.timings).toBe(
       '发现 1.2s · 合计 1.5s',
@@ -113,7 +113,7 @@ describe('sshServerStatus', () => {
       version: null,
       transport: null,
     }
-    expect(sshServerChip(disconnected)).toBeNull()
+    expect(sshServerChip(disconnected)).toEqual({ kind: 'offline' })
     expect(sshServerChip({ ...disconnected, reason: '保活超时' })).toEqual({ kind: 'offline' })
   })
 
@@ -123,9 +123,9 @@ describe('sshServerStatus', () => {
     expect(parseSshServerState({ ...readyServer, version: 1 })).toBeNull()
   })
 
-  it('hides a disconnected chip and labels the ready states', () => {
+  it('labels disconnected and ready states', () => {
     expect(sshServerChip(null)).toBeNull()
-    expect(sshServerChip({ ...readyServer, phase: 'disconnected' })).toBeNull()
+    expect(sshServerChip({ ...readyServer, phase: 'disconnected' })).toEqual({ kind: 'offline' })
     expect(sshServerChip(readyServer)).toEqual({ kind: 'agent' })
     expect(sshServerChip({ ...readyServer, version: null })).toEqual({ kind: 'agent' })
     expect(sshServerChip({ ...readyServer, phase: 'readyDirect', mode: 'direct', transport: 'direct', version: null, reason: '已关闭 ssh.server.enabled' })).toEqual({ kind: 'direct' })

@@ -14,60 +14,6 @@ export const TERMINAL_PASTE_DIR = 'terminal-paste'
 /** Reject terminal paste uploads above this size. Equal to 100MB is still allowed. */
 export const SSH_TERMINAL_PASTE_MAX_BYTES = 100 * 1024 * 1024
 
-const WINDOWS_ABS = /^(?:[a-zA-Z]:[\\/]|\\\\[^\\/]+\\)/
-const FILE_URL = /^file:\/\//i
-
-function isWindowsHost(): boolean {
-  return /Windows/i.test(navigator.userAgent)
-}
-
-function stripWrappingQuotes(value: string): string {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1)
-  }
-  return value
-}
-
-function fileUrlToPath(source: string): string | null {
-  try {
-    const url = new URL(source)
-    if (url.protocol !== 'file:') return null
-    const decoded = decodeURIComponent(url.pathname)
-    if (url.host) return `//${url.host}${decoded}`.replace(/\//g, '\\')
-    const drive = decoded.replace(/^\/([a-zA-Z]:)/, '$1')
-    return drive.replace(/\//g, WINDOWS_ABS.test(drive) ? '\\' : '/')
-  } catch {
-    return null
-  }
-}
-
-export function isLocalAbsolutePath(path: string): boolean {
-  const trimmed = path.trim()
-  if (!trimmed || trimmed.startsWith('ssh://')) return false
-  if (WINDOWS_ABS.test(trimmed)) return true
-  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) return !isWindowsHost()
-  return false
-}
-
-/**
- * True when the clipboard text is *only* local absolute file paths
- * (Explorer / Windows Terminal style), so an SSH paste can upload them.
- */
-export function parseLocalFilePasteText(text: string): string[] | null {
-  const lines = text
-    .replace(/\r/g, '')
-    .split('\n')
-    .map(line => stripWrappingQuotes(line.trim()))
-    .map(line => (FILE_URL.test(line) ? fileUrlToPath(line) ?? line : line))
-    .filter(Boolean)
-  if (lines.length === 0) return null
-  if (!lines.every(isLocalAbsolutePath)) return null
-  return lines
-}
-
 export function quotePosixShellPath(path: string): string {
   return `'${path.replace(/'/g, `'\\''`)}'`
 }
@@ -109,21 +55,6 @@ async function ensureSshDirectory(parent: string, name: string): Promise<string>
   }
 }
 
-async function existingLocalPaths(paths: string[]): Promise<string[]> {
-  if (paths.length === 0) return []
-  await authorizePaths(paths)
-  const kept: string[] = []
-  for (const path of paths) {
-    try {
-      await safeInvoke('读取文件信息', 'file_stat', { path })
-      kept.push(path)
-    } catch {
-      return []
-    }
-  }
-  return kept
-}
-
 export async function readClipboardFileList(): Promise<string[]> {
   if (!isTauri()) return []
   try {
@@ -132,23 +63,6 @@ export async function readClipboardFileList(): Promise<string[]> {
   } catch {
     return []
   }
-}
-
-export async function collectLocalFilesForSshPaste(
-  event?: ClipboardEvent | null,
-): Promise<string[]> {
-  const eventText = event?.clipboardData?.getData('text/plain')
-  const fromClipboard = await readClipboardFileList()
-  if (fromClipboard.length > 0) {
-    await authorizePaths(fromClipboard)
-    return fromClipboard
-  }
-  const text =
-    eventText ||
-    (await navigator.clipboard.readText().catch(() => ''))
-  const parsed = text ? parseLocalFilePasteText(text) : null
-  if (!parsed) return []
-  return existingLocalPaths(parsed)
 }
 
 export function sshTerminalPasteRoot(projectPath: string): string {

@@ -74,14 +74,17 @@ describe('long terminal input', () => {
     expect(callbacks.prepareFiles).toHaveBeenCalledWith([file])
   })
 
-  it('preserves a pasted path when no attachment is found', async () => {
+  it.each([
+    'D:/code/django',
+    '"D:\\code\\django"',
+    '/tmp/not-created-yet.txt',
+    'file:///D:/code/django',
+  ])('keeps path text on the native textarea paste path: %s', text => {
     const callbacks = props()
-    render(<TerminalComposer {...callbacks} prepareClipboard={async () => null} />)
-    fireEvent.paste(screen.getByRole('textbox'), {
-      clipboardData: { files: [], getData: () => '/tmp/not-created-yet.txt' },
-    })
-    await waitFor(() =>
-      expect(screen.getByRole('textbox')).toHaveValue('/tmp/not-created-yet.txt ')
-    )
+    render(<TerminalComposer {...callbacks} />)
+    expect(fireEvent.paste(screen.getByRole('textbox'), {
+      clipboardData: { files: [], getData: () => text },
+    })).toBe(true)
+    expect(callbacks.prepareClipboard).not.toHaveBeenCalled()
   })
 })

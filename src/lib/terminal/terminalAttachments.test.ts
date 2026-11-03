@@ -5,6 +5,7 @@ import {
   isSameTerminalSession,
   prepareTerminalAttachments,
   storeAttachmentFiles,
+  terminalClipboardPaths,
 } from './terminalAttachments'
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), authorize: vi.fn(), upload: vi.fn() }))
@@ -24,6 +25,62 @@ afterEach(() => {
 })
 
 describe('terminal attachment targets', () => {
+  it.each([
+    'D:/code/django',
+    'D:\\code\\django',
+    '"D:/code/django"',
+    '\\\\server\\share\\django',
+    '/home/me/django',
+    'file:///D:/code/django',
+    'D:/code/django\r\nD:/code/QingCode',
+  ])('keeps path text out of attachment discovery: %s', async text => {
+    mocks.invoke.mockImplementation(async (_action, command) => {
+      if (command === 'clipboard_read_files') return []
+      if (command === 'file_stat') return { is_dir: true, size: 0 }
+      throw new Error(`Unexpected command: ${command}`)
+    })
+    const readText = vi.fn(async () => text)
+    vi.stubGlobal('navigator', { clipboard: { readText } })
+
+    expect(await terminalClipboardPaths({
+      clipboardData: { files: [], getData: () => text },
+    } as unknown as ClipboardEvent)).toEqual([])
+    expect(await terminalClipboardPaths()).toEqual([])
+    expect(mocks.invoke.mock.calls.every(([, command]) => command === 'clipboard_read_files')).toBe(true)
+    expect(mocks.authorize).not.toHaveBeenCalled()
+    expect(mocks.upload).not.toHaveBeenCalled()
+    expect(readText).not.toHaveBeenCalled()
+  })
+
+  it('keeps actual native file lists even when the event also contains path text', async () => {
+    mocks.invoke.mockResolvedValue(['D:/code/django'])
+    expect(await terminalClipboardPaths({
+      clipboardData: { files: [], getData: () => 'D:/code/django' },
+    } as unknown as ClipboardEvent)).toEqual(['D:/code/django'])
+  })
+
+  it('uses native screenshot paths without encoding browser file bytes', async () => {
+    mocks.invoke.mockResolvedValue(['/tmp/screenshot.png'])
+    const file = new File(['png'], 'screenshot.png', { type: 'image/png' })
+    expect(await terminalClipboardPaths({
+      clipboardData: { files: [file] },
+    } as unknown as ClipboardEvent)).toEqual(['/tmp/screenshot.png'])
+    expect(mocks.invoke).toHaveBeenCalledTimes(1)
+  })
+
+  it('stores browser files when the native clipboard has no file or image', async () => {
+    mocks.invoke.mockImplementation(async (_action, command) =>
+      command === 'clipboard_read_files' ? [] : '/tmp/private/a.txt'
+    )
+    const file = { name: 'a.txt', size: 1, arrayBuffer: async () => Uint8Array.of(65).buffer } as File
+    expect(await terminalClipboardPaths({
+      clipboardData: { files: [file] },
+    } as unknown as ClipboardEvent)).toEqual(['/tmp/private/a.txt'])
+    expect(mocks.invoke).toHaveBeenCalledWith('保存终端附件', 'clipboard_store_file', {
+      name: 'a.txt', bytes: [65],
+    })
+  })
+
   it('treats Linux/WSL as POSIX, independent of the frontend host', () => {
     vi.stubGlobal('navigator', { userAgent: 'Windows' })
     expect(

@@ -49,6 +49,7 @@ import {
   rememberSshSessionSecrets,
   forgetSshSessionSecrets,
   testSshConnection,
+  restoreSshTransport,
 } from './sshWorkspace'
 import type { Project, SshConnection } from '../types'
 
@@ -58,6 +59,39 @@ beforeEach(() => {
   mocks.upsertSshConnection.mockResolvedValue(undefined)
   mocks.currentProject = null
   mocks.refreshProjectTree.mockResolvedValue(undefined)
+})
+
+describe('restoreSshTransport', () => {
+  const profile: SshConnection = { id: 'restore-c1', name: 'WSL', host: 'localhost', port: 2222, username: 'dev', auth_kind: 'privateKey', host_key_fingerprint: 'SHA256:ssh', created_at: 1 }
+  const info = { enabled: true, host: 'localhost', port: 48763, certificateFingerprint: 'tls', tokenSaved: true, previousPorts: [] }
+
+  it('detaches before disabling direct mode and preserves the SSH identity and pairing', async () => {
+    const steps: string[] = []
+    mocks.safeInvoke.mockImplementation(async (_label, command, args) => {
+      steps.push(command)
+      if (command === 'direct_agent_save') expect(args).toEqual({ connectionId: profile.id, host: info.host, port: info.port, certificateFingerprint: 'tls', enabled: false })
+    })
+    mocks.upsertSshConnection.mockImplementationOnce(async saved => {
+      steps.push('save-ssh')
+      expect(saved).toMatchObject({ ...profile, mode: 'ssh' })
+    })
+    expect(await restoreSshTransport(profile, info, 'ssh')).toEqual({ ...info, enabled: false })
+    expect(steps).toEqual(['ssh_disconnect', 'save-ssh', 'direct_agent_save'])
+    expect(steps).not.toContain('ssh_connect')
+  })
+
+  it('rejects a standalone TLS placeholder before disconnecting or writing configuration', async () => {
+    await expect(restoreSshTransport({ ...profile, username: 'Agent', auth_kind: 'password', host_key_fingerprint: 'tls' }, info, 'server')).rejects.toThrow('SSH 身份')
+    expect(mocks.safeInvoke).not.toHaveBeenCalled()
+    expect(mocks.upsertSshConnection).not.toHaveBeenCalled()
+  })
+
+  it('keeps direct mode enabled if detaching fails', async () => {
+    mocks.safeInvoke.mockRejectedValueOnce(new Error('detach failed'))
+    await expect(restoreSshTransport(profile, info, 'server')).rejects.toThrow('detach failed')
+    expect(mocks.upsertSshConnection).not.toHaveBeenCalled()
+    expect(mocks.safeInvoke).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('sshRootUri', () => {

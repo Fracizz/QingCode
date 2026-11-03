@@ -7,7 +7,6 @@ import ModalOverlay from './ModalOverlay'
 import Tooltip from './Tooltip'
 import { translate } from '../lib/i18n'
 import { copyToClipboard } from '../utils/fileReferences'
-import { parseLocalFilePasteText } from '../lib/sshTerminalPaste'
 import { useTerminalDraftStore } from '../store/terminalDraftStore'
 
 export interface TerminalComposerProps {
@@ -69,16 +68,9 @@ export default function TerminalComposer({
   const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
     // Native screenshots/file lists may not expose DOM files or plain text.
     const pastedText = event.clipboardData.getData('text/plain')
-    if (
-      event.clipboardData.files.length === 0 &&
-      pastedText &&
-      !parseLocalFilePasteText(pastedText)
-    )
-      return
+    if (event.clipboardData.files.length === 0 && pastedText) return
     event.preventDefault()
     const native = event.nativeEvent
-    // A pasted absolute path may be an ordinary text reference, not an existing file.
-    // Keep it if attachment discovery returns nothing.
     void insertAttachments(async () => (await prepareClipboard(native)) || pastedText || null)
   }
   useEffect(() => {

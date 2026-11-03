@@ -1179,6 +1179,45 @@ pub struct SshManager {
 }
 
 impl SshManager {
+    /// Probe only an active direct transport; a status check must never reconnect it.
+    async fn refresh_direct_status(&self, connection_id: &str) -> Result<(), String> {
+        let Some(config) = self.direct_config(connection_id) else {
+            return Ok(());
+        };
+        if !self
+            .direct_active
+            .read()
+            .is_ok_and(|active| active.contains(connection_id))
+        {
+            return Ok(());
+        }
+        let result = direct::test(&config).await;
+        // Disconnection or re-pairing may have completed while the probe was pending.
+        let active = self.direct_active.read().map_err(|_| "Server 状态不可用")?;
+        if !active.contains(connection_id)
+            || !self.direct_config(connection_id).is_some_and(|current| {
+                current.endpoint == config.endpoint
+                    && current.certificate_fingerprint == config.certificate_fingerprint
+                    && current.token == config.token
+            })
+        {
+            return Ok(());
+        }
+        let mut failures = self
+            .direct_failures
+            .write()
+            .map_err(|_| "Server 状态不可用")?;
+        match result {
+            Ok(_) => {
+                failures.remove(connection_id);
+            }
+            Err(error) => {
+                failures.insert(connection_id.into(), error);
+            }
+        }
+        Ok(())
+    }
+
     fn direct_config(&self, connection_id: &str) -> Option<direct::DirectConnectionConfig> {
         self.direct_connections
             .read()
@@ -2452,13 +2491,15 @@ pub async fn ssh_set_workspace_trust(
     Ok(())
 }
 
-/// 查询某个 SSH 项目根当前的代理阶段。非 ssh URI 或未注册根直接拒绝。
+/// 查询项目阶段；断开后保留可恢复的离线状态。
 #[tauri::command]
-pub fn ssh_server_info(
+pub async fn ssh_server_info(
     root_uri: String,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<SshServerState, String> {
+    let parsed = parse_remote_uri(&root_uri)?;
+    manager.refresh_direct_status(&parsed.connection_id).await?;
     let state = server_status::ssh_server_info(root_uri.clone(), manager.clone())?;
     // 「正在探测」却没有任务在推进（端点被清掉、监督任务已退出等）时，
     // 查询顺手补一轮后台发现，结果经状态事件推回芯片。
@@ -3652,11 +3693,12 @@ pub async fn ssh_disconnect(
 }
 
 #[tauri::command]
-pub fn ssh_connection_status(
+pub async fn ssh_connection_status(
     connection_id: String,
     manager: State<'_, SshManager>,
 ) -> Result<bool, String> {
     if manager.direct_config(&connection_id).is_some() {
+        manager.refresh_direct_status(&connection_id).await?;
         return Ok(manager.connection_is_open(&connection_id));
     }
     Ok(manager

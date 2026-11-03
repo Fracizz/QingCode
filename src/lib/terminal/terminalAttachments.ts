@@ -2,7 +2,6 @@ import type { TerminalTab } from '@/types'
 import { isSshResource, isTauri, safeInvoke } from '../tauri'
 import { authorizePaths } from '../pathAllowlist'
 import {
-  collectLocalFilesForSshPaste,
   readClipboardFileList,
   pasteLocalFilesIntoSshTerminal,
   quotePosixShellPath,
@@ -83,5 +82,7 @@ export async function terminalClipboardPaths(event?: ClipboardEvent): Promise<st
     }
     return storeAttachmentFiles(files)
   }
-  return collectLocalFilesForSshPaste(event)
+  // Only native file/image formats identify attachments. Plain text remains text,
+  // even when it names an existing local file or directory.
+  return readClipboardFileList()
 }

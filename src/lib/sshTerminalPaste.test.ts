@@ -40,8 +40,6 @@ vi.mock('../store/confirmStore', () => ({ confirmDialog: vi.fn() }))
 import { confirmDialog } from '../store/confirmStore'
 import {
   formatRemotePasteText,
-  isLocalAbsolutePath,
-  parseLocalFilePasteText,
   quotePosixShellPath,
   quotePowerShellPath,
   remoteShellPathFromUri,
@@ -52,46 +50,6 @@ import {
   clearSshTerminalPasteUploads,
   confirmClearSshTerminalPasteUploads,
 } from './sshTerminalPaste'
-
-describe('isLocalAbsolutePath', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('accepts Windows drive and UNC paths', () => {
-    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0)' })
-    expect(isLocalAbsolutePath('D:\\code\\app.ts')).toBe(true)
-    expect(isLocalAbsolutePath('C:/temp/a.txt')).toBe(true)
-    expect(isLocalAbsolutePath('\\\\server\\share\\a.txt')).toBe(true)
-    expect(isLocalAbsolutePath('/home/owner/a.txt')).toBe(false)
-    expect(isLocalAbsolutePath('ssh://c1/home/a.txt')).toBe(false)
-  })
-
-  it('accepts POSIX absolute paths on non-Windows hosts', () => {
-    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)' })
-    expect(isLocalAbsolutePath('/Users/me/a.txt')).toBe(true)
-  })
-})
-
-describe('parseLocalFilePasteText', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('reads quoted Explorer / Windows Terminal file lists', () => {
-    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0)' })
-    expect(parseLocalFilePasteText('"D:\\docs\\a.txt"\r\n"D:\\docs\\b.txt"')).toEqual([
-      'D:\\docs\\a.txt',
-      'D:\\docs\\b.txt',
-    ])
-  })
-
-  it('does not rewrite mixed command text', () => {
-    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0)' })
-    expect(parseLocalFilePasteText('python D:\\docs\\a.txt')).toBeNull()
-    expect(parseLocalFilePasteText('hello')).toBeNull()
-  })
-})
 
 describe('remote shell quoting', () => {
   it('quotes POSIX paths and escapes single quotes', () => {

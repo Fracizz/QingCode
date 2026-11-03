@@ -529,7 +529,9 @@ pub(crate) fn publish_authenticating(
             mode: ServerMode::Unknown,
             connection_mode: manager.connection_mode(connection_id),
             version: None,
-            transport: None,
+            transport: manager
+                .direct_config(connection_id)
+                .map(|_| ServerTransport::Agent),
             reason: None,
             timings: None,
         },
@@ -552,7 +554,9 @@ pub(crate) fn publish_disconnected(
             mode: ServerMode::Unknown,
             connection_mode: manager.connection_mode(connection_id),
             version: None,
-            transport: None,
+            transport: manager
+                .direct_config(connection_id)
+                .map(|_| ServerTransport::Agent),
             reason: None,
             timings: None,
         },
@@ -626,8 +630,30 @@ pub(crate) fn ssh_server_info(
     root_uri: String,
     manager: State<'_, SshManager>,
 ) -> Result<SshServerState, String> {
-    let root = require_registered_root(&manager, &root_uri)?;
-    state_for_root(&manager, &root)
+    state_for_uri(&manager, &root_uri)
+}
+
+pub(super) fn state_for_uri(
+    manager: &SshManager,
+    root_uri: &str,
+) -> Result<SshServerState, String> {
+    let parsed = parse_remote_uri(root_uri)?;
+    if let Ok(root) = manager.registered_root(root_uri) {
+        return state_for_root(manager, &root);
+    }
+    Ok(SshServerState {
+        connection_id: parsed.connection_id.clone(),
+        root_uri: normalize_remote_uri(root_uri),
+        phase: ServerPhase::Disconnected,
+        mode: ServerMode::Unknown,
+        connection_mode: manager.connection_mode(&parsed.connection_id),
+        version: None,
+        transport: manager
+            .direct_config(&parsed.connection_id)
+            .map(|_| ServerTransport::Agent),
+        reason: manager.connection_closed_reason(&parsed.connection_id),
+        timings: None,
+    })
 }
 
 /// 重启、日志只属于 Server 模式；SSH 模式的连接不部署也不读取远端 server。

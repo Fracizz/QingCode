@@ -49,6 +49,9 @@ SSH 主机统一在「远程连接」管理页维护（活动栏云图标、项�
 
 ## 当前能力
 
+- Server 端口直连的断开状态同步到连接概览与状态栏；主动断开后保留可点击的离线入口，重连会重新登记项目根。可见窗口每 5 秒补查，直连查询验证 TLS 身份、认证与服务响应，端口不可用时显示断开原因，不以活动标记代替健康状态，也不由状态查询重新激活已断开的连接。
+- 概览、状态详情与重连弹窗提供「切换到 SSH」入口，展示已保存的 SSH 地址，并允许选择「SSH + 远端服务」或「SSH 直连（兼容模式）」。确认后先断开直连传输，再保存 SSH 模式并禁用直连，保留配对信息；缺少 SSH 凭据时走认证流程。仅保存 Server 配对的连接先引导新建 SSH 身份，不把 TLS 占位账户用于 SSH。浏览器模拟与本地 TLS gateway 测试不替代 Windows 桌面及真实远端 SSH/PTY 验收。
+
 - 通过 SFTP 浏览、读取、编辑、新建、重命名和删除远程文件。
 - 文件名搜索兼容常见 GNU/BusyBox `find`；内容搜索由远端 `rg` 执行，并固定按普通文本匹配。
 - 远程 PTY 终端。SSH 服务可用时，Server 模式下交互式终端与运行任务都由 `qingcode-server` daemon 托管，网络抖动或 SSH 断开不会结束远端进程；SSH 模式下全部直连（见下方「Server / SSH 模式」）。Linux 远端进入登录 shell；Windows OpenSSH 的盘符路径（`/D:/code/app`）支持根据用户配置启动 `powershell.exe -NoLogo`、`pwsh` 或 `cmd.exe`，提示符出现时直接进入项目根目录，不回显切目录命令，无版权横幅；远端 `DefaultShell` 为 cmd、PowerShell 或 Git Bash 时行为一致（启动命令整体加引号，切目录脚本走 `-EncodedCommand`）。设置 `terminal.integrated.sshUploadOnPaste`（默认开启）生效后，在 SSH 终端里粘贴或拖入本机文件会先上传到项目内 `.qingcode/terminal-paste/`，再粘贴远端路径。超过 100MB 的文件或文件夹会被拒绝。设置页和终端右键可清理该目录。

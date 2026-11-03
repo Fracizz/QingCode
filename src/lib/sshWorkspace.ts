@@ -2,7 +2,7 @@ import type { Project, SshConnection, SshConnectionMode } from '../types'
 import { getSshConnection, upsertSshConnection } from './projectRepository'
 import { getSshServerEnabled, loadSshPreparationSettings } from './sshServerSettings'
 import { safeInvoke } from './tauri'
-import { hasDirectAgentConnection } from './directAgent'
+import { directAgentApi, hasDirectAgentConnection, type DirectAgentInfo } from './directAgent'
 import { parseSshServerState, type SshServerState } from './sshServerStatus'
 import { isProjectTrusted } from './workspaceTrust'
 
@@ -30,6 +30,7 @@ export const SSH_RECONNECT_REQUEST_EVENT = 'qingcode:ssh-reconnect-request'
 /** 连接被新建/编辑/删除后广播，打开中的对话框据此刷新连接列表。 */
 export const SSH_CONNECTIONS_CHANGED_EVENT = 'qingcode:ssh-connections-changed'
 export const SSH_CONNECTION_INVALIDATED_EVENT = 'qingcode:ssh-connection-invalidated'
+export const SSH_CONNECTION_DISCONNECTED_EVENT = 'qingcode:ssh-connection-disconnected'
 
 export function requestSshReconnect(project: Project): void {
   window.dispatchEvent(new CustomEvent<Project>(SSH_RECONNECT_REQUEST_EVENT, { detail: project }))
@@ -269,6 +270,21 @@ export async function disconnectSshSession(connectionId: string): Promise<void> 
   // otherwise its late result can resurrect the explicitly closed session.
   await workspaceConnectQueues.get(connectionId)?.catch(() => undefined)
   await safeInvoke('断开 SSH 连接', 'ssh_disconnect', { connectionId })
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(SSH_CONNECTION_DISCONNECTED_EVENT, { detail: connectionId }))
+  }
+}
+
+/** Preserve pairing and the SSH identity; detach the direct transport before disabling it. */
+export async function restoreSshTransport(connection: SshConnection, info: DirectAgentInfo, mode: SshConnectionMode): Promise<DirectAgentInfo> {
+  if (connection.username === 'Agent' && connection.auth_kind === 'password' && connection.host_key_fingerprint === info.certificateFingerprint) {
+    throw new Error('此连接尚未配置 SSH 身份，请先新建 SSH 连接。')
+  }
+  await disconnectSshSession(connection.id)
+  await upsertSshConnection({ ...connection, mode, updated_at: Date.now() })
+  await directAgentApi.save({ connectionId: connection.id, host: info.host, port: info.port, certificateFingerprint: info.certificateFingerprint, enabled: false })
+  broadcastSshConnectionsChanged()
+  return { ...info, enabled: false }
 }
 
 /** Overview checks propagate failures; workspace fast paths retain a false fallback. */

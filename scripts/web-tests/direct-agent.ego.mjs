@@ -35,6 +35,7 @@ export async function run({ spaceId, artifactDir, screenshots = true } = {}) {
       assert.match(await page.evaluate(() => document.body.textContent), /历史端口：49521、51234/)
       assert.equal(await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === '保存并启用直连').disabled), true)
     })
+    await page.click('loc=css:summary', { label: 'expand firewall setup' })
     await step('SSH authorization shows source and Public network scope; cancel leaves firewall unchanged', async () => {
       await page.click('loc=role:button[name="通过 SSH 授权放行"]', { label: 'inspect SSH firewall authorization' })
       await page.waitForSelector('[role="alertdialog"]')

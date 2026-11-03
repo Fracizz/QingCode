@@ -27,6 +27,7 @@ import Tooltip from './Tooltip'
 import SshImportDialog from './SshImportDialog'
 import DirectAgentConnectionPanel from './DirectAgentConnectionPanel'
 import DirectServerRecoveryPanel from './DirectServerRecoveryPanel'
+import DirectSshFallback from './DirectSshFallback'
 import { directAgentApi, type DirectAgentInfo } from '../lib/directAgent'
 import { confirmDialog } from '../store/confirmStore'
 import { confirmSshServerRestart } from '../lib/sshWindowsRepair'
@@ -38,6 +39,9 @@ import {
   disconnectSshSession,
   forgetSshSessionSecrets,
   isSshConnectionAlive,
+  isSshBackgroundSuspended,
+  SSH_CONNECTION_INVALIDATED_EVENT,
+  SSH_CONNECTION_DISCONNECTED_EVENT,
   listSshServerStates,
   listSshWorkspaceRoots,
   NEW_SSH_CONNECTION_ID,
@@ -186,7 +190,7 @@ export default function RemoteConnectionsManager() {
     if (directResult.status === 'fulfilled') setDirectInfos(prev => ({ ...prev, [id]: directResult.value ?? null }))
     // A state event received during the snapshot is newer than its result.
     if ((statusRevisionRef.current[id] ?? 0) !== revision) return
-    setAliveMap(prev => ({ ...prev, [id]: aliveResult.status === 'fulfilled' ? aliveResult.value : null }))
+    setAliveMap(prev => ({ ...prev, [id]: isSshBackgroundSuspended(id) ? false : aliveResult.status === 'fulfilled' ? aliveResult.value : null }))
     setStatusErrors(prev => ({ ...prev, [id]: aliveResult.status === 'rejected' ? String(aliveResult.reason) : statesResult.status === 'rejected' ? String(statesResult.reason) : directResult.status === 'rejected' ? String(directResult.reason) : '' }))
     if (statesResult.status === 'fulfilled') setStatesByConnection(prev => ({ ...prev, [id]: statesResult.value }))
   }, [])
@@ -269,6 +273,36 @@ export default function RemoteConnectionsManager() {
     }
   }, [connections, refreshStatus])
 
+  useEffect(() => {
+    const invalidate = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail
+      statusRevisionRef.current[id] = (statusRevisionRef.current[id] ?? 0) + 1
+      setAliveMap(prev => ({ ...prev, [id]: false }))
+      setStatesByConnection(prev => ({ ...prev, [id]: [] }))
+      setStatusErrors(prev => ({ ...prev, [id]: '' }))
+      if (id === selectedId) {
+        detailRequestRef.current += 1
+        setRoots([])
+        setDetailLoading(false)
+      }
+    }
+    const refresh = () => {
+      if (selectedId && selectedId !== NEW_SSH_CONNECTION_ID && selectedId !== NEW_AGENT_CONNECTION_ID && document.visibilityState !== 'hidden') void refreshDetail(selectedId)
+    }
+    const timer = setInterval(refresh, 5000)
+    window.addEventListener(SSH_CONNECTION_INVALIDATED_EVENT, invalidate)
+    window.addEventListener(SSH_CONNECTION_DISCONNECTED_EVENT, refresh)
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener(SSH_CONNECTION_INVALIDATED_EVENT, invalidate)
+      window.removeEventListener(SSH_CONNECTION_DISCONNECTED_EVENT, refresh)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [selectedId, refreshDetail])
+
   // 订阅代理状态事件，管理页与状态栏芯片看到同一份阶段模型。
   useEffect(() => {
     if (!hasBackend()) return
@@ -277,6 +311,7 @@ export default function RemoteConnectionsManager() {
     void listen<unknown>('ssh-server-state', event => {
       const next = parseSshServerState(event.payload)
       if (!next || cancelled) return
+      if (next.phase !== 'disconnected' && isSshBackgroundSuspended(next.connectionId)) return
       statusRevisionRef.current[next.connectionId] = (statusRevisionRef.current[next.connectionId] ?? 0) + 1
       setStatesByConnection(prev => {
         const current = prev[next.connectionId] ?? []
@@ -972,6 +1007,12 @@ export default function RemoteConnectionsManager() {
                       <summary className="cursor-pointer text-ui font-medium text-fg">{t('启动 Server 与开机自启')}</summary>
                       <div className="mt-3"><DirectServerRecoveryPanel key={selected.id} connectionId={selected.id} info={selectedDirect} connections={connections} onStarted={() => refreshDetail(selected.id)} onUpdated={info => setDirectInfos(prev => ({ ...prev, [selected.id]: info }))} /></div>
                     </details>}
+                    {!isNew && !editing && selected && selectedDirect?.enabled && <DirectSshFallback connection={selected} info={selectedDirect} onConfigure={() => { setSelectedId(NEW_SSH_CONNECTION_ID); setEditing(true) }} onSwitched={async info => {
+                      setDirectInfos(prev => ({ ...prev, [selected.id]: info }))
+                      await loadSshConnections()
+                      await reconnectSshConnection(selected.id)
+                      await refreshDetail(selected.id)
+                    }} />}
                     {(isNew || editing) && (isNewAgent ? <DirectAgentConnectionPanel
                       key={agentDraftId}
                       connectionId={agentDraftId}

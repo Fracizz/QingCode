@@ -24,6 +24,7 @@ type View = 'details' | 'logs' | 'agent'
 
 interface Props {
   agentPanel?: ReactNode
+  fallbackPanel?: ReactNode
   state: SshServerState
   connectionLabel: string
   projectPath: string
@@ -45,6 +46,7 @@ interface Props {
 export default function SshServerDialog({
   state,
   agentPanel,
+  fallbackPanel,
   connectionLabel,
   projectPath,
   view,
@@ -79,7 +81,7 @@ export default function SshServerDialog({
         aria-modal="true"
         aria-labelledby={`${id}-title`}
         aria-describedby={`${id}-connection`}
-        className="modal-content-enter relative flex max-h-[85vh] w-full max-w-xl flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
+        className="modal-content-enter relative flex max-h-[85vh] w-full max-w-[960px] flex-col overflow-hidden rounded-lg border border-dialog-border bg-dialog text-fg shadow-elevation-3"
       >
         <header className="flex flex-shrink-0 items-start gap-3 bg-dialog-chrome px-5 pb-4 pt-5">
           <Server size={20} className="mt-0.5 flex-shrink-0 text-fg-muted" aria-hidden />
@@ -157,6 +159,7 @@ export default function SshServerDialog({
         >
           {view === 'agent' ? agentPanel : overview ? (
             <div className="space-y-4">
+              {fallbackPanel}
               <ConnectionSummary state={state} pending={pending} />
               <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2">
                 <Detail label={t('连接模式')}>

@@ -27,6 +27,7 @@ async function openPanel(api: DirectAgentApi, sshConnections: SshConnection[] = 
   render(<DirectAgentConnectionPanel connectionId="c1" defaultHost="192.168.252.107" api={api} sshConnections={sshConnections} />)
   fireEvent.click(screen.getByRole('button', { name: 'Server 端口直连' }))
   await waitFor(() => expect(screen.getByRole('button', { name: '测试直连' })).not.toBeDisabled())
+  fireEvent.click(screen.getByText('远端需要开放 TCP 48763'))
 }
 
 describe('direct Agent connection panel', () => {
@@ -108,6 +109,8 @@ describe('direct Agent connection panel', () => {
     await screen.findByDisplayValue('48763')
     expect(screen.getByRole('button', { name: '保存并启用直连' })).toBeDisabled()
     expect(screen.getByText('远端需要开放 TCP 48763')).toBeVisible()
+    expect(screen.getByText(/执行前会显示允许来源和网络范围/)).not.toBeVisible()
+    fireEvent.click(screen.getByText('远端需要开放 TCP 48763'))
     expect(screen.getByText(/执行前会显示允许来源和网络范围/)).toBeVisible()
     fireEvent.change(screen.getByLabelText('TCP 端口'), { target: { value: '51234' } })
     expect(screen.getByText('远端需要开放 TCP 51234')).toBeVisible()

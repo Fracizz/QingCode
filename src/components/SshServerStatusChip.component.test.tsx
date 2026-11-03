@@ -6,15 +6,21 @@ import SshServerStatusChip from './SshServerStatusChip'
 import { useProjectStore } from '../store/projectStore'
 import { useUIStore } from '../store/uiStore'
 
-const { invoke, listeners, switchSshConnectionMode, confirmDialog } = vi.hoisted(() => ({
+const { invoke, listeners, switchSshConnectionMode, confirmDialog, reconnect } = vi.hoisted(() => ({
   invoke: vi.fn(),
   listeners: [] as Array<(event: { payload: unknown }) => void>,
   switchSshConnectionMode: vi.fn(),
   confirmDialog: vi.fn(),
+  reconnect: vi.fn(),
 }))
 
 vi.mock('../lib/sshWorkspace', () => ({
   switchSshConnectionMode,
+  isSshBackgroundSuspended: () => false,
+  SSH_CONNECTION_INVALIDATED_EVENT: 'qingcode:ssh-connection-invalidated',
+  SSH_CONNECTION_DISCONNECTED_EVENT: 'qingcode:ssh-connection-disconnected',
+  reconnectSshConnection: reconnect,
+  restoreSshTransport: vi.fn(),
   sshConnectionLabel: () => 'WSL（root@localhost）',
   sshRemotePathFromUri: (path: string) => path.replace(/^ssh:\/\/[^/]+/, '') || '/',
 }))
@@ -76,6 +82,7 @@ describe('SshServerStatusChip', () => {
     requestSettings.mockReset()
     switchSshConnectionMode.mockReset().mockResolvedValue(undefined)
     confirmDialog.mockReset().mockResolvedValue(true)
+    reconnect.mockReset().mockResolvedValue(undefined)
     useProjectStore.setState({ pushToast, sshConnections: [] })
     useUIStore.setState({ requestSettings })
     invoke.mockImplementation(async (_action: string, command: string) => {
@@ -144,6 +151,27 @@ describe('SshServerStatusChip', () => {
     expect(screen.getByRole('button', { name: serverChipName() })).toBeTruthy()
     listeners[0]?.({ payload: { ...ready, version: '0.2.0' } })
     expect(await screen.findByRole('button', { name: serverChipName('0.2.0') })).toBeTruthy()
+  })
+
+  it('invalidates an outstanding ready snapshot when the user disconnects and retains an offline entry', async () => {
+    let finish!: (value: unknown) => void
+    invoke.mockImplementation(async () => new Promise(resolve => { finish = resolve }))
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    await waitFor(() => expect(finish).toBeDefined())
+    act(() => window.dispatchEvent(new CustomEvent('qingcode:ssh-connection-invalidated', { detail: 'c1' })))
+    expect(await screen.findByRole('button', { name: /未连接/ })).toBeVisible()
+    await act(async () => finish({ ...ready, transport: 'agent' }))
+    expect(screen.queryByRole('button', { name: /Server 端口直连/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /未连接/ })).toHaveAttribute('data-tone', 'offline')
+  })
+
+  it('registers the workspace again when reconnecting a detached direct connection', async () => {
+    invoke.mockImplementation(async (_label, command) => command === 'ssh_server_info' ? { ...ready, phase: 'disconnected', transport: 'agent', mode: 'unknown' } : null)
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    fireEvent.click(await screen.findByRole('button', { name: /未连接/ }))
+    fireEvent.click(screen.getByRole('button', { name: '重新连接 Server' }))
+    await waitFor(() => expect(reconnect).toHaveBeenCalledWith('c1'))
+    expect(invoke.mock.calls.some(call => call[1] === 'ssh_server_restart')).toBe(false)
   })
 
   it('describes independent Agent transport and reconnects without a destructive daemon restart confirmation', async () => {
@@ -379,7 +407,7 @@ describe('SshServerStatusChip', () => {
     expect(listenersAtQuery).toBe(1)
   })
 
-  it('recovers from a probing snapshot by polling and stops once ready', async () => {
+  it('recovers from a probing snapshot and keeps checking settled connections', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       let calls = 0
@@ -397,7 +425,7 @@ describe('SshServerStatusChip', () => {
       expect(await screen.findByRole('button', { name: serverChipName() })).toBeTruthy()
       const settled = calls
       await act(() => vi.advanceTimersByTimeAsync(5000))
-      expect(calls).toBe(settled)
+      expect(calls).toBe(settled + 1)
     } finally {
       vi.useRealTimers()
     }

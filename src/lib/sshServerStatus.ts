@@ -105,8 +105,7 @@ export function parseSshServerState(value: unknown): SshServerState | null {
 
 export function sshServerChip(state: SshServerState | null): SshServerChip | null {
   if (!state) return null
-  // 主动断开没有原因，芯片隐藏；意外断线带原因，显示「已断开」直到自动重连成功。
-  if (state.phase === 'disconnected') return state.reason ? { kind: 'offline' } : null
+  if (state.phase === 'disconnected') return { kind: 'offline' }
   if (sshServerVersionMismatch(state.reason)) return { kind: 'error' }
   if (state.phase === 'readyServer') return { kind: 'agent' }
   if (state.phase === 'readyDirect') return { kind: state.connectionMode === 'ssh' ? 'ssh' : 'direct' }

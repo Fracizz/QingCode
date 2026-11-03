@@ -115,6 +115,13 @@ Windows SSH 修复确认框的独立场景位于 <http://127.0.0.1:38439/web-tes
 英文及浅色主题。截图、JSON 与 HTML 报告保存在 `.dev/web-tests/remote-connections/`。
 不建立真实 SSH 连接，不验证终端生命周期、SQLite、系统凭据与原生对话框。
 
+断开与 SSH 切换入口使用同一页面，运行
+`node scripts/web-tests/remote-connection-recovery.agent-browser.mjs`。
+覆盖主动断开后状态栏与概览同步、无事件时轮询发现端口关闭、SSH 地址及模式选择、
+切换影响确认与取消，以及英文浅色窄窗；截图和 JSON 结果位于
+`.dev/web-tests/remote-connection-recovery/`。端口关闭由内存状态模拟；
+实际 TLS 端口失效由 Rust 本地 gateway 测试覆盖，真实 Windows/远端 SSH 切换仍需桌面验收。
+
 底栏清晰度场景位于 `/web-tests/status-bar.html`，使用 `pnpm dev:web-test`（端口 **38419**）。
 复用真实 `StatusBar`、连接徽标和业务 Store，以固定内存项目、分支、光标位置和编码验证三种主题、
 连接阶段、13/20/32px 字号、窄窗、编码菜单、Git 入口及终端切换信号。可检查光标位置的快捷键提示、
