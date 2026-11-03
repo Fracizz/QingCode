@@ -6,12 +6,16 @@ import type { Channel } from '@tauri-apps/api/core'
 import type { UpdatePhase } from '../lib/directServerUpdate'
 import SshServerStatusChip from '../components/SshServerStatusChip'
 import DirectServerUpdateDialog from '../components/DirectServerUpdateDialog'
-import { useUIStore, useProjectStore } from './projectManagerAdapters'
+import Toaster from '../components/Toaster'
+import { useUIStore, useProjectStore, useWebTestOperations, trustProject } from './projectManagerAdapters'
+import { useStartupServerUpdates } from '../hooks/useStartupServerUpdates'
 import { ensureBuiltinLocaleLoaded, useLocaleStore } from '../lib/i18n'
 import type { SshServerState } from '../lib/sshServerStatus'
 import '../App.css'
 
 const rootUri = 'ssh://version-fixture/D:/code/qingcode'
+const startup = new URLSearchParams(location.search).has('startup')
+const fixtureProject = { id: 'startup-server', name: 'WinDev', path: rootUri, connection_id: 'version-fixture', kind: 'ssh' as const, created_at: 1, last_opened_at: 1 }
 let state: SshServerState = {
   rootUri,
   connectionId: 'version-fixture',
@@ -22,15 +26,19 @@ let state: SshServerState = {
   version: null,
   reason: 'daemon 版本不匹配：远端 0.1.14-beta.9，本端 0.1.14-beta.12',
 }
+if (new URLSearchParams(location.search).has('ready')) state = { ...state, phase: 'readyServer', mode: 'server', version: '0.1.14-beta.14', reason: null }
 let pending: (() => void) | null = null
 let calls = 0
 let prepareCalls = 0
-let failure = false
-let packageScenario = 'cached'
+let downloadCalls = 0
+let failure = new URLSearchParams(location.search).has('fail')
+let packageScenario = new URLSearchParams(location.search).get('package') ?? 'cached'
 let finishPrepare: (() => void) | null = null
 
 export default function Page() {
+  useStartupServerUpdates(startup)
   const updateRoot = useUIStore(s => s.serverUpdateRootUri)
+  const operations = useWebTestOperations(s => s.operations)
   const [view, setView] = useState('dark')
   return (
     <main className="h-full bg-bg p-5 text-fg">
@@ -51,6 +59,7 @@ export default function Page() {
         </select>
       </label>
       <button onClick={() => finishPrepare?.()}>完成准备</button>
+      <button onClick={() => useUIStore.setState({ serverUpdateRootUri: rootUri })}>打开更新弹窗</button>
       <button
         onClick={() => {
           pending?.()
@@ -79,15 +88,26 @@ export default function Page() {
       </button>
       <output data-testid="update-calls">{calls}</output>
       <output data-testid="prepare-calls">{prepareCalls}</output>
+      <output data-testid="download-calls">{downloadCalls}</output>
+      <output data-testid="notifications">{operations.map(operation => operation.action).join('\n')}</output>
       <SshServerStatusChip rootUri={rootUri} />
       {updateRoot && <DirectServerUpdateDialog rootUri={updateRoot} />}
+      <Toaster />
     </main>
   )
 }
 
 if (import.meta.env.MODE === 'web-test') {
   useLocaleStore.setState({ language: 'zh-CN' })
+  const recordToast = useProjectStore.getState().pushToast
   useProjectStore.setState({
+    ...(startup ? { projects: [fixtureProject, { ...fixtureProject, id: 'same-server', path: `${rootUri}-other`, last_opened_at: 0 }] } : {}),
+    pushToast(kind, text) {
+      recordToast(kind, text)
+      useProjectStore.setState(state => ({ toasts: [...state.toasts, {
+        id: `completion-${state.toasts.length}`, kind: kind === 'success' ? 'success' : 'info', text,
+      }] }))
+    },
     sshConnections: [
       {
         id: 'version-fixture',
@@ -104,18 +124,35 @@ if (import.meta.env.MODE === 'web-test') {
       },
     ],
   })
+  if (startup && !new URLSearchParams(location.search).has('untrusted')) trustProject(fixtureProject)
   mockIPC(
     async (command, rawArgs) => {
       const args = rawArgs as Record<string, unknown> | undefined
+      if (command === 'db_url') return 'sqlite:startup-fixture'
+      if (command === 'plugin:sql|load') return 'sqlite:startup-fixture'
+      if (command === 'plugin:sql|select') return useProjectStore.getState().sshConnections
+      if (command === 'default_settings_path') return '/fixture/default-settings.json'
+      if (command === 'read_file') return '// in-memory settings\n{"ssh.server.autoDownload":true}'
+      if (command === 'ssh_workspace_status') return true
+      if (command === 'ssh_prepare_workspace') {
+        if (state.phase !== 'readyServer') throw new Error(state.reason ?? 'Server 版本不匹配')
+        return null
+      }
       if (command === 'plugin:dialog|open')
         return packageScenario === 'cancel' ? null : '/fixture/offline/servers'
       if (command === 'direct_agent_prepare_update') {
         prepareCalls += 1
         document.querySelector('[data-testid="prepare-calls"]')!.textContent = String(prepareCalls)
         const progress = args?.onProgress as Channel<UpdatePhase>
-        const source = args?.packageSource as { mode: string; directory?: string }
+        const source = args?.packageSource as { mode: string; directory?: string; allowDownload?: boolean }
         progress.onmessage('checkingPackage')
         if (source.mode === 'automatic' && packageScenario === 'download') {
+          if (source.allowDownload === false) return {
+            expectedVersion: '0.1.14-beta.14', packageVersion: null,
+            directory: null, sourcePath: null, problem: '未找到匹配的本机离线包',
+          }
+          downloadCalls += 1
+          document.querySelector('[data-testid="download-calls"]')!.textContent = String(downloadCalls)
           progress.onmessage('downloading')
           await new Promise<void>(resolve => {
             finishPrepare = resolve

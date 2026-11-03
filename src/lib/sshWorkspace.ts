@@ -6,7 +6,7 @@ import { safeInvoke } from './tauri'
 import { directAgentApi, directAgentSshCandidates, hasDirectAgentConnection, type DirectAgentInfo } from './directAgent'
 import { parseSshServerState, sshServerVersionMismatch, type SshServerState } from './sshServerStatus'
 import { isProjectTrusted } from './workspaceTrust'
-import { directServerUpdateApi, updatePhaseLabels, type UpdatePhase } from './directServerUpdate'
+import { directServerUpdateApi, updatePhaseLabels, validServerUpdatePackage, type UpdatePhase } from './directServerUpdate'
 import { beginServerOperation, reportServerOperation, finishServerOperation, useServerOperationStore } from '../store/serverOperationStore'
 
 export interface SshSessionSecrets {
@@ -34,6 +34,7 @@ export const SSH_RECONNECT_REQUEST_EVENT = 'qingcode:ssh-reconnect-request'
 export const SSH_CONNECTIONS_CHANGED_EVENT = 'qingcode:ssh-connections-changed'
 export const SSH_CONNECTION_INVALIDATED_EVENT = 'qingcode:ssh-connection-invalidated'
 export const SSH_CONNECTION_DISCONNECTED_EVENT = 'qingcode:ssh-connection-disconnected'
+export const SSH_SERVER_UPDATED_EVENT = 'qingcode:ssh-server-updated'
 
 export function requestSshReconnect(project: Project): void {
   window.dispatchEvent(new CustomEvent<Project>(SSH_RECONNECT_REQUEST_EVENT, { detail: project }))
@@ -80,14 +81,17 @@ async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, o
         const settings = await loadSshPreparationSettings(project)
         const info = await directServerUpdateApi.prepare({ ...target, packageSource: settings.offlineDir
           ? { mode: 'offline', directory: settings.offlineDir }
-          : { mode: 'automatic', allowDownload: settings.autoDownload } }, progress)
-        if (info.problem || !info.directory) throw new Error(info.problem ?? '未找到可用的服务目录')
+          : { mode: 'automatic', allowDownload: false } }, progress)
+        if (!validServerUpdatePackage(info)) throw new Error(info.problem ?? '服务包未通过校验')
         signal.throwIfAborted()
         if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) throw new Error('项目授权或连接状态已变化')
         const value = await directServerUpdateApi.update({ ...target, packageDirectory: info.directory }, progress)
         const state = parseSshServerState(value)
         if (state?.phase !== 'readyServer' || state.transport !== 'agent') throw new Error(state?.reason ?? '远端服务尚未就绪')
         finishServerOperation(project.path)
+        if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(SSH_SERVER_UPDATED_EVENT, {
+          detail: { rootUri: project.path, name: project.name },
+        }))
       } catch (error) {
         finishServerOperation(project.path, String(error))
         throw error

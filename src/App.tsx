@@ -55,6 +55,7 @@ import { clampTerminalWidth, getTerminalMaxHeight, TERMINAL_MIN_HEIGHT } from '.
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts'
 import { useLaunchFileRequests } from './hooks/useLaunchFileRequests'
 import { useSshWarmup } from './hooks/useSshWarmup'
+import { useStartupServerUpdates } from './hooks/useStartupServerUpdates'
 import { applyRunConfigSessionRestorePolicy } from './lib/runConfigRuntime'
 import { terminalPositionForTemplate } from './lib/panelLayoutTemplate'
 import { beginPanelResize, settlePanelResize } from './lib/panelResize'
@@ -237,6 +238,7 @@ function App() {
   })
   useLaunchFileRequests(projectsReady, currentProject !== null, openPathsKey)
   useSshWarmup(projectsReady)
+  useStartupServerUpdates(projectsReady)
 
   useEffect(() => {
     let cancelled = false

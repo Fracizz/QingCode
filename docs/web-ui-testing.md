@@ -155,7 +155,15 @@ Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser
 `node scripts/web-tests/direct-update-source.agent-browser.mjs`。复用真实更新弹窗，验证自动获取、
 本机离线目录、取消重选、旧包/缺平台文件阻止更新、下载与上传的阶段反馈、失败后重新准备，
 以及英文浅色 480px 窄窗。截图、JSON 结果和浏览器错误保存到 `.dev/web-tests/direct-update-source/`。
-打开更新弹窗后自动准备一次服务包，重新打开时再次准备；展开说明不重复准备，实际更新仍需点击确认。
+打开更新弹窗后自动检查一次本机服务包，不触发联网下载；版本、平台及完整性校验通过的本机包直接更新，
+确认服务就绪后关闭弹窗并显示完成通知。缺包或失败时保留手动准备/重试入口，下载得到的包等待更新确认。
+重新打开时再次检查，展开说明不重复检查或更新；离线目录手动校验成功后同样自动更新。
+启动自动更新场景使用同一页面的 `?startup`，Linux 执行
+`node scripts/web-tests/startup-server-updates.agent-browser.mjs`。
+应用项目列表加载后按连接去重，在后台检查所有已有可信项目的 Server 端口直连连接（包括隐藏项目），
+只对版本不匹配且本机离线包合规的服务自动更新，不弹出更新/认证对话框，不自动下载。
+复用生产启动 hook、连接准备、自动更新、进度卡片和完成通知；IPC、SQLite 与设置均为内存模拟。
+覆盖无需点击即更新、成功提示、旧包/缺包、已是当前版本、未受信任和更新失败，产物在 `.dev/web-tests/startup-server-updates/`。
 目录选择、下载与远端更新均为内存模拟，不替代原生目录选择和真实断网主机的 SSH 更新验收。
 
 安装与更新进度卡片场景位于 `/web-tests/server-operation.html`，Linux 运行

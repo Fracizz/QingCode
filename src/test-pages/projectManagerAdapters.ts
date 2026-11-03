@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Project, SshConnection } from '../types'
+import type { Toast } from '../store/projectStore'
 import { projectManagerFixtures } from './projectManagerFixtures'
 
 type Operation = { action: string; ids: string[] }
@@ -14,7 +15,12 @@ export const useProjectStore = create(() => ({
   ...fixtures,
   currentProject: fixtures.projects.find(project => project.id === 'wsl-nem') ?? null,
   unavailableProjectIds: [] as string[],
-  toasts: [],
+  toasts: [] as Toast[],
+  pauseToast() { /* Fixture notifications remain visible until explicitly dismissed. */ },
+  resumeToast() { /* No real timers in browser fixtures. */ },
+  dismissToast(id: string) {
+    useProjectStore.setState(state => ({ toasts: state.toasts.filter(toast => toast.id !== id) }))
+  },
   async loadSshConnections() { /* Fixed in-memory fixture. */ },
   async deleteSshConnection(id: string) {
     record('deleteSshConnection', [id])
@@ -102,6 +108,9 @@ export function getWorkspaceTrust(project: Project) {
 }
 export function isProjectTrusted(project: Project) {
   return getWorkspaceTrust(project) === 'trusted'
+}
+export function createProjectTrustChecker() {
+  return isProjectTrusted
 }
 function setTrust(project: Project, level?: 'trusted' | 'restricted') {
   if (level) trust.set(project.id, level)

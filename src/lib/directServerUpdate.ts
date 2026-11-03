@@ -38,6 +38,10 @@ export interface DirectServerUpdateApi {
   ) => Promise<unknown>
 }
 
+export function validServerUpdatePackage(info: ServerPackageInfo | null): info is ServerPackageInfo & { directory: string } {
+  return Boolean(info?.directory && !info.problem && info.expectedVersion && info.packageVersion === info.expectedVersion)
+}
+
 function progressChannel(onProgress: (phase: UpdatePhase) => void) {
   const channel = new Channel<UpdatePhase>()
   channel.onmessage = onProgress

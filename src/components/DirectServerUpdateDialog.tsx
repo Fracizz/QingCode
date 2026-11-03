@@ -3,6 +3,7 @@ import { useI18n } from '../lib/i18n'
 import {
   directServerUpdateApi,
   updatePhaseLabels,
+  validServerUpdatePackage as validPackage,
   type DirectServerUpdateApi,
   type UpdatePhase,
 } from '../lib/directServerUpdate'
@@ -96,7 +97,20 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
       if (request === generation.current) setWorking(null)
     }
   }
-  const prepare = async () => {
+  const performUpdate = async (prepared: ServerPackageInfo & { directory: string }, request: number) => {
+    setWorking('update')
+    setPhase('checkingPackage')
+    const value = await api.update({ ...target(), packageDirectory: prepared.directory }, value => {
+      if (request === generation.current) setPhase(value)
+    })
+    if (request !== generation.current) return
+    const state = parseSshServerState(value)
+    if (state?.phase !== 'readyServer' || state.transport !== 'agent')
+      throw new Error(state?.reason ?? t('远端服务尚未就绪'))
+    pushToast('success', t('已更新远端服务，请重新新建终端或重试原操作'))
+    useUIStore.setState({ serverUpdateRootUri: null })
+  }
+  const prepare = async (automatic = false) => {
     if (pending.current || !ssh || (mode === 'offline' && !directory)) return
     pending.current = true
     setWorking('prepare')
@@ -104,22 +118,36 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
     setError('')
     setInfo(null)
     const request = ++generation.current
+    let localPackage = true
+    let updating = false
     try {
       const value = await api.prepare(
         {
           ...target(),
-          packageSource: mode === 'automatic' ? { mode } : { mode, directory },
+          packageSource: mode === 'automatic' ? { mode, ...(automatic ? { allowDownload: false } : {}) } : { mode, directory },
         },
         value => {
+          if (value === 'downloading') localPackage = false
           if (request === generation.current) setPhase(value)
         }
       )
-      if (request === generation.current) setInfo(value)
+      if (request !== generation.current) return
+      setInfo(value)
+      if (localPackage && validPackage(value)) {
+        updating = true
+        await performUpdate(value, request)
+      }
     } catch (reason) {
-      if (request === generation.current) setError(String(reason))
+      if (request === generation.current) {
+        setError(String(reason))
+        if (updating) setInfo(null)
+      }
     } finally {
       pending.current = false
-      if (request === generation.current) setWorking(null)
+      if (request === generation.current) {
+        setWorking(null)
+        if (updating) setSecret('')
+      }
     }
   }
   useEffect(() => {
@@ -130,27 +158,19 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
       if (cancelled || automaticallyPrepared.current || pending.current) return
       automaticallyPrepared.current = true
       setStartedAt(Date.now())
-      void prepare()
+      void prepare(true)
     })
     return () => { cancelled = true }
   })
   const update = async () => {
-    if (pending.current || !ssh || !info?.directory || info.problem) return
+    if (pending.current || !ssh || !validPackage(info)) return
     pending.current = true
     setWorking('update')
     setPhase('checkingPackage')
     setError('')
     const request = ++generation.current
     try {
-      const value = await api.update({ ...target(), packageDirectory: info.directory }, value => {
-        if (request === generation.current) setPhase(value)
-      })
-      if (request !== generation.current) return
-      const state = parseSshServerState(value)
-      if (state?.phase !== 'readyServer' || state.transport !== 'agent')
-        throw new Error(state?.reason ?? t('远端服务尚未就绪'))
-      pushToast('success', t('已更新远端服务，请重新新建终端或重试原操作'))
-      useUIStore.setState({ serverUpdateRootUri: null })
+      await performUpdate(info, request)
     } catch (reason) {
       if (request === generation.current) {
         setError(String(reason))
@@ -265,8 +285,8 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
                 <p className="text-ui-sm text-fg-muted">
                   {t(
                     mode === 'automatic'
-                      ? '优先使用本机可用服务包，缺失或不匹配时由本机联网下载。远端无需联网。'
-                      : '仅使用所选本机目录中的服务包，本次更新不联网下载。仍需通过 SSH 连接远端。'
+                      ? '本机服务包校验通过后自动更新；缺包时可手动准备并下载，远端无需联网。'
+                      : '仅使用所选本机目录中的服务包，校验通过后自动更新。本次更新不联网下载，仍需通过 SSH 连接远端。'
                   )}
                 </p>
                 {mode === 'offline' && (
@@ -304,8 +324,8 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
                     </div>
                   </dl>
                 )}
-                {info && !info.problem && info.directory && (
-                  <p className="text-ui-sm text-ok">{t('服务包已校验，可开始更新。')}</p>
+                {validPackage(info) && (
+                  <p className="text-ui-sm text-ok">{t(working === 'update' ? '服务包已校验，正在更新。' : '服务包已校验，可开始更新。')}</p>
                 )}
               </div>
             </>
@@ -351,7 +371,7 @@ function UpdateDialog({ rootUri, api = directServerUpdateApi }: Props) {
           </button>
           <button
             type="button"
-            disabled={busy || !ssh || !info?.directory || !!info.problem}
+            disabled={busy || !ssh || !validPackage(info)}
             onClick={() => { setStartedAt(Date.now()); void update() }}
             className="rounded bg-action px-3 py-1.5 text-on-action disabled:opacity-40"
           >

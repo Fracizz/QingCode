@@ -27,6 +27,7 @@ const info = {
   directory: '/selected/servers',
   problem: null,
 }
+const missing = { ...info, directory: null, packageVersion: null, sourcePath: null, problem: '未找到匹配的本机离线包' }
 const ready = {
   rootUri,
   connectionId: 'direct',
@@ -53,7 +54,13 @@ beforeEach(() => {
   localStorage.clear()
   api = {
     chooseDirectory: vi.fn().mockResolvedValue(info.directory),
-    prepare: vi.fn().mockResolvedValue(info),
+    prepare: vi.fn().mockImplementation(async (target, onProgress) => {
+      if (target.packageSource.mode === 'automatic') {
+        if (target.packageSource.allowDownload === false) return missing
+        onProgress('downloading')
+      }
+      return info
+    }),
     update: vi.fn().mockResolvedValue(ready),
   }
   useProjectStore.setState({
@@ -64,27 +71,35 @@ beforeEach(() => {
 })
 
 describe('direct Server package selection', () => {
-  it('automatically prepares once in StrictMode, displays the package, and waits for an explicit update', async () => {
+  it('automatically updates a verified local package once in StrictMode and shows completion only after readiness', async () => {
+    let finish!: (value: typeof ready) => void
+    vi.mocked(api.prepare).mockResolvedValue(info)
+    vi.mocked(api.update).mockImplementation((_target, progress) => {
+      progress('uploading')
+      return new Promise(resolve => { finish = resolve })
+    })
     const view = render(<StrictMode><DirectServerUpdateDialog rootUri={rootUri} api={api} /></StrictMode>)
     expect(screen.getByLabelText('服务包来源')).toHaveValue('automatic')
     expect(button('更新并重新连接')).toBeDisabled()
     expect(api.prepare).not.toHaveBeenCalled()
-    await automaticPreparation()
+    await waitFor(() => expect(api.update).toHaveBeenCalledTimes(1))
     view.rerender(<StrictMode><DirectServerUpdateDialog rootUri={rootUri} api={api} /></StrictMode>)
     expect(api.prepare).toHaveBeenCalledTimes(1)
-    expect(api.update).not.toHaveBeenCalled()
+    expect(api.update).toHaveBeenCalledTimes(1)
     expect(api.prepare).toHaveBeenCalledWith(
-      expect.objectContaining({ packageSource: { mode: 'automatic' } }),
+      expect.objectContaining({ packageSource: { mode: 'automatic', allowDownload: false } }),
       expect.any(Function)
     )
     expect(screen.getByText(info.sourcePath)).toBeVisible()
-    fireEvent.click(button('更新并重新连接'))
-    await waitFor(() =>
-      expect(api.update).toHaveBeenCalledWith(
-        expect.objectContaining({ packageDirectory: info.directory }),
-        expect.any(Function)
-      )
+    expect(api.update).toHaveBeenCalledWith(
+      expect.objectContaining({ packageDirectory: info.directory }),
+      expect.any(Function)
     )
+    expect(button('取消')).toBeDisabled()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(useUIStore.getState().serverUpdateRootUri).toBe(rootUri)
+    expect(pushToast).not.toHaveBeenCalled()
+    await act(async () => { finish(ready) })
     expect(useUIStore.getState().serverUpdateRootUri).toBeNull()
     expect(pushToast).toHaveBeenCalledWith('success', expect.any(String))
   })
@@ -113,16 +128,29 @@ describe('direct Server package selection', () => {
     expect(api.update).not.toHaveBeenCalled()
   })
 
-  it('preserves a valid selection when the native picker is cancelled and invalidates it on mode or credentials changes', async () => {
+  it('preserves an invalid offline selection when the native picker is cancelled', async () => {
     render(<DirectServerUpdateDialog rootUri={rootUri} api={api} />)
     await automaticPreparation()
     fireEvent.change(screen.getByLabelText('服务包来源'), { target: { value: 'offline' } })
     fireEvent.click(button('选择离线目录'))
     await waitFor(() => expect(button('检查并准备服务包')).toBeEnabled())
-    await prepare()
+    vi.mocked(api.prepare).mockResolvedValue({ ...info, problem: '校验失败' })
+    fireEvent.click(button('检查并准备服务包'))
+    await waitFor(() => expect(button('检查并准备服务包')).toBeEnabled())
     vi.mocked(api.chooseDirectory).mockResolvedValue(null)
     fireEvent.click(button('选择离线目录'))
-    await waitFor(() => expect(button('更新并重新连接')).toBeEnabled())
+    await waitFor(() => expect(button('检查并准备服务包')).toBeEnabled())
+    expect(screen.getByText(info.sourcePath)).toBeVisible()
+    expect(screen.getByRole('alert')).toHaveTextContent('校验失败')
+    expect(api.update).not.toHaveBeenCalled()
+  })
+
+  it('requires confirmation for a downloaded package and invalidates it when credentials or source change', async () => {
+    render(<DirectServerUpdateDialog rootUri={rootUri} api={api} />)
+    await automaticPreparation()
+    expect(api.update).not.toHaveBeenCalled()
+    await prepare()
+    expect(api.update).not.toHaveBeenCalled()
     fireEvent.change(screen.getByLabelText('SSH 密码'), { target: { value: 'secret' } })
     expect(button('更新并重新连接')).toBeDisabled()
     await prepare()
@@ -142,6 +170,7 @@ describe('direct Server package selection', () => {
     })
     render(<DirectServerUpdateDialog rootUri={rootUri} api={api} />)
     await automaticPreparation()
+    await prepare()
     fireEvent.click(button('更新并重新连接'))
     fireEvent.click(button('正在更新…'))
     expect(screen.getByRole('status')).toHaveTextContent('正在通过 SSH 上传并校验服务包…')
@@ -177,7 +206,8 @@ describe('direct Server package selection', () => {
     expect(button('更新并重新连接')).toBeDisabled()
     await waitFor(() => expect(api.prepare).toHaveBeenCalledTimes(2))
     await act(async () => { finish[1](info) })
-    expect(button('更新并重新连接')).toBeEnabled()
+    expect(api.update).toHaveBeenCalledTimes(1)
+    expect(api.update).toHaveBeenCalledWith(expect.objectContaining({ rootUri: 'ssh://direct/other-project' }), expect.any(Function))
   })
 
   it('does not loop after automatic preparation fails and allows a manual retry', async () => {
@@ -200,7 +230,7 @@ describe('direct Server package selection', () => {
     view.unmount()
     render(<DirectServerUpdateDialog rootUri={rootUri} api={api} />)
     await waitFor(() => expect(api.prepare).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(button('更新并重新连接')).toBeEnabled())
+    await waitFor(() => expect(button('检查并准备服务包')).toBeEnabled())
     expect(api.update).not.toHaveBeenCalled()
   })
 
@@ -211,6 +241,73 @@ describe('direct Server package selection', () => {
     expect(api.prepare).not.toHaveBeenCalled()
     act(() => useProjectStore.setState({ sshConnections: [ssh, { ...ssh, id: 'direct', agentEndpoint: { host: 'host', port: 48763 } }] }))
     await automaticPreparation()
-    expect(button('更新并重新连接')).toBeEnabled()
+    expect(button('更新并重新连接')).toBeDisabled()
+    expect(api.update).not.toHaveBeenCalled()
+  })
+
+  it('automatically updates a manually selected valid offline package without another confirmation', async () => {
+    render(<DirectServerUpdateDialog rootUri={rootUri} api={api} />)
+    await automaticPreparation()
+    fireEvent.change(screen.getByLabelText('服务包来源'), { target: { value: 'offline' } })
+    fireEvent.click(button('选择离线目录'))
+    await waitFor(() => expect(button('检查并准备服务包')).toBeEnabled())
+    fireEvent.click(button('检查并准备服务包'))
+    await waitFor(() => expect(api.update).toHaveBeenCalledTimes(1))
+    expect(pushToast).toHaveBeenCalledWith('success', expect.any(String))
+    expect(useUIStore.getState().serverUpdateRootUri).toBeNull()
+  })
+
+  it.each([
+    { ...info, packageVersion: 'old', problem: null },
+    { ...info, packageVersion: null },
+    { ...info, directory: null },
+    { ...info, problem: 'SHA-256 不匹配' },
+  ])('never updates an invalid local package: %j', async invalid => {
+    vi.mocked(api.prepare).mockResolvedValue(invalid)
+    render(<DirectServerUpdateDialog rootUri={rootUri} api={api} />)
+    await automaticPreparation()
+    expect(api.update).not.toHaveBeenCalled()
+    expect(button('更新并重新连接')).toBeDisabled()
+    expect(pushToast).not.toHaveBeenCalled()
+  })
+
+  it('keeps automatic update failures visible without repeating and allows manual revalidation', async () => {
+    vi.mocked(api.prepare).mockResolvedValue(info)
+    vi.mocked(api.update).mockRejectedValueOnce(new Error('update failed'))
+    const view = render(<DirectServerUpdateDialog rootUri={rootUri} api={api} />)
+    await automaticPreparation()
+    expect(screen.getByRole('alert')).toHaveTextContent('update failed')
+    expect(button('更新并重新连接')).toBeDisabled()
+    expect(pushToast).not.toHaveBeenCalled()
+    view.rerender(<DirectServerUpdateDialog rootUri={rootUri} api={api} />)
+    await act(async () => {})
+    expect(api.prepare).toHaveBeenCalledTimes(1)
+    expect(api.update).toHaveBeenCalledTimes(1)
+    fireEvent.click(button('检查并准备服务包'))
+    await waitFor(() => expect(api.update).toHaveBeenCalledTimes(2))
+    expect(pushToast).toHaveBeenCalledWith('success', expect.any(String))
+  })
+
+  it('does not report success or close a newer dialog when an automatic update completes late', async () => {
+    let finish!: (value: typeof ready) => void
+    vi.mocked(api.prepare).mockResolvedValueOnce(info)
+    vi.mocked(api.update).mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const view = render(<DirectServerUpdateDialog rootUri={rootUri} api={api} />)
+    await waitFor(() => expect(api.update).toHaveBeenCalledTimes(1))
+    view.rerender(<DirectServerUpdateDialog rootUri="ssh://direct/other-project" api={api} />)
+    await act(async () => { finish(ready) })
+    expect(api.update).toHaveBeenCalledTimes(1)
+    expect(pushToast).not.toHaveBeenCalled()
+    expect(useUIStore.getState().serverUpdateRootUri).toBe(rootUri)
+  })
+
+  it('requires a ready direct service before reporting automatic update completion', async () => {
+    vi.mocked(api.prepare).mockResolvedValue(info)
+    vi.mocked(api.update).mockResolvedValue({ ...ready, phase: 'failed', reason: '远端服务尚未就绪' })
+    render(<DirectServerUpdateDialog rootUri={rootUri} api={api} />)
+    await automaticPreparation()
+    expect(screen.getByRole('alert')).toHaveTextContent('远端服务尚未就绪')
+    expect(pushToast).not.toHaveBeenCalled()
+    expect(useUIStore.getState().serverUpdateRootUri).toBe(rootUri)
   })
 })

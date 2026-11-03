@@ -3,11 +3,12 @@ import type { Project, SshConnection } from '../types'
 
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(), info: vi.fn(), list: vi.fn(), prepare: vi.fn(), update: vi.fn(), trusted: vi.fn(() => true),
+  settings: vi.fn(async () => ({ autoDownload: true, offlineDir: '/offline' })),
 }))
 vi.mock('./tauri', () => ({ safeInvoke: mocks.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn(async () => () => {}) }))
 vi.mock('./projectRepository', () => ({ getSshConnection: vi.fn(), upsertSshConnection: vi.fn(), listSshConnections: mocks.list }))
-vi.mock('./sshServerSettings', () => ({ getSshServerEnabled: () => true, loadSshPreparationSettings: vi.fn(async () => ({ autoDownload: false, offlineDir: '/offline' })) }))
+vi.mock('./sshServerSettings', () => ({ getSshServerEnabled: () => true, loadSshPreparationSettings: mocks.settings }))
 vi.mock('./workspaceTrust', () => ({ isProjectTrusted: mocks.trusted }))
 vi.mock('./directAgent', async importOriginal => ({ ...await importOriginal<typeof import('./directAgent')>(), directAgentApi: { info: mocks.info } }))
 vi.mock('./directServerUpdate', async importOriginal => ({ ...await importOriginal<typeof import('./directServerUpdate')>(), directServerUpdateApi: { prepare: mocks.prepare, update: mocks.update } }))
@@ -29,7 +30,8 @@ beforeEach(() => {
   mocks.trusted.mockReturnValue(true)
   mocks.info.mockResolvedValue({ enabled: true, host: 'localhost' })
   mocks.list.mockImplementation(async () => [ssh])
-  mocks.prepare.mockResolvedValue({ directory: '/offline', problem: null })
+  mocks.settings.mockResolvedValue({ autoDownload: true, offlineDir: '/offline' })
+  mocks.prepare.mockResolvedValue({ expectedVersion: 'current', packageVersion: 'current', directory: '/offline', problem: null })
   mocks.update.mockImplementation(async () => ready())
   mocks.invoke.mockImplementation(async (_label, command) => {
     if (command === 'ssh_prepare_workspace') throw mismatch
@@ -61,6 +63,20 @@ describe('first-open automatic paired Server update', () => {
     expect(mocks.update).toHaveBeenCalledTimes(1)
   })
 
+  it('only inspects local packages even when automatic download is enabled in settings', async () => {
+    mocks.settings.mockResolvedValue({ autoDownload: true, offlineDir: '' })
+    mocks.prepare.mockResolvedValue({ expectedVersion: 'current', packageVersion: null, directory: null, problem: '缺少本机包' })
+    await expect(run()).rejects.toThrow('缺少本机包')
+    expect(mocks.prepare).toHaveBeenCalledWith(expect.objectContaining({ packageSource: { mode: 'automatic', allowDownload: false } }), expect.any(Function))
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+
+  it('never updates a mismatched local version even when the backend omitted a problem', async () => {
+    mocks.prepare.mockResolvedValue({ expectedVersion: 'current', packageVersion: 'old', directory: '/offline', problem: null })
+    await expect(run()).rejects.toThrow('校验')
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
+
   it.each(['password', 'fingerprint', 'otherHost', 'ambiguous'])('keeps the manual path when %s prevents safe automatic authorization', async condition => {
     if (condition === 'password') ssh.auth_kind = 'password'
     if (condition === 'fingerprint') ssh.host_key_fingerprint = ''
@@ -85,7 +101,7 @@ describe('first-open automatic paired Server update', () => {
   it('checks cancellation and trust again after package preparation', async () => {
     mocks.prepare.mockImplementation(async () => {
       mocks.trusted.mockReturnValue(false)
-      return { directory: '/offline', problem: null }
+      return { expectedVersion: 'current', packageVersion: 'current', directory: '/offline', problem: null }
     })
     await expect(run()).rejects.toThrow('授权')
     expect(mocks.update).not.toHaveBeenCalled()
