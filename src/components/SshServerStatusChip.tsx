@@ -27,7 +27,7 @@ import { directAgentApi, type DirectAgentInfo } from '../lib/directAgent'
 import { confirmDialog } from '../store/confirmStore'
 import { confirmSshServerRestart } from '../lib/sshWindowsRepair'
 import { serverModeErrorAction } from '../lib/serverModeError'
-import { switchSshConnectionMode, sshConnectionLabel, sshRemotePathFromUri, SSH_CONNECTION_INVALIDATED_EVENT, SSH_CONNECTION_DISCONNECTED_EVENT, isSshBackgroundSuspended, reconnectSshConnection } from '../lib/sshWorkspace'
+import { switchSshConnectionMode, sshConnectionLabel, sshRemoteDisplayPath, sshRemotePathFromUri, SSH_CONNECTION_INVALIDATED_EVENT, SSH_CONNECTION_DISCONNECTED_EVENT, isSshBackgroundSuspended, reconnectSshConnection } from '../lib/sshWorkspace'
 
 const STATUS_ACTION = 'status-action status-connection'
 const CHIP_DOT = 'status-connection-dot'
@@ -325,7 +325,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
         <SshServerDialog
           state={state}
           connectionLabel={connection ? agent ? connection.name : sshConnectionLabel(connection) : t('远程项目')}
-          projectPath={sshRemotePathFromUri(rootUri)}
+          projectPath={sshRemoteDisplayPath(sshRemotePathFromUri(rootUri))}
           view={sshMode && dialog === 'logs' ? 'details' : dialog}
           agentPanel={connection && <DirectAgentConnectionPanel
             key={connection.id}

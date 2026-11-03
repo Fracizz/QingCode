@@ -173,6 +173,14 @@ export function sshRemotePathFromUri(path: string): string {
   return remote || '/'
 }
 
+/**
+ * 远端路径的展示形式。Windows OpenSSH 的 SFTP 路径写作 `/D:/code/app`，
+ * 内部仍按这个形式寻址，只在展示时去掉盘符前的斜杠。
+ */
+export function sshRemoteDisplayPath(remote: string): string {
+  return /^\/[A-Za-z]:(?:\/|$)/.test(remote) ? remote.slice(1) : remote
+}
+
 /** Join POSIX segments onto an `ssh://` resource without touching the connection id. */
 export function joinSshResource(root: string, ...segments: string[]): string {
   const connectionId = sshConnectionIdFromUri(root)
@@ -192,7 +200,7 @@ export function sshProjectDisplayPath(
   connections: ReadonlyArray<Pick<SshConnection, 'id' | 'username' | 'host' | 'port' | 'agentEndpoint'>> = []
 ): string {
   if (!isSshProject(project)) return project.path
-  const remote = project.root_path || sshRemotePathFromUri(project.path)
+  const remote = sshRemoteDisplayPath(project.root_path || sshRemotePathFromUri(project.path))
   const resolved =
     connection ??
     connections.find(
@@ -210,7 +218,7 @@ export function sshFileDisplayPath(
 ): string {
   const connectionId = sshConnectionIdFromUri(path)
   if (!connectionId) return path
-  const remote = sshRemotePathFromUri(path)
+  const remote = sshRemoteDisplayPath(sshRemotePathFromUri(path))
   const connection = connections.find(item => item.id === connectionId)
   return connection ? `${sshConnectionLabel(connection)}:${remote}` : remote
 }

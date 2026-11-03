@@ -23,6 +23,7 @@ vi.mock('../lib/sshWorkspace', () => ({
   restoreSshTransport: vi.fn(),
   sshConnectionLabel: () => 'WSL（root@localhost）',
   sshRemotePathFromUri: (path: string) => path.replace(/^ssh:\/\/[^/]+/, '') || '/',
+  sshRemoteDisplayPath: (path: string) => path,
 }))
 vi.mock('../store/confirmStore', () => ({ confirmDialog }))
 

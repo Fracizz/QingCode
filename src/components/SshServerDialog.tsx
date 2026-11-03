@@ -174,14 +174,15 @@ export default function SshServerDialog({
                           ? t('按项目服务')
                           : t('尚未就绪')}
                     </Detail>
-                    {state.version && (
-                      <Detail label={t('服务版本')}>
-                        <span className="font-mono text-ui-sm">v{state.version}</span>
-                      </Detail>
-                    )}
                   </>
                 )}
+                {/* 主机与端口成对放在同一行，服务版本排在其后，避免两者被拆到不同行。 */}
                 <ConnectionEndpointDetails key={`${state.connectionId}:${agent}`} connectionId={state.connectionId} agent={agent} />
+                {!compatibility && state.version && (
+                  <Detail label={t('服务版本')}>
+                    <span className="font-mono text-ui-sm">v{state.version}</span>
+                  </Detail>
+                )}
                 <div className="min-w-0 sm:col-span-2">
                   <Detail label={t('项目目录')}>
                     <span className="font-mono text-ui-sm">{projectPath}</span>

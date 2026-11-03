@@ -50,6 +50,7 @@ import {
   forgetSshSessionSecrets,
   testSshConnection,
   restoreSshTransport,
+  sshRemoteDisplayPath,
 } from './sshWorkspace'
 import type { Project, SshConnection } from '../types'
 
@@ -175,8 +176,8 @@ describe('isSshProject', () => {
 describe('sshProjectDisplayPath', () => {
   it('uses the actual Agent endpoint for project and file display paths', () => {
     const connection = { id: 'c1', name: 'WinDev', username: 'Agent', host: 'old-ssh.test', port: 22, agentEndpoint: { host: '192.168.252.107', port: 48763 } }
-    expect(sshProjectDisplayPath({ kind: 'ssh', path: 'ssh://c1/D:/code/app' }, connection)).toBe('192.168.252.107:48763:/D:/code/app')
-    expect(sshFileDisplayPath('ssh://c1/D:/code/app/file.ts', [connection])).toBe('WinDev（192.168.252.107:48763）:/D:/code/app/file.ts')
+    expect(sshProjectDisplayPath({ kind: 'ssh', path: 'ssh://c1/D:/code/app' }, connection)).toBe('192.168.252.107:48763:D:/code/app')
+    expect(sshFileDisplayPath('ssh://c1/D:/code/app/file.ts', [connection])).toBe('WinDev（192.168.252.107:48763）:D:/code/app/file.ts')
   })
   it('shows host and remote root instead of the internal URI', () => {
     expect(
@@ -220,7 +221,7 @@ describe('sshFileDisplayPath', () => {
           port: 28822,
         },
       ])
-    ).toBe('WinDev（administrator@192.168.252.107:28822）:/D:/code/qingcode/DESIGN.md')
+    ).toBe('WinDev（administrator@192.168.252.107:28822）:D:/code/qingcode/DESIGN.md')
   })
 
   it('falls back to the bare remote path when the connection is unknown', () => {
@@ -618,5 +619,14 @@ describe('isolated connection testing and reconnecting saved configurations', ()
     } finally {
       vi.unstubAllGlobals()
     }
+  })
+})
+
+describe('sshRemoteDisplayPath', () => {
+  it('drops the slash before a Windows drive letter only', () => {
+    expect(sshRemoteDisplayPath('/D:/code/qingcode')).toBe('D:/code/qingcode')
+    expect(sshRemoteDisplayPath('/C:')).toBe('C:')
+    expect(sshRemoteDisplayPath('/home/dev/app')).toBe('/home/dev/app')
+    expect(sshRemoteDisplayPath('/Dx:/a')).toBe('/Dx:/a')
   })
 })
