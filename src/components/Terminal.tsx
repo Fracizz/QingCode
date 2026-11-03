@@ -235,6 +235,11 @@ export default function TerminalView({
   const lastFitSizeRef = useRef({ w: 0, h: 0 })
   /** 重挂回放后停在全屏 TUI 上，等网格就绪后让程序整屏重绘一次。 */
   const redrawPendingRef = useRef(false)
+  /**
+   * 正在解析的屏幕快照数。快照按 daemon 网格排版、整行依赖自动折行，xterm 又是分帧异步
+   * 解析的：解析完之前任何一次 fit 改了列数，后半段就会逐行错位成阶梯。期间推迟所有 fit。
+   */
+  const screenWriteLockRef = useRef(0)
   /** 最近一次 PTY 输出解析完成的时间，用于判断 TUI 重绘是否已经停下来。 */
   const lastOutputParsedAtRef = useRef(0)
   const revealTimerRef = useRef<number | null>(null)
@@ -483,6 +488,8 @@ export default function TerminalView({
   const commitGridSize = useCallback((next: TerminalGridSize) => {
     const term = xtermRef.current
     if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return false
+    // 快照解析完会补一次 fit（见下方 onScreen），这里先不动网格。
+    if (screenWriteLockRef.current > 0) return false
     // 直接 resize 便于准确判断是否需要等待下方的 onRender 屏障。
     term.resize(next.cols, next.rows)
     return true
@@ -585,6 +592,7 @@ export default function TerminalView({
     // 不要求激活：单窗格里不可见的标签也有真实尺寸，后台重绘好切回来即是最终画面。
     if (!redrawPendingRef.current || !term) return
     if (!container || container.clientWidth === 0 || container.clientHeight === 0) return
+    if (screenWriteLockRef.current > 0) return
     redrawPendingRef.current = false
     // 回放的旧字节按旧网格排版，而当前尺寸与 PTY 相同时 resize 会被去重，
     // TUI 收不到 SIGWINCH 就不会重绘，画面一直错位（切换项目后常见）。
@@ -978,9 +986,12 @@ export default function TerminalView({
           setReplayMasked(true)
           term.resize(snapshot.cols, snapshot.rows)
         }
+        screenWriteLockRef.current += 1
         term.write(snapshot.data, () => {
-          if (fitsGrid || xtermRef.current !== term) return
-          redrawPendingRef.current = true
+          screenWriteLockRef.current = Math.max(0, screenWriteLockRef.current - 1)
+          if (xtermRef.current !== term) return
+          if (!fitsGrid) redrawPendingRef.current = true
+          // 补上解析期间被推迟的 fit；网格不同时由它 resize 并触发 TUI 重绘。
           scheduleFit(true, false)
         })
       })

@@ -699,15 +699,25 @@ impl PtyHost {
         let cols = clamp_cols(cols);
         let rows = clamp_rows(rows);
         let term = self.term(id)?;
+        // 先改解析器再改 PTY：ConPTY / TUI 收到 resize 会立刻按新尺寸整屏重绘，
+        // 这段输出若按旧网格解析，接回时下发的屏幕快照就会逐行错位。
+        let previous = {
+            let mut state = lock(&term.state);
+            let previous = (state.cols, state.rows);
+            state.parser.set_size(rows, cols);
+            state.cols = cols;
+            state.rows = rows;
+            previous
+        };
         if let Some(master) = lock(&term.master).as_ref() {
-            master
-                .resize(pty_size(cols, rows))
-                .map_err(|err| format!("调整终端尺寸失败：{err}"))?;
+            if let Err(err) = master.resize(pty_size(cols, rows)) {
+                let mut state = lock(&term.state);
+                state.parser.set_size(previous.1, previous.0);
+                state.cols = previous.0;
+                state.rows = previous.1;
+                return Err(format!("调整终端尺寸失败：{err}"));
+            }
         }
-        let mut state = lock(&term.state);
-        state.parser.set_size(rows, cols);
-        state.cols = cols;
-        state.rows = rows;
         Ok(())
     }
 
