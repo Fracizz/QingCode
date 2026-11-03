@@ -825,9 +825,26 @@ describe('daemon screen snapshots', () => {
     expect(decode(replay).endsWith('DAEMON|live')).toBe(true)
   })
 
+  it('replays a stored screen with its daemon grid to views mounted later', async () => {
+    output('snap', 'history|')
+    screen('snap', 'DAEMON', 200, 50)
+    output('snap', '|live')
+    const events: string[] = []
+    subscribeTerminalOutput(
+      'snap',
+      data => events.push(`data:${new TextDecoder().decode(data)}`),
+      snapshot => events.push(`screen:${snapshot.cols}x${snapshot.rows}:${snapshot.data}`)
+    )()
+    expect(events.at(-2)).toBe('screen:200x50:DAEMON')
+    expect(events.at(-1)).toBe('data:|live')
+    expect(events.slice(0, -2).join('')).toMatch(/history\|$/)
+  })
+
   it('stops delivering screens after unsubscribe', async () => {
     const screens: unknown[] = []
     subscribeTerminalOutput('snap', () => {}, snapshot => screens.push(snapshot))()
+    // 订阅时回放的是先前用例留在 ring 里的快照，只看之后的派发。
+    screens.length = 0
     screen('snap', 'LATE')
     await vi.runAllTimersAsync()
     expect(screens).toEqual([])
@@ -836,6 +853,7 @@ describe('daemon screen snapshots', () => {
   it('ignores malformed screen payloads', async () => {
     const screens: unknown[] = []
     const unsubscribe = subscribeTerminalOutput('snap', () => {}, snapshot => screens.push(snapshot))
+    screens.length = 0
     emit('terminal-screen', { id: 'snap', data: 'X', cols: 0, rows: 5 })
     emit('terminal-screen', { id: 'snap', data: 42, cols: 40, rows: 5 })
     emit('terminal-screen', { id: 'missing', data: 'X', cols: 40, rows: 5 })

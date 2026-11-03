@@ -605,7 +605,16 @@ export default function TerminalView({
       if (!term) return
       const w = container.clientWidth
       const h = container.clientHeight
-      if (!refresh && w === lastFitSizeRef.current.w && h === lastFitSizeRef.current.h) return
+      // 游离时收到快照会把网格改成 daemon 尺寸并挂起重绘，挂回槽位时容器尺寸可能没变，
+      // 这时也不能跳过，否则网格停在快照尺寸、TUI 收不到重绘。
+      if (
+        !refresh &&
+        !redrawPendingRef.current &&
+        w === lastFitSizeRef.current.w &&
+        h === lastFitSizeRef.current.h
+      ) {
+        return
+      }
       lastFitSizeRef.current = { w, h }
       try {
         const next = readProposedGridSize()

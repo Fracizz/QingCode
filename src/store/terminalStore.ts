@@ -427,14 +427,26 @@ function addTerminalScreenListener(id: string, listener: TerminalScreenListener)
 }
 
 /**
+ * ring 里最近一次屏幕快照的位置：快照字节数与其后又追加的字节数。
+ * 快照到达时视图可能还没挂载（本次启动后没打开过的项目），挂载回放时据此把快照
+ * 交给视图按快照网格写入，而不是当普通字节写进当前网格。
+ */
+const terminalRingScreens = new Map<
+  string,
+  { snapshot: TerminalViewSnapshot; size: number; after: number }
+>()
+
+/**
  * daemon 接回时下发的屏幕快照。直接当普通输出写进尺寸不同的 xterm 会逐行错位，
  * 所以交给视图按快照网格写入后再 fit 重绘（同 VS Code 处理 replay 事件）。ring 也追加
- * 快照字节，供持久化与尚未挂载的视图回放（回放后由重绘兜底）。
+ * 快照字节，供持久化与尚未挂载的视图回放（见 subscribeTerminalOutput）。
  */
 function applyTerminalScreen(id: string, snapshot: TerminalViewSnapshot) {
   // 先把批处理中的输出交给视图，保证快照排在它们之后。
   if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
-  touchRing(id, new TextEncoder().encode(snapshot.data))
+  const bytes = new TextEncoder().encode(snapshot.data)
+  touchRing(id, bytes)
+  terminalRingScreens.set(id, { snapshot, size: bytes.length, after: 0 })
   terminalScreenListeners.get(id)?.forEach(listener => listener(snapshot))
 }
 
@@ -547,6 +559,8 @@ function publishTerminalOutput(id: string, data: unknown) {
   if (!bytes) return
   recordPerformanceThroughput('terminalBytes', bytes.length)
   touchRing(id, bytes)
+  const screen = terminalRingScreens.get(id)
+  if (screen) screen.after += bytes.length
 
   const listeners = terminalOutputListeners.get(id)
   if (listeners?.size) {
@@ -557,6 +571,7 @@ function publishTerminalOutput(id: string, data: unknown) {
 function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   useTerminalDraftStore.getState().clearDraft(id)
   terminalScrollbackRings.delete(id)
+  terminalRingScreens.delete(id)
   terminalPendingOutput.delete(id)
   cancelScheduledOutputFlush(id)
   terminalCommandHistory.delete(id)
@@ -573,6 +588,7 @@ function prepareTerminalOutputForSnapshot(id: string) {
   terminalPendingOutput.delete(id)
   cancelScheduledOutputFlush(id)
   terminalScrollbackRings.delete(id)
+  terminalRingScreens.delete(id)
   terminalRingUpdatedAt.delete(id)
   terminalRingVersions.delete(id)
   terminalScrollbackTextCache.delete(id)
@@ -632,7 +648,16 @@ export function subscribeTerminalOutput(
 
   // A newly mounted xterm needs one complete replay. Live output is batched below.
   const ring = terminalByteRingToBytes(terminalScrollbackRings.get(id))
-  if (ring.length) listener(ring)
+  const screen = onScreen ? terminalRingScreens.get(id) : undefined
+  const before = screen ? ring.length - screen.size - screen.after : -1
+  if (onScreen && screen && before >= 0) {
+    // 快照仍完整留在 ring 里：前段历史照常回放，快照按自身网格交给视图，再接上之后的输出。
+    if (before > 0) listener(ring.subarray(0, before))
+    onScreen(screen.snapshot)
+    if (screen.after > 0) listener(ring.subarray(ring.length - screen.after))
+  } else if (ring.length) {
+    listener(ring)
+  }
 
   return () => {
     removeScreenListener?.()
