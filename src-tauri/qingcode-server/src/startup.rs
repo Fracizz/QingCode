@@ -1,16 +1,19 @@
 //! Opt-in boot registration for the current user's paired direct gateway.
 //! Disabling registration deliberately leaves the running gateway and PTYs alone.
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use crate::daemon::RunDir;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use sha2::{Digest, Sha256};
 use std::path::Path;
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 use std::process::Command;
 use std::process::ExitCode;
 
 #[cfg(any(windows, test))]
 const WINDOWS_SCRIPT: &str = include_str!("startup_windows.ps1");
+
+#[cfg(any(target_os = "macos", test))]
+mod macos;
 
 pub fn run(args: &[String]) -> ExitCode {
     match execute(args) {
@@ -45,7 +48,7 @@ fn parse(args: &[String]) -> Result<(&str, Option<&Path>), String> {
     }
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn checked(command: &mut Command) -> Result<(), String> {
     let output = command.output().map_err(|e| e.to_string())?;
     if output.status.success() {
@@ -61,7 +64,7 @@ fn checked(command: &mut Command) -> Result<(), String> {
     }
 }
 
-#[cfg(any(windows, target_os = "linux"))]
+#[cfg(any(windows, target_os = "linux", target_os = "macos"))]
 fn execute(args: &[String]) -> Result<(), String> {
     let (action, state) = parse(args)?;
     let run = RunDir::resolve(state)?;
@@ -114,6 +117,8 @@ fn execute(args: &[String]) -> Result<(), String> {
     }
     #[cfg(target_os = "linux")]
     linux(action, name, &binary, &state, info.as_ref())?;
+    #[cfg(target_os = "macos")]
+    macos::register(action, name, &binary, &state, info.as_ref())?;
     println!(
         "{}",
         serde_json::json!({ "autoStart": action != "disable", "name": name })
@@ -121,10 +126,10 @@ fn execute(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 fn execute(args: &[String]) -> Result<(), String> {
     parse(args)?;
-    Err("boot startup currently supports Windows Task Scheduler and Linux systemd".into())
+    Err("startup supports Windows, Linux and macOS".into())
 }
 
 #[cfg(target_os = "linux")]

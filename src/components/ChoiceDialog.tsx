@@ -39,7 +39,7 @@ export default function ChoiceDialog() {
               {t(request.message)}
             </p>
             {!markdownDetail && request.detail && (
-              <p className="text-ui-sm mt-2.5 leading-relaxed text-fg-muted whitespace-pre-line break-all">
+              <p className="text-ui-sm mt-2.5 leading-relaxed text-fg-muted whitespace-pre-line [overflow-wrap:anywhere]">
                 {request.detail}
               </p>
             )}

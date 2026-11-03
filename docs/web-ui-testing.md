@@ -150,3 +150,19 @@ Server 启动与自启恢复复用 `/web-tests/direct-agent.html` 的「打开�
 Windows 管理员真机可运行 `powershell -File scripts/test-server-startup.ps1 -ServerBinary <qingcode-server.exe>`，
 用独立程序、随机本地端口、临时状态目录和任务验证注册、取消及计划任务拉起，结束后清理；不重启主机。
 Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser.mjs`。
+
+直连 Server 更新来源场景位于 `/web-tests/server-version-update.html`，Linux 运行
+`node scripts/web-tests/direct-update-source.agent-browser.mjs`。复用真实更新弹窗，验证自动获取、
+本机离线目录、取消重选、旧包/缺平台文件阻止更新、下载与上传的阶段反馈、失败后重新准备，
+以及英文浅色 480px 窄窗。截图、JSON 结果和浏览器错误保存到 `.dev/web-tests/direct-update-source/`。
+目录选择、下载与远端更新均为内存模拟，不替代原生目录选择和真实断网主机的 SSH 更新验收。
+
+安装与更新进度卡片场景位于 `/web-tests/server-operation.html`，Linux 运行
+`node scripts/web-tests/server-operation.agent-browser.mjs`。复用真实打开项目组件、后台操作 store 与进度卡片，
+覆盖首次安装非模态、真实阶段推进、取消打开、后台更新、计时、成功自动关闭、失败保留授权入口及英文浅色窄窗。
+结果与截图位于 `.dev/web-tests/server-operation/`。该场景不连接 SSH，不替代 Linux/macOS 原生生命周期验收。
+
+
+退出应用场景位于 `/web-tests/app-close.html`，执行 `node scripts/web-tests/app-close.agent-browser.mjs`。
+复用真实退出决策与 `ChoiceDialog`，只替换窗口、文件保存和终端接口；覆盖保留、结束、未确认后的重试/仍然退出、取消文件确认、Escape、仅本地终端以及英文浅色 480px 布局。
+截图与结果保存在 `.dev/web-tests/app-close/`。页面不建立远程连接，不能替代原生退出和真实远程终端验收。

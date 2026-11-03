@@ -74,7 +74,7 @@ vi.mock('./uiStore', () => ({
   },
 }))
 
-import { subscribeTerminalOutput, useTerminalStore } from './terminalStore'
+import { pauseTerminalSpawnsForExit, resumeTerminalSpawnsAfterExit, subscribeTerminalOutput, useTerminalStore } from './terminalStore'
 import { activeTerminalsForConfig, findRunLinkageForTerminal } from '@/lib/runConfigRuntime'
 import { buildWorkspaceSessionSnapshot, parseWorkspaceSession } from '@/lib/workspaceSessionPersist'
 import { terminalFromPersisted } from '@/lib/workspaceSessionRestore'
@@ -133,7 +133,36 @@ describe('terminal persistent connection events', () => {
 
   afterEach(() => {
     unlisten?.()
+    useTerminalStore.setState({ terminals: [] })
+    resumeTerminalSpawnsAfterExit()
     vi.useRealTimers()
+  })
+
+  it('freezes pending PTYs during an exit decision and resumes after cancellation', async () => {
+    useTerminalStore.setState({ terminals: [terminal({ status: 'starting', ptySpawnPending: true })] })
+    await pauseTerminalSpawnsForExit()
+    await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+    expect(mocks.createTerminal).not.toHaveBeenCalled()
+    expect(await useTerminalStore.getState().addTerminal('ssh://conn/home/app', 'p1')).toBeNull()
+    resumeTerminalSpawnsAfterExit()
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(mocks.createTerminal).toHaveBeenCalledOnce()
+  })
+
+  it('settles in-flight creation before reading the persistent PTY for exit', async () => {
+    let complete!: (result: TerminalSpawnResult) => void
+    mocks.createTerminal.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    useTerminalStore.setState({ terminals: [terminal({ status: 'starting', ptySpawnPending: true })] })
+    const spawning = useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+    let settled = false
+    const pausing = pauseTerminalSpawnsForExit().then(() => { settled = true })
+    await vi.advanceTimersByTimeAsync(25)
+    expect(settled).toBe(false)
+    complete({ persistent: true, ptyId: 'created-during-exit', connectionId: 'conn' })
+    await spawning
+    await vi.advanceTimersByTimeAsync(25)
+    await pausing
+    expect(useTerminalStore.getState().terminals[0].ptyId).toBe('created-during-exit')
   })
 
   it('flows persistent reconnect events without spawning a replacement shell', () => {

@@ -1,7 +1,7 @@
 import { AlertTriangle, Check, LoaderCircle, Server } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../lib/i18n'
-import { sshServerPhaseKey } from '../lib/sshServerStatus'
+import { sshServerPhaseKey, sshServerVersionMismatch } from '../lib/sshServerStatus'
 import { sshProjectDisplayPath } from '../lib/sshWorkspace'
 import { useProjectStore } from '../store/projectStore'
 import { cancelSshOpening, useSshOpeningStore } from '../store/sshOpeningStore'
@@ -9,11 +9,14 @@ import { useUIStore } from '../store/uiStore'
 import ModalOverlay from './ModalOverlay'
 import { confirmSshServerRestart, isWindowsSshRoot } from '../lib/sshWindowsRepair'
 import SshServerRecovery from './SshServerRecovery'
+import ServerOperationProgress from './ServerOperationProgress'
+import { useServerOperationStore } from '../store/serverOperationStore'
 
 export default function SshOpeningDialog() {
   const { t } = useI18n()
   const attempt = useSshOpeningStore(s => s.attempt)
   const connections = useProjectStore(s => s.sshConnections)
+  const operation = useServerOperationStore(s => attempt ? s.tasks[attempt.project.path] : undefined)
   const [visibleController, setVisibleController] = useState<AbortController | null>(null)
   const [retryingController, setRetryingController] = useState<AbortController | null>(null)
   const retryRef = useRef<{ opening: AbortController; controller: AbortController } | null>(null)
@@ -30,16 +33,18 @@ export default function SshOpeningDialog() {
   if (!attempt || (!attempt.error && visibleController !== controller)) return null
 
   const { project, stage, server, error } = attempt
-  if (attempt.reusingServer && !error) {
+  if (!error) {
+    const step = stage === 'connecting' ? 1 : stage === 'files' ? 4
+      : server?.phase === 'installing' ? 3 : server?.phase === 'handshaking' || server?.phase === 'readyServer' ? 4 : 2
+    const label = attempt.reusingServer ? t('正在打开项目 {name}…', { name: project.name })
+      : server?.phase === 'readyServer' && server.transport === 'serve' ? t('正在准备远程终端…')
+        : stage === 'files' ? t('读取项目文件') : stage === 'connecting' ? t('连接 SSH')
+          : server?.phase === 'installing' ? t('安装 QingCode Server') : server ? t(sshServerPhaseKey(server.phase)) : t('正在检查远端服务')
     return (
-      <div className="fixed bottom-9 right-4 z-[110] flex max-w-[min(420px,90vw)] items-center gap-3 rounded-lg border border-border-strong bg-bg-elevated px-3 py-2 text-ui shadow-elevation-3">
-        <div role="status" className="flex min-w-0 items-center gap-2 text-fg">
-          <LoaderCircle size={14} className="shrink-0 animate-spin text-accent" aria-hidden />
-          <span className="truncate">{t('正在打开项目 {name}…', { name: project.name })}</span>
-        </div>
-        <button type="button" onClick={cancelSshOpening} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">
-          {t('取消打开')}
-        </button>
+      <div className="fixed bottom-9 right-4 z-[110] w-[min(420px,calc(100vw-2rem))]">
+        <ServerOperationProgress name={project.name} status={operation?.kind === 'update' ? '更新中' : attempt.reusingServer ? '正在打开远程项目' : '安装中'}
+          label={operation?.label ?? label} step={operation?.step ?? step} startedAt={operation?.startedAt ?? attempt.startedAt}
+          actions={<button type="button" onClick={cancelSshOpening} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">{t('取消打开')}</button>} />
       </div>
     )
   }
@@ -105,6 +110,10 @@ export default function SshOpeningDialog() {
             {error ? t('关闭') : t('取消打开')}
           </button>
           {error && <>
+            {server?.transport === 'agent' && sshServerVersionMismatch(error) && <button type="button" className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover" onClick={() => {
+              cancelSshOpening()
+              useUIStore.setState({ serverUpdateRootUri: project.path })
+            }}>{t('通过 SSH 更新远端服务')}</button>}
             <button type="button" className="rounded border border-border-strong px-3 py-1.5 text-ui text-fg hover:bg-bg-hover" onClick={() => {
               cancelSshOpening()
               useUIStore.getState().openRemoteConnections()

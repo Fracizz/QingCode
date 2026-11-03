@@ -53,8 +53,8 @@ pub(crate) use scripts::{kill_server_command, windows_kill_server_script};
 pub(crate) use serve::{server_stream_call, ServerStreamOutcome};
 pub(crate) use terminal::{
     attach_persistent_terminal, kill_detached_terminal, kill_detached_terminals,
-    list_detached_terminals, spawn_persistent_terminal, DetachedTerminal, PersistentLaunch,
-    PersistentTerminal,
+    kill_terminal_for_exit, list_detached_terminals, spawn_persistent_terminal, DetachedTerminal,
+    PersistentLaunch, PersistentTerminal,
 };
 pub(crate) use watch::spawn_server_watch_supervisor;
 

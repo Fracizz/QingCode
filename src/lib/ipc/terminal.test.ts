@@ -16,6 +16,24 @@ beforeEach(() => {
 })
 
 describe('SSH detached terminal IPC contract', () => {
+  it('uses explicit PTY metadata for exit decisions without sweeping a connection', async () => {
+    const { finishRemoteTerminalOnExit } = await import('./terminal')
+    mocks.safeInvoke.mockResolvedValue(undefined)
+    const args = { id: 'tab-a', ptyId: 'pty-a', cwd: 'ssh://conn/home/app', action: 'preserve' as const }
+    await finishRemoteTerminalOnExit(args)
+    expect(mocks.safeInvoke).toHaveBeenLastCalledWith('处理退出时的远程终端', 'ssh_finish_terminal_on_exit', args)
+    mocks.safeInvoke.mockRejectedValueOnce(new Error('unconfirmed'))
+    await expect(finishRemoteTerminalOnExit({ ...args, action: 'terminate' })).rejects.toThrow('unconfirmed')
+  })
+
+  it('closes a compatibility terminal using its URI even without a spawned-session cache entry', async () => {
+    const { closeTerminalOnExit } = await import('./terminal')
+    mocks.safeInvoke.mockResolvedValue(undefined)
+    await closeTerminalOnExit({ id: 'restored-compat', cwd: 'ssh://conn/home/app' })
+    expect(mocks.safeInvoke).toHaveBeenLastCalledWith('关闭终端', 'ssh_kill_terminal', {
+      id: 'restored-compat', source: 'app_exit', operationId: expect.any(String),
+    })
+  })
   it('ends a detached PTY without creating an attached local session', async () => {
     mocks.safeInvoke.mockResolvedValueOnce(undefined)
     const args = { ptyId: 'idle-pty', cwd: 'ssh://conn/home/app' }

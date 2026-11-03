@@ -3,6 +3,7 @@ import { useI18n } from '../lib/i18n'
 import { X, AlertCircle, Info, CheckCircle2 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import TransferTasks from './TransferTasks'
+import ServerOperationTasks from './ServerOperationTasks'
 
 export default function Toaster() {
   const { t: translate } = useI18n()
@@ -82,6 +83,7 @@ export default function Toaster() {
           </div>
         )
       })}
+      <ServerOperationTasks />
       <TransferTasks />
     </div>
   )

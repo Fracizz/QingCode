@@ -142,6 +142,21 @@ export function killTerminal(id: string, source: TerminalActionSource = 'user_cl
   )
 }
 
+/** Exit paths use explicit resource metadata, including restored tabs without an attached proxy. */
+export function finishRemoteTerminalOnExit(args: {
+  id: string; ptyId: string; cwd: string; action: 'preserve' | 'terminate'
+}): Promise<void> {
+  return safeInvoke('处理退出时的远程终端', 'ssh_finish_terminal_on_exit', args)
+}
+
+export async function closeTerminalOnExit(tab: { id: string; cwd: string }): Promise<void> {
+  await safeInvoke('关闭终端', isSshResource(tab.cwd) ? 'ssh_kill_terminal' : 'kill_terminal', {
+    id: tab.id, source: 'app_exit', operationId: crypto.randomUUID(),
+  })
+  outputPauseHolders.delete(tab.id)
+  sshTerminalIds.delete(tab.id)
+}
+
 export function terminalSessionOpen(id: string): Promise<boolean> {
   return safeInvoke<boolean>('查询终端会话', 'terminal_session_open', { id })
 }

@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { mockIPC } from '@tauri-apps/api/mocks'
 import { emit } from '@tauri-apps/api/event'
+import type { Channel } from '@tauri-apps/api/core'
+import type { UpdatePhase } from '../lib/directServerUpdate'
 import SshServerStatusChip from '../components/SshServerStatusChip'
 import DirectServerUpdateDialog from '../components/DirectServerUpdateDialog'
 import { useUIStore, useProjectStore } from './projectManagerAdapters'
@@ -23,13 +25,31 @@ let state: SshServerState = {
 let pending: (() => void) | null = null
 let calls = 0
 let failure = false
+let packageScenario = 'cached'
+let finishPrepare: (() => void) | null = null
 
 export default function Page() {
   const updateRoot = useUIStore(s => s.serverUpdateRootUri)
   const [view, setView] = useState('dark')
   return (
     <main className="h-full bg-bg p-5 text-fg">
-      <p>Server 版本更新 Web 验收 · 内存场景</p>
+      <p>Server 版本更新 Web 验收 · 内存场景，不建立 SSH 或下载真实服务包。</p>
+      <label>
+        模拟服务包
+        <select
+          aria-label="模拟服务包"
+          onChange={event => {
+            packageScenario = event.target.value
+          }}
+        >
+          <option value="cached">本机缓存可用</option>
+          <option value="download">需要本机下载</option>
+          <option value="old">离线包版本过旧</option>
+          <option value="missing">目录缺少平台文件</option>
+          <option value="cancel">取消选择目录</option>
+        </select>
+      </label>
+      <button onClick={() => finishPrepare?.()}>完成准备</button>
       <button
         onClick={() => {
           pending?.()
@@ -83,7 +103,35 @@ if (import.meta.env.MODE === 'web-test') {
     ],
   })
   mockIPC(
-    async command => {
+    async (command, rawArgs) => {
+      const args = rawArgs as Record<string, unknown> | undefined
+      if (command === 'plugin:dialog|open')
+        return packageScenario === 'cancel' ? null : '/fixture/offline/servers'
+      if (command === 'direct_agent_prepare_update') {
+        const progress = args?.onProgress as Channel<UpdatePhase>
+        const source = args?.packageSource as { mode: string; directory?: string }
+        progress.onmessage('checkingPackage')
+        if (source.mode === 'automatic' && packageScenario === 'download') {
+          progress.onmessage('downloading')
+          await new Promise<void>(resolve => {
+            finishPrepare = resolve
+          })
+          finishPrepare = null
+        }
+        const directory = source.directory ?? '/fixture/cache/servers'
+        return {
+          expectedVersion: '0.1.14-beta.14',
+          packageVersion: packageScenario === 'old' ? '0.1.14-beta.9' : '0.1.14-beta.14',
+          directory,
+          sourcePath: `${directory}/qingcode-server-windows-x86_64.exe`,
+          problem:
+            packageScenario === 'old'
+              ? '服务包版本不匹配'
+              : packageScenario === 'missing'
+                ? '服务目录缺少当前主机需要的文件'
+                : null,
+        }
+      }
       if (command === 'ssh_server_info') return state
       if (command === 'direct_agent_info')
         return {
@@ -95,12 +143,18 @@ if (import.meta.env.MODE === 'web-test') {
           previousPorts: [],
         }
       if (command === 'direct_agent_update') {
+        const progress = (args?.options as { onProgress: Channel<UpdatePhase> }).onProgress
+        progress.onmessage('uploading')
         calls += 1
         document.querySelector('[data-testid="update-calls"]')!.textContent = String(calls)
         await new Promise<void>(resolve => {
           pending = resolve
         })
-        if (failure) throw new Error('SSH host identity changed; update refused')
+        if (failure) {
+          progress.onmessage('restoring')
+          throw new Error('SSH host identity changed; update refused')
+        }
+        progress.onmessage('verifying')
         state = {
           ...state,
           phase: 'readyServer',

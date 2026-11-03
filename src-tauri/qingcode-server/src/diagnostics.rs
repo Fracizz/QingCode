@@ -78,7 +78,7 @@ pub fn termination_source(source: Option<&str>) -> &str {
         Some(
             value @ ("user_close" | "user_restart" | "user_close_others" | "user_close_all"
             | "cancel_reconnect" | "session_replaced" | "spawn_cancelled"
-            | "detached_cleanup" | "connection_removed" | "backend_cleanup"),
+            | "detached_cleanup" | "connection_removed" | "backend_cleanup" | "app_exit"),
         ) => value,
         _ => "unknown",
     }

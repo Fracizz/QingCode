@@ -97,6 +97,8 @@ fn main() -> ExitCode {
         "serve" => run_serve(rest),
         "direct" => run_direct(rest),
         "direct-info" => run_direct_info(rest),
+        #[cfg(unix)]
+        "direct-stop" => run_direct_stop(rest),
         "service" => qingcode_server::service::run(rest),
         "startup" => qingcode_server::startup::run(rest),
         "self-check" => run_self_check(rest),
@@ -974,6 +976,35 @@ fn run_direct(args: &[String]) -> ExitCode {
         gateway.run().await
     }) {
         Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(unix)]
+fn run_direct_stop(args: &[String]) -> ExitCode {
+    if args.len() != 6
+        || args[0] != "--expect-pid"
+        || args[2] != "--expect-port"
+        || args[4] != "--expect-certificate"
+    {
+        eprintln!("usage: direct-stop --expect-pid <pid> --expect-port <port> --expect-certificate <sha256>");
+        return ExitCode::from(2);
+    }
+    let result = args[1]
+        .parse::<u32>()
+        .map_err(|e| e.to_string())
+        .and_then(|pid| {
+            let port = args[3].parse::<u16>().map_err(|e| e.to_string())?;
+            qingcode_server::direct::maintenance::stop(pid, port, &args[5])
+        });
+    match result {
+        Ok(binary) => {
+            println!("{}", binary.display());
+            ExitCode::SUCCESS
+        }
         Err(error) => {
             eprintln!("{error}");
             ExitCode::FAILURE

@@ -102,7 +102,7 @@ pub(crate) async fn package_info(
     }))
 }
 
-fn checked_directory(dir: &str) -> Result<PathBuf, String> {
+pub(crate) fn checked_directory(dir: &str) -> Result<PathBuf, String> {
     let dir = dir.trim();
     if dir.is_empty() || dir.len() > 1024 || dir.contains('\0') || dir.contains("://") {
         return Err("离线目录必须是本机文件夹".into());

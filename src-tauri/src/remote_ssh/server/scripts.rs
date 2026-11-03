@@ -327,7 +327,9 @@ pub(super) fn remote_sha256_command(remote_bin: &str) -> String {
     format!(
         "if [ ! -e {bin} ] && [ ! -L {bin} ]; then \
          if [ -r {parent} ] && [ -x {parent} ]; then exit {missing}; else exit 1; fi; \
-         fi; sha256sum -- {bin}",
+         fi; if command -v sha256sum >/dev/null 2>&1; then sha256sum -- {bin}; \
+         elif command -v shasum >/dev/null 2>&1; then shasum -a 256 {bin}; \
+         else exit 1; fi",
         bin = shell_quote(remote_bin),
         parent = shell_quote(if parent.is_empty() { "/" } else { parent }),
         missing = REMOTE_BINARY_MISSING_EXIT,

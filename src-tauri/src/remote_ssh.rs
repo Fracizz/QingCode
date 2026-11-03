@@ -35,9 +35,11 @@ mod search;
 mod server;
 mod server_status;
 mod sshd_limits;
+mod terminal_exit;
 #[cfg(test)]
 mod test_connection;
 mod transfer;
+pub use terminal_exit::*;
 mod windows_path_guard;
 mod windows_sshd_repair;
 pub use config_import::*;

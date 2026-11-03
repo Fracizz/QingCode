@@ -26,6 +26,9 @@ use crate::daemon::RunDir;
 use crate::ipc::IpcEndpoint;
 use crate::proto::{self, HelloRequest, Kind};
 
+#[cfg(unix)]
+pub mod maintenance;
+
 pub const DEFAULT_DIRECT_PORT: u16 = 48763;
 
 const MAX_HEADERS: usize = 16 * 1024;

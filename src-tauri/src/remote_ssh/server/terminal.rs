@@ -52,6 +52,9 @@ pub(crate) struct PersistentTerminal {
     /// 有新输入入队时唤醒会话循环。
     input_ready: Notify,
     closed: AtomicBool,
+    detach_requested: Notify,
+    proxy_finished: AtomicBool,
+    proxy_stopped: Notify,
     commands: mpsc::Sender<TerminalCommand>,
     kill_context: Mutex<serde_json::Value>,
 }
@@ -115,6 +118,22 @@ impl PersistentTerminal {
         self.commands
             .try_send(TerminalCommand::Resize)
             .map_err(|_| "SSH 终端已结束".to_string())
+    }
+
+    /// Stop this proxy without sending pty.kill or affecting other sessions.
+    pub(crate) async fn detach_for_exit(&self) -> Result<(), String> {
+        self.detach_requested.notify_one();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let stopped = self.proxy_stopped.notified();
+                if self.proxy_finished.load(Ordering::Acquire) {
+                    return;
+                }
+                stopped.await;
+            }
+        })
+        .await
+        .map_err(|_| "断开终端代理超时，远端进程未被主动结束".to_string())
     }
 
     pub(crate) async fn kill(&self) -> Result<(), String> {
@@ -553,6 +572,15 @@ struct ActiveSession {
     events: SessionEventReceiver,
 }
 
+impl Drop for ActiveSession {
+    fn drop(&mut self) {
+        // Exit can cancel a reconnect while attach/replay is awaiting a response.
+        // Always close that newly opened channel as well as the previous active one.
+        self.session.shutdown();
+        self.transport.release();
+    }
+}
+
 /// A direct connection has no SSH pool lease. The DaemonSession owns its
 /// WebSocket; releasing this marker never touches any remote process.
 pub(super) enum SessionTransport {
@@ -819,11 +847,19 @@ fn validate_detached_terminal_for_kill(
     client_id: &str,
     root: &RegisteredRoot,
 ) -> Result<(), String> {
-    if info.owner.as_deref() != Some(client_id) {
-        return Err("PTY 不属于当前客户端".to_string());
-    }
     if !info.detached {
         return Err("PTY 已被接回，无法按遗留终端结束".to_string());
+    }
+    validate_terminal_for_exit(info, client_id, root)
+}
+
+fn validate_terminal_for_exit(
+    info: &PtyInfoWire,
+    client_id: &str,
+    root: &RegisteredRoot,
+) -> Result<(), String> {
+    if info.owner.as_deref() != Some(client_id) {
+        return Err("PTY 不属于当前客户端".to_string());
     }
     let cwd = info
         .cwd
@@ -877,6 +913,69 @@ pub(crate) async fn kill_detached_terminal(
                 &serde_json::json!({ "id": pty_id,"source":"detached_cleanup" }),
             )
             .await?;
+        Ok(())
+    }
+    .await;
+    session.shutdown();
+    transport.release();
+    result
+}
+
+/// Ensures cancellation by the exit timeout also closes the temporary daemon channel.
+struct ExitSessionCleanup<'a> {
+    transport: &'a SessionTransport,
+    session: &'a DaemonSession,
+}
+
+impl Drop for ExitSessionCleanup<'_> {
+    fn drop(&mut self) {
+        self.session.shutdown();
+        self.transport.release();
+    }
+}
+
+/// Confirm termination of exactly one owned PTY, attached or detached.
+/// Unlike the legacy best-effort kill path, network errors must reach the exit dialog.
+pub(crate) async fn kill_terminal_for_exit(
+    pty_id: &str,
+    root: &RegisteredRoot,
+    app: &AppHandle,
+    manager: &SshManager,
+) -> Result<(), String> {
+    let parsed = parse_remote_uri(&root.uri)?;
+    let endpoint = server::require_server_endpoint(app, manager, root, true).await?;
+    let daemon = endpoint
+        .daemon
+        .as_ref()
+        .ok_or_else(|| server::server_mode_error("远端 daemon 不可用"))?;
+    let client_id = manager.daemon_client_id(&parsed.connection_id);
+    let (transport, session) = open_terminal_daemon_session(
+        manager,
+        &parsed.connection_id,
+        &root.uri,
+        &client_id,
+        daemon,
+    )
+    .await?;
+    let _cleanup = ExitSessionCleanup {
+        transport: &transport,
+        session: &session,
+    };
+    let result = async {
+        let response = session.request("pty.list", &serde_json::json!({})).await?;
+        let response: PtyListResponse = serde_json::from_value(response)
+            .map_err(|error| format!("解析 pty.list 应答失败：{error}"))?;
+        let Some(info) = response.ptys.iter().find(|info| info.id == pty_id) else {
+            return Ok(());
+        };
+        let current_root = manager.root_for_uri(&root.uri, true)?;
+        if current_root.canonical_path != root.canonical_path {
+            return Err("项目根已变化，无法安全结束终端".to_string());
+        }
+        validate_terminal_for_exit(info, &client_id, &current_root)?;
+        session.request("pty.kill", &serde_json::json!({
+            "id": pty_id, "source": "app_exit", "operationId": uuid::Uuid::new_v4().to_string(),
+        })).await?;
         Ok(())
     }
     .await;
@@ -1026,6 +1125,9 @@ pub(crate) async fn attach_persistent_terminal(
         pending_input: Mutex::new(VecDeque::new()),
         input_ready: Notify::new(),
         closed: AtomicBool::new(false),
+        detach_requested: Notify::new(),
+        proxy_finished: AtomicBool::new(false),
+        proxy_stopped: Notify::new(),
         commands: command_tx,
         kill_context: Mutex::new(serde_json::Value::Null),
     });
@@ -1191,6 +1293,9 @@ pub(crate) async fn spawn_persistent_terminal(
         pending_input: Mutex::new(VecDeque::new()),
         input_ready: Notify::new(),
         closed: AtomicBool::new(false),
+        detach_requested: Notify::new(),
+        proxy_finished: AtomicBool::new(false),
+        proxy_stopped: Notify::new(),
         commands: command_tx,
         kill_context: Mutex::new(serde_json::Value::Null),
     });
@@ -1246,11 +1351,30 @@ async fn run_persistent_terminal(
     root: RegisteredRoot,
     app: AppHandle,
     mut active: ActiveSession,
+    command_rx: mpsc::Receiver<TerminalCommand>,
+) {
+    tokio::select! {
+        biased;
+        _ = terminal.detach_requested.notified() => {},
+        _ = run_persistent_terminal_inner(Arc::clone(&terminal), root, app.clone(), &mut active, command_rx) => {},
+    }
+    active.session.shutdown();
+    active.transport.release();
+    remove_persistent_terminal(&app, &terminal);
+    terminal.proxy_finished.store(true, Ordering::Release);
+    terminal.proxy_stopped.notify_waiters();
+}
+
+async fn run_persistent_terminal_inner(
+    terminal: Arc<PersistentTerminal>,
+    root: RegisteredRoot,
+    app: AppHandle,
+    active: &mut ActiveSession,
     mut command_rx: mpsc::Receiver<TerminalCommand>,
 ) {
     let manager = app.state::<SshManager>();
     loop {
-        match run_connected(&terminal, &app, &mut active, &mut command_rx).await {
+        match run_connected(&terminal, &app, active, &mut command_rx).await {
             ConnectedEnd::Exited(code) => {
                 terminal.mark_closed();
                 // shell 正常退出也要释放独占的 SSH 连接与 daemon 会话。
@@ -1318,7 +1442,7 @@ async fn run_persistent_terminal(
                     }
                     match reconnect_terminal(&terminal, &root, &app, &manager).await {
                         ReconnectEnd::Connected(connected) => {
-                            active = connected;
+                            *active = connected;
                             break;
                         }
                         ReconnectEnd::Terminated(reason) => {
@@ -1506,31 +1630,40 @@ async fn reconnect_terminal(
                 return ReconnectEnd::Retry(error);
             }
         };
-    let from_seq = terminal.next_seq.load(Ordering::Acquire);
-    let attach = match session.attach(&terminal.pty_id, from_seq, false).await {
-        Ok(attach) => attach,
-        Err(error) if attach_terminal_is_gone(&error) => {
-            session.shutdown();
-            transport.release();
-            return ReconnectEnd::Terminated("远端终端已结束或被回收".to_string());
-        }
-        Err(error) => {
-            session.shutdown();
-            transport.release();
-            return ReconnectEnd::Retry(error);
-        }
-    };
     let Some(events) = session.take_events() else {
         session.shutdown();
         transport.release();
         return ReconnectEnd::Retry("daemon 终端事件通道不可用".into());
     };
+    let active = ActiveSession {
+        transport,
+        session,
+        events,
+    };
+    let from_seq = terminal.next_seq.load(Ordering::Acquire);
+    let attach = match active
+        .session
+        .attach(&terminal.pty_id, from_seq, false)
+        .await
+    {
+        Ok(attach) => attach,
+        Err(error) if attach_terminal_is_gone(&error) => {
+            active.session.shutdown();
+            active.transport.release();
+            return ReconnectEnd::Terminated("远端终端已结束或被回收".to_string());
+        }
+        Err(error) => {
+            active.session.shutdown();
+            active.transport.release();
+            return ReconnectEnd::Retry(error);
+        }
+    };
     let (exited, restore) = match apply_attach_restore(terminal, app, &attach).await {
         Ok(result) => result,
         Err(error) => {
             // 已写出的输出已推进 next_seq，下次 attach 从缺口续补。
-            session.shutdown();
-            transport.release();
+            active.session.shutdown();
+            active.transport.release();
             eprintln!(
                 "[WARN] persistent terminal {} attach restore failed, will retry: {error}",
                 terminal.id
@@ -1543,20 +1676,20 @@ async fn reconnect_terminal(
             .size
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        resize_session(&session, &terminal.pty_id, cols, rows).await?;
-        flush_pending_to_session(terminal, &session).await
+        resize_session(&active.session, &terminal.pty_id, cols, rows).await?;
+        flush_pending_to_session(terminal, &active.session).await
     })
     .await
     {
         Ok(Some(code)) => {
-            session.shutdown();
-            transport.release();
+            active.session.shutdown();
+            active.transport.release();
             return ReconnectEnd::Exited(code);
         }
         Ok(None) => {}
         Err(error) => {
-            session.shutdown();
-            transport.release();
+            active.session.shutdown();
+            active.transport.release();
             eprintln!(
                 "[WARN] persistent terminal {} could not prepare live session after attach: {error}",
                 terminal.id
@@ -1570,11 +1703,7 @@ async fn reconnect_terminal(
         RestoreKind::None | RestoreKind::Exit => Some("none"),
     };
     emit_connection(app, &terminal.id, "attached", None, None, restore_name);
-    ReconnectEnd::Connected(ActiveSession {
-        transport,
-        session,
-        events,
-    })
+    ReconnectEnd::Connected(active)
 }
 
 /// 快照不清空前端：断线前的输出留作滚动历史，前端只把当前屏幕换成快照（见 Terminal.tsx 的 onScreen）。
@@ -1904,6 +2033,9 @@ mod tests {
             pending_input: Mutex::new(VecDeque::new()),
             input_ready: Notify::new(),
             closed: AtomicBool::new(false),
+            detach_requested: Notify::new(),
+            proxy_finished: AtomicBool::new(false),
+            proxy_stopped: Notify::new(),
             commands,
             kill_context: Mutex::new(serde_json::Value::Null),
         }
@@ -2149,6 +2281,42 @@ mod tests {
         info.cwd = Some("/home/dev/app/subdir".into());
         root.trusted = false;
         assert!(validate_detached_terminal_for_kill(&info, client_id, &root).is_err());
+    }
+
+    #[test]
+    fn exit_kill_accepts_attached_sessions_but_checks_owner_and_root() {
+        let mut root = RegisteredRoot {
+            uri: "ssh://c/work".into(),
+            canonical_path: "/work".into(),
+            trusted: true,
+        };
+        let mut info = pty_info("pty", Some("install:c"), "/work/project");
+        info.detached = false;
+        assert!(validate_terminal_for_exit(&info, "install:c", &root).is_ok());
+        assert!(validate_detached_terminal_for_kill(&info, "install:c", &root).is_err());
+        assert!(validate_terminal_for_exit(&info, "other:c", &root).is_err());
+        info.cwd = Some("/work-sibling".into());
+        assert!(validate_terminal_for_exit(&info, "install:c", &root).is_err());
+        info.cwd = Some("/work".into());
+        root.trusted = false;
+        assert!(validate_terminal_for_exit(&info, "install:c", &root).is_err());
+    }
+
+    #[tokio::test]
+    async fn exit_detach_stops_proxy_without_marking_process_closed_or_sending_kill() {
+        let terminal = Arc::new(test_terminal());
+        let worker = Arc::clone(&terminal);
+        let task = tokio::spawn(async move {
+            worker.detach_requested.notified().await;
+            assert!(!worker.closed.load(Ordering::Acquire));
+            worker.proxy_finished.store(true, Ordering::Release);
+            worker.proxy_stopped.notify_waiters();
+        });
+        terminal.detach_for_exit().await.unwrap();
+        task.await.unwrap();
+        assert!(!terminal.closed.load(Ordering::Acquire));
+        // Repeated detach on an already stopped proxy is idempotent.
+        terminal.detach_for_exit().await.unwrap();
     }
 
     #[test]

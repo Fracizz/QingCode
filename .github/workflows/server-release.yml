@@ -113,8 +113,36 @@ jobs:
           path: dist/qingcode-server-windows-x86_64.exe
           if-no-files-found: error
 
+  build-macos:
+    runs-on: macos-14
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            arch: x86_64
+          - target: aarch64-apple-darwin
+            arch: aarch64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build macOS Server
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml -p qingcode-server --profile server-release --target ${{ matrix.target }}
+          mkdir -p dist
+          cp src-tauri/target/${{ matrix.target }}/server-release/qingcode-server dist/qingcode-server-macos-${{ matrix.arch }}
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qingcode-server-macos-${{ matrix.arch }}
+          path: dist/qingcode-server-macos-${{ matrix.arch }}
+          if-no-files-found: error
+
   publish:
-    needs: [build, build-windows]
+    needs: [build, build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -150,7 +178,7 @@ jobs:
             echo "  \"version\": \"$VERSION\","
             echo '  "artifacts": {'
             first=1
-            for f in qingcode-server-x86_64 qingcode-server-aarch64 qingcode-server-windows-x86_64.exe; do
+            for f in qingcode-server-x86_64 qingcode-server-aarch64 qingcode-server-windows-x86_64.exe qingcode-server-macos-x86_64 qingcode-server-macos-aarch64; do
               [ -f "$f" ] || continue
               SHA="$(sha256sum "$f" | cut -d' ' -f1)"
               SIZE="$(stat -c%s "$f")"
@@ -174,7 +202,7 @@ jobs:
           set -euo pipefail
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-              qingcode-server-x86_64 qingcode-server-aarch64 qingcode-server-windows-x86_64.exe manifest.json
+              qingcode-server-x86_64 qingcode-server-aarch64 qingcode-server-windows-x86_64.exe qingcode-server-macos-x86_64 qingcode-server-macos-aarch64 manifest.json
           else
             release_flags=(--latest=false)
             if [[ "${{ steps.meta.outputs.version }}" == *-* ]]; then
@@ -184,5 +212,5 @@ jobs:
               "${release_flags[@]}" \
               --title "qingcode-server ${TAG#server-v}" \
               --notes "qingcode-server 远端代理独立发布。资产与 manifest.json（含 sha256）配合客户端 ssh.server.autoDownload 使用；Windows 安装包和便携版使用独立离线服务包。" \
-              qingcode-server-x86_64 qingcode-server-aarch64 qingcode-server-windows-x86_64.exe manifest.json
+              qingcode-server-x86_64 qingcode-server-aarch64 qingcode-server-windows-x86_64.exe qingcode-server-macos-x86_64 qingcode-server-macos-aarch64 manifest.json
           fi

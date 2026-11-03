@@ -1,10 +1,13 @@
 import type { Project, SshConnection, SshConnectionMode } from '../types'
-import { getSshConnection, upsertSshConnection } from './projectRepository'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { getSshConnection, listSshConnections, upsertSshConnection } from './projectRepository'
 import { getSshServerEnabled, loadSshPreparationSettings } from './sshServerSettings'
 import { safeInvoke } from './tauri'
-import { directAgentApi, hasDirectAgentConnection, type DirectAgentInfo } from './directAgent'
-import { parseSshServerState, type SshServerState } from './sshServerStatus'
+import { directAgentApi, directAgentSshCandidates, hasDirectAgentConnection, type DirectAgentInfo } from './directAgent'
+import { parseSshServerState, sshServerVersionMismatch, type SshServerState } from './sshServerStatus'
 import { isProjectTrusted } from './workspaceTrust'
+import { directServerUpdateApi, updatePhaseLabels, type UpdatePhase } from './directServerUpdate'
+import { beginServerOperation, reportServerOperation, finishServerOperation, useServerOperationStore } from '../store/serverOperationStore'
 
 export interface SshSessionSecrets {
   password?: string
@@ -42,6 +45,60 @@ const sessionSecrets = new Map<string, SshSessionSecrets>()
 const workspaceConnectQueues = new Map<string, Promise<void>>()
 const connectionModeQueues = new Map<string, Promise<void>>()
 const suspendedBackgroundConnections = new Set<string>()
+// Keep the settled attempt as well: passive preparation/status retries must not
+// repeatedly restart the same user's daemon or keep retrying missing credentials.
+const directUpdateAttempts = new Map<string, Promise<void>>()
+
+async function tryAutomaticDirectUpdate(project: Project, signal: AbortSignal, onStart: () => void): Promise<boolean> {
+  const id = project.connection_id || sshConnectionIdFromUri(project.path)
+  if (!id || !isProjectTrusted(project) || isSshBackgroundSuspended(id)) return false
+  signal.throwIfAborted()
+  const info = await directAgentApi.info(id)
+  if (!info?.enabled) return false
+  onStart()
+  let attempt = directUpdateAttempts.get(id)
+  if (!attempt) {
+    attempt = (async () => {
+      const candidates = directAgentSshCandidates(await listSshConnections(), info.host)
+      const ssh = candidates.find(connection => connection.id === id)
+        ?? (candidates.length === 1 ? candidates[0] : undefined)
+      if (!ssh?.host_key_fingerprint || (ssh.auth_kind === 'password' && !sshSecretsFor(ssh.id).password)) {
+        throw new Error('自动更新需要已确认指纹且可认证的 SSH 连接，请通过“更新远端服务”授权后重试')
+      }
+      signal.throwIfAborted()
+      if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) throw new Error('项目授权或连接状态已变化')
+      const target = {
+        rootUri: project.path,
+        sshConnectionId: ssh.id,
+        config: sshRuntimeConfig(ssh, sshSecretsFor(ssh.id)),
+      }
+      beginServerOperation(project.path, project.name, 'update')
+      const progress = (phase: UpdatePhase) => reportServerOperation(project.path,
+        phase === 'connecting' ? 1 : phase === 'checkingPackage' || phase === 'downloading' ? 2 : phase === 'verifying' ? 4 : 3,
+        updatePhaseLabels[phase])
+      try {
+        const settings = await loadSshPreparationSettings(project)
+        const info = await directServerUpdateApi.prepare({ ...target, packageSource: settings.offlineDir
+          ? { mode: 'offline', directory: settings.offlineDir }
+          : { mode: 'automatic', allowDownload: settings.autoDownload } }, progress)
+        if (info.problem || !info.directory) throw new Error(info.problem ?? '未找到可用的服务目录')
+        signal.throwIfAborted()
+        if (!isProjectTrusted(project) || isSshBackgroundSuspended(id)) throw new Error('项目授权或连接状态已变化')
+        const value = await directServerUpdateApi.update({ ...target, packageDirectory: info.directory }, progress)
+        const state = parseSshServerState(value)
+        if (state?.phase !== 'readyServer' || state.transport !== 'agent') throw new Error(state?.reason ?? '远端服务尚未就绪')
+        finishServerOperation(project.path)
+      } catch (error) {
+        finishServerOperation(project.path, String(error))
+        throw error
+      }
+    })()
+    directUpdateAttempts.set(id, attempt)
+  }
+  await attempt
+  signal.throwIfAborted()
+  return true
+}
 
 export function isSshBackgroundSuspended(id: string): boolean {
   return suspendedBackgroundConnections.has(id)
@@ -322,16 +379,30 @@ export async function prepareSshWorkspace(
   options?: { project: Project; background?: boolean },
 ): Promise<void> {
   let stopped = false
+  let unlisten: UnlistenFn | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   const stop = () => {
     stopped = true
     clearTimeout(timer)
   }
+  const accept = (state: SshServerState) => {
+    if (state.rootUri !== rootUri) return
+    if (!stopped) onState(state)
+    const existing = useServerOperationStore.getState().tasks[rootUri]
+    if (options && state.phase === 'installing' && (!existing || existing.finishedAt)) {
+      beginServerOperation(rootUri, options.project.name, 'install')
+    }
+    const task = useServerOperationStore.getState().tasks[rootUri]
+    if (task?.kind === 'install' && !task.finishedAt) {
+      if (state.phase === 'installing') reportServerOperation(rootUri, 3, '安装 QingCode Server')
+      if (state.phase === 'handshaking') reportServerOperation(rootUri, 4, '正在验证远端服务与配对身份…')
+    }
+  }
   const poll = async () => {
     try {
       const value = await safeInvoke('读取 SSH Server 状态', 'ssh_server_info', { rootUri })
       const state = parseSshServerState(value)
-      if (!stopped && state?.rootUri === rootUri) onState(state)
+      if (state) accept(state)
     } catch {
       // Preparation owns the authoritative result; a missed snapshot is harmless.
     }
@@ -343,12 +414,39 @@ export async function prepareSshWorkspace(
   signal.addEventListener('abort', stop, { once: true })
   if (!options?.background) void poll()
   try {
-    await safeInvoke('准备 SSH 项目', 'ssh_prepare_workspace', {
+    try {
+      unlisten = await listen<unknown>('ssh-server-state', event => {
+        const state = parseSshServerState(event.payload)
+        if (state) accept(state)
+      })
+    } catch { /* Older runtimes still expose progress through status queries. */ }
+    signal.throwIfAborted()
+    const prepare = () => safeInvoke('准备 SSH 项目', 'ssh_prepare_workspace', {
       rootUri, ...(options ? { settings } : {}),
     })
+    try {
+      await prepare()
+    } catch (error) {
+      signal.throwIfAborted()
+      if (!options || !sshServerVersionMismatch(String(error))) throw error
+      try {
+        if (!await tryAutomaticDirectUpdate(options.project, signal, () => onState({
+          connectionId: options.project.connection_id || sshConnectionIdFromUri(rootUri) || '', rootUri,
+          phase: 'installing', mode: 'server', connectionMode: 'server', version: null, transport: 'agent', reason: null,
+        }))) throw error
+      } catch (updateError) {
+        throw Object.assign(new Error(`${String(error)}；${String(updateError)}`), { cause: updateError })
+      }
+      await prepare()
+    }
+    if (useServerOperationStore.getState().tasks[rootUri]?.kind === 'install') finishServerOperation(rootUri)
     signal.throwIfAborted()
+  } catch (error) {
+    if (useServerOperationStore.getState().tasks[rootUri]?.kind === 'install') finishServerOperation(rootUri, String(error))
+    throw error
   } finally {
     stop()
+    unlisten?.()
     signal.removeEventListener('abort', stop)
   }
 }

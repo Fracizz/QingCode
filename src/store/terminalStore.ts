@@ -93,6 +93,29 @@ const QUICK_FAIL_THRESHOLD_MS = 2000
 const PTY_SPAWN_FALLBACK_MS = 2500
 
 const ptySpawnInFlight = new Set<string>()
+let terminalExitInProgress = false
+const terminalRestartsInFlight = new Set<string>()
+
+/** Freeze new PTYs and settle those already being created before taking the exit snapshot. */
+export async function pauseTerminalSpawnsForExit(): Promise<void> {
+  terminalExitInProgress = true
+  const deadline = Date.now() + 5000
+  while (ptySpawnInFlight.size > 0 || taskShellTransitions.size > 0 || terminalRestartsInFlight.size > 0) {
+    if (Date.now() >= deadline) throw new Error(translate('终端仍在启动，请稍后重试退出。'))
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+}
+
+export function resumeTerminalSpawnsAfterExit(): void {
+  terminalExitInProgress = false
+  for (const tab of useTerminalStore.getState().terminals) {
+    if (!tab.ptySpawnPending) continue
+    schedulePtySpawnFallback(tab.id, () => {
+      void useTerminalStore.getState().spawnPendingTerminal(tab.id, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS)
+    })
+  }
+}
+
 /** Prevents concurrent App effects from double-respawning restored tabs. */
 const restoreSpawnInFlight = new Set<string>()
 const ptySpawnFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -264,6 +287,7 @@ type TerminalOutputListener = (data: Uint8Array) => void
 
 /** Convert a finished one-shot task into a plain terminal without replaying its command. */
 async function enterShellAfterTask(id: string): Promise<void> {
+  if (terminalExitInProgress) return
   const tab = useTerminalStore.getState().terminals.find(terminal => terminal.id === id)
   if (
     !tab ||
@@ -1119,6 +1143,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   addTerminal: async (projectPath: string, projectId: string, profileId?: string) => {
+    if (terminalExitInProgress) return null
     const project =
       useProjectStore.getState().projects.find(p => p.id === projectId) ??
       (useProjectStore.getState().currentProject?.id === projectId
@@ -1136,7 +1161,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return null
     }
     const profile = getTerminalProfile(profileId)
-    if (!(await ensureTerminalProfileTrust(profile))) return null
+    if (!(await ensureTerminalProfileTrust(profile)) || terminalExitInProgress) return null
     const shell = normalizeTerminalShell(profile.shell)
     const id = crypto.randomUUID()
     const profileSettings = loadTerminalProfileSettings()
@@ -1193,6 +1218,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     name: string,
     linkage?
   ) => {
+    if (terminalExitInProgress) return null
     const project =
       useProjectStore.getState().projects.find(p => p.id === projectId) ??
       (useProjectStore.getState().currentProject?.id === projectId
@@ -1372,74 +1398,80 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   restartTerminal: async (id: string, options) => {
-    const tab = get().terminals.find(terminal => terminal.id === id)
-    if (!tab) return
-    if (tab.restoreUnavailable) { await get().reopenTerminalShell(id); return }
-    // Profile terminals store profileId + launchCommand without shellKind.
-    // Run-config tasks set shellKind and are gated by ensureRunTrust instead.
-    if (tab.launchCommand && tab.profileId && !tab.shellKind) {
-      const profile = getTerminalProfile(tab.profileId)
-      if (
-        !(await ensureTerminalProfileTrust({
-          id: profile.id,
-          name: profile.name,
-          command: tab.launchCommand,
-        }))
-      ) {
-        return
-      }
-    }
-    if (!options?.preserveOutput) {
-      clearTerminalOutput(id)
-    } else {
-      // Keep scrollback/history while resetting the partial input accumulator.
-      terminalInputPending.delete(id)
-    }
-    clearPtySpawnFallback(id)
-    ptySpawnInFlight.delete(id)
-    markIntentionalPtyKill(id)
-    const operationId = crypto.randomUUID()
-    recordTerminalDiagnostic('terminal.restart_requested', tab, 'user_restart', operationId)
+    if (terminalExitInProgress) return
+    terminalRestartsInFlight.add(id)
     try {
-      await killTerminal(id, 'user_restart', operationId)
-    } catch (error) {
-      useProjectStore
-        .getState()
-        .pushToast('error', translate('结束终端进程失败: {error}', { error: String(error) }))
-    }
-    // Local kill removes the session before wait, so no terminal-exit follows.
-    // Leaving the mark set would treat the replacement shell's later exit as
-    // intentional and block input.
-    releaseIntentionalPtyKill(id)
-    set(s => ({
-      terminals: s.terminals.map(terminal =>
-        terminal.id === id
-          ? {
-              ...terminal,
-              status: 'starting',
-              endedAt: undefined,
-              restoreUnavailable: false,
-              exitCode: null,
-              startedAt: Date.now(),
-              awaitingRestoreSpawn: false,
-              restorePreservedOutput: options?.preserveOutput === true,
-              ptySpawnPending: true,
-            }
-          : terminal
-      ),
-    }))
-    useUIStore.getState().openTerminalPanel()
-    const remembered = lastPtySize.get(id)
-    schedulePtySpawnFallback(id, () => {
-      void get().spawnPendingTerminal(
-        id,
-        remembered?.cols ?? DEFAULT_PTY_COLS,
-        remembered?.rows ?? DEFAULT_PTY_ROWS
-      )
-    })
-    // Prefer an immediate respawn when we already know the grid (xterm still mounted).
-    if (remembered) {
-      void get().spawnPendingTerminal(id, remembered.cols, remembered.rows)
+      const tab = get().terminals.find(terminal => terminal.id === id)
+      if (!tab) return
+      if (tab.restoreUnavailable) { await get().reopenTerminalShell(id); return }
+      // Profile terminals store profileId + launchCommand without shellKind.
+      // Run-config tasks set shellKind and are gated by ensureRunTrust instead.
+      if (tab.launchCommand && tab.profileId && !tab.shellKind) {
+        const profile = getTerminalProfile(tab.profileId)
+        if (
+          !(await ensureTerminalProfileTrust({
+            id: profile.id,
+            name: profile.name,
+            command: tab.launchCommand,
+          }))
+        ) {
+          return
+        }
+      }
+      if (!options?.preserveOutput) {
+        clearTerminalOutput(id)
+      } else {
+        // Keep scrollback/history while resetting the partial input accumulator.
+        terminalInputPending.delete(id)
+      }
+      clearPtySpawnFallback(id)
+      ptySpawnInFlight.delete(id)
+      markIntentionalPtyKill(id)
+      const operationId = crypto.randomUUID()
+      recordTerminalDiagnostic('terminal.restart_requested', tab, 'user_restart', operationId)
+      try {
+        await killTerminal(id, 'user_restart', operationId)
+      } catch (error) {
+        useProjectStore
+          .getState()
+          .pushToast('error', translate('结束终端进程失败: {error}', { error: String(error) }))
+      }
+      // Local kill removes the session before wait, so no terminal-exit follows.
+      // Leaving the mark set would treat the replacement shell's later exit as
+      // intentional and block input.
+      releaseIntentionalPtyKill(id)
+      set(s => ({
+        terminals: s.terminals.map(terminal =>
+          terminal.id === id
+            ? {
+                ...terminal,
+                status: 'starting',
+                endedAt: undefined,
+                restoreUnavailable: false,
+                exitCode: null,
+                startedAt: Date.now(),
+                awaitingRestoreSpawn: false,
+                restorePreservedOutput: options?.preserveOutput === true,
+                ptySpawnPending: true,
+              }
+            : terminal
+        ),
+      }))
+      useUIStore.getState().openTerminalPanel()
+      const remembered = lastPtySize.get(id)
+      schedulePtySpawnFallback(id, () => {
+        void get().spawnPendingTerminal(
+          id,
+          remembered?.cols ?? DEFAULT_PTY_COLS,
+          remembered?.rows ?? DEFAULT_PTY_ROWS
+        )
+      })
+      // Prefer an immediate respawn when we already know the grid (xterm still mounted).
+      if (remembered) {
+        void get().spawnPendingTerminal(id, remembered.cols, remembered.rows)
+      }
+    } finally {
+      terminalRestartsInFlight.delete(id)
     }
   },
 
@@ -1566,6 +1598,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   syncDetachedTerminals: async (projectId: string) => {
+    if (terminalExitInProgress) return
     const projectState = useProjectStore.getState()
     const project =
       projectState.projects.find(candidate => candidate.id === projectId) ??
@@ -1608,6 +1641,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (orphans.length === 0) return
 
     const openOrphanActions = async () => {
+      if (terminalExitInProgress) return
       const action = await choiceDialog({
         title: translate('发现远端终端'),
         message: translate('远端还有 {count} 个终端在运行', {
@@ -1991,6 +2025,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   spawnPendingTerminal: async (id: string, cols: number, rows: number) => {
+    if (terminalExitInProgress) return
     const tab = get().terminals.find(terminal => terminal.id === id)
     if (!tab?.ptySpawnPending) return
     if (ptySpawnInFlight.has(id)) return

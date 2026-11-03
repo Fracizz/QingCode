@@ -1779,6 +1779,18 @@ mod tests {
             Ok(true)
         );
         assert!(remote_binary_digest_matches(Ok(run(&binary, true)), &expected).is_err());
+        // Stock macOS has shasum, without GNU sha256sum. Exercise that branch
+        // using a private PATH and verify an actual tool failure is preserved.
+        use std::os::unix::fs::PermissionsExt;
+        let shasum = dir.join("shasum");
+        std::fs::write(&shasum, format!("#!/bin/sh\n[ \"$1\" = -a ] && [ \"$2\" = 256 ] || exit 9\nprintf '%s  %s\\n' '{expected}' \"$3\"\n")).unwrap();
+        std::fs::set_permissions(&shasum, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            remote_binary_digest_matches(Ok(run(&binary, true)), &expected),
+            Ok(true)
+        );
+        std::fs::write(&shasum, "#!/bin/sh\nexit 23\n").unwrap();
+        assert_eq!(run(&binary, true).exit_code, 23);
         assert_eq!(
             remote_binary_digest_matches(Ok(run(&dir.join("absent"), false)), &expected),
             Ok(false)

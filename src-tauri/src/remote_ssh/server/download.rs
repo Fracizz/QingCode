@@ -74,18 +74,39 @@ pub(super) async fn remote_server_arch(
             .stdout
     } else {
         manager
-            .exec_command(&root.uri, "uname -m", None, true, REMOTE_EXEC_TIMEOUT)
+            .exec_command(
+                &root.uri,
+                "uname -s && uname -m",
+                None,
+                true,
+                REMOTE_EXEC_TIMEOUT,
+            )
             .await
             .map_err(ServerDeployError::from)?
             .stdout
     };
-    let arch = arch.trim().to_string();
-    if arch != "x86_64" && arch != "aarch64" {
-        return Err(ServerDeployError::permanent(format!(
-            "远端架构不支持（{arch}）"
-        )));
+    parse_remote_platform(&arch, windows).map_err(ServerDeployError::permanent)
+}
+
+// The platform prefix travels with the architecture through every install,
+// recovery and download path, so a Mac can never select a Linux ELF binary.
+fn parse_remote_platform(output: &str, windows: bool) -> Result<String, String> {
+    let parts = output.split_whitespace().collect::<Vec<_>>();
+    let (system, arch) = match parts.as_slice() {
+        [arch] if windows => ("Windows", *arch),
+        [system, arch] if !windows => (*system, *arch),
+        _ => return Err("远端系统或架构探测失败".into()),
+    };
+    let arch = match arch {
+        "x86_64" => "x86_64",
+        "aarch64" | "arm64" => "aarch64",
+        _ => return Err(format!("远端架构不支持（{arch}）")),
+    };
+    match system {
+        "Darwin" => Ok(format!("macos-{arch}")),
+        "Linux" | "Windows" => Ok(arch.into()),
+        _ => Err(format!("远端系统不支持（{system}）")),
     }
-    Ok(arch)
 }
 
 async fn find_local_server_binary(
@@ -440,6 +461,29 @@ async fn download_server_binary_from(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn remote_platform_keeps_macos_and_linux_artifacts_separate() {
+        for (system, arch, expected) in [
+            ("Darwin", "arm64", "macos-aarch64"),
+            ("Darwin", "x86_64", "macos-x86_64"),
+            ("Linux", "aarch64", "aarch64"),
+            ("Linux", "x86_64", "x86_64"),
+        ] {
+            let arch = super::parse_remote_platform(&format!("{system}\n{arch}\n"), false).unwrap();
+            assert_eq!(arch, expected);
+            assert_eq!(
+                super::server_binary_file_name(false, &arch),
+                format!("qingcode-server-{expected}")
+            );
+        }
+        assert_eq!(
+            super::parse_remote_platform("aarch64", true).unwrap(),
+            "aarch64"
+        );
+        assert!(super::parse_remote_platform("FreeBSD\nx86_64", false).is_err());
+        assert!(super::parse_remote_platform("Darwin\ni386", false).is_err());
+    }
+
     use super::*;
 
     struct PackageFixture(PathBuf);

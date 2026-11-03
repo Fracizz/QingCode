@@ -161,6 +161,66 @@ fn journal(dir: &Path) -> Vec<Value> {
 }
 
 #[test]
+fn app_exit_preserves_detached_pty_and_terminates_only_selected_session() {
+    let dir = std::env::temp_dir().join(format!(
+        "qingcode-app-exit-{}",
+        qingcode_server::generate_token()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut launcher = start(&dir, None);
+    let mut window_a = Connection::open(&dir);
+    let mut window_b = Connection::open(&dir);
+    let daemon_pid = window_a.daemon_pid;
+    let kept = window_a.request("pty.create", json!({"cwd":dir}))["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let other = window_b.request("pty.create", json!({"cwd":dir}))["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    drop(window_a);
+    wait_until(|| {
+        window_b.request("pty.list", json!({}))["ptys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|pty| pty["id"] == kept && pty["detached"] == true && pty["exited"].is_null())
+    });
+    let mut reopened = Connection::open(&dir);
+    assert_eq!(reopened.daemon_pid, daemon_pid);
+    reopened.request("pty.attach", json!({"id":kept,"fromSeq":0}));
+    reopened.request(
+        "pty.kill",
+        json!({"id":kept,"source":"app_exit","operationId":"exit-window-a"}),
+    );
+    wait_until(|| {
+        journal(&dir)
+            .iter()
+            .any(|entry| entry["event"] == "pty.exited" && entry["fields"]["ptyId"] == kept)
+    });
+    assert!(window_b.request("pty.list", json!({}))["ptys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|pty| pty["id"] == other && pty["exited"].is_null()));
+    let records = journal(&dir);
+    assert!(records
+        .iter()
+        .any(|entry| entry["event"] == "pty.kill_requested"
+            && entry["fields"]["ptyId"] == kept
+            && entry["fields"]["source"] == "app_exit"));
+    assert!(!records
+        .iter()
+        .any(|entry| entry["event"] == "pty.kill_requested" && entry["fields"]["ptyId"] == other));
+    window_b.request("server.shutdown", json!({}));
+    drop(reopened);
+    drop(window_b);
+    let _ = launcher.wait();
+    println!("APP_EXIT_EVIDENCE={}", dir.display());
+}
+
+#[test]
 fn real_pty_disconnect_kill_exit_and_restart_preserve_diagnostic_evidence() {
     let dir = std::env::temp_dir().join(format!(
         "qingcode-lifecycle-{}",

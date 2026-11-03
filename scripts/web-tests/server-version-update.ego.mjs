@@ -36,6 +36,7 @@ export async function run({ spaceId, artifactDir } = {}) {
     await step('failed SSH update remains visible and allows retry', async () => {
       await page.evaluate(() => [...document.querySelectorAll('button')].find(button => button.textContent === '切换更新失败').click())
       await page.click('loc=role:button[name="通过 SSH 更新远端服务"]')
+      await page.click('loc=role:button[name="检查并准备服务包"]')
       await page.click('loc=role:button[name="更新并重新连接"]')
       await page.waitForSelector('loc=role:button[name="正在更新…"]')
       assert.ok(await page.evaluate(() => [...document.querySelectorAll('section[aria-busy="true"] button')].every(button => button.disabled)))
@@ -63,6 +64,7 @@ export async function run({ spaceId, artifactDir } = {}) {
       await page.click('loc=role:button[name="切换更新失败"]')
       await page.click('loc=role:button[name*="远端服务版本不匹配 阶段"]')
       await page.click('loc=role:button[name="通过 SSH 更新远端服务"]')
+      await page.click('loc=role:button[name="检查并准备服务包"]')
       await page.click('loc=role:button[name="更新并重新连接"]')
       await page.waitForSelector('loc=role:button[name="正在更新…"]')
       await complete()

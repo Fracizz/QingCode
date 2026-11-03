@@ -7,6 +7,7 @@ export type SshOpeningStage = 'connecting' | 'service' | 'files' | 'mounting'
 
 interface SshOpeningAttempt {
   id: number
+  startedAt: number
   project: Project
   stage: SshOpeningStage
   server: SshServerState | null
@@ -41,7 +42,7 @@ export async function runSshOpening<T>(
   const controller = new AbortController()
   const { signal } = controller
   const attempt: SshOpeningAttempt = {
-    id: ++openingSequence, project, stage: 'connecting', server: null, error: null, controller, reusingServer: false,
+    id: ++openingSequence, startedAt: Date.now(), project, stage: 'connecting', server: null, error: null, controller, reusingServer: false,
   }
   useSshOpeningStore.setState({ attempt })
   const report = (stage: SshOpeningStage, server?: SshServerState) => {
