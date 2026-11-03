@@ -821,7 +821,7 @@
     "检查 Windows SSH 兼容修复": "Check Windows SSH compatibility repair",
     "修复 Windows SSH 兼容性": "Repair Windows SSH compatibility",
     "已重新连接": "Reconnected",
-    "已重新连接（已从屏幕快照恢复，部分历史输出不可用）": "Reconnected (restored from a screen snapshot; some earlier output is unavailable)",
+    "已重新连接（断线期间部分输出未能补回）": "Reconnected (some output produced while disconnected could not be recovered)",
     "已取消重新连接，正在结束终端…": "Reconnect cancelled; closing the terminal…",
     "已退出，可从终端标签重启": "Exited; restart from the terminal tab",
     "正在重新连接…": "Reconnecting…",

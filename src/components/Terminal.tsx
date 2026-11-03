@@ -981,6 +981,17 @@ export default function TerminalView({
         // daemon 接回下发的屏幕快照按 daemon 网格排版（同 VS Code 的 replay 事件）：
         // 网格不同就先按原网格写入，再由 fit 正常 resize，让 TUI 按新尺寸重画；
         // 期间用遮罩盖住，揭开由 flushPendingRedraw 等重绘回包后负责。
+        // 普通屏幕的快照自带清屏，会抹掉当前视口：先把视口里已有的行推进滚动历史，
+        // 断线前的输出不丢，快照只换掉当前屏幕。
+        const buffer = term.buffer.active
+        if (
+          snapshot.data.startsWith('\x1b[?1049l') &&
+          buffer.type === 'normal' &&
+          (buffer.baseY > 0 || buffer.cursorY > 0 || buffer.cursorX > 0)
+        ) {
+          const used = Math.min(term.rows, buffer.cursorY + 1)
+          term.write(`\x1b[${term.rows};1H${'\n'.repeat(used)}`)
+        }
         const fitsGrid = term.cols === snapshot.cols && term.rows === snapshot.rows
         if (!fitsGrid) {
           setReplayMasked(true)

@@ -106,7 +106,7 @@ export function planTerminalConnectionEvent(
     status: 'running',
     notice:
       restore === 'snapshot'
-        ? { key: '已重新连接（已从屏幕快照恢复，部分历史输出不可用）' }
+        ? { key: '已重新连接（断线期间部分输出未能补回）' }
         : { key: '已重新连接' },
     reason,
     attempt,

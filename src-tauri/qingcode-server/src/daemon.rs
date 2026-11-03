@@ -2116,15 +2116,21 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 id: String,
                 #[serde(default)]
                 from_seq: u64,
+                /// 停在全屏 TUI 时改给屏幕快照（应用重启后的接回用）。旧客户端不传，行为不变。
+                #[serde(default)]
+                screen_on_alternate: bool,
             }
             let Ok(params) = params::<AttachParams>(&request) else {
                 conn.fail(id, "badRequest", "pty.attach 参数错误");
                 return;
             };
             let attach = match daemon.install_attach_route(&params.id, conn.conn_id, || {
-                daemon
-                    .pty
-                    .attach(&params.id, params.from_seq, &conn.client_id)
+                daemon.pty.attach_with(
+                    &params.id,
+                    params.from_seq,
+                    &conn.client_id,
+                    params.screen_on_alternate,
+                )
             }) {
                 Ok(attach) => attach,
                 Err(message) => {

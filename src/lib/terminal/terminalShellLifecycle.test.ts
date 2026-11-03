@@ -131,7 +131,7 @@ describe('planTerminalConnectionEvent', () => {
 
   it.each([
     ['replay', '已重新连接'],
-    ['snapshot', '已重新连接（已从屏幕快照恢复，部分历史输出不可用）'],
+    ['snapshot', '已重新连接（断线期间部分输出未能补回）'],
     ['none', '已重新连接'],
   ] as const)('returns to running for attached restore=%s', (restore, notice) => {
     expect(

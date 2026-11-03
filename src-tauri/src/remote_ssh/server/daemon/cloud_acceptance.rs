@@ -275,7 +275,7 @@ async fn live_direct_cloud_latency_disconnect_and_security() {
         if after["pid"] != before["pid"] {
             return Err("daemon PID changed after simulated network loss".into());
         }
-        let attached = resumed.attach(&pty, 0).await?;
+        let attached = resumed.attach(&pty, 0, false).await?;
         if !attached.stream_end.ok || attached.response.get("exited").is_some_and(|v| !v.is_null()) {
             return Err("original PTY did not survive simulated network loss".into());
         }

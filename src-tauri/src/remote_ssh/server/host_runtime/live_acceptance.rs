@@ -134,7 +134,7 @@ async fn hold_project_terminals(
             let root = &roots[index % roots.len()];
             let (resumed_transport, mut resumed) = super::super::terminal::open_reconnect_daemon_session(manager, root, None).await?;
             let mut events = resumed.take_events().ok_or("missing resumed event receiver")?;
-            let attached = resumed.attach(pty_id, 0).await;
+            let attached = resumed.attach(pty_id, 0, false).await;
             session.shutdown();
             transport.release();
             *transport = resumed_transport.into_ssh()?;
@@ -181,7 +181,7 @@ async fn hold_project_terminals(
             return Err("failed reconnect retained stale token".into());
         }
         let (transport, session) = super::super::terminal::open_reconnect_daemon_session(manager, &roots[0], None).await?;
-        let restored = session.attach(&terminals[0].2, 0).await;
+        let restored = session.attach(&terminals[0].2, 0, false).await;
         let alive = match restored {
             Ok(_) => session.request("pty.resize", &serde_json::json!({"id":terminals[0].2,"cols":101,"rows":30})).await.map(|_| ()),
             Err(error) => Err(error),

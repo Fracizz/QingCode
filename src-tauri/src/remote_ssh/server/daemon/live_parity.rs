@@ -284,7 +284,7 @@ async fn verify_services(
         {
             return Err("PTY did not survive reconnect".into());
         }
-        let attached = resumed.attach(&pty, 0).await?;
+        let attached = resumed.attach(&pty, 0, false).await?;
         if !attached.stream_end.ok {
             return Err("PTY reattach failed".into());
         }

@@ -4,6 +4,7 @@ import {
   OUTPUT_PERSIST_DEBOUNCE_MS,
   OUTPUT_PERSIST_MIN_INTERVAL_MS,
   TERMINAL_SESSION_OUTPUT_KEY,
+  TERMINAL_SESSION_OUTPUT_VERSION,
   nextOutputPersistDelay,
   absorbInputForHistory,
   appendScrollbackBytes,
@@ -173,5 +174,31 @@ describe('nextOutputPersistDelay', () => {
 
   it('keeps continuous output persists at least the minimum interval apart', () => {
     expect(nextOutputPersistDelay(10_500, 10_000)).toBe(OUTPUT_PERSIST_MIN_INTERVAL_MS - 500)
+  })
+})
+
+describe('terminal output resume sequence', () => {
+  it('keeps a valid resume sequence through build and parse', () => {
+    const built = buildTerminalOutputSnapshot({
+      terminals: { t1: { scrollback: 'hello', history: [], seq: 42 } },
+      now: 1,
+    })
+    expect(built.terminals.t1.seq).toBe(42)
+    const parsed = parseTerminalOutputSnapshot(JSON.parse(JSON.stringify(built)))
+    expect(parsed?.terminals.t1.seq).toBe(42)
+  })
+
+  it('drops malformed resume sequences', () => {
+    const parsed = parseTerminalOutputSnapshot({
+      version: TERMINAL_SESSION_OUTPUT_VERSION,
+      terminals: {
+        a: { scrollback: 'x', history: [], seq: -1 },
+        b: { scrollback: 'x', history: [], seq: 1.5 },
+        c: { scrollback: 'x', history: [], seq: '3' },
+      },
+    })
+    expect(parsed?.terminals.a.seq).toBeUndefined()
+    expect(parsed?.terminals.b.seq).toBeUndefined()
+    expect(parsed?.terminals.c.seq).toBeUndefined()
   })
 })

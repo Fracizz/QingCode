@@ -709,14 +709,21 @@ impl DaemonSession {
         }
     }
 
+    /// `screen_on_alternate`：终端停在全屏 TUI 时要求 daemon 给快照而非补发增量
+    /// （旧 daemon 忽略该字段，照常按 `from_seq` 补发）。
     pub(super) async fn attach(
         &self,
         pty_id: &str,
         from_seq: u64,
+        screen_on_alternate: bool,
     ) -> Result<DaemonAttachResult, String> {
         let (stream_id, mut replies) = self.begin_stream_request(
             "pty.attach",
-            &serde_json::json!({ "id": pty_id, "fromSeq": from_seq }),
+            &serde_json::json!({
+                "id": pty_id,
+                "fromSeq": from_seq,
+                "screenOnAlternate": screen_on_alternate,
+            }),
         )?;
         let deadline = tokio::time::Instant::now() + DAEMON_SESSION_REQUEST_TIMEOUT;
         let mut response = None;
@@ -2129,7 +2136,7 @@ mod tests {
             if after["pid"] != info["pid"] {
                 return Err("daemon PID changed during backpressure recovery".to_string());
             }
-            let attach = resumed.attach(&pty_id, 0).await?;
+            let attach = resumed.attach(&pty_id, 0, false).await?;
             if attach
                 .response
                 .get("exited")

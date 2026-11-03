@@ -33,6 +33,8 @@ export type PersistedTerminalOutput = {
   scrollback: string
   history: string[]
   updatedAt: number
+  /** daemon 终端在这份 scrollback 之后的续传序号；重启接回时只补发此后的输出。 */
+  seq?: number
 }
 
 export type TerminalOutputSnapshot = {
@@ -265,6 +267,9 @@ function parseTerminalOutput(value: unknown): PersistedTerminalOutput | null {
     scrollback: truncateScrollbackText(value.scrollback, maxLines),
     history: normalizeCommandHistory(value.history),
     updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : 0,
+    ...(typeof value.seq === 'number' && Number.isSafeInteger(value.seq) && value.seq >= 0
+      ? { seq: value.seq }
+      : {}),
   }
 }
 
@@ -359,7 +364,10 @@ export function clearTerminalOutputSnapshot(): void {
 }
 
 export function buildTerminalOutputSnapshot(input: {
-  terminals: Record<string, { scrollback: string; history: string[]; updatedAt?: number }>
+  terminals: Record<
+    string,
+    { scrollback: string; history: string[]; updatedAt?: number; seq?: number }
+  >
   now?: number
   scrollbackLines?: number
 }): TerminalOutputSnapshot {
@@ -375,6 +383,7 @@ export function buildTerminalOutputSnapshot(input: {
       scrollback,
       history,
       updatedAt: entry.updatedAt ?? now,
+      ...(entry.seq !== undefined ? { seq: entry.seq } : {}),
     }
   }
   return enforceTerminalOutputStorageBudget({

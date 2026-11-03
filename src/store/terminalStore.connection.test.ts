@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { TERMINAL_RESET_EVENT } from '@/lib/terminal/terminalViewBridge'
 import type { TerminalSpawnResult } from '@/lib/ipc/terminal'
 import type { TerminalTab } from '@/types'
 
@@ -235,6 +234,7 @@ describe('terminal persistent connection events', () => {
       cwd: 'ssh://conn/home/app',
       cols: 100,
       rows: 30,
+      fromSeq: null,
     })
     expect(mocks.createTerminal).not.toHaveBeenCalled()
     expect(useTerminalStore.getState().terminals[0]).toMatchObject({
@@ -244,6 +244,27 @@ describe('terminal persistent connection events', () => {
       connectionId: 'conn',
       awaitingRestoreSpawn: false,
     })
+  })
+
+  it('resumes a restored daemon PTY from the last output sequence it received', async () => {
+    const restoring = terminal({
+      id: 'resume',
+      status: 'exited',
+      persistent: true,
+      ptyId: 'pty-r',
+      connectionId: 'conn',
+      awaitingRestoreSpawn: true,
+      ptySpawnPending: true,
+    })
+    useTerminalStore.setState({ terminals: [restoring] })
+    emit('terminal-data', { id: 'resume', data: Array.from(new TextEncoder().encode('a')), nextSeq: 41 })
+    emit('terminal-screen', { id: 'resume', data: 'S', cols: 80, rows: 24, nextSeq: 42 })
+
+    await useTerminalStore.getState().spawnPendingTerminal('resume', 100, 30)
+
+    expect(mocks.attachTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'resume', ptyId: 'pty-r', fromSeq: 42 })
+    )
   })
 
   it('does not kill the daemon PTY before the first restored attach', async () => {
@@ -761,19 +782,6 @@ describe('terminal persistent connection events', () => {
     expect(mocks.createTerminal).not.toHaveBeenCalled()
   })
 
-  it('asks the mounted xterm view to reset on terminal-reset', () => {
-    const resets: string[] = []
-    const onReset = (event: Event) => {
-      const detail = (event as CustomEvent<{ terminalId?: string }>).detail
-      if (detail.terminalId) resets.push(detail.terminalId)
-    }
-    window.addEventListener(TERMINAL_RESET_EVENT, onReset)
-
-    emit('terminal-reset', { id: 't1' })
-
-    expect(resets).toEqual(['t1'])
-    window.removeEventListener(TERMINAL_RESET_EVENT, onReset)
-  })
 })
 
 describe('daemon screen snapshots', () => {

@@ -787,13 +787,16 @@ async fn phase_reattach(ctx: &Ctx, failures: &mut Vec<String>) -> Result<(), Str
     .await
     .map_err(|error| format!("重开 daemon 会话失败（{}）：{error}", ms(started.elapsed())))?;
     let transport = transport.into_ssh()?;
-    let attach = session.attach(&pty_id, next_seq).await.map_err(|error| {
-        format!(
-            "pty.attach 失败（主连接回退={}，{}）：{error}",
-            transport.main_fallback,
-            ms(started.elapsed())
-        )
-    })?;
+    let attach = session
+        .attach(&pty_id, next_seq, false)
+        .await
+        .map_err(|error| {
+            format!(
+                "pty.attach 失败（主连接回退={}，{}）：{error}",
+                transport.main_fallback,
+                ms(started.elapsed())
+            )
+        })?;
     let first_seq = attach.chunks.first().and_then(|chunk| chunk.seq);
     let replay_bytes: usize = attach.chunks.iter().map(|chunk| chunk.data.len()).sum();
     let replay_text = strip_ansi(

@@ -48,6 +48,8 @@ export type TerminalAttachArgs = {
   cwd: string
   cols: number
   rows: number
+  /** 重启前持久化的续传序号；为空时 daemon 给屏幕快照。 */
+  fromSeq?: number | null
 }
 
 export function createTerminal(args: {

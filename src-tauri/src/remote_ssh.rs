@@ -6677,12 +6677,14 @@ pub async fn ssh_list_detached_terminals(
 
 /// 把本地标签接回一个仍由 daemon 托管的 PTY。
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn ssh_attach_terminal(
     id: String,
     pty_id: String,
     cwd: String,
     cols: u16,
     rows: u16,
+    from_seq: Option<u64>,
     app: AppHandle,
     manager: State<'_, SshManager>,
 ) -> Result<TerminalSpawnResult, String> {
@@ -6691,7 +6693,7 @@ pub async fn ssh_attach_terminal(
     if remote_uri_connection_id(&root.uri) != Some(parsed.connection_id.as_str()) {
         return Err("终端工作目录与 SSH 连接不匹配".to_string());
     }
-    server::attach_persistent_terminal(id, pty_id, root, cols, rows, app, &manager).await
+    server::attach_persistent_terminal(id, pty_id, root, cols, rows, from_seq, app, &manager).await
 }
 
 /// 项目从 QingCode 移除后注销对应根，并尽力结束其中仍由 daemon 托管的终端。

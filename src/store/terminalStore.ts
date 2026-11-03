@@ -62,7 +62,6 @@ import {
   shouldCancelReconnectOnInput,
   shouldKeepShellAfterExit,
 } from '@/lib/terminal/terminalShellLifecycle'
-import { requestTerminalReset } from '@/lib/terminal/terminalViewBridge'
 import { planTerminalSpawn } from '@/lib/terminal/terminalSpawnPlan'
 import {
   effectiveShellForTerminalName,
@@ -427,6 +426,16 @@ function addTerminalScreenListener(id: string, listener: TerminalScreenListener)
 }
 
 /**
+ * daemon 终端的续传序号：ring 里最后一个字节之后的输出序号，随输出一起持久化。
+ * 应用重启后接回时带给 daemon，只补发断线期间的输出（见 attachTerminal 的 fromSeq）。
+ */
+const terminalResumeSeqs = new Map<string, number>()
+
+function parseResumeSeq(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+/**
  * ring 里最近一次屏幕快照的位置：快照字节数与其后又追加的字节数。
  * 快照到达时视图可能还没挂载（本次启动后没打开过的项目），挂载回放时据此把快照
  * 交给视图按快照网格写入，而不是当普通字节写进当前网格。
@@ -441,10 +450,11 @@ const terminalRingScreens = new Map<
  * 所以交给视图按快照网格写入后再 fit 重绘（同 VS Code 处理 replay 事件）。ring 也追加
  * 快照字节，供持久化与尚未挂载的视图回放（见 subscribeTerminalOutput）。
  */
-function applyTerminalScreen(id: string, snapshot: TerminalViewSnapshot) {
+function applyTerminalScreen(id: string, snapshot: TerminalViewSnapshot, resumeSeq?: number) {
   // 先把批处理中的输出交给视图，保证快照排在它们之后。
   if (terminalPendingOutput.has(id)) flushTerminalOutput(id)
   const bytes = new TextEncoder().encode(snapshot.data)
+  if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
   touchRing(id, bytes)
   terminalRingScreens.set(id, { snapshot, size: bytes.length, after: 0 })
   terminalScreenListeners.get(id)?.forEach(listener => listener(snapshot))
@@ -452,14 +462,20 @@ function applyTerminalScreen(id: string, snapshot: TerminalViewSnapshot) {
 
 function parseTerminalScreenPayload(
   payload: unknown
-): ({ id: string } & TerminalViewSnapshot) | null {
+): ({ id: string; nextSeq?: number } & TerminalViewSnapshot) | null {
   if (!payload || typeof payload !== 'object') return null
   const record = payload as Record<string, unknown>
   const isSize = (value: unknown): value is number =>
     typeof value === 'number' && Number.isInteger(value) && value > 0
   if (typeof record.id !== 'string' || typeof record.data !== 'string') return null
   if (!isSize(record.cols) || !isSize(record.rows)) return null
-  return { id: record.id, data: record.data, cols: record.cols, rows: record.rows }
+  return {
+    id: record.id,
+    data: record.data,
+    cols: record.cols,
+    rows: record.rows,
+    nextSeq: parseResumeSeq(record.nextSeq),
+  }
 }
 
 /** ring 每次变化递增；持久化时只重新解码版本变化的终端。 */
@@ -554,10 +570,13 @@ function queueTerminalOutput(id: string, bytes: Uint8Array) {
   scheduleTerminalOutputFlush(id)
 }
 
-function publishTerminalOutput(id: string, data: unknown) {
+function publishTerminalOutput(id: string, data: unknown, nextSeq?: unknown) {
   const bytes = decodeTerminalEventData(data)
   if (!bytes) return
   recordPerformanceThroughput('terminalBytes', bytes.length)
+  // 与 ring 同步更新，持久化时两者对应同一时刻。
+  const resumeSeq = parseResumeSeq(nextSeq)
+  if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
   touchRing(id, bytes)
   const screen = terminalRingScreens.get(id)
   if (screen) screen.after += bytes.length
@@ -572,6 +591,7 @@ function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   useTerminalDraftStore.getState().clearDraft(id)
   terminalScrollbackRings.delete(id)
   terminalRingScreens.delete(id)
+  terminalResumeSeqs.delete(id)
   terminalPendingOutput.delete(id)
   cancelScheduledOutputFlush(id)
   terminalCommandHistory.delete(id)
@@ -583,25 +603,16 @@ function clearTerminalOutput(id: string, options?: { persist?: boolean }) {
   if (options?.persist !== false) scheduleTerminalOutputPersist()
 }
 
-/** Discard queued/previous replay bytes before a fresh daemon screen snapshot. */
-function prepareTerminalOutputForSnapshot(id: string) {
-  terminalPendingOutput.delete(id)
-  cancelScheduledOutputFlush(id)
-  terminalScrollbackRings.delete(id)
-  terminalRingScreens.delete(id)
-  terminalRingUpdatedAt.delete(id)
-  terminalRingVersions.delete(id)
-  terminalScrollbackTextCache.delete(id)
-  scheduleTerminalOutputPersist()
-}
-
 /** Seed live rings from durable storage (called during workspace hydrate). */
 export function seedTerminalOutputFromPersist(
   id: string,
   scrollback: string,
-  history: string[] = []
+  history: string[] = [],
+  resumeSeq?: number
 ) {
   if (scrollback) {
+    // 续传序号只对这份 scrollback 有意义，两者一起恢复。
+    if (resumeSeq !== undefined) terminalResumeSeqs.set(id, resumeSeq)
     const bytes = truncateScrollbackBytes(
       encodeScrollbackText(scrollback),
       getTerminalScrollback(),
@@ -624,7 +635,7 @@ export function hydrateTerminalOutputForTabs(terminalIds: Iterable<string>) {
   const wanted = new Set(terminalIds)
   for (const [id, entry] of Object.entries(snapshot.terminals)) {
     if (!wanted.has(id)) continue
-    seedTerminalOutputFromPersist(id, entry.scrollback, entry.history)
+    seedTerminalOutputFromPersist(id, entry.scrollback, entry.history, entry.seq)
   }
 }
 
@@ -672,10 +683,12 @@ export function subscribeTerminalOutput(
 
 function collectOutputPersistPayload(): Record<
   string,
-  { scrollback: string; history: string[]; updatedAt?: number }
+  { scrollback: string; history: string[]; updatedAt?: number; seq?: number }
 > {
-  const terminals: Record<string, { scrollback: string; history: string[]; updatedAt?: number }> =
-    {}
+  const terminals: Record<
+    string,
+    { scrollback: string; history: string[]; updatedAt?: number; seq?: number }
+  > = {}
   for (const tab of useTerminalStore.getState().terminals) {
     const scrollback = cachedScrollbackText(tab.id)
     const history = terminalCommandHistory.get(tab.id) ?? []
@@ -684,6 +697,7 @@ function collectOutputPersistPayload(): Record<
       scrollback,
       history,
       updatedAt: terminalRingUpdatedAt.get(tab.id),
+      seq: terminalResumeSeqs.get(tab.id),
     }
   }
   return terminals
@@ -2006,6 +2020,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
             cwd: restorePlan.cwd,
             cols: size.cols,
             rows: size.rows,
+            fromSeq: terminalResumeSeqs.get(id) ?? null,
           })
         } catch (error) {
           // Preserve the failed restore; never rerun the saved profile or task command.
@@ -2029,6 +2044,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         return
       }
       if (!spawnResult) {
+        // 新 PTY 的序号从头开始，旧续传序号作废。
+        terminalResumeSeqs.delete(id)
         const plan = planTerminalSpawn(tab)
         if (plan.mode === 'script') {
           spawnResult = await spawnTerminalScript({
@@ -2121,13 +2138,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       unlistenInputError,
       unlistenExit,
       unlistenConnection,
-      unlistenReset,
       unlistenScreen,
       unlistenPoolNotice,
     ] = await Promise.all([
-      listen<{ id: string; data: unknown }>('terminal-data', event => {
+      listen<{ id: string; data: unknown; nextSeq?: unknown }>('terminal-data', event => {
         if (get().terminals.some(terminal => terminal.id === event.payload.id)) {
-          publishTerminalOutput(event.payload.id, event.payload.data)
+          publishTerminalOutput(event.payload.id, event.payload.data, event.payload.nextSeq)
         }
       }),
       listen<{ id: string; message: string }>('terminal-input-error', event => {
@@ -2226,16 +2242,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           publishTerminalNotice(id, translate(plan.notice.key, plan.notice.values))
         }
       }),
-      listen<{ id?: unknown }>('terminal-reset', event => {
-        const id = event.payload?.id
-        if (typeof id !== 'string' || !get().terminals.some(terminal => terminal.id === id)) return
-        prepareTerminalOutputForSnapshot(id)
-        requestTerminalReset(id)
-      }),
       listen('terminal-screen', event => {
         const screen = parseTerminalScreenPayload(event.payload)
         if (!screen || !get().terminals.some(terminal => terminal.id === screen.id)) return
-        applyTerminalScreen(screen.id, { data: screen.data, cols: screen.cols, rows: screen.rows })
+        applyTerminalScreen(
+          screen.id,
+          { data: screen.data, cols: screen.cols, rows: screen.rows },
+          screen.nextSeq
+        )
       }),
       // server 模式终端共用 SSH 连接；已有连接按 sshd MaxSessions 占满、新开连接时提示。
       listen<{ message?: unknown }>('ssh-terminal-pool-notice', event => {
@@ -2250,7 +2264,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       unlistenExit()
       unlistenInputError()
       unlistenConnection()
-      unlistenReset()
       unlistenScreen()
       unlistenPoolNotice()
     }

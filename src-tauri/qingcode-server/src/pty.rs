@@ -368,6 +368,12 @@ impl TermScreen {
         }
     }
 
+    /// 是否停在备用屏幕（全屏 TUI）。解析器状态不可读时按普通屏幕处理。
+    fn alternate_screen(&self) -> bool {
+        let parser = &self.parser;
+        screen_guarded(|| parser.screen().alternate_screen()).unwrap_or(false)
+    }
+
     /// 屏幕快照（见 [`render_screen`]）。导出 panic 时重建解析器并返回空快照。
     fn render(&mut self) -> String {
         let parser = &self.parser;
@@ -774,7 +780,21 @@ impl PtyHost {
 
     /// 客户端接回终端。`from_seq` 仍被缓冲覆盖时只补缺失块，否则给屏幕快照。
     /// 无论哪条路径都会把终端标记为已接入（`detached = false`）。
+    #[cfg(test)]
     pub fn attach(&self, id: &str, from_seq: u64, client_id: &str) -> Result<AttachResult, String> {
+        self.attach_with(id, from_seq, client_id, false)
+    }
+
+    /// 同 [`Self::attach`]；`screen_on_alternate` 为真且终端停在全屏 TUI 时总给快照。
+    /// 应用重启后客户端网格与断线期间的 PTY 尺寸不一定相同，原样补发 TUI 的增量
+    /// 输出会错位；普通 Shell 的增量按行排版，照常补发。
+    pub fn attach_with(
+        &self,
+        id: &str,
+        from_seq: u64,
+        client_id: &str,
+        screen_on_alternate: bool,
+    ) -> Result<AttachResult, String> {
         let term = self.term(id)?;
         let mut state = lock(&term.state);
         if state
@@ -788,7 +808,8 @@ impl PtyHost {
         state.detached_at = None;
         state.owner = Some(client_id.to_string());
         let seq_end = state.ring.seq_end();
-        let (screen, replay) = if state.ring.can_replay(from_seq) {
+        let force_screen = screen_on_alternate && state.parser.alternate_screen();
+        let (screen, replay) = if !force_screen && state.ring.can_replay(from_seq) {
             (None, state.ring.replay(from_seq))
         } else {
             (Some(state.parser.render()), Vec::new())
@@ -1797,6 +1818,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn term_screen_reports_alternate_screen() {
+        let mut screen = TermScreen::new(24, 80, 0);
+        assert!(!screen.alternate_screen());
+        screen.process(b"[?1049h");
+        assert!(screen.alternate_screen());
+        screen.process(b"[?1049l");
+        assert!(!screen.alternate_screen());
+    }
+
+    #[test]
     fn screen_snapshot_restores_tui_buffer_and_input_modes_without_clipboard_actions() {
         let mut source = Parser::new(nonzero(24), nonzero(80), 0);
         source.process(b"\x1b[?1049h\x1b[?1002h\x1b[?1006h\x1b[?2004h\x1b[?1h\x1b=OpenCode / Claude\x1b]52;c;aGk=\x07");
@@ -2291,6 +2322,13 @@ mod tests {
         assert!(caught_up.replay.is_empty());
         assert!(caught_up.screen.is_none());
         assert_eq!(caught_up.seq_end, replay_all.seq_end);
+
+        // 普通 Shell 不在备用屏幕：要求「全屏时给快照」也照常补发增量。
+        let normal = host
+            .attach_with(&info.id, 0, "client-a", true)
+            .expect("attach 失败");
+        assert!(normal.screen.is_none());
+        assert!(!normal.replay.is_empty());
 
         // 序号超前（例如 daemon 重启后序号错乱）：退化为屏幕快照。
         let ahead = host
