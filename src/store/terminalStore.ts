@@ -111,7 +111,8 @@ export function resumeTerminalSpawnsAfterExit(): void {
   for (const tab of useTerminalStore.getState().terminals) {
     if (!tab.ptySpawnPending) continue
     schedulePtySpawnFallback(tab.id, () => {
-      void useTerminalStore.getState().spawnPendingTerminal(tab.id, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS)
+      const size = preferredSpawnSize(tab.id)
+      void useTerminalStore.getState().spawnPendingTerminal(tab.id, size.cols, size.rows)
     })
   }
 }
@@ -261,6 +262,28 @@ function clearPtySpawnFallback(id: string) {
 
 function rememberPtySize(id: string, cols: number, rows: number) {
   lastPtySize.set(id, normalizePtySize(cols, rows))
+}
+
+/**
+ * 已挂载且有真实尺寸的终端视图当前的字符网格（视图 fit 后登记，卸载时清除）。
+ * 应用重启后 lastPtySize 是空的，恢复/兜底启动若直接用 80x24，接回前对齐网格会把 PTY
+ * 真的改成 80x24：快照按 80x24 下发，视图要先缩到 80x24 写快照再 fit 回去，期间 TUI 按
+ * 实际尺寸的重绘若先到，就被裁在左上角 80x24 里（应用启动时界面繁忙、fit 推迟，
+ * 启动即接回的当前项目最容易碰上）。
+ */
+const terminalViewGrids = new Map<string, { cols: number; rows: number }>()
+
+export function setTerminalViewGrid(id: string, size: { cols: number; rows: number } | null) {
+  if (size) terminalViewGrids.set(id, normalizePtySize(size.cols, size.rows))
+  else terminalViewGrids.delete(id)
+}
+
+/** 启动/接回在拿不到视图 fit 回调时用的尺寸：视图网格 → 上次下发的尺寸 → 默认。 */
+function preferredSpawnSize(id: string): { cols: number; rows: number } {
+  return (
+    terminalViewGrids.get(id) ??
+    lastPtySize.get(id) ?? { cols: DEFAULT_PTY_COLS, rows: DEFAULT_PTY_ROWS }
+  )
 }
 
 function deferPtySync(id: string, update: { size?: { cols: number; rows: number }; redraw?: boolean }) {
@@ -1235,7 +1258,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     // Ensure the panel has a non-zero height before xterm fit → PTY spawn.
     useUIStore.getState().openTerminalPanel()
     schedulePtySpawnFallback(id, () => {
-      void get().spawnPendingTerminal(id, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS)
+      const size = preferredSpawnSize(id)
+      void get().spawnPendingTerminal(id, size.cols, size.rows)
     })
     return id
   },
@@ -1294,7 +1318,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }))
     useUIStore.getState().openTerminalPanel()
     schedulePtySpawnFallback(id, () => {
-      void get().spawnPendingTerminal(id, DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS)
+      const size = preferredSpawnSize(id)
+      void get().spawnPendingTerminal(id, size.cols, size.rows)
     })
     return id
   },
@@ -1616,12 +1641,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }))
       await Promise.all(
         pending.map(t => {
-          const remembered = lastPtySize.get(t.id)
-          return get().spawnPendingTerminal(
-            t.id,
-            remembered?.cols ?? DEFAULT_PTY_COLS,
-            remembered?.rows ?? DEFAULT_PTY_ROWS,
-          )
+          // 重启后 lastPtySize 为空：优先用已挂载视图的真实网格接回，快照与 TUI 重绘
+          // 才会与视图同一网格，视图不必先缩到默认尺寸写快照。
+          const size = preferredSpawnSize(t.id)
+          return get().spawnPendingTerminal(t.id, size.cols, size.rows)
         }),
       )
     } finally {

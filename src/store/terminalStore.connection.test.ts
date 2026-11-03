@@ -74,7 +74,7 @@ vi.mock('./uiStore', () => ({
   },
 }))
 
-import { pauseTerminalSpawnsForExit, resumeTerminalSpawnsAfterExit, subscribeTerminalOutput, useTerminalStore } from './terminalStore'
+import { pauseTerminalSpawnsForExit, resumeTerminalSpawnsAfterExit, setTerminalViewGrid, subscribeTerminalOutput, useTerminalStore } from './terminalStore'
 import { activeTerminalsForConfig, findRunLinkageForTerminal } from '@/lib/runConfigRuntime'
 import { buildWorkspaceSessionSnapshot, parseWorkspaceSession } from '@/lib/workspaceSessionPersist'
 import { terminalFromPersisted } from '@/lib/workspaceSessionRestore'
@@ -359,6 +359,32 @@ describe('terminal persistent connection events', () => {
       expect.objectContaining({ ptyId: 'pty-restored' }),
     )
     expect(mocks.killTerminal).not.toHaveBeenCalled()
+  })
+
+  it('attaches a restored PTY with the mounted view grid instead of the 80x24 default', async () => {
+    mocks.attachTerminal.mockResolvedValue({ persistent: true, ptyId: 'pty-restored', connectionId: 'conn' })
+    const restored = terminal({
+      status: 'exited',
+      persistent: true,
+      ptyId: 'pty-restored',
+      connectionId: 'conn',
+      awaitingRestoreSpawn: true,
+    })
+    // 重启后 lastPtySize 为空：已挂载视图的网格优先，快照与 TUI 重绘才会与视图同一网格。
+    setTerminalViewGrid('t1', { cols: 183, rows: 52 })
+    useTerminalStore.setState({ terminals: [restored] })
+    await useTerminalStore.getState().spawnRestoredTerminals('p1')
+    expect(mocks.attachTerminal).toHaveBeenLastCalledWith(
+      expect.objectContaining({ ptyId: 'pty-restored', cols: 183, rows: 52 }),
+    )
+
+    // 视图卸载后没有可用网格，才退回默认尺寸。
+    setTerminalViewGrid('t1', null)
+    useTerminalStore.setState({ terminals: [{ ...restored, id: 't2' }] })
+    await useTerminalStore.getState().spawnRestoredTerminals('p1')
+    expect(mocks.attachTerminal).toHaveBeenLastCalledWith(
+      expect.objectContaining({ id: 't2', cols: 80, rows: 24 }),
+    )
   })
 
   it('kills a restored daemon PTY when its tab closes before the first attach', async () => {

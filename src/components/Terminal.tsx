@@ -11,6 +11,7 @@ import { openUrl } from '@tauri-apps/plugin-opener'
 import {
   consumeTerminalDisconnectNotice,
   hasTerminalScrollback,
+  setTerminalViewGrid,
   subscribeTerminalOutput,
   useTerminalStore,
 } from '../store/terminalStore'
@@ -487,13 +488,15 @@ export default function TerminalView({
 
   const commitGridSize = useCallback((next: TerminalGridSize) => {
     const term = xtermRef.current
+    // next 总是按容器算出的网格：登记给 store，恢复/兜底启动按它接回而不是默认 80x24。
+    if (term) setTerminalViewGrid(terminalId, next)
     if (!term || !terminalGridSizeChanged({ cols: term.cols, rows: term.rows }, next)) return false
     // 快照解析完会补一次 fit（见下方 onScreen），这里先不动网格。
     if (screenWriteLockRef.current > 0) return false
     // 直接 resize 便于准确判断是否需要等待下方的 onRender 屏障。
     term.resize(next.cols, next.rows)
     return true
-  }, [])
+  }, [terminalId])
 
   const readProposedGridSize = useCallback((): TerminalGridSize | undefined => {
     const container = containerRef.current
@@ -1155,6 +1158,7 @@ export default function TerminalView({
       container.replaceChildren()
       xtermRef.current = null
       searchAddonRef.current = null
+      setTerminalViewGrid(terminalId, null)
     }
   }, [
     clearBuffer,
@@ -1284,9 +1288,19 @@ export default function TerminalView({
           term.writeln(`\r\n\x1b[90m[${detail}${translate('，可从终端标签重启')}]\x1b[0m`)
         }
       })()
+    } else if (
+      terminal.status === 'running' &&
+      previous === 'starting' &&
+      term.buffer.active.type === 'alternate'
+    ) {
+      // 接回在途期间视图要的重绘会被并进「补一次 resize」，而这次 resize 引起的 TUI 重绘
+      // 可能赶在视图 fit 回自身网格之前、按快照网格解析成残缺画面。接回完成后由视图在
+      // 网格就绪时（flushPendingRedraw 会等快照解析完）再整屏重绘一次。
+      redrawPendingRef.current = true
+      scheduleFit(true, false)
     }
     previousStatusRef.current = terminal.status
-  }, [terminal, terminalId])
+  }, [scheduleFit, terminal, terminalId])
 
   useEffect(() => {
     if (!isTauri()) return
