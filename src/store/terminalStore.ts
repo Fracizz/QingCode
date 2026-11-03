@@ -265,6 +265,51 @@ function rememberPtySize(id: string, cols: number, rows: number) {
 }
 
 /**
+ * 同一 PTY 两次改尺寸的最小间隔。ConPTY 下的全屏 TUI（OpenCode 实测约 100ms）要过一会
+ * 才响应尺寸变化：中间尺寸停留太短时 TUI 来不及按它重画，conhost 却已按它裁掉缓冲区，
+ * 回到原尺寸后 TUI 的差量渲染认为画面没变、不再重画，于是整屏错位且再抖动也修不回来。
+ * 实测 80ms 不够、150ms 可以，留余量取 300ms（与视图侧 resize 合并窗口一致）。
+ */
+const PTY_RESIZE_MIN_GAP_MS = 300
+/** 每个终端最近一次真正改动 PTY 尺寸的时间（新建/接回按请求尺寸算一次）。 */
+const ptySizeChangedAt = new Map<string, number>()
+/** 等待间隔期间排队的尺寸：只保留最新的一次。 */
+const pacedPtyResizes = new Map<string, { size: { cols: number; rows: number }; done: Promise<void> }>()
+
+function markPtySizeChanged(id: string) {
+  ptySizeChangedAt.set(id, Date.now())
+}
+
+function ptyResizeWaitMs(id: string): number {
+  const last = ptySizeChangedAt.get(id)
+  if (last === undefined) return 0
+  // 封顶：系统时钟回拨时不至于等出远超间隔的时长。
+  return Math.min(PTY_RESIZE_MIN_GAP_MS, Math.max(0, last + PTY_RESIZE_MIN_GAP_MS - Date.now()))
+}
+
+/** 按最小间隔把尺寸交给 PTY；间隔内再来的尺寸合并成最新一次。 */
+function sendPtySizePaced(id: string, size: { cols: number; rows: number }): Promise<void> {
+  const queued = pacedPtyResizes.get(id)
+  if (queued) {
+    queued.size = size
+    return queued.done
+  }
+  const wait = ptyResizeWaitMs(id)
+  if (wait === 0) {
+    markPtySizeChanged(id)
+    return resizeTerminal(id, size.cols, size.rows)
+  }
+  const entry = { size, done: Promise.resolve() }
+  entry.done = new Promise<void>(resolve => setTimeout(resolve, wait)).then(() => {
+    pacedPtyResizes.delete(id)
+    markPtySizeChanged(id)
+    return resizeTerminal(id, entry.size.cols, entry.size.rows)
+  })
+  pacedPtyResizes.set(id, entry)
+  return entry.done
+}
+
+/**
  * 已挂载且有真实尺寸的终端视图当前的字符网格（视图 fit 后登记，卸载时清除）。
  * 应用重启后 lastPtySize 是空的，恢复/兜底启动若直接用 80x24，接回前对齐网格会把 PTY
  * 真的改成 80x24：快照按 80x24 下发，视图要先缩到 80x24 写快照再 fit 回去，期间 TUI 按
@@ -299,13 +344,15 @@ function deferPtySync(id: string, update: { size?: { cols: number; rows: number 
  * 否则只在接回时补一次重绘。
  */
 export function planDeferredPtySync(
-  spawned: { cols: number; rows: number },
+  spawned: { cols: number; rows: number } | null,
   deferred: { size?: { cols: number; rows: number }; redraw?: boolean } | undefined,
   attached: boolean
 ): { action: 'resize' | 'redraw'; cols: number; rows: number } | null {
   if (!deferred) return null
   const size = deferred.size ?? spawned
-  if (size.cols !== spawned.cols || size.rows !== spawned.rows) {
+  // 沿用 PTY 尺寸接回（spawned 为空）且期间没有视图网格：等视图 fit 后自然下发。
+  if (!size) return null
+  if (!spawned || size.cols !== spawned.cols || size.rows !== spawned.rows) {
     return { action: 'resize', ...size }
   }
   return deferred.redraw && attached ? { action: 'redraw', ...size } : null
@@ -2052,7 +2099,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (previous && previous.cols === size.cols && previous.rows === size.rows) return
     rememberPtySize(id, size.cols, size.rows)
     try {
-      await resizeTerminal(id, size.cols, size.rows)
+      await sendPtySizePaced(id, size)
     } catch (error) {
       // 没下发成功就退回上一次的尺寸，否则同尺寸的重试会被上面的去重吞掉。
       // 没有上一次（PTY 还没起来）时保留：spawn 会直接按这个尺寸创建。
@@ -2076,8 +2123,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (!tab || tab.status === 'exited' || tab.ptySpawnPending) return false
     if (size.rows < 2) return false
     try {
-      await resizeTerminal(id, size.cols, size.rows - 1)
-      await resizeTerminal(id, size.cols, size.rows)
+      // 两步之间按 PTY_RESIZE_MIN_GAP_MS 隔开：紧挨着发时 TUI 来不及响应中间尺寸，
+      // 不但重绘不出来，conhost 还会裁掉最后一行，反而把画面弄坏。
+      const before = lastPtySize.get(id)
+      await sendPtySizePaced(id, { cols: size.cols, rows: size.rows - 1 })
+      // 等待期间视图已下发了新尺寸（真实 resize 本身就会整屏重绘），不要再改回旧网格。
+      if (lastPtySize.get(id) !== before) return true
+      await sendPtySizePaced(id, size)
       rememberPtySize(id, size.cols, size.rows)
       return true
     } catch (error) {
@@ -2112,15 +2164,22 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     try {
       let spawnResult: TerminalSpawnResult | undefined
       let attached = false
+      let attachSize: { cols: number; rows: number } | null = null
       const restorePlan = planTerminalRestore(tab)
       if (restorePlan.mode === 'attach') {
+        // 接回的是正在运行的进程：只按视图实测网格对齐，拿不到就沿用 PTY 现有尺寸，
+        // 等视图 fit 后再下发一次真实尺寸（同 VS Code）。用猜的尺寸（默认 80x24）接回
+        // 会把 PTY 先缩小再撑回：ConPTY 缩小时截掉的内容，TUI 因尺寸复原不会重画。
+        attachSize = terminalViewGrids.get(id) ?? null
+        if (attachSize) rememberPtySize(id, attachSize.cols, attachSize.rows)
+        else lastPtySize.delete(id)
         try {
           spawnResult = await attachTerminal({
             id,
             ptyId: restorePlan.ptyId,
             cwd: restorePlan.cwd,
-            cols: size.cols,
-            rows: size.rows,
+            cols: attachSize?.cols ?? null,
+            rows: attachSize?.rows ?? null,
             fromSeq: terminalResumeSeqs.get(id) ?? null,
           })
           attached = true
@@ -2190,6 +2249,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       // 以后端结果为准：接回失败回退新建时可能是直连终端（persistent=false），
       // 不能沿用旧 ptyId，否则断线提示消失、下次重启又去接回已失效的 PTY。
       applyTerminalSpawnResult(id, spawnResult)
+      // 新建按请求尺寸起进程、接回前也按它对齐过网格：紧随其后的 resize 同样要隔开。
+      markPtySizeChanged(id)
     const spawnedTab = get().terminals.find(terminal => terminal.id === id)
     if (spawnedTab) recordTerminalDiagnostic('terminal.spawned', spawnedTab)
       set(s => ({
@@ -2207,7 +2268,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }))
       // 先解除在途标记，补发的 resize/重绘才会真正下发。
       ptySpawnInFlight.delete(id)
-      const deferred = planDeferredPtySync(size, deferredPtySync.get(id), attached)
+      // 新建按 size 创建；接回按实测网格对齐，沿用 PTY 尺寸时本端不知道它的尺寸。
+      const deferred = planDeferredPtySync(
+        attached ? attachSize : size,
+        deferredPtySync.get(id),
+        attached
+      )
       deferredPtySync.delete(id)
       if (deferred?.action === 'resize') {
         void get().resizeTerminal(id, deferred.cols, deferred.rows)

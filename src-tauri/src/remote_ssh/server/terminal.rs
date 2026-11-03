@@ -359,6 +359,9 @@ struct TerminalScreenPayload {
 /// daemon 因此直接给屏幕快照而不是从头重放。原始历史是在多种 PTY 尺寸下产生的，
 /// 按当前尺寸整段重放会把全屏 TUI 画花；快照则是 daemon 当前排好的屏幕。
 const COLD_ATTACH_FROM_SEQ: u64 = u64::MAX;
+/// 沿用 PTY 尺寸接回、而旧 daemon 又没回报尺寸时的兜底网格（只记账，不下发）。
+const DEFAULT_ATTACH_COLS: u16 = 80;
+const DEFAULT_ATTACH_ROWS: u16 = 24;
 
 /// `pty.list` 中 P3 需要的字段；owner/cwd 对旧 daemon 可缺省。
 #[derive(Debug, Clone, Deserialize)]
@@ -1012,8 +1015,7 @@ pub(crate) async fn attach_persistent_terminal(
     id: String,
     pty_id: String,
     root: RegisteredRoot,
-    cols: u16,
-    rows: u16,
+    size: Option<(u16, u16)>,
     from_seq: Option<u64>,
     app: AppHandle,
     manager: &SshManager,
@@ -1021,7 +1023,7 @@ pub(crate) async fn attach_persistent_terminal(
     if pty_id.trim().is_empty() {
         return Err("ptyId 不能为空".to_string());
     }
-    if cols == 0 || rows == 0 {
+    if size.is_some_and(|(cols, rows)| cols == 0 || rows == 0) {
         return Err("终端尺寸必须大于 0".to_string());
     }
     let parsed = parse_remote_uri(&root.uri)?;
@@ -1074,7 +1076,15 @@ pub(crate) async fn attach_persistent_terminal(
     // 没有序号或已被淘汰时 daemon 给快照。停在全屏 TUI 时总要快照：重启后网格可能变了，
     // 原样补发 TUI 的增量会错位。
     let from_seq = from_seq.unwrap_or(COLD_ATTACH_FROM_SEQ);
-    let presized = presize_before_attach(&session, &id, &pty_id, (cols, rows)).await;
+    // 没有视图实测网格（size 为 None）时不碰 PTY 尺寸：拿猜的尺寸（如 80x24）接回会把
+    // 正在运行的 PTY 先缩小、等视图 fit 后再撑回。ConPTY 缩小时会截掉自己屏幕缓冲里
+    // 超出的部分，而尺寸很快复原时 OpenCode 等 TUI 认为尺寸没变、不会整屏重画，画面就
+    // 永久残缺错位（daemon 自己的屏幕也一样）。这时沿用 PTY 现有尺寸，快照也按它下发，
+    // 由视图 fit 后的那一次真实 resize 让 TUI 重画（同 VS Code 接回时只下发实测尺寸）。
+    let presized = match size {
+        Some(size) => presize_before_attach(&session, &id, &pty_id, size).await,
+        None => false,
+    };
     let attach = match session.attach(&pty_id, from_seq, true).await {
         Ok(attach) => attach,
         Err(error) if attach_terminal_is_gone(&error) => {
@@ -1114,6 +1124,10 @@ pub(crate) async fn attach_persistent_terminal(
         return Err("daemon 会话事件流已初始化".to_string());
     };
 
+    // 沿用 PTY 现有尺寸时以 daemon 回报为准，断线重连也按它对齐。
+    let (cols, rows) = size.unwrap_or_else(|| {
+        attach_screen_size(&attach.response, (DEFAULT_ATTACH_COLS, DEFAULT_ATTACH_ROWS))
+    });
     let (command_tx, command_rx) = mpsc::channel(8);
     let terminal = Arc::new(PersistentTerminal {
         id: id.clone(),
@@ -1148,8 +1162,9 @@ pub(crate) async fn attach_persistent_terminal(
             return Err(error);
         }
     };
-    // attach 前已按本网格 resize 的不再重复下发，免得 ConPTY 再整屏重绘一次。
-    if !presized {
+    // attach 前已按本网格 resize 的不再重复下发，免得 ConPTY 再整屏重绘一次；
+    // 沿用 PTY 尺寸接回时什么都不下发。
+    if size.is_some() && !presized {
         if let Err(error) = resize_session(&session, &pty_id, cols, rows).await {
             // 尺寸下发失败不影响接回：交给会话循环稍后重试。
             eprintln!("[WARN] persistent terminal {id} resize after attach failed: {error}");

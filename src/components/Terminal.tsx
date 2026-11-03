@@ -603,9 +603,11 @@ export default function TerminalView({
     pendingPtySizeRef.current = null
     const startedAt = Date.now()
     ptyResizeSentAtRef.current = startedAt
+    // 重绘分两步、中间隔开（见 store 的 PTY_RESIZE_MIN_GAP_MS）：从最后一步下发后才开始
+    // 等输出安静，免得第一步的回包一安静就揭开，露出中间尺寸的那一帧。
     void redrawTerminal(terminalId, term.cols, term.rows)
       .catch(() => false)
-      .then(sent => revealAfterRedraw(startedAt, sent))
+      .then(sent => revealAfterRedraw(sent ? Date.now() : startedAt, sent))
   }, [clearPtyResizeTimer, redrawTerminal, revealAfterRedraw, terminalId])
 
   const fitNow = useCallback(

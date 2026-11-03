@@ -257,12 +257,13 @@ describe('terminal persistent connection events', () => {
 
     await useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
 
+    // 视图还没量出网格：沿用 PTY 现有尺寸接回，不拿调用方猜的尺寸去改正在运行的进程。
     expect(mocks.attachTerminal).toHaveBeenCalledWith({
       id: 't1',
       ptyId: 'pty-1',
       cwd: 'ssh://conn/home/app',
-      cols: 100,
-      rows: 30,
+      cols: null,
+      rows: null,
       fromSeq: null,
     })
     expect(mocks.createTerminal).not.toHaveBeenCalled()
@@ -288,13 +289,22 @@ describe('terminal persistent connection events', () => {
       ptySpawnPending: true,
     })
     useTerminalStore.setState({ terminals: [restoring] })
+    setTerminalViewGrid('t1', { cols: 100, rows: 30 })
     const spawning = useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
     // 后端尚未登记终端：重绘与 resize 都不能下发，否则失败后被去重吞掉。
     expect(await useTerminalStore.getState().redrawTerminal('t1', 100, 30)).toBe(false)
     expect(mocks.resizeTerminal).not.toHaveBeenCalled()
     complete({ persistent: true, ptyId: 'pty-1', connectionId: 'conn' })
     await spawning
+    // 重绘两步与接回前的对齐之间都要隔开 300ms：紧挨着改尺寸时 ConPTY 下的 TUI
+    // 来不及响应中间尺寸，画面会被永久裁坏（OpenCode 实测）。
     await vi.advanceTimersByTimeAsync(0)
+    expect(mocks.resizeTerminal).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(300)
+    expect(mocks.resizeTerminal.mock.calls).toEqual([['t1', 100, 29]])
+    await vi.advanceTimersByTimeAsync(299)
+    expect(mocks.resizeTerminal.mock.calls).toEqual([['t1', 100, 29]])
+    await vi.advanceTimersByTimeAsync(1)
     expect(mocks.resizeTerminal.mock.calls).toEqual([
       ['t1', 100, 29],
       ['t1', 100, 30],
@@ -310,8 +320,39 @@ describe('terminal persistent connection events', () => {
     expect(mocks.resizeTerminal).not.toHaveBeenCalled()
     complete({ persistent: true, ptyId: 'pty-1', connectionId: 'conn' })
     await again
-    await vi.advanceTimersByTimeAsync(0)
+    await vi.advanceTimersByTimeAsync(300)
     expect(mocks.resizeTerminal.mock.calls).toEqual([['t1', 120, 40]])
+
+    // 沿用 PTY 尺寸接回时本端不知道 PTY 尺寸：在途期间量出的网格接回后一定下发。
+    setTerminalViewGrid('t1', null)
+    mocks.resizeTerminal.mockClear()
+    mocks.attachTerminal.mockImplementationOnce(() => new Promise(resolve => { complete = resolve }))
+    useTerminalStore.setState({ terminals: [restoring] })
+    const unsized = useTerminalStore.getState().spawnPendingTerminal('t1', 100, 30)
+    await useTerminalStore.getState().resizeTerminal('t1', 100, 30)
+    complete({ persistent: true, ptyId: 'pty-1', connectionId: 'conn' })
+    await unsized
+    await vi.advanceTimersByTimeAsync(300)
+    expect(mocks.resizeTerminal.mock.calls).toEqual([['t1', 100, 30]])
+  })
+
+  it('spaces PTY size changes and keeps only the latest size queued inside the gap', async () => {
+    mocks.resizeTerminal.mockClear()
+    useTerminalStore.setState({ terminals: [terminal({ id: 'pace', status: 'running' })] })
+    const store = useTerminalStore.getState()
+    await store.resizeTerminal('pace', 100, 30)
+    expect(mocks.resizeTerminal.mock.calls).toEqual([['pace', 100, 30]])
+    // 间隔内的中间尺寸若真下发，ConPTY 会按它裁掉缓冲区而 TUI 来不及重画：只发最新的。
+    const first = store.resizeTerminal('pace', 80, 24)
+    const second = store.resizeTerminal('pace', 120, 40)
+    await vi.advanceTimersByTimeAsync(299)
+    expect(mocks.resizeTerminal.mock.calls).toEqual([['pace', 100, 30]])
+    await vi.advanceTimersByTimeAsync(1)
+    await Promise.all([first, second])
+    expect(mocks.resizeTerminal.mock.calls).toEqual([
+      ['pace', 100, 30],
+      ['pace', 120, 40],
+    ])
   })
 
   it('resumes a restored daemon PTY from the last output sequence it received', async () => {
@@ -378,13 +419,19 @@ describe('terminal persistent connection events', () => {
       expect.objectContaining({ ptyId: 'pty-restored', cols: 183, rows: 52 }),
     )
 
-    // 视图卸载后没有可用网格，才退回默认尺寸。
+    // 没有可用网格时不传尺寸：默认 80x24 会把运行中的 TUI 先缩小再撑回，ConPTY 截掉的
+    // 内容不会被重画。视图之后量出的网格照常下发，不被猜测尺寸的去重吞掉。
     setTerminalViewGrid('t1', null)
+    mocks.resizeTerminal.mockClear()
     useTerminalStore.setState({ terminals: [{ ...restored, id: 't2' }] })
     await useTerminalStore.getState().spawnRestoredTerminals('p1')
     expect(mocks.attachTerminal).toHaveBeenLastCalledWith(
-      expect.objectContaining({ id: 't2', cols: 80, rows: 24 }),
+      expect.objectContaining({ id: 't2', cols: null, rows: null }),
     )
+    const resizing = useTerminalStore.getState().resizeTerminal('t2', 80, 24)
+    await vi.advanceTimersByTimeAsync(300)
+    await resizing
+    expect(mocks.resizeTerminal).toHaveBeenCalledWith('t2', 80, 24)
   })
 
   it('kills a restored daemon PTY when its tab closes before the first attach', async () => {
@@ -627,8 +674,8 @@ describe('terminal persistent connection events', () => {
       expect.objectContaining({
         ptyId: 'pty-orphan',
         cwd: project.path,
-        cols: 120,
-        rows: 40,
+        cols: null,
+        rows: null,
       }),
     )
     expect(
@@ -749,7 +796,10 @@ describe('terminal persistent connection events', () => {
     const task = exitedTask({ cwd, persistent, ptyId: persistent ? 'old-task-pty' : undefined })
     mocks.createTerminal.mockResolvedValue({ persistent, ptyId: persistent ? 'shell-pty' : undefined })
     emit('terminal-data', { id: task.id, data: Array.from(new TextEncoder().encode('Address already in use\r\n')) })
-    await useTerminalStore.getState().resizeTerminal(task.id, 110, 35)
+    // PTY 尺寸变更按最小间隔节流：推进定时器让排队的 resize 下发。
+    const resizing = useTerminalStore.getState().resizeTerminal(task.id, 110, 35)
+    await vi.advanceTimersByTimeAsync(300)
+    await resizing
 
     await useTerminalStore.getState().writeToTerminal(task.id, '\x03')
     await vi.advanceTimersByTimeAsync(0)

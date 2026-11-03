@@ -854,7 +854,20 @@ impl Daemon {
     /// 重放流已经全部入队后调用：排空重放期间积累的实时事件。
     /// 每次取出 pending 时保持 `Draining`，所以排空过程中新到的事件仍会排队，
     /// 不会在上一批事件尚未入队时直接走 live 路径。
-    fn finish_attach_replay(&self, pty_id: &str, conn_id: u32) {
+    ///
+    /// pending 最多可积累 2MB、远超发送队列的帧数（例如接回前的 resize 让全屏 TUI
+    /// 整屏重绘、Claude Code 重排整段历史）。这里必须等队列腾出容量再发，
+    /// 不能 try_send 一满就断开，否则接回刚完成就被自己断掉、永远接不回。
+    async fn finish_attach_replay(&self, pty_id: &str, conn_id: u32) {
+        let Some(outbound) = self
+            .conns
+            .lock()
+            .unwrap()
+            .get(&conn_id)
+            .map(|handle| handle.outbound.clone())
+        else {
+            return;
+        };
         loop {
             let pending = {
                 let mut routes = self.routes.lock().unwrap();
@@ -878,9 +891,10 @@ impl Daemon {
                 }
                 pending
             };
-            for outbound in pending {
-                if !self.send_to_conn(conn_id, outbound.priority, outbound.frame) {
-                    self.disconnect_conn(conn_id);
+            for item in pending {
+                if !outbound.send_async(item.priority, item.frame).await {
+                    // 连接已关闭或正在关闭：交给连接清理把终端标回 detached。
+                    outbound.abort();
                     return;
                 }
             }
@@ -2182,7 +2196,7 @@ async fn pty_method(daemon: Arc<Daemon>, conn: ConnCtx, request: Request) {
                 },
             );
             if ok {
-                daemon.finish_attach_replay(&params.id, conn.conn_id);
+                daemon.finish_attach_replay(&params.id, conn.conn_id).await;
             } else {
                 daemon.clear_route_for_conn(&params.id, conn.conn_id);
             }
@@ -2472,8 +2486,8 @@ mod tests {
     /// attach 快照返回 `seq_end = 3` 的同时，读线程正试图投递 seq 3。
     /// 事件必须等 routes 锁释放后进入 pending，重放结束后按 2、3、4 连续
     /// 投递；attach 前已进入事件队列的 0/1/2 只能由重放提供一次。
-    #[test]
-    fn attach_handoff_keeps_cutover_event_once_and_in_sequence() {
+    #[tokio::test]
+    async fn attach_handoff_keeps_cutover_event_once_and_in_sequence() {
         let (daemon, mut conn_rx, run_dir) = route_test_daemon("attach-handoff");
         let pty_id = "pty-handoff";
         let conn_id = 41;
@@ -2554,7 +2568,7 @@ mod tests {
                 .unwrap(),
             ),
         );
-        daemon.finish_attach_replay(pty_id, conn_id);
+        daemon.finish_attach_replay(pty_id, conn_id).await;
 
         // 切换到 live 后继续从 seq 4 投递，不应有任何空洞。
         assert_eq!(
@@ -2571,6 +2585,75 @@ mod tests {
         assert_eq!(routed_pty_data(&live), Some((4, b"live".to_vec())));
         assert!(conn_rx.try_recv().is_err(), "同一 PTY 输出被重复投递");
 
+        let _ = std::fs::remove_dir_all(run_dir.dir());
+    }
+
+    /// 接回前的 resize 会让全屏 TUI 整屏重绘，重放期间 pending 的帧数可能远超发送
+    /// 队列容量。排空时必须等队列腾出空间，不能一满就断开连接。
+    #[tokio::test]
+    async fn attach_drain_waits_for_queue_capacity_instead_of_disconnecting() {
+        let (daemon, mut conn_rx, run_dir) = route_test_daemon("attach-drain-burst");
+        let pty_id = "pty-burst";
+        let conn_id = 41;
+        daemon
+            .install_attach_route(pty_id, conn_id, || {
+                Ok(crate::pty::AttachResult {
+                    screen: None,
+                    replay: Vec::new(),
+                    seq_end: 0,
+                    cols: 80,
+                    rows: 24,
+                    next_input_seq: 0,
+                    exited: None,
+                })
+            })
+            .unwrap();
+        // 测试连接的数据队列只有 8 帧，pending 放 40 帧。
+        let burst = 40u64;
+        for seq in 0..burst {
+            assert_eq!(
+                daemon.dispatch_pty_data(
+                    pty_id,
+                    seq,
+                    vec![pty_data_outbound(pty_id, seq, b"redraw")]
+                ),
+                RouteDataOutcome::Queued
+            );
+        }
+        let reader = tokio::spawn(async move {
+            let mut seqs = Vec::new();
+            while seqs.len() < burst as usize {
+                let frame = conn_rx.recv().await.expect("连接队列被提前关闭").frame;
+                if let Some((seq, _)) = routed_pty_data(&frame) {
+                    seqs.push(seq);
+                }
+            }
+            seqs
+        });
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            daemon.finish_attach_replay(pty_id, conn_id),
+        )
+        .await
+        .expect("排空 pending 卡住");
+        let seqs = reader.await.unwrap();
+        assert_eq!(seqs, (0..burst).collect::<Vec<_>>());
+        let closing = daemon
+            .conns
+            .lock()
+            .unwrap()
+            .get(&conn_id)
+            .map(|handle| handle.outbound.closing.load(Ordering::SeqCst));
+        assert_eq!(closing, Some(false), "排空 pending 不应断开连接");
+        assert_eq!(
+            daemon
+                .routes
+                .lock()
+                .unwrap()
+                .get(pty_id)
+                .map(|route| route.phase),
+            Some(RoutePhase::Live)
+        );
         let _ = std::fs::remove_dir_all(run_dir.dir());
     }
 

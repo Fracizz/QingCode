@@ -46,8 +46,12 @@ export type TerminalAttachArgs = {
   ptyId: string
   /** SSH resource URI under a registered workspace root. */
   cwd: string
-  cols: number
-  rows: number
+  /**
+   * 视图实测网格。为空时沿用远端 PTY 现有尺寸接回、不先改尺寸：拿猜的尺寸接回会把
+   * 正在运行的全屏 TUI 先缩小再撑回，ConPTY 截掉的内容不会被重画。
+   */
+  cols: number | null
+  rows: number | null
   /** 重启前持久化的续传序号；为空时 daemon 给屏幕快照。 */
   fromSeq?: number | null
 }

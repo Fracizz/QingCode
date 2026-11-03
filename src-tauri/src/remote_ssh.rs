@@ -6684,8 +6684,9 @@ pub async fn ssh_attach_terminal(
     id: String,
     pty_id: String,
     cwd: String,
-    cols: u16,
-    rows: u16,
+    // 视图实测网格；缺省时沿用 PTY 现有尺寸接回，不先改尺寸（见 attach_persistent_terminal）。
+    cols: Option<u16>,
+    rows: Option<u16>,
     from_seq: Option<u64>,
     app: AppHandle,
     manager: State<'_, SshManager>,
@@ -6695,7 +6696,8 @@ pub async fn ssh_attach_terminal(
     if remote_uri_connection_id(&root.uri) != Some(parsed.connection_id.as_str()) {
         return Err("终端工作目录与 SSH 连接不匹配".to_string());
     }
-    server::attach_persistent_terminal(id, pty_id, root, cols, rows, from_seq, app, &manager).await
+    let size = cols.zip(rows);
+    server::attach_persistent_terminal(id, pty_id, root, size, from_seq, app, &manager).await
 }
 
 /// 项目从 QingCode 移除后注销对应根，并尽力结束其中仍由 daemon 托管的终端。
