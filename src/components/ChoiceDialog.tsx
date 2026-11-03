@@ -13,6 +13,12 @@ export default function ChoiceDialog() {
   if (!request) return null
 
   const markdownDetail = Boolean(request.detailMarkdown && request.detail)
+  const wideActions = request.wideActions
+  const panelLayout = markdownDetail
+    ? 'flex max-h-[80vh] max-w-[min(90vw,640px)] flex-col overflow-hidden'
+    : wideActions
+      ? 'max-h-[calc(100dvh-2rem)] max-w-[560px] overflow-y-auto'
+      : 'max-w-[460px]'
 
   return (
     <ModalOverlay onDismiss={() => answer(null)} zIndex={INTERRUPT_MODAL_Z}>
@@ -21,11 +27,7 @@ export default function ChoiceDialog() {
         aria-modal="true"
         aria-labelledby="choice-title"
         aria-describedby="choice-message"
-        className={
-          markdownDetail
-            ? 'modal-content-enter relative flex max-h-[80vh] w-full max-w-[min(90vw,640px)] flex-col overflow-hidden rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3'
-            : 'modal-content-enter relative w-full max-w-[460px] rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3'
-        }
+        className={`modal-content-enter relative w-full rounded-lg border border-border-strong bg-bg-elevated shadow-elevation-3 ${panelLayout} ${wideActions ? '@container/choice text-ui' : ''}`}
       >
         <div className={`flex gap-3.5 px-5 pt-5 pb-4 ${markdownDetail ? 'flex-shrink-0' : ''}`}>
           <div className="mt-0.5 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full border border-border/60 bg-warn/10 text-warn">
@@ -53,7 +55,11 @@ export default function ChoiceDialog() {
           </div>
         )}
         <div
-          className={`flex flex-wrap justify-end gap-2 border-t border-border px-5 py-3.5 bg-bg-deep/20 rounded-b-lg ${
+          className={`flex gap-2 border-t border-border px-5 py-3.5 bg-bg-deep/20 rounded-b-lg ${
+            wideActions
+              ? 'flex-col [overflow-wrap:anywhere] @min-[32em]/choice:flex-row @min-[32em]/choice:justify-end'
+              : 'flex-wrap justify-end'
+          } ${
             markdownDetail ? 'flex-shrink-0' : ''
           }`}
         >

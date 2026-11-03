@@ -14,6 +14,8 @@ export interface ChoiceRequest {
   detail?: string
   /** When true, render `detail` as GFM Markdown in a scrollable pane. */
   detailMarkdown?: boolean
+  /** Give long action labels a wider footer that stacks in narrow windows. */
+  wideActions?: boolean
   options: ChoiceOption[]
 }
 

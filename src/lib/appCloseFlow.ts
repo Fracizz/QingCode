@@ -44,6 +44,7 @@ export async function runAppClose(deps: AppCloseDependencies): Promise<void> {
     ].filter(Boolean).join('\n\n')
     const action = await deps.choose({
       title: t('退出 QingCode'), message: t('确定要关闭应用程序吗？'), detail,
+      wideActions: persistent.length > 0,
       options: [
         { id: 'cancel', label: t('取消') },
         ...(persistent.length > 0 ? [
