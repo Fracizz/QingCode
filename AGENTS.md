@@ -9,6 +9,7 @@ Global `default-settings.json` and workspace `.qingcode/project-settings.json` a
 ## Build, Test, and Development Commands
 
 - `pnpm install` installs the frontend toolchain.
+- `pnpm package:local` is the local-only parallel packaging CLI (see `docs/local-packaging.md`). Use `--plan`, `--only`, `--jobs`, `start`, `status <run-id>`, and `cancel <run-id> [--task apk]`. Independent preparation/APK stages run in parallel; desktop Cargo stages run sequentially. It never pushes tags or publishes releases.
 - `pnpm tauri:dev` starts the complete Windows desktop application; use this for features involving files, terminals, or native dialogs.
 - `pnpm dev` runs only Vite's browser UI for layout-focused work.
 - `pnpm build` runs TypeScript checking and creates the frontend production bundle.

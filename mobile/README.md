@@ -2,6 +2,12 @@
 
 ## APK 按需发布
 
+本地 `pnpm package:exe` / `pnpm package:installer` 会检查 Android 输入文件和已生成 APK 的摘要。
+有更新或 APK 缺失/损坏时构建 `release/QingCode_<版本>-android.apk`，并更新 `QingCode-Android.apk`；
+无更新时保留原 APK 的版本和文件。仅桌面版本号变化不触发 APK 构建。
+需要 `ANDROID_HOME` / `JAVA_HOME`，也支持本项目现有 `.dev/android-build/sdk` 工具目录；
+缺少工具链时提示跳过。签名沿用已有本地密钥；缓存保存在 `.dev/android-build/package-state.json`。
+
 Release 工作流以最近一个实际包含 APK 的公开发布版本（含预发布）为比较基准。
 Android 源码、构建/版本脚本、打包图标、依赖锁文件或 APK 内置依赖声明变化时才重新打包；
 仅桌面端或应用版本号变化时跳过 APK，继续使用最近发布的 Android APK。

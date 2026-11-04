@@ -10,6 +10,9 @@ param(
   [switch]$SkipCopy,
   # Reuse existing server binaries; version and integrity checks still run before publishing.
   [switch]$SkipServer,
+  [switch]$SkipAndroid,
+  # Unified local CLI already refreshed the validated offline pack.
+  [switch]$SkipServerPack,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc for Windows ARM64).
   [string]$Target = ''
 )
@@ -173,7 +176,7 @@ try {
   }
 
   # 便携版没有安装目录，server 二进制与 exe 同目录（运行时「exe 目录/servers」）。
-  Publish-ServerOfflinePack -ProjectRoot $projectRoot
+  if (-not $SkipServerPack) { Publish-ServerOfflinePack -ProjectRoot $projectRoot }
 
   $versioned = Join-Path $outDir ("{0}_{1}{2}.exe" -f $productName, $version, $archSuffix)
   # Keep unversioned QingCode.exe for the default (host) build only.
@@ -228,6 +231,7 @@ try {
   }
 
   Write-Host ""
+  if (-not $env:CI -and -not $SkipAndroid) { & (Join-Path $PSScriptRoot 'package-android-if-needed.ps1') }
   Write-Host "OK portable exe written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
   Write-Host "  $latest"

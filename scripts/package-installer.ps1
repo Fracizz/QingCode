@@ -7,6 +7,8 @@ param(
   [switch]$SkipIcons,
   # Reuse existing server binaries; version and integrity checks still run before publishing.
   [switch]$SkipServer,
+  [switch]$SkipAndroid,
+  [switch]$SkipServerPack,
   # Optional Rust target triple (e.g. aarch64-pc-windows-msvc).
   [string]$Target = ''
 )
@@ -84,7 +86,7 @@ try {
   # release/QingCode-servers.zip，安装器保持轻量，运行时按本地目录或在线下载发现。
   Write-Step 'SSH server binaries (not bundled)'
   Invoke-ServerBinaryBuild -ProjectRoot $projectRoot -SkipServer:$SkipServer
-  Publish-ServerOfflinePack -ProjectRoot $projectRoot
+  if (-not $SkipServerPack) { Publish-ServerOfflinePack -ProjectRoot $projectRoot }
 
   $frontendRebuilt = $false
   if ($SkipFrontend) {
@@ -179,6 +181,7 @@ try {
   Copy-Item $setup.FullName $latest -Force
 
   Write-Host ""
+  if (-not $env:CI -and -not $SkipAndroid) { & (Join-Path $PSScriptRoot 'package-android-if-needed.ps1') }
   Write-Host "OK NSIS installer written to release/" -ForegroundColor Green
   Write-Host "  $versioned"
   Write-Host "  $latest"
