@@ -18,6 +18,8 @@ Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import
 
 手机最近打开与批量结束会话：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-recent-sessions.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证最近 10 项的时间排序、整页滚动与固定导航、重开置顶、旧电脑兼容与按电脑隔离，以及结束全部会话的数量/范围确认、取消、部分失败保留和重试。截图与 JSON 位于 `.dev/web-tests/mobile-recent-sessions/`；使用内存 RPC，不结束真实终端，不替代 Android 真机和本机/WSL/SSH 进程验收。
 
+手机新建会话与电脑端终端配置：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-terminal-profiles.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证首个终端使用「普通终端」配置、弹窗按电脑端配置列出并标出未信任项、未信任配置留在弹窗不创建、按配置 id 创建且不向终端输入命令、电脑端修改后再次打开即刷新、已删除配置由电脑端拒绝、旧电脑只保留普通终端，以及 320px 窄屏。截图与 JSON 位于 `.dev/web-tests/mobile-terminal-profiles/`；使用内存 RPC，命令解析与信任由 `src/lib/mobileBridge.test.ts`、Rust `mobile` / `terminal` 测试覆盖，不替代本机/WSL/SSH 真实进程验收。
+
 Android 延迟显示运行 `node scripts/web-tests/mobile-latency.agent-browser.mjs`。覆盖首页与终端复用读数、10 秒刷新、长轮询不污染测量、连接详情、320px / 横屏布局、Android 前后台回调、探测失败仍可输入、旧版电脑不重复检测、重新配对恢复和切换电脑丢弃迟到值；截图与 JSON 位于 `.dev/web-tests/mobile-latency/`。调度、单并发和过期由 `mobileAndroidLatency.test.ts` 补充验证；浏览器使用内存桥，真实手机网络及原生计时仍需真机验收。
 
 Android 终端长按选字运行 `node scripts/web-tests/mobile-selection.agent-browser.mjs`，复用真实 xterm、触摸手势与页面。覆盖中文宽字符长按、双端手柄跨行拖动、全选、手机剪贴板桥、失败重试、鼠标上报 TUI 不发输入、返回取消、旋转清理及会话切换；截图与结果在 `.dev/web-tests/mobile-selection/`。剪贴板写入由内存桥模拟，Android 原生剪贴板和真实触屏手感仍需真机验收。

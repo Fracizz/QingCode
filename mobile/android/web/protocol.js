@@ -230,8 +230,18 @@ export function renameProfileKeys(keys, prefix, from, to) {
   return moves;
 }
 
-/** Fixed launch commands only; project paths and user text never enter this command. */
-export function launchCommand(launch) {
-  if (launch === 'claude' || launch === 'opencode') return launch + '\r';
-  throw new Error('不支持的快捷命令');
+/**
+ * 电脑端「终端配置」→ 新建会话选项。手机只拿到 id 与名称，命令由电脑端按 id 解析，
+ * 用户文字不会进入启动命令。旧版电脑端不支持时返回 null，只保留普通终端（id 为 null）。
+ */
+export function terminalProfileChoices(list) {
+  const choices = [];
+  const seen = new Set();
+  for (const item of Array.isArray(list) ? list : []) {
+    if (!item || typeof item.id !== 'string' || !item.id || seen.has(item.id)) continue;
+    seen.add(item.id);
+    const name = typeof item.name === 'string' && item.name.trim() ? item.name.trim().slice(0, 80) : '未命名配置';
+    choices.push({ id: item.id, name, trusted: item.trusted !== false });
+  }
+  return choices.length ? choices : [{ id: null, name: '新建终端', trusted: true }];
 }

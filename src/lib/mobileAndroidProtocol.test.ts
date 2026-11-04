@@ -10,7 +10,6 @@ import {
   consumeModifier,
   keySequence,
   matchesProject,
-  launchCommand,
   nextModifierState,
   outputBatches,
   outputChunk,
@@ -24,6 +23,7 @@ import {
   sessionRunning,
   mergeSessionName,
   splitInput,
+  terminalProfileChoices,
   terminalGridSize,
 } from '../../mobile/android/web/protocol.js'
 
@@ -297,10 +297,25 @@ describe('Android connection avatars', () => {
     }
   })
 })
-describe('mobile quick launch', () => {
-  it('only allows the two fixed commands', () => {
-    expect(launchCommand('claude')).toBe('claude\r')
-    expect(launchCommand('opencode')).toBe('opencode\r')
-    expect(() => launchCommand('claude; rm -rf /')).toThrow()
+describe('mobile terminal profiles', () => {
+  it('keeps desktop profile ids and names only, in order and without duplicates', () => {
+    expect(terminalProfileChoices([
+      { id: 'default', name: '普通终端', trusted: true },
+      { id: 'claude', name: ' Claude ', trusted: true, command: 'claude' },
+      { id: 'claude', name: 'dup' },
+      { id: 'ops', name: '  ', trusted: false },
+      { id: '', name: 'bad' }, null, { name: 'no id' },
+    ])).toEqual([
+      { id: 'default', name: '普通终端', trusted: true },
+      { id: 'claude', name: 'Claude', trusted: true },
+      { id: 'ops', name: '未命名配置', trusted: false },
+    ])
+  })
+
+  it('falls back to a plain terminal when the desktop has no profile list', () => {
+    const plain = [{ id: null, name: '新建终端', trusted: true }]
+    expect(terminalProfileChoices(null)).toEqual(plain)
+    expect(terminalProfileChoices([])).toEqual(plain)
+    expect(terminalProfileChoices({ error: 'old' })).toEqual(plain)
   })
 })

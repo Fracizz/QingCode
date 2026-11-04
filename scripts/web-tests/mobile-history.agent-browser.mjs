@@ -123,7 +123,7 @@ try {
   openHistory()
   check('delayed page is loading', `document.querySelector('#terminal-history').getAttribute('aria-busy')==='true'`)
   run('click', '#new-session')
-  run('click', '#new-session-dialog [data-launch="shell"]')
+  run('click', '#new-session-dialog [data-profile="default"]')
   evaluate('window.__switchedAt=performance.now()')
   check('late history cannot leak into a different session', `performance.now()-window.__switchedAt>950 && document.querySelector('#terminal-history').hidden && ${historyText}==='' && !window.__mobileFixture.terminalText().includes('history line')`)
   evaluate(`window.__motionSamples=[]; new Promise(resolve=>{

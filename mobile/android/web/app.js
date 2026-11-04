@@ -1,6 +1,5 @@
 import {
   DEFAULT_PORT,
-  launchCommand,
   applyModifiers,
   avatarFor,
   consumeModifier,
@@ -18,6 +17,7 @@ import {
   mergeSessionName,
   splitInput,
   terminalGridSize,
+  terminalProfileChoices,
   validIpv4,
   validPort,
 } from './protocol.js';
@@ -76,6 +76,9 @@ let sessionDrawerEpoch = 0;
 let sessionRefreshTimer;
 let sessionRefreshing = false;
 let foreground = true;
+// 电脑端终端配置（按连接缓存），弹窗打开时先显示缓存再刷新。
+const terminalProfiles = new Map();
+let terminalProfilesRequest = 0;
 let viewEpoch = 0;
 let term;
 let fit;
@@ -990,7 +993,7 @@ for (const [id, action] of Object.entries({
     get('reader-dialog').showModal();
   },
   'menu-sessions': () => { void openSessionDrawer(); },
-  'menu-new': () => { if (!busy) get('new-session-dialog').showModal(); },
+  'menu-new': () => { if (!busy) openNewSessionDialog(); },
   'menu-dashboard': () => returnToDashboard('project'),
 })) get(id).addEventListener('click', () => { get('terminal-menu-dialog').close(); action(); });
 get('review-submission').addEventListener('click', showSubmissions);
@@ -1373,7 +1376,7 @@ async function openProject(item, resumeOnly = false) {
       ?? sessions[0];
     if (existing) selectSession(existing);
     else if (resumeOnly) returnToDashboard('home');
-    else await createSession(epoch);
+    else await createSession(epoch, 'default');
   } catch (error) {
     if (epoch === viewEpoch) handleTerminalError(error);
   } finally {
@@ -1504,19 +1507,55 @@ get('rename-session-form').addEventListener('submit', async event => {
 });
 get('rename-session-dialog').addEventListener('close', () => { renamingSession = null; });
 
-async function createSession(epoch, launch = 'shell') {
-  const session = await remote('create', { project: project.id, ...dimensions() });
+async function createSession(epoch, terminalProfile = null) {
+  // 启动命令由电脑端按配置 id 解析并在新会话启动时执行，手机不再向终端输入命令。
+  const args = { project: project.id, ...dimensions() };
+  if (terminalProfile) args.terminal_profile = terminalProfile;
+  const session = await remote('create', args);
   if (epoch !== viewEpoch) return;
   sessions.push(session);
   selectSession(session);
-  if (launch !== 'shell') {
-    // Send exactly once to the newly created session. Never use a current tab's id
-    // after an await, and never retry a launch whose delivery is uncertain.
-    try {
-      await remote('input', { id: session.id, data: launchCommand(launch) });
-    } catch (error) {
-      if (selected === session.id) get('terminal-status').textContent = '启动结果未知，请检查终端输出。' + error.message;
+}
+
+function renderTerminalProfiles(choices, state = '') {
+  const list = get('terminal-profiles');
+  list.replaceChildren(...choices.map(choice => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'secondary';
+    if (choice.id) button.dataset.profile = choice.id;
+    const name = document.createElement('span');
+    name.textContent = choice.name;
+    button.append(name);
+    if (!choice.trusted) {
+      const hint = document.createElement('small');
+      hint.textContent = '需先在电脑上信任';
+      button.append(hint);
     }
+    button.addEventListener('click', () => {
+      // 电脑端创建时仍会校验信任；这里提前提示，避免关闭弹窗后才报错。
+      if (!choice.trusted) message('terminal-profiles-error', `请先在电脑上新建一次「${choice.name}」终端并选择「信任此配置」。`);
+      else void newSession(choice.id);
+    });
+    return button;
+  }));
+  list.setAttribute('aria-busy', String(state === 'loading'));
+  message('terminal-profiles-error', state === 'error' ? '无法读取电脑端终端配置，已仅显示普通终端。' : '');
+}
+
+async function openNewSessionDialog() {
+  const address = profile?.id;
+  const cached = terminalProfiles.get(address);
+  renderTerminalProfiles(cached ?? terminalProfileChoices(null), cached ? '' : 'loading');
+  get('new-session-dialog').showModal();
+  const request = ++terminalProfilesRequest;
+  try {
+    const choices = terminalProfileChoices(await remote('terminal_profiles', {}, address));
+    terminalProfiles.set(address, choices);
+    if (request === terminalProfilesRequest && profile?.id === address) renderTerminalProfiles(choices);
+  } catch {
+    // 旧版电脑端不认识该请求：保留缓存或普通终端。
+    if (request === terminalProfilesRequest && profile?.id === address) renderTerminalProfiles(cached ?? terminalProfileChoices(null), cached ? '' : 'error');
   }
 }
 
@@ -1695,10 +1734,10 @@ document.addEventListener('visibilitychange', () => {
 });
 get('session-drawer').addEventListener('toggle', () => get('show-sessions').setAttribute('aria-expanded', String(get('session-drawer').open)));
 get('drawer-settings').addEventListener('click', () => { get('session-drawer').close(); get('session-dialog').showModal(); });
-get('drawer-new-session').addEventListener('click', () => { if (!busy) { get('session-drawer').close(); get('new-session-dialog').showModal(); } });
+get('drawer-new-session').addEventListener('click', () => { if (!busy) { get('session-drawer').close(); openNewSessionDialog(); } });
 get('terminal-retry').addEventListener('click', () => { void openProject(project); });
-get('new-session').addEventListener('click', () => { if (!busy) get('new-session-dialog').showModal(); });
-async function newSession(launch) {
+get('new-session').addEventListener('click', () => { if (!busy) openNewSessionDialog(); });
+async function newSession(terminalProfile) {
   if (busy) return;
   busy = true;
   const epoch = viewEpoch;
@@ -1711,7 +1750,7 @@ async function newSession(launch) {
     sessions = list;
     renderSessions();
     get('new-session-dialog').close();
-    await createSession(epoch, launch);
+    await createSession(epoch, terminalProfile);
   } catch (error) {
     if (epoch === viewEpoch) {
       if (wasReady && !error.revoked) get('terminal-status').textContent = error.message;
@@ -1966,9 +2005,6 @@ async function initialize() {
 
 void initialize();
 
-for (const button of document.querySelectorAll('[data-launch]')) {
-  button.addEventListener('click', () => { void newSession(button.dataset.launch); });
-}
 const sendModeSelect = get('send-mode');
 sendModeSelect.value = sendMode;
 sendModeSelect.addEventListener('change', () => {

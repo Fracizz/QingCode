@@ -102,7 +102,7 @@ try {
   write('session selection')
   hold()
   run('click', '#new-session')
-  run('click', '#new-session-dialog [data-launch="shell"]')
+  run('click', '#new-session-dialog [data-profile="default"]')
   check('switching sessions disposes selection and old handles', `document.querySelectorAll('.terminal-selection-tools').length===1 && !(${selecting}) && !window.__selectionTerm.hasSelection()`)
   evaluate(`const s=[...window.__mobileFixture.state.sessions.values()].at(-1); s.history=Array.from({length:160},(_,i)=>'可选择的历史 '+i); s.output.push(btoa('live history')); s.next++; for(const wake of s.waiters.splice(0)) wake()`)
   check('new history metadata arrives', `window.__mobileFixture.terminalText().includes('live history')`)

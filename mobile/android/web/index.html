@@ -310,12 +310,9 @@
 
   <dialog id="new-session-dialog" aria-labelledby="new-session-title">
     <h2 id="new-session-title">新建会话</h2>
-    <div class="rows session-shortcuts">
-      <button type="button" class="secondary" data-launch="shell">新建终端</button>
-      <button type="button" class="secondary" data-launch="claude">新建 Claude</button>
-      <button type="button" class="secondary" data-launch="opencode">新建 OpenCode</button>
-    </div>
-    <p>在当前项目中新建会话；Claude / OpenCode 需已在目标环境安装。</p>
+    <div id="terminal-profiles" class="rows session-shortcuts" aria-label="终端配置"></div>
+    <p id="terminal-profiles-error" class="error" role="alert" hidden></p>
+    <p>选项来自电脑端「设置 → 终端 → 终端配置」；启动命令在当前项目环境（本机、WSL 或远端）中执行。</p>
     <div class="dialog-actions"><button type="button" class="secondary" data-close="new-session-dialog">取消</button></div>
   </dialog>
 

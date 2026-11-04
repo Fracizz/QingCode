@@ -281,6 +281,8 @@ struct Session {
     owner: String,
     number: u64,
     custom_name: Option<String>,
+    /// 带启动命令的终端配置名；程序未设置标题时代替「终端 N」。
+    label: Option<String>,
     name_revision: u64,
     ready: bool,
     exit: Option<Exit>,
@@ -299,6 +301,7 @@ impl Session {
             owner,
             number,
             custom_name: None,
+            label: None,
             name_revision: 0,
             ready: false,
             exit: None,
@@ -349,6 +352,7 @@ impl Session {
         self.custom_name
             .as_deref()
             .or_else(|| self.screen.title())
+            .or(self.label.as_deref())
             .map(str::to_owned)
             .unwrap_or_else(|| format!("终端 {}", self.number))
     }
@@ -469,10 +473,15 @@ enum Operation {
     Sessions {
         project: String,
     },
+    /// 电脑端「终端配置」列表（只含 id / 名称 / 是否已信任，不含命令）。
+    TerminalProfiles,
     Create {
         project: String,
         cols: u16,
         rows: u16,
+        /// 电脑端终端配置 id；旧版手机不传，按普通终端启动。
+        #[serde(default)]
+        terminal_profile: Option<String>,
     },
     Poll {
         id: String,
@@ -1096,23 +1105,28 @@ async fn desktop_request(
     project: Option<&str>,
     attachment: Option<&str>,
 ) -> Result<Value, String> {
+    desktop_query(app, json!({ "project": project, "attachment": attachment })).await
+}
+
+/// 经主窗口查询电脑端保存的状态（项目、终端配置）。`request` 为不含 `id` 的请求体。
+async fn desktop_query(app: &AppHandle, mut request: Value) -> Result<Value, String> {
     let state = app.state::<MobileState>();
     let id = Uuid::new_v4();
     let (sender, receiver) = oneshot::channel();
     state.pending.lock().unwrap().insert(id, sender);
-    let timeout = if project.is_some() {
+    let opens_project = request
+        .get("project")
+        .is_some_and(|project| !project.is_null());
+    let timeout = if opens_project {
         CREATE_TIMEOUT
     } else {
         PROJECTS_TIMEOUT
     };
-    let result = match app.emit_to(
-        "main",
-        "mobile-request",
-        json!({ "id": id, "project": project, "attachment": attachment }),
-    ) {
+    request["id"] = json!(id);
+    let result = match app.emit_to("main", "mobile-request", request) {
         Ok(()) => match tokio::time::timeout(timeout, receiver).await {
             Ok(Ok(result)) => result,
-            _ if project.is_some() => Err(
+            _ if opens_project => Err(
                 "Windows QingCode 未及时响应。若电脑上弹出确认（如远端主机指纹），请在电脑上处理后重试。"
                     .into(),
             ),
@@ -1308,11 +1322,23 @@ async fn operate(app: &AppHandle, device: &str, operation: Operation) -> Result<
                 .map(|(id, session)| session.metadata(id))
                 .collect::<Vec<_>>()))
         }
+        Operation::TerminalProfiles => desktop_query(app, json!({ "profiles": true })).await,
         Operation::Create {
             project,
             cols,
             rows,
-        } => create(app, device, &project, cols, rows).await,
+            terminal_profile,
+        } => {
+            create(
+                app,
+                device,
+                &project,
+                terminal_profile.as_deref(),
+                cols,
+                rows,
+            )
+            .await
+        }
         Operation::History { id, before } => {
             let inner = hub.inner.lock().unwrap();
             let session = inner.sessions.get(&id).ok_or("终端不存在。")?;
@@ -1523,16 +1549,49 @@ fn size(cols: u16, rows: u16) -> (u16, u16) {
     (cols.clamp(2, 300), rows.clamp(2, 150))
 }
 
+/// 电脑端按 id 解析出的终端配置。命令只来自电脑端保存且已信任的配置，手机只传 id。
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LaunchProfile {
+    name: String,
+    /// 多行命令已由电脑端合并为单行；空串表示普通终端。
+    command: String,
+    /// 主机 shell 偏好（auto / powershell / pwsh / cmd / wsl / bash / zsh）。
+    shell: String,
+}
+
+impl LaunchProfile {
+    fn command(&self) -> Option<&str> {
+        Some(self.command.trim()).filter(|command| !command.is_empty())
+    }
+
+    fn label(&self) -> Option<String> {
+        let name = self.name.trim();
+        (self.command().is_some() && !name.is_empty())
+            .then(|| name.chars().filter(|c| !c.is_control()).take(80).collect())
+    }
+}
+
+async fn launch_profile(app: &AppHandle, id: &str) -> Result<LaunchProfile, String> {
+    serde_json::from_value(desktop_query(app, json!({ "profile": id })).await?)
+        .map_err(|_| "电脑端返回的终端配置无效，请更新 Windows QingCode 后重试。".into())
+}
+
 async fn create(
     app: &AppHandle,
     device: &str,
     project_id: &str,
+    profile_id: Option<&str>,
     cols: u16,
     rows: u16,
 ) -> Result<Value, String> {
     let hub = &app.state::<MobileState>().inner().hub;
     let project: Project = serde_json::from_value(desktop(app, Some(project_id)).await?)
         .map_err(|error| error.to_string())?;
+    let profile = match profile_id {
+        Some(id) => Some(launch_profile(app, id).await?),
+        None => None,
+    };
     let id = format!("{TERMINAL_PREFIX}{}", Uuid::new_v4().simple());
     {
         let mut inner = hub.inner.lock().unwrap();
@@ -1544,24 +1603,48 @@ async fn create(
         }
         inner.next_number += 1;
         let number = inner.next_number;
-        inner.sessions.insert(
-            id.clone(),
-            Session::new(project.clone(), device.to_string(), number),
-        );
+        let mut session = Session::new(project.clone(), device.to_string(), number);
+        session.label = profile.as_ref().and_then(LaunchProfile::label);
+        inner.sessions.insert(id.clone(), session);
     }
     let (cols, rows) = size(cols, rows);
     hub.with_session(&id, |session| session.screen.resize(cols, rows));
+    let command = profile
+        .as_ref()
+        .and_then(LaunchProfile::command)
+        .map(str::to_owned);
+    let shell = profile.map(|profile| profile.shell);
     let result = if project.kind == ProjectKind::Ssh {
-        crate::remote_ssh::ssh_create_terminal(
-            id.clone(),
-            project.path,
-            Some(cols),
-            Some(rows),
-            None,
-            app.clone(),
-            app.state(),
-        )
-        .await
+        if let Some(command) = command {
+            // 与电脑端配置终端同一路径：远端 Linux 用登录 shell 执行后保留 shell，
+            // 远端 Windows 按配置的 shell 执行；daemon 名称沿用 `mobile-` id。
+            crate::remote_ssh::ssh_spawn_script(
+                id.clone(),
+                project.path,
+                "interactive".into(),
+                command,
+                HashMap::new(),
+                Some(cols),
+                Some(rows),
+                shell,
+                None,
+                None,
+                app.clone(),
+                app.state(),
+            )
+            .await
+        } else {
+            crate::remote_ssh::ssh_create_terminal(
+                id.clone(),
+                project.path,
+                Some(cols),
+                Some(rows),
+                shell,
+                app.clone(),
+                app.state(),
+            )
+            .await
+        }
     } else {
         let app = app.clone();
         let id = id.clone();
@@ -1569,10 +1652,31 @@ async fn create(
             app.state::<crate::PathAllowlist>()
                 .ensure_executable(&project.path)?;
             let manager = app.state::<crate::TerminalManager>();
-            if project.kind == ProjectKind::Wsl {
-                manager.spawn_mobile_wsl(id, &project.path, cols, rows, app.clone())
-            } else {
-                manager.spawn(id, &project.path, None, cols, rows, app.clone())
+            match (project.kind, command) {
+                // WSL 项目在发行版内执行，主机 shell 偏好不适用。
+                (ProjectKind::Wsl, command) => manager.spawn_mobile_wsl(
+                    id,
+                    &project.path,
+                    command.as_deref(),
+                    cols,
+                    rows,
+                    app.clone(),
+                ),
+                (_, Some(command)) => manager.spawn_script(
+                    id,
+                    &project.path,
+                    "interactive",
+                    &command,
+                    HashMap::new(),
+                    shell.as_deref(),
+                    None,
+                    cols,
+                    rows,
+                    app.clone(),
+                ),
+                (_, None) => {
+                    manager.spawn(id, &project.path, shell.as_deref(), cols, rows, app.clone())
+                }
             }
         })
         .await
@@ -1996,6 +2100,61 @@ mod tests {
         assert!(session.rename(&"中".repeat(81)).is_err());
         assert!(session.rename("bad\nname").is_err());
         assert_eq!(session.name(), "Claude");
+    }
+
+    #[test]
+    fn create_accepts_an_optional_terminal_profile_id() {
+        let legacy: Operation =
+            serde_json::from_str(r#"{"op":"create","project":"p","cols":80,"rows":24}"#).unwrap();
+        assert!(matches!(
+            legacy,
+            Operation::Create {
+                terminal_profile: None,
+                ..
+            }
+        ));
+        let chosen: Operation = serde_json::from_str(
+            r#"{"op":"create","project":"p","cols":80,"rows":24,"terminal_profile":"claude"}"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(chosen, Operation::Create { terminal_profile: Some(ref id), .. } if id == "claude")
+        );
+        let list: Operation = serde_json::from_str(r#"{"op":"terminal_profiles"}"#).unwrap();
+        assert!(matches!(list, Operation::TerminalProfiles));
+        // 手机不能直接提交命令：未知字段被忽略，命令只来自电脑端配置。
+        let injected: Operation = serde_json::from_str(
+            r#"{"op":"create","project":"p","cols":80,"rows":24,"command":"rm -rf /"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            injected,
+            Operation::Create {
+                terminal_profile: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn profile_sessions_fall_back_to_the_profile_name_until_a_title_arrives() {
+        let profile = |name: &str, command: &str| LaunchProfile {
+            name: name.into(),
+            command: command.into(),
+            shell: "auto".into(),
+        };
+        assert_eq!(profile("普通终端", "  ").command(), None);
+        assert_eq!(profile("普通终端", "").label(), None);
+        assert_eq!(profile(" ", "claude").label(), None);
+        assert_eq!(profile(" Claude ", " claude ").command(), Some("claude"));
+
+        let mut session = Session::new(project(), "phone".into(), 3);
+        session.label = profile(" Claude\n", "claude").label();
+        assert_eq!(session.name(), "Claude");
+        session.push(OutputChunk::Bytes(
+            base64::engine::general_purpose::STANDARD.encode("\x1b]2;claude · app\x07"),
+        ));
+        assert_eq!(session.name(), "claude · app");
     }
 
     #[test]
