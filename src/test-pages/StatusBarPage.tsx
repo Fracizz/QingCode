@@ -91,6 +91,7 @@ if (import.meta.env.DEV && import.meta.env.MODE === 'web-test') {
   // Use dev:web-test (38419); test:web aliases the stores to project-manager stubs.
   mockIPC(command => {
     if (command === 'ssh_server_info') return serverState
+    if (command === 'ssh_server_latency') return 28
     if (command === 'ssh_server_logs') return { text: 'Fixture service ready' }
     throw new Error(`Unexpected status-bar fixture IPC: ${command}`)
   }, { shouldMockEvents: true })

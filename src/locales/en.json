@@ -2,6 +2,10 @@
   "locale": "en",
   "label": "English",
   "messages": {
+    "测量 Server 往返延迟": "Measure Server round-trip latency",
+    "往返延迟：{latency}": "Round-trip latency: {latency}",
+    "测量时间：{time}": "Measured at: {time}",
+    "每 30 秒更新，窗口隐藏时暂停": "Updates every 30 seconds; paused while the window is hidden",
     "已自动更新 {name} 的远端服务": "Automatically updated the remote service for {name}",
     "本机服务包校验通过后自动更新；缺包时可手动准备并下载，远端无需联网。": "A verified local package starts the update automatically. If it is missing, prepare and download it manually; the remote host does not need internet access.",
     "仅使用所选本机目录中的服务包，校验通过后自动更新。本次更新不联网下载，仍需通过 SSH 连接远端。": "Use only the package in the selected local directory and update automatically after verification. No download is performed; SSH access to the remote host is still required.",

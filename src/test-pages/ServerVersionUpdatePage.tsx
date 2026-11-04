@@ -174,6 +174,7 @@ if (import.meta.env.MODE === 'web-test') {
         }
       }
       if (command === 'ssh_server_info') return state
+      if (command === 'ssh_server_latency') return 28
       if (command === 'direct_agent_info')
         return {
           enabled: true,

@@ -76,6 +76,22 @@ describe('SshServerStatusChip', () => {
   const pushToast = vi.fn()
   const requestSettings = vi.fn()
 
+  it('shows latency as plain text for a ready Server and removes it on disconnection', async () => {
+    invoke.mockImplementation(async (_action: string, command: string) => {
+      if (command === 'ssh_server_info') return { ...ready, transport: 'agent' }
+      if (command === 'ssh_server_latency') return 28.2
+      throw new Error(`unexpected ${command}`)
+    })
+    render(<SshServerStatusChip rootUri={rootUri} />)
+    expect(await screen.findByText('28 ms')).toBeVisible()
+    const button = screen.getByRole('button', { name: /往返延迟：28 ms/ })
+    expect(button.querySelector('svg')).toBeNull()
+    expect(button).toHaveAccessibleName(/测量时间：/)
+    await act(async () => listeners.forEach(notify => notify({ payload: { ...ready, transport: 'agent', phase: 'disconnected' } })))
+    expect(screen.queryByText('28 ms')).toBeNull()
+    expect(screen.getByText('未连接')).toBeVisible()
+  })
+
   beforeEach(() => {
     listeners.splice(0, listeners.length)
     invoke.mockReset()

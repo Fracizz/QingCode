@@ -12,6 +12,7 @@ import '../App.css'
 let useDirect = false
 let connected = true
 let portClosed = false
+let latencyFailed = false
 const wslRoot = 'ssh://fixture-wsl/home/code/nem-panel'
 
 export default function Page() {
@@ -30,6 +31,8 @@ export default function Page() {
           useProjectStore.setState({ sshConnections: useProjectStore.getState().sshConnections.map(c => c.id === 'fixture-wsl' ? { ...c, agentEndpoint: { host: 'localhost', port: 48763 } } : c) })
         }}>模拟 WSL 使用 Server</button>
         <button className={button} onClick={() => { portClosed = true }}>模拟端口关闭</button>
+        <button className={button} onClick={() => { latencyFailed = true }}>模拟延迟超时</button>
+        <button className={button} onClick={() => { latencyFailed = false }}>恢复延迟测量</button>
       </div>
       <pre data-testid="operation-log">{JSON.stringify(operations)}</pre>
     </main>
@@ -51,6 +54,11 @@ if (import.meta.env.DEV && import.meta.env.MODE === 'web-test') {
     const id = String(params?.connectionId ?? '')
     const state = (connectionId: string): SshServerState => ({ connectionId, rootUri: `ssh://${connectionId}/home/code/nem-panel`, phase: connectionId === 'fixture-wsl' && (!connected || portClosed) ? 'disconnected' : 'readyServer', mode: 'server', connectionMode: 'server', version: 'fixture', transport: connectionId === 'fixture-tls' || (connectionId === 'fixture-wsl' && useDirect) ? 'agent' : 'daemon', reason: connectionId === 'fixture-wsl' && portClosed ? '[direct:unreachable] Fixture port closed' : null })
     if (command === 'ssh_server_info') return state(String(params?.rootUri).split('/')[2])
+    if (command === 'ssh_server_latency') {
+      useWebTestOperations.setState(s => ({ operations: [...s.operations, { action: 'latency', ids: [String(params?.rootUri)] }] }))
+      if (latencyFailed) throw new Error('Fixture latency timeout')
+      return 28
+    }
     if (command === 'ssh_disconnect') { connected = false; return }
     if (command === 'ssh_connection_status') return id !== 'fixture-windev' && (id !== 'fixture-wsl' || (connected && !portClosed))
     if (command === 'ssh_workspace_roots') return id === 'fixture-wsl' && connected ? [{ rootUri: wslRoot, trusted: true }] : []

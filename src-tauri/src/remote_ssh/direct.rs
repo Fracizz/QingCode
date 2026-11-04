@@ -426,6 +426,56 @@ pub(super) mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn latency_requires_an_active_trusted_root_and_does_not_change_health() {
+        use super::super::{measure_direct_latency, RegisteredRoot, SshManager};
+        let (config, gateway, directory) = gateway().await;
+        let manager = SshManager::new();
+        let id = "latency-probe";
+        let uri = "ssh://latency-probe/project";
+        manager
+            .direct_connections
+            .write()
+            .unwrap()
+            .insert(id.into(), config.clone());
+        manager.direct_active.write().unwrap().insert(id.into());
+        assert!(measure_direct_latency(&manager, uri).await.is_err());
+        manager.roots.write().unwrap().insert(
+            uri.into(),
+            RegisteredRoot {
+                uri: uri.into(),
+                canonical_path: "/project".into(),
+                trusted: false,
+            },
+        );
+        assert!(measure_direct_latency(&manager, uri)
+            .await
+            .unwrap_err()
+            .contains("未信任"));
+        manager.set_root_trust(uri, true).unwrap();
+        let elapsed = measure_direct_latency(&manager, uri).await.unwrap();
+        assert!(elapsed.is_finite() && elapsed >= 0.0);
+        // Probe authentication failures must not update the connection's health cache.
+        manager.direct_connections.write().unwrap().insert(
+            id.into(),
+            DirectConnectionConfig {
+                token: "invalid-token".into(),
+                ..config
+            },
+        );
+        assert!(measure_direct_latency(&manager, uri)
+            .await
+            .unwrap_err()
+            .starts_with("[direct:auth]"));
+        assert!(manager.connection_is_open(id));
+        assert!(manager.direct_failures.read().unwrap().is_empty());
+        manager.detach_direct_connection(id).unwrap();
+        assert!(measure_direct_latency(&manager, uri).await.is_err());
+        gateway.abort();
+        let _ = gateway.await;
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
     async fn status_probe_detects_closed_port_and_never_reactivates_a_detached_connection() {
         use super::super::{server_status, RegisteredRoot, SshManager};
         let (config, gateway, directory) = gateway().await;

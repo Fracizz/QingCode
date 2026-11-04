@@ -442,6 +442,8 @@ export class WebTestBackend {
         return
       case 'ssh_server_info':
         return this.serverState(String(args.rootUri))
+      case 'ssh_server_latency':
+        return 28
       case 'ssh_server_restart':
         this.reconnect(this.connectionId(String(args.rootUri)))
         return this.serverState(String(args.rootUri))

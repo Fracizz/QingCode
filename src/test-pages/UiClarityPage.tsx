@@ -229,6 +229,7 @@ if (import.meta.env.DEV && import.meta.env.MODE === 'web-test') {
     command => {
       if (command === 'ssh_import_candidates') return { path: '/home/demo/.ssh/config', candidates }
       if (command === 'ssh_server_info') return serverState
+      if (command === 'ssh_server_latency') return 28
       if (command === 'ssh_server_logs') return { text: 'Remote service ready\n文件监听已启动' }
       throw new Error(`Unexpected test command: ${command}`)
     },

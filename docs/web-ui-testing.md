@@ -160,6 +160,11 @@ SCM 分支菜单场景位于 `/web-tests/scm-branches.html`，使用 `pnpm test:
 `.dev/web-tests/remote-connection-recovery/`。端口关闭由内存状态模拟；
 实际 TLS 端口失效由 Rust 本地 gateway 测试覆盖，真实 Windows/远端 SSH 切换仍需桌面验收。
 
+Server 状态栏延迟使用同一页面，运行 `node scripts/web-tests/connection-latency.agent-browser.mjs`。
+验证延迟纯文字、提示中的测量时间与更新间隔、状态轮询不重复测量、隐藏暂停及恢复补测、
+失败占位不改变在线状态、恢复、断开清理及英文浅色窄窗。产物在 `.dev/web-tests/connection-latency/`。
+数值和超时由内存适配器提供；真实认证请求和测量门槛另由 Rust 本地 HTTPS gateway 测试覆盖。
+
 底栏清晰度场景位于 `/web-tests/status-bar.html`，使用 `pnpm dev:web-test`（端口 **38419**）。
 复用真实 `StatusBar`、连接徽标和业务 Store，以固定内存项目、分支、光标位置和编码验证三种主题、
 连接阶段、13/20/32px 字号、窄窗、编码菜单、Git 入口及终端切换信号。可检查光标位置的快捷键提示、

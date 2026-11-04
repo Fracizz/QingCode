@@ -2513,6 +2513,40 @@ pub async fn ssh_server_info(
     Ok(state)
 }
 
+/// Measure an authenticated Server request without changing connection health.
+#[tauri::command]
+pub async fn ssh_server_latency(
+    root_uri: String,
+    manager: State<'_, SshManager>,
+) -> Result<f64, String> {
+    measure_direct_latency(&manager, &root_uri).await
+}
+
+/// A read-only probe must not reconnect or alter the connection's health state.
+async fn measure_direct_latency(manager: &SshManager, root_uri: &str) -> Result<f64, String> {
+    manager.root_for_uri(root_uri, true)?;
+    let parsed = parse_remote_uri(root_uri)?;
+    let id = &parsed.connection_id;
+    let config = manager
+        .direct_config(id)
+        .filter(|_| manager.connection_is_open(id))
+        .ok_or("Server 连接尚未建立")?;
+    let elapsed = direct::WorkspaceClient::new(config.clone())
+        .latency_ms()
+        .await?;
+    // Reject results from a transport that was disconnected or re-paired in flight.
+    if !manager.connection_is_open(id)
+        || !manager.direct_config(id).is_some_and(|current| {
+            current.endpoint == config.endpoint
+                && current.certificate_fingerprint == config.certificate_fingerprint
+                && current.token == config.token
+        })
+    {
+        return Err("Server 连接已变更".into());
+    }
+    Ok(elapsed)
+}
+
 /// 清掉该根的 server slot，必要时按 server.json 里的 pid 结束 serve 进程，再重新 ensure。
 #[tauri::command]
 pub async fn ssh_server_restart(

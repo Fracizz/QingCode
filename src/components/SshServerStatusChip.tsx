@@ -1,4 +1,6 @@
 import { hasBackend } from '../lib/runtimeCapabilities'
+import { useConnectionLatency } from '../lib/useConnectionLatency'
+import { invalidateConnectionLatency } from '../lib/connectionLatency'
 import { useEffect, useRef, useState } from 'react'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { AlertCircle } from 'lucide-react'
@@ -56,6 +58,9 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
   const [busy, setBusy] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0)
   const [fallbackInfo, setFallbackInfo] = useState<DirectAgentInfo | null>(null)
+  const showLatency = !hidden && !infoError && state?.transport === 'agent' && state.phase === 'readyServer'
+  const latency = useConnectionLatency(showLatency && hasBackend() ? rootUri : null)
+  const latencyText = latency.milliseconds === null ? '-- ms' : `${Math.max(1, Math.round(latency.milliseconds))} ms`
 
   useEffect(() => {
     let cancelled = false
@@ -81,6 +86,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
       return next && sshServerEventMatches(next.rootUri, rootUri) ? next : null
     }
     const accept = (next: SshServerState) => {
+      if (next.transport !== 'agent' || next.phase !== 'readyServer') invalidateConnectionLatency(rootUri)
       setHidden(false)
       setInfoError(null)
       setState(next)
@@ -190,6 +196,11 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
 
   const tipLines = [
     ...sshServerTipLines(state).map(line => translateTipLine(line, t)),
+    ...(showLatency ? [
+      t('往返延迟：{latency}', { latency: latencyText }),
+      ...(latency.checkedAt === null ? [] : [t('测量时间：{time}', { time: new Date(latency.checkedAt).toLocaleTimeString() })]),
+      t('每 30 秒更新，窗口隐藏时暂停'),
+    ] : []),
     t('点击查看详情'),
   ]
   const tip = tipLines.join('\n')
@@ -296,6 +307,7 @@ function SshServerStatus({ rootUri }: { rootUri: string }) {
         >
           <ChipDot kind={chip.kind} />
           <span className="truncate">{t(sshServerModeKey(state))}</span>
+          {showLatency && <span className="shrink-0 tabular-nums text-fg-muted">{latencyText}</span>}
         </button>
       </StatusTip>
       {menu && (

@@ -97,6 +97,24 @@ impl WorkspaceClient {
         &self,
         request: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
+        self.request_timed(request).await.map(|(value, _)| value)
+    }
+
+    /// Time only the authenticated exchange, excluding pool admission and TLS setup.
+    pub(in super::super) async fn latency_ms(&self) -> Result<f64, String> {
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            self.request_timed(&serde_json::json!({"op":"info"})),
+        )
+        .await
+        .map_err(|_| timeout_error())?
+        .map(|(_, elapsed)| elapsed)
+    }
+
+    async fn request_timed(
+        &self,
+        request: &serde_json::Value,
+    ) -> Result<(serde_json::Value, f64), String> {
         validate_token(&self.shared.config.token)?;
         let endpoint = endpoint(&self.shared.config.endpoint)?;
         let expected = normalized_fingerprint(&self.shared.config.certificate_fingerprint)?;
@@ -126,9 +144,11 @@ impl WorkspaceClient {
                 "POST /workspace HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
                 endpoint.authority, self.shared.config.token, body.len()
             );
+            let started = Instant::now();
             write_http_request(&mut stream, &headers, &body).await
                 .map_err(|_| "[direct:unreachable] 工作区请求发送失败")?;
             let response = read_response(&mut stream).await?;
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
             if matches!(response.status, 401 | 403) {
                 return Err("[direct:auth] Server 连接凭据错误或已失效".into());
             }
@@ -146,7 +166,7 @@ impl WorkspaceClient {
                 return Err(value.get("error").and_then(serde_json::Value::as_str)
                     .unwrap_or("Server 工作区请求失败").to_string());
             }
-            Ok(value.get("value").cloned().unwrap_or(serde_json::Value::Null))
+            Ok((value.get("value").cloned().unwrap_or(serde_json::Value::Null), elapsed_ms))
         }).await.map_err(|_| timeout_error())?
     }
 }

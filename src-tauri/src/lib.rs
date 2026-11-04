@@ -934,6 +934,7 @@ pub fn run() {
             remote_ssh::ssh_server_states,
             remote_ssh::ssh_set_workspace_trust,
             remote_ssh::ssh_server_info,
+            remote_ssh::ssh_server_latency,
             remote_ssh::ssh_server_restart,
             remote_ssh::ssh_server_update,
             remote_ssh::ssh_windows_repair_plan,
