@@ -6,6 +6,21 @@ Chinese version: [CHANGELOG.md](./CHANGELOG.md).
 
 ## [Unreleased]
 
+## [0.1.14-beta.24] - 2026-11-03
+
+### Added
+
+- Add QR pairing, persistent pairing information and multi-device connection management to the Android companion terminal.
+
+### Changed
+
+- Show terminal connection status in an overlay and improve parallel update feedback, mobile connection saving, passwords and port changes.
+- Improve daemon terminal output replay and add stable-key signing for Android releases.
+
+### Fixed
+
+- Fix corrupted terminal glyphs after long-running sessions.
+
 ## [0.1.14-beta.14] - 2026-10-30
 
 ### Fixed

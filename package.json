@@ -1,7 +1,7 @@
 {
   "name": "qingcode",
   "private": true,
-  "version": "0.1.14-beta.23",
+  "version": "0.1.14-beta.24",
   "type": "module",
   "packageManager": "pnpm@11.0.8",
   "engines": {
@@ -20,7 +20,7 @@
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check && cargo clippy --manifest-path src-tauri/Cargo.toml --workspace --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml --workspace",
     "lint": "eslint .",
     "test": "vitest run && pnpm test:packaging",
-    "test:packaging": "node --test scripts/nsis-hooks.test.mjs scripts/register-open-with.test.mjs scripts/canonical-release-assets.test.mjs scripts/server-packaging.test.mjs scripts/android-version.test.mjs",
+    "test:packaging": "node --test scripts/nsis-hooks.test.mjs scripts/register-open-with.test.mjs scripts/canonical-release-assets.test.mjs scripts/server-packaging.test.mjs scripts/android-version.test.mjs scripts/android-release-needed.test.mjs",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:web": "vite --config vite.web-test.config.ts --mode web-test",

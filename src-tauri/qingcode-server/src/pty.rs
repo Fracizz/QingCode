@@ -792,12 +792,12 @@ impl PtyHost {
 
     /// 客户端接回终端。`from_seq` 仍被缓冲覆盖时只补缺失块，否则给屏幕快照。
     /// 无论哪条路径都会把终端标记为已接入（`detached = false`）。
-    #[cfg(test)]
+    #[cfg(all(test, unix))]
     pub fn attach(&self, id: &str, from_seq: u64, client_id: &str) -> Result<AttachResult, String> {
         self.attach_with(id, from_seq, client_id, AttachScreenPolicy::Replay)
     }
 
-    /// 同 [`Self::attach`]，按 `screen` 决定是否改给快照。
+    /// 客户端接回终端，按 `screen` 决定是否改给快照。
     /// `OnAlternate`：应用重启后客户端网格与断线期间的 PTY 尺寸不一定相同，原样补发
     /// TUI 的增量输出会错位；普通 Shell 的增量按行排版，照常补发。
     pub fn attach_with(

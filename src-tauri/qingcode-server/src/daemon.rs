@@ -2767,7 +2767,7 @@ mod tests {
             let mut received = 0usize;
             while received < total {
                 // 模拟慢 SSH 管道：写端偶尔被卡住。
-                if received % 16 == 0 {
+                if received.is_multiple_of(16) {
                     tokio::time::sleep(Duration::from_millis(5)).await;
                 }
                 let out = data_rx.recv().await.expect("连接队列被提前关闭");

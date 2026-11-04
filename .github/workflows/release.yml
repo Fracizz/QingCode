@@ -27,6 +27,7 @@ jobs:
       tag: ${{ steps.meta.outputs.tag }}
       draft: ${{ steps.meta.outputs.draft }}
       prerelease: ${{ steps.meta.outputs.prerelease }}
+      android_needed: ${{ steps.android.outputs.needed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -81,6 +82,12 @@ jobs:
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "draft=${DRAFT}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${PRERELEASE}" >> "$GITHUB_OUTPUT"
+
+      - name: Check Android changes since the latest published APK
+        id: android
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/android-release-needed.mjs
 
   check:
     runs-on: windows-latest
@@ -307,6 +314,7 @@ jobs:
     steps:
       - name: Check release keystore
         id: keystore
+        if: needs.meta.outputs.android_needed == 'true'
         shell: pwsh
         run: |
           # The APK must keep one signing key across releases or phones cannot upgrade in place.
@@ -318,6 +326,11 @@ jobs:
           } else {
             "ready=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           }
+
+      - name: Android unchanged
+        if: needs.meta.outputs.android_needed != 'true'
+        shell: pwsh
+        run: Write-Host 'Android inputs are unchanged; skip APK packaging. Use the most recent Android APK release.'
 
       - name: Checkout
         if: steps.keystore.outputs.ready == 'true'
