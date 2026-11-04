@@ -1,10 +1,10 @@
 import { createRoot } from 'react-dom/client'
 import { useState } from 'react'
-import SshOpeningDialog from '../components/SshOpeningDialog'
-import ServerOperationTasks from '../components/ServerOperationTasks'
+import Toaster from '../components/Toaster'
 import { runSshOpening, cancelSshOpening } from '../store/sshOpeningStore'
 import { beginServerOperation, reportServerOperation, finishServerOperation, useServerOperationStore } from '../store/serverOperationStore'
-import { useUIStore } from './projectManagerAdapters'
+import { useUIStore, useProjectStore } from './projectManagerAdapters'
+import { useTransferStore } from '../store/transferStore'
 import { ensureBuiltinLocaleLoaded, useLocaleStore } from '../lib/i18n'
 import type { Project } from '../types'
 import type { SshOpeningStage } from '../store/sshOpeningStore'
@@ -34,6 +34,25 @@ export default function Page() {
         beginServerOperation(project.path, project.name, 'update')
         reportServerOperation(project.path, 2, '正在本机下载并校验服务包…')
       }}>模拟后台更新</button>
+      <button onClick={() => {
+        const rootUri = 'ssh://parallel/home/code/nem-panel'
+        beginServerOperation(rootUri, 'nem-panel', 'update')
+        reportServerOperation(rootUri, 2, '正在本机下载并校验服务包…')
+      }}>添加并行更新</button>
+      <button onClick={() => {
+        for (let index = 0; index < 6; index++) {
+          const rootUri = `ssh://parallel-${index}/home/code/project-${index}`
+          beginServerOperation(rootUri, `并行更新项目-${index}`, 'update')
+        }
+      }}>添加多条更新</button>
+      <button onClick={() => {
+        void runSshOpening({ ...project, id: 'opening-parallel', name: '正在打开的项目', path: 'ssh://opening/home/code/project' }, async () => new Promise(() => {})).catch(() => {})
+      }}>并行打开项目</button>
+      <button onClick={() => {
+        useProjectStore.setState({ toasts: [{ id: 'parallel-toast', kind: 'success', text: '远端服务更新完成' }] })
+        useTransferStore.setState({ tasks: [{ taskId: 'parallel-transfer', status: 'running', completedFiles: 0, completedBytes: 0, completedPaths: [], currentBytes: 512, currentTotalBytes: 1024,
+          request: { direction: 'upload', paths: ['/tmp/example.txt'], destination: 'ssh://operation/tmp/example.txt' } }] })
+      }}>添加通知与传输</button>
       <button onClick={() => reportServerOperation(project.path, 3, '正在通过 SSH 上传并校验服务包…')}>更新第 3 步</button>
       <button onClick={() => reportServerOperation(project.path, 4, '正在验证远端服务与配对身份…')}>更新第 4 步</button>
       <button onClick={() => finishServerOperation(project.path)}>模拟成功</button>
@@ -47,8 +66,7 @@ export default function Page() {
       }}>切换语言主题</button>
     </div>
     <output data-testid="manual-update-root">{updateRoot}</output>
-    <SshOpeningDialog />
-    <div className="fixed bottom-9 right-4 w-[min(420px,calc(100vw-2rem))]"><ServerOperationTasks /></div>
+    <Toaster />
   </main>
 }
 

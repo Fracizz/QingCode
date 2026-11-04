@@ -4,6 +4,7 @@ import { X, AlertCircle, Info, CheckCircle2 } from 'lucide-react'
 import { useProjectStore } from '../store/projectStore'
 import TransferTasks from './TransferTasks'
 import ServerOperationTasks from './ServerOperationTasks'
+import SshOpeningDialog from './SshOpeningDialog'
 
 export default function Toaster() {
   const { t: translate } = useI18n()
@@ -13,7 +14,7 @@ export default function Toaster() {
   const dismiss = useProjectStore(s => s.dismissToast)
 
   return (
-    <div className="fixed bottom-8 right-4 z-[150] flex flex-col gap-2 w-80 max-w-[min(20rem,calc(100vw-2rem))]">
+    <div data-floating-task-stack className="fixed bottom-8 right-3 z-[150] flex max-h-[calc(100dvh-4rem)] w-[min(428px,calc(100vw-1.5rem))] flex-col gap-2 overflow-y-auto overscroll-contain p-1 empty:hidden [&>*]:shrink-0">
       {toasts.map(t => {
         const Icon =
           t.kind === 'error'
@@ -44,7 +45,7 @@ export default function Toaster() {
             onBlurCapture={event => {
               if (!event.currentTarget.contains(event.relatedTarget)) resume(t.id, 'focus')
             }}
-            className="toast-enter toast-item relative overflow-hidden bg-bg-elevated border border-border-strong rounded-lg shadow-elevation-2 px-3.5 py-3 flex items-start gap-2.5 text-ui-lg max-w-sm transition-all duration-150 hover:shadow-elevation-3"
+            className="toast-enter toast-item relative overflow-hidden bg-bg-elevated border border-border-strong rounded-lg shadow-elevation-2 px-3.5 py-3 flex items-start gap-2.5 text-ui-lg w-80 max-w-full self-end [overflow-wrap:anywhere] transition-all duration-150 hover:shadow-elevation-3"
           >
             <Icon size={16} className={`${color} mt-0.5 flex-shrink-0`} />
             <div className="flex-1 min-w-0">
@@ -84,6 +85,7 @@ export default function Toaster() {
         )
       })}
       <ServerOperationTasks />
+      <SshOpeningDialog />
       <TransferTasks />
     </div>
   )

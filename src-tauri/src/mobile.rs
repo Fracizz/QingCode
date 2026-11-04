@@ -96,6 +96,10 @@ struct SavedSettings {
     certificate: Vec<u8>,
     private_key: Vec<u8>,
     code: CodeVerifier,
+    // Kept with the certificate key in the owner-only settings file so the
+    // desktop can restore and reveal it. Legacy verifier-only files still load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    password: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -121,16 +125,13 @@ struct CodeVerifier {
 }
 
 fn valid_code(code: &str) -> bool {
-    code.len() == 6
-        && code.bytes().all(|byte| byte.is_ascii_graphic())
-        && code.bytes().any(|byte| byte.is_ascii_alphabetic())
-        && code.bytes().any(|byte| byte.is_ascii_digit())
+    (6..=20).contains(&code.len()) && code.bytes().all(|byte| byte.is_ascii_graphic())
 }
 
 impl CodeVerifier {
     fn new(code: &str) -> Result<Self, String> {
         if !valid_code(code) {
-            return Err("验证码须为 6 位，包含英文字母和数字，可使用符号。".into());
+            return Err("密码须为 6–20 位，可使用数字、英文字母或符号，无需组合。".into());
         }
         let salt = *Uuid::new_v4().as_bytes();
         let mut digest = [0; 32];
@@ -355,6 +356,7 @@ pub struct Status {
 pub struct SettingsSummary {
     port: u16,
     configured: bool,
+    password: Option<String>,
 }
 
 impl Gateway {
@@ -398,11 +400,11 @@ impl Gateway {
             inner.failures.pop_front();
         }
         if inner.failures.len() >= MAX_ATTEMPTS {
-            return Err("验证码尝试过多，请在一分钟后重试。".into());
+            return Err("密码尝试过多，请在一分钟后重试。".into());
         }
         if !self.code.matches(secret) {
             inner.failures.push_back(now);
-            return Err("验证码不正确。".into());
+            return Err("密码不正确。".into());
         }
         inner.failures.clear();
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
@@ -488,6 +490,7 @@ pub fn mobile_saved_settings() -> Result<SettingsSummary, String> {
             .as_ref()
             .map_or(DEFAULT_PORT, |settings| settings.endpoint.port()),
         configured: saved.is_some(),
+        password: saved.and_then(|settings| settings.password),
     })
 }
 
@@ -504,7 +507,7 @@ pub async fn mobile_start(
     }
     if let Some(current) = state.current() {
         if code.is_some() {
-            return Err("更换验证码前请先停止移动连接。".into());
+            return Err("更换密码前请先停止移动连接。".into());
         }
         if port == current.port {
             return Ok(current.status());
@@ -517,10 +520,12 @@ pub async fn mobile_start(
     let mut settings = if let Some(mut saved) = load_settings()? {
         if let Some(code) = code {
             saved.code = CodeVerifier::new(&code)?;
+            saved.password = Some(code);
         }
         saved
     } else {
-        let code = CodeVerifier::new(code.as_deref().unwrap_or_default())?;
+        let password = code.ok_or("请设置 6–20 位密码。")?;
+        let code = CodeVerifier::new(&password)?;
         let certificate = rcgen::generate_simple_self_signed(vec!["qingcode.local".into()])
             .map_err(|error| error.to_string())?;
         SavedSettings {
@@ -528,6 +533,7 @@ pub async fn mobile_start(
             certificate: certificate.cert.der().to_vec(),
             private_key: certificate.key_pair.serialize_der(),
             code,
+            password: Some(password),
         }
     };
     settings.endpoint = SavedEndpoint::Port { port };
@@ -934,11 +940,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manual_code_requires_six_graphic_characters_with_letters_and_digits() {
-        for invalid in ["123456", "abcdef", "abc 12", "a1BCD", "a1BCDE3", "a1中BC"] {
+    fn password_accepts_six_to_twenty_graphic_characters_without_complexity_rules() {
+        for invalid in [
+            "",
+            "12345",
+            "123456789012345678901",
+            "abc 12",
+            "a1中BC",
+            "abcdef\n",
+        ] {
             assert!(!valid_code(invalid));
         }
-        assert!(valid_code("a1B@3!"));
+        for valid in [
+            "123456",
+            "abcdef",
+            "!!!!!!",
+            "a1B@3!",
+            "12345678901234567890",
+        ] {
+            assert!(valid_code(valid));
+        }
     }
 
     #[test]
@@ -951,10 +972,19 @@ mod tests {
             certificate: vec![],
             private_key: vec![],
             code: CodeVerifier::new(code).unwrap(),
+            password: None,
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains(code));
         let mut restored: SavedSettings = serde_json::from_str(&json).unwrap();
+        assert!(restored.password.is_none());
+        restored.password = Some(code.into());
+        let remembered: SavedSettings =
+            serde_json::from_str(&serde_json::to_string(&restored).unwrap()).unwrap();
+        assert_eq!(remembered.password.as_deref(), Some(code));
+        assert!(remembered
+            .code
+            .matches(remembered.password.as_deref().unwrap()));
         assert_eq!(restored.endpoint.port(), 49123);
         restored.endpoint = SavedEndpoint::Port { port: 49124 };
         let migrated = serde_json::to_value(&restored).unwrap();
@@ -969,7 +999,7 @@ mod tests {
             inner: Mutex::default(),
         };
         for _ in 0..MAX_ATTEMPTS {
-            assert_eq!(gateway.pair("wrong").unwrap_err(), "验证码不正确。");
+            assert_eq!(gateway.pair("wrong").unwrap_err(), "密码不正确。");
         }
         assert!(gateway.pair(code).unwrap_err().contains("尝试过多"));
         let aged = Instant::now() - ATTEMPT_WINDOW;

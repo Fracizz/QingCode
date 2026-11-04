@@ -77,7 +77,7 @@
         <div id="connection-list" class="rows"></div>
         <div id="connection-empty" class="empty-card" hidden>
           <span class="tile"><svg><use href="#i-host"/></svg></span>
-          <h2>暂无已配对电脑</h2><p>从电脑端的 Android 移动连接设置获取地址和验证码。</p>
+          <h2>暂无已配对电脑</h2><p>从电脑端的 Android 移动连接设置获取地址和密码。</p>
         </div>
       </section>
 
@@ -123,15 +123,15 @@
   <dialog id="pair-dialog" aria-labelledby="pair-title">
     <form id="pair-form">
       <h2 id="pair-title">添加连接</h2>
-      <p>在电脑端「设置 → 功能 → Android 移动连接」中获取地址和验证码。</p>
+      <p>在电脑端「设置 → 功能 → Android 移动连接」中获取地址和密码。</p>
       <label for="pair-name">连接名称</label>
       <input id="pair-name" maxlength="48" placeholder="例如 工作电脑" required>
       <div class="pair-address">
         <div><label for="pair-host">IPv4 地址</label><input id="pair-host" inputmode="decimal" autocomplete="off" placeholder="192.168.1.10" required></div>
         <div><label for="pair-port">端口</label><input id="pair-port" type="number" inputmode="numeric" min="1" max="65535" value="48764" required></div>
       </div>
-      <label for="pair-code">连接验证码</label>
-      <input id="pair-code" type="password" minlength="6" maxlength="6" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="6 位验证码" required>
+      <label for="pair-code">连接密码</label>
+      <input id="pair-code" type="password" minlength="6" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="6–20 位密码" required>
       <p id="pair-error" class="error" role="alert" hidden></p>
       <div class="dialog-actions"><button type="button" class="secondary" data-close="pair-dialog">取消</button><button id="pair-submit" class="primary" type="submit">核对并连接</button></div>
     </form>

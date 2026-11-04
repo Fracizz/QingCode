@@ -1,5 +1,11 @@
 # Web 测试页与浏览器验收
 
+Android 移动连接设置场景位于 `/web-tests/mobile-connection.html`，运行 `pnpm test:web` 和
+`node scripts/web-tests/mobile-connection.agent-browser.mjs`。复用真实设置组件，通过内存 IPC 检查
+设置标题与输入控件对齐、简单密码与 20 位边界、密码自动保存与重新打开后恢复、显示/隐藏、停止后修改，
+以及浅色窄窗和大字号布局。截图与结果位于 `.dev/web-tests/mobile-connection/`。
+该场景不启动监听端口，不替代 Windows 重启恢复及 Android 真机配对验收。
+
 Linux（含 WSL）默认使用 `agent-browser`，Windows/macOS 默认使用 `ego-browser`。
 以执行任务的操作系统为准；WSL 即使能调用 Windows Ego，也不会自动改选 Ego。
 用户显式指定引擎时优先遵循，同一次验收保持同一引擎，失败时不自动换浏览器。
@@ -178,6 +184,8 @@ Linux 浏览器场景使用 `node scripts/web-tests/server-startup.agent-browser
 安装与更新进度卡片场景位于 `/web-tests/server-operation.html`，Linux 运行
 `node scripts/web-tests/server-operation.agent-browser.mjs`。复用真实打开项目组件、后台操作 store 与进度卡片，
 覆盖首次安装非模态、真实阶段推进、取消打开、后台更新、计时、成功自动关闭、失败保留授权入口及英文浅色窄窗。
+后台更新、打开项目、通知与文件传输复用同一个右下角纵向堆栈；覆盖并行卡片无重叠、取消打开后更新继续、
+420px 英文浅色窄窗，以及短窗口中多任务滚动后仍可操作末项。
 结果与截图位于 `.dev/web-tests/server-operation/`。该场景不连接 SSH，不替代 Linux/macOS 原生生命周期验收。
 
 

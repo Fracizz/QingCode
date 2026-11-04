@@ -334,8 +334,8 @@ get('pair-form').addEventListener('submit', async event => {
   message('pair-error', '');
   try {
     if (!name) throw new Error('请输入连接名称。');
-    if (!/^(?=.*[A-Za-z])(?=.*[0-9])[!-~]{6}$/.test(code)) {
-      throw new Error('验证码须为 6 位，包含英文字母和数字。');
+    if (!/^[!-~]{6,20}$/.test(code)) {
+      throw new Error('密码须为 6–20 位，可使用数字、英文字母或符号，无需组合。');
     }
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
     const fingerprint = await rpc('probe', { host, port });

@@ -13,6 +13,13 @@ const check = (name, condition) => {
   results.push({ name, passed: true })
 }
 const capture = name => run('screenshot', '.server-operation-card', resolve(directory, `${name}.png`))
+const captureStack = name => run('screenshot', '[data-floating-task-stack]', resolve(directory, `${name}.png`))
+const separateCards = `(() => {
+  const stack = document.querySelector('[data-floating-task-stack]');
+  const cards = [...stack.children].map(card => card.getBoundingClientRect());
+  return cards.every((card, i) => card.width > 0 && card.left >= 0 && card.right <= innerWidth &&
+    (i === 0 || card.top >= cards[i - 1].bottom + 7));
+})()`
 try {
   run('set', 'viewport', '1200', '800')
   run('open', 'http://127.0.0.1:38439/web-tests/server-operation.html')
@@ -30,6 +37,18 @@ try {
   check('background update displays real upload progress', `document.querySelector('.server-operation-card').textContent.includes('更新中') && document.body.textContent.includes('第 3/4 步')`)
   check('elapsed seconds advance independently of stage progress', `/已用 [1-9][0-9]* 秒/.test(document.querySelector('.server-operation-card').textContent)`)
   capture('update-dark')
+  click('添加并行更新')
+  check('parallel updates share a stack without overlap', `document.querySelectorAll('.server-operation-card').length === 2 && ${separateCards}`)
+  captureStack('parallel-updates-dark')
+  click('并行打开项目')
+  check('opening another project stacks with both updates', `document.querySelectorAll('.server-operation-card').length === 3 && ${separateCards}`)
+  click('添加通知与传输')
+  check('notifications and transfers also share the stack', `document.querySelector('[data-floating-task-stack]').children.length === 5 && ${separateCards}`)
+  captureStack('parallel-mixed-dark')
+  click('取消打开')
+  check('cancelling opening keeps both background updates', `document.querySelectorAll('.server-operation-card').length === 2 && ${separateCards}`)
+  run('reload')
+  click('模拟后台更新')
   click('更新第 4 步')
   click('模拟成功')
   check('success shows a completed bar', `document.querySelector('[role="progressbar"]').getAttribute('aria-valuenow') === '4' && document.querySelector('[role="status"]').textContent.includes('Server 已就绪')`)
@@ -46,6 +65,25 @@ try {
   run('set', 'viewport', '420', '800')
   check('English light card stays within the narrow viewport', `document.querySelector('.server-operation-card').textContent.includes('Updating') && document.querySelector('.server-operation-card').textContent.includes('Step 2/4') && document.documentElement.scrollWidth <= innerWidth`)
   capture('update-light-en-narrow')
+  click('添加并行更新')
+  click('并行打开项目')
+  check('English light parallel cards stay separate at 420px', `document.querySelectorAll('.server-operation-card').length === 3 && ${separateCards}`)
+  captureStack('parallel-light-en-narrow')
+  click('添加多条更新')
+  run('set', 'viewport', '420', '420')
+  check('many parallel tasks scroll within a short viewport', `(() => {
+    const stack = document.querySelector('[data-floating-task-stack]');
+    const rect = stack.getBoundingClientRect();
+    return stack.scrollHeight > stack.clientHeight && rect.top >= 0 && rect.bottom <= innerHeight - 24 &&
+      document.documentElement.scrollWidth <= innerWidth && ${separateCards};
+  })()`)
+  run('eval', `document.querySelector('[data-floating-task-stack]').scrollTop = 100000`)
+  check('last task actions remain reachable by scrolling', `(() => {
+    const button = [...document.querySelectorAll('button')].find(b => b.textContent === 'Cancel opening');
+    const rect = button.getBoundingClientRect();
+    return rect.top >= 0 && rect.bottom <= innerHeight - 24;
+  })()`)
+  captureStack('parallel-short-scrolled')
 } catch (error) {
   results.push({ name: String(error), passed: false })
   capture('failure')

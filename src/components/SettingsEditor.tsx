@@ -1127,7 +1127,7 @@ export default function SettingsEditor() {
                     settingsRevision={settingsRevision}
                   />
                 )}
-                {!workspaceLocked && /Windows/i.test(navigator.userAgent) && match('Android', '安卓', '移动连接', '验证码') && (
+                {!workspaceLocked && /Windows/i.test(navigator.userAgent) && match('Android', '安卓', '移动连接', '密码', '验证码') && (
                   <MobileConnectionSettings />
                 )}
                 {!workspaceLocked && (

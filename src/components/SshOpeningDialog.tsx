@@ -41,11 +41,9 @@ export default function SshOpeningDialog() {
         : stage === 'files' ? t('读取项目文件') : stage === 'connecting' ? t('连接 SSH')
           : server?.phase === 'installing' ? t('安装 QingCode Server') : server ? t(sshServerPhaseKey(server.phase)) : t('正在检查远端服务')
     return (
-      <div className="fixed bottom-9 right-4 z-[110] w-[min(420px,calc(100vw-2rem))]">
-        <ServerOperationProgress name={project.name} status={operation?.kind === 'update' ? '更新中' : attempt.reusingServer ? '正在打开远程项目' : '安装中'}
-          label={operation?.label ?? label} step={operation?.step ?? step} startedAt={operation?.startedAt ?? attempt.startedAt}
-          actions={<button type="button" onClick={cancelSshOpening} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">{t('取消打开')}</button>} />
-      </div>
+      <ServerOperationProgress name={project.name} status={operation?.kind === 'update' ? '更新中' : attempt.reusingServer ? '正在打开远程项目' : '安装中'}
+        label={operation?.label ?? label} step={operation?.step ?? step} startedAt={operation?.startedAt ?? attempt.startedAt}
+        actions={<button type="button" onClick={cancelSshOpening} className="shrink-0 rounded px-2 py-1 text-ui-sm text-fg-muted hover:bg-bg-hover hover:text-fg">{t('取消打开')}</button>} />
     )
   }
   const steps = [t('连接 SSH'), t('准备远端服务和终端'), t('读取项目文件')]

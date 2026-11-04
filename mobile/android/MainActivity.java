@@ -220,8 +220,8 @@ public final class MainActivity extends Activity {
             String address = request.getString("host") + ":" + request.getInt("port");
             String pin = request.getString("fingerprint");
             String code = request.getString("code");
-            if (!code.matches("(?=.*[A-Za-z])(?=.*[0-9])[!-~]{6}")) {
-                return failure("验证码须为 6 位，包含英文字母和数字。");
+            if (!code.matches("[!-~]{6,20}")) {
+                return failure("密码须为 6–20 位，可使用数字、英文字母或符号，无需组合。");
             }
             String name = request.getString("name").trim();
             if (name.isEmpty() || name.length() > 48) return failure("连接名称须为 1–48 个字符。");
@@ -242,7 +242,7 @@ public final class MainActivity extends Activity {
             return success(JSONObject.NULL);
         }
         Connection current = connections.get(request.getString("profile"));
-        if (current == null) return failure("请先完成验证码配对。");
+        if (current == null) return failure("请先完成密码配对。");
         if ("rename".equals(op)) {
             String name = request.getString("name").trim();
             if (name.isEmpty() || name.length() > 48) return failure("连接名称须为 1–48 个字符。");
