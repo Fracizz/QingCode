@@ -15,12 +15,39 @@ import {
   outputChunk,
   parsePairingLink,
   projectSourceLabel,
+  recentProjects,
+  rememberProject,
   pullOffset,
   renameProfileKeys,
   splitInput,
 } from '../../mobile/android/web/protocol.js'
 
 const fingerprint = '0123456789abcdef'.repeat(4)
+
+describe('Android recent projects', () => {
+  it('orders phone and desktop opens by time and caps the result at ten', () => {
+    const projects = Array.from({ length: 15 }, (_, i) => ({ id: String(i), lastOpenedAt: i + 1 }))
+    const result = recentProjects(projects, [{ id: '0', openedAt: 30 }, { id: 'removed', openedAt: 100 }])
+    expect(result.map(item => item.id)).toEqual(['0', '14', '13', '12', '11', '10', '9', '8', '7', '6'])
+    expect(projects[0].id).toBe('0')
+  })
+
+  it('handles older desktops and damaged history without inventing opens', () => {
+    const projects = [{ id: 'old' }, { id: 'new', lastOpenedAt: 20 }, { id: 'invalid', lastOpenedAt: NaN }]
+    expect(recentProjects(projects, null).map(item => item.id)).toEqual(['new'])
+    expect(recentProjects(projects, [null, { id: 'old', openedAt: 30 }, { id: 'new', openedAt: 'bad' }])
+      .map(item => item.id)).toEqual(['old', 'new'])
+  })
+
+  it('moves reopened projects to the top and bounds persisted history', () => {
+    let history = null
+    for (let i = 0; i < 15; i++) history = rememberProject(history, String(i), i + 1)
+    history = rememberProject(history, '8', 30)
+    expect(history).toHaveLength(10)
+    expect(history[0]).toEqual({ id: '8', openedAt: 30 })
+    expect(history.filter(item => item.id === '8')).toHaveLength(1)
+  })
+})
 
 describe('Android project sources', () => {
   const wslRemote = {
@@ -125,10 +152,12 @@ describe('Android terminal protocol', () => {
       `${prefix}project:1.2.3.4:48764`,
       `${prefix}session:1.2.3.4:487640:p1`,
       `${prefix}active`,
+      `${prefix}recent-projects:1.2.3.4:48764`,
     ]
     expect(renameProfileKeys(keys, prefix, '1.2.3.4:48764', '1.2.3.4:49000')).toEqual([
       [keys[0], `${prefix}session:1.2.3.4:49000:p1`],
       [keys[1], `${prefix}project:1.2.3.4:49000`],
+      [keys[4], `${prefix}recent-projects:1.2.3.4:49000`],
     ])
   })
 })

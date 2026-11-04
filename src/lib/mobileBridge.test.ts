@@ -65,8 +65,8 @@ describe('mobile project bridge', () => {
 
   it('refreshes saved WSL projects added outside the main window', async () => {
     expect(await request()).toEqual({ id: 'request', data: [
-      { id: 'local', name: 'Local app', path: 'D:/app', kind: 'local', host: 'Windows' },
-      { id: 'wsl', name: 'WSL app', path: wsl.path, kind: 'wsl', host: 'Ubuntu' },
+      { id: 'local', name: 'Local app', path: 'D:/app', kind: 'local', host: 'Windows', lastOpenedAt: 1 },
+      { id: 'wsl', name: 'WSL app', path: wsl.path, kind: 'wsl', host: 'Ubuntu', lastOpenedAt: 1 },
     ] })
   })
 

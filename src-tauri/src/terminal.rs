@@ -983,7 +983,7 @@ fn validate_terminal_cwd(cwd: &str) -> Result<(), String> {
 ///
 /// CreateProcess 能接受该前缀，但 PowerShell 无法把它映射到盘符，提示符会显示成
 /// `PS Microsoft.PowerShell.Core\FileSystem::\\?\D:\...>`，因此交给 shell 前必须还原。
-fn strip_windows_verbatim_prefix(cwd: &str) -> Cow<'_, str> {
+pub(crate) fn strip_windows_verbatim_prefix(cwd: &str) -> Cow<'_, str> {
     let Some(rest) = cwd.strip_prefix(r"\\?\") else {
         return Cow::Borrowed(cwd);
     };

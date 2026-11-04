@@ -63,8 +63,9 @@
         </div>
         <button id="browse-projects" class="secondary wide" type="button" hidden>从其他项目打开终端</button>
         <section id="home-projects" class="home-projects" hidden aria-labelledby="home-projects-title">
-          <div class="section-heading"><h2 id="home-projects-title">快速打开</h2><button id="home-all-projects" class="text-button" type="button">全部项目 <svg><use href="#i-chevron"/></svg></button></div>
+          <div class="section-heading"><h2 id="home-projects-title">最近打开</h2><button id="home-all-projects" class="text-button" type="button">全部项目 <svg><use href="#i-chevron"/></svg></button></div>
           <div id="home-project-list" class="rows"></div>
+          <p id="home-recent-empty" class="hint" hidden>还没有最近打开的项目，可从全部项目中选择。</p>
         </section>
         <ol id="home-guide" class="setup-guide">
           <li><span>1</span><div><strong>开启电脑连接</strong><p>电脑端设置 → 功能 → Android 移动连接</p></div></li>
@@ -253,6 +254,7 @@
     <div class="sheet-handle" aria-hidden="true"><span></span></div>
     <h2 id="session-dialog-title">会话与设置</h2>
     <div id="session-options" class="rows"></div>
+    <p id="session-error" class="error" role="alert" hidden></p>
     <h3>终端设置</h3>
     <label for="terminal-columns">终端列宽</label>
     <select id="terminal-columns"><option value="0">适应屏幕</option><option value="80">固定 80 列</option><option value="100">固定 100 列</option></select>
@@ -260,11 +262,11 @@
     <div class="font-setting"><div><strong>终端字号</strong><p>仅调整手机显示</p></div><div class="font-stepper"><button id="font-smaller" type="button" aria-label="缩小终端字号">A−</button><output id="font-size" aria-live="polite"></output><button id="font-larger" type="button" aria-label="放大终端字号">A+</button></div></div>
     <label for="image-compression">图片压缩</label>
     <select id="image-compression" aria-describedby="image-compression-hint">
-      <option value="original">原图（HEIC 转 JPEG）</option><option value="low">低压缩 · 更清晰</option>
+      <option value="original">原图 · 不压缩</option><option value="low">低压缩 · 更清晰</option>
       <option value="medium" selected>中压缩 · 推荐</option><option value="high">高压缩 · 更小</option>
     </select>
-    <p id="image-compression-hint">自动保存，下次发图直接使用。HEIC / HEIF 在手机上转为 JPEG，需要系统支持解码；单张上传最大 8 MB。</p>
-    <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button><button type="button" id="end-session" class="secondary danger">结束当前会话</button></div>
+    <p id="image-compression-hint">自动保存，下次发图直接使用。原图保留 PNG / JPEG 文件；HEIC / HEIF 需要系统支持解码，原图模式保留分辨率并转换格式。单张上传最大 8 MB，超出时请选择压缩。</p>
+    <div class="dialog-actions"><button type="button" class="secondary" data-close="session-dialog">返回</button><button type="button" id="end-session" class="secondary danger">结束当前会话</button><button type="button" id="end-all-sessions" class="secondary danger">结束全部会话</button></div>
   </dialog>
 
   <dialog id="new-session-dialog" aria-labelledby="new-session-title">

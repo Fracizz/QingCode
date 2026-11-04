@@ -22,7 +22,7 @@ function mobileProject(project: Project, connections: Map<string, Pick<SshConnec
   const host = kind === 'ssh'
     ? remote?.host ?? 'SSH'
     : kind === 'wsl' ? wslDistroNameFromPath(project.path) ?? 'WSL' : 'Windows'
-  return { id: project.id, name: project.name, path: project.path, kind, host, connectionName: remote?.name }
+  return { id: project.id, name: project.name, path: project.path, kind, host, connectionName: remote?.name, lastOpenedAt: project.last_opened_at }
 }
 
 async function respond(projectId: string | null, attachment?: string | null) {

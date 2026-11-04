@@ -1,9 +1,12 @@
 Android 图片与快捷会话场景运行 `node scripts/web-tests/mobile-images.agent-browser.mjs`。
+Windows / macOS 的原图上传专项运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-images.ego.mjs').then(m=>m.run())"`（路径按检出目录调整）。覆盖原图选择与保存、上传参数与草稿、超限后切换压缩、重载后沿用和 320px 布局；截图与结果位于 `.dev/web-tests/mobile-images-ego/`，原生选择与上传使用内存桥模拟。
 覆盖默认中压缩、保存偏好、取消选择、上传失败保留草稿、迟到上传不串会话、Claude / OpenCode 各启动一次、
 紧凑底栏与模拟圆角内边距，截图和结果位于 `.dev/web-tests/mobile-images/`。
 此页面使用内存图片选择与 RPC，不替代 Android 相册、照片压缩、Windows / WSL 路径和远端上传的真机验收。
 
 # Web 测试页与浏览器验收
+
+手机最近打开与批量结束会话：Windows/macOS 运行 `ego-browser nodejs -e "await import('file:///D:/Code/QingCode/scripts/web-tests/mobile-recent-sessions.ego.mjs').then(m=>m.run())"`（先启动 `pnpm test:web`）。验证最近 10 项的时间排序、整页滚动与固定导航、重开置顶、旧电脑兼容与按电脑隔离，以及结束全部会话的数量/范围确认、取消、部分失败保留和重试。截图与 JSON 位于 `.dev/web-tests/mobile-recent-sessions/`；使用内存 RPC，不结束真实终端，不替代 Android 真机和本机/WSL/SSH 进程验收。
 
 Android 延迟显示运行 `node scripts/web-tests/mobile-latency.agent-browser.mjs`。覆盖首页与终端复用读数、10 秒刷新、长轮询不污染测量、连接详情、320px / 横屏布局、Android 前后台回调、探测失败仍可输入、旧版电脑不重复检测、重新配对恢复和切换电脑丢弃迟到值；截图与 JSON 位于 `.dev/web-tests/mobile-latency/`。调度、单并发和过期由 `mobileAndroidLatency.test.ts` 补充验证；浏览器使用内存桥，真实手机网络及原生计时仍需真机验收。
 

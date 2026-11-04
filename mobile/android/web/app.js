@@ -10,6 +10,8 @@ import {
   outputChunk,
   parsePairingLink,
   projectSourceLabel,
+  recentProjects,
+  rememberProject,
   renameProfileKeys,
   splitInput,
   validIpv4,
@@ -323,6 +325,16 @@ function lastProject() {
   return projects.find(item => item.id === id);
 }
 
+function projectHistory() {
+  if (!profile) return [];
+  try {
+    const raw = localStorage.getItem(prefix + 'recent-projects:' + profile.id);
+    if (raw !== null) return JSON.parse(raw);
+  } catch { /* Ignore damaged history; the desktop's saved times remain available. */ }
+  const previous = lastProject();
+  return previous ? [{ id: previous.id, openedAt: 1 }] : [];
+}
+
 function renderHome() {
   const recent = lastProject();
   const state = hostState(profile);
@@ -343,9 +355,10 @@ function renderHome() {
     get('resume-name').textContent = recent.name;
     get('resume-host').textContent = profile.name + ' / ' + projectSourceLabel(recent);
   }
-  const quickProjects = projects.filter(item => item.id !== (canResume ? recent.id : null)).slice(0, 3);
-  get('home-projects').hidden = state !== 'online' || !quickProjects.length;
-  get('home-project-list').replaceChildren(...quickProjects.map(projectRow));
+  const recentList = recentProjects(projects, projectHistory());
+  get('home-projects').hidden = state !== 'online' || !projects.length;
+  get('home-project-list').replaceChildren(...recentList.map(projectRow));
+  get('home-recent-empty').hidden = recentList.length > 0;
   const homeStates = {
     checking: ['正在连接电脑', '正在读取已信任的项目。', '查看连接'],
     offline: ['电脑暂时不可达', '检查手机和电脑的网络后重试。', '重新连接'],
@@ -664,6 +677,7 @@ get('remove-host').addEventListener('click', async () => {
     }
     workspace.removeHost(item.id);
     localStorage.removeItem(prefix + 'project:' + item.id);
+    localStorage.removeItem(prefix + 'recent-projects:' + item.id);
     get('host-dialog').close();
     if (profile?.id === item.id) {
       profileEpoch += 1;
@@ -1281,6 +1295,7 @@ function renderSessions() {
   tabs.replaceChildren();
   options.replaceChildren();
   get('end-session').disabled = !selected;
+  get('end-all-sessions').disabled = !sessions.length;
   get('end-session').textContent = sessions.find(item => item.id === selected)?.exit ? '移除已结束会话' : '结束当前会话';
   for (const [index, session] of sessions.entries()) {
     const label = '终端 ' + (session.number ?? index + 1);
@@ -1325,6 +1340,10 @@ function selectSession(session) {
   resizeComposer();
   localStorage.setItem(sessionKey(project.id), session.id);
   localStorage.setItem(prefix + 'project:' + profile.id, project.id);
+  try {
+    localStorage.setItem(prefix + 'recent-projects:' + profile.id,
+      JSON.stringify(rememberProject(projectHistory(), project.id)));
+  } catch { /* Terminal access remains available when history cannot be saved. */ }
   localStorage.setItem(prefix + 'open', profile.id);
   renderHome();
   makeTerminal();
@@ -1511,6 +1530,67 @@ get('end-session').addEventListener('click', async () => {
     }
   } finally {
     busy = false;
+  }
+});
+
+get('end-all-sessions').addEventListener('click', async () => {
+  if (busy || !project || !sessions.length) return;
+  let epoch = viewEpoch;
+  const address = profile.id;
+  const projectId = project.id;
+  const previous = selected;
+  busy = true;
+  message('session-error', '');
+  try {
+    // Refresh before confirmation, then end only the exact sessions shown there.
+    const targets = await remote('sessions', { project: projectId }, address);
+    if (epoch !== viewEpoch) return;
+    sessions = targets;
+    renderSessions();
+    if (!targets.length) {
+      get('session-dialog').close();
+      localStorage.removeItem(sessionKey(projectId));
+      returnToDashboard('home');
+      return;
+    }
+    if (!await confirmAction('结束全部会话？',
+      `将结束「${profile.name} / ${project.name}」的全部 ${targets.length} 个手机会话，关闭其中的 Shell 和前台任务，并移除会话输出。其他项目和桌面终端不受影响。`, '结束全部')) return;
+    if (epoch !== viewEpoch) return;
+    get('session-dialog').close();
+    // Pause polling and input while the confirmed terminals are being closed.
+    leaveTerminal({ preserveFullscreen: true });
+    epoch = viewEpoch;
+    terminalState('正在结束全部会话…');
+    const ended = new Set();
+    const failed = [];
+    for (const item of targets) {
+      try {
+        await remote('end', { id: item.id }, address);
+        ended.add(item.id);
+      } catch (error) {
+        failed.push({ id: item.id, error });
+      }
+    }
+    if (epoch !== viewEpoch) return;
+    for (const id of ended) drafts.delete(draftKey(id));
+    sessions = targets.filter(item => !ended.has(item.id));
+    compose.value = '';
+    if (!sessions.length) {
+      localStorage.removeItem(sessionKey(projectId));
+      returnToDashboard('home');
+    } else {
+      selectSession(sessions.find(item => item.id === previous) ?? sessions.find(item => !item.exit) ?? sessions[0]);
+      message('session-error', `已结束 ${ended.size} 个会话，${failed.length} 个未确认结束，请核对后重试。`);
+      get('session-dialog').showModal();
+    }
+  } catch (error) {
+    if (epoch === viewEpoch) {
+      if (error.revoked) handleTerminalError(error);
+      else message('session-error', error.message);
+    }
+  } finally {
+    busy = false;
+    get('end-all-sessions').disabled = !sessions.length;
   }
 });
 

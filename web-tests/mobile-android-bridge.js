@@ -14,6 +14,8 @@
       { id: 'p-ssh', name: 'api-server', path: 'ssh://conn-1/srv/api', kind: 'ssh', host: 'build.example' },
     ],
     sessions: new Map(),
+    ends: [],
+    endErrors: new Set(),
     inputs: [],
     polls: [],
     historyRequests: [],
@@ -125,7 +127,12 @@
         return { ok: true, data: { path: "'/tmp/mobile-image.jpg'" } }
       }
       case 'resize': return { ok: true, data: null }
-      case 'end': state.sessions.delete(request.id); return { ok: true, data: null }
+      case 'end': {
+        state.ends.push(request.id)
+        if (state.endErrors.has(request.id)) return { ok: false, error: '模拟结束失败' }
+        state.sessions.delete(request.id)
+        return { ok: true, data: null }
+      }
       default: return { ok: false, error: '未知操作。' }
     }
   }

@@ -4,6 +4,27 @@
 export const PAIRING_PREFIX = 'qingcode://pair?';
 export const DEFAULT_PORT = 48764;
 export const INPUT_SLICE = 2048;
+export const RECENT_PROJECT_LIMIT = 10;
+
+export function rememberProject(history, id, openedAt = Date.now()) {
+  const entries = Array.isArray(history) ? history : [];
+  return [{ id, openedAt }, ...entries.filter(item => item && item.id !== id
+    && typeof item.id === 'string' && Number.isFinite(item.openedAt) && item.openedAt > 0)]
+    .slice(0, RECENT_PROJECT_LIMIT);
+}
+
+/** Only current trusted projects qualify; desktop and phone opens share the ordering. */
+export function recentProjects(projects, history) {
+  const times = new Map();
+  for (const item of Array.isArray(history) ? history : []) {
+    if (item && typeof item.id === 'string' && Number.isFinite(item.openedAt) && item.openedAt > 0)
+      times.set(item.id, Math.max(times.get(item.id) || 0, item.openedAt));
+  }
+  const timestamp = project => Math.max(times.get(project.id) || 0,
+    Number.isFinite(project.lastOpenedAt) && project.lastOpenedAt > 0 ? project.lastOpenedAt : 0);
+  return projects.filter(project => timestamp(project) > 0)
+    .sort((a, b) => timestamp(b) - timestamp(a)).slice(0, RECENT_PROJECT_LIMIT);
+}
 
 /** 保留连接名称和实际主机；连接名为 WSL 的 SSH 项目仍使用远端通道。 */
 export function projectSourceLabel(project) {
@@ -140,7 +161,7 @@ export function keySequence(key, { applicationCursor = false } = {}) {
 export function renameProfileKeys(keys, prefix, from, to) {
   const moves = [];
   for (const key of keys) {
-    for (const scope of ['session:', 'project:']) {
+    for (const scope of ['session:', 'project:', 'recent-projects:']) {
       const old = prefix + scope + from;
       if (key === old || key.startsWith(old + ':')) moves.push([key, prefix + scope + to + key.slice(old.length)]);
     }
