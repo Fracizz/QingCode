@@ -79,6 +79,48 @@ export function applyModifiers(value, { ctrl = false, alt = false } = {}) {
   return result;
 }
 
+/** 双击判定窗口（毫秒），参考 Termux extra-keys 的修饰键锁定手势。 */
+export const MODIFIER_LOCK_WINDOW = 350;
+
+/**
+ * 修饰键三态：off → once（单次）→ 窗口内再点 → lock（锁定）；once 超时再点或 lock 再点均回到 off。
+ * 返回 { state, at }，at 为本次点击时间，供下一次判定双击。
+ */
+export function nextModifierState(current, now, lastTap = -Infinity) {
+  if (current === 'once' && now - lastTap <= MODIFIER_LOCK_WINDOW) return { state: 'lock', at: now };
+  if (current === 'off' || !current) return { state: 'once', at: now };
+  return { state: 'off', at: now };
+}
+
+/** 发送一次输入后：单次修饰键复位，锁定保持。 */
+export function consumeModifier(state) {
+  return state === 'lock' ? 'lock' : 'off';
+}
+
+/** 下拉刷新：带阻尼的位移与触发阈值（像素）。 */
+export const PULL_THRESHOLD = 64;
+export const PULL_MAX = 96;
+
+export function pullOffset(distance) {
+  if (!(distance > 0)) return 0;
+  // 越拉越难：前段近似 1:2，靠近上限时趋缓。
+  return Math.round(PULL_MAX * (1 - Math.exp(-distance / (PULL_MAX * 1.25))));
+}
+
+const AVATAR_HUES = 6;
+
+/** 连接头像：取名称首个字母/汉字（英文取前两个单词首字母），色相由名称稳定散列得出。 */
+export function avatarFor(name) {
+  const text = String(name ?? '').trim();
+  const words = text.split(/[\s_\-.]+/).filter(Boolean);
+  const initials = words.length > 1 && /^[a-z0-9]/i.test(words[0]) && /^[a-z0-9]/i.test(words[1])
+    ? words[0][0] + words[1][0]
+    : Array.from(text)[0] ?? '?';
+  let hash = 0;
+  for (const character of text) hash = (hash * 31 + character.codePointAt(0)) >>> 0;
+  return { initials: initials.toUpperCase(), hue: hash % AVATAR_HUES };
+}
+
 const ARROWS = { up: 'A', down: 'B', right: 'C', left: 'D', home: 'H', end: 'F' };
 const TILDE_KEYS = { pgup: '5~', pgdn: '6~' };
 

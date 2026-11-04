@@ -2,12 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { buildPairingLink, formatFingerprint } from './mobilePairing'
 // Android WebView 资产与桌面共用同一套配对链接格式。
 import {
+  MODIFIER_LOCK_WINDOW,
+  PULL_MAX,
+  PULL_THRESHOLD,
   applyModifiers,
+  avatarFor,
+  consumeModifier,
   keySequence,
   matchesProject,
+  nextModifierState,
   outputChunk,
   parsePairingLink,
   projectSourceLabel,
+  pullOffset,
   renameProfileKeys,
   splitInput,
 } from '../../mobile/android/web/protocol.js'
@@ -118,5 +125,58 @@ describe('Android terminal protocol', () => {
       [keys[0], `${prefix}session:1.2.3.4:49000:p1`],
       [keys[1], `${prefix}project:1.2.3.4:49000`],
     ])
+  })
+})
+
+describe('Android extra-key modifiers (Termux-style lock)', () => {
+  it('cycles off → once → lock on a double tap and releases on the next tap', () => {
+    const first = nextModifierState('off', 1000)
+    expect(first).toEqual({ state: 'once', at: 1000 })
+    const second = nextModifierState(first.state, 1000 + MODIFIER_LOCK_WINDOW, first.at)
+    expect(second.state).toBe('lock')
+    expect(nextModifierState(second.state, 5000, second.at).state).toBe('off')
+  })
+
+  it('treats a slow second tap as cancelling the one-shot modifier', () => {
+    expect(nextModifierState('once', 2000, 2000 - MODIFIER_LOCK_WINDOW - 1).state).toBe('off')
+  })
+
+  it('consumes one-shot modifiers but keeps locked ones', () => {
+    expect(consumeModifier('once')).toBe('off')
+    expect(consumeModifier('off')).toBe('off')
+    expect(consumeModifier('lock')).toBe('lock')
+  })
+})
+
+describe('Android pull to refresh', () => {
+  it('ignores upward or zero movement', () => {
+    expect(pullOffset(0)).toBe(0)
+    expect(pullOffset(-40)).toBe(0)
+    expect(pullOffset(Number.NaN)).toBe(0)
+  })
+
+  it('damps the pull, crosses the threshold with a deliberate drag and never exceeds the maximum', () => {
+    expect(pullOffset(60)).toBeLessThan(60)
+    expect(pullOffset(80)).toBeLessThan(PULL_THRESHOLD)
+    expect(pullOffset(150)).toBeGreaterThanOrEqual(PULL_THRESHOLD)
+    expect(pullOffset(10_000)).toBeLessThanOrEqual(PULL_MAX)
+    expect(pullOffset(100)).toBeGreaterThan(pullOffset(90))
+  })
+})
+
+describe('Android connection avatars', () => {
+  it('uses the first character for CJK names and two initials for multi-word names', () => {
+    expect(avatarFor('工作电脑').initials).toBe('工')
+    expect(avatarFor('build server').initials).toBe('BS')
+    expect(avatarFor('DEVBOX').initials).toBe('D')
+    expect(avatarFor('').initials).toBe('?')
+  })
+
+  it('keeps a stable colour per name within the palette', () => {
+    expect(avatarFor('WinDev').hue).toBe(avatarFor('WinDev').hue)
+    for (const name of ['a', 'WSL', '工作电脑', 'build server', '🙂 home']) {
+      const { hue } = avatarFor(name)
+      expect(Number.isInteger(hue) && hue >= 0 && hue < 6).toBe(true)
+    }
   })
 })

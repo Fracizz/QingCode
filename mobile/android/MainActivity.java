@@ -145,7 +145,7 @@ public final class MainActivity extends Activity {
                     String type;
                     switch (asset) {
                         case "index.html": type = "text/html"; break;
-                        case "app.js": case "protocol.js": case "scanner.js": case "terminalTouch.js":
+                        case "app.js": case "protocol.js": case "scanner.js": case "terminalTouch.js": case "gestures.js":
                         case "xterm.js": case "fit.js": case "jsqr.js":
                             type = "application/javascript"; break;
                         case "app.css": case "xterm.css": type = "text/css"; break;

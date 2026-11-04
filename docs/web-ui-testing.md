@@ -62,7 +62,9 @@ agent-browser --session qingcode-ui-review close
 
 QingCode Android 场景位于 `/mobile-android/`（`pnpm test:web`）。Linux / WSL 运行
 `node scripts/web-tests/mobile-layout.agent-browser.mjs`，覆盖首次使用引导、快捷项目、搜索清空、吸顶筛选、长名称、
-中文组词保护、命令发送、实时键盘切换、Ctrl+C、字号上下限、历史回看、会话草稿、离线重连、居中弹窗与返回操作。
+中文组词保护、命令发送、实时键盘切换、Ctrl+C、两排快捷键与符号键、Alt 双击锁定与释放、单会话隐藏标签栏、
+竖屏会话底部弹层、连接头像、字号上下限、历史回看、会话草稿、离线重连、居中弹窗与返回操作。
+下拉刷新、弹层下滑关闭和长按连发的触摸手势由 `src/lib/mobileAndroidGestures.test.ts` 覆盖。
 在 320px 窄屏、390px 常规屏、键盘压缩视口和横屏保存截图，结果位于 `.dev/web-tests/mobile-layout/`。
 Windows / macOS 可运行 `scripts/web-tests/mobile-android.ego.mjs` 的 `run()`。
 页面直接加载 `mobile/android/web/` 的真实 `index.html`、`app.js`、`protocol.js` 与 xterm，`web-tests/mobile-android-bridge.js`

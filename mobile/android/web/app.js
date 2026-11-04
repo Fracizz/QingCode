@@ -1,8 +1,11 @@
 import {
   DEFAULT_PORT,
   applyModifiers,
+  avatarFor,
+  consumeModifier,
   keySequence,
   matchesProject,
+  nextModifierState,
   outputChunk,
   parsePairingLink,
   projectSourceLabel,
@@ -13,6 +16,7 @@ import {
 } from './protocol.js';
 import { decodeScannerFrame, focusScannerCamera, requestScannerCamera } from './scanner.js';
 import { attachTerminalTouchScroll } from './terminalTouch.js';
+import { attachKeyRepeat, attachPullToRefresh, attachSheetDrag } from './gestures.js';
 
 const get = id => document.getElementById(id);
 const native = window.QingCodeNative;
@@ -39,7 +43,9 @@ let term;
 let fit;
 let disposeTouchScroll;
 let terminalReady = false;
-const modifiers = { ctrl: false, alt: false };
+// 修饰键三态 off / once / lock，lastTap 用于识别双击锁定。
+const modifiers = { ctrl: 'off', alt: 'off' };
+const lastTap = { ctrl: -Infinity, alt: -Infinity };
 let busy = false;
 let inputQueue = '';
 let inputTimer = null;
@@ -196,6 +202,16 @@ function button(className, action) {
   return element;
 }
 
+function avatar(name) {
+  const { initials, hue } = avatarFor(name);
+  const element = document.createElement('span');
+  element.className = 'avatar';
+  element.dataset.hue = String(hue);
+  element.textContent = initials;
+  element.setAttribute('aria-hidden', 'true');
+  return element;
+}
+
 function hostState(item) {
   return health.get(item?.id) ?? 'saved';
 }
@@ -226,7 +242,7 @@ function renderConnections() {
     status.className = 'connection-state';
     status.textContent = labels[state] + (current ? ' · 当前电脑' : '');
     text.append(status);
-    select.append(tile('host'), text, dot);
+    select.append(avatar(item.name), text, dot);
     card.append(select, detail);
     list.append(card);
   }
@@ -305,7 +321,8 @@ function renderProjects() {
   const checking = hostState(profile) === 'checking';
   list.setAttribute('aria-busy', String(checking));
   get('refresh').disabled = !profile || checking;
-  get('refresh').textContent = checking ? '读取中…' : '刷新';
+  get('refresh').dataset.busy = String(checking);
+  get('refresh').setAttribute('aria-label', checking ? '正在读取项目' : '刷新项目');
   get('project-filters').hidden = !profile;
   get('project-subtitle').textContent = profile ? profile.name + ' · 已信任项目' : '请先在「连接」中配对电脑。';
   get('list-label').textContent = matching.length ? matching.length + ' 个项目'
@@ -671,14 +688,22 @@ for (const item of get('hosts').querySelectorAll('button')) {
   });
 }
 
-function setModifier(name, value) {
-  modifiers[name] = value;
-  get('special-keys').querySelector('[data-key="' + name + '"]').setAttribute('aria-pressed', String(value));
+function setModifier(name, state) {
+  modifiers[name] = state;
+  const key = get('special-keys').querySelector('[data-key="' + name + '"]');
+  key.setAttribute('aria-pressed', String(state !== 'off'));
+  key.dataset.locked = String(state === 'lock');
 }
 
 function clearModifiers() {
-  setModifier('ctrl', false);
-  setModifier('alt', false);
+  setModifier('ctrl', 'off');
+  setModifier('alt', 'off');
+}
+
+/** 一次输入之后：单次修饰键复位，锁定的保持。 */
+function consumeModifiers() {
+  setModifier('ctrl', consumeModifier(modifiers.ctrl));
+  setModifier('alt', consumeModifier(modifiers.alt));
 }
 
 function setRawKeyboard(enabled) {
@@ -686,6 +711,8 @@ function setRawKeyboard(enabled) {
   get('keyboard').setAttribute('aria-pressed', String(enabled));
   get('keyboard').setAttribute('aria-label', enabled ? '切回命令栏输入' : '打开实时输入键盘');
   get('input-hint').textContent = enabled ? '实时输入 · 按键直接发送到终端' : '命令栏可编辑中文 · 空白发送为回车';
+  compose.placeholder = enabled ? '实时输入中 · 按键直接发送' : '输入命令，空白发送回车';
+  get('compose-form').dataset.mode = enabled ? 'raw' : 'compose';
 }
 
 function focusRawKeyboard() {
@@ -770,7 +797,7 @@ function makeTerminal() {
   term.textarea.addEventListener('blur', () => setRawKeyboard(false));
   fit.fit();
   updateTerminalSize();
-  term.onData(data => sendInput(data));
+  term.onData(data => { sendInput(data); });
   term.onResize(() => {
     updateTerminalSize();
     clearTimeout(resizing);
@@ -876,6 +903,7 @@ async function openProject(item, resumeOnly = false) {
 
 function renderSessions() {
   const tabs = get('session-tabs');
+  get('session-rail').hidden = sessions.length < 2;
   const options = get('session-options');
   const scroll = tabs.scrollLeft;
   tabs.replaceChildren();
@@ -1017,11 +1045,11 @@ function flushInput() {
   });
 }
 
-function sendInput(value) {
+function sendInput(value, { raw = false } = {}) {
   if (!terminalReady) return false;
-  if (modifiers.ctrl || modifiers.alt) {
-    value = applyModifiers(value, modifiers);
-    clearModifiers();
+  if (!raw && (modifiers.ctrl !== 'off' || modifiers.alt !== 'off')) {
+    value = applyModifiers(value, { ctrl: modifiers.ctrl !== 'off', alt: modifiers.alt !== 'off' });
+    consumeModifiers();
   }
   if (queuedInput + inputQueue.length + value.length > 32_768) {
     get('terminal-status').textContent = '输入过长，请分段粘贴。';
@@ -1092,20 +1120,30 @@ for (const keyButton of get('special-keys').querySelectorAll('[data-key]')) {
   keyButton.addEventListener('pointerdown', event => {
     if (document.activeElement === compose || document.activeElement === term?.textarea) event.preventDefault();
   });
-  keyButton.addEventListener('click', () => {
-    const key = keyButton.dataset.key;
-    if (key === 'ctrl' || key === 'alt') {
-      setModifier(key, !modifiers[key]);
-      if (modifiers[key]) focusRawKeyboard();
-    } else if (key === 'interrupt') {
-      // Dedicated interruption always sends Ctrl+C, independent of pending modifiers.
-      clearModifiers();
-      sendInput('\x03');
-    } else {
-      // Navigation keys take pending modifiers too, e.g. Alt+← moves by word.
-      sendInput(keySequence(key, { applicationCursor: term?.modes.applicationCursorKeysMode }));
-    }
-  });
+  keyButton.addEventListener('click', () => pressKey(keyButton));
+  if (keyButton.hasAttribute('data-repeat')) attachKeyRepeat(keyButton, () => pressKey(keyButton));
+}
+
+function pressKey(keyButton) {
+  const key = keyButton.dataset.key;
+  if (key === 'ctrl' || key === 'alt') {
+    const previous = modifiers[key];
+    const next = nextModifierState(previous, performance.now(), lastTap[key]);
+    lastTap[key] = next.at;
+    setModifier(key, next.state);
+    if (previous === 'off') focusRawKeyboard();
+  } else if (key === 'interrupt') {
+    // Dedicated interruption always sends Ctrl+C, independent of pending modifiers.
+    if (!terminalReady) return;
+    consumeModifiers();
+    sendInput('\x03', { raw: true });
+  } else if (key === 'text') {
+    // Symbols that soft keyboards hide behind extra layers; pending Ctrl/Alt still apply.
+    sendInput(keyButton.dataset.text);
+  } else {
+    // Navigation keys take pending modifiers too, e.g. Alt+← moves by word.
+    sendInput(keySequence(key, { applicationCursor: term?.modes.applicationCursorKeysMode }));
+  }
 }
 get('keyboard').addEventListener('pointerdown', event => {
   if (document.activeElement === term?.textarea) event.preventDefault();
@@ -1147,6 +1185,17 @@ get('compose-form').addEventListener('submit', event => {
     resizeComposer();
   }
 });
+
+// 首页与项目页下拉刷新：重新读取项目，离线时等同重连。
+for (const [screen, indicator] of [['home-screen', 'home-pull'], ['project-screen', 'project-pull']]) {
+  attachPullToRefresh(get(screen), get(indicator), {
+    enabled: () => !!profile && hostState(profile) !== 'checking' && hostState(profile) !== 'expired',
+    onRefresh: () => refreshProjects(),
+  });
+}
+for (const sheet of document.querySelectorAll('dialog.sheet')) {
+  attachSheetDrag(sheet, sheet.querySelector('.sheet-handle'), () => sheet.close('cancel'));
+}
 
 async function initialize() {
   try {

@@ -10,6 +10,7 @@ const mobileAssets: Record<string, [string, string]> = {
   'protocol.js': ['mobile/android/web/protocol.js', 'text/javascript'],
   'scanner.js': ['mobile/android/web/scanner.js', 'text/javascript'],
   'terminalTouch.js': ['mobile/android/web/terminalTouch.js', 'text/javascript'],
+  'gestures.js': ['mobile/android/web/gestures.js', 'text/javascript'],
   'app.css': ['mobile/android/web/app.css', 'text/css'],
   'xterm.js': ['node_modules/@xterm/xterm/lib/xterm.js', 'text/javascript'],
   'xterm.css': ['node_modules/@xterm/xterm/css/xterm.css', 'text/css'],
