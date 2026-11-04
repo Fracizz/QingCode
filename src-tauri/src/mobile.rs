@@ -2,7 +2,7 @@
 //! terminals allocated by this endpoint are addressable by the paired device.
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -37,13 +37,44 @@ const CODE_ROUNDS: NonZeroU32 = NonZeroU32::new(600_000).unwrap();
 
 #[derive(Default)]
 pub struct MobileState {
-    running: Mutex<Option<Arc<Gateway>>>,
+    running: Mutex<Option<RunningGateway>>,
     lifecycle: tokio::sync::Mutex<()>,
     pending: Mutex<HashMap<Uuid, oneshot::Sender<Result<Value, String>>>>,
 }
 
+impl MobileState {
+    fn current(&self) -> Option<Arc<Gateway>> {
+        self.running
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|running| running.gateway.clone())
+    }
+}
+
+struct RunningGateway {
+    gateway: Arc<Gateway>,
+    listener: tauri::async_runtime::JoinHandle<()>,
+}
+
+impl RunningGateway {
+    async fn stop_accepting(&mut self) {
+        self.gateway.stop.send_replace(true);
+        let _ = (&mut self.listener).await;
+    }
+
+    async fn finish(self, app: &AppHandle) {
+        let sessions = std::mem::take(&mut self.gateway.inner.lock().unwrap().sessions);
+        for (id, session) in sessions {
+            if session.ready && session.exit.is_none() {
+                let _ = end(app, id, session.project.kind).await;
+            }
+        }
+    }
+}
+
 struct Gateway {
-    address: SocketAddrV4,
+    port: u16,
     fingerprint: String,
     code: CodeVerifier,
     stop: watch::Sender<bool>,
@@ -60,10 +91,27 @@ struct GatewayState {
 
 #[derive(Serialize, Deserialize)]
 struct SavedSettings {
-    address: SocketAddrV4,
+    #[serde(flatten)]
+    endpoint: SavedEndpoint,
     certificate: Vec<u8>,
     private_key: Vec<u8>,
     code: CodeVerifier,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(untagged)]
+enum SavedEndpoint {
+    Port { port: u16 },
+    Legacy { address: SocketAddrV4 },
+}
+
+impl SavedEndpoint {
+    fn port(&self) -> u16 {
+        match self {
+            Self::Port { port } => *port,
+            Self::Legacy { address } => address.port(),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -298,19 +346,26 @@ enum Operation {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Status {
-    address: Option<String>,
+    port: Option<u16>,
     paired: bool,
     fingerprint: Option<String>,
 }
 
 #[derive(Serialize)]
 pub struct SettingsSummary {
-    address: Option<Ipv4Addr>,
     port: u16,
     configured: bool,
 }
 
 impl Gateway {
+    fn status(&self) -> Status {
+        Status {
+            port: Some(self.port),
+            paired: self.inner.lock().unwrap().token.is_some(),
+            fingerprint: Some(self.fingerprint.clone()),
+        }
+    }
+
     fn authenticate(&self, bearer: Option<&str>) -> Result<(), String> {
         let inner = self.inner.lock().unwrap();
         if !*self.stop.borrow()
@@ -369,7 +424,7 @@ pub fn listen(app: &AppHandle) {
     let output_app = app.clone();
     app.listen("terminal-data", move |event| {
         let state = output_app.state::<MobileState>();
-        let Some(gateway) = state.running.lock().unwrap().clone() else {
+        let Some(gateway) = state.current() else {
             return;
         };
         let Ok(data) = serde_json::from_str::<DataEvent>(event.payload()) else {
@@ -382,7 +437,7 @@ pub fn listen(app: &AppHandle) {
     let screen_app = app.clone();
     app.listen("terminal-screen", move |event| {
         let state = screen_app.state::<MobileState>();
-        let Some(gateway) = state.running.lock().unwrap().clone() else {
+        let Some(gateway) = state.current() else {
             return;
         };
         let Ok(screen) = serde_json::from_str::<ScreenEvent>(event.payload()) else {
@@ -399,7 +454,7 @@ pub fn listen(app: &AppHandle) {
     let exit_app = app.clone();
     app.listen("terminal-exit", move |event| {
         let state = exit_app.state::<MobileState>();
-        let Some(gateway) = state.running.lock().unwrap().clone() else {
+        let Some(gateway) = state.current() else {
             return;
         };
         let Ok(exit) = serde_json::from_str::<ExitEvent>(event.payload()) else {
@@ -415,60 +470,50 @@ pub fn listen(app: &AppHandle) {
 
 #[tauri::command]
 pub fn mobile_status(state: State<'_, MobileState>) -> Status {
-    let running = state.running.lock().unwrap();
-    Status {
-        address: running.as_ref().map(|gateway| gateway.address.to_string()),
-        fingerprint: running.as_ref().map(|gateway| gateway.fingerprint.clone()),
-        paired: running
-            .as_ref()
-            .is_some_and(|gateway| gateway.inner.lock().unwrap().token.is_some()),
-    }
-}
-
-#[tauri::command]
-pub fn mobile_suggest_address() -> Option<String> {
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
-    socket.connect((Ipv4Addr::new(192, 0, 2, 1), 9)).ok()?;
-    Some(socket.local_addr().ok()?.ip().to_string())
+    state.current().map_or(
+        Status {
+            port: None,
+            paired: false,
+            fingerprint: None,
+        },
+        |gateway| gateway.status(),
+    )
 }
 
 #[tauri::command]
 pub fn mobile_saved_settings() -> Result<SettingsSummary, String> {
     let saved = load_settings()?;
     Ok(SettingsSummary {
-        address: saved.as_ref().map(|settings| *settings.address.ip()),
         port: saved
             .as_ref()
-            .map_or(DEFAULT_PORT, |settings| settings.address.port()),
+            .map_or(DEFAULT_PORT, |settings| settings.endpoint.port()),
         configured: saved.is_some(),
     })
 }
 
 #[tauri::command]
 pub async fn mobile_start(
-    address: String,
     port: u16,
     code: Option<String>,
     app: AppHandle,
 ) -> Result<Status, String> {
     let state = app.state::<MobileState>();
-    let lifecycle = state.lifecycle.lock().await;
-    if state.running.lock().unwrap().is_some() {
-        return Err("更改设置前请先停止移动连接。".into());
-    }
-    let ip: Ipv4Addr = address
-        .parse()
-        .map_err(|_| "请输入 Windows 本机的局域网 IPv4 地址。")?;
-    if ip.is_unspecified() || ip.is_multicast() || ip.is_broadcast() {
-        return Err("请选择具体的 Windows 网卡 IPv4 地址。".into());
-    }
+    let _lifecycle = state.lifecycle.lock().await;
     if port == 0 {
         return Err("端口须在 1–65535 之间。".into());
     }
-    let address = SocketAddrV4::new(ip, port);
-    let listener = TcpListener::bind(address)
+    if let Some(current) = state.current() {
+        if code.is_some() {
+            return Err("更换验证码前请先停止移动连接。".into());
+        }
+        if port == current.port {
+            return Ok(current.status());
+        }
+    }
+    // Reserve the new port before changing settings or revoking the old device.
+    let listener = TcpListener::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port))
         .await
-        .map_err(|error| format!("无法监听 {address}：{error}"))?;
+        .map_err(|error| format!("无法监听端口 {port}：{error}"))?;
     let mut settings = if let Some(mut saved) = load_settings()? {
         if let Some(code) = code {
             saved.code = CodeVerifier::new(&code)?;
@@ -479,13 +524,13 @@ pub async fn mobile_start(
         let certificate = rcgen::generate_simple_self_signed(vec!["qingcode.local".into()])
             .map_err(|error| error.to_string())?;
         SavedSettings {
-            address,
+            endpoint: SavedEndpoint::Port { port },
             certificate: certificate.cert.der().to_vec(),
             private_key: certificate.key_pair.serialize_der(),
             code,
         }
     };
-    settings.address = address;
+    settings.endpoint = SavedEndpoint::Port { port };
     let fingerprint = format!("{:x}", Sha256::digest(&settings.certificate));
     let key = PrivatePkcs8KeyDer::from(settings.private_key.clone());
     let config = rustls::ServerConfig::builder_with_provider(Arc::new(
@@ -499,40 +544,41 @@ pub async fn mobile_start(
     save_settings(&settings)?;
     let (stop, stop_rx) = watch::channel(false);
     let gateway = Arc::new(Gateway {
-        address,
-        fingerprint: fingerprint.clone(),
+        port,
+        fingerprint,
         code: settings.code,
         stop,
         inner: Mutex::default(),
     });
-    *state.running.lock().unwrap() = Some(gateway.clone());
-    drop(lifecycle);
-    tauri::async_runtime::spawn(serve(
-        app,
-        gateway,
+    let mut previous = state.running.lock().unwrap().take();
+    if let Some(previous) = previous.as_mut() {
+        previous.stop_accepting().await;
+    }
+    let listener = tauri::async_runtime::spawn(serve(
+        app.clone(),
+        gateway.clone(),
         listener,
         TlsAcceptor::from(Arc::new(config)),
         stop_rx,
     ));
-    Ok(Status {
-        address: Some(address.to_string()),
-        paired: false,
-        fingerprint: Some(fingerprint),
-    })
+    *state.running.lock().unwrap() = Some(RunningGateway {
+        gateway: gateway.clone(),
+        listener,
+    });
+    if let Some(previous) = previous {
+        previous.finish(&app).await;
+    }
+    Ok(gateway.status())
 }
 
 #[tauri::command]
 pub async fn mobile_stop(app: AppHandle) {
     let state = app.state::<MobileState>();
     let _lifecycle = state.lifecycle.lock().await;
-    let gateway = state.running.lock().unwrap().take();
-    let Some(gateway) = gateway else { return };
-    gateway.stop.send_replace(true);
-    let sessions = std::mem::take(&mut gateway.inner.lock().unwrap().sessions);
-    for (id, session) in sessions {
-        if session.ready && session.exit.is_none() {
-            let _ = end(&app, id, session.project.kind).await;
-        }
+    let running = state.running.lock().unwrap().take();
+    if let Some(mut running) = running {
+        running.stop_accepting().await;
+        running.finish(&app).await;
     }
 }
 
@@ -581,9 +627,11 @@ async fn serve(
     let capacity = Arc::new(Semaphore::new(16));
     loop {
         let stream = tokio::select! {
+            biased;
             _ = stop.changed() => break,
             result = listener.accept() => match result {
-                Ok((stream, _)) => stream,
+                Ok((stream, peer)) if lan_peer(peer.ip()) => stream,
+                Ok(_) => continue,
                 Err(_) => break,
             },
         };
@@ -618,6 +666,10 @@ async fn serve(
             }
         });
     }
+}
+
+fn lan_peer(address: IpAddr) -> bool {
+    matches!(address, IpAddr::V4(ip) if ip.is_private() || ip.is_link_local() || ip.is_loopback())
 }
 
 async fn request_handler(
@@ -893,18 +945,24 @@ mod tests {
     fn saved_code_survives_reload_and_pairing_is_rate_limited() {
         let code = "a1B@3!";
         let settings = SavedSettings {
-            address: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 49123),
+            endpoint: SavedEndpoint::Legacy {
+                address: SocketAddrV4::new(Ipv4Addr::LOCALHOST, 49123),
+            },
             certificate: vec![],
             private_key: vec![],
             code: CodeVerifier::new(code).unwrap(),
         };
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains(code));
-        let restored: SavedSettings = serde_json::from_str(&json).unwrap();
-        assert_eq!(restored.address.port(), 49123);
+        let mut restored: SavedSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.endpoint.port(), 49123);
+        restored.endpoint = SavedEndpoint::Port { port: 49124 };
+        let migrated = serde_json::to_value(&restored).unwrap();
+        assert_eq!(migrated["port"], 49124);
+        assert!(migrated.get("address").is_none());
         let (stop, _) = watch::channel(false);
         let gateway = Gateway {
-            address: restored.address,
+            port: restored.endpoint.port(),
             fingerprint: String::new(),
             code: restored.code,
             stop,
@@ -921,5 +979,21 @@ mod tests {
         assert!(gateway.pair(code).is_err());
         gateway.inner.lock().unwrap().token = None;
         assert_ne!(gateway.pair(code).unwrap(), token);
+    }
+
+    #[test]
+    fn automatic_listener_accepts_lan_ipv4_sources() {
+        for allowed in [
+            "127.0.0.1",
+            "192.168.1.2",
+            "172.18.0.2",
+            "10.0.0.2",
+            "169.254.2.3",
+        ] {
+            assert!(lan_peer(allowed.parse().unwrap()));
+        }
+        for denied in ["0.0.0.0", "8.8.8.8", "172.32.0.2", "2001:db8::1"] {
+            assert!(!lan_peer(denied.parse().unwrap()));
+        }
     }
 }

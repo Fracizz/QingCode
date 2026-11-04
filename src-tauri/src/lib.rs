@@ -817,7 +817,6 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             mobile::mobile_status,
-            mobile::mobile_suggest_address,
             mobile::mobile_saved_settings,
             mobile::mobile_start,
             mobile::mobile_stop,
